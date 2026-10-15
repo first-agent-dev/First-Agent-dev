@@ -39,8 +39,8 @@ worklogs/planning-topology-and-executable-contracts-loop/
 ## Increments
 
 Rolling wave: **I01 and I02 are planned in full** (`increments/increment-01-…`,
-`increments/increment-02-…`); foundation I03 has a linked ownership outline; I04–I06 remain
-**outlines** and get executable increment briefs just-in-time. Scope migration is recorded in E200–E201;
+`increments/increment-02-…`); foundation I03 has six source-grounded conditional briefs;
+exact Q59/Q60/Q63 dispositions still block their affected slices. I04–I06 remain **outlines** and get executable increment briefs just-in-time. Scope migration is recorded in E200–E201;
 no implementation/status tick follows from it.
 The map below is expected to be refined as reality teaches.
 
@@ -48,7 +48,7 @@ The map below is expected to be refined as reality teaches.
 |---|---|---|---|
 | **I01** | Plan grammar & extractor | **IN PROGRESS** | the harness can parse and lint the new plan format |
 | I02 | Executable contracts & verify gate | **IN PROGRESS** ([plan](increments/increment-02-verify-gate-and-kill-checks.md)) | Retained explicit-plan Q57/Q58 admission/repair/promotion, slice-scoped verify/kill classification, T0 and real local controller/session/eval proof. Seven sections through SLICE6 (including SLICE2b). SHIPPED is attainable on actual revised local DoD/full-suite disposition/review before I03; not OS isolation or deployed acceptance. Every unique live producer case remains I03-owned. [Migration map](notes/i02-to-i03-scope-migration-2026-10-15.md). |
-| I03 | Execution/workspace foundation & integrated acceptance | **OUTLINED** ([ownership outline](increments/increment-03-execution-workspace-foundation.md)) | Mandatory Linux/Docker project-code cells with PTY, trusted launch/host supervisor, exclusive workspace writer/private views/pinned readers, sealing/fenced publication/recovery, real nested selection/bootstrap/simple Q66, and final reviewed deployed I02+I03 acceptance. Owns CT96/CT97, managed clauses and all former SLICE7 CT88/CT89. Reuse existing facades; no standalone FastAPI completion gate or second authority. |
+| I03 | Execution/workspace foundation & integrated acceptance | **OUTLINED** ([conditional six-slice plan](increments/increment-03-execution-workspace-foundation.md)) | Mandatory Linux/Docker project-code cells with PTY, trusted launch/host supervisor, exclusive workspace writer/private views/pinned readers, sealing/fenced publication/recovery, real nested selection/bootstrap/simple Q66, and final reviewed deployed I02+I03 acceptance. Owns CT96/CT97, managed clauses and all former SLICE7 CT88/CT89. Reuse existing facades; no standalone FastAPI completion gate or second authority. Six briefs ordered A/B/C/E/D/F; pending exact route/bundle/live-schema decisions and all runtime proof. |
 | I04 | Evidence ledger, pinned invariants, retry hygiene | outlined | the loop carries evidence, pins governance, retries clean, never wedges (includes the ledger **parser**, moved here from I01 — build it beside its consumers; and the **pinned-invariants injection**, drafted as an I01 slice on 2026-10-06 and moved back here as scope creep — contracts banked in `notes/role-prompts-conformance.md`, ledger E79) |
 | I05 | Rolling-wave, ASK#, autonomy, chat orchestration | outlined | the roadmap closes across runs; the ceremony/scope/draft work lands here, revised |
 | I06 | Telemetry & distillation (parallel deferred) | outlined | runs are measured and distilled; slice-DAG parallelism deferred |

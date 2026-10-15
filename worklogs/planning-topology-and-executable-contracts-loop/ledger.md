@@ -2135,3 +2135,23 @@ E202 DERIVED ADVERSARIAL I02 PLAN REVIEW, 2026-10-15. Source-grounded review rec
     Pure extractor/AST/table checks and whitespace pass after correcting AST harness locations;
     pytest/type/Docker/full-suite/operator acceptance remain unproved. No product source changes.
     [operator adversarial-review request; named source evidence and validation in review note]
+
+E203 DERIVED ADVERSARIAL I03 FOUNDATION REVIEW AND CONCRETE CONDITIONAL BRIEFS, 2026-10-15.
+    Twelve source-grounded I03 findings/gaps cover parent artifact aliasing, PTY replay/timeout
+    loss, early readiness/imports, hidden metadata Git, credential-bearing chat subagents,
+    workspace lifecycle, sealing/publication/recovery and stale live spawn-failure oracle.
+    I03 remains OUTLINED but has six briefs A/B/C/E/D/F, seventeen planned FUNCTIONAL kills,
+    exact core wire/view/receipt/manifest mechanics, proposed managed v2, binary host/local DoD
+    and an OPEN inspected execution inventory. Whole execution closure precedes nested C1.
+    CT96/CT97 original kill and CT88/CT89/STEP lineage preserved; no second authority/session DB,
+    PTY deletion, unsafe fallback, CAS/overlay matrix, parallel scheduler or advanced privacy.
+    Follow-up I02 finding: absent 3c0caad cannot be a runnable DoD baseline; use available
+    d9109f4 without inferring historical approval. Correct exact validator call signature.
+    Actual bounded source probes confirm timed_out projection loss and shell missing-binary
+    exit 127/FAIL. Actual leaf/selected-AST checks pass for I02/I03 grammar/kill ownership;
+    all new targets remain planned, not executed mutation proof. Embedded example, new links,
+    question-status/progress/history/source/roadmap invariants and whitespace pass. Historical
+    I01 no-kill directives are not relabelled a new I02/I03 failure or edited to satisfy the probe.
+    Q59/Q60/Q63 and profile/input/Git/maintenance acceptance remain explicit gates, not ratified
+    policy. No implementation, pytest/type/Docker/main-host acceptance or shipped/live tick.
+    [operator strict-review request; named file:line evidence and actual checks in review/specs]

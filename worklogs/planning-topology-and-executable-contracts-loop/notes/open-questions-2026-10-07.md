@@ -2,7 +2,7 @@
 
 Canonical record. Next free id after this file: **Q67**.
 
-**Current owner/disposition alignment, 2026-10-15 (E200–E201):** retained I02 owns explicit-plan
+**Current owner/disposition alignment, 2026-10-15 (E200–E203):** retained I02 owns explicit-plan
 Q57/Q58, CT92 rules and local admission/gate proof. Q59/Q60 exact nested choices, Q61/CT97
 foundation implementation, Q66 propagation and Q63 final E2E schema are I03 consumers, not I02
 shipping dependencies. Broad design directions are recorded in the execution decision note; this
@@ -930,6 +930,10 @@ A failed validator remains eligible for another bounded planner attempt. Empty/u
 
 ## Q59 — Is chat escalation advisory, or must complex tasks be forced through `invoke_workflow`?
 
+**2026-10-15 review:** I03 spec §7 proposes an explicit --require-workflow router-only route,
+without changing ordinary advisory chat. Exact guarantee/name remains unratified; SLICE5 STEP1
+requires disposition, not a prompt-compliance claim.
+
 **Status: OPEN on enforcement strength; the user-experience intent is clarified.** Operator
 intent, 2026-10-14: chat is the everyday front door for any task. A deterministic scope/escalation
 module should inject a recommendation to use `invoke_workflow` when work looks complex, and the
@@ -972,6 +976,11 @@ controller route or whether model-mediated tool selection is acceptable.
 ---
 
 ## Q60 — Is the proposed CT96 planner-managed selection/bootstrap protocol approved?
+
+**2026-10-15 review:** [I03 spec §7](i03-execution-workspace-spec-2026-10-15.md#7-nested-acquisition-and-q66--exact-proposal-q59q60-still-open)
+proposes exact stable project_slug/increment_id selection, clarification and controller-rendered
+bundle, replacing the old path-shaped recommendation only if approved. Existing linkage/status
+handling and managed admission v2 are explicit remaining schema dispositions; no option ratified.
 
 **Status: OPEN. CT96 remains recommended, not operator-ratified.** Operator leans toward option
 (a), 2026-10-14, and asks whether it remains sound; the decision is not yet ratified. This gates
@@ -1220,7 +1229,7 @@ treat path-only session facts as proof of transcript inheritance.
 - Q59–Q63 remain decision/specification questions; Q64 is deferred, Q65 is resolved, and Q66's
   API decision is resolved while runtime proof remains. Current production source still lacks
   admission, planner-managed selection/bootstrap, inherited chat-context propagation, and the CT97
-  PlanRef boundary; see retained I02 local DoD and foundation I03 outline/migration bank.
+  PlanRef boundary; see retained I02 local DoD and foundation I03 conditional briefs/migration bank.
 
 I02 does not wait for the successful nested path, OS boundary or deployed-host evidence; it still
 requires retained explicit Q57/Q58 implementation, negative unavailable managed-path proof, Q62/Q43

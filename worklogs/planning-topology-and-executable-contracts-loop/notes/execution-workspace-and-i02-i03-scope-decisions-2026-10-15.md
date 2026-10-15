@@ -700,9 +700,10 @@ I01 grammar ownership и правила status ticking сохраняются; �
 ### 12.6. Suggested I03 decomposition (planning skeleton, не готовый increment)
 
 Первоначальная seven-group table ниже сохранена как design context. После scope-reduction check
-active [foundation outline](../increments/increment-03-execution-workspace-foundation.md) использует
-six candidate groups A–F, объединяя launch/backend/adapters. Ни один skeleton не является executable
-CT/STEP plan; не добавлять второй terminal/management stack ради unfinished FastAPI server.
+[foundation plan](../increments/increment-03-execution-workspace-foundation.md) сначала получил
+six candidate groups A–F. E203 преобразует их в шесть concrete conditional briefs A/B/C/E/D/F;
+Q59/Q60/Q63 и runtime proof остаются открыты. Таблицы skeleton ниже — historical context, не
+конкурирующий executable CT/STEP plan; не добавлять второй terminal/management stack ради unfinished FastAPI server.
 Existing server допускается как optional cell-internal transport, не host supervisor или I02 gate.
 
 Не больше 7 хорошо связанных slices; конкретные filenames/CTs/kill directives агент обязан привязать к реальным producers.
@@ -799,3 +800,15 @@ Source anchors относятся к указанному HEAD; следующи
 Главный минимализм: **одна boundary, один managed writer, одна view на исполнителя, один publisher,
 existing role/history/state substrate.** Future parallelism расширяет число private candidates,
 а не вводит shared writable canonical tree. Advanced context/privacy/scheduler остаются вне этого increment.
+
+## Adversarial-review implementation elaboration (2026-10-15, E202–E203)
+
+The retained I02 now links an exact admission implementation spec and binary local proof package.
+Foundation I03 now has six conditional briefs, an initial inspected execution-call inventory and
+concrete authority/view/receipt/seal/current-pointer/canonical-projection/recovery contract.
+Sequence A/B/C/E/D/F closes execution before nested C1. This elaboration is planning, not runtime
+delivery or operator ratification: Q59/Q60 exact route/selection/bundle and Q63 result schema remain
+open. Conservative input/private-Git limits and actual host profile/FS/cgroup/maintenance requirements
+are explicit acceptance dispositions, not hidden compatibility guarantees. No second authority/DB,
+PTY deletion, CAS/overlay matrix, parallel orchestration or advanced privacy is introduced.
+Historical migration/outline/validation statements above retain their original snapshot provenance.

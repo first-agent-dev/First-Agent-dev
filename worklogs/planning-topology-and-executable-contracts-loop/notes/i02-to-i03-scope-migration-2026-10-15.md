@@ -279,7 +279,8 @@ End of historical checklist. Active ownership and shipping conditions are in rev
   and selected actual source bodies without compatibility shims. Full pytest/Mypy/Docker/deployed
   proof is not run or claimed; old failure dispositions and independent review remain pending.
 
-Minimal reproducible extractor check (does not import the package/runtime or execute plan commands):
+Minimal reproducible extractor check (updated to current E203 brief shape; the bullets above
+retain E200–E201 historical results). Does not import the package/runtime or execute plan commands:
 
 ```python
 import importlib.util
@@ -297,5 +298,17 @@ assert ids.slices == ("SLICE1", "SLICE2", "SLICE2b", "SLICE3", "SLICE4", "SLICE5
 assert sum(cls == "FUNCTIONAL" for _, cls, _ in ids.slice_records[-1].contracts) == 16
 assert not any(d.severity == parser.FAIL for d in parser.precheck(i02).diagnostics)
 i03 = (plans / "increment-03-execution-workspace-foundation.md").read_text()
-assert not parser.extract_plan_ids(i03).slices
+assert parser.extract_plan_ids(i03).slices == tuple(f"SLICE{n}" for n in range(1, 7))
+assert not any(d.severity == parser.FAIL for d in parser.precheck(i03).diagnostics)
 ```
+
+## 8. Adversarial-review successor map (E203; no delivery)
+
+The six I03 briefs now map A→SLICE1, B→SLICE2, C→SLICE3, E→SLICE4, D→SLICE5,
+F→SLICE6. E precedes D so nested C1 cannot certify an unsafe execution prologue. CT96/CT97
+retain original handler/stage-seam kill identities; CT88/CT89 and former SLICE7 STEP1–STEP10
+retain identities in final SLICE6. Managed clauses CT90/CT92–CT95→SLICE5; IO/publication/binding
+clauses→SLICE2/3/4; local CT66 remains I02 with supervised binding in SLICE4. Original case rows
+and historical schema/SLICE7/DoD above are unchanged. New source-grounded call inventory and
+conditional implementation spec are linked from I03. OUTLINED remains; no progress/live tick.
+Earlier zero-slice grammar results in §7 describe their actual earlier snapshot, not current shape.

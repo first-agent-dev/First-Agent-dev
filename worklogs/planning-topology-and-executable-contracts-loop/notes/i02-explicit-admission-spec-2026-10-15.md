@@ -80,7 +80,7 @@ PlanRef. Deny the active target in its file writer and block on detected out-of-
 Do not silently accept ordinary-planner edits as a new admitted target.
 
 `_validate_plan_admission(snapshot)` invokes both `precheck(text, path=relative_path)` and
-`validate_kill_directives(ids)` on **the same** text/IDs. Return typed PASS, DIAGNOSTICS or
+`validate_kill_directives(text, ids, path=relative_path)` on **the same** text/IDs. Return typed PASS, DIAGNOSTICS or
 INDETERMINATE plus sanitized diagnostics. No caller independently rereads or reparses the target.
 PASS needs ≥1 parsed slice and no FAIL/ERROR. WARN alone is advisory. Nonempty zero-slice text
 with determinate FAILs may be repaired; empty text, unexplained zero slices, validator exception,
@@ -243,7 +243,8 @@ artifact references, mutation table, source-restoration diff, independent review
 Run the full suite through the existing `just test` gate, and `just check`; separately retain each
 blocking subgate result so expected red tests do not hide missing type/lint/coverage checks.
 For baseline comparison use an isolated `git archive d9109f4` tree and the same supported Python,
-locked dependencies/config/command; do not switch this session's branch. Capture baseline and
+locked dependencies/config/command; use separate tree-local environments and verify module origins
+so an editable candidate install cannot contaminate baseline. Do not switch this session's branch. Capture baseline and
 candidate exact failure nodeids plus failure phase/category, not just totals. Both runs need
 complete collection/execution manifests and normal terminal summaries: E174's aborted reporter is
 not an eligible baseline. Changed/new tests and changed-file checks must be green. Existing E19

@@ -523,7 +523,7 @@ CONTRACTS:
 TESTS: tests/test_verify_gate_live.py   (EXISTING — extend direct explicit-plan C1/C2/C3)
 ```verify
 uv run pytest tests/test_verify_gate_live.py -q
-uv run ruff check src/fa/inner_loop/workflow_controller.py src/fa/inner_loop/workflow_artifacts.py src/fa/inner_loop/profiles.py src/fa/inner_loop/tools/write_file.py src/fa/cli.py src/fa/feature_flags.py tests/test_verify_gate_live.py
+uv run ruff check src/fa/inner_loop/workflow_controller.py src/fa/inner_loop/workflow_artifacts.py src/fa/inner_loop/profiles.py src/fa/inner_loop/tools/write_file.py src/fa/cli.py src/fa/feature_flags.py src/fa/session/manager.py tests/test_verify_gate_live.py
 ```
 - [ ] STEP1: implement/verify `verify_plan(plan_ids, *, root, …) -> PlanVerification`, preserving plan-level and per-slice command ownership (exit: `uv run pytest tests/test_verify_slice.py -q -k verify_plan` exits 0)
 - [ ] STEP2: call `verify_plan` from `_run_stage` only after a successful coder stage, capture T0 before that dispatch, and persist the result (exit: `uv run pytest tests/test_verify_gate_live.py -q -k "coder_stage or baseline"` exits 0)
@@ -586,8 +586,10 @@ acceptance are incomplete I03 obligations, not suppressed failures or I02 eviden
       operator-reviewed dispositions for E19, each unrelated baseline failure and recorded Mypy
       diagnostic. Changed-file/new-test checks pass; new/missing/unclassified failures = 0.
       No pass from E174 aborted reporter, count-only waiver, skipped gate or absent summary.
-- [ ] Review `git diff 3c0caad -- src/fa/inner_loop/plan_ids.py` against only Q45-B approved position
-      fields; pure extractor tests pass. Scoped runtime mutation has no non-equivalent survivors.
+- [ ] Review actual I02 source delta against available baseline d9109f4, preserving approved Q45-B
+      source-position fields and current extractor behavior; pure extractor tests pass. Historical
+      3c0caad is absent from this checkout and cannot be a runnable gate or an inferred clean diff.
+      Scoped runtime mutation has no non-equivalent survivors.
 - [ ] Independent review of revised retained plan/DoD, implementation and evidence is recorded.
       Verify moved CT/STEP/case coverage has explicit incomplete I03 ownership in migration bank;
       this is mapping review, not the moved E2E fixture/checklist implementation.
@@ -616,9 +618,9 @@ explicit disposition. Q64 calibration stays I06.
 - Generated-mutant sweep and nonessential verification-integrity follow-ups remain deferred;
   calibration/≥95% is I06. Do not add CAS/overlay framework, parallel scheduler or advanced privacy.
 
-## Hand-off to I03 (banked context, not an executable foundation plan)
+## Hand-off to I03 (conditional concrete briefs, not delivery)
 
-Use [foundation outline](increment-03-execution-workspace-foundation.md) and
+Use [conditional six-slice foundation plan](increment-03-execution-workspace-foundation.md) and
 [migration bank](../notes/i02-to-i03-scope-migration-2026-10-15.md) for exact clause/case ownership.
 Keep existing SliceVerification/actual eval evidence facades and strengthened local parser; I03
 adds supervised execution/revision binding. Existing FastAPI PTY server is an optional cell-internal
