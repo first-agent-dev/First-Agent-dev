@@ -183,3 +183,94 @@ E204's local CT66 producer kill also exercises the **unpatched** `KILL_CHECK_COM
 mandatory harness report arguments in this checkout's ready venv. This supersedes the old
 row's “never exercised verbatim” local claim, not its deployed-image/workspace risk. It is not
 live-host acceptance and leaves the historical row intact.
+
+## SLICE6 request-entry boundary — planned host surface (E205, 2026-10-15)
+
+**Implementation checkpoint, not SLICE6 completion.** CT74/CT95 now share strict pure request
+normalization at CLI/direct entry; CLI parses injection before lifecycle allocation. CT90's
+workspace-relative explicit-plan guard, admission/repair/promotion, baseline lifecycle and integrated
+acceptance remain incomplete. No STEP12/STEP13 or increment-DoD box is closed by this checkpoint.
+C0 policy and C2 CLI rejection are local proof classes; C3 is adversarial security testing, not a
+synonym for “live host.” The host cases below are planned I03 F acceptance, not executed results.
+
+| Producer | Planned case | Host arrangement and two-sided oracle | Status |
+| :--- | :--- | :--- | :--- |
+| `_workflow_roles` | REQ-H01 | Real CLI/direct requests with whitespace, omitted/misordered eval, repeated coder; verify non-eval order and actual evaluator insertion. Reject blank/unknown roles, duplicate ordinary planner and planner-after-coder before allocation/provider. Test linear/adaptive separately. | planned |
+| `_workflow_budget` | REQ-H02 | Direct raw None/int/bool/string/float plus actual argparse integer inputs. Existing defaults/ceilings apply; real integers clamp, zero remains legal, bool/string/float reject before allocation. Do not pretend a CLI string token remains a string after argparse. | planned |
+| `_validate_workflow_run_id` | REQ-H03 | One- and 128-character valid IDs, digit-leading valid ID, forbidden leading dot/traversal/empty/129-character ID, and generated CLI identity. Accepted IDs use the requested namespace; malformed identity creates no addressed run/artifact. | planned |
+| `_workflow_tasks` | REQ-H04 | Shared and per-role tasks; coder-omitted eval still needs a usable eval task. Empty/non-string task and missing role task reject before session/run claim; valid per-role-only configuration dispatches normally. | planned |
+| `_workflow_injections` | REQ-H05 | Real repeatable --inject parsing and direct resolved overrides. Test valid off/observe/enforce, unknown names/modes, duplicates, missing '=', bad raw types/unhashable values. Invalid explicit configuration cannot allocate a session/run or call a provider. | planned |
+| `_validate_workflow_request` / `_WorkflowRequest` | REQ-H06 | Call both shipped public roots with the same matrix, including mismatched/malformed RunContext and a matching control. Assert normalized values actually govern dispatch/budgets; rejected requests return exit 2 before lifecycle/artifact work. Valid requests must continue through eventual admitted workflow, not merely return from the pure helper. | planned |
+| `WorkflowRequestError` | REQ-H07 | Inspect direct typed reason and CLI exit/diagnostic, including existing escaped offending-role/allowed-role presentation. No arbitrary budget/task/injection/context bytes in new typed error reasons. CLI presentation is not the closed admission.json vocabulary. | planned |
+
+### Fixture and evidence requirements
+
+- I03 F owns the reviewed host fixture package. Do not add host helper scripts or execute these
+  cases before its independent checklist/review. Q63's result schema remains unratified; these
+  descriptive case IDs do not silently freeze that schema.
+- Record deployed SHA/image, fixture revision, actual CLI argv/API shape, selected workspace,
+  requested/generated run ID, mode, exit/reason, provider-stage count/order and request-specific
+  session/run/artifact deltas. Use unique reviewed scratch namespaces, no credentials or global
+  debug flags, no tracked-source mutation. Concurrent unrelated host activity is not a test delta.
+- Run malformed requests in both modes and both entry paths. Observe is not permission to allocate
+  or dispatch on invalid configuration. Verify zero provider work and zero request-specific
+  allocation, alongside a valid admitted control. Preserve the actual eval report and routing
+  evidence when the valid control reaches coder/eval; do not substitute private-helper results.
+- **Different failure classes:** malformed request identity/configuration gets exit 2 with no
+  allocation. A well-formed direct request with a missing/unusable PlanRef must later produce
+  the separately specified BLOCKED admission evidence, not use this no-artifact oracle. That
+  PlanRef protocol is still pending; these entry tests do not prove it.
+- Supplementary local remove-call kills from `run_workflow` and `_cmd_workflow` to
+  `_validate_workflow_request` protect this new wiring. They do not replace CT95's declared
+  `run_workflow -> _require_plan_for_coder` kill or any of the 16 full-path SLICE6 runs.
+- Exact-byte reader/admission schemas, scoped candidate writer, Q58 fault points, shared planner
+  credit, T0/topology, source mismatch/eval integrity and unsupported acquisition each still
+  require their own local/adversarial/live cases under the existing register and I03 owner.
+
+### E205 local checkpoint evidence (not host acceptance)
+
+- Python 3.13.16, `uv sync --frozen --extra dev`; repository dependency/profile files unchanged.
+- `uv run --frozen pytest tests/test_verify_gate_live.py tests/test_verify_slice.py
+  tests/test_slice_verification_runner.py tests/test_workflow_role_allowlist.py -q`:
+  **262 passed in 141.48s** on final source/tests. New boundary selection
+  `-k 'direct_budget or role_order_request or plan_preflight'`: **89 passed, 12 deselected**.
+- **TEST-EDITS:** one import and 89 new parametrized cases appended. All 12 original test
+  function ASTs compare equal to clean HEAD `68c0aa6`; no old assertion softened/deleted.
+  Negative tests call real public entry with `_cmd_run`, no mocked lifecycle/controller;
+  absence of home/state/workspace/run artifacts is the early-stop oracle. These rejected
+  requests never reach `drive_session`, so they are not new admitted C1 proof. Existing
+  live C1 and its producer-kill table pass in the 262-test run.
+- Actual `_run_kill_check` on final source, each `targets=1, edits=1`:
+  `run_workflow -> _validate_workflow_request`, selected
+  `test_direct_budget_invalid_request_has_no_artifacts_or_dispatch`: **PROVEN**, 1.926s;
+  `_cmd_workflow -> _validate_workflow_request`, selected
+  `test_plan_preflight_cli_rejects_malformed_request_before_lifecycle`: **PROVEN**, 2.099s.
+  These are supplementary boundary kills, not completion of the full 16-contract package.
+- Fresh narrowed scratch mutmut sweep of all six entry helpers: **209 selected,
+  207 killed, 2 equivalent/unobservable; no other statuses**. Exact current controller
+  SHA256: `03db7fef0377c3810eae045788deae79dc05aa9542cdb8de522ca7ccbaf83aa2`.
+  Scratch copied exact source/test plus scripts; selectors are the new boundary names above.
+  Repository mutation configuration and source suppressions were not changed. Initial sweep
+  exposed missing task/unhashable-mode and short-circuited malformed-context coverage;
+  add tests, refresh coverage and rerun, rather than label these survivors equivalent.
+  Scratch logs/metadata are disposable cache, not required versioned artifacts.
+- Equivalence proof 1: `x__workflow_roles__mutmut_47` changes planner index `>` to `>=`.
+  Distinct `planner` and `coder` cannot occupy the same list index; validation guarantees
+  these are known strings, so equality is impossible and the predicates coincide.
+- Equivalence proof 2: `x__validate_workflow_run_id__mutmut_1` changes the private default
+  `allow_missing=False` to True. Normalizer always passes the flag explicitly. Sole
+  default-using CLI call is after a missing ID has been replaced by a nonempty generated
+  string; its non-None branch never observes the default. No reachable public behavior
+  changes. These are call-graph proofs, not blanket permission to ignore survivors.
+- Ruff (three changed Python files), mypy (same three files), pylint (two production files,
+  **10.00/10**) and `git diff --check` pass. No full-repository static/format claim.
+- Deadline regression suite: final candidate **9 passed, 2 failed**. Independently extracted
+  clean HEAD `68c0aa6` with a separate frozen environment reproduces both failures
+  (role-allowlist + deadline baseline: **19 passed, 2 failed**):
+  `test_no_deadline_runs_the_full_pipeline`, `test_generous_deadline_runs_the_full_pipeline`.
+  Both expect planner/coder while the existing Q55 path inserts eval. **Not waived/fixed**;
+  operator-reviewed disposition remains required. This is not the mandatory full-suite
+  `d9109f4` versus candidate acceptance comparison, which has not run.
+- Pending: PlanRef/admission, bounded Q57 repair/Q58 promotion, explicit shared T0,
+  pinned verifier/eval evidence, unsupported managed acquisition, full declared kills,
+  full-suite comparison, independent review and operator DoD. I02 remains open.

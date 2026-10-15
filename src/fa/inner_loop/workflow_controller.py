@@ -15,6 +15,7 @@ import argparse
 import json
 import logging
 import os
+import re
 import sys
 import tempfile
 import time
@@ -24,7 +25,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
 from fa.inner_loop.coder_loop import SessionOutcome
-from fa.inner_loop.injections import resolve_injection_modes
+from fa.inner_loop.injections import INJECTION_MODES, INJECTION_SPECS, resolve_injection_modes
 from fa.inner_loop.plan_ids import PlanIds, canonical_slice_id, extract_plan_id, extract_plan_ids
 from fa.inner_loop.prompt import ADVERSARIAL_EVAL_STANCE_PREAMBLE
 from fa.inner_loop.slice_verification import (
@@ -1398,18 +1399,120 @@ def _print_terminal_summary(
     )
 
 
-def _resolve_max_repairs(value: int | None) -> int:
-    v = DEFAULT_MAX_REPAIRS if value is None else int(value)
-    if v < 0:
-        v = 0
-    return min(v, MAX_REPAIRS_CEILING)
+class WorkflowRequestError(ValueError):
+    """Sanitized input failure: no user-supplied values enter the diagnostic."""
+
+    def __init__(self, code: str) -> None:
+        self.code = code
+        super().__init__(f"invalid workflow request: {code}")
 
 
-def _resolve_max_replans(value: int | None) -> int:
-    v = DEFAULT_MAX_REPLANS if value is None else int(value)
-    if v < 0:
-        v = 0
-    return min(v, MAX_REPLANS_CEILING)
+@dataclass(frozen=True, slots=True)
+class _WorkflowRequest:
+    roles: tuple[str, ...]
+    max_repairs: int
+    max_replans: int
+
+
+def _workflow_roles(value: object, mode: object) -> list[str]:
+    if not isinstance(value, list) or not value:
+        raise WorkflowRequestError("roles")
+    roles: list[str] = []
+    for role in value:
+        if not isinstance(role, str) or role.strip() not in WORKFLOW_STAGE_ROLES:
+            raise WorkflowRequestError("roles")
+        roles.append(role.strip())
+    if mode not in WORKFLOW_MODES:
+        raise WorkflowRequestError("mode")
+    if mode == "adaptive" and "coder" not in roles:
+        raise WorkflowRequestError("adaptive-roles")
+    if roles.count("planner") > 1 or (
+        "planner" in roles and "coder" in roles and roles.index("planner") > roles.index("coder")
+    ):
+        raise WorkflowRequestError("role-order")
+    return roles
+
+
+def _workflow_budget(value: object, *, default: int, ceiling: int, code: str) -> int:
+    if value is None:
+        return default
+    if type(value) is not int:
+        raise WorkflowRequestError(code)
+    return min(max(value, 0), ceiling)
+
+
+def _validate_workflow_run_id(value: object, *, allow_missing: bool = False) -> None:
+    if value is None and allow_missing:
+        return
+    if not isinstance(value, str) or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", value) is None:
+        raise WorkflowRequestError("run-id")
+
+
+def _workflow_tasks(roles: list[str], task: object, per_role_task: object) -> None:
+    if task is not None and (not isinstance(task, str) or not task.strip()):
+        raise WorkflowRequestError("task")
+    if not isinstance(per_role_task, Mapping):
+        raise WorkflowRequestError("task")
+    for role, value in per_role_task.items():
+        if role not in WORKFLOW_STAGE_ROLES or (
+            value is not None and (not isinstance(value, str) or not value.strip())
+        ):
+            raise WorkflowRequestError("task")
+    if any(not (per_role_task.get(role) or task) for role in roles):
+        raise WorkflowRequestError("task")
+    # Q55 requires an evaluator even when omitted from the requested sequence.
+    # Actual stage insertion stays at run_workflow's declared CT73 choke point.
+    if "coder" in roles and not (per_role_task.get("eval") or task):
+        raise WorkflowRequestError("task")
+
+
+def _workflow_injections(value: object) -> None:
+    if value is None:
+        return
+    if not isinstance(value, Mapping):
+        raise WorkflowRequestError("injection")
+    for name, mode in value.items():
+        if not isinstance(name, str) or not isinstance(mode, str):
+            raise WorkflowRequestError("injection")
+        if name not in INJECTION_SPECS or mode not in INJECTION_MODES:
+            raise WorkflowRequestError("injection")
+
+
+def _validate_workflow_request(
+    *,
+    roles: object,
+    mode: object,
+    max_repairs: object,
+    max_replans: object,
+    run_id: object,
+    task: object,
+    per_role_task: object,
+    inject_overrides: object = None,
+    allow_missing_run_id: bool = False,
+    workspace: Path | None = None,
+    run_context: RunContext | None = None,
+) -> _WorkflowRequest:
+    """Shared side-effect-free public boundary (CT74/95, admission spec §1).
+
+    CLI permits an absent requested ID before generating one; direct API does
+    not. Both validate the actual ID before deriving any artifact path. This
+    function never resolves/provisions a workspace or loads feature/config files.
+    """
+    normalized_roles = _workflow_roles(roles, mode)
+    repairs = _workflow_budget(
+        max_repairs, default=DEFAULT_MAX_REPAIRS, ceiling=MAX_REPAIRS_CEILING, code="max-repairs"
+    )
+    replans = _workflow_budget(
+        max_replans, default=DEFAULT_MAX_REPLANS, ceiling=MAX_REPLANS_CEILING, code="max-replans"
+    )
+    _validate_workflow_run_id(run_id, allow_missing=allow_missing_run_id)
+    if run_context is not None and (
+        getattr(run_context, "run_id", None) != run_id or getattr(run_context, "workspace_path", None) != workspace
+    ):
+        raise WorkflowRequestError("context-binding")
+    _workflow_tasks(normalized_roles, task, per_role_task)
+    _workflow_injections(inject_overrides)
+    return _WorkflowRequest(tuple(normalized_roles), repairs, replans)
 
 
 def _render_mode_label(mode: str, *, max_repairs: int, max_replans: int) -> str:
@@ -1853,8 +1956,8 @@ def run_workflow(
     task: str | None,
     per_role_task: Mapping[str, str | None],
     mode: str,
-    max_repairs: int,
-    max_replans: int,
+    max_repairs: int | None,
+    max_replans: int | None,
     run_id: str,
     config: Path,
     workspace: Path,
@@ -1883,7 +1986,24 @@ def run_workflow(
     ``WORKFLOW_DEADLINE_EXIT_CODE``; it does not raise.
     """
     _wf_start_mono = time.monotonic()
-    roles = _ensure_eval_after_coder(roles)
+    try:
+        request = _validate_workflow_request(
+            roles=roles,
+            mode=mode,
+            max_repairs=max_repairs,
+            max_replans=max_replans,
+            run_id=run_id,
+            task=task,
+            per_role_task=per_role_task,
+            inject_overrides=inject_overrides,
+            workspace=workspace,
+            run_context=run_context,
+        )
+    except WorkflowRequestError as error:
+        print(f"fa workflow: {error}", file=sys.stderr)
+        return 2, None
+    roles = _ensure_eval_after_coder(list(request.roles))
+    max_repairs, max_replans = request.max_repairs, request.max_replans
 
     artifact_paths = workflow_artifact_paths(
         run_id,
@@ -2001,6 +2121,7 @@ __all__ = [
     "WorkflowArtifactPaths",
     "WorkflowContext",
     "WorkflowProgress",
+    "WorkflowRequestError",
     "build_eval_report",
     "emit_eval_report",
     "eval_system_prompt_extra",

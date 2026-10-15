@@ -2174,3 +2174,21 @@ E204  FACT  Implement amended I02 SLICE5 STEP7/CT66 from base ea77299: replace s
     no new C1/C2/C3 evidence, no I02 SHIPPED or GAP-01–15 closure. Q59/Q60/Q63 remain open.
     [actual commands/results/config/IDs/equivalence proofs: notes/i02-slice-verification-design.md
     §6; future host cases: notes/e2e-live-verification-register.md amended CT66 section]
+
+E205  FACT  Partial I02 SLICE6 CT74/CT95 request-entry chunk from 68c0aa6: share pure strict
+    role/mode/order/task/budget/run-ID/injection/context validation between CLI and direct API,
+    before lifecycle/artifact allocation. Parse CLI injections before session resolution;
+    preserve escaped actionable unsupported-role diagnostics and CT73 explicit Q55 insertion.
+    No PlanRef/admission/promotion/T0 implementation or full SLICE6 completion claim.
+    Final four suites: 262 passed (141.48s); 89 new boundary cases, all 12 original live test
+    function ASTs unchanged. Supplementary normalizer remove-call kills at both public roots:
+    PROVEN, each targets=1/edits=1. Fresh six-helper targeted mutation: 209 selected,
+    207 killed, 2 proven equivalent/unobservable, no other statuses; no profile suppressions.
+    Ruff/mypy three changed Python files clean; pylint two production files 10.00/10;
+    diff whitespace clean. Two deadline failures independently reproduce on clean 68c0aa6;
+    not waived and not substituted for mandatory d9109f4/candidate full-suite comparison.
+    Append seven planned host cases covering all new producers/record/error, with I03 F
+    ownership, fixture/evidence/dual-path/mode controls and explicit pending C1/C3/host proof.
+    STEP12/STEP13/DoD remain open; no I02 SHIPPED/live/integrated-security claim.
+    [commands, final hash/counts/equivalence proofs, baseline identities and host obligations:
+    notes/e2e-live-verification-register.md, E205 request-entry boundary section]

@@ -19,6 +19,7 @@ import json
 import os
 import shlex
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -649,3 +650,316 @@ def test_real_workflow_writes_verification_and_supplies_it_to_eval(
     assert "Plan command: outcome=fail, exit_code=7" in eval_request
     assert "SLICE1: proven" in eval_request
     assert "SLICE2: proven" in eval_request
+
+
+# Retained SLICE6, CT74/95: the pure request boundary, before admission IO.
+# C0 policy plus C2 real CLI rejection; these do not claim admitted C1 delivery.
+
+
+def _request_input() -> dict[str, Any]:
+    return {
+        "roles": ["planner", "coder", "eval"],
+        "mode": "linear",
+        "max_repairs": None,
+        "max_replans": None,
+        "run_id": "request-valid",
+        "task": "implement the declared plan",
+        "per_role_task": {},
+    }
+
+
+@pytest.mark.parametrize(
+    ("roles", "mode", "expected"),
+    [
+        ([" coder "], "adaptive", ("coder", "eval")),
+        (["eval", "coder", "coder"], "linear", ("coder", "eval", "coder", "eval")),
+        (["eval", "planner", "coder"], "linear", ("planner", "coder", "eval")),
+        (["planner"], "linear", ("planner",)),
+    ],
+)
+def test_role_order_request_normalization_preserves_non_eval_stages(
+    roles: list[str], mode: str, expected: tuple[str, ...]
+) -> None:
+    values = _request_input() | {"roles": roles, "mode": mode}
+    request = workflow._validate_workflow_request(**values)
+
+    assert request.roles == tuple(role.strip() for role in roles)
+    assert workflow._ensure_eval_after_coder(list(request.roles)) == list(expected)
+    assert values["roles"] == roles
+    assert request.max_repairs == workflow.DEFAULT_MAX_REPAIRS
+    assert request.max_replans == workflow.DEFAULT_MAX_REPLANS
+
+
+@pytest.mark.parametrize(("repairs", "replans", "expected"), [(-10, -1, (0, 0)), (0, 0, (0, 0)), (99, 99, (3, 2))])
+def test_direct_budget_request_clamps_real_integers(repairs: int, replans: int, expected: tuple[int, int]) -> None:
+    request = workflow._validate_workflow_request(
+        **(_request_input() | {"max_repairs": repairs, "max_replans": replans})
+    )
+
+    assert (request.max_repairs, request.max_replans) == expected
+
+
+_INVALID_REQUESTS = [
+    ("roles", [], "roles"),
+    ("roles", "coder", "roles"),
+    ("roles", ["coder", ""], "roles"),
+    ("roles", ["private-secret-value"], "roles"),
+    ("roles", [True], "roles"),
+    ("roles", ["coder", "planner"], "role-order"),
+    ("roles", ["planner", "planner", "coder"], "role-order"),
+    ("mode", "private-secret-mode", "mode"),
+    ("max_repairs", True, "max-repairs"),
+    ("max_repairs", "1", "max-repairs"),
+    ("max_repairs", 1.0, "max-repairs"),
+    ("max_replans", False, "max-replans"),
+    ("max_replans", "1", "max-replans"),
+    ("max_replans", 1.0, "max-replans"),
+    ("run_id", "../private-secret", "run-id"),
+    ("run_id", ".hidden", "run-id"),
+    ("run_id", "", "run-id"),
+    ("run_id", "x" * 129, "run-id"),
+    ("task", " ", "task"),
+    ("task", None, "task"),
+    ("task", 7, "task"),
+    ("inject_overrides", {"private-secret-injection": "off"}, "injection"),
+    ("inject_overrides", {"coder_slice_ceremony": "private-secret-mode"}, "injection"),
+    ("inject_overrides", {"coder_slice_ceremony": True}, "injection"),
+]
+
+
+@pytest.mark.parametrize(("field", "value", "code"), _INVALID_REQUESTS)
+def test_direct_budget_invalid_request_has_no_artifacts_or_dispatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    field: str,
+    value: object,
+    code: str,
+) -> None:
+    from fa.cli import _cmd_run
+
+    home, state, workspace = tmp_path / "home", tmp_path / "state", tmp_path / "workspace"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("FA_STATE_ROOT", str(state))
+    values = _request_input() | {field: value}
+
+    result = run_workflow(
+        **values,
+        config=tmp_path / "missing-models.yaml",
+        workspace=workspace,
+        max_turns=1,
+        run_stage_fn=_cmd_run,
+    )
+
+    assert result == (2, None)
+    assert capsys.readouterr().err == f"fa workflow: invalid workflow request: {code}\n"
+    assert not home.exists()
+    assert not state.exists()
+    assert not workspace.exists()
+
+
+@pytest.mark.parametrize(("field", "value", "code"), [row for row in _INVALID_REQUESTS if row[0] != "inject_overrides"])
+def test_plan_preflight_cli_rejects_malformed_request_before_lifecycle(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    field: str,
+    value: object,
+    code: str,
+) -> None:
+    import argparse
+
+    from fa.cli import _cmd_workflow
+
+    home, state, workspace = tmp_path / "home", tmp_path / "state", tmp_path / "workspace"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("FA_STATE_ROOT", str(state))
+    values = _request_input() | {field: value}
+    roles = values["roles"]
+    # Actual argv delivers one comma-separated string, including empty entries.
+    cli_roles = ",".join(roles) if isinstance(roles, list) and all(isinstance(role, str) for role in roles) else roles
+    if field == "roles" and value == "coder":
+        cli_roles = "private-secret-value"
+    args = argparse.Namespace(
+        **{key: val for key, val in values.items() if key not in {"roles", "per_role_task"}},
+        roles=cli_roles,
+        session_id="preflight-session",
+        workspace=workspace,
+        config=tmp_path / "missing-models.yaml",
+        max_turns=1,
+        inject=None,
+    )
+
+    assert _cmd_workflow(args) == 2
+    expected_error = f"fa workflow: invalid workflow request: {code}\n"
+    if code == "roles" and cli_roles == "private-secret-value":
+        expected_error = (
+            "fa workflow: unsupported stage role(s): 'private-secret-value'. "
+            "--roles must be drawn from: coder, eval, planner\n"
+        )
+    assert capsys.readouterr().err == expected_error
+    assert not home.exists()
+    assert not state.exists()
+    assert not workspace.exists()
+
+
+@pytest.mark.parametrize("inject", [["unknown=off"], ["coder_slice_ceremony=invalid"], ["bad"], [True]])
+def test_plan_preflight_invalid_inject_cannot_claim_a_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], inject: list[object]
+) -> None:
+    import argparse
+
+    from fa.cli import _cmd_workflow
+
+    home, state, workspace = tmp_path / "home", tmp_path / "state", tmp_path / "workspace"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("FA_STATE_ROOT", str(state))
+    args = argparse.Namespace(
+        roles="coder",
+        task="implement",
+        run_id="request-valid",
+        mode="adaptive",
+        max_repairs=0,
+        max_replans=0,
+        config=tmp_path / "models.yaml",
+        workspace=workspace,
+        max_turns=1,
+        session_id="preflight-session",
+        inject=inject,
+    )
+
+    assert _cmd_workflow(args) == 2
+    assert capsys.readouterr().err == "fa workflow: invalid workflow request: injection\n"
+    assert not home.exists()
+    assert not state.exists()
+    assert not workspace.exists()
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "code"),
+    [
+        ("run_id", None, "run-id"),
+        ("run_id", True, "run-id"),
+        ("run_id", 7, "run-id"),
+        ("mode", None, "mode"),
+        ("per_role_task", None, "task"),
+        ("per_role_task", {"unknown": "text"}, "task"),
+        ("per_role_task", {"coder": True}, "task"),
+        ("inject_overrides", [], "injection"),
+        ("inject_overrides", {7: "off"}, "injection"),
+        ("inject_overrides", {"coder_slice_ceremony": []}, "injection"),
+    ],
+)
+def test_direct_budget_pure_request_rejects_wrong_shapes(field: str, value: object, code: str) -> None:
+    with pytest.raises(workflow.WorkflowRequestError) as failure:
+        workflow._validate_workflow_request(**(_request_input() | {field: value}))
+
+    assert failure.value.code == code
+    assert str(failure.value) == f"invalid workflow request: {code}"
+
+
+@pytest.mark.parametrize("run_id", ["a", "0", "a" * 128, "A.b_C-9"])
+@pytest.mark.parametrize("mode", ["off", "observe", "enforce"])
+def test_direct_budget_valid_identity_and_injection_controls(run_id: str, mode: str) -> None:
+    request = workflow._validate_workflow_request(
+        **(_request_input() | {"run_id": run_id, "inject_overrides": {"coder_slice_ceremony": mode}})
+    )
+
+    assert request.roles == ("planner", "coder", "eval")
+    assert (request.max_repairs, request.max_replans) == (workflow.DEFAULT_MAX_REPAIRS, workflow.DEFAULT_MAX_REPLANS)
+
+
+def test_plan_preflight_requested_id_can_be_absent_only_at_cli_generation_boundary() -> None:
+    values = _request_input() | {"run_id": None}
+    request = workflow._validate_workflow_request(**values, allow_missing_run_id=True)
+
+    assert request.roles == ("planner", "coder", "eval")
+    with pytest.raises(workflow.WorkflowRequestError, match=r"^invalid workflow request: run-id$"):
+        workflow._validate_workflow_request(**values)
+
+
+@pytest.mark.parametrize(("context_id", "context_workspace"), [("different", "workspace"), ("request-valid", "other")])
+def test_direct_budget_context_identity_mismatch_has_no_side_effects(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    context_id: str,
+    context_workspace: str,
+) -> None:
+    from fa.cli import _cmd_run
+    from fa.session.manager import RunContext
+
+    home, state, workspace = tmp_path / "home", tmp_path / "state", tmp_path / "workspace"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("FA_STATE_ROOT", str(state))
+    context = RunContext(
+        run_id=context_id,
+        session_id="request-session",
+        workspace_path=tmp_path / context_workspace,
+        session_db_path=state / "session.db",
+        run_log_dir=state / "run",
+    )
+
+    result = run_workflow(
+        **_request_input(),
+        config=tmp_path / "models.yaml",
+        workspace=workspace,
+        max_turns=1,
+        run_stage_fn=_cmd_run,
+        run_context=context,
+    )
+
+    assert result == (2, None)
+    assert capsys.readouterr().err == "fa workflow: invalid workflow request: context-binding\n"
+    assert not home.exists()
+    assert not state.exists()
+    assert not workspace.exists()
+
+
+def test_direct_budget_matching_context_and_per_role_tasks_are_accepted(tmp_path: Path) -> None:
+    from fa.session.manager import RunContext
+
+    workspace = tmp_path / "workspace"
+    context = RunContext(
+        run_id="request-valid",
+        session_id="request-session",
+        workspace_path=workspace,
+        session_db_path=tmp_path / "session.db",
+        run_log_dir=tmp_path / "run",
+    )
+    request = workflow._validate_workflow_request(
+        **(
+            _request_input()
+            | {"task": None, "per_role_task": dict.fromkeys(("planner", "coder", "eval"), "implement")}
+        ),
+        workspace=workspace,
+        run_context=context,
+    )
+
+    assert request.roles == ("planner", "coder", "eval")
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize(
+    "values,code",
+    [
+        ({"roles": ["planner"], "mode": "adaptive"}, "adaptive-roles"),
+        ({"roles": ["coder"], "task": None, "per_role_task": {"coder": "implement"}}, "task"),
+        ({"per_role_task": {"coder": " "}}, "task"),
+    ],
+)
+def test_direct_budget_request_cross_field_rejections(values: dict[str, object], code: str) -> None:
+    with pytest.raises(workflow.WorkflowRequestError) as failure:
+        workflow._validate_workflow_request(**(_request_input() | values))
+
+    assert failure.value.code == code
+
+
+@pytest.mark.parametrize("context", [{}, [], "not-a-context", SimpleNamespace(run_id="request-valid")])
+def test_direct_budget_malformed_context_is_a_typed_rejection(context: object) -> None:
+    with pytest.raises(workflow.WorkflowRequestError) as failure:
+        workflow._validate_workflow_request(
+            **(_request_input() | {"run_context": context}), workspace=Path("workspace")
+        )
+
+    assert failure.value.code == "context-binding"
