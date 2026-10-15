@@ -984,3 +984,36 @@ Then wire one admitted T0 plus pinned verifier/actual-eval ordering and approved
 routing. Add full public C1/C2/C3 matrix and the actual `_run_admission_repair→_promote_validated_plan`
 producer; run every retained FUNCTIONAL kill on the whole declared test path. No STEP tick,
 SLICE6 completion, I02 SHIPPED, deployed PASS, security acceptance or independent/operator approval.
+
+
+## E210 — 2026-10-15 remaining-contract source review; Q67 stop
+
+Checkpoint `4b6e3625e63fe00d4ed5f6a6830bb94ec52908bd`, clean worktree before this review.
+Reviewed public controller/stage/outcome/adaptive-replan, admission schema/writer, explicit spec
+§§2–5, retained SLICE6 contracts, open decisions and tests-writing/mutation rules.
+No production implementation was edited: first eval-requested replan from a validator-PASS plan
+has no explicit pre-provider admission representation specified. See Q67 for exact options.
+
+**Evidence-only edit declaration:** allowed files are this register, `../ledger.md`, and
+`open-questions-2026-10-07.md`. Intent: implicit lifecycle choice → explicit OPEN Q67 with source
+references and a real-validator counterexample; do not invent FAILs or relax closed schema.
+Contract support CT74/87/91/92/94/95, GAP-06/10/12/15; no closure. Mechanism: append-only decision
+and evidence notes, no runtime fallback/stub. Failure behavior: halt the affected implementation
+until operator disposition. DoD: capture current source, both rejected pending encodings and the
+accepted unchanged canonical state, preserve all prior evidence, commit/push own branch.
+Class: C0 schema probe only; no new producer kill target because production code is unchanged.
+No C1/C2/C3, mutation, static-code or deployed acceptance result is claimed from this review.
+
+Actual `uv run --frozen python` probe (rc 0), using `validate_admission_record`:
+
+```text
+Existing canonical ADMITTED/PASS record: accepted
+Pre-dispatch EVAL_REPLAN/PASS/RETRY, no candidate/promoted hash: rejected
+Pre-dispatch EVAL_REPLAN/PASS/ADMITTED, no candidate/promoted hash: rejected
+Preserving existing ADMITTED history without adding a pending attempt: accepted
+```
+
+Recommendation is Q67(a), reuse v1 canonical-state semantics with an unchanged durable barrier,
+then record the actual candidate outcome. Not ratified; no new lifecycle semantics implemented.
+Existing six pytest failures, 59 fixture-type errors, full-path kills, public admission/T0/pinned
+evidence, independent/operator DoD and I03 boundaries remain as E209. No new STEP tick.

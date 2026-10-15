@@ -2304,3 +2304,15 @@ E209  FACT  Partial retained I02 SLICE6 STEP9/10 CT94 prerequisite from 175617e:
     all16 kills, full-suite d9109f4 comparison, independent/operator DoD, shipped/security claim.
     [declaration/allowed files, actual commands, TEST-EDITS, mutation table/provenance, hashes,
     failures, host inventory and concrete handoff: notes/e2e-live-verification-register.md, E209]
+
+
+E210  FACT  Remaining I02 contract source review from 4b6e362; no production/test edits.
+    Shared initial repair/adaptive replan integration paused for explicit Q67 disposition:
+    eval-only replan can start from validator-PASS, but v1 RETRY requires real FAIL and
+    EVAL_REPLAN/ADMITTED requires completed promotion. Real schema probe accepts old canonical
+    ADMITTED, rejects both unpromoted pending encodings, accepts unchanged-history persistence.
+    Recommend retaining canonical ADMITTED with durable unchanged barrier until actual candidate
+    outcome; alternative requires specified/versioned pending evidence. Neither ratified.
+    Q67 is OPEN; no fake diagnostic, weakened schema, public helper wiring or acceptance claim.
+    Append-only question/register/ledger changes only; E209 runtime limits/debts remain.
+    [notes/open-questions-2026-10-07.md Q67; notes/e2e-live-verification-register.md E210]

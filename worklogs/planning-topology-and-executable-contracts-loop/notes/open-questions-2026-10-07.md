@@ -1235,3 +1235,57 @@ I02 does not wait for the successful nested path, OS boundary or deployed-host e
 requires retained explicit Q57/Q58 implementation, negative unavailable managed-path proof, Q62/Q43
 disposition where used, full-suite failure identities and independent/operator review. Nothing
 in this owner edit closes those proofs. Old tracker/L2-eval references follow the deferred successor.
+
+
+---
+
+## Q67 — How is the first eval-requested replan represented before candidate validation?
+
+**Status: OPEN — implementation disposition requested, 2026-10-15.** Blocks wiring the
+shared initial-repair/adaptive-replan admission lifecycle, not the completed E209 IO prerequisite.
+No schema/lifecycle choice is ratified by the recommendation below.
+
+**Source-verified starting point:** `4b6e3625e63fe00d4ed5f6a6830bb94ec52908bd`.
+`run_workflow` still reads explicit PlanRef without invoking the new admission helpers;
+`_run_adaptive_replan` still dispatches the ordinary planner/coder/eval sequence.
+The next implementation must use scoped candidates, shared planner credit, durable barriers,
+actual candidate validation and no fabricated diagnostics.
+
+**Unspecified lifecycle point.** An eval `return_to_planner` can request a revision of a
+canonical plan whose structural/kill validators still PASS. Explicit-admission spec §3 and
+`admission_schema.py::_record_attempt` allow RETRY only for DIAGNOSTICS with a real FAIL.
+`_record_attempt_hashes` allows EVAL_REPLAN/ADMITTED only after a nonnull promoted hash.
+Thus neither PASS/RETRY nor an unpromoted EVAL_REPLAN/PASS/ADMITTED attempt can represent the
+first pending planner dispatch. The spec explicitly requires pre-dispatch RETRY for determinate
+validation failure (§2), but does not explicitly state whether an eval-only first replan retains
+the previous canonical ADMITTED record or requires a new pending-dispatch representation.
+This is not a reason to weaken existing schema checks or manufacture a validator failure.
+
+**Reproduced C0 schema probe (not product proof):** an exact initial EXPLICIT_INPUT/PASS/ADMITTED
+record is accepted. Appending EVAL_REPLAN/PASS/RETRY with candidate/promoted null is rejected;
+appending EVAL_REPLAN/PASS/ADMITTED with those nulls is also rejected. Keeping the previous
+ADMITTED record unchanged is accepted. All checks use the real `validate_admission_record`,
+not a fake validator. `write_admission_record` already supports `attempt=None` for a durable
+unchanged-history write. No source or test code changed for this probe.
+
+**Options:**
+
+- **(a) Keep v1 and canonical-state meaning (recommended).** ADMITTED describes the currently
+  accepted canonical snapshot, not permission to run coder while a revision is pending. Before
+  the first eval-requested replan, recheck canonical identity and durably persist the unchanged
+  ADMITTED record; reserve shared planner credit before provider dispatch. After the scoped
+  planner returns, append its actual EVAL_REPLAN candidate validation/promotion or BLOCKED
+  outcome. Only a determinate candidate FAIL gets a RETRY entry before another planner attempt.
+  No new schema values/fields; no synthetic FAIL, premature promoted hash, coder/T0 dispatch or
+  success inferred from the retained ADMITTED status. The controller's pending revision blocks
+  coder until final validation/publication/durable admission succeeds. Admission/write/provider
+  uncertainty remains fail-closed; existing Q55 post-coder eval obligations are preserved.
+- **(b) Add explicit pending-dispatch evidence.** Require a durable new attempt before even the
+  first eval-only revision provider. Specify/version a pending state or separate dispatch event
+  and its cross-field/old-record compatibility rules before implementation. Do not silently
+  broaden v1 RETRY or overload DIAGNOSTICS with model eval text. Exact schema extension needs
+  separate disposition; choosing this direction alone does not ratify an unspecified shape.
+
+**Question:** approve (a), or require (b) and settle the versioned shape first?
+CT74/CT87/CT91/CT92/CT94/CT95 and GAP-06/10/12/15 remain open. This question does not reopen
+Q57 bounded repair, Q58 same-path publication, Q55 actual eval or I03 ownership decisions.
