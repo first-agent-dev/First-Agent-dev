@@ -2066,3 +2066,23 @@ E198 ADOPTED DESIGN REFINEMENTS AFTER INDEPENDENT REVIEW, 2026-10-15. The operat
     Concrete mechanisms are adopted design/pending proof; exact open-question ratifications,
     implementation, live verdicts, readiness and status ticks are not inferred. Scope-reduction
     analysis is the next distinct step. [operator request; reviewer design refinements]
+
+E199 FACT SOURCE-GROUNDED EXECUTION FOUNDATION REUSE AUDIT, 2026-10-15. A separate audit
+    records existing session/run/DB authority, executor/PTY/tool facades, live workflow context
+    seams, JUnit capture/parser, and bootstrap private-open/flock patterns with their limits.
+    Current SessionManager rejects another session's owned workspace (`workspace_already_owned`);
+    the primary decision note corrects desired versus implemented lifecycle rather than removing
+    the guard. Isolated actual-source-body diagnostics confirm that skip/failure/testcase-error
+    can have the same false nodeid projection, the existing artifact writer fsyncs the file but
+    not its parent directory, and the bootstrap lock excludes another process while held and
+    rejects a leaf symlink. These are bounded diagnostics, not package-suite or Docker proof.
+    The audit proposes one local ownership/publication domain, materialized revisions, existing
+    execution/workflow adapters, one detailed JUnit parser and scoped initial planner context,
+    avoiding duplicate managers/DBs/frameworks. A compact six-group I03 outline is a recommendation,
+    not operator ratification, plan migration or status completion. Mandatory isolation,
+    terminal sealing, fencing/durability, admission and integrated E2E obligations remain.
+    Product source, plans/DoD, question dispositions and status trackers are unchanged.
+    [verified: src/fa/session/manager.py::_check_reverse_workspace_ownership;
+    tests/test_session_lifecycle.py::test_workspace_cannot_be_owned_by_two_sessions;
+    notes/execution-foundation-scope-reduction-and-reuse-audit-2026-10-15.md §9 diagnostic evidence;
+    product source d9109f489c84cb7f1ab3568b609d96e5b2b61ae2]

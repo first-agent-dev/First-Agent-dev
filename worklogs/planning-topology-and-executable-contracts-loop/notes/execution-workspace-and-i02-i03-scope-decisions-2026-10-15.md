@@ -13,6 +13,11 @@ Concrete mechanisms остаются adopted design; implementation/proof и exa
 **Активные consumers:** перепланирование I02/SLICE6, создание I03, согласование roadmap/question tracker/schema и перенос E2E case coverage.
 Не копировать этот текст целиком в CT/STEP: rationale остаётся здесь, в increment идут короткие проверяемые императивы.
 
+**Отдельный следующий шаг выполнен:** [scope-reduction/reuse audit](execution-foundation-scope-reduction-and-reuse-audit-2026-10-15.md)
+содержит source-grounded reuse limits и предложения сокращения mechanisms/surfaces (E199).
+Это recommendations, не автоматическая ратификация нового grouping или изменение plans/DoD;
+в §4.1 внесена только factual correction current session/workspace lifecycle.
+
 **Статус утверждений:**
 - **OPERATOR:** прямо заданное направление из текущего обсуждения; переносится в новые планы как решение.
 - **ADOPTED DESIGN:** инженерная конкретизация, принятая reviewer'ом по просьбе оператора; не выдаётся за отдельную дословную ратификацию.
@@ -212,9 +217,15 @@ Host help wrapper импортирует reviewed host repo; это operator too
 ### 4.1. Canonical workspace и identity
 
 Canonical workspace — persistent project working directory, выбранный/созданный SessionManager.
-Новая session обычно создаёт новый workspace. Resume и новая session могут использовать существующий workspace по supported lifecycle.
-Поэтому ownership привязывается к **canonical managed workspace identity**, не к `session_id` или `run_id`.
-Две разные сессии на одном workspace не получают два независимых write lease.
+Новая session обычно создаёт новый workspace; current attach/resume использует workspace той же session.
+**Factual correction после source reuse audit:** текущий `SessionManager._check_reverse_workspace_ownership()`
+запрещает второй session уже принадлежащий другой session workspace (`workspace_already_owned`);
+это проверяет `tests/test_session_lifecycle.py::test_workspace_cannot_be_owned_by_two_sessions`.
+Новая session может выбрать pre-existing unowned workspace, но requested new-session/old-owned-workspace reuse —
+**desired lifecycle, implementation/disposition pending**, не already-supported behavior.
+Не снимать reverse-ownership guard без явного approved lifecycle change и regression proof.
+Ownership всё равно привязывается к **canonical managed workspace identity**, не к `session_id` или `run_id`:
+несколько runs/processes одной session тоже не получают независимое право concurrent mutation.
 
 Сохранить существующий SessionContext/RunContext и session-scoped SQLite authority.
 Private workdir не подменяет canonical `SessionContext.workspace_path` и не требует новой persistent session на каждый stage/test.
