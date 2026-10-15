@@ -69,6 +69,9 @@ def _config(tmp_path: Path) -> Path:
 
 
 def _run(tmp_path: Path, roles: list[str], *, run_id: str, mode: str = "linear") -> tuple[int, Any]:
+    from tests.workflow_fixtures import write_explicit_plan
+
+    plan = write_explicit_plan(tmp_path)
     return run_workflow(
         roles=roles,
         task="do the thing",
@@ -82,6 +85,7 @@ def _run(tmp_path: Path, roles: list[str], *, run_id: str, mode: str = "linear")
         max_turns=1,
         output_mode="quiet",
         run_stage_fn=_SilentStage(),
+        plan_path=plan,
     )
 
 

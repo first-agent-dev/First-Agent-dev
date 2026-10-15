@@ -13,16 +13,25 @@ for later phases of the workflow implementation plan.
 
 from __future__ import annotations
 
+import errno
+import fcntl
 import json
 import os
 import re
-import tempfile
-from collections.abc import Mapping
+import stat
+import time
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
+from uuid import uuid4
+
+from fa.inner_loop.admission_schema import AdmissionRecordError, validate_admission_record
+from fa.inner_loop.plan_admission import PlanRef
 
 __all__ = [
+    "AdmissionIOError",
     "EvalFinding",
     "EvalReport",
     "EvalVerdict",
@@ -38,6 +47,7 @@ __all__ = [
     "load_eval_report",
     "load_flow_state",
     "parse_eval_report",
+    "write_admission_record",
     "write_eval_report",
     "write_flow_state",
 ]
@@ -544,31 +554,218 @@ def _first_summary_line(text: str, verdict: EvalVerdict) -> str:
     return f"verdict {verdict}"
 
 
-def _write_json_atomic(path: Path, payload: dict[str, object]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temp_path: Path | None = None
+class AdmissionIOError(OSError):
+    """Static storage reason; never claims an uncommitted record persisted."""
+
+    def __init__(self, rule: str) -> None:
+        self.rule = rule
+        super().__init__(f"admission storage error: {rule}")
+
+
+@contextmanager
+def _private_artifact_directory(directory: Path) -> Iterator[int]:
+    path = directory.absolute()
+    if ".." in path.parts or path == Path("/"):
+        raise AdmissionIOError("append-failed")
+    fd = os.open("/", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
     try:
-        with tempfile.NamedTemporaryFile(
-            "w",
-            encoding="utf-8",
-            dir=path.parent,
-            prefix=f".{path.name}.",
-            suffix=".tmp",
-            delete=False,
-        ) as handle:
-            json.dump(payload, handle, ensure_ascii=False, sort_keys=True, indent=2)
-            handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-            temp_path = Path(handle.name)
-        os.replace(temp_path, path)
-    except Exception:  # graceful degradation per Phase 0.5, failure-observable WARNING
-        if temp_path is not None:
+        for part in path.parts[1:]:
             try:
-                temp_path.unlink()
-            except FileNotFoundError:
+                os.mkdir(part, 0o700, dir_fd=fd)
+            except FileExistsError:
                 pass
-        raise
+            else:
+                os.fsync(fd)
+            previous = fd
+            fd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=fd)
+            os.close(previous)
+        if os.fstat(fd).st_uid != os.getuid():
+            raise AdmissionIOError("append-failed")
+        os.fchmod(fd, 0o700)
+        yield fd
+    finally:
+        os.close(fd)
+
+
+def _admission_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    value: dict[str, object] = {}
+    for key, item in pairs:
+        if key in value:
+            raise AdmissionRecordError
+        value[key] = item
+    return value
+
+
+def _read_admission_at(directory_fd: int, name: str) -> object:
+    fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK, dir_fd=directory_fd)
+    try:
+        metadata = os.fstat(fd)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1 or metadata.st_uid != os.getuid():
+            raise AdmissionRecordError
+        with os.fdopen(fd, "r", encoding="utf-8", closefd=False) as handle:
+            return json.load(handle, object_pairs_hook=_admission_object)
+    finally:
+        os.close(fd)
+
+
+def _replace_private_json(directory_fd: int, name: str, payload: dict[str, Any]) -> None:
+    raw = (json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2, allow_nan=False) + "\n").encode("utf-8")
+    temporary = f".{name}.{uuid4().hex}.tmp"
+    replaced = False
+    created = False
+    fd: int | None = None
+    try:
+        # Refuse a symlink/nonregular/hard-linked existing control artifact.
+        try:
+            metadata = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            pass
+        else:
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+                raise AdmissionIOError("append-failed")
+        fd = os.open(
+            temporary,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+            0o600,
+            dir_fd=directory_fd,
+        )
+        created = True
+        os.fchmod(fd, 0o600)
+        remaining = memoryview(raw)
+        while remaining:
+            written = os.write(fd, remaining)
+            if written <= 0:
+                raise OSError(errno.EIO, "short artifact write")
+            remaining = remaining[written:]
+        os.fsync(fd)
+        previous = fd
+        fd = None
+        os.close(previous)
+        os.replace(temporary, name, src_dir_fd=directory_fd, dst_dir_fd=directory_fd)
+        replaced = True
+        os.fsync(directory_fd)
+    except OSError as error:
+        raise AdmissionIOError("durability-unknown" if replaced else "append-failed") from error
+    finally:
+        try:
+            if fd is not None:
+                os.close(fd)
+        finally:
+            if created and not replaced:
+                try:
+                    os.unlink(temporary, dir_fd=directory_fd)
+                except FileNotFoundError:
+                    pass
+
+
+def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
+    with _private_artifact_directory(path.parent) as directory_fd:
+        _replace_private_json(directory_fd, path.name, payload)
+
+
+@contextmanager
+def _admission_lock(directory_fd: int, *, deadline: float | None) -> Iterator[None]:
+    try:
+        fd = os.open(
+            ".admission.lock",
+            os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK,
+            0o600,
+            dir_fd=directory_fd,
+        )
+    except OSError as error:
+        raise AdmissionIOError("lock-failed") from error
+    try:
+        try:
+            metadata = os.fstat(fd)
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1 or metadata.st_uid != os.getuid():
+                raise AdmissionIOError("lock-failed")
+            os.fchmod(fd, 0o600)
+            # Same bounded-lock construction/default as workspace bootstrap, capped
+            # by the workflow's absolute deadline. No unbounded waiter without one.
+            limit = time.monotonic() + 120.0
+            if deadline is not None:
+                limit = min(limit, deadline)
+            while True:
+                left = limit - time.monotonic()
+                if left <= 0:
+                    raise AdmissionIOError("lock-failed")
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    time.sleep(min(0.1, left))
+        except OSError as error:
+            if isinstance(error, AdmissionIOError):
+                raise
+            raise AdmissionIOError("lock-failed") from error
+        try:
+            yield
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
+
+
+def write_admission_record(
+    path: Path,
+    *,
+    run_id: str,
+    plan_ref: PlanRef | None,
+    attempt: Mapping[str, object] | None = None,
+    status: str = "ACQUIRING",
+    deadline: float | None = None,
+) -> dict[str, Any]:
+    """Initialize or append one attempt under one process-shared lock (CT92).
+
+    The caller supplies attempt fields except its index; numbering is assigned
+    under the lock. The complete old and proposed record are checked. A later
+    replacement/fsync failure never truncates or rolls back the committed file.
+    """
+    initial: dict[str, Any] = {
+        "schema_version": 1,
+        "run_id": run_id,
+        "status": "ACQUIRING",
+        "plan_ref": asdict(plan_ref) if plan_ref is not None else None,
+        "attempts": [],
+    }
+    validate_admission_record(initial, run_id=run_id)
+    if path.name != "admission.json":
+        raise AdmissionRecordError
+    try:
+        with _private_artifact_directory(path.parent) as directory_fd:
+            try:
+                with _admission_lock(directory_fd, deadline=deadline):
+                    try:
+                        old = _read_admission_at(directory_fd, path.name)
+                    except FileNotFoundError:
+                        old = initial
+                    except (ValueError, UnicodeError, AdmissionRecordError) as error:
+                        raise AdmissionIOError("corrupt-record") from error
+                    try:
+                        record = validate_admission_record(old, run_id=run_id)
+                        # Detach all caller-owned mutable data before validation/persistence.
+                        payload = json.loads(json.dumps(record, allow_nan=False))
+                        payload["status"] = status
+                        payload["plan_ref"] = initial["plan_ref"]
+                        if attempt is not None:
+                            if "attempt" in attempt:
+                                raise AdmissionRecordError
+                            item = json.loads(json.dumps(dict(attempt), allow_nan=False))
+                            item["attempt"] = len(payload["attempts"]) + 1
+                            payload["attempts"].append(item)
+                        validated = validate_admission_record(payload, run_id=run_id)
+                    except (TypeError, ValueError) as error:
+                        raise AdmissionIOError("corrupt-record") from error
+                    _replace_private_json(directory_fd, path.name, validated)
+                    return validated
+            except OSError as error:
+                if isinstance(error, AdmissionIOError):
+                    raise
+                raise AdmissionIOError("append-failed") from error
+    except OSError as error:
+        if isinstance(error, AdmissionIOError):
+            raise
+        raise AdmissionIOError("append-failed") from error
 
 
 def write_eval_report(path: Path, report: EvalReport) -> None:

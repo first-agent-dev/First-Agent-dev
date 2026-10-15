@@ -123,7 +123,9 @@ def workflow_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path,
 def _run(config: Path, workspace: Path, run_id: str) -> tuple[int, Any]:
     from fa.cli import _cmd_run
     from fa.inner_loop.workflow_controller import run_workflow
+    from tests.workflow_fixtures import write_explicit_plan
 
+    plan = write_explicit_plan(workspace)
     return run_workflow(
         roles=["planner", "coder", "eval"],
         task="do a thing",
@@ -139,6 +141,7 @@ def _run(config: Path, workspace: Path, run_id: str) -> tuple[int, Any]:
         run_stage_fn=_cmd_run,
         transport=_StubTransport(),
         secrets=_SECRETS,
+        plan_path=plan,
     )
 
 

@@ -2214,3 +2214,35 @@ E206  FACT  Continue retained I02 SLICE6 CT90/CT95 STEP13 from 1741daf: read-onl
     I02 close/SHIPPED/deployed result or security acceptance claimed.
     [exact commands, source hashes, equivalence proofs, TEST-EDITS/baseline identities and host
     arrangements/oracles: notes/e2e-live-verification-register.md, E206 section]
+
+E207  FACT  Partial retained I02 SLICE6 CT92/CT95 STEP9/STEP13 GAP-03/GAP-10 from 5b10409:
+    closed admission v1 schema/all-history diagnostics-route-hash checks; private descriptor IO,
+    no-follow process-shared bounded flock, validated locked append, same-directory unique temp,
+    file/replace/directory-fsync publication with irreversible durability-unknown handling.
+    Direct controller now calls the named coder-plan guard before artifact derivation and writes
+    safely addressed BLOCKED admission plus best-effort FAILED/blocked flow on missing/unreadable
+    references, with separate sanitized storage failures and zero provider/T0/verification/eval.
+    Shared normal flow/eval atomic IO also hardened, so fallback cannot follow an artifact alias.
+    No dependency/framework/profile suppression/new policy or successful-admission claim.
+    Final boundary 181 passed/150 deselected; real subprocess 4x4 append, locale/provenance,
+    hostile path, mode, corruption, serialization and pre/post-publication fault controls.
+    Existing real C1 uses a disposable contained source/test workspace; original oracles retained.
+    Final full live-path producer kills CT95 run_workflow->_require_plan_for_coder and CT92
+    _record_admission_attempt->write_admission_record: PROVEN, each 1 target/1 edit,
+    139.719s/67.552s. No selector laundering; Q53(c) slice-level attribution risk retained.
+    Fresh final targeted mutation 794 selected: 759 killed/35 proven equivalents, no other selected
+    statuses; complete IDs/proofs and source/test hashes recorded. Initial timeouts not called kills;
+    independent assertion alarms and actual child import provenance close those evidence gaps.
+    Ruff/mypy ten Python files pass, pylint three production modules 10/10, whitespace clean.
+    Declared fixture extraction/migrations preserve routing/budget/history/deadline assertions;
+    only superseded public silent-no-plan test replaced. Final twenty-suite run 864 passed,
+    6 failed/473.61s: five independently reproduced on archived 5b10409 (5 failed/19 passed,
+    same interpreter/module-origin check), plus NEW unresolved implicit-child history failure
+    from the now-blocked missing PlanRef. None waived; nested unavailable acquisition/diagnostic
+    still needs proper wiring, not a pretend successful child or suppressed assertion.
+    Eight planned I03 F host cases cover every new schema/IO/root/error/shared-writer surface;
+    no deployed or scoped-registry/OS C3 result. Valid-plan validation/Q57/Q58, admitted T0,
+    pinned verifier/eval, unsupported acquisition, all16 final kills, d9109f4 full comparison,
+    independent/operator DoD remain pending. No STEP tick, SHIPPED or complete-security claim.
+    [exact scope, commands, TEST-EDITS, unwaived identities, equivalences, hashes and host cases:
+    notes/e2e-live-verification-register.md, E207 checkpoint section]

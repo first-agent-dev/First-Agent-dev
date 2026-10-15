@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Final
 
 from fa.inner_loop.coder_loop import SessionOutcome
 from fa.inner_loop.injections import INJECTION_MODES, INJECTION_SPECS, resolve_injection_modes
+from fa.inner_loop.plan_admission import PlanRef, PlanRefError, _require_plan_for_coder, read_plan_snapshot
 from fa.inner_loop.plan_ids import PlanIds, canonical_slice_id, extract_plan_id, extract_plan_ids
 from fa.inner_loop.prompt import ADVERSARIAL_EVAL_STANCE_PREAMBLE
 from fa.inner_loop.slice_verification import (
@@ -40,6 +41,7 @@ from fa.inner_loop.slice_verification import (
     verify_plan,
 )
 from fa.inner_loop.workflow_artifacts import (
+    AdmissionIOError,
     EvalReport,
     FlowState,
     FlowStatus,
@@ -47,6 +49,7 @@ from fa.inner_loop.workflow_artifacts import (
     default_route_for_verdict,
     load_flow_state,
     parse_eval_report,
+    write_admission_record,
     write_eval_report,
     write_flow_state,
 )
@@ -127,6 +130,10 @@ class WorkflowArtifactPaths:
     flow_state: Path
     verification: Path
     verify_baseline: Path
+
+    @property
+    def admission(self) -> Path:
+        return self.base_dir / "admission.json"
 
 
 @dataclass(frozen=True)
@@ -1950,6 +1957,52 @@ def workflow_exit_code(result_code: int, terminal_state: FlowState | None) -> in
 # ── Public API ─────────────────────────────────────────────────────────────
 
 
+def _record_admission_attempt(
+    paths: WorkflowArtifactPaths,
+    *,
+    run_id: str,
+    plan_ref: PlanRef | None,
+    attempt: Mapping[str, object],
+    status: str,
+    deadline: float | None,
+) -> None:
+    """Durable controller barrier; a failed write is never a persisted attempt."""
+    write_admission_record(
+        paths.admission, run_id=run_id, plan_ref=plan_ref, attempt=attempt, status=status, deadline=deadline
+    )
+
+
+def _blocked_plan_request(
+    *, run_id: str, task: str | None, rule: str, base_dir: Path | None, deadline: float | None
+) -> tuple[int, FlowState | None]:
+    paths = workflow_artifact_paths(run_id, base_dir=base_dir)
+    attempt: dict[str, object] = {
+        "dispatch_kind": "EXPLICIT_INPUT", "validation": "INDETERMINATE",
+        "diagnostics": [{"validator": "plan-ref", "rule": rule, "severity": "ERROR", "line": None}],
+        "source_sha256": None, "candidate_sha256": None, "promoted_sha256": None, "route": "BLOCKED",
+    }
+    print(f"fa workflow: invalid plan reference: {rule}", file=sys.stderr)
+    try:
+        _record_admission_attempt(
+            paths, run_id=run_id, plan_ref=None, attempt=attempt, status="BLOCKED", deadline=deadline
+        )
+    except (OSError, ValueError) as error:
+        reason = error.rule if isinstance(error, AdmissionIOError) else "append-failed"
+        print(f"fa workflow: admission storage error: {reason}", file=sys.stderr)
+    state = FlowState(
+        run_id=run_id, task=task or "", status="FAILED", active_role="workflow",
+        active_plan_id=run_id, active_plan_version=1, last_actor="workflow",
+        last_transition_reason="explicit plan admission blocked", last_route_decision="blocked",
+        blocked_reason=f"plan-ref/{rule}", judged=False,
+    )
+    try:
+        write_flow_state(paths.flow_state, state)
+    except (OSError, ValueError):
+        print("fa workflow: blocked flow storage error: append-failed", file=sys.stderr)
+        return 2, None
+    return 2, state
+
+
 def run_workflow(
     *,
     roles: list[str],
@@ -2004,6 +2057,19 @@ def run_workflow(
         return 2, None
     roles = _ensure_eval_after_coder(list(request.roles))
     max_repairs, max_replans = request.max_repairs, request.max_replans
+
+    try:
+        _require_plan_for_coder(roles, plan_path)
+        if plan_path is not None:
+            if not isinstance(plan_path, Path):
+                raise PlanRefError("unreadable")
+            snapshot = read_plan_snapshot(workspace, plan_path)
+            plan_path = workspace / snapshot.ref.workspace_relative_path
+    except PlanRefError as error:
+        return _blocked_plan_request(
+            run_id=run_id, task=task, rule=error.rule,
+            base_dir=run_context.run_log_dir if run_context is not None else None, deadline=deadline_mono,
+        )
 
     artifact_paths = workflow_artifact_paths(
         run_id,

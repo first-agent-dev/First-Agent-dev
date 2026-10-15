@@ -367,3 +367,154 @@ proof remain separate pending obligations; a read-only regular hard-link is not 
 - Existing two deadline failures remain unwaived. Direct admission, durable schema/locked append,
   Q57/Q58, single T0, pinned evidence, unsupported acquisition, full-suite acceptance, independent
   review and operator DoD remain incomplete. No STEP/DoD ticks or I02 SHIPPED/live claim.
+
+## SLICE6 admission record and direct rejection checkpoint (E207, 2026-10-15)
+
+**Partial CT92/CT95, STEP9/STEP13, GAP-03/GAP-10; no STEP/DoD tick.**
+`admission_schema.py` supplies the closed v1 record vocabulary, exact field/type checks,
+all-history route/diagnostic/hash coherence and sanitized errors. This checks record structure;
+it does **not** establish accepted nonempty plan bytes or authorize an admitted coder.
+`workflow_artifacts.py` supplies descriptor-rooted private IO, a bounded process-shared lock,
+old/full-new validation and durable append. The direct controller calls the named presence guard
+before artifact derivation, conditionally snapshots a supplied reference, and records a safely
+addressed missing/unreadable-reference rejection before providers/T0/verification/eval.
+A storage failure is separately observable; best-effort flow storage failure returns no persisted
+FlowState object. A post-replace fsync error is **durability unknown**, not proof of file absence.
+
+The existing flow/eval atomic writer now shares the private no-follow publication primitive.
+That deliberate sibling change prevents the best-effort blocked-flow write from following an
+artifact-directory alias after admission rejects it. No new dependency, transaction framework,
+workspace service, acquisition authority, credential policy or mutation-profile suppression.
+
+### Planned I03 F host cases — all unexecuted
+
+Use the standing reviewed fixture requirements and E205/E206 provenance/safety controls.
+All namespaces/targets must be explicitly owned scratch fixtures. Record host image/SHA/config,
+UID/modes, actual argv, selected workspace and run/context identity, provider/stage deltas,
+exit/reason and exact artifact bytes/schema. Do not test hostile paths against operator state.
+Repeat public denials in linear/adaptive and observe/enforce; the flag never waives preflight.
+
+| Producers / changed surface | Case | Arrangement and observable oracle |
+| :--- | :--- | :--- |
+| `AdmissionRecordError`, `_record_object`, `_record_enum`, `_record_hash`, `_record_plan_ref`, `_record_diagnostics`, `_record_attempt_hashes`, `_record_attempt`, `validate_admission_record`, closed `ADMISSION_RULES` | ADM-H01 | Exercise exact-key/version/type/enum/rule matrix, every old attempt, index continuity, FAIL/WARN/ERROR accumulation, RETRY/ADMITTED/BLOCKED truth table and canonical promotion chain. Corrupt old records, duplicate JSON keys and unknown diagnostic bodies never reset or become admission. Reserved values are reader compatibility, not I02 acquisition permission. |
+| `_private_artifact_directory`, `_read_admission_at`, `_admission_object`, `AdmissionIOError` | ADM-H02 | Reviewed terminal/ancestor/dangling aliases, hardlinks, FIFO/directory and foreign-owner faults with valid-looking JSON controls. No outside bytes/modes changed, no hangs; private leaf directory 0700. Verify rooted no-follow/nonblocking/close-on-exec descriptors, explicit UTF-8 independently of process locale and owned-FD cleanup. Local metadata fault injection is not a deployed ownership-boundary result. |
+| `_admission_lock` | ADM-H03 | Hold the real lock in another process; contend with a bounded absolute workflow deadline, then retry after release. Lock file regular/single-link/owned, 0600/no-follow; deadline exhaustion visibly lock-failed and prior bytes unchanged. Test the 120-second default bound with controlled timing, not an unbounded live waiter. |
+| `write_admission_record` | ADM-H04 | Four processes append four attempts each to one safely addressed record. Require all 16 committed attempts exactly once and contiguous, old history retained, full record valid; corrupt prior data never silently initializes. Pin every subprocess import to the deployed candidate source, not an installed sibling. |
+| `_replace_private_json` | ADM-H05 | Inject short/zero writes, tempfile-name collision, file fsync, replace and directory fsync faults. Before replacement retain exact prior bytes; after replacement retain published bytes and report durability-unknown without rollback. Only owned unpublished temps are cleaned; record/temp create mode 0600. No claim of persisted admission from a failed/uncertain barrier. |
+| `WorkflowArtifactPaths.admission`, `_record_admission_attempt` | ADM-H06 | Direct rejection reaches the real controller writer and persisted artifact at context-specific/default paths. Its named CT92 producer removal must fail the full declared slice path. Later repeat with actual repair/replan/final admission barriers and a valid-plan coder; those consumers remain pending at this checkpoint. |
+| `run_workflow -> _require_plan_for_coder`, supplied-reference snapshot, `_blocked_plan_request` | ADM-H07 | Missing/outside/symlink/invalid UTF-8 plus the full supported file-reference denial matrix; valid identity gives BLOCKED admission and FAILED/blocked flow, exact sanitized reason, zero provider/T0/verification/eval. Invalid identity remains the separate no-artifact path. Named direct CT95 producer removal must fail the whole slice path, not a nodeid selector. Valid UTF-8 semantic plan diagnostics still need the later admission-validator consumer. |
+| shared `_write_json_atomic`, `write_flow_state`, `write_eval_report`; rejection storage renderer | ADM-H08 | Actual flow/eval outputs remain readable and private. Reject aliased/nonregular/hardlinked control targets and non-JSON numeric metadata without clobbering old bytes. Fault admission-only, flow-only and both writes: distinguish storage errors, preserve any committed history, never falsely claim a missing/uncertain write persisted. After successful coder, future admission IO failure must not suppress required eval; that integrated case is still pending. |
+
+These are handoff labels, not Q63 result-schema ratification. No host scripts, deployed runs,
+OS-boundary acceptance or scoped candidate-registry C3 are supplied by this checkpoint.
+
+### TEST-EDITS and explicit remaining gaps
+
+- Extract the existing explicit CLI input builder verbatim into `tests/workflow_fixtures.py`;
+  `test_cli_ergonomics::_workflow_args`, deadline, direct history and no-eval helper callers reuse
+  it. Supply a real disposable plan/test/interpreter, not synthetic baseline/result JSON.
+  Routing, history, terminal and deadline assertions remain unchanged.
+- Replace only the superseded public `test_absent_plan_degrades_silently` with
+  `test_absent_coder_plan_is_blocked_before_dispatch`; private fallback tests remain unchanged.
+- The existing live C1 now copies real source/scripts and its declared test into a disposable
+  workspace, with contained plan/marker and the existing interpreter. Its provider sequence,
+  verifier/eval/baseline/kill/artifact assertions are unchanged. This is not yet an admitted-plan C1.
+- Five existing unwaived failures reproduce on archived **5b10409** with the same interpreter:
+  the two deadline full-pipeline cases and `test_workflow_no_eval_terminal`'s linear no-verdict,
+  scratch-success and planner/coder-without-eval cases. They reflect mandatory-eval/old terminal
+  expectations; do not remove eval or weaken outcomes to make them green.
+- **New unresolved integration failure:** `test_workflow_global_history::test_nested_workflow_produces_two_rows`.
+  Its real implicit child supplies no PlanRef and is now rejected before dispatch, so no child
+  aggregate history row is written. Its assertion was not changed or waived. The final approved
+  managed-acquisition/unavailable path and its distinct bootstrap diagnostic still need wiring;
+  the present generic missing-reference denial is not that delivery.
+- Valid-plan precheck/kill validation, Q57 repair, exact-target registry/Q58 promotion, one admitted
+  T0, pinned verifier/eval evidence, unsupported-acquisition routing, all 16 final producer runs,
+  d9109f4 full-suite comparison and independent/operator DoD remain open. Do not infer completion
+  from a passing partial STEP9 selector or from the existing verifier/eval C1.
+
+### Actual local evidence
+
+- Python 3.13.16, existing frozen dev environment. Final boundary command
+  `uv run --frozen pytest tests/test_verify_gate_live.py -k 'admission_artifact or direct_api_plan_guard' -q`:
+  **181 passed, 150 deselected (2.38s)**. Live file now has 331 cases, 181 newly added.
+  Closed-record/IO tests are C0, including real filesystem/subprocess supplements; actual direct
+  root denials use `_cmd_run` and only mock provider IO. They deliberately stop before session
+  dispatch, not an admitted `drive_session` success. Hostile-path cases are local adversarial
+  artifact-IO evidence, not I03 OS isolation or scoped-writer registry C3.
+- The subprocess concurrency and non-UTF-8-locale tests explicitly prepend the importing module's
+  source root and assert child module provenance. Initial inherited-only subprocess imports could
+  resolve the installed sibling; that gap was corrected before the final mutation audit. Four
+  competing processes preserve all 16 attempts. Zero-write and held-lock tests have an independent
+  assertion alarm so a wedged mutant becomes a failing test, not a runner-timeout proof.
+- Final actual producer kills use `_run_kill_check` with **the whole declared
+  `tests/test_verify_gate_live.py` path**, real overlay/provenance/report checks and a 900-second
+  outer budget; no nodeid/per-contract mapping. Each resolved **1 target / 1 edit**:
+  CT95 `run_workflow -> _require_plan_for_coder`: **PROVEN, 139.719s**;
+  CT92 `_record_admission_attempt -> write_admission_record`: **PROVEN, 67.552s**.
+  This proves the direct denial/record consumers now wired, not valid-plan repair/admission.
+  Q53(c)'s slice-wide unrelated-failure attribution risk remains. Earlier intermediate runs and
+  a deliberately cancelled audit are not substituted for these final fixed-test-source runs.
+- Fresh final targeted mutmut: **794 selected, 759 killed, 35 equivalents/unobservable**;
+  no selected timeout/no-tests/suspicious/error/unchecked result. Breakdown: schema **416/413/3**,
+  private IO/writer **255/223/32**, new controller helpers **123/123/0** (selected/killed/equivalent).
+  Unselected generated mutants in the existing modules are outside this declared scope; this is
+  not whole-controller mutation coverage. Scratch only, no repository profile change or source
+  suppression. Initial audit was 666 killed/126 survived/2 timed out; tests were strengthened,
+  locale/provenance and shared eval JSON edge cases were added, coverage/meta caches refreshed,
+  and the entire selected scope rerun fresh. No timeout was relabelled a kill.
+- Scratch configuration: source_paths are `src/fa/inner_loop/{admission_schema,workflow_artifacts,
+  workflow_controller}.py`; also_copy `src/fa` and `scripts`; pytest selects the live file with
+  `-q -x -k 'admission_artifact or direct_api_plan_guard'`. Mutant filters cover all schema functions;
+  artifact `AdmissionIOError`, `_private_artifact_directory`, `_admission_object`, `_read_admission_at`,
+  `_replace_private_json`, `_write_json_atomic`, `_admission_lock`, `write_admission_record`; controller
+  `*admission*` and `_blocked_plan_request`. Reuse the E206 scratch-only absolute instrumentation-path
+  adapter; do not change actual CWD/provenance tests to accommodate mutmut.
+- Ruff and targeted mypy: **all ten changed/new Python files pass**. Pylint on the three production
+  modules: **10.00/10**. `git diff --check` clean. AST comparison against 5b10409: only the declared
+  original live C1 fixture function changes; no old live function removed. Other original function
+  changes are the four declared `_run`/`_workflow_args` fixture callers; only the explicitly
+  superseded public no-plan test is renamed/replaced. No hidden routing/budget/oracle relaxation.
+- Archived `git archive 5b10409`, same interpreter and explicitly checked archived module origin:
+  `test_workflow_global_history`, `test_workflow_no_eval_terminal`, `test_workflow_deadline`:
+  **5 failed, 19 passed (1.92s)**, the five identities listed above. This is a checkpoint regression
+  baseline, not the required d9109f4 full-suite comparison. A first archive command ran from the
+  scratch non-Git directory and failed; only the corrected repository-root archive was used.
+
+#### Accepted equivalent / unobservable mutant inventory (35)
+
+IDs below are suffixes of the indicated module/function's `__mutmut_N`; final source hashes follow.
+No pragma or mutation-scope suppression hides these results.
+
+| Module/function | IDs | Proof at the supported boundary |
+| :--- | :--- | :--- |
+| `admission_schema._record_attempt` | 89, 90 | Changing the INDETERMINATE comparison in the ERROR/routing predicate cannot admit a new route: the closed route set plus separate ADMITTED→PASS and RETRY→DIAGNOSTICS guards already force INDETERMINATE to BLOCKED. |
+| same | 102 | RETRY's `or`→`and` is redundant with earlier PASS-no-FAIL, DIAGNOSTICS-needs-FAIL and INDETERMINATE-only-BLOCKED guards. The full routing/severity truth table covers the reachable combinations. |
+| `workflow_artifacts._read_admission_at` | 23, 25, 31 | `closefd=False`→None is the same false boolean; omitted mode defaults to `r`; UTF-8/utf-8 are identical codec aliases. Locale-dependent encoding removal is **not** accepted: final explicit-source non-UTF-8 child kills 22/26. |
+| `_replace_private_json` | 5, 8 | JSON encoder's False→None boolean options are identical false values. |
+| same | 6, 7, 10, 11, 12, 14, 15, 16 | Sort order, optional indentation and escaped-vs-literal Unicode change representation only. All remain valid JSON with identical typed record values; no canonical admission-JSON byte serialization is specified. This does not waive exact old-byte preservation on a failed replacement. |
+| same | 20 | UTF-8/utf-8 encoder alias. |
+| same | 22, 24, 30 | False→None has identical truthiness for the publication/owned-temp flags and `follow_symlinks`. |
+| same | 40, 41, 42 | The inner pre-publication error's rule is immediately caught as OSError and normalized to the same outer append-failed. Persisted data, public typed rule/message and cleanup are unchanged; internal cause text is not the diagnostic contract. |
+| same | 73, 74, 75, 76, 77, 78 | Zero-write cause errno/message changes normalize to identical append-failed with identical cleanup and retained prior bytes. No public consumer uses that internal cause's errno/text. |
+| `write_admission_record` | 48, 50, 51, 67, 69, 71 | False→None matches the encoder boolean; allowing NaN in the **in-memory detach round trip** cannot persist it: old record is already fully validated and full proposed-record schema rejects every nonfinite field/key before publication. Both paths yield the same corrupt-record failure for malformed proposals. This does **not** apply to the shared publication serializer: omission/True there (13/17) is killed by real eval-metadata non-JSON-number tests. |
+
+Production SHA256: schema `cd833ce4d2c480d230061974ec0b41908b99fde8430a5092331970e7eff39427`;
+artifacts `27c8a2ca60ced86d8d220b1b0c26b22598e304b1f00ac6df5b086c7744004721`;
+controller `d350e8cbdf3b6020abff466e3eb56741a7d214e51accc9c57679a4044ba4126c`.
+Final live-test SHA256 `5196e34b28d7ca960397de0562fe29245059cc9828782d717c06e88071839330`.
+
+Final broad checkpoint command: `uv run --frozen pytest -q --tb=short` on these twenty
+`tests/*.py` suites: `test_verify_gate_live`, `test_verify_slice`, `test_slice_verification_runner`,
+`test_workflow_role_allowlist`, `test_session_lifecycle`, `test_session_manifest_guards`,
+`test_session_workspace_provisioning`, `test_plan_reference`, `test_cli_ergonomics`,
+`test_s8_workflow_controller`, `test_s10b_cli_parity`, `test_inject_cli_flag`,
+`test_s10c_artifact_posture`, `test_workflow_artifacts`, `test_workflow_deadline`,
+`test_workflow_global_history`, `test_workflow_no_eval_terminal`, `test_eval_evidence_block`,
+`test_slice_id_validation`, `test_s10c_workflow_exit_contract`:
+**864 passed, 6 failed in 473.61s** (exit 1). Exactly the five baseline failures and the new
+implicit-child history failure enumerated above; no waiver or green full-suite claim.
+The existing real verifier/eval C1 passes in this final fixed-source run. An earlier broad run
+before the last two serializer cases/provenance correction was 862 passed/6 failed in 562.85s;
+it is not substituted for the final run. This is still a targeted twenty-suite checkpoint,
+not `just test`, d9109f4 acceptance, or proof that the rest of I02 is complete.

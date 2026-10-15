@@ -72,6 +72,9 @@ def _run(
     roles: list[str] | None = None,
     mode: str = "linear",
 ) -> tuple[int, Any]:
+    from tests.workflow_fixtures import write_explicit_plan
+
+    plan = write_explicit_plan(tmp_path)
     return run_workflow(
         roles=list(roles or _ROLES),
         task="do the thing",
@@ -86,6 +89,7 @@ def _run(
         output_mode="quiet",
         run_stage_fn=stage,
         deadline_mono=deadline_mono,
+        plan_path=plan,
     )
 
 

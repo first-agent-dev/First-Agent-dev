@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import os
 import shlex
+from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -33,7 +34,14 @@ from fa.inner_loop.slice_verification import (
     PlanVerification,
     _gate_mode,
 )
-from fa.inner_loop.workflow_artifacts import EvalReport, EvalVerdict, RouteDecision, load_eval_report, load_flow_state
+from fa.inner_loop.workflow_artifacts import (
+    EvalReport,
+    EvalVerdict,
+    FlowState,
+    RouteDecision,
+    load_eval_report,
+    load_flow_state,
+)
 from fa.inner_loop.workflow_controller import (
     BaselineCapture,
     StageResult,
@@ -545,8 +553,21 @@ def test_real_workflow_writes_verification_and_supplies_it_to_eval(
 
     config = tmp_path / "models.yaml"
     config.write_text("".join(_ROLE_YAML.format(role=role) for role in ("planner", "coder", "eval")), encoding="utf-8")
-    plan_marker = tmp_path / "plan-level-command-runs.txt"
-    plan_path = tmp_path / "implementation-plan.md"
+    # STEP13: real source/test overlay in a disposable workspace; the explicit
+    # plan must not live outside it. No operator source or metadata is mutated.
+    import shutil
+
+    workspace = tmp_path / "workspace"
+    for relative in ("src/fa", "scripts"):
+        shutil.copytree(REPO_ROOT / relative, workspace / relative, ignore=shutil.ignore_patterns("__pycache__"))
+    (workspace / "tests").mkdir()
+    for filename in ("conftest.py", "__init__.py", "test_verify_gate_live.py"):
+        shutil.copy2(REPO_ROOT / "tests" / filename, workspace / "tests" / filename)
+    for filename in ("pyproject.toml", "uv.lock"):
+        shutil.copy2(REPO_ROOT / filename, workspace / filename)
+    (workspace / ".venv").symlink_to(REPO_ROOT / ".venv", target_is_directory=True)
+    plan_marker = workspace / "plan-level-command-runs.txt"
+    plan_path = workspace / "implementation-plan.md"
     plan_path.write_text(_plan_text(plan_marker, fail_plan_command=True), encoding="utf-8")
 
     provider_roles: list[str] = []
@@ -583,7 +604,7 @@ def test_real_workflow_writes_verification_and_supplies_it_to_eval(
         max_replans=0,
         run_id=run_id,
         config=config,
-        workspace=REPO_ROOT,
+        workspace=workspace,
         max_turns=2,
         output_mode="quiet",
         run_stage_fn=_cmd_run,
@@ -1495,3 +1516,1070 @@ def test_plan_preflight_allocated_workspace_mismatch_blocks_provider(
     assert "fa workflow: workspace preflight: workspace-mismatch\n" in capsys.readouterr().err
     assert (state / "session-log" / "mismatch").is_dir(), "the fault must actually pass through lifecycle"
     assert not (state / "session-log" / "mismatch" / "flow_state.json").exists()
+
+
+# CT92/95: closed records, durable locked append and safely addressed rejection.
+
+
+def _admission_attempt(**changes: Any) -> dict[str, Any]:
+    return {
+        "dispatch_kind": "EXPLICIT_INPUT",
+        "validation": "INDETERMINATE",
+        "diagnostics": [{"validator": "plan-ref", "rule": "missing", "severity": "ERROR", "line": None}],
+        "source_sha256": None,
+        "candidate_sha256": None,
+        "promoted_sha256": None,
+        "route": "BLOCKED",
+    } | changes
+
+
+def _admission_fixture() -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "run_id": "admission-test",
+        "status": "ADMITTED",
+        "plan_ref": {"workspace_relative_path": "plans/p.md", "source_kind": "EXPLICIT", "sha256": "a" * 64},
+        "attempts": [
+            _admission_attempt(
+                attempt=1,
+                validation="PASS",
+                route="ADMITTED",
+                source_sha256="a" * 64,
+                diagnostics=[
+                    {
+                        "validator": "precheck",
+                        "rule": "step-near-miss",
+                        "severity": "WARN",
+                        "line": 7,
+                        "contract_id": "CT12a",
+                    }
+                ],
+            )
+        ],
+    }
+
+
+@pytest.mark.parametrize(
+    "path,value",
+    [
+        (("schema_version",), True),
+        (("schema_version",), 2),
+        (("run_id",), "different"),
+        (("status",), "unknown"),
+        (("attempts",), []),
+        (("attempts",), {}),
+        (("extra",), "raw secret"),
+        (("plan_ref", "extra"), "raw secret"),
+        (("plan_ref", "workspace_relative_path"), "../outside"),
+        (("plan_ref", "workspace_relative_path"), "/outside"),
+        (("plan_ref", "workspace_relative_path"), "a//b"),
+        (("plan_ref", "workspace_relative_path"), "a/./b"),
+        (("plan_ref", "workspace_relative_path"), ""),
+        (("plan_ref", "workspace_relative_path"), "a\x00b"),
+        (("plan_ref", "sha256"), None),
+        (("plan_ref", "sha256"), "A" * 64),
+        (("plan_ref", "source_kind"), "guessed"),
+        (("attempts", 0, "attempt"), True),
+        (("attempts", 0, "attempt"), 0),
+        (("attempts", 0, "dispatch_kind"), "PLANNER"),
+        (("attempts", 0, "validation"), "unknown"),
+        (("attempts", 0, "route"), "unknown"),
+        (("attempts", 0, "route"), "RETRY"),
+        (("attempts", 0, "source_sha256"), None),
+        (("attempts", 0, "source_sha256"), "x"),
+        (("attempts", 0, "candidate_sha256"), "b" * 64),
+        (("attempts", 0, "promoted_sha256"), "a" * 64),
+        (("attempts", 0, "diagnostics"), {}),
+        (("attempts", 0, "diagnostics", 0, "validator"), "unknown"),
+        (("attempts", 0, "diagnostics", 0, "rule"), "kill-directive-missing"),
+        (("attempts", 0, "diagnostics", 0, "severity"), "unknown"),
+        (("attempts", 0, "diagnostics", 0, "severity"), "ERROR"),
+        (("attempts", 0, "diagnostics", 0, "severity"), "FAIL"),
+        (("attempts", 0, "diagnostics", 0, "line"), True),
+        (("attempts", 0, "diagnostics", 0, "line"), 0),
+        (("attempts", 0, "diagnostics", 0, "contract_id"), "CT12\n"),
+        (("attempts", 0, "diagnostics", 0, "message"), "raw secret"),
+    ],
+)
+def test_admission_artifact_schema_rejects_invalid_fields(path: tuple[Any, ...], value: object) -> None:
+    from fa.inner_loop.admission_schema import AdmissionRecordError, validate_admission_record
+
+    record = _admission_fixture()
+    parent = record
+    for key in path[:-1]:
+        parent = parent[key]
+    parent[path[-1]] = value
+    with pytest.raises(AdmissionRecordError, match=r"^invalid admission record$"):
+        validate_admission_record(record, run_id="admission-test")
+
+
+@pytest.mark.parametrize("level", ["record", "reference", "attempt", "diagnostic"])
+def test_admission_artifact_schema_requires_every_key(level: str) -> None:
+    from fa.inner_loop.admission_schema import AdmissionRecordError, validate_admission_record
+
+    base = _admission_fixture()
+    keys = {
+        "record": set(base),
+        "reference": set(base["plan_ref"]),
+        "attempt": set(base["attempts"][0]),
+        "diagnostic": {"validator", "rule", "severity", "line"},
+    }[level]
+    for missing in keys:
+        record = _admission_fixture()
+        target = {
+            "record": record,
+            "reference": record["plan_ref"],
+            "attempt": record["attempts"][0],
+            "diagnostic": record["attempts"][0]["diagnostics"][0],
+        }[level]
+        del target[missing]
+        with pytest.raises(AdmissionRecordError):
+            validate_admission_record(record, run_id="admission-test")
+
+
+def test_admission_artifact_valid_history_preserves_old_admission_and_cas_chain() -> None:
+    from fa.inner_loop.admission_schema import validate_admission_record
+
+    record = _admission_fixture()
+    record["attempts"].extend(
+        [
+            _admission_attempt(
+                attempt=2,
+                dispatch_kind="EVAL_REPLAN",
+                validation="DIAGNOSTICS",
+                route="RETRY",
+                source_sha256="a" * 64,
+                candidate_sha256="b" * 64,
+                diagnostics=[
+                    {"validator": "precheck", "rule": "slice-without-tests", "severity": "FAIL", "line": None}
+                ],
+            ),
+            _admission_attempt(
+                attempt=3,
+                dispatch_kind="EVAL_REPLAN",
+                validation="PASS",
+                route="ADMITTED",
+                source_sha256="a" * 64,
+                candidate_sha256="c" * 64,
+                promoted_sha256="c" * 64,
+                diagnostics=[],
+            ),
+        ]
+    )
+    record["plan_ref"]["sha256"] = "c" * 64
+    assert validate_admission_record(record, run_id="admission-test") == record
+    record["attempts"][1]["source_sha256"] = "b" * 64
+    with pytest.raises(ValueError, match="invalid admission record"):
+        validate_admission_record(record, run_id="admission-test")
+
+
+def test_admission_artifact_initialization_append_and_modes(tmp_path: Path) -> None:
+    from fa.inner_loop.workflow_artifacts import write_admission_record
+
+    path = tmp_path / "private" / "admission.json"
+    initial = write_admission_record(path, run_id="admission-test", plan_ref=None)
+    assert initial == {
+        "schema_version": 1,
+        "run_id": "admission-test",
+        "status": "ACQUIRING",
+        "plan_ref": None,
+        "attempts": [],
+    }
+    first = write_admission_record(
+        path, run_id="admission-test", plan_ref=None, attempt=_admission_attempt(), status="BLOCKED"
+    )
+    second = write_admission_record(
+        path, run_id="admission-test", plan_ref=None, attempt=_admission_attempt(), status="BLOCKED"
+    )
+    assert second["attempts"] == first["attempts"] + [_admission_attempt(attempt=2)]
+    assert json.loads(path.read_bytes()) == second
+    assert path.stat().st_mode & 0o777 == 0o600
+    assert path.parent.stat().st_mode & 0o777 == 0o700
+    assert (path.parent / ".admission.lock").stat().st_mode & 0o777 == 0o600
+    assert not list(path.parent.glob("*.tmp"))
+
+
+@pytest.mark.parametrize("bad", ["{broken", '{"schema_version":true}', '{"schema_version":1,"schema_version":2}'])
+def test_admission_artifact_old_corruption_is_never_reset(tmp_path: Path, bad: str) -> None:
+    from fa.inner_loop.workflow_artifacts import AdmissionIOError, write_admission_record
+
+    path = tmp_path / "admission.json"
+    path.write_text(bad, encoding="utf-8")
+    with pytest.raises(AdmissionIOError) as failure:
+        write_admission_record(
+            path, run_id="admission-test", plan_ref=None, attempt=_admission_attempt(), status="BLOCKED"
+        )
+    assert failure.value.rule == "corrupt-record"
+    assert path.read_text(encoding="utf-8") == bad
+
+
+@pytest.mark.parametrize("phase", ["file-fsync", "replace", "directory-fsync", "zero-write"])
+def test_admission_artifact_publication_faults_preserve_irreversible_boundary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, phase: str, bounded_admission_test: None
+) -> None:
+    import stat
+
+    from fa.inner_loop.workflow_artifacts import AdmissionIOError, write_admission_record
+
+    path = tmp_path / "admission.json"
+    write_admission_record(path, run_id="admission-test", plan_ref=None)
+    old = path.read_bytes()
+    original_sync, original_replace = os.fsync, os.replace
+    published = False
+
+    def sync(fd: int) -> None:
+        if phase == "file-fsync" and stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError("injected file fsync")
+        if phase == "directory-fsync" and published and stat.S_ISDIR(os.fstat(fd).st_mode):
+            raise OSError("injected directory fsync")
+        original_sync(fd)
+
+    def replace(source: Any, target: Any, **kwargs: Any) -> None:
+        nonlocal published
+        if phase == "replace":
+            raise OSError("injected replace")
+        original_replace(source, target, **kwargs)
+        published = True
+
+    monkeypatch.setattr(os, "fsync", sync)
+    monkeypatch.setattr(os, "replace", replace)
+    if phase == "zero-write":
+        monkeypatch.setattr(os, "write", lambda *_args: 0)
+    with pytest.raises(AdmissionIOError) as failure:
+        write_admission_record(
+            path, run_id="admission-test", plan_ref=None, attempt=_admission_attempt(), status="BLOCKED"
+        )
+    assert failure.value.rule == ("durability-unknown" if phase == "directory-fsync" else "append-failed")
+    if phase == "directory-fsync":
+        assert json.loads(path.read_bytes())["attempts"] == [_admission_attempt(attempt=1)]
+    else:
+        assert path.read_bytes() == old
+    assert not list(tmp_path.glob("*.tmp"))
+
+
+def test_admission_artifact_lock_wait_is_bounded_and_does_not_modify_record(
+    tmp_path: Path, bounded_admission_test: None
+) -> None:
+    import fcntl
+    import time
+
+    from fa.inner_loop.workflow_artifacts import AdmissionIOError, write_admission_record
+
+    path = tmp_path / "admission.json"
+    write_admission_record(path, run_id="admission-test", plan_ref=None)
+    before = path.read_bytes()
+    with (tmp_path / ".admission.lock").open("rb") as held:
+        fcntl.flock(held, fcntl.LOCK_EX)
+        started = time.monotonic()
+        with pytest.raises(AdmissionIOError) as failure:
+            write_admission_record(
+                path,
+                run_id="admission-test",
+                plan_ref=None,
+                attempt=_admission_attempt(),
+                status="BLOCKED",
+                deadline=started + 0.04,
+            )
+        assert failure.value.rule == "lock-failed"
+        assert time.monotonic() - started < 1
+    assert path.read_bytes() == before
+
+
+def test_admission_artifact_concurrent_subprocess_appends_do_not_lose_attempts(tmp_path: Path) -> None:
+    import subprocess
+    import sys
+
+    from fa.inner_loop import workflow_artifacts as artifacts
+    from fa.inner_loop.admission_schema import validate_admission_record
+
+    path = tmp_path / "admission.json"
+    source_root = str(Path(artifacts.__file__).resolve().parents[2])
+    child_env = os.environ | {"PYTHONPATH": os.pathsep.join((source_root, os.environ.get("PYTHONPATH", "")))}
+    script = (
+        "from pathlib import Path; import sys\n"
+        "from fa.inner_loop import workflow_artifacts as artifacts\n"
+        "from fa.inner_loop.workflow_artifacts import write_admission_record\n"
+        "assert Path(artifacts.__file__).resolve().is_relative_to(Path(sys.argv[2]).resolve())\n"
+        f"attempt = {_admission_attempt()!r}\n"
+        "for _ in range(4):\n"
+        "    write_admission_record(Path(sys.argv[1]), run_id='admission-test', "
+        "plan_ref=None, attempt=attempt, status='BLOCKED')\n"
+    )
+    processes = [
+        subprocess.Popen(
+            [sys.executable, "-c", script, str(path), source_root],
+            env=child_env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        for _ in range(4)
+    ]
+    try:
+        for process in processes:
+            out, err = process.communicate(timeout=15)
+            assert (process.returncode, out, err) == (0, b"", b"")
+    finally:
+        for process in processes:
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+    record = validate_admission_record(json.loads(path.read_bytes()), run_id="admission-test")
+    assert [item["attempt"] for item in record["attempts"]] == list(range(1, 17))
+
+
+@pytest.mark.parametrize(
+    "kind,rule",
+    [("missing", "missing"), ("outside", "path-escape"), ("invalid-utf8", "invalid-utf8"), ("symlink", "symlink")],
+)
+@pytest.mark.parametrize("mode", ["linear", "adaptive"])
+@pytest.mark.parametrize("gate_mode", ["observe", "enforce"])
+def test_direct_api_plan_guard_persists_blocked_before_real_dispatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    kind: str,
+    rule: str,
+    mode: str,
+    gate_mode: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from fa import feature_flags
+    from fa.cli import _cmd_run
+
+    flag_path = tmp_path / "flags.yaml"
+    flag_path.write_text(f"feature_flags:\n  workflow:\n    verify_gate:\n      mode: {gate_mode}\n", encoding="utf-8")
+    monkeypatch.setattr(feature_flags, "DEFAULT_CONFIG_PATH", flag_path)
+
+    state, workspace = tmp_path / "state", tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setenv("FA_STATE_ROOT", str(state))
+    config = tmp_path / "models.yaml"
+    config.write_text("".join(_ROLE_YAML.format(role=r) for r in ("planner", "coder", "eval")), encoding="utf-8")
+    target: Path | None = None
+    if kind == "outside":
+        target = tmp_path / "private-sentinel.md"
+        target.write_text("fixture private bytes", encoding="utf-8")
+    elif kind == "invalid-utf8":
+        target = workspace / "plan.md"
+        target.write_bytes(b"\xff")
+    elif kind == "symlink":
+        target = workspace / "plan.md"
+        target.symlink_to(workspace / "absent.md")
+    calls: list[str] = []
+
+    def provider(
+        chain: ProviderChain, request: RequestInfo, *, logical_call_id: str | None = None
+    ) -> tuple[ResponseInfo, str, list[Any]]:
+        calls.append(chain.config.role)
+        return ResponseInfo(text=_EVAL_FINAL_TEXT, in_tokens=1, out_tokens=1, finish_reason="stop"), "p", []
+
+    monkeypatch.setattr(ProviderChain, "request", provider)
+    result, flow = run_workflow(
+        **(_request_input() | {"mode": mode}),
+        config=config,
+        workspace=workspace,
+        max_turns=1,
+        run_stage_fn=_cmd_run,
+        plan_path=target,
+        secrets=SecretStore({"K": "fixture-key"}),
+    )
+    assert result == 2
+    assert flow is not None and flow.status == "FAILED" and flow.last_route_decision == "blocked"
+    assert flow.blocked_reason == f"plan-ref/{rule}"
+    assert flow == FlowState(
+        run_id="request-valid",
+        task="implement the declared plan",
+        status="FAILED",
+        active_role="workflow",
+        active_plan_id="request-valid",
+        active_plan_version=1,
+        last_actor="workflow",
+        last_transition_reason="explicit plan admission blocked",
+        last_route_decision="blocked",
+        blocked_reason=f"plan-ref/{rule}",
+        judged=False,
+    )
+    assert calls == []
+    directory = state / "session-log" / "request-valid"
+    record = json.loads((directory / "admission.json").read_bytes())
+    assert record == {
+        "schema_version": 1,
+        "run_id": "request-valid",
+        "status": "BLOCKED",
+        "plan_ref": None,
+        "attempts": [
+            _admission_attempt(
+                attempt=1, diagnostics=[{"validator": "plan-ref", "rule": rule, "severity": "ERROR", "line": None}]
+            )
+        ],
+    }
+    assert load_flow_state(directory / "flow_state.json") == flow
+    assert not (directory / "verification.json").exists()
+    assert not (directory / "verify_baseline.json").exists()
+    assert not (directory / "eval_report.json").exists()
+    assert "private-sentinel" not in (directory / "admission.json").read_text()
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == f"fa workflow: invalid plan reference: {rule}\n"
+
+
+@pytest.mark.parametrize(
+    "kind",
+    ["ancestor", "record-link", "lock-link", "record-hardlink", "lock-hardlink", "record-directory", "lock-fifo"],
+)
+def test_admission_artifact_hostile_paths_never_touch_outside(tmp_path: Path, kind: str) -> None:
+    from fa.inner_loop.workflow_artifacts import AdmissionIOError, write_admission_record
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    sentinel = outside / "sentinel"
+    sentinel.write_text(
+        json.dumps(
+            {"schema_version": 1, "run_id": "admission-test", "status": "ACQUIRING", "plan_ref": None, "attempts": []}
+        ),
+        encoding="utf-8",
+    )
+    sentinel.chmod(0o640)
+    parent = tmp_path / "record"
+    if kind == "ancestor":
+        parent.symlink_to(outside, target_is_directory=True)
+    else:
+        parent.mkdir()
+        target = parent / (".admission.lock" if kind.startswith("lock") else "admission.json")
+        if kind.endswith("link") and "hardlink" not in kind:
+            target.symlink_to(sentinel)
+        elif kind.endswith("hardlink"):
+            os.link(sentinel, target)
+        elif kind == "record-directory":
+            target.mkdir()
+        else:
+            os.mkfifo(target)
+    before = {p.name: (p.read_bytes(), p.stat().st_mode) for p in outside.iterdir()}
+    with pytest.raises(AdmissionIOError) as failure:
+        write_admission_record(
+            parent / "admission.json",
+            run_id="admission-test",
+            plan_ref=None,
+            attempt=_admission_attempt(),
+            status="BLOCKED",
+        )
+    expected_rule = (
+        "lock-failed"
+        if kind.startswith("lock")
+        else "corrupt-record"
+        if kind in {"record-directory", "record-hardlink"}
+        else "append-failed"
+    )
+    assert failure.value.rule == expected_rule
+    assert {p.name: (p.read_bytes(), p.stat().st_mode) for p in outside.iterdir()} == before
+
+
+def test_admission_artifact_temp_collision_is_not_owned_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from fa.inner_loop import workflow_artifacts as artifacts
+
+    path = tmp_path / "admission.json"
+    artifacts.write_admission_record(path, run_id="admission-test", plan_ref=None)
+    before = path.read_bytes()
+    collision = tmp_path / ".admission.json.collision.tmp"
+    collision.write_bytes(b"someone else's file")
+    monkeypatch.setattr(artifacts, "uuid4", lambda: SimpleNamespace(hex="collision"))
+    with pytest.raises(artifacts.AdmissionIOError) as failure:
+        artifacts.write_admission_record(
+            path, run_id="admission-test", plan_ref=None, attempt=_admission_attempt(), status="BLOCKED"
+        )
+    assert failure.value.rule == "append-failed"
+    assert collision.read_bytes() == b"someone else's file"
+    assert path.read_bytes() == before
+
+
+def test_admission_artifact_short_writes_and_unchanged_proposal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import copy
+
+    from fa.inner_loop.workflow_artifacts import write_admission_record
+
+    original_write = os.write
+    monkeypatch.setattr(os, "write", lambda fd, raw: original_write(fd, raw[:3]))
+    proposal = _admission_attempt()
+    before = copy.deepcopy(proposal)
+    path = tmp_path / "admission.json"
+    value = write_admission_record(path, run_id="admission-test", plan_ref=None, attempt=proposal, status="BLOCKED")
+    assert value["attempts"] == [proposal | {"attempt": 1}]
+    assert json.loads(path.read_bytes()) == value
+    assert proposal == before
+
+
+@pytest.mark.parametrize("run_id", ["", "../outside", "a" * 129, "a\n"])
+def test_admission_artifact_invalid_identity_precedes_directory_creation(tmp_path: Path, run_id: str) -> None:
+    from fa.inner_loop.admission_schema import AdmissionRecordError
+    from fa.inner_loop.workflow_artifacts import write_admission_record
+
+    directory = tmp_path / "not-created"
+    with pytest.raises(AdmissionRecordError):
+        write_admission_record(directory / "admission.json", run_id=run_id, plan_ref=None)
+    assert not directory.exists()
+
+
+def test_admission_artifact_valid_diagnostic_vocabulary_and_reserved_values() -> None:
+    from fa.inner_loop.admission_schema import ADMISSION_RULES, validate_admission_record
+
+    expected = {
+        "precheck": {
+            "heading-near-miss",
+            "step-marker-unknown",
+            "step-near-miss",
+            "slice-count-at-ceiling",
+            "orphaned-slice-field",
+            "slice-without-tests",
+            "step-without-exit",
+            "deps-undefined-slice",
+            "deps-cycle",
+            "contract-reference-undeclared",
+            "contract-declared-twice",
+            "contract-declaration-lost",
+        },
+        "kill-directives": {
+            "kill-directive-near-miss",
+            "kill-directive-malformed",
+            "kill-directive-ambiguous",
+            "kill-directive-missing",
+        },
+        "plan-ref": {
+            "missing",
+            "path-escape",
+            "symlink",
+            "not-regular",
+            "unreadable",
+            "invalid-utf8",
+            "empty",
+            "too-large",
+            "zero-slices",
+            "source-changed",
+            "validator-error",
+        },
+        "promotion": {
+            "scope-denied",
+            "symlink",
+            "not-regular",
+            "source-changed",
+            "prepare-failed",
+            "replace-failed",
+            "durability-unknown",
+            "hash-mismatch",
+        },
+        "artifact-io": {"corrupt-record", "lock-failed", "append-failed", "durability-unknown"},
+        "bootstrap": {"unavailable"},
+    }
+    assert ADMISSION_RULES == expected
+    for validator, rules in expected.items():
+        for rule in rules:
+            record = _admission_fixture()
+            record["status"] = "BLOCKED"
+            record["attempts"][0].update(
+                validation="INDETERMINATE",
+                route="BLOCKED",
+                diagnostics=[
+                    {"validator": validator, "rule": rule, "severity": "ERROR", "line": None},
+                ],
+            )
+            assert validate_admission_record(record, run_id="admission-test") == record
+
+
+@pytest.mark.parametrize("fault", ["admission-only", "unsafe-directory"])
+def test_direct_api_plan_guard_storage_failure_is_explicit_and_never_dispatches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], fault: str
+) -> None:
+    from fa.cli import _cmd_run
+    from fa.inner_loop import workflow_artifacts as artifacts
+
+    state = tmp_path / "state"
+    monkeypatch.setenv("FA_STATE_ROOT", str(state))
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    if fault == "unsafe-directory":
+        (state / "session-log").mkdir(parents=True)
+        (state / "session-log" / "request-valid").symlink_to(outside, target_is_directory=True)
+    else:
+        original = artifacts._replace_private_json
+
+        def reject_admission(directory_fd: int, name: str, payload: dict[str, Any]) -> None:
+            if name == "admission.json":
+                raise artifacts.AdmissionIOError("append-failed")
+            original(directory_fd, name, payload)
+
+        monkeypatch.setattr(artifacts, "_replace_private_json", reject_admission)
+    code, flow = run_workflow(
+        **_request_input(), config=tmp_path / "models.yaml", workspace=tmp_path, max_turns=1, run_stage_fn=_cmd_run
+    )
+    assert code == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    expected_error = (
+        "fa workflow: invalid plan reference: missing\nfa workflow: admission storage error: append-failed\n"
+    )
+    if fault == "unsafe-directory":
+        expected_error += "fa workflow: blocked flow storage error: append-failed\n"
+    assert captured.err == expected_error
+    assert (flow is not None) == (fault == "admission-only")
+    assert not list(outside.iterdir())
+    assert not (state / "session-log" / "request-valid" / "admission.json").exists()
+
+
+@pytest.fixture()
+def bounded_admission_test() -> Iterator[None]:
+    """Make a wedged storage operation a test failure, not mutation-runner evidence."""
+    import signal
+
+    def expired(_signum: int, _frame: object) -> None:
+        raise AssertionError("admission storage test exceeded its bounded operation window")
+
+    previous = signal.signal(signal.SIGALRM, expired)
+    signal.setitimer(signal.ITIMER_REAL, 2)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
+
+
+@pytest.mark.parametrize("validation", ["PASS", "DIAGNOSTICS", "INDETERMINATE"])
+@pytest.mark.parametrize("route", ["ADMITTED", "RETRY", "BLOCKED"])
+@pytest.mark.parametrize(
+    "severities", [(), ("WARN",), ("FAIL",), ("ERROR",), ("FAIL", "WARN"), ("ERROR", "WARN"), ("FAIL", "ERROR", "WARN")]
+)
+def test_admission_artifact_validation_route_truth_table(
+    validation: str, route: str, severities: tuple[str, ...]
+) -> None:
+    from fa.inner_loop.admission_schema import AdmissionRecordError, validate_admission_record
+
+    allowed = {
+        ("PASS", "ADMITTED", ()),
+        ("PASS", "ADMITTED", ("WARN",)),
+        ("PASS", "BLOCKED", ()),
+        ("PASS", "BLOCKED", ("WARN",)),
+        ("DIAGNOSTICS", "RETRY", ("FAIL",)),
+        ("DIAGNOSTICS", "RETRY", ("FAIL", "WARN")),
+        ("DIAGNOSTICS", "BLOCKED", ("FAIL",)),
+        ("DIAGNOSTICS", "BLOCKED", ("FAIL", "WARN")),
+        *(
+            ("INDETERMINATE", "BLOCKED", values)
+            for values in [
+                (),
+                ("WARN",),
+                ("FAIL",),
+                ("ERROR",),
+                ("FAIL", "WARN"),
+                ("ERROR", "WARN"),
+                ("FAIL", "ERROR", "WARN"),
+            ]
+        ),
+    }
+    record = _admission_fixture()
+    record["status"] = {"ADMITTED": "ADMITTED", "RETRY": "ACQUIRING", "BLOCKED": "BLOCKED"}[route]
+    record["attempts"][0].update(
+        validation=validation,
+        route=route,
+        diagnostics=[
+            {"validator": "precheck", "rule": "step-near-miss", "severity": severity, "line": 1}
+            for severity in severities
+        ],
+    )
+    if (validation, route, severities) in allowed:
+        assert validate_admission_record(record, run_id="admission-test") == record
+    else:
+        with pytest.raises(AdmissionRecordError):
+            validate_admission_record(record, run_id="admission-test")
+
+
+@pytest.mark.parametrize("source_kind", ["EXPLICIT", "EXISTING_SELECTION", "BOOTSTRAP"])
+def test_admission_artifact_initial_ref_is_checked_without_history(source_kind: str) -> None:
+    from fa.inner_loop.admission_schema import AdmissionRecordError, validate_admission_record
+
+    record = _admission_fixture()
+    record.update(run_id="Run-1", status="ACQUIRING", attempts=[])
+    record["plan_ref"]["source_kind"] = source_kind
+    assert validate_admission_record(record, run_id="Run-1") == record
+    for malformed in ["A" * 64, "a" * 63, True, 4, "a" * 65, []]:
+        record["plan_ref"]["sha256"] = malformed
+        with pytest.raises(AdmissionRecordError):
+            validate_admission_record(record, run_id="Run-1")
+
+
+@pytest.mark.parametrize("kind", ["ADMISSION_REPAIR", "EVAL_REPLAN"])
+@pytest.mark.parametrize(
+    "fault", ["none", "bad-source", "bad-candidate", "bad-promoted", "unpromoted", "failed-promotion"]
+)
+def test_admission_artifact_promotion_hash_coherence(kind: str, fault: str) -> None:
+    from fa.inner_loop.admission_schema import AdmissionRecordError, validate_admission_record
+
+    record = _admission_fixture()
+    record["plan_ref"]["sha256"] = "b" * 64
+    item = _admission_attempt(
+        attempt=2,
+        dispatch_kind=kind,
+        source_sha256="a" * 64,
+        candidate_sha256="b" * 64,
+        promoted_sha256="b" * 64,
+        validation="PASS",
+        route="ADMITTED",
+        diagnostics=[],
+    )
+    record["attempts"].append(item)
+    if fault == "bad-source":
+        item["source_sha256"] = "c" * 64
+    elif fault == "bad-candidate":
+        item["candidate_sha256"] = "c" * 64
+    elif fault == "bad-promoted":
+        item["candidate_sha256"] = item["promoted_sha256"] = record["plan_ref"]["sha256"] = "invalid"
+    elif fault == "unpromoted":
+        item["promoted_sha256"] = None
+        record["plan_ref"]["sha256"] = "a" * 64
+    elif fault == "failed-promotion":
+        item.update(
+            validation="DIAGNOSTICS",
+            route="BLOCKED",
+            diagnostics=[{"validator": "precheck", "rule": "step-near-miss", "severity": "FAIL", "line": 1}],
+        )
+        record["status"] = "BLOCKED"
+    if fault == "none":
+        assert validate_admission_record(record, run_id="admission-test") == record
+    else:
+        with pytest.raises(AdmissionRecordError):
+            validate_admission_record(record, run_id="admission-test")
+
+
+def test_admission_artifact_explicit_history_cannot_forget_canonical_or_admit_null() -> None:
+    from fa.inner_loop.admission_schema import AdmissionRecordError, validate_admission_record
+
+    record = _admission_fixture()
+    record["attempts"].append(record["attempts"][0] | {"attempt": 2})
+    assert validate_admission_record(record, run_id="admission-test") == record
+    record["attempts"][1]["source_sha256"] = record["plan_ref"]["sha256"] = "b" * 64
+    with pytest.raises(AdmissionRecordError):
+        validate_admission_record(record, run_id="admission-test")
+    record = _admission_fixture()
+    record["plan_ref"] = None
+    record["attempts"][0]["source_sha256"] = None
+    with pytest.raises(AdmissionRecordError):
+        validate_admission_record(record, run_id="admission-test")
+    record = {
+        "schema_version": 1,
+        "run_id": "admission-test",
+        "status": "BLOCKED",
+        "plan_ref": None,
+        "attempts": [_admission_attempt(attempt=1, dispatch_kind="ACQUISITION")],
+    }
+    assert validate_admission_record(record, run_id="admission-test") == record
+
+
+def test_admission_artifact_duplicate_valid_record_is_not_last_key_wins(tmp_path: Path) -> None:
+    from fa.inner_loop.workflow_artifacts import AdmissionIOError, write_admission_record
+
+    path = tmp_path / "admission.json"
+    record = write_admission_record(path, run_id="admission-test", plan_ref=None)
+    bad = '{"schema_version":2,' + json.dumps(record)[1:]
+    path.write_text(bad, encoding="utf-8")
+    with pytest.raises(AdmissionIOError) as failure:
+        write_admission_record(
+            path, run_id="admission-test", plan_ref=None, attempt=_admission_attempt(), status="BLOCKED"
+        )
+    assert failure.value.rule == "corrupt-record"
+    assert str(failure.value) == "admission storage error: corrupt-record"
+    assert path.read_text(encoding="utf-8") == bad
+
+
+def test_admission_artifact_requests_safe_descriptor_flags_and_private_create_mode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from fa.inner_loop.workflow_artifacts import write_admission_record
+
+    path = tmp_path / "admission.json"
+    write_admission_record(path, run_id="admission-test", plan_ref=None)
+    original = os.open
+    seen: list[tuple[str, int, int]] = []
+
+    def opened(name: Any, flags: int, mode: int = 0o777, *, dir_fd: int | None = None) -> int:
+        seen.append((str(name), flags, mode))
+        return original(name, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(os, "open", opened)
+    write_admission_record(path, run_id="admission-test", plan_ref=None, attempt=_admission_attempt(), status="BLOCKED")
+    reads = [flags for name, flags, _ in seen if name == "admission.json"]
+    assert reads and all(
+        flags & (os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK) == os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK
+        for flags in reads
+    )
+    creates = [(flags, mode) for name, flags, mode in seen if name.endswith(".tmp")]
+    assert creates and all(
+        mode == 0o600
+        and flags & (os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC)
+        == os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
+        for flags, mode in creates
+    )
+
+
+def test_admission_artifact_controller_barrier_preserves_reference_and_deadline(
+    tmp_path: Path, bounded_admission_test: None
+) -> None:
+    import fcntl
+    import time
+    from dataclasses import asdict
+
+    from fa.inner_loop.plan_admission import PlanRef
+    from fa.inner_loop.workflow_artifacts import AdmissionIOError, write_admission_record
+
+    paths = workflow_artifact_paths("admission-test", base_dir=tmp_path)
+    ref = PlanRef("планы/p.md", "EXPLICIT", "a" * 64)
+    write_admission_record(paths.admission, run_id="admission-test", plan_ref=ref)
+    proposal = _admission_attempt(validation="PASS", route="ADMITTED", source_sha256="a" * 64, diagnostics=[])
+    workflow._record_admission_attempt(
+        paths, run_id="admission-test", plan_ref=ref, attempt=proposal, status="ADMITTED", deadline=time.monotonic() + 1
+    )
+    record = json.loads(paths.admission.read_bytes())
+    assert record["plan_ref"] == asdict(ref)
+    assert record["attempts"] == [proposal | {"attempt": 1}]
+    before = paths.admission.read_bytes()
+    with (tmp_path / ".admission.lock").open("rb") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        with pytest.raises(AdmissionIOError) as failure:
+            workflow._record_admission_attempt(
+                paths,
+                run_id="admission-test",
+                plan_ref=ref,
+                attempt=proposal,
+                status="ADMITTED",
+                deadline=time.monotonic() - 1,
+            )
+        assert failure.value.rule == "lock-failed"
+    assert paths.admission.read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    "change", [{"attempt": 55}, {"extra": "source body"}, {"diagnostics": [{"message": "source body"}]}]
+)
+def test_admission_artifact_bad_proposal_does_not_overwrite_history(tmp_path: Path, change: dict[str, Any]) -> None:
+    from fa.inner_loop.workflow_artifacts import AdmissionIOError, write_admission_record
+
+    path = tmp_path / "admission.json"
+    write_admission_record(path, run_id="admission-test", plan_ref=None)
+    before = path.read_bytes()
+    with pytest.raises(AdmissionIOError) as failure:
+        write_admission_record(
+            path, run_id="admission-test", plan_ref=None, attempt=_admission_attempt(**change), status="BLOCKED"
+        )
+    assert failure.value.rule == "corrupt-record"
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize("kind", ["symlink", "hardlink", "directory"])
+def test_admission_artifact_shared_flow_writer_rejects_aliased_controls(tmp_path: Path, kind: str) -> None:
+    from fa.inner_loop.workflow_artifacts import AdmissionIOError, FlowState, write_flow_state
+
+    outside = tmp_path / "outside"
+    outside.write_bytes(b"private bytes")
+    parent = tmp_path / "records"
+    parent.mkdir()
+    target = parent / "flow_state.json"
+    if kind == "symlink":
+        target.symlink_to(outside)
+    elif kind == "hardlink":
+        os.link(outside, target)
+    else:
+        target.mkdir()
+    with pytest.raises(AdmissionIOError) as failure:
+        write_flow_state(
+            target,
+            FlowState(
+                run_id="admission-test",
+                task="blocked",
+                status="FAILED",
+                active_role="workflow",
+                active_plan_id="admission-test",
+                active_plan_version=1,
+            ),
+        )
+    assert failure.value.rule == "append-failed"
+    assert outside.read_bytes() == b"private bytes"
+
+
+@pytest.mark.parametrize("location", ["directory", "record", "record-kind"])
+def test_admission_artifact_foreign_owner_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, location: str
+) -> None:
+    import stat
+
+    from fa.inner_loop.workflow_artifacts import AdmissionIOError, write_admission_record
+
+    path = tmp_path / "admission.json"
+    write_admission_record(path, run_id="admission-test", plan_ref=None)
+    before = path.read_bytes()
+    original = os.fstat
+
+    def metadata(fd: int) -> Any:
+        result = original(fd)
+        wanted = (
+            stat.S_ISDIR(result.st_mode) if location == "directory" else os.readlink(f"/proc/self/fd/{fd}") == str(path)
+        )
+        if wanted:
+            return SimpleNamespace(
+                st_mode=stat.S_IFIFO | 0o600 if location == "record-kind" else result.st_mode,
+                st_uid=os.getuid() if location == "record-kind" else os.getuid() + 1,
+                st_nlink=result.st_nlink,
+            )
+        return result
+
+    monkeypatch.setattr(os, "fstat", metadata)
+    with pytest.raises(AdmissionIOError) as failure:
+        write_admission_record(
+            path, run_id="admission-test", plan_ref=None, attempt=_admission_attempt(), status="BLOCKED"
+        )
+    assert failure.value.rule == ("append-failed" if location == "directory" else "corrupt-record")
+    assert path.read_bytes() == before
+
+
+def test_admission_artifact_rejected_candidate_digest_is_still_checked() -> None:
+    from fa.inner_loop.admission_schema import AdmissionRecordError, validate_admission_record
+
+    record = _admission_fixture()
+    record["status"] = "ACQUIRING"
+    record["attempts"].append(
+        _admission_attempt(
+            attempt=2,
+            dispatch_kind="ADMISSION_REPAIR",
+            source_sha256="a" * 64,
+            candidate_sha256="invalid",
+            validation="DIAGNOSTICS",
+            route="RETRY",
+            diagnostics=[{"validator": "precheck", "rule": "step-near-miss", "severity": "FAIL", "line": 1}],
+        )
+    )
+    with pytest.raises(AdmissionRecordError):
+        validate_admission_record(record, run_id="admission-test")
+
+
+def test_direct_api_plan_guard_context_directory_and_expired_admission_deadline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import time
+
+    from fa.cli import _cmd_run
+    from fa.session.manager import RunContext
+
+    state = tmp_path / "state"
+    monkeypatch.setenv("FA_STATE_ROOT", str(state))
+    context = RunContext(
+        run_id="request-valid",
+        session_id="request-session",
+        workspace_path=tmp_path,
+        session_db_path=tmp_path / "session.db",
+        run_log_dir=tmp_path / "private-run",
+    )
+    code, flow = run_workflow(
+        **(
+            _request_input()
+            | {
+                "task": None,
+                "per_role_task": dict.fromkeys(["planner", "coder", "eval"], "role task"),
+            }
+        ),
+        config=tmp_path / "models.yaml",
+        workspace=tmp_path,
+        max_turns=1,
+        run_stage_fn=_cmd_run,
+        run_context=context,
+        deadline_mono=time.monotonic() - 1,
+    )
+    assert code == 2
+    assert flow is not None and flow.task == "" and flow.blocked_reason == "plan-ref/missing"
+    assert load_flow_state(context.run_log_dir / "flow_state.json") == flow
+    assert not (context.run_log_dir / "admission.json").exists()
+    assert not state.exists()
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert (
+        captured.err
+        == "fa workflow: invalid plan reference: missing\nfa workflow: admission storage error: lock-failed\n"
+    )
+
+
+def test_direct_api_plan_guard_schema_storage_error_has_sanitized_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from fa.cli import _cmd_run
+    from fa.inner_loop.admission_schema import AdmissionRecordError
+
+    monkeypatch.setenv("FA_STATE_ROOT", str(tmp_path / "state"))
+
+    def rejected(*_args: Any, **_kwargs: Any) -> Any:
+        raise AdmissionRecordError
+
+    # C0 injected storage-schema failure, supplementing the real-writer root cases.
+    monkeypatch.setattr(workflow, "write_admission_record", rejected)
+    code, flow = run_workflow(
+        **_request_input(), config=tmp_path / "models.yaml", workspace=tmp_path, max_turns=1, run_stage_fn=_cmd_run
+    )
+    assert code == 2 and flow is not None and flow.status == "FAILED"
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert (
+        captured.err
+        == "fa workflow: invalid plan reference: missing\nfa workflow: admission storage error: append-failed\n"
+    )
+
+
+def test_admission_artifact_utf8_read_is_independent_of_process_locale(tmp_path: Path) -> None:
+    import subprocess
+    import sys
+
+    from fa.inner_loop import workflow_artifacts as artifacts
+    from fa.inner_loop.plan_admission import PlanRef
+    from fa.inner_loop.workflow_artifacts import write_admission_record
+
+    path = tmp_path / "admission.json"
+    source_root = str(Path(artifacts.__file__).resolve().parents[2])
+    ref = PlanRef("планы/p.md", "EXPLICIT", "a" * 64)
+    write_admission_record(path, run_id="admission-test", plan_ref=ref)
+    script = (
+        "import sys, locale; from pathlib import Path\n"
+        "from fa.inner_loop.plan_admission import PlanRef\n"
+        "from fa.inner_loop import workflow_artifacts as artifacts\n"
+        "from fa.inner_loop.workflow_artifacts import write_admission_record\n"
+        "assert Path(artifacts.__file__).resolve().is_relative_to(Path(sys.argv[2]).resolve())\n"
+        "assert locale.getencoding().lower() not in ('utf-8', 'utf8')\n"
+        f"ref=PlanRef({ref.workspace_relative_path!a}, 'EXPLICIT', 'a'*64)\n"
+        f"attempt={_admission_attempt(validation='PASS', route='ADMITTED', source_sha256='a' * 64, diagnostics=[])!r}\n"
+        "write_admission_record(Path(sys.argv[1]), run_id='admission-test', "
+        "plan_ref=ref, attempt=attempt, status='ADMITTED')\n"
+    )
+    child = subprocess.run(
+        [sys.executable, "-c", script, str(path), source_root],
+        env=os.environ
+        | {
+            "LC_ALL": "C",
+            "PYTHONUTF8": "0",
+            "PYTHONCOERCECLOCALE": "0",
+            "PYTHONPATH": os.pathsep.join((source_root, os.environ.get("PYTHONPATH", ""))),
+        },
+        capture_output=True,
+        timeout=10,
+    )
+    assert (child.returncode, child.stdout, child.stderr) == (0, b"", b"")
+    assert json.loads(path.read_bytes())["attempts"][0]["route"] == "ADMITTED"
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf")])
+def test_admission_artifact_shared_eval_writer_rejects_non_json_numbers(tmp_path: Path, value: float) -> None:
+    from dataclasses import replace
+
+    from fa.inner_loop.workflow_artifacts import write_eval_report
+
+    path = tmp_path / "eval_report.json"
+    report = _eval_report()
+    write_eval_report(path, report)
+    before = path.read_bytes()
+    with pytest.raises(ValueError):
+        write_eval_report(path, replace(report, eval_independence={"disjoint": True, "invalid_number": value}))
+    assert path.read_bytes() == before
+    assert not list(tmp_path.glob("*.tmp"))
