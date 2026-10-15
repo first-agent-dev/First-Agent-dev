@@ -18,6 +18,7 @@ import os
 import shlex
 import sys
 import textwrap
+import time
 from dataclasses import FrozenInstanceError
 from pathlib import Path
 from xml.etree import ElementTree
@@ -951,3 +952,402 @@ def test_classify_vacuous_and_all_proven_contracts() -> None:
         )
         is SliceVerdict.PROVEN
     )
+
+
+# STEP7 — amended CT66. Real pytest, including post-run corruption at the
+# external report boundary; never replace the parser, runner or verdict code.
+
+
+def _report_wrapper(workspace: Path, monkeypatch: pytest.MonkeyPatch, after: str) -> None:
+    wrapper = workspace / "kill_report_runner.py"
+    wrapper.write_text(
+        "import os, sys, subprocess, shutil\n"
+        "from pathlib import Path\n"
+        "from xml.etree import ElementTree as ET\n"
+        "exit_code = subprocess.run([sys.executable, '-m', 'pytest', *sys.argv[1:]]).returncode\n"
+        "report = Path(next(arg.split('=', 1)[1] for arg in sys.argv if arg.startswith('--junitxml=')))\n"
+        + textwrap.dedent(after)
+        + "\nsys.exit(exit_code)\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        slice_verification, "KILL_CHECK_COMMAND", f"{shlex.quote(sys.executable)} {shlex.quote(str(wrapper))} {{path}}"
+    )
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "raise ImportError('collection failed')\n",
+        "def test_broken(:\n",
+        "import pytest\n@pytest.fixture(autouse=True)\ndef setup():\n    raise RuntimeError('setup failed')\n"
+        + _DEPENDENT_TEST,
+        "import pytest\n@pytest.fixture(autouse=True)\ndef teardown():\n    yield\n"
+        "    raise RuntimeError('teardown failed')\n" + _DEPENDENT_TEST,
+        "import pytest\n@pytest.mark.skip(reason='not executed')\ndef test_skip():\n    assert False\n",
+        "import pytest\n@pytest.mark.xfail(reason='expected failure')\ndef test_xfail():\n    assert False\n",
+        "# collected zero tests\n",
+    ],
+    ids=["collection", "syntax", "setup", "failure-and-teardown-error", "all-skipped", "all-xfailed", "zero"],
+)
+def test_ct66_nonexecution_and_infrastructure_are_errors(workspace: Path, source: str) -> None:
+    (workspace / "tests" / "test_thing.py").write_text(source, encoding="utf-8")
+
+    check = _run_kill_check(_directive("produce"), "tests/test_thing.py", workspace)
+
+    assert check.verdict is SliceVerdict.ERROR, check
+    assert check.directive == _directive("produce")
+    assert "JUnit" in check.detail
+    assert check.duration_s > 0
+
+
+def test_ct66_collection_error_wins_even_with_an_executed_failure(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (workspace / "tests" / "test_bad.py").write_text("raise ImportError('collection failed')\n", encoding="utf-8")
+    monkeypatch.setattr(
+        slice_verification,
+        "KILL_CHECK_COMMAND",
+        f"{shlex.quote(sys.executable)} -m pytest {{path}} -q --continue-on-collection-errors",
+    )
+
+    check = _run_kill_check(_directive("produce"), ("tests/test_thing.py", "tests/test_bad.py"), workspace)
+
+    assert check.verdict is SliceVerdict.ERROR, check
+    assert check.directive == _directive("produce")
+    assert "JUnit" in check.detail
+
+
+@pytest.mark.parametrize("command", ["ct66-no-such-executable {path}", "python -m pytest {path} --ct66-invalid-option"])
+def test_ct66_shell_and_pytest_usage_failures_cannot_prove_a_kill(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch, command: str
+) -> None:
+    monkeypatch.setattr(slice_verification, "KILL_CHECK_COMMAND", command)
+
+    check = _run_kill_check(_directive("produce"), "tests/test_thing.py", workspace)
+
+    assert check.verdict is SliceVerdict.ERROR, check
+    assert check.directive == _directive("produce")
+    assert "report is missing or invalid" in check.detail
+
+
+def test_ct66_timeout_cannot_prove_a_kill(workspace: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (workspace / "tests" / "test_thing.py").write_text(
+        "import time\ndef test_slow():\n    time.sleep(10)\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(slice_verification, "DEFAULT_VERIFY_TIMEOUT_SECONDS", 0.3)
+
+    check = _run_kill_check(_directive("produce"), "tests/test_thing.py", workspace)
+
+    assert check.verdict is SliceVerdict.ERROR, check
+    assert check.directive == _directive("produce")
+    assert "could not be run" in check.detail
+    assert "budget" in check.detail
+
+
+@pytest.mark.parametrize(
+    ("after", "detail"),
+    [
+        ("report.unlink()", "missing or invalid"),
+        ("report.write_text('<broken')", "missing or invalid"),
+        (
+            "tree = ET.parse(report)\nfor prop in tree.iter('property'):\n"
+            "    if prop.get('name') == 'fa_pytest_run_id': prop.set('value', 'previous-run')\n"
+            "tree.write(report)",
+            "not bound",
+        ),
+        (
+            "tree = ET.parse(report)\nfor suite in tree.iter('testsuite'): suite.set('failures', '0')\n"
+            "tree.write(report)",
+            "count contradicts",
+        ),
+        ("exit_code = 0", "runner status contradicts"),
+        ("exit_code = 2", "runner status contradicts"),
+        ("exit_code = 3", "runner status contradicts"),
+        ("exit_code = 4", "runner status contradicts"),
+        ("exit_code = 5", "runner status contradicts"),
+    ],
+    ids=["missing", "malformed", "wrong-run", "wrong-counter", "exit0", "exit2", "exit3", "exit4", "exit5"],
+)
+def test_ct66_rejects_unusable_report_or_runner_disagreement(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch, after: str, detail: str
+) -> None:
+    _report_wrapper(workspace, monkeypatch, after)
+
+    check = _run_kill_check(_directive("produce"), "tests/test_thing.py", workspace)
+
+    assert check.verdict is SliceVerdict.ERROR, check
+    assert check.directive == _directive("produce")
+    assert detail in check.detail
+
+
+def test_ct66_nonzero_exit_with_only_passed_rows_is_error(workspace: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (workspace / "tests" / "test_thing.py").write_text(_INDEPENDENT_TEST, encoding="utf-8")
+    _report_wrapper(workspace, monkeypatch, "exit_code = 1")
+
+    check = _run_kill_check(_directive("produce"), "tests/test_thing.py", workspace)
+
+    assert check.verdict is SliceVerdict.ERROR, check
+    assert check.directive == _directive("produce")
+    assert check.detail == "pytest runner status contradicts executed JUnitXML outcomes"
+
+
+def test_ct66_report_is_fresh_bound_and_cleaned_even_when_a_previous_report_is_replayed(
+    workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _report_wrapper(
+        workspace,
+        monkeypatch,
+        "Path('locations.txt').write_text(str(report))\nshutil.copyfile(report, 'previous.xml')",
+    )
+    first = _run_kill_check(_directive("produce"), "tests/test_thing.py", workspace)
+    first_path = Path((workspace / "locations.txt").read_text())
+    _report_wrapper(
+        workspace,
+        monkeypatch,
+        "Path('locations.txt').write_text(str(report))\nshutil.copyfile('previous.xml', report)",
+    )
+    second = _run_kill_check(_directive("produce"), "tests/test_thing.py", workspace)
+    second_path = Path((workspace / "locations.txt").read_text())
+
+    assert first.verdict is SliceVerdict.PROVEN, first
+    assert second.verdict is SliceVerdict.ERROR, second
+    assert "not bound" in second.detail
+    assert first_path != second_path
+    assert not first_path.parent.exists()
+    assert not second_path.parent.exists()
+
+
+@pytest.mark.parametrize("failed", [False, True], ids=["pass-and-skip", "failure-and-skip"])
+def test_ct66_skips_do_not_erase_executed_results(workspace: Path, failed: bool) -> None:
+    source = _DEPENDENT_TEST if failed else _INDEPENDENT_TEST
+    (workspace / "tests" / "test_thing.py").write_text(
+        source + "\nimport pytest\n@pytest.mark.skip(reason='optional')\ndef test_optional():\n    assert False\n",
+        encoding="utf-8",
+    )
+
+    check = _run_kill_check(_directive("produce"), "tests/test_thing.py", workspace)
+
+    assert check.verdict is (SliceVerdict.PROVEN if failed else SliceVerdict.VACUOUS), check
+    assert check.directive == _directive("produce")
+    assert check.duration_s > 0
+    if not failed:
+        assert check.detail == (
+            "the declared slice test set still passes (tests/test_thing.py) with produce mutated; "
+            "the tests do not detect removal of this producer"
+        )
+
+
+_JUNIT_ROWS = """<testsuites><testsuite tests="3" failures="1" errors="0" skipped="1">
+<testcase name="green"><properties><property name="fa_pytest_nodeid" value="test_x.py::green"/>
+<property name="fa_pytest_run_id" value="current"/></properties></testcase>
+<testcase name="red"><properties><property name="fa_pytest_nodeid" value="test_x.py::red"/>
+<property name="fa_pytest_run_id" value="current"/></properties><failure message="assertion"/></testcase>
+<testcase name="skip"><properties><property name="fa_pytest_nodeid" value="test_x.py::skip"/>
+<property name="fa_pytest_run_id" value="current"/></properties><skipped/></testcase>
+</testsuite></testsuites>"""
+
+
+def test_ct66_shared_parser_retains_outcomes_and_baseline_projection(tmp_path: Path) -> None:
+    path = tmp_path / "results.xml"
+    path.write_text(_JUNIT_ROWS, encoding="utf-8")
+
+    report, detail = slice_verification._parse_junit_report(path, run_id="current")
+
+    assert detail == ""
+    assert report is not None
+    assert report.outcomes == {"test_x.py::green": "passed", "test_x.py::red": "failed", "test_x.py::skip": "skipped"}
+    assert report.executed_count == 2
+    assert report.failure_count == 1
+    assert slice_verification._parse_nodeid_report(path) == (
+        {"test_x.py::green": True, "test_x.py::red": False, "test_x.py::skip": False},
+        "",
+    )
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        ('tests="3"', 'tests="-1"'),
+        ('tests="3"', 'tests="2"'),
+        ('failures="1"', 'failures="0"'),
+        ('errors="0"', 'errors="1"'),
+        ('errors="0"', 'errors="garbage"'),
+        ('skipped="1"', 'skipped="0"'),
+        ('tests="3"', 'tests="' + "9" * 5000 + '"'),
+        (' tests="3"', ""),
+        ('value="test_x.py::red"', 'value="test_x.py::green"'),
+        ('name="fa_pytest_nodeid"', 'name="not-nodeid"'),
+        ('value="test_x.py::red"', 'value=""'),
+        ('<failure message="assertion"/>', '<error message="setup"/>'),
+        ('<failure message="assertion"/>', "<failure/><skipped/>"),
+        ('<failure message="assertion"/>', "<failure/><failure/>"),
+        ("</properties>", '<property name="fa_pytest_nodeid" value="duplicate"/></properties>'),
+        ("</properties>", '<property name="fa_pytest_run_id" value="current"/></properties>'),
+        ('value="current"', 'value="previous"'),
+        ("<testsuites>", '<testsuites tests="1">'),
+        ("<testsuite tests=", "<garbage tests="),
+    ],
+    ids=[
+        "negative-count",
+        "tests-mismatch",
+        "failures-mismatch",
+        "suite-error",
+        "invalid-count",
+        "skip-mismatch",
+        "oversized-count",
+        "missing-count",
+        "duplicate-nodeid",
+        "missing-nodeid",
+        "empty-nodeid",
+        "case-error",
+        "contradictory-case",
+        "repeated-failure",
+        "duplicate-property",
+        "duplicate-run-id",
+        "old-run-id",
+        "aggregate-counter",
+        "invalid-structure",
+    ],
+)
+def test_ct66_detailed_parser_rejects_malformed_or_contradictory_evidence(tmp_path: Path, old: str, new: str) -> None:
+    path = tmp_path / "results.xml"
+    path.write_text(_JUNIT_ROWS.replace(old, new), encoding="utf-8")
+
+    report, detail = slice_verification._parse_junit_report(path, run_id="current")
+
+    assert report is None
+    assert detail.startswith("JUnit")
+
+
+@pytest.mark.parametrize("encoding", ["utf-8", "utf-16", "utf-32"])
+@pytest.mark.parametrize(
+    "declaration",
+    [
+        '<!DOCTYPE testsuites [<!ENTITY fake "forged">]>',
+        "<!DOCTYPE testsuites>",
+        '<!ENTITY fake "forged">',
+    ],
+)
+def test_ct66_junit_declarations_are_rejected_across_encodings(tmp_path: Path, encoding: str, declaration: str) -> None:
+    path = tmp_path / "results.xml"
+    path.write_bytes(('<?xml version="1.0"?>' + declaration + _JUNIT_ROWS).encode(encoding))
+
+    assert slice_verification._parse_junit_report(path) == (
+        None,
+        "JUnitXML report contains a forbidden DTD/entity declaration",
+    )
+
+
+def test_ct66_evidence_retains_directive_and_elapsed_cost(workspace: Path) -> None:
+    directive = _directive("produce")
+    started = time.monotonic()
+    check = _run_kill_check(directive, "tests/test_thing.py", workspace)
+    elapsed = time.monotonic() - started
+
+    assert check.verdict is SliceVerdict.PROVEN, check
+    assert check.directive == directive
+    assert check.detail == ""
+    assert 0 < check.duration_s <= elapsed
+
+
+@pytest.mark.parametrize(
+    "xml",
+    [
+        _JUNIT_ROWS.replace("<skipped/>", "<error/>").replace('skipped="1"', 'skipped="0"'),
+        _JUNIT_ROWS.replace("<testsuites>", '<testsuites errors="1">'),
+        '<testsuites><testsuite tests="0" failures="0" errors="0" skipped="0"><properties/></testsuite>'
+        + _JUNIT_ROWS.removeprefix("<testsuites>").removesuffix("</testsuites>").replace('failures="1"', 'failures="0"')
+        + "</testsuites>",
+    ],
+    ids=["case-error-with-zero-suite-error-count", "partial-aggregate-error-count", "later-suite-counter"],
+)
+def test_ct66_independent_report_errors_cannot_be_masked(tmp_path: Path, xml: str) -> None:
+    path = tmp_path / "results.xml"
+    path.write_text(xml, encoding="utf-8")
+
+    report, detail = slice_verification._parse_junit_report(path, run_id="current")
+
+    assert report is None
+    assert detail.startswith("JUnit")
+
+
+@pytest.mark.parametrize(
+    "xml",
+    [
+        _JUNIT_ROWS.replace('tests="3"', 'tests="0003"'),
+        _JUNIT_ROWS.removeprefix("<testsuites>").removesuffix("</testsuites>"),
+        _JUNIT_ROWS.replace(
+            '<testcase name="green">',
+            '<properties><property name="platform" value="Linux"/></properties>'
+            '<system-out>suite stdout</system-out><system-err>suite stderr</system-err><testcase name="green">',
+        ),
+    ],
+    ids=["leading-zero-counter", "single-suite-root", "optional-suite-sections"],
+)
+def test_ct66_valid_report_variants_keep_the_same_evidence(tmp_path: Path, xml: str) -> None:
+    path = tmp_path / "results.xml"
+    path.write_text(xml, encoding="utf-8")
+
+    report, detail = slice_verification._parse_junit_report(path, run_id="current")
+
+    assert detail == ""
+    assert report is not None
+    assert report.outcomes == {"test_x.py::green": "passed", "test_x.py::red": "failed", "test_x.py::skip": "skipped"}
+    assert (report.executed_count, report.failure_count) == (2, 1)
+
+
+def test_ct66_baseline_still_accepts_a_valid_zero_test_report(workspace: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (workspace / "tests" / "test_thing.py").write_text("# no tests yet\n", encoding="utf-8")
+    monkeypatch.setattr(
+        slice_verification,
+        "NODEID_CAPTURE_COMMAND",
+        f"{shlex.quote(sys.executable)} -m pytest {{paths}} "
+        "-p fa.inner_loop.junit_nodeid_plugin --junitxml={report} -q",
+    )
+
+    captured = capture_test_nodeids(("tests/test_thing.py",), root=workspace)
+
+    assert captured.nodeids == {}
+    assert captured.detail == ""
+    assert captured.command_result is not None
+    assert captured.command_result.exit_code == 5
+
+    check = _run_kill_check(_directive("produce"), "tests/test_thing.py", workspace)
+    assert check.verdict is SliceVerdict.ERROR
+    assert check.directive == _directive("produce")
+    assert check.detail == "JUnitXML records zero executed tests (empty or all skipped)"
+    assert check.duration_s > 0
+
+
+def test_ct66_unknown_xml_encoding_is_an_unusable_report(tmp_path: Path) -> None:
+    path = tmp_path / "results.xml"
+    path.write_bytes(b'<?xml version="1.0" encoding="not-a-real-encoding"?><testsuites/>')
+
+    report, detail = slice_verification._parse_junit_report(path)
+
+    assert report is None
+    assert detail.startswith("JUnitXML report is missing or invalid:")
+
+
+def test_ct66_rejects_non_junit_root_with_actionable_detail(tmp_path: Path) -> None:
+    path = tmp_path / "results.xml"
+    path.write_text("<not-junit/>", encoding="utf-8")
+
+    assert slice_verification._parse_junit_report(path) == (None, "JUnitXML report has no testsuite/testsuites root")
+
+
+def test_ct66_scripts_provenance_error_preserves_directive_metadata(workspace: Path) -> None:
+    scripts = workspace / "scripts"
+    scripts.mkdir()
+    (scripts / "__init__.py").write_text("", encoding="utf-8")
+    (scripts / "demo.py").write_text("def produce():\n    return 7\n", encoding="utf-8")
+    (workspace / "tests" / "test_thing.py").write_text(_INDEPENDENT_TEST, encoding="utf-8")
+    directive = _directive("produce", path="scripts/demo.py")
+
+    check = _run_kill_check(directive, "tests/test_thing.py", workspace)
+
+    assert check.verdict is SliceVerdict.ERROR, check
+    assert check.directive == directive
+    assert check.detail.startswith("pytest did not prove the scripts overlay import:")
+    assert check.duration_s > 0

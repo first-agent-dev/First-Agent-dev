@@ -2155,3 +2155,22 @@ E203 DERIVED ADVERSARIAL I03 FOUNDATION REVIEW AND CONCRETE CONDITIONAL BRIEFS, 
     Q59/Q60/Q63 and profile/input/Git/maintenance acceptance remain explicit gates, not ratified
     policy. No implementation, pytest/type/Docker/main-host acceptance or shipped/live tick.
     [operator strict-review request; named file:line evidence and actual checks in review/specs]
+
+E204  FACT  Implement amended I02 SLICE5 STEP7/CT66 from base ea77299: replace shell-FAIL
+    inference with one detailed JUnit parser, baseline-compatible bool projection and fresh
+    per-invocation report/run-ID binding. Preserve overlay provenance, scripts guard, Q53(c)
+    unrelated genuine-failure sensitivity and existing baseline policy. Missing/stale/malformed,
+    collection/setup/teardown/runner/timeout errors, counter disagreement and zero/all-skipped
+    evidence fail closed. No new runtime policy, dependency or global mutation-scope change.
+    Build real CPython 3.13.16 environment; frozen dev sync succeeds. Actual pre-edit 131 tests;
+    final three suites 195 passed; exact STEP7 two-suite exit 151 passed. CT66 exact remove-call
+    verify_slice->_run_kill_check: targets=1, edits=1, PROVEN via real overlay/subprocess/report.
+    Targeted mutmut: 223 selected, initially 183 killed/40 survived; strengthen tests, refresh
+    coverage, rerun all 40: 38 killed/2 provably unobservable. Aggregate 221 killed, 2 documented
+    equivalents, no source suppressions; not a fresh final 223-run claim. Ruff, targeted mypy
+    and pylint pass; unchanged formatter hunks and two pre-existing overlay-test mypy errors
+    independently reproduced, not hidden or repaired. Check only STEP7, append new producer
+    host cases H01-H07 with C1/I03 C3 prerequisites and safe handoff; no live fixture execution,
+    no new C1/C2/C3 evidence, no I02 SHIPPED or GAP-01–15 closure. Q59/Q60/Q63 remain open.
+    [actual commands/results/config/IDs/equivalence proofs: notes/i02-slice-verification-design.md
+    §6; future host cases: notes/e2e-live-verification-register.md amended CT66 section]

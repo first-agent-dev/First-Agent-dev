@@ -406,3 +406,164 @@ To be explicit, since the project's failure mode is scope growth: no mutant gene
 ranking, no flake detection, no retry policy inside this module, no new sandbox gate (S6's
 Do-not: a stricter gate denied 8/10 real verifier commands), no parallelism, and no reuse of
 `_run_subprocess_fallback`.
+
+## 6. CT66 implementation evidence (2026-10-15)
+
+**Scope:** E204 completes amended I02 SLICE5 STEP7, not SLICE6 or I03. Pre-edit base
+`ea77299b65346f70c466eac096160f750de2b6f3` classified any kill command `FAIL` as PROVEN.
+No report was required. No blocking CT66 policy question remained: Q53(c) continues to allow
+slice-level attribution, including a genuine unrelated failure. Q59/Q60/Q63 stay unresolved
+for their affected work; this change neither ratifies them nor adopts a clean-control baseline gate.
+
+### Mechanism and failure contract
+
+- `_run_kill_check` still applies the declared mutation, creates the existing narrow overlay,
+  and requires the provenance probe before running tests. It then allocates a private temporary
+  report directory and fresh UUID run ID. Mandatory plugin/JUnit arguments are appended by the
+  harness, not supplied by the plan. The run ID is computed into the scrubbed child environment.
+- The explicitly loaded `pytest_itemcollected` plugin retains authoritative nodeids and adds
+  `fa_pytest_run_id` when `FA_VERIFY_JUNIT_RUN_ID` is set. Each testcase must carry exactly one
+  matching run ID. A previous report copied to a new report path is rejected. The report is
+  parsed before temporary-directory cleanup; tests verify cleanup on success and rejection.
+- `_parse_junit_report` is the single detailed parser. It distinguishes pass/failure/skip,
+  rejects testcase errors, duplicates, DTD/entity declarations (including UTF-16/32 input),
+  malformed XML/unknown encodings, invalid suite structure and contradictory counters. Required
+  pytest suite counters and any supplied aggregate counters must agree. Decimal comparison
+  avoids oversized-counter integer conversion exceptions while accepting leading zeros.
+- `_parse_nodeid_report` projects the same report into the old baseline map: passed=True,
+  failed/skipped=False, unusable=None. A valid zero-test baseline still yields `{}`; the same
+  zero-execution report is not evidence of a successful kill.
+- `_kill_check_result` requires at least one executed failure and pytest exit 1/FAIL for PROVEN.
+  Valid executed all-pass requires exit 0/PASS and yields VACUOUS. Missing/stale/malformed/error
+  reports, zero/all-skipped, timeouts and exit/report disagreements yield ERROR. Original
+  scripts-import provenance diagnostics and directive metadata remain intact.
+- This is local correlation, not authentication against hostile test code. Independently
+  supervised job/revision binding remains I03 work. No retries, second verifier, new test mapping,
+  new dependency, global mutation-scope change, or production fault-injection switch was added.
+
+### Environment and actual checks
+
+Python 3.11 was not used as a substitute. The normal uv standalone download failed at its
+non-allowlisted GitHub release-asset redirect. Certificate-verified codeload source builds supplied
+CPython **3.13.16** and OpenSSL **3.0.18**; SQLite **3.40.1**, zlib **1.2.13** and ctypes imported
+successfully. `uv 0.13.1 sync --frozen --extra dev --python <built-python3.13>` installed all 76
+locked project/dev packages. No TLS-verification bypass or dependency-file edit. Build products,
+venv, scratch mutation copies and raw logs remain outside tracked files.
+
+Executed in this checkout (uv available on PATH):
+
+```text
+Before edit:
+uv run --frozen pytest tests/test_verify_slice.py tests/test_slice_verification_runner.py tests/test_mutation_overlay.py -q
+131 passed in 8.33s
+
+Final normal suite:
+uv run --frozen pytest tests/test_verify_slice.py tests/test_slice_verification_runner.py tests/test_mutation_overlay.py -q
+195 passed in 28.30s
+
+Exact STEP7 exit command:
+uv run pytest tests/test_verify_slice.py tests/test_slice_verification_runner.py -q
+151 passed in 22.76s
+
+ruff check <both changed production modules and both changed test files>
+All checks passed!
+mypy <both changed production modules> tests/test_verify_slice.py
+Success: no issues found in 3 source files
+pylint <both changed production modules>
+Your code has been rated at 10.00/10
+```
+
+The four-file mypy invocation also exposed two **pre-existing** overlay-test errors: accessing
+unexported module `shutil`, and an already-narrowed enum identity comparison. Running mypy on
+`git show HEAD:tests/test_mutation_overlay.py` with the same two explicit production modules
+reproduced exactly those errors. No unrelated repairs or weakened assertions.
+
+Whole-file formatter check still reports pre-existing hunks (production verifier 5, verifier
+suite 1, overlay suite 1; plugin 0). A `SequenceMatcher`/Counter comparison of original-versus-
+formatted and current-versus-formatted text proved these hunk contents identical: **no new
+format violations**. Only new test regions were formatted. This is not a claim that the whole
+repository passes formatter/mypy or that the full repository test suite ran.
+
+### Exact producer kill and targeted mutation evidence
+
+The actual production operator ran:
+
+```python
+from pathlib import Path
+from fa.inner_loop.slice_verification import (
+    KillDirective, KillOperator, SliceVerdict, apply_kill, _run_kill_check,
+)
+root = Path.cwd()
+d = KillDirective(operator=KillOperator.REMOVE_CALL,
+    path="src/fa/inner_loop/slice_verification.py", symbol="verify_slice",
+    callee="_run_kill_check", line=1)
+a = apply_kill((root / d.path).read_text(), d)
+assert (a.targets, a.edits) == (1, 1)
+c = _run_kill_check(d, (
+    "tests/test_verify_slice.py::test_verify_slice_composes_a_proven_kill_into_the_frozen_slice_result",
+), root)
+assert c.verdict is SliceVerdict.PROVEN, c
+```
+
+Actual output: `CT66 producer kill: targets=1, edits=1, verdict=proven, detail=''`.
+This executes the real overlay, probe, subprocess pytest and fresh bound report, not a mocked
+return or source-only assertion. It is C0 real-I/O, not a workflow-composition C1 claim.
+
+**mutmut 3.6.0:** an excluded scratch copy used `source_paths` containing only
+`src/fa/inner_loop/slice_verification.py`, `also_copy = ["src/fa", "scripts"]`, and explicit
+selection of the three suites above. `pytest_add_cli_args` was `-x -q -k
+'not test_the_overlay_leaves_the_real_checkout_untouched'`: only that unrelated real-Git
+checkout-invariance case is excluded from the non-Git scratch run, never from the normal suite.
+The child pytest plugin stays uninstrumented because mutmut's trampoline cannot initialize from
+those throwaway child working directories. Two initial stats-collection failures established
+these setup requirements; neither was counted as mutation evidence. The eventual clean and
+forced-failure controls passed before mutations ran.
+
+```text
+mutmut run --max-children 4 \
+  'fa.inner_loop.slice_verification.x__kill_check_result*' \
+  'fa.inner_loop.slice_verification.x__junit_testcase*' \
+  'fa.inner_loop.slice_verification.x__junit_counter_error*' \
+  'fa.inner_loop.slice_verification.x__parse_junit_report*'
+```
+
+The first sweep executed all **223 selected mutants: 183 killed, 40 survived**. Tests were then
+strengthened without removing old assertions; fresh coverage was collected and all **40 exact
+survivor IDs** explicitly rerun: **38 killed, 2 survived**. These are two measured runs, not a
+claim that all 223 ran again on the final test snapshot. Source bytes were verified identical
+between the checkout and both scratch runs: SHA256
+`96021dbf5c05ad9fd2ec7e200d70b651dc5170f057e97e1bd163ecb925d9e2c5`.
+
+**KILLED VIA EXACT ASSERTIONS (221 across those runs):**
+- `fa.inner_loop.slice_verification.x__junit_testcase__mutmut_1..32` (32): nodeids,
+  invocation binding, outcomes and independently detectable testcase errors.
+- `fa.inner_loop.slice_verification.x__junit_counter_error__mutmut_1..74`, except `_70`
+  (73): malformed/contradictory counters, later-suite validation, partial aggregate counters,
+  and valid leading-zero/optional-section controls.
+- `fa.inner_loop.slice_verification.x__parse_junit_report__mutmut_1..45` (45): missing,
+  malformed, wrong-root and encoding/declaration negatives, duplicate rows and valid roots.
+- `fa.inner_loop.slice_verification.x__kill_check_result__mutmut_1..71` (71): PROVEN vs
+  VACUOUS vs ERROR, preserved directives, bounded measured duration and actionable diagnostics.
+
+**ACCEPTED AS EQUIVALENT / UNOBSERVABLE (2; no source suppression):**
+- `fa.inner_loop.slice_verification.x__junit_testcase__mutmut_33`: changes the successful
+  row's accompanying error string from `""` to `"XXXX"`. Its sole production caller only reads
+  that error when the row is None; successful rows proceed through counter validation and
+  return a new empty detail. Every public report/projection/kill result is identical.
+- `fa.inner_loop.slice_verification.x__junit_counter_error__mutmut_70`: changes
+  `raw.lstrip("0")` to `raw.lstrip("XX0XX")`. The preceding ASCII-digit validation excludes X;
+  Python strips a set of characters, so on every admitted input the operation is identical.
+  This is an upstream-validation/standard-library invariant, not an untested exception path.
+
+Raw scratch results are not committed/generated artifacts. The scoped configuration, exact IDs,
+source hash, counts, reproduction command and equivalence proofs above preserve the result.
+Global mutmut configuration/CI scope is unchanged.
+
+### Remaining acceptance
+
+Every new callable/property producer is registered in
+[e2e-live-verification-register.md](e2e-live-verification-register.md) with H01–H07 planned host
+cases, controls, safe scratch execution, observed artifacts and BLOCKED conditions. No host
+fixture helper was implemented before independent review. Local tests are C0 (including real
+I/O); C1 belongs to the remaining SLICE6 wiring; no new C2 or deployed C3 result is claimed.
+STEP7 completion is not I02 SHIPPED, not GAP-01–15 closure, and not I03 delivery.

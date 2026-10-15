@@ -16,11 +16,14 @@ nothing to ordinary test runs.
 
 from __future__ import annotations
 
+import os
 from typing import Protocol
 
-__all__ = ["JUNIT_NODEID_PROPERTY", "pytest_itemcollected"]
+__all__ = ["JUNIT_NODEID_PROPERTY", "JUNIT_RUN_ID_ENV", "JUNIT_RUN_ID_PROPERTY", "pytest_itemcollected"]
 
 JUNIT_NODEID_PROPERTY = "fa_pytest_nodeid"
+JUNIT_RUN_ID_PROPERTY = "fa_pytest_run_id"
+JUNIT_RUN_ID_ENV = "FA_VERIFY_JUNIT_RUN_ID"
 
 
 class _PytestItem(Protocol):
@@ -33,3 +36,6 @@ class _PytestItem(Protocol):
 def pytest_itemcollected(item: _PytestItem) -> None:
     """Attach pytest's exact nodeid before it creates JUnit test reports."""
     item.user_properties.append((JUNIT_NODEID_PROPERTY, item.nodeid))
+    # Computed by the harness, never inherited through the environment scrubber.
+    if run_id := os.environ.get(JUNIT_RUN_ID_ENV):
+        item.user_properties.append((JUNIT_RUN_ID_PROPERTY, run_id))

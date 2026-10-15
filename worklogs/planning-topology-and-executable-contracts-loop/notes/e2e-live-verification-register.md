@@ -130,3 +130,56 @@ outside, and mutmut's global `source_paths` remains src-only.
   real run (E130). That measurement has no in-repo proxy.
 - **Observe-vs-enforce.** The switch recorded in `verification.json` (E132, CT77c) changes
   nothing a unit test can see; its first real exercise is the live host.
+
+## Amended CT66 — new report producers and planned host cases (2026-10-15)
+
+**PLANNED, not live evidence.** I02 STEP7 supplies C0/parser and C0 real-I/O proof. SLICE6
+must first prove the admitted-plan → controller → verifier → eval composition (C1). I03 F
+owns deployed C3 acceptance, the independently reviewed fixture package and final artifact schema
+(Q63); do not create/run host fixture helpers before that review or infer live completion here.
+The pre-existing rows above are historical and unchanged. This section adds the new producer set.
+
+| Producer | Local oracle | Planned host case / fixture | Required deployed observation |
+| :--- | :--- | :--- | :--- |
+| `_JUnitReport.executed_count` | mixed pass/failure/skip rows, all-skipped and empty subprocess runs | CT66-H01: ordinary failure, pass, mixed skip, all-skip and zero-test variants | real failure → PROVEN; executed all-pass → VACUOUS; zero/all-skip → ERROR; skip never counts as a failure |
+| `_JUnitReport.failure_count` | detailed parser distinguishes failure from skip | CT66-H01 plus unrelated genuine failure | only executed failures count; Q53(c) unrelated failure still qualifies without per-contract mapping or a new baseline gate |
+| `_junit_property` | missing/empty/duplicate nodeid or duplicate run identity is unusable | CT66-H02: controlled report-boundary omission/duplication in scratch fixture | ERROR with an actionable diagnostic, never a reconstructed nodeid or PROVEN |
+| `_junit_testcase` | exact nodeid/run ID, conflicting outcomes, setup/teardown errors | CT66-H03: real setup error, body failure plus teardown error, and collection error plus executed failure | each error dominates any genuine failure and cannot become PROVEN |
+| `_junit_counter_error` | per-suite and aggregate count contradictions / invalid structure | CT66-H04: report-boundary counter corruption after a real pytest run | ERROR despite a failure row; all reported counters agree before a report can be accepted |
+| `_parse_junit_report` | one detailed parser, malformed/DTD/encoding/duplicate negatives | CT66-H05: missing/malformed report, forbidden declaration and exact previous report replay | ERROR, including when an old report is copied onto the current fresh report path |
+| `_kill_check_result` | runner/report agreement, exits 0–5, actual timeout, shell 127 | CT66-H06: timeout, missing command, usage failure, interrupted/internal runner status, and deliberate exit/report disagreement | ERROR; a nonzero shell exit is not kill evidence |
+| `pytest_itemcollected` run-ID extension | harness run ID serialized with authoritative nodeid | CT66-H07: two consecutive harness-issued kills; deliberately replay the first report into the second | distinct harness invocation identities and private report locations; replay rejected; temporary report directory cleaned after each operation |
+
+### Safe host execution plan and evidence handoff
+
+1. **Preconditions:** approved I03 fixture package; real deployed session workspace and ready
+   venv; admitted explicit PlanRef; current deployed SHA/image recorded; Q63 evidence schema
+   ratified. No host execution occurred for this change. Do not substitute this sandbox for
+   `/sessions/<id>/` or assume the historically listed image paths still apply.
+2. Copy only reviewed fixtures into a unique session-local scratch directory. Use tiny src-layout
+   producers, tests outside mutation roots, and both `src/` and `scripts/` cases. Keep PTY and
+   mandatory execution authority intact. No tracked production edits, credentials, global debug
+   flags, real user files or network-dependent test commands.
+3. Run H01's passing/failing controls in **observe** mode first, through the real CLI/workflow,
+   not direct private-helper calls. Verify persisted same-attempt typed kill evidence reaches
+   eval, without altering the actual eval report. C1 wiring is a prerequisite, not supplied by
+   these local helper tests. Repeat relevant negative cases in enforce mode and verify repair
+   routing rather than successful completion.
+4. H02/H04/H05/H06 use an explicitly reviewed **fixture-only** report/runner fault adapter
+   inside the managed job; do not add a production switch that disables validation. Keep that
+   adapter separate from the canonical negative parser tests. H03 uses ordinary pytest errors,
+   and H07 uses an exact prior report, not fabricated success evidence.
+5. Capture run/attempt IDs, deployed revision/image, admitted plan revision, fixture variant,
+   selected TESTS paths, runner outcome/exit, persisted verdict/detail and routing outcome under
+   the approved run artifact directory. Report paths/run IDs are correlation data, not credentials
+   or a claim of hostile-code-proof authenticity. I03 adds independently supervised job/revision
+   binding; local report identity does not replace it. Preserve approved evidence before cleanup.
+6. Required two-sided verdicts: genuine failure is PROVEN; independent all-pass is VACUOUS;
+   each negative above is ERROR, never PROVEN. Repeat the exact CT66 remove-call producer kill
+   on the reviewed scratch product build and require an executed test failure. Record every case
+   as PASS/FAIL/BLOCKED with actual artifacts; do not relabel missing evidence as PASS.
+
+E204's local CT66 producer kill also exercises the **unpatched** `KILL_CHECK_COMMAND` with
+mandatory harness report arguments in this checkout's ready venv. This supersedes the old
+row's “never exercised verbatim” local claim, not its deployed-image/workspace risk. It is not
+live-host acceptance and leaves the historical row intact.

@@ -39,13 +39,14 @@ import shutil
 import subprocess
 import tempfile
 import time
+import uuid
 from collections.abc import Iterable, Iterator, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Final, override
 from xml.etree import ElementTree
 
-from fa.inner_loop.junit_nodeid_plugin import JUNIT_NODEID_PROPERTY
+from fa.inner_loop.junit_nodeid_plugin import JUNIT_NODEID_PROPERTY, JUNIT_RUN_ID_ENV, JUNIT_RUN_ID_PROPERTY
 from fa.inner_loop.plan_ids import FAIL, PlanDiagnostic, PlanIds, SliceRecord
 from fa.inner_loop.tools.bash_env import build_scrubbed_env
 
@@ -413,46 +414,120 @@ def _existing_test_paths(test_paths: Sequence[str], root: Path) -> tuple[str, ..
     return tuple(dict.fromkeys(existing))
 
 
-def _parse_nodeid_report(path: Path) -> tuple[dict[str, bool] | None, str]:
-    """Read exact nodeid/status rows from a harness-issued JUnitXML report."""
+class _JUnitOutcome(enum.StrEnum):
+    PASSED = "passed"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+
+
+@dataclass(frozen=True, slots=True)
+class _JUnitReport:
+    outcomes: Mapping[str, _JUnitOutcome]
+
+    @property
+    def executed_count(self) -> int:
+        return sum(outcome is not _JUnitOutcome.SKIPPED for outcome in self.outcomes.values())
+
+    @property
+    def failure_count(self) -> int:
+        return sum(outcome is _JUnitOutcome.FAILED for outcome in self.outcomes.values())
+
+
+def _junit_property(testcase: ElementTree.Element, name: str) -> str | None:
+    values = [
+        prop.attrib.get("value")
+        for prop in testcase.findall("./properties/property")
+        if prop.attrib.get("name") == name
+    ]
+    return values[0] if len(values) == 1 and values[0] else None
+
+
+def _junit_testcase(
+    testcase: ElementTree.Element, *, run_id: str | None
+) -> tuple[tuple[str, _JUnitOutcome] | None, str]:
+    nodeid = _junit_property(testcase, JUNIT_NODEID_PROPERTY)
+    if nodeid is None:
+        return None, f"JUnit testcase {testcase.attrib!r} lacks one nonempty exact nodeid property"
+    if run_id is not None and _junit_property(testcase, JUNIT_RUN_ID_PROPERTY) != run_id:
+        return None, f"JUnit testcase {nodeid!r} is not bound to this kill invocation"
+    states = [child.tag for child in testcase if child.tag in {"failure", "error", "skipped"}]
+    if len(states) > 1:
+        return None, f"JUnit testcase {nodeid!r} has contradictory or repeated outcomes"
+    if "error" in states:
+        return None, f"JUnitXML reports a collection/setup/teardown testcase error for {nodeid!r}"
+    outcome = _JUnitOutcome.PASSED
+    if states:
+        outcome = _JUnitOutcome.FAILED if states[0] == "failure" else _JUnitOutcome.SKIPPED
+    return (nodeid, outcome), ""
+
+
+def _junit_counter_error(root: ElementTree.Element) -> str:
+    for suite in root.iter():
+        if suite.tag not in {"testsuite", "testsuites"}:
+            continue
+        allowed_children = {"testsuite", "properties", "system-out", "system-err"}
+        if suite.tag == "testsuite":
+            allowed_children.add("testcase")
+        if any(child.tag not in allowed_children for child in suite):
+            return f"JUnitXML has malformed children on <{suite.tag}>"
+        cases = tuple(suite.iter("testcase"))
+        expected = {
+            "tests": len(cases),
+            "failures": sum(case.find("failure") is not None for case in cases),
+            "errors": 0,
+            "skipped": sum(case.find("skipped") is not None for case in cases),
+        }
+        for name, count in expected.items():
+            raw = suite.get(name)
+            # pytest emits all four on testsuite; aggregate testsuites counters
+            # are optional, but must agree with the rows whenever present.
+            if raw is None and suite.tag == "testsuites":
+                continue
+            if raw is None or re.fullmatch(r"[0-9]+", raw) is None:
+                return f"JUnitXML has an invalid or missing {name} count on <{suite.tag}>"
+            # String comparison also handles arbitrarily large malformed counters
+            # without int()'s digit-limit exception escaping the evidence boundary.
+            if (raw.lstrip("0") or "0") != str(count):
+                return f"JUnitXML {name} count contradicts testcase outcomes on <{suite.tag}>"
+    return ""
+
+
+def _parse_junit_report(path: Path, *, run_id: str | None = None) -> tuple[_JUnitReport | None, str]:
+    """One detailed parser for harness snapshots and invocation-bound kills (CT66/68/69)."""
     try:
         xml_bytes = path.read_bytes()
     except OSError as error:
         return None, f"JUnitXML report is missing or invalid: {error}"
-    upper_xml = xml_bytes.upper()
+    upper_xml = xml_bytes.replace(b"\x00", b"").upper()
     if b"<!DOCTYPE" in upper_xml or b"<!ENTITY" in upper_xml:
         return None, "JUnitXML report contains a forbidden DTD/entity declaration"
     try:
         root = ElementTree.fromstring(xml_bytes)  # noqa: S314 — declarations are rejected above
-    except ElementTree.ParseError as error:
+    except (ElementTree.ParseError, LookupError, ValueError) as error:
         return None, f"JUnitXML report is missing or invalid: {error}"
+    if root.tag not in {"testsuite", "testsuites"}:
+        return None, "JUnitXML report has no testsuite/testsuites root"
 
-    for suite in root.iter():
-        if suite.tag not in {"testsuite", "testsuites"}:
-            continue
-        try:
-            errors = int(suite.attrib.get("errors", "0"))
-        except ValueError:
-            return None, f"JUnitXML has an invalid errors count on <{suite.tag}>"
-        if errors:
-            return None, f"JUnitXML reports {errors} collection/setup error(s)"
-
-    nodeids: dict[str, bool] = {}
+    outcomes: dict[str, _JUnitOutcome] = {}
     for testcase in root.iter("testcase"):
-        values = [
-            prop.attrib.get("value")
-            for prop in testcase.findall("./properties/property")
-            if prop.attrib.get("name") == JUNIT_NODEID_PROPERTY
-        ]
-        if len(values) != 1 or not values[0]:
-            return None, f"JUnit testcase {testcase.attrib!r} has {len(values)} exact nodeid properties"
-        nodeid = values[0]
-        if nodeid in nodeids:
+        row, detail = _junit_testcase(testcase, run_id=run_id)
+        if row is None:
+            return None, detail
+        nodeid, outcome = row
+        if nodeid in outcomes:
             return None, f"JUnitXML repeats pytest nodeid {nodeid!r}"
-        # A skipped/xfail test is not green. The baseline comparison can then
-        # distinguish red-to-red from a formerly green test that stops passing.
-        nodeids[nodeid] = not any(testcase.find(tag) is not None for tag in ("failure", "error", "skipped"))
-    return nodeids, ""
+        outcomes[nodeid] = outcome
+    if detail := _junit_counter_error(root):
+        return None, detail
+    return _JUnitReport(outcomes), ""
+
+
+def _parse_nodeid_report(path: Path) -> tuple[dict[str, bool] | None, str]:
+    """Baseline-compatible projection: failure/skip is false, unusable report is None."""
+    report, detail = _parse_junit_report(path)
+    if report is None:
+        return None, detail
+    return {nodeid: outcome is _JUnitOutcome.PASSED for nodeid, outcome in report.outcomes.items()}, ""
 
 
 def capture_test_nodeids(
@@ -1365,7 +1440,8 @@ def _run_kill_check(
 
     Q53(c): every `TESTS:` path declared for the slice runs under every
     functional contract's mutation. Any failing test makes this contract's
-    kill-check ``PROVEN``; an unrelated test can therefore be falsely
+    kill-check ``PROVEN`` only with consistent current JUnit evidence and no
+    infrastructure errors; an unrelated test can therefore be falsely
     attributed, a cost and risk explicitly accepted by the operator.
 
     A surviving test set is ``VACUOUS``, not a pass. Any uncertainty -- an
@@ -1424,12 +1500,36 @@ def _run_kill_check(
                     f"overlay provenance probe did not pass: {probe.stderr_tail or probe.stdout_tail}",
                     started,
                 )
-            command = KILL_CHECK_COMMAND.format(path=shlex.join(paths))
-            kill_env = _gate_subprocess_env(Path(root), base_env=env, kill_check=True)
-            (result,) = run_commands((command,), workspace=Path(root), deadline=deadline, env=kill_env)
+            with tempfile.TemporaryDirectory(prefix="fa-kill-junit-") as report_directory:
+                report_path = Path(report_directory) / "results.xml"
+                run_id = uuid.uuid4().hex
+                # These arguments belong to the harness, not the plan or test fixture.
+                command = (
+                    KILL_CHECK_COMMAND.format(path=shlex.join(paths))
+                    + " -p fa.inner_loop.junit_nodeid_plugin"
+                    + f" --junitxml={shlex.quote(str(report_path))}"
+                )
+                kill_env = _gate_subprocess_env(Path(root), base_env=env, kill_check=True)
+                kill_env[JUNIT_RUN_ID_ENV] = run_id
+                (result,) = run_commands((command,), workspace=Path(root), deadline=deadline, env=kill_env)
+                report, report_detail = _parse_junit_report(report_path, run_id=run_id)
     except OverlayError as exc:
         return _errored(directive, f"overlay failed: {exc}", started)
+    except OSError as exc:
+        return _errored(directive, f"kill-check report operation failed: {exc}", started)
 
+    return _kill_check_result(directive, paths_label, started, result, report, report_detail)
+
+
+def _kill_check_result(
+    directive: KillDirective,
+    paths_label: str,
+    started: float,
+    result: CommandResult,
+    report: _JUnitReport | None,
+    report_detail: str,
+) -> KillCheck:
+    """A shell failure alone is never mutation evidence (amended CT66)."""
     elapsed = time.monotonic() - started
     combined_tail = f"{result.stdout_tail}\n{result.stderr_tail}"
     if _OVERLAY_PROVENANCE_ERROR_MARKER in combined_tail:
@@ -1440,7 +1540,15 @@ def _run_kill_check(
         )
     if result.outcome is CommandOutcome.ERROR:
         return _errored(directive, f"{paths_label} could not be run: {result.stderr_tail}", started)
-    if result.outcome is CommandOutcome.FAIL:
+    if report is None:
+        return _errored(directive, report_detail, started)
+    if report.executed_count == 0:
+        return _errored(directive, "JUnitXML records zero executed tests (empty or all skipped)", started)
+    expected_exit = 1 if report.failure_count else 0
+    expected_outcome = CommandOutcome.FAIL if report.failure_count else CommandOutcome.PASS
+    if result.exit_code != expected_exit or result.outcome is not expected_outcome:
+        return _errored(directive, "pytest runner status contradicts executed JUnitXML outcomes", started)
+    if report.failure_count:
         return KillCheck(
             directive=directive,
             verdict=SliceVerdict.PROVEN,
