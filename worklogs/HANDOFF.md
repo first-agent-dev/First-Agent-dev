@@ -3,7 +3,7 @@
 > Read [`knowledge/llms.txt`](../knowledge/llms.txt) §MUST READ FIRST.
 > Current local delivery is distinct from final I03/deployed acceptance.
 
-## Current state — I02 LOCAL SHIPPED / I03 IMPLEMENTATION IN PROGRESS, 2026-10-16 / E234
+## Current state — I02 LOCAL SHIPPED / I03 IMPLEMENTATION IN PROGRESS, 2026-10-16 / E235
 
 Branch `arena/86633f17-first-agent-dev` only. Retained I02 runtime/test proof snapshot
 `a32a72fc58db4b9a5b048a9b6475649bcf3e32b4`. E230/E231 finalized planning; E232 adds the first
@@ -41,7 +41,15 @@ Ubuntu host test,OS isolation,managed nested acquisition or host supervisor deli
 only;Go is an indirect inherited hook-build diagnosis,not a new FA runtime/deployment requirement.
 PTY stays. Q69–Q73 resolved;Q72 remains its narrow46-links/15-files+banner repair decision.
 
-**E234 current action — Q75(a) SELECTED, IMPLEMENTATION RESUMED:** the operator explicitly
+**E235 current continuation:** complete19-operation wire/result/error codec and full immutable
+receipt/operation data now exist.72new+64existing C0/C3 tests pass; eight developmental full136case
+mutations killed with zero runner/collection errors/skips and exact restoration. Details/evidence
+in the review/ledger. No service/authority/kernel proof. Follow the operator request to exhaust
+independent tasks before questions. No Docker CLI/socket in this sandbox; external supported
+Python3.13.16/frozen dev rebuilt. Profile/client/dispatch and deployment joins remain unfinished.
+All35STEPS/four final duties unchecked. E234 replay policy remains ratified, never reopen Q75.
+
+**E234 retained action — Q75(a) SELECTED, IMPLEMENTATION RESUMED:** the operator explicitly
 selected `exact_cached_replay`. Same authenticated principal, namespace, original request/input
 and original proof may recover ONLY the original memory-cached completed reply after that handoff
 revoked proof. No fresh work, re-execution, renewal or durable-secret reconstruction. Cache loss/

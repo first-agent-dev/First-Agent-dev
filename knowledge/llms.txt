@@ -59,6 +59,8 @@ Task type → primary entrypoint, then secondary:
 [worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e232/controller-entry.json.gz]: CT98 local developmental evidence only.
 [worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e234/replay.json.gz]: Q75(a) C0/C3 replay/type evidence, not service/live proof.
 
+[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e235/wire.json.gz]: Closed wire/receipt C0/C3 evidence, not service or host proof.
+
 **Deleted files (merged into knowledge/reference.md):** `knowledge/architecture.md`, `knowledge/glossary.md`, `knowledge/overview/FEATURES.md`. If you see references to these, they now live in `knowledge/reference.md`.
 
 **Archived 2026-08-25 (b_full) — moved to `worklogs/archive/`:**

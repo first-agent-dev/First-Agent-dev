@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from enum import StrEnum
 from typing import Any
 
@@ -199,3 +199,81 @@ class GrantReply:
 
     def to_wire_result(self) -> dict[str, Any]:
         return {**self._public_result(), "capability": self.capability}
+
+
+class JobState(StrEnum):
+    RESERVED = "RESERVED"
+    RUNNING = "RUNNING"
+    EXITED = "EXITED"
+    CANCELLED = "CANCELLED"
+    TIMED_OUT = "TIMED_OUT"
+    LAUNCH_FAILED = "LAUNCH_FAILED"
+    UNKNOWN = "UNKNOWN"
+
+
+@dataclass(frozen=True)
+class OperationRef:
+    operation_id: str
+    view_id: str
+    owner_run_id: str
+    generation: int
+    input_tree_sha256: str
+
+    def __post_init__(self) -> None:
+        _hex_id(self.operation_id, "op-")
+        _hex_id(self.view_id, "view-")
+        _hex_id(self.input_tree_sha256, "", 64)
+        _positive_integer(self.generation)
+        try:
+            SessionManager.validate_run_id(self.owner_run_id)
+        except SessionManagerError:
+            raise ExecutionContractError from None
+
+
+@dataclass(frozen=True)
+class ExecutionReceipt:
+    """Complete v1 receipt data; construction cannot attest backend observations."""
+
+    schema_version: int
+    operation_id: str
+    namespace: NamespaceRef
+    workspace_id: str
+    view_id: str
+    owner_run_id: str
+    generation: int
+    revision_id: str | None
+    original_revision_id: str | None
+    input_tree_sha256: str
+    plan_sha256: str | None
+    profile_id: str
+    image_digest: str
+    state: JobState
+    exit_code: int | None
+    timed_out: bool
+    stdout_tail: str
+    stderr_tail: str
+    truncated: bool
+    duration_ms: int
+    terminal_barrier: bool
+
+    def __post_init__(self) -> None:
+        # Local import keeps the single wire-schema authority independent of
+        # construction order, rather than duplicating receipt validation here.
+        from fa.execution.protocol import validate_receipt
+
+        if not isinstance(self.namespace, NamespaceRef) or not isinstance(self.state, JobState):
+            raise ExecutionContractError
+        validate_receipt(self.to_dict())
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, record: dict[str, Any]) -> ExecutionReceipt:
+        from fa.execution.protocol import validate_receipt
+
+        validate_receipt(record)
+        values = dict(record)
+        values["namespace"] = NamespaceRef(**record["namespace"])
+        values["state"] = JobState(record["state"])
+        return cls(**values)

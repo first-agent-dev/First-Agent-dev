@@ -38,6 +38,8 @@ New module/function/test names below are **planned interfaces**, not claims abou
 E234 adds only immutable NamespaceRef/ViewRef, closed operation/purpose names, four grant-result
 shapes, canonical input hashing and a bounded completed-grant-reply cache in types.py/supervisor.py.
 These are C0/C3 foundations, NOT a wire decoder, journal, dispatcher, issuer, client or service.
+E235 adds the complete closed wire/receipt codec and72 C0/C3 cases; all19 operation payload/result
+shapes are covered, including real socketpair framing. No authority/service activation.
 STEP1–4 remain unchecked; normative CT99/CT100 producer calls are absent and uncredited.
 
 ## Grounding, sequence and scope discipline
@@ -115,11 +117,11 @@ CONTRACTS:
     nonroot/cap-drop/NNP/seccomp/resource limits, digest-pinned image/toolchains, no default network
     or host/control mounts. Dependency cache is approved/read-only; unsupported dependency access
     blocks. Root/daemon/kernel/admin are TCB; profile/cgroup/UID/UDS facts require actual host proof.
-TESTS: tests/test_controller_entry.py, tests/test_execution_supervisor.py, tests/integration/test_execution_boundary.py   (NEW)
+TESTS: tests/test_controller_entry.py, tests/test_execution_supervisor.py, tests/test_execution_protocol.py, tests/integration/test_execution_boundary.py   (NEW)
 ```verify
-uv run pytest tests/test_controller_entry.py tests/test_execution_supervisor.py -q
+uv run pytest tests/test_controller_entry.py tests/test_execution_supervisor.py tests/test_execution_protocol.py -q
 FA_REQUIRE_EXECUTION_HOST=1 uv run pytest tests/integration/test_execution_boundary.py -q -m execution_host
-uv run ruff check src/fa/controller_entry.py src/fa/execution tests/test_controller_entry.py tests/test_execution_supervisor.py tests/integration/test_execution_boundary.py
+uv run ruff check src/fa/controller_entry.py src/fa/execution tests/test_controller_entry.py tests/test_execution_supervisor.py tests/test_execution_protocol.py tests/integration/test_execution_boundary.py
 ```
 - [ ] STEP1: implement spec §2.1 closed operations/results (including all four BashExecutor methods), capability/volume-map/startup recovery contracts; define frozen types/protocol/profile validation and new actual controller entry module per spec §§1–3; test strict keys/types/limits and installed import closure, including editable-pth/CWD/PYTHONPATH poisons (exit: unit tests collect and pass; isolated module executes real CLI help, not a no-op)
 - [ ] STEP2: implement supervisor service/client/cell worker using existing PTY machinery, approved profile and operation reservation/inspect/cancel; remove no behavior from ordinary PTY contract (exit: unit no-replay/timeout/wire/auth tests pass)

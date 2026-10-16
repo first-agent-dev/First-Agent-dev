@@ -442,3 +442,32 @@ All35STEPS and all four transferred final duties remain incomplete.
 E234 closeout: actual-source plan0FAIL/6retainedWARN;6slices17FUNCTIONAL35uncheckedSTEPS;
 IDs/classes/kill grammar preserved. Doc309filesPASS;whitespace clean. E232 unchanged and final
 source/test hashes bound to restored proof. E234 archive SHA256 `20fb15a64ed248e8303e1e332255bfb94c7e5165f375d579f065a3b14653c2e7`.
+
+## E235 — closed wire and complete receipt foundation, 2026-10-16
+
+Continuation instruction explicitly requests all remaining SLICE1 contracts; independent tasks
+are pursued before asking about blocked work. Sandbox reset was repaired by separate-index exact
+comparison with c0676de, no extras, then mixed metadata alignment only; no source bytes replaced.
+External supported CPython3.13.16/frozen dev environment rebuilt. No Docker CLI/daemon socket is
+available; no production host/cgroup/image approval supplied. Do not label host proof passed.
+
+New protocol.py reuses existing fastjsonschema, closes all19 request payloads/results and error
+shapes, applies independent4MiB frame/1MiB UTF-8 text/64KiB tail bounds, duplicate/nonfinite/type/
+path checks, reserved exec ID and response correlation. Invalid IDs are not echoed; valid-ID
+schema failures retain only the ID, never exception data/grants. Four-byte network-order framing
+uses real socketpair tests and performs no retries. Complete immutable OperationRef/ExecutionReceipt
+and closed JobState added; shape truth does not attest actual exit, authority or descendant barrier.
+Nullable receipt fields are structurally admitted for provisioning; profile/stage semantic checks
+and authoritative source/PlanRef binding remain integration work, not an inferred authorization.
+
+Actual owning baseline136PASS0.77s/restored136PASS0.86s (72new wire+64existing replay cases).
+RuffPASS/format5unchanged;targeted Mypy5filesPASS. Eight developmental full136case mutations have
+28/1/1/1/2/1/2/1 CALL failures, respectively schema/duplicate-key/decode-frame-size/encode-frame-size/
+UTF-8-size/reserved-op-ID/unknown-exit/reply-correlation; zero collection/setup/teardown errors/skips,
+exact restoration. Not normative full-SLICE1 kills. Initial formatting/import-library typing and
+fixture typing defects repaired, not kills or waivers. Lossless [wire evidence](evidence/i03-e235/wire.json.gz)
+includes raw reports, commands, source/test hashes and driver. E232/E234 evidence untouched.
+
+No STEP/CT completion: fixed profiles, service/client/cell integration, launch/path mapping,
+actual WorkspaceAuthority and host/kernel proof are still absent. Continue independent profile,
+transport/client and dispatch work; collect unresolved joins without prematurely stopping others.

@@ -2711,3 +2711,12 @@ E234  I03 SLICE1 Q75(a) RESOLVED / REPLAY FOUNDATION  2026-10-16;operator-select
     none run. All35STEPS/four final acceptance duties remain incomplete;no activation/status tick.
     Final planning:0FAIL/6retainedWARN,6slices17FUNCTIONAL35uncheckedSTEPS;IDs/classes/kill grammar
     preserved;doc309filesPASS;whitespace clean;E232 exact/E234 final-source hashes match.
+
+E235  I03 SLICE1 CLOSED WIRE/RECEIPT CHUNK  2026-10-16;independent continuation before roadblock questions.
+    Complete19op payload/results/error schemas;bounded framed UTF8JSON;strict keys/types/duplicates/
+    paths/byte limits/reservedID/correlation;frozen fullReceipt/OperationRef;no execution or authority.
+    72new+64existing cases:baseline136PASS0.77s/restored136PASS0.86s;RuffPASS/format5unchanged;
+    Mypy5filesPASS. Eight full136case developmental mutations:28/1/1/1/2/1/2/1CALLfails;zero errors/
+    skips;exact restore. notes/evidence/i03-e235/wire.json.gz. Owning SLICE1 test inventory updated.
+    DockerCLI/socket absent;external3.13.16/frozen dev restored. All35STEPS/four final duties open;
+    no normative CT99/100 proof or service activation. Continue unblocked profile/client/dispatch.
