@@ -2744,3 +2744,18 @@ E237  I03 JOURNAL/DISPATCH CONSTRUCTION  2026-10-16;CT99/100,F17/Q75,F15;not act
     in notes/evidence/i03-e237. No actual authority,daemon/main,issuer or Docker/cgroup reconciliation.
     Existing spec already defers real ownership/service integration;all35STEPS/four final duties
     remain open. E238 immutable build/install proof in progress;F18 active PlanRef join collected.
+
+E238  I03 IMMUTABLE BUILD/INSTALLED CLI  2026-10-16;CT98,F16,F15;not deployment.
+    Existing Docker uv lock/no-dev now --no-editable;pre-site -I-S audit before real -I CLI help.
+    Real rebuilt runtime-only installed CLI C2/C3 + byte-matched sources;both profile/session mode
+    negatives before callbacks. Owning294PASS30.13s/restored294PASS30.03s;four full294kills5/1/1/2
+    CALLfails,including actual rebuilt installed producer. Recipe cases staticC0,not Docker proof.
+    Fourth selector precheck formatting miss preserved/repaired with exact hashes,not a kill.
+    RuffPASS/format17unchanged/Mypy17target+178sourcePASS;entry30PASS2.84s. Broader690PASS12SKIP
+    diagnosedmissingShellCheck,not credited;supplied verified test-only PyPI shellcheck-py wheel,
+    deploy90PASS2.93s;final broader702PASS37.75s zero skips/warnings. Raw notes/evidence/i03-e238.
+    F18/Q76 OPEN:authoritative active PlanRef absent from normal view schema;nullable-only-provision
+    receipt language conflicts with ordinary/Q59 no-workflow execution. Recommend view-bound actual
+    admitted plan,ordinary-null allowed,formal workflow evidence nonnull;NOT ratified. Ask after all
+    independent construction. No real authority/backend/main/host facts or production cutover.
+    All35STEPS/four transferred final duties remain unfinished. No I01/I04–06 or I02 rewrite.

@@ -67,6 +67,10 @@ Task type → primary entrypoint, then secondary:
 [worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e237/callback-copies.json.gz]: Full286case private callback-copy sensitivity.
 [worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e237/journal-dispatch.json.gz]: Earlier285case development/harness history, superseded by final286 bank.
 
+[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e238/installed-build.json.gz]: Real installed CLI C2/C3 + all294case developmental sensitivity; no Docker/host activation.
+[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e238/broader.json.gz]: Initial broader690PASS12SKIP, missing ShellCheck not credited.
+[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e238/broader-final.json.gz]: Final702PASS with verified external test-only ShellCheck; zero skips/warnings, not deployed signoff.
+
 **Deleted files (merged into knowledge/reference.md):** `knowledge/architecture.md`, `knowledge/glossary.md`, `knowledge/overview/FEATURES.md`. If you see references to these, they now live in `knowledge/reference.md`.
 
 **Archived 2026-08-25 (b_full) — moved to `worklogs/archive/`:**

@@ -252,7 +252,9 @@ class SupervisorDispatcher:
             profile = self._profiles.get(request["payload"]["profile_id"])
             if profile is None:
                 raise SupervisorError("UNAPPROVED_PROFILE")
-            if request["payload"]["timeout_ms"] > profile.max_command_ms:
+            if request["payload"]["timeout_ms"] > profile.max_command_ms or profile.interactive != (
+                request["payload"]["session_id"] is not None
+            ):
                 raise SupervisorError("INPUT_POLICY")
         self._authorize(peer, copy.deepcopy(request))  # Actual namespace/view/capability/role authority REQUIRED.
 

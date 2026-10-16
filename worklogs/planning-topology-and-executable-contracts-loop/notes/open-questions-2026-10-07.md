@@ -1617,3 +1617,30 @@ Use actual dispatcher/authority composition before product acceptance; unit inje
 Developmental mutation must remove replay authorization/dedup/redaction mechanisms, with actual
 CALL failures and zero runner/collection errors. Normative CT99/CT100 kills retain full declared
 SLICE1 paths and remain pending; real-host proof remains final I03 acceptance work.
+
+## Q76 — Authoritative PlanRef binding and ordinary execution without a workflow
+
+**Status: OPEN — E238/F18, 2026-10-16. Recommendation is not operator approval.**
+Independent SLICE1 journal/dispatcher/client/worker/build construction was completed/tested before
+asking; no production service/authority activation or completion claim follows from those helpers.
+
+**Verified join:** execution/workspace spec §2.1 exec has no PlanRef; normal create_view has only
+candidate_scope:null, and §3.1 view.json has no active PlanRef. Receipt nevertheless requires an
+authoritatively reconstructed plan_sha256 with nullable-plan text limited to pre-source provisioning.
+Q59 preserves ordinary/manual execution and advisory invocation; existing normal CLI/outer chat
+need not have an active workflow PlanRef. Do not fabricate a hash or require a new workflow mode.
+The worker cannot select a binding; caller-supplied raw hash alone is not authoritative evidence.
+
+**(a) Recommended:** bind the existing controller-admitted PlanRef once into protected immutable
+view/execution context; supervisor rechecks its actual source/hash. Allow plan_sha256:null for
+ordinary execution with NO active workflow plan (and appropriate provisioning). Formal workflow/
+verification evidence still requires the real admitted plan; null never substitutes for that proof.
+Extend the closed view/admission schema consistently, not a model-selected raw exec hash.
+
+**(b) Keep the current nullable-only-before-source rule:** operator supplies/clarifies the actual
+trusted PlanRef source for ordinary no-workflow commands, and where the supervisor binds it.
+Do not silently invent one or introduce a mandatory-workflow route while clarification is pending.
+
+Both keep Q59/Q60/Q63/Q74/Q75, arbitrary shell inside cells, no token persistence and all unresolved
+host/authority proof obligations. Changes need closed-schema/receipt mismatch/ordinary-vs-workflow
+negatives and eventual real authority composition; mere DTO/null acceptance is not authorization.

@@ -560,3 +560,59 @@ actual WorkspaceAuthority/service main/positive managed kernel proof until integ
 slice-sequence decision needed. Independent immutable installation/build proof continues in E238.
 Collected F18 PlanRef join remains: ordinary execution vs nullable-only-provisioning text, and no
 active PlanRef in ordinary view metadata. Do not fabricate a plan hash or move that choice to worker.
+
+## E238 — immutable install/build preparation and remaining F18 join, 2026-10-16
+
+CT98/F16/F15: Dockerfile.fa now uses existing frozen uv sync --no-dev --no-editable, then installed
+closure audit under -I -S BEFORE any site-enabled CLI, then real isolated controller help. The RUN
+&& chain fails build on invalid closure. No dependency/lock/build system change or Docker-build claim.
+tests/test_controller_installed.py rebuilds the real package into a runtime-only venv using the frozen
+lock, forces first-agent rebuild and checks ALL installed .py bytes equal current checkout. Actual
+installed controller_entry/cli.main run, no mocked CLI. Project CWD/fa/sitecustomize/PYTHONPATH/
+PYTHONHOME/project-venv poison cannot run its marker; actual nonisolated launch returns78 before CLI;
+pre-site executable/outside .pth/editable metadata reject without marker. New profile/session gate
+checks BOTH interactive-null and noninteractive-nonnull before ownership callback/handler.
+
+Final owning11module bank294PASS30.13s/restored294PASS30.03s, zero skips/warnings/collection/setup/
+teardown errors. Four all294case developmental mutations: entry producer5CALLfails including
+ACTUAL rebuilt installed nonisolated-entry case; noneditable recipe1; pre-site recipe1; profile
+session mode2. Recipe kills are STATIC C0, not a Docker image build. Actual installed producer is
+C2, but does NOT prove wrappers/auto-run/session launch paths or deployed immutable ownership.
+One fourth-selector precheck missed Ruff multiline formatting; no mutation applied/no kill credit.
+Only already-finished three prefix runs preserved after exact source-hash equality, then fourth,
+restored and static checks executed; history retained. Exact source restoration.
+RuffPASS/format17unchanged/Mypy17target+178sourcePASS; entry30PASS2.84s separately.
+[Installed/build evidence](evidence/i03-e238/installed-build.json.gz)262323bytes
+SHA256370f252d661b5655f945c3f70972d496d88de46152962f2a3605d266e21f9f15.
+
+Broader initial690PASS12SKIP35.79s: existing deploy tests lacked shellcheck. Not credited as proof;
+obtained shellcheck-py0.11.0.1 manylinux wheel from PyPI, verified wheel SHA256
+1b274df81de5b000ff78db433e7328b87e52e3c38481c60f8e488c3095beef05, extracted test-only ShellCheck0.11.0
+outside Git (binary SHA2564da528ddb3a4d1b7b24a59d4e16eb2f5fd960f4bd9a3708a15baddbdf1d5a55b).
+No runtime/app dependency or new Go/Haskell requirement. Deploy90PASS2.93s; final broader21modules
+**702PASS37.75s, zero skips/warnings**, including lifecycle/plan/skills/deploy/entrypoint/secret tests.
+[Initial broader](evidence/i03-e238/broader.json.gz) retained; [final broader](evidence/i03-e238/broader-final.json.gz).
+Development static-slice assertion and missed parametrization (two unwanted libtmux setup errors)
+were fixed explicitly, not hidden by skip/tool installation or counted as kills. Earlier installed
+snapshot preview from a584017 is labelled preview only; final fixture byte-matches current source.
+
+**F18 — confirmed specification/producer-consumer join defect, not a proved runtime exploit.**
+Spec §2.1 exec payload carries no PlanRef; create_view includes plan_ref only inside CANDIDATE scope;
+§3.1 ordinary view metadata has no active PlanRef. Yet §2.1 receipt requires authoritative plan_sha256
+and permits null only before source provisioning, never verification. Existing ordinary/manual chat
+and Q59 advisory invocation can execute without an active workflow PlanRef. Selecting a fake hash,
+implicit unrelated plan, worker-reported hash or requiring every ordinary run to enter a workflow
+would silently change that contract. Source verified actual nullable workflow plan context in
+workflow_controller.py and optional normal CLI execution; this is not solved by journal/DTO shape.
+Recommend trusted immutable view-level active PlanRef, supplied by existing controller admission and
+rehashed under supervisor authority, null for genuinely unplanned ordinary execution/provisioning;
+formal workflow/verification evidence requires its actual admitted PlanRef. No new model routing
+mode. [Q76](open-questions-2026-10-07.md#q76--authoritative-planref-binding-and-ordinary-execution-without-a-workflow)
+is OPEN, recommendation NOT ratification. Exhausted independent journal/transport/build work before ask.
+
+Remaining activation: actual WorkspaceAuthority/issuer + Docker backend/reconciliation, protected
+volume maps/approved image+UID/cgroup/cache facts, real service main/unit and coherent controller
+factory/provisioner/wrapper integration. Existing spec explicitly postpones positive managed kernel
+proof until actual authority is wired. No fake authority/failing-main/service placeholder, no unsafe
+read-only-/sessions cutover into current writable legacy prologue. All35STEPS and four final duties
+remain unchecked; local broad regression is NOT independent review or deployed signoff.

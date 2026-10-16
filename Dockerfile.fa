@@ -83,9 +83,9 @@ RUN mkdir -p /opt/uv-python && \
     ln -sf python3.13 /usr/local/bin/python && \
     chmod -R a+rX /opt/uv-python /usr/local/bin/python3.13
 
-# Install FA runtime dependencies into an image-owned venv. The live
-# bind-mounted /workspace/src still wins at runtime via PYTHONPATH, so
-# normal source edits do not require an image rebuild; dependency changes do.
+# Immutable installed controller closure. Project source must never become an
+# editable install in the secret-bearing controller. Runtime entrypoint/wrapper
+# cutover is separate I03 integration, not proved merely by this build gate.
 COPY pyproject.toml uv.lock README.md /opt/first-agent/
 COPY src /opt/first-agent/src
 # After building the image-owned venv, make it world-readable/executable so the
@@ -93,7 +93,9 @@ COPY src /opt/first-agent/src
 # any root-only default perms).
 RUN cd /opt/first-agent && \
     uv venv /opt/fa-venv --python /usr/local/bin/python3.13 && \
-    UV_PROJECT_ENVIRONMENT=/opt/fa-venv uv sync --frozen --no-dev && \
+    UV_PROJECT_ENVIRONMENT=/opt/fa-venv uv sync --frozen --no-dev --no-editable && \
+    /opt/fa-venv/bin/python -I -S /opt/first-agent/src/fa/controller_entry.py --check-install /opt/fa-venv && \
+    /opt/fa-venv/bin/python -I -m fa.controller_entry --help >/dev/null && \
     rm -rf /tmp/uv-cache && \
     chmod -R a+rX /opt/fa-venv /opt/first-agent
 

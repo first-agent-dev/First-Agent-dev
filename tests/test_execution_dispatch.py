@@ -10,6 +10,7 @@ import os
 import socket
 import struct
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -86,11 +87,13 @@ class Fixture:
             return {"released": True}
         return GrantReply(Operation.HANDOFF, ISSUED, None, 2, "rev-" + "5" * 32)
 
-    def make_service(self, *, uid: int | None = None) -> SupervisorDispatcher:
+    def make_service(
+        self, *, uid: int | None = None, configured_profile: ExecutionProfile | None = None
+    ) -> SupervisorDispatcher:
         return SupervisorDispatcher(
             client_uids=frozenset({os.getuid() if uid is None else uid}),
             rpc_timeout_ms=2000,
-            profiles=(profile(),),
+            profiles=(profile() if configured_profile is None else configured_profile,),
             journal=self.journal,
             replies=CompletedReplyCache(max_entries=32),
             authorize=self.authorize,
@@ -186,12 +189,22 @@ def test_backend_exception_is_secret_free_uncertain_and_not_replayed(tmp_path: P
 
 
 @pytest.mark.parametrize(
-    "profile_id,timeout,code", [("not-approved", 1000, "UNAPPROVED_PROFILE"), ("interactive", 1001, "INPUT_POLICY")]
+    "profile_id,timeout,session,interactive,code",
+    [
+        ("not-approved", 1000, "main", True, "UNAPPROVED_PROFILE"),
+        ("interactive", 1001, "main", True, "INPUT_POLICY"),
+        ("interactive", 1000, None, True, "INPUT_POLICY"),
+        ("verification", 1000, "main", False, "INPUT_POLICY"),
+    ],
 )
 def test_profile_and_configured_limit_deny_before_authority_or_handler(
-    tmp_path: Path, profile_id: str, timeout: int, code: str
+    tmp_path: Path, profile_id: str, timeout: int, session: str | None, interactive: bool, code: str
 ) -> None:
     case = Fixture(tmp_path)
+    if not interactive:
+        case.service = case.make_service(
+            configured_profile=replace(profile(), profile_id="verification", interactive=False)
+        )
     req = {
         **request(),
         "op": "exec",
@@ -210,13 +223,13 @@ def test_profile_and_configured_limit_deny_before_authority_or_handler(
             "timeout_ms": timeout,
             "cwd": ".",
             "command": "fixture",
-            "session_id": "main",
+            "session_id": session,
         },
     }
     parsed = decode_request(encode_json(req))
     response = case.service._dispatch(PeerIdentity(os.getpid(), os.getuid(), os.getgid()), parsed)
-    assert response["error"]["code"] == code
     assert case.auth_calls == case.handler_calls == 0
+    assert response["error"]["code"] == code
     assert case.journal.lookup("op-" + RID, NS) is None
 
 
