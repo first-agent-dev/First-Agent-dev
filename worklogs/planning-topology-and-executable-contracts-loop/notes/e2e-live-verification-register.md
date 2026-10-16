@@ -1133,3 +1133,14 @@ pre-commit fetch from go.dev fails outside allowed egress. Real-body diagnostic 
 precommit traceback. No skip/ready-marker/hook bypass; root foreign Arena hook preserved.
 Blocked proof report/table/reproduction/hashes/full identity dispositions in E218 of E211 note;
 not acceptance. Independent/operator review and D8/other reader/prompt reconciliation remain.
+
+
+### E220 — ordered local audit complete; not deployed-host acceptance
+
+Completed877pass baseline precedes40FUNCTIONAL+CT79+2supplemental PROVEN invocations,
+including each16normative+2supplemental full487-path SLICE6 proof; current hashes/UUIDs/
+provenance/manifests verified, no skips/errors. STEP17 local ordering now satisfied. Actual
+just check/test rc1 solely on common Go/Gitleaks readiness;5033pass1fail12skip1xfail.
+See [blocked acceptance/evidence record](i02-local-acceptance.md). Local reader/prompt/export
+obligations reconciled; operator dispositions and independent review open. No table's deployed
+status is upgraded. I03 acquisition/isolation/host fixtures remain undelivered.

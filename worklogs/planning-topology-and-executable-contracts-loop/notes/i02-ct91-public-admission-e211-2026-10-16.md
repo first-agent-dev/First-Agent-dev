@@ -1429,3 +1429,28 @@ restoration inputs; `i02-d3-d5-d8-controls.py` reproduces. These are not normati
 or per-contract test mappings. All tracked Python and git status unchanged across controls.
 No Go binary found in usual Linux/system/user SDK paths. Environment unblock still required.
 No checkbox/DoD acceptance yet; complete final unmutated bank BEFORE any final declared kills.
+
+
+## E220 — ordered closure audit completed; real environment/review stop, 2026-10-16
+
+Proof snapshot c4cb55fe4d0a63a4ac43c62acacdac54b9404bad. Completed877pass0skip baseline
+preceded all43 actual producer invocations:40FUNCTIONAL+CT79+2supplemental, all PROVEN,
+exact declared manifests, native UUIDs/import provenance, no skips/errors, source hashes and
+Git status unchanged at final exit0. Includes amended CT66=110pass5fail and all16 normative
+SLICE6 runs on each full487 public bank. STEP17 now checked; E218 concurrent evidence and
+rejected876pass1skip external baseline remain explicitly non-closure history. External harness
+CT61 edit-count and CT83 script-root defects corrected without production changes; all43 rerun
+against the actual completed877 baseline, not fabricated new baseline identity.
+
+Actual just check→just test completed:5033pass1fail12skip1xfail/5047,570.71s,83.18% coverage,
+composite rc1. Every other blocking subgate passed; independent CLI floors27/78 passed after
+test prevented recipe's chained floor invocation. Candidate-only failures0,common1,baseline-only8;
+6old identities explicitly mapped (3Q55/CT95 replacements plus3D3 parameterizations),576new.
+D1/D2/D3/D4-local/D5/D8 now reconciled; deferred wrappers/coder-brief remain incomplete.
+
+[Blocked local acceptance record](i02-local-acceptance.md) has all43 costs/results, exact
+per-case proposed dispositions, eight Mypy fixes, remaining review checklist and lossless
+[durable evidence inventory](evidence/i02-e220/manifest.json). GoSDK missing; pinned Gitleaks
+requires >=1.24.11 plus build dependencies. No hook/test bypass. Environment provision and
+rerun, operator dispositions, independent retained-plan/source/evidence review/signoff remain.
+Record is NOT acceptance; I02 IN PROGRESS, I03/acquisition/isolation/host package undelivered.

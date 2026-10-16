@@ -541,19 +541,25 @@ uv run ruff check src/fa/inner_loop/workflow_controller.py src/fa/inner_loop/wor
 - [ ] STEP13: implement read-only SessionManager.resolve_workflow_workspace; validate plan/task/inject before lifecycle, recheck allocated workspace, and enforce spec §1 failure/evidence classes. Update help without fixing E19. Unsupported coder-containing managed acquisition blocks before child provider; preserve verified non-coder delegation (Q70). Contain the SD-C fixture plan inside its fixture workspace; repair/promotion uses a disposable workspace at the same canonical relative path (exit: `uv run pytest tests/test_verify_gate_live.py -q -k "plan_preflight or direct_api_plan_guard or plan_help or acquisition_unavailable"` exits 0)
 - [ ] STEP14: implement spec §5 baseline state independent of counters; capture once after admission, reject capture/storage uncertainty before coder, reuse across repeated coder/repair/replan, and check symmetric slice→TESTS topology equality (exit: `uv run pytest tests/test_verify_gate_live.py -q -k "baseline or t0 or repeated_configured_coders or eval_replan"` exits 0)
 - [ ] STEP16: prove direct explicit-plan C1/C2/C3: actual controller→_cmd_run→drive_session with only provider mocked; valid/invalid-first-valid-later admission, no/failed planner, budget/indeterminate/UTF8/size/path/run-ID blocks, actual registry symlink denial, stale source-hash contention, write failure before retry/after promotion, Q58 same-path bytes, T0 reuse, actual eval/evidence and stage ordering. Add negative unsupported invoke_workflow test (zero child provider), not nested success proof. Preserve tracked source bytes. Detected post-coder PlanRef mismatch and persistence failure still reach eval using pinned IDs and cannot succeed in either mode (exit: `uv run pytest tests/test_verify_gate_live.py -q -k "ct91_public or acquisition_unavailable or plan_ref_mismatch"` exits 0)
-- [ ] STEP17: after Q69 fixture factoring and a completed unmutated whole-path baseline, run the full declared tests/test_verify_gate_live.py path once per retained FUNCTIONAL contract: CT71, CT72, CT73, CT75, CT76, CT77b, CT77c, CT77, CT86, CT87, CT90, CT91, CT92, CT93, CT94, CT95. Report all 16 contract×path runs, cost/provenance and Q53(c) attribution risk; do not replace kills with -k subsets. Keep tests outside mutation roots and restore source (exit: every retained named producer mutation is killed)
+- [x] STEP17: after Q69 fixture factoring and a completed unmutated whole-path baseline, run the full declared tests/test_verify_gate_live.py path once per retained FUNCTIONAL contract: CT71, CT72, CT73, CT75, CT76, CT77b, CT77c, CT77, CT86, CT87, CT90, CT91, CT92, CT93, CT94, CT95. Report all 16 contract×path runs, cost/provenance and Q53(c) attribution risk; do not replace kills with -k subsets. Keep tests outside mutation roots and restore source (exit: every retained named producer mutation is killed)
 
 **Scope/progress:** STEP IDs 11 and 15 move entirely to I03; mixed STEPs retain the IDs above and
 have clause-level successors in the migration bank. STEP8 remains checked only for the historical
-operator Q58 decision. STEP17 remains open: E218's699-case frozen baseline and18 exact487-case
-mutation runs finished, but were launched concurrently. The required baseline-before-mutation
-ordering was not satisfied. All18 mechanical PROVEN results are diagnostic only for STEP17;
-a fresh serial complete-path run after a completed baseline is required. E212 remains valid
-only for its older hashes. Q72 dispositions only the two repaired E19 documentation causes. No other new box or
-shipped status is ticked; full-repository/disposition/review DoD remains open. SLICE6 has **16 FUNCTIONAL** kills,
-not 18; old 9-kill/12-test C1 and 308-test records remain historical, not proof of new admission.
-The old full-suite E174 reporter failure/no-summary and nine full-repo Mypy diagnostics remain
-unresolved until test-by-test disposition. Neither scope migration nor existing green verifier
+operator Q58 decision. STEP17 is now complete at E220: a completed877-pass/no-skip
+unmutated baseline preceded all16 normative+2supplemental exact487-case runs; all PROVEN
+with fresh native UUIDs, import provenance and unchanged source/status. The whole retained
+bank's40 FUNCTIONAL+CT79 also passed actual producer sensitivity, including amended SLICE5
+CT66 (110pass5fail). E218's concurrent699/18 and E212's older486 results remain historical,
+not substitutes. See [blocked local acceptance/evidence record](../notes/i02-local-acceptance.md).
+Q72 dispositions only the two repaired E19 documentation causes. No shipped or overall DoD
+status is assigned: final actual just check/test remain red on real readiness/Go prewarm;
+operator dispositions and independent review remain open. SLICE6 has **16 FUNCTIONAL** kills,
+not18; older9-kill/12-test/308-test records are not current admission proof.
+E174’s reporter/no-summary is historical: E220 has actual terminal summaries and exact
+baseline/candidate nodeid comparison. Eight recorded configured-Mypy diagnostics are now clean
+with individual proposed fixes; E194’s ninth/test_inject_condensates context is not reproduced
+by d910 and remains explicitly unresolved for review. Operator disposition is still required.
+Neither scope migration nor existing green verifier
 proof closes admission, full-suite comparison or review. Nested success/OS integrity/live-host
 acceptance are incomplete I03 obligations, not suppressed failures or I02 evidence.
 
@@ -583,8 +589,8 @@ acceptance are incomplete I03 obligations, not suppressed failures or I02 eviden
 - [ ] Demonstrate VACUOUS, PRODUCER_ABSENT, REGRESSION and error negatives on constructed slices;
       prove overlay import provenance (disabled probe exposes VACUOUS; enabled mismatch is ERROR).
       Operator tree/source bytes and git status are unchanged by gate tests; no leftover worktrees.
-- [ ] Reconcile I02-owned D1/D2/D3/D4-readers/D5/D8 with actual named evidence in deferred register.
-      D2 remains OPEN until real precheck admission caller+kill passes; pending successor coder-brief
+- [x] Reconcile I02-owned D1/D2/D3/D4-readers/D5/D8 with actual named evidence in deferred register.
+      D2 now has the real caller+ordered kill (E220); pending successor coder-brief
       reader is not falsely closed. No register tick is assigned by this plan edit.
 - [ ] Produce `notes/i02-local-acceptance.md` per spec §6, with usable full-suite baseline/candidate
       manifests and terminal summaries, exact failure identity/phase comparison against isolated

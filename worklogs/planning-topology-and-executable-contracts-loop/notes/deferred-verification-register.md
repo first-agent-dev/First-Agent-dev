@@ -9,6 +9,46 @@ deployed I02+I03 acceptance belongs to foundation I03. Old I03 coder-brief/track
 the named deferred slice-loop/tracker/L2-eval successor. Historical evidence/ticks below are not
 re-run or closed by this owner edit; no live verdict is assigned.
 
+## Current local reconciliation — E220, 2026-10-16
+
+**I02 local rows D1/D2/D3/D4a/D5/D8 are reconciled with executed evidence below.**
+This is not operator acceptance or an I03/live-host verdict. See [E220 blocked acceptance/evidence record](i02-local-acceptance.md).
+
+- **D1a:** the original persisted adjusted-report C1 case passes in the actual final suite;
+  its E145 kill remains historical. Current verifier/eval producers also have fresh full-path
+  sensitivity. No claim that its historical kill was rerun separately.
+- **D1b/D3 — CLOSED local C1:** `test_plan_grammar_live_chain.py` now has8passing cases,
+  including both `[plan-authoring]` cold and `[feature-planning]` warm routes through shipped
+  provider factory/real chain/drive_session; only `ProviderChain.request` mocked. Displayed
+  skeleton identity and actual parser extraction are asserted. E219 removed the real skill
+  reader:6fail2pass, no setup errors/skips. Fresh ordered877 baseline and final repository
+  suite include all8. This proves the prompt/grammar seam, **not actual hosted-model output**;
+  historical “model actually wrote” wording below must not be read as a live-model claim.
+- **D2 — CLOSED local caller/kill:** `_validate_plan_admission` calls actual `precheck` before
+  coder. Fresh ordered CT91 full487-path:415pass72fail,35.78s, PROVEN, native UUID/provenance,
+  no errors/skips, original source bytes unchanged. Refusal/repair/WARN cases named below
+  remain present; the former ordering blocker is now discharged, not waived.
+- **D4a — CLOSED local readers / D4b — OPEN successor compatibility:** schema §7 now states
+  the actual partition. `commands_for(None)`/plan_commands feed `verify_plan`; direct
+  `SliceRecord.commands`, `.test_paths`, `.section`, `.contract_class` feed verifier,
+  baseline/controller and kill validation. Actual C1/baseline/runner/ownership cases execute
+  in the877 baseline and relevant full-path kills. `commands_for(slice)`, `section(slice)`,
+  `tests_for(slice)` wrappers are preserved compatibility surfaces, not invented live callers.
+  `tests_note`/CT10b and steps_mode-driven coder brief remain explicit incomplete slice-loop
+  successor work, not foundation I03 completion and not a dummy I02 reader. No new accessor.
+- **D5 — CLOSED local C1:** `test_planner_emits_schema4.py`12pass includes real shipped
+  provider factory/registry/drive_session and request-boundary assertions for both actual
+  planner prompt blocks. E219 blanked actual planner role prompt:1fail11pass after real
+  provider invocation; no errors/skips. Static constant tests alone are not counted live.
+- **D8 — CLOSED metadata guard:** `test_skill_grammar_emit.py`23pass includes export→schema7
+  named-consumer guard over the actual11 exports. E219 unknown export:1fail22pass, no errors/
+  skips; no extra production API or unapproved general verification-debt policy introduced.
+
+The measured historical entries below retain their provenance; present-tense “test to write”
+and “zero callers” descriptions are superseded only by this named local evidence. D4b/D6 and
+I03 deployed-host obligations stay open. The optional executable-register policy remains
+**unratified/unbuilt**.
+
 **Why this exists.** I01 ships a parser, a pre-check engine, and two prompt blocks. Almost
 all of it is proven by *static* tests over fixture text. Under SD-C (E93) static conformance
 is necessary and **never sufficient**: it proves a string, not a behaviour. I01 deliberately
@@ -69,10 +109,10 @@ whole verify gate: SLICE6 reads a slice's commands from the plan, so if a model-
 does not parse into slices carrying `verify` fences, the gate silently does nothing — the
 original defect one storey up. **Close D1b before SLICE5/SLICE6, not after.**
 
-## D2 — production `precheck` admission caller · **caller/kill observed; final ordered proof OPEN (E218)**
+## D2 — production `precheck` admission caller · **CLOSED local ordered proof (E220)**
 
 
-**Closure, 2026-10-16:** `_validate_plan_admission` now calls the real `precheck` before
+**Historical E218 observation, superseded by the E220 reconciliation above:** `_validate_plan_admission` now calls the real `precheck` before
 public coder dispatch. `tests/test_verify_gate_live.py::test_ct91_public_repair_retries_latest_draft_then_promotes`,
 `::test_ct91_public_block_never_reaches_t0_coder_eval`,
 `::test_ct91_public_structural_zero_slice_near_miss_is_repairable` and
@@ -120,10 +160,10 @@ The earlier measurements and requested proof below are historical.
 
 ## D4 — Read-API consumers · owner: **I02** gate readers, **deferred slice-loop successor** coder brief
 
-`commands_for(slice)`, `commands_for(None)`, `section`, `contract_class`, `tests_for`,
-`SliceRecord.tests_note`, `SliceRecord.test_paths`, `plan_commands`. Each carries a named
-consumer in schema §7, none has a call site outside tests. Live proof arrives with the
-consumer; until then each is a typed promise. **Do not add more accessors** (SD-B).
+Current split is D4a (actual local readers, closed) / D4b (compatibility and deferred
+coder-brief consumers, incomplete), as enumerated in the E220 reconciliation above and schema
+§7. The old “none has a call site” description is no longer true. Preserve wrappers and
+strict semantics; do not manufacture consumers or add accessors (SD-B).
 
 ## D5 — The two prompt blocks (SLICE1c)  ·  owner: **I02**
 

@@ -4,53 +4,47 @@
 > This file records the verified state and the next bounded action.
 > Previous 1426-line S14-era version archived to `worklogs/archive/HANDOFF-S14-era-20260825.md`.
 
-## Current state — I02 local explicit-plan gate, 2026-10-16
+## Current state — I02 local explicit-plan gate, 2026-10-16 / E220
 
-Active branch: `arena/86633f17-first-agent-dev`; never switch/create another session branch.
-I02 remains **IN PROGRESS**, not SHIPPED or I03/security acceptance.
-**Current stop: verified environment blocker, no unresolved Q69–Q72.** Gitleaks hook prewarm
-needs a Go SDK; none is installed. The unchanged real readiness integration reaches
-`precommit_prewarm_failed` rc75: pre-commit fetches `https://go.dev/dl/?mode=json`, outside
-sandbox egress, SSL EOF/URLError. Need trusted supported Go/toolchain/dependency availability
-or an appropriate execution environment, then rerun real readiness→hooks→commit→local-push.
-Do not disable hook/test, fake a ready marker, loosen bootstrap or replace foreign Arena hook.
-
-Q72 explicitly approved exactly46 link-target repairs in15 archived files and one banner-test
-path migration; no blanket baseline waiver. Q71 deterministic recipe/lifecycle guard has no
-new path exemptions. Q69 real nonrecursive C1 factoring and Q70 coder-containing-only unavailable
-guard remain. Do not re-ask these decisions. Scope mistake and narrow approval retained E216/E217.
-
-Read [E218 in the E211 note](planning-topology-and-executable-contracts-loop/notes/i02-ct91-public-admission-e211-2026-10-16.md),
-[I02 plan](planning-topology-and-executable-contracts-loop/increments/increment-02-verify-gate-and-kill-checks.md),
+Branch `arena/86633f17-first-agent-dev` only. Proof snapshot c4cb55fe4d0a63a4ac43c62acacdac54b9404bad;
+latest follow-up is documentation/evidence only. I02 **IN PROGRESS**, not SHIPPED or I03 acceptance.
+Read [blocked local acceptance record](planning-topology-and-executable-contracts-loop/notes/i02-local-acceptance.md),
+[plan](planning-topology-and-executable-contracts-loop/increments/increment-02-verify-gate-and-kill-checks.md),
 [spec](planning-topology-and-executable-contracts-loop/notes/i02-explicit-admission-spec-2026-10-15.md),
-[deferred register](planning-topology-and-executable-contracts-loop/notes/deferred-verification-register.md).
+[register](planning-topology-and-executable-contracts-loop/notes/deferred-verification-register.md).
+Lossless original reports/manifests/logs/runner history and SHA256 inventory are tracked in
+`notes/evidence/i02-e220` beneath that worklog; do not depend on ephemeral runtime cache alone.
 
-**Completed observations:** final699focused baseline pass346.07s; all16normative+2supplemental
-full487-case public-path mutations PROVEN, exact manifests/UUID/provenance/errors0/skips0/22
-hashes unchanged. STEP17 NOT met: baseline/audit launched concurrently, violating the required
-baseline-before-mutation order. All18 are diagnostic for STEP17; serial rerun required. D2
-production caller/kill observed locally.
-Full candidate5040:5026pass1fail12skip1xfail1094.49s, coverage83.20%. Git-complete d910 baseline
-4477:4455pass9fail12skip1xfail872.47s. Common1/candidate-only0/baseline-only8;3old identities
-superseded under Q55/CT95, exact replacements mapped, not counted as passes. Mypy450, whole
-Ruff901, authoring0, contracts/deptry/Pylint/shell/lock pass; CLI floors27/78 pass. Default
-Pyrefly0errors139suppressed43hidden warnings. Actual final just composite wrappers not run;
-expanded constituents retained, no false successful-check claim. Baseline native plugin lacks
-UUID support, exact collector nodeids retained; no UUID fabricated.
+**Completed:**877pass/no-skip ordinary external baseline completed BEFORE all43 fresh mutations;
+40FUNCTIONAL+CT79+2supplemental all PROVEN, exact declared paths/manifests, native UUID and
+import provenance, no errors/skips, final tracked hashes/status unchanged. All16normative+
+2supplemental SLICE6 invocations executed the whole487 public bank; amended CT66=110pass5fail.
+STEP17 now checked. E218's concurrent699/18 remains diagnostic. First876pass1skip external
+baseline was rejected; v2 runner assumed one edit and src-only roots. v3 corrected those
+external defects, reused only verified actual877 baseline and reran all43; no production patch.
+D1/D2/D3/D4-local/D5/D8 reconciled; deferred coder-brief/wrappers explicitly not wired.
 
-**Current continuation (E219):** D8 export/schema consumer guard and D5 both-planner-block
-provider-boundary C1 added; D3 warm/cold now uses actual shipped chain/session with only request
-mocked.43targeted pass; three supplemental producer/declaration controls fail actual assertions
-with0errors/skips; configured Mypy450/Ruff/Pyrefly clean. No production source changes.
-Schema annotations distinguish actual gate field readers and deferred compatibility calls.
-All changes in existing files. Ordered fresh retained-bank baseline and producer proofs next,
-including amended SLICE5 CT66; do not start mutations before baseline terminal success.
+**Actual final wrappers:** just check→just test rc1,5033pass1fail12skip1xfail/5047,570.71s,
+83.18% coverage. All other blocking subgates pass; CLI floor independently27/78 pass.
+Git-complete d9104477 comparison:0candidate-only failures,1common,8baseline-only;6superseded
+old IDs explicitly mapped,576new. Eight recorded Mypy diagnostics individually fixed; actual
+configured450-file Mypy clean; historical E194 ninth context remains unreconciled. No successful-check or blanket baseline waiver claim.
 
-**After proof:** actual final just wrappers/readiness still need trusted Go SDK/dependencies
-or appropriate execution environment; independent retained-plan/source/evidence review and
-remaining exact per-case operator dispositions still required. Only then create/sign
-`i02-local-acceptance.md`. No localDoD/SHIPPED/I03/deployment acceptance. See E219 for exact
-allowed scope/changes/targeted and control results; E218 remains old-version observation.
+**Current stop needs environment attention:** no Go SDK. Real readiness precommit prewarm
+returns75; blocked go.dev SSL/URLError. Pinned Gitleaks8.30.1 requires trusted **Go>=1.24.11**
+plus available/cached build dependencies or a suitably prepared Linux environment. Do not
+skip hook/test, forge ready marker, weaken bootstrap or replace foreign208-byte Arena hook.
+After provision rerun real readiness→hooks→commit→local-push and final actual just test/check,
+verify current input versions and refresh evidence. Current record remains NOT ACCEPTED.
+
+**Review still required:** operator reviews each exact baseline/missing-ID/Mypy proposed
+case disposition; independent reviewer checks retained plan/DoD, d910→implementation delta,
+Q45-B/parser behavior, evidence and explicit incomplete I03 migration coverage; operator signs
+retained local DoD. No signature exists. Q69–Q72 are resolved, do not re-ask them. Q72 approves
+only46 link fixes/15 archived files and one banner-fixture path migration; E19 remains intact.
+No further bounded production gap was indicated by this audit, not independent assurance.
+I03 acquisition, all-project mandatory execution boundary, PTY descendants/publication/recovery
+and former SLICE7 deployed-host package remain explicitly **undelivered**.
 
 The older S18/doc-hygiene notes below are historical, not this session's current action list.
 
