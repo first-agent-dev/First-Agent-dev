@@ -11,8 +11,9 @@ shipped: —
 **Planning state:** finalized after E230 adversarial review and E231 operator answers/source audit.
 Q59 advisory/manual + EXISTING experimental suggestion injection, no required mode; Q60 delegated
 source-grounded reuse design in spec §7; Q63 four states/optional commentary/no reason enum; Q74
-per-stage/episode ordinary-edit checkpoints. E233 found NEW blocking Q75 (grant-reply replay/
-nonsecret journal and non-exec observation); SLICE1 implementation is paused for its disposition. OUTLINED
+per-stage/episode ordinary-edit checkpoints. E233 found F17/Q75; the operator explicitly selected
+Q75(a) in E234: narrowly bound memory-only original completed-reply replay, secret-free journal,
+no fresh authority/re-execution/reconstruction. The stop is lifted; SLICE1 implementation resumes. OUTLINED
 is deliberately unchanged: plan finalization assigns no implementation tick, READY automation,
 live result or deployment authorization. All35 construction steps and final acceptance remain open.
 
@@ -33,7 +34,11 @@ both observe/enforce and for every role. Partial backend success is not whole-pr
 **Lineage:** [migration bank](../notes/i02-to-i03-scope-migration-2026-10-15.md),
 [decisions](../notes/execution-workspace-and-i02-i03-scope-decisions-2026-10-15.md),
 [reuse audit](../notes/execution-foundation-scope-reduction-and-reuse-audit-2026-10-15.md).
-New module/function/test names below are **planned interfaces**, not claims about existing code.
+New module/function/test names below are **planned interfaces**, not claims about complete code.
+E234 adds only immutable NamespaceRef/ViewRef, closed operation/purpose names, four grant-result
+shapes, canonical input hashing and a bounded completed-grant-reply cache in types.py/supervisor.py.
+These are C0/C3 foundations, NOT a wire decoder, journal, dispatcher, issuer, client or service.
+STEP1–4 remain unchecked; normative CT99/CT100 producer calls are absent and uncredited.
 
 ## Grounding, sequence and scope discipline
 

@@ -2691,3 +2691,23 @@ E233  I03 SLICE1 IMPLEMENTATION STOP — NEW Q75/F17  2026-10-16;source15dc7cb v
     acceptance assigned. All35STEPS/allfour final duties remain incomplete. Await exact Q75 answer.
     E233 planning checks:actual-source leaf0FAIL/6retainedWARN,6slices17FUNCTIONAL35uncheckedSTEPS;
     doc308filesPASS;EOFblank-line repaired/diffclean;source/tests/deploy/lock/E232 evidence unchanged.
+
+E234  I03 SLICE1 Q75(a) RESOLVED / REPLAY FOUNDATION  2026-10-16;operator-selected exact_cached_replay.
+    F17 policy join closed by explicit selection, not inferred recommendation. Tracker/spec/plan/
+    roadmap/HANDOFF aligned; E233 historical finding retained. One nonsecret journal, memory-only
+    original reply, exact authenticated principal/namespace/request/input/original-proof binding;
+    revoked-proof exception cannot authorize fresh work/renewal. Restart/cache loss blocks.
+    New execution types and CompletedReplyCache plus64 C0/C3 cases; no service/decoder/journal/
+    issuer/client/real authority. Explicit journal projection omits grant and checks both known
+    secrets before durability. Caller must establish durable DONE before remember_completed.
+    Final owning baseline/restored64PASS0.44s;broader383PASS7.97s;RuffPASS/format4unchanged;
+    Mypy4target/173sourcePASS. Nine developmental full64case mutations:7/7/1/2/1/5/1/1/14CALLfail,
+    eachrc1,zero runner/collection/setup/teardown errors/skips;exact source restoration. Not normative
+    CT99/CT100/wholeSLICE1 proof. Evidence:notes/evidence/i03-e234/replay.json.gz with raw reports,
+    hashes/commands/mutations/driver/toolchain provenance. E232 source/evidence unchanged.
+    Source-built external Python3.13.16/frozen dev env restored;optional stdlib modules absent,
+    no full readiness claim. Draft vocabulary/static/typing errors repaired,not kills/waivers.
+    Review records new real-service lost-ack/revocation/restart/durable-fault/saturation E2E duties;
+    none run. All35STEPS/four final acceptance duties remain incomplete;no activation/status tick.
+    Final planning:0FAIL/6retainedWARN,6slices17FUNCTIONAL35uncheckedSTEPS;IDs/classes/kill grammar
+    preserved;doc309filesPASS;whitespace clean;E232 exact/E234 final-source hashes match.

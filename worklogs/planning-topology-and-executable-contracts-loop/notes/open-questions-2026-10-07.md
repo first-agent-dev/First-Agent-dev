@@ -1559,11 +1559,15 @@ Spec §6.1 is the exact (a) proposal, not its approval. No code or status change
 
 ## Q75 — May exact completed-request replay return an original cached grant after revocation?
 
-**Status: OPEN — implementation stop, E233, 2026-10-16.** Blocks freezing I03 SLICE1 wire/
-authorization/recovery contracts (CT99/CT100). Q59/Q60/Q63/Q74 stay resolved. No runtime fix or
-new replay permission is selected by recording this question.
+**Status: RESOLVED (a), E234, 2026-10-16 — explicit operator selection `exact_cached_replay`.**
+The E233 implementation stop is lifted. Same authenticated principal, namespace, exact original
+request/input and original proof may recover ONLY the original memory-cached completed reply,
+even after that handoff revoked its proof. No fresh work, renewal, re-execution, durable grants
+or automatic reconstruction. Cache loss/restart blocks until safe reconciliation. IDs alone
+never authorize; retain one secret-free durable journal. Q59/Q60/Q63/Q74 stay resolved.
+The original alternatives and frozen finding below are preserved as decision history, not an open question.
 
-**Verified baseline:** `15dc7cb3f6298f22496469ef35ad5d4e67f0e2bf`. `src/fa/execution/`, protocol.py,
+**Historical verified baseline (E233):** `15dc7cb3f6298f22496469ef35ad5d4e67f0e2bf`. At that baseline `src/fa/execution/`, protocol.py,
 supervisor.py and client.py do not exist; this is a specification join defect, NOT a demonstrated
 implementation vulnerability. Current implementation is E232's partial CT98 entry/audit only.
 
@@ -1588,7 +1592,7 @@ exact original-operation/request replay rather than pretending its result is Exe
 Canonical namespace/input hash and original authorization must match independently; IDs alone
 never authorize. No operation executes again, no grant is renewed, uncertainty never means success.
 
-**(a) Narrow memory-only completed-reply replay — recommended.** Allow an authenticated caller
+**(a) Narrow memory-only completed-reply replay — SELECTED.** Allow an authenticated caller
 with the exact original namespace, request/input and original authorization proof to receive ONLY
 that original cached reply, including its grant, even if the supplied grant was revoked by that
 operation's completed handoff. This is an exact-request read/replay exception, NEVER a mutation

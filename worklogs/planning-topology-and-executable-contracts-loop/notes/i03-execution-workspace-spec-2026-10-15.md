@@ -35,13 +35,12 @@ Reuse private IO primitives introduced for I02, but keep publication commit sema
 
 ## 2. Launch, wire protocol and installed profile
 
-**E233 implementation hold — Q75 OPEN.** Frozen15dc7cb lines89–100/132–147/241–251 conflict at
-non-exec lost-reply/grant recovery: inspect returns only ExecutionReceipt, pre-view grants can be
-unavailable, and typed journal replies would contain memory-only secrets. Handoff revokes the
-original proof before an acknowledgement may arrive. Resolve [Q75](open-questions-2026-10-07.md#q75--may-exact-completed-request-replay-return-an-original-cached-grant-after-revocation)
-before implementing/freezing these joins. The schema text below is retained as the review input,
-NOT permission to persist capabilities or accept revoked grants. No temporary service/decoder ships
-on an inferred policy. E232 partial CT98 remains unchanged; other ratified decisions stay resolved.
+**Q75(a) ratified, E234:** [operator decision](open-questions-2026-10-07.md#q75--may-exact-completed-request-replay-return-an-original-cached-grant-after-revocation)
+lifts E233's hold. Exact completed-reply replay is a narrow memory-only read exception, not fresh
+execution authority. Durable results are nonsecret projections, never literal grant-bearing wire
+replies. Non-exec observation uses original-operation replay, not a viewless ExecutionReceipt.
+The concrete rules below supersede the frozen15dc7cb joins recorded as review F17. No slice/CT
+completion or production activation follows from ratification or the first helper implementation.
 
 Controller entry is `/opt/fa-venv/bin/python -I -m fa.controller_entry`, CWD a trusted directory,
 not the active workspace. Add the named module first; do not substitute `-m fa.cli` (currently a
@@ -98,12 +97,23 @@ Payloads/results are closed per-op schemas in §2.1, the SOLE wire-shape authori
 parallel dataclass may omit its mandatory keys. register/acquire/pin/create_view/prepare_bundle/
 install_project/handoff and OWNER release use view_ref=null; health additionally has namespace/capability=null; other operations use the
 specified owner/view grant. All successful grants remain private controller DI.
+
+Q75(a) exception: BEFORE any fresh-work authorization branch, an already-DONE operation may return
+ONLY its original protected memory-cached completed reply to the same authenticated principal,
+namespace, original request ID/op/canonical input and original authorization proof. The original
+proof may have been revoked by that completed handoff; compare it to the cache binding, not an
+invented fresh grant. Pre-grant calls retain their original null proof and principal binding.
+No cache lookup can admit new work, execute a callback, change the result, renew a grant or reserve
+another operation. Mismatch rejects. Cache loss/restart/unavailability fails closed for the grant
+reply until safe reconciliation; neither durable public metadata nor IDs authorize reconstruction.
+Ordinary fresh-work authorization/revocation rules remain mandatory and unchanged.
+
 The controller reserves a unique op-UUID before sending exec; supervisor persists that ID and input
 binding before starting it. Other mutation request IDs likewise deduplicate by exact input hash;
 a reused key with different input fails, never replays. IDs refer only to supervisor-created state,
 not caller-supplied manifests/bundles or filesystem locations. Bind every stored result to caller
-namespace and reject cross-run inspection. Capability is a supervisor-minted 256-bit random grant,
-null only for health/register/acquire/pin; other requests require its exact actor/view/access binding.
+namespace and reject cross-run inspection. Capability is a supervisor-minted 256-bit random grant
+encoded as 64 lowercase hex characters, null only for health/register/acquire/pin; other requests require its exact actor/view/access binding.
 Return it only to authenticated controller DI, never tools/events/receipts/transcripts. IDs are not secrets
 and are not themselves authorization. Redact the entire capability field from transport diagnostics. Release cannot discard state needed by live jobs/pins.
 
@@ -249,12 +259,24 @@ acknowledging a pin; restart never garbage-collects a pin with uncertain ownersh
 Operation journal `operations/<operation_id>.json` keys exactly `{schema_version:1,operation_id,
 request_id,op,namespace,view_ref,input_sha256,state,container_id,cancel_requested,result}`;
 state RESERVED/EXECUTING/DONE/UNKNOWN, container_id nullable before create/for non-exec, result
-nullable until determined (typed per-op result). For every mutating request operation_id is
+nullable until determined (typed per-op NONSECRET result projection). Non-grant results retain
+their closed §2.1 shape. For acquire_writer/handoff, projection is exactly
+`{view_ref:null,generation,revision_id}`; for pin_reader/create_view it is exactly `{view_ref}`.
+The capability field is OMITTED, never stored/redacted-to-null as a substitute grant. Validate
+projection against both the issued grant and original proof BEFORE durability, including secrets
+disguised as identity strings. Full grant-bearing reply and original replay proof live only in
+protected process memory; no second journal. For every mutating request operation_id is
 `op-<request_id>`; exec.payload.operation_id MUST equal it. One journal supplies deduplication,
 not separate competing request/execution histories. Hash canonical JSON of op/namespace/view_ref/
-payload, excluding credentials/request ID. Same ID+different hash rejects; same completed input
-returns stored result, unknown inspects/stops rather than re-executes. Non-exec mutation losses are
-also inspectable by the pre-reserved ID, including publish/install after acknowledgement loss.
+payload, excluding credentials/request ID. Canonical encoding is UTF-8 JSON, sorted object keys,
+compact comma/colon separators, no ASCII escaping or nonfinite numbers. Same ID+different input
+rejects. After actual durable DONE, exact completed input returns its original result only under
+ordinary authorization or the strictly bound Q75(a) memory exception above; unknown state inspects/
+stops rather than re-executes. Non-exec mutation losses (including publish/install) are observed
+by exact original-operation/request replay, NOT inspect/cancel or an invented ExecutionReceipt.
+A grant-free projection is never enough to synthesize a successful original grant-bearing reply.
+Cache saturation refuses new entries without replacing old replies; it has the same fail-closed
+uncertainty rule as cache loss. Journal owner must validate DONE before remembering a completion.
 Grant secrets may be cached only in protected process memory; restart revokes them, quarantines
 old owned views until inspected/drained, and issues fresh grants only after safe reconciliation.
 

@@ -376,3 +376,69 @@ E233 actual closeout: stdlib actual-source planning leaf6slices/17FUNCTIONAL/35u
 0FAIL/6retainedWARN; IDs/classes/kill grammar preserved. Doc checker308filesPASS. Initial EOF blank
 line finding repaired; final diff whitespace clean. No source/tests/scripts/knowledge/deploy/lock
 changes versus15dc7cb; E232 compressed artifact exact and source/test proof hashes match.
+
+## E234 — Q75(a) ratified; bounded replay/type foundation, 2026-10-16
+
+**Disposition:** the operator selected `exact_cached_replay`. F17's policy join is resolved by
+Q75(a); the historical E233 finding/alternatives remain above. Spec §§2/3.1 now separate nonsecret
+journal results from private in-memory grant replies and use original-operation replay for
+non-exec observation. No viewless ExecutionReceipt, new durable authority or second journal.
+
+**Source-backed implementation:** prior source had no execution package. New types.py reuses
+SessionManager validators and freezes NamespaceRef/ViewRef, the actual nineteen operation names,
+READ/WRITE and five purpose values. GrantReply implements only the four grant-result shapes,
+including READ-only pin result shape. These are NOT a whole-wire decoder or grant authorization.
+A 256-bit grant is encoded as64 lowercase hex; no issuer has been added. Canonical input SHA256
+covers operation/namespace/full view/payload, excluding credentials and request ID; it expects
+already wire-validated input and does not itself enforce the whole frame/body/operation schema.
+
+supervisor.py contains only CompletedReplyCache/replay-binding helpers, not a supervisor daemon.
+A cache read checks original authenticated-principal identity, namespace, op/request/input and
+original proof (constant-time proof comparison), then returns only the same immutable result.
+remember_completed permits identical duplicate storage, denies changed results/grant renewal,
+requires the future real journal owner to establish durable DONE first, and refuses capacity
+without replacing existing entries. Missing/restarted state raises uncertainty, never invokes an
+execution callback or rebuilds a grant. Actual journal/dedup/reservation, current-grant revocation,
+peer authentication and fresh-work authorization are not implemented or proved by this helper.
+
+GrantReply's explicit journal projection omits capability and rejects the issued/original proof
+hidden in identity fields BEFORE the caller persists it. This is not generic secret scanning or
+proof that real journal files/logs are safe; no journal integration exists yet. Returned dictionaries
+are copies; frozen data and opaque repr prevent accidental cache mutation/grant repr exposure.
+No production launcher, image, dependency lock, existing I02 source, authority or tool path changes.
+
+**Tests-writing / actual final source-bound checks:** tests/test_execution_supervisor.py is C0/C3
+primitive proof, not C1/service/kernel proof. Final baseline/restored64PASS0.44s each; broader eight
+modules383PASS7.97s (new primitives, actual installed controller, session lifecycle/manifest/workspace,
+plan extractor/precheck and skill conformance). RuffPASS/format4unchanged; targeted Mypy4filesPASS;
+source Mypy173filesPASS. No skips/xfails in the owning/broader runs. Earlier draft enum/ViewRef
+vocabulary mismatches were corrected against the real spec and exact wire-name/shape assertions
+added. Initial static/test-boundary errors were repaired, not counted as kills or waived.
+
+Nine DEVELOPMENTAL mutations each execute ALL64 owning cases: replay authorization call7CALL
+failures; identity binding7; original proof1; changed-result guard2; capacity guard1; journal grant
+leak5; known-secret guard1; input namespace1; cache producer14. Each exits1 with zero collection,
+setup/teardown errors or skips; baseline/restored exit0 and source/test bytes match exactly.
+These are NOT normative CT99/CT100 kills: _dispatch/_authorize_request/client remain absent.
+Lossless commands/stdout/stderr/pytest reports/mutations/hashes/runner and external-toolchain
+provenance: [E234 evidence](evidence/i03-e234/replay.json.gz). Historical E232 proof stays exact.
+
+**Live-host E2E additions planned, NOT RUN:** extend the actual private-UDS/service/controller
+fixture, not a fake callback and not premature I02 deployed testing:
+- Drop the first completed handoff reply after actual durable DONE and revocation, retry the same
+  authenticated original request/proof, then use the original child grant. Assert one durable operation,
+  one grant issuance and one intended work effect; altered principal/namespace/input/proof cannot launch anything.
+- Kill/restart the real service after DONE but before reply delivery: no raw capability in durable
+  files, logs, events, transcripts or receipts; cache loss quarantines/blocks until actual drain and
+  safe reconciliation, with no reconstructed secret or second execution.
+- Inject real journal persistence/fsync uncertainty: no cached successful reply before durable DONE;
+  bounded-cache saturation keeps old replies intact and cannot admit replacement/fresh work.
+- Retain the existing immutable-entry poison matrix and backend-down zero-project-instruction
+  oracle, then run direct+nested real-provider/controller paths only after SLICE1–4 integration.
+Independent oracle/helper review, actual Ubuntu/Docker/cgroup/profile facts and maintenance consent
+are still required at final acceptance. No live result, CT/STEP tick, READY or deployment signoff.
+All35STEPS and all four transferred final duties remain incomplete.
+
+E234 closeout: actual-source plan0FAIL/6retainedWARN;6slices17FUNCTIONAL35uncheckedSTEPS;
+IDs/classes/kill grammar preserved. Doc309filesPASS;whitespace clean. E232 unchanged and final
+source/test hashes bound to restored proof. E234 archive SHA256 `20fb15a64ed248e8303e1e332255bfb94c7e5165f375d579f065a3b14653c2e7`.

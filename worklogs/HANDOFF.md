@@ -3,7 +3,7 @@
 > Read [`knowledge/llms.txt`](../knowledge/llms.txt) §MUST READ FIRST.
 > Current local delivery is distinct from final I03/deployed acceptance.
 
-## Current state — I02 LOCAL SHIPPED / I03 IMPLEMENTATION IN PROGRESS, 2026-10-16 / E233
+## Current state — I02 LOCAL SHIPPED / I03 IMPLEMENTATION IN PROGRESS, 2026-10-16 / E234
 
 Branch `arena/86633f17-first-agent-dev` only. Retained I02 runtime/test proof snapshot
 `a32a72fc58db4b9a5b048a9b6475649bcf3e32b4`. E230/E231 finalized planning; E232 adds the first
@@ -41,25 +41,31 @@ Ubuntu host test,OS isolation,managed nested acquisition or host supervisor deli
 only;Go is an indirect inherited hook-build diagnosis,not a new FA runtime/deployment requirement.
 PTY stays. Q69–Q73 resolved;Q72 remains its narrow46-links/15-files+banner repair decision.
 
-**E233 current action — IMPLEMENTATION PAUSED, Q75 OPEN:** continuing SLICE1 source review found
-F17: inspect only returns ExecutionReceipt/requires view+grant, but non-exec lost replies must be
-observable; grant replies cannot be persisted as journal result because secrets are memory-only.
-Handoff revokes old actor before its reply can be lost. Whether exact completed-request replay may
-return its original cached grant using the now-revoked original proof is an authorization policy,
-not inferred engineering approval. Q75(a) recommends narrowly bound memory-only reply replay/no
-re-execution/renewal; (b) strict revocation and explicit maintenance recovery. BOTH keep durable
-journal secret-free and block after cache loss/restart until safe reconciliation. Not selected.
-Current question/spec/plan/roadmap/review flag hold; no runtime source edit or alternate stub.
+**E234 current action — Q75(a) SELECTED, IMPLEMENTATION RESUMED:** the operator explicitly
+selected `exact_cached_replay`. Same authenticated principal, namespace, original request/input
+and original proof may recover ONLY the original memory-cached completed reply after that handoff
+revoked proof. No fresh work, re-execution, renewal or durable-secret reconstruction. Cache loss/
+restart blocks until safe reconciliation; IDs do not authorize. E233/F17 remains historical evidence
+of a specification join defect, not a demonstrated runtime vulnerability. Tracker/spec/plan aligned.
 
-Source15dc7cb exactly verified against restored files before safely aligning stale d910 Git metadata.
-No user bytes lost. Environment reset:Python3.11.2, no uv/pytest/Docker or prior cached toolchain.
-Do NOT claim E232 supported checks were rerun. Its evidence/source/tests remain unchanged.
-E233 actual stdlib planning checks:0FAIL/6retainedWARN,6slices17FUNCTIONAL35uncheckedSTEPS;
-doc308filesPASS,EOFblank-line repaired/diffclean;E232 artifact exact and source/test hashes match.
-Next: obtain Q75 answer; reconcile concrete wire/nonsecret journal/replay authorization and tests,
-then resume source-declared SLICE1 work. Do not reopen Q59/Q60/Q63/Q74 or call their decisions
-unresolved. No new service/authority/forced workflow or persisted-secret workaround. All35STEPS
-and four final acceptance duties still incomplete; no slice/CT/runtime/live completion assigned.
+New src/fa/execution/{types,supervisor}.py implements immutable identity/grant-result data and a
+bounded completed-grant-reply cache. Proofs compared in constant time; journal projection omits
+capability and checks known issued/original secrets before durability. Cache duplicate result
+replacement is denied; missing/saturated/restarted cache cannot create a reply. No decoder,
+durable operation journal/reservation, grant issuer, dispatcher, client, cell or daemon is delivered.
+remember_completed requires the future real journal owner to validate durable DONE first. C0/C3
+unit proof is NOT real authentication, grant revocation, durable completion or no-command-replay proof.
+
+E234 local outputs/evidence and remaining live-test additions are recorded in the adversarial
+review/ledger and notes/evidence/i03-e234/replay.json.gz. Do not borrow E232 numbers as reruns.
+Rebuilt external CPython3.13.16 with host SSL3.0.20/SQLite3.40.1/zlib1.2.13; frozen dev dependencies.
+Optional stdlib modules remain absent; no full environment or deployment readiness claim.
+
+Next: continue source-declared SLICE1 strict whole-wire/profile/results and single-journal foundation,
+then real service/client integration with actual WorkspaceAuthority before production activation.
+No permissive temporary authority or failing main stub. Preserve all35 unchecked steps and all four
+unfinished final acceptance duties; normative full-SLICE1/host proof remains pending. Q75 is resolved;
+do not ask it again or reinstate the E233 hold. Q59/Q60/Q63/Q74 remain resolved.
 
 **E232 retained implementation checkpoint — I03 IMPLEMENTATION STARTED, PARTIAL SLICE1/CT98:** operator authorized
 careful source-declared, tested/mutated implementation. No blocking new policy question in this
@@ -79,7 +85,7 @@ zlib verified; .venv from uv sync --frozen --extra dev. Other optional stdlib mo
 full runtime/deployment readiness. Docker unavailable. Earlier environment/fixture/static errors
 were repaired,not kills/waivers. Cache/toolchain paths excluded from persisted snapshots.
 
-E232's implementation continuation instruction is superseded by the E233 Q75 hold above.
+E232's implementation continuation now follows the ratified E234 Q75(a) rules above.
 Keep SLICE1–4 closure before activation; main-host facts/maintenance authorization, final independent
 fixture/helper review and actual direct+nested E2E remain required, not granted by this checkpoint.
 
