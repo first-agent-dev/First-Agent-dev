@@ -11,7 +11,8 @@ shipped: —
 **Planning state:** finalized after E230 adversarial review and E231 operator answers/source audit.
 Q59 advisory/manual + EXISTING experimental suggestion injection, no required mode; Q60 delegated
 source-grounded reuse design in spec §7; Q63 four states/optional commentary/no reason enum; Q74
-per-stage/episode ordinary-edit checkpoints. No policy question below remains pending. OUTLINED
+per-stage/episode ordinary-edit checkpoints. E233 found NEW blocking Q75 (grant-reply replay/
+nonsecret journal and non-exec observation); SLICE1 implementation is paused for its disposition. OUTLINED
 is deliberately unchanged: plan finalization assigns no implementation tick, READY automation,
 live result or deployment authorization. All35 construction steps and final acceptance remain open.
 

@@ -338,3 +338,41 @@ Final actual planning guards: extractor/precheck/kill grammar0FAIL/6retainedWARN
 17FUNCTIONAL/35uncheckedSTEPS, current CT98 producer call exists EXACTLY once. Evidence8runs/source/
 tests/uv.lock hashes validated. Doc links309filesPASS; staged diff/whitespace inspected clean.
 CI uses setup-uv + uv sync --locked --extra dev, matching offline installed-fixture prerequisites.
+
+## E233 — Stop-rule finding F17: grant-reply replay policy is not closed, 2026-10-16
+
+**Source verified before edit:** restored working files exactly match pushed15dc7cb; stale local
+d910 Git metadata safely aligned ONLY after a separate-index diff and extra-file check found zero
+differences. No user/source bytes overwritten. No src/fa/execution directory or protocol/supervisor/
+client exists. E232 controller_entry/test/evidence remain exact.
+
+**F17 — confirmed specification join defect, not proved runtime vulnerability.** Frozen15dc7cb
+execution spec:89–100 requires namespace/capability binding; :132–147 returns capabilities from
+grant operations and gives inspect only ExecutionReceipt; :241–251 promises typed per-op journal
+results/non-exec inspectability but prohibits durable grants and revokes them on restart. Handoff
+revokes original actor before reply delivery; losing that reply leaves no ordinary authorized
+recovery route. A request ID is explicitly NOT authorization. Storing the literal wire reply would
+violate memory-only secrets; calling non-exec output an ExecutionReceipt would fabricate bindings.
+
+**Policy requiring disposition:** whether exact originally-authorized completed-request replay may
+return its cached grant reply AFTER that operation revoked the supplied proof. Recommended Q75(a)
+is memory-only exact-reply replay with principal/namespace/input/original-proof binding, no mutation
+or renewed grant. Q75(b) retains strict revocation and needs maintenance after lost handoff ack.
+Both retain one nonsecret durable journal; no automatic secret reconstruction after restart.
+Recommendations are NOT ratification. Current spec/plan/roadmap/tracker/HANDOFF explicitly paused;
+no protocol code, permissive authority, live test or production activation introduced.
+
+**Future binary proof:** original/mismatched principal, namespace, request/input and proof; cached
+reply after handoff; restart/cache loss fail-closed; all non-exec result types; no durable/log/error
+tokens and exactly one execution/grant issuance. Unit injection stays C0; actual dispatcher/
+authority composition plus full-slice CT99/CT100 mutations and kernel/live acceptance remain required.
+
+**Actual checks in this stop checkpoint:** documentation-only. Source/tests/deployment/lock and
+E232 evidence unchanged versus15dc7cb. Pure actual-source plan extractor/precheck/kill grammar and
+document-link/whitespace checks recorded at E233 closeout. Restored environment is Python3.11.2
+without uv/pytest/Docker; no supported-runtime/security/mutation/live suite executed or credited.
+
+E233 actual closeout: stdlib actual-source planning leaf6slices/17FUNCTIONAL/35uncheckedSTEPS,
+0FAIL/6retainedWARN; IDs/classes/kill grammar preserved. Doc checker308filesPASS. Initial EOF blank
+line finding repaired; final diff whitespace clean. No source/tests/scripts/knowledge/deploy/lock
+changes versus15dc7cb; E232 compressed artifact exact and source/test proof hashes match.

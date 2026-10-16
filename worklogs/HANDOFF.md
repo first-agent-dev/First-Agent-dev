@@ -3,7 +3,7 @@
 > Read [`knowledge/llms.txt`](../knowledge/llms.txt) §MUST READ FIRST.
 > Current local delivery is distinct from final I03/deployed acceptance.
 
-## Current state — I02 LOCAL SHIPPED / I03 IMPLEMENTATION IN PROGRESS, 2026-10-16 / E232
+## Current state — I02 LOCAL SHIPPED / I03 IMPLEMENTATION IN PROGRESS, 2026-10-16 / E233
 
 Branch `arena/86633f17-first-agent-dev` only. Retained I02 runtime/test proof snapshot
 `a32a72fc58db4b9a5b048a9b6475649bcf3e32b4`. E230/E231 finalized planning; E232 adds the first
@@ -41,7 +41,27 @@ Ubuntu host test,OS isolation,managed nested acquisition or host supervisor deli
 only;Go is an indirect inherited hook-build diagnosis,not a new FA runtime/deployment requirement.
 PTY stays. Q69–Q73 resolved;Q72 remains its narrow46-links/15-files+banner repair decision.
 
-**E232 current action — I03 IMPLEMENTATION STARTED, PARTIAL SLICE1/CT98:** operator authorized
+**E233 current action — IMPLEMENTATION PAUSED, Q75 OPEN:** continuing SLICE1 source review found
+F17: inspect only returns ExecutionReceipt/requires view+grant, but non-exec lost replies must be
+observable; grant replies cannot be persisted as journal result because secrets are memory-only.
+Handoff revokes old actor before its reply can be lost. Whether exact completed-request replay may
+return its original cached grant using the now-revoked original proof is an authorization policy,
+not inferred engineering approval. Q75(a) recommends narrowly bound memory-only reply replay/no
+re-execution/renewal; (b) strict revocation and explicit maintenance recovery. BOTH keep durable
+journal secret-free and block after cache loss/restart until safe reconciliation. Not selected.
+Current question/spec/plan/roadmap/review flag hold; no runtime source edit or alternate stub.
+
+Source15dc7cb exactly verified against restored files before safely aligning stale d910 Git metadata.
+No user bytes lost. Environment reset:Python3.11.2, no uv/pytest/Docker or prior cached toolchain.
+Do NOT claim E232 supported checks were rerun. Its evidence/source/tests remain unchanged.
+E233 actual stdlib planning checks:0FAIL/6retainedWARN,6slices17FUNCTIONAL35uncheckedSTEPS;
+doc308filesPASS,EOFblank-line repaired/diffclean;E232 artifact exact and source/test hashes match.
+Next: obtain Q75 answer; reconcile concrete wire/nonsecret journal/replay authorization and tests,
+then resume source-declared SLICE1 work. Do not reopen Q59/Q60/Q63/Q74 or call their decisions
+unresolved. No new service/authority/forced workflow or persisted-secret workaround. All35STEPS
+and four final acceptance duties still incomplete; no slice/CT/runtime/live completion assigned.
+
+**E232 retained implementation checkpoint — I03 IMPLEMENTATION STARTED, PARTIAL SLICE1/CT98:** operator authorized
 careful source-declared, tested/mutated implementation. No blocking new policy question in this
 chunk. New src/fa/controller_entry.py implements real CLI entry, pre-site -I -S install audit and
 isolated runtime import-closure gate. Actual fa.cli.main reused; source/wheel byte binding in new
@@ -59,13 +79,9 @@ zlib verified; .venv from uv sync --frozen --extra dev. Other optional stdlib mo
 full runtime/deployment readiness. Docker unavailable. Earlier environment/fixture/static errors
 were repaired,not kills/waivers. Cache/toolchain paths excluded from persisted snapshots.
 
-Next: continue bounded SLICE1 protocol/profile/type contracts and CT98 frozen noneditable image/
-wrapper/entrypoint/bootstrap cutover; source/allowed-file/mechanism/failure/DoD/class/kill declaration
-before EVERY chunk. Keep mandatory execution behind SLICE1–4 complete boundary; do not deploy a
-partly isolated product. Main-host profile/UID/cgroup/mount/UDS/image facts and maintenance consent
-still required. STEP7 independent final oracle/helper design review precedes final fixtures; actual
-helper code reviewed again before main-host use. Record live-case matrix for image/wrapper/help/
-auto-run/session imports and backend-down zero project execution; no premature live tests now.
+E232's implementation continuation instruction is superseded by the E233 Q75 hold above.
+Keep SLICE1–4 closure before activation; main-host facts/maintenance authorization, final independent
+fixture/helper review and actual direct+nested E2E remain required, not granted by this checkpoint.
 
 E231 decisions remain:Q59advisory/manual+EXISTING experimental suggestion/no required mode;
 Q60verified reuse/ONE workflow-admission-repair machine;Q63fourstates/optional commentary/no reason

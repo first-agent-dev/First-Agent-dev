@@ -35,6 +35,14 @@ Reuse private IO primitives introduced for I02, but keep publication commit sema
 
 ## 2. Launch, wire protocol and installed profile
 
+**E233 implementation hold — Q75 OPEN.** Frozen15dc7cb lines89–100/132–147/241–251 conflict at
+non-exec lost-reply/grant recovery: inspect returns only ExecutionReceipt, pre-view grants can be
+unavailable, and typed journal replies would contain memory-only secrets. Handoff revokes the
+original proof before an acknowledgement may arrive. Resolve [Q75](open-questions-2026-10-07.md#q75--may-exact-completed-request-replay-return-an-original-cached-grant-after-revocation)
+before implementing/freezing these joins. The schema text below is retained as the review input,
+NOT permission to persist capabilities or accept revoked grants. No temporary service/decoder ships
+on an inferred policy. E232 partial CT98 remains unchanged; other ratified decisions stay resolved.
+
 Controller entry is `/opt/fa-venv/bin/python -I -m fa.controller_entry`, CWD a trusted directory,
 not the active workspace. Add the named module first; do not substitute `-m fa.cli` (currently a
 silent no-op) or nonexistent `-m fa`. Pin the installed fa package and dependencies, remove editable

@@ -1556,3 +1556,60 @@ plan promotion, which retains its separate validated same-path irreversible repl
   still cannot be rolled back; do not pretend the whole workflow is an atomic transaction.
 
 Spec §6.1 is the exact (a) proposal, not its approval. No code or status changes assign the choice.
+
+## Q75 — May exact completed-request replay return an original cached grant after revocation?
+
+**Status: OPEN — implementation stop, E233, 2026-10-16.** Blocks freezing I03 SLICE1 wire/
+authorization/recovery contracts (CT99/CT100). Q59/Q60/Q63/Q74 stay resolved. No runtime fix or
+new replay permission is selected by recording this question.
+
+**Verified baseline:** `15dc7cb3f6298f22496469ef35ad5d4e67f0e2bf`. `src/fa/execution/`, protocol.py,
+supervisor.py and client.py do not exist; this is a specification join defect, NOT a demonstrated
+implementation vulnerability. Current implementation is E232's partial CT98 entry/audit only.
+
+Frozen execution spec evidence:
+- `:89–100`: exact result schemas, viewless grant operations, capability mandatory for inspect;
+  IDs are not secrets/authorization and stored results are namespace-bound.
+- `:132–136,147`: acquire/pin/create/handoff replies contain capability; handoff revokes old actor.
+- `:140`: inspect/cancel always returns ExecutionReceipt, not arbitrary non-exec/grant results.
+- `:241–251`: journal result is typed per-op, all non-exec losses inspectable by reserved ID;
+  grants are memory-only and revoked at restart, fresh grants only after safe reconciliation.
+
+**Concrete failure:** handoff completes and revokes parent's grant, then its reply is lost. The
+parent has the original proof but no active grant; normal authorization rejects retry. A viewless
+inspect cannot satisfy the present envelope/result type. Persisting the complete successful reply
+would persist a capability, contrary to the explicit memory-only rule. Non-exec publish/install
+results also are not ExecutionReceipt. Choosing recovery here changes an authorization boundary.
+
+**Shared non-negotiable correction (both alternatives):** never store capability secrets. Define
+the journal result as a nonsecret projection/descriptor, separate from the ephemeral wire reply,
+using the SAME existing journal (not another DB/history/service). Clarify non-exec observation via
+exact original-operation/request replay rather than pretending its result is ExecutionReceipt.
+Canonical namespace/input hash and original authorization must match independently; IDs alone
+never authorize. No operation executes again, no grant is renewed, uncertainty never means success.
+
+**(a) Narrow memory-only completed-reply replay — recommended.** Allow an authenticated caller
+with the exact original namespace, request/input and original authorization proof to receive ONLY
+that original cached reply, including its grant, even if the supplied grant was revoked by that
+operation's completed handoff. This is an exact-request read/replay exception, NEVER a mutation
+exception or capability-renewal path. Altered inputs, other operations/namespaces/principals and
+revoked grants used for fresh work are rejected. Cache loss/restart does not recreate a grant:
+block/quarantine as required until the already-required safe reconciliation and fresh admission.
+
+**(b) No revoked-grant replay exception.** Replay remains possible only while ordinary authorization
+still holds (including authenticated pre-grant calls). If a completed handoff revoked the proof
+before its reply was received, fail closed and require explicit recovery/quiescent reconciliation.
+Same memory-only/nonsecret-journal correction; no automatic recovery of that lost handoff reply.
+This is simpler/stricter but a harmless reply loss can interrupt the workflow and require maintenance.
+
+**Why ask rather than infer:** Q60 delegates managed-acquisition design, not blanket permission
+to accept revoked supervisor grants. Existing dedup/no-replay language does not specify this
+exception; persisting tokens or inventing a viewless inspector would silently change security policy.
+
+**Required later tests/proof:** C0 closed request/reply/journal round trips for EVERY operation;
+C3 exact/mismatched namespace/principal/input/proof, revoke-before-reply, lost ack, cache loss and
+restart; prove no capability in durable files/errors/logs and no second execution/grant issuance.
+Use actual dispatcher/authority composition before product acceptance; unit injection is C0 only.
+Developmental mutation must remove replay authorization/dedup/redaction mechanisms, with actual
+CALL failures and zero runner/collection errors. Normative CT99/CT100 kills retain full declared
+SLICE1 paths and remain pending; real-host proof remains final I03 acceptance work.
