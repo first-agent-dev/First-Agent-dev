@@ -510,3 +510,53 @@ Collected join for later: exec has no PlanRef field and normal view metadata lac
 binding, yet receipt must be reconstructed authoritatively with plan_sha256. Ordinary no-workflow
 execution (Q59) also needs explicit nullable-plan semantics. Do not fabricate hashes or let worker
 text select a binding. Continue independent journal work before asking about this join.
+
+## E237 — durable journal and injected-authority dispatcher, 2026-10-16
+
+Contracts CT99/CT100 construction; F17/Q75 integration and F15 owning paths. journal.py is a helper
+of the SAME supervisor, protected operations/<op-ID>.json, using existing private directory/flock/
+atomic replace+file/directory fsync. No session DB or alternate history. Exact canonical input hash,
+namespace/view binding, one durable execution claim, recorded container ID, persistent cancel and
+one start claim with write-ahead UNKNOWN; actual bounded Docker start remains backend responsibility.
+Failed directory fsync never reports successful admission even if replace became visible. Corrupt/
+aliased state never overwritten. Restart marks unfinished UNKNOWN only while holding startup
+singleton scope; this is NOT actual Docker/cgroup reconciliation, draining, authorization or renewal.
+Completed execution records validate known bound identities and reject indeterminate/missing-exit
+as DONE; full source/profile/PlanRef authority remains outside this helper. Grant projections derive
+from the sole wire schemas, remove capability and reject known issued/original secrets before IO.
+
+SupervisorDispatcher serves one accepted AF_UNIX connection, checks actual SO_PEERCRED UID before
+reading a frame, closed codec before dispatch, fixed configured profile ID/command budget and the
+REQUIRED ownership callback before reservation/handler. No callback default, service main, issuer,
+Docker backend or permissive production authority. Exact completed replay precedes fresh authority;
+principal/namespace/input/original-proof mismatch rejects, cache loss never calls handler/issuer.
+Non-grant immutable successful snapshots support release/other mutation replies without capability
+reconstruction. Body schema validation + durable DONE precede cache+ack; lost ack does not undo DONE.
+Unexpected backend exceptions return sanitized uncertainty and persist UNKNOWN, without exception
+body/cause logging. One BLE001 reviewer anchor at this deliberate private exception boundary, not
+a global lint/rule waiver; KeyboardInterrupt/SystemExit not swallowed. Callback request copies keep
+original input/request key/proof stable even if trusted callback code normalizes its own copy.
+Client and dispatcher now use a single monotonic RPC deadline across partial reads/writes.
+
+Actual final all10current owning/regression modules286PASS27.89s/restored286PASS28.07s, zero skips,
+collection/setup/teardown errors or warnings. Nine full286case developmental mutations:
+fresh-authorize producer10CALLfails; reservation durability27; execution claim3; start claim2;
+persist cancel2; known-grant guard1; completed input/proof10; absolute deadline1; startup ownership1.
+Callback authority/handler-copy mutations separately run full286 each and kill1/1CALL; baseline
+286PASS28.06s/restored286PASS27.90s. Static RuffPASS/format14unchanged/Mypy14target+178sourcePASS;
+entry30PASS2.95s separately. Exact source restoration. NOT normative full service/kernel C1 proof.
+
+Evidence: [final286 bank](evidence/i03-e237/journal-dispatch-final.json.gz),
+[callback-copy bank](evidence/i03-e237/callback-copies.json.gz),
+[earlier285 development](evidence/i03-e237/journal-dispatch.json.gz).
+Initial combined baseline283PASS2FAIL because reporter imported from external cache violated C0
+origin-root assumption; identical test-only plugin moved under repository .arena, no guard/oracle
+weakened and no kill credit. Initial reports retained. Review also restored unrelated GrantReply
+EXEC negative fixture accidentally changed by broad text replacement; only replay binding expands
+to non-health vocabulary. Final286 evidence is rerun on exact repaired fixtures/source, not relabelled.
+
+Source confirms spec §2.1 already permits this C0 typed injected ownership construction and defers
+actual WorkspaceAuthority/service main/positive managed kernel proof until integration. No new
+slice-sequence decision needed. Independent immutable installation/build proof continues in E238.
+Collected F18 PlanRef join remains: ordinary execution vs nullable-only-provisioning text, and no
+active PlanRef in ordinary view metadata. Do not fabricate a plan hash or move that choice to worker.

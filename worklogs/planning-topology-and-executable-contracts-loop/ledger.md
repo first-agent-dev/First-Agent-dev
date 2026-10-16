@@ -2731,3 +2731,16 @@ E236  I03 PROFILES/CLIENT/CELL PTY ADAPTER  2026-10-16;C0/C3 construction,not ac
     exact restore;notes/evidence/i03-e236/client-worker.json.gz. Not normative service/kernel proof.
     Collected PlanRef/receipt join;finish independent journal work before questions. No production
     main/authority/grant issuer/live test or CT/STEP tick. All35STEPS/four final duties incomplete.
+
+E237  I03 JOURNAL/DISPATCH CONSTRUCTION  2026-10-16;CT99/100,F17/Q75,F15;not activation.
+    Protected secret-free JSON reuses private IO/flock/fsync;single execution/start claim,persistent
+    cancel,startup singleton+UNKNOWN. Real per-connection SO_PEERCRED transport;required actual
+    authority/backend callbacks,completed-cache read before fresh auth;no handler replay/reissuance.
+    Public non-grant snapshots and absolute whole-RPC deadline;sanitized backend uncertainty.
+    Final286PASS27.89s/restored286PASS28.07s;nine full286kills10/27/3/2/2/1/10/1/1CALLfails.
+    Callback-copy full286kills1/1,baseline28.06s/restored27.90s;zero runner errors/skips,exact restore.
+    RuffPASS/format14unchanged/Mypy14target+178sourcePASS;entry30PASS2.95s. Earlier reporter-root
+    baseline failure/fixture repair retained,not counted as kills. Raw final+copy+earlier evidence
+    in notes/evidence/i03-e237. No actual authority,daemon/main,issuer or Docker/cgroup reconciliation.
+    Existing spec already defers real ownership/service integration;all35STEPS/four final duties
+    remain open. E238 immutable build/install proof in progress;F18 active PlanRef join collected.

@@ -15,7 +15,7 @@ from typing import Any, cast
 from uuid import uuid4
 
 from fa.execution.profiles import ExecutionProfile
-from fa.execution.protocol import decode_reply, decode_request, encode_json, read_frame, write_frame
+from fa.execution.protocol import DeadlineConnection, decode_reply, decode_request, encode_json, read_frame, write_frame
 from fa.execution.types import (
     ExecutionContractError,
     ExecutionReceipt,
@@ -63,7 +63,7 @@ class ExecutionClient:
             raise ExecutionContractError
         self._path = socket_path
         self._server_uid = server_uid
-        self._timeout = rpc_timeout_ms / 1000
+        self._timeout_ms = rpc_timeout_ms
 
     def _connect(self, connection: socket.socket) -> None:
         # Peer credentials after connect are authoritative even across a path
@@ -110,11 +110,12 @@ class ExecutionClient:
         attempted_send = False
         try:
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
-                connection.settimeout(self._timeout)
+                framed = DeadlineConnection(connection, timeout_ms=self._timeout_ms)
+                connection.settimeout(framed.remaining())
                 self._connect(connection)
                 attempted_send = True  # sendall can lose a partial/completed write.
-                write_frame(connection, raw)
-                response = decode_reply(read_frame(connection), operation=operation, request_id=request_id)
+                write_frame(framed, raw)
+                response = decode_reply(read_frame(framed), operation=operation, request_id=request_id)
         except (OSError, ExecutionContractError):
             if attempted_send:
                 raise ExecutionUncertainError("op-" + request_id) from None

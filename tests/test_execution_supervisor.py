@@ -301,11 +301,11 @@ def test_view_shape_rejects_invalid_identity_and_open_enums(changes: dict[str, o
         {"namespace": "untrusted"},
         {"request_id": "request-id"},
         {"input_sha256": "hash"},
-        {"operation": Operation.EXEC},
+        {"operation": Operation.HEALTH},
         {"operation": "handoff"},
     ],
 )
-def test_replay_binding_rejects_invalid_or_non_grant_operation(changes: dict[str, object]) -> None:
+def test_replay_binding_rejects_invalid_or_health_operation(changes: dict[str, object]) -> None:
     with pytest.raises(ExecutionContractError):
         _unchecked_replace(binding(), changes)
 
@@ -382,3 +382,28 @@ def test_view_wire_shape_and_purpose_vocabulary_match_spec() -> None:
     assert {p.value for p in ViewPurpose} == {"PROJECT", "PROVISIONING", "VERIFICATION", "MUTATION", "CANDIDATE"}
     with pytest.raises(ExecutionContractError):
         GrantReply(Operation.PIN_READER, GRANT, VIEW, None, None)
+
+
+def test_non_grant_snapshot_is_immutable_and_completed_reply_not_fresh_authority() -> None:
+    from fa.execution.types import PublicReply
+
+    public = {"released": True}
+    snapshot = PublicReply.from_result(Operation.RELEASE, public)
+    public["released"] = False
+    key = replace(binding(), operation=Operation.RELEASE)
+    cache = CompletedReplyCache(max_entries=1)
+    cache.remember_completed(key, PROOF, snapshot)
+    assert cache.replay(key, PROOF).to_wire_result() == {"released": True}
+    assert snapshot.to_journal_result(original_proof=PROOF) == {"released": True}
+    assert "released" not in repr(snapshot)
+    with pytest.raises(ReplayConflictError):
+        cache.replay(key, GRANT)
+
+
+def test_public_snapshot_refuses_grant_bodies_and_mutable_raw_data() -> None:
+    from fa.execution.types import PublicReply
+
+    with pytest.raises(ExecutionContractError):
+        PublicReply.from_result(Operation.HANDOFF, reply().to_wire_result())
+    with pytest.raises(ExecutionContractError):
+        PublicReply(Operation.RELEASE, cast(Any, bytearray(b'{"released":true}')))

@@ -8,12 +8,14 @@ from __future__ import annotations
 
 import json
 import re
+import socket
 import struct
+import time
 from typing import Any, Protocol
 
 import fastjsonschema  # type: ignore[import-untyped]  # Existing dependency ships no typing metadata.
 
-from fa.execution.types import ExecutionContractError, Operation
+from fa.execution.types import ExecutionContractError, Operation, _positive_integer
 
 MAX_FRAME_BYTES = 4 * 1024 * 1024
 MAX_TEXT_BYTES = 1024 * 1024
@@ -352,6 +354,29 @@ class FrameConnection(Protocol):
     def recv(self, size: int, /) -> bytes: ...
 
     def sendall(self, data: bytes, /) -> None: ...
+
+
+class DeadlineConnection:
+    """One monotonic budget for the ENTIRE socket RPC, not each partial read."""
+
+    def __init__(self, connection: socket.socket, *, timeout_ms: int) -> None:
+        _positive_integer(timeout_ms)
+        self._connection = connection
+        self._deadline = time.monotonic() + timeout_ms / 1000
+
+    def remaining(self) -> float:
+        remaining = self._deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError
+        return remaining
+
+    def recv(self, size: int, /) -> bytes:
+        self._connection.settimeout(self.remaining())
+        return self._connection.recv(size)
+
+    def sendall(self, data: bytes, /) -> None:
+        self._connection.settimeout(self.remaining())
+        self._connection.sendall(data)
 
 
 def _read_exact(connection: FrameConnection, size: int) -> bytes:

@@ -1,8 +1,8 @@
 """Immutable execution identities and grant-reply data (not authorization).
 
-These are internal primitives, not a complete wire decoder. The dispatcher,
-resource registry, durable operation journal and ExecutionReceipt remain separate
-work. A well-shaped ViewRef does not prove that the view exists or is authorized.
+Shape validation and memory snapshots do not attest actual backend observations.
+The real resource authority and installed service integration remain separate.
+A well-shaped ViewRef does not prove that the view exists or is authorized.
 """
 
 from __future__ import annotations
@@ -325,3 +325,45 @@ class ExecutionReceipt:
             view.generation,
         ):
             raise ExecutionContractError
+
+
+@dataclass(frozen=True, repr=False)
+class PublicReply:
+    """Immutable successful non-grant result snapshot; never execution authority."""
+
+    operation: Operation
+    canonical_result: bytes
+
+    def __post_init__(self) -> None:
+        from fa.execution.protocol import _RESULT_CHECKS, _check, _loads, validate_receipt
+
+        if (
+            not isinstance(self.operation, Operation)
+            or self.operation in GRANT_OPERATIONS
+            or self.operation is Operation.HEALTH
+        ):
+            raise ExecutionContractError
+        if type(self.canonical_result) is not bytes:
+            raise ExecutionContractError
+        record = _loads(self.canonical_result)
+        _check(_RESULT_CHECKS[self.operation], record)
+        if self.operation in {Operation.EXEC, Operation.INSPECT, Operation.CANCEL}:
+            validate_receipt(record["receipt"])
+
+    @classmethod
+    def from_result(cls, operation: Operation, result: dict[str, Any]) -> PublicReply:
+        from fa.execution.protocol import encode_json
+
+        return cls(operation, encode_json(result))
+
+    def to_wire_result(self) -> dict[str, Any]:
+        from fa.execution.protocol import _loads
+
+        return _loads(self.canonical_result)
+
+    def to_journal_result(self, *, original_proof: str | None) -> dict[str, Any]:
+        if original_proof is not None:
+            validate_capability(original_proof)
+            if original_proof.encode() in self.canonical_result:
+                raise ExecutionContractError
+        return self.to_wire_result()

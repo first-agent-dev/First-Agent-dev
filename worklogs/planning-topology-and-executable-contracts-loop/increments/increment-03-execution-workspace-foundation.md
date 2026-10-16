@@ -42,7 +42,10 @@ E235 adds the complete closed wire/receipt codec and72 C0/C3 cases; all19 operat
 shapes are covered, including real socketpair framing. No authority/service activation.
 E236 adds fixed-profile rendering, a single-attempt authenticated-UDS client, receipt binding, all
 four managed PTY methods and a cell-local framed PTY worker. C0/C3 only; no factory activation.
-STEP1–4 remain unchecked; normative CT99/CT100 producer calls are absent and uncredited.
+E237 adds protected operation journal, one-claim/cancel/start guards, startup singleton scope,
+absolute RPC deadline and per-connection kernel-peer dispatcher with REQUIRED authority/backend
+callbacks. Q75 covers successful non-grant replies too. C0/C3, not a running production service.
+STEP1–4 remain unchecked; producer helpers exist, but C1 factory/authority/kernel wiring is uncredited.
 
 ## Grounding, sequence and scope discipline
 
@@ -119,11 +122,11 @@ CONTRACTS:
     nonroot/cap-drop/NNP/seccomp/resource limits, digest-pinned image/toolchains, no default network
     or host/control mounts. Dependency cache is approved/read-only; unsupported dependency access
     blocks. Root/daemon/kernel/admin are TCB; profile/cgroup/UID/UDS facts require actual host proof.
-TESTS: tests/test_controller_entry.py, tests/test_execution_supervisor.py, tests/test_execution_protocol.py, tests/test_execution_client.py, tests/test_execution_cell_worker.py, tests/integration/test_execution_boundary.py   (NEW)
+TESTS: tests/test_controller_entry.py, tests/test_execution_supervisor.py, tests/test_execution_protocol.py, tests/test_execution_client.py, tests/test_execution_cell_worker.py, tests/test_execution_journal.py, tests/test_execution_dispatch.py, tests/integration/test_execution_boundary.py   (NEW)
 ```verify
-uv run pytest tests/test_controller_entry.py tests/test_execution_supervisor.py tests/test_execution_protocol.py tests/test_execution_client.py tests/test_execution_cell_worker.py -q
+uv run pytest tests/test_controller_entry.py tests/test_execution_supervisor.py tests/test_execution_protocol.py tests/test_execution_client.py tests/test_execution_cell_worker.py tests/test_execution_journal.py tests/test_execution_dispatch.py -q
 FA_REQUIRE_EXECUTION_HOST=1 uv run pytest tests/integration/test_execution_boundary.py -q -m execution_host
-uv run ruff check src/fa/controller_entry.py src/fa/execution tests/test_controller_entry.py tests/test_execution_supervisor.py tests/test_execution_protocol.py tests/test_execution_client.py tests/test_execution_cell_worker.py tests/integration/test_execution_boundary.py
+uv run ruff check src/fa/controller_entry.py src/fa/execution tests/test_controller_entry.py tests/test_execution_supervisor.py tests/test_execution_protocol.py tests/test_execution_client.py tests/test_execution_cell_worker.py tests/test_execution_journal.py tests/test_execution_dispatch.py tests/integration/test_execution_boundary.py
 ```
 - [ ] STEP1: implement spec §2.1 closed operations/results (including all four BashExecutor methods), capability/volume-map/startup recovery contracts; define frozen types/protocol/profile validation and new actual controller entry module per spec §§1–3; test strict keys/types/limits and installed import closure, including editable-pth/CWD/PYTHONPATH poisons (exit: unit tests collect and pass; isolated module executes real CLI help, not a no-op)
 - [ ] STEP2: implement supervisor service/client/cell worker using existing PTY machinery, approved profile and operation reservation/inspect/cancel; remove no behavior from ordinary PTY contract (exit: unit no-replay/timeout/wire/auth tests pass)

@@ -3,7 +3,7 @@
 > Read [`knowledge/llms.txt`](../knowledge/llms.txt) §MUST READ FIRST.
 > Current local delivery is distinct from final I03/deployed acceptance.
 
-## Current state — I02 LOCAL SHIPPED / I03 IMPLEMENTATION IN PROGRESS, 2026-10-16 / E236
+## Current state — I02 LOCAL SHIPPED / I03 IMPLEMENTATION IN PROGRESS, 2026-10-16 / E237
 
 Branch `arena/86633f17-first-agent-dev` only. Retained I02 runtime/test proof snapshot
 `a32a72fc58db4b9a5b048a9b6475649bcf3e32b4`. E230/E231 finalized planning; E232 adds the first
@@ -40,6 +40,14 @@ E2E/deployment signoff. I03 remains OUTLINED/undelivered,all four successors unc
 Ubuntu host test,OS isolation,managed nested acquisition or host supervisor delivered here. Python
 only;Go is an indirect inherited hook-build diagnosis,not a new FA runtime/deployment requirement.
 PTY stays. Q69–Q73 resolved;Q72 remains its narrow46-links/15-files+banner repair decision.
+
+**E237 current continuation:** durable secret-free journal and per-connection UDS dispatcher now
+constructed, with required injected authority/backend, one-claim/cancel/start guards and Q75 replay.
+Final286case bank + eleven developmental full-bank kills pass/kill with clean restoration;
+static14target/178source pass. No main/issuer/real ownership/Docker/cgroup proof. Existing spec
+already allows C0 construction before SLICE2 authority; do not ask about that settled sequence.
+E238 immutable Docker install/build gate and actual installed CLI tests are in progress/uncommitted.
+F18 active PlanRef/ordinary-nullability join remains collected; exhaust independent work first.
 
 **E236 continuation:** fixed profile renderer, single-attempt peer-authenticated UDS client,
 all four managed PTY methods, full receipt binding and real cell-local PTY module now exist.

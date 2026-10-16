@@ -25,6 +25,8 @@ Planned new modules, deliberately divided by responsibility rather than new serv
 | `src/fa/execution/types.py` | Frozen NamespaceRef, ViewRef, OperationRef, ExecutionReceipt; closed job/error states and schema validation |
 | `src/fa/execution/client.py` | ExecutionClient over private UDS, ManagedBashExecutor, noninteractive adapter; run_stage_with_plan_write_boundary and receipt validation |
 | `src/fa/execution/supervisor.py` | Privileged host main/UDS dispatch, fixed profile loading, cell create/inspect/cancel, process-tree barrier; no raw Docker request passthrough |
+| `src/fa/execution/journal.py` | Same supervisor’s protected secret-free operation JSON, one-claim guards and restart uncertainty; reuses private IO/flock helpers, no second database |
+| `src/fa/execution/profiles.py` | Frozen explicit approved-profile inputs and fixed Docker renderer; not host approval or protected resource authority |
 | `src/fa/execution/cell_worker.py` | Thin cell-local adapter reusing PtyPool/InProcessPtyExecutor and result framing; no independent host authority |
 | `src/fa/execution/workspace.py` | Same supervisor's registration, writer flock/generation, materialized revisions/candidates, rooted file-tool operations/read pins |
 | `src/fa/execution/publication.py` | Same authority's seal validation, prepare/commit/projection/recovery and no-clobber project install |
@@ -194,7 +196,13 @@ Reserve durably BEFORE Docker create, use deterministic owned name and labels in
 ID; persist container identity before start. Restart reconciles RESERVED/RUNNING by ID/name/labels
 and actual Docker+cgroup facts. Lost create/start reply means inspect the existing identity or
 quarantine, NEVER a second create/start. Cancel-before-start also persists and prevents late start.
-Bound control RPC timeouts separately from command deadline; lost reply cannot mean not executed.
+Before startup recovery, hold the existing private flock primitive in operations/.supervisor for
+the accepting service lifetime. Per-operation atomic transitions use the separate short journal
+lock. A persisted cancel before the start critical section denies start; write UNKNOWN before ONE
+bounded start RPC while holding that journal critical section. Never regain the start claim after
+loss. This journal state records write-ahead uncertainty, not an actual Docker observation.
+Bound control RPC timeouts separately from command deadline; use one monotonic deadline across
+all partial frame reads/writes, not resettable socket inactivity alone; lost reply cannot mean not executed.
 
 Deployment contract: controller `/sessions` and any canonical project binds READ-ONLY; replace the
 current compose writable `/sessions` bind. Keep controller session/config DB mounts writable but
