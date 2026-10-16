@@ -930,6 +930,14 @@ A failed validator remains eligible for another bounded planner attempt. Empty/u
 
 ## Q59 — Is chat escalation advisory, or must complex tasks be forced through `invoke_workflow`?
 
+**Status: RESOLVED — operator 2026-10-16 (E231).** Advisory/manual invocation PLUS the existing
+experimental mid-chat prompt-injected invoke suggestion. No new --require-workflow, router-only
+mode or production success guard. Preserve/verify expansion/routing and current injection plumbing;
+prompt compliance is not a guarantee. Mandatory managed execution remains independent of workflow
+choice. Current contract: I03 spec §§7/7.0/9; source cli.py:2408–2437, expansion.py:10–23.
+
+### Historical proposals and source analysis (superseded by E231 above)
+
 **E230 current finalization:** still OPEN, not ratified by plan review. Exact current proposal and
 binary oracles are in I03 spec §§7/7.1/9; current source is1132eee, not the old d910 anchors below.
 Q63's package owner is now I03 SLICE6 (former I02 SLICE7). See E230 findings before deciding.
@@ -981,11 +989,23 @@ controller route or whether model-mediated tool selection is acceptable.
 
 ## Q60 — Is the proposed CT96 planner-managed selection/bootstrap protocol approved?
 
+**Status: RESOLVED BY DELEGATED ENGINEERING DESIGN — operator 2026-10-16 (E231).** The operator
+instructed source verification/reuse, then wise robust maintainable design; this was NOT blanket
+ratification of the earlier proposal. Source-verified selected solution is I03 spec §§7/7.0/7.1:
+one existing workflow/admission/repair machine, existing child allocator and PlannerDispatch,
+strict stable-pair choice/clarification, deterministic fixed-three-file bootstrap, explicit v2
+acquisition cross-fields with unchanged v1 readers. Existing reserved enums are not producers.
+Current pr_prepare producer is tools/prepare_pr.py, not a nonexistent tools/pr_prepare.py. Optional
+private entry/capability is not a public boolean missing-plan bypass. Plan-only delegation here;
+construction/proof/deployment not performed or approved by this resolution.
+
+### Historical proposals and source analysis (superseded by E231 above)
+
 **E230 current finalization:** still OPEN, not ratified by plan review. Exact current proposal and
 binary oracles are in I03 spec §§7/7.1/9; current source is1132eee, not the old d910 anchors below.
 Q63's package owner is now I03 SLICE6 (former I02 SLICE7). See E230 findings before deciding.
 
-**2026-10-15 review:** [I03 spec §7](i03-execution-workspace-spec-2026-10-15.md#7-nested-acquisition-and-q66--exact-proposal-q59q60-still-open)
+**2026-10-15 review:** [I03 spec §7](i03-execution-workspace-spec-2026-10-15.md#7-nested-acquisition-and-q66--source-grounded-design-e231)
 proposes exact stable project_slug/increment_id selection, clarification and controller-rendered
 bundle, replacing the old path-shaped recommendation only if approved. Existing linkage/status
 handling and managed admission v2 are explicit remaining schema dispositions; no option ratified.
@@ -1138,6 +1158,15 @@ small v1 code table as the first CT92 substep.
 ---
 
 ## Q63 — Is the proposed live E2E result vocabulary approved?
+
+**Status: RESOLVED — operator 2026-10-16 (E231).** Exactly `NOT RUN | PASS | FAIL | BLOCKED`.
+Every state permits optional short reasoning/commentary; no extra hardcoded reason variants and
+no required BLOCKED reason. Artifact field `commentary` is optional in every state, ≤512 UTF-8
+bytes, single line, redacted, never control flow. I03 SLICE6 owns actual artifact/test changes;
+append-only attempts and independent live-result ownership remain. Existing roadmap/increment/
+CT vocabularies and generic READY are not changed. See artifact schema §6 and I03 spec §9.
+
+### Historical proposals and source analysis (superseded by E231 above)
 
 **E230 current finalization:** still OPEN, not ratified by plan review. Exact current proposal and
 binary oracles are in I03 spec §§7/7.1/9; current source is1132eee, not the old d910 anchors below.
@@ -1504,6 +1533,14 @@ to determinate evidence, consistent with the retained spec's determinate-only ad
 
 
 ## Q74 — When do ordinary managed source edits become published?
+
+**Status: RESOLVED — operator 2026-10-16 (E231), option (a).** Per-stage/episode checkpoints.
+After actual terminality and security/path seal, publish permitted ordinary edits even on failed
+stages. Workflow stays failed; no rollback promise. Verify/eval/repair read new immutable current;
+close old PTY and issue new editing view. Q58 validated plan replacement remains separate.
+Workflow-end-only branch/discard machinery is NOT selected. Current normative table: I03 spec §6.1.
+
+### Historical proposals and source analysis (superseded by E231 above)
 
 **Status: OPEN — operator decision required before I03 SLICE3/4 integration.** This is not Q58
 plan promotion, which retains its separate validated same-path irreversible replacement.

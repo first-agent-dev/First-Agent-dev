@@ -58,9 +58,9 @@ launchers and dynamically selected project integrations need traced coverage dur
 | --- | --- | --- |
 | `src/fa/cli.py` | `_cmd_run:2166–2515`, `_make_workflow_ctx_provider:1616–1697`, `_build_pty_pool:1923–1951`, `_prepare_managed_workspace:150–159` | Extend current seam; managed IO/execution and preserved invariants per spec §§2.1–7.1 |
 | `src/fa/session/manager.py` | `_new_session:262–330`, `_provision_workspace:208–240`, `_check_reverse_workspace_ownership:193–206`, `begin_run:441–478` | Provisioner BEFORE create; reference reuse; preserve run reservation; never delete supervisor-owned committed root |
-| `src/fa/inner_loop/tools/workflow_tool.py` | `_child_run_context:387–403`, `_requires_acquisition:382–384`, `build_invoke_workflow_tool:406–587` | Existing non-coder child allocation is already real; reuse it, replace coder-only unavailable branch only after acquisition approval |
+| `src/fa/inner_loop/tools/workflow_tool.py` | `_child_run_context:387–403`, `_requires_acquisition:382–384`, `build_invoke_workflow_tool:406–587` | Existing non-coder child allocation is already real; reuse it, replace coder-only unavailable branch under E231 selected acquisition design |
 | `src/fa/inner_loop/workflow_controller.py` | `_run_stage:1181–1383`, `_effective_controller_route:613–645`, `_git_output:835–864`, `_stage_task:1164–1178` | Extend current seam; managed IO/execution and preserved invariants per spec §§2.1–7.1 |
-| `src/fa/inner_loop/coder_loop.py` | `_drive_session_inner:535–2111` | Live local conversation snapshot callback at pre-tool dispatch; strict route final-outcome guard only if Q59 approved |
+| `src/fa/inner_loop/coder_loop.py` | `_drive_session_inner:535–2111` | Live local conversation snapshot callback at pre-tool dispatch; preserve existing experimental escalation/injection, NO strict-route final-outcome guard |
 | `src/fa/inner_loop/tools/write_file.py` | `build_write_file_tool:70–110`, `build_scoped_write_file_tool:113–150` | Extend current seam; managed IO/execution and preserved invariants per spec §§2.1–7.1 |
 | `src/fa/inner_loop/tools/edit_file.py` | `_find_fuzzy:26–79`, `build_edit_file_tool:99–193` | Extend current seam; managed IO/execution and preserved invariants per spec §§2.1–7.1 |
 | `src/fa/inner_loop/slice_verification.py` | `_run_one:330–357`, `capture_test_nodeids:539–581`, `_pytest_report_status_error:530–536`, `_run_kill_check:1439–1537` | Extend current seam; managed IO/execution and preserved invariants per spec §§2.1–7.1 |
@@ -74,3 +74,20 @@ Read_file PDF parsers and runtime optional installed imports are approved-librar
 not evidence of project import closure; bound file parsing and reject unsupported plugin execution.
 No newly found source route is silently exempted; future implementation closes rows only with the
 actual caller/profile/view/negative nodeid evidence in the checklist above.
+
+## E231 source-grounded Q59/Q60 closure (planning only)
+
+- Existing `expansion.py:10–23`, `routing.py:3–13`, `cli.py:2408–2437` support mid-chat advice and
+  current injection plumbing. Preserve both; no new forced workflow mode or duplicate injection.
+- Existing `planner_dispatch.py:17–55`, `plan_admission.py:133–168`,
+  `workflow_controller.py:1181–1383,2231–2270,2370–2428` and `coder_loop.py:379–408` are the ONE
+  machine/type/snapshot/outcome/validator/repair seams. New managed_acquisition helpers are pure
+  choice/metadata/resolve/render functions, not a second orchestration layer. Spec §7.0 owns joins.
+- Actual `pr_prepare` is `tools/prepare_pr.py:186–283`; registration at `cli.py:1788` occurs AFTER
+  role-profile assembly, store at `cli.py:2285–2290` and `pr_draft.py:45–118` has current-session
+  digest trust. Filter it for read-only acquisition; preserve constrained ordinary/scoped usage
+  and Q68 sticky failed-tool behavior. No `tools/pr_prepare.py` exists.
+- Reserved admission values in `admission_schema.py:93–104,154–182` are NOT acquisition producers.
+  v1 hash path `:129–151` would require a promoted hash for ACQUISITION ADMITTED; spec §7 supplies
+  explicit v2 selected-source vs installed-bundle cases rather than inventing a false promotion.
+- Q59/Q60/Q63/Q74 resolved in E231; implementation inventory rows remain OPEN, not closed by docs.

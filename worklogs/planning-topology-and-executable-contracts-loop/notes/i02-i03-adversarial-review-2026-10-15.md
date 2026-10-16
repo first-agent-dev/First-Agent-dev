@@ -1,5 +1,9 @@
 # Adversarial review: retained I02, then execution foundation I03
 
+**Current disposition:** E230/E231 below supersede historical open-policy statements. Planning
+finalized against I02 source1132eee/runtimea32a72f; operator Q59/Q60/Q63/Q74 reconciled, no runtime
+or deployment performed. Older baseline/line references remain historical, not current source claims.
+
 Date: 2026-10-15. Review baseline: E201 / `f0cef5b02120f8c9a44e7bc9ef616e11d2420559`;
 product source is unchanged from `d9109f4`. Document line references below identify **that immutable
 baseline**, unless explicitly marked revised. Source facts were read at the named functions/callers.
@@ -220,3 +224,42 @@ Initial checker mistakenly iterated PrecheckReport rather than .diagnostics; cor
 not runtime/proof evidence. Python3.11.2 here is below package>=3.13; pytest/uv/Docker are absent.
 No supported-runtime suite, mutation, host/profile/deployment or real-provider check is claimed.
 Only worklogs files changed; source/tests/scripts/knowledge/deployment/I02 plan/status untouched.
+
+## E231 — Operator dispositions and actual-surface reuse, 2026-10-16
+
+**Immutable review inputs:** plan/spec at `ffc8b6ac23981a0b477bf91155079524b251f9c6`; runtime/test
+source unchanged from I02 `a32a72f` (also present at1132eee). The operator's actual answers, not a
+review recommendation, resolve Q59/Q63/Q74. Q60 is delegated engineering judgment after source
+verification, NOT blanket operator ratification of the earlier packet or implementation authority.
+
+| Confirmed input / file:line | Selected correction and ownership |
+| --- | --- |
+| Frozen spec `:617–626,707–717` proposes new required-workflow router. Actual `src/fa/inner_loop/expansion.py:10–23`, `routing.py:3–13`, `cli.py:2408–2437` already provide escalation/injection seams. | Q59 advisory/manual PLUS existing experimental suggestion. Remove new required mode/success guard, preserve current configuration/expansion/--inject behavior. Actual invocation remains an E2E witness obligation, not a guaranteed production route. |
+| `src/fa/inner_loop/tools/workflow_tool.py:387–403`; `planner_dispatch.py:17–55`; `workflow_controller.py:1181–1383,2231–2270,2370–2428`; `coder_loop.py:379–408`. | Q60 extends existing child allocator/PlannerDispatch/stage/SessionOutcome/admission/repair, ONE machine and shared budget/history. New choice/resolve/render helpers are pure; no pre-workflow planner replay or duplicate engine. Spec §7.0 names actual vs new seams. |
+| `src/fa/inner_loop/admission_schema.py:93–104,129–151,154–182`; frozen spec `:652–684` carries v1 invariants into v2 without the selected-plan hash join. | Reserved ACQUISITION/source_kind values are not producers. v1 requires non-EXPLICIT ADMITTED promoted hash. New v2 selection explicitly binds captured source without a fake promotion; bootstrap requires real committed receipt. Null/blocked choice, failed install and uncertain receipt cases are explicit; v1 stays byte-for-byte compatible. |
+| `src/fa/inner_loop/tools/prepare_pr.py:186–283`, `cli.py:1749–1796,2285–2290`, `pr_draft.py:45–118`. | Actual pr_prepare producer found, not tools/pr_prepare.py. Reuse current-session draft/digest/IntentGuard; bounded existing controller artifact IO, no new supervisor op/draft subsystem. Registry adds draft tool AFTER profile: explicitly filter ACQUISITION, preserve ordinary/scoped Q68 behavior. |
+| Frozen spec `:791–795` mandates BLOCKED reason variants; `:529–541` leaves checkpoint policy conditional. | Q63 exactly four states, optional short commentary on ALL/no enum or required BLOCKED reason. Q74 per-stage/episode checkpoint after terminality/security, including failure; no rollback promise or workflow-end unpublished branch. Rewrite active schema/plan/spec/questions/roadmap/HANDOFF directly; preserve older proposals as clearly historical. |
+
+**Engineering design, not discovered production code:** private ManagedAdmissionEntry, new enum
+branch, strict metadata/choice helpers, v2 cross-fields, controlled three-file renderer, live-history
+snapshot handoff and managed draft IO remain construction/test obligations. Actual source inspection
+found the existing seams above, not those future implementations. Existing permissive skill-frontmatter
+loaders are NOT reused as fail-closed admission validators. Reuse existing PyYAML/MarkdownIt/plan
+grammar machinery with a small strict adapter; fixed roadmap schema/status table belong to controller.
+No broader ledger parser, route policy, second planning framework or platform backend is added.
+
+**Verdict:** finalized plan is adequate in scope for the mid-roadmap CURRENT whole-plan live explicit
+AND nested workflow target. Not the deferred per-slice scheduler/STEP tracker/L2 VERIFIED target.
+No remaining Q59/Q60/Q63/Q74 policy gate; I03 remains OUTLINED/unimplemented. Four transferred
+acceptance duties and all35 steps remain incomplete, all17 FUNCTIONAL IDs/classes preserved.
+
+**Actual E231 planning checks:** stdlib actual-source extractor/precheck + pure kill-validator leaf
+harness (`/home/user/.cache/i03-review/validate.py`), 6 slices/17 FUNCTIONAL/35 unchecked steps,
+0 FAIL/6 retained cross-increment WARNs; source AST checks confirm current inventory symbol ranges.
+Original CT96 handler/CT97 stage-boundary lineage intact; CT108 uses existing _child_run_context.
+`python scripts/check_doc_links.py`:308files/no broken links. `git diff --check`:clean after EOF repair.
+No src/tests/scripts/knowledge/deployment changes versus1132eee; schema example markers preserved.
+Python3.11/no uv/pytest/Docker: no supported-runtime suite, kernel/isolation/mutation/deployed test
+run; no live result assigned. Environment/toolchain/host/profile approval, source declarations and
+actual per-slice construction/proof, independent final helper/evidence review, authorized normal
+main update and unmocked direct+nested witnesses remain required implementation/release work.

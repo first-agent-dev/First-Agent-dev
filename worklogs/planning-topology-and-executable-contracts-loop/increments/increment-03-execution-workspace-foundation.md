@@ -8,19 +8,19 @@ shipped: —
 
 # INCREMENT I03: Execution/workspace foundation and integrated acceptance
 
-**Planning state:** six source-grounded briefs replace the ownership-only outline. OUTLINED remains:
-Q59/Q60 exact acquisition/route, Q74 checkpoint policy and Q63 final result-schema decisions are pending. The core
-mechanics have current-source interface contracts; conditional SLICE5/SLICE6 cannot be dispatched
-until their dispositions are recorded. Do not pass this increment wholesale to a coder as an
-approved plan yet. Parser-valid shape is not operator approval or a machine-enforced readiness gate.
-No implementation box, live result or shipped status is assigned by this review.
+**Planning state:** finalized after E230 adversarial review and E231 operator answers/source audit.
+Q59 advisory/manual + EXISTING experimental suggestion injection, no required mode; Q60 delegated
+source-grounded reuse design in spec §7; Q63 four states/optional commentary/no reason enum; Q74
+per-stage/episode ordinary-edit checkpoints. No policy question below remains pending. OUTLINED
+is deliberately unchanged: plan finalization assigns no implementation tick, READY automation,
+live result or deployment authorization. All35 construction steps and final acceptance remain open.
 
 **Depends on:** retained I02 local implementation/checks and plan-versus-diff review; no restored
 I02 deployed-host, broad independent-review or inherited-baseline acceptance prerequisite.
 **E223 final-acceptance ownership:** all four transferred obligations are unfinished under SLICE6:
 deployed functional/source-to-behaviour verification; environment/readiness and inherited baseline
 acceptance review; broad independent implementation/evidence review; integrated E2E/deployment signoff.
-This transfer does not approve I03's pending conditional decisions or mark either increment shipped.
+The E231 decisions finalize the plan, not runtime delivery or either increment’s final acceptance.
 **Shippable when:** all project execution uses mandatory Linux/Docker cells, one protected workspace
 writer owns coherent private views/pinned readers, terminal sealing/fenced publication/recovery
 are proved, real nested selection/bootstrap/context works, and every unique required I02+I03
@@ -58,7 +58,7 @@ New module/function/test names below are **planned interfaces**, not claims abou
 **Mid-roadmap target:** on the intended Ubuntu/Docker main deployment, execute a real explicit-plan
 workflow AND ordinary outer chat→invoke→managed child workflow, with actual provider requests,
 useful source edits/tests, admission/T0/verification/actual eval and persisted terminal evidence.
-This increment is sufficient in scope for that CURRENT whole-plan system only after its decisions,
+This increment is sufficient in scope for that CURRENT whole-plan system only after its
 mechanics and final host acceptance are complete. It does not deliver per-slice scheduling, automatic
 STEP/CT tracking or L2 VERIFIED. Those remain the named deferred successor; do not advertise that
 broader roadmap loop as live-tested. I01 remains active pending its own disposition, not auto-closed.
@@ -184,9 +184,9 @@ TESTS: tests/test_workspace_publication.py, tests/integration/test_publication_r
 uv run pytest tests/test_workspace_publication.py -q
 FA_REQUIRE_EXECUTION_HOST=1 uv run pytest tests/integration/test_publication_recovery.py -q -m execution_host
 ```
-- [ ] STEP1: freeze Q74 disposition and spec §6.1 stage transition table before controller/publication integration; implement terminal barrier/view state machine and immutable export validation; tests launch fork/double-fork/setsid/background writers in real cells and hold active file operations (exit: none can seal/publish while still writable)
+- [ ] STEP1: implement selected Q74 per-stage/episode checkpoint policy and spec §6.1 stage transition table; implement terminal barrier/view state machine and immutable export validation; tests launch fork/double-fork/setsid/background writers in real cells and hold active file operations (exit: none can seal/publish while still writable)
 - [ ] STEP2: implement exact intent/current/projection schemas/order/dir fsync and generation/base CAS per spec §5, including canonical Git-index preservation and spec §5.1 exact Q58/bootstrap forward-recovery phases (exit: complete old/new pinned-reader and stale/fault unit matrix passes)
-- [ ] STEP3: integrate Q58 buffer/hash/promotion and no-clobber bundle primitives with this same authority; no managed-acquisition UI/protocol before SLICE5 disposition (exit: direct controller-authorized tests prove collisions preserve old bytes and post-commit failure never rolls back)
+- [ ] STEP3: integrate Q58 buffer/hash/promotion and no-clobber bundle primitives with this same authority; no managed-acquisition UI/protocol before SLICE5 integration (exit: direct controller-authorized tests prove collisions preserve old bytes and post-commit failure never rolls back)
 - [ ] STEP4: recover from supervisor/process death at each durable boundary, before/after pointer replace and during projection; require approved filesystem and separately label process-crash versus power-loss evidence (exit: real recovery tests expose only complete current revisions or quarantine, no success from uncertain state)
 - [ ] STEP5: record full declared-path CT104–CT107 kills and cleanup/ownership evidence (exit: all four producers killed by useful executed oracles; no cells/pins/intent abandoned without disposition)
 
@@ -229,9 +229,9 @@ FA_REQUIRE_EXECUTION_HOST=1 uv run pytest tests/integration/test_execution_closu
 STEPS: prescriptive
 DEPS: SLICE4
 INTENT: deliver actual outer chat→invoke→child workflow with correct child authority, approved
-  selection/bootstrap/clarification and Q66, only after exact Q59/Q60 dispositions are recorded.
+  selection/bootstrap/clarification and Q66 under recorded Q59/Q60 dispositions, reusing one workflow machine.
 CONTRACTS:
-  CT96 [FUNCTIONAL]: after explicit Q59/Q60 disposition, actual invoke handler calls managed
+  CT96 [FUNCTIONAL]: under recorded Q59/Q60 dispositions, actual invoke handler calls managed
     planner acquisition, returns exactly approved stable-ID selection/bundle/clarification, admits
     selected/installed canonical PlanRef before T0/coder, and preserves ordinary chat default.
     No guessed path, public context/PlanRef field, free-form file map or raw ledger. Original kill:
@@ -244,20 +244,21 @@ CONTRACTS:
     feeds only initial planner user task beside its own prompt/skills; no SYSTEM transcript/public
     schema field. Redact credentials; retries/replans use distilled packets, ordinary logs allowed.
     kill: remove-call src/fa/cli.py::_make_workflow_ctx_provider -> _snapshot_parent_for_initial_planner
-  CT109a [CONSTRAINT]: spec §7 is an exact proposal, not ratified Q59/Q60. Resolve mode/guarantee,
-    stable pair/schema, clarification, rendering/caps and v2 admission rules before implementation.
-    Retain v1 evidence readers. Collision/ambiguity/malformed/missing choice blocks before coder/
-    eval; post-install IO failure retains valid bundle. No temporary unavailable stub ships as CT96.
+  CT109a [CONSTRAINT]: implement spec §§7/7.0/7.1 stable pair/schema, clarification, rendering/caps
+    and v2 acquisition cross-fields using existing child allocator/PlannerDispatch/SessionOutcome/
+    admission/repair/PrDraftStore, not a second engine. Retain v1 readers and current experimental
+    injection; no new required-workflow mode. Collision/ambiguity/malformed/missing choice blocks
+    before coder/eval; post-install IO failure retains valid bundle. No unavailable stub ships as CT96.
 TESTS: tests/test_verify_gate_live.py, tests/test_invoke_workflow_tool.py, tests/test_managed_acquisition.py, tests/integration/test_nested_workflow.py   (NEW acquisition/integration)
 ```verify
 uv run pytest tests/test_managed_acquisition.py tests/test_verify_gate_live.py tests/test_invoke_workflow_tool.py -q
 FA_REQUIRE_EXECUTION_HOST=1 uv run pytest tests/integration/test_nested_workflow.py -q -m execution_host
 ```
-- [ ] STEP1: record exact operator Q59/Q60 dispositions against spec §7; approve/amend and freeze the exact proposed managed admission v2 keys/rule sets/rendered fixture examples and Q74 policy without changing v1. Do not start schema/helper implementation while these are guesses (exit: explicit decision/evidence link; no inferred approval)
+- [ ] STEP1: author exact spec §7 managed-v2 keys/rules/rendering fixtures and v1 compatibility/selection-vs-bootstrap hash tests; apply E231 decisions, no re-approval ceremony or new routing mode. Include existing expansion/injection preservation and source-backed registry/pr_prepare seams (exit: source-matched fixture/schema tests pass; no inferred runtime acceptance)
 - [ ] STEP2: implement actual handler/reused _child_run_context/parent writer suspension and server-acknowledged handoff and acquisition capability; preserve existing task/roles/mode/budget tool fields, no path/context; reserve invocation/child identity before dispatch (exit: actual handler tests prove parent artifacts byte-identical and unique child namespace)
 - [ ] STEP3: implement approved stable-ID selection/clarification and controller-rendered no-clobber bundle via SLICE3 authority, shared I02 repair and before-T0 ordering (exit: exact caps/unknown+duplicate fields/status-smuggling/ambiguous/collision/post-install-fsync+append matrix passes)
 - [ ] STEP4: implement live current-message provider, bounded initial task/redaction and distilled retry/replan separation; keep Q66 ordinary log policy (exit: parent-only sentinel occurs in first real planner request, not retries; configured credential sentinel absent)
-- [ ] STEP5: actual outer drive_session→invoke→child run_workflow→_cmd_run→drive_session with real supervisor/cells and only ProviderChain.request mocked proves existing selection and new project, clarification/no-coder blocks, child evidence and parent refresh at turn boundary (exit: execution_host nested C1 passes in both routing/gate modes approved by STEP1)
+- [ ] STEP5: actual outer drive_session→invoke→child run_workflow→_cmd_run→drive_session with real supervisor/cells and only ProviderChain.request mocked proves existing selection and new project, clarification/no-coder blocks, child evidence and parent refresh at turn boundary (exit: execution_host nested C1 passes with advisory/manual and existing experimental suggestion paths, in observe/enforce gate modes)
 - [ ] STEP6: record CT96/CT108/CT109 full-path mutation outcomes with original CT96 handler producer lineage, no helper-only substitutes (exit: each declared producer killed; no unknown/stale report credited)
 
 ## SLICE6: Reviewed I02+I03 package and actual deployed acceptance
@@ -268,7 +269,8 @@ INTENT: execute transferred SLICE7 and E223 acceptance with independent review, 
 CONTRACTS:
   CT88 [CONSTRAINT]: preserve all original unique I02 producer keys/cases and add I03 producers;
     separate local proof/live result, stable IDs/owners/fixture/oracle/evidence. Shared scenario only
-    with explicit per-producer evidence mapping. Q63 exact vocabulary/reason-code rule pending.
+    with explicit per-producer evidence mapping. Q63 exactly NOT RUN/PASS/FAIL/BLOCKED, optional short
+    commentary on ALL states, no mandatory/hardcoded reason variant.
     Append deployed SHA/image/profile/config/run/command/rc/effect/artifact/reviewer per attempt.
   CT89 [CONSTRAINT]: planner owns oracle/run sheet; coder appends source-backed seams/proposals;
     independent manual checklist precedes fixtures/helpers, repeated on material changes. Human
@@ -282,7 +284,7 @@ TESTS: tests/test_e2e_artifact_contract.py, tests/test_skill_conformance.py   (N
 uv run pytest tests/test_e2e_artifact_contract.py tests/test_skill_conformance.py -q
 uv run python scripts/check_execution_e2e_coverage.py
 ```
-- [ ] STEP1: resolve Q63 exact result enum/BLOCKED reason invariant; update artifact schema only after disposition. Keep existing roadmap/increment/CT vocabularies, generic READY and active I01 distinct (exit: explicit decision and schema conformance tests; no live outcome inferred)
+- [ ] STEP1: implement recorded Q63 four-state live-result schema, optional short commentary on every state, no reason-code enum/mandatory BLOCKED field; test all states with and without commentary. Keep roadmap/increment/CT vocabularies, generic READY and active I01 distinct (exit: actual artifact conformance tests pass; no live outcome inferred)
 - [ ] STEP2: implement planner case index e2e/README.md and master e2e/I03/live-verification.md with append-only attempts/local-vs-live fields; retain old e2e/I02 origins (exit: index/status tests pass)
 - [ ] STEP3: mechanically snapshot original normalized unique producer keys from notes/e2e-live-verification-register.md, preserve all unique keys/CT/STEP lineage, add new producers and successor mappings; correct CT52 bounded repair and shell-exit-127 vs genuine launch-error oracles (exit: actual coverage checker/test detects removal of any unique case, not only total counts)
 - [ ] STEP4: coder writes e2e/I03/implementation-handoffs.md after real seams/proofs exist, labeling facts vs proposals and limitations (exit: handoff-shape tests pass; coder has changed no oracle/result)
@@ -299,8 +301,8 @@ uv run python scripts/check_execution_e2e_coverage.py
       runs use FA_REQUIRE_EXECUTION_HOST=1 and cannot succeed by skipping unavailable Docker/profile.
       All 17 FUNCTIONAL full-declared-path kills have useful executed failing oracles, provenance,
       elapsed cost and restored source; errors do not count as kills.
-- [ ] Exact Q59/Q60/Q63/Q74 dispositions and managed v2 schema/rule/rendering contract are recorded;
-      no conditional proposal/stub remains. Existing Q62/I02 v1 readers and strict IDs stay compatible.
+- [ ] Implemented artifacts conform to recorded Q59/Q60/Q63/Q74 and spec §7 managed-v2/schema/rendering
+      contract; no conditional runtime proposal/stub remains. Existing Q62/I02 v1 readers and strict IDs stay compatible.
 - [ ] Real profile/UID/UDS/cgroup/mount/import proof and complete execution inventory show zero
       project execution outside cells for every production path/role, including readiness and chat
       subagents; backend-down/transport uncertainty never triggers fallback/replay. No legacy writer.

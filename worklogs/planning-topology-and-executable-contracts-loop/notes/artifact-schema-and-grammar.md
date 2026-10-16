@@ -366,6 +366,17 @@ Reduced I02 shipping is scoped by its own DoD, not by delivered L2/tracker or ho
 I03's final acceptance owns reviewed deployed I02+I03 producer evidence; local proof never assigns it.
 The migration changes capability references, not status vocabulary or schema-example tokens.
 
+### Live E2E attempt result (Q63, E231; I03 SLICE6 implementation obligation)
+
+Exactly `NOT RUN | PASS | FAIL | BLOCKED`. Every state allows optional short `commentary`
+(≤512 UTF-8 bytes, single line, credential-redacted); absence is valid for every state, including
+BLOCKED. No mandatory reason, reason enum, hardcoded reason variants or control flow derived
+from commentary. Append-only attempts retain separate local proof/live result and immutable
+source/image/profile/config/run/command/effect/artifact/reviewer identity. Operator or independent
+evidence reviewer assigns live results, never coder/harness/unit tests. NOT RUN/BLOCKED do not
+count as PASS. This is the finalized schema obligation, not a claim its runtime artifacts exist.
+Does not alter increment/CT/STEP vocabularies, admission/wire diagnostics, generic READY or I01.
+
 ## 7. What the extractor must expose (I01 surface)
 
 The exported module surface has the following named consumers (D8). This table

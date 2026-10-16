@@ -2,9 +2,12 @@
 
 Date: 2026-10-15; refreshed 2026-10-16 against I02 closeout `1132eee` (runtime `a32a72f`).
 The d910 evidence below is historical; E230 in the existing adversarial review records current findings.
-This is a proposed implementation specification, not deployed behavior. New files/functions below
-are **planned**, not discovered interfaces. Core mechanics can be specified now; §7's Q59/Q60
-choices, §6.1 checkpoint policy (Q74), and §9's Q63 vocabulary need exact operator disposition before their affected slices are dispatched.
+This is the implementation specification finalized after E230 review and the operator's E231
+answers. New files/functions are **planned**, not discovered or implemented interfaces. Q59 keeps
+advisory/manual invocation plus EXISTING experimental suggestion injection (no required mode).
+Q60 delegates the source-grounded engineering solution; §7 records the selected reuse design.
+Q63 is four states with optional short commentary, NO reason-code enum. Q74 selects per-stage/
+episode checkpoints. These resolve planning decisions, not implementation/deployment authorization.
 No temporary production backend, unsafe fallback or fake acquisition completion is acceptable.
 
 ## 1. Smallest coherent ownership model
@@ -526,16 +529,14 @@ with explicit uncertainty (read-only/quarantined data only), then nonzero; never
 code from a nonterminal writable view. If no safe view/deadline exists, record unsuccessful eval
 unavailability; do not fake a report or release a writer while descendants remain.
 
-### 6.1. Stage/verification transitions — Q74 exact proposal, not yet ratified
+### 6.1. Stage/verification transitions — Q74 operator-selected checkpoints
 
-Proposed compatibility policy: checkpoint permitted source edits at EACH mutating episode/stage
-boundary after stop/seal/security validation, even if provider/stage/functional judgment fails.
-A failed workflow is not a rollback transaction; existing I02 already leaves ordinary file edits.
-Q58 remains separately validated plan replacement. Operator may instead choose workflow-end-only
-publication; that requires distinct unpublished source vs publication-base fields and failed-candidate
-retention before coding. Do NOT guess or silently mix the two. SLICE3/4 await Q74 disposition.
+After confirmed terminality and path/security validation, checkpoint permitted ordinary edits at
+EACH mutating episode/stage boundary, even if provider/stage/functional judgment fails. Failed
+workflow stays failed, no rollback promise. Q58 retains separate validated plan replacement.
+Workflow-end-only unpublished branches are NOT built; one current revision remains sufficient.
 
-For proposed checkpoint policy, use this single state transition table (no reopening SEALED views):
+Use this single state transition table (no reopening SEALED views):
 
 | Transition | Required action / next source |
 | --- | --- |
@@ -598,7 +599,7 @@ provisioning separately because it can precede `_cmd_run`. Failure before first 
 must execute zero project commands. Add StageResult source-revision/operation links internally (not
 model JSON); stop/seal/checkpoint at the controller stage choke point before verifier/eval/repair.
 
-## 7. Nested acquisition and Q66 — exact proposal, Q59/Q60 still OPEN
+## 7. Nested acquisition and Q66 — source-grounded design, E231
 
 Use real outer drive_session → actual invoke handler → `_run_planner_managed_workflow` → child
 run_workflow → `_cmd_run` → drive_session. Reuse the CURRENT workflow_tool._child_run_context (already calls SessionManager.begin_run);
@@ -614,11 +615,13 @@ publication keeps mutation unavailable, while old reader pins remain usable. Fut
 subagents must inherit that same owner/view/cancel scope; remain absent
 from workflow registry until separately proved. No parallel subagent scheduler here.
 
-Q59 proposal: ordinary chat remains generalist/advisory, always managed for execution. Explicit
-`--require-workflow` is controller-owned opt-in: router-only read/search/context/invoke registry,
-no write/edit/shell/subagent/Git mutators, and refusal to finish with 'success' without an actual
-workflow invocation. This flag/name/guarantee needs explicit disposition; do not make it default or
-claim prompt compliance guarantees invocation. No selected workflow → clarification/BLOCKED outcome.
+Q59 operator decision: ordinary chat remains generalist/advisory with manual invoke AND the
+EXISTING experimental mid-chat suggestion injection. Preserve expansion/routing/turn_context and
+existing --inject/config plumbing and their current semantics; no new injection name, strict router,
+--require-workflow flag, success guard or forced escalation. Source: expansion.py:10–23,
+routing.py:3–13, cli.py:2408–2437. Mandatory managed execution is separate from advisory workflow
+choice; neither injection nor prompts guarantee invocation. Nested E2E must observe actual invoke;
+no invoke is a failed/unfulfilled witness, not a new production enforcement feature.
 
 Preserve existing invoke_workflow public task/roles/mode/budget fields and validate raw types with
 the I02 shared normalizer before coercion/child allocation. A coder-bearing managed invocation
@@ -626,14 +629,14 @@ must include its initial planner because no outer PlanRef field exists; otherwis
 acquisition_requires_planner before child/provider, not a guessed default target. Non-coder-only
 workflows retain their existing purpose and do not invent acquisition to justify a coder bypass.
 
-Q60 proposal (supersedes old free-path recommendation if approved): one strict JSON choice,
+Q60 delegated engineering selection (reuses current surfaces; no parallel state machine): one strict JSON choice,
 duplicate/unknown keys rejected, no file map/raw ledger/destination/frontmatter:
 
 - `{kind:SELECT_EXISTING, project_slug, increment_id}`. Slug lower kebab ≤48 chars; increment ID
   `I[0-9]{2,}`. Controller inventories regular canonical increment files, validates their metadata,
   maps this stable pair to exactly one canonical relative path. Existing roadmap ID need not equal
 the directory slug: validate declared roadmap↔increment linkage, do not rename the current RM-
-planning-topology IDs to fit the bootstrap template. Proposed selectable status is IN PROGRESS;
+planning-topology IDs to fit the bootstrap template. Selectable status is IN PROGRESS in BOTH roadmap and increment, with matching active-increment;
 OUTLINED/SHIPPED returns clarification, not automatic mutation authorization. Ambiguous/duplicate/missing match
   does not glob-and-guess or bootstrap automatically.
 - `{kind:BOOTSTRAP_NEW_PROJECT, project_slug, increment_slug, roadmap_body, increment_body}` with
@@ -642,14 +645,17 @@ OUTLINED/SHIPPED returns clarification, not automatic mutation authorization. Am
   Return to parent chat with zero coder/eval, no implicit project creation. No arbitrary reason text
   in admission control record; ordinary user-facing conversation remains allowed.
 
-Controller renders roadmap IDs/date/status/active I01; increment I01 metadata/status/slice count
-from validated body; ledger **header only**, no generated E# evidence. Require roadmap Intent,
-Artifact schema, Increments, Out of scope sections and correct I01 link. Reject body metadata/status
-smuggling and invalid plan grammar/kill directives before publish. Exact rendering fixtures live
+Controller renders H1/frontmatter IDs/UTC date/status/active I01; increment I01 metadata/status/
+slice count from validated body and shipped `—`; ledger **header only**, no generated E# evidence.
+Input roadmap_body has exactly the H2 sections Intent and Out of scope (subheadings allowed);
+renderer supplies fixed Artifact schema and its OWN Increments table with exactly I01 IN PROGRESS and the correct
+`increments/increment-01-<increment_slug>.md` link. No model-owned status table. Both body inputs
+forbid frontmatter/H1/control-metadata lines outside fenced examples; increment STEP records must all be TODO, no claimed
+shipped/verified state. Reject invalid plan grammar/kill directives before publish. Exact rendering fixtures live
 with managed-acquisition tests; do not introduce the future I04 ledger parser. Bootstrap no-clobber
 per §5. Shared I02 admission and bounded repair follow valid acquired PlanRef, before T0/coder.
 
-Managed admission **exact v2 proposal**, conditional on STEP1 disposition:
+Managed admission **v2 implementation contract**, selected under delegated Q60 engineering judgment:
 
 - Top keys: v1 keys plus `workspace_id`, `owner_run_id`, `generation`, `base_revision`;
   schema_version is integer 2. owner_run_id is the root lease owner, run_id is child actor;
@@ -663,7 +669,23 @@ Managed admission **exact v2 proposal**, conditional on STEP1 disposition:
   linking the supervisor publication receipt, not model-supplied process output. bundle_sha256 is
   null except bootstrap, where it hashes the complete rendered three-file manifest; candidate/
   promoted SHA fields still hash **plan bytes**, not the whole bundle.
-- Preserve v1 enum/type/hash/route consistency rules. Initial managed choice uses ACQUISITION;
+- Preserve v1 enum/type/hash/route consistency rules UNCHANGED for v1 and existing v2 attempt
+  kinds. New v2 ACQUISITION cross-fields are explicit (do not fake a publication on selection):
+  EXISTING_SELECTION sets source_sha256/PlanRef SHA to captured bytes, candidate/promoted/bundle
+  SHA null, input_revision==output_revision and operation_id null; establish canonical hash from
+  source. ADMITTED requires actual validation PASS. BOOTSTRAP has source null, candidate SHA of
+  rendered plan and promoted SHA equal candidate ONLY after committed verified install, plus
+  matching output revision/operation/bundle receipt; establish canonical hash from promoted SHA.
+  Blocked pre-selection/clarification has null PlanRef/source/candidate/promoted and no output
+  revision/operation/bundle. Rejected rendered bootstrap may retain candidate/bundle hashes but
+  no promotion/PlanRef/output revision; no invented committed effect. A reserved install operation
+  remains recorded on failed/lost acknowledgement; inspect its journal rather than retry. Until
+  receipt confirms commit, no promoted SHA/committed revision claim; retain any installed directory
+  and quarantine uncertainty, never delete it as cleanup. RETRY is allowed only for
+  actual determinate validation FAIL of an acquired plan, via existing shared repair. Missing or
+  indeterminate acquisition outcome blocks without retry. Persist acquiring history before first
+  provider and actual outcome afterward, then use the unchanged durable admission-before-coder
+  barrier. Test all these joins with v1 fixtures and mixed valid/invalid histories. Initial managed choice uses ACQUISITION;
   initial planner acquisition consumes the configured initial planner stage once (free), never
   follows it with a duplicate ordinary planner. Required repair/replan uses the shared counter.
 - Keep all v1 rule tables; v2 extends bootstrap rules with `invalid-body`, `invalid-metadata`,
@@ -679,9 +701,9 @@ Managed admission **exact v2 proposal**, conditional on STEP1 disposition:
 - Versioned reader accepts old complete v1 as v1, new complete v2 as v2, never 'upgrades' old
   records or silently inserts missing binding fields. Admission file belongs to child namespace.
 
-These are concrete proposed values, not a blank enum to invent during coding. Q60 STEP1 must
-approve/amend and freeze this schema and choice/rendering fixtures explicitly. The implementation
-cannot claim acquisition readiness while that disposition remains absent. Only a controller-minted
+These are concrete values, not an enum to invent during coding. SLICE5 STEP1 freezes fixture
+examples and tests these exact keys/rules against existing v1 invariants before implementing the
+v2 branch. Delegation selects the design; only actual implementation/proof establishes readiness. Only a controller-minted
 managed capability, bound to that child/owner/generation, permits the initial no-PlanRef planner;
 CLI/direct explicit callers retain I02 guards. No public boolean/path field bypass is introduced.
 
@@ -695,7 +717,54 @@ do not globally enable debug bodies or design anti-persistence machinery. Retry/
 contain ≤8 KiB distilled state/diagnostics/latest draft reference, not the original parent packet.
 Prove a unique parent-only fact reaches initial planner and does not recur in repair/replan.
 
-### 7.1. Acquisition source/data handoffs (Q59/Q60 proposal remains conditional)
+### 7.0. Current surface audit and smallest implementation delta (E231)
+
+| Reuse current producer | Already real / exact extension |
+| --- | --- |
+| tools/workflow_tool._child_run_context:387–403 | Validates parent/session/workspace and calls begin_run today; call once in managed wrapper, not another allocator. Keep non-coder path. |
+| WorkflowContext + run_workflow + _run_stage + _run_admission_repair | Keep the ONE workflow machine/budget/history/aggregate. Private ManagedAdmissionEntry permits initial no-PlanRef planner only after actual child/owner grant validation. Do not run an extra pre-workflow planner then replay planner in run_workflow. |
+| planner_dispatch.PlannerDispatchKind:17–20 / PlannerDispatch:33–55 | Existing ORDINARY/ADMISSION_REPAIR/EVAL_REPLAN and exact candidate target are real. Add ACQUISITION to THIS type, no candidate target/active plan until selection; managed grant required, read/search+final choice only. Other variants' validation stays unchanged. |
+| coder_loop.SessionOutcome.final_text:403–408 | Read strict acquisition JSON from actual initial planner final_text. StageResult carries private parsed choice; no model-facing new context/path field or alternate provider loop. |
+| plan_admission.read_plan_snapshot/snapshot_from_bytes:133–168 | Reuse exact bytes/hash/UTF-8/size/IDs for selected and rendered plans, supplying EXISTING_SELECTION/BOOTSTRAP source_kind rather than trusting model hashes. |
+| workflow_controller._validate_plan_admission:2231ff / _run_admission_repair:2370ff | Reuse both pure validators and bounded existing repair AFTER valid acquisition; no duplicated admission engine or free initial planner retry. |
+| admission_schema._record_plan_ref:93–104 / _record_attempt:154–182 | EXISTING_SELECTION, BOOTSTRAP and attempt ACQUISITION labels already exist, not working acquisition producers. Keep v1 reader EXACT; add explicit v2 branch for bindings/rules, never mutate old records or invent a fresh schema system. |
+| plan_promotion.publish_plan_buffer:183–221; scoped write_file:113–150 | Keep validated buffer/source-hash/mode and Q68 failed-tool logic; transfer FS effects into SAME supervisor candidate/publication authority. Not an arbitrary model file-map API. |
+| tools/prepare_pr.build_prepare_pr_tool:186–283; pr_draft.PrDraftStore:45–118; cli.py:1788,2285–2290 | Actual pr_prepare producer and current-session digest already exist. Reuse draft validation/store/IntentGuard seam; bounded controller-only run artifact IO, not source publication or another draft engine. |
+| plan_ids.extract_plan_ids/precheck and existing PyYAML dependency | Reuse grammar/IDs and YAML parsing machinery. No general new planning/YAML framework, no I04 ledger parser. Skill frontmatter loaders are permissive/fallback-based and not safe admission validators. |
+
+Actually missing (new narrow pure helpers in managed_acquisition.py): strict choice parser, stable
+pair resolver, deterministic fixed-three-file renderer. Bounded source AST/name/caller inspection finds no existing managed
+choice/selection/renderer producer; existing source_kind strings are NOT evidence those mechanisms
+exist. Keep all three helpers behind the existing controller, not a new orchestration service.
+
+Internal ManagedAdmissionEntry holds child RunContext, source READ binding and owner grant reference
+(no raw token/public bool). `_validate_workflow_request` still validates raw types BEFORE coercion;
+then direct/CLI callers without entry retain missing-plan rejection. Managed entry requires first
+configured planner, exact child/session/workspace/root-owner/active-actor binding and acquired view
+before provider. Initial _run_stage uses PlannerDispatchKind.ACQUISITION and normal outcome_sink;
+consume final choice there exactly once, install/select/admit before T0/coder. Invalid choice or
+clarification records BLOCKED with null PlanRef and zero coder/eval; no automatic bootstrap or free
+planner retry. Preserve additional requested stages and aggregate initial planner usage once.
+Acquisition is read/search/final-choice only: `_build_run_tool_registry` currently unconditionally
+registers pr_prepare at cli.py:1788. Filter this EXISTING post-profile addition for ACQUISITION;
+otherwise a read-only profile silently gains a writer. Preserve pr_prepare in ordinary/scoped
+stages, current-session provenance and Q68 sticky failed-pr_prepare semantics. Its destination is
+controller-owned run_log_dir/pr_draft.md outside cell/source mounts, never a caller path; protect
+through existing ArtifactStore/run-directory ownership. It does NOT write root-owned supervisor
+state and needs no new supervisor wire operation. Review IntentGuard/read_current_text after the
+IO adapter change; failed draft persistence never marks the draft trusted.
+`_run_planner_managed_workflow` only allocates/delegates/invokes run_workflow/restores parent; it
+must NOT become a second acquisition/workflow state machine. Non-coder-only delegation stays intact.
+
+Metadata parser helper `_parse_artifact_metadata`: frontmatter≤4KiB UTF-8, flat scalar mapping,
+existing PyYAML SafeLoader with duplicate-key rejection; forbid aliases/anchors/custom tags/nested
+values, no permissive skill-loader fallback. Validate required canonical keys/types/linkage from artifact schema §§2/3; slices is integer
+1–7, not bool; created is an ISO calendar date (normalize YAML date/string); unknown control keys reject. Canonical roadmap keys Roadmap-ID/slug/created/status/active-increment (existing
+supersedes optional); increment keys Increment-ID/Roadmap-ID/status/slices/shipped. IDs/linkage are
+not guessed from slug. Use existing plan grammar on the COMPLETE rendered text so positions stay
+correct. Keep fixture examples for current RM-planning-topology IDs and generated new-project IDs.
+
+### 7.1. Acquisition source/data handoffs and existing-code reuse
 
 Reuse `_child_run_context`; NamespaceRef parent_run_id is controller-attested after actual begin_run.
 Reserve invocation count/child ID once before first provider; retries keep identity and shared budget.
@@ -704,24 +773,23 @@ or ordinary chat tool output. A managed acquisition planner uses read/search plu
 choice response; it cannot write a canonical bootstrap directory via generic file tools. Q68 failed
 publication-tool outcomes still invalidate scoped repair; recovered read/search does not.
 
-Q59 proposed explicit `fa run --role chat --require-workflow`: ordinary default stays advisory.
-Reject this flag for non-chat before allocation. Router-only registry must stay read/context/invoke
-through every dynamic expansion/rebuild; no shell/write/edit/Git/subagent escape. Harness success
-requires an observed coder-bearing managed child with admitted PlanRef, actual eval, DONE and exit0;
-a final model sentence, planner/eval-only delegation, blocked choice or merely attempted invocation
-cannot fulfill it. Otherwise return nonzero workflow_required_unfulfilled/clarification, preserving
-child artifacts. This guarantee and flag still require operator disposition, not automatic adoption.
+Do not add a mandatory-route CLI mode, a new autosuggestion policy or a replacement for the existing
+expansion/injection mechanism. Test default/direct chat and suggestion-enabled chat remain usable;
+only the managed execution boundary is mandatory. User asks/manual tool dispatch can request the
+workflow; the parent must receive truthful child/clarification status, not an invented guarantee.
 
 Freeze literal rendering fixtures before implementing renderer: project directory
 `worklogs/<project_slug>/`, roadmap.md, ledger.md, `increments/increment-01-<increment_slug>.md`.
 Controller owns frontmatter: Roadmap-ID `RM-<project_slug>`, Increment-ID `RM-<project_slug>-I01`,
 roadmap created=UTC date/status IN PROGRESS/active-increment I01; increment status IN PROGRESS,
 slices=actual extracted count, shipped=—. ledger is fixed heading only, no model E# rows.
-The proposed roadmap_body is Intent/Out-of-scope prose ONLY with those exact two headings; controller
+roadmap_body is Intent/Out-of-scope prose ONLY with those exact two headings; controller
 renders Artifact schema and Increments table/link. increment_body is validated slice grammar, no
 frontmatter, no duplicate increment/roadmap/status metadata or lifecycle claims. Reject disguised
-metadata outside code fences using the same parser, not substring deletion. Preserve literal code
-examples inside fences. No free-form model path/file map. Build all bytes and both validators before
+metadata outside code fences using existing MarkdownIt tokens, not substring deletion or a new
+general Markdown parser. Preserve literal examples; the UNCHANGED full-plan IDs/precheck/kill
+validators still interpret grammar-looking fenced text as documented by schema §4/CT13. This is
+not a new ignore-fences mode. No free-form model path/file map. Build all bytes and both validators before
 new-project install; invalid acquisition blocks, while acquired existing PlanRef still uses shared
 bounded I02 repair. Stable selection validates declared roadmap linkage AND active-increment/status;
 matching a filename/IN PROGRESS alone is insufficient. Multiple active matches clarify, never guess.
@@ -788,10 +856,13 @@ are inherited inputs; their factual red/unknown outcomes and original proof iden
 Transfer is not completion or a baseline PASS/waiver. I02 may close locally before these obligations;
 I03 may not ship with them incomplete. This plan-only update runs no host cases or diff review.
 
-Q63 exact proposed enum remains `NOT RUN|PASS|FAIL|BLOCKED` with proposed mandatory BLOCKED reason
-`DEPLOYMENT_UNAVAILABLE|SAFETY_STOP|EVIDENCE_MISSING|PREREQUISITE_UNRESOLVED`; not ratified here.
-Before package finalization obtain exact disposition or keep that step open. Only operator or an
-independent evidence reviewer assigns live results, never coder/harness/automatic local checks.
+Q63 operator decision: live result is exactly `NOT RUN|PASS|FAIL|BLOCKED`. Every state may have an
+optional `commentary` string (≤512 UTF-8 bytes, single line, redacted); omission is valid in ALL states.
+No mandatory reason field, reason enum, hardcoded BLOCKED subtype or parsing commentary for control
+flow. Keep immutable append-only attempts and source/image/config/run/command/effect/artifact/reviewer
+fields. This result vocabulary does not change admission/wire diagnostic code tables, CT status,
+roadmap/increment status, generic READY or active I01. Only operator/independent evidence reviewer
+assigns live results, never coder/harness/local tests. Short commentary is explanation, not proof.
 
 Before normal main-host update obtain operational maintenance approval: stop legacy writable
 runtimes, install supervisor/profile/UID/cgroup/UDS configuration, validate immutable image/import

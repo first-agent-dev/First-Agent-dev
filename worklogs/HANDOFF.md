@@ -40,17 +40,31 @@ Ubuntu host test,OS isolation,managed nested acquisition or host supervisor deli
 only;Go is an indirect inherited hook-build diagnosis,not a new FA runtime/deployment requirement.
 PTY stays. Q69–Q73 resolved;Q72 remains its narrow46-links/15-files+banner repair decision.
 
-**E230 current action — I03 PLAN FINALIZATION:** operator authorized adversarial plan review, not
-runtime/deployment. Existing six-slice plan/spec/inventory/review now contain16 current-source
-findings and concrete protocol/publication/provisioning/stage/context handoffs plus real-provider
-direct+nested final witnesses. Q59/Q60/Q63 and new Q74 checkpoint policy remain explicit decisions;
-no recommendation is ratification. All35STEPS unchecked,17FUNCTIONAL IDs/classes preserved,CT96/97
-lineage retained,CT108 deliberately reuses _child_run_context. Local kernel tests and FINAL e2e/I03
-helpers/review timing are distinguished; no premature main-host runs. No runtime/test/deploy change.
-Planning checks: actual stdlib extractor/precheck/kill validation0FAIL/6retained WARNs;doc checker
-308filesPASS;whitespaceclean. Environment restored to Python3.11 without uv/pytest/Docker, so no
-supported-runtime/host check is implied. Next: obtain the four exact choices, reconcile dispositions,
-revalidate final plan and wait for implementation authorization. I03 remains OUTLINED/unimplemented.
+**E230/E231 current action — I03 PLAN FINALIZED, runtime NOT STARTED:** adversarial review updated
+six-slice plan/spec/inventory directly and found16 source-backed gaps. Operator answered Q59/Q60/
+Q63/Q74: advisory/manual + EXISTING experimental mid-chat suggestion, no required mode; verify/reuse
+current surfaces then delegated robust design; exactly four result states with optional commentary
+on each/no hardcoded reason variants; per-stage/episode checkpoints even on safely sealed failed
+stages. Question tracker/schema/roadmap now reconcile those answers. Spec §7.0 records actual
+child allocator/PlannerDispatch/SessionOutcome/admission/repair/pr_prepare joins; no second engine,
+no invented acquisition producer or false selected-plan promotion. Historical proposals superseded.
+All35STEPS remain unchecked,17FUNCTIONAL IDs/classes and CT96/97 lineage retained; CT108 reuses
+_child_run_context. I03 stays OUTLINED/unimplemented and allfour transferred acceptance duties remain
+unfinished. Scope reaches live CURRENT whole-plan direct+nested workflows, not deferred slice-loop/
+tracker/L2. Preserve active I01 and I04–I06. No runtime/test/deployment change or live PASS assigned.
+
+E231 planning validation: actual-source stdlib parser/precheck/kill leaf0FAIL/6retainedWARN,
+6slices17FUNCTIONAL35uncheckedSTEPS;inventory AST ranges valid;308doclinksPASS;diffclean. Runtime/
+tests/scripts/knowledge/deployment unchanged versus1132eee. These are planning checks, not runtime proof.
+
+Next only with implementation authorization: follow SLICE1→6 (A/B/C/E/D/F), declare each mechanism/
+failure/DoD/test class/kill target before editing source, then targeted/static/diff/results and
+major-chunk mutations. Host prerequisites still require actual Ubuntu/Docker/profile/cgroup/UID/
+mount/UDS/import proof and maintenance authorization; early disposable host tests ≠ final main-host
+E2E. STEP7 independent oracle/helper design review precedes final fixtures; actual helpers reviewed
+again before main-host execution. Existing just-check red/readiness and historical Mypy disposition
+remain real SLICE6 obligations, not waived. Current Python3.11/no uv/pytest/Docker cannot execute
+supported>=3.13/runtime/security suites; stdlib planning checks are not substitutes.
 
 Older S18/doc-hygiene notes below are historical,not current I02/I03 action items.
 

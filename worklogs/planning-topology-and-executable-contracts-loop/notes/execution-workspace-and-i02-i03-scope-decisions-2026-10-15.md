@@ -1,5 +1,11 @@
 # Execution boundary, workspace ownership и новый scope I02/I03
 
+**E231 current disposition (2026-10-16):** Q59/Q60/Q63/Q74 are resolved in the question tracker
+and I03 execution/workspace spec §§6.1/7/9. Advisory/manual + EXISTING experimental suggestion,
+source-grounded delegated reuse design, four live states with optional commentary/no reason enum,
+and per-stage checkpoints. Older OPEN/proposed statements below are historical, not pending gates.
+No implementation/deployment acceptance follows; retained source snapshots remain historical.
+
 **Дата:** 2026-10-15. **Source snapshot:** `d9109f489c84cb7f1ab3568b609d96e5b2b61ae2`.
 
 **Назначение:** context-bearing запись для агента, который уточнит I02/SLICE6 и напишет новый I03.
