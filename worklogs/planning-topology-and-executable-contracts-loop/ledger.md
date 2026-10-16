@@ -2337,3 +2337,43 @@ E211  FACT  Public explicit-admission major-chunk checkpoint from e56ace2; parti
     comparison/static debt/independent/operator DoD remain open. No STEP/SHIPPED/boundary claim.
     [notes/i02-ct91-public-admission-e211-2026-10-16.md: declaration, commands, TEST-EDITS, hashes,
     actual mutation table/harness, captured failures, exact next implementation, ADM-H20–H25]
+
+
+E212  FACT  Remaining I02 architecture/readiness review from e94b62b; retained local explicit-plan
+    design remains sound, not managed/security acceptance. Operator explicitly approved Q69
+    nonrecursive original-C1 fixture factoring and Q70 coder-containing-only unavailable guard.
+    Preserve noncoder delegation using actual child SessionManager binding, not parent RunContext;
+    real CLI/chat C1 checks refusal and child session/DB/history. Q55 deadline/no-eval migrations
+    retain deadline/exit/stage and actual-judgment oracles. Raw-input fixture typing fixes59 old
+    Pyrefly errors without suppressions/oracle changes. Two predeclared test fixtures added.
+    Whole public baseline486passed106.92s; final combined604passed117.09s; final tool91passed2.11s.
+    Changed-file Ruff/format/Mypy/Pyrefly clean; full deptry/Pylint rc0 (10/10).
+    Final all16 normative full-path mutations plus2 additional guard/child-allocation removals
+    PROVEN, each exact486nodeids, rc1/failures>0/errors0/skips0, fresh UUID JUnit, import provenance,
+    one target/edit and unchanged source/test hashes. Actual table/hashes/reproduction in E212
+    continuation of E211 note. STEP17 checked only for these frozen versions; not SLICE6/SHIPPED.
+    Broader checks remain red: eight same-identity baseline/candidate Mypy errors; authoring five
+    baseline plus three new candidate public-export blocks; formatting debt; doc-links46 old
+    archive targets (five changed Markdown files clean). No blanket baseline disposition.
+    Full candidate5027 and isolated d9109f4 baseline4477 test runs started, no terminal comparison
+    claimed here. Managed readiness refused existing foreign Arena commit-msg hook (preserved).
+    Independent/operator DoD and I03 work remain open. Handoff updated with exact next actions.
+    [notes/i02-ct91-public-admission-e211-2026-10-16.md E212; Q69/Q70; explicit spec §7]
+
+
+E213  FACT  Completed preliminary full-repository execution supersedes E212's running status,
+    not its frozen16+2 source proof. Normal summaries, no reporter crash: candidate just check rc1,
+    4994passed20failed12skipped1xfail2warnings1053.50s, coverage83.19%; archived d9109f4 just test rc1,
+    4451passed11failed14skipped1xfail2warnings902.76s. Exact JUnit IDs for all5027/4477 cases,
+    errors0; failure phase call for all. Common4 / candidate-only16 / baseline-only7 identities
+    retained individually in E212 note; archive/Git-sensitive failures need classification, not
+    inferred improvements. Candidate full-run UUID env typo means no UUID property; fresh path,
+    exact nodeids intact. All normative reports have correct UUIDs. Final acceptance report not
+    created. Separate CLI function coverage floor rc0,27floors/78functions.
+    Six new Q70 handoff/K fixtures requested default coder; declared only test_handoff_payload.py
+    migration to planner/eval, preserving oracles and no-context refusal. Handoff+invoke112passed
+    0.78s; checks clean with actual source-module Mypy context. Frozen normative inputs unchanged.
+    Ten other candidate-only failures and three new authoring exports remain to repair; new full
+    candidate execution, exact dispositions and independent/operator review still required.
+    No blanket baseline waiver, complete SLICE6, SHIPPED or I03 claim.
+    [notes/i02-ct91-public-admission-e211-2026-10-16.md: completed reports/identity sets/TEST-EDITS]

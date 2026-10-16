@@ -255,7 +255,7 @@ new or missing/unclassified failures = 0. If a usable full-run report cannot be 
 DoD stays open. A blanket baseline waiver or lower count is never a passing result.
 
 
-## 6. Ratified lifecycle clarifications — Q67(a), Q68(a), 2026-10-16
+## 7. Ratified lifecycle and fixture clarifications — Q67–Q70, 2026-10-16
 
 **Q67(a):** during the first eval-only replan, preserve canonical v1 ADMITTED and durably rewrite
 its unchanged history before provider dispatch. Reserve shared planner credit before dispatch.
@@ -269,3 +269,18 @@ invalidate a scoped attempt, even if later recovered. Recovered read/list/search
 not. Missing/nonzero terminal outcome and final validation/preparation/publication/IO uncertainty
 remain fail-closed. Ordinary planning is unaffected. Project trusted paired tool names, not raw
 error bodies or model prose, into the scoped controller's outcome check.
+
+**Q69 (explicitly approved):** the constructed original C1 plan may select a nonrecursive leaf
+fixture preserving the real-session/global/slice/eval assertions and nine internal producer kills.
+The leaf's own plan has no FUNCTIONAL contracts. Runtime recursion markers are unchanged. All
+16 normative SLICE6 kills still execute the complete outer public TESTS path, after a completed
+unmutated whole-file baseline. No selected-mutant or test-subset substitution, fake PROVEN,
+contract→nodeid mapping or infrastructure-error-as-kill is authorized.
+
+**Q70 (coder-containing-only option explicitly selected):** unavailable managed acquisition
+rejects nested requests containing coder (including default roles), before child identity,
+handoff, artifacts or provider dispatch, as `acquisition_unavailable`. Do not reject otherwise
+valid planner/eval-only delegation. Session-bound noncoder children use their own actual
+SessionManager.begin_run binding, sharing the verified parent session/workspace/DB, not the
+parent's RunContext. Invalid/missing authority or allocation fails closed. This is local supported
+noncoder delegation, not successful managed acquisition, I03 context propagation or OS isolation.

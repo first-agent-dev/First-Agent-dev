@@ -4,6 +4,28 @@
 > This file records the verified state and the next bounded action.
 > Previous 1426-line S14-era version archived to `worklogs/archive/HANDOFF-S14-era-20260825.md`.
 
+## Current state — I02 local explicit-plan gate, 2026-10-16
+
+Active branch: `arena/86633f17-first-agent-dev`; never switch/create another session branch.
+I02 remains **IN PROGRESS**, not SHIPPED or I03/security acceptance. Q69 nonrecursive constructed
+C1 factoring and Q70 coder-containing-only unavailable guard were explicitly approved; do not
+ask those choices again or silently block planner/eval-only delegation. Noncoder children now
+have actual distinct SessionManager run authority in the same session.
+
+Authoritative current evidence and reproducible audit: [E212 continuation in the E211 note](planning-topology-and-executable-contracts-loop/notes/i02-ct91-public-admission-e211-2026-10-16.md).
+Read that section, current [I02 plan](planning-topology-and-executable-contracts-loop/increments/increment-02-verify-gate-and-kill-checks.md),
+[explicit spec](planning-topology-and-executable-contracts-loop/notes/i02-explicit-admission-spec-2026-10-15.md)
+and [open decisions](planning-topology-and-executable-contracts-loop/notes/open-questions-2026-10-07.md).
+Whole public bank486 passed106.92s; final combined bank604 passed117.09s; changed-file checks clean.
+All16 final whole-public-path mutations and two supplemental removals are PROVEN with exact
+486-case manifests/no errors/skips/unchanged hashes. STEP17 only is checked. Full suites completed
+normally: candidate20failed4994passed; isolated baseline11failed4451passed. Exact comparison is
+recorded in E212, not waived; six new handoff compatibility failures since migrated (112passed).
+Ten other candidate-only failures, three new authoring exports, baseline dispositions and
+independent/operator acceptance remain open. A fresh full suite after migrations is required.
+
+The older S18/doc-hygiene notes below are historical, not this session's current action list.
+
 ## S18 + I-63 CLOSED — evidence /tmp/s18-evidence-20260825T130324Z/ PASS (2026-08-25)
 
 **Status:** CLOSED, live-verified. Evidence bundle `/tmp/s18-evidence-20260825T130324Z/` (host) contains:
@@ -134,14 +156,29 @@ Authority correctness, observability contracts, mutation gap closure — all COM
 
 `PLAN-session-workspace-readiness-bootstrap.md` v33 READY + live-closure v18 DELIVERY-READY — still active, commit 9ab68bb only partial (pop+set pinning _command_environment hermetic + UV pinning). Keep per user instruction. Full I-63 context fix still pending in docs_only patch scope.
 
-## Next bounded action
+### Historical doc-hygiene follow-ups
 
 1. Update `knowledge/llms.txt` BY-DEMAND INDEX to reflect archived plans and formal substrate (Blackboard+fs_search).
 2. Run `python scripts/check_doc_links.py` and fix broken links from archiving (implementation-plans → archive moves).
 3. Produce docs_only patch assuming I-63 merged: includes BACKLOG dedup, pr-notes pointer, root cleanup, HANDOFF rewrite, llms.txt update, link fixes.
 4. Ask operator per borderline plan (S1-S4) before archiving.
 
-## Session close protocol
+## Next bounded action
+
+1. Read E212's final producer table and completed full-suite comparison; no result from
+   an interrupted or missing report is PROVEN. Preserve all16 whole-public-path mutations.
+2. Preserve/finish dispositions of the usable candidate/d9109f4 manifests and normal summaries with
+   separate tree-local environments and verified imports. Cache artifacts are not persisted;
+   preserve compact results/hashes in the evidence note. Do not count no-summary/reporter crashes.
+3. Repair the ten remaining candidate-only failures and three new authoring export violations,
+   then rerun affected checks/proofs and the full candidate suite; classify
+   the five old authoring and eight matching Mypy identities explicitly, with operator review.
+   Full-tree formatting debt also remains. No skip/suppression or count-only baseline waiver.
+4. Complete independent retained-plan/source/evidence review and operator local DoD disposition.
+   Existing foreign Arena commit-msg hook blocks managed bootstrap readiness; preserve it,
+   do not replace it or bypass checks. Commit/push only this branch and verify the remote SHA.
+
+## Historical S18 session close record
 
 - Evidence: `/tmp/s18-evidence-20260825T130324Z/` PASS, corpus 17, WIRING_EXIT 0.
 - Doc hygiene: b_full in progress, 17 plans archived, BACKLOG merged, pr-notes deduped, root cleaned, HANDOFF rewritten.

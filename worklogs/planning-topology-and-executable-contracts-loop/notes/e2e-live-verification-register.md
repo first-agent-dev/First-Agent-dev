@@ -1038,3 +1038,41 @@ checkbox, full-repo/independent/operator DoD, nested success, boundary or SHIPPE
 Exact declaration/mechanism/allowed files, TEST-EDITS, hashes, commands/results, mutation table
 and reproducible harness, captured compatibility failures, remaining implementation and planned
 ADM-H20–H25 host handoff: `notes/i02-ct91-public-admission-e211-2026-10-16.md`.
+
+
+## E212 — 2026-10-16 remaining-plan architecture, Q69/Q70 and complete-path producer proof
+
+Source-reviewed retained plan/spec/16 targets and real CLI/session binding; fixed empty STEP16,
+STEP14 selector coverage and duplicate spec heading. Operator approved nonrecursive constructed
+C1 leaf and selected coder-containing-only acquisition refusal, preserving planner/eval delegation.
+No runtime recursion-marker change, guessed plan, public PlanRef extension, stub acquisition or
+contract→test mapping. Actual child RunContext comes from SessionManager.begin_run in the same
+session. New real CLI/chat matrix mocks only provider IO and verifies child identity/event/history
+or no child artifacts/provider on refusal. Q55 compatibility fixture migrations preserve actual
+eval obligation, mode-specific missing-verdict and deadline/exit/stage oracles.
+
+Whole public486passed106.92s; final combined604passed117.09s; final tool91passed2.11s. Changed nine
+files Ruff/format/Mypy/Pyrefly clean; full deptry/Pylint rc0 (10/10). **Final16 normative full-path
+mutations plus2 supplemental real guard/allocation removals all PROVEN:** each complete486nodeid
+bank, actual failures, no errors/skips, fresh UUID-bound JUnit and import provenance, one actual
+producer edit, unchanged frozen source/test hashes. STEP17 checked for these exact versions only.
+Table includes every duration/outcome/UUID/XML hash and tested source hashes; actual production
+pipeline reproduction is in the E212 continuation of `i02-ct91-public-admission-e211-2026-10-16.md`.
+
+Full gate is not green: baseline/candidate eight identical Mypy diagnostics, candidate authoring
+five baseline plus three new export blocks, broader formatting debt, old46 archived-link failures
+(changed Markdown links clean), foreign Arena hook readiness collision preserved. Full candidate
+and isolated d9109f4 baseline suites are running with separate environments/verified imports;
+no normal terminal manifests/comparison/disposition/acceptance claim until explicitly recorded.
+Independent/operator review, retained local DoD and I03 acquisition/OS/deployment proofs remain
+open. No SLICE6 complete, SHIPPED, security, managed-success or deployed acceptance claim.
+
+E213 completes E212's preliminary full-suite status: candidate just check rc1,4994pass20fail/
+12skip1xfail1053.50s; isolated d9109f4 just test rc1,4451pass11fail14skip1xfail902.76s. Both normal
+summaries and complete exact-ID JUnit, no reporter abort/errors. Common4/candidate-only16/
+baseline-only7 individual identities, report hashes and phase classifications in E212 note;
+no dispositions/waiver or acceptance. CLI function floor separately rc0 (27/78). Six Q70 handoff
+compatibility failures migrated through supported planner/eval roles without weakening handoff,
+blackboard/K oracles:112passed0.78s, static clean, audited public/production bytes unchanged.
+Ten other candidate-only failures, three new authoring blocks, final re-execution/dispositions and
+independent/operator DoD remain. E212's completed frozen16+2 proof is unchanged.

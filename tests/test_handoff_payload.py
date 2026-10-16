@@ -107,7 +107,7 @@ def test_handoff_uses_backslash_normalised_paths() -> None:
     assert "src/fa/x.py" in out
 
 
-# ── K budget (C1 through the tool handler) ─────────────────────────────────
+# ── K budget (C0 through the tool-handler seam) ─────────────────────────────────
 
 
 def _run_tool(
@@ -118,7 +118,7 @@ def _run_tool(
     spec = build_invoke_workflow_tool(lambda **kw: runner(kw), lambda: ctx)
     results = []
     for params in calls:
-        results.append(spec.handler(params))
+        results.append(spec.handler({"roles": "planner,eval", **params}))
     return results
 
 
@@ -197,7 +197,7 @@ def test_facts_provider_exception_does_not_kill_chat() -> None:
         session_facts_provider=boom,
     )
     spec = build_invoke_workflow_tool(lambda **kw: runner(kw), lambda: ctx)
-    result = spec.handler({"task": "still works"})
+    result = spec.handler({"task": "still works", "roles": "planner,eval"})
     assert result.error is None
     assert len(runner_calls) == 1
 
@@ -214,7 +214,7 @@ def test_blackboard_writer_called_with_handoff() -> None:
         blackboard_writer=lambda entry: written.append(entry),
     )
     spec = build_invoke_workflow_tool(lambda **kw: runner(kw), lambda: ctx)
-    result = spec.handler({"task": "g"})
+    result = spec.handler({"task": "g", "roles": "planner,eval"})
     assert result.error is None
     assert len(written) == 1
     assert written[0]["type"] == "workflow_handoff"

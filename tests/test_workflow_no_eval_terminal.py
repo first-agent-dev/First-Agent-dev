@@ -138,34 +138,35 @@ def test_eval_requested_but_no_verdict_fails(tmp_path: Path, mode: str) -> None:
     assert exit_code == 1, "non-DONE must map to a non-zero exit code"
     payload = _flow_state(f"r-{mode}")
     assert payload["status"] == "FAILED"
-    assert "no verdict" in payload["blocked_reason"].lower()
+    expected = (
+        "eval stage produced no verdict"
+        if mode == "adaptive"
+        else "workflow blocked after eval: eval stage produced no usable verdict"
+    )
+    assert payload["blocked_reason"] == expected
+    assert payload["judged"] is False
 
 
 # ── C1: T19b — eval never requested ────────────────────────────────────────
 
 
-def test_scratch_pipeline_succeeds_but_is_marked_unjudged(tmp_path: Path) -> None:
-    """T19b — ``--roles coder`` stays a valid success, tagged ``judged=false``.
-
-    The fix must not make eval mandatory: a scratch pipeline is a legitimate
-    use. What it must do is stop the artifact from being mistakable for a
-    verified run.
-    """
-    exit_code, state = _run(tmp_path, ["coder"], run_id="r-scratch")
-
-    assert exit_code == 0, "a scratch pipeline must still succeed"
-    assert state is not None
-    assert state.status == "DONE"
-    assert state.judged is False, "nothing judged this run; the artifact must say so"
-    assert _flow_state("r-scratch")["judged"] is False
+def test_noncoder_planning_succeeds_but_is_marked_unjudged(tmp_path: Path) -> None:
+    """Q55 requires eval for coder; planner-only work remains an unjudged success."""
+    exit_code, state = _run(tmp_path, ["planner"], run_id="r-planning")
+    assert exit_code == 0 and state is not None and state.status == "DONE"
+    assert state.judged is False and _flow_state("r-planning")["judged"] is False
 
 
-def test_planner_coder_without_eval_is_also_unjudged(tmp_path: Path) -> None:
-    """T19b — the rule keys on eval's ABSENCE, not on a single-role run."""
-    exit_code, state = _run(tmp_path, ["planner", "coder"], run_id="r-pc")
-    assert exit_code == 0
-    assert state is not None
-    assert (state.status, state.judged) == ("DONE", False)
+@pytest.mark.parametrize("roles", [["coder"], ["planner", "coder"]])
+def test_omitted_eval_is_inserted_and_silent_judgment_fails(tmp_path: Path, roles: list[str]) -> None:
+    """Q55 negative pair: omission cannot authorize an unjudged coder success."""
+    exit_code, state = _run(tmp_path, roles, run_id="r-inserted")
+    assert exit_code == 1 and state is not None and state.status == "FAILED"
+    assert state.judged is False
+    payload = _flow_state("r-inserted")
+    assert payload["active_role"] == "eval"
+    assert payload["judged"] is False and payload["last_route_decision"] == "blocked"
+    assert "no usable verdict" in payload["blocked_reason"].lower()
 
 
 # ── Regression guard: judged must not become decorative ────────────────────

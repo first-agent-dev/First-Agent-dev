@@ -422,3 +422,372 @@ FAILED tests/test_workflow_no_eval_terminal.py::test_planner_coder_without_eval_
 6 failed, 1031 passed, 2 deselected in 285.86s (0:04:45)
 
 ```
+
+
+## E212 continuation — remaining-plan architecture/readiness review and Q69/Q70
+
+Review base: `e94b62b6dcc3db27022feca823eb863693834de8`. This section supersedes E211's
+remaining-work statements only where actual results below say so. It is **not** independent
+review, operator acceptance, I02 SHIPPED or I03 completion. No STEP checkbox is newly checked.
+
+### Pre-edit scope and architectural findings
+
+Declared CT95, STEP13/16, Q69/Q70, GAP-06/10/15; supporting STEP5–7/14/17 evidence. Reviewed
+`workflow_tool`, real CLI context injection, SessionManager.begin_run and CLI private-context checks,
+verification overlays/JUnit classification, all 16 normative targets, current explicit spec,
+retained DoD and `/tests-writing`. The remaining architecture is sound for **local explicit-plan
+SLICE6**, not managed deployment. Found three executable-plan defects: STEP16's empty selector,
+STEP14's incomplete selector, and C1's recursive verification cost. Corrected selectors and
+required the unmutated whole-bank baseline before STEP17; fixed the duplicate spec section 6.
+
+| Remaining work | Existing mechanism / proof ground | Reachability / still required |
+|---|---|---|
+| STEP9/10/12 | Shared pure request/admission validators, actual scoped planner, durable admission and exact-buffer same-path publication; E211 real-root matrix | Implementation exists; full-file and producer evidence, full-repo comparison/dispositions and review still required. No helper-only acceptance. |
+| STEP13 | Read-only workspace resolution and preflight; new coder-only tool guard, genuine child session authority for supported noncoders | Q70 resolves the prior overbroad blocking ambiguity. Successful managed acquisition remains I03, not a retained I02 requirement. |
+| STEP14 | Independent T0 state and symmetric identity; repeated configured coder/eval-replan tests | Selector now includes those actual test names. Whole-file proof must retain the once-only T0 and uncertainty barriers. |
+| STEP5–7/16 | Actual controller→CLI→drive_session; provider IO seam; real guarded filesystem/session/eval artifacts | Q69 removes recursive fixture cost without deleting the public C1 or narrowing normative TESTS. Measured full-file baseline is finite. |
+| STEP17 | 16 unique named producer directives, original production overlay/provenance/JUnit classifier, complete declared path | No test mapping or selected mutants. All 16 individual valid reports and source restoration required; errors/timeout cannot pass. |
+| Local DoD | Isolated archive d9109f4 comparison, same locked dependencies/Python, just test/check, exact manifests and failure dispositions | Reachable but not discharged by these focused results. Baseline contamination, absent terminal summary or unexplained failure blocks. |
+| Review/signoff | Independent revised-plan/source/evidence review and operator-reviewed local DoD | Still explicitly open; this author's source review cannot substitute. I03 migration is ownership, not delivered proof. |
+
+Q69 and Q70 were blocking choices; the operator approved fixture factoring and explicitly selected
+coder-containing-only refusal. Decisions are recorded in open questions and spec §7. No runtime
+recursion-marker change, guessed plan, public PlanRef schema extension, acquisition stub, new
+admission state, role-wide delegation ban or normative-bank reduction was introduced.
+
+Exact allowed code/tests: `src/fa/inner_loop/tools/workflow_tool.py`,
+`tests/test_invoke_workflow_tool.py`, `tests/test_verify_gate_live.py`,
+`tests/test_workflow_global_history.py`, `tests/_chat_registry_fixture.py`; the two separately
+predeclared new fixture files `tests/fixtures/i02_gate_probe.py` and `i02_gate_subject.py`.
+The later precise Q55 compatibility declaration additionally allowed `tests/test_workflow_deadline.py`
+and `tests/test_workflow_no_eval_terminal.py`. Evidence/authority: current plan, explicit spec,
+open questions, this existing note, register and ledger. No controller/coder-loop/verifier runtime
+code changed in this chunk. Source branch remains arena/86633f17-first-agent-dev.
+
+Current→target/mechanism: coder/default invocation formerly reached an unsupported path; now the
+named `_requires_acquisition` guard refuses before candidate identity, handoff, artifacts/provider.
+For noncoders, forwarding the parent's RunContext would fail actual run binding validation; now
+`_child_run_context` checks trusted parent/session field consistency and uses existing SessionManager.begin_run to allocate the
+child's own authority. Pure request validation precedes allocation for supported noncoder input;
+structured validation/context failure does not consume invocation credit. Retain existing budget,
+reentrancy, deadline, handoff, exception isolation and legacy unbound behavior. No new backend.
+
+### TEST-EDITS and test classes
+
+- **Q69 C1:** only the original constructed plan selects the whole nonrecursive leaf; its default
+  helper TESTS path is unchanged. Copy the two leaf fixtures into that temporary workspace.
+  The leaf exercises real workflow/CLI/session with provider IO only, two independently owned
+  slice commands, one failing global command with once marker, independent baseline and actual
+  typed eval/Harness evidence. All nine original internal mutations remain in the outer C1.
+- **Q70 C0:** supported forwarding cases use planner/eval, preserving parameter/exception/deadline
+  oracles. Five refusal variants assert no controller/handoff and no consumed child identity.
+  Three invalid noncoder request cases prove pre-allocation validation and next successful wf1.
+- **Q70 C1:** five normal `_cmd_run` chat→actual registry→invoke_workflow compositions. Provider IO
+  alone is mocked. Default/coder refusal asserts error, zero child provider/binding/directory/
+  history; planner, planner/eval and eval assert actual sequence, one session with distinct child
+  binding/event streams, DONE, separate parent+child history rows and no admission fabrication.
+- **Q55 compatibility:** successful deadline fixtures now return typed PASS for the automatically
+  inserted real eval obligation; retain exact deadline marker/exit and stage-count assertions.
+  Planner-only unjudged success remains positive. Coder omission now requires inserted eval and
+  missing-judgment fail-closed negative pairs; preserve exact mode-specific refusal reason.
+  Historical global-history delegation uses supported planner/eval with real transport/secrets.
+- **Typing only:** move raw malformed-request overrides inside `_request_input(**overrides)` with
+  its existing `dict[str, Any]` boundary. All invalid values, root calls and assertions remain;
+  no ignores, weakened runtime annotations or diagnostic suppression. Remove an unnecessary str
+  conversion on an already-str path. Shared chat fixture accepts typed transport/secrets.
+
+C2 deadline/argument migrations and existing C3 filesystem oracles remain in the bank. New policy
+failure behavior is observable through real provider/context/artifact producers; no fake gate
+verdict, substituted composition root or assertion reduction. Supplemental guard/context removals
+are additional to, not replacements for, the 16 normative contract×path runs.
+
+### Actual results before normative audit finalization
+
+Environment: locally compiled CPython 3.13.16, frozen uv.lock/all extras, uv 0.13.1. SSL manually
+built against installed OpenSSL 3.0.20; ssl/sqlite3/zlib/ctypes imported successfully. This runtime
+lacks optional bz2/lzma/readline modules; do not describe it as an identical complete stock build.
+No dependency/lock change. Commands below use the supported uv launcher so verification child
+`python` resolves the project interpreter. Direct `.venv/bin/pytest` without that PATH activation
+caused one broad run to fail closed at baseline-unavailable (30failed/568passed/1deselected31.44s);
+that environment-misconfigured run is NOT mutation/acceptance evidence.
+
+- Standalone whole leaf: **1passed3.04s**.
+- Four compatibility/delegation modules after exact Q55 reason fix: **110passed14.92s**.
+- New normal CLI/chat `-k acquisition_unavailable`: **5passed481deselected2.05s**.
+- `uv run --frozen --no-sync pytest tests/test_verify_gate_live.py -q --tb=short
+  --junitxml=/home/user/.cache/fa-runtime/ct95-whole.xml`: **486passed106.92s**, rc0,
+  no deselection/skips. This includes the original whole C1 and all nine internal kills.
+- Ruff check, Mypy nine changed implementation/test files: clean; Pyrefly with min-severity warn:
+  **0 diagnostics (1 pre-existing suppressed)**, rc0. No new suppression added. Production
+  Pylint: **10/10**. `git diff --check`: clean. Three raw-fixture formatting deltas remain to be
+  canonicalized before final candidate proof; no claim that full format/full-repo checks passed.
+- Current plan precheck: PASS, eight WARN, zero FAIL; strict extractor/IDs unchanged. A first
+  diagnostic-print command incorrectly iterated PrecheckReport and raised TypeError; rerun used
+  its real `.diagnostics`/`.ok` API. That tooling mistake is not a validator result or proof.
+
+Normative audit and final source/version results follow below when complete. Full-repository
+baseline/candidate manifests, just test/check, broad static dispositions, independent/operator
+review remain open. Do not infer them from the whole live-gate file or Q69/Q70 approval.
+
+
+### Final-byte baseline and broader gate execution
+
+Canonicalized the three raw-input fixture formatting deltas; added three C0 actual-session-API
+cases for missing session, missing run and mismatched parent run fields, all refusing before child
+allocation/provider. Initial construction of those three C0 fixtures exposed an invalid workspace
+override and then an incorrect begin_run keyword; these were test-setup failures, corrected using
+the real approved workspace root and requested_run_id API. No fake SessionContext/manager added.
+The final unmutated combined invocation includes the **entire** public file, four compatibility/
+delegation modules and both leaf files: **604passed117.09s**, rc0, no deselection/skips. Final
+changed-file Ruff check/format, Mypy and Pyrefly are clean (nine files, zero new suppressions).
+The final public-file/producer inputs are frozen for the repeated 16+2 full-path audit.
+
+`just check` and an isolated archived d9109f4 `just test` have been started with separate tree-local
+environments, identical uv.lock/Python/dependencies and verified fa module origins. Their outcomes
+must be recorded below; starting a command is not a completed gate. Full-tree lint reports older
+formatting debt beyond this chunk, Mypy currently reports eight diagnostics in four files, and
+current authoring-check remains red. `_lint` short-circuited at format, so deptry/Pylint are also
+run individually rather than silently counting unexecuted subgates as passed. Deptry passed; the
+first separate Pylint batch timed out at the tool boundary after 60s and its continuation status
+was not usable, so only that subgate is repeated under process tracking with a durable rc file.
+
+The read-only workspace readiness check returned rc75 / degraded_environment / hook_seat_collision:
+Arena's existing foreign commit-msg hook is not the FA-managed hook. Preserved it without changing
+hook ownership/configuration; no bootstrap-ready or hook-bypass claim. Normal git uses that actual
+Arena hook. This is an environment blocker, not a green DoD disposition.
+
+
+### E212 reproducible full-path audit
+
+The production execution/classification path is reused, not a replacement verifier: apply_kill →
+mutation_overlay → actual import provenance → production run_commands → fresh UUID-bound JUnit →
+production _kill_check_result. The declaration is parsed from SLICE6, not hand-mapped to test IDs.
+Each normative invocation runs the complete TESTS path; four isolated overlays run concurrently,
+with the production timeout unchanged. A separately collected complete manifest is compared with
+every result's exact nodeids. Root source/test bytes are hashed before and after every invocation.
+Fresh artifact paths and UUIDs prohibit stale reports. Failed collection/setup/teardown reports,
+runner/timeout errors or skips cannot satisfy the final assertions. Q53(c) attribution risk remains:
+a slice-wide failure proves sensitivity, not which individual assertion establishes a contract.
+No contract→nodeid mapping or new clean-control policy is introduced.
+
+Artifacts stay outside Git under `/home/user/.cache/fa-runtime/slice6-final-audit/` (inputs,
+baseline-collection, per-contract JSON/XML, combined results); the retained table/hashes below
+survive independently of that cache. Reproduce from the repository root after frozen all-extra
+setup with `uv run --frozen --no-sync python <audit-script>`:
+
+```python
+"""E212: full declared-path audit using production overlay/provenance/runner/JUnit classifier."""
+import concurrent.futures,dataclasses,hashlib,json,shlex,subprocess,sys,time,uuid
+from pathlib import Path
+from fa.inner_loop.plan_ids import extract_plan_ids
+from fa.inner_loop import slice_verification as v
+ROOT=Path.cwd();OUT=Path('/home/user/.cache/fa-runtime/slice6-final-audit');OUT.mkdir(exist_ok=True)
+PLAN=ROOT/'worklogs/planning-topology-and-executable-contracts-loop/increments/increment-02-verify-gate-and-kill-checks.md'
+record=next(r for r in extract_plan_ids(PLAN.read_text()).slice_records if r.slice_id=='SLICE6')
+assert record.test_paths==('tests/test_verify_gate_live.py',)
+cases=list(v.parse_kill_directives(record).items());assert len(cases)==16
+cases += [('SUP-GUARD',v.KillDirective(v.KillOperator.REMOVE_CALL,'src/fa/inner_loop/tools/workflow_tool.py','build_invoke_workflow_tool.handler','_requires_acquisition',0)),('SUP-CONTEXT',v.KillDirective(v.KillOperator.REMOVE_CALL,'src/fa/inner_loop/tools/workflow_tool.py','_child_run_context','begin_run',0))]
+watched=sorted(set([d.path for _,d in cases]+['tests/test_verify_gate_live.py','tests/fixtures/i02_gate_probe.py','tests/fixtures/i02_gate_subject.py']))
+def hashes():return {p:hashlib.sha256((ROOT/p).read_bytes()).hexdigest() for p in watched}
+frozen=hashes();(OUT/'inputs.json').write_text(json.dumps(frozen,indent=2)+'\n')
+col=subprocess.run([sys.executable,'-m','pytest',*record.test_paths,'--collect-only','-q'],cwd=ROOT,capture_output=True,text=True,check=True)
+manifest=sorted(l for l in col.stdout.splitlines() if l.startswith('tests/test_verify_gate_live.py::'))
+assert len(manifest)==486,len(manifest)
+(OUT/'baseline-collection.json').write_text(json.dumps(manifest,indent=2)+'\n')
+
+def run(case):
+ name,d=case;started=time.monotonic();source=(ROOT/d.path).read_text();a=v.apply_kill(source,d)
+ assert a.targets==a.edits==1 and a.source is not None,(name,a)
+ report_path=OUT/(name+'.xml');report_path.unlink(missing_ok=True)
+ with v.mutation_overlay(ROOT,d.path,a.source) as overlay:
+  env=v._overlay_env(ROOT,overlay);probe=v._assert_overlay_wins(v._module_name(d.path),overlay,env,workspace=ROOT)
+  assert probe.outcome is v.CommandOutcome.PASS,(name,probe)
+  run_id=uuid.uuid4().hex;env=v._gate_subprocess_env(ROOT,base_env=env,kill_check=True);env[v.JUNIT_RUN_ID_ENV]=run_id
+  command=v.KILL_CHECK_COMMAND.format(path=shlex.join(record.test_paths))+' -p fa.inner_loop.junit_nodeid_plugin --junitxml='+shlex.quote(str(report_path))
+  (result,)=v.run_commands((command,),workspace=ROOT,env=env)
+  report,detail=v._parse_junit_report(report_path,run_id=run_id)
+ verdict=v._kill_check_result(d,', '.join(record.test_paths),started,result,report,detail)
+ summary={'name':name,'directive':dataclasses.asdict(d),'targets':a.targets,'edits':a.edits,'command':command,'probe':dataclasses.asdict(probe),'runner':dataclasses.asdict(result),'check':dataclasses.asdict(verdict),'run_id':run_id,'report_detail':detail,'nodeids_match':report is not None and sorted(report.outcomes)==manifest,'outcomes':dict(report.outcomes) if report else None}
+ if report:
+  summary['counts']={k:sum(x.value==k for x in report.outcomes.values()) for k in ['passed','failed','skipped']}
+ (OUT/(name+'.json')).write_text(json.dumps(summary,indent=2,default=str)+'\n')
+ assert hashes()==frozen,(name,'source/test input changed')
+ print(json.dumps({'name':name,'verdict':verdict.verdict.value,'rc':result.exit_code,'duration':round(verdict.duration_s,2),'counts':summary.get('counts'),'nodeids_match':summary['nodeids_match'],'detail':verdict.detail}),flush=True)
+ return summary
+
+results=[]
+with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+ for done in concurrent.futures.as_completed([pool.submit(run,c) for c in cases]):
+  results.append(done.result());(OUT/'results.json').write_text(json.dumps(results,indent=2,default=str)+'\n')
+assert len(results)==18
+assert all(r['check']['verdict'] is v.SliceVerdict.PROVEN and r['nodeids_match'] and r['counts']['skipped']==0 for r in results),[(r['name'],r['check']) for r in results]
+assert hashes()==frozen
+print('ALL_16_NORMATIVE_PLUS_2_SUPPLEMENTAL_PROVEN; unchanged inputs; exact whole-path manifests',flush=True)
+```
+
+
+### Additional measured gate identities and handoff scope
+
+After source review and a pre-edit declaration, the session-close mirror `worklogs/HANDOFF.md`
+is updated only to route the next agent to E212/current plan/spec/decisions and exact unfinished
+work; unrelated old S18/doc-hygiene instructions remain historical. Doc-maintenance skill read.
+No new knowledge/worklog file, ADR, term, index entry, branch or public schema was introduced.
+
+- Final tool module tests: **91passed2.11s**, rc0 after canonical formatting.
+- Separate full-tree deptry: PASS. Process-tracked Pylint src/fa: rc0, **10/10**.
+- Isolated d9109f4 Mypy: **8 errors/4 files/443 files checked**, rc1. Candidate: **8 errors/4
+  files/450 checked**, rc1. Same path/code/message identities (two mutation-overlay line numbers
+  shift by one); not a reviewed waiver. Exact diagnostics: plan_ids.py:877 var-annotated inside;
+  test_skill_grammar_emit.py:70 no-any-return; test_slice_verification_runner.py:88,89,321
+  comparison-overlap and :150 var-annotated; test_mutation_overlay.py:144/145 attr-defined shutil
+  and :555/556 comparison-overlap. Retain all eight for operator-reviewed disposition.
+- Candidate Pyrefly full project: rc0, **0 errors (139 suppressed, 52 warnings not shown)** by
+  existing config. No new suppression. This is not a warning-free whole-project claim.
+- Authoring baseline: rc1, **5** existing export-completeness blocks: BaselineCapture,
+  capture_baseline, load_verify_baseline, write_verification, EVAL_VERIFICATION_MAX_CHARS.
+  Candidate: rc1, those five plus **3 new** public symbols absent from __all__:
+  WorkflowAdmission, AdmissionDiagnostic, PlanAdmissionValidation. These three are new blocking
+  work, not a baseline disposition or accepted API expansion. Correct intended visibility and
+  repeat affected static/runtime proof before local acceptance.
+- Candidate lock, four contract guards and shell syntax passed. Full lint stops at broader
+  formatting debt; no blanket whole-tree formatting/legacy-test rewrite in this chunk.
+
+Candidate full suite collected5027; baseline4477, verified separate editable module origins.
+Both existing just test commands are still running at this checkpoint until explicit final status
+is appended. Do not compare totals alone, claim no new failures, or create local-acceptance.md
+from partial output. The old WindowsPath reporter problem remains a risk, not a waived gate.
+
+
+### Final E212 normative results — completed, rc0
+
+Final formatted-source audit completed with **all16 normative +2 supplemental PROVEN**.
+Each invocation executed the entire exact486-nodeid public bank, rc1 with actual call-phase
+failures, zero errors/skips and valid fresh UUID-bound JUnit. Every producer resolved uniquely
+(one target/one edit), actual overlay import probe passed, and every frozen input hash below
+remained unchanged after every invocation. No collector/runner/timeout/infra error was accepted.
+Four-way concurrency; unchanged production600s budget. Sum of measured invocation durations: **3850.30s** (overlapping, not wall time).
+
+| Contract | Producer removed / neutralised | Passed | Failed | Errors / skipped | Elapsed s | Invocation UUID | XML SHA256 |
+|---|---|---:|---:|---|---:|---|---|
+| CT71 | `_run_stage → verify_plan` | 452 | 34 | 0 / 0 | 224.90 | `aa38910bafb141778dca1816cd94e9ed` | `b51b84c1dcbe113c635e0bdde7f3ee1bae5f00cfe0de47f2d63415eec243c314` |
+| CT72 | `_effective_controller_route (neutralise)` | 473 | 13 | 0 / 0 | 319.43 | `37f44c0a93a54794b4ba6e440f46db75` | `8d513cdaf42c08a1a1f849f66edd3feef9b7a77fd68f5e58de4004bd74a31fc4` |
+| CT73 | `run_workflow → _ensure_eval_after_coder` | 415 | 71 | 0 / 0 | 45.22 | `e83a099831044fa6add283802a31e7c3` | `82fbe9c99ab8c5fba0126ad637a5f75b31f6a6298f932e2bcc93d5ee42758696` |
+| CT75 | `_run_stage → run_stage_fn` | 424 | 62 | 0 / 0 | 42.13 | `7659d79432744e2f88383dc0da268b78` | `7eb59965ecf008fe387362a504bbcd9c77646624077ce750980aa91988321cb5` |
+| CT76 | `verify_plan → commands_for` | 478 | 8 | 0 / 0 | 223.24 | `636f9448781c4bf2b13abd8ac6ce3938` | `ae3d6a40e4d6a0c51195f759a741cbce23d9ec56b45b8d24d5a59ffa5582eaf3` |
+| CT77b | `_run_stage → write_verification` | 472 | 14 | 0 / 0 | 326.34 | `d60b29e5475447b8af611a2c793e1a5f` | `84f72f690a3b3316027a020542fd304806e7258c225fd629ed1f6cfd8e2809c6` |
+| CT77c | `_gate_mode (neutralise)` | 478 | 8 | 0 / 0 | 332.32 | `eee028754654460fad6e34dc74556a33` | `eaf212b3916b543f6ad5a49293b8e87a78cfb52a7ed91f8c87138bba86f4b455` |
+| CT77 | `_eval_evidence_block → _verification_evidence_lines` | 455 | 31 | 0 / 0 | 323.85 | `c88176a7ad4c4a76a8e9ccbd90a345a9` | `4d7373ba6019b3c1c6a4740bdc3dbcb35d63acb471def43b1f2f574e00c5e4ae` |
+| CT86 | `_run_stage → capture_baseline` | 454 | 32 | 0 / 0 | 55.92 | `2ecea2730d9b4004b7bf98eb28e890c1` | `f24e15f5ffa3c08d36a89e11857e326a07f75671652ed92d8913c8d38100d1c2` |
+| CT87 | `_validate_plan_admission → validate_kill_directives` | 415 | 71 | 0 / 0 | 52.20 | `415c5ba44306410dac17a72d4a924516` | `cc59a0cd93ff88d2331c450733a61f9d962f9eb3581965dfb2d56943d688a6c9` |
+| CT90 | `_cmd_workflow → _require_plan_for_coder` | 484 | 2 | 0 / 0 | 296.76 | `1491be1b12384cb7b277afede0f4fb07` | `d6c3e006a6226db06e40ea1650c6fef91fe3978b0cbf95a47ce32169501876b4` |
+| CT91 | `_validate_plan_admission → precheck` | 414 | 72 | 0 / 0 | 44.96 | `f139aec9e9b242fa8397fea445471955` | `451c0fca88f6b4c14022e69c6c472cccdf19f8e5e125e3b6c9d6d983cdfb7f02` |
+| CT92 | `_record_admission_attempt → write_admission_record` | 420 | 66 | 0 / 0 | 200.11 | `36de85f340b349f0b87dbb0e3c146e0d` | `38c2c81a8be9beaa50f6cad0eb4428cd4c406eae473468c1d883856b5a15f3b9` |
+| CT93 | `_build_tool_builders → build_scoped_write_file_tool` | 464 | 22 | 0 / 0 | 273.87 | `3c80954107c5444b983efec7880d96bc` | `0f036aeb171f2f4e5b4e403dbbbf480f349fa5d1bd70332af4689ba5c28aa6fb` |
+| CT94 | `_run_admission_repair → _promote_validated_plan` | 473 | 13 | 0 / 0 | 288.60 | `47c2944faa744816bdf8906508af6cbc` | `4fde595cc48631ea855a9c18c9b5e3f937d6dbfed59bd12a08907a681428fe3e` |
+| CT95 | `run_workflow → _require_plan_for_coder` | 478 | 8 | 0 / 0 | 302.06 | `d4181a117d1241939773ac31329795a5` | `cdf0081a2ae8870c6b047e13e2b760e5fa14960503402e2984e2c88605c32283` |
+| SUP-GUARD | `build_invoke_workflow_tool.handler → _requires_acquisition` | 484 | 2 | 0 / 0 | 297.63 | `541296ea3e1c46ee9a9ac0c5a0ce3a79` | `bc09b94b1313f7754f4d1a4c2a683dd9e12f4a90aab450b5922d1411733c7875` |
+| SUP-CONTEXT | `_child_run_context → begin_run` | 483 | 3 | 0 / 0 | 200.77 | `7a84bcd8f44046f29efcb5ec0b84e604` | `d2eaa9351c6d72f53bba62f496bb12f12fbef56923852fe33028773262e8e193` |
+
+SUP-GUARD and SUP-CONTEXT are additional real producer removals in workflow_tool, not extra
+SLICE6 contracts. Normative count remains16. The guard removal kills both default/coder normal
+chat cases; child begin_run removal kills all three supported noncoder normal chat cases. The
+pre-format16+2 batch also completed, but this final table supersedes it for candidate-byte proof.
+The source/provenance/slice-sensitivity limitations above still apply. STEP17 alone may now be
+checked for these exact frozen versions; no SLICE6/local-DoD/independent/operator acceptance.
+
+Frozen normative/fixture inputs (SHA256; canonical root unchanged by all18 overlays):
+
+```text
+732ca6bb3e0ac9acf42e1aef200ee50ec21e9693464886f0a278142012650e89  src/fa/cli.py
+9dc2780947286c753926fef845b00760df5c813e398f5ecf3ee45f16aa09b2da  src/fa/inner_loop/profiles.py
+96021dbf5c05ad9fd2ec7e200d70b651dc5170f057e97e1bd163ecb925d9e2c5  src/fa/inner_loop/slice_verification.py
+137cc8f80709b63748c68692b9f4e7ba25c0c210281ce88ddd312a7d61978f3f  src/fa/inner_loop/tools/workflow_tool.py
+9896ba84bfd87bc1760139a0194634e6db66910ca64501647463edaf8fe47778  src/fa/inner_loop/workflow_controller.py
+0da233bef7e76bb2db461c8c1b093835174a11b4f275dba753f1e341a5cdec52  tests/fixtures/i02_gate_probe.py
+96b72e3b13d8c3fd7597afac21bf679b5ff9acc986ff961669ef45490b119f2e  tests/fixtures/i02_gate_subject.py
+efe1674c7cdd614c5c7c7e0a58b1916646b1f5abcc047e672563f0c819e207b1  tests/test_verify_gate_live.py
+```
+
+Complete486-nodeid collection manifest SHA256: `3c8e96d2e7467a703909e1c3d1f5169d68b59341da7b9a971c6d71fb6d57bf02`.
+Whole-repo doc-links command: rc1,46 pre-existing broken archived links; the five changed
+Markdown files checked separately: rc0/no broken links. No link waiver or archive rewrite.
+
+
+### Complete preliminary full-suite reports — not local acceptance
+
+Both commands completed normally, no WindowsPath reporter abort. Candidate `just check` rc1:
+**4994passed20failed12skipped1xfailed2warnings1053.50s**, coverage83.19% (80% total floor met).
+Baseline `just test` rc1: **4451passed11failed14skipped1xfailed2warnings902.76s**. JUnit carries
+exact collector nodeids for all5027 candidate/all4477 baseline cases, zero setup/teardown errors;
+all failures are call-phase. Xfail is serialized as one additional skipped case. The candidate
+full-run UUID env name was initially misspelled, so its report has exact IDs but no run-UUID
+property; it was a fresh absent-at-start report path, not reused evidence. Normative16+2 reports
+above all have the correct fresh UUID binding. This preliminary comparison does not waive the
+version/final-manifest requirements for the eventual local-acceptance report.
+
+`just _cli-cov-floor` was run separately after pytest prevented the normal chained invocation:
+rc0,27 cli.py function floors met,78 functions scanned. Individual deptry/Pylint are separately
+recorded above. Full `just check` remains red, not partially blessed.
+
+Exact failure identity sets from the two completed XML reports (no count-only waiver):
+
+**Common (4):**
+
+```text
+tests/test_deploy_scripts.py::test_historical_workspace_docs_have_top_level_superseded_banner
+tests/test_doc_links.py::test_repo_has_no_broken_internal_file_links
+tests/test_s10a_cli_coverage.py::test_s10a_authoring_check_runs_on_a_real_workspace
+tests/test_workspace_readiness_integration.py::test_clean_candidate_real_readiness_commit_and_local_publication
+```
+
+**Candidate-only (16):**
+
+```text
+tests/test_deploy_scripts.py::test_workspace_stale_claims_are_confined_to_historical_evidence
+tests/test_handoff_payload.py::test_blackboard_writer_called_with_handoff
+tests/test_handoff_payload.py::test_facts_provider_exception_does_not_kill_chat
+tests/test_handoff_payload.py::test_handoff_reaches_run_workflow_task
+tests/test_handoff_payload.py::test_k_budget_third_call_denied_k2
+tests/test_handoff_payload.py::test_malformed_risk_config_degrades_to_goal_only
+tests/test_handoff_payload.py::test_missing_facts_provider_degrades_goal_only
+tests/test_prompt_registry_coherence.py::test_wire_name_error_is_not_swallowed_by_the_fallback[build_baseline_registry-fs_read_file]
+tests/test_prompt_registry_coherence.py::test_wire_name_error_is_not_swallowed_by_the_fallback[build_chat_registry-fs_read_file]
+tests/test_prompt_registry_coherence.py::test_wire_name_error_is_not_swallowed_by_the_fallback[build_eval_registry-fs_run_bash]
+tests/test_prompt_registry_coherence.py::test_wire_name_error_is_not_swallowed_by_the_fallback[build_planner_registry-fs_read_file]
+tests/test_quality_slice_coverage.py::test_profile_registry_propagates_schema_contract_failure
+tests/test_s127_outline.py::test_s127_fold_cli_py_matches_ast_truth
+tests/test_s13_10_tool_names.py::test_composition_root_accepts_a_non_fs_pr_prefixed_name
+tests/test_s13_10_tool_names.py::test_composition_root_rejects_non_portable_name
+tests/test_s4_log_kind.py::test_log_kind_member_count_matches_source
+```
+
+**Baseline-only (7):**
+
+```text
+tests/test_deploy_scripts.py::test_executable_script_modes_are_pinned
+tests/test_mutation_overlay.py::test_the_overlay_leaves_the_real_checkout_untouched
+tests/test_workflow_deadline.py::test_generous_deadline_runs_the_full_pipeline
+tests/test_workflow_deadline.py::test_no_deadline_runs_the_full_pipeline
+tests/test_workflow_no_eval_terminal.py::test_eval_requested_but_no_verdict_fails[linear]
+tests/test_workflow_no_eval_terminal.py::test_planner_coder_without_eval_is_also_unjudged
+tests/test_workflow_no_eval_terminal.py::test_scratch_pipeline_succeeds_but_is_marked_unjudged
+```
+
+Some archived-baseline fixture failures are Git/archive-context sensitive (script mode and
+checkout-untouched checks), not automatically product improvements. The reports need case-by-case
+classification and operator review. No new/missing/unclassified=0 or acceptance claim.
+
+**Additional declared Q70 compatibility edit:** `tests/test_handoff_payload.py` only. Six old
+handoff/K-budget fixtures still requested default coder roles and were correctly refused. Set
+supported planner/eval roles in the shared handler fixture and two direct positive calls; preserve
+all handoff/goal/error-recovery/blackboard/K-counter oracles, and leave no-live-context refusal
+unchanged. Handler-seam tests are C0, not claimed as real-session proof. Final handoff+invoke:
+**112passed0.78s**, rc0; Ruff/check-format/Pyrefly clean; Mypy clean with the real source module
+included (single-test-only Mypy first produced five import-untyped context diagnostics, not
+suppressed). Production and frozen public/leaf audit inputs are unchanged; the completed normative
+proof remains source/hash-identical. A fresh full suite is still required after these migrations.
+
+Root doc-links remains rc1/46 archived links, changed-file docs rc0; no archive rewrite or waiver.
+The other candidate-only failures and new authoring exports remain explicit next repair work.
+Full candidate JUnit SHA256: `0b08b31a5135d177f8195eb507983e26bab653e07c80f049d821fa2278475f26`.
+Full baseline JUnit SHA256: `55eb4f1963c7fd47d5ae1475131f5721ce74e6d039c61c53c3db48faec4c9492`.

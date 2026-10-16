@@ -1320,3 +1320,46 @@ E211 C1 pairs exercise real failed `fs_read_file` versus failed `pr_prepare`, fo
 successful preparation/write, in both observe/enforce. Mutation checks must kill both removal of
 prepare-error consumption and reintroduction of the blanket tool-error rule. No security-boundary
 or complete SLICE6 claim follows from these local tests.
+
+
+## Q69 — Keep the original C1 public test without recursive whole-bank verification?
+
+**Status: RESOLVED — explicit operator approval, 2026-10-16.** The old constructed C1 plan
+selected its own outer public file for each internal kill. The unfiltered 481-case baseline had
+not completed after ten minutes; selected subsets were not normative acceptance evidence.
+
+Approved: factor a nonrecursive constructed-plan leaf into `tests/fixtures/i02_gate_probe.py`,
+with a deterministic test subject in `tests/fixtures/i02_gate_subject.py`. The outer C1 retains
+real controller→CLI→session/provider-IO-only composition, persisted artifacts, once-only global
+command, independent slice attribution, exact eval evidence and all nine internal producer kills.
+Its constructed plan selects the whole leaf file; the leaf's own plan has no FUNCTIONAL kills.
+Other `_plan_text` callers keep the original default TESTS path. This is fixture factoring, not a
+runtime recursion-marker change, skipped C1, fabricated PROVEN or contract→test mapping.
+
+All **16** retained SLICE6 normative mutations still run the **complete outer public test file**.
+A completed unmutated full-file baseline precedes those runs. Collection, runner, timeout and
+infrastructure errors cannot count as kills. Approval permits the construction; measured results
+and remaining acceptance obligations are recorded in the E212 continuation of the E211 note.
+
+
+## Q70 — Which nested requests fail when managed plan acquisition is unavailable?
+
+**Status: RESOLVED — operator selected coder-containing-only guard, 2026-10-16.** Blocking all
+nested workflows was offered but NOT selected: it would unnecessarily remove planner/eval-only
+delegation. Missing managed acquisition must fail closed for coder-containing requests, including
+the default planner,coder,eval roles, before child identity allocation, handoff/artifacts/provider.
+Use the structured `acquisition_unavailable` tool error; do not guess a plan or add a public
+PlanRef field/stub acquisition backend.
+
+Otherwise-valid planner/eval-only delegation remains supported. In a session-bound invocation,
+allocate the actual child RunContext through existing SessionManager authority in the same
+session/workspace/DB; never forward the parent's differently-bound RunContext as the child.
+Missing/mismatched parent authority and allocation failure remain fail-closed. Legacy invocations
+without either session/run context keep their existing unbound behavior; this does not establish
+I03 managed acquisition, cross-session reuse, parallel orchestration or OS isolation.
+
+C0 covers repeated refusal without consuming the next child identity and invalid noncoder request
+preconditions before allocation. C1 exercises the normal CLI/chat registry path with only provider
+IO mocked: default/coder refusal and planner, planner/eval, eval delegation; inspect actual child
+binding, provider sequence, session rows, global history and absent fabricated admission. E212
+records actual results and producer-removal sensitivity separately from policy approval.

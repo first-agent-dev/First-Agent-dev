@@ -45,7 +45,11 @@ from fa.inner_loop.workflow_controller import (
     MAX_REPAIRS_CEILING,
     MAX_REPLANS_CEILING,
     WORKFLOW_MODES,
+    WorkflowRequestError,
+    _validate_workflow_request,
 )
+from fa.paths import fa_state_root
+from fa.session.manager import RunContext, SessionContext, SessionManager, SessionManagerError
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     # FlowState is defined in workflow_artifacts; workflow_controller merely
@@ -224,7 +228,7 @@ def build_handoff_task(
     goal = goal.strip()
 
     def _posix(p: str) -> str:
-        return str(p).replace("\\", "/")
+        return p.replace("\\", "/")
 
     reads = sorted({_posix(p) for p in read_paths if p})
     writes = sorted({_posix(p) for p in write_paths if p})
@@ -375,6 +379,30 @@ def _resolve_handoff_task(*, task: str, candidate: str, ctx: WorkflowInvocationC
     return handoff
 
 
+def _requires_acquisition(roles: list[str]) -> bool:
+    """Q70: only coder-containing nested requests need the unavailable I03 handoff."""
+    return "coder" in roles
+
+
+def _child_run_context(ctx: WorkflowInvocationContext, candidate: str) -> RunContext | None:
+    """Allocate through existing session authority; never reuse/clone the parent run."""
+    if ctx.run_context is None and ctx.session_context is None:
+        return None  # Explicit legacy library contexts have no session lifecycle.
+    parent, session = ctx.run_context, ctx.session_context
+    if not isinstance(parent, RunContext) or not isinstance(session, SessionContext):
+        raise SessionManagerError("session_context_missing", "nested workflow needs both session contexts")
+    if (
+        parent.run_id != ctx.parent_run_id
+        or parent.session_id != session.session_id
+        or parent.workspace_path != ctx.workspace
+        or session.workspace_path != ctx.workspace
+        or parent.session_db_path != session.session_db_path
+    ):
+        raise SessionManagerError("session_context_mismatch", "nested workflow parent binding does not match")
+    manager = SessionManager(state_root=fa_state_root(), workspace_root=ctx.workspace.parent)
+    return manager.begin_run(session, requested_run_id=candidate)
+
+
 def build_invoke_workflow_tool(
     run_workflow_fn: Callable[..., tuple[int, FlowState | None]],
     ctx_provider: Callable[[], WorkflowInvocationContext | None],
@@ -438,6 +466,13 @@ def build_invoke_workflow_tool(
                 retryable=True,
             )
 
+        if _requires_acquisition(roles):
+            return ToolResult.fail(
+                "acquisition_unavailable",
+                "nested coder workflows need I03 managed plan acquisition; "
+                "use an explicit-plan CLI/library workflow instead",
+            )
+
         max_repairs = _clamp(_as_int(params, "max_repairs", DEFAULT_TOOL_MAX_REPAIRS), low=0, high=MAX_REPAIRS_CEILING)
         max_replans = _clamp(_as_int(params, "max_replans", DEFAULT_TOOL_MAX_REPLANS), low=0, high=MAX_REPLANS_CEILING)
 
@@ -448,6 +483,21 @@ def build_invoke_workflow_tool(
                 "invalid_child_run_id",
                 f"derived child run id {candidate!r} does not match {_RUN_ID_RE.pattern}",
             )
+
+        try:
+            _validate_workflow_request(
+                roles=roles,
+                mode=mode,
+                max_repairs=max_repairs,
+                max_replans=max_replans,
+                run_id=candidate,
+                task=task,
+                per_role_task={},
+                inject_overrides=ctx.inject_overrides,
+            )
+            child_context = _child_run_context(ctx, candidate)
+        except (SessionManagerError, WorkflowRequestError) as exc:
+            return ToolResult.fail("workflow_context_error", f"child run allocation refused: {exc.code}")
 
         # (f2) Planner handoff (S10 / CT6, DP-9): file-map + Do-exactly built
         # from LIVE session facts; degrades to the raw goal when unavailable.
@@ -476,7 +526,7 @@ def build_invoke_workflow_tool(
                 transport=ctx.transport,
                 secrets=ctx.secrets,
                 session_context=ctx.session_context,
-                run_context=ctx.run_context,
+                run_context=child_context,
                 session_db=ctx.session_db,
                 deadline_mono=deadline,
                 # PLAN S5c / Q9: inherit the chat session's --inject.
@@ -525,7 +575,9 @@ def build_invoke_workflow_tool(
         name="invoke_workflow",
         description=(
             "Run a multi-role workflow pipeline (planner, coder, eval) on a task that is too "
-            "large to finish in this conversation. Returns the child run id, exit code and "
+            "large to finish in this conversation. Coder-containing requests currently return "
+            "acquisition_unavailable; planner/eval-only delegation remains available. "
+            "Returns the child run id, exit code and "
             "terminal status; the pipeline's artifacts are written under that run id."
         ),
         input_schema=INVOKE_WORKFLOW_SCHEMA,

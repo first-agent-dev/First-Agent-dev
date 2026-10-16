@@ -125,7 +125,9 @@ def _context(tmp_path: Path, *, run_id: str, mode: str = "observe") -> WorkflowC
     )
 
 
-def _plan_text(marker: Path, *, fail_plan_command: bool = False) -> str:
+def _plan_text(
+    marker: Path, *, fail_plan_command: bool = False, test_path: str = "tests/test_verify_gate_live.py"
+) -> str:
     append_code = f"from pathlib import Path; Path({str(marker)!r}).open('a', encoding='utf-8').write('global\\n')"
     if fail_plan_command:
         append_code += "; raise SystemExit(7)"
@@ -156,7 +158,7 @@ CONTRACTS:
     kill: remove-call src/fa/inner_loop/workflow_controller.py::_eval_evidence_block -> _verification_evidence_lines
   CT86 [FUNCTIONAL]: the baseline is captured before coder dispatch.
     kill: remove-call src/fa/inner_loop/workflow_controller.py::_run_stage -> capture_baseline
-TESTS: tests/test_verify_gate_live.py
+TESTS: {test_path}
 ```verify
 python -c "print('slice-one')"
 ```
@@ -164,7 +166,7 @@ python -c "print('slice-one')"
 ## SLICE2: the second command owner
 CONTRACTS:
   CT90 [CONSTRAINT]: the second slice owns its own command result.
-TESTS: tests/test_verify_gate_live.py
+TESTS: {test_path}
 ```verify
 python -c "print('slice-two')"
 ```
@@ -566,12 +568,17 @@ def test_real_workflow_writes_verification_and_supplies_it_to_eval(
     (workspace / "tests").mkdir()
     for filename in ("conftest.py", "__init__.py", "test_verify_gate_live.py"):
         shutil.copy2(REPO_ROOT / "tests" / filename, workspace / "tests" / filename)
+    (workspace / "tests/fixtures").mkdir()
+    for filename in ("i02_gate_probe.py", "i02_gate_subject.py"):
+        shutil.copy2(REPO_ROOT / "tests/fixtures" / filename, workspace / "tests/fixtures" / filename)
     for filename in ("pyproject.toml", "uv.lock"):
         shutil.copy2(REPO_ROOT / filename, workspace / filename)
     (workspace / ".venv").symlink_to(REPO_ROOT / ".venv", target_is_directory=True)
     plan_marker = workspace / "plan-level-command-runs.txt"
     plan_path = workspace / "implementation-plan.md"
-    plan_path.write_text(_plan_text(plan_marker, fail_plan_command=True), encoding="utf-8")
+    plan_path.write_text(
+        _plan_text(plan_marker, fail_plan_command=True, test_path="tests/fixtures/i02_gate_probe.py"), encoding="utf-8"
+    )
 
     provider_roles: list[str] = []
     request_text_by_role: dict[str, list[str]] = {"planner": [], "coder": [], "eval": []}
@@ -680,8 +687,9 @@ def test_real_workflow_writes_verification_and_supplies_it_to_eval(
 # C0 policy plus C2 real CLI rejection; these do not claim admitted C1 delivery.
 
 
-def _request_input() -> dict[str, Any]:
-    return {
+def _request_input(**overrides: Any) -> dict[str, Any]:
+    """Raw public-boundary fixture: preserve malformed values without inferring a kwargs union."""
+    values: dict[str, Any] = {
         "roles": ["planner", "coder", "eval"],
         "mode": "linear",
         "max_repairs": None,
@@ -690,6 +698,9 @@ def _request_input() -> dict[str, Any]:
         "task": "implement the declared plan",
         "per_role_task": {},
     }
+
+    values.update(overrides)
+    return values
 
 
 @pytest.mark.parametrize(
@@ -704,7 +715,7 @@ def _request_input() -> dict[str, Any]:
 def test_role_order_request_normalization_preserves_non_eval_stages(
     roles: list[str], mode: str, expected: tuple[str, ...]
 ) -> None:
-    values = _request_input() | {"roles": roles, "mode": mode}
+    values = _request_input(**{"roles": roles, "mode": mode})
     request = workflow._validate_workflow_request(**values)
 
     assert request.roles == tuple(role.strip() for role in roles)
@@ -717,7 +728,7 @@ def test_role_order_request_normalization_preserves_non_eval_stages(
 @pytest.mark.parametrize(("repairs", "replans", "expected"), [(-10, -1, (0, 0)), (0, 0, (0, 0)), (99, 99, (3, 2))])
 def test_direct_budget_request_clamps_real_integers(repairs: int, replans: int, expected: tuple[int, int]) -> None:
     request = workflow._validate_workflow_request(
-        **(_request_input() | {"max_repairs": repairs, "max_replans": replans})
+        **(_request_input(**{"max_repairs": repairs, "max_replans": replans}))
     )
 
     assert (request.max_repairs, request.max_replans) == expected
@@ -765,7 +776,7 @@ def test_direct_budget_invalid_request_has_no_artifacts_or_dispatch(
     home, state, workspace = tmp_path / "home", tmp_path / "state", tmp_path / "workspace"
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("FA_STATE_ROOT", str(state))
-    values = _request_input() | {field: value}
+    values = _request_input(**{field: value})
 
     result = run_workflow(
         **values,
@@ -798,7 +809,7 @@ def test_plan_preflight_cli_rejects_malformed_request_before_lifecycle(
     home, state, workspace = tmp_path / "home", tmp_path / "state", tmp_path / "workspace"
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("FA_STATE_ROOT", str(state))
-    values = _request_input() | {field: value}
+    values = _request_input(**{field: value})
     roles = values["roles"]
     # Actual argv delivers one comma-separated string, including empty entries.
     cli_roles = ",".join(roles) if isinstance(roles, list) and all(isinstance(role, str) for role in roles) else roles
@@ -876,7 +887,7 @@ def test_plan_preflight_invalid_inject_cannot_claim_a_session(
 )
 def test_direct_budget_pure_request_rejects_wrong_shapes(field: str, value: object, code: str) -> None:
     with pytest.raises(workflow.WorkflowRequestError) as failure:
-        workflow._validate_workflow_request(**(_request_input() | {field: value}))
+        workflow._validate_workflow_request(**(_request_input(**{field: value})))
 
     assert failure.value.code == code
     assert str(failure.value) == f"invalid workflow request: {code}"
@@ -886,7 +897,7 @@ def test_direct_budget_pure_request_rejects_wrong_shapes(field: str, value: obje
 @pytest.mark.parametrize("mode", ["off", "observe", "enforce"])
 def test_direct_budget_valid_identity_and_injection_controls(run_id: str, mode: str) -> None:
     request = workflow._validate_workflow_request(
-        **(_request_input() | {"run_id": run_id, "inject_overrides": {"coder_slice_ceremony": mode}})
+        **(_request_input(**{"run_id": run_id, "inject_overrides": {"coder_slice_ceremony": mode}}))
     )
 
     assert request.roles == ("planner", "coder", "eval")
@@ -894,7 +905,7 @@ def test_direct_budget_valid_identity_and_injection_controls(run_id: str, mode: 
 
 
 def test_plan_preflight_requested_id_can_be_absent_only_at_cli_generation_boundary() -> None:
-    values = _request_input() | {"run_id": None}
+    values = _request_input(**{"run_id": None})
     request = workflow._validate_workflow_request(**values, allow_missing_run_id=True)
 
     assert request.roles == ("planner", "coder", "eval")
@@ -952,10 +963,7 @@ def test_direct_budget_matching_context_and_per_role_tasks_are_accepted(tmp_path
         run_log_dir=tmp_path / "run",
     )
     request = workflow._validate_workflow_request(
-        **(
-            _request_input()
-            | {"task": None, "per_role_task": dict.fromkeys(("planner", "coder", "eval"), "implement")}
-        ),
+        **(_request_input(**{"task": None, "per_role_task": dict.fromkeys(("planner", "coder", "eval"), "implement")})),
         workspace=workspace,
         run_context=context,
     )
@@ -974,7 +982,7 @@ def test_direct_budget_matching_context_and_per_role_tasks_are_accepted(tmp_path
 )
 def test_direct_budget_request_cross_field_rejections(values: dict[str, object], code: str) -> None:
     with pytest.raises(workflow.WorkflowRequestError) as failure:
-        workflow._validate_workflow_request(**(_request_input() | values))
+        workflow._validate_workflow_request(**(_request_input(**values)))
 
     assert failure.value.code == code
 
@@ -982,9 +990,7 @@ def test_direct_budget_request_cross_field_rejections(values: dict[str, object],
 @pytest.mark.parametrize("context", [{}, [], "not-a-context", SimpleNamespace(run_id="request-valid")])
 def test_direct_budget_malformed_context_is_a_typed_rejection(context: object) -> None:
     with pytest.raises(workflow.WorkflowRequestError) as failure:
-        workflow._validate_workflow_request(
-            **(_request_input() | {"run_context": context}), workspace=Path("workspace")
-        )
+        workflow._validate_workflow_request(**(_request_input(**{"run_context": context})), workspace=Path("workspace"))
 
     assert failure.value.code == "context-binding"
 
@@ -1877,7 +1883,7 @@ def test_direct_api_plan_guard_persists_blocked_before_real_dispatch(
 
     monkeypatch.setattr(ProviderChain, "request", provider)
     result, flow = run_workflow(
-        **(_request_input() | {"mode": mode}),
+        **(_request_input(**{"mode": mode})),
         config=config,
         workspace=workspace,
         max_turns=1,
@@ -2481,11 +2487,12 @@ def test_direct_api_plan_guard_context_directory_and_expired_admission_deadline(
     )
     code, flow = run_workflow(
         **(
-            _request_input()
-            | {
-                "task": None,
-                "per_role_task": dict.fromkeys(["planner", "coder", "eval"], "role task"),
-            }
+            _request_input(
+                **{
+                    "task": None,
+                    "per_role_task": dict.fromkeys(["planner", "coder", "eval"], "role task"),
+                }
+            )
         ),
         config=tmp_path / "models.yaml",
         workspace=tmp_path,
@@ -4249,3 +4256,108 @@ def test_ct91_public_q68_failed_prepare_invalidates_even_after_recovery(
     assert not (base / "verify_baseline.json").exists()
     assert not (base / "verification.json").exists()
     assert not list((tmp_path / ".fa/admission/ct91-public").glob("candidate-*"))
+
+
+@pytest.mark.parametrize("roles", [None, "coder", "planner", "planner,eval", "eval"])
+def test_acquisition_unavailable_live_chat_and_noncoder_child_binding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, roles: str | None
+) -> None:
+    """C1/Q70: real CLI, parent authority, registry, handler and child stages; provider IO only."""
+    from fa.cli import _cmd_run, build_parser
+    from fa.inner_loop.global_history import GlobalHistoryStore, default_global_history_path
+    from fa.inner_loop.session_db import SessionDatabase
+    from fa.session.manager import SessionManager
+
+    state = tmp_path / "state"
+    monkeypatch.setenv("FA_STATE_ROOT", str(state))
+    monkeypatch.delenv("FA_EGRESS_PROXY_URL", raising=False)
+    monkeypatch.delenv("FA_PROXY_TOKEN_FILE", raising=False)
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "README.md").write_text("review this note")
+    manager = SessionManager(state_root=state, workspace_root=tmp_path / "workspaces", source_workspace=source)
+    session = manager.create_or_attach_session(session_id=None, workspace_override=None)
+    parent = manager.begin_run(session, requested_run_id="ct95-parent")
+    db = SessionDatabase.open_existing(session.session_db_path, session_id=session.session_id)
+    config = session.workspace_path / "models.yaml"
+    config.write_text("".join(_ROLE_YAML.format(role=r) for r in ("chat", "planner", "coder", "eval")))
+    phases: list[str] = []
+    chat_turn = 0
+
+    def provider(
+        chain: ProviderChain, request: RequestInfo, *, logical_call_id: str | None = None
+    ) -> tuple[ResponseInfo, str, list[Any]]:
+        nonlocal chat_turn
+        role = chain.config.role
+        phases.append(role)
+        calls: tuple[dict[str, Any], ...] = ()
+        if role == "chat":
+            chat_turn += 1
+            if chat_turn <= 2:
+                name = "pr_prepare" if chat_turn == 1 else "invoke_workflow"
+                params: dict[str, Any] = (
+                    {"intent": "IMPLEMENT", "invariant": "Implements: CT95 child boundary"}
+                    if chat_turn == 1
+                    else {"task": "review notes"}
+                )
+                if chat_turn == 2 and roles is not None:
+                    params["roles"] = roles
+                calls = (
+                    {
+                        "id": "prepare-parent" if chat_turn == 1 else "nested-call",
+                        "type": "function",
+                        "function": {"name": name, "arguments": json.dumps(params)},
+                    },
+                )
+        text = _EVAL_FINAL_TEXT if role == "eval" else "done"
+        return (
+            ResponseInfo("" if calls else text, 1, 1, "tool_calls" if calls else "stop", calls),
+            logical_call_id or "ct95",
+            [],
+        )
+
+    monkeypatch.setattr(ProviderChain, "request", provider)
+    args = build_parser().parse_args(
+        [
+            "run",
+            "--role",
+            "chat",
+            "--config",
+            str(config),
+            "--workspace",
+            str(session.workspace_path),
+            "--run-id",
+            parent.run_id,
+            "--max-turns",
+            "5",
+            "--output-mode",
+            "quiet",
+            "review notes",
+        ]
+    )
+    args._session_context, args._run_context, args._session_db = session, parent, db
+    assert _cmd_run(args, secrets=SecretStore({"K": "sk-test-live"})) == 0
+    rows = db.read_event_rows(run_id=parent.run_id)
+    result = next(r["content"] for r in rows if r["kind"] == "tool_result" and r["tool_call_id"] == "nested-call")
+    child_id = "ct95-parent-wf1"
+    child_dir = state / "session-log" / child_id
+    history = GlobalHistoryStore(default_global_history_path())
+    assert history.read_run(parent.run_id) is not None
+    if roles is None or roles == "coder":
+        assert result["ok"] is False and result["error"]["code"] == "acquisition_unavailable"
+        assert phases == ["chat"] * 3
+        assert db.get_run_binding(child_id) is None and not child_dir.exists()
+        assert history.read_run(child_id) is None
+    else:
+        assert result["ok"] is True and result["result"]["exit_code"] == 0
+        assert phases == ["chat", "chat", *roles.split(","), "chat"]
+        binding = db.get_run_binding(child_id)
+        assert binding is not None and binding["session_id"] == session.session_id
+        child_rows = db.read_event_rows(run_id=child_id)
+        assert child_rows and all(r["run_id"] == child_id for r in child_rows)
+        assert {r["event_id"] for r in child_rows}.isdisjoint(r["event_id"] for r in rows)
+        flow = json.loads((child_dir / "flow_state.json").read_text())
+        assert flow["run_id"] == child_id and flow["status"] == "DONE"
+        child_history = history.read_run(child_id)
+        assert child_history is not None and child_history["role"] == roles.replace(",", "→")
+        assert not (child_dir / "admission.json").exists()

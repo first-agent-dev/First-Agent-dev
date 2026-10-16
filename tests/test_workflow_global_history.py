@@ -265,11 +265,13 @@ def test_nested_workflow_produces_two_rows(
         workspace,
         parent_run_id="chat-parent",
         with_workflow_ctx=True,
+        transport=_StubTransport(),
+        secrets=_SECRETS,
     )
     spec = registry.lookup("invoke_workflow")
     assert spec is not None, "chat must carry invoke_workflow for this test to mean anything"
 
-    result = spec.handler({"task": "do a thing"})
+    result = spec.handler({"task": "do a thing", "roles": "planner,eval"})
 
     child_run_id = (result.result or {}).get("run_id", "")
     assert child_run_id, f"tool returned no run_id: {result.summary}"
@@ -278,7 +280,8 @@ def test_nested_workflow_produces_two_rows(
     store = GlobalHistoryStore(default_global_history_path())
     child_row = store.read_run(child_run_id)
     assert child_row is not None, f"nested workflow wrote no row for {child_run_id}"
-    assert child_row["role"] == "planner→coder→eval"
+    assert child_row["role"] == "planner→eval"
+    assert result.error is None and (result.result or {})["exit_code"] == 0
 
     # The parent chat row is written by _cmd_run, which this test does not
     # invoke; what S5 depends on is that the CHILD occupies its own key, so the
