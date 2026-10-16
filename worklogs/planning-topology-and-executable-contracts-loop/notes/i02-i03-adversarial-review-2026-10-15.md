@@ -616,3 +616,9 @@ factory/provisioner/wrapper integration. Existing spec explicitly postpones posi
 proof until actual authority is wired. No fake authority/failing-main/service placeholder, no unsafe
 read-only-/sessions cutover into current writable legacy prologue. All35STEPS and four final duties
 remain unchecked; local broad regression is NOT independent review or deployed signoff.
+
+Final [source/plan audit](evidence/i03-e238/source-plan.json.gz): actual-source parser0FAIL6WARN,
+6slices17FUNCTIONAL35unchecked, kill grammar valid; doc links309PASS and diff-checkPASS. Six warnings
+remain visible external-contract references, not relabelled zero-warning. Exact preserved I02/session,
+lock/pyproject and existing wrapper/compose sources checked against E235. E238 source commit dbaaade;
+branch-only remote verified. No runtime/STEP acceptance inferred from documentation audit.
