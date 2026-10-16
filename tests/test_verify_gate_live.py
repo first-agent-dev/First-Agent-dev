@@ -30,10 +30,14 @@ from fa.feature_flags import FAIL_OPEN_FLAGS, FeatureFlags
 from fa.inner_loop import workflow_controller as workflow
 from fa.inner_loop.plan_ids import extract_plan_ids
 from fa.inner_loop.slice_verification import (
+    TAIL_LIMIT,
     CommandOutcome,
     CommandResult,
     PlanVerification,
+    SliceVerdict,
+    SliceVerification,
     _gate_mode,
+    capture_test_nodeids,
 )
 from fa.inner_loop.workflow_artifacts import (
     EvalReport,
@@ -4543,3 +4547,104 @@ def test_review_initial_admission_and_failure_flow_storage_errors_return_no_stal
     assert roles == []
     assert not (base / "admission.json").exists()
     assert not (base / "verify_baseline.json").exists()
+
+
+@pytest.mark.parametrize("gate", ["observe", "enforce"])
+@pytest.mark.parametrize("route", ["complete", "return_to_coder", "return_to_planner", "blocked"])
+def test_review_peer_missing_required_verification_is_not_a_mode_waiver(gate: str, route: RouteDecision) -> None:
+    """CT71/95: absent evidence blocks eval complete; Q56 retains actual negative judgment."""
+    assert _effective_controller_route(
+        _eval_report("peer-missing-evidence", route=route),
+        None,
+        gate_mode=gate,
+        eval_requested=True,
+        verification_required=True,
+    ) == ("blocked" if route == "complete" else route)
+
+
+@pytest.mark.parametrize("mode", ["linear", "adaptive"])
+@pytest.mark.parametrize("phase", ["t0", "post-coder"])
+@pytest.mark.parametrize("gate", ["observe", "enforce"])
+@pytest.mark.parametrize("error_type", [AssertionError, TypeError])
+def test_review_peer_unexpected_capture_error_keeps_pre_and_post_coder_contracts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str, phase: str, gate: str, error_type: type[Exception]
+) -> None:
+    """CT86/Q55: capture adapter exceptions are indeterminate, not missing judge dispatch."""
+    real_capture = capture_test_nodeids
+    calls = 0
+
+    def capture(*args: Any, **kwargs: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        result = real_capture(*args, **kwargs)
+        if calls == (1 if phase == "t0" else 2):
+            raise error_type("capture adapter fault")
+        return result
+
+    monkeypatch.setattr(workflow, "capture_test_nodeids", capture)
+    code, state, base, roles, _ = _ct91_public(tmp_path, monkeypatch, mode=mode, gate=gate)
+    assert code != 0 and state is not None and state.status == "FAILED"
+    assert roles == (["planner"] if phase == "t0" else ["planner", "coder", "eval"])
+    if phase == "t0":
+        payload = json.loads((base / "verify_baseline.json").read_bytes())["slices"]["SLICE1"]["capture"]
+        assert payload["nodeids"] is None and error_type.__name__ in payload["detail"]
+        assert not (base / "verification.json").exists()
+        assert not (base / "eval_report.json").exists()
+    else:
+        attempt = json.loads((base / "verification.json").read_bytes())["attempts"][-1]
+        assert any(error_type.__name__ in error for error in attempt["errors"])
+        assert json.loads((base / "eval_report.json").read_bytes())["verdict"] == "PASS"
+
+
+@pytest.mark.parametrize("gate", ["observe", "enforce"])
+@pytest.mark.parametrize("route", ["complete", "return_to_coder", "return_to_planner", "blocked"])
+@pytest.mark.parametrize("kind", ["errors", "command-error", "slice-error", "determinate-failure"])
+def test_review_peer_ratified_indeterminate_evidence_routing_matrix(gate: str, route: RouteDecision, kind: str) -> None:
+    """Operator choice: uncertainty is non-waivable; determinate observe failures are advisory."""
+    command = CommandResult("capture", CommandOutcome.ERROR, None, "", "unavailable", 0.0)
+    verification = {
+        "errors": PlanVerification((), (), ("unavailable capture",)),
+        "command-error": PlanVerification((command,), ()),
+        "slice-error": PlanVerification((), (SliceVerification("SLICE1", SliceVerdict.ERROR, (), ()),)),
+        "determinate-failure": _blocking_verification(),
+    }[kind]
+    expected = route
+    if route == "complete":
+        expected = (
+            "complete"
+            if kind == "determinate-failure" and gate == "observe"
+            else ("return_to_coder" if kind == "determinate-failure" else "blocked")
+        )
+    assert (
+        _effective_controller_route(
+            _eval_report("peer-indeterminate", route=route),
+            verification,
+            gate_mode=gate,
+            eval_requested=True,
+            verification_required=True,
+        )
+        == expected
+    )
+
+
+@pytest.mark.parametrize("signal", [KeyboardInterrupt, SystemExit])
+def test_review_peer_capture_does_not_swallow_base_exception_signals(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, signal: type[BaseException]
+) -> None:
+    def capture(*_args: Any, **_kwargs: Any) -> Any:
+        raise signal()
+
+    monkeypatch.setattr(workflow, "capture_test_nodeids", capture)
+    with pytest.raises(signal):
+        workflow._capture_nodeids_by_slice(_ct94_source(tmp_path).ids, root=tmp_path)
+
+
+def test_review_peer_capture_exception_evidence_is_bounded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def capture(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("x" * (TAIL_LIMIT + 100))
+
+    monkeypatch.setattr(workflow, "capture_test_nodeids", capture)
+    captured = workflow._capture_nodeids_by_slice(_ct94_source(tmp_path).ids, root=tmp_path)
+    assert captured.nodeids_by_slice == {"SLICE1": None}
+    detail = captured.captures["SLICE1"].detail
+    assert detail.startswith("nodeid capture raised AssertionError:") and len(detail) <= TAIL_LIMIT

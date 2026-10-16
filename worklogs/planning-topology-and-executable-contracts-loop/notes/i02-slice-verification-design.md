@@ -97,7 +97,7 @@ operator's original failure mode.
 | R4 | A kill-check whose **target does not exist** blocks — the producer was never written | `tests-writing/SKILL.md:68` ("vacuous kill-check = theater") |
 | R5 | Three-or-more-state result; **ERROR is never PASS** | handoff §1 (`_git_output` collapses errors — the anti-pattern) |
 | R6 | No commands ⇒ `skipped: true`, advisory, do **not** block | S6 Do:5 (G8); SIMPLIFICATION §4.1 (legacy plans) |
-| R7 | Always run eval after a successful coder stage, then reconcile the actual eval route with verifier facts. In enforce mode, a blocking determinate result overrides only eval `complete` to `return_to_coder`; an indeterminate result overrides only eval `complete` to `blocked`; preserve every eval non-complete route. Keep the existing bounded repair budget. Never synthesize or replace the model's `EvalReport`. | **Q55/Q56, operator-selected 2026-10-08; Q10(a)'s repair cap retained, synthetic-report mechanism superseded** |
+| R7 | Always run eval after a successful coder stage, then reconcile the actual eval route with verifier facts. Missing required or indeterminate verification overrides only eval `complete` to `blocked` in both modes (Q73). Determinate failures are advisory in observe; enforce routes them to `return_to_coder`. Preserve every eval non-complete route. Keep the existing bounded repair budget. Never synthesize or replace the model's `EvalReport`. | **Q55/Q56, operator-selected 2026-10-08; Q10(a)'s repair cap retained, synthetic-report mechanism superseded** |
 | R8 | Existing test GREEN→RED ⇒ **REGRESSION**, blocks | `verify-block-design.md` truth table |
 
 **Non-functional**

@@ -2582,3 +2582,24 @@ E226  IN PROGRESS / COMBINED STORAGE FAULT  Final trace of first finding shows i
     intermediate abf1bdc test-import Mypy errors fixed in8b2a17f, not inherited. Interrupted
     proof/check attempts discarded; failed edit assertion wrote nothing, repeated pre-fix log
     retained as diagnostic. Restart final frozen-source proof/checks; no acceptance claim yet.
+
+
+E227  COMPLETED / HISTORICAL FROZEN PROOF  b2b2830:927pass/no-skip baseline before46 full-path
+    producer invocations,40FUNCTIONAL+CT79+5SUP all PROVEN;21 SLICE6 runs537 cases each.113 raw
+    artifacts archived losslessly/native bindings checked;source/status unchanged. Actual check
+    rc1,5083pass1fail12skip1xfail/5097,1212.45s,83.37%;other subgates PASS,CLI27/78 PASS.
+    Exact d910 comparison0new/1common/8baseline-only failure,6missing/626new IDs; common readiness
+    rc75/precommit_prewarm_failed retained. New operator message supplies peer findings before
+    closeout; this completed source snapshot is historical, not post-follow-up acceptance.
+
+E228  DECIDED / PEER FINDINGS VERIFIED  Q73 operator explicitly selects fail-closed present
+    indeterminate evidence in both modes; determinate observe remains advisory and Q56 negative
+    eval authority/report preserved. Independently reproduced peer missing-evidence and ordinary
+    capture-exception findings;T0 status finding overlaps already-fixed code. Help example finding
+    NOT reproduced:existing+independent tests parse all5, no pointless help change. Add before-fix
+    negatives, both-mode evidence/route matrix, pre/post-coder AssertionError/TypeError cases,
+    BaseException propagation, bounded diagnostics,15-row T0 table and real red baseline. Capture
+    Exception boundary logs+persists indeterminate, does not swallow BaseException.95 targeted
+    peer/T0 cases PASS35.49s;intermediate595 public cases PASS186.68s;current596 public/131 verifier.
+    One generated fixture syntax error rejected/log archived. Ruff+configured450 Mypy clean.
+    Refresh affected SLICE5/6 proof and actual wrappers before local closeout;I03 remains incomplete.

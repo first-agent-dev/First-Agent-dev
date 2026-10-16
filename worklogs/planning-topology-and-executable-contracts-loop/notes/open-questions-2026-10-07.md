@@ -1475,3 +1475,17 @@ guard-disabled mutation7fail5pass; actual log-producer visit disabled1fail11pass
 Five of18 already-started487-case full-path runs PROVEN at observation, audit incomplete;
 final candidate and Git-complete d9109f4 suites still running. No STEP17/local DoD/SHIPPED tick.
 Do not mistake completed future process results for operator E19 approval.
+
+
+## Q73 — observe plus present but indeterminate verifier evidence (2026-10-16)
+
+**Status: RESOLVED — operator selected “Fail closed in both modes”, 2026-10-16.**
+
+When eval says complete, missing required verifier evidence or a present but indeterminate result
+blocks completion in both observe and enforce. Indeterminate includes verification.errors,
+plan-command ERROR, slice ERROR and slice-command ERROR. A determinate command/kill/regression
+failure remains advisory in observe. Preserve every actual eval-authored non-complete route (Q56)
+and the actual EvalReport; do not manufacture a negative model verdict. This ratifies the first
+option presented after separately verifying the other agent's findings; it is not I03 deployment
+or broad independent acceptance. The old general “observe preserves routing” wording is narrowed
+to determinate evidence, consistent with the retained spec's determinate-only advisory boundary.

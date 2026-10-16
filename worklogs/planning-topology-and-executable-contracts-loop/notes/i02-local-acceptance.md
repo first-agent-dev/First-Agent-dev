@@ -81,6 +81,40 @@ was discarded; no completed proof/check outcome claimed. A failed edit-script as
 no source and its repeated4fail/46pass test log is diagnostic, not an after-fix result.
 Final proof/check processes must restart on this frozen source; no deployed tests were started.
 
+### E227 — completed frozen b2b2830 proof, superseded source snapshot
+
+The final b2b2830 audit actually completed:927 passed/no skips before all46 producer invocations
+(40FUNCTIONAL+CT79+5supplemental), all PROVEN with native UUID/exact full-path manifests and
+unchanged source/status. Each of21 SLICE6 invocations ran537 cases. Lossless113-artifact inventory:
+[evidence/i02-e227/manifest.json](evidence/i02-e227/manifest.json). Actual just check rc1:
+5083pass1fail12skip1xfail/5097,1212.45s,83.37%; all other blocking subgates pass; CLI27/78 pass.
+Exact d910 comparison:0newfail/1common/8baseline-only/6missing/626new. Common failure remains
+readiness rc75/precommit_prewarm_failed. This is completed historical source-bound evidence,
+not current post-Q73 proof or local acceptance. No failure relabeled PASS.
+
+### E228 — independent verification of supplied findings; Q73 ratified
+
+1. T0 runner/report inconsistency: confirmed overlap with the fix already here. Add15-row status
+   table and real red-baseline positive; retain valid empty exit5 and skipped/red baseline semantics.
+2. Missing required verifier evidence in observe: independently reproduced; both-mode floor fixed
+   while actual negative eval routes retain Q56 precedence.
+3. Unexpected capture exception suppressing eval: independently reproduced with AssertionError and
+   TypeError before and after coder. Catch ordinary Exception at capture boundary; retain bounded
+   error evidence and ordinary logged traceback. KeyboardInterrupt/SystemExit still propagate.
+4. Fifth help example: NOT REPRODUCED on this branch. The existing all-five parser test and an
+   independent duplicate both parse it successfully with workspace/plan/task. Removed the redundant
+   new duplicate; no unnecessary source/help change or invented failing reproduction.
+
+Operator explicitly selected Q73 fail-closed for present indeterminate evidence in both modes.
+Updated spec/CT71/design/question record consistently. Matrix covers missing verification,
+verification.errors, command ERROR, slice ERROR, determinate failure and all actual eval routes.
+Initial supplied-findings tests9fail8pass; expanded pre-policy fix set20fail38pass. Full public
+bank595pass186.68s before final bounded-detail test; current bank596. Targeted peer/T0 tests95pass
+35.49s, Ruff and450-file Mypy clean. One generated red-baseline fixture had a quoting syntax
+error; that collection-error log is retained as rejected, not proof. Current shared-verifier tests
+131. Completed E227 proofs stay archived as earlier-version evidence; refresh affected SLICE5/6
+checks/mutations and actual final wrappers on this new frozen source before closeout.
+
 ## Version, durable evidence and scope
 
 Proof snapshot: `c4cb55fe4d0a63a4ac43c62acacdac54b9404bad` on

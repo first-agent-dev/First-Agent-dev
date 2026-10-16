@@ -441,8 +441,8 @@ CONTRACTS:
     kill: remove-call src/fa/inner_loop/workflow_controller.py::_run_stage -> verify_plan
   CT72 [FUNCTIONAL]: after real eval, reconcile enforce-mode verifier evidence as a floor:
     eval complete + determinate block → return_to_coder; complete + indeterminate → blocked;
-    no blocked enforce run is DONE/exit 0. Observe preserves eval routing; non-complete eval
-    routes keep Q56 precedence. Integrity/missing-evidence failures hard-block both modes after eval.
+    no blocked run is DONE/exit 0. Observe preserves routing only for determinate evidence; eval
+    non-complete routes keep Q56. Integrity/missing/indeterminate evidence hard-blocks both modes (Q73).
     Preserve model eval_report; effective route goes to flow_state.
     kill: neutralise src/fa/inner_loop/workflow_controller.py::_effective_controller_route
   CT73 [FUNCTIONAL]: every successful coder is followed by real eval with that attempt's evidence,

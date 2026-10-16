@@ -4,6 +4,19 @@
 > This file records the verified state and the next bounded action.
 > Previous 1426-line S14-era version archived to `worklogs/archive/HANDOFF-S14-era-20260825.md`.
 
+## Current action — E228 peer review follow-through, 2026-10-16
+
+Operator supplied another agent's findings. Independently confirmed missing verifier evidence
+in observe and unexpected capture exceptions suppressing eval; fixed both. T0 exit-status issue
+already fixed. Fifth help-example parsing defect NOT reproduced: existing all-five test passes.
+Q73 explicitly ratified: missing/indeterminate evidence blocks complete in BOTH modes; determinate
+observe failures remain advisory, actual negative eval routes/report preserved. Spec/CT71/design
+and resolved question updated.95 focused peer/T0 tests, Ruff and450-file Mypy pass. Current public
+bank596, verifier131; fresh union baseline expected1002. Before closeout, refresh affected SLICE5/6
+producer proofs and actual wrappers on final frozen source. E227's completed927/46 proof and red
+5097-case wrapper are retained as historical b2b2830 evidence, not current proof. No deployment/
+I03 acceptance or local SHIPPED yet. Old checkpoints below are historical, not current counts.
+
 ## Current action — E226 frozen-source verification pending, 2026-10-16
 
 Final flow-failure edge repaired: typed public boundary also covers initial admission timeout

@@ -45,6 +45,7 @@ from fa.inner_loop.plan_promotion import PlanPromotionError, publish_plan_buffer
 from fa.inner_loop.planner_dispatch import PlannerDispatch, PlannerDispatchError, PlannerDispatchKind
 from fa.inner_loop.prompt import ADVERSARIAL_EVAL_STANCE_PREAMBLE
 from fa.inner_loop.slice_verification import (
+    TAIL_LIMIT,
     CommandOutcome,
     CommandResult,
     NodeidCapture,
@@ -344,8 +345,10 @@ def _capture_nodeids_by_slice(
     for record in plan_ids.slice_records:
         try:
             capture = capture_test_nodeids(record.test_paths, root=root, deadline=deadline)
-        except (OSError, ValueError, RuntimeError) as error:
-            capture = NodeidCapture(nodeids=None, detail=f"nodeid capture raised {type(error).__name__}: {error}")
+        except Exception as error:  # Capture uncertainty is evidence; BaseException signals still propagate.
+            logger.exception("workflow nodeid capture failed for slice %s", record.slice_id)
+            detail = f"nodeid capture raised {type(error).__name__}: {error}"[:TAIL_LIMIT]
+            capture = NodeidCapture(nodeids=None, detail=detail)
         captures[record.slice_id] = capture
         nodeids_by_slice[record.slice_id] = capture.nodeids
         if capture.nodeids is None:
@@ -616,39 +619,30 @@ def _effective_controller_route(
     verification_required: bool = False,
     integrity_failed: bool = False,
 ) -> RouteDecision | None:
-    """Reconcile eval judgment with non-waivable verifier facts after eval runs.
+    """Reconcile actual eval with non-waivable evidence floors in both modes.
 
-    Observe mode records verifier evidence but leaves routing to eval. Enforce
-    mode never lets a blocking verifier result become ``complete``. Eval's
-    non-complete route always wins; only an eval ``complete`` is reconciled:
-    unusable evidence becomes ``blocked`` and a determinate failure falls back
-    to the existing bounded coder-repair route. The actual EvalReport stays the
-    model's report -- this is controller routing, not a synthetic replacement.
+    Eval's non-complete route always wins (Q56). Missing required evidence or
+    indeterminate verification blocks completion in observe and enforce.
+    Determinate gate failures remain advisory in observe; enforce routes them
+    to the existing bounded coder repair. Never replace the model EvalReport.
     """
     if integrity_failed and (report is None or report.route_decision == "complete"):
+        return "blocked"
+    if report is not None and report.route_decision != "complete":
+        return report.route_decision
+    if verification_required and verification is None:
+        return "blocked"
+    if verification is not None and _verification_is_indeterminate(verification):
         return "blocked"
     if report is None:
         if eval_requested:
             return "blocked"
-        if gate_mode == "enforce" and verification_required and verification is None:
-            return "blocked"
         if verification is not None and gate_mode == "enforce" and verification.blocking:
-            return "blocked" if _verification_is_indeterminate(verification) else "return_to_coder"
+            return "return_to_coder"
         return None
-
-    if gate_mode != "enforce":
-        return report.route_decision
-    # Eval owns negative routing authority. The gate is a floor against PASS,
-    # not a ceiling that can erase a stricter eval decision.
-    if report.route_decision != "complete":
-        return report.route_decision
-    if verification_required and verification is None:
-        return "blocked"
-    if verification is None or not verification.blocking:
-        return report.route_decision
-    if _verification_is_indeterminate(verification):
-        return "blocked"
-    return "return_to_coder"
+    if gate_mode == "enforce" and verification is not None and verification.blocking:
+        return "return_to_coder"
+    return report.route_decision
 
 
 def emit_eval_report(

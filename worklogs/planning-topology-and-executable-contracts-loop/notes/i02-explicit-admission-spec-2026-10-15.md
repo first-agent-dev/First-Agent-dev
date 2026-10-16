@@ -211,6 +211,11 @@ T0 identity or eval artifact also prevents a successful terminal result in both 
 remains advisory only for determinate command/kill/regression judgment; it is not a waiver of
 PlanRef/control-plane integrity or missing evidence. Preserve Q56 non-complete eval precedence.
 
+Q73 (operator-selected 2026-10-16): present but indeterminate verification is not a determinate
+observe-mode waiver. If eval says complete, verification.errors, plan-command ERROR, slice ERROR
+or slice-command ERROR blocks both modes, just like absent required verification. Determinate
+failures remain advisory in observe; preserve every actual eval non-complete route and report.
+
 Do not replace the model report or synthesize eval. If artifacts cannot persist after coder,
 attempt eval once while deadline permits, retain the IO failure in returned/terminal diagnostics,
 and return nonzero; never claim persisted evidence. If the shared deadline is already exhausted,

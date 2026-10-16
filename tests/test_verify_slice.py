@@ -1349,3 +1349,46 @@ def test_ct66_scripts_provenance_error_preserves_directive_metadata(workspace: P
     assert check.directive == directive
     assert check.detail.startswith("pytest did not prove the scripts overlay import:")
     assert check.duration_s > 0
+
+
+@pytest.mark.parametrize(
+    ("rows", "exit_code", "outcome", "valid"),
+    [
+        ((), 5, CommandOutcome.FAIL, True),
+        ((), 0, CommandOutcome.PASS, False),
+        (("passed",), 0, CommandOutcome.PASS, True),
+        (("passed",), 1, CommandOutcome.FAIL, False),
+        (("passed",), 2, CommandOutcome.FAIL, False),
+        (("passed",), 3, CommandOutcome.FAIL, False),
+        (("passed",), 4, CommandOutcome.FAIL, False),
+        (("passed",), 5, CommandOutcome.FAIL, False),
+        (("passed",), None, CommandOutcome.ERROR, False),
+        (("failed",), 1, CommandOutcome.FAIL, True),
+        (("failed",), 0, CommandOutcome.PASS, False),
+        (("skipped",), 0, CommandOutcome.PASS, True),
+        (("passed", "failed"), 1, CommandOutcome.FAIL, True),
+        (("passed", "skipped"), 0, CommandOutcome.PASS, True),
+        (("failed", "skipped"), 1, CommandOutcome.FAIL, True),
+    ],
+)
+def test_review_t0_runner_report_status_matrix(
+    rows: tuple[str, ...], exit_code: int | None, outcome: CommandOutcome, valid: bool
+) -> None:
+    report = slice_verification._JUnitReport(
+        {f"test_x.py::test_{index}": slice_verification._JUnitOutcome(row) for index, row in enumerate(rows)}
+    )
+    result = CommandResult("pytest", outcome, exit_code, "", "", 0.01)
+    detail = slice_verification._pytest_report_status_error(result, report, allow_no_tests=True)
+    assert (detail == "") is valid
+    if not valid:
+        assert detail == "pytest runner status contradicts executed JUnitXML outcomes"
+
+
+def test_review_t0_preserves_a_genuine_red_pytest_baseline(tmp_path: Path) -> None:
+    (tmp_path / "test_red.py").write_text("def test_red():\n    assert False, 'legitimate existing failure'\n")
+    captured = capture_test_nodeids(("test_red.py",), root=tmp_path)
+    assert captured.nodeids == {"test_red.py::test_red": False}
+    assert captured.detail == ""
+    assert captured.command_result is not None
+    assert captured.command_result.exit_code == 1
+    assert captured.command_result.outcome is CommandOutcome.FAIL

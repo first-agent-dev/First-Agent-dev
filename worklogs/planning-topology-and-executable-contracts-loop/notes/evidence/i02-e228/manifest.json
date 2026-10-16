@@ -1,0 +1,31 @@
+{
+  "scope": "peer findings independently verified; post-policy final proof pending",
+  "prior_frozen_proof": "../i02-e227/manifest.json",
+  "files": {
+    "i02-peer-findings-before.log.gz": {
+      "sha256_uncompressed": "ea9c9233aac8fa6bce8a18af836c58eba9a1db4e20c9bddd7cfe0929712fea08",
+      "sha256_gzip": "3cf142fc4a3ed21bb5f16c58d47720258832e8bd546e8ed88a3feb1b0325c6dc",
+      "bytes_uncompressed": 36386
+    },
+    "i02-peer-policy-before.log.gz": {
+      "sha256_uncompressed": "62711bee020495eb55720f4fc5adc3bfd1ea5fe8d21b13475ee873d855f03658",
+      "sha256_gzip": "7d0eb0973c0b38e597880b1186ef273b69fb013ca22f19e129c74413db88f86e",
+      "bytes_uncompressed": 78355
+    },
+    "i02-peer-public-bank-after.log.gz": {
+      "sha256_uncompressed": "369b1ce1db530a36cc42844242620030d9ae2bcc5cd2fe7bae8e9c4801d3bd58",
+      "sha256_gzip": "c9d1de358c76f84d180699a514c24156566f8beb1813310f12019b3852324f85",
+      "bytes_uncompressed": 752
+    },
+    "i02-peer-targeted-after.log.gz": {
+      "sha256_uncompressed": "85dc12569cb2fee3adbebeb98e5ac067e4206accba5ac926b40b7cbc8f2a4320",
+      "sha256_gzip": "42e008c98b75f7ab9e1f629fa7f204980e5606fa9d39cc190385856618f633ba",
+      "bytes_uncompressed": 1795
+    },
+    "i02-peer-targeted-after-valid.log.gz": {
+      "sha256_uncompressed": "7deafd61c305973d76a02544d1d7c8f94585f21f04ab01586e90a605382c2952",
+      "sha256_gzip": "d663a1cf7fb8a2555cbff81b9314380e2436ebbe735764ff15a4de83b13da2bf",
+      "bytes_uncompressed": 196
+    }
+  }
+}
