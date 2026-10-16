@@ -1076,3 +1076,14 @@ compatibility failures migrated through supported planner/eval roles without wea
 blackboard/K oracles:112passed0.78s, static clean, audited public/production bytes unchanged.
 Ten other candidate-only failures, three new authoring blocks, final re-execution/dispositions and
 independent/operator DoD remain. E212's completed frozen16+2 proof is unchanged.
+
+
+## E214 — 2026-10-16 documentation-oracle Q71 stop
+
+Source-reviewed current plan/DoD and E213 failures at c881621. Fresh targeted C0 stale-claim test:
+1failed0.54s/rc1, exactly three evidence/audit paths. Its bare-term trigger conflates actual
+alias-denial/risk evidence with obsolete capability claims. Q71 records exact source locations,
+a bounded three-path/one-trigger exception proposal and required two-sided controls. Not approved;
+no guard, production, immutable evidence or status change. No full-suite rerun or new mutation
+claim from this review. Preserved Q69/Q70 approvals, frozen16+2 proof and all remaining DoD gates.
+Current implementation is paused for the operator decision, not SHIPPED or independent acceptance.

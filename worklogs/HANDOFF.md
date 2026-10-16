@@ -7,7 +7,9 @@
 ## Current state — I02 local explicit-plan gate, 2026-10-16
 
 Active branch: `arena/86633f17-first-agent-dev`; never switch/create another session branch.
-I02 remains **IN PROGRESS**, not SHIPPED or I03/security acceptance. Q69 nonrecursive constructed
+I02 remains **IN PROGRESS**, not SHIPPED or I03/security acceptance.
+**Current stop: Q71 OPEN.** Source review reproduced an ambiguous documentation-guard failure;
+no production/test-oracle changes this continuation. See the open-decision record below. Q69 nonrecursive constructed
 C1 factoring and Q70 coder-containing-only unavailable guard were explicitly approved; do not
 ask those choices again or silently block planner/eval-only delegation. Noncoder children now
 have actual distinct SessionManager run authority in the same session.
@@ -165,6 +167,9 @@ Authority correctness, observability contracts, mutation gap closure — all COM
 
 ## Next bounded action
 
+0. Obtain explicit Q71 disposition before changing the documentation acceptance oracle. The
+   exact three-path/one-trigger exception is only a proposal; no spelling workaround, immutable
+   evidence rewrite or candidate-only waiver. Q69/Q70 stay resolved.
 1. Read E212's final producer table and completed full-suite comparison; no result from
    an interrupted or missing report is PROVEN. Preserve all16 whole-public-path mutations.
 2. Preserve/finish dispositions of the usable candidate/d9109f4 manifests and normal summaries with

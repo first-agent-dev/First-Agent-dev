@@ -1363,3 +1363,54 @@ preconditions before allocation. C1 exercises the normal CLI/chat registry path 
 IO mocked: default/coder refusal and planner, planner/eval, eval delegation; inspect actual child
 binding, provider sequence, session rows, global history and absent fabricated admission. E212
 records actual results and producer-removal sensitivity separately from policy approval.
+
+
+## Q71 — May the documentation guard distinguish recorded alias-denial evidence from obsolete workspace claims?
+
+**Status: OPEN — operator decision required, 2026-10-16.** Review checkpoint:
+`c881621d53026c21cf4cecbd037ae1361bbfae92`. No production or test-oracle change is authorized
+by recording this question. Q69/Q70 remain resolved; this does not reopen runtime acquisition,
+execution isolation, verifier attribution or supported noncoder delegation.
+
+**Source-verified conflict:** `tests/test_deploy_scripts.py:847–879` scans every Markdown file
+for five literal phrases. Its second phrase (`stale_phrases[1]`, the unhyphenated filesystem-link
+term) is rejected regardless of whether a document asserts an obsolete capability or records
+actual denial/remaining risk. The existing finite path/prefix exceptions omit these three files:
+
+1. `worklogs/planning-topology-and-executable-contracts-loop/ledger.md:2259–2261`:
+   append-only EVIDENCE records actual descriptor-origin rejection, not support for unsafe cloning.
+2. `notes/e2e-live-verification-register.md:400,406,598,605–607,749–750,965` under that project:
+   alias-denial test obligations and actual writer-error evidence; local proof is explicitly not
+   deployed isolation acceptance.
+3. `notes/execution-foundation-scope-reduction-and-reuse-audit-2026-10-15.md:185–187`:
+   explicitly warns that leaf no-follow does not establish ancestor/alias safety.
+
+Fresh command (supported Python/locked environment):
+
+```bash
+uv run --frozen --no-sync pytest tests/test_deploy_scripts.py::test_workspace_stale_claims_are_confined_to_historical_evidence -q --tb=short
+```
+
+Actual: **1 failed in 0.54s**, rc1; the three paths above are the complete reported violation set.
+This is the same candidate-only failure recorded in E213, not a new product regression. No skip,
+waiver, added allowlist entry, evidence rewrite, spelling workaround or false historical banner
+has been used to make it pass. The ledger's append-only constraint is preserved.
+
+**Recommended bounded disposition (a):** authorize an exact three-path exception **only for the
+second bare-term trigger**, using the guard's existing explicit-exception construction. All four
+other obsolete transport/lifecycle phrases remain rejected in those three files. All five
+triggers remain rejected in other non-exempt instruction paths. Add C0 two-sided controls proving
+that exact-path bare-term evidence is allowed, an unlisted instruction remains rejected, and
+other obsolete claims in the three evidence paths remain rejected. Keep actual old path/prefix
+exceptions and the runtime/acceptance policies unchanged. No project-wide exemption or new
+semantic/NLP classifier.
+
+**Alternative (b):** retain the guard unchanged and keep I02 blocked on this failure pending a
+different explicitly approved design. Do not resolve it by editing immutable evidence, moving
+an active register into an archive, or accepting a candidate-only failure as a baseline waiver.
+The operator may propose a different deterministic distinction as a custom response.
+
+**Question:** approve (a), or keep (b)? This choice affects a retained full-suite acceptance
+oracle, so it is not inferred from the instruction to continue implementation. New authoring
+exports, remaining registry-fixture migrations, final suite comparison and independent/operator
+DoD remain open; no additional checkbox or SHIPPED status is assigned.

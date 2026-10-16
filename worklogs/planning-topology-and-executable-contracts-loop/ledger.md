@@ -2377,3 +2377,16 @@ E213  FACT  Completed preliminary full-repository execution supersedes E212's ru
     candidate execution, exact dispositions and independent/operator review still required.
     No blanket baseline waiver, complete SLICE6, SHIPPED or I03 claim.
     [notes/i02-ct91-public-admission-e211-2026-10-16.md: completed reports/identity sets/TEST-EDITS]
+
+
+E214  FACT  Source review from c881621 stopped at explicit documentation-oracle ambiguity Q71.
+    Existing stale-claim guard's second bare-term trigger flags actual alias-denial/security-risk
+    evidence in three current project paths, not an obsolete capability assertion. Append-only
+    ledger cannot be rewritten to appease a substring check. Fresh exact C0 test:1failed0.54s,
+    rc1, same complete three-path set as E213. Proposed exact three-path/second-trigger exception
+    with two-sided controls; not ratified or implemented. No source/test-oracle changes, runtime
+    policy, skip/waiver, source-proof invalidation, new checkbox or acceptance claim. Evidence-only
+    allowed files: open questions, this ledger, register and HANDOFF. This is a blocking-Q stop,
+    not completion of the remaining ten failures/exports/reviews. Existing frozen16+2 remains
+    unchanged; Q69/Q70 remain resolved. Resume implementation only after operator Q71 disposition.
+    [notes/open-questions-2026-10-07.md Q71; tests/test_deploy_scripts.py:847–879 @ c881621]
