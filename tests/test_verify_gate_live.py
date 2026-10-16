@@ -4506,3 +4506,40 @@ def test_review_t0_runner_failure_with_passing_rows_blocks_before_coder(
     assert "runner status contradicts" in capture["detail"]
     assert not (base / "verification.json").exists()
     assert not (base / "eval_report.json").exists()
+
+
+@pytest.mark.parametrize("mode", ["linear", "adaptive"])
+@pytest.mark.parametrize("expired_lock", [False, True])
+def test_review_initial_admission_and_failure_flow_storage_errors_return_no_stale_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str, expired_lock: bool
+) -> None:
+    """CT92/95: combined storage faults, including timeout recording, remain public failures."""
+    from fa.inner_loop.workflow_artifacts import AdmissionIOError
+
+    deadline = time.monotonic() + 300.0
+    expired = False
+    real_clock = time.monotonic
+    real_write = write_flow_state
+
+    def clock() -> float:
+        return deadline + 1.0 if expired else real_clock()
+
+    def admission(*_args: Any, **_kwargs: Any) -> None:
+        nonlocal expired
+        expired = expired_lock
+        raise AdmissionIOError("lock-failed" if expired_lock else "append-failed")
+
+    def flow(path: Path, state: FlowState) -> None:
+        if state.status == "FAILED":
+            raise OSError("failure receipt unavailable")
+        real_write(path, state)
+
+    monkeypatch.setattr(time, "monotonic", clock)
+    monkeypatch.setattr(workflow, "write_admission_record", admission)
+    monkeypatch.setattr(workflow, "write_flow_state", flow)
+    code, state, base, roles, _ = _ct91_public(tmp_path, monkeypatch, mode=mode, deadline_mono=deadline)
+    assert code == (workflow.WORKFLOW_DEADLINE_EXIT_CODE if expired_lock else 2)
+    assert state is None, "the initial PLANNING receipt is not a terminal result"
+    assert roles == []
+    assert not (base / "admission.json").exists()
+    assert not (base / "verify_baseline.json").exists()

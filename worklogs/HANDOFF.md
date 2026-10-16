@@ -4,6 +4,17 @@
 > This file records the verified state and the next bounded action.
 > Previous 1426-line S14-era version archived to `worklogs/archive/HANDOFF-S14-era-20260825.md`.
 
+## Current action — E226 frozen-source verification pending, 2026-10-16
+
+Final flow-failure edge repaired: typed public boundary also covers initial admission timeout
+receipt failure; terminal readback rejects in-progress receipts.50 new review regressions pass,
+Ruff and450-file configured Mypy pass. Current public bank537; fresh baseline expected927 cases.
+Intermediate Mypy errors in new tests were fixed, not waived. All interrupted proof/check attempts
+are discarded, not final results. Restart final ordered proof + actual just check on frozen source,
+then finish review/record local implemented+diff-reviewed pending I03 deployed E2E. No source edits
+are planned unless those final checks expose a reproducible defect. Older checkpoints below remain
+historical, not final counts/results.
+
 ## Current action — E225 final source freeze, 2026-10-16
 
 Third review finding fixed: T0 previously accepted passing JUnit rows from an infra-failed pytest

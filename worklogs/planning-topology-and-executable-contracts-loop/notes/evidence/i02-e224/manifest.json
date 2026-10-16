@@ -47,6 +47,21 @@
       "sha256_uncompressed": "da4dced6c1fe3129033df41bc45bffb6731605a6f19a15e3265578b1c0619969",
       "sha256_gzip": "d0c66b9d82140b73d70785b2dea9a8ab4cfc25078534f9f81246cc32ef6d9705",
       "bytes_uncompressed": 60451
+    },
+    "i02-review-combined-before.log.gz": {
+      "sha256_uncompressed": "2b8ed36cdac02dfa161a377582d313806c33a3d8fd82efee1c39d3d05adc9e55",
+      "sha256_gzip": "39e133af4f81417341c7d8c71f94a49c1537443c9b11aacebc4614b300f817ee",
+      "bytes_uncompressed": 15482
+    },
+    "i02-review-final-targeted-v3.log.gz": {
+      "sha256_uncompressed": "172834a3ce2e180134afcc5d576628c0a705412e5182cc6ea7790cfc7054b52e",
+      "sha256_gzip": "f4d6935aa9b1e952b6cf4a03bc80c5f4598b9430928789b9b5d1fb549f8c35e8",
+      "bytes_uncompressed": 15494
+    },
+    "i02-review-final-targeted-v4.log.gz": {
+      "sha256_uncompressed": "09f952a2de9e6b4248d05aa2d529fcb4f41e2e87575014d5b837c3ab73ffbd1d",
+      "sha256_gzip": "da4121f5241d764e706ed5f630bf06d66038037abacb1617dd29e8a600c8499f",
+      "bytes_uncompressed": 116
     }
   }
 }

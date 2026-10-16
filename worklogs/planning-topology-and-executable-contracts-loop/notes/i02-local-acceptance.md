@@ -67,6 +67,20 @@ log is an intermediate source snapshot, not final verification. Source changes n
 fresh whole-path baseline, affected shared-verifier producer refresh, final checks and review
 closeout. No new mutation skip/depth policy or per-contract nodeid map is introduced.
 
+### E226 — combined storage-fault closure before final proof
+
+Final control-flow trace found one missed edge of the first finding: initial admission lock
+expiry followed by failed deadline-flow persistence escaped outside the typed boundary; a
+non-deadline admission+failure-flow fault returned an in-progress receipt. Four public negatives
+failed before the fix. The same public typed boundary now covers initialization after context
+creation as well as stage execution. Terminal readback rejects in-progress receipts while keeping
+DONE/FAILED/REPAIR_REQUIRED/REPLAN_REQUIRED.50 review regressions pass37.61s; configured450-file
+Mypy and Ruff pass. The intermediate abf1bdc check's six new test import/type errors were actually
+fixed (8b2a17f), not attributed to inherited infrastructure. Another interrupted refresh/check
+was discarded; no completed proof/check outcome claimed. A failed edit-script assertion wrote
+no source and its repeated4fail/46pass test log is diagnostic, not an after-fix result.
+Final proof/check processes must restart on this frozen source; no deployed tests were started.
+
 ## Version, durable evidence and scope
 
 Proof snapshot: `c4cb55fe4d0a63a4ac43c62acacdac54b9404bad` on

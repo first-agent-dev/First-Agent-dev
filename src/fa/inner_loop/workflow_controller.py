@@ -1583,6 +1583,9 @@ def read_back_terminal_state(flow_state_path: Path, run_id: str) -> FlowState | 
             run_id,
         )
         return None
+    if state.status not in {"DONE", "FAILED", "REPAIR_REQUIRED", "REPLAN_REQUIRED"}:
+        logger.warning("workflow terminal-state read-back found only an in-progress receipt (run=%s)", run_id)
+        return None
     return state
 
 
@@ -2721,29 +2724,25 @@ def run_workflow(
             else None
         ),
     )
-    if _deadline_exceeded(ctx):
-        try:
-            _write_deadline_state(ctx, roles[0], progress=WorkflowProgress())
-        except _WorkflowStorageError:
-            print("fa workflow: deadline flow storage error: append-failed", file=sys.stderr)
-            return WORKFLOW_DEADLINE_EXIT_CODE, None
-        return WORKFLOW_DEADLINE_EXIT_CODE, read_back_terminal_state(artifact_paths.flow_state, run_id)
-    if ctx.admission is not None:
-        try:
-            _record_admission_attempt(
-                artifact_paths,
-                run_id=run_id,
-                plan_ref=ctx.admission.snapshot.ref,
-                attempt=None,
-                status="ACQUIRING",
-                deadline=deadline_mono,
-            )
-        except (OSError, ValueError) as error:
-            _admission_storage_failure(ctx, error)
-            return _admission_exit_code(ctx), read_back_terminal_state(artifact_paths.flow_state, run_id)
-    label = _render_mode_label(mode, max_repairs=max_repairs, max_replans=max_replans)
-    print(f"fa workflow: run_id={run_id} mode={label} roles={'→'.join(roles)}", file=sys.stderr)
     try:
+        if _deadline_exceeded(ctx):
+            _write_deadline_state(ctx, roles[0], progress=WorkflowProgress())
+            return WORKFLOW_DEADLINE_EXIT_CODE, read_back_terminal_state(artifact_paths.flow_state, run_id)
+        if ctx.admission is not None:
+            try:
+                _record_admission_attempt(
+                    artifact_paths,
+                    run_id=run_id,
+                    plan_ref=ctx.admission.snapshot.ref,
+                    attempt=None,
+                    status="ACQUIRING",
+                    deadline=deadline_mono,
+                )
+            except (OSError, ValueError) as error:
+                _admission_storage_failure(ctx, error)
+                return _admission_exit_code(ctx), read_back_terminal_state(artifact_paths.flow_state, run_id)
+        label = _render_mode_label(mode, max_repairs=max_repairs, max_replans=max_replans)
+        print(f"fa workflow: run_id={run_id} mode={label} roles={'→'.join(roles)}", file=sys.stderr)
         if mode == "adaptive":
             result_code = _run_adaptive(ctx, roles, max_repairs, max_replans, run_stage_fn)
         else:

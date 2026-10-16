@@ -2572,3 +2572,13 @@ E225  IN PROGRESS / SOURCE FREEZE  Remaining actual review reproduces T0 accepti
     discovered; no verdict claimed. Intermediate abf1bdc just check rc1/log archived as red,
     not final. Freeze source next, refresh whole-path baseline/affected shared-verifier producers
     and final local checks; actual diff-review closeout remains pending. I03 acceptance incomplete.
+
+
+E226  IN PROGRESS / COMBINED STORAGE FAULT  Final trace of first finding shows initial admission
+    lock timeout + failed deadline receipt escaped outside the typed boundary; ordinary initial
+    admission+failure-flow error returned PLANNING.4 public negatives fail before fix. Extend
+    the same typed boundary over post-context initialization and reject in-progress terminal
+    readback.50 focused review cases pass37.61s, Ruff and configured450-file Mypy pass. New
+    intermediate abf1bdc test-import Mypy errors fixed in8b2a17f, not inherited. Interrupted
+    proof/check attempts discarded; failed edit assertion wrote nothing, repeated pre-fix log
+    retained as diagnostic. Restart final frozen-source proof/checks; no acceptance claim yet.
