@@ -1,10 +1,11 @@
 # I03 execution call inventory — source-grounded initial version
 
-Date: 2026-10-15. Product source baseline `d9109f4` (unchanged through E202).
+Date: 2026-10-15; E230 refresh 2026-10-16. Current source `1132eee`/runtime `a32a72f`.
+The initial d910 line table below is historical; refreshed exact symbol ranges follow it.
 **State: OPEN.** This is an inspected starting inventory, not proof of complete runtime closure.
 Rows name actual producers; proposed replacement APIs are in the I03 spec. Implementer must add
 exact new source lines, actual caller traces and test nodeids/results before setting a row closed.
-No source was changed by creating this inventory. Static search is evidence of candidates, not a
+No runtime source is changed by this inventory review. Static search is evidence of candidates, not a
 proof that a route is reachable or safe. 'Read-only' and fixed Git argv do not exempt project Git.
 
 | Actual producer / source lines | Inspected caller/dependency | Required route / concrete negative oracle (future) |
@@ -49,3 +50,27 @@ proof that a route is reachable or safe. 'Read-only' and fixed Git argv do not e
 
 No row is checked or closed in this planning review. Additional aliases/libtmux/pexpect/dependency
 launchers and dynamically selected project integrations need traced coverage during implementation.
+
+
+## E230 current-source anchors — OPEN, no closure assigned
+
+| File | Current actual producer ranges | I03 handoff |
+| --- | --- | --- |
+| `src/fa/cli.py` | `_cmd_run:2166–2515`, `_make_workflow_ctx_provider:1616–1697`, `_build_pty_pool:1923–1951`, `_prepare_managed_workspace:150–159` | Extend current seam; managed IO/execution and preserved invariants per spec §§2.1–7.1 |
+| `src/fa/session/manager.py` | `_new_session:262–330`, `_provision_workspace:208–240`, `_check_reverse_workspace_ownership:193–206`, `begin_run:441–478` | Provisioner BEFORE create; reference reuse; preserve run reservation; never delete supervisor-owned committed root |
+| `src/fa/inner_loop/tools/workflow_tool.py` | `_child_run_context:387–403`, `_requires_acquisition:382–384`, `build_invoke_workflow_tool:406–587` | Existing non-coder child allocation is already real; reuse it, replace coder-only unavailable branch only after acquisition approval |
+| `src/fa/inner_loop/workflow_controller.py` | `_run_stage:1181–1383`, `_effective_controller_route:613–645`, `_git_output:835–864`, `_stage_task:1164–1178` | Extend current seam; managed IO/execution and preserved invariants per spec §§2.1–7.1 |
+| `src/fa/inner_loop/coder_loop.py` | `_drive_session_inner:535–2111` | Live local conversation snapshot callback at pre-tool dispatch; strict route final-outcome guard only if Q59 approved |
+| `src/fa/inner_loop/tools/write_file.py` | `build_write_file_tool:70–110`, `build_scoped_write_file_tool:113–150` | Extend current seam; managed IO/execution and preserved invariants per spec §§2.1–7.1 |
+| `src/fa/inner_loop/tools/edit_file.py` | `_find_fuzzy:26–79`, `build_edit_file_tool:99–193` | Extend current seam; managed IO/execution and preserved invariants per spec §§2.1–7.1 |
+| `src/fa/inner_loop/slice_verification.py` | `_run_one:330–357`, `capture_test_nodeids:539–581`, `_pytest_report_status_error:530–536`, `_run_kill_check:1439–1537` | Extend current seam; managed IO/execution and preserved invariants per spec §§2.1–7.1 |
+| `src/fa/inner_loop/subagent_runner.py` | `run_stateless:293–410` | Extend current seam; managed IO/execution and preserved invariants per spec §§2.1–7.1 |
+
+Current bounded AST scan inspected all src/fa Python calls to subprocess/os shell/async subprocess,
+importlib module/file loading and runpy. It found the existing direct subprocess/import families;
+workflow_controller._git_output aliases subprocess.run to a local callable and therefore proves why
+static call-name matching alone is incomplete. Trace injected runners and libtmux/pexpect too.
+Read_file PDF parsers and runtime optional installed imports are approved-library data/TCB paths,
+not evidence of project import closure; bound file parsing and reject unsupported plugin execution.
+No newly found source route is silently exempted; future implementation closes rows only with the
+actual caller/profile/view/negative nodeid evidence in the checklist above.

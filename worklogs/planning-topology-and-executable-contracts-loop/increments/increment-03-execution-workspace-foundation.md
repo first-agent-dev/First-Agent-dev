@@ -9,8 +9,8 @@ shipped: —
 # INCREMENT I03: Execution/workspace foundation and integrated acceptance
 
 **Planning state:** six source-grounded briefs replace the ownership-only outline. OUTLINED remains:
-Q59/Q60 exact acquisition/route and Q63 final result-schema decisions are still pending. The core
-mechanics have concrete implementation contracts; conditional SLICE5/SLICE6 cannot be dispatched
+Q59/Q60 exact acquisition/route, Q74 checkpoint policy and Q63 final result-schema decisions are pending. The core
+mechanics have current-source interface contracts; conditional SLICE5/SLICE6 cannot be dispatched
 until their dispositions are recorded. Do not pass this increment wholesale to a coder as an
 approved plan yet. Parser-valid shape is not operator approval or a machine-enforced readiness gate.
 No implementation box, live result or shipped status is assigned by this review.
@@ -39,7 +39,8 @@ New module/function/test names below are **planned interfaces**, not claims abou
 - Current `run_bash` and `_build_pty_pool` deliberately fall back to host subprocess; SubagentRunner,
   readiness, verifier and Git helpers execute independently. Enforcing only one shell adapter leaks.
 - Existing SessionManager rejects second-session reuse; begin_run already reserves unique run/DB
-  namespace. Reuse it for child runs instead of passing parent RunContext or adding another DB.
+  namespace. I02 `_child_run_context` ALREADY allocates valid distinct child contexts for non-coder
+  delegation; extend it for managed acquisition, never duplicate allocation or regress Q70.
 - Existing FastAPI server is an optional PTY transport, not supervisor; timeout/identity/lifecycle
   fields and descendant barrier are incomplete. No standalone server-completion milestone.
 - Materialized snapshots, one local authority and fixed profiles suffice. No overlay/CAS backend
@@ -50,6 +51,40 @@ New module/function/test names below are **planned interfaces**, not claims abou
   confer no safe deployment claim; do not keep an unsafe permissive backend as a compatibility mode.
 - New-session/old-workspace reuse, private Git metadata/history limitations, conservative copy caps
   and filesystem support are explicit contracts in spec §§2–5, not already-supported guarantees.
+
+
+## E230 trajectory and execution prerequisites (plan review, not implementation)
+
+**Mid-roadmap target:** on the intended Ubuntu/Docker main deployment, execute a real explicit-plan
+workflow AND ordinary outer chat→invoke→managed child workflow, with actual provider requests,
+useful source edits/tests, admission/T0/verification/actual eval and persisted terminal evidence.
+This increment is sufficient in scope for that CURRENT whole-plan system only after its decisions,
+mechanics and final host acceptance are complete. It does not deliver per-slice scheduling, automatic
+STEP/CT tracking or L2 VERIFIED. Those remain the named deferred successor; do not advertise that
+broader roadmap loop as live-tested. I01 remains active pending its own disposition, not auto-closed.
+
+**Source truth:** use `1132eee`/I02 E229, not the old d910 line inventory. The original 17 FUNCTIONAL
+IDs remain; new private interfaces are obligations to implement/test, not existing-code assertions.
+Spec §§2.1/4.1/5.1/6.1/7.1/9.1 are part of every affected STEP's contract, including error/restart
+paths. All runtime/host boxes remain unchecked. Do not run deployment during plan finalization.
+
+**Verification schedule:** design the per-slice unit/kernel oracles with each slice. Ordinary unit
+checks can run during construction; local disposable Docker integration may run where available.
+The `FA_REQUIRE_EXECUTION_HOST=1` commands and full declared-path kills are REQUIRED release proof,
+not permission to exercise the production main host before final SLICE6 STEP7 review/STEP10 approval.
+If there is no approved disposable Docker host earlier, record those checks NOT RUN/BLOCKED, never
+PASS or a narrowed unit-only kill. Coding may progress in dependency order; no slice/product safety
+acceptance or production enablement follows until all accumulated required checks pass at SLICE6.
+Final e2e/I03 fixtures/helpers are different from local tests/integration; STEP7 review precedes their
+implementation, followed by review of actual helper code before first main-host execution.
+
+**Deterministic scheduling:** all wire/state/type validation precedes launch. Acquire one owner,
+then open views through that authority; stage prologue/provisioning is inside the boundary too.
+A workflow deadline is one absolute monotonic budget across admission/provider/stage transitions,
+exec and terminal barriers. Each request uses min(configured operation limit, remaining budget);
+none may start after expiry. Operation elapsed times are supervisor observations, not caller clocks.
+Timeout returns unsuccessful/unknown and retains fencing until terminality. Best-effort eval after
+coder still obeys Q55/Q56/Q73 and may use only a safely sealed source plus explicit uncertainty.
 
 ## SLICE1: Trusted launch and single supervised execution backend
 STEPS: prescriptive
@@ -80,9 +115,9 @@ uv run pytest tests/test_execution_supervisor.py -q
 FA_REQUIRE_EXECUTION_HOST=1 uv run pytest tests/integration/test_execution_boundary.py -q -m execution_host
 uv run ruff check src/fa/controller_entry.py src/fa/execution tests/test_execution_supervisor.py tests/integration/test_execution_boundary.py
 ```
-- [ ] STEP1: define frozen types/protocol/profile validation and new actual controller entry module per spec §§1–3; test strict keys/types/limits and installed import closure, including editable-pth/CWD/PYTHONPATH poisons (exit: unit tests collect and pass; isolated module executes real CLI help, not a no-op)
+- [ ] STEP1: implement spec §2.1 closed operations/results (including all four BashExecutor methods), capability/volume-map/startup recovery contracts; define frozen types/protocol/profile validation and new actual controller entry module per spec §§1–3; test strict keys/types/limits and installed import closure, including editable-pth/CWD/PYTHONPATH poisons (exit: unit tests collect and pass; isolated module executes real CLI help, not a no-op)
 - [ ] STEP2: implement supervisor service/client/cell worker using existing PTY machinery, approved profile and operation reservation/inspect/cancel; remove no behavior from ordinary PTY contract (exit: unit no-replay/timeout/wire/auth tests pass)
-- [ ] STEP3: add service/config/install guidance, immutable image and wrapper/entrypoint changes; root-only fixture setup launches real isolated disposable cell, not a fake Docker response (exit: execution_host proof shows absent control mounts/secrets, denied profile/raw-path escalation and zero project commands when backend unavailable)
+- [ ] STEP3: add service/config/install guidance, immutable image and wrapper/entrypoint changes; make canonical /sessions read-only in controller, keep supervisor StateDirectory unmounted, expose only private UDS, and freeze approved host↔controller↔cell path mappings; root-only fixture setup launches real isolated disposable cell, not a fake Docker response (exit: execution_host proof shows absent control mounts/secrets, denied profile/raw-path escalation and zero project commands when backend unavailable)
 - [ ] STEP4: record real profile/image/kernel/daemon/cgroup facts and source-restored full-path CT98–CT100 mutation outcomes/cost (exit: all required tests non-skipped; each named producer deletion breaks an executed oracle)
 
 ## SLICE2: Workspace identity, exclusive writer and coherent private IO
@@ -107,12 +142,12 @@ CONTRACTS:
     registered workspace without transferring session DB/history ownership; one writer remains.
     Validate legacy manifests/run bindings; no blanket guard removal or second session manager.
     Future children inherit parent ownership/view/cancel scope; workflow subagents stay absent.
-TESTS: tests/test_managed_workspace.py, tests/integration/test_workspace_views.py   (NEW)
+TESTS: tests/test_managed_workspace.py, tests/test_session_lifecycle.py, tests/integration/test_workspace_views.py   (NEW)
 ```verify
 uv run pytest tests/test_managed_workspace.py tests/test_session_lifecycle.py -q
 FA_REQUIRE_EXECUTION_HOST=1 uv run pytest tests/integration/test_workspace_views.py -q -m execution_host
 ```
-- [ ] STEP1: implement protected registration/current metadata, flock/generation/pin/view authority and strict rooted IO; reject alias re-registration and root rebind (exit: cross-process writer contention, stale generation and reader-pin unit tests pass)
+- [ ] STEP1: implement protected registration/current metadata, flock/generation/pin/view authority and strict rooted IO; reject alias/ancestor/descendant re-registration and root rebind (exit: cross-process writer contention, stale generation and reader-pin unit tests pass)
 - [ ] STEP2: update SessionManager ownership/provisioning integration per spec §4; replace old second-owner rejection test with explicit registered reuse plus busy-mutation/corrupt-manifest negatives; preserve old run-ID claims (exit: actual session lifecycle suite and new/resume/new-session-reuse matrix pass)
 - [ ] STEP3: materialize dirty input and explicit copy policy; preserve canonical index, safely handle/exclude links/credentials/caches, document private-Git history limitation (exit: dirty/staged/untracked/deletion and external-link/hard-link/special/limit cases pass without silent omissions)
 - [ ] STEP4: wire actual read/search/write/edit handlers/transaction observations to ViewRef and service IO; exercise shared PTY/file visibility and protected target/ancestor rename/import denial (exit: real execution_host view tests pass; parent pinned reader sees old complete revision)
@@ -149,8 +184,8 @@ TESTS: tests/test_workspace_publication.py, tests/integration/test_publication_r
 uv run pytest tests/test_workspace_publication.py -q
 FA_REQUIRE_EXECUTION_HOST=1 uv run pytest tests/integration/test_publication_recovery.py -q -m execution_host
 ```
-- [ ] STEP1: implement terminal barrier/view state machine and immutable export validation; tests launch fork/double-fork/setsid/background writers in real cells and hold active file operations (exit: none can seal/publish while still writable)
-- [ ] STEP2: implement exact intent/current/projection schemas/order/dir fsync and generation/base CAS per spec §5, including canonical Git-index preservation (exit: complete old/new pinned-reader and stale/fault unit matrix passes)
+- [ ] STEP1: freeze Q74 disposition and spec §6.1 stage transition table before controller/publication integration; implement terminal barrier/view state machine and immutable export validation; tests launch fork/double-fork/setsid/background writers in real cells and hold active file operations (exit: none can seal/publish while still writable)
+- [ ] STEP2: implement exact intent/current/projection schemas/order/dir fsync and generation/base CAS per spec §5, including canonical Git-index preservation and spec §5.1 exact Q58/bootstrap forward-recovery phases (exit: complete old/new pinned-reader and stale/fault unit matrix passes)
 - [ ] STEP3: integrate Q58 buffer/hash/promotion and no-clobber bundle primitives with this same authority; no managed-acquisition UI/protocol before SLICE5 disposition (exit: direct controller-authorized tests prove collisions preserve old bytes and post-commit failure never rolls back)
 - [ ] STEP4: recover from supervisor/process death at each durable boundary, before/after pointer replace and during projection; require approved filesystem and separately label process-crash versus power-loss evidence (exit: real recovery tests expose only complete current revisions or quarantine, no success from uncertain state)
 - [ ] STEP5: record full declared-path CT104–CT107 kills and cleanup/ownership evidence (exit: all four producers killed by useful executed oracles; no cells/pins/intent abandoned without disposition)
@@ -177,15 +212,15 @@ CONTRACTS:
   CT111a [CONSTRAINT]: inventory all project execution and prove closure before product acceptance:
     readiness/dependency hooks/entrypoint, project Git/config/helpers, chat SubagentRunner, PTY and
     verifier routes. Admission/isolation/integrity are mandatory in both modes and every role.
-    Keep I02 pinned T0/Q55/Q56 semantics; unsuccessful safe-view/deadline recovery is explicit,
+    Keep I02 pinned T0/Q55/Q56/Q73 semantics; unsuccessful safe-view/deadline recovery is explicit,
     never fabricated eval or DONE. Structured reports are not hostile-test correctness attestation.
-TESTS: tests/test_verify_gate_live.py, tests/test_verify_slice.py, tests/integration/test_execution_closure.py   (NEW integration)
+TESTS: tests/test_verify_gate_live.py, tests/test_verify_slice.py, tests/test_slice_verification_runner.py, tests/test_workflow_deadline.py, tests/test_workflow_global_history.py, tests/integration/test_execution_closure.py   (NEW integration)
 ```verify
-uv run pytest tests/test_verify_gate_live.py tests/test_verify_slice.py -q
+uv run pytest tests/test_verify_gate_live.py tests/test_verify_slice.py tests/test_slice_verification_runner.py tests/test_workflow_deadline.py tests/test_workflow_global_history.py -q
 FA_REQUIRE_EXECUTION_HOST=1 uv run pytest tests/integration/test_execution_closure.py -q -m execution_host
 ```
 - [ ] STEP1: complete the inspected notes/i03-execution-call-inventory.md with exact source/caller/profile/view/negative oracle per spec §6; classify newly found subprocess/import/Git entrypoints rather than excluding them by name (exit: inventory covers every production route used by explicit/chat/nested workflows)
-- [ ] STEP2: wrap whole _cmd_run prologue and route manager/entrypoint/bootstrap readiness through provisioning cells; remove fail-open readiness and host fallback paths. Wire project Git/pair/subagent paths too (exit: backend-down run across each inventory route executes zero project commands; no unsupervised legacy bind/process)
+- [ ] STEP2: retain _cmd_run signature as pure validation→run_stage_with_plan_write_boundary→_cmd_run_inner; wrap whole _cmd_run prologue and route manager/entrypoint/bootstrap readiness through provisioning cells; remove fail-open readiness and host fallback paths. Inject the managed provisioner into SessionManager BEFORE _new_session provisioning; no rollback deleting supervisor-owned registered roots. Wire project Git/pair/subagent paths too (exit: backend-down run across each inventory route executes zero project commands; no unsupervised legacy bind/process)
 - [ ] STEP3: integrate pinned verification scratch/receipts/report parsing and explicit artifact schema versions; retain old I02 evidence readers, no duplicate verification engine (exit: actual supervised tests prove candidate import provenance, stale-operation/timeout/report negatives and immutable T0 compatibility)
 - [ ] STEP4: real direct C1 with actual supervisor/cells and only provider mocked proves each write/edit/shell route, dirty sentinels, denied protected paths and successful ordinary source edit/Q58; real eval sees same attempt and hard-blocks integrity failure in both modes (exit: execution_host closure matrix passes, no all-skips)
 - [ ] STEP5: record full-path CT97/CT110/CT111 kills; retain original CT97 producer case identity and all I02 gate regression proofs (exit: source restored and useful executed producer oracles all killed)
@@ -204,7 +239,7 @@ CONTRACTS:
   CT108 [FUNCTIONAL]: managed invocation allocates child RunContext via existing SessionManager
     before child artifacts/provider; distinct run_log_dir/DB binding and parent metadata. Suspend
     parent mutators; scoped child inherits same workspace writer, no deadlock/second writer.
-    kill: remove-call src/fa/inner_loop/tools/workflow_tool.py::_run_planner_managed_workflow -> _allocate_child_run
+    kill: remove-call src/fa/inner_loop/tools/workflow_tool.py::_run_planner_managed_workflow -> _child_run_context
   CT109 [FUNCTIONAL]: live provider snapshots bounded current parent messages at invocation time,
     feeds only initial planner user task beside its own prompt/skills; no SYSTEM transcript/public
     schema field. Redact credentials; retries/replans use distilled packets, ordinary logs allowed.
@@ -213,13 +248,13 @@ CONTRACTS:
     stable pair/schema, clarification, rendering/caps and v2 admission rules before implementation.
     Retain v1 evidence readers. Collision/ambiguity/malformed/missing choice blocks before coder/
     eval; post-install IO failure retains valid bundle. No temporary unavailable stub ships as CT96.
-TESTS: tests/test_verify_gate_live.py, tests/test_managed_acquisition.py, tests/integration/test_nested_workflow.py   (NEW acquisition/integration)
+TESTS: tests/test_verify_gate_live.py, tests/test_invoke_workflow_tool.py, tests/test_managed_acquisition.py, tests/integration/test_nested_workflow.py   (NEW acquisition/integration)
 ```verify
-uv run pytest tests/test_managed_acquisition.py tests/test_verify_gate_live.py -q
+uv run pytest tests/test_managed_acquisition.py tests/test_verify_gate_live.py tests/test_invoke_workflow_tool.py -q
 FA_REQUIRE_EXECUTION_HOST=1 uv run pytest tests/integration/test_nested_workflow.py -q -m execution_host
 ```
-- [ ] STEP1: record exact operator Q59/Q60 dispositions against spec §7; approve/amend and freeze the exact proposed managed admission v2 keys/rule sets/rendered fixture examples without changing v1. Do not start schema/helper implementation while these are guesses (exit: explicit decision/evidence link; no inferred approval)
-- [ ] STEP2: implement actual handler/child allocation/parent writer suspension and acquisition capability; preserve existing task/roles/mode/budget tool fields, no path/context; reserve invocation/child identity before dispatch (exit: actual handler tests prove parent artifacts byte-identical and unique child namespace)
+- [ ] STEP1: record exact operator Q59/Q60 dispositions against spec §7; approve/amend and freeze the exact proposed managed admission v2 keys/rule sets/rendered fixture examples and Q74 policy without changing v1. Do not start schema/helper implementation while these are guesses (exit: explicit decision/evidence link; no inferred approval)
+- [ ] STEP2: implement actual handler/reused _child_run_context/parent writer suspension and server-acknowledged handoff and acquisition capability; preserve existing task/roles/mode/budget tool fields, no path/context; reserve invocation/child identity before dispatch (exit: actual handler tests prove parent artifacts byte-identical and unique child namespace)
 - [ ] STEP3: implement approved stable-ID selection/clarification and controller-rendered no-clobber bundle via SLICE3 authority, shared I02 repair and before-T0 ordering (exit: exact caps/unknown+duplicate fields/status-smuggling/ambiguous/collision/post-install-fsync+append matrix passes)
 - [ ] STEP4: implement live current-message provider, bounded initial task/redaction and distilled retry/replan separation; keep Q66 ordinary log policy (exit: parent-only sentinel occurs in first real planner request, not retries; configured credential sentinel absent)
 - [ ] STEP5: actual outer drive_session→invoke→child run_workflow→_cmd_run→drive_session with real supervisor/cells and only ProviderChain.request mocked proves existing selection and new project, clarification/no-coder blocks, child evidence and parent refresh at turn boundary (exit: execution_host nested C1 passes in both routing/gate modes approved by STEP1)
@@ -253,10 +288,10 @@ uv run python scripts/check_execution_e2e_coverage.py
 - [ ] STEP4: coder writes e2e/I03/implementation-handoffs.md after real seams/proofs exist, labeling facts vs proposals and limitations (exit: handoff-shape tests pass; coder has changed no oracle/result)
 - [ ] STEP5: planner finalizes copy/paste host sheet from actual deployment/workspace facts per spec §9, complete tasks/variables/commands/run IDs/artifacts, safe update stop conditions and observe→review→enforce order (exit: run-sheet checks plus human command review, not pytest claiming deployment happened)
 - [ ] STEP6: update plan-authoring/feature-planning/tests-writing skill obligations exactly as transferred STEP6; preserve unrelated READY behavior (exit: artifact+skill conformance tests pass)
-- [ ] STEP7: independent reviewer completes manual checklist before fixtures/helpers, including all source/import/readiness/descendant/fencing/recovery and nested cases, maintenance prerequisites/no secrets/stop path; include E223's I02+I03 implementation/evidence scope and record open findings for final review (exit: named reviewer/date/notes recorded; no machine-approved marker; final broad review still required after material changes)
+- [ ] STEP7: independent reviewer completes manual checklist before the FINAL e2e/I03 fixture/helper package (not earlier local tests/integration kernel tests), including all source/import/readiness/descendant/fencing/recovery and nested cases, maintenance prerequisites/no secrets/stop path; include E223's I02+I03 implementation/evidence scope and record open findings for final review (exit: named reviewer/date/notes recorded; no machine-approved marker; final broad review still required after material changes)
 - [ ] STEP8: only after STEP7 implement reviewed bounded fixtures under e2e/I03/fixtures/ in unique disposable workspaces; preserve evidence/owned cleanup and keep live host commands outside default pytest discovery (exit: fixture conformance passes; review-before-implementation provenance exists)
 - [ ] STEP9: index every distinct local/live producer, including separate CLI/direct guards, candidate/promotion/schema/T0, CT96 selection/bootstrap/clarification/context, CT97 file/edit/shell/subagent-absence/alias paths, early readiness/imports, no-replay, contention/read pins, terminal seal/publication/recovery; map retained I02 source/functional claims to actual deployed behaviour oracles (exit: all original+new required producer keys mapped with useful evidence oracle; no local-only or missing deployed claim credited)
-- [ ] STEP10: run local package conformance and full release gates; review environment/readiness and inherited baseline acceptance using retained I02 manifests, exact test identities/replacements and Mypy contexts, including the unreproduced historical ninth context and relevant hook observations. Resolve/explicitly disposition each item for the intended Ubuntu/Docker/Python deployment without falsifying red results. Only with maintenance/deploy authorization perform normal main update and reviewed host runs; inspect nonzero update before retry, verify actual deployed SHA/image/profile/config, record source-to-behaviour results and broad independent implementation/evidence review plus integrated signoff. No automated/harness PASS (exit: all four E223 acceptance obligations complete with recorded review; all required cases independently reviewed PASS; BLOCKED/NOT RUN/skip never counts)
+- [ ] STEP10: run local package conformance, every accumulated non-skipped execution_host suite and all17 full-declared-path kills, and full release gates; review environment/readiness and inherited baseline acceptance using retained I02 manifests, exact test identities/replacements and Mypy contexts, including the unreproduced historical ninth context and relevant hook observations. Resolve/explicitly disposition each item for the intended Ubuntu/Docker/Python deployment without falsifying red results. Only with maintenance/deploy authorization perform normal main update and reviewed host runs; inspect nonzero update before retry, verify actual deployed SHA/image/profile/config, execute spec §9.1 unmocked direct+nested workflow witnesses (not only deterministic provider-stub cases), record source-to-behaviour results and broad independent implementation/evidence review plus integrated signoff. No automated/harness PASS (exit: all four E223 acceptance obligations complete with recorded review; all required cases independently reviewed PASS; BLOCKED/NOT RUN/skip never counts)
 
 ## Increment definition of done — binary, no partial isolation claim
 
@@ -264,7 +299,7 @@ uv run python scripts/check_execution_e2e_coverage.py
       runs use FA_REQUIRE_EXECUTION_HOST=1 and cannot succeed by skipping unavailable Docker/profile.
       All 17 FUNCTIONAL full-declared-path kills have useful executed failing oracles, provenance,
       elapsed cost and restored source; errors do not count as kills.
-- [ ] Exact Q59/Q60/Q63 dispositions and managed v2 schema/rule/rendering contract are recorded;
+- [ ] Exact Q59/Q60/Q63/Q74 dispositions and managed v2 schema/rule/rendering contract are recorded;
       no conditional proposal/stub remains. Existing Q62/I02 v1 readers and strict IDs stay compatible.
 - [ ] Real profile/UID/UDS/cgroup/mount/import proof and complete execution inventory show zero
       project execution outside cells for every production path/role, including readiness and chat
@@ -279,7 +314,7 @@ uv run python scripts/check_execution_e2e_coverage.py
       matrix yields complete old/new revision or quarantine, no partial-current success/rollback.
 - [ ] Actual direct and nested C1 use real supervisor/cells with only provider mocked. Child artifacts
       never overwrite parent; acquired explicit canonical PlanRef/T0/verification/eval share identity;
-      Q66 current initial context/distilled retry and Q55/Q56/both-mode integrity floor are proved.
+      Q66 current initial context/distilled retry and Q55/Q56/Q73/both-mode integrity floor are proved.
 - [ ] E223 deployed functional/source-to-behaviour verification covers retained I02 and new I03
       claims, including admission/repair/promotion/T0/eval/failure paths, with actual deployed
       code/image/config identities and useful effect/artifact oracles; local green is not host proof.
@@ -292,7 +327,7 @@ uv run python scripts/check_execution_e2e_coverage.py
       skipped security check or invented FA Go runtime requirement; actual red remains red.
 - [ ] E223 integrated E2E/deployment acceptance: full CT88/CT89 producer-preserving package/
       manual review/handoff/skills/fixtures complete;
-      every unique required I02+I03 deployed-main case has reviewed PASS with code/image/config/run/
+      spec §9.1 real-provider direct+nested witnesses and every unique required I02+I03 deployed-main case have reviewed PASS with code/image/config/run/
       oracle/artifact evidence. No local proof sets live status, no unresolved blocked deployment row.
 - [ ] E223 broad independent I02+I03 implementation/security/recovery/evidence review and final
       operator deployment signoff recorded in

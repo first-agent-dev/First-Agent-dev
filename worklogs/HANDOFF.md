@@ -40,9 +40,17 @@ Ubuntu host test,OS isolation,managed nested acquisition or host supervisor deli
 only;Go is an indirect inherited hook-build diagnosis,not a new FA runtime/deployment requirement.
 PTY stays. Q69–Q73 resolved;Q72 remains its narrow46-links/15-files+banner repair decision.
 
-**Next bounded action:** wait for operator direction for I03;read its conditional six-slice plan/
-spec and unresolved exact route/bundle/live-schema decisions before any runtime/fixture work.
-Do not rerun unchanged mutation audits just for documentation status,or relabel red/unknown PASS.
+**E230 current action — I03 PLAN FINALIZATION:** operator authorized adversarial plan review, not
+runtime/deployment. Existing six-slice plan/spec/inventory/review now contain16 current-source
+findings and concrete protocol/publication/provisioning/stage/context handoffs plus real-provider
+direct+nested final witnesses. Q59/Q60/Q63 and new Q74 checkpoint policy remain explicit decisions;
+no recommendation is ratification. All35STEPS unchecked,17FUNCTIONAL IDs/classes preserved,CT96/97
+lineage retained,CT108 deliberately reuses _child_run_context. Local kernel tests and FINAL e2e/I03
+helpers/review timing are distinguished; no premature main-host runs. No runtime/test/deploy change.
+Planning checks: actual stdlib extractor/precheck/kill validation0FAIL/6retained WARNs;doc checker
+308filesPASS;whitespaceclean. Environment restored to Python3.11 without uv/pytest/Docker, so no
+supported-runtime/host check is implied. Next: obtain the four exact choices, reconcile dispositions,
+revalidate final plan and wait for implementation authorization. I03 remains OUTLINED/unimplemented.
 
 Older S18/doc-hygiene notes below are historical,not current I02/I03 action items.
 

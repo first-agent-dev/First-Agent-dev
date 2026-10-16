@@ -145,3 +145,78 @@ First major step commit 5687d9e was pushed and remote SHA verified; second step 
 I03 now has concrete conditional briefs, not an approved/deployed implementation; exact Q59/Q60/Q63
 and operational compatibility/profile dispositions plus all implementation/runtime/host evidence
 remain. No blanket READY, SHIPPED, VERIFIED or live PASS is assigned by this review.
+
+
+## E230 — I03 finalization review, 2026-10-16 (current source 1132eee)
+
+**Trajectory verdict:** enough scope to reach a deployed whole-plan workflow demonstration, NOT the
+full roadmap's per-slice/tracker/L2 loop. The latter was explicitly moved to a named successor and
+must not be accidentally advertised as delivered. Foundation is still large (17 FUNCTIONAL across
+six slices); retain one backend/authority/materialized-copy implementation, not optional platforms.
+No additional runtime subsystem or foundation implementation is introduced by this review.
+
+### Confirmed plan defects / stale assumptions and direct repairs
+
+Line references in the evidence column are frozen `1132eee` BEFORE this review, unless a source
+module is named (runtime files remain unchanged). plan = increments/increment-03-execution-workspace-foundation.md;
+spec = notes/i03-execution-workspace-spec-2026-10-15.md. Updated normative sections are in that spec.
+
+| ID | Severity / confirmed finding | Evidence file:line | Correction / binary future oracle |
+| --- | --- | --- | --- |
+| F01 | High: no explicit real-provider witness; local/mock deployed cases could satisfy vague live E2E wording | I03 plan:24–28,234–259; spec:483–497 | §9.1 requires unmocked direct AND outer-chat nested useful-code workflows; actual calls, effect/tests/artifacts/identity; no invocation or replay is not PASS |
+| F02 | Medium: child allocation treated as absent, proposed duplicate helper; baseline/Q73 stale | plan:204–207; src/fa/inner_loop/tools/workflow_tool.py:387–403,487–533; src/fa/inner_loop/workflow_controller.py:613–645 | Reuse _child_run_context and actual SessionManager authority; preserve Q70 non-coder and Q73 floors; zero double allocation/parent overwrite |
+| F03 | High: protocol cannot implement promised PTY facade, exec lacks session ID, no interrupt/close/list | spec:68–87,124; src/fa/runtime/bash_executor.py:18–27,53–69 | §2.1 exact PTY wire mapping and namespaced session; four methods tested, persistent state within episode, no replay on loss |
+| F04 | High: opaque grant required but absent from exact envelope; read pins conflicted with blanket current-generation mutation rule | spec:70–97,110–114,163–165 | Explicit redacted capability and OWNER/READ/WRITE grants; server handoff revokes late parent mutation, pins survive generation advance |
+| F05 | High: supervisor state below controller-writable state; canonical compose bind remains writable, container/host paths differ | spec:150–155; docker-compose.fa.yml:100–111; scripts/fa:36–45 | Root-owned unmounted StateDirectory; canonical binds RO; UDS only; approved three-way path mapping, real mount/UID negative proof |
+| F06 | High: canonical-path alias rule omits overlapping workspace roots and stale canonical re-import | spec:152–165,185–186 | §4.1 rejects ancestor/descendant/bind aliases, rebind and stale-import ambiguity; two writer processes cannot overlap same filesystem domain |
+| F07 | High: Q58 irreversible replace has no exact recovery phase/schema, unlike ordinary pointer commit | spec:245–276; src/fa/inner_loop/plan_promotion.py:195–221 | §5.1 distinct REVISION/PLAN/BOOTSTRAP discriminator and hash-based ambiguous-PREPARED recovery; fault every boundary, never delete/rollback committed bytes |
+| F08 | High: after coder seal, next repair/replan source/view and publication timing unspecified | spec:223–228,301–307,336–339; src/fa/inner_loop/workflow_controller.py:1295–1317 | §6.1 transition table; never reopen sealed PTY/view. Q74 checkpoint-vs-workflow-end is a genuine operator policy question, NOT silently chosen |
+| F09 | High: bundle ID has no upload/validation producer; generic protected-path denial conflicts with existing scoped candidate writer | spec:83–92,266–275; src/fa/inner_loop/tools/write_file.py:113–136 | prepare_bundle→stored validated ID→no-clobber install; narrow CANDIDATE grant outside canonical/control mounts; exact scoped plan publish |
+| F10 | High: wrapping stage misses prior provisioning; old manager cleanup can remove a newly committed registered root | src/fa/session/manager.py:293–296,316–329; src/fa/cli.py:150–159,2214–2227 | Inject provisioner BEFORE _new_session; propagate non-ready; preserve supervisor-owned roots after later session failure; backend-down executes zero project instructions |
+| F11 | Medium: planned edit op risks replacing existing fuzzy/first-match semantics with a second privileged implementation | spec:83–84; src/fa/inner_loop/tools/edit_file.py:120–135 | Existing controller fuzzy helper produces exact replacement+hash; service only bounded rooted IO; no fake kernel-CAS claim vs arbitrary background writes |
+| F12 | High: context provider cannot capture conversation merely from state_ref; current history is loop-local | src/fa/cli.py:1644–1659; src/fa/inner_loop/coder_loop.py:600–623,1847; src/fa/inner_loop/state.py:339–369 | §7.1 pre-dispatch snapshot callback after compaction; consume once via PlannerDispatch; no repeated raw history/system schema/credentials or goal-only false inheritance |
+| F13 | High: host tests required in slices1–5 but fixture review only at slice6; final-review scope/main-host timing ambiguous | plan:77–86,228–259; spec:437–456 | Separate local tests/integration from final e2e/I03 helpers; required non-skipped accumulated kernel/mutation proof before acceptance, no early main-host runs |
+| F14 | High: immutable-source verification omits environment/report paths and migration binding; existing public C1 fixtures would no longer work | spec:301–323; src/fa/inner_loop/slice_verification.py:539–581; src/fa/inner_loop/workflow_controller.py:1271–1283 | §6.1 scratch/dependency compatibility tests, execution sidecar and mandatory managed receipt binding; preserve T0 bytes/lineage and honest C1 classification |
+| F15 | Medium: declared TESTS omit existing lifecycle suite already in verify, and changed nested/deadline/history/runner seams | plan:110–114,182–186,216–219 | Add relevant existing paths to owning slices; full declared paths under kills, no per-contract selector mapping |
+| F16 | High: safe immutable launch has no exact existing build change or cutover/downgrade constraint | Dockerfile.fa:86–98; spec:34–52,488–492 | Reuse uv.lock/uv sync with --no-editable, test imports; §9.1 approved quiescent cutover and forward-compatible recovery, no automatic legacy restart after new-format commit |
+
+### Genuine unresolved decisions / suspicions (not runtime defects proved here)
+
+- Q59: advisory-only default or default plus explicit router-only required-workflow option. Proposed
+  success guarantee is an ACTUAL successful coder-bearing/eval child, not mere invocation count.
+- Q60: proposed stable selection + fixed three-file bootstrap, exact v2 schema/render fixtures.
+- Q63: exact four live-result values and mandatory BLOCKED reasons; source status vocabularies differ.
+- Q74: when ordinary source edits publish; current behavior keeps even failed-stage edits, but
+  workflow-end atomic publication would require a different unpublished-source/base representation.
+- Actual main host Docker/cgroup/UID/seccomp/FS, offline cache/toolchain and provider readiness remain
+  unverified operational inputs. No host failure or compatibility success is inferred from source.
+- Ordinary same-owner background shell writes are not a kernel file-CAS transaction; seal binds
+  actual final bytes. No stronger intra-owner lost-update guarantee is claimed without a mechanism.
+- Malicious project tests can forge their reports; supervised receipt binding is not correctness
+  attestation, L2 VERIFIED or calibration. Preserve Q53(c) full-slice attribution limitations.
+
+### What is genuinely sound
+
+One host authority/backend, existing SessionManager/DB, fixed profiles, materialized copies, actual
+cgroup terminality before export, no rollback of irreversible publication, role-independent boundary,
+Q70 narrow unavailable guard, Python-only controller/supervisor, and end-of-I03 broad/deployed review
+are appropriate. No CAS/overlay/backend matrix, proxy platform, second workflow/session engine,
+mandatory debug-body suppression, automatic escalation or parallel scheduler is added.
+
+**Plan verdict:** mechanics revised directly; whole-increment unconditional dispatch remains blocked
+until explicit Q59/Q60/Q63/Q74 decisions. Current planning review is NOT future independent review
+of unwritten implementation/fixtures and assigns no source/live PASS or runtime checkbox.
+
+
+### E230 executed planning checks (not runtime acceptance)
+
+Actual stdlib-only plan_ids extractor/precheck and AST-loaded actual pure kill parser/validator:
+6slices,17FUNCTIONAL, all existing CT IDs/classes preserved, CT96/97 original target lineage,
+CT108 changed deliberately to existing _child_run_context.35STEP boxes all unchecked. Zero FAIL;
+6existing undeclared cross-increment-reference WARNs retained, not hidden. All declared TESTS and
+verify commands extract, including added existing lifecycle/nested/deadline/history/runner paths.
+`python scripts/check_doc_links.py`:308Markdown files, no broken links; git diff --check clean.
+Initial checker mistakenly iterated PrecheckReport rather than .diagnostics; corrected and rerun,
+not runtime/proof evidence. Python3.11.2 here is below package>=3.13; pytest/uv/Docker are absent.
+No supported-runtime suite, mutation, host/profile/deployment or real-provider check is claimed.
+Only worklogs files changed; source/tests/scripts/knowledge/deployment/I02 plan/status untouched.

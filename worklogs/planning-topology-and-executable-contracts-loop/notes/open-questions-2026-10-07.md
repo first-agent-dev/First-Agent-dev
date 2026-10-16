@@ -930,6 +930,10 @@ A failed validator remains eligible for another bounded planner attempt. Empty/u
 
 ## Q59 — Is chat escalation advisory, or must complex tasks be forced through `invoke_workflow`?
 
+**E230 current finalization:** still OPEN, not ratified by plan review. Exact current proposal and
+binary oracles are in I03 spec §§7/7.1/9; current source is1132eee, not the old d910 anchors below.
+Q63's package owner is now I03 SLICE6 (former I02 SLICE7). See E230 findings before deciding.
+
 **2026-10-15 review:** I03 spec §7 proposes an explicit --require-workflow router-only route,
 without changing ordinary advisory chat. Exact guarantee/name remains unratified; SLICE5 STEP1
 requires disposition, not a prompt-compliance claim.
@@ -976,6 +980,10 @@ controller route or whether model-mediated tool selection is acceptable.
 ---
 
 ## Q60 — Is the proposed CT96 planner-managed selection/bootstrap protocol approved?
+
+**E230 current finalization:** still OPEN, not ratified by plan review. Exact current proposal and
+binary oracles are in I03 spec §§7/7.1/9; current source is1132eee, not the old d910 anchors below.
+Q63's package owner is now I03 SLICE6 (former I02 SLICE7). See E230 findings before deciding.
 
 **2026-10-15 review:** [I03 spec §7](i03-execution-workspace-spec-2026-10-15.md#7-nested-acquisition-and-q66--exact-proposal-q59q60-still-open)
 proposes exact stable project_slug/increment_id selection, clarification and controller-rendered
@@ -1130,6 +1138,10 @@ small v1 code table as the first CT92 substep.
 ---
 
 ## Q63 — Is the proposed live E2E result vocabulary approved?
+
+**E230 current finalization:** still OPEN, not ratified by plan review. Exact current proposal and
+binary oracles are in I03 spec §§7/7.1/9; current source is1132eee, not the old d910 anchors below.
+Q63's package owner is now I03 SLICE6 (former I02 SLICE7). See E230 findings before deciding.
 
 **Status: OPEN. Non-blocking for core runtime coding; settle before SLICE7 finalizes the live-case
 index/run sheet.** The plan recommends `NOT RUN | PASS | FAIL | BLOCKED` with append-only attempt
@@ -1489,3 +1501,21 @@ and the actual EvalReport; do not manufacture a negative model verdict. This rat
 option presented after separately verifying the other agent's findings; it is not I03 deployment
 or broad independent acceptance. The old general “observe preserves routing” wording is narrowed
 to determinate evidence, consistent with the retained spec's determinate-only advisory boundary.
+
+
+## Q74 — When do ordinary managed source edits become published?
+
+**Status: OPEN — operator decision required before I03 SLICE3/4 integration.** This is not Q58
+plan promotion, which retains its separate validated same-path irreversible replacement.
+
+- **(a) Per-stage/episode checkpoint (recommended compatibility policy).** After actual process
+  terminality and path/security seal, publish permitted ordinary edits even when provider/stage/
+  functional judgment fails. Failed workflow remains failed; no rollback promise. Verify/eval and
+  next repair use new immutable current; close old PTY and allocate new editing view. This preserves
+  today's user-visible edits after failed stages and needs no second unpublished branch authority.
+- **(b) Workflow-end-only publication.** Keep intermediate code private until chosen final outcome;
+  preserve failed candidates for inspection. Before coding specify separate source-revision vs CAS
+  publication-base and exact failure/discard/retention/parent-visibility policy. Q58/bootstrap commits
+  still cannot be rolled back; do not pretend the whole workflow is an atomic transaction.
+
+Spec §6.1 is the exact (a) proposal, not its approval. No code or status changes assign the choice.

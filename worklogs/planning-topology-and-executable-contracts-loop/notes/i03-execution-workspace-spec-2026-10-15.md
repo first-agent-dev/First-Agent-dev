@@ -1,9 +1,10 @@
 # I03 execution/workspace implementation specification
 
-Date: 2026-10-15. Baseline product source `d9109f4`; source evidence in the adversarial review.
+Date: 2026-10-15; refreshed 2026-10-16 against I02 closeout `1132eee` (runtime `a32a72f`).
+The d910 evidence below is historical; E230 in the existing adversarial review records current findings.
 This is a proposed implementation specification, not deployed behavior. New files/functions below
 are **planned**, not discovered interfaces. Core mechanics can be specified now; §7's Q59/Q60
-choices and §9's Q63 vocabulary need exact operator disposition before their slices are dispatched.
+choices, §6.1 checkpoint policy (Q74), and §9's Q63 vocabulary need exact operator disposition before their affected slices are dispatched.
 No temporary production backend, unsafe fallback or fake acquisition completion is acceptable.
 
 ## 1. Smallest coherent ownership model
@@ -45,7 +46,9 @@ Project pytest/import probes deliberately import the candidate **inside a cell**
 
 Update `scripts/fa`, `scripts/fa-entrypoint.sh`, `Dockerfile.fa`, `docker-compose.fa.yml` and
 bootstrap/readiness entrypoints. No workspace-first PYTHONPATH export or project-CWD console
-launch. Host wrapper help must use installed trusted help or delegated isolated controller, not
+launch. Change Dockerfile.fa's existing install to `UV_PROJECT_ENVIRONMENT=/opt/fa-venv uv sync
+--frozen --no-dev --no-editable`; retain uv.lock, noneditable wheel install and origin tests.
+No second dependency installer/build system; copying source alone does not fix editable pth. Host wrapper help must use installed trusted help or delegated isolated controller, not
 host-repo PYTHONPATH. `docker compose exec` does not inherit entrypoint-only exports; configure
 and test each path explicitly. Operator `fa shell` is maintenance-only outside active workflow:
 no project commands in the secret-bearing controller. Offer managed cell shell or refuse while busy.
@@ -59,6 +62,9 @@ PID namespace, privileged mounts/capabilities or supervisor paths. Host/kernel/D
 TCB. An approved UID/GID mapping and cgroup-v2 layout are required deployment inputs, not guesses.
 
 Versioned, length-framed JSON requests; reject unknown keys/types/versions and over-limit frames.
+Malformed framing/UTF-8 or invalid request_id closes the connection without launch or echoing an
+invalid ID. With valid request_id but invalid payload, return structured INVALID_REQUEST; operation_id
+is null before reservation. Never dump raw frames or grant-bearing exceptions to logs.
 Max control frame 4 MiB as an independent encoded-frame cap (body caps do not imply wire size),
 max individual tool text 1 MiB, bounded output tails 64 KiB/channel. Commands are opaque text;
 cwd is relative to an authorized view. Neither wire nor model accepts host paths, image, Docker
@@ -66,32 +72,34 @@ flags, mount lists, arbitrary environment, networking, UID, cgroup path or publi
 Authenticated controller selects immutable approved profile ID; supervisor expands fixed config.
 
 Closed operations: health, register_workspace, acquire_writer, pin_reader, create_view, read_file,
-write_file, edit_file, exec, inspect, cancel, stop_view, seal, publish, install_project, release.
-Wire envelope v1 is exactly `{protocol_version:1, request_id, op, namespace, view_ref, payload}`.
+write_file, edit_file, exec, inspect, cancel, stop_view, seal, publish, install_project, release, pty_control, handoff, prepare_bundle.
+Wire envelope v1 is exactly `{protocol_version:1, request_id, op, namespace, view_ref, capability, payload}`.
 request_id is a controller UUID key; namespace is null only for health, otherwise exactly
-`{session_id,run_id,parent_run_id}` (parent null when absent). view_ref is null only for operations
-that precede view creation; other operations carry the validated ViewRef, not a string path.
+`{session_id,run_id,parent_run_id}` (parent null when absent). view_ref is null for the owner/pre-view operations listed below; other operations carry the
+validated ViewRef, not a string path.
 Reply exactly `{protocol_version:1,request_id,status,result,error}`; status OK|ERROR, one of result/
 error nonnull. error exactly `{code,retryable,operation_id}`; code closed:
 INVALID_REQUEST, UNAUTHORIZED, UNAPPROVED_PROFILE, WORKSPACE_BUSY, STALE_GENERATION,
 STALE_REVISION, VIEW_CLOSED, BACKEND_UNAVAILABLE, EXECUTION_UNKNOWN, TERMINALITY_UNKNOWN,
 PATH_DENIED, INPUT_POLICY, COLLISION, DURABILITY_UNKNOWN, CORRUPT_STATE. No exception text.
 
-Payloads are separate closed per-op dataclasses/schemas, not arbitrary kwargs. Key shapes:
-register_workspace `{root_id,relative_root}` against a configured approved host-root ID (never an
-absolute host path); acquire_writer `{workspace_id}`; create_view `{workspace_id,base_revision,access}`;
-write_file `{path,content,expected_sha256}` and edit_file `{path,old,new,expected_sha256}` are rooted
-capability-relative IO with bounded UTF-8; exec `{operation_id,profile_id,command,cwd,timeout_ms}`;
-inspect/cancel `{operation_id}`; stop_view/seal/release `{}` against view_ref; publish
-`{sealed_manifest_id,expected_base_revision}`; install_project `{validated_bundle_id,project_slug}`;
-pin_reader `{workspace_id,revision_id}`. Receipt/status data are structured result variants (§3).
+Payloads/results are closed per-op schemas in §2.1, the SOLE wire-shape authority. No abbreviated
+parallel dataclass may omit its mandatory keys. register/acquire/pin/create_view/prepare_bundle/
+install_project/handoff and OWNER release use view_ref=null; health additionally has namespace/capability=null; other operations use the
+specified owner/view grant. All successful grants remain private controller DI.
 The controller reserves a unique op-UUID before sending exec; supervisor persists that ID and input
 binding before starting it. Other mutation request IDs likewise deduplicate by exact input hash;
 a reused key with different input fails, never replays. IDs refer only to supervisor-created state,
 not caller-supplied manifests/bundles or filesystem locations. Bind every stored result to caller
-namespace and reject cross-run inspection. Release cannot discard state needed by live jobs/pins.
+namespace and reject cross-run inspection. Capability is a supervisor-minted 256-bit random grant,
+null only for health/register/acquire/pin; other requests require its exact actor/view/access binding.
+Return it only to authenticated controller DI, never tools/events/receipts/transcripts. IDs are not secrets
+and are not themselves authorization. Redact the entire capability field from transport diagnostics. Release cannot discard state needed by live jobs/pins.
 
-Every mutating request validates namespace, current lease/generation and allowed view capability.
+Every workspace/source-mutating request validates namespace, current lease/generation and allowed
+capability. Pre-lease register/acquire are authenticated controller-only; READ-pin exec/scratch does
+not require current writer generation and cannot mutate source. No blanket stale-generation test
+may invalidate an otherwise-live immutable reader pin.
 Operation IDs are allocated/reserved before starting work. inspect is read-only; exec retry with
 an already used operation ID inspects/returns its old receipt, never starts a duplicate command.
 No generic path-copy/exec-on-host operation. Service rejects busy/stale/wrong-run requests.
@@ -105,11 +113,82 @@ If a product path actually requires remote dependency access, an explicit tested
 must be approved before that path is accepted; do not silently grant Docker bridge networking or
 pass controller SSH/provider credentials. A dependency/proxy platform is not part of I03.
 
+### 2.1. Closed adapter contract and deployment mapping (E230)
+
+All resource IDs are supervisor-minted: ws-/view-/rev-/op-/seal-/bundle- followed by32 lowercase hex; request_id is32
+lowercase hex. root_id/input_id/profile_id are configured lower-kebab IDs≤48chars, not paths.
+Namespace IDs use existing SessionManager validators unchanged; parent_run_id is null or a valid run ID. SHA256 is64 lowercase hex. Reject bool-as-int, duplicate JSON keys, nonfinite
+numbers, bad UTF-8, null/unknown fields except explicitly nullable values. Paths are UTF-8 POSIX
+relative components with no NUL, empty/dot/dotdot component, absolute prefix or traversal; cwd may
+be exactly `.`. Limits in §2 apply before allocation, IO or launch. Capability is never a path.
+
+Complete payload additions/results (every object has exactly the named keys; IDs are strings):
+
+| op | payload / successful result |
+| --- | --- |
+| health | `{}` / `{ready:bool,protocol_version:1,profile_set_sha256}`; health is not execution readiness or a view grant |
+| register_workspace | `{root_id,relative_root,create:bool,input_id:null-or-configured-ID}` / `{workspace_id,revision_id}`; create=false requires existing root; create=true installs an owned new root no-clobber from approved materialized input or empty source; no remote clone/ambient credentials |
+| acquire_writer | `{workspace_id}` / `{view_ref:null,capability,generation,revision_id}`; grant bound to authenticated controller's namespace and root owner |
+| pin_reader | `{workspace_id,revision_id}` / `{view_ref,capability}`; READ pin independent of subsequent writer generations |
+| create_view | `{workspace_id,base_revision,access,purpose,candidate_scope}` / `{view_ref,capability}`; purpose PROJECT/PROVISIONING/VERIFICATION/MUTATION/CANDIDATE; candidate_scope null except exact `{candidate_path,plan_ref}` for CANDIDATE; grant checks permitted combinations before copy |
+| read_file | `{path,offset_bytes,max_bytes}` / `{content,sha256,eof}`; max_bytes1MiB, exact bounded UTF-8 file snapshot; reject unsupported binary/split-codepoint rather than silently corrupt; SHA covers whole bounded file; oversized files need explicit read-only chunk policy, never partial SHA for edits |
+| write_file / edit_file | `{path,content,expected_sha256}` / `{sha256,bytes}`; expected_sha256 nullable only for write(create-if-absent); edit requires hash; conflict is STALE_REVISION with no silent retry |
+| exec | `{operation_id,profile_id,command,cwd,timeout_ms,session_id}` / `{receipt}`; session_id nonnull only for interactive profile; fixed simple identifier≤64chars, scoped to namespace+view |
+| inspect / cancel | `{operation_id}` / `{receipt}`; cancel requests stop, not success or terminality until independently confirmed |
+| pty_control | `{action:INTERRUPT|CLOSE|LIST,session_id}` / `{sessions,message}`; LIST uses null ID; other actions require ID; namespace/view scoped, never process-global main |
+| stop_view | `{}` / `{view_id,terminal:bool}`; false/unknown cannot seal/release |
+| seal | `{}` / `{sealed_manifest_id,revision_id,tree_sha256}`; immutable revision may be unpublished/MUTATION-only; cannot be made writable or used for canonical publication without owner grant |
+| publish | `{sealed_manifest_id,expected_base_revision}` / `{workspace_id,revision_id,tree_sha256,operation_id,projection_complete:true}`; no receipt before durable DONE |
+| prepare_bundle | `{project_slug,increment_slug,roadmap_text,increment_text,expected_base_revision}` / `{validated_bundle_id,bundle_sha256}`; OWNER grant, fixed three-file renderer/ledger header, recomputed caps/grammar/hash in supervisor; no model file map |
+| install_project | `{validated_bundle_id,project_slug}` / same committed result as publish; bundle created by trusted bounded renderer, not arbitrary model file map |
+| handoff | `{target_namespace}` / `{view_ref:null,capability,generation,revision_id}`; current actor's views must be terminal/settled; target bound to existing parent-child run relationship; same root owner/generation, exactly one active mutator grant |
+| release | `{}` / `{released:true}`; revokes only its grant/pin; writer release requires no writable/live/unknown jobs or unfinished projection; READ release cannot revoke another actor |
+
+`BashExecutor.run/send_ctrl_c/close/list_sessions` map to exec/pty_control. Preserve stateful cwd,
+environment and PTY session between commands in ONE open episode. Interrupt/close timeout is
+explicit uncertainty, not shell replay or implicit successful cleanup. `run_bash` must catch typed
+managed errors BEFORE its current blanket fallback catches and return the existing ToolResult
+error envelope; remove the production `_run_subprocess_fallback` branch. A transport loss after
+send is inspect/cancel by the SAME operation ID. Never allocate a new ID to retry the same command.
+
+ExecutionReceipt v1 is exactly `{schema_version:1,operation_id,namespace,workspace_id,view_id,
+owner_run_id,generation,revision_id,original_revision_id,input_tree_sha256,plan_sha256,profile_id,
+image_digest,state,exit_code,timed_out,stdout_tail,stderr_tail,truncated,duration_ms,terminal_barrier}`.
+Nullable revision/plan fields only for pre-source provisioning, never verification; exit_code int or
+null, timed_out/truncated/terminal_barrier bool, duration_ms nonnegative int, tails≤64KiB/channel.
+Normal noninteractive EXITED needs actual container/process exit and terminal_barrier=true;
+LAUNCH_FAILED/UNKNOWN never inherit exit0. Interactive completion may leave idle shell and barrier
+false until stop_view. Supervisor reconstructs identity from reserved state, never worker JSON.
+Exact operation input hashes are private; model/cell text cannot select any binding/profile/mount.
+
+Reserve durably BEFORE Docker create, use deterministic owned name and labels including operation
+ID; persist container identity before start. Restart reconciles RESERVED/RUNNING by ID/name/labels
+and actual Docker+cgroup facts. Lost create/start reply means inspect the existing identity or
+quarantine, NEVER a second create/start. Cancel-before-start also persists and prevents late start.
+Bound control RPC timeouts separately from command deadline; lost reply cannot mean not executed.
+
+Deployment contract: controller `/sessions` and any canonical project binds READ-ONLY; replace the
+current compose writable `/sessions` bind. Keep controller session/config DB mounts writable but
+never expose the supervisor state directory through them. Only private UDS is mounted to controller;
+no supervisor state/daemon/credential mount in cells. Host config owns a table of root_id + host
+canonical root + controller logical path; cells see `/workspace`, `/scratch`, approved environment.
+Never send `/sessions/...` directly to host Docker as if it were the same host path. Profile/image/
+UID:GID/cgroup-v2/free-space/daemon+seccomp facts are captured in the approved deployment record
+before host runs. Existing entrypoint command overrides and `fa shell` either use managed shell or
+explicit quiescent TCB maintenance, never a production alternate runner. No Go runtime is added.
+
+SLICE1 construction exposes no production grant issuer before SLICE2. Supervisor authorization
+uses an injected typed ownership-validation callable; unit fixtures may fake it and remain C0.
+SLICE2 wires the actual WorkspaceAuthority into service main before any positive managed-project
+kernel proof. Do not add a permissive temporary authority, guessed registered view or failing main
+stub. Required actual authorization/kernel proof is accumulated for final SLICE6, not claimed from
+unit injection. Packaging can be prepared in SLICE1; production service startup follows integration.
+
 ## 3. Identity and job lifecycle
 
 NamespaceRef = `{session_id, run_id, parent_run_id?}` from existing manager/bindings. WorkspaceRef
 is an opaque stable workspace_id from protected registration, not a run/session label. ViewRef =
-`{workspace_id, generation, base_revision, view_id, owner_run_id, access}`; access is READ|WRITE.
+`{workspace_id, generation, base_revision, view_id, owner_run_id, access, purpose}`; access is READ|WRITE.
 Opaque writer capability never enters model JSON, transcript or ordinary logs. Paths are not IDs.
 OperationRef = `{operation_id, view_id, owner_run_id, generation, input_tree_sha256}`.
 
@@ -145,12 +224,37 @@ that field, identity, uncertainty and no-replay semantics. Its HTTP success/heal
 not supervisor terminality. Default plan is the thin cell worker reusing PTY machinery, not a
 second HTTP management layer or standalone server completion milestone.
 
+### 3.1. Minimal persisted state and retry keys
+
+Use protected JSON files with existing atomic replace/file+directory fsync primitives, not another
+session DB. workspace.json keys exactly `{schema_version:1,workspace_id,root_id,relative_root,
+root_dev,root_ino,generation,owner_namespace,active_actor,status}`; owner/actor nullable only when
+AVAILABLE, status AVAILABLE/OWNED/QUARANTINED. Positive/nonnegative integer rules reject bool.
+view.json keys exactly `{schema_version:1,view_ref,actor_namespace,state,input_tree_sha256,
+sealed_manifest_id,operation_ids,candidate_scope}`; nullable seal ID before seal, state per §5.
+Do not put raw grant tokens into either file. Revision/pin retention references persist before
+acknowledging a pin; restart never garbage-collects a pin with uncertain ownership.
+
+Operation journal `operations/<operation_id>.json` keys exactly `{schema_version:1,operation_id,
+request_id,op,namespace,view_ref,input_sha256,state,container_id,cancel_requested,result}`;
+state RESERVED/EXECUTING/DONE/UNKNOWN, container_id nullable before create/for non-exec, result
+nullable until determined (typed per-op result). For every mutating request operation_id is
+`op-<request_id>`; exec.payload.operation_id MUST equal it. One journal supplies deduplication,
+not separate competing request/execution histories. Hash canonical JSON of op/namespace/view_ref/
+payload, excluding credentials/request ID. Same ID+different hash rejects; same completed input
+returns stored result, unknown inspects/stops rather than re-executes. Non-exec mutation losses are
+also inspectable by the pre-reserved ID, including publish/install after acknowledgement loss.
+Grant secrets may be cached only in protected process memory; restart revokes them, quarantines
+old owned views until inspected/drained, and issues fresh grants only after safe reconciliation.
+
 ## 4. Workspace writer, input policy, file tools and readers
 
-Protected supervisor state under the existing configured FA state root's `execution/` subtree:
+Protected supervisor state is host-root-owned `/var/lib/first-agent-execution/` (systemd
+StateDirectory); it is NOT below the controller-writable FA state bind. Layout:
 `workspaces/<workspace_id>/{workspace.json,writer.lock,current.json,intent.json,revisions/,views/}`.
-Registration contains normalized approved canonical root and stable ID; same canonical root/aliases
-cannot register a second writer domain. Root identity cannot silently rebind after rename/symlink
+Registration contains normalized approved canonical root, root `(st_dev,st_ino)` and stable ID.
+Reject aliases with the same identity AND ancestor/descendant registered roots (including bind-mount
+aliases); nested projects share the containing workspace ID. Path-string equality alone is insufficient. Root identity cannot silently rebind after rename/symlink
 replacement. No model-controlled state-root override. Keep session metadata and DBs in their
 existing roots, never inside cell mounts.
 
@@ -193,7 +297,7 @@ symlinks in v1. This is an explicit limitation, not silent symlink dereferencing
 
 Version the concrete input limits in trusted config: default 100,000 entries, 2 GiB total,
 64 MiB/file, depth 64; failure names a bounded policy error. Exclude `.venv`, dependency caches,
-`.fa/admission`, known controller/log/state roots and configured credential files; default project
+the entire `.fa` control/artifact/cache tree, known controller/log/state roots and configured credential files; default project
 `.env` excluded. Larger/generated/secret-dependent projects need explicit approved input profile,
 not a model exception. Dependency cache is separately approved/read-only, not a secret-bearing
 copy of host caches. Model can read approved project files; this is not a general DLP system.
@@ -207,7 +311,14 @@ limitation in help and acceptance; it is not satisfied by a clean checkout losin
 
 File write/edit handlers call the supervisor's descriptor-rooted view IO and use the same working
 view as PTY; no controller direct writes to canonical paths or separate stale shell copy. Preserve
-existing tool names/ToolResult and transaction observations; carry view identity internally.
+existing tool names/ToolResult and transaction observations; carry view identity internally. Keep
+edit_file._find_fuzzy in the controller: read a bounded snapshot, compute replacement with the existing
+fuzzy/first-match algorithm, send exact new content plus expected SHA. Do not reimplement fuzzy edits
+in the privileged service or replace the public old_string/new_string fields with a new tool schema.
+Serialize model mutator calls within an actor; expected_sha detects ordinary stale reads, NOT a
+kernel CAS against arbitrary background shell writes. Rooted IO revalidates path/inode identity; a
+concurrent replacement is an explicit conflict, never silent retry. Final authority is the actual
+post-terminality sealed tree, not a tool's claim of atomicity against same-owner background code.
 Read/search use the pinned view. Active PlanRef is read-mounted from a pinned revision; do not pretend a leaf read-only bind alone
 prevents ancestor substitution inside a private tree. Protected path/identity changes or aliases in
 the candidate are rejected at seal/import. Overwrite/unlink/rename/parent substitution cannot alter
@@ -217,6 +328,33 @@ A reader pin retains immutable revision bytes until release. Parent chat switche
 turns after child completion; never reinterpret an existing file descriptor/path as a new revision.
 Retain all revisions/views needed by open pins, jobs and recovery intent. Delete only unreferenced
 owned scratch after terminality; automated retention/GC platform is deferred, not mandatory.
+
+### 4.1. Registration and SessionManager cutover
+
+Reject overlapping registered roots, same-inode aliases and root replacement; compare identities
+and ancestry, not just resolved path strings. Approved host roots exclude controller/supervisor
+state, credentials, daemon sockets and ancestors of them. Data copy must not traverse those paths.
+Initial R0 imports dirty current bytes under the same no-writers barrier as later snapshots. Do not
+silently keep serving stale current.json when quiescent admin maintenance changed canonical bytes:
+explicit re-import under authority (fresh generation/revision) or CORRUPT_STATE/quarantine.
+
+Inject an existing-manager managed provisioner BEFORE `_new_session` calls `_provision_workspace`;
+`workspace_preparer` alone is too late. Manager creates/owns session manifest/DB, supervisor alone
+creates/registers canonical workspace. Provisioner returns a verified workspace/revision or raises
+SessionManagerError; `_prepare_managed_workspace` must propagate not-READY, not log+continue.
+After workspace commit, later session/DB failure preserves registered bytes and blocks; manager's
+finally/cleanup must NEVER rmtree a supervisor-owned workspace. Only uncommitted owned scratch is
+eligible for cleanup. Missing remote/network/credential-dependent clone support is an explicit
+compatibility BLOCKED disposition, not a host Git exception. Existing workspace references avoid
+re-running clone/remotes/hooks. Corrupt legacy bindings block; old run-ID reservations remain.
+
+Reader grants stay valid against their pinned revision despite later generations; they cannot
+write/publish or open a PROJECT view. Read-only verification may write only its private scratch.
+Write grants require current generation AND current active actor. Handoff invalidates parent's
+mutating grant server-side after drain/publication, not merely a thread-local flag; never reactivate
+the old token on return, even if the tree did not change. Recheck grants at launch after queueing; already queued
+requests cannot run late. Child return settles committed/unknown state before fresh parent view;
+use SessionState internal execution binding, not captured legacy workspace paths as authorization.
 
 ## 5. Seal and publication — three different irreversible operations
 
@@ -275,6 +413,54 @@ Its own durable intent precedes install; recovery after a completed rename incor
 bundle into the published revision/projection forward before new mutation/parent refresh. A generic
 PREPARED/old-current cleanup must never delete a successfully installed bootstrap directory.
 
+Candidate grants are not ordinary project writes: existing PlannerDispatch logical candidate path
+may remain `.fa/admission/...` for v1 compatibility, but bytes live in supervisor-owned staging,
+NOT canonical .fa/admission or a cell/control mount. Internal binding carries source READ grant plus
+one CANDIDATE grant; generic tools deny control paths, scoped candidate tools route only exact
+candidate_path to its buffer. `candidate_scope.plan_ref` is the pinned v1 PlanRef with source hash.
+On seal, validate bounded buffer with existing pure I02 validators; publish of CANDIDATE uses PLAN
+intent at the scoped canonical PlanRef path, never imports a candidate directory. Parent/model cannot
+choose a promotion destination. Q68 tool failures remain authoritative for the attempt.
+
+`prepare_bundle` is the missing upload/validation handoff: controller supplies its rendered bounded
+roadmap/increment bytes; supervisor renders fixed ledger header, independently validates metadata/
+paths/hashes/caps and mints validated_bundle_id privately. It is bound to namespace/root generation/
+expected base. install_project uses that exact stored bundle and CAS base, no caller-provided ID
+without a producer. OWNER grant and view_ref=null are required for prepare/install, with all project
+writers settled. On collision do not overwrite or mutate the existing project; on post-install
+uncertainty retain it and forward-recover. Ordinary grant creation/read/pin cannot publish buffers.
+
+### 5.1. Exact recovery discriminator, not a generic transaction framework
+
+`intent.json` v1 keys: `{schema_version:1,kind,operation_id,workspace_id,generation,base_revision,
+next_revision,tree_sha256,phase,target_relative,old_sha256,new_sha256}`. kind REVISION/PLAN/BOOTSTRAP;
+phase PREPARED/COMMITTED/PROJECTING/DONE. REVISION has target_relative/old_sha256/new_sha256 null;
+PLAN has exact canonical PlanRef path and old/new plan hashes; BOOTSTRAP has canonical project
+relative path, old_sha256 null and new_sha256 bundle-manifest hash. Unknown keys/phase/hash mismatch
+quarantine. current.json exactly `{schema_version:1,workspace_id,generation,revision_id,tree_sha256}`.
+Revisions/intent are protected supervisor state, never cell/model-authored control files.
+
+| Kind | Irreversible point / recovery when current still old |
+| --- | --- |
+| REVISION | durable current pointer commit; PREPARED+old pointer can discard owned uncommitted scratch only; never canonical projection before commit |
+| PLAN | same-path validated buffer replacement, NOT pointer commit; PREPARED must inspect exact canonical hash: old→no commit, new→complete new revision/current/projection forward, neither→quarantine; never rollback a replaced plan |
+| BOOTSTRAP | RENAME_NOREPLACE of rendered directory; PREPARED must inspect installed directory's full approved manifest/hash: absent→no commit, exact new→finish revision/current forward, conflicting→quarantine; never delete installed bundle |
+
+Prepare and fsync complete Rnext plus intent BEFORE any PLAN/BOOTSTRAP replace/install. After their
+irreversible point, fsync directory, complete current/projection/DONE forward, then acknowledge.
+Missing COMMITTED phase write is not evidence that replacement did not happen. No next writer on
+uncertainty; inspect the SAME operation. Fault matrix for EACH kind: before intent; after intent;
+after irreversible syscall before fsync; after fsync before phase update; current replace; midway
+projection; after DONE before reply; artifact append failure; supervisor kill/restart at each point.
+Include ENOSPC, EIO and unsupported file/directory fsync. Process-kill tests are not power-loss proof.
+
+Manifest is the complete approved-source tree; excluded environment/cache/.git/controller/credential
+paths are not deletion tombstones and survive projection. Reject deletion/rename/type substitution
+of ANY ancestor containing protected/excluded canonical bytes. Preserve canonical .git/index and
+unrelated sentinels bitwise, while ordinary allowed deletions/mode changes publish. Tree hash covers
+only the approved source domain. Paths sorted UTF-8, directories size0, symlink size UTF-8 byte length;
+all privilege bits rejected. Rooted no-follow import never follows a cell-provided path or link.
+
 ## 6. Whole execution inventory and verification binding
 
 Mandatory boundary covers **every** project-code entry, not only workflow coder tools:
@@ -332,16 +518,91 @@ Do not change Q53(c) slice attribution or add an unapproved clean-control/per-co
 Binding proves which supervised operation/tree produced captured evidence; it is **not** a claim
 that hostile project pytest hooks cannot forge their own report or that tests prove correctness.
 No L2 VERIFIED or cryptographic test attestation is delivered. Q55 real eval/Q56 precedence/T0
-compatibility from I02 remain; hard integrity/publication failures cannot finish DONE in either mode.
+compatibility from I02 remain, including Q73 missing/indeterminate completion blocking in BOTH modes
+with determinate observe advisory and actual negative eval precedence. Hard integrity/publication
+failures cannot finish DONE in either mode.
 If coder succeeded but sealing/publication fails, still attempt real eval on last known candidate
 with explicit uncertainty (read-only/quarantined data only), then nonzero; never execute project
 code from a nonterminal writable view. If no safe view/deadline exists, record unsuccessful eval
 unavailability; do not fake a report or release a writer while descendants remain.
 
+### 6.1. Stage/verification transitions — Q74 exact proposal, not yet ratified
+
+Proposed compatibility policy: checkpoint permitted source edits at EACH mutating episode/stage
+boundary after stop/seal/security validation, even if provider/stage/functional judgment fails.
+A failed workflow is not a rollback transaction; existing I02 already leaves ordinary file edits.
+Q58 remains separately validated plan replacement. Operator may instead choose workflow-end-only
+publication; that requires distinct unpublished source vs publication-base fields and failed-candidate
+retention before coding. Do NOT guess or silently mix the two. SLICE3/4 await Q74 disposition.
+
+For proposed checkpoint policy, use this single state transition table (no reopening SEALED views):
+
+| Transition | Required action / next source |
+| --- | --- |
+| start / initial planner | acquire one workflow owner; admitted R0 pins input; ordinary planner read-only; scoped candidate capability remains distinct |
+| T0 | one managed noninteractive read-only-source job on admitted R0; genuine red/empty baseline remains allowed; errors block before coder; preserve T0 bytes through repair/replan |
+| coder or chat mutating episode ends | drain file handlers, stop all cells/PTY descendants; seal immutable candidate; security-valid source checkpoint→Rn/current/projection before next episode; functional PASS is NOT a publication prerequisite |
+| stage nonzero/interrupt | same bounded stop/seal attempt; allowed terminal edits may checkpoint, stage remains failed; unknown/live/quarantined view cannot publish or release |
+| verify / eval | separate READ source Rn with disposable scratch; real eval receives Rn/PlanRef and exact attempt evidence; never read changing OPEN source or stale parent root |
+| repair/repeated coder | allocate NEW OPEN view from authoritative Rn after prior publication; old PTY sessions do not resume across stage/view boundaries |
+| planner plan revision | buffer-only candidate, shared admission validation, same-path Q58 commit through authority; new Rplan pins updated plan; T0 reuse only with exact unchanged slice→TESTS topology |
+| terminal workflow / child return | settle all jobs/intent and persist result; failed result never becomes DONE because bytes checkpointed; parent opens a new view at actual committed current |
+
+Verification v1 supports read-only source: fixed cell-local environment supplies PYTHONDONTWRITEBYTECODE,
+pytest cache/basetemp and coverage/report paths under `/scratch`, and approved read-only dependency
+venv/toolchain. Never run uv sync against excluded project .venv by accident. Dependency fingerprint
+includes pyproject/lock/toolchain/profile; provisioning on a private writable copy builds a separate
+environment, not a source revision. In-place build/test requirements need a reviewed scratch mapping;
+unsupported source-writing verify commands fail explicitly, not silently switch to writable source
+or host fallback. Test these compatibility cases BEFORE choosing the main-host E2E target project.
+
+Use ONE sidecar `execution.json` v1 in the existing private run directory; retain existing I02
+admission/T0/verification formats/readers rather than add arbitrary fields to closed v1 schemas.
+Sidecar keys `{schema_version:1,run_id,workspace_id,records}`. Each record exactly `{kind,artifact_sha256,
+plan_sha256,revision_id,original_revision_id,tree_sha256,operation_ids}`; kind T0/STAGE/VERIFY/KILL,
+SHA fields64hex, operation_ids nonempty unique supervisor IDs, immutable record order. Full sanitized
+receipts are read by ID from private supervisor evidence, not cell paths; no capabilities recorded.
+Persist the artifact then link/hash durably before accepting it. New managed consumers require a
+matching sidecar+receipt; legacy v1 remains readable as LEGACY, never accepted as bound managed proof.
+A crash between artifact/link is indeterminate, not a reason to recapture T0 or dispatch coder.
+T0 binds its initial revision/plan; permitted later plan revisions use validated admission lineage
+and unchanged topology, NOT a false requirement that original T0 SHA equal latest plan SHA.
+
+Extend existing junit_nodeid_plugin/parser with bounded per-test setup/call/teardown outcomes and
+collection/runner error facts; keep the old boolean nodeid projection for T0. Kill PROVEN requires
+fresh expected run+operation+source binding, actual normal pytest exit1, at least one CALL-phase test
+failure, zero collection/setup/teardown/runner errors and zero skip-only proof. Exit2–5, malformed/
+missing/duplicate/stale/oversize report, timeout, wrong mutant/base or failed import probe is ERROR.
+Do not classify a setup failure as a producer kill. Test actual report fixtures for every phase.
+Mutation source derivative is immutable before project execution, retains original-base+PlanRef
+binding and never modifies tests or canonical current. Every declared TESTS path still executes.
+
+Explicit plumbing, not ambient path inference: add frozen internal ExecutionBinding (namespace,
+owner/view/source identities, client reference; no token fields) to WorkflowContext and SessionState.
+ExecutionClient alone caches raw grants in private memory and selects them for the typed operation;
+never serialize its cache/object as a tool result. Forward binding explicitly through run_commands,
+capture_test_nodeids, verify_plan/verify_slice, _run_one and _run_kill_check; executor threads must
+not assume ContextVar propagation. Missing binding in a production/library execution call returns
+ERROR/BACKEND_UNAVAILABLE, never the legacy host runner. Pure parser calls remain independent.
+`_run_managed_command` receives command + binding + timeout/deadline; `_validate_bound_pytest_report`
+receives expected stage checkpoint/source/PlanRef plus actual receipt/report, rejecting a merely
+self-consistent replay from another revision. StageResult links the completed checkpoint/operations;
+legacy bare Path is display identity, not an execution capability.
+
+Whole-stage integration seam: keep `_cmd_run` public args/transport/secrets/outcome_sink/planner_dispatch
+signature; validate pure inputs first, call `run_stage_with_plan_write_boundary` with `_cmd_run_inner`
+as body and trusted internal execution binding. Inner prologue uses managed SessionManager provisioner,
+managed registry/executor and rooted IO; do not recursively call `_cmd_run` from its wrapper. Preserve
+outcome_sink/global aggregate semantics and planner dispatch capability. Wrap entrypoint/manager
+provisioning separately because it can precede `_cmd_run`. Failure before first project instruction
+must execute zero project commands. Add StageResult source-revision/operation links internally (not
+model JSON); stop/seal/checkpoint at the controller stage choke point before verifier/eval/repair.
+
 ## 7. Nested acquisition and Q66 — exact proposal, Q59/Q60 still OPEN
 
 Use real outer drive_session → actual invoke handler → `_run_planner_managed_workflow` → child
-run_workflow → `_cmd_run` → drive_session. Child uses SessionManager.begin_run in the same session
+run_workflow → `_cmd_run` → drive_session. Reuse the CURRENT workflow_tool._child_run_context (already calls SessionManager.begin_run);
+do not allocate the child twice or recreate the old parent-context defect. Child uses the same session
 DB, with **new** RunContext/run_log_dir and parent link in execution/event metadata, never parent's
 artifact directory. Claim before child artifacts/provider. Parent stays synchronous: close/drain its file commands, stop all parent cell writers, seal and
 publish any allowed pending parent edits before child snapshot. Keep the root writer/generation;
@@ -434,6 +695,48 @@ do not globally enable debug bodies or design anti-persistence machinery. Retry/
 contain ≤8 KiB distilled state/diagnostics/latest draft reference, not the original parent packet.
 Prove a unique parent-only fact reaches initial planner and does not recur in repair/replan.
 
+### 7.1. Acquisition source/data handoffs (Q59/Q60 proposal remains conditional)
+
+Reuse `_child_run_context`; NamespaceRef parent_run_id is controller-attested after actual begin_run.
+Reserve invocation count/child ID once before first provider; retries keep identity and shared budget.
+Use real SessionOutcome.final_text for strict managed-choice parsing, not a new temporary plan path
+or ordinary chat tool output. A managed acquisition planner uses read/search plus its approved
+choice response; it cannot write a canonical bootstrap directory via generic file tools. Q68 failed
+publication-tool outcomes still invalidate scoped repair; recovered read/search does not.
+
+Q59 proposed explicit `fa run --role chat --require-workflow`: ordinary default stays advisory.
+Reject this flag for non-chat before allocation. Router-only registry must stay read/context/invoke
+through every dynamic expansion/rebuild; no shell/write/edit/Git/subagent escape. Harness success
+requires an observed coder-bearing managed child with admitted PlanRef, actual eval, DONE and exit0;
+a final model sentence, planner/eval-only delegation, blocked choice or merely attempted invocation
+cannot fulfill it. Otherwise return nonzero workflow_required_unfulfilled/clarification, preserving
+child artifacts. This guarantee and flag still require operator disposition, not automatic adoption.
+
+Freeze literal rendering fixtures before implementing renderer: project directory
+`worklogs/<project_slug>/`, roadmap.md, ledger.md, `increments/increment-01-<increment_slug>.md`.
+Controller owns frontmatter: Roadmap-ID `RM-<project_slug>`, Increment-ID `RM-<project_slug>-I01`,
+roadmap created=UTC date/status IN PROGRESS/active-increment I01; increment status IN PROGRESS,
+slices=actual extracted count, shipped=—. ledger is fixed heading only, no model E# rows.
+The proposed roadmap_body is Intent/Out-of-scope prose ONLY with those exact two headings; controller
+renders Artifact schema and Increments table/link. increment_body is validated slice grammar, no
+frontmatter, no duplicate increment/roadmap/status metadata or lifecycle claims. Reject disguised
+metadata outside code fences using the same parser, not substring deletion. Preserve literal code
+examples inside fences. No free-form model path/file map. Build all bytes and both validators before
+new-project install; invalid acquisition blocks, while acquired existing PlanRef still uses shared
+bounded I02 repair. Stable selection validates declared roadmap linkage AND active-increment/status;
+matching a filename/IN PROGRESS alone is insufficient. Multiple active matches clarify, never guess.
+
+Q66 requires one explicit loop handoff: coder_loop's live conversation_history is LOCAL, absent from
+SessionState. Supply a controller-owned current-message snapshot callback at the pre-tool-dispatch
+boundary after compaction; `_make_workflow_ctx_provider` consumes that snapshot at invocation, not
+registry construction or replaying parent DB as child history. Copy bounded user/assistant/tool DATA,
+no parent system/tools/auth headers, preserve current goal/constraints and label tool content untrusted.
+Initial planner dispatch consumes the packet ONCE using existing PlannerDispatch phase; subsequent
+repair/replan tasks use distilled state, even though WorkflowContext.task_for('planner') normally
+reuses the same override. SecretRedactor applies before crossing chain and ordinary logs remain. If the managed coder path
+has no live snapshot, return needs-clarification before planner; do not claim Q66 from a goal-only
+fallback. Preserve legacy non-coder delegation rather than blocking all nested requests.
+
 ## 8. Tests and mutation policy
 
 Local unit/model tests may fake the UDS transport to classify errors; they do not certify kernel
@@ -443,7 +746,12 @@ sets FA_REQUIRE_EXECUTION_HOST=1; absent Docker/cgroup/profile becomes test fail
 Default no-host unit suite may skip host tests but is not the release gate. Cleanup is bounded,
 checks cgroup terminality, and never deletes live user roots. No privileged broad host probes.
 
-Core local C1 must use actual supervisor/cells and mock only ProviderChain.request. Assert useful
+Core local C1 must use actual supervisor/cells and mock only ProviderChain.request.
+Adapt existing workflow_fixtures/_ct91_public and CLI lifecycle fixtures to the new registered view
+authority; ordinary tests may fake transport only when labeled unit/C0, never silently demote the
+existing C1 bank. Mark real-kernel fixtures individually, not the whole mixed C0/C1 public module.
+Default no-host skips are explicit and do not discharge any required release/kill proof. Include
+existing SessionManager/nested/deadline/history/runner regressions in their owning TESTS paths. Assert useful
 persisted receipts/artifacts and host sentinels, not only a helper returning true. Full-path producer
 kills retain Q53(c), source restoration and cost; newly planned producer paths must exist before
 reporting any kill. CT96/CT97 retain their original stage/handler kill identities. Additional CTs
@@ -495,3 +803,44 @@ backend/admission/integrity floor remains mandatory in both. Record unique run I
 exit/effect/artifact paths, profile/kernel/daemon/FS facts, bounded redacted evidence. Local green,
 all-skipped, NOT RUN, blocked or unobservable never counts as PASS. Full I03 SHIPPED requires all
 required unique producer cases reviewed PASS, no unresolved blocked case or policy/deployment gate.
+
+
+### 9.1. Minimum live workflow witness and acceptance execution order
+
+Required in addition to all producer-specific controlled cases:
+
+1. An authorized deployed explicit-plan planner→coder→eval happy path with production ProviderChain
+   and real configured providers: meaningful source edit, a test exercising the edit, actual T0,
+   verification, eval report, terminal DONE/exit0 and sealed/published source identity.
+2. An authorized deployed outer chat→actual invoke_workflow→managed SELECT_EXISTING child on a
+   disposable registered workspace, also with real providers (including outer chat). Prior parent
+   constraint reaches first planner, child namespaces differ, actual coder/eval and parent refresh
+   are observed. No invocation means NOT a successful witness, even if chat says it completed.
+3. Controlled deployed BOOTSTRAP_NEW_PROJECT, clarification, failure/repair, concurrency, no-replay,
+   isolation and recovery cases retain useful artifact/host-sentinel oracles; provider stubs may be
+   used ONLY when explicitly labeled provider_mode=CONTROLLED. At least the two witnesses above
+   are provider_mode=REAL: no ProviderChain/transport/stage/supervisor mock, transcript replay or
+   injected success. Record resolved role/model family/config identities and disjoint eval policy,
+   budgets, actual calls and redacted usage. This is not an LLM-quality/calibration benchmark.
+
+Final SLICE6 order: freeze oracle/case index and Q63 schema → source-backed handoff → independent
+manual review → implement FINAL e2e/I03 helpers → review actual helper diff/commands → run local
+conformance/release checks and all accumulated kernel/mutation checks → maintenance/deploy approval
+→ quiesce/back up immutable old image/config/state references → install/update → verify actual
+SHA/wheel/image/profile/mount/UDS health → reviewed observe runs → operator review → enforce runs
+→ independent evidence judgments and integrated signoff. Q73/backend floors apply even in observe.
+No planned/controlled/local-only witness is automatically a REAL/live PASS.
+
+Main host is NOT a staging host. Test supervisor authority/labels/approved roots are disposable and
+disjoint from live workspaces/secrets/daemon-management paths; mutation of authorization/publication
+producers may not gain access to real user roots. Trusted operator-reviewed test drivers/setup are
+TCB test code, not permission to run arbitrary project pytest/conftest in controller. Project tests
+still run only in cells; main-host fixture commands stay outside default discovery and require
+explicit approval. Local tests/integration are not the final e2e/I03 helper package. No host run in
+this plan review. Unavailable host/profile/cache/provider or safety prerequisites keep acceptance open.
+
+Cutover rollback is NOT workspace rollback: before irreversible commits, restore the known old
+image/config only if it can interpret new state safely; after any new-format state/publication,
+stop/quarantine and forward-recover with compatible supervisor. Never auto-downgrade, erase new
+intent/admission v2, delete committed bundles or restart legacy writable controllers. Maintain a
+source/image/config/state-format compatibility record and recovery command sheet before cutover.
