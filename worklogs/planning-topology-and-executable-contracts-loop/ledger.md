@@ -2662,3 +2662,18 @@ E231  I03 PLAN FINALIZED AFTER OPERATOR ANSWERS  2026-10-16;frozen review inputf
     deployment change,implementation tick or live PASS. I03 OUTLINED/unimplemented;allfour final
     transferred acceptance duties incomplete. Ready for authorized implementation,not deployment;
     live whole-plan direct+nested target remains distinct from deferred slice-loop/tracker/L2.
+
+E232  I03 IMPLEMENTATION START — PARTIAL SLICE1/CT98  2026-10-16;operator-authorized.
+    New installed controller_entry with real main guard, pre-site -I -S install audit and runtime
+    isolated-origin admission before CLI; existing fa.cli.main reused. F16 launch/build gap and
+    F15 owning TESTS; no wrapper/image/production activation yet. New30C0/C2/C3 tests build/install
+    real noneditable wheel offline from existing uv.lock; source/wheel byte binding. Malformed JSON,
+    nested-customizer and deep-package-symlink gaps found/fixed; no unresolved policy choice.
+    Actual30PASS;new+existing entrypoint/parser/skill174PASS6.79s;RuffPASS/format2unchanged;
+    targetedMypy2PASS/sourceMypy170PASS. Python3.13.16 test-only build/SSL/SQLite/zlib repaired in
+    external cache;earlier pre-collection/fixture/static errors not kills or inherited waivers.
+    Six developmental mutations,ALL30tests each: CALL failures4/17/5/4/1/2,exit1/zeroerrors/zeroskips;
+    baseline/restored30PASS/sourcehash exact. Lossless notes/evidence/i03-e232/controller-entry.json.gz.
+    NOT normative full-SLICE1 CT98PROVEN:remaining declared test paths/cells/launch integration absent.
+    No STEP tick,CT/READY/SHIPPED/live result. All35STEPS and four final acceptance duties incomplete.
+    Existing production paths still unsafe until full boundary/cutover;no Docker/main-host run.

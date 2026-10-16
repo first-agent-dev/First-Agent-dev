@@ -263,3 +263,78 @@ Python3.11/no uv/pytest/Docker: no supported-runtime suite, kernel/isolation/mut
 run; no live result assigned. Environment/toolchain/host/profile approval, source declarations and
 actual per-slice construction/proof, independent final helper/evidence review, authorized normal
 main update and unmocked direct+nested witnesses remain required implementation/release work.
+
+## E232 — I03 implementation starts: installed-entry/audit chunk, 2026-10-16
+
+**Authority/scope:** operator explicitly authorizes careful implementation. No blocking policy
+question surfaced in this chunk; Q59/Q60/Q63/Q74 remain resolved. Contract CT98, review gap F16
+(immutable install/launch/cutover), owning TESTS adjustment F15. Not SLICE1 completion: protocol,
+supervisor/cells and all launcher/image/cutover changes remain absent. No STEP tick/status change.
+
+**Source before edit:** cli.py ends with a callable main but no module main guard; scripts/fa:59
+injects repository PYTHONPATH for help; fa-entrypoint.sh:237 injects workspace src; Dockerfile.fa:97
+uv sync lacks --no-editable. These production paths are intentionally UNCHANGED in this chunk.
+
+**Implemented idea/mechanism:** new src/fa/controller_entry.py:33–119 provides bounded install-data
+audit, no dependency/project import; `-I -S <trusted-entry-file> --check-install <absolute-venv>`
+is the pre-site build check. Deny executable/editable/external .pth, egg-link, root/nested startup
+customization, external package symlinks, ambiguous/system site config and editable metadata.
+Internal .pth directories are permitted; ZIP/file .pth import layouts are unsupported under the
+selected unpacked-wheel profile, not silently trusted. Runtime :122–150 requires isolated Linux
+Python>=3.13 in a closed venv, installed entry origin, approved stdlib/venv path and loaded module/
+namespace origins. :153–173 is a REAL main guard/dispatcher, checks closure before CLI import,
+sets trusted venv CWD and invokes existing fa.cli.main. Sanitize audit failures to exit78 and one
+fixed error; no fallback. Immutable frozen image and pre-site audit remain the trust root: late
+runtime assertions CANNOT undo Python startup code. This does not sandbox project execution yet.
+
+**Tests-writing:** C0 strict install-data/loaded-origin tests; C2 actual noneditable wheel build,
+locked offline install and real CLI help; C3 cwd/PYTHONPATH/user-site poison, unsafe launch, nested
+customizer/deep symlink/loaded-origin faults. Wheel/source bytes explicitly equal in fixture. No
+provider mock/helper returning success substitutes for CLI execution. Fake install DATA fixtures
+are C0/C3 only, never claimed runnable product environments. No final live fixtures added early.
+
+**Actual checks:** Python3.13.16 local source build (SSL/SQLite/zlib verified, other optional modules
+not all present; not deployment readiness). New tests30PASS; broader new+entrypoint+plan/parser/
+skill suites174PASS in6.79s. Ruff check PASS; Ruff format2files unchanged; strict targeted Mypy
+2filesPASS; source-tree Mypy170filesPASS. Earlier attempted runs had environment/pre-collection
+errors, then19PASS/4 offline fixture setup errors and static findings; all fixed, not accepted as
+inherited, skipped or counted as kills. Toolchain/caches/binaries stay outside Git.
+
+**Developmental mutation evidence (NOT normative CT98 PROVEN):**
+[lossless command/log/JUnit/hash bundle](evidence/i03-e232/controller-entry.json.gz). Entire new
+30-test path runs for baseline, EVERY mutation, restored baseline. Each mutant exits1 with actual
+CALL assertion failures, no setup/collection/runner errors, no skips; source restored hash exact.
+
+| Removed mechanism | CALL failures / cases |
+| --- | --- |
+| _main → _assert_controller_import_closure (declared CT98 producer) | 4 /30 |
+| _assert_installation → _audit_site | 17 /30 |
+| _audit_pth unsafe import/external-path guard | 5 /30 |
+| _audit_site → _audit_customization | 4 /30 |
+| _audit_site deep external-symlink guard | 1 /30 |
+| _assert_controller_import_closure → _assert_loaded_origins | 2 /30 |
+
+Baseline/restored each exit0/30PASS. No equivalents accepted, no suppression/test narrowing.
+The FULL declared SLICE1 TESTS also include still-unimplemented supervisor/boundary paths, so no
+full-slice kill is claimed; do not assign CT98 IMPLEMENTED/VERIFIED or STEP1 complete from this.
+
+**Final live-case planning (not implemented/executed):** preserve CT98 producer lineage and add
+case rows in the reviewed SLICE6 package for image build/install, host wrapper help/delegation,
+compose-exec, entrypoint auto-run and session launches. On approved disposable/main hosts, prove
+actual immutable package/dependency origins and trusted CWD with poisoned project src/PYTHONPATH/
+user site; pre-site executable-pth rejection must leave a host sentinel absent. Verify real frozen
+noneditable image, read-only controller code, no legacy editable startup, exact deployed SHA/image/
+config/artifacts. Run/session project behavior additionally requires SLICE1–4 supervised boundary:
+backend-down must execute zero project instructions; no premature host run to test this entry alone.
+Independent final fixture/oracle design review precedes new e2e/I03 helpers, review actual helper
+code again before main-host use; real-provider direct+nested final witnesses and allfour transferred
+acceptance duties remain incomplete. Existing live-result schema/READY/I01 remain unchanged.
+
+**Next bounded implementation:** frozen protocol/types/strict profile contracts plus continued CT98
+image/wrapper/entrypoint/bootstrap inventory/cutover in dependency order. Re-declare exact scope and
+source behavior before editing; no production activation until SLICE1–4 closure and authorization.
+
+Final actual planning guards: extractor/precheck/kill grammar0FAIL/6retainedWARN; unchanged6slices/
+17FUNCTIONAL/35uncheckedSTEPS, current CT98 producer call exists EXACTLY once. Evidence8runs/source/
+tests/uv.lock hashes validated. Doc links309filesPASS; staged diff/whitespace inspected clean.
+CI uses setup-uv + uv sync --locked --extra dev, matching offline installed-fixture prerequisites.

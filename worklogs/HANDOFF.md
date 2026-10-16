@@ -3,10 +3,11 @@
 > Read [`knowledge/llms.txt`](../knowledge/llms.txt) §MUST READ FIRST.
 > Current local delivery is distinct from final I03/deployed acceptance.
 
-## Current state — I02 LOCAL SHIPPED / I03 E2E PENDING, 2026-10-16 / E229
+## Current state — I02 LOCAL SHIPPED / I03 IMPLEMENTATION IN PROGRESS, 2026-10-16 / E232
 
-Branch `arena/86633f17-first-agent-dev` only. Runtime/test proof snapshot
-`a32a72fc58db4b9a5b048a9b6475649bcf3e32b4`; later closeout edits are documentation/evidence.
+Branch `arena/86633f17-first-agent-dev` only. Retained I02 runtime/test proof snapshot
+`a32a72fc58db4b9a5b048a9b6475649bcf3e32b4`. E230/E231 finalized planning; E232 adds the first
+I03 source/test chunk described below. Retained I02 implementations/evidence remain unchanged.
 I02 is **locally implemented and diff-reviewed, pending E2E tests as I03 ships**.
 Read the [final local record](planning-topology-and-executable-contracts-loop/notes/i02-local-acceptance.md),
 [retained plan](planning-topology-and-executable-contracts-loop/increments/increment-02-verify-gate-and-kill-checks.md)
@@ -40,31 +41,38 @@ Ubuntu host test,OS isolation,managed nested acquisition or host supervisor deli
 only;Go is an indirect inherited hook-build diagnosis,not a new FA runtime/deployment requirement.
 PTY stays. Q69–Q73 resolved;Q72 remains its narrow46-links/15-files+banner repair decision.
 
-**E230/E231 current action — I03 PLAN FINALIZED, runtime NOT STARTED:** adversarial review updated
-six-slice plan/spec/inventory directly and found16 source-backed gaps. Operator answered Q59/Q60/
-Q63/Q74: advisory/manual + EXISTING experimental mid-chat suggestion, no required mode; verify/reuse
-current surfaces then delegated robust design; exactly four result states with optional commentary
-on each/no hardcoded reason variants; per-stage/episode checkpoints even on safely sealed failed
-stages. Question tracker/schema/roadmap now reconcile those answers. Spec §7.0 records actual
-child allocator/PlannerDispatch/SessionOutcome/admission/repair/pr_prepare joins; no second engine,
-no invented acquisition producer or false selected-plan promotion. Historical proposals superseded.
-All35STEPS remain unchecked,17FUNCTIONAL IDs/classes and CT96/97 lineage retained; CT108 reuses
-_child_run_context. I03 stays OUTLINED/unimplemented and allfour transferred acceptance duties remain
-unfinished. Scope reaches live CURRENT whole-plan direct+nested workflows, not deferred slice-loop/
-tracker/L2. Preserve active I01 and I04–I06. No runtime/test/deployment change or live PASS assigned.
+**E232 current action — I03 IMPLEMENTATION STARTED, PARTIAL SLICE1/CT98:** operator authorized
+careful source-declared, tested/mutated implementation. No blocking new policy question in this
+chunk. New src/fa/controller_entry.py implements real CLI entry, pre-site -I -S install audit and
+isolated runtime import-closure gate. Actual fa.cli.main reused; source/wheel byte binding in new
+tests/test_controller_entry.py. Covers part of F16/F15. Existing wrappers/entrypoint/Docker image/
+bootstrap/session launch paths are UNCHANGED and not safe managed execution yet. No activation.
+No STEP/CT/READY tick,all35STEPS still unchecked;I03 remains OUTLINED with implementation in progress.
 
-E231 planning validation: actual-source stdlib parser/precheck/kill leaf0FAIL/6retainedWARN,
-6slices17FUNCTIONAL35uncheckedSTEPS;inventory AST ranges valid;308doclinksPASS;diffclean. Runtime/
-tests/scripts/knowledge/deployment unchanged versus1132eee. These are planning checks, not runtime proof.
+Actual checks:30new testsPASS;new+existing entrypoint/parser/skill174PASS6.79s;RuffPASS/format2unchanged;
+targetedMypy2filesPASS;sourceMypy170filesPASS. Six developmental full-new-module mutations each
+execute30tests,exit1 with CALL failures4/17/5/4/1/2,zeroerrors/skip;baseline/restored30PASS/sourcehash
+exact. Lossless evidence notes/evidence/i03-e232/controller-entry.json.gz under this roadmap.
+NOT normative full-SLICE1 CT98 PROVEN: other declared supervisor/boundary paths remain unimplemented.
+Toolchain in /home/user/.cache/i03-impl: uv tools and locally source-built Python3.13.16,SSL/SQLite/
+zlib verified; .venv from uv sync --frozen --extra dev. Other optional stdlib modules absent; not
+full runtime/deployment readiness. Docker unavailable. Earlier environment/fixture/static errors
+were repaired,not kills/waivers. Cache/toolchain paths excluded from persisted snapshots.
 
-Next only with implementation authorization: follow SLICE1→6 (A/B/C/E/D/F), declare each mechanism/
-failure/DoD/test class/kill target before editing source, then targeted/static/diff/results and
-major-chunk mutations. Host prerequisites still require actual Ubuntu/Docker/profile/cgroup/UID/
-mount/UDS/import proof and maintenance authorization; early disposable host tests ≠ final main-host
-E2E. STEP7 independent oracle/helper design review precedes final fixtures; actual helpers reviewed
-again before main-host execution. Existing just-check red/readiness and historical Mypy disposition
-remain real SLICE6 obligations, not waived. Current Python3.11/no uv/pytest/Docker cannot execute
-supported>=3.13/runtime/security suites; stdlib planning checks are not substitutes.
+Next: continue bounded SLICE1 protocol/profile/type contracts and CT98 frozen noneditable image/
+wrapper/entrypoint/bootstrap cutover; source/allowed-file/mechanism/failure/DoD/class/kill declaration
+before EVERY chunk. Keep mandatory execution behind SLICE1–4 complete boundary; do not deploy a
+partly isolated product. Main-host profile/UID/cgroup/mount/UDS/image facts and maintenance consent
+still required. STEP7 independent final oracle/helper design review precedes final fixtures; actual
+helper code reviewed again before main-host use. Record live-case matrix for image/wrapper/help/
+auto-run/session imports and backend-down zero project execution; no premature live tests now.
+
+E231 decisions remain:Q59advisory/manual+EXISTING experimental suggestion/no required mode;
+Q60verified reuse/ONE workflow-admission-repair machine;Q63fourstates/optional commentary/no reason
+enum;Q74per-stage safe checkpoints including failure/no rollback. Preserve Q66/Q67/Q68/Q69/Q70/Q73.
+Scope remains CURRENT whole-plan direct+nested E2E,not deferred slice-loop/tracker/L2. Active I01/
+I04–I06 unchanged. Allfour transferred acceptance duties remain unfinished,including actual red
+readiness/just-check and historical Mypy-context disposition; no live PASS or broad review assigned.
 
 Older S18/doc-hygiene notes below are historical,not current I02/I03 action items.
 
