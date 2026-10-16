@@ -1,7 +1,7 @@
-# I02 local acceptance record — PENDING DIFF REVIEW / NOT ACCEPTED
+# I02 local acceptance record — DIFF REVIEW IN PROGRESS / NOT ACCEPTED
 
-2026-10-16, current closeout scope E223. I02 remains IN PROGRESS. Local proof exists, but the
-plan-versus-diff review has not been started by this documentation update. No SHIPPED,
+2026-10-16, current closeout scope E223; authorized source review checkpoint E224. I02 remains
+IN PROGRESS. The actual plan-versus-diff review is underway; refreshed closeout proof is pending. No SHIPPED,
 deployed-host, OS-isolation or I03 completion claim. Q69–Q72 remain resolved.
 
 ## E223 — operator-approved local closeout and final I03 acceptance ownership
@@ -25,8 +25,32 @@ operator/broad-review gates now transferred to I03. No Go provisioning or deploy
 I02 local shipping prerequisite. Keep actual red/unknown outcomes below for final I03 review.
 Historical ledger entries and original compressed proof artifacts are not rewritten.
 
-**Next action is paused:** push this documentation change, then wait for the operator's next
-command before any plan-versus-diff review or code tweak. The local record is not finalized.
+**E224 next command received:** the operator authorized adversarial review, fixes and refreshed
+local proof. The E223 wait is satisfied; review is now underway, not yet finalized.
+
+## E224 — actual diff-review regression checkpoint (in progress)
+
+Reviewed core admission/request/schema/repair/promotion/T0/eval control flow against the retained
+specification and available d9109f4 baseline. Two reproducible failure-path gaps were found:
+
+- Unguarded flow-state IO escaped the public API and could suppress required post-coder eval.
+  A typed private flow-persistence boundary now distinguishes storage from provider exceptions;
+  pre-coder faults stop, eval transition faults retain the integrity floor but run actual eval,
+  and terminal faults return nonzero with a best-effort FAILED receipt. Recovery returns only
+  its successfully persisted receipt, never a stale FAILED/CODING/DONE file.
+- Entry-only deadline checks allowed T0/eval-evidence preparation to consume the deadline and
+  still dispatch a new stage. Recheck immediately at the provider dispatch boundary; retain124,
+  actual-not-executed semantics and no fabricated eval report.
+
+Regressions were added before source fixes:22/22 failed for the intended two mechanisms on
+pre-fix code, then22 passed. Four additional stale-receipt cases initially had a test-authoring
+AttributeError (diagnostic, not proof); corrected cases then4/4 failed on stale recovery before
+that fix. Final focused set26passed24.28s. Intermediate full public bank509passed126.28s before
+adding those four cases; it is not the final513-case proof. Ruff passes after formatting and
+factoring stage announcement/task assembly; no new waiver/dependency/schema/framework.
+[Checkpoint evidence](evidence/i02-e224/manifest.json) preserves raw logs losslessly, including
+that rejected test-authoring run. Full checks and affected SLICE6 mutation refresh are pending.
+No local closeout, SHIPPED, deployed Ubuntu/Docker or I03 acceptance claim yet.
 
 ## Version, durable evidence and scope
 

@@ -2549,3 +2549,16 @@ E223  DECIDED / SCOPE MIGRATION  Operator explicitly approves moving to final I0
     passed1.30s;13 claim/ownership checks passed0.43s;309Markdown files no broken links;
     both plans0precheck FAIL,7/6sections, unchanged CT/path/command/kill-directive signatures,
     no new checked markers;only12existing Markdown files changed;diff whitespace clean.
+
+
+E224  IN PROGRESS / ACTUAL DIFF REVIEW  Operator's next command authorizes retained-I02 source
+    review/fixes/local closeout, superseding E223 STOP. Traced plan versus core implementation
+    and reproduced two gaps: unguarded flow-state IO escapes/required-eval suppression, and
+    no final deadline recheck after preparation. Added22 public-path failing regressions first;
+    typed flow-only persistence boundary, post-coder real eval integrity floor, best-effort
+    terminal failure and actual-dispatch deadline check now pass26 focused cases24.28s.
+    Four added stale-receipt cases: first test-authoring AttributeError rejected, corrected4
+    fail before recovery fix, pass afterward. Intermediate509 public cases126.28s pass; final
+    bank now513 not yet executed. Ruff clean after stage announcement/task helper factoring.
+    Original logs/hashes retained in notes/evidence/i02-e224. Full checks/affected mutation
+    refresh and remaining diff review pending; no local closeout/SHIPPED/deployed acceptance.

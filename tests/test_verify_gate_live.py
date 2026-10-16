@@ -3688,6 +3688,7 @@ def _ct91_public(
     failed_prepare: bool = False,
     nonincrement: bool = False,
     callback: Callable[[str, RequestInfo], None] | None = None,
+    deadline_mono: float | None = None,
 ) -> tuple[int, FlowState | None, Path, list[str], list[dict[str, Any]]]:
     from fa import feature_flags
     from fa.cli import _cmd_run
@@ -3790,6 +3791,7 @@ def _ct91_public(
         run_stage_fn=_cmd_run,
         secrets=SecretStore({"K": "sk-test-live"}),
         plan_path=path,
+        deadline_mono=deadline_mono,
     )
     return code, state, base, phases, admission_seen
 
@@ -4375,3 +4377,103 @@ def test_controller_keeps_admission_implementation_types_private_and_facades_exp
         "write_verification",
     ):
         assert name in workflow.__all__ and hasattr(workflow, name)
+
+
+@pytest.mark.parametrize("mode", ["linear", "adaptive"])
+@pytest.mark.parametrize("phase", ["initial", "planner", "coder"])
+def test_review_flow_storage_failure_returns_nonzero_before_provider(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str, phase: str
+) -> None:
+    """CT92/95: control-file IO errors are public failure results, not escaping exceptions."""
+    real_write = workflow.write_flow_state
+    attempts: list[str] = []
+
+    def write(path: Path, state: FlowState) -> None:
+        attempts.append(state.active_role)
+        initial = state.last_transition_reason.startswith("workflow initialized")
+        if (phase == "initial" and initial) or (
+            not initial and state.active_role == phase and state.status != "FAILED"
+        ):
+            raise OSError("private flow storage fault")
+        real_write(path, state)
+
+    monkeypatch.setattr(workflow, "write_flow_state", write)
+    code, state, base, roles, _ = _ct91_public(tmp_path, monkeypatch, mode=mode)
+    assert code != 0
+    assert roles == ([] if phase in {"initial", "planner"} else ["planner"])
+    assert state is None or state.status == "FAILED"
+    assert not (base / "verify_baseline.json").exists()
+    assert not (base / "verification.json").exists()
+    assert not (base / "eval_report.json").exists()
+    assert attempts
+
+
+@pytest.mark.parametrize("mode", ["linear", "adaptive"])
+@pytest.mark.parametrize("gate", ["observe", "enforce"])
+@pytest.mark.parametrize("phase", ["eval-dispatch", "terminal", "persistent", "persistent-stale"])
+def test_review_post_coder_flow_failure_preserves_real_eval_but_never_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str, gate: str, phase: str
+) -> None:
+    """Q55/CT95: a flow receipt failure is not permission to skip eval or return stale DONE."""
+    real_write = workflow.write_flow_state
+    failed = False
+
+    def write(path: Path, state: FlowState) -> None:
+        nonlocal failed
+        terminal = state.status == "DONE"
+        eval_dispatch = state.active_role == "eval" and state.status == "EVALUATING"
+        inject = (phase == "terminal" and terminal) or (phase != "terminal" and eval_dispatch)
+        if inject or (failed and phase.startswith("persistent")):
+            if phase == "persistent-stale" and not failed:
+                # A prior or partial terminal receipt is not proof that this write succeeded.
+                stale = json.loads(path.read_bytes())
+                stale["status"] = "FAILED"
+                real_write(path, FlowState.from_json_dict(stale))
+            failed = True
+            raise OSError("private flow storage fault")
+        real_write(path, state)
+
+    monkeypatch.setattr(workflow, "write_flow_state", write)
+    code, state, base, roles, _ = _ct91_public(tmp_path, monkeypatch, mode=mode, gate=gate)
+    assert failed and code != 0
+    assert roles == ["planner", "coder", "eval"]
+    report = json.loads((base / "eval_report.json").read_bytes())
+    assert report["verdict"] == "PASS", "do not synthesize a negative model judgment"
+    assert state is None if phase.startswith("persistent") else state is not None and state.status == "FAILED"
+    if not phase.startswith("persistent"):
+        assert json.loads((base / "flow_state.json").read_bytes())["status"] == "FAILED"
+    else:
+        expected = "FAILED" if phase == "persistent-stale" else "CODING"
+        assert json.loads((base / "flow_state.json").read_bytes())["status"] == expected
+
+
+@pytest.mark.parametrize("mode", ["linear", "adaptive"])
+@pytest.mark.parametrize("phase", ["t0", "eval-evidence"])
+def test_review_deadline_rechecked_after_preparation_before_dispatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str, phase: str
+) -> None:
+    """CT95: real preparation can consume the deadline; never dispatch a new provider afterward."""
+    deadline = workflow.time.monotonic() + 300.0
+    expired = False
+    real_clock = workflow.time.monotonic
+
+    def clock() -> float:
+        return deadline + 1.0 if expired else real_clock()
+
+    monkeypatch.setattr(workflow.time, "monotonic", clock)
+    target = "capture_baseline" if phase == "t0" else "_eval_evidence_block"
+    real_prepare = getattr(workflow, target)
+
+    def prepare(*args: Any, **kwargs: Any) -> Any:
+        nonlocal expired
+        result = real_prepare(*args, **kwargs)
+        expired = True
+        return result
+
+    monkeypatch.setattr(workflow, target, prepare)
+    code, state, base, roles, _ = _ct91_public(tmp_path, monkeypatch, mode=mode, deadline_mono=deadline)
+    assert expired and code == workflow.WORKFLOW_DEADLINE_EXIT_CODE
+    assert state is not None and state.status == "FAILED"
+    assert workflow.DEADLINE_REASON_MARKER in state.last_transition_reason
+    assert roles == (["planner"] if phase == "t0" else ["planner", "coder"])
+    assert not (base / "eval_report.json").exists(), "deadline is not a fabricated evaluation"

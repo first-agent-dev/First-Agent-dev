@@ -4,6 +4,19 @@
 > This file records the verified state and the next bounded action.
 > Previous 1426-line S14-era version archived to `worklogs/archive/HANDOFF-S14-era-20260825.md`.
 
+## Current action — E224 source review checkpoint, 2026-10-16
+
+The operator supplied the next command and authorized actual adversarial plan-versus-diff review,
+fixes and affected local proof refresh. E223's STOP below is historical and satisfied.
+Two reproduced gaps fixed in workflow_controller: flow-state IO normalization/required eval/stale
+receipt handling, and dispatch-boundary deadline recheck after preparation.26 focused public-path
+regressions pass; intermediate509-case bank passes; final bank513 and affected SLICE6 mutations
+still need refreshed execution. just check is running; do not infer its outcome. Read current
+[E224 local record](planning-topology-and-executable-contracts-loop/notes/i02-local-acceptance.md)
+and [checkpoint evidence](planning-topology-and-executable-contracts-loop/notes/evidence/i02-e224/manifest.json).
+No review closeout/SHIPPED or I03/deployment acceptance yet. Continue review, finish checks and
+refresh source-bound affected proofs before finalizing. Preserve historical failures as red.
+
 ## Current state — I02 local explicit-plan gate, 2026-10-16 / E223
 
 Branch `arena/86633f17-first-agent-dev` only. Proof snapshot c4cb55fe4d0a63a4ac43c62acacdac54b9404bad;

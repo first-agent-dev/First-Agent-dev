@@ -290,6 +290,17 @@ def workflow_artifact_paths(run_id: str, *, base_dir: Path | None = None) -> Wor
     )
 
 
+class _WorkflowStorageError(OSError):
+    """Typed internal boundary for failed flow-state persistence, without raw paths/bodies."""
+
+
+def _persist_flow_state(path: Path, state: FlowState) -> None:
+    try:
+        write_flow_state(path, state)
+    except (OSError, ValueError) as error:
+        raise _WorkflowStorageError("workflow flow-state storage failed") from error
+
+
 @dataclass(frozen=True)
 class BaselineCapture:
     """T0/now nodeid maps plus any harness evidence needed for an operator report."""
@@ -1130,6 +1141,49 @@ def _scoped_stage_failed(dispatch: PlannerDispatch | None, sink: list[SessionOut
     return not sink or sink[-1].exit_code != 0 or not {"fs_write_file", "pr_prepare"}.isdisjoint(sink[-1].failed_tools)
 
 
+def _announce_stage(ctx: WorkflowContext, role: str, progress: WorkflowProgress, transition_reason: str) -> None:
+    try:
+        _persist_flow_state(
+            ctx.artifact_paths.flow_state,
+            FlowState(
+                run_id=ctx.run_id,
+                task=(ctx.base_task or ""),
+                status=status_for_role(role),
+                active_role=role,
+                active_plan_id=ctx.run_id,
+                active_plan_version=progress.plan_version,
+                repair_round=progress.repair_round,
+                replan_round=progress.replan_round,
+                last_actor="workflow",
+                last_transition_reason=transition_reason,
+            ),
+        )
+    except _WorkflowStorageError:
+        if role != "eval" or ctx.admission is None:
+            raise
+        # Q55: a missing transition receipt cannot erase a successful coder's judge.
+        # The in-memory integrity floor still prevents success, even if writes recover.
+        _mark_integrity_failure(ctx, "artifact-io/append-failed")
+        print("fa workflow: eval transition storage error: append-failed", file=sys.stderr)
+
+
+def _stage_task(
+    ctx: WorkflowContext, role: str, verification: PlanVerification | None, repair_round: int
+) -> str | None:
+    # S13: the judge is handed the contract and the evidence. Eval only --
+    # the coder and planner already have the plan by other means, and a diff
+    # of the coder's own work is not input to writing it.
+    stage_task = ctx.task_for(role)
+    if role == "eval":
+        evidence = _eval_evidence_block(ctx, verification=verification, repair_round=repair_round)
+        if evidence:
+            # Appended, never substituted: the task states what to judge and
+            # the block states what to judge it against.
+            stage_task = f"{stage_task}\n\n{evidence}" if stage_task else evidence
+
+    return stage_task
+
+
 def _run_stage(
     ctx: WorkflowContext,
     role: str,
@@ -1166,31 +1220,8 @@ def _run_stage(
         return StageResult(role=role, exit_code=_admission_exit_code(ctx))
     progress = _admission_progress(ctx, progress)
 
-    write_flow_state(
-        ctx.artifact_paths.flow_state,
-        FlowState(
-            run_id=ctx.run_id,
-            task=(ctx.base_task or ""),
-            status=status_for_role(role),
-            active_role=role,
-            active_plan_id=ctx.run_id,
-            active_plan_version=progress.plan_version,
-            repair_round=progress.repair_round,
-            replan_round=progress.replan_round,
-            last_actor="workflow",
-            last_transition_reason=transition_reason,
-        ),
-    )
-    # S13: the judge is handed the contract and the evidence. Eval only --
-    # the coder and planner already have the plan by other means, and a diff
-    # of the coder's own work is not input to writing it.
-    stage_task = ctx.task_for(role)
-    if role == "eval":
-        evidence = _eval_evidence_block(ctx, verification=prior_verification, repair_round=progress.repair_round)
-        if evidence:
-            # Appended, never substituted: the task states what to judge and
-            # the block states what to judge it against.
-            stage_task = f"{stage_task}\n\n{evidence}" if stage_task else evidence
+    _announce_stage(ctx, role, progress, transition_reason)
+    stage_task = _stage_task(ctx, role, prior_verification, progress.repair_round)
 
     stage_kwargs: dict[str, object] = {
         "task_pos": None,
@@ -1262,6 +1293,11 @@ def _run_stage(
     # ``sink`` is local to this stage and is read below for eval alone, so
     # collecting a non-eval outcome here is inert.
     dispatch_kwargs = {"planner_dispatch": dispatch} if dispatch is not None else {}
+    # Admission/T0/evidence preparation may have consumed the remaining budget.
+    # Check at the actual dispatch boundary, not only at entry to this function.
+    if _deadline_exceeded(ctx):
+        _write_deadline_state(ctx, role, progress=progress)
+        return StageResult(role=role, exit_code=WORKFLOW_DEADLINE_EXIT_CODE)
     code = run_stage_fn(
         stage_args,
         transport=ctx.transport,
@@ -1385,7 +1421,7 @@ def _write_deadline_state(
         if ctx.deadline_mono is None
         else f" after {max(0.0, time.monotonic() - ctx.deadline_mono):.0f}s past deadline"
     )
-    write_flow_state(
+    _persist_flow_state(
         ctx.artifact_paths.flow_state,
         FlowState(
             run_id=ctx.run_id,
@@ -1427,7 +1463,7 @@ def _write_stage_failure_state(
     if ctx.admission is not None and ctx.admission.failure is not None:
         return
     progress = _admission_progress(ctx, progress)
-    write_flow_state(
+    _persist_flow_state(
         ctx.artifact_paths.flow_state,
         FlowState(
             run_id=ctx.run_id,
@@ -1507,7 +1543,7 @@ def _write_terminal_state(
     if status == "DONE" and (_integrity_failed(ctx) or integrity_errors):
         status, route = "FAILED", "blocked"
         blocked = "workflow control-plane integrity failed"
-    write_flow_state(
+    _persist_flow_state(
         ctx.artifact_paths.flow_state,
         FlowState(
             run_id=ctx.run_id,
@@ -2257,7 +2293,7 @@ def _admission_exit_code(ctx: WorkflowContext) -> int:
     return ctx.admission.block_exit_code if ctx.admission is not None else 2
 
 
-def _admission_failed(ctx: WorkflowContext, reason: str) -> None:
+def _admission_failed(ctx: WorkflowContext, reason: str) -> FlowState | None:
     state = ctx.admission
     if state is None:
         raise RuntimeError("admission authority absent")
@@ -2265,26 +2301,26 @@ def _admission_failed(ctx: WorkflowContext, reason: str) -> None:
     state.failure = reason
     state.admitted = False
     print(f"fa workflow: admission blocked: {reason}", file=sys.stderr)
+    failed = FlowState(
+        run_id=ctx.run_id,
+        task=ctx.base_task or "",
+        status="FAILED",
+        active_role="workflow",
+        active_plan_id=ctx.plan_identity(),
+        active_plan_version=state.plan_version,
+        replan_round=state.planner_calls,
+        last_actor="workflow",
+        last_transition_reason="explicit plan admission blocked",
+        last_route_decision="blocked",
+        blocked_reason=f"admission/{reason}",
+        judged=state.last_eval_report is not None,
+    )
     try:
-        write_flow_state(
-            ctx.artifact_paths.flow_state,
-            FlowState(
-                run_id=ctx.run_id,
-                task=ctx.base_task or "",
-                status="FAILED",
-                active_role="workflow",
-                active_plan_id=ctx.plan_identity(),
-                active_plan_version=state.plan_version,
-                replan_round=state.planner_calls,
-                last_actor="workflow",
-                last_transition_reason="explicit plan admission blocked",
-                last_route_decision="blocked",
-                blocked_reason=f"admission/{reason}",
-                judged=state.last_eval_report is not None,
-            ),
-        )
+        _persist_flow_state(ctx.artifact_paths.flow_state, failed)
     except (OSError, ValueError):
         print("fa workflow: blocked flow storage error: append-failed", file=sys.stderr)
+        return None
+    return failed
 
 
 def _admission_storage_failure(ctx: WorkflowContext, error: OSError | ValueError) -> None:
@@ -2642,20 +2678,24 @@ def run_workflow(
         run_id,
         base_dir=run_context.run_log_dir if run_context is not None else None,
     )
-    artifact_paths.base_dir.mkdir(parents=True, exist_ok=True)
-    write_flow_state(
-        artifact_paths.flow_state,
-        FlowState(
-            run_id=run_id,
-            task=(task or ""),
-            status="PLANNING" if roles[0] == "planner" else "PLAN_READY",
-            active_role=roles[0],
-            active_plan_id=run_id,
-            active_plan_version=1,
-            last_actor="workflow",
-            last_transition_reason=f"workflow initialized (mode={mode})",
-        ),
-    )
+    try:
+        artifact_paths.base_dir.mkdir(parents=True, exist_ok=True)
+        _persist_flow_state(
+            artifact_paths.flow_state,
+            FlowState(
+                run_id=run_id,
+                task=(task or ""),
+                status="PLANNING" if roles[0] == "planner" else "PLAN_READY",
+                active_role=roles[0],
+                active_plan_id=run_id,
+                active_plan_version=1,
+                last_actor="workflow",
+                last_transition_reason=f"workflow initialized (mode={mode})",
+            ),
+        )
+    except (OSError, ValueError):
+        print("fa workflow: initial flow storage error: append-failed", file=sys.stderr)
+        return 2, None
 
     ctx = WorkflowContext(
         run_id=run_id,
@@ -2682,7 +2722,11 @@ def run_workflow(
         ),
     )
     if _deadline_exceeded(ctx):
-        _write_deadline_state(ctx, roles[0], progress=WorkflowProgress())
+        try:
+            _write_deadline_state(ctx, roles[0], progress=WorkflowProgress())
+        except _WorkflowStorageError:
+            print("fa workflow: deadline flow storage error: append-failed", file=sys.stderr)
+            return WORKFLOW_DEADLINE_EXIT_CODE, None
         return WORKFLOW_DEADLINE_EXIT_CODE, read_back_terminal_state(artifact_paths.flow_state, run_id)
     if ctx.admission is not None:
         try:
@@ -2699,10 +2743,20 @@ def run_workflow(
             return _admission_exit_code(ctx), read_back_terminal_state(artifact_paths.flow_state, run_id)
     label = _render_mode_label(mode, max_repairs=max_repairs, max_replans=max_replans)
     print(f"fa workflow: run_id={run_id} mode={label} roles={'→'.join(roles)}", file=sys.stderr)
-    if mode == "adaptive":
-        result_code = _run_adaptive(ctx, roles, max_repairs, max_replans, run_stage_fn)
-    else:
-        result_code = _run_linear(ctx, roles, run_stage_fn)
+    try:
+        if mode == "adaptive":
+            result_code = _run_adaptive(ctx, roles, max_repairs, max_replans, run_stage_fn)
+        else:
+            result_code = _run_linear(ctx, roles, run_stage_fn)
+    except _WorkflowStorageError:
+        print("fa workflow: flow storage error: append-failed", file=sys.stderr)
+        if ctx.admission is None:
+            return 2, None
+        if ctx.admission.block_exit_code == WORKFLOW_DEADLINE_EXIT_CODE:
+            return WORKFLOW_DEADLINE_EXIT_CODE, None
+        # Return only a receipt actually persisted by this failure handler, never
+        # a stale CODING/DONE/FAILED artifact left by an earlier write or invocation.
+        return 2, _admission_failed(ctx, "artifact-io/append-failed")
 
     terminal_state = read_back_terminal_state(artifact_paths.flow_state, run_id)
     exit_code = workflow_exit_code(result_code, terminal_state)
