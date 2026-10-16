@@ -1061,3 +1061,331 @@ PATH, exact frozen dependency environment, correct UUID/nodeid plugin. No root b
 Do not modify source/tests while these frozen observations run. A requested protected-scope
 restore changes a watched test file: stop/restart or invalidate affected runs explicitly.
 No final acceptance report exists; independent review and operator dispositions remain required.
+
+
+## E218 — final repaired-source proof, exact full suites, environment stop (2026-10-16)
+
+**State: BLOCKED, not accepted.** Source/test repair checkpoint `0f7814d10faada80453adcadb0444567bb46f2d4`;
+subsequent `37b9dae`/`3b72a17` are decision/evidence only. Q72 explicitly approved only46
+archived relative-link targets and one banner-test path correction. No other baseline waiver.
+Final frozen focused699passed346.07s, no skips/errors. Source has not changed during the final
+audits. Actual parser delta against d9109f4 is only `inside: set[int] = set()`; Q45-B source
+positions, extractor semantics and accessor strictness are unchanged. Pure parser/grammar
+tests passed in the complete final candidate suite.
+
+### Exact final full suites and comparison
+
+| Run | Collected | Passed | Failed | Errors | Skipped | Xfailed | Seconds | rc |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| Candidate |5040|5026|1|0|12|1|1094.49|1|
+| Git-complete d9109f4 |4477|4455|9|0|12|1|872.47|1|
+
+Both ended with normal terminal summaries, Linux/built CPython3.13.16/pytest9.0.3, separate
+tree-local frozen dependency environments, same explicit PATH. The d910 archive acquired only
+exact d910 Git index/HEAD metadata (same session branch name), clean status, no tracked source
+changes. The two old archive-no-Git failures now pass; they are checkout-context artifacts, not
+product improvements. Candidate coverage83.20%, required80%; independent CLI floor rc0,
+27floors/78functions. Twelve skips are missing shellcheck; xfail is the existing Q19 OS boundary
+gap, not I02 delivery. Neither is silently promoted to proof.
+
+Commands were the exact expanded `just test` pytest/coverage command plus explicit JUnit
+plugin/report arguments, followed by separate `just _cli-cov-floor`. Non-test chain was
+`just _lock-check _lint _mypy _pyrefly _authoring _contracts _shell-syntax`, rc0: lock unchanged,
+whole Ruff check/format901 clean, deptry clean, Pylint10/10, Mypy450 clean, authoring0, contracts
+and shell syntax pass. Pyrefly default0errors139suppressed43warnings hidden, not warning-free.
+The final `just test`/`just check` composite commands were **not** rerun as single wrappers;
+this expanded constituent execution is not mislabeled a successful composite. The preliminary
+actual `just check` remains old-version evidence. Actual composite acceptance remains open.
+
+Runtime artifacts: `/home/user/.cache/fa-runtime/i02-final-repository.{log,xml}`,
+`i02-d910-final-repository.{log,xml}`, `i02-final-suite-comparison.json`, `i02-final-static.log`,
+`i02-final-cli-floor.log`, `i02-repair-final-baseline.{log,xml}`. Manifests contain all5040/4477
+exact collector nodeids, uniquely stored as `fa_pytest_nodeid`, not synthesized from classname.
+Candidate report is bound to `i02-final-repair-8817f3a299e540ac9cb356c3d24bd51f`. Baseline d910
+plugin has **no run-ID feature**: its exact-nodeid/fresh-path terminal comparison is usable,
+but no UUID-binding claim or current mutation-parser acceptance is made for that old report.
+No report was rewritten to inject a UUID.
+
+**Failure identity/phase:** common1 (call), candidate-only0, baseline-only8 (call). Three
+old collector identities are absent by explicit approved-policy supersession, not silently
+counted as passes;566 candidate identities are new, including replacements. No claim of zero
+missing identities or completed operator review.
+
+| Baseline-only failure | Candidate observation / disposition (operator review still required except Q72) |
+|---|---|
+| `tests/test_deploy_scripts.py::test_historical_workspace_docs_have_top_level_superseded_banner` | PASS; exact banner archive-path repair explicitly approved Q72. |
+| `tests/test_doc_links.py::test_repo_has_no_broken_internal_file_links` | PASS; exact target-only repairs explicitly approved Q72. |
+| `tests/test_s10a_cli_coverage.py::test_s10a_authoring_check_runs_on_a_real_workspace` | PASS; existing compatibility facade exports explicitly declared; no authoring exclusion. |
+| `tests/test_workflow_deadline.py::test_generous_deadline_runs_the_full_pipeline` | PASS; earlier Q55 fixture migration preserves actual full pipeline/deadline assertions. |
+| `tests/test_workflow_deadline.py::test_no_deadline_runs_the_full_pipeline` | PASS; earlier Q55 fixture migration preserves actual full pipeline/deadline assertions. |
+| `tests/test_workflow_no_eval_terminal.py::test_eval_requested_but_no_verdict_fails[linear]` | PASS; explicit valid PlanRef fixture reaches actual missing-eval judgment, with exact blocked-state oracle. |
+| `tests/test_workflow_no_eval_terminal.py::test_planner_coder_without_eval_is_also_unjudged` | ABSENT, not PASS; legacy unjudged-coder promise superseded by Q55, replacements below. |
+| `tests/test_workflow_no_eval_terminal.py::test_scratch_pipeline_succeeds_but_is_marked_unjudged` | ABSENT, not PASS; legacy unjudged-coder promise superseded by Q55, replacements below. |
+
+Exact absent→replacement mappings (all replacements passed):
+
+- `tests/test_plan_reference.py::test_absent_plan_degrades_silently` →
+  `test_absent_coder_plan_is_blocked_before_dispatch` (CT95 explicit-plan fail-closed supersession).
+- `tests/test_workflow_no_eval_terminal.py::test_scratch_pipeline_succeeds_but_is_marked_unjudged`
+  and `::test_planner_coder_without_eval_is_also_unjudged` →
+  `::test_omitted_eval_is_inserted_and_silent_judgment_fails[roles0]` / `[roles1]` (Q55 mandatory
+  actual eval after coder); planner-only unjudged success remains positively asserted by
+  `::test_noncoder_planning_succeeds_but_is_marked_unjudged`. These are policy migrations, not
+  equivalent passing implementations of the retired promises.
+
+### Blocking integration cause, no waiver
+
+The single common failure is
+`tests/test_workspace_readiness_integration.py::test_clean_candidate_real_readiness_commit_and_local_publication`.
+Both final runs now fail rc75 at **precommit_prewarm_failed**, not old sync_failed. An unchanged
+integration-body diagnostic retained logs before its normal cleanup: pre-commit4.6.0 needs
+a Go toolchain for Gitleaks v8.30.1; no `go` executable exists.
+`pre_commit/languages/golang.py::_infer_go_version` requests `https://go.dev/dl/?mode=json`
+and receives SSL UNEXPECTED_EOF/URLError. go.dev is outside this sandbox's allowed outbound
+hosts. Runtime logs `i02-readiness-bootstrap.log`, `i02-readiness-precommit.log`, diagnostic
+script/log in the cache. The diagnostic did not modify tracked source or weaken the test.
+
+**Unblock:** provide a supported trusted Go SDK on PATH (and required hook dependency availability)
+or a suitable execution environment/network policy, then rerun the complete real readiness→
+hooks→commit→local-publication path. Do not disable Gitleaks, loosen readiness, preinstall a
+handwritten ready marker, replace the foreign root Arena hook, skip the test, or accept this
+shared infrastructure error. Root hook collision is separately unwaived; current hook preserved.
+Implementation stops at this verified external dependency blocker.
+
+### Completed diagnostic whole-public-path runs — STEP17 ordering NOT satisfied
+
+All16 normative plus2 supplemental are PROVEN; exactly487 collector identities each, no
+errors/skips, one AST target/edit each, overlay import provenance passes, invocation-specific
+JUnit UUIDs and exact manifests match. Each mutation failed real assertions (not infrastructure).
+The699-case baseline and audit were launched concurrently: some mutations completed before
+the baseline. This violates STEP17’s required baseline-before-mutation ordering. The18 mechanical
+PROVEN results are diagnostic, not completed STEP17 proof. An ordered serial rerun is required. Q53(c) attribution remains
+slice sensitivity, not per-contract attribution; no contract→test subset map. The16 normative
+contracts are unchanged; supplemental guard/context controls are not extra normative contracts.
+
+| Target | Passed | Failed | Seconds |
+|---|---:|---:|---:|
+|CT71|453|34|248.17|
+|CT72|474|13|350.54|
+|CT73|416|71|43.37|
+|CT75|425|62|42.05|
+|CT76|479|8|260.06|
+|CT77|456|31|342.31|
+|CT77b|473|14|338.73|
+|CT77c|479|8|363.56|
+|CT86|455|32|51.41|
+|CT87|416|71|47.19|
+|CT90|485|2|322.15|
+|CT91|415|72|47.98|
+|CT92|421|66|218.41|
+|CT93|465|22|255.07|
+|CT94|474|13|271.65|
+|CT95|479|8|322.82|
+|SUP-CONTEXT|484|3|270.59|
+|SUP-GUARD|485|2|316.86|
+
+Frozen SHA256s, all22 rechecked unchanged:
+
+```json
+{
+  "src/fa/cli.py": "732ca6bb3e0ac9acf42e1aef200ee50ec21e9693464886f0a278142012650e89",
+  "src/fa/inner_loop/overlay_pytest_plugin.py": "645ad19ec57e712d37903e9de602a5cc95d627cdc8fc8adf42d6b5b7cb408713",
+  "src/fa/inner_loop/plan_ids.py": "8e87bb9d3701615780bd87c61c95f9c8c7902e7aeb7a260f0c70c9824f1f22bc",
+  "src/fa/inner_loop/profiles.py": "cb58d326fbf58c6ab8f3a714b656a3d96a729ee9f6bfb7b357ce269bc161cd5a",
+  "src/fa/inner_loop/slice_verification.py": "11b39a1e1c9042dead2998016ea0cc4695c93d2711d64bc094b9ff87dc10d459",
+  "src/fa/inner_loop/tools/workflow_tool.py": "137cc8f80709b63748c68692b9f4e7ba25c0c210281ce88ddd312a7d61978f3f",
+  "src/fa/inner_loop/workflow_controller.py": "cc1b184a7b2973a53203cf80d06304af3831aae5bb4022042d8ab13586fb839f",
+  "tests/fixtures/i02_gate_probe.py": "0da233bef7e76bb2db461c8c1b093835174a11b4f275dba753f1e341a5cdec52",
+  "tests/fixtures/i02_gate_subject.py": "96b72e3b13d8c3fd7597afac21bf679b5ff9acc986ff961669ef45490b119f2e",
+  "tests/test_deploy_scripts.py": "413846eabf096982022fe75145d2bf14f2bb900d3525665b2501534cfeddb0dc",
+  "tests/test_mutation_overlay.py": "beb9156f5a2d523db554c234683d5150dc3052b4b0409fd6e9ca86b234ec2060",
+  "tests/test_planner_emits_schema4.py": "af14c2e86c6923229f30af425e65240461e30b38b0dab2631ac6ff799b8f50b5",
+  "tests/test_prompt_registry_coherence.py": "f94b58f6f5e4f2f1117c213bbf12f7def6f6e6374780dbd6d96235a1fb6d4e27",
+  "tests/test_quality_slice_coverage.py": "db154956f2b40732a932bcce7467d4e16d58ba95d1765398e29dfafa04446a1e",
+  "tests/test_s127_outline.py": "8ebf7e00601b942e86bb81ed09771f5f128683be3651ef7d86488cfc0370868e",
+  "tests/test_s13_10_tool_names.py": "55bee6348e6b07e19fc812ca0f4e2a996da992e4a8d55a1a5196ad0ae7914399",
+  "tests/test_s4_log_kind.py": "8efcbae41eddb23ca758eb68eb984a62f7ab379f5f133ba5e92148033aca88d2",
+  "tests/test_skill_grammar_emit.py": "23869d04efa747b3dc0c4f2cf31b88e7df214a8e22b2d54491dd472f3ba27dea",
+  "tests/test_slice_verification_runner.py": "2dea75ef0faf04ee310caccd9203221dc2062bd7b087fd2386d7341ec2b9de6d",
+  "tests/test_verify_gate_live.py": "e8eeb988e9146837100e4b8dbc4e7ac07fef2f1f5883c8d4cf9797f6e21ec1d8",
+  "tests/test_verify_slice.py": "af858b1c3fb30d5039764c56d500979cd655689eefcf0a2bf670865d7cde876b",
+  "tests/workflow_fixtures.py": "82e5607eea4786df25bfd82cc19391b34fc91a1b321afc9d08c1c9acc36d6526"
+}
+```
+
+Runtime reproduction uses the production parser, overlay/provenance, command runner and JUnit
+classifier. Complete an unmutated baseline first, then launch this harness (not concurrently).
+For clean-checkout reproducibility the listing below freezes the actual22 watched paths instead
+of deriving them from an uncommitted Git diff; the original executed cache harness is retained. Run through frozen uv from this checkout; output directory is cache-only. The exact
+harness below records commands/UUIDs/counts/restoration per target; no source mutation in place.
+
+```python
+"""E215: full declared-path audit using production overlay/provenance/runner/JUnit classifier."""
+
+import concurrent.futures, dataclasses, hashlib, json, shlex, subprocess, sys, time, uuid
+from pathlib import Path
+from fa.inner_loop.plan_ids import extract_plan_ids
+from fa.inner_loop import slice_verification as v
+
+ROOT = Path.cwd()
+OUT = Path("/home/user/.cache/fa-runtime/slice6-repair-audit")
+OUT.mkdir(exist_ok=True)
+PLAN = (
+    ROOT
+    / "worklogs/planning-topology-and-executable-contracts-loop/increments/increment-02-verify-gate-and-kill-checks.md"
+)
+record = next(r for r in extract_plan_ids(PLAN.read_text()).slice_records if r.slice_id == "SLICE6")
+assert record.test_paths == ("tests/test_verify_gate_live.py",)
+cases = list(v.parse_kill_directives(record).items())
+assert len(cases) == 16
+cases += [
+    (
+        "SUP-GUARD",
+        v.KillDirective(
+            v.KillOperator.REMOVE_CALL,
+            "src/fa/inner_loop/tools/workflow_tool.py",
+            "build_invoke_workflow_tool.handler",
+            "_requires_acquisition",
+            0,
+        ),
+    ),
+    (
+        "SUP-CONTEXT",
+        v.KillDirective(
+            v.KillOperator.REMOVE_CALL, "src/fa/inner_loop/tools/workflow_tool.py", "_child_run_context", "begin_run", 0
+        ),
+    ),
+]
+changed_py = [
+    "src/fa/cli.py",
+    "src/fa/inner_loop/overlay_pytest_plugin.py",
+    "src/fa/inner_loop/plan_ids.py",
+    "src/fa/inner_loop/profiles.py",
+    "src/fa/inner_loop/slice_verification.py",
+    "src/fa/inner_loop/tools/workflow_tool.py",
+    "src/fa/inner_loop/workflow_controller.py",
+    "tests/fixtures/i02_gate_probe.py",
+    "tests/fixtures/i02_gate_subject.py",
+    "tests/test_deploy_scripts.py",
+    "tests/test_mutation_overlay.py",
+    "tests/test_planner_emits_schema4.py",
+    "tests/test_prompt_registry_coherence.py",
+    "tests/test_quality_slice_coverage.py",
+    "tests/test_s127_outline.py",
+    "tests/test_s13_10_tool_names.py",
+    "tests/test_s4_log_kind.py",
+    "tests/test_skill_grammar_emit.py",
+    "tests/test_slice_verification_runner.py",
+    "tests/test_verify_gate_live.py",
+    "tests/test_verify_slice.py",
+    "tests/workflow_fixtures.py",
+]
+watched = sorted(
+    set(
+        [d.path for _, d in cases]
+        + ["tests/test_verify_gate_live.py", "tests/fixtures/i02_gate_probe.py", "tests/fixtures/i02_gate_subject.py"]
+        + changed_py
+    )
+)
+
+
+def hashes():
+    return {p: hashlib.sha256((ROOT / p).read_bytes()).hexdigest() for p in watched}
+
+
+frozen = hashes()
+(OUT / "inputs.json").write_text(json.dumps(frozen, indent=2) + "\n")
+col = subprocess.run(
+    [sys.executable, "-m", "pytest", *record.test_paths, "--collect-only", "-q"],
+    cwd=ROOT,
+    capture_output=True,
+    text=True,
+    check=True,
+)
+manifest = sorted(l for l in col.stdout.splitlines() if l.startswith("tests/test_verify_gate_live.py::"))
+assert len(manifest) == 487, len(manifest)
+(OUT / "baseline-collection.json").write_text(json.dumps(manifest, indent=2) + "\n")
+
+
+def run(case):
+    name, d = case
+    started = time.monotonic()
+    source = (ROOT / d.path).read_text()
+    a = v.apply_kill(source, d)
+    assert a.targets == a.edits == 1 and a.source is not None, (name, a)
+    report_path = OUT / (name + ".xml")
+    report_path.unlink(missing_ok=True)
+    with v.mutation_overlay(ROOT, d.path, a.source) as overlay:
+        env = v._overlay_env(ROOT, overlay)
+        probe = v._assert_overlay_wins(v._module_name(d.path), overlay, env, workspace=ROOT)
+        assert probe.outcome is v.CommandOutcome.PASS, (name, probe)
+        run_id = uuid.uuid4().hex
+        env = v._gate_subprocess_env(ROOT, base_env=env, kill_check=True)
+        env[v.JUNIT_RUN_ID_ENV] = run_id
+        command = (
+            v.KILL_CHECK_COMMAND.format(path=shlex.join(record.test_paths))
+            + " -p fa.inner_loop.junit_nodeid_plugin --junitxml="
+            + shlex.quote(str(report_path))
+        )
+        (result,) = v.run_commands((command,), workspace=ROOT, env=env)
+        report, detail = v._parse_junit_report(report_path, run_id=run_id)
+    verdict = v._kill_check_result(d, ", ".join(record.test_paths), started, result, report, detail)
+    summary = {
+        "name": name,
+        "directive": dataclasses.asdict(d),
+        "targets": a.targets,
+        "edits": a.edits,
+        "command": command,
+        "probe": dataclasses.asdict(probe),
+        "runner": dataclasses.asdict(result),
+        "check": dataclasses.asdict(verdict),
+        "run_id": run_id,
+        "report_detail": detail,
+        "nodeids_match": report is not None and sorted(report.outcomes) == manifest,
+        "outcomes": dict(report.outcomes) if report else None,
+    }
+    if report:
+        summary["counts"] = {
+            k: sum(x.value == k for x in report.outcomes.values()) for k in ["passed", "failed", "skipped"]
+        }
+    (OUT / (name + ".json")).write_text(json.dumps(summary, indent=2, default=str) + "\n")
+    assert hashes() == frozen, (name, "source/test input changed")
+    print(
+        json.dumps(
+            {
+                "name": name,
+                "verdict": verdict.verdict.value,
+                "rc": result.exit_code,
+                "duration": round(verdict.duration_s, 2),
+                "counts": summary.get("counts"),
+                "nodeids_match": summary["nodeids_match"],
+                "detail": verdict.detail,
+            }
+        ),
+        flush=True,
+    )
+    return summary
+
+
+results = []
+with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+    for done in concurrent.futures.as_completed([pool.submit(run, c) for c in cases]):
+        results.append(done.result())
+        (OUT / "results.json").write_text(json.dumps(results, indent=2, default=str) + "\n")
+assert len(results) == 18
+assert all(
+    r["check"]["verdict"] is v.SliceVerdict.PROVEN and r["nodeids_match"] and r["counts"]["skipped"] == 0
+    for r in results
+), [(r["name"], r["check"]) for r in results]
+assert hashes() == frozen
+print("ALL_16_NORMATIVE_PLUS_2_SUPPLEMENTAL_PROVEN; unchanged inputs; exact whole-path manifests", flush=True)
+```
+
+**Closure limits:** STEP17 stays unchecked. Its baseline-before-run precondition was not met. D2's production-precheck
+caller+full-path removal is observed (CT91), with final closure pending that ordered rerun; do not leave its obsolete zero-call-site statement
+as current truth. Other deferred reader/prompt/export rows need explicit reconciliation; D8
+export/schema drift control is not silently implemented by authoring0. Independent retained
+plan/source/evidence review, operator review of remaining per-case baseline/Mypy dispositions,
+actual final composite gates and `i02-local-acceptance.md` remain open. The acceptance report
+is not created prematurely; this E218 section is the blocked proof/stop report, not signoff.
+No SLICE6 overall/local DoD/SHIPPED/I03/deployment-security acceptance.

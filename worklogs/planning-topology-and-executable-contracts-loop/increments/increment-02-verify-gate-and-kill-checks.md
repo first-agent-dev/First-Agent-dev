@@ -476,7 +476,7 @@ CONTRACTS:
     kill: remove-call src/fa/inner_loop/workflow_controller.py::_validate_plan_admission -> validate_kill_directives
   CT90 [FUNCTIONAL]: CLI roles containing coder require --plan before run/session/artifact creation;
     resolve supplied relative paths against the selected workspace, not process CWD. Update help/
-    examples; preserve deliberately red E19. No managed-acquisition exception is delivered in I02.
+    examples; preserve E19 guards and Q72’s narrow operator-approved repairs. No managed-acquisition exception is delivered in I02.
     kill: remove-call src/fa/cli.py::_cmd_workflow -> _require_plan_for_coder
   CT91 [FUNCTIONAL]: precheck FAIL joins kill diagnostics in Q57 repair; WARN alone does not block.
     Non-empty structural near-miss can repair before a slice parses. Exceptions, empty input or
@@ -545,9 +545,11 @@ uv run ruff check src/fa/inner_loop/workflow_controller.py src/fa/inner_loop/wor
 
 **Scope/progress:** STEP IDs 11 and 15 move entirely to I03; mixed STEPs retain the IDs above and
 have clause-level successors in the migration bank. STEP8 remains checked only for the historical
-operator Q58 decision. STEP17 was verified for E212's frozen source/test versions. Q71/quality repair changes controller
-bytes and the public bank, so it is reopened until a fresh baseline and all16 complete-path
-mutations are recorded. Historical E212 proof remains valid only for its recorded hashes. No other new box or
+operator Q58 decision. STEP17 remains open: E218's699-case frozen baseline and18 exact487-case
+mutation runs finished, but were launched concurrently. The required baseline-before-mutation
+ordering was not satisfied. All18 mechanical PROVEN results are diagnostic only for STEP17;
+a fresh serial complete-path run after a completed baseline is required. E212 remains valid
+only for its older hashes. Q72 dispositions only the two repaired E19 documentation causes. No other new box or
 shipped status is ticked; full-repository/disposition/review DoD remains open. SLICE6 has **16 FUNCTIONAL** kills,
 not 18; old 9-kill/12-test C1 and 308-test records remain historical, not proof of new admission.
 The old full-suite E174 reporter failure/no-summary and nine full-repo Mypy diagnostics remain

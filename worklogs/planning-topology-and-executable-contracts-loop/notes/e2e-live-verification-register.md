@@ -1116,3 +1116,20 @@ were already started: only5PROVEN at this observation; full candidate/baseline i
 Isolated d910 archive's missing Git context repaired by exact d910 index/HEAD, no tracked
 source changes. Final baseline rerun underway. Await Q72, then inspect actual process outcomes
 and frozen hashes; do not re-ask Q69/Q70/Q71 or infer E19 approval from green results.
+
+
+### E218 — completed repaired-source proof / external dependency stop (2026-10-16)
+
+Q72 approved exact E19 link/banner repairs. Fresh699baseline passed346.07s; all16 normative
+plus2supplemental complete487-case public-path kills PROVEN, no errors/skips, correct UUID/
+provenance/manifests,22 hashes unchanged. Baseline and mutations launched concurrently: required STEP17 ordering NOT
+met, box remains open; all18 results diagnostic for STEP17, serial rerun required. D2 caller/kill
+observed locally. Full candidate5026pass1fail12skip1xfail vs Git-complete d9104455pass9fail12skip
+1xfail, normal5040/4477-case summaries. Candidate-only failures0; common1; baseline-only8;
+3deliberately superseded old identities mapped separately, not silently treated as passes.
+Expanded non-test chain all rc0; actual final composite wrappers remain open.
+Remaining common readiness path fails precommit_prewarm_failed: Gitleaks needs absent Go SDK,
+pre-commit fetch from go.dev fails outside allowed egress. Real-body diagnostic retained
+precommit traceback. No skip/ready-marker/hook bypass; root foreign Arena hook preserved.
+Blocked proof report/table/reproduction/hashes/full identity dispositions in E218 of E211 note;
+not acceptance. Independent/operator review and D8/other reader/prompt reconciliation remain.

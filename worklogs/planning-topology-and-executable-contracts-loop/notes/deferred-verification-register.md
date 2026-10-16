@@ -69,7 +69,19 @@ whole verify gate: SLICE6 reads a slice's commands from the plan, so if a model-
 does not parse into slices carrying `verify` fences, the gate silently does nothing — the
 original defect one storey up. **Close D1b before SLICE5/SLICE6, not after.**
 
-## D2 — `precheck` is implemented but wired to nothing · planned owner: **I02** (OPEN)
+## D2 — production `precheck` admission caller · **caller/kill observed; final ordered proof OPEN (E218)**
+
+
+**Closure, 2026-10-16:** `_validate_plan_admission` now calls the real `precheck` before
+public coder dispatch. `tests/test_verify_gate_live.py::test_ct91_public_repair_retries_latest_draft_then_promotes`,
+`::test_ct91_public_block_never_reaches_t0_coder_eval`,
+`::test_ct91_public_structural_zero_slice_near_miss_is_repairable` and
+`::test_ct91_public_warn_alone_admits_without_planner_credit` cover real-session refusal/repair
+and WARN behavior. Fresh CT91 removal of that production call:415passed72failed, exact487-case
+public bank,47.98s, PROVEN/provenance/UUID/no skips/errors;22 source/test hashes unchanged.
+See E218. The caller and kill effect are observed, but the audit was launched concurrently with its
+baseline. Final closure waits for STEP17’s ordered serial rerun; no local DoD/I03 acceptance.
+The earlier measurements and requested proof below are historical.
 
 - **Promise.** 12 rules (`slice-without-tests`, `step-without-exit`, `deps-undefined-slice`,
   `deps-cycle`, `heading-near-miss`, `contract-reference-undeclared`,

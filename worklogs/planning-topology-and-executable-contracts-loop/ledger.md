@@ -2440,3 +2440,27 @@ E217  DECIDED (operator) Q72 selected “Approve these E19 repairs”: retain ex
     actual narrow disposition, historical E19 untouched. Already-running frozen observations
     may be assessed; all22 Python hashes unchanged. Full final comparison and independent/
     operator DoD review still required. Q69/Q70/Q71/Q72 resolved; do not re-ask.
+
+
+E218  FACT / VERIFIED ENVIRONMENT STOP  Fresh repaired699-case baseline passed346.07s. All16
+    normative+2supplemental full487-case public-path mutations PROVEN: exact manifests, one
+    AST target/edit, overlay provenance, invocation UUIDs, real assertion failures, no skips/
+    errors,22 frozen Python hashes unchanged. Complete counts/durations/hashes/reproduction in
+    E218 note. Baseline and mutations launched concurrently: required STEP17 ordering NOT met.
+    All18 mechanical results are diagnostic for that procedure; serial rerun required, box open.
+    D2 local production precheck caller+kill is observed; no overall acceptance.
+    Final candidate5040:5026pass1fail12skip1xfail1094.49s/coverage83.20%; exact Git-complete
+    d910 baseline4477:4455pass9fail12skip1xfail872.47s; normal summaries/errors0. Common1,
+    candidate-only0, baseline-only8;3old identities deliberately replaced under Q55/CT95,
+    explicitly mapped (not counted as passes). Candidate UUID valid; old d910 plugin lacks
+    run-ID feature, disclosed rather than fabricated. All exact nodeids/failure-call phases
+    retained. Non-test chain rc0, configured Mypy450 clean, authoring0, CLI floors27/78 rc0.
+    Q72 approval recorded; no other baseline waiver. Actual final composite just wrappers not
+    rerun; expanded exact constituent commands retained, no false successful-check claim.
+    Common readiness integration now reaches precommit prewarm and fails rc75: no Go SDK,
+    Gitleaks bootstrap calls go.dev outside sandbox allowlist, SSL EOF/URLError. Unchanged
+    diagnostic retained precommit log; no hook/readiness/test weakening. External dependency
+    blocker reached; stop implementation until suitable Go/toolchain/network environment.
+    Root foreign Arena hook unchanged. D8/prompt/reader reconciliation, remaining per-case
+    operator dispositions and independent review still open. No actual acceptance report,
+    SLICE6 overall/local DoD/SHIPPED/I03 acceptance.

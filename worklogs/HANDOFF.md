@@ -8,33 +8,43 @@
 
 Active branch: `arena/86633f17-first-agent-dev`; never switch/create another session branch.
 I02 remains **IN PROGRESS**, not SHIPPED or I03/security acceptance.
-**Q72 RESOLVED:** operator selected “Approve these E19 repairs”: exactly46 link-target
-corrections in15 archived files and one banner-fixture path migration. D7 records the narrow
-supersession; E19 historical entry remains unchanged. No unrelated failure waiver/acceptance.
-Resume actual pending audits/comparison. Q69/Q70/Q71/Q72 must not be re-asked.
+**Current stop: verified environment blocker, no unresolved Q69–Q72.** Gitleaks hook prewarm
+needs a Go SDK; none is installed. The unchanged real readiness integration reaches
+`precommit_prewarm_failed` rc75: pre-commit fetches `https://go.dev/dl/?mode=json`, outside
+sandbox egress, SSL EOF/URLError. Need trusted supported Go/toolchain/dependency availability
+or an appropriate execution environment, then rerun real readiness→hooks→commit→local-push.
+Do not disable hook/test, fake a ready marker, loosen bootstrap or replace foreign Arena hook.
 
-**Q71 RESOLVED by custom production-grade design authorization.** Adopted a deterministic retired-
-recipe/lifecycle guard, no new path exemptions. Do not ask Q69/Q70/Q71 again. Security denial/risk
-evidence may name alias mechanisms; no evidence rewrite or guard waiver. Q69 nonrecursive C1
-factoring and Q70 coder-containing-only unavailable guard remain in force.
+Q72 explicitly approved exactly46 link-target repairs in15 archived files and one banner-test
+path migration; no blanket baseline waiver. Q71 deterministic recipe/lifecycle guard has no
+new path exemptions. Q69 real nonrecursive C1 factoring and Q70 coder-containing-only unavailable
+guard remain. Do not re-ask these decisions. Scope mistake and narrow approval retained E216/E217.
 
-Current implementation/evidence: [E215 continuation in the E211 note](planning-topology-and-executable-contracts-loop/notes/i02-ct91-public-admission-e211-2026-10-16.md),
-[current I02 plan](planning-topology-and-executable-contracts-loop/increments/increment-02-verify-gate-and-kill-checks.md),
-[explicit spec](planning-topology-and-executable-contracts-loop/notes/i02-explicit-admission-spec-2026-10-15.md),
-[decisions](planning-topology-and-executable-contracts-loop/notes/open-questions-2026-10-07.md).
-Ten remaining candidate-only fixture/oracle failures repaired; historical-banner stale test path
-corrected; all8 baseline typing errors and authoring diagnostics fixed without suppressions.
-Whole Ruff/check/format, configured Mypy450, authoring, doclinks308 clean. All46 broken links are
-target-only relocation repairs in15 existing files, not exclusions. Targeted152passed12skipped
-(shellcheck absent), baseline-typing regressions100passed. Public bank now487; pre-format diagnostic
-run487passed111.85s. Final frozen focused699passed346.07s; all non-test gates rc0.16+2 whole-bank proofs and full
-repository candidate/Git-complete baseline run pending;5of18 PROVEN at stop, not complete.
-See E216 in the note for process IDs/artifacts. In-flight results are observations only.
-Q72 supplies the narrow E19 disposition; independent/operator review and remaining exact
-baseline dispositions still block acceptance even if those runs turn green.
-STEP17 reopened; E212 remains valid only for its recorded hashes. Fresh results must be recorded
-before any checkbox. Root foreign Arena hook is preserved. Independent/operator review remains
-required; do not infer local DoD, SHIPPED, deploy safety or I03 acceptance.
+Read [E218 in the E211 note](planning-topology-and-executable-contracts-loop/notes/i02-ct91-public-admission-e211-2026-10-16.md),
+[I02 plan](planning-topology-and-executable-contracts-loop/increments/increment-02-verify-gate-and-kill-checks.md),
+[spec](planning-topology-and-executable-contracts-loop/notes/i02-explicit-admission-spec-2026-10-15.md),
+[deferred register](planning-topology-and-executable-contracts-loop/notes/deferred-verification-register.md).
+
+**Completed observations:** final699focused baseline pass346.07s; all16normative+2supplemental
+full487-case public-path mutations PROVEN, exact manifests/UUID/provenance/errors0/skips0/22
+hashes unchanged. STEP17 NOT met: baseline/audit launched concurrently, violating the required
+baseline-before-mutation order. All18 are diagnostic for STEP17; serial rerun required. D2
+production caller/kill observed locally.
+Full candidate5040:5026pass1fail12skip1xfail1094.49s, coverage83.20%. Git-complete d910 baseline
+4477:4455pass9fail12skip1xfail872.47s. Common1/candidate-only0/baseline-only8;3old identities
+superseded under Q55/CT95, exact replacements mapped, not counted as passes. Mypy450, whole
+Ruff901, authoring0, contracts/deptry/Pylint/shell/lock pass; CLI floors27/78 pass. Default
+Pyrefly0errors139suppressed43hidden warnings. Actual final just composite wrappers not run;
+expanded constituents retained, no false successful-check claim. Baseline native plugin lacks
+UUID support, exact collector nodeids retained; no UUID fabricated.
+
+**Next bounded work after environment unblock:** complete baseline, THEN fresh16+2 audit;
+actual readiness and final composite gates;
+reconcile remaining D1/D3/D4/D5/D8 promises (D8 export/schema drift guard not implemented by
+authoring0), independent retained-plan/source/evidence review, exact remaining per-case operator
+dispositions. Only then create/sign `i02-local-acceptance.md`. No SLICE6 overall/localDoD/SHIPPED/
+I03/deploy-safety acceptance. No known audit/full-suite process remains running. Runtime logs,
+full scripts/tables/hashes/paths in E218; frozen source checkpoint0f7814d, later docs-only commits.
 
 The older S18/doc-hygiene notes below are historical, not this session's current action list.
 
