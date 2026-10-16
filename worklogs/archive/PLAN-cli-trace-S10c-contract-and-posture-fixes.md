@@ -45,7 +45,7 @@ target's mode) and `follow_symlinks=False` raises `NotImplementedError` on
 Linux, so an explicit `is_symlink()` skip is mandatory; and chmod-ing
 directories to `0600` makes them untraversable.
 · Upstream: parent
-[`cli-trace-substrate-rebaseline-2026-07-25.md`](./cli-trace-substrate-rebaseline-2026-07-25.md)
+[`cli-trace-substrate-rebaseline-2026-07-25.md`](../implementation-plans/cli-trace-substrate-rebaseline-2026-07-25.md)
 §Step S11. **Predecessors:** S10a (coverage), S10b (decomposition) — both
 COMPLETE. **Successor: S11** (controlled deployment).
 

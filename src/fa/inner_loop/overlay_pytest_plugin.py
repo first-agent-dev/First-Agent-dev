@@ -122,11 +122,7 @@ def _prepend_overlay_before_collection() -> None:
     overlay_import_root = str(overlay_root)
     sys.path[:] = [
         overlay_import_root,
-        *(
-            entry
-            for entry in sys.path
-            if _resolved_entry(entry) != overlay_root
-        ),
+        *(entry for entry in sys.path if _resolved_entry(entry) != overlay_root),
     ]
     _install_scripts_importer(scripts_tree)
 
@@ -139,6 +135,7 @@ def pytest_load_initial_conftests() -> None:
 def pytest_configure() -> None:
     """Reassert the scripts importer and reject an already-bound workspace copy."""
     _prepend_overlay_before_collection()
+
 
 def _resolved_entry(entry: str) -> Path | None:
     try:

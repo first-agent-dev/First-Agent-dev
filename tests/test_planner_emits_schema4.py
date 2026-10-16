@@ -139,9 +139,7 @@ def test_rerouted_content_sits_under_grounding(plan_blocks: list[str]) -> None:
     template = plan_blocks[0]
     grounding_at = template.index("## Grounding")
     for field in _GROUNDING_FIELDS:
-        assert template.index(field) > grounding_at, (
-            f"{field!r} appears before `## Grounding`; it was not rerouted"
-        )
+        assert template.index(field) > grounding_at, f"{field!r} appears before `## Grounding`; it was not rerouted"
     for heading in ("Assumptions", "Risks"):
         assert template.index(heading) > grounding_at, f"{heading} is not under `## Grounding`"
 

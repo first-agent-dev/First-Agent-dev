@@ -27,6 +27,7 @@ from __future__ import annotations
 import ast
 import inspect
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -141,7 +142,7 @@ def test_a_failure_inside_the_body_is_not_replaced_by_a_cleanup_error(workspace:
     with pytest.raises(ZeroDivisionError):
         with mutation_overlay(workspace, "src/demo/__init__.py", "x = 1\n") as overlay:
             # Remove the tree early, so the `finally` block's own rmtree misses.
-            slice_verification.shutil.rmtree(overlay)
+            shutil.rmtree(overlay)
             _ = 1 / 0
 
 
@@ -317,9 +318,7 @@ def test_scripts_kill_imports_the_mutated_module_not_the_workspace_copy(
     assert "return 7" in (scripts / "demo_tool.py").read_text(encoding="utf-8")
 
 
-def test_scripts_bootstrap_failure_is_error_not_a_proven_kill(
-    workspace: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_scripts_bootstrap_failure_is_error_not_a_proven_kill(workspace: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """CT62 / Q54. A target not imported by the tests is a harness error."""
     import shlex
 
@@ -552,7 +551,7 @@ def test_provenance_reports_error_never_fail(workspace: Path) -> None:
         result = _assert_overlay_wins("demo.no_such_module", overlay, env, workspace=workspace)
 
         assert result.outcome is CommandOutcome.ERROR
-        assert result.outcome is not CommandOutcome.FAIL
+        assert result.outcome not in {CommandOutcome.FAIL}
 
 
 def test_provenance_explains_itself_when_it_refuses(workspace: Path) -> None:

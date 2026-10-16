@@ -4361,3 +4361,17 @@ def test_acquisition_unavailable_live_chat_and_noncoder_child_binding(
         child_history = history.read_run(child_id)
         assert child_history is not None and child_history["role"] == roles.replace(",", "→")
         assert not (child_dir / "admission.json").exists()
+
+
+def test_controller_keeps_admission_implementation_types_private_and_facades_exported() -> None:
+    for name in ("WorkflowAdmission", "AdmissionDiagnostic", "PlanAdmissionValidation"):
+        assert not hasattr(workflow, name)
+        assert hasattr(workflow, "_" + name)
+    for name in (
+        "BaselineCapture",
+        "EVAL_VERIFICATION_MAX_CHARS",
+        "capture_baseline",
+        "load_verify_baseline",
+        "write_verification",
+    ):
+        assert name in workflow.__all__ and hasattr(workflow, name)

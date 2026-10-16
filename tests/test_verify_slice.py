@@ -590,9 +590,7 @@ def test_verify_plan_runs_plan_commands_once_and_keeps_slice_attribution(
     assert verification.blocking is False
 
 
-def test_verify_plan_treats_a_failed_plan_command_as_blocking(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_verify_plan_treats_a_failed_plan_command_as_blocking(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     plan = extract_plan_ids(_plan_for_verify_plan())
 
     def run_spy(

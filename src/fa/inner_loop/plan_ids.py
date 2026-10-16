@@ -874,7 +874,7 @@ def _rule_orphaned_grammar(text: str, slices: list[_Slice], path: str) -> list[P
     if not slices:
         return []
     spans = [(s.section, s.start_line) for s in slices]
-    inside = set()
+    inside: set[int] = set()
     for section, start_line in spans:
         inside.update(range(start_line, start_line + section.count("\n") + 1))
 

@@ -242,9 +242,7 @@ def _add_optional_tool_builders(builders: dict[str, Callable[[], ToolSpec]], roo
         pass
 
 
-def _planner_target_allowed(
-    root: Path, path: str, prefixes: Sequence[str], dispatch: PlannerDispatch | None
-) -> bool:
+def _planner_target_allowed(root: Path, path: str, prefixes: Sequence[str], dispatch: PlannerDispatch | None) -> bool:
     if PurePosixPath(path).parts[:2] == (".fa", "admission"):
         return False
     try:

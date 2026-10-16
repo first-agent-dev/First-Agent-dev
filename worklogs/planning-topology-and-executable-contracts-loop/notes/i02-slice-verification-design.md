@@ -133,13 +133,13 @@ The single most important design choice, because it is what callers branch on:
 
 ```python
 class SliceVerdict(StrEnum):
-    PROVEN          = "proven"           # commands green AND every kill-check killed its test
-    VACUOUS         = "vacuous"          # commands green BUT a kill-check SURVIVED
+    PROVEN = "proven"  # commands green AND every kill-check killed its test
+    VACUOUS = "vacuous"  # commands green BUT a kill-check SURVIVED
     PRODUCER_ABSENT = "producer_absent"  # a kill-check target does not exist in the tree
-    FAILING         = "failing"          # a command exited non-zero
-    REGRESSION      = "regression"       # an existing test went GREEN -> RED
-    ERROR           = "error"            # could not determine: timeout, worktree failure, tooling
-    SKIPPED         = "skipped"          # no verify block (legacy plan) -> advisory only
+    FAILING = "failing"  # a command exited non-zero
+    REGRESSION = "regression"  # an existing test went GREEN -> RED
+    ERROR = "error"  # could not determine: timeout, worktree failure, tooling
+    SKIPPED = "skipped"  # no verify block (legacy plan) -> advisory only
 ```
 
 **Why `PRODUCER_ABSENT` is separate from `VACUOUS`.** They have different causes and
@@ -491,17 +491,26 @@ The actual production operator ran:
 ```python
 from pathlib import Path
 from fa.inner_loop.slice_verification import (
-    KillDirective, KillOperator, SliceVerdict, apply_kill, _run_kill_check,
+    KillDirective,
+    KillOperator,
+    SliceVerdict,
+    apply_kill,
+    _run_kill_check,
 )
+
 root = Path.cwd()
-d = KillDirective(operator=KillOperator.REMOVE_CALL,
-    path="src/fa/inner_loop/slice_verification.py", symbol="verify_slice",
-    callee="_run_kill_check", line=1)
+d = KillDirective(
+    operator=KillOperator.REMOVE_CALL,
+    path="src/fa/inner_loop/slice_verification.py",
+    symbol="verify_slice",
+    callee="_run_kill_check",
+    line=1,
+)
 a = apply_kill((root / d.path).read_text(), d)
 assert (a.targets, a.edits) == (1, 1)
-c = _run_kill_check(d, (
-    "tests/test_verify_slice.py::test_verify_slice_composes_a_proven_kill_into_the_frozen_slice_result",
-), root)
+c = _run_kill_check(
+    d, ("tests/test_verify_slice.py::test_verify_slice_composes_a_proven_kill_into_the_frozen_slice_result",), root
+)
 assert c.verdict is SliceVerdict.PROVEN, c
 ```
 

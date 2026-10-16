@@ -645,8 +645,9 @@ Scratch logs: `/home/user/.cache/fa-i02-ct93-pyrefly-{candidate,baseline}.log`.
 Final real `_run_kill_check` directive:
 
 ```python
-KillDirective(KillOperator.REMOVE_CALL, "src/fa/inner_loop/profiles.py",
-              "_build_tool_builders", "build_scoped_write_file_tool", 0)
+KillDirective(
+    KillOperator.REMOVE_CALL, "src/fa/inner_loop/profiles.py", "_build_tool_builders", "build_scoped_write_file_tool", 0
+)
 # _run_kill_check(directive, "tests/test_verify_gate_live.py", root,
 #                 deadline=time.monotonic() + 900)
 ```
@@ -1087,3 +1088,16 @@ a bounded three-path/one-trigger exception proposal and required two-sided contr
 no guard, production, immutable evidence or status change. No full-suite rerun or new mutation
 claim from this review. Preserved Q69/Q70 approvals, frozen16+2 proof and all remaining DoD gates.
 Current implementation is paused for the operator decision, not SHIPPED or independent acceptance.
+
+
+### E215 / Q71 custom resolution — 2026-10-16
+
+Operator delegated robust maintainable design selection. No new whitelist: bounded retired-recipe
+and lifecycle-claim detection replaces bare alias-term matching. Security/denial evidence unchanged.
+Typed registry fixtures, CLI78/AST anchor and canonical LogKind scanner repaired; private admission
+implementation types and explicit existing facade exports remove authoring diagnostics. All8 baseline
+Mypy errors fixed without suppressions; configured450files clean. Whole Ruff901, doclinks308 and
+authoring clean. All46 dangling links are target-only relocation corrections, no expanded exclusion.
+Targeted152passed12skipped (shellcheck missing); typing regressions100passed. Diagnostic pre-format
+public bank487passed111.85s; final frozen baseline/audit pending. STEP17 reopened: controller/test
+bytes changed, old16+2 proof must not authorize new bytes. No acceptance checkbox or foreign-hook waiver.

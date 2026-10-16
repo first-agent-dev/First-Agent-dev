@@ -8,7 +8,7 @@ Status: **COMPLETE — merged as `57f574a`** (+ CI follow-up `211e8fb`), 2026-07
 All seven implementation steps landed with execution records in §5; DoD verified
 in §8. **One item remains OPEN by decision: Q19 / V24 / V25** (subagent
 containment), carried as a strict `xfail` and tracked in
-[`BACKLOG.md` §I-34](../../knowledge/BACKLOG.md#i-34--subagent-containment-os-level-writable-mount-boundary-q19--v24v25).
+[`BACKLOG.md` §I-34](../BACKLOG.md#i-34--subagent-containment-os-level-writable-mount-boundary-q19--v24v25).
 
 Post-merge review: **2026-07-29** (§13). Verdict **PASS** — all six parent
 kill-checks re-measured and biting; three defects found and closed here.

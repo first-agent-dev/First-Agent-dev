@@ -5,9 +5,7 @@ from pathlib import Path
 
 def write_explicit_plan(tmp_path: Path) -> Path:
     # CT90: routing/history fixtures must supply an explicit workspace plan.
-    plan = (
-        tmp_path / "worklogs/planning-topology-and-executable-contracts-loop/increments/increment-99-cli-fixture.md"
-    )
+    plan = tmp_path / "worklogs/planning-topology-and-executable-contracts-loop/increments/increment-99-cli-fixture.md"
     plan.parent.mkdir(parents=True, exist_ok=True)
     plan.write_text(
         "Plan-ID: PLAN-cli-fixture\n\n## SLICE1: CLI routing fixture\n"

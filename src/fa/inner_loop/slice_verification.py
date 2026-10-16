@@ -120,10 +120,7 @@ TAIL_LIMIT = 4000
 #: The JUnit adapter must carry pytest's authoritative Item.nodeid (CT68/CT69).
 #: Keep this command separate from planner-authored verify fences: these are
 #: harness-issued before/after snapshots, not commands the plan gets to rewrite.
-NODEID_CAPTURE_COMMAND = (
-    "python -m pytest {paths} -p fa.inner_loop.junit_nodeid_plugin "
-    "--junitxml={report} -q"
-)
+NODEID_CAPTURE_COMMAND = "python -m pytest {paths} -p fa.inner_loop.junit_nodeid_plugin --junitxml={report} -q"
 
 _GATE_TEST_DEPTH_ENV: Final = "FA_VERIFY_GATE_TEST_DEPTH"
 _GATE_KILL_CHECK_ENV: Final = "FA_VERIFY_GATE_KILL_CHECK"
@@ -962,6 +959,7 @@ def _overlay_target(overlay_root: Path, rel_path: str) -> Path:
         raise OverlayError(f"kill-directive path {rel_path!r} resolves outside the overlay {source_root} tree")
     return resolved
 
+
 @contextlib.contextmanager
 def mutation_overlay(workspace: Path, rel_path: str, mutated_source: str) -> Iterator[Path]:
     """Yield a throwaway tree holding allowlisted source roots with one file mutated. (CT60, Q54)
@@ -1052,6 +1050,7 @@ _PROVENANCE_PROBE = (
     "sys.exit(0 if f and pathlib.Path(f).resolve().is_relative_to(expected) else 3)"
 )
 
+
 def _assert_overlay_wins(
     module: str,
     overlay_root: Path,
@@ -1099,6 +1098,7 @@ def _assert_overlay_wins(
         stderr_tail=probe.stderr_tail or f"{module} did not resolve inside {expected_tree}",
         duration_s=time.monotonic() - started,
     )
+
 
 # ---------------------------------------------------------------------------
 # The mutation operators (SLICE3). Pure: source text in, source text out.
@@ -1706,9 +1706,7 @@ class PlanVerification:
         if any(result.outcome is not CommandOutcome.PASS for result in self.plan_command_results):
             return True
         return any(
-            result.verdict
-            not in {SliceVerdict.PROVEN, SliceVerdict.SKIPPED}
-            for result in self.slice_verifications
+            result.verdict not in {SliceVerdict.PROVEN, SliceVerdict.SKIPPED} for result in self.slice_verifications
         )
 
 

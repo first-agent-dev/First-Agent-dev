@@ -2,7 +2,7 @@
 
 **Дата:** 2026-07-01
 **Тема:** Полная верификация и закрытие выживших мутантов `mutmut` для TCB песочницы (`src/fa/sandbox/`)
-**Связанные задачи:** [`BACKLOG.md I-23`](../BACKLOG.md#i-23--mutation-testing-promotion-to-blocking-gate), [`knowledge/mutation-survivors-workplan.md`](../mutation-survivors-workplan.md)
+**Связанные задачи:** [`BACKLOG.md I-23`](../../BACKLOG.md#i-23--mutation-testing-promotion-to-blocking-gate), [`knowledge/mutation-survivors-workplan.md`](../../../knowledge/mutation-survivors-workplan.md)
 
 ---
 
@@ -32,7 +32,7 @@
 4. **Устранение дублирования циклов в `validators.py`**:
    Удален дублирующийся неразмеченный цикл `for i, ch in enumerate(clause):` в функции `_grants_world_write`, из-за которого мутации первого цикла перезаписывались вторым и выживали.
 5. **Создание переиспользуемого навыка**:
-   Добавлен агентский навык [`knowledge/skills/mutation-clearing/SKILL.md`](../skills/mutation-clearing/SKILL.md), формализующий 4-уровневую таксономию триажа мутантов и критерии реестра эквивалентных мутаций.
+   Добавлен агентский навык [`knowledge/skills/mutation-clearing/SKILL.md`](../../../knowledge/skills/mutation-clearing/SKILL.md), формализующий 4-уровневую таксономию триажа мутантов и критерии реестра эквивалентных мутаций.
 
 ---
 

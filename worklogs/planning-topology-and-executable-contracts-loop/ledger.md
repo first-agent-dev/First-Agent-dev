@@ -2390,3 +2390,25 @@ E214  FACT  Source review from c881621 stopped at explicit documentation-oracle 
     not completion of the remaining ten failures/exports/reviews. Existing frozen16+2 remains
     unchanged; Q69/Q70 remain resolved. Resume implementation only after operator Q71 disposition.
     [notes/open-questions-2026-10-07.md Q71; tests/test_deploy_scripts.py:847–879 @ c881621]
+
+
+E215  FACT  Q71 custom reply authorized a robust maintainable construction, not the proposed
+    exact-path whitelist. Adopted bounded recipe/lifecycle-claim detection; alias terminology
+    alone is permitted in denial/risk evidence everywhere. Existing historical exceptions
+    unchanged. Two-sided controls cover unsafe transport flags/intervening flags/continuations,
+    safe no-sharing transport and security evidence. No historical evidence rewritten for this
+    guard. Typed registry fixtures forward planner_dispatch; CLI anchor78 names actual added
+    _valid_planner_dispatch while retaining independent AST truth; LogKind uses canonical AST
+    append-producer scanner, not other kind namespaces. New admission implementation types are
+    private; existing verification compatibility facades are explicitly exported. Authoring0.
+    Targeted152passed12skipped2.52s (shellcheck missing). Changed8-file Ruff/Mypy/Pyrefly clean.
+    Historical banner oracle now reads the existing relocated archive, not a nonexistent file.
+    Baseline typing8 fixed without suppressions or assertion deletion; configured Mypy450 files
+    clean. Whole Ruff check/format901 clean. All46 broken relative links repaired by target-only
+    relocation edits in15 existing files; whole308-file documentation scan clean. Formatter-only
+    runtime/profile/scanner changes retain identical ASTs. No lock/requirement/environment policy
+    changes. Pre-format public-bank487passed111.85s is diagnostic, not the final frozen baseline.
+    Controller/public-bank bytes changed: STEP17 reopened; E21216+2 remains historical/exact-hash
+    evidence only. Final baseline, fresh16+2 whole-bank audit and final full repository run pending.
+    No local DoD/SHIPPED/I03 acceptance, blanket baseline waiver or foreign-hook replacement.
+    [notes/open-questions-2026-10-07.md Q71; E215 continuation in E211 note]

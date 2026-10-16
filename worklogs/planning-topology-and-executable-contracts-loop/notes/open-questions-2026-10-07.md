@@ -416,9 +416,9 @@ encode. The slice ships its central behaviour untested. **Rejected.**
 class KillApplication:
     """What one directive did to one source text. (CT57)"""
 
-    source: str | None   # the mutated text; None unless it is safe to run
-    targets: int         # definitions whose qualified name is the directive symbol
-    edits: int           # bodies neutralised (0 or 1) / call sites silenced (0..n)
+    source: str | None  # the mutated text; None unless it is safe to run
+    targets: int  # definitions whose qualified name is the directive symbol
+    edits: int  # bodies neutralised (0 or 1) / call sites silenced (0..n)
 ```
 
 `apply_kill(source, directive) -> KillApplication`, total, never raising. `source` is `None`
@@ -1367,7 +1367,20 @@ records actual results and producer-removal sensitivity separately from policy a
 
 ## Q71 — May the documentation guard distinguish recorded alias-denial evidence from obsolete workspace claims?
 
-**Status: OPEN — operator decision required, 2026-10-16.** Review checkpoint:
+**Status: RESOLVED direction — custom operator authorization, 2026-10-16.**
+The operator replied: “implement suiting production-grade wise design. robust and maintainable policy”.
+This delegates design selection, not selection of the proposed exact-path exception below.
+
+**Adopted construction:** reject retired local/shared/object-sharing clone recipes and the existing
+one-session/container-lifecycle assertions, not mere filesystem mechanism names. Security denial,
+risk discussion and negative-test evidence may mention alias mechanisms in any document. Retain
+existing historical exceptions without adding a project-path exception. The deterministic detector
+recognizes unsafe clone flags with intervening flags/continued lines; explicitly safe no-local/no-
+sharing options are not matched. This is a bounded lexical recipe/claim guard, not an NLP claim
+classifier or execution-isolation guarantee. Two-sided C0 controls are required. No evidence
+rewrite, skip, baseline waiver or runtime policy relaxation. The proposal below is historical.
+
+Review checkpoint:
 `c881621d53026c21cf4cecbd037ae1361bbfae92`. No production or test-oracle change is authorized
 by recording this question. Q69/Q70 remain resolved; this does not reopen runtime acquisition,
 execution isolation, verifier attribution or supported noncoder delegation.

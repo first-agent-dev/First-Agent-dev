@@ -173,60 +173,125 @@ Reproduction harness, run as `uv run --frozen python /path/to/audit.py` from rep
 
 ```python
 """Supplemental selected-case audit, not whole-declared-path contract acceptance."""
-import ast,hashlib,json,subprocess,sys,xml.etree.ElementTree as ET
-from pathlib import Path
-from fa.inner_loop.slice_verification import CommandOutcome,KillDirective,KillOperator,apply_kill,mutation_overlay,_assert_overlay_wins,_overlay_env
-ROOT=Path.cwd();OUT=Path('/home/user/.cache/i02-ct91-mutations');OUT.mkdir(exist_ok=True)
-C='src/fa/inner_loop/workflow_controller.py';L='src/fa/inner_loop/coder_loop.py'
-SELECT='q68 or (ct91_public_repair_retries_latest_draft_then_promotes and enforce and linear) or (ct91_public_q67_eval_replan and observe) or ct91_public_block_never or ct93_real_stage_dispatch or ct91_terminal_none or (ct91_public_post_coder_integrity and observe) or ct91_public_initial_repair_spends or ct91_t0_reuse_rejects or ct91_public_admission_storage or ct91_public_post_replace_fsync'
-CASES=[
-('producer-precheck',C,'_validate_plan_admission','KILL','precheck'),
-('producer-kill-validator',C,'_validate_plan_admission','KILL','validate_kill_directives'),
-('producer-public-gate',C,'_run_stage','KILL','_admit_plan'),
-('producer-public-publication',C,'_run_admission_repair','KILL','_promote_validated_plan'),
-('producer-durable-barrier',C,'_record_admission_attempt','KILL','write_admission_record'),
-('failed-tool-projection',L,'_failed_tool_names',None,'return set()'),
-('reserve-shared-credit',C,'_admit_plan','state.planner_calls += 1','state.planner_calls += 0'),
-('bounded-shared-credit',C,'_admit_plan','state.planner_calls < state.planner_limit','True'),
-('source-hash-guard',C,'_check_admission_source',None,'return None'),
-('baseline-independent-counter',C,'_needs_baseline',None,'return progress.repair_round == 0'),
-('control-integrity-floor',C,'_mark_integrity_failure',None,'return None'),
-('owned-candidate-cleanup',C,'_run_admission_repair','os.unlink(target.name, dir_fd=parent)','None'),
-('publication-prepare-error',C,'_scoped_stage_failed','{"fs_write_file", "pr_prepare"}','{"fs_write_file"}'),
-('blanket-tool-error',C,'_scoped_stage_failed','not {"fs_write_file", "pr_prepare"}.isdisjoint(sink[-1].failed_tools)','bool(sink[-1].failed_tools)'),
-('pinned-context-authority',C,'plan_text','return self.admission.snapshot.text','return self.plan_path.read_text(encoding="utf-8")'),
-]
-results=[]
-for name,rel,symbol,before,after in CASES:
- source=(ROOT/rel).read_text()
- if before=='KILL':
-  change=apply_kill(source,KillDirective(KillOperator.REMOVE_CALL,rel,symbol,after,0));assert change.targets==change.edits==1 and change.source
-  mutated=change.source
- else:
-  nodes=[n for n in ast.walk(ast.parse(source)) if isinstance(n,ast.FunctionDef) and n.name==symbol];assert len(nodes)==1
-  node=nodes[0];lines=source.splitlines(keepends=True);start=node.lineno-1;end=node.end_lineno
-  original=''.join(lines[start:end])
-  if before is None:
-   body_start=node.body[0].lineno-node.lineno
-   changed=''.join(original.splitlines(keepends=True)[:body_start])+'    '+after+'\n'
-  else:
-   assert original.count(before)==1,(name,original.count(before));changed=original.replace(before,after)
-  mutated=''.join(lines[:start])+changed+''.join(lines[end:])
- ast.parse(mutated);testhash=hashlib.sha256((ROOT/'tests/test_verify_gate_live.py').read_bytes()).hexdigest()
- with mutation_overlay(ROOT,rel,mutated) as overlay:
-  env=_overlay_env(ROOT,overlay);probe=_assert_overlay_wins(rel[4:-3].replace('/','.'),overlay,env,workspace=ROOT)
-  assert probe.outcome is CommandOutcome.PASS,probe
-  xml=OUT/(name+'.xml');xml.unlink(missing_ok=True)
-  run=subprocess.run([sys.executable,'-m','pytest','tests/test_verify_gate_live.py','-k',SELECT,'-q','--tb=short','--junitxml='+str(xml)],cwd=ROOT,env=env,capture_output=True,text=True,timeout=180)
-  (OUT/(name+'.log')).write_text(run.stdout+run.stderr)
-  assert testhash==hashlib.sha256((ROOT/'tests/test_verify_gate_live.py').read_bytes()).hexdigest()
-  tree=ET.parse(xml).getroot();stats={k:sum(int(n.get(k,0)) for n in tree.findall('testsuite')) for k in ['tests','failures','errors','skipped']}
-  if results:assert stats['tests']==results[0]['tests'],stats
-  r=dict(name=name,path=rel,symbol=symbol,source_sha256=hashlib.sha256(source.encode()).hexdigest(),tests_sha256=testhash,rc=run.returncode,**stats)
-  r['killed']=r['rc']==1 and r['failures']>0 and r['errors']==r['skipped']==0
-  results.append(r);print(json.dumps(r),flush=True);(OUT/'results.json').write_text(json.dumps(results,indent=2)+'\n')
-assert len(results)==15 and all(r['killed'] for r in results),results
 
+import ast, hashlib, json, subprocess, sys, xml.etree.ElementTree as ET
+from pathlib import Path
+from fa.inner_loop.slice_verification import (
+    CommandOutcome,
+    KillDirective,
+    KillOperator,
+    apply_kill,
+    mutation_overlay,
+    _assert_overlay_wins,
+    _overlay_env,
+)
+
+ROOT = Path.cwd()
+OUT = Path("/home/user/.cache/i02-ct91-mutations")
+OUT.mkdir(exist_ok=True)
+C = "src/fa/inner_loop/workflow_controller.py"
+L = "src/fa/inner_loop/coder_loop.py"
+SELECT = "q68 or (ct91_public_repair_retries_latest_draft_then_promotes and enforce and linear) or (ct91_public_q67_eval_replan and observe) or ct91_public_block_never or ct93_real_stage_dispatch or ct91_terminal_none or (ct91_public_post_coder_integrity and observe) or ct91_public_initial_repair_spends or ct91_t0_reuse_rejects or ct91_public_admission_storage or ct91_public_post_replace_fsync"
+CASES = [
+    ("producer-precheck", C, "_validate_plan_admission", "KILL", "precheck"),
+    ("producer-kill-validator", C, "_validate_plan_admission", "KILL", "validate_kill_directives"),
+    ("producer-public-gate", C, "_run_stage", "KILL", "_admit_plan"),
+    ("producer-public-publication", C, "_run_admission_repair", "KILL", "_promote_validated_plan"),
+    ("producer-durable-barrier", C, "_record_admission_attempt", "KILL", "write_admission_record"),
+    ("failed-tool-projection", L, "_failed_tool_names", None, "return set()"),
+    ("reserve-shared-credit", C, "_admit_plan", "state.planner_calls += 1", "state.planner_calls += 0"),
+    ("bounded-shared-credit", C, "_admit_plan", "state.planner_calls < state.planner_limit", "True"),
+    ("source-hash-guard", C, "_check_admission_source", None, "return None"),
+    ("baseline-independent-counter", C, "_needs_baseline", None, "return progress.repair_round == 0"),
+    ("control-integrity-floor", C, "_mark_integrity_failure", None, "return None"),
+    ("owned-candidate-cleanup", C, "_run_admission_repair", "os.unlink(target.name, dir_fd=parent)", "None"),
+    ("publication-prepare-error", C, "_scoped_stage_failed", '{"fs_write_file", "pr_prepare"}', '{"fs_write_file"}'),
+    (
+        "blanket-tool-error",
+        C,
+        "_scoped_stage_failed",
+        'not {"fs_write_file", "pr_prepare"}.isdisjoint(sink[-1].failed_tools)',
+        "bool(sink[-1].failed_tools)",
+    ),
+    (
+        "pinned-context-authority",
+        C,
+        "plan_text",
+        "return self.admission.snapshot.text",
+        'return self.plan_path.read_text(encoding="utf-8")',
+    ),
+]
+results = []
+for name, rel, symbol, before, after in CASES:
+    source = (ROOT / rel).read_text()
+    if before == "KILL":
+        change = apply_kill(source, KillDirective(KillOperator.REMOVE_CALL, rel, symbol, after, 0))
+        assert change.targets == change.edits == 1 and change.source
+        mutated = change.source
+    else:
+        nodes = [n for n in ast.walk(ast.parse(source)) if isinstance(n, ast.FunctionDef) and n.name == symbol]
+        assert len(nodes) == 1
+        node = nodes[0]
+        lines = source.splitlines(keepends=True)
+        start = node.lineno - 1
+        end = node.end_lineno
+        original = "".join(lines[start:end])
+        if before is None:
+            body_start = node.body[0].lineno - node.lineno
+            changed = "".join(original.splitlines(keepends=True)[:body_start]) + "    " + after + "\n"
+        else:
+            assert original.count(before) == 1, (name, original.count(before))
+            changed = original.replace(before, after)
+        mutated = "".join(lines[:start]) + changed + "".join(lines[end:])
+    ast.parse(mutated)
+    testhash = hashlib.sha256((ROOT / "tests/test_verify_gate_live.py").read_bytes()).hexdigest()
+    with mutation_overlay(ROOT, rel, mutated) as overlay:
+        env = _overlay_env(ROOT, overlay)
+        probe = _assert_overlay_wins(rel[4:-3].replace("/", "."), overlay, env, workspace=ROOT)
+        assert probe.outcome is CommandOutcome.PASS, probe
+        xml = OUT / (name + ".xml")
+        xml.unlink(missing_ok=True)
+        run = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                "tests/test_verify_gate_live.py",
+                "-k",
+                SELECT,
+                "-q",
+                "--tb=short",
+                "--junitxml=" + str(xml),
+            ],
+            cwd=ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+        (OUT / (name + ".log")).write_text(run.stdout + run.stderr)
+        assert testhash == hashlib.sha256((ROOT / "tests/test_verify_gate_live.py").read_bytes()).hexdigest()
+        tree = ET.parse(xml).getroot()
+        stats = {
+            k: sum(int(n.get(k, 0)) for n in tree.findall("testsuite"))
+            for k in ["tests", "failures", "errors", "skipped"]
+        }
+        if results:
+            assert stats["tests"] == results[0]["tests"], stats
+        r = dict(
+            name=name,
+            path=rel,
+            symbol=symbol,
+            source_sha256=hashlib.sha256(source.encode()).hexdigest(),
+            tests_sha256=testhash,
+            rc=run.returncode,
+            **stats,
+        )
+        r["killed"] = r["rc"] == 1 and r["failures"] > 0 and r["errors"] == r["skipped"] == 0
+        results.append(r)
+        print(json.dumps(r), flush=True)
+        (OUT / "results.json").write_text(json.dumps(results, indent=2) + "\n")
+assert len(results) == 15 and all(r["killed"] for r in results), results
 ```
 
 This selected-case sensitivity is not Q53(c) whole-path acceptance. The prior CT94 whole-path
@@ -577,52 +642,139 @@ setup with `uv run --frozen --no-sync python <audit-script>`:
 
 ```python
 """E212: full declared-path audit using production overlay/provenance/runner/JUnit classifier."""
-import concurrent.futures,dataclasses,hashlib,json,shlex,subprocess,sys,time,uuid
+
+import concurrent.futures, dataclasses, hashlib, json, shlex, subprocess, sys, time, uuid
 from pathlib import Path
 from fa.inner_loop.plan_ids import extract_plan_ids
 from fa.inner_loop import slice_verification as v
-ROOT=Path.cwd();OUT=Path('/home/user/.cache/fa-runtime/slice6-final-audit');OUT.mkdir(exist_ok=True)
-PLAN=ROOT/'worklogs/planning-topology-and-executable-contracts-loop/increments/increment-02-verify-gate-and-kill-checks.md'
-record=next(r for r in extract_plan_ids(PLAN.read_text()).slice_records if r.slice_id=='SLICE6')
-assert record.test_paths==('tests/test_verify_gate_live.py',)
-cases=list(v.parse_kill_directives(record).items());assert len(cases)==16
-cases += [('SUP-GUARD',v.KillDirective(v.KillOperator.REMOVE_CALL,'src/fa/inner_loop/tools/workflow_tool.py','build_invoke_workflow_tool.handler','_requires_acquisition',0)),('SUP-CONTEXT',v.KillDirective(v.KillOperator.REMOVE_CALL,'src/fa/inner_loop/tools/workflow_tool.py','_child_run_context','begin_run',0))]
-watched=sorted(set([d.path for _,d in cases]+['tests/test_verify_gate_live.py','tests/fixtures/i02_gate_probe.py','tests/fixtures/i02_gate_subject.py']))
-def hashes():return {p:hashlib.sha256((ROOT/p).read_bytes()).hexdigest() for p in watched}
-frozen=hashes();(OUT/'inputs.json').write_text(json.dumps(frozen,indent=2)+'\n')
-col=subprocess.run([sys.executable,'-m','pytest',*record.test_paths,'--collect-only','-q'],cwd=ROOT,capture_output=True,text=True,check=True)
-manifest=sorted(l for l in col.stdout.splitlines() if l.startswith('tests/test_verify_gate_live.py::'))
-assert len(manifest)==486,len(manifest)
-(OUT/'baseline-collection.json').write_text(json.dumps(manifest,indent=2)+'\n')
+
+ROOT = Path.cwd()
+OUT = Path("/home/user/.cache/fa-runtime/slice6-final-audit")
+OUT.mkdir(exist_ok=True)
+PLAN = (
+    ROOT
+    / "worklogs/planning-topology-and-executable-contracts-loop/increments/increment-02-verify-gate-and-kill-checks.md"
+)
+record = next(r for r in extract_plan_ids(PLAN.read_text()).slice_records if r.slice_id == "SLICE6")
+assert record.test_paths == ("tests/test_verify_gate_live.py",)
+cases = list(v.parse_kill_directives(record).items())
+assert len(cases) == 16
+cases += [
+    (
+        "SUP-GUARD",
+        v.KillDirective(
+            v.KillOperator.REMOVE_CALL,
+            "src/fa/inner_loop/tools/workflow_tool.py",
+            "build_invoke_workflow_tool.handler",
+            "_requires_acquisition",
+            0,
+        ),
+    ),
+    (
+        "SUP-CONTEXT",
+        v.KillDirective(
+            v.KillOperator.REMOVE_CALL, "src/fa/inner_loop/tools/workflow_tool.py", "_child_run_context", "begin_run", 0
+        ),
+    ),
+]
+watched = sorted(
+    set(
+        [d.path for _, d in cases]
+        + ["tests/test_verify_gate_live.py", "tests/fixtures/i02_gate_probe.py", "tests/fixtures/i02_gate_subject.py"]
+    )
+)
+
+
+def hashes():
+    return {p: hashlib.sha256((ROOT / p).read_bytes()).hexdigest() for p in watched}
+
+
+frozen = hashes()
+(OUT / "inputs.json").write_text(json.dumps(frozen, indent=2) + "\n")
+col = subprocess.run(
+    [sys.executable, "-m", "pytest", *record.test_paths, "--collect-only", "-q"],
+    cwd=ROOT,
+    capture_output=True,
+    text=True,
+    check=True,
+)
+manifest = sorted(l for l in col.stdout.splitlines() if l.startswith("tests/test_verify_gate_live.py::"))
+assert len(manifest) == 486, len(manifest)
+(OUT / "baseline-collection.json").write_text(json.dumps(manifest, indent=2) + "\n")
+
 
 def run(case):
- name,d=case;started=time.monotonic();source=(ROOT/d.path).read_text();a=v.apply_kill(source,d)
- assert a.targets==a.edits==1 and a.source is not None,(name,a)
- report_path=OUT/(name+'.xml');report_path.unlink(missing_ok=True)
- with v.mutation_overlay(ROOT,d.path,a.source) as overlay:
-  env=v._overlay_env(ROOT,overlay);probe=v._assert_overlay_wins(v._module_name(d.path),overlay,env,workspace=ROOT)
-  assert probe.outcome is v.CommandOutcome.PASS,(name,probe)
-  run_id=uuid.uuid4().hex;env=v._gate_subprocess_env(ROOT,base_env=env,kill_check=True);env[v.JUNIT_RUN_ID_ENV]=run_id
-  command=v.KILL_CHECK_COMMAND.format(path=shlex.join(record.test_paths))+' -p fa.inner_loop.junit_nodeid_plugin --junitxml='+shlex.quote(str(report_path))
-  (result,)=v.run_commands((command,),workspace=ROOT,env=env)
-  report,detail=v._parse_junit_report(report_path,run_id=run_id)
- verdict=v._kill_check_result(d,', '.join(record.test_paths),started,result,report,detail)
- summary={'name':name,'directive':dataclasses.asdict(d),'targets':a.targets,'edits':a.edits,'command':command,'probe':dataclasses.asdict(probe),'runner':dataclasses.asdict(result),'check':dataclasses.asdict(verdict),'run_id':run_id,'report_detail':detail,'nodeids_match':report is not None and sorted(report.outcomes)==manifest,'outcomes':dict(report.outcomes) if report else None}
- if report:
-  summary['counts']={k:sum(x.value==k for x in report.outcomes.values()) for k in ['passed','failed','skipped']}
- (OUT/(name+'.json')).write_text(json.dumps(summary,indent=2,default=str)+'\n')
- assert hashes()==frozen,(name,'source/test input changed')
- print(json.dumps({'name':name,'verdict':verdict.verdict.value,'rc':result.exit_code,'duration':round(verdict.duration_s,2),'counts':summary.get('counts'),'nodeids_match':summary['nodeids_match'],'detail':verdict.detail}),flush=True)
- return summary
+    name, d = case
+    started = time.monotonic()
+    source = (ROOT / d.path).read_text()
+    a = v.apply_kill(source, d)
+    assert a.targets == a.edits == 1 and a.source is not None, (name, a)
+    report_path = OUT / (name + ".xml")
+    report_path.unlink(missing_ok=True)
+    with v.mutation_overlay(ROOT, d.path, a.source) as overlay:
+        env = v._overlay_env(ROOT, overlay)
+        probe = v._assert_overlay_wins(v._module_name(d.path), overlay, env, workspace=ROOT)
+        assert probe.outcome is v.CommandOutcome.PASS, (name, probe)
+        run_id = uuid.uuid4().hex
+        env = v._gate_subprocess_env(ROOT, base_env=env, kill_check=True)
+        env[v.JUNIT_RUN_ID_ENV] = run_id
+        command = (
+            v.KILL_CHECK_COMMAND.format(path=shlex.join(record.test_paths))
+            + " -p fa.inner_loop.junit_nodeid_plugin --junitxml="
+            + shlex.quote(str(report_path))
+        )
+        (result,) = v.run_commands((command,), workspace=ROOT, env=env)
+        report, detail = v._parse_junit_report(report_path, run_id=run_id)
+    verdict = v._kill_check_result(d, ", ".join(record.test_paths), started, result, report, detail)
+    summary = {
+        "name": name,
+        "directive": dataclasses.asdict(d),
+        "targets": a.targets,
+        "edits": a.edits,
+        "command": command,
+        "probe": dataclasses.asdict(probe),
+        "runner": dataclasses.asdict(result),
+        "check": dataclasses.asdict(verdict),
+        "run_id": run_id,
+        "report_detail": detail,
+        "nodeids_match": report is not None and sorted(report.outcomes) == manifest,
+        "outcomes": dict(report.outcomes) if report else None,
+    }
+    if report:
+        summary["counts"] = {
+            k: sum(x.value == k for x in report.outcomes.values()) for k in ["passed", "failed", "skipped"]
+        }
+    (OUT / (name + ".json")).write_text(json.dumps(summary, indent=2, default=str) + "\n")
+    assert hashes() == frozen, (name, "source/test input changed")
+    print(
+        json.dumps(
+            {
+                "name": name,
+                "verdict": verdict.verdict.value,
+                "rc": result.exit_code,
+                "duration": round(verdict.duration_s, 2),
+                "counts": summary.get("counts"),
+                "nodeids_match": summary["nodeids_match"],
+                "detail": verdict.detail,
+            }
+        ),
+        flush=True,
+    )
+    return summary
 
-results=[]
+
+results = []
 with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
- for done in concurrent.futures.as_completed([pool.submit(run,c) for c in cases]):
-  results.append(done.result());(OUT/'results.json').write_text(json.dumps(results,indent=2,default=str)+'\n')
-assert len(results)==18
-assert all(r['check']['verdict'] is v.SliceVerdict.PROVEN and r['nodeids_match'] and r['counts']['skipped']==0 for r in results),[(r['name'],r['check']) for r in results]
-assert hashes()==frozen
-print('ALL_16_NORMATIVE_PLUS_2_SUPPLEMENTAL_PROVEN; unchanged inputs; exact whole-path manifests',flush=True)
+    for done in concurrent.futures.as_completed([pool.submit(run, c) for c in cases]):
+        results.append(done.result())
+        (OUT / "results.json").write_text(json.dumps(results, indent=2, default=str) + "\n")
+assert len(results) == 18
+assert all(
+    r["check"]["verdict"] is v.SliceVerdict.PROVEN and r["nodeids_match"] and r["counts"]["skipped"] == 0
+    for r in results
+), [(r["name"], r["check"]) for r in results]
+assert hashes() == frozen
+print("ALL_16_NORMATIVE_PLUS_2_SUPPLEMENTAL_PROVEN; unchanged inputs; exact whole-path manifests", flush=True)
 ```
 
 
@@ -791,3 +943,81 @@ Root doc-links remains rc1/46 archived links, changed-file docs rc0; no archive 
 The other candidate-only failures and new authoring exports remain explicit next repair work.
 Full candidate JUnit SHA256: `0b08b31a5135d177f8195eb507983e26bab653e07c80f049d821fa2278475f26`.
 Full baseline JUnit SHA256: `55eb4f1963c7fd47d5ae1475131f5721ce74e6d039c61c53c3db48faec4c9492`.
+
+
+## E215 — Q71 production-grade repair and repository quality cleanup, 2026-10-16
+
+Q71 custom direction: “implement suiting production-grade wise design. robust and maintainable policy”.
+Adopted deterministic retired-recipe/lifecycle detection, no new path exemptions; ordinary security
+and denial evidence can name alias mechanisms anywhere. This is not a language-understanding
+classifier, permission waiver, or execution-isolation proof. Historical ledger entries are unchanged.
+
+**Scope and mechanism.** CT87/91/95; STEP12/13/16/17; GAP06/10/15 and retained local DoD quality
+gates. Only existing controller implementation types become private; existing verification facade
+exports are completed. Production routing, acquisition, deadline, isolation and retry policy are
+unchanged. Registry C0 fixtures typed-forward the new dispatch argument, preserving actual invalid
+name/schema exceptions and optional-builder fallback. CLI78 is the addition of `_valid_planner_dispatch`;
+AST-derived truth is still independently asserted. LogKind C0 uses the canonical append-kind AST
+scanner and its existing dormant-event explanations; a two-sided fixture distinguishes admission/
+provider namespaces, actual literal/conditional producers and an unresolved producer.
+
+**Quality corrections, no waivers.** Annotate an integer set and empty results; validate expected
+JSON object shape; use direct shutil dependency; express enum exclusion as membership after a
+positive identity assertion (same oracle, no comparison-overlap); move the empty-tuple assertion
+after the error generator to avoid narrowing its element to Never. No assertions deleted.
+Formatter-only profile/runner/overlay/plugin fixtures retain identical ASTs. Archive edits only
+relocate broken Markdown link targets, preserving labels/fragments and historical bodies; destinations
+are existing canonical documents or moved archives, not fabricated stubs.
+
+**Actual checks so far:** targeted152passed12skipped2.52s (missing shellcheck); standalone typing-fixture
+regressions100passed4.48s; configured `mypy`450files clean (explicit `mypy .` is a different480-file
+selection and reports legacy archived demos/scripts; it is not the configured gate). Ruff check
+whole tree clean; format901files clean; whole doclinks308files clean; authoring0diagnostics.
+Pre-format public-bank487passed111.85s is diagnostic only. Invalid baseline invocation with a
+nonexistent invoke-test filename returned rc4/no tests; not counted. Final corrected baseline and
+16+2 audit pending. All live normative mutations must retain the entire487-case bank; no per-contract
+test map. STEP17 reopened because source/test bytes changed. No local DoD/SHIPPED or I03 acceptance.
+
+**Allowed existing-file inventory for this batch** (decision/evidence files are included; no new
+source/test module or path-whitelist component):
+
+- `src/fa/inner_loop/overlay_pytest_plugin.py`
+- `src/fa/inner_loop/plan_ids.py`
+- `src/fa/inner_loop/profiles.py`
+- `src/fa/inner_loop/slice_verification.py`
+- `src/fa/inner_loop/workflow_controller.py`
+- `tests/test_deploy_scripts.py`
+- `tests/test_mutation_overlay.py`
+- `tests/test_planner_emits_schema4.py`
+- `tests/test_prompt_registry_coherence.py`
+- `tests/test_quality_slice_coverage.py`
+- `tests/test_s127_outline.py`
+- `tests/test_s13_10_tool_names.py`
+- `tests/test_s4_log_kind.py`
+- `tests/test_skill_grammar_emit.py`
+- `tests/test_slice_verification_runner.py`
+- `tests/test_verify_gate_live.py`
+- `tests/test_verify_slice.py`
+- `tests/workflow_fixtures.py`
+- `worklogs/HANDOFF.md`
+- `worklogs/archive/HANDOFF-S14-era-20260825.md`
+- `worklogs/archive/PLAN-cli-trace-S10a-cli-coverage.md`
+- `worklogs/archive/PLAN-cli-trace-S10b-cli-decomposition.md`
+- `worklogs/archive/PLAN-cli-trace-S10c-contract-and-posture-fixes.md`
+- `worklogs/archive/PLAN-cli-trace-S11-controlled-deployment.md`
+- `worklogs/archive/PLAN-cli-trace-S5-authority-correctness.md`
+- `worklogs/archive/PLAN-cli-trace-S6.6-mutation-gap-closure.md`
+- `worklogs/archive/PLAN-cli-trace-S7-container-verification.md`
+- `worklogs/archive/PLAN-cli-trace-S7-direct-run-vertical-slice.md`
+- `worklogs/archive/PLAN-cli-trace-S8-workflow-controller-surface.md`
+- `worklogs/archive/PLAN-cli-trace-S9-stats-projections.md`
+- `worklogs/archive/knowledge-pr-notes-20260825/PR_NOTE_SANDBOX_MUTATION_CLOSURE.md`
+- `worklogs/archive/knowledge-pr-notes-20260825/PR_NOTE_substrate_gap_closure.md`
+- `worklogs/archive/knowledge-pr-notes-20260825/README.md`
+- `worklogs/archive/knowledge-pr-notes-20260825/workspace-isolation.md`
+- `worklogs/planning-topology-and-executable-contracts-loop/increments/increment-02-verify-gate-and-kill-checks.md`
+- `worklogs/planning-topology-and-executable-contracts-loop/ledger.md`
+- `worklogs/planning-topology-and-executable-contracts-loop/notes/e2e-live-verification-register.md`
+- `worklogs/planning-topology-and-executable-contracts-loop/notes/i02-ct91-public-admission-e211-2026-10-16.md`
+- `worklogs/planning-topology-and-executable-contracts-loop/notes/i02-slice-verification-design.md`
+- `worklogs/planning-topology-and-executable-contracts-loop/notes/open-questions-2026-10-07.md`

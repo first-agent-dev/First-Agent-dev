@@ -11,11 +11,12 @@ Verifies:
 
 from __future__ import annotations
 
-import subprocess
+import ast
 import typing
 from pathlib import Path
 
 from fa.output import LogKind
+from scripts.check_log_kind_contract import KNOWN_DORMANT_KINDS, _AppendKindVisitor, extract_log_append_kinds
 from tests._capabilities import requires_posix_paths
 
 # ── Constants ────────────────────────────────────────────────────────
@@ -41,28 +42,11 @@ def test_log_kind_member_count_matches_source() -> None:
     string literals found in src/fa/ (including dynamically constructed kinds)."""
     args = set(typing.get_args(LogKind))
 
-    # Grep for kind="..." in source
-    result = subprocess.run(
-        ["grep", "-rn", 'kind="', str(SRC_FA), "--include=*.py"],
-        capture_output=True,
-        text=True,
-    )
-    found_kinds: set[str] = set()
-    for line in result.stdout.splitlines():
-        import re
-
-        m = re.search(r'kind="([^"]+)"', line)
-        if m:
-            found_kinds.add(m.group(1))
-
-    # Add dynamically constructed kinds not caught by simple grep
-    dyn_result = subprocess.run(
-        ["grep", "-rn", "subagent_spawn_done", str(SRC_FA), "--include=*.py"],
-        capture_output=True,
-        text=True,
-    )
-    if "subagent_spawn_done" in dyn_result.stdout:
-        found_kinds.add("subagent_spawn_done")
+    # One canonical producer scanner: admission/provider ``kind`` fields are
+    # different namespaces. Unresolved actual log producers still fail closed.
+    producers, unresolved = extract_log_append_kinds()
+    assert not unresolved, f"Unresolved log producers: {unresolved}"
+    found_kinds = set(producers)
 
     # Every source kind must be in LogKind
     missing_from_logkind = found_kinds - args
@@ -82,6 +66,7 @@ def test_log_kind_member_count_matches_source() -> None:
         if m:
             dormant_kinds.add(m.group(1))
 
+    dormant_kinds.update(KNOWN_DORMANT_KINDS)
     missing_from_source = args - found_kinds
     assert not (missing_from_source - dormant_kinds), (
         f"LogKind members with no producer in source: {missing_from_source - dormant_kinds}"
@@ -146,3 +131,18 @@ def test_expected_members_present() -> None:
     }
     missing = expected - args
     assert not missing, f"Expected LogKind members missing: {missing}"
+
+
+def test_log_kind_scanner_separates_namespaces_and_preserves_dynamic_producers() -> None:
+    source = """
+_record_admission_attempt(kind="EXPLICIT_INPUT")
+ProviderError(kind="provider-only")
+log.append(kind="real-event")
+kind = "first" if condition else "second"
+log.append(kind=kind)
+log.append(kind=unknown_value)
+"""
+    visitor = _AppendKindVisitor("probe.py")
+    visitor.visit(ast.parse(source))
+    assert set(visitor.found) == {"real-event", "first", "second"}
+    assert len(visitor.unresolved) == 1 and "unknown_value" in visitor.unresolved[0]

@@ -157,7 +157,7 @@ class WorkflowArtifactPaths:
 
 
 @dataclass(slots=True)
-class WorkflowAdmission:
+class _WorkflowAdmission:
     """Run-local canonical authority and the shared planner-attempt counter."""
 
     snapshot: PlanSnapshot
@@ -212,7 +212,7 @@ class WorkflowContext:
     # CT77c: resolved once at workflow start so one run cannot switch between
     # observe/enforce if the operator edits config while a stage is in flight.
     verify_gate_mode: str = "observe"
-    admission: WorkflowAdmission | None = None
+    admission: _WorkflowAdmission | None = None
 
     def plan_text(self) -> str | None:
         """Use the immutable admitted snapshot, or read legacy optional input.
@@ -1127,11 +1127,7 @@ def _load_eval_independence(ctx: WorkflowContext) -> Mapping[str, object] | None
 def _scoped_stage_failed(dispatch: PlannerDispatch | None, sink: list[SessionOutcome]) -> bool:
     if dispatch is None or dispatch.kind == PlannerDispatchKind.ORDINARY_PLANNING:
         return False
-    return (
-        not sink
-        or sink[-1].exit_code != 0
-        or not {"fs_write_file", "pr_prepare"}.isdisjoint(sink[-1].failed_tools)
-    )
+    return not sink or sink[-1].exit_code != 0 or not {"fs_write_file", "pr_prepare"}.isdisjoint(sink[-1].failed_tools)
 
 
 def _run_stage(
@@ -1174,7 +1170,7 @@ def _run_stage(
         ctx.artifact_paths.flow_state,
         FlowState(
             run_id=ctx.run_id,
-            task=str(ctx.base_task or ""),
+            task=(ctx.base_task or ""),
             status=status_for_role(role),
             active_role=role,
             active_plan_id=ctx.run_id,
@@ -1393,7 +1389,7 @@ def _write_deadline_state(
         ctx.artifact_paths.flow_state,
         FlowState(
             run_id=ctx.run_id,
-            task=str(ctx.base_task or ""),
+            task=(ctx.base_task or ""),
             status="FAILED",
             active_role=role,
             active_plan_id=ctx.run_id,
@@ -1435,7 +1431,7 @@ def _write_stage_failure_state(
         ctx.artifact_paths.flow_state,
         FlowState(
             run_id=ctx.run_id,
-            task=str(ctx.base_task or ""),
+            task=(ctx.base_task or ""),
             status="FAILED",
             active_role=role,
             active_plan_id=ctx.run_id,
@@ -1515,7 +1511,7 @@ def _write_terminal_state(
         ctx.artifact_paths.flow_state,
         FlowState(
             run_id=ctx.run_id,
-            task=str(ctx.base_task or ""),
+            task=(ctx.base_task or ""),
             status=status,
             active_role=last_role,
             active_plan_id=ctx.run_id,
@@ -2173,7 +2169,7 @@ def workflow_exit_code(result_code: int, terminal_state: FlowState | None) -> in
 
 
 @dataclass(frozen=True, slots=True)
-class AdmissionDiagnostic:
+class _AdmissionDiagnostic:
     """Projection deliberately excludes paths, messages and exception bodies."""
 
     validator: str
@@ -2183,31 +2179,31 @@ class AdmissionDiagnostic:
 
 
 @dataclass(frozen=True, slots=True)
-class PlanAdmissionValidation:
+class _PlanAdmissionValidation:
     snapshot: PlanSnapshot
     outcome: Literal["PASS", "DIAGNOSTICS", "INDETERMINATE"]
-    diagnostics: tuple[AdmissionDiagnostic, ...]
+    diagnostics: tuple[_AdmissionDiagnostic, ...]
 
 
-def _admission_diagnostics(validator: str, diagnostics: tuple[PlanDiagnostic, ...]) -> tuple[AdmissionDiagnostic, ...]:
+def _admission_diagnostics(validator: str, diagnostics: tuple[PlanDiagnostic, ...]) -> tuple[_AdmissionDiagnostic, ...]:
     projected = []
     for item in diagnostics:
         if item.rule not in ADMISSION_RULES[validator] or item.severity not in {"WARN", "FAIL", "ERROR"}:
             raise ValueError("unrecognized validator diagnostic")
         line = item.line if type(item.line) is int and item.line > 0 else None
-        projected.append(AdmissionDiagnostic(validator, item.rule, item.severity, line))
+        projected.append(_AdmissionDiagnostic(validator, item.rule, item.severity, line))
     return tuple(projected)
 
 
-def _validate_plan_admission(snapshot: PlanSnapshot) -> PlanAdmissionValidation:
+def _validate_plan_admission(snapshot: PlanSnapshot) -> _PlanAdmissionValidation:
     """Both validators consume the same captured text/IDs; no filesystem authority."""
-    diagnostics: tuple[AdmissionDiagnostic, ...] = ()
+    diagnostics: tuple[_AdmissionDiagnostic, ...] = ()
     try:
         diagnostics += _admission_diagnostics(
             "precheck", precheck(snapshot.text, path=snapshot.ref.workspace_relative_path).diagnostics
         )
     except Exception:  # noqa: BLE001 - closed failure evidence, never swallow a validator error as success
-        diagnostics += (AdmissionDiagnostic("plan-ref", "validator-error", "ERROR"),)
+        diagnostics += (_AdmissionDiagnostic("plan-ref", "validator-error", "ERROR"),)
     try:
         diagnostics += _admission_diagnostics(
             "kill-directives",
@@ -2220,27 +2216,29 @@ def _validate_plan_admission(snapshot: PlanSnapshot) -> PlanAdmissionValidation:
             ),
         )
     except Exception:  # noqa: BLE001 - preserve other validator diagnostics, without leaking exception bodies
-        diagnostics += (AdmissionDiagnostic("plan-ref", "validator-error", "ERROR"),)
+        diagnostics += (_AdmissionDiagnostic("plan-ref", "validator-error", "ERROR"),)
     if not snapshot.text.strip():
-        return PlanAdmissionValidation(snapshot, "INDETERMINATE", (AdmissionDiagnostic("plan-ref", "empty", "ERROR"),))
+        return _PlanAdmissionValidation(
+            snapshot, "INDETERMINATE", (_AdmissionDiagnostic("plan-ref", "empty", "ERROR"),)
+        )
     if any(item.severity == "ERROR" for item in diagnostics):
-        return PlanAdmissionValidation(snapshot, "INDETERMINATE", diagnostics)
+        return _PlanAdmissionValidation(snapshot, "INDETERMINATE", diagnostics)
     if any(item.severity == "FAIL" for item in diagnostics):
-        return PlanAdmissionValidation(snapshot, "DIAGNOSTICS", diagnostics)
+        return _PlanAdmissionValidation(snapshot, "DIAGNOSTICS", diagnostics)
     if not snapshot.ids.slice_records:
-        return PlanAdmissionValidation(
+        return _PlanAdmissionValidation(
             snapshot,
             "INDETERMINATE",
             (
                 *diagnostics,
-                AdmissionDiagnostic("plan-ref", "zero-slices", "ERROR"),
+                _AdmissionDiagnostic("plan-ref", "zero-slices", "ERROR"),
             ),
         )
-    return PlanAdmissionValidation(snapshot, "PASS", diagnostics)
+    return _PlanAdmissionValidation(snapshot, "PASS", diagnostics)
 
 
 def _promote_validated_plan(
-    workspace: Path, source: PlanSnapshot, validated: PlanAdmissionValidation, *, deadline: float | None = None
+    workspace: Path, source: PlanSnapshot, validated: _PlanAdmissionValidation, *, deadline: float | None = None
 ) -> PlanSnapshot:
     """Only the validated immutable buffer is published; no draft path is recopied."""
     if validated.outcome != "PASS":
@@ -2299,7 +2297,7 @@ def _admission_storage_failure(ctx: WorkflowContext, error: OSError | ValueError
 
 def _admission_attempt(
     ctx: WorkflowContext,
-    validation: PlanAdmissionValidation,
+    validation: _PlanAdmissionValidation,
     *,
     kind: str,
     route: str,
@@ -2343,9 +2341,9 @@ def _run_admission_repair(
     *,
     kind: PlannerDispatchKind,
     draft: PlanSnapshot,
-    diagnostics: tuple[AdmissionDiagnostic, ...] = (),
+    diagnostics: tuple[_AdmissionDiagnostic, ...] = (),
     reason: str = "",
-) -> tuple[PlanAdmissionValidation, PlanSnapshot | None]:
+) -> tuple[_PlanAdmissionValidation, PlanSnapshot | None]:
     """One reserved planner attempt; own its target through cleanup, then use only bytes."""
     if ctx.admission is None:
         raise RuntimeError("admission authority absent")
@@ -2408,8 +2406,8 @@ def _admission_error(
     validator = "plan-ref" if isinstance(error, PlanRefError) else "promotion"
     rule = "scope-denied" if isinstance(error, PlannerDispatchError) else error.rule
     candidate = ctx.admission.candidate if kind != "EXPLICIT_INPUT" else None
-    validation = PlanAdmissionValidation(
-        candidate or ctx.admission.snapshot, "INDETERMINATE", (AdmissionDiagnostic(validator, rule, "ERROR"),)
+    validation = _PlanAdmissionValidation(
+        candidate or ctx.admission.snapshot, "INDETERMINATE", (_AdmissionDiagnostic(validator, rule, "ERROR"),)
     )
     try:
         _admission_attempt(ctx, validation, kind=kind, route="BLOCKED", candidate=candidate is not None)
@@ -2531,9 +2529,13 @@ def _blocked_plan_request(
 ) -> tuple[int, FlowState | None]:
     paths = workflow_artifact_paths(run_id, base_dir=base_dir)
     attempt: dict[str, object] = {
-        "dispatch_kind": "EXPLICIT_INPUT", "validation": "INDETERMINATE",
+        "dispatch_kind": "EXPLICIT_INPUT",
+        "validation": "INDETERMINATE",
         "diagnostics": [{"validator": "plan-ref", "rule": rule, "severity": "ERROR", "line": None}],
-        "source_sha256": None, "candidate_sha256": None, "promoted_sha256": None, "route": "BLOCKED",
+        "source_sha256": None,
+        "candidate_sha256": None,
+        "promoted_sha256": None,
+        "route": "BLOCKED",
     }
     print(f"fa workflow: invalid plan reference: {rule}", file=sys.stderr)
     try:
@@ -2544,10 +2546,17 @@ def _blocked_plan_request(
         reason = error.rule if isinstance(error, AdmissionIOError) else "append-failed"
         print(f"fa workflow: admission storage error: {reason}", file=sys.stderr)
     state = FlowState(
-        run_id=run_id, task=task or "", status="FAILED", active_role="workflow",
-        active_plan_id=run_id, active_plan_version=1, last_actor="workflow",
-        last_transition_reason="explicit plan admission blocked", last_route_decision="blocked",
-        blocked_reason=f"plan-ref/{rule}", judged=False,
+        run_id=run_id,
+        task=task or "",
+        status="FAILED",
+        active_role="workflow",
+        active_plan_id=run_id,
+        active_plan_version=1,
+        last_actor="workflow",
+        last_transition_reason="explicit plan admission blocked",
+        last_route_decision="blocked",
+        blocked_reason=f"plan-ref/{rule}",
+        judged=False,
     )
     try:
         write_flow_state(paths.flow_state, state)
@@ -2638,7 +2647,7 @@ def run_workflow(
         artifact_paths.flow_state,
         FlowState(
             run_id=run_id,
-            task=str(task or ""),
+            task=(task or ""),
             status="PLANNING" if roles[0] == "planner" else "PLAN_READY",
             active_role=roles[0],
             active_plan_id=run_id,
@@ -2667,7 +2676,7 @@ def run_workflow(
         plan_path=plan_path,
         verify_gate_mode=_gate_mode(),
         admission=(
-            WorkflowAdmission(snapshot, "planner" in roles, max_replans)
+            _WorkflowAdmission(snapshot, "planner" in roles, max_replans)
             if snapshot is not None and "coder" in roles
             else None
         ),
@@ -2756,20 +2765,24 @@ __all__ = [
     "EVAL_DOC_PATHS",
     "EVAL_GIT_TIMEOUT_SECONDS",
     "EVAL_VERDICT_TO_TERMINAL_STATUS",
+    "EVAL_VERIFICATION_MAX_CHARS",
     "MAX_REPAIRS_CEILING",
     "MAX_REPLANS_CEILING",
     "WORKFLOW_DEADLINE_EXIT_CODE",
     "WORKFLOW_MODES",
     "WORKFLOW_STAGE_ROLES",
     "WORKFLOW_STATUS_TO_STOP_REASON",
+    "BaselineCapture",
     "StageResult",
     "WorkflowArtifactPaths",
     "WorkflowContext",
     "WorkflowProgress",
     "WorkflowRequestError",
     "build_eval_report",
+    "capture_baseline",
     "emit_eval_report",
     "eval_system_prompt_extra",
+    "load_verify_baseline",
     "read_back_terminal_state",
     "run_workflow",
     "slugify_task",
@@ -2778,4 +2791,5 @@ __all__ = [
     "validate_slice_ids",
     "workflow_artifact_paths",
     "workflow_exit_code",
+    "write_verification",
 ]

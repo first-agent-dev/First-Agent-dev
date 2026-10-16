@@ -31,7 +31,7 @@ mandated a shared `_stats_args` helper;
 **(F)** the new guard must use `getattr(args, "since", None)` — the two
 existing call sites disagree (`:2689` getattr vs `:2730` bare attribute).
 Upstream context: parent
-[`cli-trace-substrate-rebaseline-2026-07-25.md`](./cli-trace-substrate-rebaseline-2026-07-25.md)
+[`cli-trace-substrate-rebaseline-2026-07-25.md`](../implementation-plans/cli-trace-substrate-rebaseline-2026-07-25.md)
 §Step S9 (line 1796); depends on **S5** and **S8**, both COMPLETE.
 Operator decision 2026-07-31: **Q36 = option (c)**.
 

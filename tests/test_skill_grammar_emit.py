@@ -67,7 +67,9 @@ def _example() -> str:
 
 
 def _expected() -> dict[str, Any]:
-    return json.loads(_marked_block(_schema_text(), "SCHEMA4-EXPECTED"))
+    parsed: object = json.loads(_marked_block(_schema_text(), "SCHEMA4-EXPECTED"))
+    assert isinstance(parsed, dict), "SCHEMA4-EXPECTED must be a JSON object"
+    return parsed
 
 
 def _records() -> dict[str, SliceRecord]:

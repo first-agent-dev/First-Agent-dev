@@ -2,8 +2,8 @@
 
 Point-in-time PR notes / PR bodies, kept for history. These are **artifacts of a
 specific PR**, not living docs — they are not maintained after merge. For current
-state read [`HANDOFF.md`](../../worklogs/HANDOFF.md); for durable design read the
-[ADRs](../adr/README.md).
+state read [`HANDOFF.md`](../../HANDOFF.md); for durable design read the
+[ADRs](../../../knowledge/adr/README.md).
 
 Newest first:
 
@@ -18,4 +18,4 @@ Newest first:
 | 2026-06-08 | [`PR_BODY.md`](./PR_BODY.md) | FIX — secrets hardening: runtime redaction, deploy docs, repo hygiene. |
 
 > Adding a new PR note? Drop the file here and prepend a row above (per
-> [`MAINTENANCE.md`](../MAINTENANCE.md)). Dates are approximate (PR landing).
+> [`MAINTENANCE.md`](../../../knowledge/MAINTENANCE.md)). Dates are approximate (PR landing).

@@ -85,8 +85,8 @@ def test_timeout_yields_error_with_no_exit_code(workspace: Path) -> None:
 
     assert result.outcome is CommandOutcome.ERROR
     assert result.exit_code is None
-    assert result.outcome is not CommandOutcome.PASS
-    assert result.outcome is not CommandOutcome.FAIL
+    assert result.outcome not in {CommandOutcome.PASS}
+    assert result.outcome not in {CommandOutcome.FAIL}
     assert "budget" in result.stderr_tail
 
 
@@ -144,10 +144,10 @@ def test_empty_command_tuple_returns_empty_results(workspace: Path) -> None:
 
 def test_empty_commands_do_not_raise_or_block(workspace: Path) -> None:
     """CT48 -- a slice with no verify fence must be skippable, not fatal."""
-    results = run_commands([], workspace=workspace)
+    results: tuple[CommandResult, ...] = run_commands([], workspace=workspace)
 
-    assert results == ()
     assert not any(r.outcome is CommandOutcome.ERROR for r in results)
+    assert results == ()
 
 
 # ── CT49c: commands run in the session workspace ─────────────────────────────
@@ -318,7 +318,7 @@ def test_a_command_that_cannot_be_launched_is_error_not_fail(tmp_path: Path) -> 
     (result,) = run_commands(("true",), workspace=missing)
 
     assert result.outcome is CommandOutcome.ERROR
-    assert result.outcome is not CommandOutcome.FAIL
+    assert result.outcome not in {CommandOutcome.FAIL}
     assert result.exit_code is None
     assert "could not start" in result.stderr_tail
     assert result.command == "true"

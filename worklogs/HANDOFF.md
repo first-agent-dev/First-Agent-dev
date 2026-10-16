@@ -8,23 +8,24 @@
 
 Active branch: `arena/86633f17-first-agent-dev`; never switch/create another session branch.
 I02 remains **IN PROGRESS**, not SHIPPED or I03/security acceptance.
-**Current stop: Q71 OPEN.** Source review reproduced an ambiguous documentation-guard failure;
-no production/test-oracle changes this continuation. See the open-decision record below. Q69 nonrecursive constructed
-C1 factoring and Q70 coder-containing-only unavailable guard were explicitly approved; do not
-ask those choices again or silently block planner/eval-only delegation. Noncoder children now
-have actual distinct SessionManager run authority in the same session.
+**Q71 RESOLVED by custom production-grade design authorization.** Adopted a deterministic retired-
+recipe/lifecycle guard, no new path exemptions. Do not ask Q69/Q70/Q71 again. Security denial/risk
+evidence may name alias mechanisms; no evidence rewrite or guard waiver. Q69 nonrecursive C1
+factoring and Q70 coder-containing-only unavailable guard remain in force.
 
-Authoritative current evidence and reproducible audit: [E212 continuation in the E211 note](planning-topology-and-executable-contracts-loop/notes/i02-ct91-public-admission-e211-2026-10-16.md).
-Read that section, current [I02 plan](planning-topology-and-executable-contracts-loop/increments/increment-02-verify-gate-and-kill-checks.md),
-[explicit spec](planning-topology-and-executable-contracts-loop/notes/i02-explicit-admission-spec-2026-10-15.md)
-and [open decisions](planning-topology-and-executable-contracts-loop/notes/open-questions-2026-10-07.md).
-Whole public bank486 passed106.92s; final combined bank604 passed117.09s; changed-file checks clean.
-All16 final whole-public-path mutations and two supplemental removals are PROVEN with exact
-486-case manifests/no errors/skips/unchanged hashes. STEP17 only is checked. Full suites completed
-normally: candidate20failed4994passed; isolated baseline11failed4451passed. Exact comparison is
-recorded in E212, not waived; six new handoff compatibility failures since migrated (112passed).
-Ten other candidate-only failures, three new authoring exports, baseline dispositions and
-independent/operator acceptance remain open. A fresh full suite after migrations is required.
+Current implementation/evidence: [E215 continuation in the E211 note](planning-topology-and-executable-contracts-loop/notes/i02-ct91-public-admission-e211-2026-10-16.md),
+[current I02 plan](planning-topology-and-executable-contracts-loop/increments/increment-02-verify-gate-and-kill-checks.md),
+[explicit spec](planning-topology-and-executable-contracts-loop/notes/i02-explicit-admission-spec-2026-10-15.md),
+[decisions](planning-topology-and-executable-contracts-loop/notes/open-questions-2026-10-07.md).
+Ten remaining candidate-only fixture/oracle failures repaired; historical-banner stale test path
+corrected; all8 baseline typing errors and authoring diagnostics fixed without suppressions.
+Whole Ruff/check/format, configured Mypy450, authoring, doclinks308 clean. All46 broken links are
+target-only relocation repairs in15 existing files, not exclusions. Targeted152passed12skipped
+(shellcheck absent), baseline-typing regressions100passed. Public bank now487; pre-format diagnostic
+run487passed111.85s. Final frozen baseline,16+2 whole-bank proofs and full repository run pending.
+STEP17 reopened; E212 remains valid only for its recorded hashes. Fresh results must be recorded
+before any checkbox. Root foreign Arena hook is preserved. Independent/operator review remains
+required; do not infer local DoD, SHIPPED, deploy safety or I03 acceptance.
 
 The older S18/doc-hygiene notes below are historical, not this session's current action list.
 

@@ -10,7 +10,7 @@ Execution record. Four findings raised (I-36…I-39), zero fixes applied.
 Depth: **P1** — evidence-gathering on a live deployment. **No source edits.**
 
 Parent plan:
-[`cli-trace-substrate-rebaseline-2026-07-25.md`](./cli-trace-substrate-rebaseline-2026-07-25.md) §Step S7 Do #10
+[`cli-trace-substrate-rebaseline-2026-07-25.md`](../implementation-plans/cli-trace-substrate-rebaseline-2026-07-25.md) §Step S7 Do #10
 
 Local half: [`PLAN-cli-trace-S7-direct-run-vertical-slice.md`](./PLAN-cli-trace-S7-direct-run-vertical-slice.md)
 

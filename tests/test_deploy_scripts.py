@@ -834,7 +834,7 @@ def test_historical_workspace_docs_have_top_level_superseded_banner() -> None:
     """
 
     historical_docs = (
-        _ROOT / "knowledge" / "pr-notes" / "workspace-isolation.md",
+        _ROOT / "worklogs" / "archive" / "knowledge-pr-notes-20260825" / "workspace-isolation.md",
         _ROOT / "worklogs" / "pr-notes" / "workspace-isolation.md",
     )
     for path in historical_docs:
@@ -844,16 +844,51 @@ def test_historical_workspace_docs_have_top_level_superseded_banner() -> None:
         assert "AP-004-symptom-chasing-without-model.md" in banner, path
 
 
+# Q71: mechanism names are not deployment claims. Retired clone recipes and
+# lifecycle assertions are; preserve the existing historical-path exceptions.
+def _obsolete_workspace_claims(text: str) -> list[str]:
+    normalized = text.lower().replace(chr(92) + "\n", " ")
+    patterns = {
+        "object-sharing clone recipe": r"\bgit\s+clone\b[^\n;]*\s--(?:local|shared|hardlinks)(?=[\s=;]|$)",
+        "container lifecycle corresponds to one session": r"container\s+lifecycle\s+corresponds\s+to\s+one\s+session",
+        "one session per container lifecycle": r"one\s+session\s+per\s+container\s+lifecycle",
+        "по одной на старт контейнера": r"по\s+одной\s+на\s+старт\s+контейнера",
+    }
+    return [label for label, pattern in patterns.items() if re.search(pattern, normalized)]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Actual descriptor rejection of hardlinks is recorded.",
+        "Leaf no-follow does not prove ancestor traversal or hardlink safety.",
+        "Negative coverage includes hardlinked aliases, symlinks and FIFO targets.",
+        "git clone --no-local --no-hardlinks source workspace",
+    ],
+)
+def test_workspace_claim_guard_allows_security_terms_and_safe_transport(text: str) -> None:
+    assert _obsolete_workspace_claims(text) == []
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "git clone --local source workspace",
+        "git clone --bare --shared source workspace",
+        "git clone --hardlinks source workspace",
+        "git clone " + chr(92) + "\n --shared source workspace",
+        "container lifecycle corresponds to one session",
+        "one session per\ncontainer lifecycle",
+        "по одной на старт контейнера",
+    ],
+)
+def test_workspace_claim_guard_rejects_retired_recipes_and_lifecycle_claims(text: str) -> None:
+    assert _obsolete_workspace_claims(text)
+
+
 def test_workspace_stale_claims_are_confined_to_historical_evidence() -> None:
     """C0 S8/T15: any new stale-claim path is a documentation-contract failure."""
 
-    stale_phrases = (
-        "git clone --local",
-        "hardlink",
-        "container lifecycle corresponds to one session",
-        "one session per container lifecycle",
-        "по одной на старт контейнера",
-    )
     allowed_prefixes = (
         Path("knowledge/research"),
         Path("knowledge/trace"),
@@ -872,7 +907,7 @@ def test_workspace_stale_claims_are_confined_to_historical_evidence() -> None:
         if any(part in {".git", ".venv", "node_modules", "mutants"} for part in relative.parts):
             continue
         text = path.read_text(encoding="utf-8").lower()
-        hits = [phrase for phrase in stale_phrases if phrase in text]
+        hits = _obsolete_workspace_claims(text)
         allowed = relative in allowed_paths or any(relative.is_relative_to(prefix) for prefix in allowed_prefixes)
         if hits and not allowed:
             violations[relative.as_posix()] = hits
