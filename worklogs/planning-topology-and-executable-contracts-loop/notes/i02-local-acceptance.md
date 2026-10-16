@@ -224,3 +224,40 @@ no production/test source changed. Correct post-edit checks:156passed (doc links
 skill grammar, kill directives);13passed77deselected (deployment claim/ownership guards);
 309Markdown files have no broken internal links; diff whitespace clean. Two preceding
 mistyped test-file invocations exited4 with no tests and are rejected, not counted green.
+
+
+## E221 — closure reassessment, 2026-10-16
+
+Starting commit `4b78084214de2d01f83bb522f8b4ce69cce975eb`, clean tree and matching remote.
+Read-only validation recomputed compressed/original SHA256s for all81 archived artifacts,
+reparsed the877-case baseline,43 mutation reports and5047-case candidate with their actual
+native UUIDs, and checked ordering and exact mutation manifests. All runtime/test Python
+hashes still match the proof snapshot. The only changed watched input is the E220 plan's
+status/evidence text; all seven contract/path/command/kill-directive signatures are identical.
+These are validations of existing runs, **not new executions or new report identities**.
+
+All11 distinct SLICE6 STEP exit selectors were freshly collected (normal environment,
+`python -m pytest ... --collect-only`). In STEP order, deduplicating STEP5/6/7's same command:
+`verify_plan`:2; `coder_stage or baseline`:2; `reconciliation`:1;
+`role_loops or repair or indeterminate`:66; `real_workflow`:1;
+`candidate or admission_artifact`:179; `admission or precheck`:197;
+`linear_admission or adaptive_admission or role_order or direct_budget`:63;
+`plan_preflight or direct_api_plan_guard or plan_help or acquisition_unavailable`:100;
+`baseline or t0 or repeated_configured_coders or eval_replan`:45;
+`ct91_public or acquisition_unavailable or plan_ref_mismatch`:50.
+Every collected nodeid is in the actual completed877-pass baseline. Collection was nonempty
+and rc0 for each command; this is not a claim that selected groups were freshly executed.
+
+Fresh regression command:
+`uv run --frozen --no-sync pytest tests/test_plan_ids.py tests/test_plan_reference.py tests/test_slice_id_validation.py -q`
+→ **115passed1.95s**, rc0. The actual `git diff d9109f4 c4cb55f -- src/fa/inner_loop/plan_ids.py`
+contains only `inside = set()` → `inside: set[int] = set()`. No extractor/source-position
+behavioral change is inferred from that annotation; independent Q45-B review remains required.
+
+No new implementation gap was identified by these bounded checks. Go is still absent from
+the configured executable PATH; the foreign208-byte commit-msg hook remains intact. Do not
+repeat the known bootstrap failure or manufacture green readiness. Need a provisioned trusted
+Go>=1.24.11/build-dependency environment, then execute the real readiness integration and
+final gates. Operator dispositions (including the unreproduced historical ninth context and
+separate source-root hook-seat collision), independent review and DoD signoff still remain.
+No checklist or overall status is upgraded by this reassessment; I02 remains **NOT ACCEPTED**.

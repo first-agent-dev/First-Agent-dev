@@ -2502,3 +2502,16 @@ E220  FACT / VERIFICATION  c4cb55f ordered877pass0skip baseline completed before
     needed for real Gitleaks readiness; no bypass/foreign-hook replacement. Operator case
     dispositions, independent review and actual final green gates/signoff outstanding.
     No SHIPPED/I03/deployed acceptance; E19 untouched. [verified: E220 local acceptance record]
+
+
+E221  FACT / REASSESSMENT  At4b78084 clean/matching remote: all81 durable artifacts verified
+    by compressed/original hashes;877baseline/43ordered mutations/5047candidate native report
+    bindings revalidated. Runtime/test hashes unchanged; seven retained contract/path/command/
+    directive signatures unchanged despite status-only plan edit. All11distinct SLICE6 STEP
+    selectors collect nonempty rc0 and are subsets of actual877passing baseline (not fresh
+    selected executions). Fresh parser/PlanRef/slice-ID regressions115pass1.95s; plan_ids delta
+    against d910 is one explicit set[int] annotation only, no extractor rewrite. No new local
+    implementation gap found by bounded checks, not independent assurance. Go still absent,
+    foreign208byte hook intact; readiness provision/reexecution, operator dispositions,
+    historical ninth context, independent review/signoff remain open. No status/waiver change.
+    [verified: notes/i02-local-acceptance.md E221, current source/hashes/actual command output]

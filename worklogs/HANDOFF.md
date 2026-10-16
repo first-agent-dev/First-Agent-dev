@@ -4,7 +4,7 @@
 > This file records the verified state and the next bounded action.
 > Previous 1426-line S14-era version archived to `worklogs/archive/HANDOFF-S14-era-20260825.md`.
 
-## Current state — I02 local explicit-plan gate, 2026-10-16 / E220
+## Current state — I02 local explicit-plan gate, 2026-10-16 / E221
 
 Branch `arena/86633f17-first-agent-dev` only. Proof snapshot c4cb55fe4d0a63a4ac43c62acacdac54b9404bad;
 latest follow-up is documentation/evidence only. I02 **IN PROGRESS**, not SHIPPED or I03 acceptance.
@@ -29,6 +29,15 @@ D1/D2/D3/D4-local/D5/D8 reconciled; deferred coder-brief/wrappers explicitly not
 Git-complete d9104477 comparison:0candidate-only failures,1common,8baseline-only;6superseded
 old IDs explicitly mapped,576new. Eight recorded Mypy diagnostics individually fixed; actual
 configured450-file Mypy clean; historical E194 ninth context remains unreconciled. No successful-check or blanket baseline waiver claim.
+
+**E221 read-only reassessment:** all81 archive hashes and native report bindings revalidated;
+all runtime/test hashes and seven contract/path/command/directive signatures unchanged.
+All11 distinct SLICE6 STEP selectors collect nonempty and match passing877-baseline cases;
+not fresh selected executions. Fresh parser/PlanRef/slice-ID regressions115pass1.95s.
+plan_ids source delta against d910 is only the explicit set[int] annotation. No new bounded
+implementation gap found; no acceptance or independent review inferred. See E221 in the
+existing blocked acceptance record. No need to rerun unchanged mutation audit merely for this
+status-only documentation update.
 
 **Current stop needs environment attention:** no Go SDK. Real readiness precommit prewarm
 returns75; blocked go.dev SSL/URLError. Pinned Gitleaks8.30.1 requires trusted **Go>=1.24.11**
