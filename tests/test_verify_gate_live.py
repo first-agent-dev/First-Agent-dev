@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import os
 import shlex
+import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from types import SimpleNamespace
@@ -41,6 +42,7 @@ from fa.inner_loop.workflow_artifacts import (
     RouteDecision,
     load_eval_report,
     load_flow_state,
+    write_flow_state,
 )
 from fa.inner_loop.workflow_controller import (
     BaselineCapture,
@@ -4385,7 +4387,7 @@ def test_review_flow_storage_failure_returns_nonzero_before_provider(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str, phase: str
 ) -> None:
     """CT92/95: control-file IO errors are public failure results, not escaping exceptions."""
-    real_write = workflow.write_flow_state
+    real_write = write_flow_state
     attempts: list[str] = []
 
     def write(path: Path, state: FlowState) -> None:
@@ -4415,7 +4417,7 @@ def test_review_post_coder_flow_failure_preserves_real_eval_but_never_success(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str, gate: str, phase: str
 ) -> None:
     """Q55/CT95: a flow receipt failure is not permission to skip eval or return stale DONE."""
-    real_write = workflow.write_flow_state
+    real_write = write_flow_state
     failed = False
 
     def write(path: Path, state: FlowState) -> None:
@@ -4453,14 +4455,14 @@ def test_review_deadline_rechecked_after_preparation_before_dispatch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str, phase: str
 ) -> None:
     """CT95: real preparation can consume the deadline; never dispatch a new provider afterward."""
-    deadline = workflow.time.monotonic() + 300.0
+    deadline = time.monotonic() + 300.0
     expired = False
-    real_clock = workflow.time.monotonic
+    real_clock = time.monotonic
 
     def clock() -> float:
         return deadline + 1.0 if expired else real_clock()
 
-    monkeypatch.setattr(workflow.time, "monotonic", clock)
+    monkeypatch.setattr(time, "monotonic", clock)
     target = "capture_baseline" if phase == "t0" else "_eval_evidence_block"
     real_prepare = getattr(workflow, target)
 
