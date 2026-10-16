@@ -2562,3 +2562,13 @@ E224  IN PROGRESS / ACTUAL DIFF REVIEW  Operator's next command authorizes retai
     bank now513 not yet executed. Ruff clean after stage announcement/task helper factoring.
     Original logs/hashes retained in notes/evidence/i02-e224. Full checks/affected mutation
     refresh and remaining diff review pending; no local closeout/SHIPPED/deployed acceptance.
+
+
+E225  IN PROGRESS / SOURCE FREEZE  Remaining actual review reproduces T0 accepting all-pass
+    JUnit rows from actual pytest exit3.20 public runner-exit1–5 negatives all fail before fix;
+    share runner/report consistency with kill checks, retaining genuine red/empty T0 semantics.
+    All46 review regressions pass36.87s, Ruff clean. No new module/dependency/evidence schema.
+    Stopped initial affected mutation process before completed proof when this third gap was
+    discovered; no verdict claimed. Intermediate abf1bdc just check rc1/log archived as red,
+    not final. Freeze source next, refresh whole-path baseline/affected shared-verifier producers
+    and final local checks; actual diff-review closeout remains pending. I03 acceptance incomplete.

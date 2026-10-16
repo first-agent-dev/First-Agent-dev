@@ -1,7 +1,7 @@
 {
   "review_base": "c8c8ed33d71d04a8f84a76bc5c2a1d02f89a6550",
   "comparison_base": "d9109f489c84cb7f1ab3568b609d96e5b2b61ae2",
-  "status": "IN PROGRESS; regression checkpoint, not refreshed closeout proof",
+  "status": "IN PROGRESS; source fixes complete pending final frozen-source checks/proof",
   "files": {
     "i02-review-before.log.gz": {
       "sha256_uncompressed": "e15bb607906020440ad66632ff47347f14e07c41a1efc339213da43d0269813f",
@@ -32,6 +32,21 @@
       "sha256_uncompressed": "503a6f04a256551180df47e25acbbee017cfc894e25f09cbe49e416493ebcf1a",
       "sha256_gzip": "0e1ba35cd6ab661d79e4edd99bf6c18edb123d350b9e79ff61455ca46980857c",
       "bytes_uncompressed": 672
+    },
+    "i02-review-t0-before.log.gz": {
+      "sha256_uncompressed": "c084e61fb9c58b69fd3ead5a733a970b617d1b33a162ffab71d66f1bbe6cebdf",
+      "sha256_gzip": "415428eb39b34761ac69b67298a499fc482c70c2604e1ce91c52cf19f0702b70",
+      "bytes_uncompressed": 63030
+    },
+    "i02-review-final-targeted-v2.log.gz": {
+      "sha256_uncompressed": "e6a478f0754b3a3771ba8f4d5f4f4cf4302c827f37ea7a3940333d319a91480b",
+      "sha256_gzip": "3ad418bb7ce87ad66c3210756363ba0566c89fae10ca2a832c33091d5e2d2cee",
+      "bytes_uncompressed": 116
+    },
+    "i02-review-just-check.log.gz": {
+      "sha256_uncompressed": "da4dced6c1fe3129033df41bc45bffb6731605a6f19a15e3265578b1c0619969",
+      "sha256_gzip": "d0c66b9d82140b73d70785b2dea9a8ab4cfc25078534f9f81246cc32ef6d9705",
+      "bytes_uncompressed": 60451
     }
   }
 }

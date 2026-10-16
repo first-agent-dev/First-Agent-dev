@@ -4477,3 +4477,30 @@ def test_review_deadline_rechecked_after_preparation_before_dispatch(
     assert workflow.DEADLINE_REASON_MARKER in state.last_transition_reason
     assert roles == (["planner"] if phase == "t0" else ["planner", "coder"])
     assert not (base / "eval_report.json").exists(), "deadline is not a fabricated evaluation"
+
+
+@pytest.mark.parametrize("mode", ["linear", "adaptive"])
+@pytest.mark.parametrize("gate", ["observe", "enforce"])
+@pytest.mark.parametrize("runner_exit", [1, 2, 3, 4, 5])
+def test_review_t0_runner_failure_with_passing_rows_blocks_before_coder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str, gate: str, runner_exit: int
+) -> None:
+    """CT86/95: real pytest status cannot be laundered by an otherwise usable JUnit report."""
+
+    def callback(role: str, _request: RequestInfo) -> None:
+        if role == "planner":
+            (tmp_path / "tests/conftest.py").write_text(
+                f"def pytest_sessionfinish(session, exitstatus):\n    session.exitstatus = {runner_exit}\n"
+            )
+
+    code, state, base, roles, _ = _ct91_public(tmp_path, monkeypatch, mode=mode, gate=gate, callback=callback)
+    assert code != 0
+    assert roles == ["planner"]
+    assert state is not None and state.status == "FAILED"
+    baseline = json.loads((base / "verify_baseline.json").read_bytes())
+    capture = baseline["slices"]["SLICE1"]["capture"]
+    assert capture["command_result"]["exit_code"] == runner_exit
+    assert capture["nodeids"] is None
+    assert "runner status contradicts" in capture["detail"]
+    assert not (base / "verification.json").exists()
+    assert not (base / "eval_report.json").exists()

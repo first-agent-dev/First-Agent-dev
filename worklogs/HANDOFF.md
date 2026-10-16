@@ -4,6 +4,16 @@
 > This file records the verified state and the next bounded action.
 > Previous 1426-line S14-era version archived to `worklogs/archive/HANDOFF-S14-era-20260825.md`.
 
+## Current action — E225 final source freeze, 2026-10-16
+
+Third review finding fixed: T0 previously accepted passing JUnit rows from an infra-failed pytest
+runner. Share the existing kill runner/report consistency check; preserve valid red/empty T0.
+All46 new public-path review regressions pass; bank now533. Source includes controller and shared
+slice_verification, so refresh affected producer proofs against a fresh whole-path baseline.
+Initial affected-proof process intentionally stopped before completed proof; no verdict claimed.
+Intermediate abf1bdc just check rc1/log archived; final checks/proof and diff-review closeout pending.
+No I03/deployed acceptance. E224 details below are historical checkpoints, not current final counts.
+
 ## Current action — E224 source review checkpoint, 2026-10-16
 
 The operator supplied the next command and authorized actual adversarial plan-versus-diff review,

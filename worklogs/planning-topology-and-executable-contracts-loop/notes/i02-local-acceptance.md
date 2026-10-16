@@ -52,6 +52,21 @@ factoring stage announcement/task assembly; no new waiver/dependency/schema/fram
 that rejected test-authoring run. Full checks and affected SLICE6 mutation refresh are pending.
 No local closeout, SHIPPED, deployed Ubuntu/Docker or I03 acceptance claim yet.
 
+### E225 — third finding and final source-freeze checkpoint
+
+The remaining source review reproduced a third gap using real pytest: valid-looking passing
+JUnit rows with runner exit3 were accepted as T0. Added20 real public-path negatives (runner
+exit1–5, linear/adaptive, observe/enforce); all20 failed before the fix. T0 now shares the kill
+runner/report consistency check. Genuine failing baselines remain valid; pytest exit5 plus an
+actually empty report remains the existing valid empty T0, not a kill. No evidence schema changes.
+All46 new review regressions pass36.87s; Ruff clean. Changed source is controller plus the
+existing slice_verification module; tests stay in the existing public bank (now533 cases).
+The first affected-proof process was deliberately stopped before a completed baseline/proof;
+no verdict from it is claimed. abf1bdc's actual just check remained rc1, not PASS; its archived
+log is an intermediate source snapshot, not final verification. Source changes now require a
+fresh whole-path baseline, affected shared-verifier producer refresh, final checks and review
+closeout. No new mutation skip/depth policy or per-contract nodeid map is introduced.
+
 ## Version, durable evidence and scope
 
 Proof snapshot: `c4cb55fe4d0a63a4ac43c62acacdac54b9404bad` on

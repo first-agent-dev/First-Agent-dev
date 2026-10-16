@@ -527,6 +527,15 @@ def _parse_nodeid_report(path: Path) -> tuple[dict[str, bool] | None, str]:
     return {nodeid: outcome is _JUnitOutcome.PASSED for nodeid, outcome in report.outcomes.items()}, ""
 
 
+def _pytest_report_status_error(result: CommandResult, report: _JUnitReport, *, allow_no_tests: bool = False) -> str:
+    """A usable report cannot turn an interrupted/broken pytest runner into evidence."""
+    expected_exit = 5 if allow_no_tests and not report.outcomes else (1 if report.failure_count else 0)
+    expected_outcome = CommandOutcome.PASS if expected_exit == 0 else CommandOutcome.FAIL
+    if result.exit_code != expected_exit or result.outcome is not expected_outcome:
+        return "pytest runner status contradicts executed JUnitXML outcomes"
+    return ""
+
+
 def capture_test_nodeids(
     test_paths: Sequence[str],
     *,
@@ -561,8 +570,15 @@ def capture_test_nodeids(
                 command_result=result,
                 detail=result.stderr_tail or "harness-issued JUnit run could not be completed",
             )
-        nodeids, detail = _parse_nodeid_report(report)
-        return NodeidCapture(nodeids=nodeids, command_result=result, detail=detail)
+        parsed, detail = _parse_junit_report(report)
+        if parsed is None:
+            return NodeidCapture(nodeids=None, command_result=result, detail=detail)
+        # Preserve pytest's valid empty T0 (exit5), but never accept partial rows
+        # from collection/interruption/internal/usage failures as a complete baseline.
+        if detail := _pytest_report_status_error(result, parsed, allow_no_tests=True):
+            return NodeidCapture(nodeids=None, command_result=result, detail=detail)
+        nodeids = {nodeid: outcome is _JUnitOutcome.PASSED for nodeid, outcome in parsed.outcomes.items()}
+        return NodeidCapture(nodeids=nodeids, command_result=result)
 
 
 # --------------------------------------------------------------------------- #
@@ -1544,10 +1560,8 @@ def _kill_check_result(
         return _errored(directive, report_detail, started)
     if report.executed_count == 0:
         return _errored(directive, "JUnitXML records zero executed tests (empty or all skipped)", started)
-    expected_exit = 1 if report.failure_count else 0
-    expected_outcome = CommandOutcome.FAIL if report.failure_count else CommandOutcome.PASS
-    if result.exit_code != expected_exit or result.outcome is not expected_outcome:
-        return _errored(directive, "pytest runner status contradicts executed JUnitXML outcomes", started)
+    if detail := _pytest_report_status_error(result, report):
+        return _errored(directive, detail, started)
     if report.failure_count:
         return KillCheck(
             directive=directive,
