@@ -277,3 +277,51 @@ class ExecutionReceipt:
         values["namespace"] = NamespaceRef(**record["namespace"])
         values["state"] = JobState(record["state"])
         return cls(**values)
+
+    def require_binding(
+        self,
+        *,
+        operation: OperationRef,
+        namespace: NamespaceRef,
+        view: ViewRef,
+        profile_id: str,
+        image_digest: str,
+        revision_id: str | None,
+        original_revision_id: str | None,
+        plan_sha256: str | None,
+    ) -> None:
+        """Compare against trusted reserved identity, not worker-supplied values."""
+        actual = (
+            self.operation_id,
+            self.namespace,
+            self.workspace_id,
+            self.view_id,
+            self.owner_run_id,
+            self.generation,
+            self.input_tree_sha256,
+            self.profile_id,
+            self.image_digest,
+            self.revision_id,
+            self.original_revision_id,
+            self.plan_sha256,
+        )
+        expected = (
+            operation.operation_id,
+            namespace,
+            view.workspace_id,
+            view.view_id,
+            operation.owner_run_id,
+            operation.generation,
+            operation.input_tree_sha256,
+            profile_id,
+            image_digest,
+            revision_id,
+            original_revision_id,
+            plan_sha256,
+        )
+        if actual != expected or (operation.view_id, operation.owner_run_id, operation.generation) != (
+            view.view_id,
+            view.owner_run_id,
+            view.generation,
+        ):
+            raise ExecutionContractError

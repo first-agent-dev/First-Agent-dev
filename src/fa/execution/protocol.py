@@ -8,9 +8,8 @@ from __future__ import annotations
 
 import json
 import re
-import socket
 import struct
-from typing import Any
+from typing import Any, Protocol
 
 import fastjsonschema  # type: ignore[import-untyped]  # Existing dependency ships no typing metadata.
 
@@ -349,7 +348,13 @@ def decode_reply(raw: bytes, *, operation: Operation, request_id: str) -> dict[s
     return record
 
 
-def _read_exact(connection: socket.socket, size: int) -> bytes:
+class FrameConnection(Protocol):
+    def recv(self, size: int, /) -> bytes: ...
+
+    def sendall(self, data: bytes, /) -> None: ...
+
+
+def _read_exact(connection: FrameConnection, size: int) -> bytes:
     data = bytearray()
     while len(data) < size:
         chunk = connection.recv(min(size - len(data), 64 * 1024))
@@ -359,14 +364,14 @@ def _read_exact(connection: socket.socket, size: int) -> bytes:
     return bytes(data)
 
 
-def read_frame(connection: socket.socket) -> bytes:
+def read_frame(connection: FrameConnection) -> bytes:
     length = struct.unpack("!I", _read_exact(connection, 4))[0]
     if not 0 < length <= MAX_FRAME_BYTES:
         raise ExecutionContractError
     return _read_exact(connection, length)
 
 
-def write_frame(connection: socket.socket, raw: bytes) -> None:
+def write_frame(connection: FrameConnection, raw: bytes) -> None:
     if not 0 < len(raw) <= MAX_FRAME_BYTES:
         raise ExecutionContractError
     connection.sendall(struct.pack("!I", len(raw)) + raw)

@@ -471,3 +471,42 @@ includes raw reports, commands, source/test hashes and driver. E232/E234 evidenc
 No STEP/CT completion: fixed profiles, service/client/cell integration, launch/path mapping,
 actual WorkspaceAuthority and host/kernel proof are still absent. Continue independent profile,
 transport/client and dispatch work; collect unresolved joins without prematurely stopping others.
+
+## E236 — fixed profiles, managed client and cell-local PTY worker, 2026-10-16
+
+New profiles.py takes explicit trusted digest/resource/UID/GID/cgroup/seccomp inputs, no production
+defaults or wire Docker options. Renderer fixes nonroot/cap-drop/NNP/private namespaces/read-only
+rootfs/no-network/resource limits and exactly source/scratch/read-only-cache targets. Actual image,
+seccomp/cgroup configuration and protected path ownership still require authority/host approval;
+rendering is not Docker/kernel proof. Empty syscall policy in unit fixtures is deliberately NOT
+an approved deployable host profile. Worker argv includes its configured maximum command budget.
+
+ExecutionClient checks private socket metadata and actual SO_PEERCRED server UID, validates both
+wire directions and sends once. Partial/lost reply yields typed uncertainty with the original
+operation ID; no resend, replacement ID or host subprocess. ManagedBashExecutor implements all four
+methods and caps command timeout, normalizes only logical cwd, checks every reserved receipt field,
+retains normal nonzero command exits and rejects timeout/backend/unknown as determinate success.
+No current controller/tool factory is wired; existing production fallback is not claimed removed.
+
+cell_worker.py provides a real module entry with private framed stdio, no grant/namespace input,
+stateful PtyPool reuse, all control methods plus STOP and bounded UTF-8 tails. One RUN thread allows
+concurrent interrupt controls without parallel job orchestration; replies carry separate request
+IDs. PTY creation happens on the main thread before RUN, not forkpty from the RUN thread. A first
+combined test run exposed the forkpty-thread warning; mechanism/test setup repaired rather than
+suppressing it. Local worker results are UNTRUSTED DATA, never receipts or descendant barriers.
+Only three existing PtySession timeout annotations change int→float; integer callers preserved,
+real50ms local timeout exercised. Supervisor's independent deadline/cgroup barrier remains required.
+
+Actual final bank219PASS24.50s/restored219PASS24.27s (seven owning+existing PTY modules), no skips,
+errors or warnings. Installed-entry30PASS3.81s separately rerun. RuffPASS/format11unchanged;
+targeted Mypy11files/source178filesPASS in working tree (includes journal construction separately
+in progress, not journal runtime proof). Nine developmental ALL219case mutations: execute-once
+call24CALL failures; receipt binding12; server peer1; after-send uncertainty1; READ mount1; network2;
+worker schema5; timeout signal1; truncation signal1. Zero collection/setup/teardown errors/skips,
+exact source restoration. Lossless [client/worker evidence](evidence/i03-e236/client-worker.json.gz).
+Not normative full-SLICE1 CT98–100 proof: actual service/authority/kernel paths remain absent.
+
+Collected join for later: exec has no PlanRef field and normal view metadata lacks an active PlanRef
+binding, yet receipt must be reconstructed authoritatively with plan_sha256. Ordinary no-workflow
+execution (Q59) also needs explicit nullable-plan semantics. Do not fabricate hashes or let worker
+text select a binding. Continue independent journal work before asking about this join.

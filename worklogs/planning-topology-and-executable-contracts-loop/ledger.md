@@ -2720,3 +2720,14 @@ E235  I03 SLICE1 CLOSED WIRE/RECEIPT CHUNK  2026-10-16;independent continuation 
     skips;exact restore. notes/evidence/i03-e235/wire.json.gz. Owning SLICE1 test inventory updated.
     DockerCLI/socket absent;external3.13.16/frozen dev restored. All35STEPS/four final duties open;
     no normative CT99/100 proof or service activation. Continue unblocked profile/client/dispatch.
+
+E236  I03 PROFILES/CLIENT/CELL PTY ADAPTER  2026-10-16;C0/C3 construction,not activation.
+    Digest-pinned fixed-profile renderer;single-attempt peer-authenticated UDS;bound receipts;
+    allfour BashExecutor methods;real module cell worker/private framed stdio/stateful PTY/controls.
+    Source deadline annotations int→float only;forkpty-thread warning fixed by main-thread creation.
+    Full219case bank baseline24.50s/restored24.27s PASS,no warnings/skips;installed-entry30PASS3.81s;
+    RuffPASS/format11unchanged;Mypy11target/178sourcePASS including independent journal WIP.
+    Nine ALL219case mutations:24/12/1/1/1/2/5/1/1CALLfails,zero runner/collection/setup errors/skips,
+    exact restore;notes/evidence/i03-e236/client-worker.json.gz. Not normative service/kernel proof.
+    Collected PlanRef/receipt join;finish independent journal work before questions. No production
+    main/authority/grant issuer/live test or CT/STEP tick. All35STEPS/four final duties incomplete.

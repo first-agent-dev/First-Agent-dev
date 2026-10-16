@@ -165,6 +165,14 @@ Complete payload additions/results (every object has exactly the named keys; IDs
 | handoff | `{target_namespace}` / `{view_ref:null,capability,generation,revision_id}`; current actor's views must be terminal/settled; target bound to existing parent-child run relationship; same root owner/generation, exactly one active mutator grant |
 | release | `{}` / `{released:true}`; revokes only its grant/pin; writer release requires no writable/live/unknown jobs or unfinished projection; READ release cannot revoke another actor |
 
+Cell-private stdio frames carry exactly `{version:1,request_id,action,payload}`; actions
+RUN/INTERRUPT/CLOSE/LIST/STOP. RUN payload exactly `{command,cwd,timeout_ms,session_id}`; control
+payload is `{session_id}` or `{}` for LIST/STOP. No capability/namespace/host configuration enters
+the worker. Replies exactly `{version:1,request_id,result,error}` with null error on result or
+WORKER_UNAVAILABLE; result is complete PtyResult fields for RUN, `{sessions,message}` otherwise.
+One active RUN, controls remain responsive; STOP acknowledgement is not a descendant barrier.
+Worker output remains untrusted; supervisor reconstructs all receipt bindings and terminality.
+
 `BashExecutor.run/send_ctrl_c/close/list_sessions` map to exec/pty_control. Preserve stateful cwd,
 environment and PTY session between commands in ONE open episode. Interrupt/close timeout is
 explicit uncertainty, not shell replay or implicit successful cleanup. `run_bash` must catch typed
