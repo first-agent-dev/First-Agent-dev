@@ -8,6 +8,11 @@
 
 Active branch: `arena/86633f17-first-agent-dev`; never switch/create another session branch.
 I02 remains **IN PROGRESS**, not SHIPPED or I03/security acceptance.
+**Current stop: Q72 OPEN (standing E19 conflict).** The agent over-scoped E215 cleanup:
+15 archive link-target repairs and one banner-fixture path change conflict with operator
+E19/D7 “STAY RED”. Already committed0f7814d, not ratified. No further implementation/checkbox.
+Obtain explicit keep-versus-protected-scope-restore disposition; do not infer it from Q71.
+
 **Q71 RESOLVED by custom production-grade design authorization.** Adopted a deterministic retired-
 recipe/lifecycle guard, no new path exemptions. Do not ask Q69/Q70/Q71 again. Security denial/risk
 evidence may name alias mechanisms; no evidence rewrite or guard waiver. Q69 nonrecursive C1
@@ -22,7 +27,10 @@ corrected; all8 baseline typing errors and authoring diagnostics fixed without s
 Whole Ruff/check/format, configured Mypy450, authoring, doclinks308 clean. All46 broken links are
 target-only relocation repairs in15 existing files, not exclusions. Targeted152passed12skipped
 (shellcheck absent), baseline-typing regressions100passed. Public bank now487; pre-format diagnostic
-run487passed111.85s. Final frozen baseline,16+2 whole-bank proofs and full repository run pending.
+run487passed111.85s. Final frozen focused699passed346.07s; all non-test gates rc0.16+2 whole-bank proofs and full
+repository candidate/Git-complete baseline run pending;5of18 PROVEN at stop, not complete.
+See E216 in the note for process IDs/artifacts. In-flight results are observations only.
+E19 disposition and independent/operator review remain blocking even if those runs turn green.
 STEP17 reopened; E212 remains valid only for its recorded hashes. Fresh results must be recorded
 before any checkbox. Root foreign Arena hook is preserved. Independent/operator review remains
 required; do not infer local DoD, SHIPPED, deploy safety or I03 acceptance.

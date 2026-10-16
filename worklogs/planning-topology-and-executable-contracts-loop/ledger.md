@@ -2412,3 +2412,22 @@ E215  FACT  Q71 custom reply authorized a robust maintainable construction, not 
     evidence only. Final baseline, fresh16+2 whole-bank audit and final full repository run pending.
     No local DoD/SHIPPED/I03 acceptance, blanket baseline waiver or foreign-hook replacement.
     [notes/open-questions-2026-10-07.md Q71; E215 continuation in E211 note]
+
+
+E216  CORRECTION / BLOCKING-Q  E215 quality cleanup overran standing E19 scope. Re-reading
+    ledger E19 and deferred-register D7 found explicit operator “STAY RED / do not fix” for
+    doc-links and historical-banner guards. Q71 did not ratify superseding that requirement.
+    Checkpoint0f7814d already contains15 target-only archived link repairs and one banner-fixture
+    path correction; assertions unchanged, but those edits are proposed/unratified, not accepted
+    E19 disposition. Agent acknowledges scope error; stopped further implementation at Q72.
+    Recommend explicit narrow approval to retain repaired invariants/real guards; alternative
+    exact protected-scope restore, without undoing Q71 or unrelated repairs. No unilateral
+    rollback/waiver/checkmark. E19 historical entry unchanged. Final frozen focused699passed
+    346.07s; configured non-test chain rc0 (Pyrefly139suppressed43hidden warnings, not warning-free).
+    Scanner C0 extracted controls12pass; disabled guard7fail5pass; disabled producer1fail11pass;
+    no errors. Full487-bank16+2 audit5PROVEN so far/incomplete, full candidate running. Isolated
+    d910 archive now has exact d910 Git index/HEAD (same session branch name), clean source;
+    original two archive-no-Git failures are not product regressions. Git-complete baseline
+    rerun started using the same compiled Python3.13 PATH. In-flight observations may finish
+    but cannot authorize protected repairs or DoD. Root foreign Arena hook remains untouched.
+    [notes/open-questions-2026-10-07.md Q72; retained plan DoD; deferred-verification-register D7]

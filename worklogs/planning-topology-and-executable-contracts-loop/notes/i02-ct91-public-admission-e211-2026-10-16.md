@@ -1021,3 +1021,43 @@ source/test module or path-whitelist component):
 - `worklogs/planning-topology-and-executable-contracts-loop/notes/i02-ct91-public-admission-e211-2026-10-16.md`
 - `worklogs/planning-topology-and-executable-contracts-loop/notes/i02-slice-verification-design.md`
 - `worklogs/planning-topology-and-executable-contracts-loop/notes/open-questions-2026-10-07.md`
+
+
+### E216 — stop on standing E19 conflict, not a clean acceptance
+
+E215's link/banner cleanup crossed the explicit operator E19/D7 “STAY RED” boundary. The
+agent acknowledges this scope error. Q71 is resolved but does not ratify those protected
+repairs. Q72 records exact keep-versus-restore disposition; no further implementation or
+checkbox after discovery. The15 archive edits are link-target only, and one banner-test path
+is migrated to an existing archive; neither guard was weakened. Green observations do not
+authorize these unratified proposals. Historical ledger E19 remains unchanged.
+
+Actual final frozen focused baseline:699passed346.07s, no skips/errors. Configured non-test
+chain `just _lock-check _lint _mypy _pyrefly _authoring _contracts _shell-syntax` rc0. Default
+Pyrefly0errors139suppressed43warnings hidden, not warning-free. Extracted unmodified C0 scanner
+controls12pass0.19s; disabled-guard return7fail5pass0.17s; disabled actual log-producer visit
+1fail11pass0.11s, no errors. These are oracle-sensitivity controls, not normative full-path proof.
+
+Already-running audits are observation only, incomplete at stop: CT75/CT73/CT71/CT76/CT72
+PROVEN, each exact487cases/no skips; all other normative/supplemental results pending. Audit
+frozen inputs now include every changed Python file as well as target/fixture sources. STEP17
+remains unchecked. Candidate full suite and baseline rerun are still running. Original d910
+archive lacked Git, so two checkout-dependent failures were artifacts. Created an isolated
+exact d910 index/HEAD using the same session branch name, without tracked source changes;
+clean status verified. Fresh Git-complete baseline uses the same built3.13 interpreter on
+PATH, exact frozen dependency environment, correct UUID/nodeid plugin. No root branch switch.
+
+**Resume identifiers** (use blocking exit waits, then validate terminal XML/hashes):
+
+- Full audit: process `repaired-i02-full-path-producer--50b2fab3`;
+  `/home/user/.cache/fa-runtime/slice6-repair-audit{.py,.log,/results.json,/inputs.json}`.
+- Candidate: process `final-i02-full-repository-suite-b72c43e9`;
+  `/home/user/.cache/fa-runtime/i02-final-repository.{log,xml}`, UUID `i02-final-suite-run-id.txt`.
+- Git-complete baseline: process `git-complete-d9109f4-comparison--bfcc6a47`;
+  `/home/user/.cache/fa-runtime/i02-d910-final-repository.{log,xml}`, UUID `i02-d910-final-run-id.txt`.
+- Focused baseline completed: `i02-repair-final-baseline.{log,xml}`; non-test chain completed:
+  `i02-final-static.log`; scanner controls: `i02-oracle-controls/`. All under the runtime cache.
+
+Do not modify source/tests while these frozen observations run. A requested protected-scope
+restore changes a watched test file: stop/restart or invalidate affected runs explicitly.
+No final acceptance report exists; independent review and operator dispositions remain required.

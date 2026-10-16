@@ -1101,3 +1101,18 @@ authoring clean. All46 dangling links are target-only relocation corrections, no
 Targeted152passed12skipped (shellcheck missing); typing regressions100passed. Diagnostic pre-format
 public bank487passed111.85s; final frozen baseline/audit pending. STEP17 reopened: controller/test
 bytes changed, old16+2 proof must not authorize new bytes. No acceptance checkbox or foreign-hook waiver.
+
+
+### E216 / Q72 blocking disposition — 2026-10-16
+
+Correction: E215's15 archived link-target repairs and one banner-test path migration cross
+standing operator E19/D7 “stay red” scope. They are unratified proposals in0f7814d, not an
+accepted baseline disposition. Q71 authorizes its deterministic alias-term guard repair,
+not superseding E19. Agent acknowledged scope mistake and stopped implementation; operator
+must approve exact repaired causes or request exact protected-scope restore. No acceptance.
+Final frozen focused699passed346.07s; non-test chain rc0. Extracted C0 controls12pass; guard
+disabled7fail5pass; producer visit disabled1fail11pass. All18 full-path/final suite processes
+were already started: only5PROVEN at this observation; full candidate/baseline incomplete.
+Isolated d910 archive's missing Git context repaired by exact d910 index/HEAD, no tracked
+source changes. Final baseline rerun underway. Await Q72, then inspect actual process outcomes
+and frozen hashes; do not re-ask Q69/Q70/Q71 or infer E19 approval from green results.

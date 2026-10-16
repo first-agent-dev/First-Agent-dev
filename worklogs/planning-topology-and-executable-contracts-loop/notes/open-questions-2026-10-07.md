@@ -1427,3 +1427,45 @@ The operator may propose a different deterministic distinction as a custom respo
 oracle, so it is not inferred from the instruction to continue implementation. New authoring
 exports, remaining registry-fixture migrations, final suite comparison and independent/operator
 DoD remain open; no additional checkbox or SHIPPED status is assigned.
+
+
+## Q72 — explicit E19 disposition after over-scoped quality cleanup (2026-10-16)
+
+**Status: OPEN — operator decision required. Implementation stopped.**
+
+**Source-verified constraint:** ledger E19 (`To preserve`) says the two doc-gate reds are
+“deliberate S7 bait and STAY RED — do not fix them in any increment” (operator, standing).
+`notes/deferred-verification-register.md` D7 repeats that a green guard is a regression. The
+current I02 DoD requires operator-reviewed E19 dispositions, not a count-only baseline waiver.
+Q71 custom production-grade authorization resolved the alias-term oracle; it did **not**
+explicitly supersede E19.
+
+**Scope mistake already made, not ratified:** checkpoint `0f7814d` includes target-only fixes
+for46 broken links in15 archived Markdown files and changes the banner test to the existing
+relocated archive. The doc-link and banner assertions were not removed/weakened, historical
+bodies were not rewritten, but making these protected reds green crossed the standing scope
+boundary. These edits must not be accepted under Q71 by implication. The agent acknowledges
+this error and stopped before an acceptance report or checkbox. No additional implementation
+or unilateral rollback has been performed after discovery.
+
+**Recommendation (requires explicit approval):** accept exactly these15 link-target repairs
+and the one banner-fixture path correction; preserve both guards as real integrity checks,
+not required failing tests. Record this as a new narrow E19 disposition that supersedes the
+standing red requirement for these two repaired causes, not a blanket baseline waiver. The
+unchanged CLI ergonomics selector's Python-version-dependent result is a separate observation,
+not a requested source fix or a forced failure. Full final comparison/independent/operator
+DoD review remain mandatory.
+
+**Alternative:** restore only the15 archived link-target edits and the banner fixture's old
+path; preserve approved Q71 guard design and all unrelated fixture/private-type/typing repairs.
+Protected doc gates then remain expected-red; record operator disposition without skips,
+assertion weakening or a global failure waiver. Such a source/test change invalidates running
+proof hashes and requires stopping/restarting the affected evidence runs.
+
+**Observed at stop:** final frozen focused baseline699passed346.07s; configured non-test chain
+(lock/lint/Mypy/Pyrefly/authoring/contracts/shell) rc0. Pyrefly default0errors includes139
+suppressed/43hidden warnings; not warning-free. Extracted unchanged scanner C0 controls12pass;
+guard-disabled mutation7fail5pass; actual log-producer visit disabled1fail11pass, no errors.
+Five of18 already-started487-case full-path runs PROVEN at observation, audit incomplete;
+final candidate and Git-complete d9109f4 suites still running. No STEP17/local DoD/SHIPPED tick.
+Do not mistake completed future process results for operator E19 approval.
