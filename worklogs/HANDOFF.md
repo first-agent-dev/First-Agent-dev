@@ -4,7 +4,7 @@
 > This file records the verified state and the next bounded action.
 > Previous 1426-line S14-era version archived to `worklogs/archive/HANDOFF-S14-era-20260825.md`.
 
-## Current state — I02 local explicit-plan gate, 2026-10-16 / E221
+## Current state — I02 local explicit-plan gate, 2026-10-16 / E222
 
 Branch `arena/86633f17-first-agent-dev` only. Proof snapshot c4cb55fe4d0a63a4ac43c62acacdac54b9404bad;
 latest follow-up is documentation/evidence only. I02 **IN PROGRESS**, not SHIPPED or I03 acceptance.
@@ -39,12 +39,16 @@ implementation gap found; no acceptance or independent review inferred. See E221
 existing blocked acceptance record. No need to rerun unchanged mutation audit merely for this
 status-only documentation update.
 
-**Current stop needs environment attention:** no Go SDK. Real readiness precommit prewarm
-returns75; blocked go.dev SSL/URLError. Pinned Gitleaks8.30.1 requires trusted **Go>=1.24.11**
-plus available/cached build dependencies or a suitably prepared Linux environment. Do not
-skip hook/test, forge ready marker, weaken bootstrap or replace foreign208-byte Arena hook.
-After provision rerun real readiness→hooks→commit→local-push and final actual just test/check,
-verify current input versions and refresh evidence. Current record remains NOT ACCEPTED.
+**E222 scope correction — current closure work is review/disposition, not mandatory Go:**
+Operator reaffirmed Ubuntu/Docker/Python and all deployed E2E at end-I03. Existing retained
+DoD already matches that. E220/E221 overstated unconditional Go provisioning/green composite.
+Go comes from the inherited Gitleaks hook build in the local S1–S6 readiness integration,
+not FA's implementation or a new I02 deployed-host gate. The actual common baseline/candidate
+failure remains red. It requires explicit operator per-case disposition; either selected
+repair/reexecution or an explicitly accepted inherited-infrastructure disposition, **not an
+assumed waiver**. No approval of that disposition is inferred from the scope clarification.
+Do not install a new runtime dependency, skip checks, fake readiness or replace Arena's hook.
+Continue retained clause/source/evidence review; no independent reviewer signoff exists.
 
 **Review still required:** operator reviews each exact baseline/missing-ID/Mypy proposed
 case disposition; independent reviewer checks retained plan/DoD, d910→implementation delta,

@@ -2515,3 +2515,18 @@ E221  FACT / REASSESSMENT  At4b78084 clean/matching remote: all81 durable artifa
     foreign208byte hook intact; readiness provision/reexecution, operator dispositions,
     historical ninth context, independent review/signoff remain open. No status/waiver change.
     [verified: notes/i02-local-acceptance.md E221, current source/hashes/actual command output]
+
+
+E222  CORRECTION / SCOPE RECONCILIATION  Operator reaffirmed Ubuntu/Docker/Python target
+    and final deployed E2E at end-I03. Retained I02 DoD already permits local SHIPPED before
+    I03 after actual full-suite outcomes and operator-reviewed per-case baseline dispositions.
+    E220/E221 overstated Go provisioning and green composite as unconditional I02 prerequisites.
+    Go diagnosis belongs to inherited Gitleaks hook-build infrastructure, not FA's language or
+    a new deployed-host gate. Actual common readiness failure remains red; explicit disposition
+    still required, no automatic waiver/repair/migration approved by scope clarification.
+    Current remaining work: retained local clause/source/scoped-mutation evidence review,
+    independent plan/implementation/evidence/I03-mapping review, exact operator dispositions
+    including historical ninth context, final local acceptance/signoff. No known new retained
+    implementation gap; not independent assurance. Records corrected; no runtime/test/hooks/
+    dependencies changed, no DoD/SHIPPED/I03 acceptance. [verified: retained DoD/spec6;
+    .pre-commit-config.yaml:135-138; test_workspace_readiness_integration.py; acceptance E222]

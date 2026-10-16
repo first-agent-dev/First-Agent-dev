@@ -563,6 +563,11 @@ Neither scope migration nor existing green verifier
 proof closes admission, full-suite comparison or review. Nested success/OS integrity/live-host
 acceptance are incomplete I03 obligations, not suppressed failures or I02 evidence.
 
+**E222 clarification:** existing readiness/Gitleaks failure is an inherited local integration
+baseline-disposition item, not a new Go runtime or I02 deployed-E2E requirement. Actual full
+suite/composite outcomes and operator-reviewed per-case dispositions remain required. No
+exception is approved by this clarification; final deployed E2E remains at end-I03.
+
 ## Increment definition of done
 
 - [ ] Every retained CT in the seven sections satisfies its local verify/C1/C2/C3 and declared

@@ -4,6 +4,29 @@
 signoff or independent review**. I02 remains IN PROGRESS. No SHIPPED, deployed-host,
 OS-isolation or I03 completion claim. Q69–Q72 are resolved; no new waiver is requested.
 
+## E222 — scope correction: no mandatory Go or I02 deployed E2E gate
+
+The operator reaffirmed Ubuntu/Docker/Python deployment and final deployed E2E at the end
+of I03. This matches retained I02 scope. **E220/E221 overstated environment repair and an
+all-green full composite as unconditional I02 prerequisites.** The retained DoD requires
+actual full-suite outcomes plus explicit operator-reviewed dispositions of inherited failures;
+it does not authorize inventing a Go runtime requirement or moving I03 host acceptance back.
+
+Go was diagnosed because the existing `.pre-commit-config.yaml` selects Gitleaks v8.30.1,
+whose hook installation builds a Go security tool. The failed existing readiness test is a
+local S1–S6 C2/C3 Git/hooks integration, not I02 deployed E2E. Its failure remains real and
+present in both executable baseline and candidate. It needs an explicit per-case disposition,
+not automatic suppression and not necessarily SDK provisioning. Whether to repair its hook
+packaging/environment or accept a scoped inherited-infrastructure disposition is **not yet
+approved**. The operator's clarification is not a blanket baseline waiver.
+
+Remaining DoD work: clause-by-clause review of retained local C1/C2/C3/matrix/negative evidence;
+actual d910→I02 source/scoped-mutation review including Q45-B; independent retained-plan,
+implementation/evidence and I03 successor-ownership review; operator per-case baseline/changed-ID/
+Mypy dispositions (including the unreproduced historical ninth context); then final local
+acceptance/signoff. No new retained implementation gap has been identified by bounded checks.
+This does not stand in for independent review. Current records remain **NOT ACCEPTED**.
+
 ## Version, durable evidence and scope
 
 Proof snapshot: `c4cb55fe4d0a63a4ac43c62acacdac54b9404bad` on
@@ -136,11 +159,13 @@ Common failure: `tests/test_workspace_readiness_integration.py::test_clean_candi
 (call-phase in both). Actual readiness returns75, `precommit_prewarm_failed`. No Go SDK is
 installed; pre-commit's Go bootstrap hits blocked `go.dev` and fails SSL/URLError. Pinned
 [Gitleaks v8.30.1 go.mod](https://github.com/gitleaks/gitleaks/blob/v8.30.1/go.mod) specifies
-**Go1.24.11** (checked via GitHub API). Need a trusted supported Go SDK >=1.24.11 **and**
-reachable or cached build/module dependencies, or a suitably prepared Linux execution
-environment. SDK alone is not promised sufficient under restricted egress. Then rerun the
-real readiness→hooks→commit→local-push integration and actual final composite. Do not disable
-the hook/test, fake a ready marker, or replace the foreign208-byte Arena commit-msg hook.
+**Go1.24.11** (checked via GitHub API). That is an indirect hook-build dependency,
+not a new FA language/runtime/deployment requirement. A trusted SDK plus reachable/cached
+build dependencies is one possible way to repair this inherited test environment, **not an
+unconditional I02 prerequisite**. Alternatively, an explicit operator-reviewed per-case
+baseline disposition may resolve the I02 comparison obligation; no such disposition is
+inferred here. Preserve actual rc1, the hook/test and foreign208-byte Arena commit-msg hook.
+No I02 deployed-host test or I03 implementation is introduced by this diagnosis.
 
 Eight baseline-only failures, individually proposed dispositions:
 
@@ -202,7 +227,9 @@ authorization is inferred; any required compatible trusted seating needs explici
 - [x] Completed unmutated baseline before all43 current producer runs; STEP17 and amended CT66.
 - [x] D1/D2/D3/D4-local-readers/D5/D8 reconciled with named source, tests and actual controls.
 - [x] Actual final just wrappers and exact identity/phase comparison, not successful wrappers.
-- [ ] Environment repaired; actual readiness integration and final `just test`/`just check` green.
+- [ ] Explicitly disposition the inherited readiness failure under the baseline-comparison DoD.
+  If repair is required by that disposition, repair and rerun unchanged gates; do not invent
+  an unconditional Go/runtime/live-host requirement or claim the actual red composite passed.
 - [ ] Operator reviews each proposed baseline/missing-ID/Mypy disposition above, including
   the unresolved historical ninth context and separate source-root hook-seat collision. Q72 only covers
   its two specified E19 causes; it is not approval of the rest of this table.
@@ -211,9 +238,11 @@ authorization is inferred; any required compatible trusted seating needs explici
 - [ ] Operator signs the retained local DoD. No acceptance signature exists in this record.
 
 No further production implementation is indicated by this completed local audit. That is a
-bounded observation, not independent assurance. Stop rather than weaken readiness. After
-provisioning, use this branch, inspect current source/input hashes, rerun real gates and refresh
-version-bound evidence; do not recycle this report as new-environment success. I03 acquisition,
+bounded observation, not independent assurance. Continue source/evidence/disposition review,
+not mandatory Go provisioning. Never weaken checks or fabricate readiness. If environment/
+hook repair is selected, rerun actual gates and refresh version-bound evidence. If an inherited
+baseline exception is explicitly approved, preserve the observed red result and its exact
+scope rather than relabeling it PASS. No exception has yet been approved. I03 acquisition,
 mandatory all-project execution boundary, PTY descendants/publication/recovery and former
 SLICE7 deployment/host package remain explicitly **undelivered**, not completed by migration.
 
@@ -227,6 +256,9 @@ mistyped test-file invocations exited4 with no tests and are rejected, not count
 
 
 ## E221 — closure reassessment, 2026-10-16
+
+Historical reassessment: its mandatory-Go/environment-stop conclusion is superseded by E222
+above; its actual hash/collection/test results remain unchanged.
 
 Starting commit `4b78084214de2d01f83bb522f8b4ce69cce975eb`, clean tree and matching remote.
 Read-only validation recomputed compressed/original SHA256s for all81 archived artifacts,
