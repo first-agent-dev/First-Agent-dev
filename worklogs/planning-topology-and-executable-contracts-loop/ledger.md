@@ -2431,3 +2431,12 @@ E216  CORRECTION / BLOCKING-Q  E215 quality cleanup overran standing E19 scope. 
     rerun started using the same compiled Python3.13 PATH. In-flight observations may finish
     but cannot authorize protected repairs or DoD. Root foreign Arena hook remains untouched.
     [notes/open-questions-2026-10-07.md Q72; retained plan DoD; deferred-verification-register D7]
+
+
+E217  DECIDED (operator) Q72 selected “Approve these E19 repairs”: retain exactly46 relative-
+    link target fixes in15 archived files and one historical-banner fixture path correction.
+    Supersedes E19 required-red rule only for these two repaired causes; guard assertions stay
+    real/active. No other baseline waiver, acceptance or scope expansion. D7 updated to record
+    actual narrow disposition, historical E19 untouched. Already-running frozen observations
+    may be assessed; all22 Python hashes unchanged. Full final comparison and independent/
+    operator DoD review still required. Q69/Q70/Q71/Q72 resolved; do not re-ask.

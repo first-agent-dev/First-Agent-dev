@@ -127,13 +127,19 @@ and assert the grammar block is present — a real live-path assertion that need
 `tests/test_slice_id_validation.py::test_legacy_s_ids_normalise_to_canonical_space`. Live
 proof belongs with the eval consumer in I04.
 
-## D7 — Guards that must stay red  ·  owner: every increment
+## D7 — Protected baseline guards · operator disposition Q72 (2026-10-16)
 
-Three gates are expected-red by design (E19) and must **never** be "fixed":
-`test_doc_links::test_repo_has_no_broken_internal_file_links` (46 broken links at
-2026-10-07), `test_deploy_scripts::…superseded_banner`,
-`test_cli_ergonomics::test_workflow_per_role_overrides_parse`. A green one is the
-regression.
+Historical E19 required the doc-link and historical-banner failures to remain red. The agent
+initially over-scoped their repair in E215; E216 records that error and blocking stop. The
+operator then explicitly selected **“Approve these E19 repairs”** in Q72: exactly46 relative-
+link target corrections in15 archived files and one banner-fixture path migration. E19’s
+required-red rule is superseded **only for these two repaired causes**. Both real integrity
+checks and their assertions remain active; new broken links/missing historical banners must
+still fail. No skip, failure-count waiver or acceptance is implied.
+
+`test_cli_ergonomics::test_workflow_per_role_overrides_parse` was also listed in the older trio.
+It is unchanged; Python-version-dependent green is an observation, not a source fix or a
+forced-failure requirement. Record its actual final baseline/candidate outcome separately.
 
 ## D8 — The exported surface can drift away from schema §7  ·  owner: **I02**
 

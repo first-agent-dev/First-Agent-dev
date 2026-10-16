@@ -1431,7 +1431,13 @@ DoD remain open; no additional checkbox or SHIPPED status is assigned.
 
 ## Q72 — explicit E19 disposition after over-scoped quality cleanup (2026-10-16)
 
-**Status: OPEN — operator decision required. Implementation stopped.**
+**Status: RESOLVED — operator selected “Approve these E19 repairs”, 2026-10-16.**
+
+Approved exactly46 relative-link target repairs in15 archived files and the one banner-test
+path correction. This explicitly supersedes E19’s required-red rule for these two repaired
+causes only. Real guard assertions, final comparison and independent/operator review remain
+mandatory. No other baseline waiver, source change or acceptance is approved. The stop record
+below is historical; already-started frozen runs may now be assessed on their actual results.
 
 **Source-verified constraint:** ledger E19 (`To preserve`) says the two doc-gate reds are
 “deliberate S7 bait and STAY RED — do not fix them in any increment” (operator, standing).
