@@ -1,118 +1,50 @@
 # HANDOFF.md — next agent/session
 
 > Read [`knowledge/llms.txt`](../knowledge/llms.txt) §MUST READ FIRST.
-> This file records the verified state and the next bounded action.
-> Previous 1426-line S14-era version archived to `worklogs/archive/HANDOFF-S14-era-20260825.md`.
+> Current local delivery is distinct from final I03/deployed acceptance.
 
-## Current action — E228 peer review follow-through, 2026-10-16
+## Current state — I02 LOCAL SHIPPED / I03 E2E PENDING, 2026-10-16 / E229
 
-Operator supplied another agent's findings. Independently confirmed missing verifier evidence
-in observe and unexpected capture exceptions suppressing eval; fixed both. T0 exit-status issue
-already fixed. Fifth help-example parsing defect NOT reproduced: existing all-five test passes.
-Q73 explicitly ratified: missing/indeterminate evidence blocks complete in BOTH modes; determinate
-observe failures remain advisory, actual negative eval routes/report preserved. Spec/CT71/design
-and resolved question updated.95 focused peer/T0 tests, Ruff and450-file Mypy pass. Current public
-bank596, verifier131; fresh union baseline expected1002. Before closeout, refresh affected SLICE5/6
-producer proofs and actual wrappers on final frozen source. E227's completed927/46 proof and red
-5097-case wrapper are retained as historical b2b2830 evidence, not current proof. No deployment/
-I03 acceptance or local SHIPPED yet. Old checkpoints below are historical, not current counts.
+Branch `arena/86633f17-first-agent-dev` only. Runtime/test proof snapshot
+`a32a72fc58db4b9a5b048a9b6475649bcf3e32b4`; later closeout edits are documentation/evidence.
+I02 is **locally implemented and diff-reviewed, pending E2E tests as I03 ships**.
+Read the [final local record](planning-topology-and-executable-contracts-loop/notes/i02-local-acceptance.md),
+[retained plan](planning-topology-and-executable-contracts-loop/increments/increment-02-verify-gate-and-kill-checks.md)
+and [current inventory](planning-topology-and-executable-contracts-loop/notes/evidence/i02-e229/manifest.json).
 
-## Current action — E226 frozen-source verification pending, 2026-10-16
+**Review:** all43 changed Python files versus d910 reviewed;flow IO/eval/stale receipts, dispatch
+boundary deadline, T0 runner/report disagreement, missing observe evidence and unexpected capture
+exceptions fixed.125 added review cases pass. Q73 explicitly selects hard-blocking indeterminate
+completion in both modes;determinate observe remains advisory,Q56 actual negative routes/report
+preserved. Peer help-example defect NOT reproduced:all5 existing examples parse, no pointless fix.
+Strict extractor/Q45-B behavior unchanged;test replacement intent reviewed,no new skip/xfail.
 
-Final flow-failure edge repaired: typed public boundary also covers initial admission timeout
-receipt failure; terminal readback rejects in-progress receipts.50 new review regressions pass,
-Ruff and450-file configured Mypy pass. Current public bank537; fresh baseline expected927 cases.
-Intermediate Mypy errors in new tests were fixed, not waived. All interrupted proof/check attempts
-are discarded, not final results. Restart final ordered proof + actual just check on frozen source,
-then finish review/record local implemented+diff-reviewed pending I03 deployed E2E. No source edits
-are planned unless those final checks expose a reproducible defect. Older checkpoints below remain
-historical, not final counts/results.
+**Proof:** actual1002pass/no-skip baseline completed before all29 final affected SLICE5/6 runs:
+22FUNCTIONAL+6SUP+1 external exception-revert control killed.23 SLICE6 runs each execute596 cases.
+19 unchanged earlier leaf proofs (18FUNCTIONAL+CT79) retained/revalidated, not new executions.
+All40 retained FUNCTIONAL covered. Root-file hash-glob omission discovered/fixed in external audit;
+corrected v2 hashes every tracked Python source/test/script, preserving original baseline UUID/
+timestamps and explicit Git-body validation. Incomplete/rejected attempts remain diagnostic.
+Lossless original artifacts/manifests/provenance/commands/hashes retained in E220/E224/E227–E229.
 
-## Current action — E225 final source freeze, 2026-10-16
+**Actual final wrapper:** just check rc1;5158pass1fail12skip1xfail/5172;all other blocking subgates
+pass,CLI27floors/78functions separately pass. Exact d910 comparison:0new failure,1common,
+8baseline-only,6superseded IDs,701new. Common readiness rc75/precommit_prewarm_failed remains red;
+no blanket environment/baseline PASS. Historical ninth Mypy context remains unreconciled despite
+current450-file configured Mypy passing. Foreign208-byte Arena commit-msg hook is not replaced.
 
-Third review finding fixed: T0 previously accepted passing JUnit rows from an infra-failed pytest
-runner. Share the existing kill runner/report consistency check; preserve valid red/empty T0.
-All46 new public-path review regressions pass; bank now533. Source includes controller and shared
-slice_verification, so refresh affected producer proofs against a fresh whole-path baseline.
-Initial affected-proof process intentionally stopped before completed proof; no verdict claimed.
-Intermediate abf1bdc just check rc1/log archived; final checks/proof and diff-review closeout pending.
-No I03/deployed acceptance. E224 details below are historical checkpoints, not current final counts.
+**Still INCOMPLETE — final I03 SLICE6:** deployed source-to-behaviour verification;environment/
+readiness/inherited-baseline acceptance;broad independent implementation/evidence review;integrated
+E2E/deployment signoff. I03 remains OUTLINED/undelivered,all four successors unchecked. No Docker/
+Ubuntu host test,OS isolation,managed nested acquisition or host supervisor delivered here. Python
+only;Go is an indirect inherited hook-build diagnosis,not a new FA runtime/deployment requirement.
+PTY stays. Q69–Q73 resolved;Q72 remains its narrow46-links/15-files+banner repair decision.
 
-## Current action — E224 source review checkpoint, 2026-10-16
+**Next bounded action:** wait for operator direction for I03;read its conditional six-slice plan/
+spec and unresolved exact route/bundle/live-schema decisions before any runtime/fixture work.
+Do not rerun unchanged mutation audits just for documentation status,or relabel red/unknown PASS.
 
-The operator supplied the next command and authorized actual adversarial plan-versus-diff review,
-fixes and affected local proof refresh. E223's STOP below is historical and satisfied.
-Two reproduced gaps fixed in workflow_controller: flow-state IO normalization/required eval/stale
-receipt handling, and dispatch-boundary deadline recheck after preparation.26 focused public-path
-regressions pass; intermediate509-case bank passes; final bank513 and affected SLICE6 mutations
-still need refreshed execution. just check is running; do not infer its outcome. Read current
-[E224 local record](planning-topology-and-executable-contracts-loop/notes/i02-local-acceptance.md)
-and [checkpoint evidence](planning-topology-and-executable-contracts-loop/notes/evidence/i02-e224/manifest.json).
-No review closeout/SHIPPED or I03/deployment acceptance yet. Continue review, finish checks and
-refresh source-bound affected proofs before finalizing. Preserve historical failures as red.
-
-## Current state — I02 local explicit-plan gate, 2026-10-16 / E223
-
-Branch `arena/86633f17-first-agent-dev` only. Proof snapshot c4cb55fe4d0a63a4ac43c62acacdac54b9404bad;
-latest follow-up is documentation/evidence only. I02 **IN PROGRESS**, not SHIPPED or I03 acceptance.
-Read [pending local closeout/evidence record](planning-topology-and-executable-contracts-loop/notes/i02-local-acceptance.md),
-[plan](planning-topology-and-executable-contracts-loop/increments/increment-02-verify-gate-and-kill-checks.md),
-[spec](planning-topology-and-executable-contracts-loop/notes/i02-explicit-admission-spec-2026-10-15.md),
-[register](planning-topology-and-executable-contracts-loop/notes/deferred-verification-register.md).
-Lossless original reports/manifests/logs/runner history and SHA256 inventory are tracked in
-`notes/evidence/i02-e220` beneath that worklog; do not depend on ephemeral runtime cache alone.
-
-**Completed:**877pass/no-skip ordinary external baseline completed BEFORE all43 fresh mutations;
-40FUNCTIONAL+CT79+2supplemental all PROVEN, exact declared paths/manifests, native UUID and
-import provenance, no errors/skips, final tracked hashes/status unchanged. All16normative+
-2supplemental SLICE6 invocations executed the whole487 public bank; amended CT66=110pass5fail.
-STEP17 now checked. E218's concurrent699/18 remains diagnostic. First876pass1skip external
-baseline was rejected; v2 runner assumed one edit and src-only roots. v3 corrected those
-external defects, reused only verified actual877 baseline and reran all43; no production patch.
-D1/D2/D3/D4-local/D5/D8 reconciled; deferred coder-brief/wrappers explicitly not wired.
-
-**Actual final wrappers:** just check→just test rc1,5033pass1fail12skip1xfail/5047,570.71s,
-83.18% coverage. All other blocking subgates pass; CLI floor independently27/78 pass.
-Git-complete d9104477 comparison:0candidate-only failures,1common,8baseline-only;6superseded
-old IDs explicitly mapped,576new. Eight recorded Mypy diagnostics individually fixed; actual
-configured450-file Mypy clean; historical E194 ninth context remains unreconciled. No successful-check or blanket baseline waiver claim.
-
-**E221 read-only reassessment:** all81 archive hashes and native report bindings revalidated;
-all runtime/test hashes and seven contract/path/command/directive signatures unchanged.
-All11 distinct SLICE6 STEP selectors collect nonempty and match passing877-baseline cases;
-not fresh selected executions. Fresh parser/PlanRef/slice-ID regressions115pass1.95s.
-plan_ids source delta against d910 is only the explicit set[int] annotation. No new bounded
-implementation gap found; no acceptance or independent review inferred. See E221 in the
-existing blocked acceptance record. No need to rerun unchanged mutation audit merely for this
-status-only documentation update.
-
-**E223 operator-approved plan update — final acceptance moved, NOT completed:**
-I02 retains local implementation/checks and only plan-versus-diff review before moving on.
-Final I03 SLICE6 explicitly owns deployed functional/source-to-behaviour verification,
-environment/readiness and inherited baseline acceptance review, broad independent implementation/
-evidence review, and integrated E2E/deployment signoff. All four are unchecked/incomplete in
-I03 plan/spec; exact successors and inherited evidence are in
-[migration bank §9](planning-topology-and-executable-contracts-loop/notes/i02-to-i03-scope-migration-2026-10-15.md#9-e223-closeout-acceptance-transfer--2026-10-16).
-This supersedes E220–E222's broader I02 review/disposition prerequisites, not factual test results.
-Go is an indirect inherited Gitleaks hook-build diagnosis, not a mandatory FA runtime or local
-I02 shipping requirement. Preserve actual rc1/readiness/foreign-hook observations for I03 review;
-do not skip checks, fake readiness, replace Arena's hook or call red/unknown PASS.
-
-**E223 documentation validation:**171doc/parser/grammar/directive/skill tests and13claim/
-ownership checks passed;309Markdown files have no broken internal links. Both plans have
-0precheck FAIL,7/6sections and unchanged CT/path/command/kill-directive signatures. No new
-checked markers, code/test/hook/evidence changes or implementation diff review.
-
-**Next action — STOP after documentation push:** the operator explicitly requires waiting for
-the next command before starting the I02 diff review, in this or a new session. This change
-performs no source/diff review, fixes no code and marks no new DoD item fulfilled or SHIPPED.
-When later authorized, review I02 changes against its retained plan/d910, fix findings and
-refresh affected local checks/proofs, then finalize the local closeout record. Intentional test
-changes/new I02 defects are still review work; formal inherited-baseline/Mypy acceptance is I03.
-Q69–Q72 remain resolved; Q72 only approves46 link fixes/15 archived files and one banner path
-migration. Historical E19/evidence unchanged. No I03 acquisition/isolation/host package delivered.
-
-The older S18/doc-hygiene notes below are historical, not this session's current action list.
+Older S18/doc-hygiene notes below are historical,not current I02/I03 action items.
 
 ## S18 + I-63 CLOSED — evidence /tmp/s18-evidence-20260825T130324Z/ PASS (2026-08-25)
 

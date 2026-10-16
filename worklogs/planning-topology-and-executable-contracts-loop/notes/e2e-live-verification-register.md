@@ -18,6 +18,9 @@ local checks/results. [Migration bank §9](i02-to-i03-scope-migration-2026-10-15
 records successors; historical checkpoint “review pending” conclusions below retain their dated
 provenance and do not reinstate the old I02 acceptance boundary. No row gets a live verdict here.
 
+**E229 local review complete:** source changes are implemented and diff-reviewed, not deployed
+accepted. New/changed error-path helper coverage below is future I03 fixture work, not a live PASS.
+
 **Status vocabulary.** `unit` = proven by in-repo tests and a kill-check. `e2e` = proven on the
 live host. These historical row labels do not assign current live verdicts. Local scoped I02
 completion is distinct from still-incomplete I03 host acceptance; neither implies the other.
@@ -41,7 +44,7 @@ fixture cannot reproduce, and exactly where a silent no-op would hide.
 3. Assertions read from the persisted artifacts the operator reads —
    `~/.fa/session-log/<run_id>/{eval_report,flow_state}.json`, host path
    `/srv/first-agent/state/session-log/<run_id>/` — never from in-process objects.
-4. Observe-mode first (E132): the first live run must record and not enforce.
+4. Observe-mode first (E132): determinate failures are advisory; Q73 missing/indeterminate and integrity completion floors still apply in both modes. The first live run cannot waive them.
 
 ---
 
@@ -117,11 +120,11 @@ exists; it does not mean live-host e2e is done. The first deployed session still
 | :--- | :--- | :--- | :--- | :--- |
 | `run_workflow` → `_ensure_eval_after_coder` | CT73 kill `PROVEN`; C1 test omits eval from requested roles | real workspace, `--plan` supplied, requested roles `planner,coder`; begin observe, then repeat in enforce | persisted provider/session evidence shows actual `planner,coder,eval` dispatch in that order; verifier evidence is supplied to eval. Removing the normalizer prevents the eval request and kills the C1 oracle | unit |
 | `_run_stage` → `run_stage_fn` → `drive_session` | CT75 kill `PROVEN`; C1 uses real `_cmd_run` | same plan, bootstrapped `.venv`, real stage command; only the in-repo test mocks provider requests | stage artifacts and provider calls exist for planner, coder and eval; no replacement/fake stage result can satisfy the assertion | unit |
-| `_run_stage` → `verify_plan` / `verify_slice` | CT71/CT76 kills `PROVEN`; C1 has one plan-level command and two separately attributed slice commands | command in plan-level fence exits 7 after writing a marker; each slice has its own passing verify command | persisted plan command has exit 7; each slice artifact contains only its own command; plan-level marker is written once. Observe does not route; enforce does not end DONE | unit |
+| `_run_stage` → `verify_plan` / `verify_slice` | CT71/CT76 kills `PROVEN`; C1 has one plan-level command and two separately attributed slice commands | command in plan-level fence exits 7 after writing a marker; each slice has its own passing verify command | persisted plan command has exit 7; each slice artifact contains only its own command; plan-level marker is written once. Observe leaves determinate failures advisory; enforce does not end DONE | unit |
 | `capture_baseline` / `load_verify_baseline` | CT86 kill `PROVEN`; CT85/86 baseline tests pass | first coder attempt has existing `TESTS:` paths; trigger a bounded repair without changing `run_id` | `verify_baseline.json` predates coder dispatch, remains byte-identical through repair, and its nodeid maps are used on the next attempt | unit |
 | `workflow_artifact_paths` / `write_verification` / `_verification_lines` | CT77b kill `PROVEN`; artifact history test passes | first run a workflow in observe and review its artifact; then, in a separate enforce-mode workflow, trigger a bounded coder repair with the mode fixed for that run | each run records its configured mode; the enforce run's `verification.json` appends both attempts/rounds without erasing history, and eval receives only the current attempt's latest evidence block | unit |
 | `_verification_evidence_lines` → `_eval_evidence_block` | CT77 kill `PROVEN`; C1 inspects the actual eval request | deliberately fail a plan command; capture the real eval call through provider tracing and read persisted verification/eval artifacts | request includes mode, round, plan command exit, per-slice verdict and kill outcomes; `eval_report.json` is the actual provider-authored report, never a harness replacement | unit |
-| `_effective_controller_route` / `_write_terminal_state` / `workflow_exit_code` | CT72 kill `PROVEN`; route matrix, missing-plan and linear composition tests pass | run determinate and indeterminate verifier cases, including a successful coder with no supplied plan; have eval return both `complete` and each non-complete route | determinate + eval complete → `return_to_coder`; indeterminate/missing evidence + eval complete → `blocked`; eval non-complete route is preserved; no blocking enforce result is terminal DONE or exit 0 | unit |
+| `_effective_controller_route` / `_write_terminal_state` / `workflow_exit_code` | CT72 kill `PROVEN`; route matrix, missing-plan and linear composition tests pass | both modes with an admitted plan: determinate/indeterminate evidence plus missing-required-evidence fault fixture; eval complete and each non-complete route. Missing plan is a separate pre-provider rejection, not successful coder setup | enforce determinate failure + complete → `return_to_coder`; observe determinate failure advisory; Q73 missing/indeterminate + complete → `blocked` in both modes; Q56 non-complete route preserved; no hard-blocking completion is DONE/exit0 | unit |
 | `load_feature_flags_from_path` / `_gate_mode` | CT77c kill `PROVEN`; call-time HOME/config and mode unit test passes | set `~/.fa/config.yaml` first to observe, review artifacts, then explicitly change to enforce | each run records the resolved mode in `verification.json`; config-read failure defaults to observe and never cold-enforces | unit |
 | adaptive repair/replan dispatch helpers (`_finish_adaptive`, `_dispatch_adaptive_round`, `_run_adaptive_repair`, `_run_adaptive_replan`) | adaptive cap/indeterminate-route tests pass | in adaptive mode, use a persistent deterministic failure and a separate eval-authored replan; set finite repair/replan budgets | every coder is followed by eval; determinate gate failures stop at the existing repair cap; indeterminate gate evidence alone does not launch a repair; eval's non-complete replan route is retained | planned |
 
@@ -132,20 +135,21 @@ outside, and mutmut's global `source_paths` remains src-only.
 
 ## Open e2e-only risks, recorded now so they are not rediscovered live
 
-- **Admission timing.** CT53's purity is proven structurally, by walking the functions' AST.
-  That proves they *can* run before the coder stage; only a live run proves they *do*.
+- **Admission timing.** Pure-validator checks and the actual local C1 chain prove pre-coder
+  execution/order. The final I03 fixture must still verify that order on the deployed host.
 - **Cost.** Phase B does not start until Phase A yields a measured per-command cost from a
   real run (E130). That measurement has no in-repo proxy.
-- **Observe-vs-enforce.** The switch recorded in `verification.json` (E132, CT77c) changes
-  nothing a unit test can see; its first real exercise is the live host.
+- **Observe-vs-enforce.** Local C0/C1 cover mode resolution, routing and Q73's both-mode
+  completion floor. Deployed configuration/workspace/artifact behavior still needs I03 fixtures.
 
 ## Amended CT66 — new report producers and planned host cases (2026-10-15)
 
-**PLANNED, not live evidence.** I02 STEP7 supplies C0/parser and C0 real-I/O proof. SLICE6
-must first prove the admitted-plan → controller → verifier → eval composition (C1). I03 F
-owns deployed C3 acceptance, the independently reviewed fixture package and final artifact schema
-(Q63); do not create/run host fixture helpers before that review or infer live completion here.
-The pre-existing rows above are historical and unchanged. This section adds the new producer set.
+**PLANNED deployed cases, not live evidence.** I02 STEP7 supplies C0/parser and C0 real-I/O
+proof; E220/E227/E229 supply local admitted-plan → controller → verifier → eval composition (C1).
+I03 F owns deployed C3 acceptance, the independently reviewed fixture package and final artifact
+schema (Q63); do not create/run host fixture helpers before that review or infer live completion.
+Pre-existing live verdicts remain unchanged. E229 clarifies Q73/missing-plan oracles above without
+upgrading deployed status. This section adds the report-producer set.
 
 | Producer | Local oracle | Planned host case / fixture | Required deployed observation |
 | :--- | :--- | :--- | :--- |
@@ -1152,3 +1156,23 @@ just check/test rc1 solely on common Go/Gitleaks readiness;5033pass1fail12skip1x
 See [blocked acceptance/evidence record](i02-local-acceptance.md). Local reader/prompt/export
 obligations reconciled; operator dispositions and independent review open. No table's deployed
 status is upgraded. I03 acquisition/isolation/host fixtures remain undelivered.
+
+
+## E229 review-fix producers — future I03 fixture coverage, UNVERIFIED DEPLOYED
+
+Keep these helpers in the normalized producer/case inventory; reuse existing controller cases,
+not a parallel fixture authority. No fixture/helper/runtime package is implemented by this table.
+
+| New helper producer | Future deployed fixture / observable oracle |
+| :--- | :--- |
+| workflow_controller._persist_flow_state | Initial/pre-coder/transient/persistent/terminal control-file IO and fsync uncertainty return nonzero; only an actually persisted terminal receipt is claimed. |
+| workflow_controller._announce_stage | After successful coder, eval transition receipt failure still attempts actual eval while deadline permits; no completion despite model PASS, no synthetic judgment. |
+| workflow_controller._stage_task | The actual eval request gets the pinned plan and same attempt's evidence; planner/coder task routing remains unchanged. |
+| slice_verification._pytest_report_status_error | Real deployed pytest/report disagreement blocks T0 and cannot prove a kill; preserve genuine red/empty/skipped baseline semantics. |
+
+Existing _run_stage/read_back_terminal_state cases must also cover preparation crossing the deadline,
+combined initial admission+flow recording failure, and no stale in-progress receipt. Existing
+_capture_nodeids_by_slice/_effective_controller_route cases must include ordinary capture exceptions
+before/after coder, bounded persisted error evidence, BaseException propagation, missing required
+verification and Q73 present-indeterminate observe/enforce routing with Q56 negative precedence.
+All of these deployed results remain INCOMPLETE under final I03 SLICE6.

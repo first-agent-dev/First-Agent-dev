@@ -1,8 +1,160 @@
-# I02 local acceptance record — DIFF REVIEW IN PROGRESS / NOT ACCEPTED
+# I02 local implementation and diff review — COMPLETE; I03 E2E PENDING
 
-2026-10-16, current closeout scope E223; authorized source review checkpoint E224. I02 remains
-IN PROGRESS. The actual plan-versus-diff review is underway; refreshed closeout proof is pending. No SHIPPED,
-deployed-host, OS-isolation or I03 completion claim. Q69–Q72 remain resolved.
+2026-10-16 / E229. Local SHIPPED only: implemented and diff-reviewed against the retained plan,
+with findings fixed and source-bound checks/proofs recorded. Actual just check remains rc1;
+deployment/broad independent acceptance and I03 remain incomplete. No failure is relabeled PASS.
+
+## E229 — LOCAL IMPLEMENTED AND DIFF-REVIEWED; I03 E2E PENDING
+
+**Runtime/test snapshot:** `a32a72fc58db4b9a5b048a9b6475649bcf3e32b4`, own branch
+`arena/86633f17-first-agent-dev`. Review baseline: available `d9109f489c84cb7f1ab3568b609d96e5b2b61ae2`,
+not absent3c0caad. [Final evidence inventory](evidence/i02-e229/manifest.json) retains original
+reports, complete input hashes, UUIDs/manifests, provenance, commands, comparison and logs.
+This is the implementation agent's actual plan-versus-diff review plus separately reproduced
+peer findings, not the broad independent review or deployed acceptance transferred to I03.
+
+### Source review, findings and resolutions
+
+Reviewed all43 changed Python files against the retained plan/spec. The runtime changes stay
+within explicit admission, scoped publication, one-shot T0, verifier/eval routing and their CLI/
+session/tool seams. No Go runtime, new dependency, cell/supervisor stub, privilege weakening,
+blanket nested-workflow ban or schema migration was introduced. Ordinary planner permissions
+remain narrow; PTY remains. Future subagents can reuse run-local state and cooperative flock/CAS;
+full parallel orchestration and an OS-enforced managed writer remain I03 work.
+
+| Review area | Actual implementation / review conclusion |
+| :--- | :--- |
+| Entry / CT74/90/95 | Shared typed request validation before lifecycle/path writes; selected-workspace resolution before plan check; no inferred plan; safely addressed direct rejection differs from malformed identity. |
+| Snapshot / CT87/91/95 | One no-follow descriptor read, immutable bytes/hash/extractor IDs; strict UTF-8/size/type/path rules; both validators consume that snapshot; source rechecked before coder and after success. |
+| Repair / CT91/94 | Determinate FAIL only, reserved shared planner credit, latest rejected draft, no T0/coder/eval on rejected admission; ordinary initial planner is free, linear does not gain adaptive eval loops. |
+| History / CT92/Q67 | Exact v1 closed schema/full history, lock/atomic durable append barriers; eval replan retains canonical ADMITTED history before provider, records actual result afterward. |
+| Writer/promotion / CT93/94/Q68 | Actual CLI registry exact-target capability; descriptor-rooted writes, canonical-target lock/CAS, validated buffer replacement, mode preservation, no post-replace rollback; real failed publication tools invalidate scoped attempts. |
+| T0 / CT85/86/95 | Capture once after admission, explicit state independent of repair counters, exact run/topology checks; collection/storage/runner uncertainty blocks before coder; legitimate red/empty baseline retained. |
+| Eval / CT71–77/95/Q73 | Successful coder reaches real eval with pinned evidence even after ordinary capture/control-write faults; actual report retained; missing/indeterminate evidence cannot complete either mode; Q56 negatives preserved. |
+| Extractor / Q45-B | plan_ids.py delta remains only local `set[int]` annotation; no accessor leniency, locator duplication or source-position behavior change. Pure parser/ownership tests pass. |
+| Tests / compatibility | Normal C1 replaces only ProviderChain.request; supplemental IO/timing/capture faults delegate real boundaries. C0 helpers remain labeled leaf tests, not invented C1 or deployed evidence. |
+
+**Five confirmed failure-path defects resolved:** (1) flow-state IO escaped the API or suppressed
+required eval, including stale/combined-fault receipts; (2) preparation could cross the deadline
+before dispatch; (3) T0 accepted valid-looking JUnit from an inconsistent runner status; (4)
+observe allowed completion with absent required verification; (5) unexpected capture exceptions
+could skip eval after coder. Tests were added before the corresponding fixes. Q73 is a separate
+explicit operator policy choice: present indeterminate evidence blocks completion in both modes,
+while determinate observe failures remain advisory. It was not silently inferred as a decision.
+
+The supplied fifth help-example defect was **not reproduced** on this branch/Python3.13.16:
+all five current examples parse with task/workspace/plan in the existing executable test and an
+independent check. No unnecessary help edit or redundant test was retained.
+
+**Intentional replacement tests reviewed:** missing-plan advisory success becomes pre-provider
+BLOCKED; unjudged coder scratch/omitted-eval success becomes actual inserted-eval/silent-judge
+failure, retaining planner-only unjudged success; three D3 bare cases become cold/warm pairs
+through the real chain. No unrelated test function was deleted. Defaults/budget private helpers
+were consolidated into the shared strict normalizer. Narrow Q72 link/banner repairs and Q71
+claim/typing/fixture changes retain their real assertions. No new skip/xfail or inherited-failure
+exemption was added. All125 new review cases (109public +16shared-verifier) pass in the full run.
+
+### Actual refreshed local proof
+
+Completed **1002passed,0skips/errors**, native run `a0f6f6f41d4d4af69ff3b2007e0efe60`,
+224.77s, BEFORE every final affected mutation. v2 reused that actual
+completed baseline at the identical clean committed HEAD with its original UUID/timestamps;
+it did not create a new baseline execution. All22 affected SLICE5/6 FUNCTIONAL producer runs,
+6 supplemental controls and one review-only exception-catch revert were killed with executed
+test failures, consistent runner status, exact full-path manifests and successful import probes.
+All23 SLICE6 invocations execute the whole596-case path; SLICE5 executes its whole131-case path.
+The exception-revert control is explicitly external review-only, not a new normative operator.
+
+**19 unchanged earlier SLICE1–4 proofs retained, not rerun:**18FUNCTIONAL+CT79 from E227.
+Producer/test committed bodies and entire slice sections are unchanged and revalidated. Together
+with the22 refreshed FUNCTIONAL runs, all40 retained FUNCTIONAL contracts remain covered. No
+per-contract selected-nodeid mapping or recursion/skip-marker policy was introduced. Q53(c)'s
+full-slice sensitivity and unrelated-failure attribution risk remain; PROVEN is not unique semantic
+attribution, mutation completeness, live model quality or OS isolation.
+
+**External inventory correction:** the old runner glob omitted295 root-level Python files.
+Its clean HEAD/status bindings were real, but its per-file hash inventory was not complete.
+The final v2 explicitly hashes every tracked Python file under src/tests/scripts and verifies
+committed bodies. The earlier affected attempt was stopped and not used as completed proof.
+Old root-file hashes retained for leaf proof comparison are explicitly derived from verified Git
+bodies, not falsely labeled entries in the old manifest. No failed validation was relabeled PASS.
+Complete hashes/status remain unchanged after final proof; only closeout documentation follows.
+
+| Mutation/control | Scope / class | Pass / fail | Seconds |
+| :--- | :--- | ---: | ---: |
+| CT65 | SLICE5 / FUNCTIONAL | 121 / 10 | 70.02 |
+| CT66 | SLICE5 / FUNCTIONAL | 126 / 5 | 71.57 |
+| CT67 | SLICE5 / FUNCTIONAL | 129 / 2 | 74.37 |
+| CT68 | SLICE5 / FUNCTIONAL | 129 / 2 | 76.71 |
+| CT82 | SLICE5 / FUNCTIONAL | 97 / 34 | 10.68 |
+| CT83 | SLICE5 / FUNCTIONAL | 130 / 1 | 35.07 |
+| CT75 | SLICE6 / FUNCTIONAL | 476 / 120 | 70.89 |
+| CT73 | SLICE6 / FUNCTIONAL | 459 / 137 | 84.46 |
+| CT71 | SLICE6 / FUNCTIONAL | 536 / 60 | 431.87 |
+| CT76 | SLICE6 / FUNCTIONAL | 572 / 24 | 409.71 |
+| CT72 | SLICE6 / FUNCTIONAL | 535 / 61 | 503.86 |
+| CT77c | SLICE6 / FUNCTIONAL | 588 / 8 | 488.55 |
+| CT86 | SLICE6 / FUNCTIONAL | 508 / 88 | 85.35 |
+| CT87 | SLICE6 / FUNCTIONAL | 469 / 127 | 57.20 |
+| CT91 | SLICE6 / FUNCTIONAL | 468 / 128 | 55.33 |
+| CT77b | SLICE6 / FUNCTIONAL | 574 / 22 | 422.91 |
+| CT77 | SLICE6 / FUNCTIONAL | 539 / 57 | 414.23 |
+| CT92 | SLICE6 / FUNCTIONAL | 468 / 128 | 218.72 |
+| CT90 | SLICE6 / FUNCTIONAL | 594 / 2 | 378.08 |
+| CT93 | SLICE6 / FUNCTIONAL | 574 / 22 | 317.59 |
+| CT94 | SLICE6 / FUNCTIONAL | 583 / 13 | 320.73 |
+| CT95 | SLICE6 / FUNCTIONAL | 588 / 8 | 347.38 |
+| SUP-GUARD | SLICE6 / SUPPLEMENTAL | 594 / 2 | 341.38 |
+| SUP-CONTEXT | SLICE6 / SUPPLEMENTAL | 593 / 3 | 334.33 |
+| SUP-FLOW-INTEGRITY | SLICE6 / SUPPLEMENTAL | 592 / 4 | 333.15 |
+| SUP-T0-STATUS | SLICE6 / SUPPLEMENTAL | 576 / 20 | 360.01 |
+| SUP-DISPATCH-DEADLINE | SLICE6 / SUPPLEMENTAL | 592 / 4 | 326.89 |
+| SUP-INDETERMINATE | SLICE6 / SUPPLEMENTAL | 579 / 17 | 228.29 |
+| REVIEW-CAPTURE-NARROW | SLICE6 / REVIEW-ONLY-CONTROL | 579 / 17 | 209.98 |
+
+Sum of overlapping refreshed mutation durations: **7079.30s**;
+four workers, not a wall-clock total. Prior43/46 audits remain separately dated/version-bound.
+
+### Actual repository gates — red remains red
+
+Actual **just check rc1**, actual test: **5158pass,1fail,12skip,1xfail /5172**;
+coverage **83.22%** (80% floor met).
+Lock, Ruff/format/deptry/Pylint, configured450-file Mypy, configured Pyrefly, authoring,
+contract checks and shell syntax pass. Pyrefly's suppressions/hidden warnings are not a
+warning-free claim. CLI coverage floor separately passes27floors/78functions after test failure.
+
+Native exact comparison against d910: **0new failures,1common,8baseline-only,6missing old IDs,
+701new IDs**. Missing IDs are reviewed replacements, not passes. The common call-phase failure
+is `tests/test_workspace_readiness_integration.py::test_clean_candidate_real_readiness_commit_and_local_publication`,
+readiness rc75/precommit_prewarm_failed. Twelve shellcheck skips and the Q19 OS-boundary xfail
+remain recorded. Formal inherited-baseline/readiness disposition, the historical ninth Mypy
+context and environment/packaging acceptance remain I03; current new Mypy errors were fixed,
+not waived. No Go runtime/deployed-host requirement or blanket baseline PASS is inferred.
+
+### Intended Ubuntu/Docker deployment and remaining acceptance
+
+Linux descriptor flags, flock, permission checks, fsync and same-directory replacement fit the
+intended platform by source inspection; failure/uncertainty is fail-closed. Actual container UID,
+mount/filesystem durability, deployment layout, trusted imports and project execution boundary
+are **not validated by this sandbox review**. I02 is not isolation, safe nested acquisition or a
+host supervisor. No deployed tests/I03 runtime/fixture package were delivered here.
+
+I02 is now **locally implemented and diff-reviewed, pending E2E tests as I03 ships**. The four
+transferred final I03 SLICE6 obligations remain unchecked: deployed source-to-behaviour tests;
+environment/readiness/inherited-baseline acceptance; broad independent implementation/evidence
+review; integrated E2E/deployment signoff. Local SHIPPED does not mean production accepted.
+
+### E229 post-closeout documentation checks
+
+After the frozen proof exited, only closeout records/evidence changed. All475 tracked Python
+source/test/script hashes are unchanged; every slice ID/contract/class/source position/TESTS/
+verify command/mode/kill directive remains identical. I03 plan/spec bytes and their unchecked
+acceptance obligations are unchanged. Doc/parser/skill/compatibility suite:202passed3.01s;
+ownership/claim guards:13passed77deselected0.44s; authoring-check:0diagnostics/exit0;
+diff whitespace clean. Historical archives E22081/E22412/E227113/E2285 original/compressed
+hashes revalidated. One operator worktree; foreign208-byte commit-msg hook unchanged. This is
+not another full wrapper run or a change to its actual red outcome. Final narrative/fixture-oracle
+clarifications passed14doc/ownership guards84deselected0.81s; no live verdict upgraded.
 
 ## E223 — operator-approved local closeout and final I03 acceptance ownership
 
@@ -26,7 +178,7 @@ I02 local shipping prerequisite. Keep actual red/unknown outcomes below for fina
 Historical ledger entries and original compressed proof artifacts are not rewritten.
 
 **E224 next command received:** the operator authorized adversarial review, fixes and refreshed
-local proof. The E223 wait is satisfied; review is now underway, not yet finalized.
+local proof. The E223 wait was satisfied; the authorized review is now complete in E229.
 
 ## E224 — actual diff-review regression checkpoint (in progress)
 
@@ -106,7 +258,7 @@ not current post-Q73 proof or local acceptance. No failure relabeled PASS.
    new duplicate; no unnecessary source/help change or invented failing reproduction.
 
 Operator explicitly selected Q73 fail-closed for present indeterminate evidence in both modes.
-Updated spec/CT71/design/question record consistently. Matrix covers missing verification,
+Updated spec/CT72/design/question record consistently. (E228 ledger label CT71 was a documentation typo.) Matrix covers missing verification,
 verification.errors, command ERROR, slice ERROR, determinate failure and all actual eval routes.
 Initial supplied-findings tests9fail8pass; expanded pre-policy fix set20fail38pass. Full public
 bank595pass186.68s before final bounded-detail test; current bank596. Targeted peer/T0 tests95pass
@@ -115,7 +267,7 @@ error; that collection-error log is retained as rejected, not proof. Current sha
 131. Completed E227 proofs stay archived as earlier-version evidence; refresh affected SLICE5/6
 checks/mutations and actual final wrappers on this new frozen source before closeout.
 
-## Version, durable evidence and scope
+## Historical E220 version, durable evidence and scope
 
 Proof snapshot: `c4cb55fe4d0a63a4ac43c62acacdac54b9404bad` on
 `arena/86633f17-first-agent-dev`; production checkpoint `0f7814d10faada80453adcadb0444567bb46f2d4`.
@@ -132,7 +284,7 @@ or a turnkey public gate. Do not rerun the archived fixed-output-path audit scri
 The whole-repository baseline's historical plugin has nodeids but **no native UUID binding**;
 it is usable for failure comparison, not silently upgraded to a current gate proof.
 
-## Completed ordered local proof
+## Historical E220 ordered local proof
 
 Unmutated union of all seven declared path sets plus D3/D5/D8 tests: **877 passed,
 0 skipped/errors**, 143.74s.
@@ -213,7 +365,7 @@ The D3/D5/D8 supplemental controls from E219 are also retained in the evidence d
 - E218's699 baseline/18 mutations overlapped; those results remain diagnostic for STEP17.
   E212/earlier486-case results remain older-version evidence. None substitutes for this audit.
 
-## Actual final repository gates
+## Historical E220 actual repository gates
 
 Actual `just check` invoked actual `just test` and exited **1**. Test terminal summary:
 **5033 passed,1 failed,12 skipped,1 xfailed;5047 total;570.71s;83.18% coverage**.
@@ -316,13 +468,13 @@ readiness review item, not a requirement to replace Arena's hook before local I0
 
 ## Closure checklist and handoff — retained local I02
 
-- [x] Completed unmutated baseline before all43 current producer runs; STEP17 and amended CT66.
+- [x] Historical E220 ordered43 and E227 ordered46 archives retained; current E2291002 baseline precedes29 affected invocations,19 unchanged leaf proofs explicitly retained.
 - [x] D1/D2/D3/D4-local-readers/D5/D8 reconciled with named source, tests and actual controls.
 - [x] Actual just wrappers and exact identity/phase comparison retained, not successful wrappers.
-- [ ] Complete plan-versus-diff review against retained I02 plan/d910, including intended local
+- [x] Complete plan-versus-diff review against retained I02 plan/d910, including intended local
   logic, meaningful tests/replacement intent, Q45-B/parser compatibility and unintended changes.
-- [ ] Fix review findings and refresh affected local checks/proofs; no new I02 defects deferred.
-- [ ] Finalize this local record with review outcome/findings/resolution and local closeout status.
+- [x] Fix review findings and refresh affected local checks/proofs; no new I02 defects deferred.
+- [x] Finalize this local record with review outcome/findings/resolution and local closeout status.
   No broad independent review, inherited-baseline acceptance or deployment signoff required here.
 
 ## Transferred acceptance checklist — INCOMPLETE under final I03 SLICE6
@@ -337,11 +489,11 @@ readiness review item, not a requirement to replace Arena's hook before local I0
 No source/case/evidence is deleted by transfer, and no red/unknown outcome becomes PASS. Q72
 still approves only its exact46 link fixes/15files and one banner path migration; E19 stays intact.
 I03 acquisition, mandatory all-project execution boundary, PTY descendants/publication/recovery
-and former SLICE7 deployment/host package remain **undelivered**. Local I02 SHIPPED, once earned,
-will mean implemented and diff-reviewed, not deployment-validated. Broad assurance and final
-operator deployment signoff belong to I03. **Wait for the next command before starting review.**
+and former SLICE7 deployment/host package remain **undelivered**. Local I02 SHIPPED now means
+implemented and diff-reviewed, not deployment-validated. Broad assurance and final
+operator deployment signoff belong to I03. The authorized review is complete in E229; no I03 runtime work was started.
 
-### Documentation-only follow-up verification
+### Historical E220 documentation-only follow-up verification
 
 After the frozen audit exited, records/STEP17 were reconciled and lossless evidence archived;
 no production/test source changed. Correct post-edit checks:156passed (doc links, parser,

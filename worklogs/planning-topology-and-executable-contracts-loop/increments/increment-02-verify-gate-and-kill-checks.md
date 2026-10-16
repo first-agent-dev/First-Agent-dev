@@ -1,9 +1,9 @@
 ---
 Increment-ID: RM-planning-topology-I02
 Roadmap-ID: RM-planning-topology
-status: IN PROGRESS
+status: SHIPPED
 slices: 7
-shipped: —
+shipped: 2026-10-16
 ---
 
 # INCREMENT I02: Executable contracts & the verify gate
@@ -531,108 +531,89 @@ TESTS: tests/test_verify_gate_live.py   (EXISTING — extend direct explicit-pla
 uv run pytest tests/test_verify_gate_live.py -q
 uv run ruff check src/fa/inner_loop/workflow_controller.py src/fa/inner_loop/workflow_artifacts.py src/fa/inner_loop/profiles.py src/fa/inner_loop/tools/write_file.py src/fa/cli.py src/fa/feature_flags.py src/fa/session/manager.py tests/test_verify_gate_live.py
 ```
-- [ ] STEP1: implement/verify `verify_plan(plan_ids, *, root, …) -> PlanVerification`, preserving plan-level and per-slice command ownership (exit: `uv run pytest tests/test_verify_slice.py -q -k verify_plan` exits 0)
-- [ ] STEP2: call `verify_plan` from `_run_stage` only after a successful coder stage, capture T0 before that dispatch, and persist the result (exit: `uv run pytest tests/test_verify_gate_live.py -q -k "coder_stage or baseline"` exits 0)
-- [ ] STEP3: reconcile the actual eval route with typed verifier evidence through `_effective_controller_route` per Q56; preserve `eval_report.json` (exit: `uv run pytest tests/test_verify_gate_live.py -q -k reconciliation` exits 0)
-- [ ] STEP4: make successful coder dispatch always reach eval, pass typed verification evidence, and prove the route matrix plus repair cap (exit: `uv run pytest tests/test_verify_gate_live.py -q -k "role_loops or repair or indeterminate"` exits 0)
-- [ ] STEP5: boot the real C1 composition root with only `ProviderChain.request` mocked; assert a verifier false-pass cannot finish DONE (exit: `uv run pytest tests/test_verify_gate_live.py -q -k real_workflow` exits 0)
-- [ ] STEP6: assert plan-level and per-slice command attribution and the once-only plan-level command (exit: `uv run pytest tests/test_verify_gate_live.py -q -k real_workflow` exits 0)
-- [ ] STEP7: assert eval received the same attempt's typed evidence and the persisted actual eval report remains unmodified (exit: `uv run pytest tests/test_verify_gate_live.py -q -k real_workflow` exits 0)
+- [x] STEP1: implement/verify `verify_plan(plan_ids, *, root, …) -> PlanVerification`, preserving plan-level and per-slice command ownership (exit: `uv run pytest tests/test_verify_slice.py -q -k verify_plan` exits 0)
+- [x] STEP2: call `verify_plan` from `_run_stage` only after a successful coder stage, capture T0 before that dispatch, and persist the result (exit: `uv run pytest tests/test_verify_gate_live.py -q -k "coder_stage or baseline"` exits 0)
+- [x] STEP3: reconcile the actual eval route with typed verifier evidence through `_effective_controller_route` per Q56; preserve `eval_report.json` (exit: `uv run pytest tests/test_verify_gate_live.py -q -k reconciliation` exits 0)
+- [x] STEP4: make successful coder dispatch always reach eval, pass typed verification evidence, and prove the route matrix plus repair cap (exit: `uv run pytest tests/test_verify_gate_live.py -q -k "role_loops or repair or indeterminate"` exits 0)
+- [x] STEP5: boot the real C1 composition root with only `ProviderChain.request` mocked; assert a verifier false-pass cannot finish DONE (exit: `uv run pytest tests/test_verify_gate_live.py -q -k real_workflow` exits 0)
+- [x] STEP6: assert plan-level and per-slice command attribution and the once-only plan-level command (exit: `uv run pytest tests/test_verify_gate_live.py -q -k real_workflow` exits 0)
+- [x] STEP7: assert eval received the same attempt's typed evidence and the persisted actual eval report remains unmodified (exit: `uv run pytest tests/test_verify_gate_live.py -q -k real_workflow` exits 0)
 - [x] STEP8: record the operator-resolved Q58 interface in the open-question/design record: controller-owned candidate, exact-target planner writer, revalidation, then physical replacement of the original canonical increments file at the same `--plan` path. This decision step is complete; runtime implementation and its proofs remain in the following steps (exit: explicit operator decision recorded; no inferred approval)
-- [ ] STEP9: implement CT92–CT94 explicit-plan history/candidate/scoped-writer/promotion with private durable IO, canonical-target flock and source-hash CAS; preserve Q58 irreversible failure policy and rejected-draft progress (exit: `uv run pytest tests/test_verify_gate_live.py -q -k "candidate or admission_artifact"` exits 0)
-- [ ] STEP10: implement shared exact-byte PlanRef admission with precheck+kill validators, WARN advisory and Q57 determinate repair; prove indeterminate/empty/zero-slice blocks (exit: `uv run pytest tests/test_verify_gate_live.py -q -k "admission or precheck"` exits 0)
-- [ ] STEP12: implement spec §§1–2 shared pure request validator/budget normalizer and pre-coder admission; retain non-eval order with explicit Q55 eval relocation, reject unsafe ordinary-planner ordering, preserve linear semantics and shared repair/replan counter (exit: `uv run pytest tests/test_verify_gate_live.py -q -k "linear_admission or adaptive_admission or role_order or direct_budget"` exits 0)
-- [ ] STEP13: implement read-only SessionManager.resolve_workflow_workspace; validate plan/task/inject before lifecycle, recheck allocated workspace, and enforce spec §1 failure/evidence classes. Update help without fixing E19. Unsupported coder-containing managed acquisition blocks before child provider; preserve verified non-coder delegation (Q70). Contain the SD-C fixture plan inside its fixture workspace; repair/promotion uses a disposable workspace at the same canonical relative path (exit: `uv run pytest tests/test_verify_gate_live.py -q -k "plan_preflight or direct_api_plan_guard or plan_help or acquisition_unavailable"` exits 0)
-- [ ] STEP14: implement spec §5 baseline state independent of counters; capture once after admission, reject capture/storage uncertainty before coder, reuse across repeated coder/repair/replan, and check symmetric slice→TESTS topology equality (exit: `uv run pytest tests/test_verify_gate_live.py -q -k "baseline or t0 or repeated_configured_coders or eval_replan"` exits 0)
-- [ ] STEP16: prove direct explicit-plan C1/C2/C3: actual controller→_cmd_run→drive_session with only provider mocked; valid/invalid-first-valid-later admission, no/failed planner, budget/indeterminate/UTF8/size/path/run-ID blocks, actual registry symlink denial, stale source-hash contention, write failure before retry/after promotion, Q58 same-path bytes, T0 reuse, actual eval/evidence and stage ordering. Add negative unsupported invoke_workflow test (zero child provider), not nested success proof. Preserve tracked source bytes. Detected post-coder PlanRef mismatch and persistence failure still reach eval using pinned IDs and cannot succeed in either mode (exit: `uv run pytest tests/test_verify_gate_live.py -q -k "ct91_public or acquisition_unavailable or plan_ref_mismatch"` exits 0)
+- [x] STEP9: implement CT92–CT94 explicit-plan history/candidate/scoped-writer/promotion with private durable IO, canonical-target flock and source-hash CAS; preserve Q58 irreversible failure policy and rejected-draft progress (exit: `uv run pytest tests/test_verify_gate_live.py -q -k "candidate or admission_artifact"` exits 0)
+- [x] STEP10: implement shared exact-byte PlanRef admission with precheck+kill validators, WARN advisory and Q57 determinate repair; prove indeterminate/empty/zero-slice blocks (exit: `uv run pytest tests/test_verify_gate_live.py -q -k "admission or precheck"` exits 0)
+- [x] STEP12: implement spec §§1–2 shared pure request validator/budget normalizer and pre-coder admission; retain non-eval order with explicit Q55 eval relocation, reject unsafe ordinary-planner ordering, preserve linear semantics and shared repair/replan counter (exit: `uv run pytest tests/test_verify_gate_live.py -q -k "linear_admission or adaptive_admission or role_order or direct_budget"` exits 0)
+- [x] STEP13: implement read-only SessionManager.resolve_workflow_workspace; validate plan/task/inject before lifecycle, recheck allocated workspace, and enforce spec §1 failure/evidence classes. Update help without fixing E19. Unsupported coder-containing managed acquisition blocks before child provider; preserve verified non-coder delegation (Q70). Contain the SD-C fixture plan inside its fixture workspace; repair/promotion uses a disposable workspace at the same canonical relative path (exit: `uv run pytest tests/test_verify_gate_live.py -q -k "plan_preflight or direct_api_plan_guard or plan_help or acquisition_unavailable"` exits 0)
+- [x] STEP14: implement spec §5 baseline state independent of counters; capture once after admission, reject capture/storage uncertainty before coder, reuse across repeated coder/repair/replan, and check symmetric slice→TESTS topology equality (exit: `uv run pytest tests/test_verify_gate_live.py -q -k "baseline or t0 or repeated_configured_coders or eval_replan"` exits 0)
+- [x] STEP16: prove direct explicit-plan C1/C2/C3: actual controller→_cmd_run→drive_session with only provider mocked; valid/invalid-first-valid-later admission, no/failed planner, budget/indeterminate/UTF8/size/path/run-ID blocks, actual registry symlink denial, stale source-hash contention, write failure before retry/after promotion, Q58 same-path bytes, T0 reuse, actual eval/evidence and stage ordering. Add negative unsupported invoke_workflow test (zero child provider), not nested success proof. Preserve tracked source bytes. Detected post-coder PlanRef mismatch and persistence failure still reach eval using pinned IDs and cannot succeed in either mode (exit: `uv run pytest tests/test_verify_gate_live.py -q -k "ct91_public or acquisition_unavailable or plan_ref_mismatch"` exits 0)
 - [x] STEP17: after Q69 fixture factoring and a completed unmutated whole-path baseline, run the full declared tests/test_verify_gate_live.py path once per retained FUNCTIONAL contract: CT71, CT72, CT73, CT75, CT76, CT77b, CT77c, CT77, CT86, CT87, CT90, CT91, CT92, CT93, CT94, CT95. Report all 16 contract×path runs, cost/provenance and Q53(c) attribution risk; do not replace kills with -k subsets. Keep tests outside mutation roots and restore source (exit: every retained named producer mutation is killed)
 
-**Scope/progress:** STEP IDs 11 and 15 move entirely to I03; mixed STEPs retain the IDs above and
-have clause-level successors in the migration bank. STEP8 remains checked only for the historical
-operator Q58 decision. STEP17 is now complete at E220: a completed877-pass/no-skip
-unmutated baseline preceded all16 normative+2supplemental exact487-case runs; all PROVEN
-with fresh native UUIDs, import provenance and unchanged source/status. The whole retained
-bank's40 FUNCTIONAL+CT79 also passed actual producer sensitivity, including amended SLICE5
-CT66 (110pass5fail). E218's concurrent699/18 and E212's older486 results remain historical,
-not substitutes. See [blocked local acceptance/evidence record](../notes/i02-local-acceptance.md).
-Q72 dispositions only the two repaired E19 documentation causes. No shipped or overall DoD
-status is assigned: actual just check/test remain red on inherited readiness/Go prewarm;
-E223 carries environment/inherited-baseline acceptance and broad independent review to I03.
-The retained I02 plan-versus-diff review has not started. SLICE6 has **16 FUNCTIONAL** kills,
-not18; older9-kill/12-test/308-test records are not current admission proof.
-E174’s reporter/no-summary is historical: E220 has actual terminal summaries and exact
-baseline/candidate nodeid comparison. Eight recorded configured-Mypy diagnostics are now clean
-with individual proposed fixes; E194’s ninth/test_inject_condensates context is not reproduced
-by d910 and stays unresolved for I03 final baseline acceptance review. Intentional I02 changes
-and replacement-test intent remain subjects of the local plan-versus-diff review.
-Neither scope migration nor existing green verifier
-proof closes admission, full-suite comparison or review. Nested success/OS integrity/live-host
-acceptance are incomplete I03 obligations, not suppressed failures or I02 evidence.
-
-**E223 operator-approved closeout boundary, 2026-10-16:** final I03 SLICE6 owns all four
-acceptance obligations listed above; [migration bank §9](../notes/i02-to-i03-scope-migration-2026-10-15.md#9-e223-closeout-acceptance-transfer--2026-10-16)
-records their exact successors and unfinished status. This supersedes E222's requirement for
-operator-reviewed inherited-baseline dispositions and broad independent review before I02 closure.
-Local C1/C2/C3 and producer-sensitivity checks remain I02 requirements, not deployed verification.
-No failure is relabeled PASS, no guard is disabled, and no new I02 regression may be hidden by
-calling it deferred acceptance. This documentation update does not start the diff review.
+**Scope/progress — E229 local closeout, 2026-10-16:** all retained local steps and plan-versus-diff
+review are complete, with five confirmed failure-path findings resolved and Q73 explicitly ratified.
+STEP IDs11/15 and all managed/deployed clauses remain I03-owned. Current1002-pass/no-skip baseline
+precedes22 affected FUNCTIONAL+6 supplemental+1 external review-control runs, all killed; every
+SLICE6 invocation runs the full596 public cases.19 unchanged leaf proofs (18FUNCTIONAL+CT79) remain
+revalidated E227 evidence, not new executions. All40 retained FUNCTIONAL contracts are covered.
+See the [final local record](../notes/i02-local-acceptance.md) for scope, durations, provenance,
+complete input-inventory correction, reviewed replacement-test intent and actual remaining reds.
+Actual just check remains rc1 with5158pass1fail12skip1xfail; no new failure versus d910. CLI floor
+passes separately. This is not a blanket full-suite/environment PASS or deployed validation.
+E223's four final I03 SLICE6 acceptance obligations remain explicitly incomplete. Historical E19,
+Q72's narrow repairs, Q69 fixture/whole-path rules and the unreconciled ninth historical Mypy
+context are preserved. Local SHIPPED means implemented/diff-reviewed, pending E2E as I03 ships.
 
 ## Increment definition of done
 
-- [ ] Every retained CT in the seven sections satisfies its local verify/C1/C2/C3 and declared
+- [x] Every retained CT in the seven sections satisfies its local verify/C1/C2/C3 and declared
       producer-kill oracle. Reprove amended SLICE5 CT66/STEP7; errors/skip-only/stale reports never
       PROVEN. Q53(c) full-path attribution/cost and Q54 mutation restrictions remain.
-- [ ] Real direct C1 boots run_workflow→_cmd_run→drive_session with only ProviderChain.request
+- [x] Real direct C1 boots run_workflow→_cmd_run→drive_session with only ProviderChain.request
       mocked; proves explicit admission/repair/promotion/T0/verification/actual eval/terminal route.
       CLI missing --plan creates no run/session artifacts; direct invalid PlanRef creates specified
       blocked evidence but zero provider stages; rejected repair creates no coder/eval/T0 artifacts.
-- [ ] Explicit-plan acceptance matrix proves both modes, role ordering, bounds, exact schema/no
+- [x] Explicit-plan acceptance matrix proves both modes, role ordering, bounds, exact schema/no
       raw diagnostic bytes, no-follow candidate/target paths, source-hash contention, and Q58
       failure points before/after replacement. Deleting each retained producer breaks its oracle;
       all 16 SLICE6 FUNCTIONAL full-path kills are recorded with elapsed/provenance/limitations.
       The spec §6 matrix is complete; every required selector collects tests, no all-skip proof.
       Exact v1 schema checks old and new attempts, concurrent appends and bool-integer rejection.
-- [ ] T0 is write-once after admission, survives repair/replan, rejects changed slice→TESTS maps;
+- [x] T0 is write-once after admission, survives repair/replan, rejects changed slice→TESTS maps;
       successful coder reaches real eval with pinned attempt evidence, including indeterminate verifier/
       detected PlanRef mismatch. Integrity/storage/missing-evidence failures cannot finish DONE in
       either mode; observe is advisory only for determinate gate judgment. Shared deadline
       exhaustion is explicitly unsuccessful, not a synthesized eval.
-- [ ] Unsupported coder-containing managed acquisition is explicitly unavailable before any child provider/coder;
+- [x] Unsupported coder-containing managed acquisition is explicitly unavailable before any child provider/coder;
       no fake bootstrap, guessed PlanRef, public context field or unsafe fallback is introduced.
       General planner permissions stay narrow. I02 makes no OS isolation/secret-read protection claim.
-- [ ] Demonstrate VACUOUS, PRODUCER_ABSENT, REGRESSION and error negatives on constructed slices;
+- [x] Demonstrate VACUOUS, PRODUCER_ABSENT, REGRESSION and error negatives on constructed slices;
       prove overlay import provenance (disabled probe exposes VACUOUS; enabled mismatch is ERROR).
       Operator tree/source bytes and git status are unchanged by gate tests; no leftover worktrees.
 - [x] Reconcile I02-owned D1/D2/D3/D4-readers/D5/D8 with actual named evidence in deferred register.
       D2 now has the real caller+ordered kill (E220); pending successor coder-brief
       reader is not falsely closed. No register tick is assigned by this plan edit.
-- [ ] Finalize `notes/i02-local-acceptance.md` as the local implementation/closeout record:
+- [x] Finalize `notes/i02-local-acceptance.md` as the local implementation/closeout record:
       code SHA, commands, actual outcomes, local proof and mutation references, limitations and
       plan-versus-diff review result. Preserve usable isolated d9109f4/candidate full-suite manifests,
       terminal summaries and exact failure identity/phase comparisons already recorded. Retain actual
       just test/just check and blocking subgate results; red remains red. Formal environment/readiness
       and inherited baseline/Mypy acceptance review belongs to I03 SLICE6, not a new I02 Go/live-host gate.
-- [ ] Complete plan-versus-diff review of actual I02 changes against d9109f4 and this retained plan,
+- [x] Complete plan-versus-diff review of actual I02 changes against d9109f4 and this retained plan,
       in this or a new session. Confirm intended local logic, meaningful local tests, replacement-test
       intent, no unintended changes, strict extractor/Q45-B source-position preservation and scoped
       mutation findings. Pure extractor tests pass; no non-equivalent survivor remains in the retained
       scoped runtime mutation audit. Use available d9109f4, not absent 3c0caad or an inferred clean diff.
       Resolve findings and refresh affected local checks/proofs. New I02 defects are not deferred as
       inherited infrastructure. No separate broad independent review required here.
-- [ ] Record the four transferred acceptance obligations and their incomplete I03 SLICE6 successors
+- [x] Record the four transferred acceptance obligations and their incomplete I03 SLICE6 successors
       consistently in the migration bank, I03 plan/spec and local record; do not mark them VERIFIED
       or fulfilled merely because ownership moved. Close I02 locally only after retained local checks
       and the plan-versus-diff review, with findings resolved and the local closeout record finalized.
 
-After the retained local checks and plan-versus-diff review, I02 may receive existing SHIPPED
-status **before I03**. No tick/status is assigned by this documentation change; wait for the
-operator's next command before starting that review. SHIPPED means the retained local explicit-plan
-gate is implemented and diff-reviewed, **not deployment-validated** or a safe integrated product.
-Broad independent implementation/evidence review and all deployed functional/source-to-behaviour,
-environment/inherited-baseline, integrated E2E and deployment acceptance remain unfinished I03 work.
-Intentional test changes are checked during the local diff review; their final acceptance treatment
-is recorded in I03. Existing evidence/results, historical E19 and Q72's narrow repair approval remain
-intact; no blanket passing result or hook/test bypass is authorized.
+The retained local checks and actual plan-versus-diff review are complete (E229). Existing
+SHIPPED status records only the scoped local explicit-plan gate, **not deployment validation** or
+a safe integrated product. Broad independent implementation/evidence review, deployed functional/
+source-to-behaviour verification, environment/inherited-baseline acceptance and integrated E2E/
+deployment signoff remain unfinished final I03 work. Intentional test replacements were reviewed;
+actual red/unknown outcomes, historical E19 and Q72 remain recorded, not silently waived.
 
 Q59/Q60 exact nested route/bundle and CT97 runtime decisions, Q66 propagation, Q63 final live-result
 schema, cell deployment and the former SLICE7 host package are not retained I02 blockers.

@@ -2603,3 +2603,28 @@ E228  DECIDED / PEER FINDINGS VERIFIED  Q73 operator explicitly selects fail-clo
     peer/T0 cases PASS35.49s;intermediate595 public cases PASS186.68s;current596 public/131 verifier.
     One generated fixture syntax error rejected/log archived. Ruff+configured450 Mypy clean.
     Refresh affected SLICE5/6 proof and actual wrappers before local closeout;I03 remains incomplete.
+
+
+E229  LOCAL CLOSEOUT / DIFF REVIEW COMPLETE  a32a72f source/test snapshot; available d910 baseline.
+    All43 changed Python files reviewed against retained plan/spec;five confirmed failure-path
+    defects fixed,125 new review cases pass. Peer help defect not reproduced:all5 examples parse;
+    no unnecessary edit. Q73 ratified fail-closed both modes while determinate observe advisory
+    and Q56 negative authority/report remain. E228's “CT71” policy-label typo means CT72; actual
+    source/contract changed correctly.1002pass/no-skip actual baseline preserved at original UUID/
+    timestamps before all29 final affected invocations:22FUNCTIONAL+6SUP+1 review-only exception
+    revert all killed, full native manifests/provenance,23 SLICE6 runs596 cases each.19 unchanged
+    earlier leaf proofs (18FUNCTIONAL+CT79) revalidated, not rerun. All40 retained FUNCTIONAL covered.
+    External glob omitted295 root Python files;first affected attempt stopped/not closure. v2
+    inventories every tracked Python file and verifies committed bodies;valid1002 baseline reuse
+    explicit. Old missing per-file hashes not invented; Git-derived comparison origins disclosed.
+    Actual check rc1:5158pass1fail12skip1xfail/5172,83.22% coverage;all other
+    blocking subgates pass,CLI27/78 separately pass. Exact d9100new/1common/8baseline-only failures,
+    6missing/701new IDs;common readiness rc75/precommit_prewarm_failed remains red. Historical ninth
+    Mypy context/readiness/hook acceptance remain I03;new defects were not deferred as inherited.
+    I02 local SHIPPED = implemented+diff-reviewed pending E2E as I03 ships. Four final I03 acceptance
+    successors remain unchecked;no deployed/OS-isolation/broad independent acceptance or I03 runtime
+    delivered. Source bytes/status restored before documentation closeout;final archive i02-e229.
+    E229 documentation follow-up:202 doc/parser/skill/compatibility tests pass;13 ownership guards
+    pass77deselected;authoring0diagnostics/exit0;all475Python hashes and extractor binding/positions
+    unchanged;I03 plan/spec bytes unchanged;historical211artifact compressed/original hashes verified;
+    one worktree,foreign208-byte hook unchanged. No rerun/green label assigned to the failed wrapper.

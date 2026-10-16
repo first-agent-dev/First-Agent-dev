@@ -17,6 +17,11 @@ I03 SLICE6 obligations per [migration bank §9](i02-to-i03-scope-migration-2026-
 No historical result or deferred successor is upgraded; D4b/D6 ownership is unchanged. This
 planning change does not start/complete the diff review or turn any inherited failure green.
 
+**E229 current local state:** I02 is locally implemented and diff-reviewed, pending E2E as I03
+ships. Five failure-path findings were fixed; Q73 was explicitly ratified. The final local record
+contains current1002-case baseline/affected proof refresh and actual red wrapper/comparison.
+D4b/D6 and all four final I03 acceptance obligations remain incomplete; no new live verdict.
+
 ## Current local reconciliation — E220, 2026-10-16
 
 **I02 local rows D1/D2/D3/D4a/D5/D8 are reconciled with executed evidence below.**
