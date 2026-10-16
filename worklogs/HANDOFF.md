@@ -38,13 +38,19 @@ Pyrefly0errors139suppressed43hidden warnings. Actual final just composite wrappe
 expanded constituents retained, no false successful-check claim. Baseline native plugin lacks
 UUID support, exact collector nodeids retained; no UUID fabricated.
 
-**Next bounded work after environment unblock:** complete baseline, THEN fresh16+2 audit;
-actual readiness and final composite gates;
-reconcile remaining D1/D3/D4/D5/D8 promises (D8 export/schema drift guard not implemented by
-authoring0), independent retained-plan/source/evidence review, exact remaining per-case operator
-dispositions. Only then create/sign `i02-local-acceptance.md`. No SLICE6 overall/localDoD/SHIPPED/
-I03/deploy-safety acceptance. No known audit/full-suite process remains running. Runtime logs,
-full scripts/tables/hashes/paths in E218; frozen source checkpoint0f7814d, later docs-only commits.
+**Current continuation (E219):** D8 export/schema consumer guard and D5 both-planner-block
+provider-boundary C1 added; D3 warm/cold now uses actual shipped chain/session with only request
+mocked.43targeted pass; three supplemental producer/declaration controls fail actual assertions
+with0errors/skips; configured Mypy450/Ruff/Pyrefly clean. No production source changes.
+Schema annotations distinguish actual gate field readers and deferred compatibility calls.
+All changes in existing files. Ordered fresh retained-bank baseline and producer proofs next,
+including amended SLICE5 CT66; do not start mutations before baseline terminal success.
+
+**After proof:** actual final just wrappers/readiness still need trusted Go SDK/dependencies
+or appropriate execution environment; independent retained-plan/source/evidence review and
+remaining exact per-case operator dispositions still required. Only then create/sign
+`i02-local-acceptance.md`. No localDoD/SHIPPED/I03/deployment acceptance. See E219 for exact
+allowed scope/changes/targeted and control results; E218 remains old-version observation.
 
 The older S18/doc-hygiene notes below are historical, not this session's current action list.
 

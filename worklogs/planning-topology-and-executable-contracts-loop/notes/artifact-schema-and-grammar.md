@@ -368,6 +368,23 @@ The migration changes capability references, not status vocabulary or schema-exa
 
 ## 7. What the extractor must expose (I01 surface)
 
+The exported module surface has the following named consumers (D8). This table
+is checked against the actual `plan_ids.__all__`; it does not add exports or change parsing.
+
+| Export | Named consumer |
+|---|---|
+| `FAIL` | consumer: precheck rules and I02 admission diagnostic classification |
+| `WARN` | consumer: precheck rules and I02 advisory diagnostic classification |
+| `PlanDiagnostic` | consumer: precheck report entries and I02 sanitized admission projection |
+| `PlanIds` | consumer: I02 verify_plan and workflow plan identity readers |
+| `PrecheckReport` | consumer: I02 _validate_plan_admission, failed and diagnostics |
+| `SliceRecord` | consumer: I02 verify_slice, owned commands/tests/contracts |
+| `canonical_slice_id` | consumer: workflow_controller eval-report normalization (I04 boundary) |
+| `extract_plan_id` | consumer: workflow_controller plan identity projection |
+| `extract_plan_ids` | consumer: I02 admission and verify gate |
+| `parse_slice_id` | consumer: internal dependency validation backing CT10 |
+| `precheck` | consumer: I02 _validate_plan_admission before coder dispatch |
+
 `PlanIds` is a frozen dataclass. The **existing flat tuple fields are retained unchanged**
 (`.slices`, `.gaps`, `.contracts`, `.tests`, `.commands`) — `workflow_controller.py:332,461`
 and the migrated `tests/test_plan_ids.py` depend on them. Per-slice data is **added** as a
@@ -415,14 +432,15 @@ site that will read it. A name with no named consumer is not added** (precedent:
 
 ```python
 plan = extract_plan_ids(increment_text)
-plan.commands_for("SLICE2")  # consumer: I02 verify gate — that slice's verify commands only
+plan.commands_for("SLICE2")  # compatibility accessor; I02 reads SliceRecord.commands directly
 plan.commands_for(None)  # consumer: I02 — the plan-level bucket: every command no slice owns
 plan.section("SLICE2")  # consumer: deferred slice-loop successor coder brief — scoped text
 plan.contract_class("CT3")  # consumer: I02 — CONSTRAINT-first ordering of verify and findings
-plan.tests_for("SLICE2")  # consumer: I02 — baseline selection; TESTS:-not-in-diff assertion
-# SliceRecord.tests_note  # consumer: I02 — the preserved `(NEW — …)` text its fail-before
-#                         #   filter keys on. I01 preserves the string and defines no
-#                         #   semantics for it; I02 decides what NEW licenses.
+plan.tests_for("SLICE2")  # compatibility accessor; I02 baseline reads SliceRecord.test_paths
+# TESTS:-not-in-diff enforcement belongs to the deferred slice-loop successor, not local I02
+# SliceRecord.tests_note  # consumer: deferred slice-loop successor CT10b/tests_note.
+#                         # I01 preserves the string. Reduced local I02 does not read it;
+#                         # no NEW-marker filter is delivered by the local gate.
 # NOTE: SliceRecord.test_paths holds PATHS; the retained
 # flat PlanIds.tests holds T# IDs. Same word, different
 # meaning — do not conflate them.
@@ -431,7 +449,7 @@ plan.tests_for("SLICE2")  # consumer: I02 — baseline selection; TESTS:-not-in-
                           #   foundation I03 does not deliver this reader. (Corrected 2026-10-07: this line used
                           #   to read `plan.steps_mode("SLICE2")`, a call that never
                           #   existed; ledger E116.)
-precheck(increment_text)  # consumer: I01 SLICE3 + I02 CT91 explicit admission (planned); I03 reuses it
+precheck(increment_text)  # consumer: I01 SLICE3 + I02 _validate_plan_admission; I03 reuses it
 
 # Two id-validation primitives. They are exported, so they are specified here;
 # an exported name absent from this section is drift, and I01's DoD walk found

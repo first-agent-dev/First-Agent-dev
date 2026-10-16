@@ -15,11 +15,20 @@ is that what the planner is told to emit is what the harness can read.
 from __future__ import annotations
 
 import re
+from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
+from fa.cli import _build_provider_chain
+from fa.inner_loop import EventLog, SessionState
+from fa.inner_loop.coder_loop import drive_session
+from fa.inner_loop.hooks import HookRegistry
 from fa.inner_loop.plan_ids import extract_plan_ids
+from fa.inner_loop.profiles import build_registry_for_role
 from fa.inner_loop.prompt import PLANNER_SYSTEM_PROMPT
+from fa.providers import ProviderChain, UrllibTransport
+from tests.fixtures.session_wiring import make_test_chain_config, mock_success_response
 
 # Sections the planner emitted before SLICE1c and must keep emitting (CT32).
 _PRESERVED_SECTIONS = ("## Class", "## Goal", "## Scope", "## Constraints", "## Verification")
@@ -158,3 +167,35 @@ def test_grounding_is_not_parsed_as_plan_structure(plan_blocks: list[str]) -> No
     ids = extract_plan_ids(grounding)
     assert not ids.slices, f"`## Grounding` leaked slices: {ids.slices}"
     assert not ids.commands, f"`## Grounding` leaked verify commands: {ids.commands}"
+
+
+def test_both_planner_grammar_blocks_reach_the_real_provider_boundary(tmp_path: Path) -> None:
+    """D5 C1: real role registry/session; only ProviderChain.request is mocked."""
+    state = SessionState(
+        workspace_root=tmp_path,
+        run_id="d5-planner-wire",
+        log=EventLog(tmp_path / "events.jsonl", run_id="d5-planner-wire"),
+    )
+    chain = _build_provider_chain(make_test_chain_config(role="planner"), transport=UrllibTransport(), secrets={})
+    with patch.object(ProviderChain, "request", return_value=mock_success_response("planned")) as request:
+        drive_session(
+            "write a schema4 plan",
+            provider_chain=chain,
+            registry=build_registry_for_role("planner", tmp_path),
+            hooks=HookRegistry(),
+            state=state,
+            role="planner",
+            max_turns=1,
+            scope_mode="workflow_linear",
+        )
+    assert request.call_count == 1, "the real planner session must reach the provider"
+    system_messages = [
+        message["content"] for message in request.call_args.args[0].messages if message.get("role") == "system"
+    ]
+    assert system_messages and all(isinstance(content, str) for content in system_messages)
+    payload = "\n".join(system_messages)
+    blocks = _plan_blocks()
+    assert len(blocks) >= 2, "template and worked example must both exist"
+    for block in blocks:
+        assert block in payload, "a planner grammar block was lost before ProviderChain.request"
+        assert extract_plan_ids(block).slices, "the on-wire block must carry readable slices"

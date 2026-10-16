@@ -28,18 +28,19 @@ from __future__ import annotations
 
 import json
 import re
-import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import patch
 
 import pytest
 
+from fa.cli import _build_provider_chain
 from fa.inner_loop import EventLog, SessionState
 from fa.inner_loop.coder_loop import drive_session
 from fa.inner_loop.hooks import HookRegistry
 from fa.inner_loop.plan_ids import extract_plan_ids
 from fa.inner_loop.registry import ToolCall, ToolRegistry
-from tests.fixtures.session_wiring import make_mock_chain, mock_success_response
+from fa.providers import ProviderChain, UrllibTransport
+from tests.fixtures.session_wiring import make_test_chain_config, mock_success_response
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SKILLS_ROOT = REPO_ROOT / "knowledge" / "skills"
@@ -55,7 +56,7 @@ def _skeleton_of(skill: str) -> str:
     return match.group(1)
 
 
-def _live_payload() -> str:
+def _live_payload(workspace: Path, *, warm: bool) -> str:
     """Boot the real ``drive_session`` and return the text actually sent upstream.
 
     Only ``ProviderChain.request`` is mocked (SD-C). A ``src/`` read with no
@@ -64,7 +65,6 @@ def _live_payload() -> str:
     into the workspace because ``default_skills_root`` resolves it from
     ``state.workspace_root``, exactly as production does.
     """
-    workspace = Path(tempfile.mkdtemp())
     (workspace / "knowledge").mkdir()
     (workspace / "knowledge" / "skills").symlink_to(SKILLS_ROOT, target_is_directory=True)
 
@@ -75,46 +75,52 @@ def _live_payload() -> str:
     )
     state.record_tool_call(ToolCall(name="fs_read_file", params={"path": "src/fa/state.py"}, call_id=""))
 
-    chain: MagicMock = make_mock_chain(context_limit=100_000, compaction_threshold=None)
-    chain.request.return_value = mock_success_response("done")
-
-    drive_session(
-        "d1b live chain",
-        provider_chain=chain,
-        registry=ToolRegistry(),
-        hooks=HookRegistry(),
-        state=state,
-        role="chat",
-        max_turns=1,
-        scope_mode="chat_direct",
+    if warm:
+        state.record_tool_call(ToolCall(name="fs_read_file", params={"path": "worklogs/PLAN-d3.md"}, call_id="warm"))
+    chain = _build_provider_chain(
+        make_test_chain_config(role="chat", context_limit=100_000, compaction_threshold=None),
+        transport=UrllibTransport(),
+        secrets={},
     )
-
-    assert chain.request.call_args_list, "the session never reached the provider"
+    with patch.object(ProviderChain, "request", return_value=mock_success_response("done")) as request:
+        drive_session(
+            "d1b live chain",
+            provider_chain=chain,
+            registry=ToolRegistry(),
+            hooks=HookRegistry(),
+            state=state,
+            role="chat",
+            max_turns=1,
+            scope_mode="chat_direct",
+        )
+    assert request.call_count == 1, "the session never reached the provider"
     parts: list[str] = []
-    for call in chain.request.call_args_list:
+    for call in request.call_args_list:
         for message in call.args[0].messages:
             content = message.get("content")
             parts.append(content if isinstance(content, str) else str(content))
     return "\n".join(parts)
 
 
-@pytest.fixture(scope="module")
-def payload() -> str:
-    return _live_payload()
+@pytest.fixture(scope="module", params=["plan-authoring", "feature-planning"])
+def payload(request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory) -> tuple[str, str]:
+    skill = str(request.param)
+    return skill, _live_payload(tmp_path_factory.mktemp("d3-wire"), warm=skill == "feature-planning")
 
 
-def test_the_live_payload_carries_the_planning_skill(payload: str) -> None:
+def test_the_live_payload_carries_the_planning_skill(payload: tuple[str, str]) -> None:
     """Non-vacuity: without this, every oracle below would pass over nothing.
 
     The whole file is worthless if expansion never armed level 2 — the
     assertions would scan a payload that never contained a skill at all and
     report green. This pins that the live path really did inject.
     """
-    assert "ConditionalSkills" in payload, "L2 never armed; the rest of this file would be vacuous"
-    assert "plan-authoring" in payload, "the cold-start planning skill is the one this path selects"
+    skill, wire = payload
+    assert "ConditionalSkills" in wire, "L2 never armed; the rest of this file would be vacuous"
+    assert skill in wire, "the warm/cold planning skill must be selected on the real path"
 
 
-def test_the_skeleton_the_model_is_shown_is_the_text_the_parser_accepts(payload: str) -> None:
+def test_the_skeleton_the_model_is_shown_is_the_text_the_parser_accepts(payload: tuple[str, str]) -> None:
     """D1b — identity between the taught grammar and the readable grammar.
 
     The skeleton is compared in its **JSON-encoded** form because that is how it
@@ -122,24 +128,26 @@ def test_the_skeleton_the_model_is_shown_is_the_text_the_parser_accepts(payload:
     assertion that survives the transport without pretending the transport does
     not exist.
     """
-    skeleton = _skeleton_of("plan-authoring")
+    skill, wire = payload
+    skeleton = _skeleton_of(skill)
     on_the_wire = json.dumps(skeleton)[1:-1]
 
-    assert on_the_wire in payload, (
+    assert on_the_wire in wire, (
         "the skeleton reaching the model is not the skeleton on disk — "
         "the parser's conformance tests are proving something the model never sees"
     )
 
 
-def test_the_taught_skeleton_yields_slices_carrying_verify_commands(payload: str) -> None:
+def test_the_taught_skeleton_yields_slices_carrying_verify_commands(payload: tuple[str, str]) -> None:
     """D1b — and that text is not merely present, it is *useful* to the gate.
 
     I02's verify gate reads `commands_for(slice)`. A skeleton that parses into
     slices but declares no commands would leave the gate with nothing to run,
     which is a silent no-op wearing a green badge.
     """
-    skeleton = _skeleton_of("plan-authoring")
-    assert json.dumps(skeleton)[1:-1] in payload, "precondition: this is the text the model was shown"
+    skill, wire = payload
+    skeleton = _skeleton_of(skill)
+    assert json.dumps(skeleton)[1:-1] in wire, "precondition: this is the text the model was shown"
 
     ids = extract_plan_ids(skeleton)
 
@@ -152,10 +160,9 @@ def test_the_taught_skeleton_yields_slices_carrying_verify_commands(payload: str
 def test_both_selectable_skills_teach_a_readable_grammar(skill: str) -> None:
     """``select_l2_skill`` picks by warmth, so both branches must be readable.
 
-    The live payload above exercises the cold branch. The warm branch
-    (`feature-planning`) is selected when a plan artifact is in the read set;
-    this pins that it teaches the same readable grammar, so the gate does not
-    depend on which branch a run happens to take.
+    The live fixture above exercises both branches through the real session.
+    This independent static check pins each skill's readable skeleton as well,
+    so a payload failure is distinguishable from malformed source grammar.
     """
     ids = extract_plan_ids(_skeleton_of(skill))
 

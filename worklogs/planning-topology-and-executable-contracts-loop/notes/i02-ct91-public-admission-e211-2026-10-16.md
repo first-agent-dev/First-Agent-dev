@@ -1389,3 +1389,43 @@ plan/source/evidence review, operator review of remaining per-case baseline/Mypy
 actual final composite gates and `i02-local-acceptance.md` remain open. The acceptance report
 is not created prematurely; this E218 section is the blocked proof/stop report, not signoff.
 No SLICE6 overall/local DoD/SHIPPED/I03/deployment-security acceptance.
+
+
+## E219 — remaining-closure assessment and D3/D5/D8 implementation, 2026-10-16
+
+**Remaining before closure:** missing D8 and D5 controls; both-route D3 composition; actual
+D4 reader partition; ordered final baseline/producer audit (including amended SLICE5 CT66);
+actual final composite just gates/readiness; exact per-case operator dispositions; independent
+review and only then local acceptance/signoff. Foundation I03/live-host isolation remain moved
+and incomplete, not local work silently marked done. Q69–Q72 remain resolved.
+
+**Bounded test/documentation batch, no production changes:** existing
+`tests/test_skill_grammar_emit.py`, `tests/test_planner_emits_schema4.py`,
+`tests/test_plan_grammar_live_chain.py`, schema §7 and current I02 records. Targets retained
+D3/D5/D8 promises (schema/grammar consumer CT14/CT31) and DoD reader/evidence reconciliation.
+D8 guard reads actual __all__ and section7 named-consumer table; empty annotations reject.
+D5 uses shipped chain factory/real planner registry/drive_session with only request mocked,
+asserting exact template and worked-example bytes in actual system messages. D3 replaces
+mock chain with shipped real factory and parametric warm/cold real session, preserving identity/
+parse/usefulness assertions. No new test component, API, dependencies, fake handlers or raw
+payload privacy rule. Current source inspection found gate consumes SliceRecord fields directly;
+compatibility accessors have no fabricated reader. tests_note/TESTS-not-in-diff are explicitly
+deferred by current I02 scope, not unimplemented local delivery silently closed.
+
+Actual baseline43passed0.70s; three-file Ruff/format/Pyrefly warning-level0; configured Mypy450
+clean. Earlier fixture constructor error1fail6errors and missing-source-context Mypy errors
+are diagnostic mistakes, not product failures or valid kills. No suppressions added.
+Supplemental controls use production overlay and import proof, real declaration/producer faults:
+
+| Control | Passed | Failed | Error/skip |
+|---|---:|---:|---:|
+| D8 append undocumented actual export |22|1|0|
+| D5 blank real role-prompt selection |11|1|0|
+| D3 remove actual read_skill_for_injection call |2|6|0|
+
+Only genuine assertion failures after proper collection/provenance, per-invocation UUIDs.
+`/home/user/.cache/fa-runtime/i02-deferred-controls/` holds exact command/UUID/report/source
+restoration inputs; `i02-d3-d5-d8-controls.py` reproduces. These are not normative extra kills
+or per-contract test mappings. All tracked Python and git status unchanged across controls.
+No Go binary found in usual Linux/system/user SDK paths. Environment unblock still required.
+No checkbox/DoD acceptance yet; complete final unmutated bank BEFORE any final declared kills.

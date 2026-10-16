@@ -23,6 +23,7 @@ from typing import Any
 
 import pytest
 
+from fa.inner_loop import plan_ids
 from fa.inner_loop.plan_ids import SliceRecord, extract_plan_ids
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -257,3 +258,23 @@ def test_skill_preserves_the_other_id_grammar(skill: Path) -> None:
     text = skill.read_text(encoding="utf-8")
     for token in ("GAP#", "CT#", "T#", "Q#", "RK#"):
         assert token in text, f"{skill.parent.name}: lost {token} from its ID grammar"
+
+
+# D8: pure schema/declaration contract, not a runtime wiring claim.
+def _schema7_consumers(text: str) -> dict[str, str]:
+    match = re.search(r"^## 7\..*?(?=^## |\Z)", text, re.MULTILINE | re.DOTALL)
+    assert match is not None, "schema section 7 is missing"
+    return dict(re.findall(r"^\| `([A-Za-z_][A-Za-z_0-9]*)` \| consumer: ([^|]*\S) \|$", match.group(), re.MULTILINE))
+
+
+def test_exported_plan_api_has_schema7_named_consumers() -> None:
+    consumers = _schema7_consumers(_schema_text())
+    assert plan_ids.__all__, "an empty public surface would make the drift check vacuous"
+    missing = set(plan_ids.__all__) - consumers.keys()
+    assert not missing, f"exports without schema7 named consumers: {sorted(missing)}"
+    assert all(hasattr(plan_ids, name) for name in plan_ids.__all__)
+
+
+@pytest.mark.parametrize("annotation", ["", "consumer: "])
+def test_schema7_consumer_parser_rejects_empty_annotations(annotation: str) -> None:
+    assert _schema7_consumers(f"## 7. API\n\n| `unowned` | {annotation} |\n") == {}
