@@ -455,6 +455,31 @@ All former I02 SLICE7 CT88/CT89 and STEPs1–10 become I03 SLICE6. Keep original
 unique cases, separate local vs host proof, planner oracle/coder handoff/independent manual review,
 review-before-fixture order and fresh review on material change. No machine approval marker.
 
+**E223 operator-approved acceptance transfer — all four obligations remain INCOMPLETE:**
+
+- [ ] **Deployed functional/source-to-behaviour verification:** use SLICE6 STEP9/10's case index
+  to verify retained I02 admission, repair/promotion, T0, eval/routing/failure and new I03 claims
+  against actual deployed code/image/config and observed effects/artifacts. Arena local tests
+  and I02 plan-versus-diff review are inputs, not a deployed verdict.
+- [ ] **Environment/readiness and inherited baseline acceptance review:** SLICE6 STEP10 and the
+  release-gate DoD review the intended Ubuntu/Docker/Python environment, readiness/hooks and
+  preserved I02 baseline/candidate manifests/phase identities. Include replacement-test intent,
+  historical Mypy diagnostics/unreproduced ninth context and relevant source-root hook observations.
+  Resolve or explicitly disposition each inherited issue for final acceptance; do not suppress
+  checks, fabricate ready state, invent a mandatory FA Go runtime or relabel red results green.
+- [ ] **Broad independent implementation/evidence review:** SLICE6 STEP7 keeps manual review
+  before fixtures/helpers; STEP10 and final DoD record final independent I02+I03 implementation/
+  security/recovery/evidence review, including actual source-to-claim coverage and material-change
+  follow-up. This is distinct from the narrower I02 plan-versus-diff review.
+- [ ] **Integrated E2E and deployment signoff:** SLICE6 STEP10 and CT88/CT89 require all reviewed
+  host cases, actual deployment identities and final operator signoff in the I03 acceptance record.
+
+The [I02 closeout/evidence record](i02-local-acceptance.md) and
+[migration bank §9](i02-to-i03-scope-migration-2026-10-15.md#9-e223-closeout-acceptance-transfer--2026-10-16)
+are inherited inputs; their factual red/unknown outcomes and original proof identities stay intact.
+Transfer is not completion or a baseline PASS/waiver. I02 may close locally before these obligations;
+I03 may not ship with them incomplete. This plan-only update runs no host cases or diff review.
+
 Q63 exact proposed enum remains `NOT RUN|PASS|FAIL|BLOCKED` with proposed mandatory BLOCKED reason
 `DEPLOYMENT_UNAVAILABLE|SAFETY_STOP|EVIDENCE_MISSING|PREREQUISITE_UNRESOLVED`; not ratified here.
 Before package finalization obtain exact disposition or keep that step open. Only operator or an

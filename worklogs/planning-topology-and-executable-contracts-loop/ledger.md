@@ -2530,3 +2530,22 @@ E222  CORRECTION / SCOPE RECONCILIATION  Operator reaffirmed Ubuntu/Docker/Pytho
     implementation gap; not independent assurance. Records corrected; no runtime/test/hooks/
     dependencies changed, no DoD/SHIPPED/I03 acceptance. [verified: retained DoD/spec6;
     .pre-commit-config.yaml:135-138; test_workspace_readiness_integration.py; acceptance E222]
+
+
+E223  DECIDED / SCOPE MIGRATION  Operator explicitly approves moving to final I03 acceptance:
+    deployed functional/source-to-behaviour verification; environment/readiness and inherited
+    baseline acceptance review; broad independent implementation/evidence review; integrated
+    E2E/deployment signoff. I02 keeps local implementation/checks, truthful outcomes and only
+    plan-versus-diff review before moving on; new local regressions/findings must be resolved.
+    Revised I02 DoD/spec/closeout record, I03 SLICE6 STEP7/9/10/DoD/spec9, migration bank9,
+    decision note, roadmap/registers/HANDOFF consistently. All four successors explicitly
+    INCOMPLETE/unchecked; no requirements marked fulfilled by transfer, no CT/STEP/status reuse,
+    no runtime/test/hook/evidence changes or failure relabeled PASS. Historical E19 and Q69–Q72
+    intact; E220–E222 closure-boundary statements superseded, actual evidence not rewritten.
+    Documentation-only update; no diff/source review performed or started, no code tweaks,
+    SHIPPED or I03/deployment acceptance. Push then WAIT for next operator command before review.
+    [verified: operator scope instruction; I02 DoD; I03 SLICE6; migration bank9; local record E223]
+    Documentation verification:171 local doc/parser/grammar/directive/skill conformance tests
+    passed1.30s;13 claim/ownership checks passed0.43s;309Markdown files no broken links;
+    both plans0precheck FAIL,7/6sections, unchanged CT/path/command/kill-directive signatures,
+    no new checked markers;only12existing Markdown files changed;diff whitespace clean.

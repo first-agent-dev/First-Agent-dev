@@ -4,6 +4,9 @@
 **Record:** E200; user explicitly requests retained I02 DoD attainable before I03 and moves remaining
 SLICE6 + whole SLICE7 obligations to I03. This bank is a mapping/context record, not runtime proof.
 Active contracts are in revised I02; I03 is OUTLINED and must receive executable briefs/tests before implementation.
+**Current E223 addendum:** §9 transfers four further closeout acceptance obligations to final I03
+SLICE6, all incomplete. Historical ownership/DoD text below is provenance, not a reinstated I02
+acceptance prerequisite. Local plan-versus-diff review stays I02; it has not started in this update.
 
 ## 1. Contract ownership, without ID reuse or completion claims
 
@@ -54,14 +57,14 @@ Source plan's exact full old SLICE6 can be recovered with `git show 5530496:work
 | GAP-03 explicit guard | I02 CT90/CT95; managed exception I03 D |
 | GAP-04 stale host register | I03 F CT88: normalize unique producer set, correct CT52 Q57 expectation |
 | GAP-05 live handoff | I03 F CT88/CT89: actual package + later reviewed deployed evidence |
-| GAP-06 D2 ownership | I02 CT91; remains OPEN until production caller+kill proof |
+| GAP-06 D2 ownership | I02 CT91 local caller+ordered kill recorded E220; deployed acceptance I03 SLICE6 |
 | GAP-07 nested acquisition | I03 D CT96; I02 unavailable negative prevents unsafe bypass |
 | GAP-08 containment/base | I02 explicit no-follow workspace-relative guards; I03 D managed selection |
 | GAP-09 reserved state | I02 CT93 ordinary-writer restriction; I03 B/C/D all-tool/OS + bundle capabilities |
 | GAP-10 direct budget | I02 CT74/CT95 shared public normalizer/counter |
 | GAP-11 topology | I02 CT86 symmetric slice/test-path map |
 | GAP-12 disclosure | I02 CT92 sanitized closed diagnostic projection |
-| GAP-13 CLI help | I02 CT90; deliberately red E19 unchanged |
+| GAP-13 CLI help | I02 CT90; historical E19 preserved, Q72 approves only exact link/banner repairs; final baseline acceptance I03 SLICE6 |
 | GAP-14 provider mutation | I03 CT97 B/C/E complete boundary; I02 detected mismatch is ERROR, not isolation |
 | GAP-15 eval replan | I02 CT93/CT94/CT86 Q58 revision + T0 compatibility; I03 integrated private-view handoff |
 
@@ -312,3 +315,30 @@ clauses→SLICE2/3/4; local CT66 remains I02 with supervised binding in SLICE4. 
 and historical schema/SLICE7/DoD above are unchanged. New source-grounded call inventory and
 conditional implementation spec are linked from I03. OUTLINED remains; no progress/live tick.
 Earlier zero-slice grammar results in §7 describe their actual earlier snapshot, not current shape.
+
+
+## 9. E223 closeout acceptance transfer — 2026-10-16
+
+**Operator approved:** move the following acceptance requirements from I02 closeout to final I03.
+The source is the pre-E223 I02 DoD/spec6/local acceptance record at `82d1341`, plus the operator's
+four-item scope decision. This is a second explicit migration, not a claim E222 already moved them.
+
+| Requirement leaving I02 acceptance | Retained local I02 boundary | Explicit I03 successor | Completion |
+| --- | --- | --- | --- |
+| Deployed functional/source-to-behaviour verification | Implemented local contracts/tests/producer sensitivity and plan-versus-diff review of intended logic | SLICE6 STEP9 source/claim-to-host case mapping; STEP10 deployed runs; deployed-functional DoD; spec §9 | INCOMPLETE — no deployed result |
+| Environment/readiness and inherited baseline acceptance review | Preserve actual full-suite/subgate outcomes and manifests; review intentional test changes/new I02 defects in the local diff | SLICE6 STEP10 release environment/readiness/baseline review; environment/baseline DoD; spec §9 | INCOMPLETE — no acceptance disposition assigned |
+| Broad independent implementation/evidence review | Only plan-versus-diff review before moving on; no separate broad independent-review gate | SLICE6 STEP7 pre-fixture manual review, STEP10 final material-change review; broad-review DoD; spec §9 | INCOMPLETE — no independent signoff |
+| Integrated E2E and deployment signoff | Local implementation closeout only; I02 SHIPPED never means deployed validation | SLICE6 CT88/CT89, STEP10 reviewed host results and final deployment signoff; integrated E2E DoD; spec §9 | INCOMPLETE — no integrated/deployed acceptance |
+
+Inherited review inputs: [I02 record](i02-local-acceptance.md) and its lossless E220 evidence
+inventory; exact common readiness failure, eight baseline-only failure identities, six old-ID
+replacement mappings, eight recorded configured-Mypy fixes and unreproduced historical ninth
+context, E174 reporter history, relevant Arena foreign-hook observation and narrow Q72 repairs.
+Keep actual outcomes and uncertainty. This transfer does not turn them PASS or require a Go
+runtime for FA; I03 final environment/packaging review determines appropriate hook readiness.
+No guard/test is disabled, no producer/case deleted, and new I02 regressions are not deferred here.
+
+All successor requirements are unchecked in the I03 plan/spec. Historical E19 and Q69–Q72 decisions
+are not rewritten. No CT/STEP IDs, test paths, mutation roots or status vocabulary are changed.
+I02's local closeout record must later contain its diff-review result; no review or shipped status
+is assigned now. **Stop after the documentation push; wait for the next command before diff review.**

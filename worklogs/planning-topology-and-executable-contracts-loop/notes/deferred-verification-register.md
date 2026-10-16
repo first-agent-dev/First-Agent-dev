@@ -9,10 +9,18 @@ deployed I02+I03 acceptance belongs to foundation I03. Old I03 coder-brief/track
 the named deferred slice-loop/tracker/L2-eval successor. Historical evidence/ticks below are not
 re-run or closed by this owner edit; no live verdict is assigned.
 
+**E223 closeout scope:** local D1/D2/D3/D4a/D5/D8 proof remains I02 evidence; before moving on,
+only the plan-versus-diff review of retained implementation/test intent is required. Deployed
+verification, environment/readiness/inherited baseline acceptance (including D7 inventory), broad
+independent implementation/evidence review and integrated deployment signoff are incomplete final
+I03 SLICE6 obligations per [migration bank §9](i02-to-i03-scope-migration-2026-10-15.md#9-e223-closeout-acceptance-transfer--2026-10-16).
+No historical result or deferred successor is upgraded; D4b/D6 ownership is unchanged. This
+planning change does not start/complete the diff review or turn any inherited failure green.
+
 ## Current local reconciliation — E220, 2026-10-16
 
 **I02 local rows D1/D2/D3/D4a/D5/D8 are reconciled with executed evidence below.**
-This is not operator acceptance or an I03/live-host verdict. See [E220 blocked acceptance/evidence record](i02-local-acceptance.md).
+This is not operator acceptance or an I03/live-host verdict. See [local closeout/evidence record](i02-local-acceptance.md).
 
 - **D1a:** the original persisted adjusted-report C1 case passes in the actual final suite;
   its E145 kill remains historical. Current verifier/eval producers also have fresh full-path

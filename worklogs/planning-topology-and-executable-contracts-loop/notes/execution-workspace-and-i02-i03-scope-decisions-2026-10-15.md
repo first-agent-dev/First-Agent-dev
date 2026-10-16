@@ -636,7 +636,8 @@ Pre-migration I02 имел 8 sections: SLICE1, SLICE2, **SLICE2b**, SLICE3, SLIC
 - CT95 public controller guards для explicit PlanRef callers, budget/run/path validation.
 - Shared bounded admission repair linear/adaptive; correct T0 reuse/topology checks; Q55/Q56 routing.
 - Kill error classification improvement из §10: пересмотреть owning SLICE5/SLICE6 contracts/tests, а не скрытый unrelated fix.
-- Actual local composition-root proofs, declared producer kills и full-suite disposition.
+- Actual local composition-root proofs, declared producer kills, truthful full-suite result records
+  и plan-versus-diff review; final inherited-baseline acceptance review перенесён в I03 по E223.
 
 I02 НЕ claims kernel-enforced project-code isolation, safe nested acquisition или implemented rich subagents.
 I02 core может быть закрыт только после retained implementation/local proofs и formal revised DoD.
@@ -668,15 +669,25 @@ E200–E201 перенесли этот package в конец foundation I03; ac
 Local C1 real composition-root proof (only provider mocked) остаётся в I02: это не тот же объект, что deployed-host E2E.
 
 В revised I02 отражается deferred cross-increment host acceptance owner I03 и retained local oracles.
-**ADOPTED DESIGN status recommendation:** I02 может получить existing `SHIPPED` после actual retained implementation,
-local real-composition proofs, full-suite disposition и operator review revised DoD, не ожидая завершения I03.
-Это означает delivery reduced I02 contracts, НЕ safe complete chat→workflow path и НЕ reviewed deployed E2E acceptance.
-Перенесённые CTs/cases имеют явный I03 owner и отдельную incomplete acceptance запись; не маркируются VERIFIED от scope переноса.
-Эта scoped formulation применена в revised I02 DoD (E200), но не означает текущий SHIPPED status
-или завершённый review/implementation: требуются actual retained evidence и operator disposition.
-После retained DoD использовать existing status vocabulary; не вводить `COMPLETE_LOCAL` как новый artifact status.
-Нельзя считать E174 full-suite failure disposition, deliberate E19 reds или Mypy diagnostics автоматически разрешёнными переносом scope.
-Не выставлять SHIPPED в этой planning note; только actual evidence после реализации/review.
+**OPERATOR E223, 2026-10-16 — уточнённый closeout:** I02 сохраняет implementation/local
+proofs и review actual diff против retained I02 plan (в этой или новой session), исправление
+findings и обновление affected local checks. Отдельная broad independent implementation/evidence
+review и formal per-case inherited-baseline acceptance не блокируют local I02 closure.
+
+В final I03 SLICE6 явно перенесены и остаются **INCOMPLETE**:
+- Deployed functional/source-to-behaviour verification — STEP9/10 и deployed-functional DoD.
+- Environment/readiness and inherited baseline acceptance review — STEP10 и release/environment DoD.
+- Broad independent implementation/evidence review — STEP7 pre-fixture review + STEP10/final review.
+- Integrated E2E and deployment signoff — CT88/CT89, STEP10 и final acceptance DoD.
+
+Точные successors и inherited evidence: [migration bank §9](i02-to-i03-scope-migration-2026-10-15.md#9-e223-closeout-acceptance-transfer--2026-10-16).
+I02 может получить existing SHIPPED после retained local checks и plan-versus-diff review;
+это local implementation/diff-reviewed status, НЕ deployment-validated или safe integrated path.
+Actual red/unknown results, E174 history, E19/Q72 и Mypy contexts сохраняются для I03 review,
+не превращаются в PASS/waiver. Намеренные test replacements и новые I02 defects проверяются
+в local diff review; перенос acceptance не оправдывает новую regression или отключение guard.
+Новый status vocabulary не вводится. Эта documentation-only правка не завершает I02/I03,
+не выполняет review и не утверждает live результат. После push ждать следующей команды.
 
 Final I03 E2E относится к **всему доставленному I02+I03 path**, не только к новым runtime components.
 Каждый migrated unique producer имеет case/oracle/evidence mapping. Skip/BLOCKED не PASS.

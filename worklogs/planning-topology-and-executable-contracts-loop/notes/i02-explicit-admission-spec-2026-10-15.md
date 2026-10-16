@@ -239,20 +239,30 @@ Record all 16 retained SLICE6 FUNCTIONAL **full test-path** mutation runs and th
 provenance/outcome/duration, without contract→nodeid attribution. A collector/runner/timeout/infra
 error is ERROR, not a kill. Q53(c)'s slice sensitivity remains; no new clean-control policy.
 
-Create the actual implementation acceptance report at `notes/i02-local-acceptance.md` only when
-results exist: commands, code SHA, environment, rc, collected/pass/fail/error/skip identities,
-artifact references, mutation table, source-restoration diff, independent review and operator signoff.
-Run the full suite through the existing `just test` gate, and `just check`; separately retain each
-blocking subgate result so expected red tests do not hide missing type/lint/coverage checks.
-For baseline comparison use an isolated `git archive d9109f4` tree and the same supported Python,
-locked dependencies/config/command; use separate tree-local environments and verify module origins
-so an editable candidate install cannot contaminate baseline. Do not switch this session's branch. Capture baseline and
-candidate exact failure nodeids plus failure phase/category, not just totals. Both runs need
-complete collection/execution manifests and normal terminal summaries: E174's aborted reporter is
-not an eligible baseline. Changed/new tests and changed-file checks must be green. Existing E19
-and each unrelated baseline test/Mypy diagnostic need an explicit operator-reviewed disposition;
-new or missing/unclassified failures = 0. If a usable full-run report cannot be obtained, local
-DoD stays open. A blanket baseline waiver or lower count is never a passing result.
+Create/update `notes/i02-local-acceptance.md` from actual local results: commands, code SHA,
+environment, rc, collected/pass/fail/error/skip identities, artifact references, mutation table,
+source-restoration information, limitations and the plan-versus-diff review result. E223 keeps
+local implementation/testing and that diff review in I02; it does not require broad independent
+implementation/evidence review, deployed verification or integrated signoff before I02 closes.
+
+Run/retain existing just test/just check outcomes and individual blocking subgate results so an
+inherited red test does not hide missing local type/lint/coverage evidence. Preserve the actual
+isolated d9109f4 comparison, separate locked tree-local environments/verified module origins,
+complete collection/execution manifests, normal terminal summaries and exact failure identities/
+phases; E174's aborted reporter is not a passing result. Do not switch the session branch.
+New/changed I02 checks must pass; intentional replacement-test intent and any new regression
+are examined in the local plan-versus-diff review. Do not defer a newly introduced I02 defect.
+
+**E223 acceptance transfer:** final I03 SLICE6 owns deployed functional/source-to-behaviour
+verification; environment/readiness and inherited baseline acceptance review (including recorded
+historical test/Mypy contexts); broad independent implementation/evidence review; integrated E2E
+and deployment signoff. See [migration bank §9](i02-to-i03-scope-migration-2026-10-15.md#9-e223-closeout-acceptance-transfer--2026-10-16)
+and [I03 spec §9](i03-execution-workspace-spec-2026-10-15.md#9-final-deployed-acceptance--q63).
+These obligations stay incomplete there. No per-case inherited-baseline approval ceremony or Go
+provisioning is an I02 closeout prerequisite. Existing E19/Q72 guards and actual red/unknown
+outcomes are preserved, not waived, suppressed, or reclassified PASS. I03 final acceptance must
+review those outcomes explicitly. A documentation ownership transfer is neither local review
+completion nor deployed evidence; this change does not start the requested diff review.
 
 
 ## 7. Ratified lifecycle and fixture clarifications — Q67–Q70, 2026-10-16

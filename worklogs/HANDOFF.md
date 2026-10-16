@@ -4,11 +4,11 @@
 > This file records the verified state and the next bounded action.
 > Previous 1426-line S14-era version archived to `worklogs/archive/HANDOFF-S14-era-20260825.md`.
 
-## Current state — I02 local explicit-plan gate, 2026-10-16 / E222
+## Current state — I02 local explicit-plan gate, 2026-10-16 / E223
 
 Branch `arena/86633f17-first-agent-dev` only. Proof snapshot c4cb55fe4d0a63a4ac43c62acacdac54b9404bad;
 latest follow-up is documentation/evidence only. I02 **IN PROGRESS**, not SHIPPED or I03 acceptance.
-Read [blocked local acceptance record](planning-topology-and-executable-contracts-loop/notes/i02-local-acceptance.md),
+Read [pending local closeout/evidence record](planning-topology-and-executable-contracts-loop/notes/i02-local-acceptance.md),
 [plan](planning-topology-and-executable-contracts-loop/increments/increment-02-verify-gate-and-kill-checks.md),
 [spec](planning-topology-and-executable-contracts-loop/notes/i02-explicit-admission-spec-2026-10-15.md),
 [register](planning-topology-and-executable-contracts-loop/notes/deferred-verification-register.md).
@@ -39,25 +39,31 @@ implementation gap found; no acceptance or independent review inferred. See E221
 existing blocked acceptance record. No need to rerun unchanged mutation audit merely for this
 status-only documentation update.
 
-**E222 scope correction — current closure work is review/disposition, not mandatory Go:**
-Operator reaffirmed Ubuntu/Docker/Python and all deployed E2E at end-I03. Existing retained
-DoD already matches that. E220/E221 overstated unconditional Go provisioning/green composite.
-Go comes from the inherited Gitleaks hook build in the local S1–S6 readiness integration,
-not FA's implementation or a new I02 deployed-host gate. The actual common baseline/candidate
-failure remains red. It requires explicit operator per-case disposition; either selected
-repair/reexecution or an explicitly accepted inherited-infrastructure disposition, **not an
-assumed waiver**. No approval of that disposition is inferred from the scope clarification.
-Do not install a new runtime dependency, skip checks, fake readiness or replace Arena's hook.
-Continue retained clause/source/evidence review; no independent reviewer signoff exists.
+**E223 operator-approved plan update — final acceptance moved, NOT completed:**
+I02 retains local implementation/checks and only plan-versus-diff review before moving on.
+Final I03 SLICE6 explicitly owns deployed functional/source-to-behaviour verification,
+environment/readiness and inherited baseline acceptance review, broad independent implementation/
+evidence review, and integrated E2E/deployment signoff. All four are unchecked/incomplete in
+I03 plan/spec; exact successors and inherited evidence are in
+[migration bank §9](planning-topology-and-executable-contracts-loop/notes/i02-to-i03-scope-migration-2026-10-15.md#9-e223-closeout-acceptance-transfer--2026-10-16).
+This supersedes E220–E222's broader I02 review/disposition prerequisites, not factual test results.
+Go is an indirect inherited Gitleaks hook-build diagnosis, not a mandatory FA runtime or local
+I02 shipping requirement. Preserve actual rc1/readiness/foreign-hook observations for I03 review;
+do not skip checks, fake readiness, replace Arena's hook or call red/unknown PASS.
 
-**Review still required:** operator reviews each exact baseline/missing-ID/Mypy proposed
-case disposition; independent reviewer checks retained plan/DoD, d910→implementation delta,
-Q45-B/parser behavior, evidence and explicit incomplete I03 migration coverage; operator signs
-retained local DoD. No signature exists. Q69–Q72 are resolved, do not re-ask them. Q72 approves
-only46 link fixes/15 archived files and one banner-fixture path migration; E19 remains intact.
-No further bounded production gap was indicated by this audit, not independent assurance.
-I03 acquisition, all-project mandatory execution boundary, PTY descendants/publication/recovery
-and former SLICE7 deployed-host package remain explicitly **undelivered**.
+**E223 documentation validation:**171doc/parser/grammar/directive/skill tests and13claim/
+ownership checks passed;309Markdown files have no broken internal links. Both plans have
+0precheck FAIL,7/6sections and unchanged CT/path/command/kill-directive signatures. No new
+checked markers, code/test/hook/evidence changes or implementation diff review.
+
+**Next action — STOP after documentation push:** the operator explicitly requires waiting for
+the next command before starting the I02 diff review, in this or a new session. This change
+performs no source/diff review, fixes no code and marks no new DoD item fulfilled or SHIPPED.
+When later authorized, review I02 changes against its retained plan/d910, fix findings and
+refresh affected local checks/proofs, then finalize the local closeout record. Intentional test
+changes/new I02 defects are still review work; formal inherited-baseline/Mypy acceptance is I03.
+Q69–Q72 remain resolved; Q72 only approves46 link fixes/15 archived files and one banner path
+migration. Historical E19/evidence unchanged. No I03 acquisition/isolation/host package delivered.
 
 The older S18/doc-hygiene notes below are historical, not this session's current action list.
 

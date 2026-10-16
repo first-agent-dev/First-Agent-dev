@@ -1,31 +1,32 @@
-# I02 local acceptance record — BLOCKED / NOT ACCEPTED
+# I02 local acceptance record — PENDING DIFF REVIEW / NOT ACCEPTED
 
-2026-10-16, E220. Builder-produced evidence and proposed dispositions, **not operator
-signoff or independent review**. I02 remains IN PROGRESS. No SHIPPED, deployed-host,
-OS-isolation or I03 completion claim. Q69–Q72 are resolved; no new waiver is requested.
+2026-10-16, current closeout scope E223. I02 remains IN PROGRESS. Local proof exists, but the
+plan-versus-diff review has not been started by this documentation update. No SHIPPED,
+deployed-host, OS-isolation or I03 completion claim. Q69–Q72 remain resolved.
 
-## E222 — scope correction: no mandatory Go or I02 deployed E2E gate
+## E223 — operator-approved local closeout and final I03 acceptance ownership
 
-The operator reaffirmed Ubuntu/Docker/Python deployment and final deployed E2E at the end
-of I03. This matches retained I02 scope. **E220/E221 overstated environment repair and an
-all-green full composite as unconditional I02 prerequisites.** The retained DoD requires
-actual full-suite outcomes plus explicit operator-reviewed dispositions of inherited failures;
-it does not authorize inventing a Go runtime requirement or moving I03 host acceptance back.
+I02 retains implementation of its local contracts, local C1/C2/C3/producer-sensitivity checks,
+honest result records and plan-versus-diff review. Resolve review findings and refresh affected
+local proof before closing I02. Intentional replacement-test meaning is reviewed here; a newly
+introduced I02 defect cannot be hidden as deferred inherited infrastructure.
 
-Go was diagnosed because the existing `.pre-commit-config.yaml` selects Gitleaks v8.30.1,
-whose hook installation builds a Go security tool. The failed existing readiness test is a
-local S1–S6 C2/C3 Git/hooks integration, not I02 deployed E2E. Its failure remains real and
-present in both executable baseline and candidate. It needs an explicit per-case disposition,
-not automatic suppression and not necessarily SDK provisioning. Whether to repair its hook
-packaging/environment or accept a scoped inherited-infrastructure disposition is **not yet
-approved**. The operator's clarification is not a blanket baseline waiver.
+**Moved explicitly to final I03 SLICE6, all INCOMPLETE:** deployed functional/source-to-behaviour
+verification; environment/readiness and inherited baseline acceptance review; broad independent
+implementation/evidence review; integrated E2E and deployment signoff. Exact successors are in
+[migration bank §9](i02-to-i03-scope-migration-2026-10-15.md#9-e223-closeout-acceptance-transfer--2026-10-16),
+[I03 plan](../increments/increment-03-execution-workspace-foundation.md) and
+[I03 spec §9](i03-execution-workspace-spec-2026-10-15.md#9-final-deployed-acceptance--q63).
 
-Remaining DoD work: clause-by-clause review of retained local C1/C2/C3/matrix/negative evidence;
-actual d910→I02 source/scoped-mutation review including Q45-B; independent retained-plan,
-implementation/evidence and I03 successor-ownership review; operator per-case baseline/changed-ID/
-Mypy dispositions (including the unreproduced historical ninth context); then final local
-acceptance/signoff. No new retained implementation gap has been identified by bounded checks.
-This does not stand in for independent review. Current records remain **NOT ACCEPTED**.
+This ratified transfer supersedes E220–E222's broader I02 closeout requirements; it is not an
+acceptance result, blanket baseline PASS or permission to weaken checks. The old E222 correction
+identified Gitleaks' indirect Go hook-build dependency correctly, but still retained per-case
+operator/broad-review gates now transferred to I03. No Go provisioning or deployed test is an
+I02 local shipping prerequisite. Keep actual red/unknown outcomes below for final I03 review.
+Historical ledger entries and original compressed proof artifacts are not rewritten.
+
+**Next action is paused:** push this documentation change, then wait for the operator's next
+command before any plan-versus-diff review or code tweak. The local record is not finalized.
 
 ## Version, durable evidence and scope
 
@@ -148,12 +149,15 @@ Advisory Vulture ran; it is not a blocking substitute. Twelve unchanged skips ar
 shellcheck; one unchanged Q19 xfail records absent OS containment, still an I03 obligation.
 No new skip/xfail was added to turn a failure green.
 
-## Exact baseline comparison — proposals awaiting operator review
+## Exact baseline comparison — inherited inputs for final I03 acceptance review
 
 Baseline4477:4455pass9fail12skip1xfail,872.47s,82.21% coverage. Candidate5047 above:
 **0 candidate-only failures,1 common failure,8 baseline-only failures,6 superseded old
 nodeids,576 new nodeids**. Missing identities are not passes; their replacements follow.
 Full identities, messages and phase are retained in the comparison JSON, not inferred from totals.
+E223 moves formal acceptance dispositions for this inherited inventory to I03 SLICE6 STEP10.
+Local diff review still checks the intent/coverage of I02 test changes; no new I02 regression is
+excused by this transfer, and the observed baseline/candidate results are not relabeled PASS.
 
 Common failure: `tests/test_workspace_readiness_integration.py::test_clean_candidate_real_readiness_commit_and_local_publication`
 (call-phase in both). Actual readiness returns75, `precommit_prewarm_failed`. No Go SDK is
@@ -162,9 +166,9 @@ installed; pre-commit's Go bootstrap hits blocked `go.dev` and fails SSL/URLErro
 **Go1.24.11** (checked via GitHub API). That is an indirect hook-build dependency,
 not a new FA language/runtime/deployment requirement. A trusted SDK plus reachable/cached
 build dependencies is one possible way to repair this inherited test environment, **not an
-unconditional I02 prerequisite**. Alternatively, an explicit operator-reviewed per-case
-baseline disposition may resolve the I02 comparison obligation; no such disposition is
-inferred here. Preserve actual rc1, the hook/test and foreign208-byte Arena commit-msg hook.
+unconditional I02 prerequisite**. E223 assigns its environment/packaging and formal inherited
+baseline acceptance disposition to I03 SLICE6 STEP10; no passing disposition is inferred here.
+Preserve actual rc1, the hook/test and foreign208-byte Arena commit-msg hook.
 No I02 deployed-host test or I03 implementation is introduced by this diagnosis.
 
 Eight baseline-only failures, individually proposed dispositions:
@@ -214,37 +218,41 @@ The older E194 record counted9 diagnostics/5 files, including `test_inject_conde
 The exact isolated d910 run reproduces8/4, not that ninth case; the original ninth diagnostic
 message is not available in this evidence bundle. That file is unchanged against d910 and
 clean in the current configured gate. **Historical ninth identity/context reconciliation remains
-for review**, not an invented source fix, pass, or waiver. E174 reporter failure likewise was
+for final I03 baseline acceptance review**, not an invented source fix, pass, or waiver. E174 reporter failure likewise was
 not repaired here: both final complete runs produced normal terminal summaries without it.
 
 Separate source-root readiness observation remains `hook_seat_collision` rc75 because Arena's
 foreign commit-msg hook is not FA-managed. It is preserved, not resolved by supplying Go or
 by the clean-candidate integration fixture. No source-root ready claim or hook-replacement
-authorization is inferred; any required compatible trusted seating needs explicit disposition.
+authorization is inferred; any required compatible deployed seating is an I03 environment/
+readiness review item, not a requirement to replace Arena's hook before local I02 closeout.
 
-## Closure checklist and handoff
+## Closure checklist and handoff — retained local I02
 
 - [x] Completed unmutated baseline before all43 current producer runs; STEP17 and amended CT66.
 - [x] D1/D2/D3/D4-local-readers/D5/D8 reconciled with named source, tests and actual controls.
-- [x] Actual final just wrappers and exact identity/phase comparison, not successful wrappers.
-- [ ] Explicitly disposition the inherited readiness failure under the baseline-comparison DoD.
-  If repair is required by that disposition, repair and rerun unchanged gates; do not invent
-  an unconditional Go/runtime/live-host requirement or claim the actual red composite passed.
-- [ ] Operator reviews each proposed baseline/missing-ID/Mypy disposition above, including
-  the unresolved historical ninth context and separate source-root hook-seat collision. Q72 only covers
-  its two specified E19 causes; it is not approval of the rest of this table.
-- [ ] Independent reviewer checks retained plan/DoD, actual d910→proof source delta, Q45-B
-  extractor behavior, evidence bindings, and explicit incomplete I03 successor mapping.
-- [ ] Operator signs the retained local DoD. No acceptance signature exists in this record.
+- [x] Actual just wrappers and exact identity/phase comparison retained, not successful wrappers.
+- [ ] Complete plan-versus-diff review against retained I02 plan/d910, including intended local
+  logic, meaningful tests/replacement intent, Q45-B/parser compatibility and unintended changes.
+- [ ] Fix review findings and refresh affected local checks/proofs; no new I02 defects deferred.
+- [ ] Finalize this local record with review outcome/findings/resolution and local closeout status.
+  No broad independent review, inherited-baseline acceptance or deployment signoff required here.
 
-No further production implementation is indicated by this completed local audit. That is a
-bounded observation, not independent assurance. Continue source/evidence/disposition review,
-not mandatory Go provisioning. Never weaken checks or fabricate readiness. If environment/
-hook repair is selected, rerun actual gates and refresh version-bound evidence. If an inherited
-baseline exception is explicitly approved, preserve the observed red result and its exact
-scope rather than relabeling it PASS. No exception has yet been approved. I03 acquisition,
-mandatory all-project execution boundary, PTY descendants/publication/recovery and former
-SLICE7 deployment/host package remain explicitly **undelivered**, not completed by migration.
+## Transferred acceptance checklist — INCOMPLETE under final I03 SLICE6
+
+- [ ] Deployed functional/source-to-behaviour verification — STEP9/10 and deployed-functional DoD.
+- [ ] Environment/readiness and inherited baseline acceptance review — STEP10 and environment/
+  release-gate DoD; includes this record's exact baseline/changed-ID/Mypy/hook observations.
+- [ ] Broad independent I02+I03 implementation/evidence review — STEP7 before fixtures/helpers,
+  STEP10 and final broad-review DoD; repeat/finalize after material changes.
+- [ ] Integrated E2E/deployment signoff — CT88/CT89, STEP10 and final acceptance record.
+
+No source/case/evidence is deleted by transfer, and no red/unknown outcome becomes PASS. Q72
+still approves only its exact46 link fixes/15files and one banner path migration; E19 stays intact.
+I03 acquisition, mandatory all-project execution boundary, PTY descendants/publication/recovery
+and former SLICE7 deployment/host package remain **undelivered**. Local I02 SHIPPED, once earned,
+will mean implemented and diff-reviewed, not deployment-validated. Broad assurance and final
+operator deployment signoff belong to I03. **Wait for the next command before starting review.**
 
 ### Documentation-only follow-up verification
 
@@ -257,8 +265,9 @@ mistyped test-file invocations exited4 with no tests and are rejected, not count
 
 ## E221 — closure reassessment, 2026-10-16
 
-Historical reassessment: its mandatory-Go/environment-stop conclusion is superseded by E222
-above; its actual hash/collection/test results remain unchanged.
+Historical reassessment: mandatory-Go/environment-stop and broad-review/per-case I02 closure
+conclusions are superseded by E223 above; actual hash/collection/test results remain unchanged.
+The closing paragraph below records the old assessment, not current closeout requirements.
 
 Starting commit `4b78084214de2d01f83bb522f8b4ce69cce975eb`, clean tree and matching remote.
 Read-only validation recomputed compressed/original SHA256s for all81 archived artifacts,

@@ -10,6 +10,14 @@ One row per producer, carrying what the host fixture has to arrange
 and what it has to observe — so the e2e suite can be written from this register alone, without
 re-deriving any of it from the code.
 
+**E223 explicit closeout transfer:** final I03 SLICE6 also owns deployed functional/source-to-
+behaviour verification, environment/readiness and inherited baseline acceptance review, broad
+independent implementation/evidence review, and integrated E2E/deployment signoff. All remain
+incomplete, not I02 shipping prerequisites. Local I02 keeps its plan-versus-diff review and actual
+local checks/results. [Migration bank §9](i02-to-i03-scope-migration-2026-10-15.md#9-e223-closeout-acceptance-transfer--2026-10-16)
+records successors; historical checkpoint “review pending” conclusions below retain their dated
+provenance and do not reinstate the old I02 acceptance boundary. No row gets a live verdict here.
+
 **Status vocabulary.** `unit` = proven by in-repo tests and a kill-check. `e2e` = proven on the
 live host. These historical row labels do not assign current live verdicts. Local scoped I02
 completion is distinct from still-incomplete I03 host acceptance; neither implies the other.

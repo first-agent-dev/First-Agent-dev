@@ -11,8 +11,12 @@ shipped: —
 **Shippable when:** explicit-plan CLI/library workflows validate a controller-owned PlanRef before
 coder, perform bounded Q57 admission repair/Q58 same-path promotion, capture T0 once, run the
 slice-scoped command/kill gate after successful coder, and preserve real eval plus Q55/Q56 routing.
-Retained local contracts, composition/mutation proofs, full-suite disposition and independent
-review satisfy the DoD below **without waiting for foundation I03 or deployed-host E2E**.
+Retained local contracts, composition/mutation proofs, honest local/full-suite result records and
+plan-versus-diff review satisfy the DoD below **without waiting for foundation I03 or deployed-host E2E**.
+E223 moves deployed functional/source-to-behaviour verification, environment/readiness and inherited
+baseline acceptance review, broad independent implementation/evidence review, and integrated E2E/
+deployment signoff to final I03 SLICE6, explicitly incomplete. No separate broad review or per-case
+inherited-baseline acceptance ceremony is an I02 closeout prerequisite.
 This is delivery of the scoped local gate, not OS isolation or safe integrated chat→workflow acceptance.
 
 **Scope migration, 2026-10-15 (E200):** this plan ends at SLICE6. Seven actual sections remain:
@@ -552,21 +556,26 @@ bank's40 FUNCTIONAL+CT79 also passed actual producer sensitivity, including amen
 CT66 (110pass5fail). E218's concurrent699/18 and E212's older486 results remain historical,
 not substitutes. See [blocked local acceptance/evidence record](../notes/i02-local-acceptance.md).
 Q72 dispositions only the two repaired E19 documentation causes. No shipped or overall DoD
-status is assigned: final actual just check/test remain red on real readiness/Go prewarm;
-operator dispositions and independent review remain open. SLICE6 has **16 FUNCTIONAL** kills,
+status is assigned: actual just check/test remain red on inherited readiness/Go prewarm;
+E223 carries environment/inherited-baseline acceptance and broad independent review to I03.
+The retained I02 plan-versus-diff review has not started. SLICE6 has **16 FUNCTIONAL** kills,
 not18; older9-kill/12-test/308-test records are not current admission proof.
 E174’s reporter/no-summary is historical: E220 has actual terminal summaries and exact
 baseline/candidate nodeid comparison. Eight recorded configured-Mypy diagnostics are now clean
 with individual proposed fixes; E194’s ninth/test_inject_condensates context is not reproduced
-by d910 and remains explicitly unresolved for review. Operator disposition is still required.
+by d910 and stays unresolved for I03 final baseline acceptance review. Intentional I02 changes
+and replacement-test intent remain subjects of the local plan-versus-diff review.
 Neither scope migration nor existing green verifier
 proof closes admission, full-suite comparison or review. Nested success/OS integrity/live-host
 acceptance are incomplete I03 obligations, not suppressed failures or I02 evidence.
 
-**E222 clarification:** existing readiness/Gitleaks failure is an inherited local integration
-baseline-disposition item, not a new Go runtime or I02 deployed-E2E requirement. Actual full
-suite/composite outcomes and operator-reviewed per-case dispositions remain required. No
-exception is approved by this clarification; final deployed E2E remains at end-I03.
+**E223 operator-approved closeout boundary, 2026-10-16:** final I03 SLICE6 owns all four
+acceptance obligations listed above; [migration bank §9](../notes/i02-to-i03-scope-migration-2026-10-15.md#9-e223-closeout-acceptance-transfer--2026-10-16)
+records their exact successors and unfinished status. This supersedes E222's requirement for
+operator-reviewed inherited-baseline dispositions and broad independent review before I02 closure.
+Local C1/C2/C3 and producer-sensitivity checks remain I02 requirements, not deployed verification.
+No failure is relabeled PASS, no guard is disabled, and no new I02 regression may be hidden by
+calling it deferred acceptance. This documentation update does not start the diff review.
 
 ## Increment definition of done
 
@@ -597,32 +606,39 @@ exception is approved by this clarification; final deployed E2E remains at end-I
 - [x] Reconcile I02-owned D1/D2/D3/D4-readers/D5/D8 with actual named evidence in deferred register.
       D2 now has the real caller+ordered kill (E220); pending successor coder-brief
       reader is not falsely closed. No register tick is assigned by this plan edit.
-- [ ] Produce `notes/i02-local-acceptance.md` per spec §6, with usable full-suite baseline/candidate
-      manifests and terminal summaries, exact failure identity/phase comparison against isolated
-      source baseline d9109f4 (E192 is historical evidence, not an executable baseline).
-      Run existing `just test`/`just check`, retain every blocking subgate result, and record
-      operator-reviewed dispositions for E19, each unrelated baseline failure and recorded Mypy
-      diagnostic. Changed-file/new-test checks pass; new/missing/unclassified failures = 0.
-      No pass from E174 aborted reporter, count-only waiver, skipped gate or absent summary.
-- [ ] Review actual I02 source delta against available baseline d9109f4, preserving approved Q45-B
-      source-position fields and current extractor behavior; pure extractor tests pass. Historical
-      3c0caad is absent from this checkout and cannot be a runnable gate or an inferred clean diff.
-      Scoped runtime mutation has no non-equivalent survivors.
-- [ ] Independent review of revised retained plan/DoD, implementation and evidence is recorded.
-      Verify moved CT/STEP/case coverage has explicit incomplete I03 ownership in migration bank;
-      this is mapping review, not the moved E2E fixture/checklist implementation.
+- [ ] Finalize `notes/i02-local-acceptance.md` as the local implementation/closeout record:
+      code SHA, commands, actual outcomes, local proof and mutation references, limitations and
+      plan-versus-diff review result. Preserve usable isolated d9109f4/candidate full-suite manifests,
+      terminal summaries and exact failure identity/phase comparisons already recorded. Retain actual
+      just test/just check and blocking subgate results; red remains red. Formal environment/readiness
+      and inherited baseline/Mypy acceptance review belongs to I03 SLICE6, not a new I02 Go/live-host gate.
+- [ ] Complete plan-versus-diff review of actual I02 changes against d9109f4 and this retained plan,
+      in this or a new session. Confirm intended local logic, meaningful local tests, replacement-test
+      intent, no unintended changes, strict extractor/Q45-B source-position preservation and scoped
+      mutation findings. Pure extractor tests pass; no non-equivalent survivor remains in the retained
+      scoped runtime mutation audit. Use available d9109f4, not absent 3c0caad or an inferred clean diff.
+      Resolve findings and refresh affected local checks/proofs. New I02 defects are not deferred as
+      inherited infrastructure. No separate broad independent review required here.
+- [ ] Record the four transferred acceptance obligations and their incomplete I03 SLICE6 successors
+      consistently in the migration bank, I03 plan/spec and local record; do not mark them VERIFIED
+      or fulfilled merely because ownership moved. Close I02 locally only after retained local checks
+      and the plan-versus-diff review, with findings resolved and the local closeout record finalized.
 
-After these actual retained proofs and operator-reviewed DoD, I02 may receive existing SHIPPED
-status **before I03**, without a reviewed deployed-host result. No tick/status is assigned here.
-SHIPPED then means the retained local explicit-plan gate only; it is not safe integrated product
-or deployed I02+I03 acceptance. The latter belongs to I03's final group, with every unique I02
-producer still covered. Normal integrated/security deployment readiness is not inferred from I02.
+After the retained local checks and plan-versus-diff review, I02 may receive existing SHIPPED
+status **before I03**. No tick/status is assigned by this documentation change; wait for the
+operator's next command before starting that review. SHIPPED means the retained local explicit-plan
+gate is implemented and diff-reviewed, **not deployment-validated** or a safe integrated product.
+Broad independent implementation/evidence review and all deployed functional/source-to-behaviour,
+environment/inherited-baseline, integrated E2E and deployment acceptance remain unfinished I03 work.
+Intentional test changes are checked during the local diff review; their final acceptance treatment
+is recorded in I03. Existing evidence/results, historical E19 and Q72's narrow repair approval remain
+intact; no blanket passing result or hook/test bypass is authorized.
+
 Q59/Q60 exact nested route/bundle and CT97 runtime decisions, Q66 propagation, Q63 final live-result
 schema, cell deployment and the former SLICE7 host package are not retained I02 blockers.
-Q62's implementation table is now supplied in spec §3; historical question status is not silently
-closed. Preserve current strict parser accessor behavior and extractor-origin IDs; no Q43 leniency
-adoption is authorized. An implementation proposing changed accessor semantics still needs its
-explicit disposition. Q64 calibration stays I06.
+Q62's implementation table is supplied in spec §3; historical question status is not silently closed.
+Preserve strict parser accessor behavior and extractor-origin IDs; no Q43 leniency adoption is
+authorized. Changed accessor semantics still need explicit disposition. Q64 calibration stays I06.
 
 ## Out of scope (moved, not dropped)
 
@@ -631,6 +647,9 @@ explicit disposition. Q64 calibration stays I06.
   uncertain outcomes, workspace lease/views/fencing/sealing/publication/recovery.
 - I03 final group owns former SLICE7 CT88/CT89 and STEPs1–10: producer index/run sheets/fixtures,
   independent manual checklist, skill E2E obligations and reviewed main-host acceptance for I02+I03.
+  E223 also explicitly transfers deployed functional/source-to-behaviour verification, environment/
+  readiness and inherited baseline acceptance review, broad independent implementation/evidence
+  review, and integrated E2E/deployment signoff. All remain incomplete under I03 SLICE6.
 - Old I03 loop/tracker/three-level eval, TEST-DEFECT, CT10b/tests_note and VERIFIED L2 conditions
   follow the named deferred successor capability on the roadmap, not foundation I03's number.
 - Generated-mutant sweep and nonessential verification-integrity follow-ups remain deferred;
