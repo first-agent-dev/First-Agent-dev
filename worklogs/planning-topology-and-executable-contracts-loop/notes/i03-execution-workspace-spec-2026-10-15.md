@@ -327,6 +327,12 @@ failure remains unavailable/uncertain, no resend or terminality assertion. Add d
 Unix/worker scheduling proof that holds gate retirement after reply visibility and submits RUN2;
 RUN2 waits at publication, not rejects. No sleep/retry/longer timeout as a repair.
 
+E252 implemented this boundary in `cell_worker.serve` with deterministic actual-worker/PTY/UDS
+regression and independent full-bank kills of both lock producers. Owning733/broader1253 pass;
+E251 broader failure remains in its immutable archive. This is component proof, not real
+WorkspaceAuthority/CellBackend composition or deployed CT98–100 acceptance. See
+[evidence](evidence/i03-e252/worker-handoff.json.gz).
+
 **Restart and loss:** mark uncertain operations with existing `recover_uncertain()` but also discover
 and inspect ALL owned cells by original name/CID/labels, including cells whose creation command is
 DONE. An idle shell/background writer can outlive a completed interactive command. Memory episode

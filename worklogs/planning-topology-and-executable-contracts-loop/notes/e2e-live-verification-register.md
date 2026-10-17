@@ -1207,7 +1207,7 @@ Formal workflow cases retain the actual admitted plan; ordinary no-active-workfl
 | I03-LIVE-08 `src/fa/execution/plans.py` | ProtectedPlanContext and actual plan recheck | Actual protected view/context and controller-admitted PlanRef; change source/hash before admission/exec and forge worker plan hash. Deny effects or completion. Ordinary no-active-workflow null allowed; formal evidence null denied. Never infer ordinary mode from null or PROJECT alone. | PLANNED / UNEXECUTED |
 | I03-LIVE-09 `src/fa/execution/client.py` | ExecutionClient and all ManagedBashExecutor methods | Actual tool/PTY run/INTERRUPT/CLOSE/LIST with 15 closed errors, supplied/missing references, timeout and disconnect. Persist truthful typed outcomes; no host shell/reconnect/resend. Control uncertainty replays original control input, never exec-inspects its request ID. | PLANNED / UNEXECUTED |
 | I03-LIVE-10 `src/fa/execution/cell_protocol.py` | Private worker codec | Actual non-TTY cell stream with split/oversize/malformed frames, wrong request/session binding and command/control concurrency. Reject invalid frames without privilege/grant/path leakage or invented success. | PLANNED / UNEXECUTED |
-| I03-LIVE-11 `src/fa/execution/cell_worker.py` | Persistent worker, one-shot worker and module main | Two commands retain shell state in one owned cell; independent namespace/view main sessions stay separate. Real one-shot nonzero/timeout, concurrent interrupt/close/list/STOP and EOF. STOP/worker exit is not cgroup emptiness. | PLANNED / UNEXECUTED |
+| I03-LIVE-11 `src/fa/execution/cell_worker.py` | Persistent worker, one-shot worker and module main | Two commands retain shell state in one owned cell; independent namespace/view main sessions stay separate. Force reply visibility before sender return/gate retirement, then issue sequential RUN2: it waits at publication and preserves shell state, never false busy or reexecution. Real one-shot nonzero/timeout, concurrent interrupt/close/list/STOP and EOF. STOP/worker exit is not cgroup emptiness. | PLANNED / UNEXECUTED |
 | I03-LIVE-12 `src/fa/execution/worker_client.py` | Sole attach, RUN/control multiplexing and stream-loss handling | Real Docker attach one RUN plus concurrent controls, correlation mismatch and forced stream loss. All affected requests become uncertain without resend/reconnect; verify no duplicate command sentinel. | PLANNED / UNEXECUTED |
 | I03-LIVE-13 `src/fa/execution/docker.py` | Authenticated native HTTP, create/start/inspect/attach/force-stop | Real approved daemon: owned labels/image/CID, original-name recovery, attach Upgrade/mux/stderr limits, fixed full-CID SIGKILL after durable cancel and independent same-CID inspect. Foreign/rebound identity, 409/404/loss/malformed replies remain truthful; no ACK-as-terminal barrier. | PLANNED / UNEXECUTED |
 | I03-LIVE-14 `src/fa/execution/view_io.py` | RootedViewIO and actual admitted text IO | Actual tool and PTY same-view read-your-writes; immutable readers stay pinned. Exercise no-follow/link/FIFO/owner/protected-PlanRef/size/UTF8/window/hash/expected-absence, parent-swap and fsync faults. Assert canonical/control sentinels, modes/UIDs, retained descriptors through drain and explicit conflict/uncertainty. | PLANNED / UNEXECUTED |
@@ -1220,7 +1220,7 @@ Formal workflow cases retain the actual admitted plan; ordinary no-active-workfl
 |---|---|---|---|
 | I03-LIVE-S01 | Installed launch → controller → private authenticated UDS | Real entry/help/auto-run/session paths, unavailable backend and hostile project imports: zero project host/controller commands. | PLANNED / UNEXECUTED |
 | I03-LIVE-S02 | Dispatcher → actual WorkspaceAuthority.admit → CellBackend | Real actor/generation/pin/profile/PlanRef check and same original deadline, register active work before effects; revoke/stop races permit no late send/write. E251 implements local actor/deadline propagation; actual admission/backend owners remain incomplete. | PLANNED / UNEXECUTED |
-| I03-LIVE-S03 | Journal → original creation/CID → attach → reused per-command RUN | Two commands, two durable operations, one cell/attach; duplication/loss/restart including creator-DONE never permits another RUN or replacement cell. No second history. | PLANNED / UNEXECUTED |
+| I03-LIVE-S03 | Journal → original creation/CID → attach → reused per-command RUN | Two commands, two durable operations, one cell/attach; force the reply-publication/RUN-gate handoff schedule on the actual cell. Duplication/loss/restart including creator-DONE never permits another RUN or replacement cell. No second history. | PLANNED / UNEXECUTED |
 | I03-LIVE-S04 | Cancel/close-admission → drain → force-stop → kernel barrier | Hold active file handler and queued RUN while stopping; fork/double-fork/setsid writers remain fenced until actual owned cgroup populated=0. 204/409/404/STOP/worker exit are not release proof; unknown quarantines. | PLANNED / UNEXECUTED |
 | I03-LIVE-S05 | Registered root/writer → dirty R0 → view/rooted IO → pinned reader | Two OS actors race alias/bind/nested registrations and writer generation; exactly one writer. Copy actual staged/unstaged/untracked/deleted bytes without canonical index changes; tools/PTY share writer view, independent pins survive newer generation. | PLANNED / UNEXECUTED |
 | I03-LIVE-S06 | Actual view → seal/current/intent → projection/recovery | Freeze after terminal barrier; inject death/fsync failure at every irreversible boundary. Complete old/new immutable revisions or quarantine, no committed rollback; protect Git index and user sentinels, safe no-replace new-project install. | PLANNED / UNEXECUTED |
@@ -1275,3 +1275,32 @@ NEXT fix the confirmed worker reply/gate handoff race with deterministic schedul
 actual WorkspaceAuthority registration/generation/materialization/admit/drain joined to the
 real CellBackend; no temporary issuer. SLICE1/2/all35STEPS/four final duties remain unfinished;
 Q59/Q75/Q76 and final-SLICE6 host/full-path release proof unchanged. No new policy adopted.
+
+### E252 — worker seam rollforward, live verdicts unchanged
+
+E252 repairs the E251-confirmed reply-visible/RUN-gate-retirement race in cell_worker.serve.
+Production best practice: use the existing publication lock as one linearization boundary for
+next-RUN admission and completed-RUN gate retirement, including reply-write failure cleanup.
+No retry, scheduler, timeout increase, policy change or parallel command execution. Concurrent
+controls and main-thread PTY acquisition/prior-thread join remain. Unavailable stream is still
+uncertain; STOP/worker exit remains no cgroup/terminality proof.
+TEST-EDITS: tests/test_execution_attach.py — append one deterministic real worker/PTY/UDS/attach
+scheduling regression; old file is an exact byte prefix. Native-lock wrappers expose the window,
+not fake worker results. Unfixed source fails the admission assertion [True, False] != [True]
+(1failed/52deselected0.70s, clean setup/teardown); fixed focused127PASS5.53s.
+Final whole15-module owning bank733PASS43.25s → eleven whole733-bank assertion-only kills
+26/62/26/26/4/16/2/2/1/1/1 → restored733PASS42.43s. Both worker producers (admission coordination,
+retirement-inside-publication) kill independently. All phases clean except intended mutant CALL
+assertions; no skips/warnings/collection/runtime/infra credit. All598 source/input hashes
+exact; supervisor.py AND cell_worker.py independently match frozen snapshots. Ruff/format27PASS,
+Mypy27/183PASS; configured+clean-path Pyrefly0errors (existing141suppressed/50warnings).
+Broader28modules1253PASS57.98s, including the actual E251 failing sequential-RUN test.
+E2511251PASS1FAIL remains immutable red history, repaired by this changed source, not a rerun waiver.
+Evidence `notes/evidence/i03-e252/worker-handoff.json.gz`, 1173316bytes SHA25683da84e828616b1b109579c83866c166f9cefb08348a0eb06fe285fbba4f7c40.
+C0/C3 component proof only; C1 actual authority/backend factory and C2 deployed callers remain absent.
+E250 inventory unchanged:16 production surfaces/eight joins, all live PLANNED/UNEXECUTED; extend
+I03-LIVE-11/S03 with the forced reply-publication/next-RUN schedule. No early host/deployment run.
+NEXT implement actual WorkspaceAuthority registration/writer generation/readers/materialization/
+admit/drain, reusing E245 RootedViewIO, joined to actual CellBackend per-view episodes/per-command
+records and independent terminality; then real factory/caller/mount cutover. SLICE1 is NOT shipped;
+SLICE2/all35STEPS/four final duties remain open. Q59/Q75/Q76/final-SLICE6 rollout unchanged.

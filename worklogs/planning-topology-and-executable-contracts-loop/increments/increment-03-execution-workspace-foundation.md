@@ -516,11 +516,31 @@ Next dependency-ready STEP1 seam: dispatcher must pass authenticated peer and or
 deadline explicitly through authorization/handler to actual backend/admission (§2.2, F20/F21),
 not infer identity from namespace or reset command budget. Actual owners/SLICE2 remain unfinished.
 
-## E252 NEXT — confirmed worker completion/admission race
+## E252 — confirmed worker handoff repaired; actual owners NEXT
 
-E251 whole732/nine assertion kills passes, but broader1251PASS1FAIL exposed actual local
-worker/PTY handoff. Source cell_worker.py176–188 publishes reply before running.release; main
-RUN reader191–203 nonblocking-acquires that gate without coordinating with publication. A reply
-can be observed before release, so sequential RUN2 is rejected. FIRST repair under spec§2.2 E252
-with deterministic native scheduling and full-bank sensitivity; not an inherited/flaky waiver.
-Then continue actual backend–WorkspaceAuthority construction. No policy change or completion tick.
+E252 repairs the E251-confirmed reply-visible/RUN-gate-retirement race in cell_worker.serve.
+Production best practice: use the existing publication lock as one linearization boundary for
+next-RUN admission and completed-RUN gate retirement, including reply-write failure cleanup.
+No retry, scheduler, timeout increase, policy change or parallel command execution. Concurrent
+controls and main-thread PTY acquisition/prior-thread join remain. Unavailable stream is still
+uncertain; STOP/worker exit remains no cgroup/terminality proof.
+TEST-EDITS: tests/test_execution_attach.py — append one deterministic real worker/PTY/UDS/attach
+scheduling regression; old file is an exact byte prefix. Native-lock wrappers expose the window,
+not fake worker results. Unfixed source fails the admission assertion [True, False] != [True]
+(1failed/52deselected0.70s, clean setup/teardown); fixed focused127PASS5.53s.
+Final whole15-module owning bank733PASS43.25s → eleven whole733-bank assertion-only kills
+26/62/26/26/4/16/2/2/1/1/1 → restored733PASS42.43s. Both worker producers (admission coordination,
+retirement-inside-publication) kill independently. All phases clean except intended mutant CALL
+assertions; no skips/warnings/collection/runtime/infra credit. All598 source/input hashes
+exact; supervisor.py AND cell_worker.py independently match frozen snapshots. Ruff/format27PASS,
+Mypy27/183PASS; configured+clean-path Pyrefly0errors (existing141suppressed/50warnings).
+Broader28modules1253PASS57.98s, including the actual E251 failing sequential-RUN test.
+E2511251PASS1FAIL remains immutable red history, repaired by this changed source, not a rerun waiver.
+Evidence `notes/evidence/i03-e252/worker-handoff.json.gz`, 1173316bytes SHA25683da84e828616b1b109579c83866c166f9cefb08348a0eb06fe285fbba4f7c40.
+C0/C3 component proof only; C1 actual authority/backend factory and C2 deployed callers remain absent.
+E250 inventory unchanged:16 production surfaces/eight joins, all live PLANNED/UNEXECUTED; extend
+I03-LIVE-11/S03 with the forced reply-publication/next-RUN schedule. No early host/deployment run.
+NEXT implement actual WorkspaceAuthority registration/writer generation/readers/materialization/
+admit/drain, reusing E245 RootedViewIO, joined to actual CellBackend per-view episodes/per-command
+records and independent terminality; then real factory/caller/mount cutover. SLICE1 is NOT shipped;
+SLICE2/all35STEPS/four final duties remain open. Q59/Q75/Q76/final-SLICE6 rollout unchanged.

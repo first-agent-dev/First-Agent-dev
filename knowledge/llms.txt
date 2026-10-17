@@ -56,6 +56,8 @@ Task type → primary entrypoint, then secondary:
 
 ## § BY-DEMAND INDEX (Deprecated)
 
+[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e252/worker-handoff.json.gz]: Worker reply/RUN race repair;733owning/11kills/1253broader, exact restoration; E251 red retained, actual authority/backend/host proof open.
+
 [worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e251/context-seam.json.gz]: Explicit authenticated peer/absolute deadline C0/C3 seam;732owning/nine kills/broader1251PASS1FAIL worker handoff race, E2E source rollforward; actual authority/backend/C1/host acceptance incomplete.
 
 [worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e249/owned-stop.json.gz]: E249 native force-stop C0/C3;684owning/nine assertion-only kills/1204broader; actual backend/authority/cgroup/service/callers still incomplete.

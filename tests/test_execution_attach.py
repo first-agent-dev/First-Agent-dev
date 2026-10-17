@@ -541,3 +541,132 @@ def test_invalid_attach_deadline_is_rejected_before_contact(endpoint: Endpoint, 
     with pytest.raises(ExecutionContractError):
         endpoint.engine().attach(CID, deadline=deadline)
     assert endpoint.seen == []
+
+
+class _RunRetirementWindow:
+    def __init__(self) -> None:
+        self.retiring, self.release_gate, self.next_at_publication, self.finished = (
+            threading.Event() for _ in range(4)
+        )
+        self.main_thread: int | None = None
+        self.attempts: list[bool] = []
+        self.locks: list[object] = []
+
+    @property
+    def main_at_retirement(self) -> bool:
+        return threading.get_ident() == self.main_thread and self.retiring.is_set() and not self.release_gate.is_set()
+
+    def lock(self) -> Any:
+        if not self.locks:
+            self.main_thread = threading.get_ident()
+        value = _PublicationWrites(self) if not self.locks else _RetiringRun(self)
+        self.locks.append(value)
+        return value
+
+
+class _PublicationWrites:
+    def __init__(self, window: _RunRetirementWindow) -> None:
+        self.window = window
+        self.lock = threading.Lock()
+
+    def __enter__(self) -> None:
+        if self.window.main_at_retirement:
+            if self.lock.acquire(blocking=False):
+                return
+            self.window.next_at_publication.set()
+        self.lock.acquire()
+
+    def __exit__(self, *args: object) -> None:
+        self.lock.release()
+        if self.window.main_at_retirement:
+            self.window.next_at_publication.set()
+
+
+class _RetiringRun:
+    def __init__(self, window: _RunRetirementWindow) -> None:
+        self.window = window
+        self.lock = threading.Lock()
+        self.first_release = True
+
+    def acquire(self, *, blocking: bool) -> bool:
+        accepted = self.lock.acquire(blocking=blocking)
+        self.window.attempts.append(accepted)
+        return accepted
+
+    def release(self) -> None:
+        if self.first_release:
+            self.first_release = False
+            self.window.retiring.set()
+            if not self.window.release_gate.wait(5):
+                raise TimeoutError("unit_gate_retirement_not_released")
+        self.lock.release()
+
+
+def test_sequential_run_waits_for_atomic_reply_and_gate_retirement(
+    local_worker: CellWorker,
+    worker_endpoint: Endpoint,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """C0/C3: force the real publication/gate window, no sleep/retry oracle."""
+    from types import SimpleNamespace
+
+    import fa.execution.cell_worker as cell_worker
+
+    window = _RunRetirementWindow()
+    retiring, release_gate = window.retiring, window.release_gate
+    next_at_publication, finished = window.next_at_publication, window.finished
+    attempts = window.attempts
+
+    # Replace only the worker module's lock constructors, not global threading.
+    # Native mutexes still decide admission; wrappers expose the scheduling window.
+    monkeypatch.setattr(
+        cell_worker, "threading", SimpleNamespace(Lock=window.lock, Event=threading.Event, Thread=threading.Thread)
+    )
+
+    class Mux:
+        def __init__(self, peer: socket.socket) -> None:
+            self.peer = peer
+
+        def recv(self, size: int, /) -> bytes:
+            return self.peer.recv(size)
+
+        def sendall(self, data: bytes, /) -> None:
+            self.peer.sendall(mux(data))
+
+    def bridge(peer: socket.socket) -> None:
+        peer.settimeout(5)
+        try:
+            serve(local_worker, Mux(peer))
+        except (ExecutionContractError, OSError):
+            pass  # Expected EOF, not a terminality oracle.
+        finally:
+            finished.set()
+
+    endpoint = worker_endpoint
+    case = Case(endpoint, tmp_path)
+    endpoint.replies.extend([Reply(200, observation()), Reply(raw=UPGRADE, upgraded=bridge)])
+    client = WorkerClient(case.cells.attach_created(case.req, profile=profile(), deadline=until(5)))
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        pending = None
+        try:
+            first = client.request(run("export FA_ATOMIC_REPLY=kept"), deadline=until(5))
+            assert first["exit_code"] == 0 and retiring.wait(3)
+            pending = executor.submit(
+                client.request, run('printf "%s" "$FA_ATOMIC_REPLY"', "2" * 32), deadline=until(5)
+            )
+            assert next_at_publication.wait(3), "RUN2 did not reach the forced publication window"
+            assert attempts == [True], "sequential RUN2 tested a still-retiring RUN gate"
+            release_gate.set()
+            second = pending.result(5)
+            assert second["exit_code"] == 0 and "kept" in second["stdout"] and not second["timed_out"]
+            assert attempts == [True, True] and len(endpoint.seen) == 2
+        finally:
+            release_gate.set()
+            if pending is not None:
+                try:
+                    pending.result(5)
+                except WorkerUnavailableError:
+                    pass  # Preserve the admission assertion on the unfixed/mutated producer.
+            client.close(deadline=until(3))
+            assert finished.wait(3)

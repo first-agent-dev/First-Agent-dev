@@ -166,25 +166,32 @@ def serve(worker: CellWorker, connection: FrameConnection) -> None:
             _reply(connection, request_id, result)
 
     def run(raw: bytes, request_id: str) -> None:
+        result: dict[str, Any] | None = None
         try:
             try:
                 result = worker.handle(raw)
             except (OSError, ExecutionContractError, RuntimeError):
                 result = None
-            try:
-                reply(request_id, result)
-            except OSError:
-                stream_failed.set()
-                worker.stopped = True
         finally:
-            running.release()
+            # A receiver may observe bytes before sendall returns. Retire the
+            # gate under the SAME lock used by next-RUN admission, not afterward.
+            with writes:
+                try:
+                    _reply(connection, request_id, result)
+                except OSError:
+                    stream_failed.set()
+                    worker.stopped = True
+                finally:
+                    running.release()
 
     try:
         while not worker.stopped:
             raw = read_frame(connection)
             record = decode_cell_request(raw)
             if record["action"] == "RUN":
-                if not running.acquire(blocking=False):
+                with writes:
+                    accepted = running.acquire(blocking=False)
+                if not accepted:
                     reply(record["request_id"], None)
                     continue
                 if active is not None:

@@ -3,7 +3,7 @@
 > Read [`knowledge/llms.txt`](../knowledge/llms.txt) §MUST READ FIRST.
 > Current local delivery is distinct from final I03/deployed acceptance.
 
-## Current state — I02 LOCAL SHIPPED / I03 IMPLEMENTATION IN PROGRESS, 2026-10-18 / E251
+## Current state — I02 LOCAL SHIPPED / I03 IMPLEMENTATION IN PROGRESS, 2026-10-18 / E252
 
 Branch `arena/86633f17-first-agent-dev` only. Retained I02 runtime/test proof snapshot
 `a32a72fc58db4b9a5b048a9b6475649bcf3e32b4`. E230/E231 finalized planning; E232 adds the first
@@ -41,7 +41,41 @@ Ubuntu host test,OS isolation,managed nested acquisition or host supervisor deli
 only;Go is an indirect inherited hook-build diagnosis,not a new FA runtime/deployment requirement.
 PTY stays. Q69–Q73 resolved;Q72 remains its narrow46-links/15-files+banner repair decision.
 
-**E251 CURRENT — explicit composition seam implemented, actual owners NEXT:**
+**E252 CURRENT — worker handoff repaired; SLICE1 NOT shipped:**
+E252 repairs the E251-confirmed reply-visible/RUN-gate-retirement race in cell_worker.serve.
+Production best practice: use the existing publication lock as one linearization boundary for
+next-RUN admission and completed-RUN gate retirement, including reply-write failure cleanup.
+No retry, scheduler, timeout increase, policy change or parallel command execution. Concurrent
+controls and main-thread PTY acquisition/prior-thread join remain. Unavailable stream is still
+uncertain; STOP/worker exit remains no cgroup/terminality proof.
+TEST-EDITS: tests/test_execution_attach.py — append one deterministic real worker/PTY/UDS/attach
+scheduling regression; old file is an exact byte prefix. Native-lock wrappers expose the window,
+not fake worker results. Unfixed source fails the admission assertion [True, False] != [True]
+(1failed/52deselected0.70s, clean setup/teardown); fixed focused127PASS5.53s.
+Final whole15-module owning bank733PASS43.25s → eleven whole733-bank assertion-only kills
+26/62/26/26/4/16/2/2/1/1/1 → restored733PASS42.43s. Both worker producers (admission coordination,
+retirement-inside-publication) kill independently. All phases clean except intended mutant CALL
+assertions; no skips/warnings/collection/runtime/infra credit. All598 source/input hashes
+exact; supervisor.py AND cell_worker.py independently match frozen snapshots. Ruff/format27PASS,
+Mypy27/183PASS; configured+clean-path Pyrefly0errors (existing141suppressed/50warnings).
+Broader28modules1253PASS57.98s, including the actual E251 failing sequential-RUN test.
+E2511251PASS1FAIL remains immutable red history, repaired by this changed source, not a rerun waiver.
+Evidence `notes/evidence/i03-e252/worker-handoff.json.gz`, 1173316bytes SHA25683da84e828616b1b109579c83866c166f9cefb08348a0eb06fe285fbba4f7c40.
+C0/C3 component proof only; C1 actual authority/backend factory and C2 deployed callers remain absent.
+E250 inventory unchanged:16 production surfaces/eight joins, all live PLANNED/UNEXECUTED; extend
+I03-LIVE-11/S03 with the forced reply-publication/next-RUN schedule. No early host/deployment run.
+NEXT implement actual WorkspaceAuthority registration/writer generation/readers/materialization/
+admit/drain, reusing E245 RootedViewIO, joined to actual CellBackend per-view episodes/per-command
+records and independent terminality; then real factory/caller/mount cutover. SLICE1 is NOT shipped;
+SLICE2/all35STEPS/four final duties remain open. Q59/Q75/Q76/final-SLICE6 rollout unchanged.
+
+**Next (implementation, no host approval prerequisite):**
+1. Construct the real WorkspaceAuthority with durable registration/writer generation and admitted
+   rooted views, retaining E245 RootedViewIO. No temporary/permissive authority.
+2. Join actual CellBackend episodes, command reservations, cancellation/drain and independent
+   terminality before factory/main/caller/mount cutover. Keep final host proof at SLICE6.
+
+**E251 retained historical result — explicit composition seam implemented; broader RED at that source:**
 E251 repairs the existing dispatcher composition seam, not the actual backend/authority.
 DeadlineConnection retains one monotonic request start and exposes read-only start/reply deadline;
 required typed authorizer/
@@ -170,8 +204,8 @@ Final repair SHA256728a228c8f9e1ecf10400bb8a90f2a996ed089556b5f9b83c670bc6ea702c
 verification+closure SHA25659cfc0cba71d2457cd1d5d275f63f784eda8b16de2a15339ec462fdc7d33262e.
 
 NEXT MENU (SLICE1 first): E247 client classification and E249 native force-stop legs implemented.
-E251 explicit authenticated peer/deadline propagation is implemented. FIRST fix confirmed worker
-reply/gate handoff race (broader1251PASS1FAIL); THEN construct the actual
+E251 explicit authenticated peer/deadline propagation and E252 worker handoff repair are
+implemented (broader1253PASS at E252 source; E251 red retained). NEXT construct the actual
 CellBackend protected per-view episodes/per-command begin/CID/worker
 control/restart together with the ONE actual WorkspaceAuthority admission/drain (necessary SLICE2
 dependency). Take authenticated peer + one absolute deadline through this real join; no permissive
