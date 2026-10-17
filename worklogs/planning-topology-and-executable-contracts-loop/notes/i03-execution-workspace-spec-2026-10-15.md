@@ -326,6 +326,17 @@ or missing receipt to exit0/FAIL. Exec uncertainty uses original exec inspect/ca
 mutating controls/non-exec requests use exact original request/input replay, not exec inspect with
 a control request ID. Q75 permits only the original in-memory completed reply, including after handoff.
 
+**E246 typed ERROR closure (before repair):** ExecutionClient must classify the existing closed
+ERROR codes before handing them to ManagedBashExecutor: EXECUTION_UNKNOWN, TERMINALITY_UNKNOWN,
+DURABILITY_UNKNOWN and CORRUPT_STATE raise ExecutionUncertainError retaining the code and the
+original operation reference (use the original request ID if the error has no reference).
+BACKEND_UNAVAILABLE raises ExecutionUnavailableError, preserving a supplied operation reference;
+remaining codes are determinate request/policy rejections via ExecutionRejectedError. Preserve
+sanitized exception messages and the existing timed-out-receipt subtype. The retryable bit never
+permits automatic resend, replacement IDs, reconnect, inspect/cancel or shell fallback. Cover exec,
+INTERRUPT, CLOSE and LIST; a control request ID is not an exec inspection key. This changes no wire
+schema, exposes no grant/body in errors, and does not implement backend/admission/terminality.
+
 ## 3. Identity and job lifecycle
 
 NamespaceRef = `{session_id, run_id, parent_run_id?}` from existing manager/bindings. WorkspaceRef

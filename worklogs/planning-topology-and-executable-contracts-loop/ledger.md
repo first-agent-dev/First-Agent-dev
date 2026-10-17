@@ -2915,3 +2915,11 @@ E245  FACT  After pushed docs-first checkpoint a7ba6d5, constructed internal des
     excludes permitted read-atime only; bounded parameter IDs avoid MiB payloads in collected IDs.
     Earlier diagnostics retained losslessly (nested gzip+base64 with raw SHA), not sensitivity credit.
     Final archive1514276bytes SHA256d3c09ff2dcfa854470144741ea548da9dee74874d2e5022527a71933dda01057.
+
+E246  FACT  User asks whether updated SLICE1 is fully shipped. Verified at437ee25: NO. Four
+    unchecked STEPS correspond to real gaps: generic client ERROR misclassification; missing
+    CellBackend/WorkspaceAuthority admission, stop/kill/episode/restart/drain; missing composed
+    supervisor factory/listener/config/install and atomic caller cutover; absent boundary suite
+    and actual final host facts/full-path proof. Existing source references recorded in review
+    and increment E246 menu. Typed client repair FIRST, owned Docker control NEXT, then real
+    backend–authority composition; no new helper/authority/history/approval gate. [source grep/read]

@@ -3,7 +3,7 @@
 > Read [`knowledge/llms.txt`](../knowledge/llms.txt) §MUST READ FIRST.
 > Current local delivery is distinct from final I03/deployed acceptance.
 
-## Current state — I02 LOCAL SHIPPED / I03 IMPLEMENTATION IN PROGRESS, 2026-10-17 / E245
+## Current state — I02 LOCAL SHIPPED / I03 IMPLEMENTATION IN PROGRESS, 2026-10-17 / E246
 
 Branch `arena/86633f17-first-agent-dev` only. Retained I02 runtime/test proof snapshot
 `a32a72fc58db4b9a5b048a9b6475649bcf3e32b4`. E230/E231 finalized planning; E232 adds the first
@@ -41,7 +41,15 @@ Ubuntu host test,OS isolation,managed nested acquisition or host supervisor deli
 only;Go is an indirect inherited hook-build diagnosis,not a new FA runtime/deployment requirement.
 PTY stays. Q69–Q73 resolved;Q72 remains its narrow46-links/15-files+banner repair decision.
 
-**E245 CURRENT — docs-first, then internal rooted IO:** E244/a7ba6d5 was committed/pushed before
+**E246 CURRENT — SLICE1 verified NOT shipped:** user asks to verify updated contracts, put missing
+steps next and implement. Source confirms backend.py/CellBackend, workspace.py/actual admission,
+supervisor factory/main/listener and boundary integration suite absent. Docker is create/inspect/
+attach only; episode/cancel/drain/restart and actual host facts remain. Client127–129 incorrectly
+maps every ERROR to rejection, including unknown/unavailable. E246 directly records the remaining
+menu in increment and fixes target error taxonomy in spec BEFORE implementation. All four SLICE1
+STEPS/all35STEPS/four final duties stay open. No early host/deployment request.
+
+**E245 retained — docs-first, then internal rooted IO:** E244/a7ba6d5 was committed/pushed before
 source. `execution/view_io.py` now provides pinned descriptor/no-follow bounded text read/write,
 complete SHA/windows, expected absence/SHA, private no-clobber staging/parent creation, safe cell
 UID/GID/modes and explicit conflict/durability uncertainty. No existing project parent chmod/chown.
@@ -82,15 +90,14 @@ kill grammar clean/doc309PASS/diffPASS; old assertions/ledger preserved and198 h
 Final repair SHA256728a228c8f9e1ecf10400bb8a90f2a996ed089556b5f9b83c670bc6ea702c587;
 verification+closure SHA25659cfc0cba71d2457cd1d5d275f63f784eda8b16de2a15339ec462fdc7d33262e.
 
-NEXT: implement the ONE actual WorkspaceAuthority (protected startup/registration/root identities,
-writer generation/flock/admission/drain, R0/current/pins/materialization), consume completed descriptor
-IO with trusted profile/access/exclusion/PlanRef bindings. Join CellBackend over existing DockerCells/
-WorkerClient/journal; reuse per-command begin/record_container and original live cell creation binding.
-No more standalone authority wrappers, helper rebuild, permissive/failing main or host fallback.
-Then existing SessionManager/tools; provisioning reserves its real DB/begin_run context before RPC.
-Publication-dependent provisioner/factory completes SLICE3; atomic caller/mount cutover SLICE4;
-required actual kernel/full-path release proof remains final SLICE6. All35STEPS/17FUNCTIONAL/four
-final duties unfinished; Q59/Q75/Q76 unchanged. Do not request early deployment or waive these joins.
+NEXT MENU (SLICE1 first): repair client typed ERROR classification across run/INTERRUPT/CLOSE/LIST;
+then owned Docker stop/kill/observation with original creation/journal identity, never ACK-as-death.
+Construct actual CellBackend per-view episode registry/per-command begin/record_container/worker
+control/restart over existing transports/journal; join the ONE actual WorkspaceAuthority admission/
+drain (necessary SLICE2 dependency), not a permissive callback or fake grant issuer. No more rooted
+IO helper rebuilding. Then real service/config/install factory (publication leg SLICE3), atomic
+SessionManager/tools/wrapper/mount cutover SLICE4. Required actual host/kernel/full-path release
+proof remains final SLICE6. All35STEPS/17FUNCTIONAL/four final duties unfinished; Q59/Q75/Q76 intact.
 
 **E242 retained continuation:** actual fixed native Docker Upgrade/stdin/stdout/stderr attach now
 joins owned journal inspection to shared cell codec + WorkerClient. Preserves bytes after HTTP

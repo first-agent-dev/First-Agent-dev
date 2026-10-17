@@ -1123,3 +1123,23 @@ principal/view/profile/PlanRef, register workspace roots, acquire/drain writers,
 select search/PDF paths, provision sessions or establish terminality/publication. The real authority
 must admit calls, supply trusted roots/exclusions/access and preserve descriptor lifetime through
 drain; expected-SHA remains non-kernel-CAS. No whole-contract, C1, Docker/host or release claim.
+
+### E246 — explicit SLICE1 shipment verification, base437ee25
+
+**Confirmed NOT shipped**, not merely unproven host tests. Evidence: CT98 installed package checks
+exist (Dockerfile.fa94–98), but scripts/fa58–59 inject repo PYTHONPATH for help and update script
+839–840 directly imports fa.cli; atomic caller cutover remains required. CT99 dispatcher explicitly
+requires authority/backend callbacks (supervisor.py216–234); no actual factory/main/listener.
+CT100 backend.py/CellBackend and workspace.py/WorkspaceAuthority are absent after source grep;
+DockerCells396–503 is create/inspect/attach, with no stop/kill or receipt/terminality owner. Declared
+tests/integration/test_execution_boundary.py is absent. Profile rendering (profiles.py73 onward)
+does not attest actual daemon/kernel/cgroup deployment. These are implementation gaps; do not
+request early host approval to hide them.
+
+**Confirmed remaining client defect:** client.py127–129 raises ExecutionRejectedError for every
+validated ERROR. EXECUTION_UNKNOWN/DURABILITY_UNKNOWN/TERMINALITY_UNKNOWN/CORRUPT_STATE and backend
+unavailability are therefore misclassified through all four managed executor methods. Existing
+client test360 only covers UNAUTHORIZED. Corrected target in spec§2.2 before code; this repair is
+first, owned Docker control next, then actual backend–authority join and factory/callers in their
+existing dependency order. All four SLICE1 STEPS remain unchecked; earlier467/894 construction
+results and E24593/1001 are not SLICE1 acceptance. No inherited results rerun for status alone.
