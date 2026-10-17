@@ -417,6 +417,14 @@ class SupervisorDispatcher:
                             framed, encode_json(self._reply(exc.request_id, error=SupervisorError("INVALID_REQUEST")))
                         )
                     return
+                if request["op"] == "exec":
+                    profile = self._profiles.get(request["payload"]["profile_id"])
+                    if (
+                        profile is not None
+                        and request["payload"]["timeout_ms"] <= profile.max_command_ms
+                        and profile.interactive == (request["payload"]["session_id"] is not None)
+                    ):
+                        framed.add_execution_budget(request["payload"]["timeout_ms"])
                 response = self._dispatch(PeerIdentity(pid, uid, gid), request)
                 write_frame(framed, encode_json(response))
             except (OSError, ExecutionContractError):

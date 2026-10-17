@@ -2851,3 +2851,28 @@ E242  I03 OWNED ATTACH + CLOSED PRIVATE WORKER CLIENT  2026-10-17;CT99–CT100.
     Final audit0FAIL6WARN/6slices17FUNCTIONAL35unchecked;kill grammar clean;doc309PASS/diffPASS;
     all198 tested hashes exact. I02/session/deps/Dockerfile/wrapper/compose/client/profile/public
     protocol/plan/types/controller entry preserved from1aed729. No service/cutover/host dispatch.
+
+E243  FACT  Mid-slice adversarial SLICE1/2 review at e736082: F20 actual short-control-RPC/
+    long-command reply defect repaired; F21–F27 confirmed target-interface/ordering gaps directly
+    rewritten in increment nine STEPS/CT103 and normative spec §§2.2/4.2. One WorkspaceAuthority
+    admission/drain gate, existing begin/record_container per reused command, original creation
+    identity, restart drain includes creation-DONE, same writer view/independent pinned readers,
+    reuse discovery/PDF inside cell with scratch DB, safe metadata-versus-project IO and committed
+    workspace cleanup. Early existing DB/begin_run supplies real private provisioning namespace;
+    both reverse-reference callers retained with corruption/run-ownership checks. No second DB/log/
+    search service or guessed issuer. Publication joins SLICE3, atomic caller/mount cutover SLICE4.
+    Added14 C0/C3 regressions, no old assertion changes. Owning481PASS34.21s/restored481PASS34.01s; nine
+    whole481-bank assertion kills1/1/1/1/2/1/3/1/1, clean phases/no skip/warnings, exact198 tested hashes.
+    Ruff/format24 + Mypy24/182PASS; configured and clean-PYTHONPATH Pyrefly0errors, existing141
+    suppressed/50warnings. Broader908PASS48.03s, clean. Rejected development fixture/assertion
+    mistakes retained as diagnostics, not proof. Raw commands/sources/reports/runners in i03-e243.
+    All35STEPS/four duties unfinished; no backend/authority/service completion, actual deployment,
+    full-repo baseline PASS or early-host approval. Required host/full-path release proof stays
+    final SLICE6; Q59/Q75/Q76 unchanged. [review: F20–F27; spec §§2.2/4.2; i03-e243 evidence]
+    Final client phase review preserves short connect/request budget, adds exec time only for reply.
+    Passing v1 proof retained separately and its static/broader archive embedded in final verification;
+    final changed source re-proved with extra input-phase mutation, no unchanged-code audit rerun.
+    Final closure audit0FAIL6WARN/6slices17FUNCTIONAL35unchecked;kill grammar clean;doc309PASS/
+    diffPASS;198 hashes exact/old assertions+ledger prefix preserved, only12 declared tracked files.
+    Final repair archive SHA256728a228c8f9e1ecf10400bb8a90f2a996ed089556b5f9b83c670bc6ea702c587;
+    verification+closure SHA25659cfc0cba71d2457cd1d5d275f63f784eda8b16de2a15339ec462fdc7d33262e.

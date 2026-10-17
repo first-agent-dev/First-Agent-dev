@@ -3,7 +3,7 @@
 > Read [`knowledge/llms.txt`](../knowledge/llms.txt) §MUST READ FIRST.
 > Current local delivery is distinct from final I03/deployed acceptance.
 
-## Current state — I02 LOCAL SHIPPED / I03 IMPLEMENTATION IN PROGRESS, 2026-10-17 / E242
+## Current state — I02 LOCAL SHIPPED / I03 IMPLEMENTATION IN PROGRESS, 2026-10-17 / E243
 
 Branch `arena/86633f17-first-agent-dev` only. Retained I02 runtime/test proof snapshot
 `a32a72fc58db4b9a5b048a9b6475649bcf3e32b4`. E230/E231 finalized planning; E232 adds the first
@@ -41,7 +41,40 @@ Ubuntu host test,OS isolation,managed nested acquisition or host supervisor deli
 only;Go is an indirect inherited hook-build diagnosis,not a new FA runtime/deployment requirement.
 PTY stays. Q69–Q73 resolved;Q72 remains its narrow46-links/15-files+banner repair decision.
 
-**E242 current continuation:** actual fixed native Docker Upgrade/stdin/stdout/stderr attach now
+**E243 CURRENT — mid-slice review completed, not SLICE1/2 acceptance:** reviewed E242/e736082
+against remaining SLICE1 + next SLICE2 and real callers. Eight evidence-anchored findings F20–F27
+in existing adversarial review. Directly rewrote all nine affected STEPS/CT103/source baseline and
+spec §§2.2/4.2: one admission/drain owner, existing journal begin per reused command, original cell
+creation identity, startup drain even creation-DONE, writer read-your-writes versus independent
+pins, cell-local existing discovery/PDF with scratch indexes, private metadata IO versus project
+modes, committed-workspace cleanup ownership and real provisioning namespace before first RPC.
+No extra journal/session DB/search service/workflow mode or early-host approval prerequisite.
+
+F20 actual short-RPC/long-command reply defect repaired in protocol/client/supervisor only. Command
+budget adds ONCE to original absolute transport deadline after short-budget connect/request send; no expired-frame revival,
+control/profile-policy extension, clock reset or replay. This does not implement backend deadlines,
+authority, terminality, service activation or all target behavior. Fourteen new C0/C3 fixture cases;
+existing assertions retained. Owning481PASS34.21s/restored481PASS34.01s; nine whole481-bank assertion-only
+kills1/1/1/1/2/1/3/1/1, clean phases, exact198 hashes. Ruff/format24 and Mypy24/182PASS, full Pyrefly0errors
+(existing141suppressed/50warnings), clean-PYTHONPATH also0; broader908PASS48.03s. Initial fixture/new
+assertion mistakes rejected/corrected, not proof. Passing v1 proof retained as superseded after final
+input/reply phase tightening; final changed source re-proved with the extra phase mutation. Evidence/
+runners in notes/evidence/i03-e243. Final audit0FAIL6WARN/6slices17FUNCTIONAL35unchecked,
+kill grammar clean/doc309PASS/diffPASS; old assertions/ledger preserved and198 hashes exact.
+Final repair SHA256728a228c8f9e1ecf10400bb8a90f2a996ed089556b5f9b83c670bc6ea702c587;
+verification+closure SHA25659cfc0cba71d2457cd1d5d275f63f784eda8b16de2a15339ec462fdc7d33262e.
+
+NEXT: construct CellBackend over existing DockerCells/WorkerClient/journal, join real
+WorkspaceAuthority admission + materialization/rooted IO, then existing SessionManager/tools.
+Reused command calls begin/record_container, never another create/start/claim log. New-session
+managed provisioning must create existing DB under provisioning manifest and reserve a real
+internal provisioning RunContext via existing begin_run before first service request; no arbitrary
+run label/public inactive attach. Publication-dependent provisioning/factory completes in SLICE3;
+atomic caller/mount cutover in SLICE4; required kernel/full-path release proof at final SLICE6.
+All35STEPS/17FUNCTIONAL/four final duties unfinished. Q59/Q75/Q76 unchanged. Do not rebuild helpers,
+reconstruct live episodes/replay cache, flip /sessions read-only early or request early deployment.
+
+**E242 retained continuation:** actual fixed native Docker Upgrade/stdin/stdout/stderr attach now
 joins owned journal inspection to shared cell codec + WorkerClient. Preserves bytes after HTTP
 headers, non-TTY mux fragments, bounded stderr diagnostics and per-response (not lifetime) caps.
 One RUN plus concurrent control, independent deadlines, exact reply/session binding, all-pending
@@ -354,7 +387,7 @@ Authority correctness, observability contracts, mutation gap closure — all COM
 3. Produce docs_only patch assuming I-63 merged: includes BACKLOG dedup, pr-notes pointer, root cleanup, HANDOFF rewrite, llms.txt update, link fixes.
 4. Ask operator per borderline plan (S1-S4) before archiving.
 
-## Next bounded action
+## Historical E212 next-action list — superseded by E243 current continuation
 
 0. Obtain explicit Q71 disposition before changing the documentation acceptance oracle. The
    exact three-path/one-trigger exception is only a proposal; no spelling workaround, immutable

@@ -117,6 +117,8 @@ class ExecutionClient:
                 self._connect(connection)
                 attempted_send = True  # sendall can lose a partial/completed write.
                 write_frame(framed, raw)
+                if operation is Operation.EXEC:
+                    framed.add_execution_budget(payload["timeout_ms"])
                 response = decode_reply(read_frame(framed), operation=operation, request_id=request_id)
         except (OSError, ExecutionContractError):
             if attempted_send:

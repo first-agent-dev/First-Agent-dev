@@ -154,7 +154,7 @@ Complete payload additions/results (every object has exactly the named keys; IDs
 | acquire_writer | `{workspace_id}` / `{view_ref:null,capability,generation,revision_id}`; grant bound to authenticated controller's namespace and root owner |
 | pin_reader | `{workspace_id,revision_id,plan_ref}` / `{view_ref,capability}`; READ pin independent of subsequent writer generations |
 | create_view | `{workspace_id,base_revision,access,purpose,candidate_scope,plan_ref}` / `{view_ref,capability}`; purpose PROJECT/PROVISIONING/VERIFICATION/MUTATION/CANDIDATE; candidate_scope null except exact `{candidate_path,plan_ref}` for CANDIDATE, with identical top-level plan_ref; grant checks permitted combinations before copy |
-| read_file | `{path,offset_bytes,max_bytes}` / `{content,sha256,eof}`; max_bytes1MiB, exact bounded UTF-8 file snapshot; reject unsupported binary/split-codepoint rather than silently corrupt; SHA covers whole bounded file; oversized files need explicit read-only chunk policy, never partial SHA for edits |
+| read_file | `{path,offset_bytes,max_bytes}` / `{content,sha256,eof}`; max_bytes1MiB, exact bounded UTF-8 file snapshot; reject unsupported binary/split-codepoint rather than silently corrupt; SHA covers whole input-policy-bounded file, not the returned window; larger files use the bounded read-only window policy in §4.2, never partial SHA for edits |
 | write_file / edit_file | `{path,content,expected_sha256}` / `{sha256,bytes}`; expected_sha256 nullable only for write(create-if-absent); edit requires hash; conflict is STALE_REVISION with no silent retry |
 | exec | `{operation_id,profile_id,command,cwd,timeout_ms,session_id}` / `{receipt}`; session_id nonnull only for interactive profile; fixed simple identifier≤64chars, scoped to namespace+view |
 | inspect / cancel | `{operation_id}` / `{receipt}`; cancel requests stop, not success or terminality until independently confirmed |
@@ -189,7 +189,8 @@ environment and PTY session between commands in ONE open episode. Interrupt/clos
 explicit uncertainty, not shell replay or implicit successful cleanup. `run_bash` must catch typed
 managed errors BEFORE its current blanket fallback catches and return the existing ToolResult
 error envelope; remove the production `_run_subprocess_fallback` branch. A transport loss after
-send is inspect/cancel by the SAME operation ID. Never allocate a new ID to retry the same command.
+sending exec is inspect/cancel by the SAME exec operation ID; non-exec/control mutation loss uses
+exact original-request replay (§2.2), not an exec receipt. Never allocate a new ID to retry the same command.
 
 ExecutionReceipt v1 is exactly `{schema_version:1,operation_id,namespace,workspace_id,view_id,
 owner_run_id,generation,revision_id,original_revision_id,input_tree_sha256,plan_sha256,profile_id,
@@ -251,6 +252,79 @@ SLICE2 wires the actual WorkspaceAuthority into service main before any positive
 kernel proof. Do not add a permissive temporary authority, guessed registered view or failing main
 stub. Required actual authorization/kernel proof is accumulated for final SLICE6, not claimed from
 unit injection. Packaging can be prepared in SLICE1; production service startup follows integration.
+
+### 2.2. Remaining SLICE1/2 composition contract (E243)
+
+These are required implementation interfaces, **not implemented owners**. Keep the existing
+protocol/journal/client/worker/Docker transport; do not create a second execution history, session
+manager, HTTP supervisor, scheduler, lease daemon or configurable backend matrix.
+
+- **NEW `execution/backend.py::CellBackend`** is the one thin lifecycle owner over `DockerCells`,
+  `WorkerClient` and `OperationJournal`. Its private live episode map is keyed by authenticated
+  principal + NamespaceRef + exact ViewRef + approved profile; worker PTY session IDs are subordinate
+  to that episode. Store the original creation request/CID and sole attach in memory, not credentials
+  in another persisted episode file. Different namespaces/views cannot reuse a shell named `main`.
+- **NEW `WorkspaceAuthority.admit(peer, request, *, deadline)`** revalidates the actual grant,
+  namespace/active actor/generation/view state, protected source identities and PlanRef, and registers
+  active work under that workspace's admission lock. It returns an internal scoped admission, never
+  a wire grant. A successful earlier `authorize()` call or journal reservation is not this permit.
+  Internal admission carries the actual loaded view record, retained source descriptor, trusted
+  profile/path triple and ProtectedPlanContext plus deadline; no new wire/persisted grant schema.
+  READ grants check their retained pin, not the latest writer generation. The service's private
+  backend dispatch must carry authenticated peer and absolute deadline as explicit arguments; today's
+  `handle(request)` callback is insufficient for this join and must be changed with its callers/tests.
+- **NEW `supervisor.py::build_supervisor/main`** compose actual authority + lifecycle owner + existing
+  journal/reply cache/dispatcher; configure all closed operation handlers, including SLICE3 publication,
+  before production startup. NEW `CellBackend.execute(peer, request, *, deadline)` consumes this
+  authority admission; existing planned `supervisor.stop_view` closes that same gate before backend
+  drain and `_wait_descendants_terminal` (CT104), not a second stop/lease owner. No permissive
+  callback/default authority/failing-main stub. Packaging is
+  SLICE1 work, real ownership/IO is SLICE2, publication SLICE3, atomic caller/mount cutover SLICE4.
+  `DEPS` expresses construction order, not a demand to tick SLICE1 before constructing its authority.
+
+**One-command ordering, including reused shells:** dispatcher authenticates/validates, checks the
+exact cached-completion path, authorizes, reserves and calls existing `journal.begin()` once. For a
+fresh cell, retain `create_once → durable CID → start_once` and original creation labels. For a later
+command in the SAME live episode, use `record_container(new_command_id, namespace, original_CID)`
+before its one RUN send; never call `launch_new/start_once` again or rebind original labels to the new
+command. `begin()` is the durable per-command claim: duplicate dispatch/restart cannot claim it again.
+No second RUN log or redundant claim API is needed. The original first command may already be in
+journal UNKNOWN after its one start RPC; that write-ahead stage is not permission to retry it.
+
+Acquire actual admission before any create/start/RUN/write effect and recheck cancellation at the
+bounded send/start boundary. Gate registration and close-admission must linearize: if revoke/stop
+wins, no late send/write; if admission wins, stop owns that in-flight work and cannot finish before
+it drains. Persist cancel intent before acknowledging cancel; it is not a terminal receipt. Close
+admission before STOPPING, wait active file handlers and queued/dispatching sends, stop cells, then
+observe real exit/cgroup emptiness. Do not hold the global journal lock while waiting for a command,
+handler drain or cgroup. Lock order is workspace admission before short journal transitions; any
+cancel path that records intent first releases its journal transaction before waiting for admission.
+
+**Restart and loss:** mark uncertain operations with existing `recover_uncertain()` but also discover
+and inspect ALL owned cells by original name/CID/labels, including cells whose creation command is
+DONE. An idle shell/background writer can outlive a completed interactive command. Memory episode
+loss does not permit reconnect/reconstruction/new RUN or replay-cache reconstruction. Stop/inspect
+old cells before fresh writer admission; unknown ownership/exit/barrier quarantines, never lease expiry.
+A missing cell is not a successful historical command. Build receipts from the reserved command/view,
+approved profile, trusted protected input/PlanRef and independently observed execution facts. An
+interactive command can be EXITED with barrier=false; one-shot normal completion additionally joins
+actual container exit and empty owned cgroup. A worker exit/STOP ack never substitutes for that join.
+
+**Deadlines and error paths:** request input framing is bounded by the short configured control RPC
+budget. Once a decoded exec matches a configured profile/mode/limit, transport may add its requested
+command budget ONCE to the original absolute deadline; it never resets on a partial read/write and
+cannot revive expired input. Client keeps connect/request send on the short budget and adds the same exec budget only after
+sending the validated frame;
+controls/unapproved exec do not borrow it. E243 implements this transport repair only. The actual
+service/backend still need one absolute command deadline measured from request receipt, consuming
+queue/admission/create/start/RUN time, not a fresh timeout for each phase. SLICE4's controller clamps
+the request to remaining actual workflow budget; profile and backend ceilings still apply. Transport
+waiting/expiry is not evidence of command timeout or descendant death. Typed error handling must
+cover ERROR envelopes as well as receipts: unknown/durability/terminality errors stay uncertain,
+backend unavailability stays unavailable, policy denial remains denial. Never normalize a denial
+or missing receipt to exit0/FAIL. Exec uncertainty uses original exec inspect/cancel; uncertain
+mutating controls/non-exec requests use exact original request/input replay, not exec inspect with
+a control request ID. Q75 permits only the original in-memory completed reply, including after handoff.
 
 ## 3. Identity and job lifecycle
 
@@ -417,7 +491,7 @@ Serialize model mutator calls within an actor; expected_sha detects ordinary sta
 kernel CAS against arbitrary background shell writes. Rooted IO revalidates path/inode identity; a
 concurrent replacement is an explicit conflict, never silent retry. Final authority is the actual
 post-terminality sealed tree, not a tool's claim of atomicity against same-owner background code.
-Read/search use the pinned view. Active PlanRef is read-mounted from a pinned revision; do not pretend a leaf read-only bind alone
+Read/search select the active working view or an independent immutable pin as specified in §4.2. Active PlanRef is read-mounted from a pinned revision; do not pretend a leaf read-only bind alone
 prevents ancestor substitution inside a private tree. Protected path/identity changes or aliases in
 the candidate are rejected at seal/import. Overwrite/unlink/rename/parent substitution cannot alter
 canonical PlanRef or be imported; verifier/eval authority uses the separately pinned snapshot. Planner revisions get one distinct narrow candidate capability.
@@ -447,12 +521,115 @@ compatibility BLOCKED disposition, not a host Git exception. Existing workspace 
 re-running clone/remotes/hooks. Corrupt legacy bindings block; old run-ID reservations remain.
 
 Reader grants stay valid against their pinned revision despite later generations; they cannot
-write/publish or open a PROJECT view. Read-only verification may write only its private scratch.
+write/publish or open a writable PROJECT view. Read-only verification may write only its private scratch.
 Write grants require current generation AND current active actor. Handoff invalidates parent's
 mutating grant server-side after drain/publication, not merely a thread-local flag; never reactivate
 the old token on return, even if the tree did not change. Recheck grants at launch after queueing; already queued
 requests cannot run late. Child return settles committed/unknown state before fresh parent view;
 use SessionState internal execution binding, not captured legacy workspace paths as authorization.
+
+### 4.2. Concrete IO/tool and lifecycle joins (E243)
+
+Use ONE WorkspaceAuthority for registration/generation/admission/materialization/rooted IO. Keep
+CT101/102/103 as separate obligations and kill producers, not separate services. Protected metadata
+can reuse the existing private JSON/flock/fsync patterns. Do NOT use
+`workflow_artifacts._private_artifact_directory` on project/cell-owned directories: it creates/chmods
+parents and requires the service UID. Likewise `_replace_private_bytes` installs0600 service-owned
+files; project writes must preserve appropriate cell access and safe existing modes, not make later
+PTY reads fail. Use a small descriptor-rooted project IO implementation with pinned root identity,
+no-follow component traversal, bounded regular single-link targets, fsync and explicit conflict/
+durability-unknown results; no `resolve()` containment check followed by a path-based privileged write.
+
+**View selection is internal, not a model field:** active writer file reads/search/edit use its SAME
+OPEN private source tree as PTY, including prior tool/shell edits. An independent reader uses the
+exact immutable revision retained by its READ pin, including after a newer writer publishes. Never
+route all reads to the base revision, change a pin in place, or rebuild indexes on canonical paths.
+A pin may support read-only cell execution on its retained source with private scratch; it cannot
+open a writable PROJECT view, mutate source, publish or inherit writer authority. Formal verification
+still uses its actual admitted PlanRef and immutable input, not an ordinary mutable chat view.
+
+Map public relative/absolute file paths lexically against the controller's logical workspace root,
+then send only validated relative paths. Do not resolve/stat canonical source in the controller to
+choose a private-view target. Return logical paths and preserve existing ToolResult/path framing;
+filesystem authorization and alias handling remain in the supervisor or isolated read cell.
+
+**Preserve existing ACI rather than expanding19 operations:**
+
+- `write_file.build_write_file_tool` and `edit_file.build_edit_file_tool` keep public schemas and
+  `_find_fuzzy`/first-match behavior in the controller. Replace source access only: read a bounded
+  rooted snapshot/hash, compute existing replacement, write via service with expected SHA. Keep
+  `check_mutation_allowed`/Transaction/record_mutation observations on logical relative paths;
+  blackboard-absent permission is never workspace authority. Inject actual managed-view/supervised
+  metadata for mutation_guard's version stamps: its current `_base_commit` executes host Git and
+  `_file_hash` reads canonical paths, so retaining those calls unchanged is NOT safe reuse. Likewise
+  discovery attribution is recorded back through controller `add_search_result_paths`, not lost in
+  a helper with no SessionState. No managed metadata → explicit error, never a host fallback.
+  `write_file.build_scoped_write_file_tool`
+  keeps its exact candidate scope and goes through the same authority, not its old host-private writer.
+- `read_file.build_read_file_tool` keeps artifact_id resolution in the controller (controller-owned
+  artifacts are not cell input). Project text reads use supervisor rooted IO and existing line/frame/
+  telemetry formatting; no Path.read_text canonical fallback. A rooted read captures at most the
+  approved per-file input limit (default64MiB), computes SHA over those complete captured bytes and
+  returns only the requested window (max1MiB), with eof relative to complete length. Reject oversized
+  input, binary/non-UTF-8 or a split codepoint explicitly; no partial hash. Multiple windows must have
+  identical whole-file SHA or fail STALE_REVISION, not combine different versions. Ordinary RPC edits/
+  writes retain their1MiB content limit and fail explicitly above it; large approved files remain
+  readable input, not permission for partial tool replacement. A concurrent shell can still change
+  bytes: this is bounded read data/ordinary conflict detection, not formal immutable evidence or
+  kernel CAS. Test exact window/hash/EOF/UTF-8/limit behavior, including a file over1MiB.
+- **NEW `execution/project_tools.py`** is a thin frozen cell-local CLI, NOT a search engine/service.
+  Reuse `fs_search.build_fs_search_tool(db_path, workspace_root)` (including outline/listing),
+  `fs_reach.build_fs_reach_tool` and existing PDF readers inside the cell through the existing exec
+  operation. Add an internal optional scratch-db argument to fs_reach's builder; fs_search already
+  accepts one. Source is `/workspace`, index DBs are per-view `/scratch`, never controller .fa/session
+  DBs or readonly dependency cache. No shared mutable index across pins/views. Existing search/reach
+  algorithms/schemas remain; no privileged search RPC or supervisor state bind to controller.
+  Pass only validated tool name+params as encoded/quoted data to the installed isolated interpreter;
+  never capability/host path/namespace/profile from tool text. Cell result is untrusted tool data.
+  Serialize the existing ToolResult envelope `{summary,result,error,artifacts}` with artifacts empty;
+  bound its UTF-8 JSON below the64KiB worker tail, validate result/error exclusivity/types on return.
+  Truncated output, malformed JSON, nonzero/unknown execution, missing helper/parser or unavailable
+  backend yields the existing explicit error envelope, never a partial success or host retry. Keep
+  large-result/artifact projection in existing controller facades; do not transport arbitrary raw
+  PDF/full-file output as an unbounded shell tail. Record read-set/file-read observations back in
+  controller session context, not in a fictitious cell session DB. This helper does not run providers.
+
+**SessionManager ordering/recovery:** implement materialization/rooted authority before its managed
+provisioner. Inject that provisioner BEFORE `_new_session` calls `_provision_workspace`, not only via
+workspace_preparer. Its result must distinguish an uncommitted owned scratch from a registered/
+committed workspace and verify workspace/revision; existence-before-call is not cleanup ownership.
+Close the new-session namespace cycle explicitly: `_new_session` currently provisions before DB
+creation, while CLI calls begin_run only AFTER create_or_attach_session. Before managed registration/
+provisioning, create the existing session DB under the still-`provisioning` manifest, build a PRIVATE
+provisional SessionContext, and use existing `begin_run(..., None)` to reserve one real provisioning
+RunContext (DB binding + run directory). Pass that NamespaceRef to the provisioner. No invented run
+string, second run allocator/DB, or public attach to an inactive session. Current begin_run already
+opens the session DB and checks context/run ownership without requiring an active-manifest attach;
+keep public `_read_manifest` strict. Normal CLI begin_run afterward still reserves its separately
+requested run ID, never reuses the provisioning claim. Resume/registered-reference paths that do no
+provisioning do not allocate this internal run. Failure retains its run-directory reservation even
+if uncommitted session metadata is cleaned; original run IDs never become reusable. Test the actual
+CLI/entrypoint lifecycle, not an injected pre-made namespace. This is internal execution identity,
+not another session manager or workflow subagent.
+A commit followed by session DB/manifest/readiness failure keeps registered workspace bytes intact,
+leaves no active session, and reports SessionManagerError. Replay/reconcile the original operation
+rather than provision twice. New-session explicit registered reuse bypasses clone/readiness/remotes;
+resume preserves original session DB. Update `_check_reverse_workspace_ownership` consumers in BOTH
+`_new_session` and `resolve_workflow_workspace`: validate all relevant manifests and supervisor
+registration, permit a reference, retain DB/run ownership/corruption rejection. Do not delete the guard
+wholesale. Initial new workspace commit/publication is the SLICE3 join; do not claim that path ready
+from SLICE2 helper tests or keep host Git as a fallback until then. `_prepare_managed_workspace` must
+propagate not-READY after managed readiness runs, not log+continue. At SLICE4 atomic activation,
+manager no longer creates/chmods canonical project roots; deployment/supervisor own those roots.
+
+**Binary construction/release tests:** two OS-process writers → one durable grant; revoked queued
+launch/write → zero effects; admitted handler → stop waits until it drains; two same-episode commands
+→ one cell/two command records/state retained; restart with creation-DONE/live shell → stop before
+new writer; file write→PTY read and PTY write→file read/search agree; independent pin sees old bytes/
+symbols; dirty/index/sentinels unchanged canonically; corrupt manifests and post-commit DB failure
+→ no active session/no canonical deletion. Add syscall/rename/fsync fault cases to owning unit banks;
+run actual registry/factory + real Docker versions and full declared-path kills at final SLICE6.
+Simulated callbacks/socketpairs cannot close these integrated obligations.
 
 ## 5. Seal and publication — three different irreversible operations
 

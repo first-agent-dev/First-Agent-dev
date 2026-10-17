@@ -323,3 +323,98 @@ def test_callback_mutation_cannot_retarget_original_key_or_replay_proof(tmp_path
     assert case.service._dispatch(peer, request()) == response
     assert case.auth_calls == case.handler_calls == 1
     assert case.journal.lookup("op-" + "a" * 32, NS) is None
+
+
+@pytest.mark.parametrize("exec_request", [True, False])
+def test_command_budget_extends_reply_deadline_but_control_does_not(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, exec_request: bool
+) -> None:
+    """C0/C3 socketpair + journal; explicit fake authority/backend, no Docker proof."""
+    from tests.test_execution_protocol import request as wire_request
+
+    now = [0.0]
+    monkeypatch.setattr("fa.execution.protocol.time.monotonic", lambda: now[0])
+
+    class DelayedFixture(Fixture):
+        @override
+        def authorize(self, peer: PeerIdentity, req: dict[str, Any]) -> ProtectedPlanContext | None:
+            super().authorize(peer, req)
+            return ProtectedPlanContext(tmp_path, None, False) if req["op"] == "exec" else None
+
+        @override
+        def handle(self, req: dict[str, Any]) -> GrantReply | dict[str, Any]:
+            if req["op"] != "exec":
+                value = super().handle(req)
+                now[0] = 2.1
+                return value
+            self.handler_calls += 1
+            record = self.journal.lookup("op-" + req["request_id"], NS)
+            assert record is not None and record["state"] == "EXECUTING"
+            now[0] = 2.1  # Beyond 2s RPC, within 2s RPC + approved 1s exec budget.
+            raise RuntimeError("literal fixture backend uncertainty")
+
+    case = DelayedFixture(tmp_path)
+    req = request()
+    if exec_request:
+        req = wire_request(Operation.EXEC)
+        req["capability"] = CAP
+        req["payload"].update(profile_id="interactive", timeout_ms=1000, session_id="main")
+    controller, accepted = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
+    response = None
+    with ThreadPoolExecutor(max_workers=1) as workers:
+        future = workers.submit(case.service.serve_connection, accepted)
+        with controller:
+            controller.settimeout(3)
+            write_frame(controller, encode_json(req))
+            try:
+                response = read_frame(controller)
+            except (OSError, ValueError):
+                pass
+        future.result(timeout=4)
+    record = case.journal.lookup("op-" + RID, NS)
+    assert case.handler_calls == 1 and record is not None
+    if exec_request:
+        assert response is not None  # Defect: the old short deadline discards this reply.
+        reply = decode_reply(response, operation=Operation.EXEC, request_id=RID)
+        assert reply["error"]["code"] == "EXECUTION_UNKNOWN"
+        assert reply["error"]["operation_id"] == "op-" + RID
+        assert record["state"] == "UNKNOWN"
+    else:
+        assert response is None and record["state"] == "DONE"
+
+
+@pytest.mark.parametrize("invalid", ["unknown-profile", "excessive-budget", "wrong-mode"])
+def test_unapproved_exec_cannot_extend_the_input_frame_deadline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, invalid: str
+) -> None:
+    from tests.test_execution_protocol import request as wire_request
+
+    borrowed: list[int] = []
+    original = DeadlineConnection.add_execution_budget
+
+    def observe(connection: DeadlineConnection, timeout_ms: int) -> None:
+        borrowed.append(timeout_ms)
+        original(connection, timeout_ms)
+
+    monkeypatch.setattr(DeadlineConnection, "add_execution_budget", observe)
+    req = wire_request(Operation.EXEC)
+    req["capability"] = CAP
+    req["payload"].update(profile_id="interactive", timeout_ms=1000, session_id="main")
+    if invalid == "unknown-profile":
+        req["payload"]["profile_id"] = "unapproved"
+    elif invalid == "excessive-budget":
+        req["payload"]["timeout_ms"] = 1001
+    else:
+        req["payload"]["session_id"] = None
+    case = Fixture(tmp_path)
+    controller, accepted = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
+    with ThreadPoolExecutor(max_workers=1) as workers:
+        future = workers.submit(case.service.serve_connection, accepted)
+        with controller:
+            controller.settimeout(3)
+            write_frame(controller, encode_json(req))
+            reply = decode_reply(read_frame(controller), operation=Operation.EXEC, request_id=RID)
+        future.result(timeout=4)
+    assert reply["error"]["code"] == ("UNAPPROVED_PROFILE" if invalid == "unknown-profile" else "INPUT_POLICY")
+    assert borrowed == [] and case.auth_calls == case.handler_calls == 0
+    assert case.journal.lookup("op-" + RID, NS) is None

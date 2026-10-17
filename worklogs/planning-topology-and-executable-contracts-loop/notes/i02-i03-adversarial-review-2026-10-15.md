@@ -1,8 +1,9 @@
 # Adversarial review: retained I02, then execution foundation I03
 
-**Current disposition:** E230/E231 below supersede historical open-policy statements. Planning
-finalized against I02 source1132eee/runtimea32a72f; operator Q59/Q60/Q63/Q74 reconciled, no runtime
-or deployment performed. Older baseline/line references remain historical, not current source claims.
+**Current disposition:** E243 below reviews remaining SLICE1/next SLICE2 against E242/e736082,
+records F20–F27, repairs the RPC/command deadline defect and directly rewrites the executable plan.
+E230/E231 policy decisions and Q75/Q76 remain; all35STEPS/four final duties are still incomplete.
+No deployed/host acceptance or production activation. Older baselines/line references are historical.
 
 Date: 2026-10-15. Review baseline: E201 / `f0cef5b02120f8c9a44e7bc9ef616e11d2420559`;
 product source is unchanged from `d9109f4`. Document line references below identify **that immutable
@@ -975,3 +976,115 @@ Verification archive SHA256 395ce9a24252c6cb5cc55364aef4d8951103977f6c95bff845d8
 Primary attach archive SHA256 deba5fabcdebdac0a352f997ec3e8b21e9bce72faddea06ed2c9491d668a83b7.
 No service main/cutover/host dispatch or acceptance tick. Next work is actual registry/backend/
 terminal lifecycle and authority, not another evidence-only substitution or early-host question.
+
+## E243 — adversarial mid-slice review: remaining SLICE1 and next SLICE2 (2026-10-17)
+
+**Scope/authority:** review baseline `e73608247575251bae674db1dfee14a265cec4da` (E242).
+The evidence anchors below are **file:line at that commit**, so later rewrites do not change their
+meaning. Read code plus dispatcher/journal/Docker/client callers, SessionManager/CLI provisioning,
+file-tool builders/transaction/blackboard and search-index/PDF dependents. No broad product rewrite,
+new approval gate or actual deployment. Recommendation is not completion. Required host acceptance
+remains accumulated for final SLICE6; Q59/Q75/Q76 and all35unchecked STEPS/four duties remain.
+
+**Trajectory verdict:** SLICE2 advances the real goal: authority and coherent private IO are the
+missing consumers of SLICE1's transport, not optional scope. Keep six slices/17FUNCTIONAL; fold
+CT101/102/103 implementation into ONE WorkspaceAuthority, not three subsystems. Keep operation
+journal/reply cache/PTY/search/session/run facades. Reject another journal, persistent episode DB,
+search service, lease platform or backend matrix. The new thin lifecycle owner and frozen cell
+project-tool entry are necessary glue over existing capabilities, not replacements for them.
+
+### Findings — confirmed defects or confirmed contract gaps
+
+| ID / severity / disposition | Evidence and failure | Direct correction / binary exit |
+| --- | --- | --- |
+| F20 / HIGH / **runtime transport repair implemented; full backend deadline join still open** | `client.py:115–120`, `supervisor.py:411–421`, `protocol.py:369–389`: the same short fixed RPC deadline spans command execution/reply. Valid command time can exceed it; server drops a reply even after handler/uncertain journal transition. Corrected regression reaches handler exactly once and observes missing reply; client independently raises uncertainty. | Add validated exec time ONCE to original absolute transport deadline, no reset/revival/control loan. New tests require usable post-control-budget command reply, bounded controls and profile rejection. §2.2 separately requires actual backend queue/admission/execution deadline propagation; transport time is not timeout/kill evidence. |
+| F21 / HIGH / **confirmed missing target join, not a demonstrated deployed exploit** | `supervisor.py:260–276,305–310,380–384`: initial authority returns only PlanRef context; `handle(request)` receives neither peer nor deadline after reserve/begin. `docker.py:449–468` validates binding before later create/start. No owner yet linearizes revoke/STOPPING versus launch/file admission. | §2.2 names explicit private peer/deadline dispatch and `WorkspaceAuthority.admit`/close/drain ownership. Recheck actual grant/source at effect boundary. Race oracles: revoke wins→zero sends/writes; admission wins→stop waits for tracked work then actual terminality. No global journal lock across RUN/drain. |
+| F22 / HIGH / **confirmed remaining lifecycle/identity contract gap** | `docker.py:396–401,439–505` intentionally supports new-cell creation/original creation attach, not per-command dispatch. `journal.py:280–287,324–355,409–425` already provides one `begin` claim/CID association but recovery marks only RESERVED/EXECUTING uncertain. A creation-command DONE is compatible with a live interactive shell; journal DONE is not container death. | §2.2 reuses begin/record_container per new command, keeps original creation labels/CID/attach, forbids repeat create/start/RUN. Startup scans/drains all owned cells, including creation-DONE, without reconstructing Q75 cache. Two stateful commands→one cell/two records; crash with DONE+live shell→no writer reacquire until drain. No redundant RUN claim API/log. |
+| F23 / HIGH / **confirmed inconsistent/incomplete IO composition contract** | Spec §4 `:410–420` requires same tool/PTY view but says all read/search use a pin; increment SLICE2 STEP4 `:188` names no viable search route. Closed19 ops (`types.py:38–57`, `protocol.py:93+`) have no listing/search RPC. Actual `read_file.py:426–484` reads host paths and special-cases controller artifacts; PDF reader `:22–109` loads native parsers. `fs_search.py:961–979` accepts an explicit DB; `fs_reach.py:89–94` hardcodes workspace .fa; mutation_guard `:51–76` invokes host Git/canonical hash while discovery attribution `fs_search.py:561–583` needs controller SessionState. | §§2.2/4.2 distinguish active-writer read-your-writes from independent immutable reader pins, retaining public schemas. Reuse search/reach/PDF in a thin fixed cell helper over exec, indexes in private scratch; text and expected-SHA writes use rooted IO, artifact_id stays controller-side. Exact bounded whole-file SHA/window policy closes the >1MiB ambiguity. Real tool+PTY/new-symbol and independent old-pin oracles; truncation/helper failure never partial success/canonical fallback. |
+| F24 / HIGH / **confirmed integration/ordering gap, not a new current-manager ownership bug** | Increment SLICE2 STEP2 `:186` requires provisioner before STEP3 materialization. Manager `:269,293–296` checks reverse ownership/provisions before workspace_preparer, `:280,316–329` derives cleanup permission from prior path absence. `_check_reverse_workspace_ownership` also called by `resolve_workflow_workspace:403`. CLI `_prepare_managed_workspace:150–159` logs not-READY and returns. Existing spec §4.1 already warns about these seams, but STEP ordering/DoD does not enforce them. | Reorder materialization before managed provisioner; update both reverse-reference call sites, preserve manifest/session DB/run validators and old claims. Provision result must identify committed authority ownership; post-commit DB/readiness/manifest failure cannot rmtree registered bytes. Publication-dependent new-workspace leg joins SLICE3, no temporary host clone. Test new/resume/reuse, corrupt manifests, busy mutation, post-commit failure/no deletion. |
+| F25 / MEDIUM / **confirmed prescriptive-step inconsistency/stale DoD** | SLICE1 STEP3 `:155` tells implementer to flip canonical mounts read-only before SLICE2 file/provisioning consumers; STEP2 `:154` says generic service/client/worker despite implemented E236–242 components. Spec §2.1 `:248–253` already forbids a real issuer until actual SLICE2 authority, while final host schedule `increment:105–114` defers acceptance. | Rewrite all remaining SLICE1/2 STEPS against existing code. Packaging first, actual authority→publication→atomic SLICE4 caller/mount cutover; no temporary main or early-host request. Exit criteria specify bytes/counts/errors/ordering and whole-bank assertion kills, not merely tests-collect/no exception. DEPS remains construction ordering, not fabricated completion. |
+| F26 / MEDIUM / **confirmed reuse hazard; no existing workspace implementation to blame** | `workflow_artifacts.py:566–585` creates parents/requires service UID/chmods0700; `:616–649` writes0600 service-owned replacement. These are correct for private artifacts, not drop-in project IO for another cell UID. `tools/base.py:7–17` is resolve-then-use containment, not a privileged descriptor fence. `plan_promotion.py:102–111` explicitly distinguishes canonical parents from private chmod helpers. | §4.2 reuses private IO only for protected metadata and specifies small descriptor-rooted project IO preserving safe cell access/modes. Test no canonical chmod/creation, PTY readability after tool replacement, symlink/ancestor/inode substitution, expected-SHA conflict and fsync uncertainty; no generic transaction framework. |
+| F27 / HIGH / **confirmed missing provisioning namespace order** | `manager.py:293–296` provisions before creating session DB; `cli.py:314–318` allocates the first RunContext only after create_or_attach_session returns. All non-health wire operations need NamespaceRef (`protocol.py:299–302`), and managed provisioning must not invent a run ID. Existing `begin_run:441–477` already reserves a real binding/run directory using a SessionContext plus existing DB without public active-manifest attach. | §4.2 moves DB initialization before managed provisioning under the existing provisioning manifest and reuses begin_run for one private provisioning RunContext; normal requested CLI run stays distinct. No relaxed public manifest reader, second allocator or new DB. Actual new-session/entrypoint tests require DB binding before first supervisor request and retain failed-run reservation. |
+
+All execution-module anchors in the table are under `src/fa/execution/`; tool anchors under
+`src/fa/inner_loop/tools/`; manager under `src/fa/session/manager.py`; CLI under `src/fa/cli.py`;
+workflow_artifacts/plan_promotion under `src/fa/inner_loop/`. Spec means `notes/i03-execution-workspace-spec-2026-10-15.md`; increment means
+`increments/increment-03-execution-workspace-foundation.md`, both under this project worklog.
+Every cited line is at e736082, not a guessed current line.
+These are source-grounded contract gaps and an actual local defect, not claims that missing owners
+already ran insecurely in a deployed system.
+
+### Sound parts and hypotheses not promoted to bugs
+
+- Installed noneditable controller/pre-site gate already exercises real CLI import closure; keep it.
+  Closed wire validation, authenticate-before-read, exact reserved input, secret-free journal and
+  Q75 memory replay are useful implemented foundations, not evidence to rewrite them again.
+- Existing `begin()` supplies the durable reused-command claim. Initial suspicion that every RUN
+  needed another claim/journal is rejected. `record_container` is the existing CID seam.
+- No demonstrated `WorkerClient` deadline/reader race was found. A minimum pending read deadline
+  and stream poisoning are conservative fail-closed behavior; do not invent a fix without a failing
+  trajectory. Actual Docker/cgroup/root-alias facts remain unproved until required host checks.
+- Existing mutation_guard/Transaction are observations/conflict coordination, not security authority
+  (`mutation_guard.py:141–148` deliberately permits absent/mismatched blackboard). Preserve them;
+  do not mistake their thread locks or pre-write checks for workspace admission.
+- Earlier review commentary named nonexistent `inner_loop/fs_safety.py`; filename discovery disproved
+  that premise. Real precedents are workflow_artifacts, plan_admission and plan_promotion. No new
+  code/import uses that nonexistent path. `session/workspace.py`, not workspace_provisioning.py,
+  is the current host Git implementation; it is not a target managed fallback.
+
+### Rewrites and remaining construction sequence
+
+Directly updated increment SLICE1 STEP1–4 and SLICE2 STEP1–5, CT103, source baseline and test inventory;
+added normative spec §§2.2/4.2 and corrected blanket pin/non-exec inspect language. No new public tool,
+wire operation, workflow mode, retention platform or approval prerequisite. Preserve17FUNCTIONAL and every constraint;
+fold shared mechanism/owners rather than delete their distinct guarantees.
+
+Next implementation order is: **CellBackend over existing transport/journal → real WorkspaceAuthority
+registration/admission + materialization/rooted IO → managed SessionManager/tool joins → SLICE3
+publication + full factory → SLICE4 atomic caller/mount cutover**. Backend and authority integration
+is a join, not a reason to stub either or wait for early deployment. The private cell project-tools
+entry reuses existing algorithms; it is a planned interface, not code falsely claimed delivered.
+Per-slice component checks may execute now; actual declared-path/kernel proof accumulates to SLICE6.
+No STEP, CT, SLICE1 or SLICE2 acceptance tick follows from this review/transport repair.
+
+### E243 executed repair evidence (component proof, not whole-slice acceptance)
+
+F20 repair changes only protocol DeadlineConnection plus its client/server call sites; no public
+wire/profile/authority/cell/wrapper change. Added14 tests, retained existing assertions. New helper
+budgets are validated/once-only; original absolute clock retained, expired input not revived, no
+control or unapproved-profile budget loan. Client connect/request send stays on the short budget; only reply waiting borrows command time.
+Client/server after-control-budget regressions use a
+logical elapsed clock with actual Unix sockets and explicit fixtures, not fake Docker/kernel facts.
+Initial wrong-CAP fixture and nonexistent new assertion field were rejected/corrected, not kill proof.
+Corrected before-code server failure reaches exactly one handler then fails on missing response.
+
+Owning14modules **481PASS34.21s / restored481PASS34.01s**; nine full481-case producer mutations
+fail only assertion oracles: client/server budget calls, client input-phase budget, once-only guard, original absolute clock,
+expired-input guard, positive budget validator, server profile limit and mode. Counts **1/1/1/1/2/1/3/1/1**;
+all phases clean, no skips/collection errors/warnings, exact198 source/test/build/lock hashes restored.
+Use raw archive timings/reports as authority; wall-clock runner overhead is separately recorded.
+Ruff/format24PASS; Mypy24target/182sourcePASS; configured Pyrefly0errors with existing141suppressed/
+50warnings (also clean-PYTHONPATH check). Broader26modules **908PASS48.03s**, clean reports/IDs/phases.
+No configured full-repo just-check, readiness/baseline or actual host result is claimed. Same supported
+Python3.13.16/frozen dev tools and cached ShellCheck0.11.0, no dependency/config/bootstrap change.
+
+Passing v1 proof is retained as deadline-review-v1.json.gz and its static/broader archive is embedded
+in the final verification archive: final review tightened client input/reply phase separation, and
+source changes required fresh proof. An edit-driver SyntaxError made no edits; its old-source smoke
+check is not new proof. No passing or failed run was relabelled.
+
+Raw commands, collected IDs/phases, literal mutations, tested sources, runner, rejected-development
+summary and corrected before-code failure: [deadline repair archive](evidence/i03-e243/deadline-review.json.gz).
+Raw static/broader reports and closure audit: [verification archive](evidence/i03-e243/verification.json.gz).
+
+**E243 final closure audit:**0FAIL6WARN;6slices17FUNCTIONAL35unchecked; kill grammar clean;
+309Markdown files/link check PASS; diff --check PASS; all198 tested hashes exact. Prior test
+assertions and append-only ledger prefix retained; only12 declared tracked files changed, all other
+source/session/dependency/profile/type/plan/worker/Docker/entrypoint/wrapper groups preserved from
+`e736082`. No actual backend/authority/host acceptance added by this audit.
+Final deadline-review.json.gz689985bytes SHA256
+728a228c8f9e1ecf10400bb8a90f2a996ed089556b5f9b83c670bc6ea702c587;
+verification.json.gz207295bytes SHA256
+59cfc0cba71d2457cd1d5d275f63f784eda8b16de2a15339ec462fdc7d33262e.
+Superseded v1 proof629618bytes SHA256
+5b4d63482b8b75450b665c4a6bdf3108d25b9b038f5714899df2a037089eb3bc retained unchanged.

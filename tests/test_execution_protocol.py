@@ -15,6 +15,7 @@ from fa.execution.protocol import (
     MAX_FRAME_BYTES,
     MAX_TAIL_BYTES,
     MAX_TEXT_BYTES,
+    DeadlineConnection,
     InvalidRequestError,
     decode_reply,
     decode_request,
@@ -439,3 +440,44 @@ def test_formal_admission_needs_plan_and_candidate_must_match(purpose: str) -> N
             req["payload"]["plan_ref"] = {**plan, field: value}
             with pytest.raises(ExecutionContractError):
                 decode_request(encode_json(req))
+
+
+def test_execution_budget_is_added_once_to_original_deadline_not_a_new_clock(monkeypatch: pytest.MonkeyPatch) -> None:
+    now = [100.0]
+    monkeypatch.setattr("fa.execution.protocol.time.monotonic", lambda: now[0])
+    left, right = socket.socketpair()
+    with left, right:
+        framed = DeadlineConnection(left, timeout_ms=1000)
+        now[0] = 100.25
+        framed.add_execution_budget(2000)
+        assert framed.remaining() == pytest.approx(2.75)
+        with pytest.raises(ExecutionContractError):
+            framed.add_execution_budget(2000)
+        assert framed.remaining() == pytest.approx(2.75)
+        now[0] = 103.0
+        with pytest.raises(TimeoutError):
+            framed.sendall(b"expired")
+
+
+@pytest.mark.parametrize("invalid", [True, 0, -1])
+def test_invalid_execution_budget_cannot_change_deadline(monkeypatch: pytest.MonkeyPatch, invalid: int) -> None:
+    monkeypatch.setattr("fa.execution.protocol.time.monotonic", lambda: 0.0)
+    left, right = socket.socketpair()
+    with left, right:
+        framed = DeadlineConnection(left, timeout_ms=1000)
+        with pytest.raises(ExecutionContractError):
+            framed.add_execution_budget(invalid)
+        assert framed.remaining() == 1.0
+
+
+def test_expired_request_frame_cannot_borrow_command_time(monkeypatch: pytest.MonkeyPatch) -> None:
+    now = [0.0]
+    monkeypatch.setattr("fa.execution.protocol.time.monotonic", lambda: now[0])
+    left, right = socket.socketpair()
+    with left, right:
+        framed = DeadlineConnection(left, timeout_ms=1000)
+        now[0] = 1.1
+        with pytest.raises(TimeoutError):
+            framed.add_execution_budget(2000)
+        with pytest.raises(TimeoutError):
+            framed.remaining()

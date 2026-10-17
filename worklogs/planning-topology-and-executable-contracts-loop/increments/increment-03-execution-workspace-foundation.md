@@ -8,7 +8,7 @@ shipped: —
 
 # INCREMENT I03: Execution/workspace foundation and integrated acceptance
 
-**Planning state:** finalized after E230 adversarial review and E231 operator answers/source audit.
+**Planning state:** E230/E231 decisions retained; E243 mid-slice review rewrites remaining SLICE1/2 execution details.
 Q59 advisory/manual + EXISTING experimental suggestion injection, no required mode; Q60 delegated
 source-grounded reuse design in spec §7; Q63 four states/optional commentary/no reason enum; Q74
 per-stage/episode ordinary-edit checkpoints. E233 found F17/Q75; the operator explicitly selected
@@ -69,6 +69,11 @@ stream uncertainty without reconnect/resend. Actual local PTY/worker transport t
 Docker/kernel/C1 acceptance. Protected episode registry, durable per-command backend/lifecycle,
 actual authority and service/controller integration still required; all35STEPS remain unchecked.
 
+E243 closes the short-control-RPC/long-command reply defect and makes remaining SLICE1/2 composition
+executable in spec §§2.2/4.2: one authority/admission gate, existing journal per command, live-only
+episode ownership, same-view read/search and safe SessionManager provisioning/cleanup. Component
+repair is not complete backend/authority delivery; all35STEPS/four final duties remain unfinished.
+
 ## Grounding, sequence and scope discipline
 
 - Current `run_bash` and `_build_pty_pool` deliberately fall back to host subprocess; SubagentRunner,
@@ -98,9 +103,9 @@ mechanics and final host acceptance are complete. It does not deliver per-slice 
 STEP/CT tracking or L2 VERIFIED. Those remain the named deferred successor; do not advertise that
 broader roadmap loop as live-tested. I01 remains active pending its own disposition, not auto-closed.
 
-**Source truth:** use `1132eee`/I02 E229, not the old d910 line inventory. The original 17 FUNCTIONAL
-IDs remain; new private interfaces are obligations to implement/test, not existing-code assertions.
-Spec §§2.1/4.1/5.1/6.1/7.1/9.1 are part of every affected STEP's contract, including error/restart
+**Source truth:** E243 reviews `e736082` (E242); `1132eee`/I02 E229 is historical retained I02 evidence,
+not the current execution implementation. The original 17 FUNCTIONAL IDs remain; new private interfaces are obligations to implement/test, not existing-code assertions.
+Spec §§2.1–2.2/4.1–4.2/5.1/6.1/7.1/9.1 are part of every affected STEP's contract, including error/restart
 paths. All runtime/host boxes remain unchecked. Do not run deployment during plan finalization.
 
 **Verification schedule:** design the per-slice unit/kernel oracles with each slice. Ordinary unit
@@ -150,10 +155,10 @@ uv run pytest tests/test_controller_entry.py tests/test_controller_installed.py 
 FA_REQUIRE_EXECUTION_HOST=1 uv run pytest tests/integration/test_execution_boundary.py -q -m execution_host
 uv run ruff check src/fa/controller_entry.py src/fa/execution tests/test_controller_entry.py tests/test_controller_installed.py tests/test_execution_supervisor.py tests/test_execution_protocol.py tests/test_execution_client.py tests/test_execution_cell_worker.py tests/test_execution_journal.py tests/test_execution_dispatch.py tests/test_execution_plans.py tests/test_execution_docker.py tests/test_execution_attach.py tests/integration/test_execution_boundary.py
 ```
-- [ ] STEP1: implement spec §2.1 closed operations/results (including all four BashExecutor methods), capability/volume-map/startup recovery contracts; define frozen types/protocol/profile validation and new actual controller entry module per spec §§1–3; test strict keys/types/limits and installed import closure, including editable-pth/CWD/PYTHONPATH poisons (exit: unit tests collect and pass; isolated module executes real CLI help, not a no-op)
-- [ ] STEP2: implement supervisor service/client/cell worker using existing PTY machinery, approved profile and operation reservation/inspect/cancel; remove no behavior from ordinary PTY contract (exit: unit no-replay/timeout/wire/auth tests pass)
-- [ ] STEP3: add service/config/install guidance, immutable image and wrapper/entrypoint changes; make canonical /sessions read-only in controller, keep supervisor StateDirectory unmounted, expose only private UDS, and freeze approved host↔controller↔cell path mappings; root-only fixture setup launches real isolated disposable cell, not a fake Docker response (exit: execution_host proof shows absent control mounts/secrets, denied profile/raw-path escalation and zero project commands when backend unavailable)
-- [ ] STEP4: record real profile/image/kernel/daemon/cgroup facts and source-restored full-path CT98–CT100 mutation outcomes/cost (exit: all required tests non-skipped; each named producer deletion breaks an executed oracle)
+- [ ] STEP1: finish spec §§2.1–2.2 closed contracts and trusted composition seams; retain implemented types/codec/client/installed-entry closure, do not rebuild them; distinguish control/command deadlines and exec versus non-exec uncertain replay (exit: complete owning bank passes, isolated installed module executes real CLI help under CWD/PYTHONPATH/editable-pth poison, locally invalid input sends no frame and command-over-control-budget reply is observed exactly once)
+- [ ] STEP2: implement NEW CellBackend in execution/backend.py over existing DockerCells/WorkerClient/OperationJournal, with per-view live episode ownership, per-command begin/record_container and actual inspect/cancel/drain/restart facts per §2.2; join the actual SLICE2 admission gate before service composition, without a temporary authority (exit: two commands preserve shell state in one cell with two durable records; duplicate/lost RUN never resends; cancel-before-send and completed-creation/live-cell restart tests pass; no success/terminal receipt derives only from worker output)
+- [ ] STEP3: prepare service/config/install/image and volume-map changes without activation; compose supervisor.py build_supervisor/main only with real WorkspaceAuthority and CellBackend, then SLICE3 publication handlers; apply controller read-only canonical mounts/private-UDS-only and entrypoint changes atomically with SLICE4 caller cutover, never before provisioner/file tools can operate (exit: no permissive/failing-main stub or alternate host runner; approved disposable-host test later boots that real factory and proves absent control mounts/secrets, denied profile/raw-path escalation and zero unavailable-backend project commands)
+- [ ] STEP4: accumulate required real profile/image/kernel/daemon/cgroup facts and source-restored full-path CT98–CT100 mutation outcomes/cost at final SLICE6, with actual SLICE2 authority and SLICE4 callers, not injected callbacks (exit: every declared path runs non-skipped; each named producer deletion causes assertion failure in the whole owning bank; terminality uncertainty leaves ownership quarantined, source restored and no live owned cell)
 
 ## SLICE2: Workspace identity, exclusive writer and coherent private IO
 STEPS: prescriptive
@@ -171,22 +176,23 @@ CONTRACTS:
     kill: remove-call src/fa/execution/workspace.py::WorkspaceAuthority.create_view -> _materialize_input
   CT103 [FUNCTIONAL]: actual write/edit tools use supervisor rooted IO against the same authorized
     open view as shell; deny protected/PlanRef/control destinations and alias escapes. Tool+PTY
-    edits are mutually visible; no separate stale copy or direct canonical write. Spec §4.
+    edits plus read/search are mutually visible for the active writer; independent readers retain
+    their immutable pins. No stale canonical/index fallback or direct canonical write. Spec §§4–4.2.
     kill: remove-call src/fa/execution/workspace.py::WorkspaceAuthority.write_file -> _write_rooted
   CT103a [CONSTRAINT]: SessionManager permits explicit new-session reference to an existing
     registered workspace without transferring session DB/history ownership; one writer remains.
     Validate legacy manifests/run bindings; no blanket guard removal or second session manager.
     Future children inherit parent ownership/view/cancel scope; workflow subagents stay absent.
-TESTS: tests/test_managed_workspace.py, tests/test_session_lifecycle.py, tests/integration/test_workspace_views.py   (NEW)
+TESTS: tests/test_managed_workspace.py, tests/test_session_lifecycle.py, tests/test_execution_project_tools.py, tests/integration/test_workspace_views.py   (NEW interfaces; existing session lifecycle tests retained)
 ```verify
-uv run pytest tests/test_managed_workspace.py tests/test_session_lifecycle.py -q
+uv run pytest tests/test_managed_workspace.py tests/test_session_lifecycle.py tests/test_execution_project_tools.py -q
 FA_REQUIRE_EXECUTION_HOST=1 uv run pytest tests/integration/test_workspace_views.py -q -m execution_host
 ```
-- [ ] STEP1: implement protected registration/current metadata, flock/generation/pin/view authority and strict rooted IO; reject alias/ancestor/descendant re-registration and root rebind (exit: cross-process writer contention, stale generation and reader-pin unit tests pass)
-- [ ] STEP2: update SessionManager ownership/provisioning integration per spec §4; replace old second-owner rejection test with explicit registered reuse plus busy-mutation/corrupt-manifest negatives; preserve old run-ID claims (exit: actual session lifecycle suite and new/resume/new-session-reuse matrix pass)
-- [ ] STEP3: materialize dirty input and explicit copy policy; preserve canonical index, safely handle/exclude links/credentials/caches, document private-Git history limitation (exit: dirty/staged/untracked/deletion and external-link/hard-link/special/limit cases pass without silent omissions)
-- [ ] STEP4: wire actual read/search/write/edit handlers/transaction observations to ViewRef and service IO; exercise shared PTY/file visibility and protected target/ancestor rename/import denial (exit: real execution_host view tests pass; parent pinned reader sees old complete revision)
-- [ ] STEP5: record CT101–CT103 full-path producer kills, same-path different-label contention and bounded cleanup/source restoration (exit: all unique named oracles fail when their producer is removed; no leftover live cell)
+- [ ] STEP1: implement one WorkspaceAuthority for protected registration/current/generation/pin metadata and startup ownership; add admit/close-admission/drain semantics per §§2.2/4.2, not a second lock service; reject root aliases/overlaps/rebind and quiesce before R0 (exit: two OS processes race for one workspace and exactly one obtains a durably advanced writer; denied/stale/closed admissions produce no launch/write; independent pins retain original bytes across generation changes)
+- [ ] STEP2: implement create_view/_materialize_input and rooted read/write/edit on admitted descriptors per §§4–4.2 before provisioning consumes them; keep private-metadata chmod helpers off project parents; preserve dirty/staged/untracked/deleted bytes and canonical index, enforce copy/link/secret/size policy and private-Git limitations (exit: exact tree/index/sentinel oracles pass; link/special/limit/root-swap failures leave no returned grant or partial revision; expected-SHA conflict and post-admission rename do not silently succeed or touch canonical/control paths)
+- [ ] STEP3: inject managed provisioner into existing SessionManager before _new_session provisioning, reserve its real provisioning RunContext via early existing DB/begin_run per §4.2, update both reverse-owner call sites for explicit registered references and fail non-READY; preserve session DB/run reservations and validate legacy records under authority; implement the publication-dependent provisioning leg with SLICE3, not host Git fallback (exit: new/resume/new-session-reuse, busy mutation, corrupt manifest, provision failure, DB/manifest failure after workspace commit and legacy run-ID tests pass; registered committed bytes are never rmtree cleanup targets)
+- [ ] STEP4: wire actual tool builders and SessionState internal binding per §4.2: controller fuzzy matching/telemetry, supervisor rooted writes, same-view bounded reads and cell-local existing search/reach/PDF implementations; no new public tools/search service or private state mount; join real authority/backend factory before disposable integration (exit: actual registry tools and PTY observe each other's edits with blackboard on/off and zero host Git/version-stamp reads, active search sees a new symbol, reader search stays pinned, artifacts retain their controller path, PDF/binary/large/truncated/helper-unavailable results are explicit and no canonical fallback occurs; seal/import alias tests complete with SLICE3)
+- [ ] STEP5: record CT101–CT103 whole-bank full-path producer kills plus same-inode/different-label contention, queued revoke/stop races, restart and cleanup; accumulate actual Docker/kernel runs for final SLICE6 without substituting unit fixtures (exit: every named producer removal breaks an executed assertion, including no late launch/write after closed admission; all required host cases non-skipped, exact source restored, no leftover live cell or lost pin)
 
 ## SLICE3: Terminal seal, fenced publication and forward recovery
 STEPS: prescriptive

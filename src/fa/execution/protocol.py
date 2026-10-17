@@ -367,12 +367,26 @@ class FrameConnection(Protocol):
 
 
 class DeadlineConnection:
-    """One monotonic budget for the ENTIRE socket RPC, not each partial read."""
+    """Absolute RPC budget; an approved exec may add its command budget once."""
 
     def __init__(self, connection: socket.socket, *, timeout_ms: int) -> None:
         _positive_integer(timeout_ms)
         self._connection = connection
         self._deadline = time.monotonic() + timeout_ms / 1000
+        self._execution_budget_added = False
+
+    def add_execution_budget(self, timeout_ms: int) -> None:
+        """No clock reset, expired-frame revival, or repeated budget extension.
+
+        The caller validates the request/profile BEFORE lending command time.
+        This bounds transport waiting, not backend execution or terminality.
+        """
+        _positive_integer(timeout_ms)
+        if self._execution_budget_added:
+            raise ExecutionContractError
+        self.remaining()
+        self._deadline += timeout_ms / 1000
+        self._execution_budget_added = True
 
     def remaining(self) -> float:
         remaining = self._deadline - time.monotonic()

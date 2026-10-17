@@ -25,7 +25,7 @@ from fa.execution.client import (
     ManagedBashExecutor,
 )
 from fa.execution.profiles import ExecutionProfile
-from fa.execution.protocol import decode_request, encode_json, read_frame, write_frame
+from fa.execution.protocol import DeadlineConnection, decode_request, encode_json, read_frame, write_frame
 from fa.execution.types import Access, ExecutionContractError, NamespaceRef, ViewPurpose, ViewRef
 from fa.runtime.bash_executor import BashExecutor
 
@@ -389,3 +389,60 @@ def test_fixed_profile_selects_persistent_or_one_shot_worker(interactive: bool) 
         cache=Path("/approved/cache"),
     )
     assert spec["body"]["Cmd"] == ["--max-command-ms", "30000"] + ([] if interactive else ["--one-shot"])
+
+
+def test_command_reply_can_outlive_control_budget_without_replay(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """C0/C3 native UDS fixture; logical elapsed clock, not a real command/backend."""
+    now = [0.0]
+    monkeypatch.setattr("fa.execution.protocol.time.monotonic", lambda: now[0])
+
+    input_budgets: list[float] = []
+
+    def observe_send(connection: DeadlineConnection, raw: bytes) -> None:
+        input_budgets.append(connection.remaining())
+        write_frame(connection, raw)
+
+    def elapsed_reply(connection: DeadlineConnection) -> bytes:
+        now[0] = 1.1  # Only reply waiting borrows command time, never connect/request.
+        return read_frame(connection)
+
+    monkeypatch.setattr("fa.execution.client.write_frame", observe_send)
+    monkeypatch.setattr("fa.execution.client.read_frame", elapsed_reply)
+    with endpoint(tmp_path) as (client, seen):
+        value = None
+        error = None
+        try:
+            value = executor(client).run("fixture response", timeout=2)
+        except ExecutionUncertainError as exc:
+            error = exc
+        assert error is None and value is not None
+        assert value.exit_code == 0 and value.stdout == "stdoutstderr"
+        assert len(seen) == 1 and seen[0]["payload"]["timeout_ms"] == 2000
+        assert input_budgets == [1.0]
+
+
+@pytest.mark.parametrize("action", ["send_ctrl_c", "close", "list_sessions"])
+def test_controls_do_not_borrow_a_command_budget(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, action: str) -> None:
+    now = [0.0]
+    monkeypatch.setattr("fa.execution.protocol.time.monotonic", lambda: now[0])
+
+    def delayed(req: dict[str, Any]) -> dict[str, Any]:
+        now[0] = 1.1
+        return result(req)
+
+    with endpoint(tmp_path, delayed) as (client, seen):
+        bash = executor(client)
+        uncertain = None
+        try:
+            if action == "list_sessions":
+                bash.list_sessions()
+            elif action == "close":
+                bash.close("main")
+            else:
+                bash.send_ctrl_c("main")
+        except ExecutionUncertainError as exc:
+            uncertain = exc
+        assert uncertain is not None
+        assert len(seen) == 1 and seen[0]["op"] == "pty_control"
