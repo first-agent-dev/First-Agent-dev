@@ -3,7 +3,7 @@
 > Read [`knowledge/llms.txt`](../knowledge/llms.txt) §MUST READ FIRST.
 > Current local delivery is distinct from final I03/deployed acceptance.
 
-## Current state — I02 LOCAL SHIPPED / I03 IMPLEMENTATION IN PROGRESS, 2026-10-17 / E247
+## Current state — I02 LOCAL SHIPPED / I03 IMPLEMENTATION IN PROGRESS, 2026-10-17 / E249
 
 Branch `arena/86633f17-first-agent-dev` only. Retained I02 runtime/test proof snapshot
 `a32a72fc58db4b9a5b048a9b6475649bcf3e32b4`. E230/E231 finalized planning; E232 adds the first
@@ -41,7 +41,29 @@ Ubuntu host test,OS isolation,managed nested acquisition or host supervisor deli
 only;Go is an indirect inherited hook-build diagnosis,not a new FA runtime/deployment requirement.
 PTY stays. Q69–Q73 resolved;Q72 remains its narrow46-links/15-files+banner repair decision.
 
-**E247 CURRENT — first menu repair implemented, SLICE1 NOT shipped:**
+**E249 CURRENT — native lifecycle implemented; SLICE1 NOT shipped:**
+E249 implements the existing E248 native force-stop contract in DockerCells/Engine only.
+Original creation namespace/input binding → durable cancel intent → owned inspect → one fixed
+full-CID SIGKILL → independent SAME-CID observation. Already-exited needs only fresh inspect;
+409 still observes;404/lost/malformed replies stay unavailable/uncertain, never terminal receipts.
+No create/start/RUN/reconnect/resend, no signal/grace setting, no result rewrite or lease release.
+Recheck the one absolute deadline after journal lookup and at each native HTTP leg. A completed
+creation command's still-live cell is stoppable without replacing its original result.
+TEST-EDITS:61 appended real-journal/literal-UDS C0/C3 cases; old Docker tests are an exact byte prefix.
+Final whole14-module bank684PASS42.05s → nine whole684-bank assertion-only kills48/7/4/32/1/1/1/1/3 →
+restored684PASS42.35s; exact597 tracked non-knowledge/worklogs hashes, clean setup/teardown,
+no skips/warnings/collection/runtime/infra credit. Ruff/format26PASS; Mypy26/183PASS; configured+
+clean-path Pyrefly0errors (existing141suppressed/50warnings). Broader27modules1204PASS54.79s,
+all phases clean. First invalid DONE-without-CID fixture and two overly restrictive proof-checker
+rejections retained, not relabelled or sensitivity credit. No old assertion/suppression/dependency change.
+Evidence `notes/evidence/i03-e249/owned-stop.json.gz` contains source snapshots, raw phases/runners,
+restoration, rejected diagnostics and full hash-verified Moby API reference (not host facts).
+Archive1407639bytes SHA25650340b4a9e421c8d9dfcf8be1ed4d578218787f041e6bc464be179a0a8b12991. Local tooling only, not full just-check/deployment acceptance.
+SLICE1 remains NOT shipped: actual CellBackend–WorkspaceAuthority admission/episodes/per-command
+routing/drain/startup discovery/cgroup barrier and factory/callers remain next in existing order.
+All35STEPS/four final duties unchecked; Q59/Q75/Q76/final-SLICE6 actual host/full-path proof unchanged.
+
+**E247 retained — first menu repair implemented, SLICE1 NOT shipped:**
 E247 closes only the first E246 menu item: existing client ERROR taxonomy, not SLICE1 delivery.
 `client.py` now preserves closed uncertainty codes/original-or-supplied operation references and
 backend-unavailable metadata across run/INTERRUPT/CLOSE/LIST, with fixed sanitized messages and no
@@ -109,13 +131,13 @@ kill grammar clean/doc309PASS/diffPASS; old assertions/ledger preserved and198 h
 Final repair SHA256728a228c8f9e1ecf10400bb8a90f2a996ed089556b5f9b83c670bc6ea702c587;
 verification+closure SHA25659cfc0cba71d2457cd1d5d275f63f784eda8b16de2a15339ec462fdc7d33262e.
 
-NEXT MENU (SLICE1 first): E247 client typed ERROR repair implemented; retain its regression bank.
-NEXT E248 native owned fixed-SIGKILL force-stop + independent same-CID observation per spec§2.2;
-durable creation cancel intent before Docker, never ACK/404-as-death. This leg is NOT yet implemented.
-Construct actual CellBackend per-view episode registry/per-command begin/record_container/worker
-control/restart over existing transports/journal; join the ONE actual WorkspaceAuthority admission/
-drain (necessary SLICE2 dependency), not a permissive callback or fake grant issuer. No more rooted
-IO helper rebuilding. Then real service/config/install factory (publication leg SLICE3), atomic
+NEXT MENU (SLICE1 first): E247 client classification and E249 native force-stop legs implemented.
+NEXT construct the actual CellBackend protected per-view episodes/per-command begin/CID/worker
+control/restart together with the ONE actual WorkspaceAuthority admission/drain (necessary SLICE2
+dependency). Take authenticated peer + one absolute deadline through this real join; no permissive
+callback, fake grant issuer, second history or further rooted-IO helper rebuilding. Actual startup
+cell discovery including creation-DONE, per-command cancel routing and descendant/cgroup barrier
+remain unimplemented. Then real service/config/install factory (publication leg SLICE3), atomic
 SessionManager/tools/wrapper/mount cutover SLICE4. Required actual host/kernel/full-path release
 proof remains final SLICE6. All35STEPS/17FUNCTIONAL/four final duties unfinished; Q59/Q75/Q76 intact.
 

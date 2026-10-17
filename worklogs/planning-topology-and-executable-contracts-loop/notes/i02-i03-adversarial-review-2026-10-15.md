@@ -1163,3 +1163,27 @@ pre-code failures, runners and toolchain provenance; 795957bytes SHA256d85358b63
 NEXT remains owned Docker termination/observation, then actual CellBackend–WorkspaceAuthority and
 factory/caller composition in existing dependency order. All35STEPS/four final duties stay unchecked;
 Q59/Q75/Q76/final-SLICE6 host/full-path proof unchanged. No fake authority or early-host gate.
+
+### E249 — native stop leg verified, not system completion
+
+Exact source: docker.py528 original journal binding/cancel producer, docker.py334 owned SIGKILL/follow-up.
+E249 implements the existing E248 native force-stop contract in DockerCells/Engine only.
+Original creation namespace/input binding → durable cancel intent → owned inspect → one fixed
+full-CID SIGKILL → independent SAME-CID observation. Already-exited needs only fresh inspect;
+409 still observes;404/lost/malformed replies stay unavailable/uncertain, never terminal receipts.
+No create/start/RUN/reconnect/resend, no signal/grace setting, no result rewrite or lease release.
+Recheck the one absolute deadline after journal lookup and at each native HTTP leg. A completed
+creation command's still-live cell is stoppable without replacing its original result.
+TEST-EDITS:61 appended real-journal/literal-UDS C0/C3 cases; old Docker tests are an exact byte prefix.
+Final whole14-module bank684PASS42.05s → nine whole684-bank assertion-only kills48/7/4/32/1/1/1/1/3 →
+restored684PASS42.35s; exact597 tracked non-knowledge/worklogs hashes, clean setup/teardown,
+no skips/warnings/collection/runtime/infra credit. Ruff/format26PASS; Mypy26/183PASS; configured+
+clean-path Pyrefly0errors (existing141suppressed/50warnings). Broader27modules1204PASS54.79s,
+all phases clean. First invalid DONE-without-CID fixture and two overly restrictive proof-checker
+rejections retained, not relabelled or sensitivity credit. No old assertion/suppression/dependency change.
+Evidence `notes/evidence/i03-e249/owned-stop.json.gz` contains source snapshots, raw phases/runners,
+restoration, rejected diagnostics and full hash-verified Moby API reference (not host facts).
+Archive1407639bytes SHA25650340b4a9e421c8d9dfcf8be1ed4d578218787f041e6bc464be179a0a8b12991. Local tooling only, not full just-check/deployment acceptance.
+SLICE1 remains NOT shipped: actual CellBackend–WorkspaceAuthority admission/episodes/per-command
+routing/drain/startup discovery/cgroup barrier and factory/callers remain next in existing order.
+All35STEPS/four final duties unchecked; Q59/Q75/Q76/final-SLICE6 actual host/full-path proof unchanged.

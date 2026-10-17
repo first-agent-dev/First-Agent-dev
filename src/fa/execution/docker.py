@@ -331,6 +331,44 @@ class DockerEngine:
                 connection.close()
             raise DockerUnavailableError from None
 
+    def force_stop_owned(
+        self,
+        *,
+        operation_id: str,
+        view: ViewRef,
+        profile: ExecutionProfile,
+        container_id: str | None,
+        deadline: float,
+    ) -> ContainerObservation:
+        """One fixed SIGKILL to the revalidated full CID; never a terminal barrier.
+
+        The owner must persist cancellation before entering. A 409 can race exit,
+        but neither it nor a 204 is an observation of exit/cgroup emptiness.
+        """
+        observed = self.inspect_owned(
+            operation_id=operation_id, view=view, profile=profile, container_id=container_id, deadline=deadline
+        )
+        if observed.status == "exited":
+            return observed
+        try:
+            self._request(
+                "POST",
+                f"/containers/{observed.container_id}/kill?signal=SIGKILL",
+                body=None,
+                status=204,
+                deadline=deadline,
+            )
+        except DockerUnavailableError as exc:
+            if exc.status != 409:
+                raise
+        return self.inspect_owned(
+            operation_id=operation_id,
+            view=view,
+            profile=profile,
+            container_id=observed.container_id,
+            deadline=deadline,
+        )
+
     def inspect_owned(
         self,
         *,
@@ -394,7 +432,7 @@ class DockerEngine:
 
 
 class DockerCells:
-    """New-cell creation only, not per-command dispatch or an authority/issuer.
+    """Cell creation/attach/owned force-stop, not command dispatch or authority.
 
     Existing interactive commands MUST reuse their original live cell/creation
     binding in the future attach/backend layer. This class issues no receipt and
@@ -480,6 +518,33 @@ class DockerCells:
         if record is None or record["input_sha256"] != digest:
             raise JournalError("EXECUTION_UNKNOWN")
         return self._engine.inspect_owned(
+            operation_id=record["operation_id"],
+            view=view,
+            profile=profile,
+            container_id=record["container_id"],
+            deadline=deadline,
+        )
+
+    def force_stop_created(
+        self,
+        creation_request: dict[str, Any],
+        *,
+        profile: ExecutionProfile,
+        deadline: float,
+    ) -> ContainerObservation:
+        """Durable original-cell stop intent, including creation-DONE/live cells.
+
+        No new begin/create/start, completion or fresh execution permission. The
+        real backend must separately bind per-command cancel and admission/drain.
+        """
+        _remaining(deadline)
+        req, namespace, view, digest = self._binding(creation_request, profile)
+        record = self._journal.lookup(req["payload"]["operation_id"], namespace)
+        if record is None or record["input_sha256"] != digest:
+            raise JournalError("EXECUTION_UNKNOWN")
+        _remaining(deadline)
+        self._journal.request_cancel(record["operation_id"], namespace)
+        return self._engine.force_stop_owned(
             operation_id=record["operation_id"],
             view=view,
             profile=profile,

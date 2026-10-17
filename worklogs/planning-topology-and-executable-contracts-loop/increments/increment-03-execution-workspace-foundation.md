@@ -181,6 +181,29 @@ and actual CellBackend–WorkspaceAuthority join remain open, including per-comm
 completed-creation/live-cell startup discovery and actual descendant/cgroup barrier. Final host/
 full-path proof remains SLICE6; no intervening approval gate or completion ticks.
 
+## E249 — native lifecycle leg implemented; backend–authority NEXT
+
+E249 implements the existing E248 native force-stop contract in DockerCells/Engine only.
+Original creation namespace/input binding → durable cancel intent → owned inspect → one fixed
+full-CID SIGKILL → independent SAME-CID observation. Already-exited needs only fresh inspect;
+409 still observes;404/lost/malformed replies stay unavailable/uncertain, never terminal receipts.
+No create/start/RUN/reconnect/resend, no signal/grace setting, no result rewrite or lease release.
+Recheck the one absolute deadline after journal lookup and at each native HTTP leg. A completed
+creation command's still-live cell is stoppable without replacing its original result.
+TEST-EDITS:61 appended real-journal/literal-UDS C0/C3 cases; old Docker tests are an exact byte prefix.
+Final whole14-module bank684PASS42.05s → nine whole684-bank assertion-only kills48/7/4/32/1/1/1/1/3 →
+restored684PASS42.35s; exact597 tracked non-knowledge/worklogs hashes, clean setup/teardown,
+no skips/warnings/collection/runtime/infra credit. Ruff/format26PASS; Mypy26/183PASS; configured+
+clean-path Pyrefly0errors (existing141suppressed/50warnings). Broader27modules1204PASS54.79s,
+all phases clean. First invalid DONE-without-CID fixture and two overly restrictive proof-checker
+rejections retained, not relabelled or sensitivity credit. No old assertion/suppression/dependency change.
+Evidence `notes/evidence/i03-e249/owned-stop.json.gz` contains source snapshots, raw phases/runners,
+restoration, rejected diagnostics and full hash-verified Moby API reference (not host facts).
+Archive1407639bytes SHA25650340b4a9e421c8d9dfcf8be1ed4d578218787f041e6bc464be179a0a8b12991. Local tooling only, not full just-check/deployment acceptance.
+SLICE1 remains NOT shipped: actual CellBackend–WorkspaceAuthority admission/episodes/per-command
+routing/drain/startup discovery/cgroup barrier and factory/callers remain next in existing order.
+All35STEPS/four final duties unchecked; Q59/Q75/Q76/final-SLICE6 actual host/full-path proof unchanged.
+
 ## SLICE1: Trusted launch and single supervised execution backend
 STEPS: prescriptive
 DEPS: none
@@ -211,7 +234,7 @@ FA_REQUIRE_EXECUTION_HOST=1 uv run pytest tests/integration/test_execution_bound
 uv run ruff check src/fa/controller_entry.py src/fa/execution tests/test_controller_entry.py tests/test_controller_installed.py tests/test_execution_supervisor.py tests/test_execution_protocol.py tests/test_execution_client.py tests/test_execution_cell_worker.py tests/test_execution_journal.py tests/test_execution_dispatch.py tests/test_execution_plans.py tests/test_execution_docker.py tests/test_execution_attach.py tests/integration/test_execution_boundary.py
 ```
 - [ ] STEP1: finish spec §§2.1–2.2 closed contracts and trusted composition seams; retain implemented types/codec/client/installed-entry closure, do not rebuild them; retain E247 typed ERROR reply classification per spec§2.2; remaining backend/authority composition is still required; distinguish control/command deadlines and exec versus non-exec uncertain replay (exit: complete owning bank passes, isolated installed module executes real CLI help under CWD/PYTHONPATH/editable-pth poison, locally invalid input sends no frame and command-over-control-budget reply is observed exactly once)
-- [ ] STEP2: NEXT finish owned Docker stop/kill/observation (no ACK-as-terminality), then implement NEW CellBackend in execution/backend.py over existing DockerCells/WorkerClient/OperationJournal, with per-view live episode ownership, per-command begin/record_container and actual inspect/cancel/drain/restart facts per §2.2; join the actual SLICE2 admission gate before service composition, without a temporary authority (exit: two commands preserve shell state in one cell with two durable records; duplicate/lost RUN never resends; cancel-before-send and completed-creation/live-cell restart tests pass; no success/terminal receipt derives only from worker output)
+- [ ] STEP2: retain E249 native owned force-stop/observation (NOT a cgroup/terminal barrier); NEXT implement NEW CellBackend in execution/backend.py over existing DockerCells/WorkerClient/OperationJournal, with per-view live episode ownership, per-command begin/record_container and actual inspect/cancel/drain/restart facts per §2.2; join the actual SLICE2 admission gate before service composition, without a temporary authority (exit: two commands preserve shell state in one cell with two durable records; duplicate/lost RUN never resends; cancel-before-send and completed-creation/live-cell restart tests pass; no success/terminal receipt derives only from worker output)
 - [ ] STEP3: prepare service/config/install/image and volume-map changes without activation; compose supervisor.py build_supervisor/main only with real WorkspaceAuthority and CellBackend, then SLICE3 publication handlers; apply controller read-only canonical mounts/private-UDS-only and entrypoint changes atomically with SLICE4 caller cutover, never before provisioner/file tools can operate (exit: no permissive/failing-main stub or alternate host runner; approved disposable-host test later boots that real factory and proves absent control mounts/secrets, denied profile/raw-path escalation and zero unavailable-backend project commands)
 - [ ] STEP4: accumulate required real profile/image/kernel/daemon/cgroup facts and source-restored full-path CT98–CT100 mutation outcomes/cost at final SLICE6, with actual SLICE2 authority and SLICE4 callers, not injected callbacks (exit: every declared path runs non-skipped; each named producer deletion causes assertion failure in the whole owning bank; terminality uncertainty leaves ownership quarantined, source restored and no live owned cell)
 

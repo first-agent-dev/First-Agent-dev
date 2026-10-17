@@ -56,6 +56,8 @@ Task type → primary entrypoint, then secondary:
 
 ## § BY-DEMAND INDEX (Deprecated)
 
+[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e249/owned-stop.json.gz]: E249 native force-stop C0/C3;684owning/nine assertion-only kills/1204broader; actual backend/authority/cgroup/service/callers still incomplete.
+
 [worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e247/typed-errors.json.gz]: E247 client typed ERROR C0/C3,623owning/six assertion-only kills/1143broader; SLICE1 backend/authority/service/callers still incomplete.
 
 [worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e245/rooted-io.json.gz]: E245 rooted descriptor IO C0/C3/C4,93cases/17whole-bank kills, static/broader1001 and rejected diagnostics; no authority/C1/host acceptance.

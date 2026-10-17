@@ -300,7 +300,7 @@ observe real exit/cgroup emptiness. Do not hold the global journal lock while wa
 handler drain or cgroup. Lock order is workspace admission before short journal transitions; any
 cancel path that records intent first releases its journal transaction before waiting for admission.
 
-**E248 owned force-stop leg (before implementation):** extend the existing private Docker transport,
+**E248 owned force-stop contract (native operations implemented E249):** extend the existing private Docker transport,
 not the wire operation set. `DockerCells.force_stop_created(original_creation_request, profile,
 deadline)` checks the original namespace/input journal binding and durably records cancel intent
 before Docker contact, even for a completed creation command with a still-live cell. Never reclaim

@@ -397,3 +397,290 @@ def test_daemon_id_is_returned_not_synthesized(endpoint: Endpoint) -> None:
     actual = "9" * 64
     endpoint.replies.append(Reply(value={"Id": actual, "Warnings": None}))
     assert create(endpoint.engine()) == actual and len(endpoint.seen) == 1
+
+
+# E249: real journal/native Unix HTTP control producer, not a host/cgroup proof.
+def force_stop(case: Case, *, until: float | None = None) -> Any:
+    return case.cells.force_stop_created(case.req, profile=profile(), deadline=deadline() if until is None else until)
+
+
+@pytest.mark.parametrize(
+    "state,known_cid",
+    [("EXECUTING", False), ("EXECUTING", True), ("UNKNOWN", False), ("UNKNOWN", True), ("DONE", True)],
+)
+def test_force_stop_persists_original_cancel_before_every_daemon_leg(
+    endpoint: Endpoint, tmp_path: Path, state: str, known_cid: bool
+) -> None:
+    from tests.test_execution_journal import result
+
+    case = Case(endpoint, tmp_path)
+    if known_cid:
+        case.journal.record_container(OID, NS, CID)
+    if state == "UNKNOWN":
+        case.journal.mark_unknown(OID, NS)
+    elif state == "DONE":
+        case.journal.complete(OID, NS, result(), original_proof=case.req["capability"])
+    before = case.journal.lookup(OID, NS)
+    assert before is not None
+    endpoint.replies.extend([Reply(200, observation()), Reply(204), Reply(200, observation("exited"))])
+    observed = force_stop(case)
+    assert observed.container_id == CID and observed.status == "exited" and observed.exit_code == 7
+    assert not hasattr(observed, "terminal_barrier") and not hasattr(observed, "receipt")
+    initial = CID if known_cid else "fa-job-" + OID.removeprefix("op-")
+    assert [(r["method"], r["path"], r["body"]) for r in endpoint.seen] == [
+        ("GET", f"/v1.45/containers/{initial}/json", None),
+        ("POST", f"/v1.45/containers/{CID}/kill?signal=SIGKILL", None),
+        ("GET", f"/v1.45/containers/{CID}/json", None),
+    ]
+    assert all(r["journal"] == {**before, "cancel_requested": True} for r in endpoint.seen)
+    assert case.journal.lookup(OID, NS) == {**before, "cancel_requested": True}
+    with pytest.raises(JournalError):
+        case.launch()
+    assert len(endpoint.seen) == 3 and case.validated == [
+        (NS, VIEW, Path("/protected/source"), Path("/protected/scratch"), Path("/approved/cache"))
+    ]
+
+
+@pytest.mark.parametrize("ack", [204, 409])
+@pytest.mark.parametrize("status", ["created", "running", "paused", "restarting", "dead", "exited"])
+def test_force_stop_ack_is_not_terminality_and_409_still_observes(
+    endpoint: Endpoint, tmp_path: Path, ack: int, status: str
+) -> None:
+    case = Case(endpoint, tmp_path)
+    endpoint.replies.extend([Reply(200, observation()), Reply(ack), Reply(200, observation(status))])
+    observed = force_stop(case)
+    assert observed.status == status and observed.running == (status in {"running", "paused"})
+    assert observed.pid == (123 if observed.running else 0)
+    assert observed.exit_code == (7 if status == "exited" else None)
+    assert not hasattr(observed, "terminal_barrier") and not hasattr(observed, "receipt")
+    assert len(endpoint.seen) == 3
+    record = case.journal.lookup(OID, NS)
+    assert record is not None and record["cancel_requested"] is True
+    assert record["state"] == "EXECUTING" and record["result"] is None
+
+
+def test_already_exited_force_stop_returns_fresh_inspection_without_signalling(
+    endpoint: Endpoint, tmp_path: Path
+) -> None:
+    case = Case(endpoint, tmp_path)
+    endpoint.replies.append(Reply(200, observation("exited")))
+    observed = force_stop(case)
+    assert observed.status == "exited" and observed.exit_code == 7 and len(endpoint.seen) == 1
+    assert endpoint.seen[0]["method"] == "GET" and endpoint.seen[0]["journal"]["cancel_requested"] is True
+    assert not hasattr(observed, "terminal_barrier")
+
+
+@pytest.mark.parametrize(
+    "bad", ["command", "cwd", "timeout", "profile", "mode", "namespace", "view", "missing", "expired"]
+)
+def test_force_stop_binding_gates_send_nothing_and_do_not_cancel_another_input(
+    endpoint: Endpoint, tmp_path: Path, bad: str
+) -> None:
+    case = Case(endpoint, tmp_path)
+    before = case.journal.lookup(OID, NS)
+    endpoint.replies.extend([Reply(200, observation()), Reply(204), Reply(200, observation("exited"))])
+    if bad == "command":
+        case.req["payload"]["command"] = "different command"
+    elif bad == "cwd":
+        case.req["payload"]["cwd"] = "different"
+    elif bad == "timeout":
+        case.req["payload"]["timeout_ms"] = 999
+    elif bad == "profile":
+        case.req["payload"]["profile_id"] = "other"
+    elif bad == "mode":
+        case.req["payload"]["session_id"] = None
+    elif bad == "namespace":
+        case.req["namespace"] = NamespaceRef("other", "run-1").to_dict()
+    elif bad == "view":
+        case.req["view_ref"]["view_id"] = "view-" + "9" * 32
+    elif bad == "missing":
+        case.req["request_id"] = "9" * 32
+        case.req["payload"]["operation_id"] = "op-" + "9" * 32
+    with pytest.raises((JournalError, ExecutionContractError, TimeoutError)):
+        force_stop(case, until=time.monotonic() - 1 if bad == "expired" else None)
+    assert endpoint.seen == [] and case.journal.lookup(OID, NS) == before
+
+
+@pytest.mark.parametrize("phase", ["before", "after"])
+@pytest.mark.parametrize("bad", ["id", "name", "operation", "view", "profile", "image", "state"])
+def test_force_stop_never_signals_foreign_identity_or_accepts_rebound_followup(
+    endpoint: Endpoint, tmp_path: Path, phase: str, bad: str
+) -> None:
+    case = Case(endpoint, tmp_path)
+    case.journal.record_container(OID, NS, CID)
+    wrong = observation("exited" if phase == "after" else "running")
+    if bad == "id":
+        wrong["Id"] = "9" * 64
+    elif bad == "name":
+        wrong["Name"] = "/foreign"
+    elif bad in {"operation", "view"}:
+        key = "operation_id" if bad == "operation" else "view_id"
+        wrong["Config"]["Labels"]["fa.execution." + key] = ("op-" if bad == "operation" else "view-") + "9" * 32
+    elif bad == "profile":
+        wrong["Config"]["Image"] = "foreign@sha256:" + "9" * 64
+    elif bad == "image":
+        wrong["Image"] = "invalid"
+    else:
+        wrong["State"]["Pid"] = True
+    endpoint.replies.extend(
+        [Reply(200, wrong), Reply(204), Reply(200, observation("exited"))]
+        if phase == "before"
+        else [Reply(200, observation()), Reply(204), Reply(200, wrong)]
+    )
+    with pytest.raises(DockerUnavailableError, match=r"^execution_engine_unavailable$"):
+        force_stop(case)
+    assert len(endpoint.seen) == (1 if phase == "before" else 3)
+    if phase == "before":
+        assert all(r["method"] == "GET" for r in endpoint.seen)
+    assert all(r["journal"]["cancel_requested"] is True for r in endpoint.seen)
+
+
+@pytest.mark.parametrize("phase", ["before", "kill", "after"])
+@pytest.mark.parametrize(
+    "reply",
+    [Reply(raw=b""), Reply(404), Reply(500), Reply(raw=b"HTTP/1.1 204 Unit\r\nContent-Length: 4\r\n\r\nbody")],
+    ids=["lost", "missing", "error", "malformed"],
+)
+def test_force_stop_failure_never_replays_or_completes(
+    endpoint: Endpoint, tmp_path: Path, phase: str, reply: Reply
+) -> None:
+    case = Case(endpoint, tmp_path)
+    replies = [Reply(200, observation()), Reply(204), Reply(200, observation("exited"))]
+    index = ["before", "kill", "after"].index(phase)
+    replies[index] = reply
+    endpoint.replies.extend(replies)
+    with pytest.raises(DockerUnavailableError, match=r"^execution_engine_unavailable$"):
+        force_stop(case)
+    assert len(endpoint.seen) == index + 1
+    assert sum(r["method"] == "POST" for r in endpoint.seen) == (0 if phase == "before" else 1)
+    record = case.journal.lookup(OID, NS)
+    assert record is not None and record["state"] == "EXECUTING" and record["result"] is None
+    assert record["cancel_requested"] is True
+
+
+def test_force_stop_unknown_creation_pins_observed_id_even_if_name_rebinds(endpoint: Endpoint, tmp_path: Path) -> None:
+    case = Case(endpoint, tmp_path)
+    rebound = observation("exited")
+    rebound["Id"] = "9" * 64
+    endpoint.replies.extend([Reply(200, observation()), Reply(204), Reply(200, rebound)])
+    with pytest.raises(DockerUnavailableError):
+        force_stop(case)
+    assert endpoint.seen[-1]["path"] == f"/v1.45/containers/{CID}/json"
+    assert endpoint.seen[1]["path"] == f"/v1.45/containers/{CID}/kill?signal=SIGKILL"
+    assert len(endpoint.seen) == 3
+
+
+def test_force_stop_durability_failure_precedes_any_daemon_contact(
+    endpoint: Endpoint, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    case = Case(endpoint, tmp_path)
+    before = case.journal.lookup(OID, NS)
+
+    def fail(*args: Any, **kwargs: Any) -> None:
+        raise JournalError("DURABILITY_UNKNOWN")
+
+    # A healthy peer makes bypassing the durability producer observable as an
+    # assertion (not an unrelated missing-reply/runtime failure).
+    endpoint.replies.extend([Reply(200, observation()), Reply(204), Reply(200, observation("exited"))])
+    monkeypatch.setattr(case.journal, "request_cancel", fail)
+    with pytest.raises(JournalError) as caught:
+        force_stop(case)
+    assert caught.value.code == "DURABILITY_UNKNOWN"
+    assert endpoint.seen == [] and case.journal.lookup(OID, NS) == before
+
+
+@pytest.mark.parametrize("expire_after", [1, 2])
+def test_force_stop_one_absolute_deadline_and_no_late_followup(
+    endpoint: Endpoint, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, expire_after: int
+) -> None:
+    from types import SimpleNamespace
+
+    import fa.execution.docker as docker
+
+    case = Case(endpoint, tmp_path)
+    endpoint.replies.extend([Reply(200, observation()), Reply(204), Reply(200, observation("exited"))])
+    until = deadline()
+    clock = [until - 1]
+    monkeypatch.setattr(docker, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    budgets: list[float] = []
+    original = case.cells._engine._request
+
+    def observe_request(method: str, path: str, *, body: dict[str, Any] | None, status: int, deadline: float) -> bytes:
+        budgets.append(deadline)
+        data = original(method, path, body=body, status=status, deadline=deadline)
+        if len(budgets) == expire_after:
+            clock[0] = until + 0.01
+        return data
+
+    monkeypatch.setattr(case.cells._engine, "_request", observe_request)
+    with pytest.raises(TimeoutError):
+        force_stop(case, until=until)
+    assert len(endpoint.seen) == expire_after and budgets == [until] * (expire_after + 1)
+    record = case.journal.lookup(OID, NS)
+    assert record is not None and record["cancel_requested"] is True and record["state"] == "EXECUTING"
+
+
+def test_force_stop_later_command_cannot_relabel_original_cell(endpoint: Endpoint, tmp_path: Path) -> None:
+    case = Case(endpoint, tmp_path)
+    case.req["request_id"] = "9" * 32
+    case.req["payload"]["operation_id"] = "op-" + "9" * 32
+    case.journal.reserve(case.req)
+    case.journal.begin(case.req["payload"]["operation_id"], NS)
+    case.journal.record_container(case.req["payload"]["operation_id"], NS, CID)
+    endpoint.replies.extend([Reply(200, observation()), Reply(204), Reply(200, observation("exited"))])
+    with pytest.raises(DockerUnavailableError):
+        force_stop(case)
+    assert len(endpoint.seen) == 1 and endpoint.seen[0]["method"] == "GET"
+    original = case.journal.lookup(OID, NS)
+    assert original is not None and original["cancel_requested"] is False
+
+
+def test_force_stop_uses_actual_discovered_full_id_not_a_fixture_or_name(endpoint: Endpoint, tmp_path: Path) -> None:
+    case = Case(endpoint, tmp_path)
+    actual_id = "a" * 64
+    before, after = observation(), observation("exited")
+    before["Id"] = after["Id"] = actual_id
+    endpoint.replies.extend([Reply(200, before), Reply(204), Reply(200, after)])
+    observed = force_stop(case)
+    assert observed.container_id == actual_id and observed.status == "exited"
+    assert endpoint.seen[1]["path"] == f"/v1.45/containers/{actual_id}/kill?signal=SIGKILL"
+    assert endpoint.seen[2]["path"] == f"/v1.45/containers/{actual_id}/json"
+    record = case.journal.lookup(OID, NS)
+    assert record is not None and record["container_id"] is None and record["state"] == "EXECUTING"
+
+
+def test_force_stop_cancel_fences_unstarted_original_cid(endpoint: Endpoint, tmp_path: Path) -> None:
+    case = Case(endpoint, tmp_path)
+    case.journal.record_container(OID, NS, CID)
+    endpoint.replies.extend([Reply(200, observation("created")), Reply(409), Reply(200, observation("created"))])
+    observed = force_stop(case)
+    assert observed.status == "created" and observed.exit_code is None
+    with pytest.raises(JournalError):
+        with case.journal.start_once(OID, NS):
+            raise AssertionError("cancelled cell was permitted to start")
+    assert len(endpoint.seen) == 3
+
+
+def test_force_stop_expired_lookup_cannot_begin_cancel_or_contact_daemon(
+    endpoint: Endpoint, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from types import SimpleNamespace
+
+    import fa.execution.docker as docker
+
+    case = Case(endpoint, tmp_path)
+    before = case.journal.lookup(OID, NS)
+    until = deadline()
+    clock = [until - 1]
+    monkeypatch.setattr(docker, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    original = case.journal.lookup
+
+    def lookup(*args: Any, **kwargs: Any) -> Any:
+        record = original(*args, **kwargs)
+        clock[0] = until + 0.01
+        return record
+
+    monkeypatch.setattr(case.journal, "lookup", lookup)
+    with pytest.raises(TimeoutError):
+        force_stop(case, until=until)
+    assert endpoint.seen == [] and original(OID, NS) == before
