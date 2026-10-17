@@ -204,6 +204,39 @@ SLICE1 remains NOT shipped: actual CellBackend–WorkspaceAuthority admission/ep
 routing/drain/startup discovery/cgroup barrier and factory/callers remain next in existing order.
 All35STEPS/four final duties unchecked; Q59/Q75/Q76/final-SLICE6 actual host/full-path proof unchanged.
 
+## E251 — explicit peer/deadline composition seam repaired
+
+E251 repairs the existing dispatcher composition seam, not the actual backend/authority.
+DeadlineConnection retains one monotonic request start and exposes read-only start/reply deadline;
+required typed authorizer/
+handler protocols receive authenticated PeerIdentity and keyword execution deadline through
+readonly/reserved operations. Exec deadline = original start + requested command budget; reply
+waiting alone keeps the separate control+command allowance. Valid but command-late input invokes
+neither authority nor backend. No clock reset, raw-wire identity or fallback callback. Expiry before fresh
+authorization/begin/backend prevents late calls; reserved failure remains UNKNOWN. Actual returned
+results still persist truthfully even when transport reply expires; Q75 cached original replay
+invokes neither callback. Actual admission/drain/command budget/terminality owners remain absent.
+TEST-EDITS: dispatch/plan fixtures and direct calls gain explicit peer/deadline arguments; all old
+assertion ASTs retained except required deadline keyword in asserted private calls.48 new C0/C3
+real-socket/journal cases cover all19 operations, mutating PTY controls, invalid/expired budgets,
+authorization/begin elapsed time and no replay. No fake production authority or C1 claim.
+Owning15modules732PASS43.34s → nine full732-bank assertion-only kills26/62/26/26/4/16/2/2/1 → restored732PASS42.05s;
+all setup/call/teardown clean except intended mutant CALL assertions; no skips/warnings/collection/
+runtime/infra credit.598 declared source/input hashes (including new test) exact. Ruff/format27PASS,
+Mypy27/183PASS, configured+clean-path Pyrefly0errors (existing141suppressed/50warnings); broader
+28modules1251PASS/1FAIL53.71s: immediate second RUN raises WorkerUnavailableError.
+This is a real unresolved worker reply/gate race, NOT inherited noise or a green broader gate. Initial missing-keyword fixture migration/lint diagnostics
+and missing formatted mutation anchor retained/described, not final kill credit. Superseded
+transport-budget source proof and three Pyrefly fixture-unpack errors retained; corrected explicit
+ViewRef fields without suppression, fresh final-source baseline/nine kills/restored run PASS.
+Evidence `notes/evidence/i03-e251/context-seam.json.gz`, 1929361bytes SHA25689dafdfa8f9fa14c479f21e7d68d76c0acceefa1277a3344aece41941fbd63f7,
+contains raw phases/snapshots/runners/restoration and E250 inventory rollforward; all16 production
+surfaces/eight joins remain tracked, live verdicts still PLANNED/UNEXECUTED. No actual host run.
+NEXT fix the confirmed worker reply/gate handoff race with deterministic scheduling proof; then
+actual WorkspaceAuthority registration/generation/materialization/admit/drain joined to the
+real CellBackend; no temporary issuer. SLICE1/2/all35STEPS/four final duties remain unfinished;
+Q59/Q75/Q76 and final-SLICE6 host/full-path release proof unchanged. No new policy adopted.
+
 ## SLICE1: Trusted launch and single supervised execution backend
 STEPS: prescriptive
 DEPS: none
@@ -233,7 +266,7 @@ uv run pytest tests/test_controller_entry.py tests/test_controller_installed.py 
 FA_REQUIRE_EXECUTION_HOST=1 uv run pytest tests/integration/test_execution_boundary.py -q -m execution_host
 uv run ruff check src/fa/controller_entry.py src/fa/execution tests/test_controller_entry.py tests/test_controller_installed.py tests/test_execution_supervisor.py tests/test_execution_protocol.py tests/test_execution_client.py tests/test_execution_cell_worker.py tests/test_execution_journal.py tests/test_execution_dispatch.py tests/test_execution_plans.py tests/test_execution_docker.py tests/test_execution_attach.py tests/integration/test_execution_boundary.py
 ```
-- [ ] STEP1: finish spec §§2.1–2.2 closed contracts and trusted composition seams; retain implemented types/codec/client/installed-entry closure, do not rebuild them; retain E247 typed ERROR reply classification per spec§2.2; remaining backend/authority composition is still required; distinguish control/command deadlines and exec versus non-exec uncertain replay (exit: complete owning bank passes, isolated installed module executes real CLI help under CWD/PYTHONPATH/editable-pth poison, locally invalid input sends no frame and command-over-control-budget reply is observed exactly once)
+- [ ] STEP1: retain E251 explicit peer/deadline seam and finish remaining actual spec §§2.1–2.2 composition; retain implemented types/codec/client/installed-entry closure, do not rebuild them; retain E247 typed ERROR reply classification per spec§2.2; remaining backend/authority composition is still required; distinguish control/command deadlines and exec versus non-exec uncertain replay (exit: complete owning bank passes, isolated installed module executes real CLI help under CWD/PYTHONPATH/editable-pth poison, locally invalid input sends no frame and command-over-control-budget reply is observed exactly once)
 - [ ] STEP2: retain E249 native owned force-stop/observation (NOT a cgroup/terminal barrier); NEXT implement NEW CellBackend in execution/backend.py over existing DockerCells/WorkerClient/OperationJournal, with per-view live episode ownership, per-command begin/record_container and actual inspect/cancel/drain/restart facts per §2.2; join the actual SLICE2 admission gate before service composition, without a temporary authority (exit: two commands preserve shell state in one cell with two durable records; duplicate/lost RUN never resends; cancel-before-send and completed-creation/live-cell restart tests pass; no success/terminal receipt derives only from worker output)
 - [ ] STEP3: prepare service/config/install/image and volume-map changes without activation; compose supervisor.py build_supervisor/main only with real WorkspaceAuthority and CellBackend, then SLICE3 publication handlers; apply controller read-only canonical mounts/private-UDS-only and entrypoint changes atomically with SLICE4 caller cutover, never before provisioner/file tools can operate (exit: no permissive/failing-main stub or alternate host runner; approved disposable-host test later boots that real factory and proves absent control mounts/secrets, denied profile/raw-path escalation and zero unavailable-backend project commands)
 - [ ] STEP4: accumulate required real profile/image/kernel/daemon/cgroup facts and source-restored full-path CT98–CT100 mutation outcomes/cost at final SLICE6, with actual SLICE2 authority and SLICE4 callers, not injected callbacks (exit: every declared path runs non-skipped; each named producer deletion causes assertion failure in the whole owning bank; terminality uncertainty leaves ownership quarantined, source restored and no live owned cell)
@@ -266,7 +299,7 @@ TESTS: tests/test_execution_view_io.py, tests/test_managed_workspace.py, tests/t
 uv run pytest tests/test_execution_view_io.py tests/test_managed_workspace.py tests/test_session_lifecycle.py tests/test_execution_project_tools.py -q
 FA_REQUIRE_EXECUTION_HOST=1 uv run pytest tests/integration/test_workspace_views.py -q -m execution_host
 ```
-- [ ] STEP1: first construct internal execution/view_io.py and its real-descriptor C0/C3 bank per §4.2 E244 (no admission/CT completion claim); then implement one WorkspaceAuthority for protected registration/current/generation/pin metadata and startup ownership; add admit/close-admission/drain semantics per §§2.2/4.2, not a second lock service; reject root aliases/overlaps/rebind and quiesce before R0 (exit: two OS processes race for one workspace and exactly one obtains a durably advanced writer; denied/stale/closed admissions produce no launch/write; independent pins retain original bytes across generation changes)
+- [ ] STEP1: retain E245 internal execution/view_io.py and its real-descriptor C0/C3 bank per §4.2 E244 (no admission/CT completion claim); NEXT implement one WorkspaceAuthority for protected registration/current/generation/pin metadata and startup ownership; add admit/close-admission/drain semantics per §§2.2/4.2, not a second lock service; reject root aliases/overlaps/rebind and quiesce before R0 (exit: two OS processes race for one workspace and exactly one obtains a durably advanced writer; denied/stale/closed admissions produce no launch/write; independent pins retain original bytes across generation changes)
 - [ ] STEP2: implement create_view/_materialize_input and rooted read/write/edit on admitted descriptors per §§4–4.2 before provisioning consumes them; keep private-metadata chmod helpers off project parents; preserve dirty/staged/untracked/deleted bytes and canonical index, enforce copy/link/secret/size policy and private-Git limitations; consume STEP1 descriptor IO under actual admission, private same-filesystem staging and explicit profile/protected-PlanRef binding (exit: exact tree/index/sentinel oracles pass; link/special/limit/root-swap failures leave no returned grant or partial revision; expected-SHA conflict and post-admission rename do not silently succeed or touch canonical/control paths)
 - [ ] STEP3: inject managed provisioner into existing SessionManager before _new_session provisioning, reserve its real provisioning RunContext via early existing DB/begin_run per §4.2, update both reverse-owner call sites for explicit registered references and fail non-READY; preserve session DB/run reservations and validate legacy records under authority; implement the publication-dependent provisioning leg with SLICE3, not host Git fallback (exit: new/resume/new-session-reuse, busy mutation, corrupt manifest, provision failure, DB/manifest failure after workspace commit and legacy run-ID tests pass; registered committed bytes are never rmtree cleanup targets)
 - [ ] STEP4: wire actual tool builders and SessionState internal binding per §4.2: controller fuzzy matching/telemetry, supervisor rooted writes, same-view bounded reads and cell-local existing search/reach/PDF implementations; no new public tools/search service or private state mount; join real authority/backend factory before disposable integration (exit: actual registry tools and PTY observe each other's edits with blackboard on/off and zero host Git/version-stamp reads, active search sees a new symbol, reader search stays pinned, artifacts retain their controller path, PDF/binary/large/truncated/helper-unavailable results are explicit and no canonical fallback occurs; seal/import alias tests complete with SLICE3)
@@ -482,3 +515,12 @@ inventory. Historical I02 project-import/env assertions apply inside cells, not 
 Next dependency-ready STEP1 seam: dispatcher must pass authenticated peer and original absolute
 deadline explicitly through authorization/handler to actual backend/admission (§2.2, F20/F21),
 not infer identity from namespace or reset command budget. Actual owners/SLICE2 remain unfinished.
+
+## E252 NEXT — confirmed worker completion/admission race
+
+E251 whole732/nine assertion kills passes, but broader1251PASS1FAIL exposed actual local
+worker/PTY handoff. Source cell_worker.py176–188 publishes reply before running.release; main
+RUN reader191–203 nonblocking-acquires that gate without coordinating with publication. A reply
+can be observed before release, so sequential RUN2 is rejected. FIRST repair under spec§2.2 E252
+with deterministic native scheduling and full-bank sensitivity; not an inherited/flaky waiver.
+Then continue actual backend–WorkspaceAuthority construction. No policy change or completion tick.

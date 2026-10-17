@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import socket
 import struct
+import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
@@ -67,7 +68,7 @@ class Fixture:
         self.break_backend = False
         self.service = self.make_service()
 
-    def authorize(self, peer: PeerIdentity, req: dict[str, Any]) -> ProtectedPlanContext | None:
+    def authorize(self, peer: PeerIdentity, req: dict[str, Any], *, deadline: float) -> ProtectedPlanContext | None:
         self.auth_calls += 1
         assert peer.uid == os.getuid() and peer.pid == os.getpid()
         if req["op"] != "health" and (
@@ -76,7 +77,7 @@ class Fixture:
             raise SupervisorError("UNAUTHORIZED")
         return None
 
-    def handle(self, req: dict[str, Any]) -> GrantReply | dict[str, Any]:
+    def handle(self, peer: PeerIdentity, req: dict[str, Any], *, deadline: float) -> GrantReply | dict[str, Any]:
         self.handler_calls += 1
         if req["op"] == "health":
             return {"ready": False, "protocol_version": 1, "profile_set_sha256": "4" * 64}
@@ -229,7 +230,9 @@ def test_profile_and_configured_limit_deny_before_authority_or_handler(
         },
     }
     parsed = decode_request(encode_json(req))
-    response = case.service._dispatch(PeerIdentity(os.getpid(), os.getuid(), os.getgid()), parsed)
+    response = case.service._dispatch(
+        PeerIdentity(os.getpid(), os.getuid(), os.getgid()), parsed, deadline=time.monotonic() + 2
+    )
     assert case.auth_calls == case.handler_calls == 0
     assert response["error"]["code"] == code
     assert case.journal.lookup("op-" + RID, NS) is None
@@ -262,10 +265,10 @@ def test_non_grant_release_replays_only_original_public_reply_without_new_handle
     case = Fixture(tmp_path)
     req = {**request(), "op": "release", "payload": {}}
     peer = PeerIdentity(os.getpid(), os.getuid(), os.getgid())
-    first = case.service._dispatch(peer, decode_request(encode_json(req)))
+    first = case.service._dispatch(peer, decode_request(encode_json(req)), deadline=time.monotonic() + 2)
     assert first["status"] == "OK" and first["result"] == {"released": True}
     assert case.proof_alive is False
-    assert case.service._dispatch(peer, req) == first
+    assert case.service._dispatch(peer, req, deadline=time.monotonic() + 2) == first
     assert case.auth_calls == case.handler_calls == 1
     record = case.journal.lookup("op-" + RID, NS)
     assert record is not None and record["state"] == "DONE" and record["result"] == {"released": True}
@@ -275,7 +278,9 @@ def test_readonly_health_reports_fixture_not_ready_without_operation_reservation
     case = Fixture(tmp_path)
     req = {**request(), "op": "health", "namespace": None, "view_ref": None, "capability": None, "payload": {}}
     response = case.service._dispatch(
-        PeerIdentity(os.getpid(), os.getuid(), os.getgid()), decode_request(encode_json(req))
+        PeerIdentity(os.getpid(), os.getuid(), os.getgid()),
+        decode_request(encode_json(req)),
+        deadline=time.monotonic() + 2,
     )
     assert response["status"] == "OK"
     assert response["result"] == {"ready": False, "protocol_version": 1, "profile_set_sha256": "4" * 64}
@@ -304,23 +309,23 @@ def test_lost_ack_does_not_roll_back_done_or_repeat_handoff(tmp_path: Path) -> N
 def test_callback_mutation_cannot_retarget_original_key_or_replay_proof(tmp_path: Path) -> None:
     class MutatingFixture(Fixture):
         @override
-        def authorize(self, peer: PeerIdentity, req: dict[str, Any]) -> None:
-            super().authorize(peer, req)
+        def authorize(self, peer: PeerIdentity, req: dict[str, Any], *, deadline: float) -> None:
+            super().authorize(peer, req, deadline=deadline)
             req["capability"] = "a" * 64
 
         @override
-        def handle(self, req: dict[str, Any]) -> GrantReply | dict[str, Any]:
-            value = super().handle(req)
+        def handle(self, peer: PeerIdentity, req: dict[str, Any], *, deadline: float) -> GrantReply | dict[str, Any]:
+            value = super().handle(peer, req, deadline=deadline)
             req["request_id"] = "a" * 32
             return value
 
     case = MutatingFixture(tmp_path)
     peer = PeerIdentity(os.getpid(), os.getuid(), os.getgid())
     original = request()
-    response = case.service._dispatch(peer, original)
+    response = case.service._dispatch(peer, original, deadline=time.monotonic() + 2)
     assert response["status"] == "OK" and response["request_id"] == RID
     assert original == request()
-    assert case.service._dispatch(peer, request()) == response
+    assert case.service._dispatch(peer, request(), deadline=time.monotonic() + 2) == response
     assert case.auth_calls == case.handler_calls == 1
     assert case.journal.lookup("op-" + "a" * 32, NS) is None
 
@@ -337,14 +342,14 @@ def test_command_budget_extends_reply_deadline_but_control_does_not(
 
     class DelayedFixture(Fixture):
         @override
-        def authorize(self, peer: PeerIdentity, req: dict[str, Any]) -> ProtectedPlanContext | None:
-            super().authorize(peer, req)
+        def authorize(self, peer: PeerIdentity, req: dict[str, Any], *, deadline: float) -> ProtectedPlanContext | None:
+            super().authorize(peer, req, deadline=deadline)
             return ProtectedPlanContext(tmp_path, None, False) if req["op"] == "exec" else None
 
         @override
-        def handle(self, req: dict[str, Any]) -> GrantReply | dict[str, Any]:
+        def handle(self, peer: PeerIdentity, req: dict[str, Any], *, deadline: float) -> GrantReply | dict[str, Any]:
             if req["op"] != "exec":
-                value = super().handle(req)
+                value = super().handle(peer, req, deadline=deadline)
                 now[0] = 2.1
                 return value
             self.handler_calls += 1

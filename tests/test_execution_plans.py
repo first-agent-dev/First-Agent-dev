@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import copy
 import os
+import time
 from dataclasses import FrozenInstanceError, asdict, replace
 from pathlib import Path
 from typing import Any, override
@@ -114,13 +115,13 @@ class PlanFixture(Fixture):
         self.receipt_plan = None if context is None or context.plan_ref is None else context.plan_ref.sha256
 
     @override
-    def authorize(self, peer: PeerIdentity, req: dict[str, Any]) -> ProtectedPlanContext | None:
+    def authorize(self, peer: PeerIdentity, req: dict[str, Any], *, deadline: float) -> ProtectedPlanContext | None:
         self.auth_calls += 1
         assert peer.pid == os.getpid() and peer.uid == os.getuid() and req["namespace"] == NS.to_dict()
         return self.context
 
     @override
-    def handle(self, req: dict[str, Any]) -> GrantReply | dict[str, Any]:
+    def handle(self, peer: PeerIdentity, req: dict[str, Any], *, deadline: float) -> GrantReply | dict[str, Any]:
         self.handler_calls += 1
         record = self.journal.lookup("op-" + req["request_id"], NS)
         assert record is not None and record["state"] == "EXECUTING"
@@ -147,7 +148,9 @@ class PlanFixture(Fixture):
 
     def dispatch(self, req: dict[str, Any]) -> dict[str, Any]:
         parsed = decode_request(encode_json(req))
-        return self.service._dispatch(PeerIdentity(os.getpid(), os.getuid(), os.getgid()), parsed)
+        return self.service._dispatch(
+            PeerIdentity(os.getpid(), os.getuid(), os.getgid()), parsed, deadline=time.monotonic() + 2
+        )
 
 
 def operation_request(op: Operation) -> dict[str, Any]:

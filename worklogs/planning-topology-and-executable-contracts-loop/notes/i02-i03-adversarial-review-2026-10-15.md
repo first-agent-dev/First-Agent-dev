@@ -1187,3 +1187,36 @@ Archive1407639bytes SHA25650340b4a9e421c8d9dfcf8be1ed4d578218787f041e6bc464be179
 SLICE1 remains NOT shipped: actual CellBackend–WorkspaceAuthority admission/episodes/per-command
 routing/drain/startup discovery/cgroup barrier and factory/callers remain next in existing order.
 All35STEPS/four final duties unchecked; Q59/Q75/Q76/final-SLICE6 actual host/full-path proof unchanged.
+
+### E251 — F20/F21 propagation seam repaired, owners still missing
+
+E251 repairs the existing dispatcher composition seam, not the actual backend/authority.
+DeadlineConnection retains one monotonic request start and exposes read-only start/reply deadline;
+required typed authorizer/
+handler protocols receive authenticated PeerIdentity and keyword execution deadline through
+readonly/reserved operations. Exec deadline = original start + requested command budget; reply
+waiting alone keeps the separate control+command allowance. Valid but command-late input invokes
+neither authority nor backend. No clock reset, raw-wire identity or fallback callback. Expiry before fresh
+authorization/begin/backend prevents late calls; reserved failure remains UNKNOWN. Actual returned
+results still persist truthfully even when transport reply expires; Q75 cached original replay
+invokes neither callback. Actual admission/drain/command budget/terminality owners remain absent.
+TEST-EDITS: dispatch/plan fixtures and direct calls gain explicit peer/deadline arguments; all old
+assertion ASTs retained except required deadline keyword in asserted private calls.48 new C0/C3
+real-socket/journal cases cover all19 operations, mutating PTY controls, invalid/expired budgets,
+authorization/begin elapsed time and no replay. No fake production authority or C1 claim.
+Owning15modules732PASS43.34s → nine full732-bank assertion-only kills26/62/26/26/4/16/2/2/1 → restored732PASS42.05s;
+all setup/call/teardown clean except intended mutant CALL assertions; no skips/warnings/collection/
+runtime/infra credit.598 declared source/input hashes (including new test) exact. Ruff/format27PASS,
+Mypy27/183PASS, configured+clean-path Pyrefly0errors (existing141suppressed/50warnings); broader
+28modules1251PASS/1FAIL53.71s: immediate second RUN raises WorkerUnavailableError.
+This is a real unresolved worker reply/gate race, NOT inherited noise or a green broader gate. Initial missing-keyword fixture migration/lint diagnostics
+and missing formatted mutation anchor retained/described, not final kill credit. Superseded
+transport-budget source proof and three Pyrefly fixture-unpack errors retained; corrected explicit
+ViewRef fields without suppression, fresh final-source baseline/nine kills/restored run PASS.
+Evidence `notes/evidence/i03-e251/context-seam.json.gz`, 1929361bytes SHA25689dafdfa8f9fa14c479f21e7d68d76c0acceefa1277a3344aece41941fbd63f7,
+contains raw phases/snapshots/runners/restoration and E250 inventory rollforward; all16 production
+surfaces/eight joins remain tracked, live verdicts still PLANNED/UNEXECUTED. No actual host run.
+NEXT fix the confirmed worker reply/gate handoff race with deterministic scheduling proof; then
+actual WorkspaceAuthority registration/generation/materialization/admit/drain joined to the
+real CellBackend; no temporary issuer. SLICE1/2/all35STEPS/four final duties remain unfinished;
+Q59/Q75/Q76 and final-SLICE6 host/full-path release proof unchanged. No new policy adopted.

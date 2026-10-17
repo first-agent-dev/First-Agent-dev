@@ -1219,7 +1219,7 @@ Formal workflow cases retain the actual admitted plan; ordinary no-active-workfl
 | ID | Join | Required live fixture/oracle | Live status |
 |---|---|---|---|
 | I03-LIVE-S01 | Installed launch → controller → private authenticated UDS | Real entry/help/auto-run/session paths, unavailable backend and hostile project imports: zero project host/controller commands. | PLANNED / UNEXECUTED |
-| I03-LIVE-S02 | Dispatcher → actual WorkspaceAuthority.admit → CellBackend | Real actor/generation/pin/profile/PlanRef check and same original deadline, register active work before effects; revoke/stop races permit no late send/write. Current actor/deadline handler propagation and actual owners are incomplete. | PLANNED / UNEXECUTED |
+| I03-LIVE-S02 | Dispatcher → actual WorkspaceAuthority.admit → CellBackend | Real actor/generation/pin/profile/PlanRef check and same original deadline, register active work before effects; revoke/stop races permit no late send/write. E251 implements local actor/deadline propagation; actual admission/backend owners remain incomplete. | PLANNED / UNEXECUTED |
 | I03-LIVE-S03 | Journal → original creation/CID → attach → reused per-command RUN | Two commands, two durable operations, one cell/attach; duplication/loss/restart including creator-DONE never permits another RUN or replacement cell. No second history. | PLANNED / UNEXECUTED |
 | I03-LIVE-S04 | Cancel/close-admission → drain → force-stop → kernel barrier | Hold active file handler and queued RUN while stopping; fork/double-fork/setsid writers remain fenced until actual owned cgroup populated=0. 204/409/404/STOP/worker exit are not release proof; unknown quarantines. | PLANNED / UNEXECUTED |
 | I03-LIVE-S05 | Registered root/writer → dirty R0 → view/rooted IO → pinned reader | Two OS actors race alias/bind/nested registrations and writer generation; exactly one writer. Copy actual staged/unstaged/untracked/deleted bytes without canonical index changes; tools/PTY share writer view, independent pins survive newer generation. | PLANNED / UNEXECUTED |
@@ -1242,3 +1242,36 @@ collection/setup/infra errors cannot prove kills. Record provider mode REAL/CONT
 roots/secrets, bounded teardown with independent cgroup emptiness; uncertainty retains fencing and
 fails the case. No root deletion while writers may survive. No permissive authority, injected live
 success, new approval gate or early deployment; all four transferred acceptance duties stay open.
+
+### E251 — tracked seam rollforward, live verdicts unchanged
+
+E251 repairs the existing dispatcher composition seam, not the actual backend/authority.
+DeadlineConnection retains one monotonic request start and exposes read-only start/reply deadline;
+required typed authorizer/
+handler protocols receive authenticated PeerIdentity and keyword execution deadline through
+readonly/reserved operations. Exec deadline = original start + requested command budget; reply
+waiting alone keeps the separate control+command allowance. Valid but command-late input invokes
+neither authority nor backend. No clock reset, raw-wire identity or fallback callback. Expiry before fresh
+authorization/begin/backend prevents late calls; reserved failure remains UNKNOWN. Actual returned
+results still persist truthfully even when transport reply expires; Q75 cached original replay
+invokes neither callback. Actual admission/drain/command budget/terminality owners remain absent.
+TEST-EDITS: dispatch/plan fixtures and direct calls gain explicit peer/deadline arguments; all old
+assertion ASTs retained except required deadline keyword in asserted private calls.48 new C0/C3
+real-socket/journal cases cover all19 operations, mutating PTY controls, invalid/expired budgets,
+authorization/begin elapsed time and no replay. No fake production authority or C1 claim.
+Owning15modules732PASS43.34s → nine full732-bank assertion-only kills26/62/26/26/4/16/2/2/1 → restored732PASS42.05s;
+all setup/call/teardown clean except intended mutant CALL assertions; no skips/warnings/collection/
+runtime/infra credit.598 declared source/input hashes (including new test) exact. Ruff/format27PASS,
+Mypy27/183PASS, configured+clean-path Pyrefly0errors (existing141suppressed/50warnings); broader
+28modules1251PASS/1FAIL53.71s: immediate second RUN raises WorkerUnavailableError.
+This is a real unresolved worker reply/gate race, NOT inherited noise or a green broader gate. Initial missing-keyword fixture migration/lint diagnostics
+and missing formatted mutation anchor retained/described, not final kill credit. Superseded
+transport-budget source proof and three Pyrefly fixture-unpack errors retained; corrected explicit
+ViewRef fields without suppression, fresh final-source baseline/nine kills/restored run PASS.
+Evidence `notes/evidence/i03-e251/context-seam.json.gz`, 1929361bytes SHA25689dafdfa8f9fa14c479f21e7d68d76c0acceefa1277a3344aece41941fbd63f7,
+contains raw phases/snapshots/runners/restoration and E250 inventory rollforward; all16 production
+surfaces/eight joins remain tracked, live verdicts still PLANNED/UNEXECUTED. No actual host run.
+NEXT fix the confirmed worker reply/gate handoff race with deterministic scheduling proof; then
+actual WorkspaceAuthority registration/generation/materialization/admit/drain joined to the
+real CellBackend; no temporary issuer. SLICE1/2/all35STEPS/four final duties remain unfinished;
+Q59/Q75/Q76 and final-SLICE6 host/full-path release proof unchanged. No new policy adopted.

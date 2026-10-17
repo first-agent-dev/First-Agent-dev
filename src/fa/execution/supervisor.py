@@ -10,12 +10,14 @@ import copy
 import hashlib
 import hmac
 import json
+import math
 import socket
 import struct
-from collections.abc import Callable, Mapping
+import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from threading import Lock
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 from fa.execution.plans import ProtectedPlanContext
 from fa.execution.profiles import ExecutionProfile
@@ -213,6 +215,25 @@ class SupervisorError(RuntimeError):
         self.code, self.operation_id = code, operation_id
 
 
+class RequestAuthorizer(Protocol):
+    def __call__(
+        self, peer: PeerIdentity, request: dict[str, Any], /, *, deadline: float
+    ) -> ProtectedPlanContext | None: ...
+
+
+class RequestHandler(Protocol):
+    def __call__(
+        self, peer: PeerIdentity, request: dict[str, Any], /, *, deadline: float
+    ) -> GrantReply | dict[str, Any]: ...
+
+
+def _require_budget(deadline: float) -> None:
+    if type(deadline) not in {int, float} or not math.isfinite(deadline):
+        raise ExecutionContractError
+    if time.monotonic() >= deadline:
+        raise TimeoutError
+
+
 class SupervisorDispatcher:
     """Transport + ordering, NOT authority/backend implementation or activation.
 
@@ -230,8 +251,8 @@ class SupervisorDispatcher:
         profiles: tuple[ExecutionProfile, ...],
         journal: OperationJournal,
         replies: CompletedReplyCache,
-        authorize: Callable[[PeerIdentity, dict[str, Any]], ProtectedPlanContext | None],
-        handle: Callable[[dict[str, Any]], GrantReply | dict[str, Any]],
+        authorize: RequestAuthorizer,
+        handle: RequestHandler,
     ) -> None:
         if not client_uids or any(type(uid) is not int or uid < 0 for uid in client_uids):
             raise ExecutionContractError
@@ -246,7 +267,10 @@ class SupervisorDispatcher:
         self._journal, self._replies = journal, replies
         self._authorize, self._handle = authorize, handle
 
-    def _authorize_request(self, peer: PeerIdentity, request: dict[str, Any]) -> ProtectedPlanContext | None:
+    def _authorize_request(
+        self, peer: PeerIdentity, request: dict[str, Any], *, deadline: float
+    ) -> ProtectedPlanContext | None:
+        _require_budget(deadline)
         if peer.uid not in self._uids:
             raise SupervisorError("UNAUTHORIZED")
         if request["op"] == "exec":
@@ -257,7 +281,9 @@ class SupervisorDispatcher:
                 request["payload"]["session_id"] is not None
             ):
                 raise SupervisorError("INPUT_POLICY")
-        context = self._authorize(peer, copy.deepcopy(request))  # Actual resource authority REQUIRED.
+        context = self._authorize(
+            peer, copy.deepcopy(request), deadline=deadline
+        )  # Actual resource authority REQUIRED.
         if request["op"] in {"pin_reader", "create_view", "exec"}:
             if not isinstance(context, ProtectedPlanContext):
                 raise SupervisorError("UNAUTHORIZED")
@@ -303,11 +329,19 @@ class SupervisorDispatcher:
             raise SupervisorError("UNAUTHORIZED", record["operation_id"]) from None
 
     def _execute_reserved(
-        self, request: dict[str, Any], binding: ReplayBinding, context: ProtectedPlanContext | None
+        self,
+        peer: PeerIdentity,
+        request: dict[str, Any],
+        binding: ReplayBinding,
+        context: ProtectedPlanContext | None,
+        *,
+        deadline: float,
     ) -> dict[str, Any]:
         operation_id = "op-" + binding.request_id
+        _require_budget(deadline)
         self._journal.begin(operation_id, binding.namespace)
-        produced = self._handle(copy.deepcopy(request))
+        _require_budget(deadline)
+        produced = self._handle(peer, copy.deepcopy(request), deadline=deadline)
         if binding.operation in {
             Operation.ACQUIRE_WRITER,
             Operation.PIN_READER,
@@ -331,7 +365,7 @@ class SupervisorDispatcher:
         self._replies.remember_completed(binding, request["capability"], snapshot)
         return snapshot.to_wire_result()
 
-    def _dispatch(self, peer: PeerIdentity, request: dict[str, Any]) -> dict[str, Any]:
+    def _dispatch(self, peer: PeerIdentity, request: dict[str, Any], *, deadline: float) -> dict[str, Any]:
         from fa.execution.journal import JournalError
 
         reserved_id: str | None = None
@@ -341,8 +375,9 @@ class SupervisorDispatcher:
             readonly = operation in {Operation.HEALTH, Operation.READ_FILE, Operation.INSPECT}
             readonly = readonly or (operation is Operation.PTY_CONTROL and request["payload"]["action"] == "LIST")
             if readonly:
-                self._authorize_request(peer, request)
-                produced = self._handle(copy.deepcopy(request))
+                self._authorize_request(peer, request, deadline=deadline)
+                _require_budget(deadline)
+                produced = self._handle(peer, copy.deepcopy(request), deadline=deadline)
                 if not isinstance(produced, dict):
                     raise ExecutionContractError
                 response = self._reply(request["request_id"], result=produced)
@@ -377,11 +412,11 @@ class SupervisorDispatcher:
                 if existing is not None:
                     value = self._completed(existing, binding, request["capability"])
                 else:
-                    context = self._authorize_request(peer, request)
+                    context = self._authorize_request(peer, request, deadline=deadline)
                     reserved = self._journal.reserve(request)
                     if reserved.fresh:
                         reserved_id = reserved.record["operation_id"]
-                        value = self._execute_reserved(request, binding, context)
+                        value = self._execute_reserved(peer, request, binding, context, deadline=deadline)
                     else:
                         value = self._completed(reserved.record, binding, request["capability"])
                 response = self._reply(request["request_id"], result=value)
@@ -409,6 +444,7 @@ class SupervisorDispatcher:
                 if uid not in self._uids:
                     return  # Authenticate before reading attacker-controlled frames.
                 framed = DeadlineConnection(connection, timeout_ms=self._timeout_ms)
+                deadline = framed.deadline
                 try:
                     request = decode_request(read_frame(framed))
                 except InvalidRequestError as exc:
@@ -425,7 +461,10 @@ class SupervisorDispatcher:
                         and profile.interactive == (request["payload"]["session_id"] is not None)
                     ):
                         framed.add_execution_budget(request["payload"]["timeout_ms"])
-                response = self._dispatch(PeerIdentity(pid, uid, gid), request)
+                        # Reply waiting may include the control allowance; execution
+                        # consumes its requested budget from the original receipt.
+                        deadline = framed.started_at + request["payload"]["timeout_ms"] / 1000
+                response = self._dispatch(PeerIdentity(pid, uid, gid), request, deadline=deadline)
                 write_frame(framed, encode_json(response))
             except (OSError, ExecutionContractError):
                 # Lost replies never roll back durable state or replay a handler.

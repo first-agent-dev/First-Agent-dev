@@ -271,8 +271,9 @@ manager, HTTP supervisor, scheduler, lease daemon or configurable backend matrix
   Internal admission carries the actual loaded view record, retained source descriptor, trusted
   profile/path triple and ProtectedPlanContext plus deadline; no new wire/persisted grant schema.
   READ grants check their retained pin, not the latest writer generation. The service's private
-  backend dispatch must carry authenticated peer and absolute deadline as explicit arguments; today's
-  `handle(request)` callback is insufficient for this join and must be changed with its callers/tests.
+  backend dispatch must carry authenticated peer and absolute deadline as explicit arguments; the
+  E251 `handle(peer, request, *, deadline)` / authorizer seam now propagates these explicitly;
+  it is still not the actual admission/backend implementation.
 - **NEW `supervisor.py::build_supervisor/main`** compose actual authority + lifecycle owner + existing
   journal/reply cache/dispatcher; configure all closed operation handlers, including SLICE3 publication,
   before production startup. NEW `CellBackend.execute(peer, request, *, deadline)` consumes this
@@ -314,6 +315,17 @@ all legs; no late follow-up or phase loan. Return only ContainerObservation, inc
 facts; never a receipt/terminal_barrier, journal DONE or lease release. Actual descendant/cgroup
 emptiness, per-command cancel routing, admission/drain/restart enumeration remain obligations of
 the real backend/authority join, not fulfilled by these native lifecycle operations.
+
+**E252 worker reply/RUN handoff repair (before code):** completion-reply publication and acceptance
+of the next RUN must share one synchronization boundary. The caller can receive a reply before
+its sender's write returns; releasing the RUN gate only afterward without coordinating admission
+can falsely reject the next sequential command. Use the existing reply-write lock for both RUN
+admission and gate retirement; retire the gate inside that lock after publishing the reply.
+Never release/reacquire it outside that boundary. Reject truly overlapping RUN without parallel
+execution; preserve concurrent controls and main-thread PTY acquisition/prior-thread join. A send
+failure remains unavailable/uncertain, no resend or terminality assertion. Add deterministic actual
+Unix/worker scheduling proof that holds gate retirement after reply visibility and submits RUN2;
+RUN2 waits at publication, not rejects. No sleep/retry/longer timeout as a repair.
 
 **Restart and loss:** mark uncertain operations with existing `recover_uncertain()` but also discover
 and inspect ALL owned cells by original name/CID/labels, including cells whose creation command is

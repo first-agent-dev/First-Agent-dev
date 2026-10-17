@@ -372,8 +372,19 @@ class DeadlineConnection:
     def __init__(self, connection: socket.socket, *, timeout_ms: int) -> None:
         _positive_integer(timeout_ms)
         self._connection = connection
-        self._deadline = time.monotonic() + timeout_ms / 1000
+        self._started_at = time.monotonic()
+        self._deadline = self._started_at + timeout_ms / 1000
         self._execution_budget_added = False
+
+    @property
+    def started_at(self) -> float:
+        """One monotonic request start, before receiving its first frame byte."""
+        return self._started_at
+
+    @property
+    def deadline(self) -> float:
+        """Original absolute budget, including only the approved one-time loan."""
+        return self._deadline
 
     def add_execution_budget(self, timeout_ms: int) -> None:
         """No clock reset, expired-frame revival, or repeated budget extension.

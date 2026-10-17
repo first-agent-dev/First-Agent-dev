@@ -3,7 +3,7 @@
 > Read [`knowledge/llms.txt`](../knowledge/llms.txt) §MUST READ FIRST.
 > Current local delivery is distinct from final I03/deployed acceptance.
 
-## Current state — I02 LOCAL SHIPPED / I03 IMPLEMENTATION IN PROGRESS, 2026-10-18 / E250
+## Current state — I02 LOCAL SHIPPED / I03 IMPLEMENTATION IN PROGRESS, 2026-10-18 / E251
 
 Branch `arena/86633f17-first-agent-dev` only. Retained I02 runtime/test proof snapshot
 `a32a72fc58db4b9a5b048a9b6475649bcf3e32b4`. E230/E231 finalized planning; E232 adds the first
@@ -41,7 +41,39 @@ Ubuntu host test,OS isolation,managed nested acquisition or host supervisor deli
 only;Go is an indirect inherited hook-build diagnosis,not a new FA runtime/deployment requirement.
 PTY stays. Q69–Q73 resolved;Q72 remains its narrow46-links/15-files+banner repair decision.
 
-**E250 CURRENT — E2E ledger inventory verified/repaired:** source diff exactly14 added Python
+**E251 CURRENT — explicit composition seam implemented, actual owners NEXT:**
+E251 repairs the existing dispatcher composition seam, not the actual backend/authority.
+DeadlineConnection retains one monotonic request start and exposes read-only start/reply deadline;
+required typed authorizer/
+handler protocols receive authenticated PeerIdentity and keyword execution deadline through
+readonly/reserved operations. Exec deadline = original start + requested command budget; reply
+waiting alone keeps the separate control+command allowance. Valid but command-late input invokes
+neither authority nor backend. No clock reset, raw-wire identity or fallback callback. Expiry before fresh
+authorization/begin/backend prevents late calls; reserved failure remains UNKNOWN. Actual returned
+results still persist truthfully even when transport reply expires; Q75 cached original replay
+invokes neither callback. Actual admission/drain/command budget/terminality owners remain absent.
+TEST-EDITS: dispatch/plan fixtures and direct calls gain explicit peer/deadline arguments; all old
+assertion ASTs retained except required deadline keyword in asserted private calls.48 new C0/C3
+real-socket/journal cases cover all19 operations, mutating PTY controls, invalid/expired budgets,
+authorization/begin elapsed time and no replay. No fake production authority or C1 claim.
+Owning15modules732PASS43.34s → nine full732-bank assertion-only kills26/62/26/26/4/16/2/2/1 → restored732PASS42.05s;
+all setup/call/teardown clean except intended mutant CALL assertions; no skips/warnings/collection/
+runtime/infra credit.598 declared source/input hashes (including new test) exact. Ruff/format27PASS,
+Mypy27/183PASS, configured+clean-path Pyrefly0errors (existing141suppressed/50warnings); broader
+28modules1251PASS/1FAIL53.71s: immediate second RUN raises WorkerUnavailableError.
+This is a real unresolved worker reply/gate race, NOT inherited noise or a green broader gate. Initial missing-keyword fixture migration/lint diagnostics
+and missing formatted mutation anchor retained/described, not final kill credit. Superseded
+transport-budget source proof and three Pyrefly fixture-unpack errors retained; corrected explicit
+ViewRef fields without suppression, fresh final-source baseline/nine kills/restored run PASS.
+Evidence `notes/evidence/i03-e251/context-seam.json.gz`, 1929361bytes SHA25689dafdfa8f9fa14c479f21e7d68d76c0acceefa1277a3344aece41941fbd63f7,
+contains raw phases/snapshots/runners/restoration and E250 inventory rollforward; all16 production
+surfaces/eight joins remain tracked, live verdicts still PLANNED/UNEXECUTED. No actual host run.
+NEXT fix the confirmed worker reply/gate handoff race with deterministic scheduling proof; then
+actual WorkspaceAuthority registration/generation/materialization/admit/drain joined to the
+real CellBackend; no temporary issuer. SLICE1/2/all35STEPS/four final duties remain unfinished;
+Q59/Q75/Q76 and final-SLICE6 host/full-path release proof unchanged. No new policy adopted.
+
+**E250 retained — E2E ledger inventory verified/repaired:** source diff exactly14 added Python
 modules +2 modified production surfaces, now16 explicit planned live rows +8 joins in existing
 E2E register, with SHA/AST evidence and16 omission controls. No live verdict. Next repair the
 spec§2.2 dispatcher peer/deadline seam before actual backend/authority construction; all owners,
@@ -138,7 +170,9 @@ Final repair SHA256728a228c8f9e1ecf10400bb8a90f2a996ed089556b5f9b83c670bc6ea702c
 verification+closure SHA25659cfc0cba71d2457cd1d5d275f63f784eda8b16de2a15339ec462fdc7d33262e.
 
 NEXT MENU (SLICE1 first): E247 client classification and E249 native force-stop legs implemented.
-NEXT construct the actual CellBackend protected per-view episodes/per-command begin/CID/worker
+E251 explicit authenticated peer/deadline propagation is implemented. FIRST fix confirmed worker
+reply/gate handoff race (broader1251PASS1FAIL); THEN construct the actual
+CellBackend protected per-view episodes/per-command begin/CID/worker
 control/restart together with the ONE actual WorkspaceAuthority admission/drain (necessary SLICE2
 dependency). Take authenticated peer + one absolute deadline through this real join; no permissive
 callback, fake grant issuer, second history or further rooted-IO helper rebuilding. Actual startup
