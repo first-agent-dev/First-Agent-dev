@@ -110,7 +110,8 @@ Final repair SHA256728a228c8f9e1ecf10400bb8a90f2a996ed089556b5f9b83c670bc6ea702c
 verification+closure SHA25659cfc0cba71d2457cd1d5d275f63f784eda8b16de2a15339ec462fdc7d33262e.
 
 NEXT MENU (SLICE1 first): E247 client typed ERROR repair implemented; retain its regression bank.
-NEXT owned Docker stop/kill/observation with original creation/journal identity, never ACK-as-death.
+NEXT E248 native owned fixed-SIGKILL force-stop + independent same-CID observation per spec§2.2;
+durable creation cancel intent before Docker, never ACK/404-as-death. This leg is NOT yet implemented.
 Construct actual CellBackend per-view episode registry/per-command begin/record_container/worker
 control/restart over existing transports/journal; join the ONE actual WorkspaceAuthority admission/
 drain (necessary SLICE2 dependency), not a permissive callback or fake grant issuer. No more rooted

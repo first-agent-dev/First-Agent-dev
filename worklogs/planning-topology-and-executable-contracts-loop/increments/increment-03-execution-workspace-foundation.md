@@ -171,6 +171,16 @@ NEXT remains owned Docker termination/observation, then actual CellBackend–Wor
 factory/caller composition in existing dependency order. All35STEPS/four final duties stay unchecked;
 Q59/Q75/Q76/final-SLICE6 host/full-path proof unchanged. No fake authority or early-host gate.
 
+## E248 — next native lifecycle leg clarified before implementation
+
+E247 closed the client taxonomy defect only. NEXT extend existing DockerCells/Engine with owned
+fixed-SIGKILL force-stop and independent same-CID observation per spec§2.2. Persist original creation
+cancel intent before daemon contact; never equate ACK/409/404 with death or release, never replay
+RUN/create/start. No signal/grace configuration or new service/authority/history. The whole STEP2
+and actual CellBackend–WorkspaceAuthority join remain open, including per-command cancellation,
+completed-creation/live-cell startup discovery and actual descendant/cgroup barrier. Final host/
+full-path proof remains SLICE6; no intervening approval gate or completion ticks.
+
 ## SLICE1: Trusted launch and single supervised execution backend
 STEPS: prescriptive
 DEPS: none

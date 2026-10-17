@@ -300,6 +300,21 @@ observe real exit/cgroup emptiness. Do not hold the global journal lock while wa
 handler drain or cgroup. Lock order is workspace admission before short journal transitions; any
 cancel path that records intent first releases its journal transaction before waiting for admission.
 
+**E248 owned force-stop leg (before implementation):** extend the existing private Docker transport,
+not the wire operation set. `DockerCells.force_stop_created(original_creation_request, profile,
+deadline)` checks the original namespace/input journal binding and durably records cancel intent
+before Docker contact, even for a completed creation command with a still-live cell. Never reclaim
+begin/create/start, change its command result or infer cancellation completion. Engine
+`force_stop_owned` re-inspects exact original name/labels/profile/CID, sends at most one fixed
+`POST /containers/<observed-full-CID>/kill?signal=SIGKILL`, then independently re-inspects that SAME
+CID. No model-selected signal/grace/name/PID or automatic resend. An already observed exited cell
+needs no signal; Docker409 (not running) still requires the independent observation, while404,
+lost/malformed acknowledgement or observation fails closed. One caller absolute deadline spans
+all legs; no late follow-up or phase loan. Return only ContainerObservation, including still-running
+facts; never a receipt/terminal_barrier, journal DONE or lease release. Actual descendant/cgroup
+emptiness, per-command cancel routing, admission/drain/restart enumeration remain obligations of
+the real backend/authority join, not fulfilled by these native lifecycle operations.
+
 **Restart and loss:** mark uncertain operations with existing `recover_uncertain()` but also discover
 and inspect ALL owned cells by original name/CID/labels, including cells whose creation command is
 DONE. An idle shell/background writer can outlive a completed interactive command. Memory episode

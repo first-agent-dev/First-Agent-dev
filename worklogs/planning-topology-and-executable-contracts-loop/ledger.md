@@ -2941,3 +2941,10 @@ E247  FACT  E247 closes only the first E246 menu item: existing client ERROR tax
     NEXT remains owned Docker termination/observation, then actual CellBackend–WorkspaceAuthority and
     factory/caller composition in existing dependency order. All35STEPS/four final duties stay unchecked;
     Q59/Q75/Q76/final-SLICE6 host/full-path proof unchanged. No fake authority or early-host gate.
+
+E248  DECIDED  Clarified existing next owned Docker lifecycle leg in spec§2.2 before code:
+    original creation journal/input binding + durable cancel intent → owned inspect → one fixed
+    full-CID SIGKILL → independent same-CID observation, using one absolute deadline. No receipt,
+    terminal barrier, replay/replacement, signal/grace settings or new authority/history/service.
+    Docker409 still needs inspect;404/loss fail closed. Actual backend/authority admission/drain/
+    per-command routing/startup discovery/cgroup proof remain open; all35STEPS unchanged. [docs-first]
