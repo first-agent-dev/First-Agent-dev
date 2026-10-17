@@ -56,6 +56,8 @@ Task type → primary entrypoint, then secondary:
 
 ## § BY-DEMAND INDEX (Deprecated)
 
+[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e247/typed-errors.json.gz]: E247 client typed ERROR C0/C3,623owning/six assertion-only kills/1143broader; SLICE1 backend/authority/service/callers still incomplete.
+
 [worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e245/rooted-io.json.gz]: E245 rooted descriptor IO C0/C3/C4,93cases/17whole-bank kills, static/broader1001 and rejected diagnostics; no authority/C1/host acceptance.
 
 [worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e243/deadline-review.json.gz]: E243 mid-slice review repair: short-RPC/command budget, whole481case producer kills; not authority/backend/C1/host acceptance.

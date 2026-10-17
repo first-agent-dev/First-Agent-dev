@@ -31,14 +31,17 @@ from fa.runtime.pty_pool import PtyResult
 
 
 class ExecutionUnavailableError(RuntimeError):
-    def __init__(self) -> None:
+    def __init__(self, *, operation_id: str | None = None) -> None:
         super().__init__("execution_unavailable")
+        self.code = "BACKEND_UNAVAILABLE"
+        self.operation_id = operation_id
 
 
 class ExecutionUncertainError(RuntimeError):
-    def __init__(self, operation_id: str | None) -> None:
+    def __init__(self, operation_id: str | None, *, code: str = "EXECUTION_UNKNOWN") -> None:
         super().__init__("execution_unknown")
         self.operation_id = operation_id
+        self.code = code
 
 
 class ExecutionTimedOutError(ExecutionUncertainError):
@@ -126,6 +129,10 @@ class ExecutionClient:
             raise ExecutionUnavailableError from None
         if response["status"] == "ERROR":
             error = response["error"]
+            if error["code"] in {"EXECUTION_UNKNOWN", "TERMINALITY_UNKNOWN", "DURABILITY_UNKNOWN", "CORRUPT_STATE"}:
+                raise ExecutionUncertainError(error["operation_id"] or "op-" + request_id, code=error["code"])
+            if error["code"] == "BACKEND_UNAVAILABLE":
+                raise ExecutionUnavailableError(operation_id=error["operation_id"])
             raise ExecutionRejectedError(error["code"], error["operation_id"])
         return cast(dict[str, Any], response["result"])
 

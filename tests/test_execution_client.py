@@ -25,7 +25,7 @@ from fa.execution.client import (
     ManagedBashExecutor,
 )
 from fa.execution.profiles import ExecutionProfile
-from fa.execution.protocol import DeadlineConnection, decode_request, encode_json, read_frame, write_frame
+from fa.execution.protocol import ERROR_CODES, DeadlineConnection, decode_request, encode_json, read_frame, write_frame
 from fa.execution.types import Access, ExecutionContractError, NamespaceRef, ViewPurpose, ViewRef
 from fa.runtime.bash_executor import BashExecutor
 
@@ -88,6 +88,8 @@ def endpoint(
     handler: Callable[[dict[str, Any]], dict[str, Any] | None] = result,
     *,
     error_code: str | None = None,
+    error_operation_id: str | None = None,
+    retryable: bool = True,
 ) -> Iterator[tuple[ExecutionClient, list[dict[str, Any]]]]:
     """A literal reply fixture, deliberately no authority, journal or executor."""
     directory = tmp_path / "private"
@@ -124,7 +126,7 @@ def endpoint(
                         error = (
                             None
                             if error_code is None
-                            else {"code": error_code, "retryable": True, "operation_id": None}
+                            else {"code": error_code, "retryable": retryable, "operation_id": error_operation_id}
                         )
                         write_frame(
                             connection,
@@ -446,3 +448,91 @@ def test_controls_do_not_borrow_a_command_budget(tmp_path: Path, monkeypatch: py
             uncertain = exc
         assert uncertain is not None
         assert len(seen) == 1 and seen[0]["op"] == "pty_control"
+
+
+_ERROR_TYPES: dict[str, type[RuntimeError]] = {
+    "INVALID_REQUEST": ExecutionRejectedError,
+    "UNAUTHORIZED": ExecutionRejectedError,
+    "UNAPPROVED_PROFILE": ExecutionRejectedError,
+    "WORKSPACE_BUSY": ExecutionRejectedError,
+    "STALE_GENERATION": ExecutionRejectedError,
+    "STALE_REVISION": ExecutionRejectedError,
+    "VIEW_CLOSED": ExecutionRejectedError,
+    "BACKEND_UNAVAILABLE": ExecutionUnavailableError,
+    "EXECUTION_UNKNOWN": ExecutionUncertainError,
+    "TERMINALITY_UNKNOWN": ExecutionUncertainError,
+    "PATH_DENIED": ExecutionRejectedError,
+    "INPUT_POLICY": ExecutionRejectedError,
+    "COLLISION": ExecutionRejectedError,
+    "DURABILITY_UNKNOWN": ExecutionUncertainError,
+    "CORRUPT_STATE": ExecutionUncertainError,
+}
+
+
+def _invoke(bash: ManagedBashExecutor, method: str) -> object:
+    if method == "run":
+        return bash.run("command-body-must-not-appear-in-errors")
+    if method == "interrupt":
+        return bash.send_ctrl_c("main")
+    if method == "close":
+        bash.close("main")
+        return None
+    return bash.list_sessions()
+
+
+def test_error_matrix_covers_closed_wire_codes() -> None:
+    assert set(_ERROR_TYPES) == set(ERROR_CODES)
+
+
+@pytest.mark.parametrize("code", ERROR_CODES)
+@pytest.mark.parametrize("method", ["run", "interrupt", "close", "list"])
+@pytest.mark.parametrize("retryable", [False, True])
+def test_every_error_code_is_typed_through_all_executor_methods_without_resend(
+    tmp_path: Path,
+    code: str,
+    method: str,
+    retryable: bool,
+) -> None:
+    with endpoint(tmp_path, error_code=code, retryable=retryable) as (client, seen):
+        with pytest.raises(RuntimeError) as caught:
+            _invoke(executor(client), method)
+        error = caught.value
+        assert type(error) is _ERROR_TYPES[code]
+        assert isinstance(error, (ExecutionUncertainError, ExecutionUnavailableError, ExecutionRejectedError))
+        assert error.code == code
+        assert len(seen) == 1
+        expected = "op-" + seen[0]["request_id"] if type(error) is ExecutionUncertainError else None
+        assert error.operation_id == expected
+        assert (seen[0]["op"] == "exec") == (method == "run")
+        if method != "run":
+            assert seen[0]["payload"]["action"] == {"interrupt": "INTERRUPT", "close": "CLOSE", "list": "LIST"}[method]
+        for private in (CAP, "command-body-must-not-appear-in-errors", str(tmp_path)):
+            assert private not in str(error) and private not in repr(error)
+
+
+@pytest.mark.parametrize(
+    "code", ["EXECUTION_UNKNOWN", "DURABILITY_UNKNOWN", "TERMINALITY_UNKNOWN", "CORRUPT_STATE", "BACKEND_UNAVAILABLE"]
+)
+@pytest.mark.parametrize("method", ["run", "interrupt", "close", "list"])
+def test_typed_service_failure_retains_supplied_reference_and_never_issues_recovery_rpc(
+    tmp_path: Path,
+    code: str,
+    method: str,
+) -> None:
+    reference = "op-" + "a" * 32  # Opaque observation/replay reference, not authority.
+    with endpoint(tmp_path, error_code=code, error_operation_id=reference) as (client, seen):
+        with pytest.raises(RuntimeError) as caught:
+            _invoke(executor(client), method)
+        error = caught.value
+        assert type(error) is _ERROR_TYPES[code]
+        assert isinstance(error, (ExecutionUncertainError, ExecutionUnavailableError))
+        assert error.operation_id == reference and error.code == code
+        assert len(seen) == 1  # No inspect/cancel/control/reconnect/RUN synthesized.
+
+
+def test_failure_constructor_compatibility_keeps_old_transport_call_sites() -> None:
+    unavailable = ExecutionUnavailableError()
+    unknown = ExecutionUncertainError("op-" + "b" * 32)
+    assert unavailable.code == "BACKEND_UNAVAILABLE" and unavailable.operation_id is None
+    assert unknown.code == "EXECUTION_UNKNOWN" and unknown.operation_id == "op-" + "b" * 32
+    assert str(unavailable) == "execution_unavailable" and str(unknown) == "execution_unknown"

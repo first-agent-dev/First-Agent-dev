@@ -355,7 +355,7 @@ run evidence/event facades; cell-supplied IDs/status are never authoritative.
 
 ManagedBashExecutor preserves existing BashExecutor methods. `run` returns ordinary PtyResult only
 for a determinate completed command; unknown/null-exit receipt raises typed ExecutionUncertain,
-launch/backend denial raises ExecutionUnavailable, confirmed timeout raises ExecutionTimedOut with
+launch failure/backend unavailability raises ExecutionUnavailable, confirmed timeout raises ExecutionTimedOut with
 its receipt when PtyResult cannot represent null exit. Tool handler maps these to closed
 execution_unknown / execution_unavailable / command_timeout errors, no fallback and no automatic
 retry. Noninteractive adapter maps timeout/unknown/launch to CommandOutcome.ERROR with null exit;

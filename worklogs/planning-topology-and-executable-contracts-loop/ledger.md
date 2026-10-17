@@ -2923,3 +2923,21 @@ E246  FACT  User asks whether updated SLICE1 is fully shipped. Verified at437ee2
     and actual final host facts/full-path proof. Existing source references recorded in review
     and increment E246 menu. Typed client repair FIRST, owned Docker control NEXT, then real
     backend–authority composition; no new helper/authority/history/approval gate. [source grep/read]
+
+E247  FACT  E247 closes only the first E246 menu item: existing client ERROR taxonomy, not SLICE1 delivery.
+    `client.py` now preserves closed uncertainty codes/original-or-supplied operation references and
+    backend-unavailable metadata across run/INTERRUPT/CLOSE/LIST, with fixed sanitized messages and no
+    resend. Existing exception constructors/timeout subtype remain compatible; no wire/schema change.
+    TEST-EDITS: `tests/test_execution_client.py` fixture gains optional error metadata; all old defaults
+    and assertions retained.142 new cases cover15 codes ×4methods ×2retryable, supplied references and
+    constructor/closed-bank compatibility. Before repair:61 assertion failures/80pass in141 selected.
+    Full owning14-module bank623PASS43.09s → six whole623-bank assertion-only kills48/12/36/32/4/141 →
+    restored623PASS42.15s; all setup/teardown pass, no skips/warnings/collection/runtime/infra credit.
+    Exact597 tracked non-knowledge/worklogs hashes restored. Ruff/format26PASS, Mypy26/183PASS,
+    configured+clean-path Pyrefly0errors (existing141suppressed/50warnings); broader27modules1143PASS54.92s,
+    all phases clean. Local Python3.13.16/frozen tooling, not host/deployment/full just-check acceptance.
+    Evidence `notes/evidence/i03-e247/typed-errors.json.gz` includes snapshots, mutations, raw phases,
+    pre-code failures, runners and toolchain provenance; 795957bytes SHA256d85358b63274ce97cbb510b6ded8445667c8bdf39cc1e8d424984d1a43db8f63.
+    NEXT remains owned Docker termination/observation, then actual CellBackend–WorkspaceAuthority and
+    factory/caller composition in existing dependency order. All35STEPS/four final duties stay unchecked;
+    Q59/Q75/Q76/final-SLICE6 host/full-path proof unchanged. No fake authority or early-host gate.

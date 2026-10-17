@@ -3,7 +3,7 @@
 > Read [`knowledge/llms.txt`](../knowledge/llms.txt) §MUST READ FIRST.
 > Current local delivery is distinct from final I03/deployed acceptance.
 
-## Current state — I02 LOCAL SHIPPED / I03 IMPLEMENTATION IN PROGRESS, 2026-10-17 / E246
+## Current state — I02 LOCAL SHIPPED / I03 IMPLEMENTATION IN PROGRESS, 2026-10-17 / E247
 
 Branch `arena/86633f17-first-agent-dev` only. Retained I02 runtime/test proof snapshot
 `a32a72fc58db4b9a5b048a9b6475649bcf3e32b4`. E230/E231 finalized planning; E232 adds the first
@@ -41,7 +41,26 @@ Ubuntu host test,OS isolation,managed nested acquisition or host supervisor deli
 only;Go is an indirect inherited hook-build diagnosis,not a new FA runtime/deployment requirement.
 PTY stays. Q69–Q73 resolved;Q72 remains its narrow46-links/15-files+banner repair decision.
 
-**E246 CURRENT — SLICE1 verified NOT shipped:** user asks to verify updated contracts, put missing
+**E247 CURRENT — first menu repair implemented, SLICE1 NOT shipped:**
+E247 closes only the first E246 menu item: existing client ERROR taxonomy, not SLICE1 delivery.
+`client.py` now preserves closed uncertainty codes/original-or-supplied operation references and
+backend-unavailable metadata across run/INTERRUPT/CLOSE/LIST, with fixed sanitized messages and no
+resend. Existing exception constructors/timeout subtype remain compatible; no wire/schema change.
+TEST-EDITS: `tests/test_execution_client.py` fixture gains optional error metadata; all old defaults
+and assertions retained.142 new cases cover15 codes ×4methods ×2retryable, supplied references and
+constructor/closed-bank compatibility. Before repair:61 assertion failures/80pass in141 selected.
+Full owning14-module bank623PASS43.09s → six whole623-bank assertion-only kills48/12/36/32/4/141 →
+restored623PASS42.15s; all setup/teardown pass, no skips/warnings/collection/runtime/infra credit.
+Exact597 tracked non-knowledge/worklogs hashes restored. Ruff/format26PASS, Mypy26/183PASS,
+configured+clean-path Pyrefly0errors (existing141suppressed/50warnings); broader27modules1143PASS54.92s,
+all phases clean. Local Python3.13.16/frozen tooling, not host/deployment/full just-check acceptance.
+Evidence `notes/evidence/i03-e247/typed-errors.json.gz` includes snapshots, mutations, raw phases,
+pre-code failures, runners and toolchain provenance; 795957bytes SHA256d85358b63274ce97cbb510b6ded8445667c8bdf39cc1e8d424984d1a43db8f63.
+NEXT remains owned Docker termination/observation, then actual CellBackend–WorkspaceAuthority and
+factory/caller composition in existing dependency order. All35STEPS/four final duties stay unchecked;
+Q59/Q75/Q76/final-SLICE6 host/full-path proof unchanged. No fake authority or early-host gate.
+
+**E246 retained verification — SLICE1 NOT shipped at437ee25:** user asks to verify updated contracts, put missing
 steps next and implement. Source confirms backend.py/CellBackend, workspace.py/actual admission,
 supervisor factory/main/listener and boundary integration suite absent. Docker is create/inspect/
 attach only; episode/cancel/drain/restart and actual host facts remain. Client127–129 incorrectly
@@ -90,8 +109,8 @@ kill grammar clean/doc309PASS/diffPASS; old assertions/ledger preserved and198 h
 Final repair SHA256728a228c8f9e1ecf10400bb8a90f2a996ed089556b5f9b83c670bc6ea702c587;
 verification+closure SHA25659cfc0cba71d2457cd1d5d275f63f784eda8b16de2a15339ec462fdc7d33262e.
 
-NEXT MENU (SLICE1 first): repair client typed ERROR classification across run/INTERRUPT/CLOSE/LIST;
-then owned Docker stop/kill/observation with original creation/journal identity, never ACK-as-death.
+NEXT MENU (SLICE1 first): E247 client typed ERROR repair implemented; retain its regression bank.
+NEXT owned Docker stop/kill/observation with original creation/journal identity, never ACK-as-death.
 Construct actual CellBackend per-view episode registry/per-command begin/record_container/worker
 control/restart over existing transports/journal; join the ONE actual WorkspaceAuthority admission/
 drain (necessary SLICE2 dependency), not a permissive callback or fake grant issuer. No more rooted

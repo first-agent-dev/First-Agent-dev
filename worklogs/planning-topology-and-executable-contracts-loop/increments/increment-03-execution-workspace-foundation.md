@@ -151,6 +151,26 @@ Proceed in this order, not another standalone rooted-IO helper. Cross-slice auth
 is a necessary dependency of the SLICE1 backend, not a reason to claim SLICE1 complete first.
 Existing four final duties, Q59/Q75/Q76 and35 unchecked STEPS remain unchanged.
 
+## E247 — first menu repair implemented, SLICE1 still NOT shipped
+
+E247 closes only the first E246 menu item: existing client ERROR taxonomy, not SLICE1 delivery.
+`client.py` now preserves closed uncertainty codes/original-or-supplied operation references and
+backend-unavailable metadata across run/INTERRUPT/CLOSE/LIST, with fixed sanitized messages and no
+resend. Existing exception constructors/timeout subtype remain compatible; no wire/schema change.
+TEST-EDITS: `tests/test_execution_client.py` fixture gains optional error metadata; all old defaults
+and assertions retained.142 new cases cover15 codes ×4methods ×2retryable, supplied references and
+constructor/closed-bank compatibility. Before repair:61 assertion failures/80pass in141 selected.
+Full owning14-module bank623PASS43.09s → six whole623-bank assertion-only kills48/12/36/32/4/141 →
+restored623PASS42.15s; all setup/teardown pass, no skips/warnings/collection/runtime/infra credit.
+Exact597 tracked non-knowledge/worklogs hashes restored. Ruff/format26PASS, Mypy26/183PASS,
+configured+clean-path Pyrefly0errors (existing141suppressed/50warnings); broader27modules1143PASS54.92s,
+all phases clean. Local Python3.13.16/frozen tooling, not host/deployment/full just-check acceptance.
+Evidence `notes/evidence/i03-e247/typed-errors.json.gz` includes snapshots, mutations, raw phases,
+pre-code failures, runners and toolchain provenance; 795957bytes SHA256d85358b63274ce97cbb510b6ded8445667c8bdf39cc1e8d424984d1a43db8f63.
+NEXT remains owned Docker termination/observation, then actual CellBackend–WorkspaceAuthority and
+factory/caller composition in existing dependency order. All35STEPS/four final duties stay unchecked;
+Q59/Q75/Q76/final-SLICE6 host/full-path proof unchanged. No fake authority or early-host gate.
+
 ## SLICE1: Trusted launch and single supervised execution backend
 STEPS: prescriptive
 DEPS: none
@@ -180,7 +200,7 @@ uv run pytest tests/test_controller_entry.py tests/test_controller_installed.py 
 FA_REQUIRE_EXECUTION_HOST=1 uv run pytest tests/integration/test_execution_boundary.py -q -m execution_host
 uv run ruff check src/fa/controller_entry.py src/fa/execution tests/test_controller_entry.py tests/test_controller_installed.py tests/test_execution_supervisor.py tests/test_execution_protocol.py tests/test_execution_client.py tests/test_execution_cell_worker.py tests/test_execution_journal.py tests/test_execution_dispatch.py tests/test_execution_plans.py tests/test_execution_docker.py tests/test_execution_attach.py tests/integration/test_execution_boundary.py
 ```
-- [ ] STEP1: finish spec §§2.1–2.2 closed contracts and trusted composition seams; retain implemented types/codec/client/installed-entry closure, do not rebuild them; FIRST fix typed ERROR reply classification per E246/spec§2.2; distinguish control/command deadlines and exec versus non-exec uncertain replay (exit: complete owning bank passes, isolated installed module executes real CLI help under CWD/PYTHONPATH/editable-pth poison, locally invalid input sends no frame and command-over-control-budget reply is observed exactly once)
+- [ ] STEP1: finish spec §§2.1–2.2 closed contracts and trusted composition seams; retain implemented types/codec/client/installed-entry closure, do not rebuild them; retain E247 typed ERROR reply classification per spec§2.2; remaining backend/authority composition is still required; distinguish control/command deadlines and exec versus non-exec uncertain replay (exit: complete owning bank passes, isolated installed module executes real CLI help under CWD/PYTHONPATH/editable-pth poison, locally invalid input sends no frame and command-over-control-budget reply is observed exactly once)
 - [ ] STEP2: NEXT finish owned Docker stop/kill/observation (no ACK-as-terminality), then implement NEW CellBackend in execution/backend.py over existing DockerCells/WorkerClient/OperationJournal, with per-view live episode ownership, per-command begin/record_container and actual inspect/cancel/drain/restart facts per §2.2; join the actual SLICE2 admission gate before service composition, without a temporary authority (exit: two commands preserve shell state in one cell with two durable records; duplicate/lost RUN never resends; cancel-before-send and completed-creation/live-cell restart tests pass; no success/terminal receipt derives only from worker output)
 - [ ] STEP3: prepare service/config/install/image and volume-map changes without activation; compose supervisor.py build_supervisor/main only with real WorkspaceAuthority and CellBackend, then SLICE3 publication handlers; apply controller read-only canonical mounts/private-UDS-only and entrypoint changes atomically with SLICE4 caller cutover, never before provisioner/file tools can operate (exit: no permissive/failing-main stub or alternate host runner; approved disposable-host test later boots that real factory and proves absent control mounts/secrets, denied profile/raw-path escalation and zero unavailable-backend project commands)
 - [ ] STEP4: accumulate required real profile/image/kernel/daemon/cgroup facts and source-restored full-path CT98–CT100 mutation outcomes/cost at final SLICE6, with actual SLICE2 authority and SLICE4 callers, not injected callbacks (exit: every declared path runs non-skipped; each named producer deletion causes assertion failure in the whole owning bank; terminality uncertainty leaves ownership quarantined, source restored and no live owned cell)
