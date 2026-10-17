@@ -52,6 +52,10 @@ ordinary no-active-workflow null permitted, formal evidence requires actual plan
 mode. F18 closed admission/context/receipt checks are constructed: owning347PASS/restored347PASS,
 six full347kills4/6/3/1/2/1, broader768PASS; actual protected loader/authority/controller persistence
 integration remains unproved. No guessed hash, C1/service proof or activation.
+E240 corrects F19: fixed noninteractive one-shot worker preserves determinate command status;
+interactive worker remains persistent. Local361PASS/restored361PASS, three full-bank kills1/1/8;
+broader782PASS. Build toward the complete target contracts, not today's helpers. Existing verification
+schedule below already defers required host acceptance without blocking dependency-order coding.
 STEP1–4 remain unchecked; producer helpers exist, but C1 factory/authority/kernel wiring is uncredited.
 
 ## Grounding, sequence and scope discipline

@@ -135,6 +135,51 @@ class _StdioConnection:
         self._destination.flush()
 
 
+def _reply(connection: FrameConnection, request_id: str, result: dict[str, Any] | None) -> None:
+    write_frame(
+        connection,
+        encode_json(
+            {
+                "version": 1,
+                "request_id": request_id,
+                "result": result,
+                "error": "WORKER_UNAVAILABLE" if result is None else None,
+            }
+        ),
+    )
+
+
+def serve_once(worker: CellWorker, connection: FrameConnection) -> int:
+    """Exactly one RUN; no synthetic normal exit for indeterminate execution.
+
+    Worker data is still untrusted. The supervisor must check actual container
+    exit and the independent descendant barrier before issuing a receipt.
+    """
+    try:
+        raw = read_frame(connection)
+        record = _loads(raw)
+        _check(_ENVELOPE, record)
+        _check(_CHECKS[record["action"]], record["payload"])
+        result: dict[str, Any] | None = None
+        if record["action"] == "RUN":
+            try:
+                result = worker.handle(raw)
+                if (
+                    type(result["exit_code"]) is not int
+                    or type(result["timed_out"]) is not bool
+                    or (not result["timed_out"] and not 0 <= result["exit_code"] <= 255)
+                ):
+                    raise ExecutionContractError
+            except (OSError, ExecutionContractError, RuntimeError):
+                result = None
+        _reply(connection, record["request_id"], result)
+        # 78 is worker failure, NOT a command result or timeout attestation.
+        return 78 if result is None or result["timed_out"] else result["exit_code"]
+    finally:
+        worker.stopped = True
+        worker.close()  # PTY cleanup, never a cgroup/descendant proof.
+
+
 def serve(worker: CellWorker, connection: FrameConnection) -> None:
     """One active RUN, concurrent controls, bounded memory and correlated replies.
 
@@ -147,16 +192,8 @@ def serve(worker: CellWorker, connection: FrameConnection) -> None:
     stream_failed = threading.Event()
 
     def reply(request_id: str, result: dict[str, Any] | None) -> None:
-        raw = encode_json(
-            {
-                "version": 1,
-                "request_id": request_id,
-                "result": result,
-                "error": "WORKER_UNAVAILABLE" if result is None else None,
-            }
-        )
         with writes:
-            write_frame(connection, raw)
+            _reply(connection, request_id, result)
 
     def run(raw: bytes, request_id: str) -> None:
         try:
@@ -207,6 +244,7 @@ def serve(worker: CellWorker, connection: FrameConnection) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Private cell-local PTY worker")
     parser.add_argument("--max-command-ms", type=int, required=True)
+    parser.add_argument("--one-shot", action="store_true")
     args = parser.parse_args()
     try:
         _positive_integer(args.max_command_ms)
@@ -214,7 +252,10 @@ def main() -> int:
             directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         pool = PtyPool(base_cwd=Path("/workspace"))
         worker = CellWorker(pool, workspace=Path("/workspace"), max_command_ms=args.max_command_ms)
-        serve(worker, _StdioConnection(sys.stdin.buffer, sys.stdout.buffer))
+        connection = _StdioConnection(sys.stdin.buffer, sys.stdout.buffer)
+        if args.one_shot:
+            return serve_once(worker, connection)
+        serve(worker, connection)
     except (OSError, ExecutionContractError):
         sys.stderr.write("fa: cell_worker_unavailable\n")
         return 78

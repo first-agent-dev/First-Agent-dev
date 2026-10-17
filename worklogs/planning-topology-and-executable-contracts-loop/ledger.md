@@ -2779,3 +2779,22 @@ E239  I03 Q76(a) ADMITTED PLAN CONTEXT JOIN  2026-10-17;F18,CT99–CT100;not act
     remains open,not DTO authorization. All35STEPS/four final duties incomplete;no STEP/READY tick.
     Final audit0FAIL6WARN/6slices17FUNCTIONAL35unchecked;kill grammar clean,doc309PASS,diffPASS.
     Tested source hashes exact;I02 source/lock/deps/Dockerfile/wrappers/compose unchanged from ba50092.
+
+
+E240  I03 TARGET/ROLLOUT CORRECTION + NONINTERACTIVE LIFETIME  2026-10-17;F19,CT100.
+    User reaffirms ALL target contracts, contradictions first. Existing verification schedule already
+    permits construction without early host; no new deployment approval/host-choice question pending.
+    No deployment/Actions dispatch/live-host test. Host/full-path acceptance remains final SLICE6.
+    Verified same persistent worker for both profiles + unconditional main exit0 mismatched target
+    noninteractive natural exit. Fixed private profile one-shot flag, main→serve_once, exactly one
+    framed RUN, determinate exit status; timeout/error never synthetic success. Interactive unchanged;
+    worker output/close still not authority or cgroup barrier. No extra runtime/dependency or fake main.
+    Owning12module361PASS31.70s/restored361PASS30.48s;three full361kills1/1/8 CALL assertions,
+    clean phases/no skips/warnings/exact restore. RuffPASS/format19unchanged/Mypy19+179sourcePASS;
+    broader23modules782PASS44.40s no skips/warnings. Focused fixture stream error corrected honestly,
+    not product fallback weakening/proof credit. Raw notes/evidence/i03-e240.
+    Continue actual backend/resource authority/service/controller/wrapper implementation toward
+    TARGET; don't substitute present helpers for contracts. All35STEPS/final duties remain open.
+    Final audit0FAIL6WARN/6slices17FUNCTIONAL35unchecked,kill grammar clean;doc309PASS,diffPASS.
+    Retained original runner provenance + explicit correction of inherited checkout metadata only;
+    no execution records altered/recredited. Tested sources exact;I02/deps/wrappers unchanged.

@@ -174,6 +174,15 @@ the worker. Replies exactly `{version:1,request_id,result,error}` with null erro
 WORKER_UNAVAILABLE; result is complete PtyResult fields for RUN, `{sessions,message}` otherwise.
 One active RUN, controls remain responsive; STOP acknowledgement is not a descendant barrier.
 Worker output remains untrusted; supervisor reconstructs all receipt bindings and terminality.
+F19 implementation clarification: interactive profiles retain the persistent framed worker;
+noninteractive profiles select the fixed private `--one-shot` worker mode. It accepts exactly one
+RUN and exits with its determinate command status, not unconditional worker-loop exit0. It closes
+its PTYs before returning; that cleanup is NOT a descendant barrier. Invalid/control-only input,
+lost reply and indeterminate/timeout results never synthesize normal completion. Worker failure
+exit78 is not itself a command outcome; a genuine command exit78/124 remains distinguishable by
+a complete determinate RUN result, matched actual container exit and independent terminal facts.
+The Docker backend must independently observe actual exit, enforce its deadline and confirm the
+cgroup barrier; a one-shot result/process code alone cannot issue an authoritative receipt.
 
 `BashExecutor.run/send_ctrl_c/close/list_sessions` map to exec/pty_control. Preserve stateful cwd,
 environment and PTY session between commands in ONE open episode. Interrupt/close timeout is

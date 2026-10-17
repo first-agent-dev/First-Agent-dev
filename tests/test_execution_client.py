@@ -376,3 +376,16 @@ def test_determinate_nonzero_exit_is_preserved_as_command_failure_data(tmp_path:
         outcome = executor(client).run("unit fixture, not executed")
         assert outcome.exit_code == 7 and outcome.truncated is True and outcome.timed_out is False
         assert len(seen) == 1
+
+
+@pytest.mark.parametrize("interactive", [True, False])
+def test_fixed_profile_selects_persistent_or_one_shot_worker(interactive: bool) -> None:
+    configured = replace(profile(), interactive=interactive)
+    spec = configured.create_spec(
+        operation_id="op-" + "a" * 32,
+        view=VIEW,
+        source=Path("/protected/source"),
+        scratch=Path("/protected/scratch"),
+        cache=Path("/approved/cache"),
+    )
+    assert spec["body"]["Cmd"] == ["--max-command-ms", "30000"] + ([] if interactive else ["--one-shot"])

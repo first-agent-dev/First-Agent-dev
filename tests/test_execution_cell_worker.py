@@ -168,3 +168,97 @@ def test_complete_payload_with_extra_authority_is_denied_before_side_effect(work
         worker.handle(message("RUN", payload))
     assert not (tmp_path / "forbidden").exists()
     assert worker.handle(message("LIST", {}))["sessions"] == []
+
+
+@pytest.mark.parametrize("exit_code", [0, 7, 78, 124, 255])
+def test_one_shot_real_pty_exits_with_command_and_never_executes_second_run(
+    worker: CellWorker, tmp_path: Path, exit_code: int
+) -> None:
+    from io import BytesIO
+
+    from fa.execution.cell_worker import _StdioConnection, serve_once
+
+    def frame(raw: bytes) -> bytes:
+        return len(raw).to_bytes(4, "big") + raw
+
+    first = run_message(f"printf observed; touch first; (exit {exit_code})")
+    second = run_message("touch second", request_id="2" * 32)
+    output = BytesIO()
+    status = serve_once(worker, _StdioConnection(BytesIO(frame(first) + frame(second)), output))
+    response = _loads(read_frame(_StdioConnection(BytesIO(output.getvalue()), BytesIO())))
+    assert status == exit_code
+    assert response["request_id"] == "1" * 32 and response["error"] is None
+    assert response["result"]["exit_code"] == exit_code and response["result"]["timed_out"] is False
+    assert "observed" in response["result"]["stdout"]
+    assert worker.stopped and worker._pool.list_sessions() == []
+    assert (tmp_path / "first").exists() and not (tmp_path / "second").exists()
+    assert "terminal_barrier" not in response["result"]
+
+
+def test_one_shot_timeout_is_not_normal_worker_or_command_success(worker: CellWorker) -> None:
+    from io import BytesIO
+
+    from fa.execution.cell_worker import _StdioConnection, serve_once
+
+    raw = run_message("sleep 5", timeout_ms=50)
+    output = BytesIO()
+    status = serve_once(worker, _StdioConnection(BytesIO(len(raw).to_bytes(4, "big") + raw), output))
+    response = _loads(read_frame(_StdioConnection(BytesIO(output.getvalue()), BytesIO())))
+    assert status == 78 and response["result"]["timed_out"] is True
+    assert response["result"]["exit_code"] != 0
+    assert worker.stopped and worker._pool.list_sessions() == []
+
+
+@pytest.mark.parametrize("bad", ["LIST", "missing-cwd", "unknown-key", "invalid-id", "short-frame"])
+def test_one_shot_bad_input_starts_no_project_command(worker: CellWorker, tmp_path: Path, bad: str) -> None:
+    from io import BytesIO
+
+    from fa.execution.cell_worker import _StdioConnection, serve_once
+
+    raw = run_message("touch forbidden")
+    if bad == "LIST":
+        raw = message("LIST", {})
+    elif bad == "missing-cwd":
+        raw = run_message("touch forbidden", cwd="missing")
+    elif bad == "unknown-key":
+        value = _loads(raw)
+        value["payload"]["capability"] = "f" * 64
+        raw = encode_json(value)
+    elif bad == "invalid-id":
+        raw = run_message("touch forbidden", request_id="invalid")
+    framed = len(raw).to_bytes(4, "big") + (raw[:-1] if bad == "short-frame" else raw)
+    output = BytesIO()
+    connection = _StdioConnection(BytesIO(framed), output)
+    if bad in {"LIST", "missing-cwd"}:
+        assert serve_once(worker, connection) == 78
+        response = _loads(read_frame(_StdioConnection(BytesIO(output.getvalue()), BytesIO())))
+        assert response["result"] is None and response["error"] == "WORKER_UNAVAILABLE"
+    else:
+        with pytest.raises(ExecutionContractError):
+            serve_once(worker, connection)
+        assert output.getvalue() == b""
+    assert worker.stopped and worker._pool.list_sessions() == [] and not (tmp_path / "forbidden").exists()
+
+
+def test_one_shot_main_selects_real_worker_status_with_fixed_cell_paths_substituted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import sys
+    from io import BytesIO, TextIOWrapper
+
+    from fa.execution import cell_worker
+
+    raw = run_message("touch main-ran; (exit 7)")
+    output = BytesIO()
+
+    def fixed_path(path: str) -> Path:
+        return tmp_path if path == "/workspace" else tmp_path / path.lstrip("/")
+
+    monkeypatch.setattr(cell_worker, "Path", fixed_path)
+    monkeypatch.setattr(sys, "argv", ["cell_worker", "--max-command-ms", "3000", "--one-shot"])
+    monkeypatch.setattr(sys, "stdin", TextIOWrapper(BytesIO(len(raw).to_bytes(4, "big") + raw)))
+    monkeypatch.setattr(sys, "stdout", TextIOWrapper(output))
+    assert cell_worker.main() == 7
+    response = _loads(read_frame(cell_worker._StdioConnection(BytesIO(output.getvalue()), BytesIO())))
+    assert response["result"]["exit_code"] == 7 and response["error"] is None
+    assert (tmp_path / "main-ran").exists()

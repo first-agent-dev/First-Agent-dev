@@ -3,7 +3,7 @@
 > Read [`knowledge/llms.txt`](../knowledge/llms.txt) §MUST READ FIRST.
 > Current local delivery is distinct from final I03/deployed acceptance.
 
-## Current state — I02 LOCAL SHIPPED / I03 IMPLEMENTATION IN PROGRESS, 2026-10-17 / E239
+## Current state — I02 LOCAL SHIPPED / I03 IMPLEMENTATION IN PROGRESS, 2026-10-17 / E240
 
 Branch `arena/86633f17-first-agent-dev` only. Retained I02 runtime/test proof snapshot
 `a32a72fc58db4b9a5b048a9b6475649bcf3e32b4`. E230/E231 finalized planning; E232 adds the first
@@ -41,7 +41,30 @@ Ubuntu host test,OS isolation,managed nested acquisition or host supervisor deli
 only;Go is an indirect inherited hook-build diagnosis,not a new FA runtime/deployment requirement.
 PTY stays. Q69–Q73 resolved;Q72 remains its narrow46-links/15-files+banner repair decision.
 
-**E239 current continuation:** Q76(a) is explicitly APPROVED (`view_bound_nullable_ordinary`),
+**E240 current continuation / rollout correction:** operator reaffirmed ALL systems must implement
+the plan's TARGET contracts; resolve contradictions first, not replace target behavior with helper
+scope. Existing **Verification schedule** already allows construction in dependency order while
+host/full-path safety acceptance remains outstanding for final SLICE6. No deployment, Actions job
+or live-host test was started; earlier host-choice request was premature and is not pending.
+DO NOT ask for an early deployment host or a redundant slice-sequence decision. Actual authority
+integration follows the existing spec; no temporary permissive authority or failing main stub.
+
+F19 corrected: noninteractive profiles now select a fixed private one-shot worker, exactly one RUN,
+determinate command exit propagation, failure/timeout never synthetic success; interactive PTY
+sessions/control preserved. Worker/PTY close STILL is not a descendant barrier. Local C0/C3 only,
+including actual PTY and main path with fixed cell-mount paths substituted; no Docker/C1 proof.
+Owning12modules361PASS31.70s/restored361PASS30.48s; three full361kills1/1/8 CALL assertions, clean
+phases/no skips/warnings/exact restore. Ruff/format19 + Mypy19/179source PASS; broader23modules
+782PASS44.40s, no skips/warnings. Raw sources/reports/static in notes/evidence/i03-e240.
+
+NEXT TARGET WORK: implement actual Docker control/attach/lifecycle/inspection/reconciliation with
+protected resource bindings, real WorkspaceAuthority and controller bridge, then private service/
+configuration and safe provisioner/wrapper cutover under the approved dependency sequence. No
+project host fallback/temporary issuer; no unsafe readonly-/sessions switch while legacy prologue
+still writes there. Construction and later integrated acceptance tracked separately; all35STEPS/
+four final duties remain unfinished. Q76(a) stays resolved and must be carried into actual metadata.
+
+**E239 retained foundation:** Q76(a) is explicitly APPROVED (`view_bound_nullable_ordinary`),
 recorded RESOLVED and constructed at C0/C3: required nullable admission PlanRef, candidate equality,
 frozen trusted plan context, actual bounded/no-follow source recheck before fresh reservation,
 receipt plan binding before DONE/cache. Ordinary no-active-workflow null allowed; formal evidence

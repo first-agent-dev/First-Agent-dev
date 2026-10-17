@@ -695,3 +695,71 @@ Final source/plan audit:0FAIL6WARN (existing external contract references visibl
 --check passes. Source matches final tested hashes; I02 inner_loop/session, lock/pyproject,
 Dockerfile and wrappers/compose unchanged from ba50092. Raw source-plan.json.gz SHA256
 1b1815aaac14d0ab859295996242f638279ecef01475d2293bac631e865a6607.
+
+
+## E240 — target semantics and noninteractive worker lifetime, 2026-10-17
+
+**Rollout correction:** operator reaffirmed building ALL target contract behavior, resolving actual
+contradictions before edits. The existing I03 **Verification schedule** already permits coding in
+dependency order without an early approved Docker host; required host/full-path acceptance remains
+outstanding for final SLICE6. Earlier assistant request to choose a host was premature, NOT a new
+operator rollout decision. No deployment, workflow dispatch or live-host test occurred. No new
+question about sequence or Q76 is pending. Do not confuse construction progress with acceptance or
+substitute current helper behavior for the target service/system.
+
+**F19 — verified lifetime/status producer mismatch, not a deployed exploit:** both profile kinds
+rendered the same persistent worker. Cell-worker main returned0 after its control loop regardless
+of RUN command status. Target normal noninteractive completion needs actual container/process exit;
+using that loop's eventual0 as command success would be false, and waiting for natural one-command
+exit would not finish. Resolve inside the existing worker/profile, not by weakening receipts or
+adding a second executor/service. Interactive episodes remain persistent.
+
+**Pre-edit declaration / CT100:** read_set execution/profiles.py, cell_worker.py, existing client/
+worker tests and spec §§2.1/3 plus plan schedule; base216302a, llms SHA256
+ac2d1c2821c1c769bdd061de07937630e9af94acb74e85a28262035b43334a75. Write_set those two source/two test
+files plus existing spec/review/plan/HANDOFF/ledger/index/evidence. Mechanism: fixed private profile
+flag, main→serve_once, exactly one validated framed RUN, actual existing local PTY execution,
+correlated bounded reply and determinate status propagation; failure78 never supplies a synthetic
+command success or timeout124. Reuse existing framing/PTY operations. Binary DoD: exit0/7/78/124/
+255 preserved, second RUN has zero side effects, timeout/control-only/malformed/escaping cwd do not
+become normal completion, interactive state/control tests retained. C0/C3 with actual local PTY and
+main path (fixed mount paths substituted), NOT Docker/C1/deployed-main proof. Developmental full-bank
+producer kills: profile selects mode; main calls serve_once; serve_once propagates command status.
+No existing test oracle weakened. No new dependency, authority, workflow mode or deployment flag.
+
+**Minimalism/goal:** reuse CellWorker/PtyPool/_run and one reply helper rather than another runtime
+or service. Without the mode, a noninteractive container cannot naturally complete one RUN with
+its observed status. Existing repo precedent runtime/pty_pool.py and inner_loop/slice_verification.py
+retain determinate process outcomes. Goal-lens: truthful mandatory execution boundary (axis C),
+subtraction evaluated YES, session-type bug-fix. No research/deployment platform added.
+
+**Development:** recovered the same supported3.13.16 frozen test toolchain from E239's archived
+bootstrap, no application dependency/lock change. First focused69PASS1FAIL: fixture substituted
+SimpleNamespace for sys.stdout, breaking pexpect's normal text-stream requirements; restored honest
+TextIOWrapper with binary buffer, without changing production fallback or weakening failure rules.
+Mypy fixture imports corrected to import sys explicitly. Final focused70PASS3.72s. Full-bank/static
+verification follows; no kill/proof credit from fixture failure.
+
+**Still target work:** actual Docker control/attach/lifecycle/observation and restart reconciliation;
+real protected WorkspaceAuthority/controller bridge; private service/config and safe wrapper/
+provisioner integration. No fake authority/failing main or early readonly-/sessions cutover. Build
+these toward full CT98–CT100a/SLICE2–4 target seams before enablement. Required real-host/system
+acceptance stays final SLICE6, never waived by this local worker fix. All35STEPS/final duties open.
+
+**Final E240 verification:** owning12module361PASS31.70s/restored361PASS30.48s. Three full361case
+mutations1/1/8 CALL assertion failures, zero collection/setup/teardown failures/skips/pytest warnings,
+exact source restoration. RuffPASS/format19unchanged; Mypy19target+179sourcePASS. Broader23modules
+782PASS44.40s with verified test-only ShellCheck0.11.0, no skips/warnings. Actual installed CLI
+rebuild/source matching retained in both banks. Raw one-shot.json.gz261875bytes SHA256
+2c87a2eee75395815f9b15c14310e44d3615620828b04997743b637dc2203921. Verification archive records actual
+commands/reports and recovered test-toolchain provenance; no application dependency or lock changes.
+No live host/production acceptance, service activation or construction tick inferred.
+
+Final plan/doc audit:0FAIL6WARN,6slices17FUNCTIONAL35unchecked,kill grammar clean;309 markdown
+links PASS,diff --check PASS,tested source hashes exact;I02/session/dependency/lock/Dockerfile/
+wrapper/compose source preserved from216302a. Raw source-plan.json.gz SHA256
+5bbbec172297de00008b83aebd73bec60a36d36def6b86bfa0794ae0e92cb72e.
+Verification archive SHA256 98cb8a0d50579455e43230d56d66b7c30d741e5764dfb10c98f0936534816b52.
+An inherited runner metadata field described E239 checkout recovery instead of current E240;
+explicit correction retains original field and executed runner source, with all commands/reports/
+return codes unchanged. No rerun or reinterpretation of test results for metadata status.

@@ -109,7 +109,7 @@ class ExecutionProfile:
                 "User": f"{self.uid}:{self.gid}",
                 "WorkingDir": "/workspace",
                 "Entrypoint": ["/opt/fa-venv/bin/python", "-I", "-m", "fa.execution.cell_worker"],
-                "Cmd": ["--max-command-ms", str(self.max_command_ms)],
+                "Cmd": ["--max-command-ms", str(self.max_command_ms)] + ([] if self.interactive else ["--one-shot"]),
                 "Env": ["HOME=/scratch/home", "TMPDIR=/scratch/tmp", "PYTHONDONTWRITEBYTECODE=1"],
                 "OpenStdin": True,
                 "StdinOnce": False,
