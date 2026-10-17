@@ -572,6 +572,56 @@ the old token on return, even if the tree did not change. Recheck grants at laun
 requests cannot run late. Child return settles committed/unknown state before fresh parent view;
 use SessionState internal execution binding, not captured legacy workspace paths as authorization.
 
+
+### E253 — actual owner construction: existing-root registration/R0/writer (before code)
+
+Implement the first real WorkspaceAuthority ownership path in execution/workspace.py; retain
+OperationJournal.single_supervisor as the ONE startup lock and journal, not a second lock service.
+Existing-root registration is an internal construction API, not a partial production wire dispatcher.
+New-root install/provisioning remains the SLICE3 join; do not add a failing factory or permissive gate.
+Before snapshot, deployment must already quiesce legacy canonical writers as §4 requires; ordinary
+metadata/hash checks detect conflicts, not a kernel CAS or proof of host rollout.
+
+Protected registration uses the exact §3.1 workspace.json schema, initially generation0/AVAILABLE.
+Freeze the private initial current.json schema as exactly {schema_version:1,revision_id,tree_sha256};
+the retained revision's tree.json is exactly {schema_version:1,revision_id,tree_sha256,entries}, entries
+use §5's sorted ordinary tree-entry fields, without deletions for R0. Tree hash is the existing
+canonical-JSON nondeleted-entry hash. This is data retention, not a second operation history or seal.
+Private manifest cap64MiB is independent of the4MiB wire cap; supported traversal depth is1..64.
+Count directory entries while enumerating, before unbounded list allocation. Mutex queueing and
+post-generation checks consume the original deadline; expiry cannot issue a grant.
+Copy dirty filesystem bytes under descriptor roots, excluding .git/.fa/.venv/.env and configured
+exclusions; preserve modes in the manifest, store service-private immutable revision data. No Git
+execution/index/config/hooks. Validate relative in-root symlink chains as data, not dereferenced copy;
+unsafe links/hardlinks/special files/limits fail. Nested mount crossings fail closed before copy;
+Linux fdinfo mount IDs prevent importing an external bind-mounted control tree. Check root identity, approved-root identity and
+physical filesystem ancestry (including Linux bind-mount aliases), not only lexical paths.
+Stage registration wholly under private state, fsync files/directories/metadata, no-clobber install
+then fsync catalog before returning IDs. No canonical mkdir/chmod/chown or registered-tree cleanup.
+
+Acquire holds a per-workspace writer.lock for its lifetime, persists advanced generation plus
+owner_namespace/active_actor before creating a memory-only principal+namespace-bound grant. Recheck
+canonical bytes against retained current input; detected maintenance changes block/quarantine,
+never silently serve stale R0. Release is allowed only for an unused owner with no views/intents;
+used-view settlement remains actual admission/backend/publication work. Startup retains pins/views,
+quarantines prior OWNED metadata, and never renews old tokens/generations or admits a writer before
+real recovery. Persistence ambiguity poisons this owner and blocks further work, not retry success.
+
+Local binary proof: dirty/untracked/deleted/index sentinels and modes; same-inode/physical ancestor/
+root-rebind denial; bounded regular copy/link policy; two writer claimers exactly one grant; exact
+metadata generation-before-grant, disk secret absence, principal/namespace/release rejection;
+startup lock/process contention and restart quarantine; short-write/fsync/copy faults; no canonical
+cleanup or mutations on denial. Full owning-bank mutations target root binding/overlap, input policy,
+generation persistence and restart quarantine. C0/C3/component sensitivity only, no C1/C2/CT closure.
+Then construct immutable pins/views/admission/drain with E245 RootedViewIO and actual CellBackend;
+no temporary authority. All checkboxes and final-SLICE6 live rollout obligations remain open.
+
+**E253 implementation checkpoint:** existing-root/R0/writer ownership now exists, including the
+actual generation producer and restart quarantine. Pins/views/admit/drain and CellBackend remain
+unimplemented; no command or writable-view permission follows from this owner grant alone.
+[Local component evidence](evidence/i03-e253/workspace-owner.json.gz),810owning/1330broader,
+15 whole-bank assertion-only kills. The prior pre-code contract above is retained.
+
 ### 4.2. Concrete IO/tool and lifecycle joins (E243)
 
 Use ONE WorkspaceAuthority for registration/generation/admission/materialization/rooted IO. Keep

@@ -1213,6 +1213,7 @@ Formal workflow cases retain the actual admitted plan; ordinary no-active-workfl
 | I03-LIVE-14 `src/fa/execution/view_io.py` | RootedViewIO and actual admitted text IO | Actual tool and PTY same-view read-your-writes; immutable readers stay pinned. Exercise no-follow/link/FIFO/owner/protected-PlanRef/size/UTF8/window/hash/expected-absence, parent-swap and fsync faults. Assert canonical/control sentinels, modes/UIDs, retained descriptors through drain and explicit conflict/uncertainty. | PLANNED / UNEXECUTED |
 | I03-LIVE-15 `src/fa/runtime/pty_pool.py` | Fractional PTY deadlines consumed by worker | Actual installed PTY backend receives subsecond remaining budget; normal/nonzero/timeout preserve result fields and responsiveness, no timeout truncation to zero or new process scope. Actual cgroup cleanup remains independently required. | PLANNED / UNEXECUTED |
 | I03-LIVE-16 `Dockerfile.fa` | Noneditable install and isolated build checks | Build actual approved immutable image; record wheel/image/dependency SHA, isolated help/origin checks and deployed entrypoint/mount facts. Build checks alone do not prove runtime cutover or kernel isolation. | PLANNED / UNEXECUTED |
+| I03-LIVE-17 `src/fa/execution/workspace.py` (E253 local ownership foundation) | Actual workspace registration/R0/writer owner | On approved Linux filesystem, quiesce legacy writers; register dirty roots, reject bind/inode/nested aliases/rebind and protected overlap; race two OS actors for one durably advanced writer; kill/restart with old owned views and verify quarantine/no renewed grant. Preserve canonical index/sentinels, enforce input/copy/fsync faults and retain revisions/pins. E253 local component proof is not deployed admission/backend integration. | PLANNED / UNEXECUTED |
 
 ### Cross-module joins — all planned, not shipped composition
 
@@ -1304,3 +1305,44 @@ NEXT implement actual WorkspaceAuthority registration/writer generation/readers/
 admit/drain, reusing E245 RootedViewIO, joined to actual CellBackend per-view episodes/per-command
 records and independent terminality; then real factory/caller/mount cutover. SLICE1 is NOT shipped;
 SLICE2/all35STEPS/four final duties remain open. Q59/Q75/Q76/final-SLICE6 rollout unchanged.
+
+### E253 — seventeenth production surface, live verdicts unchanged
+
+E253 constructs the actual WorkspaceAuthority existing-root/R0/writer path, not a placeholder
+admission callback. Reuses the SAME OperationJournal.single_supervisor/startup recovery; one protected
+JSON catalog, retained directory identities and per-workspace writer flock, no second DB/service.
+Source evidence: src/fa/execution/workspace.py::WorkspaceAuthority:406, register_existing:603, acquire_writer:717, _claim_generation:765, _load:541, release_unused_writer:774.
+Registration captures dirty/binary/untracked filesystem bytes and relative safe link chains under
+bounded no-follow descriptors, excludes control/Git/env/cache data, rejects root/inode/physical
+ancestry/bind aliases and nested mount crossings, then stages/fsyncs/no-clobber installs private R0.
+Canonical bytes/index/modes are untouched. Manifest retention cap64MiB is independent of4MiB wire;
+entry enumeration allocates only within the limit; input traversal supports1..64 levels.
+Writer generation/owner/actor persists and is reread before a memory-only principal/namespace grant;
+mutex queueing and post-durability checks consume the original deadline. Unused release cannot settle
+views/intents. Restart quarantines old ownership without renewal; persistence ambiguity fences owner.
+Legacy-writer quiescence remains the deployment prerequisite, not proved by source/hash checks.
+77 new C0/C3 cases, real Linux FS/FDs/flocks and child processes; bind-mount counterfactuals explicitly
+simulate kernel facts, NOT actual deployed mount proof. No existing source/test changed. Found root
+selection FD leak: actual new fault regression fails unfixed source by assertion1!=0, repaired via
+FD ownership transfer before fallible mount reads, not retry/suppression. Focused77PASS (exact timing in raw proof).
+Final whole16-module bank810PASS43.84s → fifteen whole810-bank assertion-only kills
+1/4/17/1/14/1/1/1/1/1/1/2/1/1/1 → restored810PASS42.77s. All phases clean except intended mutant CALL
+assertions; no skips/warnings/collection/runtime/infra credit. All600 source/input hashes restored
+exactly. Ruff/format29PASS, Mypy29/184PASS, configured clean-path Pyrefly0errors (existing141suppressed/
+50warnings). Broader29modules1330PASS58.06s. First806 trial's copy mutation rejected for two escaping
+consumer domain exceptions; two NEW tests now assert authoritative retained bytes BEFORE idempotency/
+restart consumers, no catch/reclassification/old assertion weakening. Controlled stopped FD-review
+baseline also preserved without credit. Corrected inconsistent directory-mount counterfactual to
+assign the whole subtree one foreign mount ID; development77-case producer preflight retained
+WITHOUT final sensitivity credit. Complete prior807/14/1327 proof superseded by final review fix:
+non-UTF8 symlink targets now return INPUT_POLICY, not escaping UnicodeError; malformed filename/
+target and valid Unicode preservation checked. Pre-fix runtime diagnostic is NOT a mutation kill.
+Only fresh final-source full-bank proof above counts.
+Evidence `notes/evidence/i03-e253/workspace-owner.json.gz`, 3894523bytes SHA2561d60a28c98cfb4588ce885670e0c3bc98c73bbd6afa381b16288942fd4206faf.
+E2E inventory now17 production surfaces/eight joins; new module tracked before coding and omission
+counterfactual rejects its removal. E250 historical hashes/E251 red/E252 proof unchanged; ALL live
+verdicts PLANNED/UNEXECUTED. No C1/C2/service/host/CT101–103 completion or checkbox tick.
+NEXT construct immutable pins/views and actual admit/close-admission/drain using retained E245
+RootedViewIO and Q76 protected context, then actual CellBackend episodes/per-command records,
+startup owned-cell reconciliation/independent terminality and real factory/caller/mount cutover.
+SLICE1 remains NOT shipped; all35STEPS/four final duties open. Q59/Q75/Q76/final-SLICE6 rollout unchanged.

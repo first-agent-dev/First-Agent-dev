@@ -3043,3 +3043,52 @@ E252  FACT  E252 repairs the E251-confirmed reply-visible/RUN-gate-retirement ra
     admit/drain, reusing E245 RootedViewIO, joined to actual CellBackend per-view episodes/per-command
     records and independent terminality; then real factory/caller/mount cutover. SLICE1 is NOT shipped;
     SLICE2/all35STEPS/four final duties remain open. Q59/Q75/Q76/final-SLICE6 rollout unchanged.
+
+E253  PLAN  Actual owner existing-root/R0/writer foundation before code; spec§4 E253 freezes private storage and binary proof. SLICE1/2/CT101–103 not complete.
+
+E253  DIAGNOSTIC  First806 baseline and two valid trials retained; copy-write trial rejected because two consumer domain exceptions preceded byte assertions. Before test edit: assert actual retained bytes before idempotency/restart consumers in the two NEW tests; no exception reclassification or old-test change. Fresh full-bank proof required.
+
+E253  REVIEW  Stopped intermediate proof without acceptance credit: _select mount-fact read can raise before child FD ownership transfer, leaking one FD. Before edit: transfer child into the cleanup-owned variable before fallible mount reads; append real /proc FD-count fault regression, then fresh complete owning-bank sensitivity. Same allowed Python files, no policy change.
+
+E253  TEST-REVIEW  Counterfactual directory-mount fixture assigned a foreign mount ID only to its directory, not descendant file; this does not model real kernel mount membership and lets the file guard mask directory-guard deletion. Before edit: assign the same foreign mount ID to the whole fixture subtree, then development-preflight all producers on the new module and run fresh full owning-bank sensitivity. Stopped partial full-bank trial retained, no final credit; no production contract/policy change.
+
+E253  INPUT-REVIEW  Complete807/14assertionkills/1327broader retained as superseded source proof. Before final edit: non-UTF8 symlink target must return existing INPUT_POLICY rather than raw UnicodeError; add malformed-name/target and valid Unicode link-data tests plus narrow encoder-boundary rejection. No policy/wire change; fresh whole-bank sensitivity required after source changes.
+
+E253  FACT  E253 constructs the actual WorkspaceAuthority existing-root/R0/writer path, not a placeholder
+    admission callback. Reuses the SAME OperationJournal.single_supervisor/startup recovery; one protected
+    JSON catalog, retained directory identities and per-workspace writer flock, no second DB/service.
+    Source evidence: src/fa/execution/workspace.py::WorkspaceAuthority:406, register_existing:603, acquire_writer:717, _claim_generation:765, _load:541, release_unused_writer:774.
+    Registration captures dirty/binary/untracked filesystem bytes and relative safe link chains under
+    bounded no-follow descriptors, excludes control/Git/env/cache data, rejects root/inode/physical
+    ancestry/bind aliases and nested mount crossings, then stages/fsyncs/no-clobber installs private R0.
+    Canonical bytes/index/modes are untouched. Manifest retention cap64MiB is independent of4MiB wire;
+    entry enumeration allocates only within the limit; input traversal supports1..64 levels.
+    Writer generation/owner/actor persists and is reread before a memory-only principal/namespace grant;
+    mutex queueing and post-durability checks consume the original deadline. Unused release cannot settle
+    views/intents. Restart quarantines old ownership without renewal; persistence ambiguity fences owner.
+    Legacy-writer quiescence remains the deployment prerequisite, not proved by source/hash checks.
+    77 new C0/C3 cases, real Linux FS/FDs/flocks and child processes; bind-mount counterfactuals explicitly
+    simulate kernel facts, NOT actual deployed mount proof. No existing source/test changed. Found root
+    selection FD leak: actual new fault regression fails unfixed source by assertion1!=0, repaired via
+    FD ownership transfer before fallible mount reads, not retry/suppression. Focused77PASS (exact timing in raw proof).
+    Final whole16-module bank810PASS43.84s → fifteen whole810-bank assertion-only kills
+    1/4/17/1/14/1/1/1/1/1/1/2/1/1/1 → restored810PASS42.77s. All phases clean except intended mutant CALL
+    assertions; no skips/warnings/collection/runtime/infra credit. All600 source/input hashes restored
+    exactly. Ruff/format29PASS, Mypy29/184PASS, configured clean-path Pyrefly0errors (existing141suppressed/
+    50warnings). Broader29modules1330PASS58.06s. First806 trial's copy mutation rejected for two escaping
+    consumer domain exceptions; two NEW tests now assert authoritative retained bytes BEFORE idempotency/
+    restart consumers, no catch/reclassification/old assertion weakening. Controlled stopped FD-review
+    baseline also preserved without credit. Corrected inconsistent directory-mount counterfactual to
+    assign the whole subtree one foreign mount ID; development77-case producer preflight retained
+    WITHOUT final sensitivity credit. Complete prior807/14/1327 proof superseded by final review fix:
+    non-UTF8 symlink targets now return INPUT_POLICY, not escaping UnicodeError; malformed filename/
+    target and valid Unicode preservation checked. Pre-fix runtime diagnostic is NOT a mutation kill.
+    Only fresh final-source full-bank proof above counts.
+    Evidence `notes/evidence/i03-e253/workspace-owner.json.gz`, 3894523bytes SHA2561d60a28c98cfb4588ce885670e0c3bc98c73bbd6afa381b16288942fd4206faf.
+    E2E inventory now17 production surfaces/eight joins; new module tracked before coding and omission
+    counterfactual rejects its removal. E250 historical hashes/E251 red/E252 proof unchanged; ALL live
+    verdicts PLANNED/UNEXECUTED. No C1/C2/service/host/CT101–103 completion or checkbox tick.
+    NEXT construct immutable pins/views and actual admit/close-admission/drain using retained E245
+    RootedViewIO and Q76 protected context, then actual CellBackend episodes/per-command records,
+    startup owned-cell reconciliation/independent terminality and real factory/caller/mount cutover.
+    SLICE1 remains NOT shipped; all35STEPS/four final duties open. Q59/Q75/Q76/final-SLICE6 rollout unchanged.

@@ -299,7 +299,7 @@ TESTS: tests/test_execution_view_io.py, tests/test_managed_workspace.py, tests/t
 uv run pytest tests/test_execution_view_io.py tests/test_managed_workspace.py tests/test_session_lifecycle.py tests/test_execution_project_tools.py -q
 FA_REQUIRE_EXECUTION_HOST=1 uv run pytest tests/integration/test_workspace_views.py -q -m execution_host
 ```
-- [ ] STEP1: retain E245 internal execution/view_io.py and its real-descriptor C0/C3 bank per §4.2 E244 (no admission/CT completion claim); NEXT implement one WorkspaceAuthority for protected registration/current/generation/pin metadata and startup ownership; add admit/close-admission/drain semantics per §§2.2/4.2, not a second lock service; reject root aliases/overlaps/rebind and quiesce before R0 (exit: two OS processes race for one workspace and exactly one obtains a durably advanced writer; denied/stale/closed admissions produce no launch/write; independent pins retain original bytes across generation changes)
+- [ ] STEP1: retain E245 internal execution/view_io.py and its real-descriptor C0/C3 bank per §4.2 E244 (no admission/CT completion claim); retain E253 actual WorkspaceAuthority protected existing-root registration/current/R0/writer generation/startup fencing; NEXT construct pins/views plus admit/close-admission/drain semantics per §§2.2/4.2, not a second lock service; reject root aliases/overlaps/rebind and quiesce before R0 (exit: two OS processes race for one workspace and exactly one obtains a durably advanced writer; denied/stale/closed admissions produce no launch/write; independent pins retain original bytes across generation changes)
 - [ ] STEP2: implement create_view/_materialize_input and rooted read/write/edit on admitted descriptors per §§4–4.2 before provisioning consumes them; keep private-metadata chmod helpers off project parents; preserve dirty/staged/untracked/deleted bytes and canonical index, enforce copy/link/secret/size policy and private-Git limitations; consume STEP1 descriptor IO under actual admission, private same-filesystem staging and explicit profile/protected-PlanRef binding (exit: exact tree/index/sentinel oracles pass; link/special/limit/root-swap failures leave no returned grant or partial revision; expected-SHA conflict and post-admission rename do not silently succeed or touch canonical/control paths)
 - [ ] STEP3: inject managed provisioner into existing SessionManager before _new_session provisioning, reserve its real provisioning RunContext via early existing DB/begin_run per §4.2, update both reverse-owner call sites for explicit registered references and fail non-READY; preserve session DB/run reservations and validate legacy records under authority; implement the publication-dependent provisioning leg with SLICE3, not host Git fallback (exit: new/resume/new-session-reuse, busy mutation, corrupt manifest, provision failure, DB/manifest failure after workspace commit and legacy run-ID tests pass; registered committed bytes are never rmtree cleanup targets)
 - [ ] STEP4: wire actual tool builders and SessionState internal binding per §4.2: controller fuzzy matching/telemetry, supervisor rooted writes, same-view bounded reads and cell-local existing search/reach/PDF implementations; no new public tools/search service or private state mount; join real authority/backend factory before disposable integration (exit: actual registry tools and PTY observe each other's edits with blackboard on/off and zero host Git/version-stamp reads, active search sees a new symbol, reader search stays pinned, artifacts retain their controller path, PDF/binary/large/truncated/helper-unavailable results are explicit and no canonical fallback occurs; seal/import alias tests complete with SLICE3)
@@ -544,3 +544,90 @@ NEXT implement actual WorkspaceAuthority registration/writer generation/readers/
 admit/drain, reusing E245 RootedViewIO, joined to actual CellBackend per-view episodes/per-command
 records and independent terminality; then real factory/caller/mount cutover. SLICE1 is NOT shipped;
 SLICE2/all35STEPS/four final duties remain open. Q59/Q75/Q76/final-SLICE6 rollout unchanged.
+
+## E253 — existing-root/R0/writer implemented; actual view/admission/backend NEXT
+
+
+### E253 — actual owner construction: existing-root registration/R0/writer (before code)
+
+Implement the first real WorkspaceAuthority ownership path in execution/workspace.py; retain
+OperationJournal.single_supervisor as the ONE startup lock and journal, not a second lock service.
+Existing-root registration is an internal construction API, not a partial production wire dispatcher.
+New-root install/provisioning remains the SLICE3 join; do not add a failing factory or permissive gate.
+Before snapshot, deployment must already quiesce legacy canonical writers as §4 requires; ordinary
+metadata/hash checks detect conflicts, not a kernel CAS or proof of host rollout.
+
+Protected registration uses the exact §3.1 workspace.json schema, initially generation0/AVAILABLE.
+Freeze the private initial current.json schema as exactly {schema_version:1,revision_id,tree_sha256};
+the retained revision's tree.json is exactly {schema_version:1,revision_id,tree_sha256,entries}, entries
+use §5's sorted ordinary tree-entry fields, without deletions for R0. Tree hash is the existing
+canonical-JSON nondeleted-entry hash. This is data retention, not a second operation history or seal.
+Private manifest cap64MiB is independent of the4MiB wire cap; supported traversal depth is1..64.
+Count directory entries while enumerating, before unbounded list allocation. Mutex queueing and
+post-generation checks consume the original deadline; expiry cannot issue a grant.
+Copy dirty filesystem bytes under descriptor roots, excluding .git/.fa/.venv/.env and configured
+exclusions; preserve modes in the manifest, store service-private immutable revision data. No Git
+execution/index/config/hooks. Validate relative in-root symlink chains as data, not dereferenced copy;
+unsafe links/hardlinks/special files/limits fail. Nested mount crossings fail closed before copy;
+Linux fdinfo mount IDs prevent importing an external bind-mounted control tree. Check root identity, approved-root identity and
+physical filesystem ancestry (including Linux bind-mount aliases), not only lexical paths.
+Stage registration wholly under private state, fsync files/directories/metadata, no-clobber install
+then fsync catalog before returning IDs. No canonical mkdir/chmod/chown or registered-tree cleanup.
+
+Acquire holds a per-workspace writer.lock for its lifetime, persists advanced generation plus
+owner_namespace/active_actor before creating a memory-only principal+namespace-bound grant. Recheck
+canonical bytes against retained current input; detected maintenance changes block/quarantine,
+never silently serve stale R0. Release is allowed only for an unused owner with no views/intents;
+used-view settlement remains actual admission/backend/publication work. Startup retains pins/views,
+quarantines prior OWNED metadata, and never renews old tokens/generations or admits a writer before
+real recovery. Persistence ambiguity poisons this owner and blocks further work, not retry success.
+
+Local binary proof: dirty/untracked/deleted/index sentinels and modes; same-inode/physical ancestor/
+root-rebind denial; bounded regular copy/link policy; two writer claimers exactly one grant; exact
+metadata generation-before-grant, disk secret absence, principal/namespace/release rejection;
+startup lock/process contention and restart quarantine; short-write/fsync/copy faults; no canonical
+cleanup or mutations on denial. Full owning-bank mutations target root binding/overlap, input policy,
+generation persistence and restart quarantine. C0/C3/component sensitivity only, no C1/C2/CT closure.
+Then construct immutable pins/views/admission/drain with E245 RootedViewIO and actual CellBackend;
+no temporary authority. All checkboxes and final-SLICE6 live rollout obligations remain open.
+
+### E253 implementation/evidence checkpoint
+
+E253 constructs the actual WorkspaceAuthority existing-root/R0/writer path, not a placeholder
+admission callback. Reuses the SAME OperationJournal.single_supervisor/startup recovery; one protected
+JSON catalog, retained directory identities and per-workspace writer flock, no second DB/service.
+Source evidence: src/fa/execution/workspace.py::WorkspaceAuthority:406, register_existing:603, acquire_writer:717, _claim_generation:765, _load:541, release_unused_writer:774.
+Registration captures dirty/binary/untracked filesystem bytes and relative safe link chains under
+bounded no-follow descriptors, excludes control/Git/env/cache data, rejects root/inode/physical
+ancestry/bind aliases and nested mount crossings, then stages/fsyncs/no-clobber installs private R0.
+Canonical bytes/index/modes are untouched. Manifest retention cap64MiB is independent of4MiB wire;
+entry enumeration allocates only within the limit; input traversal supports1..64 levels.
+Writer generation/owner/actor persists and is reread before a memory-only principal/namespace grant;
+mutex queueing and post-durability checks consume the original deadline. Unused release cannot settle
+views/intents. Restart quarantines old ownership without renewal; persistence ambiguity fences owner.
+Legacy-writer quiescence remains the deployment prerequisite, not proved by source/hash checks.
+77 new C0/C3 cases, real Linux FS/FDs/flocks and child processes; bind-mount counterfactuals explicitly
+simulate kernel facts, NOT actual deployed mount proof. No existing source/test changed. Found root
+selection FD leak: actual new fault regression fails unfixed source by assertion1!=0, repaired via
+FD ownership transfer before fallible mount reads, not retry/suppression. Focused77PASS (exact timing in raw proof).
+Final whole16-module bank810PASS43.84s → fifteen whole810-bank assertion-only kills
+1/4/17/1/14/1/1/1/1/1/1/2/1/1/1 → restored810PASS42.77s. All phases clean except intended mutant CALL
+assertions; no skips/warnings/collection/runtime/infra credit. All600 source/input hashes restored
+exactly. Ruff/format29PASS, Mypy29/184PASS, configured clean-path Pyrefly0errors (existing141suppressed/
+50warnings). Broader29modules1330PASS58.06s. First806 trial's copy mutation rejected for two escaping
+consumer domain exceptions; two NEW tests now assert authoritative retained bytes BEFORE idempotency/
+restart consumers, no catch/reclassification/old assertion weakening. Controlled stopped FD-review
+baseline also preserved without credit. Corrected inconsistent directory-mount counterfactual to
+assign the whole subtree one foreign mount ID; development77-case producer preflight retained
+WITHOUT final sensitivity credit. Complete prior807/14/1327 proof superseded by final review fix:
+non-UTF8 symlink targets now return INPUT_POLICY, not escaping UnicodeError; malformed filename/
+target and valid Unicode preservation checked. Pre-fix runtime diagnostic is NOT a mutation kill.
+Only fresh final-source full-bank proof above counts.
+Evidence `notes/evidence/i03-e253/workspace-owner.json.gz`, 3894523bytes SHA2561d60a28c98cfb4588ce885670e0c3bc98c73bbd6afa381b16288942fd4206faf.
+E2E inventory now17 production surfaces/eight joins; new module tracked before coding and omission
+counterfactual rejects its removal. E250 historical hashes/E251 red/E252 proof unchanged; ALL live
+verdicts PLANNED/UNEXECUTED. No C1/C2/service/host/CT101–103 completion or checkbox tick.
+NEXT construct immutable pins/views and actual admit/close-admission/drain using retained E245
+RootedViewIO and Q76 protected context, then actual CellBackend episodes/per-command records,
+startup owned-cell reconciliation/independent terminality and real factory/caller/mount cutover.
+SLICE1 remains NOT shipped; all35STEPS/four final duties open. Q59/Q75/Q76/final-SLICE6 rollout unchanged.
