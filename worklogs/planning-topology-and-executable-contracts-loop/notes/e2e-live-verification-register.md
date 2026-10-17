@@ -1213,7 +1213,7 @@ Formal workflow cases retain the actual admitted plan; ordinary no-active-workfl
 | I03-LIVE-14 `src/fa/execution/view_io.py` | RootedViewIO and actual admitted text IO | Actual tool and PTY same-view read-your-writes; immutable readers stay pinned. Exercise no-follow/link/FIFO/owner/protected-PlanRef/size/UTF8/window/hash/expected-absence, parent-swap and fsync faults. Assert canonical/control sentinels, modes/UIDs, retained descriptors through drain and explicit conflict/uncertainty. | PLANNED / UNEXECUTED |
 | I03-LIVE-15 `src/fa/runtime/pty_pool.py` | Fractional PTY deadlines consumed by worker | Actual installed PTY backend receives subsecond remaining budget; normal/nonzero/timeout preserve result fields and responsiveness, no timeout truncation to zero or new process scope. Actual cgroup cleanup remains independently required. | PLANNED / UNEXECUTED |
 | I03-LIVE-16 `Dockerfile.fa` | Noneditable install and isolated build checks | Build actual approved immutable image; record wheel/image/dependency SHA, isolated help/origin checks and deployed entrypoint/mount facts. Build checks alone do not prove runtime cutover or kernel isolation. | PLANNED / UNEXECUTED |
-| I03-LIVE-17 `src/fa/execution/workspace.py` (E253/E254 local ownership foundation) | Actual workspace registration/R0/writer owner | On approved Linux filesystem, quiesce legacy writers; register dirty roots, reject bind/inode/nested aliases/rebind and protected overlap; race two OS actors for one durably advanced writer; kill/restart with old owned views and verify quarantine/no renewed grant. Preserve canonical index/sentinels, enforce input/copy/fsync faults and retain revisions/pins. E253 local component proof is not deployed admission/backend integration. | PLANNED / UNEXECUTED |
+| I03-LIVE-17 `src/fa/execution/workspace.py` (E253–E255 local ownership foundation) | Actual workspace registration/R0/writer owner | On approved Linux filesystem, quiesce legacy writers; register dirty roots, reject bind/inode/nested aliases/rebind and protected overlap; race two OS actors for one durably advanced writer; kill/restart with old owned views and verify quarantine/no renewed grant. Preserve canonical index/sentinels, enforce input/copy/fsync faults and retain revisions/pins. E253 local component proof is not deployed admission/backend integration. | PLANNED / UNEXECUTED |
 
 ### Cross-module joins — all planned, not shipped composition
 
@@ -1365,3 +1365,25 @@ E254 local827/seven kills/restored827/broader1347 proves only epoch construction
 actual pins/admission/backend remain unimplemented. Inventory stays17surfaces/eight joins;
 current source hashes and omission counterfactual are archived in
 [evidence](evidence/i03-e254/genesis.json.gz). Historical E250/E253 snapshots are unchanged.
+
+### E255 — actual reader lifetime/IO live witnesses (PLANNED, NOT executed)
+
+Extend I03-LIVE-17/14/08 and I03-LIVE-S02/S05 in the actual integration suite once writable
+view/backend/service/caller composition exists; no skipped/stub test file is added now:
+- Real UDS pin before first writer, durable secret-free view.json, exact dirty bytes/full-file SHA
+  and large UTF8 windows; actual tool facade reads the retained revision, never canonical fallback.
+- Wrong peer/namespace/token/full ref and changed actual PlanRef deny before IO. Ordinary nullable
+  context is explicit; formal-null denies. Read pin cannot write, hand off or release a writer.
+- Keep old reader while real writer/PTY modifies and publishes a newer revision; old bytes/context
+  remain stable. Read-only retired pins do not monopolize writer ownership. Restart keeps refs but
+  cannot reconstruct old tokens/replies, including while old writer remains quarantined.
+- Hold a real file handler, concurrently release/shut down; no early descriptor close/admission
+  after revocation. Repeat pin/read/release beyond process FD limits without increasing retained
+  FDs/heavy maps; a reused native FD survives later shutdown. Immutable disk retention remains.
+- Inject no-clobber collision, fsync/lost acknowledgement, wrong metadata/source identity and late
+  request/queue deadlines. No returned grant or invented clean release after uncertainty, no GC,
+  canonical/index/control mutation or hidden host/PTY retry.
+E255 local component evidence is NOT actual UDS/tool/PTY/kernel acceptance. All live verdicts remain
+PLANNED/UNEXECUTED at final SLICE6; no intervening host approval is requested. Source hashes for all
+17surfaces/eight joins and omission counterfactual are in
+[evidence](evidence/i03-e255/readers.json.gz); historical inventories/evidence are unchanged.

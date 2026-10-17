@@ -1,7 +1,7 @@
 """Protected existing-workspace registration, R0 retention and exclusive writer.
 
 The actual owner, not a wire service or a temporary admission callback. New-root
-installation, pins/views/admission, backend drain and publication are subsequent
+installation, writable views/execution admission, backend drain and publication are subsequent
 construction steps. No factory is activated here. Legacy writers must already be
 quiesced by deployment; metadata/hash checks are not a kernel snapshot/CAS.
 """
@@ -30,10 +30,14 @@ from uuid import uuid4
 import fastjsonschema  # type: ignore[import-untyped]  # Existing schema library has no typing metadata.
 
 from fa.execution.journal import JournalError, OperationJournal
-from fa.execution.profiles import _configured_id
+from fa.execution.plans import ProtectedPlanContext
+from fa.execution.profiles import ExecutionProfile, _configured_id
 from fa.execution.protocol import (
+    CANDIDATE_SCOPE,
     NAMESPACE,
+    PLAN_REF,
     SHA,
+    VIEW,
     _check,
     _enum,
     _id,
@@ -44,8 +48,29 @@ from fa.execution.protocol import (
     encode_json,
 )
 from fa.execution.supervisor import PeerIdentity, SupervisorError
-from fa.execution.types import ExecutionContractError, GrantReply, NamespaceRef, Operation, _hex_id, validate_capability
-from fa.execution.view_io import _DIRECTORY, _FILE, ViewIOError, _fingerprint, _identity, _parts, _rename_directory
+from fa.execution.types import (
+    Access,
+    ExecutionContractError,
+    GrantReply,
+    NamespaceRef,
+    Operation,
+    ViewPurpose,
+    ViewRef,
+    _hex_id,
+    validate_capability,
+)
+from fa.execution.view_io import (
+    _DIRECTORY,
+    _FILE,
+    ReadResult,
+    RootedViewIO,
+    ViewIOError,
+    _fingerprint,
+    _identity,
+    _parts,
+    _rename_directory,
+)
+from fa.inner_loop.plan_admission import PlanRef
 from fa.inner_loop.workflow_artifacts import _private_artifact_directory, _replace_private_bytes
 
 _UINT = {"type": "integer", "minimum": 0}
@@ -87,6 +112,43 @@ _TREE = fastjsonschema.compile(
         entries={"type": "array", "items": _ENTRY},
     )
 )
+
+_VIEW_RECORD = fastjsonschema.compile(
+    _object(
+        schema_version={"type": "integer", "const": 1},
+        view_ref=VIEW,
+        actor_namespace=NAMESPACE,
+        state=_enum("OPEN", "STOPPING", "SEALED", "PUBLISHED", "REJECTED", "UNKNOWN"),
+        input_tree_sha256=SHA,
+        sealed_manifest_id=_nullable(_id("manifest-")),
+        operation_ids={"type": "array", "items": _id("op-")},
+        candidate_scope=_nullable(CANDIDATE_SCOPE),
+        plan_ref=_nullable(PLAN_REF),
+    )
+)
+
+
+@dataclass(repr=False)
+class _ReaderPin:
+    ref: ViewRef
+    namespace: NamespaceRef
+    principal: str
+    capability: str | None
+    record: dict[str, Any]
+    source: int
+    directory: int
+    manifest: tuple[int, ...]
+    entries: dict[str, dict[str, Any]]
+    context: ProtectedPlanContext
+
+    def close(self) -> None:
+        self.capability = None
+        self.entries.clear()
+        for name in ("source", "directory"):
+            fd = getattr(self, name)
+            if fd >= 0:
+                setattr(self, name, -1)
+                os.close(fd)
 
 
 def _budget(deadline: float) -> None:
@@ -406,7 +468,7 @@ class _Binding:
 class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
     """Own the existing operation journal and its startup guard for the lifetime.
 
-    Only existing-root registration/acquisition/unused-owner release are exposed
+    Existing-root ownership and immutable reader retention/IO are exposed
     in this construction step. There is no permit for a command or writable view
     until the subsequent real view/admission/backend join is implemented.
     """
@@ -420,9 +482,16 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
         lock_timeout_ms: int,
         limits: InputLimits | None = None,
         excluded_paths: tuple[str, ...] = (),
+        view_profile: ExecutionProfile | None = None,
     ) -> None:
         if not approved_roots or not controller_uids or any(type(uid) is not int or uid < 0 for uid in controller_uids):
             raise ExecutionContractError
+        if view_profile is not None and (
+            not isinstance(view_profile, ExecutionProfile) or max(view_profile.uid, view_profile.gid) > 2**32 - 2
+        ):
+            raise ExecutionContractError
+        self._view_profile = view_profile
+        self._readers: dict[str, _ReaderPin] = {}
         self._state = state_root
         self._roots = dict(approved_roots)
         for root_id, path in self._roots.items():
@@ -607,34 +676,51 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
             ):
                 raise SupervisorError("PATH_DENIED")
 
-    def _verify_revision(self, binding: _Binding, deadline: float) -> None:
+    @contextmanager
+    def _revision(
+        self, binding: _Binding, revision_id: str, deadline: float
+    ) -> Generator[tuple[int, dict[str, Any], int]]:
+        _hex_id(revision_id, "rev-")
         fd = os.open("revisions", _DIRECTORY, dir_fd=binding.fd)
         try:
-            child = os.open(binding.current["revision_id"], _DIRECTORY, dir_fd=fd)
+            try:
+                child = os.open(revision_id, _DIRECTORY, dir_fd=fd)
+            except FileNotFoundError:
+                raise SupervisorError("STALE_REVISION") from None
         finally:
             os.close(fd)
         try:
             _private(child)
             tree = _read_json(child, "tree.json", _TREE, self._limits.max_manifest_bytes)
             if (
-                tree["revision_id"] != binding.current["revision_id"]
-                or tree["tree_sha256"] != binding.current["tree_sha256"]
+                tree["revision_id"] != revision_id
                 or hashlib.sha256(_canonical(tree["entries"])).hexdigest() != tree["tree_sha256"]
             ):
                 raise SupervisorError("CORRUPT_STATE")
             data = os.open("data", _DIRECTORY, dir_fd=child)
             try:
                 actual, _ = self._snapshot(data, None, deadline)
+                if len(actual) != len(tree["entries"]):
+                    raise SupervisorError("CORRUPT_STATE")
+                for got, wanted in zip(actual, tree["entries"], strict=True):
+                    got["mode"] = wanted["mode"]  # Retention modes differ from logical input modes.
+                    if got != wanted:
+                        raise SupervisorError("CORRUPT_STATE")
+                yield data, tree, child
             finally:
                 os.close(data)
-            if len(actual) != len(tree["entries"]):
-                raise SupervisorError("CORRUPT_STATE")
-            for got, wanted in zip(actual, tree["entries"], strict=True):
-                got["mode"] = wanted["mode"]  # Private retention modes differ from logical source modes.
-                if got != wanted:
-                    raise SupervisorError("CORRUPT_STATE")
         finally:
             os.close(child)
+
+    def _verify_revision(self, binding: _Binding, deadline: float) -> None:
+        try:
+            with self._revision(binding, binding.current["revision_id"], deadline) as (_, tree, _):
+                if tree["tree_sha256"] != binding.current["tree_sha256"]:
+                    raise SupervisorError("CORRUPT_STATE")
+        except SupervisorError as error:
+            if error.code == "STALE_REVISION":
+                raise SupervisorError("CORRUPT_STATE") from None
+            raise
 
     def register_existing(
         self, peer: PeerIdentity, namespace: NamespaceRef, *, root_id: str, relative_root: str, deadline: float
@@ -825,7 +911,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                 self._recheck(binding)
                 views = os.open("views", _DIRECTORY, dir_fd=binding.fd)
                 try:
-                    if os.listdir(views) or "intent.json" in os.listdir(binding.fd):
+                    if self._has_writer_views(binding, views) or "intent.json" in os.listdir(binding.fd):
                         raise SupervisorError("WORKSPACE_BUSY")
                 finally:
                     os.close(views)
@@ -840,3 +926,288 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
             except OSError:
                 self._healthy = False
                 raise SupervisorError("DURABILITY_UNKNOWN") from None
+
+    @staticmethod
+    def _has_writer_views(binding: _Binding, views: int) -> bool:
+        for name in os.listdir(views):
+            # Unknown scratch is not safe unused-owner settlement.
+            if len(name) != 37 or not name.startswith("view-"):
+                return True
+            child = os.open(name, _DIRECTORY, dir_fd=views)
+            try:
+                _private(child)
+                record = _read_json(child, "view.json", _VIEW_RECORD, 1024**2)
+                ref = record["view_ref"]
+                if ref["workspace_id"] != binding.metadata["workspace_id"] or ref["view_id"] != name:
+                    raise SupervisorError("CORRUPT_STATE")
+                if ref["access"] != Access.READ.value:
+                    return True
+            finally:
+                os.close(child)
+        return False
+
+    def pin_reader(
+        self,
+        peer: PeerIdentity,
+        namespace: NamespaceRef,
+        *,
+        workspace_id: str,
+        revision_id: str,
+        plan_ref: PlanRef | None,
+        formal_evidence: bool,
+        deadline: float,
+    ) -> GrantReply:
+        """Private trusted policy inputs; no execution admission or writer authority."""
+        if not isinstance(namespace, NamespaceRef) or type(formal_evidence) is not bool:
+            raise ExecutionContractError
+        with self._transaction(peer, deadline):
+            if self._view_profile is None:
+                raise SupervisorError("UNAPPROVED_PROFILE")
+            binding = self._binding(workspace_id)
+            self._recheck(binding)
+            try:
+                with self._revision(binding, revision_id, deadline) as (data, tree, revision):
+                    context = ProtectedPlanContext(
+                        self._state / "workspaces" / workspace_id / "revisions" / revision_id / "data",
+                        plan_ref,
+                        formal_evidence,
+                    )
+                    context.recheck()
+                    ref = ViewRef(
+                        workspace_id,
+                        "view-" + uuid4().hex,
+                        revision_id,
+                        namespace.run_id,
+                        binding.metadata["generation"],
+                        Access.READ,
+                        ViewPurpose.PROJECT,
+                    )
+                    grant = GrantReply(Operation.PIN_READER, secrets.token_hex(32), ref, None, None)
+                    record = {
+                        "schema_version": 1,
+                        "view_ref": ref.to_dict(),
+                        "actor_namespace": namespace.to_dict(),
+                        "state": "OPEN",
+                        "input_tree_sha256": tree["tree_sha256"],
+                        "sealed_manifest_id": None,
+                        "operation_ids": [],
+                        "candidate_scope": None,
+                        "plan_ref": context.to_plan_ref(),
+                    }
+                    _check(_VIEW_RECORD, record)
+                    if grant.capability in _canonical(record).decode("utf-8"):
+                        raise ExecutionContractError
+                    source = os.dup(data)
+                    directory = -1
+                    try:
+                        _budget(deadline)
+                        directory = self._retain_reader(binding, record, deadline)
+                        _budget(deadline)
+                        pin = _ReaderPin(
+                            ref,
+                            namespace,
+                            peer.principal,
+                            grant.capability,
+                            record,
+                            source,
+                            directory,
+                            _fingerprint(os.stat("tree.json", dir_fd=revision, follow_symlinks=False)),
+                            {e["path"]: e for e in tree["entries"]},
+                            context,
+                        )
+                        self._readers[ref.view_id] = pin
+                        self._stack.callback(pin.close)
+                    except BaseException:
+                        os.close(source)
+                        if directory >= 0:
+                            os.close(directory)
+                        raise
+                    return grant
+            except ExecutionContractError:
+                raise SupervisorError("INPUT_POLICY") from None
+            except OSError:
+                self._healthy = False
+                raise SupervisorError("DURABILITY_UNKNOWN") from None
+
+    def _retain_reader(self, binding: _Binding, record: dict[str, Any], deadline: float) -> int:
+        stage = self._state / "pending" / uuid4().hex
+        installed = False
+        try:
+            with _private_artifact_directory(stage) as fd, ExitStack() as stack:
+                _replace_private_bytes(fd, "view.json", encode_json(record))
+                views = os.open("views", _DIRECTORY, dir_fd=binding.fd)
+                stack.callback(os.close, views)
+                _private(views)
+                parent = os.open(stage.parent, _DIRECTORY)
+                stack.callback(os.close, parent)
+                view_id = record["view_ref"]["view_id"]
+                _budget(deadline)
+                _rename_directory(parent, stage.name, views, view_id)
+                installed = True
+                os.fsync(parent)
+                os.fsync(views)
+                result = os.open(view_id, _DIRECTORY, dir_fd=views)
+                try:
+                    _private(result)
+                    if _read_json(result, "view.json", _VIEW_RECORD, 1024**2) != record:
+                        self._healthy = False
+                        raise SupervisorError("DURABILITY_UNKNOWN")
+                except BaseException:
+                    self._healthy = False
+                    os.close(result)
+                    raise
+                return result
+        finally:
+            if not installed and stage.exists():
+                shutil.rmtree(stage)  # Only this uninstalled service-private record.
+
+    def _reader_proof(
+        self,
+        peer: PeerIdentity,
+        namespace: NamespaceRef,
+        ref: ViewRef,
+        capability: str,
+    ) -> _ReaderPin:
+        validate_capability(capability)
+        if not isinstance(ref, ViewRef) or not isinstance(namespace, NamespaceRef):
+            raise ExecutionContractError
+        pin = self._readers.get(ref.view_id)
+        if (
+            pin is None
+            or pin.capability is None
+            or not hmac.compare_digest(pin.capability, capability)
+            or pin.principal != peer.principal
+            or pin.namespace != namespace
+            or pin.ref != ref
+        ):
+            raise SupervisorError("UNAUTHORIZED")
+        if pin.record["state"] != "OPEN":
+            raise SupervisorError("VIEW_CLOSED")
+        return pin
+
+    def _reader(
+        self,
+        peer: PeerIdentity,
+        namespace: NamespaceRef,
+        ref: ViewRef,
+        capability: str,
+    ) -> _ReaderPin:
+        pin = self._reader_proof(peer, namespace, ref, capability)
+        binding = self._binding(ref.workspace_id)
+        self._recheck(binding)
+        with ExitStack() as stack:
+            views = os.open("views", _DIRECTORY, dir_fd=binding.fd)
+            stack.callback(os.close, views)
+            view = os.open(ref.view_id, _DIRECTORY, dir_fd=views)
+            stack.callback(os.close, view)
+            _private(view)
+            if _identity(os.fstat(view)) != _identity(os.fstat(pin.directory)):
+                raise SupervisorError("CORRUPT_STATE")
+            if _read_json(view, "view.json", _VIEW_RECORD, 1024**2) != pin.record:
+                raise SupervisorError("CORRUPT_STATE")
+            revisions = os.open("revisions", _DIRECTORY, dir_fd=binding.fd)
+            stack.callback(os.close, revisions)
+            revision = os.open(ref.base_revision, _DIRECTORY, dir_fd=revisions)
+            stack.callback(os.close, revision)
+            data = os.open("data", _DIRECTORY, dir_fd=revision)
+            stack.callback(os.close, data)
+            if (
+                _identity(os.fstat(data)) != _identity(os.fstat(pin.source))
+                or _fingerprint(os.stat("tree.json", dir_fd=revision, follow_symlinks=False)) != pin.manifest
+            ):
+                raise SupervisorError("CORRUPT_STATE")
+        try:
+            pin.context.recheck()
+        except ExecutionContractError:
+            raise SupervisorError("INPUT_POLICY") from None
+        return pin
+
+    @contextmanager
+    def _reader_io(
+        self,
+        peer: PeerIdentity,
+        namespace: NamespaceRef,
+        *,
+        view_ref: ViewRef,
+        capability: str,
+        deadline: float,
+    ) -> Generator[tuple[RootedViewIO, _ReaderPin]]:
+        # Keep this coarse reader lock through IO: release/shutdown cannot close
+        # descriptors underneath a handler. Execution admission is separate work.
+        with self._transaction(peer, deadline):
+            try:
+                pin = self._reader(peer, namespace, view_ref, capability)
+                profile = self._view_profile
+                if profile is None:
+                    raise SupervisorError("UNAPPROVED_PROFILE")
+                with (
+                    _private_artifact_directory(self._state / "pending") as staging,
+                    RootedViewIO(
+                        pin.source,
+                        staging,
+                        uid=profile.uid,
+                        gid=profile.gid,
+                        writable=False,
+                        protected_paths=()
+                        if pin.context.plan_ref is None
+                        else (pin.context.plan_ref.workspace_relative_path,),
+                        excluded_paths=tuple("/".join(p) for p in self._excluded),
+                        max_file_bytes=self._limits.max_file_bytes,
+                        max_depth=self._limits.max_depth,
+                    ) as io,
+                ):
+                    _budget(deadline)
+                    yield io, pin
+                    _budget(deadline)
+            except ViewIOError as error:
+                raise SupervisorError(error.code) from None
+            except OSError:
+                raise SupervisorError("CORRUPT_STATE") from None
+
+    def read_file(
+        self,
+        peer: PeerIdentity,
+        namespace: NamespaceRef,
+        *,
+        view_ref: ViewRef,
+        capability: str,
+        path: str,
+        offset_bytes: int,
+        max_bytes: int,
+        deadline: float,
+    ) -> ReadResult:
+        with self._reader_io(peer, namespace, view_ref=view_ref, capability=capability, deadline=deadline) as (io, pin):
+            result = io.read_file(path, offset_bytes=offset_bytes, max_bytes=max_bytes)
+            entry = pin.entries.get(path)
+            if entry is None or entry["type"] != "file" or result["sha256"] != entry["sha256"]:
+                raise SupervisorError("CORRUPT_STATE")
+            return result
+
+    def release_reader(
+        self,
+        peer: PeerIdentity,
+        namespace: NamespaceRef,
+        *,
+        view_ref: ViewRef,
+        capability: str,
+        deadline: float,
+    ) -> dict[str, bool]:
+        """Revoke unused-for-execution READ retention; never assert cell terminality or GC."""
+        with self._transaction(peer, deadline):
+            revoked = False
+            try:
+                pin = self._reader_proof(peer, namespace, view_ref, capability)
+                pin.capability = None
+                revoked = True
+                pin.record = {**pin.record, "state": "REJECTED"}
+                _replace_private_bytes(pin.directory, "view.json", encode_json(pin.record))
+                if _read_json(pin.directory, "view.json", _VIEW_RECORD, 1024**2) != pin.record:
+                    raise SupervisorError("DURABILITY_UNKNOWN")
+                _budget(deadline)
+                pin.close()
+                return {"released": True}
+            except (OSError, SupervisorError):
+                if revoked:
+                    self._healthy = False
+                    raise SupervisorError("DURABILITY_UNKNOWN") from None
+                raise

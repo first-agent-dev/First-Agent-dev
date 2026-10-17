@@ -3,7 +3,7 @@
 > Read [`knowledge/llms.txt`](../knowledge/llms.txt) §MUST READ FIRST.
 > Current local delivery is distinct from final I03/deployed acceptance.
 
-## Current state — I02 LOCAL SHIPPED / I03 IMPLEMENTATION IN PROGRESS, 2026-10-18 / E254
+## Current state — I02 LOCAL SHIPPED / I03 IMPLEMENTATION IN PROGRESS, 2026-10-18 / E255
 
 Branch `arena/86633f17-first-agent-dev` only. Retained I02 runtime/test proof snapshot
 `a32a72fc58db4b9a5b048a9b6475649bcf3e32b4`. E230/E231 finalized planning; E232 adds the first
@@ -41,7 +41,41 @@ Ubuntu host test,OS isolation,managed nested acquisition or host supervisor deli
 only;Go is an indirect inherited hook-build diagnosis,not a new FA runtime/deployment requirement.
 PTY stays. Q69–Q73 resolved;Q72 remains its narrow46-links/15-files+banner repair decision.
 
-**E254 CURRENT — positive genesis implemented; actual pins/views/backend NEXT:**
+**E255 CURRENT — actual reader owner implemented; writable views/admission/backend NEXT:**
+
+E255 implements actual immutable READ retention, principal/namespace/token/exact-ref authorization,
+rooted read_file and release_reader in the SAME WorkspaceAuthority. Protected view.json uses the
+existing exact schema; durable no-clobber install/fsync/reread precedes acknowledgement. Retained
+revision/source descriptors, manifest identity, full-file SHA and actual admitted PlanRef rechecks
+prevent canonical fallback or stale private input. Reuses E245 RootedViewIO with read-only access;
+required trusted formal policy and explicit approved profile are private DI, not wire/model fields.
+READ pins do not compare the newest writer epoch; valid READ retention no longer blocks unused
+writer release. Read/release/shutdown share the original-deadline coarse authority lock THROUGH IO,
+not a global journal lock. This is reader lifetime serialization, NOT execution admission/drain.
+Revocation does not depend on a still-valid plan. Post-revocation uncertainty fences the owner;
+successful release closes descriptors/discards heavy entry maps idempotently after readers drain,
+retains on-disk references/data, and cannot close reused FD numbers at shutdown. No pin GC/token
+reconstruction/new service/dependency or cell permission. Source src/fa/execution/workspace.py:
+pin_reader:949, _retain_reader:1032, _reader:1088,
+_reader_io:1126, read_file:1167, release_reader:1186.
+52 new C0/C3 native cases; combined146PASS3.71s. ALL old test files unchanged. Native UID1001 vs
+sample1000 originally masked the read-only mutant with fchown EPERM; corrected only the NEW
+counterfactual fixture to permit creation absent readonly. Rejected51-case run retained without
+credit. Native three-release FD leak reproduced BEFORE repair by assertion28!=22; controlled
+old-source proof stop retained without credit. Actual release-close and reused-FD regression added.
+Final whole17-module879PASS48.16s → sixteen whole879-bank assertion-only kills
+46/1/2/1/5/3/2/1/27/1/2/1/1/2/1/1 → restored879PASS43.48s; collection/setup/teardown clean, no runtime,
+warning, skip or infrastructure credit. All601 source/input hashes restored exactly. Ruff/format30
+PASS, Mypy30/184PASS; configured Pyrefly0errors, existing141suppressed/50warnings. Broader30-module
+1399PASS63.44s. Producer call replacements use explicit closed counterfactuals, not None-deref
+runtime failures; exact scripts/outputs/ordered IDs/source snapshots and diagnostics archived.
+Evidence `notes/evidence/i03-e255/readers.json.gz`, 2157199bytes SHA2565f0d802f4665b135aedab84b8cbd6bc1638f618b7eef1eb1f95280c20d363acf.
+Pins/read ownership is component proof, NOT writable create_view/materialization, actual execution
+admit/close-admission/drain, CellBackend episodes/restart/terminality, service/factory or caller/mount
+cutover. Those are NEXT. SLICE1 NOT shipped; all35STEPS/four final duties remain open. Q75–77
+unchanged. Inventory17 production surfaces/eight joins; all live UNEXECUTED, final-SLICE6 only.
+
+**E254 retained — positive genesis implemented; actual pins/views/backend NEXT:**
 
 Q77 resolved by explicit operator delegation to production-engineering judgment: select one
 uniformly positive epoch. Registration now persists genesis1/AVAILABLE WITHOUT ownership or a
@@ -133,8 +167,8 @@ records and independent terminality; then real factory/caller/mount cutover. SLI
 SLICE2/all35STEPS/four final duties remain open. Q59/Q75/Q76/final-SLICE6 rollout unchanged.
 
 **Next (implementation, no host approval prerequisite):**
-1. Retain E253 existing-root/R0/writer ownership; construct actual immutable pins/views and
-   admit/close-admission/drain with E245 RootedViewIO and Q76 protected PlanRef context.
+1. Retain E253/E254 registration/writer epochs and E255 actual immutable readers; NEXT construct
+   writable views/materialization plus actual execution admit/close-admission/drain, reusing E245 IO/Q76 context.
 2. Join actual CellBackend episodes/command reservations/cancel/startup discovery and independent
    terminality; no temporary authority. Factory/main/caller/mount activation follows the real joins.
 3. Q77 is resolved and implemented. Keep full-path Linux/Docker/deployed acceptance at final SLICE6.

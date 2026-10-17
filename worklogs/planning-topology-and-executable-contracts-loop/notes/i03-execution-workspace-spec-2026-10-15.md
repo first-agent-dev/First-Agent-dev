@@ -1366,3 +1366,37 @@ image/config only if it can interpret new state safely; after any new-format sta
 stop/quarantine and forward-recover with compatible supervisor. Never auto-downgrade, erase new
 intent/admission v2, delete committed bundles or restart legacy writable controllers. Maintain a
 source/image/config/state-format compatibility record and recovery command sheet before cutover.
+
+
+## E255 pre-code — actual immutable reader ownership and rooted reads
+
+Construct pin_reader/read_file/release_reader inside the existing WorkspaceAuthority, not a second
+service or permissive execution authority. CT102/CT103 retention and SLICE1 STEP2 dependency;
+no create_view/admit/CellBackend/full-contract completion from reader construction. Protected
+view.json uses the existing exact §3.1 schema, READ/PROJECT, OPEN and operation_ids:[]; base revision
+is retained before acknowledgement. Capability/principal/formal policy stay process-private.
+Required private formal_evidence + admitted PlanRef are supplied by the trusted caller; construct
+ProtectedPlanContext from the actual retained source, never infer policy from PROJECT/null. An
+explicit operator-approved view_profile config supplies UID/GID; absent config rejects reader IO,
+not guessed deployment identities. No new wire key, profile routing mode or runtime dependency.
+Reopen/verify protected revision and view identities; validate complete revision on pin creation,
+retain its actual source descriptor/tree entries. Rooted reads reuse E245, hash complete files and
+compare retained SHA; no canonical fallback. READ pins ignore later writer generation. Writer
+unused-release ignores valid READ retention but still blocks unknown/writable views/intents.
+Release revokes this exact reader only, retains revision/metadata, never claims cell terminality.
+Read/release/shutdown use the existing original-deadline authority lock through IO so admitted
+FDs stay alive; no global journal lock is held waiting on handlers. Per-workspace execution
+admission/drain remains separate actual construction work, not fulfilled by this coarse reader lock.
+Allowed code: workspace.py and NEW test_execution_readers.py; old source/tests otherwise unchanged.
+Allowed supporting files: spec/increment/register/ledger/review/HANDOFF/index and new E255 evidence.
+Native C0/C3 proof checks durable source first, actual bytes/hash, cross-epoch pins, proof/plan/path/
+read-only/restart/fault/drain boundaries. Full owning-bank assertion-only producer kills and exact
+restoration required. Real UDS/tool/PTY witnesses remain planned at final SLICE6; no early rollout.
+
+### E255 implementation checkpoint
+
+Actual pin_reader/read_file/release_reader retention and proof path now exists;52native cases,
+879owning/sixteen full-bank kills/restored879/broader1399.
+[Local evidence](evidence/i03-e255/readers.json.gz). Successful release retires FDs/heavy maps
+idempotently after reader drain, retains disk references; no GC or token reconstruction. Writable
+views/execution admission/backend remain absent. The pre-code declaration above remains the scope.

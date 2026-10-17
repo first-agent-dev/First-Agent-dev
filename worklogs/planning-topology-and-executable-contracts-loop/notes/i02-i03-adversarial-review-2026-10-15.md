@@ -1313,3 +1313,37 @@ This fixes genesis identity, NOT a reader grant or pin implementation. Actual im
 admit/close-admission/drain, CellBackend episodes/restart/terminality, service/factory and caller/
 mount cutover remain next. SLICE1 NOT shipped; all35STEPS/four final duties remain open. Q75/Q76
 and final-SLICE6 host rollout unchanged. Inventory17surfaces/eight joins; all live UNEXECUTED.
+
+### E255 — reader owner/FD lifetime advance; execution composition still incomplete
+
+E255 implements actual immutable READ retention, principal/namespace/token/exact-ref authorization,
+rooted read_file and release_reader in the SAME WorkspaceAuthority. Protected view.json uses the
+existing exact schema; durable no-clobber install/fsync/reread precedes acknowledgement. Retained
+revision/source descriptors, manifest identity, full-file SHA and actual admitted PlanRef rechecks
+prevent canonical fallback or stale private input. Reuses E245 RootedViewIO with read-only access;
+required trusted formal policy and explicit approved profile are private DI, not wire/model fields.
+READ pins do not compare the newest writer epoch; valid READ retention no longer blocks unused
+writer release. Read/release/shutdown share the original-deadline coarse authority lock THROUGH IO,
+not a global journal lock. This is reader lifetime serialization, NOT execution admission/drain.
+Revocation does not depend on a still-valid plan. Post-revocation uncertainty fences the owner;
+successful release closes descriptors/discards heavy entry maps idempotently after readers drain,
+retains on-disk references/data, and cannot close reused FD numbers at shutdown. No pin GC/token
+reconstruction/new service/dependency or cell permission. Source src/fa/execution/workspace.py:
+pin_reader:949, _retain_reader:1032, _reader:1088,
+_reader_io:1126, read_file:1167, release_reader:1186.
+52 new C0/C3 native cases; combined146PASS3.71s. ALL old test files unchanged. Native UID1001 vs
+sample1000 originally masked the read-only mutant with fchown EPERM; corrected only the NEW
+counterfactual fixture to permit creation absent readonly. Rejected51-case run retained without
+credit. Native three-release FD leak reproduced BEFORE repair by assertion28!=22; controlled
+old-source proof stop retained without credit. Actual release-close and reused-FD regression added.
+Final whole17-module879PASS48.16s → sixteen whole879-bank assertion-only kills
+46/1/2/1/5/3/2/1/27/1/2/1/1/2/1/1 → restored879PASS43.48s; collection/setup/teardown clean, no runtime,
+warning, skip or infrastructure credit. All601 source/input hashes restored exactly. Ruff/format30
+PASS, Mypy30/184PASS; configured Pyrefly0errors, existing141suppressed/50warnings. Broader30-module
+1399PASS63.44s. Producer call replacements use explicit closed counterfactuals, not None-deref
+runtime failures; exact scripts/outputs/ordered IDs/source snapshots and diagnostics archived.
+Evidence `notes/evidence/i03-e255/readers.json.gz`, 2157199bytes SHA2565f0d802f4665b135aedab84b8cbd6bc1638f618b7eef1eb1f95280c20d363acf.
+Pins/read ownership is component proof, NOT writable create_view/materialization, actual execution
+admit/close-admission/drain, CellBackend episodes/restart/terminality, service/factory or caller/mount
+cutover. Those are NEXT. SLICE1 NOT shipped; all35STEPS/four final duties remain open. Q75–77
+unchanged. Inventory17 production surfaces/eight joins; all live UNEXECUTED, final-SLICE6 only.
