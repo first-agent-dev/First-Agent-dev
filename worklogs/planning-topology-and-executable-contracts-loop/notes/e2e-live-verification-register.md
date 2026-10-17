@@ -1176,3 +1176,69 @@ _capture_nodeids_by_slice/_effective_controller_route cases must include ordinar
 before/after coder, bounded persisted error evidence, BaseException propagation, missing required
 verification and Q73 present-indeterminate observe/enforce routing with Q56 negative precedence.
 All of these deployed results remain INCOMPLETE under final I03 SLICE6.
+
+## E250 — I03 complete source/seam inventory, 2026-10-18 — PLANNED / UNEXECUTED
+
+Source audit at `1f20d94`, relative to retained I02 `a32a72f`: the prior register ended at E229
+and did NOT explicitly inventory I03. Corrected here in the SAME ledger, not another acceptance
+owner. Exactly14 added Python modules plus2 modified production surfaces below match the complete
+production diff. Source hashes and AST symbol inventory are in
+[evidence/i03-e250/e2e-inventory.json](evidence/i03-e250/e2e-inventory.json).
+Every row is future live coverage, NOT an implemented test, C1 claim, host PASS or completion tick.
+Local component evidence E232–E249 remains separate. Future production additions must extend this
+inventory in the same implementation checkpoint; do not infer a live verdict from a source hash.
+
+**Target-scope clarification for historical I02 rows:** their workspace-first PYTHONPATH/venv/Git/
+mutation assertions apply INSIDE the authorized verification cell against its pinned source/scratch.
+They do not authorize project imports/execution in the immutable controller or direct canonical
+mounts. The standing session/artifact requirements now join actual registered private views;
+canonical `/sessions/<id>` is not a substitute for proving which source the cell executed.
+Formal workflow cases retain the actual admitted plan; ordinary no-active-workflow null follows Q76.
+
+| ID / production surface | Producers / seam | Required live fixture and useful oracle | Live status |
+|---|---|---|---|
+| I03-LIVE-01 `src/fa/controller_entry.py` | Installed isolated entry and dependency/origin closure | Boot actual image entrypoint/wrapper/help/auto-run/session with hostile CWD/PYTHONPATH/editable-pth/project venv. Assert installed module origins and unchanged controller/control sentinels; no project import before cell admission. | PLANNED / UNEXECUTED |
+| I03-LIVE-02 `src/fa/execution/__init__.py` | Execution package installation | Build/install frozen wheel in actual controller and cell images; assert execution package origins/dependency closure and no source/editable shadow. Package marker has no independent runtime producer. | PLANNED / UNEXECUTED |
+| I03-LIVE-03 `src/fa/execution/types.py` | Namespace/view/operation/receipt/grant projections | Actual UDS wrong namespace/view/generation, forged receipt and malformed grant cases deny before effects. Read persisted receipt identities; durable journals contain no capability; IDs alone authorize nothing. | PLANNED / UNEXECUTED |
+| I03-LIVE-04 `src/fa/execution/protocol.py` | Closed codec, bounded frames, DeadlineConnection | Actual socket partial/oversize/duplicate-key/nonfinite/unknown-field frames, expired input and command-over-control-budget. Assert zero denied create/RUN, bounded replies, no reset or automatic replay. | PLANNED / UNEXECUTED |
+| I03-LIVE-05 `src/fa/execution/profiles.py` | Approved profile rendering | Actual image/inspect/host facts: pinned image, nonroot, private namespaces, capdrop/NNP/seccomp/resource limits, network none and only approved source/scratch/cache mounts. Deny raw image/mount/env/daemon overrides; inspect is not host attestation. | PLANNED / UNEXECUTED |
+| I03-LIVE-06 `src/fa/execution/supervisor.py` | PeerIdentity, dispatcher, completed-reply cache and input hash | Real private UDS kernel peer authentication, exact input reservation, durable begin/DONE and original reply replay. Exercise revoked-proof Q75, cache loss/saturation/restart and denied peer; no callback/reexecution/grant reconstruction. Verify peer and original absolute deadline reach actual admission/backend. | PLANNED / UNEXECUTED |
+| I03-LIVE-07 `src/fa/execution/journal.py` | Single supervisor, reservation/begin/create/start/CID/cancel/completion/recovery | Kill supervisor at each durable boundary, including lost create/start and completed-creation/live-cell cases. Observe original IDs/CIDs, unknown fencing, durable cancel before signal and secret-free files; no renewed begin/create/start/RUN. | PLANNED / UNEXECUTED |
+| I03-LIVE-08 `src/fa/execution/plans.py` | ProtectedPlanContext and actual plan recheck | Actual protected view/context and controller-admitted PlanRef; change source/hash before admission/exec and forge worker plan hash. Deny effects or completion. Ordinary no-active-workflow null allowed; formal evidence null denied. Never infer ordinary mode from null or PROJECT alone. | PLANNED / UNEXECUTED |
+| I03-LIVE-09 `src/fa/execution/client.py` | ExecutionClient and all ManagedBashExecutor methods | Actual tool/PTY run/INTERRUPT/CLOSE/LIST with 15 closed errors, supplied/missing references, timeout and disconnect. Persist truthful typed outcomes; no host shell/reconnect/resend. Control uncertainty replays original control input, never exec-inspects its request ID. | PLANNED / UNEXECUTED |
+| I03-LIVE-10 `src/fa/execution/cell_protocol.py` | Private worker codec | Actual non-TTY cell stream with split/oversize/malformed frames, wrong request/session binding and command/control concurrency. Reject invalid frames without privilege/grant/path leakage or invented success. | PLANNED / UNEXECUTED |
+| I03-LIVE-11 `src/fa/execution/cell_worker.py` | Persistent worker, one-shot worker and module main | Two commands retain shell state in one owned cell; independent namespace/view main sessions stay separate. Real one-shot nonzero/timeout, concurrent interrupt/close/list/STOP and EOF. STOP/worker exit is not cgroup emptiness. | PLANNED / UNEXECUTED |
+| I03-LIVE-12 `src/fa/execution/worker_client.py` | Sole attach, RUN/control multiplexing and stream-loss handling | Real Docker attach one RUN plus concurrent controls, correlation mismatch and forced stream loss. All affected requests become uncertain without resend/reconnect; verify no duplicate command sentinel. | PLANNED / UNEXECUTED |
+| I03-LIVE-13 `src/fa/execution/docker.py` | Authenticated native HTTP, create/start/inspect/attach/force-stop | Real approved daemon: owned labels/image/CID, original-name recovery, attach Upgrade/mux/stderr limits, fixed full-CID SIGKILL after durable cancel and independent same-CID inspect. Foreign/rebound identity, 409/404/loss/malformed replies remain truthful; no ACK-as-terminal barrier. | PLANNED / UNEXECUTED |
+| I03-LIVE-14 `src/fa/execution/view_io.py` | RootedViewIO and actual admitted text IO | Actual tool and PTY same-view read-your-writes; immutable readers stay pinned. Exercise no-follow/link/FIFO/owner/protected-PlanRef/size/UTF8/window/hash/expected-absence, parent-swap and fsync faults. Assert canonical/control sentinels, modes/UIDs, retained descriptors through drain and explicit conflict/uncertainty. | PLANNED / UNEXECUTED |
+| I03-LIVE-15 `src/fa/runtime/pty_pool.py` | Fractional PTY deadlines consumed by worker | Actual installed PTY backend receives subsecond remaining budget; normal/nonzero/timeout preserve result fields and responsiveness, no timeout truncation to zero or new process scope. Actual cgroup cleanup remains independently required. | PLANNED / UNEXECUTED |
+| I03-LIVE-16 `Dockerfile.fa` | Noneditable install and isolated build checks | Build actual approved immutable image; record wheel/image/dependency SHA, isolated help/origin checks and deployed entrypoint/mount facts. Build checks alone do not prove runtime cutover or kernel isolation. | PLANNED / UNEXECUTED |
+
+### Cross-module joins — all planned, not shipped composition
+
+| ID | Join | Required live fixture/oracle | Live status |
+|---|---|---|---|
+| I03-LIVE-S01 | Installed launch → controller → private authenticated UDS | Real entry/help/auto-run/session paths, unavailable backend and hostile project imports: zero project host/controller commands. | PLANNED / UNEXECUTED |
+| I03-LIVE-S02 | Dispatcher → actual WorkspaceAuthority.admit → CellBackend | Real actor/generation/pin/profile/PlanRef check and same original deadline, register active work before effects; revoke/stop races permit no late send/write. Current actor/deadline handler propagation and actual owners are incomplete. | PLANNED / UNEXECUTED |
+| I03-LIVE-S03 | Journal → original creation/CID → attach → reused per-command RUN | Two commands, two durable operations, one cell/attach; duplication/loss/restart including creator-DONE never permits another RUN or replacement cell. No second history. | PLANNED / UNEXECUTED |
+| I03-LIVE-S04 | Cancel/close-admission → drain → force-stop → kernel barrier | Hold active file handler and queued RUN while stopping; fork/double-fork/setsid writers remain fenced until actual owned cgroup populated=0. 204/409/404/STOP/worker exit are not release proof; unknown quarantines. | PLANNED / UNEXECUTED |
+| I03-LIVE-S05 | Registered root/writer → dirty R0 → view/rooted IO → pinned reader | Two OS actors race alias/bind/nested registrations and writer generation; exactly one writer. Copy actual staged/unstaged/untracked/deleted bytes without canonical index changes; tools/PTY share writer view, independent pins survive newer generation. | PLANNED / UNEXECUTED |
+| I03-LIVE-S06 | Actual view → seal/current/intent → projection/recovery | Freeze after terminal barrier; inject death/fsync failure at every irreversible boundary. Complete old/new immutable revisions or quarantine, no committed rollback; protect Git index and user sentinels, safe no-replace new-project install. | PLANNED / UNEXECUTED |
+| I03-LIVE-S07 | SessionManager/provisioner/tool builders/verifier → actual composed service | New/resume/new-session explicit reuse and real provisioning namespace before RPC; all execution/import/Git/readiness/search/PDF/mutation routes stay cell-local. Atomic caller/mount cutover; unavailable dependencies have no host fallback. These callers/owners are still unimplemented. | PLANNED / UNEXECUTED |
+| I03-LIVE-S08 | Outer chat/nested workflow → source handoff/eval → final release proof | Real-provider CONTINUE_EXISTING and actual outer-chat delegated witness plus controlled bootstrap/failure/concurrency/isolation cases. Preserve Q59 suggestion/manual behavior, Q56/Q73 negative/indeterminate outcomes and Q74 checkpoints. Freeze/review final fixtures before approval/deploy; final SLICE6 only. | PLANNED / UNEXECUTED |
+
+**Fixture implementation/execution owner:** accumulate local `tests/integration/` cases as actual
+composition exists; required invocation uses FA_REQUIRE_EXECUTION_HOST=1 and cannot skip missing
+Docker/cgroup/profile. Final reviewed `e2e/I03/` package/case index and independently reviewed drivers
+remain final SLICE6 per spec§9.1, not an early live-host prerequisite. Every source producer/path,
+including internal guards and error/cleanup branches in the hash-backed symbol inventory, must be
+accounted for when freezing that final index; this table is NOT a contract→test kill mapping or a
+claim that merely naming a module proves every producer. Freeze actual factory/caller inventory,
+prove full-bank sensitivity with actual producer removals and retain complete raw phases, source
+restoration, timing/cost, persisted receipts/artifacts and host sentinel/cgroup evidence. Runtime/
+collection/setup/infra errors cannot prove kills. Record provider mode REAL/CONTROLLED explicitly.
+
+**Cleanup/safety:** disposable approved authority/profile/labels and roots disjoint from live user
+roots/secrets, bounded teardown with independent cgroup emptiness; uncertainty retains fencing and
+fails the case. No root deletion while writers may survive. No permissive authority, injected live
+success, new approval gate or early deployment; all four transferred acceptance duties stay open.

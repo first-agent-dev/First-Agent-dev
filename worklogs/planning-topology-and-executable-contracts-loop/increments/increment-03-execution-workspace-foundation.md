@@ -472,3 +472,13 @@ remain the roadmap's named deferred successor; foundation shipping neither expir
 nor provides L2 VERIFIED. I04–I06 numbering and Q64→I06 unchanged. Parallel orchestration, CAS/
 overlay/backend matrix, advanced privacy/anti-persistence/GC, package-proxy platform and calibration
 remain outside I03. PTY/FastAPI is a cell transport choice, not a fourth role or independent milestone.
+
+## E250 — E2E source/seam inventory repaired before further implementation
+
+The existing live register previously omitted explicit I03 entries. It now tracks all14 added
+Python modules, both modified production surfaces and8 cross-module joins against exact source
+hashes/AST inventory.16 omitted-module controls fail; no live case is implemented/executed by this
+inventory. Historical I02 project-import/env assertions apply inside cells, not the controller.
+Next dependency-ready STEP1 seam: dispatcher must pass authenticated peer and original absolute
+deadline explicitly through authorization/handler to actual backend/admission (§2.2, F20/F21),
+not infer identity from namespace or reset command budget. Actual owners/SLICE2 remain unfinished.

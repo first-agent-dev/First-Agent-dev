@@ -2972,3 +2972,10 @@ E249  FACT  E249 implements the existing E248 native force-stop contract in Dock
     Final closure:309Markdown links PASS, diff --check PASS;6slices/17FUNCTIONAL/35unchecked
     preserved; exactly2 modified Python files +6 existing docs/index +1 evidence archive. All old
     Docker tests byte-prefix exact and prior ledger prefix retained; no active production server.
+
+E250  FACT  Source audit finds missing I03 coverage in existing E2E live register through E229.
+    Added14 new-module +2 modified-surface rows,8 joins, exact diff/hash/AST inventory and16 omission
+    controls; all live statuses PLANNED/UNEXECUTED. Existing rows retained verbatim as prefix;
+    role-aware target clarification keeps workspace imports in cells, never immutable controller.
+    Final reviewed host package/execution remains SLICE6; all35STEPS/four duties open. Next actual
+    dispatcher peer/deadline propagation closes defined F20/F21 seam, not authority completion.

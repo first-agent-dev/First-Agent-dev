@@ -3,7 +3,7 @@
 > Read [`knowledge/llms.txt`](../knowledge/llms.txt) §MUST READ FIRST.
 > Current local delivery is distinct from final I03/deployed acceptance.
 
-## Current state — I02 LOCAL SHIPPED / I03 IMPLEMENTATION IN PROGRESS, 2026-10-17 / E249
+## Current state — I02 LOCAL SHIPPED / I03 IMPLEMENTATION IN PROGRESS, 2026-10-18 / E250
 
 Branch `arena/86633f17-first-agent-dev` only. Retained I02 runtime/test proof snapshot
 `a32a72fc58db4b9a5b048a9b6475649bcf3e32b4`. E230/E231 finalized planning; E232 adds the first
@@ -41,7 +41,13 @@ Ubuntu host test,OS isolation,managed nested acquisition or host supervisor deli
 only;Go is an indirect inherited hook-build diagnosis,not a new FA runtime/deployment requirement.
 PTY stays. Q69–Q73 resolved;Q72 remains its narrow46-links/15-files+banner repair decision.
 
-**E249 CURRENT — native lifecycle implemented; SLICE1 NOT shipped:**
+**E250 CURRENT — E2E ledger inventory verified/repaired:** source diff exactly14 added Python
+modules +2 modified production surfaces, now16 explicit planned live rows +8 joins in existing
+E2E register, with SHA/AST evidence and16 omission controls. No live verdict. Next repair the
+spec§2.2 dispatcher peer/deadline seam before actual backend/authority construction; all owners,
+SLICE2 and final SLICE6 duties remain open. No blocking policy question found in this audit.
+
+**E249 retained — native lifecycle implemented; SLICE1 NOT shipped:**
 E249 implements the existing E248 native force-stop contract in DockerCells/Engine only.
 Original creation namespace/input binding → durable cancel intent → owned inspect → one fixed
 full-CID SIGKILL → independent SAME-CID observation. Already-exited needs only fresh inspect;
