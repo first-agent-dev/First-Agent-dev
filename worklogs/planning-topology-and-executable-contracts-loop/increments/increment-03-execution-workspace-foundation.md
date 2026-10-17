@@ -57,6 +57,12 @@ interactive worker remains persistent. Local361PASS/restored361PASS, three full-
 broader782PASS. Build toward the complete target contracts, not today's helpers. Existing verification
 schedule below already defers required host acceptance without blocking dependency-order coding.
 STEP1–4 remain unchecked; producer helpers exist, but C1 factory/authority/kernel wiring is uncredited.
+E241 constructs private authenticated Docker create/start/owned-inspect transport + durable one-use
+create claim and required injected resource validator. Start ACK is only a CID, not an exec result;
+non-exited observations cannot turn provisional exit0 into success. No per-command new-cell reuse,
+receipt issuance, real authority or C1/host proof. Actual backend/episode/attach/lifecycle and service
+wiring remain target work. Local owning415PASS/restored415PASS, ten full-bank kills2/6/2/1/3/2/2/1/7/1;
+no STEP/acceptance ticks or changed verification schedule.
 
 ## Grounding, sequence and scope discipline
 

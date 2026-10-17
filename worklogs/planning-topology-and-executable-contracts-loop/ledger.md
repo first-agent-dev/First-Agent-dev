@@ -2798,3 +2798,27 @@ E240  I03 TARGET/ROLLOUT CORRECTION + NONINTERACTIVE LIFETIME  2026-10-17;F19,CT
     Final audit0FAIL6WARN/6slices17FUNCTIONAL35unchecked,kill grammar clean;doc309PASS,diffPASS.
     Retained original runner provenance + explicit correction of inherited checkout metadata only;
     no execution records altered/recredited. Tested sources exact;I02/deps/wrappers unchanged.
+
+
+E241  I03 PRIVATE DOCKER LAUNCH/OWNED OBSERVATION CONSTRUCTION  2026-10-17;CT99–CT100.
+    Actual fixed create/start/inspect HTTP over authenticated private AF_UNIX; required UID/socket/
+    explicit API/bounded RPC config, no TCP/DOCKER_HOST/pull/retry/redirect. Reused client peer check,
+    fixed profile and journal. Required resource validator; not actual authority or a temp issuer.
+    create_once checks reserved exec/input, durably UNKNOWN before callback then CID before start;
+    lost replies/CID durability faults cannot regain launch permission; cancellation/concurrent
+    claims serialized. Start ACK returns CID only, NOT command result/receipt or terminality.
+    Owned original-name/ID inspection validates identity/labels/pinned ref, reports actual config
+    image ID (not deployment approval), withholds provisional non-exited codes; no cgroup barrier.
+    Native Unix HTTP + actual journal files/locks are C0/C3, not Docker/kernel/real-authority/C1 proof.
+    Focused119PASS3.10s; owning13module415PASS32.38s/restored415PASS32.11s; ten full415mutations
+    assertion kills2/6/2/1/3/2/2/1/7/1, clean phases/no skips/warnings/exact source restoration.
+    Ruff/format21PASS;Mypy21target+180sourcePASS;broader24modules836PASS42.82s, clean. Initial style/
+    lookup typing diagnostics repaired, no failed diagnostic counted as proof. HTTP204 declared
+    body-discard edge repaired and regression proved. Source snapshots/raw phases/mutations/full
+    fetched primary Moby API hash/provenance in notes/evidence/i03-e241; no app dependency changes.
+    Original interactive cell/creation binding MUST be reused for later RUNs with separate command
+    reservations; do not wire launch_new as exec handler. Real episode/attach/control/lifecycle/
+    cgroup/reconciliation,WorkspaceAuthority/controller bridge/service/wrapper cutover remain.
+    All35STEPS/four final duties unfinished; no host request/activation or rollout waiver.
+    Final audit0FAIL6WARN/6slices17FUNCTIONAL35unchecked;kill grammar clean;doc309PASS/diffPASS;
+    tested hashes exact;I02/session/dependency/Dockerfile/wrapper/compose sources unchanged fromf92d9b5.

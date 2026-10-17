@@ -3,7 +3,7 @@
 > Read [`knowledge/llms.txt`](../knowledge/llms.txt) §MUST READ FIRST.
 > Current local delivery is distinct from final I03/deployed acceptance.
 
-## Current state — I02 LOCAL SHIPPED / I03 IMPLEMENTATION IN PROGRESS, 2026-10-17 / E240
+## Current state — I02 LOCAL SHIPPED / I03 IMPLEMENTATION IN PROGRESS, 2026-10-17 / E241
 
 Branch `arena/86633f17-first-agent-dev` only. Retained I02 runtime/test proof snapshot
 `a32a72fc58db4b9a5b048a9b6475649bcf3e32b4`. E230/E231 finalized planning; E232 adds the first
@@ -41,7 +41,28 @@ Ubuntu host test,OS isolation,managed nested acquisition or host supervisor deli
 only;Go is an indirect inherited hook-build diagnosis,not a new FA runtime/deployment requirement.
 PTY stays. Q69–Q73 resolved;Q72 remains its narrow46-links/15-files+banner repair decision.
 
-**E240 current continuation / rollout correction:** operator reaffirmed ALL systems must implement
+**E241 current continuation:** private DockerEngine now performs authenticated bounded Unix HTTP
+create/start/owned-inspect calls; DockerCells requires resource validation and journal create_once
+persists UNKNOWN before create, CID before start. No TCP/env endpoint/pull/retry/redirect. Lost
+create/start reply cannot regain launch permission; original-name/ID inspection stays read-only.
+Identity/name/labels/pinned reference verified, actual image config ID reported (not approved image
+facts); provisional non-exited codes withheld. Start ACK returns CID, NOT receipt/command success.
+Native Unix HTTP fixture + actual journal persistence/concurrency/fault tests are C0/C3, not Docker
+or kernel proof. Owning13modules415PASS32.38s/restored415PASS32.11s; ten full-bank assertion-only
+kills2/6/2/1/3/2/2/1/7/1, clean phases/no skips/warnings/exact restore. Ruff/format21 + Mypy21/180
+PASS; broader24modules836PASS42.82s, clean. Final audit0FAIL6WARN/35unchecked/doc309PASS/diffPASS;
+tested hashes exact, unrelated source/dependency/wrapper groups preserved. Evidence i03-e241 incl
+full primary API provenance. Peer auth is not actual daemon endpoint-exposure/host-facts approval.
+
+NEXT: actual protected episode registry + attach/worker command/control, Docker cancellation/kill,
+lifecycle/reconciliation and descendant barrier, then real WorkspaceAuthority/controller bridge,
+service/config/provisioner/wrappers. launch_new is NOT per-command exec: reuse the original live
+interactive cell and creation binding; each command still owns its operation/input reservation.
+Do not install CID-returning launcher as exec handler or pretend injected validation is authority.
+No production main/cutover or host approval request. All35STEPS/four duties remain incomplete;
+required actual-host/full-path acceptance remains final SLICE6 under the existing schedule.
+
+**E240 retained continuation / rollout correction:** operator reaffirmed ALL systems must implement
 the plan's TARGET contracts; resolve contradictions first, not replace target behavior with helper
 scope. Existing **Verification schedule** already allows construction in dependency order while
 host/full-path safety acceptance remains outstanding for final SLICE6. No deployment, Actions job
@@ -77,7 +98,7 @@ in notes/evidence/i03-e239; initial oracle TypeError rejected and retained, neve
 Actual protected view persistence/loader, namespace/root ownership and controller-admission bridge
 remain under real WorkspaceAuthority integration. Context construction is NOT authority/C1 proof;
 formal policy must come from protected admitted execution context, not be inferred false from null.
-No actual issuer, Docker backend/reconciliation, service main/unit, integrated wrappers/provisioner
+No actual issuer, complete Docker backend/reconciliation, service main/unit, integrated wrappers/provisioner
 or approved host image/UID/cgroup/cache facts. No fake authority/main or premature writable legacy
 cutover. The existing spec already permits C0 injection before SLICE2 authority: do not ask a
 redundant sequencing question, and do NOT ask Q76 again. All35STEPS/four final duties remain open.

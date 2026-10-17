@@ -56,6 +56,11 @@ Task type → primary entrypoint, then secondary:
 
 ## § BY-DEMAND INDEX (Deprecated)
 
+[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e241/docker-launch.json.gz]: Private Docker launch/journal C0/C3 + full415case developmental kills; not C1/host proof.
+[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e241/verification.json.gz]: E241 restored static/broader raw results; no deployed acceptance.
+[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e241/source-plan.json.gz]: E241 source-preservation/plan/doc audit; all35STEPS unchecked.
+[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e241/primary-api.json.gz]: Hash-verified full Moby API reference/provenance, not approved host facts.
+
 [worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e232/controller-entry.json.gz]: CT98 local developmental evidence only.
 [worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e234/replay.json.gz]: Q75(a) C0/C3 replay/type evidence, not service/live proof.
 

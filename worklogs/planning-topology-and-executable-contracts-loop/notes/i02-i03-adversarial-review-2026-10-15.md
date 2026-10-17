@@ -763,3 +763,91 @@ Verification archive SHA256 98cb8a0d50579455e43230d56d66b7c30d741e5764dfb10c98f0
 An inherited runner metadata field described E239 checkout recovery instead of current E240;
 explicit correction retains original field and executed runner source, with all commands/reports/
 return codes unchanged. No rerun or reinterpretation of test results for metadata status.
+
+## E241 — private Docker launch and owned observation construction, 2026-10-17
+
+**Scope / pre-edit declaration (CT99–CT100):** continue actual target implementation in the already
+approved dependency order, NOT another admission audit or host-choice gate. Read_set: execution
+client/journal/profile/protocol/supervisor/worker, their tests, this review, spec §2.1 and increment
+Verification schedule, tests-writing/doc-maintenance skills. Base f92d9b54134c92ea7fb336113b78a7c1b6df7f9a;
+pre-doc llms SHA256 4ebce21f9175e4ab53ebcef503754dd802c55adfa5be3f0502328ab53c2e7738.
+Write_set: execution/{client,journal,docker}.py, tests/test_execution_{journal,docker}.py, existing
+spec/review/increment/ledger/HANDOFF/index, notes/evidence/i03-e241. No dependency/lock, I02/session,
+Dockerfile, wrapper, compose, workflow-mode or deployment change. No concurrent writer observed.
+
+**Mechanism / minimalism:** reuse the existing endpoint/SO_PEERCRED checks, closed input hashing,
+fixed profile renderer and fsync/flock journal. DockerEngine makes actual fixed create/start/inspect
+HTTP calls over authenticated AF_UNIX; required socket/UID/API/RPC-budget configuration, no TCP,
+DOCKER_HOST, endpoint/version discovery, pull, redirect or retries. One absolute deadline through
+HTTPResponse's SocketIO reads, bounded framing/body, sanitized daemon failures. Required resource
+binding validator runs before launch; it is NOT a temporary issuer or a claim that real authority
+exists. The launch coordinator requires the reserved EXECUTING exec claim and original input hash,
+durably writes UNKNOWN before one create RPC, then CID before start; start already has its own
+write-ahead one-use guard. Cancellation and competing create claims serialize on the real journal.
+Lost reply, invalid CID or CID durability fault never regains create permission. Journal claim
+states are internal bookkeeping, NOT actual process state. Start acknowledgement returns a CID,
+NOT an ExecutionReceipt, command success or terminality.
+
+Owned inspection verifies original deterministic name/labels, full CID, configured pinned image
+reference and syntax of observed image config ID. It reports that ID; it does NOT establish that a
+manifest digest equals its config digest or approve deployed image/kernel facts. Original-name
+lookup after lost create is read-only; no fresh start or grant reconstruction. Non-exited Docker
+states never expose provisional ExitCode=0 as command completion. Even EXITED observation has NO
+cgroup terminal_barrier or authoritative receipt. Backend attach/command/control, cancellation/
+kill, durable episode registry, reconciliation and descendant-terminal lifecycle are still required.
+
+**Interactive lifetime:** launch_new is only a new cell. Later RUNs in an interactive session must
+reuse its live cell and original creation-operation binding, while reserving each command's own
+operation/input. Do NOT wire this CID-returning coordinator as an exec handler or create a new cell
+per RUN; the real episode registry/backend must enforce namespace/view/session ownership first.
+No production factory/main activation, permissive authority or failing-main stub was introduced.
+
+**Reference:** primary Moby v20.10.0 api/swagger.yaml blob
+9f1019681af5135c20ecdaaebe03975bb7497461, decoded382944bytes SHA256
+7b5de4c18a20092932ecf184d6afada89e2f8d511dfdb7b63be958b02e7d0fa8. Create name/201 Id+Warnings,
+start204 and inspect fields informed the transport. Required API is explicit, no downgrade. API1.41
+is a minimum feature reference, NOT approved deployment version; fixture1.45 is NOT compatibility
+proof. Full fetched primary text, hashes and retrieval provenance retained in primary-api.json.gz.
+No Go/runtime library dependency added. Goal-lens: truthful mandatory execution boundary (axis C),
+necessary target transport/one-use launch producers, reuse instead of a second runtime/service.
+
+**C0/C3 tests / development:** literal native Unix HTTP peer + real protected journal files/locks;
+NOT Docker, namespaces, seccomp, cgroup, host image or actual authority/C1 tests. Covered positive
+create/start ordering and payload, required binding and mode/limit/cancel/hash gates before any
+request, lost create/start replies, read-only recovery lookup, concurrent claims, CID persistence
+fault, peer rejection, malformed/oversized/truncated/ambiguous framing, redirects/error sanitizing,
+chunked success and bounded slow drip. Inspection identity/labels/image/state and provisional exit
+codes checked independently of profile rendering. Per-edit review found Python HTTPResponse silently
+discards body on204: reject explicitly declared nonzero length/transfer encoding before reading;
+regression added, no response-body success assumption. Initial style diagnostics and three optional
+lookup typing errors corrected; focused119PASS3.10s + Ruff/Mypy5PASS. No kill credit for development
+diagnostics and no existing test oracle weakened.
+
+**Owning proof:** all13module415cases PASS32.38s, restored415PASS32.11s. Ten separate full415case
+producer mutations killed with CALL assertion counts **2/6/2/1/3/2/2/1/7/1**: resource validation,
+create write-ahead, input binding, deterministic create name, durable CID propagation, start RPC,
+kernel peer gate, absolute receive budget, exit observation and204 framing. All415 setup/teardown
+phases PASS each run; zero collection failures/skips/pytest warnings; no runtime-error kill credit.
+All source hashes restored exactly after every mutation. These are developmental full-component-bank
+sensitivity checks, NOT the plan's final session/nested normative kill acceptance. Raw runner,
+node IDs/phases/output, mutations and changed source snapshots in docker-launch.json.gz675489bytes,
+SHA256 d031abf8e822eea5099321578182f151e21445f05ffb1c767a934e6b0b1c5eb7.
+
+**Restored verification:** Ruff/format21PASS, Mypy21target +180sourcePASS. Broader24modules
+836PASS42.82s, all setup/call/teardown phases clean, no skips/pytest warnings. Existing installed
+CLI and inherited source/PlanRef/session/entrypoint/security regressions included. Existing cached
+Python3.13.16 and hash-verified ShellCheck0.11.0 used; no new bootstrap/dependency/lock changes.
+Actual commands/output/full broader report in verification.json.gz; not a full-repo just-check or
+inherited-baseline readiness claim. Final source/plan/doc audit recorded below. All35STEPS, SLICE1 and
+four transferred final duties remain incomplete. Required actual-host/full-path acceptance stays
+at final SLICE6 under the existing Verification schedule, not waived or claimed by this component.
+
+
+**Final source/plan/doc audit:**0FAIL6WARN,6slices17FUNCTIONAL35unchecked; kill grammar clean;
+309 markdown files/link check PASS, diff --check PASS. Tested source hashes exact. I02/session,
+lock/dependencies, Dockerfile/wrappers/compose and unchanged execution/controller sources preserved
+from f92d9b5. Source-plan archive SHA256 a3b86de242c5b18ee8a4c7486883aeaa85e28e6fdf8a1ed536028dac95f56d26.
+Verification archive SHA256 29ce44e66a1ae3d05f0858e97969848eecf73f2143751421a8efa281efd1bd2d.
+Primary API archive SHA256 af2d7617b4e576166d170ab88cf329d2d31b08104a198e5fbe182e9e7c5b6641.
+Actual daemon/version, image config mapping, endpoint exposure/UID policy, protected mounts and
+kernel facts remain deployment acceptance inputs; peer authentication alone does not prove them.

@@ -54,6 +54,25 @@ class ExecutionRejectedError(RuntimeError):
         self.operation_id = operation_id
 
 
+def _connect_authenticated(connection: socket.socket, path: Path, server_uid: int) -> None:
+    # Peer credentials after connect are authoritative even across a path
+    # replacement race. A same-UID malicious server is inside the host TCB.
+    parent = path.parent.stat(follow_symlinks=False)
+    endpoint = path.stat(follow_symlinks=False)
+    if (
+        not stat.S_ISDIR(parent.st_mode)
+        or parent.st_uid != server_uid
+        or parent.st_mode & 0o022
+        or not stat.S_ISSOCK(endpoint.st_mode)
+        or endpoint.st_uid != server_uid
+    ):
+        raise ExecutionUnavailableError
+    connection.connect(str(path))
+    _, uid, _ = struct.unpack("3i", connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i")))
+    if uid != server_uid:
+        raise ExecutionUnavailableError
+
+
 class ExecutionClient:
     def __init__(self, socket_path: Path, *, server_uid: int, rpc_timeout_ms: int) -> None:
         if type(server_uid) is not int or server_uid < 0:
@@ -66,24 +85,7 @@ class ExecutionClient:
         self._timeout_ms = rpc_timeout_ms
 
     def _connect(self, connection: socket.socket) -> None:
-        # Peer credentials after connect are authoritative even across a path
-        # replacement race. A same-UID malicious server is inside the host TCB.
-        parent = self._path.parent.stat(follow_symlinks=False)
-        endpoint = self._path.stat(follow_symlinks=False)
-        if (
-            not stat.S_ISDIR(parent.st_mode)
-            or parent.st_uid != self._server_uid
-            or parent.st_mode & 0o022
-            or not stat.S_ISSOCK(endpoint.st_mode)
-            or endpoint.st_uid != self._server_uid
-        ):
-            raise ExecutionUnavailableError
-        connection.connect(str(self._path))
-        _, uid, _ = struct.unpack(
-            "3i", connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i"))
-        )
-        if uid != self._server_uid:
-            raise ExecutionUnavailableError
+        _connect_authenticated(connection, self._path, self._server_uid)
 
     def request(
         self,

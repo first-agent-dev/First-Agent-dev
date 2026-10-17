@@ -307,3 +307,97 @@ def test_only_one_supervisor_holds_startup_recovery_scope(tmp_path: Path) -> Non
         assert second.recover_uncertain() == 0
     with pytest.raises(JournalError):
         second.recover_uncertain()
+
+
+def test_create_once_persists_uncertainty_before_callback_and_cid_before_start(tmp_path: Path) -> None:
+    journal = OperationJournal(tmp_path / "ops", lock_timeout_ms=1000)
+    reserved = journal.reserve(request())
+    journal.begin(OID, NS)
+    observed: list[dict[str, Any]] = []
+
+    def create() -> str:
+        observed.append(json.loads((tmp_path / "ops" / (OID + ".json")).read_text()))
+        return CID
+
+    assert journal.create_once(OID, NS, input_sha256=reserved.record["input_sha256"], create=create) == CID
+    assert len(observed) == 1 and observed[0]["state"] == "UNKNOWN" and observed[0]["container_id"] is None
+    record = journal.lookup(OID, NS)
+    assert record is not None and record["state"] == "EXECUTING" and record["container_id"] == CID
+    with pytest.raises(JournalError):
+        journal.create_once(OID, NS, input_sha256=reserved.record["input_sha256"], create=create)
+    assert len(observed) == 1
+
+
+@pytest.mark.parametrize("bad", ["lost-reply", "invalid-cid", "cancel", "input"])
+def test_uncertain_or_denied_create_claim_never_regains_permission(tmp_path: Path, bad: str) -> None:
+    journal = OperationJournal(tmp_path / "ops", lock_timeout_ms=1000)
+    reserved = journal.reserve(request())
+    journal.begin(OID, NS)
+    calls: list[str] = []
+
+    def create() -> str:
+        calls.append("called")
+        if bad == "lost-reply":
+            raise RuntimeError("opaque daemon diagnostic")
+        return "invalid"
+
+    if bad == "cancel":
+        journal.request_cancel(OID, NS)
+    digest = "9" * 64 if bad == "input" else reserved.record["input_sha256"]
+    with pytest.raises((RuntimeError, ExecutionContractError)):
+        journal.create_once(OID, NS, input_sha256=digest, create=create)
+    if bad in {"lost-reply", "invalid-cid"}:
+        record = journal.lookup(OID, NS)
+        assert record is not None and record["state"] == "UNKNOWN"
+        with pytest.raises(JournalError):
+            journal.create_once(OID, NS, input_sha256=digest, create=create)
+    assert len(calls) == (0 if bad in {"cancel", "input"} else 1)
+
+
+def test_failed_cid_persistence_keeps_unknown_and_cannot_retry_create(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    owner = journal(tmp_path)
+    admission = owner.reserve(request())
+    owner.begin(OID, NS)
+    original = owner._write
+    calls: list[str] = []
+
+    def write(fd: int, record: dict[str, Any]) -> None:
+        if record["container_id"] is not None:
+            raise JournalError("EXECUTION_UNKNOWN")  # Fault at CID durability boundary, not a Docker fault.
+        original(fd, record)
+
+    def create() -> str:
+        calls.append("create")
+        return CID
+
+    monkeypatch.setattr(owner, "_write", write)
+    with pytest.raises(JournalError):
+        owner.create_once(OID, NS, input_sha256=admission.record["input_sha256"], create=create)
+    record = owner.lookup(OID, NS)
+    assert record is not None and record["state"] == "UNKNOWN"
+    with pytest.raises(JournalError):
+        owner.create_once(OID, NS, input_sha256=admission.record["input_sha256"], create=create)
+    assert calls == ["create"]
+
+
+def test_concurrent_create_claims_share_one_durable_permission(tmp_path: Path) -> None:
+    first, second = journal(tmp_path), journal(tmp_path)
+    admission = first.reserve(request())
+    first.begin(OID, NS)
+    calls: list[str] = []
+
+    def create() -> str:
+        calls.append("create")
+        return CID
+
+    def claim(owner: OperationJournal) -> str:
+        try:
+            return owner.create_once(OID, NS, input_sha256=admission.record["input_sha256"], create=create)
+        except JournalError:
+            return "denied"
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = list(pool.map(claim, (first, second)))
+    assert sorted(outcomes) == [CID, "denied"] and calls == ["create"]

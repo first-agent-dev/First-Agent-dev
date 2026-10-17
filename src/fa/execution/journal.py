@@ -11,7 +11,7 @@ import copy
 import os
 import stat
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -283,6 +283,41 @@ class OperationJournal:
                 raise JournalError("EXECUTION_UNKNOWN")
             record["state"] = "EXECUTING"
             self._write(fd, record)
+
+    def create_once(
+        self,
+        operation_id: str,
+        namespace: NamespaceRef,
+        *,
+        input_sha256: str,
+        create: Callable[[], str],
+    ) -> str:
+        """One bounded create RPC, write-ahead uncertainty, then durable CID.
+
+        The dispatcher already claimed begin(). Hold the journal lock through
+        create so cancellation linearizes before/after it, never in the middle.
+        A lost create/CID-fsync reply NEVER regains creation permission.
+        """
+        _hex_id(input_sha256, "", 64)
+        with self._transaction() as fd:
+            record = self._bound(fd, operation_id, namespace)
+            if (
+                record is None
+                or record["op"] != "exec"
+                or record["state"] != "EXECUTING"
+                or record["container_id"] is not None
+                or record["cancel_requested"]
+            ):
+                raise JournalError("EXECUTION_UNKNOWN")
+            if record["input_sha256"] != input_sha256:
+                raise JournalError("COLLISION")
+            record["state"] = "UNKNOWN"
+            self._write(fd, record)
+            container_id = create()
+            _hex_id(container_id, "", 64)
+            record.update(state="EXECUTING", container_id=container_id)
+            self._write(fd, record)
+            return container_id
 
     def record_container(self, operation_id: str, namespace: NamespaceRef, container_id: str) -> None:
         _hex_id(container_id, "", 64)

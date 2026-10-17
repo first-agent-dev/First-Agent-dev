@@ -215,6 +215,17 @@ loss. This journal state records write-ahead uncertainty, not an actual Docker o
 Bound control RPC timeouts separately from command deadline; use one monotonic deadline across
 all partial frame reads/writes, not resettable socket inactivity alone; lost reply cannot mean not executed.
 
+E241 construction clarification (not activation/acceptance): DockerCells.launch_new requires the
+original reserved exec/input binding and a resource validator; write-ahead UNKNOWN precedes one
+bounded create, durable CID precedes one start. Lost replies permit only owned observation, not
+replay. Internal journal EXECUTING/UNKNOWN are claim stages, never actual Docker lifecycle facts.
+The launch result is a start-ACK CID, not a receipt. Original-name/ID inspection verifies creation
+identity/labels and configured pinned reference, reports the actual image config ID and withholds
+provisional exit codes outside EXITED; it does not prove approved image facts or a descendant barrier.
+Later interactive RUNs must reuse the original live cell and creation binding; per-command operation
+reservation is separate. A protected episode registry, actual attach/worker/control/lifecycle and
+reconciliation owner are still required before wiring this into exec or service main.
+
 Deployment contract: controller `/sessions` and any canonical project binds READ-ONLY; replace the
 current compose writable `/sessions` bind. Keep controller session/config DB mounts writable but
 never expose the supervisor state directory through them. Only private UDS is mounted to controller;
