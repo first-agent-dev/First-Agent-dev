@@ -17,6 +17,7 @@ from typing import Any
 import pytest
 
 from fa.execution.journal import OperationJournal
+from fa.execution.plans import ProtectedPlanContext
 from fa.execution.profiles import ExecutionProfile
 from fa.execution.protocol import DeadlineConnection, decode_reply, decode_request, encode_json, read_frame, write_frame
 from fa.execution.supervisor import CompletedReplyCache, PeerIdentity, SupervisorDispatcher, SupervisorError
@@ -66,13 +67,14 @@ class Fixture:
         self.break_backend = False
         self.service = self.make_service()
 
-    def authorize(self, peer: PeerIdentity, req: dict[str, Any]) -> None:
+    def authorize(self, peer: PeerIdentity, req: dict[str, Any]) -> ProtectedPlanContext | None:
         self.auth_calls += 1
         assert peer.uid == os.getuid() and peer.pid == os.getpid()
         if req["op"] != "health" and (
             not self.proof_alive or req["capability"] != CAP or req["namespace"] != NS.to_dict()
         ):
             raise SupervisorError("UNAUTHORIZED")
+        return None
 
     def handle(self, req: dict[str, Any]) -> GrantReply | dict[str, Any]:
         self.handler_calls += 1

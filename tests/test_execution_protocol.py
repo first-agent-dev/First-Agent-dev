@@ -73,13 +73,14 @@ PAYLOADS: dict[Operation, dict[str, Any]] = {
         "input_id": None,
     },
     Operation.ACQUIRE_WRITER: {"workspace_id": WS},
-    Operation.PIN_READER: {"workspace_id": WS, "revision_id": REV},
+    Operation.PIN_READER: {"workspace_id": WS, "revision_id": REV, "plan_ref": None},
     Operation.CREATE_VIEW: {
         "workspace_id": WS,
         "base_revision": REV,
         "access": "WRITE",
         "purpose": "PROJECT",
         "candidate_scope": None,
+        "plan_ref": None,
     },
     Operation.READ_FILE: {"path": "src/main.py", "offset_bytes": 0, "max_bytes": 1024},
     Operation.WRITE_FILE: {"path": "src/main.py", "content": "ü", "expected_sha256": None},
@@ -275,6 +276,7 @@ def test_candidate_and_pty_dependent_shapes() -> None:
         "candidate_path": "draft.md",
         "plan_ref": {"workspace_relative_path": "plan.md", "source_kind": "EXPLICIT", "sha256": SHA},
     }
+    req["payload"]["plan_ref"] = req["payload"]["candidate_scope"]["plan_ref"]
     assert decode_request(encode_json(req)) == req
     req["payload"]["purpose"] = "PROJECT"
     with pytest.raises(InvalidRequestError):
@@ -402,3 +404,38 @@ def test_encoded_frame_limit_is_independent_of_individual_body_limits() -> None:
 def test_receipt_frozen_fields_cannot_be_replaced(field: str) -> None:
     with pytest.raises(FrozenInstanceError):
         setattr(ExecutionReceipt.from_dict(RECEIPT), field, None)
+
+
+@pytest.mark.parametrize("op", [Operation.PIN_READER, Operation.CREATE_VIEW])
+def test_plan_admission_is_required_nullable_closed_identity(op: Operation) -> None:
+    req = request(op)
+    del req["payload"]["plan_ref"]
+    with pytest.raises(ExecutionContractError):
+        decode_request(encode_json(req))
+    req["payload"]["plan_ref"] = {"workspace_relative_path": "plan.md", "source_kind": "EXPLICIT", "sha256": SHA}
+    assert decode_request(encode_json(req)) == req
+    req["payload"]["plan_ref"]["worker_hash"] = SHA
+    with pytest.raises(ExecutionContractError):
+        decode_request(encode_json(req))
+
+
+@pytest.mark.parametrize("purpose", ["VERIFICATION", "MUTATION", "CANDIDATE"])
+def test_formal_admission_needs_plan_and_candidate_must_match(purpose: str) -> None:
+    req = request(Operation.CREATE_VIEW)
+    req["payload"]["purpose"] = purpose
+    plan = {"workspace_relative_path": "plan.md", "source_kind": "EXPLICIT", "sha256": SHA}
+    if purpose == "CANDIDATE":
+        req["payload"]["candidate_scope"] = {"candidate_path": "draft.md", "plan_ref": plan.copy()}
+    with pytest.raises(ExecutionContractError):
+        decode_request(encode_json(req))
+    req["payload"]["plan_ref"] = plan.copy()
+    assert decode_request(encode_json(req)) == req
+    if purpose == "CANDIDATE":
+        for field, value in [
+            ("sha256", "f" * 64),
+            ("source_kind", "BOOTSTRAP"),
+            ("workspace_relative_path", "different.md"),
+        ]:
+            req["payload"]["plan_ref"] = {**plan, field: value}
+            with pytest.raises(ExecutionContractError):
+                decode_request(encode_json(req))

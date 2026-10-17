@@ -3,7 +3,7 @@
 > Read [`knowledge/llms.txt`](../knowledge/llms.txt) §MUST READ FIRST.
 > Current local delivery is distinct from final I03/deployed acceptance.
 
-## Current state — I02 LOCAL SHIPPED / I03 IMPLEMENTATION IN PROGRESS, 2026-10-16 / E238
+## Current state — I02 LOCAL SHIPPED / I03 IMPLEMENTATION IN PROGRESS, 2026-10-17 / E239
 
 Branch `arena/86633f17-first-agent-dev` only. Retained I02 runtime/test proof snapshot
 `a32a72fc58db4b9a5b048a9b6475649bcf3e32b4`. E230/E231 finalized planning; E232 adds the first
@@ -41,18 +41,29 @@ Ubuntu host test,OS isolation,managed nested acquisition or host supervisor deli
 only;Go is an indirect inherited hook-build diagnosis,not a new FA runtime/deployment requirement.
 PTY stays. Q69–Q73 resolved;Q72 remains its narrow46-links/15-files+banner repair decision.
 
-**E238 current continuation:** independent SLICE1 profile/client/cell worker/journal/dispatcher
-construction + noneditable Docker build gate and ACTUAL installed CLI tests are committed/checkpointed.
-294case owning bank passes;four full-bank developmental kills include actual installed producer;
-final broader702PASS37.75s without skips/warnings after supplying verified test-only ShellCheck.
-Raw history/static results in review/ledger/evidence;no Docker image build or host proof.
-F18/Q76 is OPEN: authoritative PlanRef absent from normal view metadata/exec, ordinary Q59 execution
-has no mandatory workflow but receipt text limits plan nullability to provisioning. Recommendation
-is view-bound admitted PlanRef + ordinary-null, never null workflow evidence;await operator choice.
-Do not activate fake authority/main, switch read-only binds into writable legacy provisioning, tick
-SLICE1 or claim all35/four final duties done. Actual WorkspaceAuthority/backend/host facts/integrated
-wrappers and production service startup remain. Source spec already permits C0 injection until
-SLICE2 actual authority, so do not ask a redundant slice-sequence question.
+**E239 current continuation:** Q76(a) is explicitly APPROVED (`view_bound_nullable_ordinary`),
+recorded RESOLVED and constructed at C0/C3: required nullable admission PlanRef, candidate equality,
+frozen trusted plan context, actual bounded/no-follow source recheck before fresh reservation,
+receipt plan binding before DONE/cache. Ordinary no-active-workflow null allowed; formal evidence
+needs actual admitted plan. Seven-field ViewRef/Q59/Q75 unchanged; no public mode/root/policy flag.
+Owning12modules347PASS28.65s/restored347PASS28.54s; six full347kills4/6/3/1/2/1 assertion failures,
+clean phases/no skips/warnings/exact restore. Ruff/format19+Mypy19/179source PASS; broader23modules
+768PASS39.87s incl existing PlanRef regressions and actual installed CLI. Raw final/static/history
+in notes/evidence/i03-e239; initial oracle TypeError rejected and retained, never final kill credit.
+
+Actual protected view persistence/loader, namespace/root ownership and controller-admission bridge
+remain under real WorkspaceAuthority integration. Context construction is NOT authority/C1 proof;
+formal policy must come from protected admitted execution context, not be inferred false from null.
+No actual issuer, Docker backend/reconciliation, service main/unit, integrated wrappers/provisioner
+or approved host image/UID/cgroup/cache facts. No fake authority/main or premature writable legacy
+cutover. The existing spec already permits C0 injection before SLICE2 authority: do not ask a
+redundant sequencing question, and do NOT ask Q76 again. All35STEPS/four final duties remain open.
+I02 inner_loop/session, lock/pyproject and runtime wrappers/compose unchanged by E239.
+
+**E238 retained history:** immutable Docker build/install gate and actual installed CLI proof were
+committed/checkpointed before Q76 was asked. Broader702PASS and owning294PASS retained unchanged.
+No Docker image build or host proof. The F18 recommendation was OPEN then; E239 above supersedes
+that question status without rewriting old evidence.
 
 **E237 retained continuation:** durable secret-free journal and per-connection UDS dispatcher now
 constructed, with required injected authority/backend, one-claim/cancel/start guards and Q75 replay.

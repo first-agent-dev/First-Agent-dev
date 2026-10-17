@@ -96,13 +96,14 @@ PAYLOADS: dict[Operation, dict[str, Any]] = {
         root_id=CONFIG_ID, relative_root=PATH, create=BOOL, input_id=_nullable(CONFIG_ID)
     ),
     Operation.ACQUIRE_WRITER: _object(workspace_id=_id("ws-")),
-    Operation.PIN_READER: _object(workspace_id=_id("ws-"), revision_id=_id("rev-")),
+    Operation.PIN_READER: _object(workspace_id=_id("ws-"), revision_id=_id("rev-"), plan_ref=_nullable(PLAN_REF)),
     Operation.CREATE_VIEW: _object(
         workspace_id=_id("ws-"),
         base_revision=_id("rev-"),
         access=VIEW["properties"]["access"],
         purpose=VIEW["properties"]["purpose"],
         candidate_scope=_nullable(CANDIDATE_SCOPE),
+        plan_ref=_nullable(PLAN_REF),
     ),
     Operation.READ_FILE: _object(
         path=PATH, offset_bytes=UINT, max_bytes={"type": "integer", "minimum": 1, "maximum": MAX_TEXT_BYTES}
@@ -201,6 +202,7 @@ _REPLY = _object(
 _ENVELOPE_CHECK = fastjsonschema.compile(_ENVELOPE)
 _REPLY_CHECK = fastjsonschema.compile(_REPLY)
 _RECEIPT_CHECK = fastjsonschema.compile(RECEIPT)
+_PLAN_REF_CHECK = fastjsonschema.compile(PLAN_REF)
 _PAYLOAD_CHECKS = {op: fastjsonschema.compile(schema) for op, schema in PAYLOADS.items()}
 _RESULT_CHECKS = {op: fastjsonschema.compile(schema) for op, schema in RESULTS.items()}
 
@@ -309,12 +311,20 @@ def _request_bindings(record: dict[str, Any], op: Operation) -> None:
     payload = record["payload"]
     if op is Operation.EXEC and payload["operation_id"] != "op-" + record["request_id"]:
         raise ExecutionContractError
-    if op is Operation.CREATE_VIEW and (
-        (payload["candidate_scope"] is not None) != (payload["purpose"] == "CANDIDATE")
-    ):
-        raise ExecutionContractError
+    if op is Operation.CREATE_VIEW:
+        if (payload["candidate_scope"] is not None) != (payload["purpose"] == "CANDIDATE"):
+            raise ExecutionContractError
+        if payload["purpose"] in {"VERIFICATION", "MUTATION", "CANDIDATE"} and payload["plan_ref"] is None:
+            raise ExecutionContractError
+        if payload["candidate_scope"] is not None and payload["candidate_scope"]["plan_ref"] != payload["plan_ref"]:
+            raise ExecutionContractError
     if op is Operation.PTY_CONTROL and ((payload["session_id"] is None) != (payload["action"] == "LIST")):
         raise ExecutionContractError
+
+
+def validate_plan_ref(record: dict[str, Any]) -> None:
+    """One closed PlanRef spelling for wire and trusted context, not admission."""
+    _check(_PLAN_REF_CHECK, record)
 
 
 def validate_receipt(record: dict[str, Any]) -> None:

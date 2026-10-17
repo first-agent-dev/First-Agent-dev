@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from threading import Lock
 from typing import TYPE_CHECKING, Any
 
+from fa.execution.plans import ProtectedPlanContext
 from fa.execution.profiles import ExecutionProfile
 from fa.execution.protocol import (
     ERROR_CODES,
@@ -229,7 +230,7 @@ class SupervisorDispatcher:
         profiles: tuple[ExecutionProfile, ...],
         journal: OperationJournal,
         replies: CompletedReplyCache,
-        authorize: Callable[[PeerIdentity, dict[str, Any]], None],
+        authorize: Callable[[PeerIdentity, dict[str, Any]], ProtectedPlanContext | None],
         handle: Callable[[dict[str, Any]], GrantReply | dict[str, Any]],
     ) -> None:
         if not client_uids or any(type(uid) is not int or uid < 0 for uid in client_uids):
@@ -245,7 +246,7 @@ class SupervisorDispatcher:
         self._journal, self._replies = journal, replies
         self._authorize, self._handle = authorize, handle
 
-    def _authorize_request(self, peer: PeerIdentity, request: dict[str, Any]) -> None:
+    def _authorize_request(self, peer: PeerIdentity, request: dict[str, Any]) -> ProtectedPlanContext | None:
         if peer.uid not in self._uids:
             raise SupervisorError("UNAUTHORIZED")
         if request["op"] == "exec":
@@ -256,7 +257,23 @@ class SupervisorDispatcher:
                 request["payload"]["session_id"] is not None
             ):
                 raise SupervisorError("INPUT_POLICY")
-        self._authorize(peer, copy.deepcopy(request))  # Actual namespace/view/capability/role authority REQUIRED.
+        context = self._authorize(peer, copy.deepcopy(request))  # Actual resource authority REQUIRED.
+        if request["op"] in {"pin_reader", "create_view", "exec"}:
+            if not isinstance(context, ProtectedPlanContext):
+                raise SupervisorError("UNAUTHORIZED")
+            try:
+                context.recheck()
+            except ExecutionContractError:
+                raise SupervisorError("INPUT_POLICY") from None
+            if request["op"] != "exec" and request["payload"]["plan_ref"] != context.to_plan_ref():
+                raise SupervisorError("INPUT_POLICY")
+            if (
+                request["op"] == "exec"
+                and request["view_ref"]["purpose"] in {"VERIFICATION", "MUTATION", "CANDIDATE"}
+                and context.plan_ref is None
+            ):
+                raise SupervisorError("INPUT_POLICY")
+        return context
 
     @staticmethod
     def _reply(
@@ -285,7 +302,9 @@ class SupervisorDispatcher:
         except ReplayConflictError:
             raise SupervisorError("UNAUTHORIZED", record["operation_id"]) from None
 
-    def _execute_reserved(self, request: dict[str, Any], binding: ReplayBinding) -> dict[str, Any]:
+    def _execute_reserved(
+        self, request: dict[str, Any], binding: ReplayBinding, context: ProtectedPlanContext | None
+    ) -> dict[str, Any]:
         operation_id = "op-" + binding.request_id
         self._journal.begin(operation_id, binding.namespace)
         produced = self._handle(copy.deepcopy(request))
@@ -304,6 +323,10 @@ class SupervisorDispatcher:
             snapshot = PublicReply.from_result(binding.operation, produced)
         response = self._reply(binding.request_id, result=snapshot.to_wire_result())
         decode_reply(encode_json(response), operation=binding.operation, request_id=binding.request_id)
+        if binding.operation is Operation.EXEC:
+            if context is None:
+                raise ExecutionContractError
+            context.check_receipt_plan(snapshot.to_wire_result()["receipt"]["plan_sha256"])
         self._journal.complete(operation_id, binding.namespace, produced, original_proof=request["capability"])
         self._replies.remember_completed(binding, request["capability"], snapshot)
         return snapshot.to_wire_result()
@@ -352,11 +375,11 @@ class SupervisorDispatcher:
                 if existing is not None:
                     value = self._completed(existing, binding, request["capability"])
                 else:
-                    self._authorize_request(peer, request)
+                    context = self._authorize_request(peer, request)
                     reserved = self._journal.reserve(request)
                     if reserved.fresh:
                         reserved_id = reserved.record["operation_id"]
-                        value = self._execute_reserved(request, binding)
+                        value = self._execute_reserved(request, binding, context)
                     else:
                         value = self._completed(reserved.record, binding, request["capability"])
                 response = self._reply(request["request_id"], result=value)

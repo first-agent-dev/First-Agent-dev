@@ -608,7 +608,8 @@ Recommend trusted immutable view-level active PlanRef, supplied by existing cont
 rehashed under supervisor authority, null for genuinely unplanned ordinary execution/provisioning;
 formal workflow/verification evidence requires its actual admitted PlanRef. No new model routing
 mode. [Q76](open-questions-2026-10-07.md#q76--authoritative-planref-binding-and-ordinary-execution-without-a-workflow)
-is OPEN, recommendation NOT ratification. Exhausted independent journal/transport/build work before ask.
+was OPEN at E238, recommendation NOT then ratification. Independent construction was exhausted before ask.
+The operator explicitly selected (a) afterward; E239 below records that approval and correction.
 
 Remaining activation: actual WorkspaceAuthority/issuer + Docker backend/reconciliation, protected
 volume maps/approved image+UID/cgroup/cache facts, real service main/unit and coherent controller
@@ -622,3 +623,75 @@ Final [source/plan audit](evidence/i03-e238/source-plan.json.gz): actual-source 
 remain visible external-contract references, not relabelled zero-warning. Exact preserved I02/session,
 lock/pyproject and existing wrapper/compose sources checked against E235. E238 source commit dbaaade;
 branch-only remote verified. No runtime/STEP acceptance inferred from documentation audit.
+
+
+## E239 — Q76(a) admitted-plan context and source/receipt join, 2026-10-17
+
+**Decision:** operator explicitly selected `view_bound_nullable_ordinary`. Q76(a) is RESOLVED, not
+pending another question. Actual admitted PlanRef in protected immutable view/execution context;
+supervisor rechecks source/hash; ordinary no-active-workflow execution can be null, formal workflow/
+verification evidence cannot. Q59 routing/manual behavior unchanged. No fabricated hash/worker choice.
+
+**Pre-edit source declaration / F18, CT99–CT100:** existing PlanRef is in
+`inner_loop/plan_admission.py`, not a new abbreviated identity. Its bounded no-follow descriptor
+reader is reusable. Current normal wire/view metadata lacks the reference and authorizer returns
+no context. Target: required nullable admission key + identical candidate reference; immutable trusted
+context from REQUIRED authority; fresh source recheck BEFORE reservation; backend receipt plan must
+match BEFORE DONE/cache. Exact source files: execution/protocol.py, execution/plans.py (new),
+execution/supervisor.py; test_execution_protocol.py, test_execution_plans.py (new),
+test_execution_dispatch.py (callback return annotation only). Docs: Q76, spec, I03 plan, this review,
+ledger, HANDOFF, knowledge/llms index. ViewRef remains seven fields; no public formal/root flag.
+Binary negatives: missing/conflicting/stale/symlinked/nonregular/invalid source, null formal evidence,
+and erased/replaced/fabricated receipt plan block. After-side-effect receipt uncertainty stays
+UNKNOWN with null durable result; no retry. Q75 cached original completion does not reread source.
+
+**Classification/producer targets:** C0/C3 actual reader+closed decoder+dispatcher/journal/socketpair,
+explicit injected test authority and simulated container/receipt witnesses ONLY. Retained installed
+CLI C2/C3 runs in the same full owning bank. No C1 resource/service/controller composition claim.
+Developmental mutations remove dispatcher context.recheck, admission-context equality and
+context.check_receipt_plan calls/checks; additionally formal/candidate admission and formal context
+requirements. All run the complete owning bank, not a contract-to-case map, with clean collection,
+setup/teardown and exact source restoration. Existing tests changed only for the newly required
+wire fields/candidate equality and honest callback typing. Negative oracles strengthened to assert
+ERROR/shape before indexing; no bypass/skip/xfail or weaker policy.
+
+**Implementation scope:** frozen ProtectedPlanContext carries existing PlanRef, private registered
+source root and existing formal-evidence requirement. It is NOT admission authority. Actual protected
+view metadata persistence/loader, real registered-root ownership and controller-admission bridge are
+still missing production consumers under WorkspaceAuthority integration. The normative schema join
+is corrected and dispatcher checks are constructed; F18's integrated authority proof is NOT closed.
+No service main, permissive authority, Docker backend, wrapper cutover or deployment activation.
+
+**Development history:** snapshot resume reset Git metadata/cache; direct Git blob+mode comparison
+confirmed all1355 pushed checkpoint files identical (0 mismatches), metadata-only HEAD recovery,
+no source replacement. Recovered supported CPython3.13.16 test build from same checked source hash,
+matching OpenSSL/zlib/SQLite headers/system libraries, frozen uv dev dependencies; no lock/dependency
+change. Optional stdlib absences are not host readiness. Initial importlib-mode helper import,
+fixture grant arguments/image property and fixture type annotations were corrected before proof.
+Initial347 bank passed; first mutation had3 assertion failures plus1 CALL TypeError because a framed
+negative indexed a null error. Driver rejected it; exact restoration and original archive retained,
+no complete kill credit. Strengthened status/shape oracles, then reran the full bank/proofs.
+
+**Verification:** final full owning12module347PASS28.65s; restored347PASS28.54s. Six full347
+mutations yield4/6/3/1/2/1 CALL assertion failures, no collection/setup/teardown failures, skips or
+warnings; byte-exact restoration of all source/tests/lock/build inputs. RuffPASS/format19unchanged;
+Mypy19target+179sourcePASS. Broader23modules768PASS39.87s, zero skips/warnings, including existing
+PlanRef reader/admission regressions and actual rebuilt installed CLI. Same verified test-only
+ShellCheck0.11.0 supplied. No Docker image/host proof. Raw runner sources/reports/history retained:
+notes/evidence/i03-e239/plan-binding.json.gz (395688bytes,
+SHA256 c5007ce8b63565ba29d2cfea20299d3c40179ee9a36f5a947d4f89c8944917e2),
+verification.json.gz (82603bytes,
+SHA256 4a1bb8710faaf11a75ef74c9eddfc6aefcba67e4b0e460743fc8938d4e893703),
+plan-binding-initial.json.gz (116453bytes,
+SHA256 86fc5d32960d95365842905424354cb6fd63630aa275ce149d14db29f9028a56).
+All35STEPS/four transferred final duties remain open. No I02 policy/implementation rewrite or
+I01/I04–I06 scope change. Protected loader/authority/backend/controller integration and real host
+facts remain next; this ratified correction is no longer a question/stop. Inspect/cancel/recovery
+must retain the original protected operation/view plan binding, not reconstruct one from worker
+text or treat a later source change as fresh admission. No real backend is claimed here.
+
+Final source/plan audit:0FAIL6WARN (existing external contract references visible),6slices,
+17FUNCTIONAL,35unchecked; kill grammar clean. Actual309 markdown link audit passes; git diff
+--check passes. Source matches final tested hashes; I02 inner_loop/session, lock/pyproject,
+Dockerfile and wrappers/compose unchanged from ba50092. Raw source-plan.json.gz SHA256
+1b1815aaac14d0ab859295996242f638279ecef01475d2293bac631e865a6607.

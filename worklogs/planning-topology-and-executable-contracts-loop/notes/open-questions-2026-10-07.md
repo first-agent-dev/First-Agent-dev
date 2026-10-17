@@ -1620,7 +1620,8 @@ SLICE1 paths and remain pending; real-host proof remains final I03 acceptance wo
 
 ## Q76 — Authoritative PlanRef binding and ordinary execution without a workflow
 
-**Status: OPEN — E238/F18, 2026-10-16. Recommendation is not operator approval.**
+**Status: RESOLVED — operator explicitly selected (a), 2026-10-17 / E239.**
+The `view_bound_nullable_ordinary` answer ratifies the correction below; no second approval needed.
 Independent SLICE1 journal/dispatcher/client/worker/build construction was completed/tested before
 asking; no production service/authority activation or completion claim follows from those helpers.
 
@@ -1631,13 +1632,13 @@ Q59 preserves ordinary/manual execution and advisory invocation; existing normal
 need not have an active workflow PlanRef. Do not fabricate a hash or require a new workflow mode.
 The worker cannot select a binding; caller-supplied raw hash alone is not authoritative evidence.
 
-**(a) Recommended:** bind the existing controller-admitted PlanRef once into protected immutable
+**(a) APPROVED:** bind the existing controller-admitted PlanRef once into protected immutable
 view/execution context; supervisor rechecks its actual source/hash. Allow plan_sha256:null for
 ordinary execution with NO active workflow plan (and appropriate provisioning). Formal workflow/
 verification evidence still requires the real admitted plan; null never substitutes for that proof.
 Extend the closed view/admission schema consistently, not a model-selected raw exec hash.
 
-**(b) Keep the current nullable-only-before-source rule:** operator supplies/clarifies the actual
+**(b) Not selected — keep the current nullable-only-before-source rule:** operator supplies/clarifies the actual
 trusted PlanRef source for ordinary no-workflow commands, and where the supervisor binds it.
 Do not silently invent one or introduce a mandatory-workflow route while clarification is pending.
 

@@ -152,8 +152,8 @@ Complete payload additions/results (every object has exactly the named keys; IDs
 | health | `{}` / `{ready:bool,protocol_version:1,profile_set_sha256}`; health is not execution readiness or a view grant |
 | register_workspace | `{root_id,relative_root,create:bool,input_id:null-or-configured-ID}` / `{workspace_id,revision_id}`; create=false requires existing root; create=true installs an owned new root no-clobber from approved materialized input or empty source; no remote clone/ambient credentials |
 | acquire_writer | `{workspace_id}` / `{view_ref:null,capability,generation,revision_id}`; grant bound to authenticated controller's namespace and root owner |
-| pin_reader | `{workspace_id,revision_id}` / `{view_ref,capability}`; READ pin independent of subsequent writer generations |
-| create_view | `{workspace_id,base_revision,access,purpose,candidate_scope}` / `{view_ref,capability}`; purpose PROJECT/PROVISIONING/VERIFICATION/MUTATION/CANDIDATE; candidate_scope null except exact `{candidate_path,plan_ref}` for CANDIDATE; grant checks permitted combinations before copy |
+| pin_reader | `{workspace_id,revision_id,plan_ref}` / `{view_ref,capability}`; READ pin independent of subsequent writer generations |
+| create_view | `{workspace_id,base_revision,access,purpose,candidate_scope,plan_ref}` / `{view_ref,capability}`; purpose PROJECT/PROVISIONING/VERIFICATION/MUTATION/CANDIDATE; candidate_scope null except exact `{candidate_path,plan_ref}` for CANDIDATE, with identical top-level plan_ref; grant checks permitted combinations before copy |
 | read_file | `{path,offset_bytes,max_bytes}` / `{content,sha256,eof}`; max_bytes1MiB, exact bounded UTF-8 file snapshot; reject unsupported binary/split-codepoint rather than silently corrupt; SHA covers whole bounded file; oversized files need explicit read-only chunk policy, never partial SHA for edits |
 | write_file / edit_file | `{path,content,expected_sha256}` / `{sha256,bytes}`; expected_sha256 nullable only for write(create-if-absent); edit requires hash; conflict is STALE_REVISION with no silent retry |
 | exec | `{operation_id,profile_id,command,cwd,timeout_ms,session_id}` / `{receipt}`; session_id nonnull only for interactive profile; fixed simple identifier≤64chars, scoped to namespace+view |
@@ -185,8 +185,10 @@ send is inspect/cancel by the SAME operation ID. Never allocate a new ID to retr
 ExecutionReceipt v1 is exactly `{schema_version:1,operation_id,namespace,workspace_id,view_id,
 owner_run_id,generation,revision_id,original_revision_id,input_tree_sha256,plan_sha256,profile_id,
 image_digest,state,exit_code,timed_out,stdout_tail,stderr_tail,truncated,duration_ms,terminal_barrier}`.
-Nullable revision/plan fields only for pre-source provisioning, never verification; exit_code int or
-null, timed_out/truncated/terminal_barrier bool, duration_ms nonnegative int, tails≤64KiB/channel.
+Nullable revision fields only for pre-source provisioning, never verification. Q76(a): plan_sha256
+may also be null for ordinary execution with NO active workflow plan; it never substitutes for
+formal workflow/verification/mutation/candidate evidence. exit_code int or null,
+timed_out/truncated/terminal_barrier bool, duration_ms nonnegative int, tails≤64KiB/channel.
 Normal noninteractive EXITED needs actual container/process exit and terminal_barrier=true;
 LAUNCH_FAILED/UNKNOWN never inherit exit0. Interactive completion may leave idle shell and barrier
 false until stop_view. Supervisor reconstructs identity from reserved state, never worker JSON.
@@ -268,7 +270,25 @@ session DB. workspace.json keys exactly `{schema_version:1,workspace_id,root_id,
 root_dev,root_ino,generation,owner_namespace,active_actor,status}`; owner/actor nullable only when
 AVAILABLE, status AVAILABLE/OWNED/QUARANTINED. Positive/nonnegative integer rules reject bool.
 view.json keys exactly `{schema_version:1,view_ref,actor_namespace,state,input_tree_sha256,
-sealed_manifest_id,operation_ids,candidate_scope}`; nullable seal ID before seal, state per §5.
+sealed_manifest_id,operation_ids,candidate_scope,plan_ref}`; nullable seal ID before seal, state per §5.
+Q76(a): plan_ref is a required nullable key with the EXISTING exact PlanRef shape
+`{workspace_relative_path,source_kind,sha256}`. Bind the actual controller-admitted reference once
+in protected immutable view/execution context, not from exec/worker text or an invented raw hash.
+Both pin_reader/create_view admission must agree with that trusted reference; candidate_scope's
+reference must equal it. VERIFICATION/MUTATION/CANDIDATE admission needs a nonnull plan. Ordinary
+no-active-workflow execution (and appropriate pre-source provisioning) can have null; an active
+workflow's PROJECT view still needs its admitted reference. This adds no routing/workflow mode.
+The supervisor rechecks actual bounded no-follow source bytes/hash before fresh view admission
+or execution and binds the returned receipt's plan hash to the context. A mismatch before reserve
+blocks effects; a mismatched backend receipt after reserve remains uncertain, never DONE/proof.
+Q75 completed original-reply replay is unchanged: it does not reread a now-changed source or renew
+admission, because no work is being re-executed. Memory cache loss still blocks replay.
+`ProtectedPlanContext` is the frozen trusted value supplied by REQUIRED resource authority; its
+source_root and formal_evidence policy are private, never new wire fields. Policy must join the
+actual controller-admitted/protected execution context; do not infer ordinary policy merely from
+PROJECT purpose or a null reference. Construction alone is not authority. The actual protected view loader/persistence, controller admission bridge and
+registered-root ownership checks must be supplied by real WorkspaceAuthority integration before
+production activation; existing injected dispatcher tests do not prove those consumers.
 Do not put raw grant tokens into either file. Revision/pin retention references persist before
 acknowledging a pin; restart never garbage-collects a pin with uncertain ownership.
 

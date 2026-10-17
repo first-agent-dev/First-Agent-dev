@@ -71,7 +71,12 @@ Task type → primary entrypoint, then secondary:
 [worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e238/broader.json.gz]: Initial broader690PASS12SKIP, missing ShellCheck not credited.
 [worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e238/broader-final.json.gz]: Final702PASS with verified external test-only ShellCheck; zero skips/warnings, not deployed signoff.
 
-[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e238/source-plan.json.gz]: Source-preservation/plan/doc audit;0FAIL6WARN,6slices17FUNCTIONAL35unchecked, Q76 remains OPEN.
+[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e238/source-plan.json.gz]: Source-preservation/plan/doc audit;0FAIL6WARN,6slices17FUNCTIONAL35unchecked; Q76 was then OPEN (E239 now ratifies a).
+
+[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e239/plan-binding.json.gz]: Q76(a) protected context/source/receipt C0/C3;347case bank and six full-bank mutations, no authority/service proof.
+[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e239/verification.json.gz]: Static19/179source and broader768PASS, zero skips/warnings; supported recovered test toolchain, not host readiness.
+[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e239/plan-binding-initial.json.gz]: Rejected initial mutation oracle TypeError/history, exact restore; not complete kill credit.
+[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e239/source-plan.json.gz]: Final Q76 approval/doc/plan/source-preservation audit; no construction or final-acceptance ticks.
 
 **Deleted files (merged into knowledge/reference.md):** `knowledge/architecture.md`, `knowledge/glossary.md`, `knowledge/overview/FEATURES.md`. If you see references to these, they now live in `knowledge/reference.md`.
 

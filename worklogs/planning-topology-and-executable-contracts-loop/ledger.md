@@ -2759,3 +2759,23 @@ E238  I03 IMMUTABLE BUILD/INSTALLED CLI  2026-10-16;CT98,F16,F15;not deployment.
     admitted plan,ordinary-null allowed,formal workflow evidence nonnull;NOT ratified. Ask after all
     independent construction. No real authority/backend/main/host facts or production cutover.
     All35STEPS/four transferred final duties remain unfinished. No I01/I04–06 or I02 rewrite.
+
+
+E239  I03 Q76(a) ADMITTED PLAN CONTEXT JOIN  2026-10-17;F18,CT99–CT100;not activation.
+    Operator explicitly selected view_bound_nullable_ordinary;Q76 RESOLVED. Required nullable
+    pin/create admission PlanRef,candidate equality,protected frozen context from REQUIRED authority,
+    actual bounded/no-follow source hash recheck BEFORE reserve,receipt binding BEFORE DONE/cache.
+    Ordinary no-active-workflow null permitted,formal evidence actual admitted plan;no new mode,
+    invented hash,worker choice,token persistence or ViewRef change. Q59/Q75 preserved.
+    Full owning12module347PASS28.65s/restored347PASS28.54s;six full347kills4/6/3/1/2/1 CALL assertions,
+    clean phases/no skips/warnings/exact restore. Initial347PASS + mutation oracle TypeError retained
+    without complete kill credit;status/shape strengthened before fresh whole-bank proof.
+    RuffPASS/format19unchanged/Mypy19target+179sourcePASS;broader23modules768PASS39.87s no skips/warnings.
+    Existing PlanRef regression + actual rebuilt installed CLI included. Raw notes/evidence/i03-e239.
+    Snapshot cache/bookkeeping recovery1355 direct blob+mode matches0mismatch,no source replacement;
+    supported3.13.16 test toolchain recovered,no app dependency/lock changes. Not host readiness.
+    Actual protected loader/persistence/controller bridge,WorkspaceAuthority/issuer,real Docker
+    backend/recovery/service/wrappers and approved host/kernel facts remain. F18 integrated proof
+    remains open,not DTO authorization. All35STEPS/four final duties incomplete;no STEP/READY tick.
+    Final audit0FAIL6WARN/6slices17FUNCTIONAL35unchecked;kill grammar clean,doc309PASS,diffPASS.
+    Tested source hashes exact;I02 source/lock/deps/Dockerfile/wrappers/compose unchanged from ba50092.
