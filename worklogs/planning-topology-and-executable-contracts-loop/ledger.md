@@ -2876,3 +2876,13 @@ E243  FACT  Mid-slice adversarial SLICE1/2 review at e736082: F20 actual short-c
     diffPASS;198 hashes exact/old assertions+ledger prefix preserved, only12 declared tracked files.
     Final repair archive SHA256728a228c8f9e1ecf10400bb8a90f2a996ed089556b5f9b83c670bc6ea702c587;
     verification+closure SHA25659cfc0cba71d2457cd1d5d275f63f784eda8b16de2a15339ec462fdc7d33262e.
+
+E244  DECIDED  User explicitly requires found issues corrected in plan docs before implementation.
+    Tightened existing I03 spec§4.2 and SLICE2 STEP1–2 in dependency order: internal descriptor IO
+    first, then one WorkspaceAuthority/admission/materialization, then existing consumer joins.
+    Defined no-follow/private-stage/no-replace, safe ownership/modes, whole-file hash/window/text,
+    expected-absence, conflict/durability and non-CAS semantics; retained F21–F27 as unfulfilled
+    implementation obligations. No new authority/service/public operation/rollout gate; Q59/Q75/
+    Q76 unchanged, all35 steps/four final duties unchecked. [docs-first E244; no runtime proof]
+    Docs-only verification: check_doc_links.py308 files/no broken links; git diff --check PASS;
+    exact6slices/17FUNCTIONAL/35unchecked retained. No source/tests changed in this checkpoint.

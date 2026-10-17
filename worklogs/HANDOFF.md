@@ -3,7 +3,7 @@
 > Read [`knowledge/llms.txt`](../knowledge/llms.txt) §MUST READ FIRST.
 > Current local delivery is distinct from final I03/deployed acceptance.
 
-## Current state — I02 LOCAL SHIPPED / I03 IMPLEMENTATION IN PROGRESS, 2026-10-17 / E243
+## Current state — I02 LOCAL SHIPPED / I03 IMPLEMENTATION IN PROGRESS, 2026-10-17 / E244
 
 Branch `arena/86633f17-first-agent-dev` only. Retained I02 runtime/test proof snapshot
 `a32a72fc58db4b9a5b048a9b6475649bcf3e32b4`. E230/E231 finalized planning; E232 adds the first
@@ -41,7 +41,16 @@ Ubuntu host test,OS isolation,managed nested acquisition or host supervisor deli
 only;Go is an indirect inherited hook-build diagnosis,not a new FA runtime/deployment requirement.
 PTY stays. Q69–Q73 resolved;Q72 remains its narrow46-links/15-files+banner repair decision.
 
-**E243 CURRENT — mid-slice review completed, not SLICE1/2 acceptance:** reviewed E242/e736082
+**E244 CURRENT — docs corrected before code:** user explicitly requests docs-first, then actual
+implementation. Spec§4.2 now defines dependency-order internal rooted IO → one WorkspaceAuthority
+admission/materialization → existing tools/session consumers; descriptor selection is not authority.
+Precise no-follow/private staging/no-replace/UID/mode/hash/window/conflict/durability rules are target
+requirements. No new code in this checkpoint and no CT/STEP/host completion. Next bounded chunk:
+construct `execution/view_io.py` + real descriptor C0/C3/fault/mutation bank under STEP1; then continue
+actual authority/backend composition. Supported local Python3.13 test tooling is being restored from
+approved sources, not application dependency or host acceptance. Final required host proof stays SLICE6.
+
+**E243 retained — mid-slice review completed, not SLICE1/2 acceptance:** reviewed E242/e736082
 against remaining SLICE1 + next SLICE2 and real callers. Eight evidence-anchored findings F20–F27
 in existing adversarial review. Directly rewrote all nine affected STEPS/CT103/source baseline and
 spec §§2.2/4.2: one admission/drain owner, existing journal begin per reused command, original cell

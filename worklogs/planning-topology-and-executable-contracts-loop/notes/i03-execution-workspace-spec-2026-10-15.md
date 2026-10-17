@@ -540,6 +540,74 @@ PTY reads fail. Use a small descriptor-rooted project IO implementation with pin
 no-follow component traversal, bounded regular single-link targets, fsync and explicit conflict/
 durability-unknown results; no `resolve()` containment check followed by a path-based privileged write.
 
+**E244 construction order / rooted-IO contract (before implementation):** build the internal
+`execution/view_io.py` descriptor/syscall primitive first, then the one WorkspaceAuthority's
+protected metadata, writer admission/drain, R0 materialization and actual admitted IO calls. This
+is dependency-order construction inside SLICE2 STEP1–2, not an alternate authority, endpoint,
+activation flag or completed CT101/102/103. The primitive consumes already selected root/staging
+FDs, trusted cell UID/GID, explicit read/write access and protected-path set. Only WorkspaceAuthority
+may select these after admission; a raw FD/ViewRef does not establish principal, generation, pin,
+PlanRef or lifecycle authorization. Its close/drain must retain all admitted descriptor owners until
+handlers finish; never close/reuse their FD numbers under a running handler.
+
+- Root and staging FDs identify directories on the same filesystem. Staging is service-owned,
+  private (0700), outside the cell source tree/mounts and absent from all cell mounts. Duplicate/pin
+  descriptors; validate configuration before effects. Traverse relative components with
+  O_NOFOLLOW/O_DIRECTORY, cap depth64 and path UTF-8 bytes1MiB; reject empty/dot/dotdot/NUL/absolute
+  components. Deny `.git`, `.fa`, `.venv`, `.env` components and trusted additional excluded roots;
+  protect the active PlanRef from writes, including ancestor substitution. These checks supplement,
+  never replace, materialization exclusions and final seal/import validation.
+- Pin each opened parent identity and rewalk from root before/after capture/publication. A detected
+  substituted/renamed parent or leaf fails STALE_REVISION before publication; after any possible
+  publication it fails DURABILITY_UNKNOWN. Do not follow the replacement or silently retry. A pinned
+  root alone does not detect host-authority rebind: WorkspaceAuthority must recheck its protected
+  registration/view binding. Root/staging selection is never accepted from wire/model fields.
+- Read only regular single-link, non-set-id files; O_NONBLOCK prevents FIFO-open hangs before type
+  rejection. Capture at most the approved complete-file limit (default64MiB), reject growth/metadata
+  changes/leaf substitution, hash ALL captured bytes, and validate the entire file as UTF-8 without
+  NUL (v1 text/binary distinction), not just the window. `offset_bytes >= size` returns empty/eof;
+  each window boundary must be UTF-8 aligned, max_bytes in1..1MiB. SHA remains the complete-file SHA.
+  A multi-window consumer compares every SHA itself; the wire gains no new snapshot token.
+- Validate new content UTF-8/no-NUL/1MiB and expected hash before effects. Null expected_sha256 means
+  **expected absence**, never unconditional overwrite (as already specified in §2 operation table).
+  Existing-target writes require the complete current-file SHA; mismatch/absence/type/link/identity
+  conflict fails explicitly. Controller write facade obtains that snapshot just like edit. Both
+  write/edit use the same exact-content writer; fuzzy matching stays in the controller.
+- Prepare regular files and missing parent directories under protected staging, not under a
+  cell-writable guessed temp name. Install parents with Linux renameat2(RENAME_NOREPLACE), reopen/
+  verify the exact installed identity; never chmod/chown an existing project directory. Existing
+  regular targets must have configured cell UID/GID and no special mode bits; preserve their0777
+  access bits. New files0644, new directories0755, both assigned configured non-root cell UID/GID.
+  No service-owned0600 project outputs; unsupported no-replace/same-filesystem primitives fail closed.
+- Null-SHA file creation uses atomic no-clobber link from protected staging; replacement uses
+  descriptor-relative atomic rename after another current-target/hash/identity check. Fsync staged
+  data/metadata and affected directories, verify installed leaf/parent identities and single-link
+  status before success. Remove only owned uninstalled staging entries on failure, never project
+  targets or preexisting directories. An interrupted create may leave its known new parent dirs;
+  do not recursively roll them back, and do not promise failure is effect-free.
+- Use existing closed errors, not a new response schema: INVALID_REQUEST for malformed window/hash/
+  text arguments; PATH_DENIED for prohibited/aliased/special/unsafe-owner targets; INPUT_POLICY for
+  approved input-size/text/depth limits; STALE_REVISION for detected ordinary conflicts;
+  BACKEND_UNAVAILABLE for pre-effect OS/backend failure; VIEW_CLOSED after local descriptor close.
+  Any fsync/identity/cleanup failure after possible project effects is DURABILITY_UNKNOWN; preserve
+  the failure, reconcile through the existing operation owner, do not retry/reconstruct success.
+  Parent-creation collision itself is no-clobber and may use the now-existing validated directory;
+  a leaf create collision fails STALE_REVISION, never turns into overwrite.
+- Ordinary checks are **not** linearizable CAS against arbitrary shell writers: a final check and
+  rename still have a gap. Do not claim every background race is detected or make IO replies formal
+  evidence. Isolation prevents aliases into canonical/control mounts; actual terminality plus
+  sealed-tree/protected-path validation is the publication authority. Existing safe symlinks copied
+  as data are not dereferenced by this text-IO primitive; cell-local read helpers may read only the
+  independently constrained mounted source. No host path fallback for PDF/binary/search.
+
+Binary local DoD for this building block: real file/descriptor tests assert complete hashes/windows,
+read-your-writes, expected-absence/no-clobber, old-content/mode/UID preservation on conflicts, nested
+parent modes, symlink/hardlink/FIFO/protected-path rejection, read-only denial, stale-parent injection,
+short writes, staged-file/directory fsync faults, post-publication uncertainty and staging/FD cleanup.
+Manual producer mutations rerun the entire owning bank, count only executed assertion failures and
+restore exact hashes. Classify this as C0/C3/C4, **not** authority/tool/PTY C1 or kernel acceptance.
+The latter remain STEP2/4/5 and final SLICE6; no whole-contract completion from a helper bank.
+
 **View selection is internal, not a model field:** active writer file reads/search/edit use its SAME
 OPEN private source tree as PTY, including prior tool/shell edits. An independent reader uses the
 exact immutable revision retained by its READ pin, including after a newer writer publishes. Never

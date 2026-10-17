@@ -1088,3 +1088,15 @@ verification.json.gz207295bytes SHA256
 59cfc0cba71d2457cd1d5d275f63f784eda8b16de2a15339ec462fdc7d33262e.
 Superseded v1 proof629618bytes SHA256
 5b4d63482b8b75450b665c4a6bdf3108d25b9b038f5714899df2a037089eb3bc retained unchanged.
+
+### E244 — docs-first disposition before continuing implementation (2026-10-17)
+
+F20 remains the executed E243 transport repair. F21/F22 admission/backend/startup obligations
+remain open implementation work; no worker/creation-DONE substitution. F23/F24/F25/F26/F27 now
+have direct target rules in spec §§2.2/4.2 and increment STEPS, not recommendations in this review.
+E244 additionally fixes construction order and the remaining project-IO ambiguities: selected FD
+is not authority; safe private staging/new-parent no-replace; expected absence; complete-file SHA/
+UTF-8 windows; cell ownership/modes; stale versus possible-effect/durability errors; no kernel-CAS
+claim. Existing SessionManager DB/provisioning, metadata/search attribution and SLICE3/4 joins remain
+mandatory. Implementation starts only after this docs checkpoint; local helper proof cannot close
+F21–F27 or CT101–103. Actual host/full-path proof remains final SLICE6.
