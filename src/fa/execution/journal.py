@@ -228,11 +228,13 @@ class OperationJournal:
             None
             if req["view_ref"] is None
             else ViewRef(
-                **{
-                    **req["view_ref"],
-                    "access": Access(req["view_ref"]["access"]),
-                    "purpose": ViewPurpose(req["view_ref"]["purpose"]),
-                }
+                workspace_id=req["view_ref"]["workspace_id"],
+                view_id=req["view_ref"]["view_id"],
+                base_revision=req["view_ref"]["base_revision"],
+                owner_run_id=req["view_ref"]["owner_run_id"],
+                generation=req["view_ref"]["generation"],
+                access=Access(req["view_ref"]["access"]),
+                purpose=ViewPurpose(req["view_ref"]["purpose"]),
             )
         )
         record = {

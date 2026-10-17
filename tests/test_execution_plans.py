@@ -9,7 +9,7 @@ import copy
 import os
 from dataclasses import FrozenInstanceError, asdict, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, override
 
 import pytest
 
@@ -113,11 +113,13 @@ class PlanFixture(Fixture):
         self.context = context
         self.receipt_plan = None if context is None or context.plan_ref is None else context.plan_ref.sha256
 
+    @override
     def authorize(self, peer: PeerIdentity, req: dict[str, Any]) -> ProtectedPlanContext | None:
         self.auth_calls += 1
         assert peer.pid == os.getpid() and peer.uid == os.getuid() and req["namespace"] == NS.to_dict()
         return self.context
 
+    @override
     def handle(self, req: dict[str, Any]) -> GrantReply | dict[str, Any]:
         self.handler_calls += 1
         record = self.journal.lookup("op-" + req["request_id"], NS)

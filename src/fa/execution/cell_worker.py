@@ -13,42 +13,16 @@ import threading
 from pathlib import Path
 from typing import Any, BinaryIO
 
-import fastjsonschema  # type: ignore[import-untyped]  # Existing package has no typing metadata.
-
+from fa.execution.cell_protocol import decode_cell_request
 from fa.execution.protocol import (
     MAX_TAIL_BYTES,
-    PATH,
-    POSITIVE,
-    SESSION_ID,
-    TEXT,
     FrameConnection,
-    _check,
-    _id,
-    _loads,
-    _object,
     encode_json,
     read_frame,
     write_frame,
 )
 from fa.execution.types import ExecutionContractError, _positive_integer
 from fa.runtime.pty_pool import PtyPool, PtySession
-
-_PAYLOADS = {
-    "RUN": _object(command=TEXT, cwd=PATH, timeout_ms=POSITIVE, session_id=SESSION_ID),
-    "INTERRUPT": _object(session_id=SESSION_ID),
-    "CLOSE": _object(session_id=SESSION_ID),
-    "LIST": _object(),
-    "STOP": _object(),
-}
-_CHECKS = {action: fastjsonschema.compile(schema) for action, schema in _PAYLOADS.items()}
-_ENVELOPE = fastjsonschema.compile(
-    _object(
-        version={"type": "integer", "const": 1},
-        request_id=_id(""),
-        action={"enum": list(_PAYLOADS)},
-        payload={"type": "object"},
-    )
-)
 
 
 class CellWorker:
@@ -60,10 +34,8 @@ class CellWorker:
         self.stopped = False
 
     def handle(self, raw: bytes) -> dict[str, Any]:
-        record = _loads(raw)
-        _check(_ENVELOPE, record)
+        record = decode_cell_request(raw)
         action, payload = record["action"], record["payload"]
-        _check(_CHECKS[action], payload)
         if self.stopped:
             raise ExecutionContractError
         if action == "STOP":
@@ -157,9 +129,7 @@ def serve_once(worker: CellWorker, connection: FrameConnection) -> int:
     """
     try:
         raw = read_frame(connection)
-        record = _loads(raw)
-        _check(_ENVELOPE, record)
-        _check(_CHECKS[record["action"]], record["payload"])
+        record = decode_cell_request(raw)
         result: dict[str, Any] | None = None
         if record["action"] == "RUN":
             try:
@@ -212,9 +182,7 @@ def serve(worker: CellWorker, connection: FrameConnection) -> None:
     try:
         while not worker.stopped:
             raw = read_frame(connection)
-            record = _loads(raw)
-            _check(_ENVELOPE, record)
-            _check(_CHECKS[record["action"]], record["payload"])
+            record = decode_cell_request(raw)
             if record["action"] == "RUN":
                 if not running.acquire(blocking=False):
                     reply(record["request_id"], None)

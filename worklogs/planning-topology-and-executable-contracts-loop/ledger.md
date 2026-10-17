@@ -2822,3 +2822,32 @@ E241  I03 PRIVATE DOCKER LAUNCH/OWNED OBSERVATION CONSTRUCTION  2026-10-17;CT99�
     All35STEPS/four final duties unfinished; no host request/activation or rollout waiver.
     Final audit0FAIL6WARN/6slices17FUNCTIONAL35unchecked;kill grammar clean;doc309PASS/diffPASS;
     tested hashes exact;I02/session/dependency/Dockerfile/wrapper/compose sources unchanged fromf92d9b5.
+
+
+E242  I03 OWNED ATTACH + CLOSED PRIVATE WORKER CLIENT  2026-10-17;CT99–CT100.
+    Fixed authenticated Docker Upgrade/stdin/stdout/stderr/live-only attach, bounded header+non-TTY
+    mux/stdio frames and stderr diagnostics; no CLI/environment endpoint, logs replay/reconnect/
+    resend/fallback. Per-response wire limit is not lifetime cap; absolute nonblocking duplex
+    budgets keep concurrent controls from resetting RUN reads. Owned journal+running inspection
+    before attach; not exclusive episode ownership or fresh resource authorization.
+    Shared closed cell codec consumed by existing persistent/one-shot worker and WorkerClient;
+    one RUN plus concurrent control with exact reply/session binding, full timeout/truncation data,
+    bounded UTF-8 tails, poison/wake pending on uncertainty. No durable command admission/receipts.
+    Actual local native Unix→worker/PTY state reuse + one-shot command7 tested at C0/C3, NOT Docker/
+    kernel/authority/C1 proof. Original live cell/creation binding reused; command claims stay distinct.
+    Focused125PASS5.69s;owning14modules467PASS34.34s/restored467PASS33.49s;ten full467assertion
+    kills1/1/1/1/1/1/1/1/5/1, clean phases/no skips/warnings/exact restore. Initial fixture fork/race
+    and mixed assertion/runtime mutant rejected, retained separately; no failed attempt credited.
+    Full configured Pyrefly20 execution errors repaired without suppression/policy change: explicit
+    validated ViewRef fields and @override/fixture map annotations; old assertions unchanged.
+    Ruff/format24PASS;Mypy24target+182sourcePASS;Pyrefly0errors (existing141suppressed/50warnings).
+    Broader26modules894PASS49.46s, incl6 real Pyrefly cases, clean. Evidence driver expected892
+    miscount retained with original rc1/raw rc0 report; validated actual894 phases/sources and
+    completed remaining checks without unchanged test rerun. No relabelled test/kill result.
+    Primary Moby attach API/full source hashes and raw source/report/runner provenance in i03-e242.
+    Next protected episode registry/durable backend command/control, Docker kill/reconciliation/
+    terminality barrier,real WorkspaceAuthority/controller bridge,service/config/provisioner/wrappers.
+    All35STEPS/four duties unfinished; final host/full-path acceptance schedule/Q59/Q75/Q76 unchanged.
+    Final audit0FAIL6WARN/6slices17FUNCTIONAL35unchecked;kill grammar clean;doc309PASS/diffPASS;
+    all198 tested hashes exact. I02/session/deps/Dockerfile/wrapper/compose/client/profile/public
+    protocol/plan/types/controller entry preserved from1aed729. No service/cutover/host dispatch.

@@ -11,17 +11,20 @@ from __future__ import annotations
 import http.client
 import math
 import re
+import select
 import socket
+import struct
 import time
 from collections.abc import Callable
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, override
 
 from fa.execution.client import ExecutionUnavailableError, _connect_authenticated
 from fa.execution.journal import JournalError, OperationJournal
 from fa.execution.profiles import ExecutionProfile
-from fa.execution.protocol import MAX_FRAME_BYTES, _loads, decode_request, encode_json
+from fa.execution.protocol import MAX_FRAME_BYTES, MAX_TAIL_BYTES, _loads, decode_request, encode_json, read_frame
 from fa.execution.supervisor import operation_input_sha256
 from fa.execution.types import Access, ExecutionContractError, NamespaceRef, Operation, ViewPurpose, ViewRef, _hex_id
 
@@ -50,14 +53,17 @@ class _DeadlineSocket(socket.socket):
         self._deadline, self._received = deadline, 0
         self.settimeout(remaining)
 
+    @override
     def connect(self, address: Any) -> None:
         self.settimeout(_remaining(self._deadline))
         super().connect(address)
 
+    @override
     def sendall(self, data: Any, flags: int = 0) -> None:
         self.settimeout(_remaining(self._deadline))
         super().sendall(data, flags)
 
+    @override
     def recv_into(self, buffer: Any, nbytes: int = 0, flags: int = 0) -> int:
         # Any is the stdlib's writable-buffer boundary; SocketIO supplies its
         # bytearray. Budget includes HTTP framing/headers, not just JSON length.
@@ -79,6 +85,135 @@ class ContainerObservation:
     pid: int
     oom_killed: bool
     # Deliberately no terminal_barrier: Docker stopped != cgroup populated=0.
+
+
+class DockerAttachStream:
+    """One non-TTY hijacked stream. Single reader/writer; never reconnects.
+
+    No socket inactivity deadline or cumulative lifetime frame cap: each exchange
+    has its own absolute budget. Separate nonblocking read/write operations avoid
+    concurrent controls resetting the RUN reader's timeout. Close != cell stop.
+    """
+
+    def __init__(self, connection: socket.socket) -> None:
+        self._connection = connection
+        connection.setblocking(False)
+        self._left = 0
+        self._wire_bytes = 0
+        self._stderr = bytearray()
+
+    def _receive(self, size: int, deadline: float) -> bytes:
+        _remaining(deadline)
+        while True:
+            try:
+                result = self._connection.recv(size)
+                if not result:
+                    raise ExecutionContractError
+                _remaining(deadline)
+                return result
+            except BlockingIOError:
+                select.select([self._connection], [], [], _remaining(deadline))
+
+    def _exact(self, size: int, deadline: float) -> bytes:
+        result = bytearray()
+        while len(result) < size:
+            part = self._receive(min(size - len(result), 64 * 1024), deadline)
+            self._wire_bytes += len(part)
+            if self._wire_bytes > MAX_FRAME_BYTES + 64 * 1024:
+                raise ExecutionContractError
+            result.extend(part)
+        return bytes(result)
+
+    def _send(self, data: bytes, deadline: float) -> None:
+        pending = memoryview(data)
+        while pending:
+            _remaining(deadline)
+            try:
+                count = self._connection.send(pending)
+                if count <= 0:
+                    raise ExecutionContractError
+                pending = pending[count:]
+            except BlockingIOError:
+                select.select([], [self._connection], [], _remaining(deadline))
+        _remaining(deadline)
+
+    def upgrade(self, request: bytes, *, deadline: float) -> None:
+        self._send(request, deadline)
+        # No BufferedReader: bytes following CRLFCRLF must remain on the socket.
+        head = bytearray()
+        while not head.endswith(b"\r\n\r\n"):
+            if len(head) >= 64 * 1024:
+                raise ExecutionContractError
+            head.extend(self._receive(1, deadline))
+        lines = head.decode("ascii").split("\r\n")
+        if re.fullmatch(r"HTTP/1\.[01] 101 [^\r\n]*", lines[0]) is None:
+            raise ExecutionContractError
+        headers: dict[str, str] = {}
+        for line in lines[1:-2]:
+            name, separator, value = line.partition(":")
+            if not separator or re.fullmatch(r"[a-zA-Z0-9-]+", name) is None or name.lower() in headers:
+                raise ExecutionContractError
+            headers[name.lower()] = value.strip().lower()
+        if (
+            headers.get("connection") != "upgrade"
+            or headers.get("upgrade") != "tcp"
+            or headers.get("content-type") != "application/vnd.docker.raw-stream"
+            or "transfer-encoding" in headers
+            or headers.get("content-length", "0") != "0"
+        ):
+            raise ExecutionContractError
+
+    def _stdout(self, size: int, deadline: float) -> bytes:
+        while not self._left:
+            head = self._exact(8, deadline)
+            kind, length = head[0], struct.unpack("!I", head[4:])[0]
+            if head[1:4] != b"\0\0\0" or kind not in {0, 1, 2} or length > MAX_FRAME_BYTES + 4:
+                raise ExecutionContractError
+            if kind == 2:
+                while length:
+                    part = self._exact(min(length, 64 * 1024), deadline)
+                    self._stderr.extend(part)
+                    del self._stderr[:-MAX_TAIL_BYTES]
+                    length -= len(part)
+            else:
+                self._left = length
+        part = self._exact(min(size, self._left), deadline)
+        self._left -= len(part)
+        return part
+
+    def read_frame(self, *, deadline: float) -> bytes:
+        stream = self
+
+        class Reader:
+            def recv(self, size: int, /) -> bytes:
+                return stream._stdout(size, deadline)
+
+            def sendall(self, data: bytes, /) -> None:
+                stream._send(data, deadline)
+
+        try:
+            self._wire_bytes = 0
+            return read_frame(Reader())
+        except (OSError, ValueError, ExecutionContractError):
+            raise DockerUnavailableError from None
+
+    def write_frame(self, raw: bytes, *, deadline: float) -> None:
+        try:
+            if not 0 < len(raw) <= MAX_FRAME_BYTES:
+                raise ExecutionContractError
+            self._send(struct.pack("!I", len(raw)) + raw, deadline)
+        except (OSError, ValueError, ExecutionContractError):
+            raise DockerUnavailableError from None
+
+    @property
+    def stderr_tail(self) -> bytes:
+        return bytes(self._stderr)
+
+    def close(self) -> None:
+        # shutdown wakes a concurrent select/recv; an already-closed peer is normal.
+        with suppress(OSError):
+            self._connection.shutdown(socket.SHUT_RDWR)
+        self._connection.close()
 
 
 class DockerEngine:
@@ -169,6 +304,32 @@ class DockerEngine:
     def start(self, container_id: str, *, deadline: float) -> None:
         _hex_id(container_id, "", 64)
         self._request("POST", f"/containers/{container_id}/start", body=None, status=204, deadline=deadline)
+
+    def attach(self, container_id: str, *, deadline: float) -> DockerAttachStream:
+        """Fixed upgraded non-TTY stdio, no logs or automatic reattach/replay."""
+        _hex_id(container_id, "", 64)
+        _remaining(deadline)
+        bounded = min(deadline, time.monotonic() + self._timeout_ms / 1000)
+        remaining = _remaining(bounded)
+        connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        stream: DockerAttachStream | None = None
+        try:
+            connection.settimeout(remaining)
+            _connect_authenticated(connection, self._path, self._uid)
+            stream = DockerAttachStream(connection)
+            query = "stream=1&stdin=1&stdout=1&stderr=1&logs=0&detachKeys="
+            request = (
+                f"POST /v{self._version}/containers/{container_id}/attach?{query} HTTP/1.1\r\n"
+                "Host: docker\r\nConnection: Upgrade\r\nUpgrade: tcp\r\nContent-Length: 0\r\n\r\n"
+            ).encode("ascii")
+            stream.upgrade(request, deadline=bounded)
+            return stream
+        except (OSError, ValueError, ExecutionContractError, ExecutionUnavailableError):
+            if stream is not None:
+                stream.close()
+            else:
+                connection.close()
+            raise DockerUnavailableError from None
 
     def inspect_owned(
         self,
@@ -264,11 +425,13 @@ class DockerCells:
             raise ExecutionContractError
         namespace = NamespaceRef(**req["namespace"])
         view = ViewRef(
-            **{
-                **req["view_ref"],
-                "access": Access(req["view_ref"]["access"]),
-                "purpose": ViewPurpose(req["view_ref"]["purpose"]),
-            }
+            workspace_id=req["view_ref"]["workspace_id"],
+            view_id=req["view_ref"]["view_id"],
+            base_revision=req["view_ref"]["base_revision"],
+            owner_run_id=req["view_ref"]["owner_run_id"],
+            generation=req["view_ref"]["generation"],
+            access=Access(req["view_ref"]["access"]),
+            purpose=ViewPurpose(req["view_ref"]["purpose"]),
         )
         digest = operation_input_sha256(Operation.EXEC, namespace, view, req["payload"])
         return req, namespace, view, digest
@@ -323,3 +486,20 @@ class DockerCells:
             container_id=record["container_id"],
             deadline=deadline,
         )
+
+    def attach_created(
+        self,
+        creation_request: dict[str, Any],
+        *,
+        profile: ExecutionProfile,
+        deadline: float,
+    ) -> DockerAttachStream:
+        """Original journal binding + owned running cell, not a fresh exec grant.
+
+        The future protected episode owner must ensure this is the sole attach.
+        Inspect/attach alone never recover lost command state after restart.
+        """
+        observed = self.inspect_created(creation_request, profile=profile, deadline=deadline)
+        if observed.status != "running" or not observed.running:
+            raise DockerUnavailableError
+        return self._engine.attach(observed.container_id, deadline=deadline)

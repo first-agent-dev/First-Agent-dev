@@ -12,7 +12,7 @@ import struct
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, override
 
 import pytest
 
@@ -303,10 +303,12 @@ def test_lost_ack_does_not_roll_back_done_or_repeat_handoff(tmp_path: Path) -> N
 
 def test_callback_mutation_cannot_retarget_original_key_or_replay_proof(tmp_path: Path) -> None:
     class MutatingFixture(Fixture):
+        @override
         def authorize(self, peer: PeerIdentity, req: dict[str, Any]) -> None:
             super().authorize(peer, req)
             req["capability"] = "a" * 64
 
+        @override
         def handle(self, req: dict[str, Any]) -> GrantReply | dict[str, Any]:
             value = super().handle(req)
             req["request_id"] = "a" * 32

@@ -851,3 +851,127 @@ Verification archive SHA256 29ce44e66a1ae3d05f0858e97969848eecf73f2143751421a8ef
 Primary API archive SHA256 af2d7617b4e576166d170ab88cf329d2d31b08104a198e5fbe182e9e7c5b6641.
 Actual daemon/version, image config mapping, endpoint exposure/UID policy, protected mounts and
 kernel facts remain deployment acceptance inputs; peer authentication alone does not prove them.
+
+## E242 — private attach/worker transport construction, 2026-10-17
+
+**Session/pre-edit declaration (CT99–CT100):** base1aed72999c5bceb174c23d7c0f294ca3f4bf17c7,
+clean branch arena/86633f17-first-agent-dev; pre-doc llms SHA256
+ad31f879e4b910e4c49866c35dd12d73cac035e7ffa7d371a67d8c7e36cc33db. AGENTS/bootstrap,
+project-overview/ADR digest/reference/HANDOFF, active increment/spec, tests-writing, pr-creation and
+doc-maintenance read; recency command surfaced E238–241, no new research-note supersession to cite.
+Read_set: execution Docker/client/journal/profile/protocol/supervisor/cell worker, owning fixtures,
+Moby attach API and source. Write_set declared before edits: Docker/cell worker, shared private codec,
+private worker client, attach/codec tests + literal HTTP fixture, existing records/evidence. Expanded
+before typing repairs to journal/supervisor and tests execution dispatch/plans. Source edits scoped
+to that set; no parallel writer observed. Arena lacks fs_blackboard/fs_search mutation-guard tools;
+used bounded direct file reads, clean-status/read-set declarations and exact source-hash checks,
+not a claim that the unavailable substrate guard ran.
+
+Subtraction: existing cell worker covers execution but no supervisor-side Docker attach consumer;
+omission loses command/control access to created cells. Reuse existing PTY worker/frame primitives
+and fixed private daemon config, no second executor/HTTP runtime. Repo precedent runtime/pty_pool.py
+retains persistent sessions and explicit controls. Goal-lens: truthful mandatory execution boundary;
+axis C, subtraction evaluated YES, session-type new-feature. Automated consumers are DockerCells
+owned attach + WorkerClient and native component tests; not a production service factory.
+
+**Construction:** DockerEngine.attach authenticates the kernel peer before fixed POST, explicit
+Upgrade=>101/raw-stream, stdin/stdout/stderr, logs=0 and empty detachKeys. No TCP, CLI/environment
+endpoint selection, historical-log replay, redirect, fallback, reconnect or resend. A bounded header
+reader consumes exactly through CRLFCRLF, preserving coalesced first output bytes. Non-TTY Docker
+8-byte mux decodes stdout (including documented type0), separates bounded stderr diagnostics,
+rejects unknown/reserved/oversized/truncated frames and retains stdout fragments across replies.
+Per-response encoded-wire cap is NOT a lifetime cap. Nonblocking duplex reads/writes keep absolute
+exchange budgets separate; concurrent controls cannot reset a RUN socket inactivity timeout.
+Stderr bytes are worker-process diagnostics, not trusted command status or authoritative receipt.
+
+DockerCells.attach_created checks the original journal namespace/view/input binding, performs owned
+inspection and requires a running cell before attach. It does NOT authorize fresh work or establish
+exclusive episode ownership; the protected backend registry must do that before use. Existing live
+cells/creation bindings must be reused for later interactive commands with separate command claims.
+A lost command stream cannot be recovered by calling attach_created again and reconstructing replies.
+
+Shared cell_protocol is now consumed by both existing worker paths (persistent and one-shot) and
+WorkerClient. Request/response objects are closed, relative cwd rules match the existing public
+contract, RUN binds request/session IDs, preserves timed_out/truncated/exit data and bounds UTF-8
+output bytes. No namespace/capability/host paths/receipt fields are admitted into the cell message.
+WorkerClient permits one RUN plus one control in flight with a single correlated reply reader and
+serialized writes. Expired/lost/forged/unavailable replies poison the channel and wake pending callers;
+never synthesize success or resend. No outstanding-ID collision can replace an active request, and
+an unsent queued-RUN timeout leaves the original exchange intact. It has NO durable at-most-once
+command admission: original operation reservation and completed-reply Q75 policy remain backend/
+journal responsibilities. Closing this channel is NOT stopping a container or proving terminality.
+
+**Primary reference, not host approval:** retained E241 Moby v20.10.0 API blob + attach excerpt;
+container_routes.go blob7f3fb34f4b6074d6203ee964c7a9c876ac059bc6,
+daemon/attach.go blobc6553f79d391905c8ca5e38e9d32a654146e1b01 and
+container/stream/attach.go blob0269a226b1bd6d26116bac86ed5d718ba242b083. Full bytes/hashes/retrieval
+provenance in primary-attach.json.gz. API docs permit200 without Upgrade; this client explicitly
+requests Upgrade, so missing101 fails closed, not an invented compatibility fallback. Empty detach
+keys are accepted by daemon; this is non-TTY framed stdin, not Docker CLI escape handling. No Go
+runtime/dependency added. Actual engine/version/image/kernel/endpoint approval remains outstanding.
+
+**Tests / diagnostics:** C0/C3 real Unix HTTP upgrade/mux + actual existing local PTY/worker; NOT
+Docker/cgroup/authority/session C1 proof. Native positive root joins owned inspect→attach→WorkerClient
+→shared codec→actual serve/PTY and reuses ONE attach for stateful commands and controls. Separate
+actual serve_once path preserves command7 and local worker function return7, NOT actual container
+exit. Literal gated peer proves concurrent out-of-order RUN/INTERRUPT correlation and all-pending
+EOF wakeup. Negative gates cover protocol/peer/ownership/state, malformed header/mux/framing/replies,
+foreign IDs/session/extra authority fields, UTF-8 tail cap, read drip/write backpressure, no replay,
+unsent queue timeout/collision, and >4MiB cumulative stream lifetime with bounded individual frames.
+
+Initial focused107PASS1FAIL1warning was rejected as proof: fixture forked its PTY after HTTP thread
+startup and asserted Ctrl-C hit a RUN not yet known to have started. PTY fixture now explicitly
+precedes server threads; native test claims state/control ACK, gated peer claims concurrent ordering.
+No production fallback or terminality weakening. Lambda inference/style diagnostics fixed. Full
+configured Pyrefly then found20 execution-foundation errors: missing overrides and heterogeneous
+**dict construction (not a deployment failure). Repaired all20 with @override/explicit validated
+seven-field ViewRef construction and honest fixture map annotation; no suppressions or schema/
+authorization changes. Existing test assertions preserved. Focused125PASS5.69s and both type checkers
+clean before proof freeze; raw initial/fixed Pyrefly logs retained in verification evidence.
+
+**Rejected developmental mutation:** initial absolute-read mutant reset each receive to1s, also
+shortening a valid native RUN. Whole467case run produced one intended assertion plus a runtime
+WorkerUnavailableError; runner rejected mixed failure, restored every source hash exactly and stopped.
+Entire initial archive retained (attach-worker-initial.json.gz); NO final kill credit. Corrected ONLY
+the mutant to a long resettable budget, no source/test oracle edits, then reran the whole owning bank.
+Final owning/static/broader results follow after execution. No STEP, SLICE1 or final duty marked done.
+
+**Final E242 owning proof:**14modules467PASS34.34s/restored467PASS33.49s. Ten full467case
+mutations killed with CALL assertion counts **1/1/1/1/1/1/1/1/5/1**: live-only attach query,
+stdin enablement, Upgrade status, mux padding, worker reply decoder producer, request correlation,
+session binding, absolute receive budget, running-cell admission and UTF-8 tail limit. All467
+setup/teardown phases PASS every run; zero collection failures/skips/pytest warnings, no runtime
+error kill credit. Exact source hashes restored after each mutation and at end. This is component
+sensitivity, NOT the final normative session/nested kill acceptance. Raw commands/node IDs/phases/
+mutations/changed source snapshots in attach-worker.json.gz735419bytes SHA256
+3c22d79c10ac534cac7e6d6ff83efdbb732c8f1815bcaeb0433bdc069568e815. Rejected initial archive569704bytes
+SHA256 5fef74a0fd782677d7737c87671de78ac4c510ee00a4eb173bc093f57adc64b0 retained unchanged.
+
+**Restored static/broader:** Ruff/format24PASS; Mypy24target+182sourcePASS; full configured Pyrefly
+0errors (existing141suppressed/50warnings, no new suppression). Explicit clean-PYTHONPATH check also
+passes; reporter path is only needed by evidence pytest plugin. Broader26modules **894PASS49.46s**,
+all collected IDs unique and all setup/CALL/teardown phases pass, no collection failure/skip/pytest
+warning. Includes existing source/installed CLI/session/entrypoint/security/PlanRef regressions and
+six real Pyrefly-topology tests. Driver initially expected892 by incorrectly assuming four topology
+cases; actual pytest rc0/raw894 report is retained, original driver rc1/incomplete archive embedded.
+Completion validator checked all894 phases + exact sources and finished remaining versions/diff
+checks WITHOUT rerunning or altering test results. Runner metadata correction is not new proof or
+a relabelled test failure. Original executed runners and completion validator retained verbatim.
+Existing supported3.13.16/frozen dev/hash-verified ShellCheck0.11.0 used, no bootstrap/lock/config/
+application dependency change. No full-repo just-check/readiness or inherited-baseline PASS claimed.
+
+Required actual Docker image/API/kernel/namespace/capability/cgroup/daemon/endpoint facts, exclusive
+registry/backend/authority/service/controller wrapper full paths and four final acceptance duties
+remain open. Do not use the transport CID/worker data as receipt or early cutover approval. Existing
+verification schedule and Q59/Q75/Q76 remain unchanged. All35STEPS/SLICE1 incomplete.
+
+
+**Final source/plan/doc audit:**0FAIL6WARN,6slices17FUNCTIONAL35unchecked, kill grammar clean;
+309 markdown/link check PASS, diff --check PASS. All198 tested source/test/build/lock hashes exact;
+initial rejected snapshot restored exactly too. I02/session/dependency/lock/Dockerfile/wrapper/
+compose, client/profile/public protocol/plan/types/controller entry groups unchanged from1aed729.
+Source-plan archive SHA256 5ca402b9644cbae316d840a9f4571d27435dec8f9f85653920b3bca442a7d70d.
+Verification archive SHA256 395ce9a24252c6cb5cc55364aef4d8951103977f6c95bff845d8f63be7043082.
+Primary attach archive SHA256 deba5fabcdebdac0a352f997ec3e8b21e9bce72faddea06ed2c9491d668a83b7.
+No service main/cutover/host dispatch or acceptance tick. Next work is actual registry/backend/
+terminal lifecycle and authority, not another evidence-only substitution or early-host question.

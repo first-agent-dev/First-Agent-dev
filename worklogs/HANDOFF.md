@@ -3,7 +3,7 @@
 > Read [`knowledge/llms.txt`](../knowledge/llms.txt) §MUST READ FIRST.
 > Current local delivery is distinct from final I03/deployed acceptance.
 
-## Current state — I02 LOCAL SHIPPED / I03 IMPLEMENTATION IN PROGRESS, 2026-10-17 / E241
+## Current state — I02 LOCAL SHIPPED / I03 IMPLEMENTATION IN PROGRESS, 2026-10-17 / E242
 
 Branch `arena/86633f17-first-agent-dev` only. Retained I02 runtime/test proof snapshot
 `a32a72fc58db4b9a5b048a9b6475649bcf3e32b4`. E230/E231 finalized planning; E232 adds the first
@@ -41,7 +41,34 @@ Ubuntu host test,OS isolation,managed nested acquisition or host supervisor deli
 only;Go is an indirect inherited hook-build diagnosis,not a new FA runtime/deployment requirement.
 PTY stays. Q69–Q73 resolved;Q72 remains its narrow46-links/15-files+banner repair decision.
 
-**E241 current continuation:** private DockerEngine now performs authenticated bounded Unix HTTP
+**E242 current continuation:** actual fixed native Docker Upgrade/stdin/stdout/stderr attach now
+joins owned journal inspection to shared cell codec + WorkerClient. Preserves bytes after HTTP
+headers, non-TTY mux fragments, bounded stderr diagnostics and per-response (not lifetime) caps.
+One RUN plus concurrent control, independent deadlines, exact reply/session binding, all-pending
+uncertainty on stream loss, no fallback/reconnect/resend. Existing persistent/one-shot worker share
+the codec. Native actual local PTY/worker joins are C0/C3, NOT Docker/kernel/authority/C1 proof.
+Configured Pyrefly20errors repaired across execution foundation without suppression; explicit
+validated ViewRef fields/overrides, old test assertions preserved. Focused125PASS5.69s before freeze.
+Initial fixture race/fork warning and mixed runtime/assertion mutation were rejected, never proof;
+raw diagnostics/rejected whole-bank attempt retained in i03-e242.
+Final owning14modules467PASS34.34s/restored467PASS33.49s, ten full467assertion kills1/1/1/1/1/1/1/1/5/1,
+clean phases/no skips/warnings/exact restore. Ruff/format24 + Mypy24target/182source PASS; configured
+Pyrefly0errors (existing141suppressed/50warnings), no new suppression. Broader26modules894PASS49.46s,
+all phases clean incl6 real Pyrefly cases. Driver expected892 miscount corrected only after retaining
+original rc1/incomplete records + raw rc0/894 results; completion validates IDs/phases/sources, does
+not rerun/relabel tests. Final audit0FAIL6WARN/35unchecked/doc309PASS/diffPASS; all198 hashes exact,
+protected unrelated groups preserved. Evidence i03-e242 contains raw reports/sources/runners/primary
+provenance. No service/host dispatch/cutover or acceptance tick.
+
+NEXT: protected exclusive episode registry + durable per-command backend dispatch/control, actual
+Docker cancellation/kill, lifecycle/reconciliation/cgroup barrier; real WorkspaceAuthority/controller
+bridge; service/config/provisioner/wrappers. WorkerClient/attach_created are NOT fresh authority,
+durable at-most-once admission or receipts. Reuse original live cell/creation binding for later RUNs
+with new command reservations; NEVER reattach to reconstruct a lost command or memory-only Q75
+reply. Stream/STOP ACK/local one-shot return/empty PTY registry are not actual terminality. All35STEPS
+and four final duties remain incomplete; required host/full-path acceptance stays final SLICE6.
+
+**E241 retained continuation:** private DockerEngine now performs authenticated bounded Unix HTTP
 create/start/owned-inspect calls; DockerCells requires resource validation and journal create_once
 persists UNKNOWN before create, CID before start. No TCP/env endpoint/pull/retry/redirect. Lost
 create/start reply cannot regain launch permission; original-name/ID inspection stays read-only.

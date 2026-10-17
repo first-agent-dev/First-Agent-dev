@@ -9,11 +9,11 @@ import socketserver
 import threading
 import time
 from collections import deque
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
-from typing import Any
+from typing import Any, override
 
 import pytest
 
@@ -30,6 +30,7 @@ class Reply:
     value: dict[str, Any] = field(default_factory=lambda: {"Id": CID, "Warnings": []})
     raw: bytes | None = None
     chunks: list[bytes] | None = None
+    upgraded: Callable[[socket.socket], None] | None = None
 
 
 class Endpoint:
@@ -44,6 +45,7 @@ class Endpoint:
         owner = self
 
         class Handler(BaseHTTPRequestHandler):
+            @override
             def log_message(self, format: str, *args: Any) -> None:
                 pass  # Test fixture never logs opaque daemon/client bodies.
 
@@ -66,6 +68,8 @@ class Endpoint:
                         self.connection.sendall(
                             f"HTTP/1.1 {reply.status} Unit\r\nContent-Length: {len(body)}\r\n\r\n".encode() + body
                         )
+                    if reply.upgraded is not None:
+                        reply.upgraded(self.connection)
                 except (BrokenPipeError, ConnectionResetError):
                     pass  # Expected when an adversarial response is rejected early.
                 except (ValueError, OSError) as exc:
@@ -368,7 +372,7 @@ def test_slow_drip_cannot_reset_absolute_rpc_budget(endpoint: Endpoint, monkeypa
     "changes", [{"daemon_uid": True}, {"rpc_timeout_ms": 0}, {"api_version": "1.40"}, {"api_version": "1.45/evil"}]
 )
 def test_invalid_private_daemon_configuration_is_rejected(endpoint: Endpoint, changes: dict[str, Any]) -> None:
-    params = {"daemon_uid": os.getuid(), "api_version": "1.45", "rpc_timeout_ms": 1000, **changes}
+    params: dict[str, Any] = {"daemon_uid": os.getuid(), "api_version": "1.45", "rpc_timeout_ms": 1000, **changes}
     with pytest.raises(ExecutionContractError):
         DockerEngine(endpoint.path, **params)
     assert endpoint.seen == []

@@ -56,6 +56,12 @@ Task type → primary entrypoint, then secondary:
 
 ## § BY-DEMAND INDEX (Deprecated)
 
+[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e242/attach-worker.json.gz]: Native attach/codec/worker C0/C3 full-bank developmental proof; not Docker/kernel/C1 acceptance.
+[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e242/attach-worker-initial.json.gz]: Rejected mixed runtime/assertion timeout mutant, exact restoration retained; no final kill credit.
+[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e242/verification.json.gz]: E242 restored static/full Pyrefly/broader results and honest developmental diagnostics.
+[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e242/source-plan.json.gz]: E242 final source/plan/doc audit, all35STEPS unchecked.
+[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e242/primary-attach.json.gz]: Full hash-verified Moby attach sources/API provenance; not approved deployment facts.
+
 [worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e241/docker-launch.json.gz]: Private Docker launch/journal C0/C3 + full415case developmental kills; not C1/host proof.
 [worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e241/verification.json.gz]: E241 restored static/broader raw results; no deployed acceptance.
 [worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e241/source-plan.json.gz]: E241 source-preservation/plan/doc audit; all35STEPS unchecked.

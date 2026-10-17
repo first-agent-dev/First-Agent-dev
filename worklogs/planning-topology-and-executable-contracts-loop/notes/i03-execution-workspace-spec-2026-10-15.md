@@ -226,6 +226,15 @@ Later interactive RUNs must reuse the original live cell and creation binding; p
 reservation is separate. A protected episode registry, actual attach/worker/control/lifecycle and
 reconciliation owner are still required before wiring this into exec or service main.
 
+E242 construction adds the actual upgraded non-TTY attach transport and a shared closed worker
+codec/client. Fixed live-only attach preserves framed output through Docker multiplexing; one RUN
+and concurrent controls retain their own IDs/deadlines and unavailability, with no reconnect/resend.
+The client reuses an attached stream, but is NOT the exclusive protected episode registry, durable
+command admission, receipt issuer or restart recovery. Only the real backend/authority may use it
+after original journal/resource checks; future commands still require their own one-use reservation.
+Worker stdout/status, stderr diagnostics, channel close and local serve_once return are not actual
+container exit/cgroup facts. These remain required before any authoritative completion/seal.
+
 Deployment contract: controller `/sessions` and any canonical project binds READ-ONLY; replace the
 current compose writable `/sessions` bind. Keep controller session/config DB mounts writable but
 never expose the supervisor state directory through them. Only private UDS is mounted to controller;

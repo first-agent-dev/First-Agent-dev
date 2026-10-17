@@ -357,11 +357,13 @@ class SupervisorDispatcher:
                     None
                     if view_data is None
                     else ViewRef(
-                        **{
-                            **view_data,
-                            "access": Access(view_data["access"]),
-                            "purpose": ViewPurpose(view_data["purpose"]),
-                        }
+                        workspace_id=view_data["workspace_id"],
+                        view_id=view_data["view_id"],
+                        base_revision=view_data["base_revision"],
+                        owner_run_id=view_data["owner_run_id"],
+                        generation=view_data["generation"],
+                        access=Access(view_data["access"]),
+                        purpose=ViewPurpose(view_data["purpose"]),
                     )
                 )
                 binding = ReplayBinding(
