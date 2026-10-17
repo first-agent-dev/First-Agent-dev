@@ -1645,3 +1645,51 @@ Do not silently invent one or introduce a mandatory-workflow route while clarifi
 Both keep Q59/Q60/Q63/Q74/Q75, arbitrary shell inside cells, no token persistence and all unresolved
 host/authority proof obligations. Changes need closed-schema/receipt mismatch/ordinary-vs-workflow
 negatives and eventual real authority composition; mere DTO/null acceptance is not authorization.
+
+
+## Q77 — Genesis reader pin generation before the first writer
+
+**Status: OPEN — implementation hold at the reader/view seam, 2026-10-18 / E254.**
+No new production source/test change or completion claim. Q75/Q76 remain resolved.
+
+Verified at `37e8af72b2f091886138fa9b134993e87a088658`:
+- `src/fa/execution/workspace.py:628` persists registration as generation0/AVAILABLE with complete R0.
+- execution/workspace spec §4 requires read-only pins on complete immutable revisions, independent of writer ownership.
+- `src/fa/execution/types.py:106` requires positive ViewRef generation, including READ;
+  `:226` requires positive OperationRef generation.
+- `src/fa/execution/protocol.py:58,77` requires positive view/receipt generation; owner replies also remain positive at `:145`.
+
+Native diagnostic executed the actual WorkspaceAuthority under its journal/startup guard in a
+private temporary root, registered one existing project, asserted protected generation0/AVAILABLE
+and exact retained input/tree.json, then attempted READ ViewRef at that actual generation:
+
+```text
+Q77 native diagnostic: registration=AVAILABLE; durable generation=0; complete R0 retained; READ ViewRef(generation=0)=REJECTED
+No writer acquired, no synthetic generation issued, no production source/test changed; diagnostic only, not mutation or completion proof.
+```
+
+A reader cannot select an invented positive epoch or secretly claim a writer to overcome the join.
+Choosing which side changes affects the identity/storage contract, so this is not a test-only fix.
+
+**(a) Recommended — positive genesis epoch.** Register complete R0 at generation1/AVAILABLE,
+without a writer/grant; the first writer durably advances to2. Keep positive ViewRef/OperationRef/
+receipt/owner-reply rules. Existing protected generation0/AVAILABLE records may initialize to1
+only durably under the original startup lock after validating R0, with no views, pending intent or
+owner; ambiguity or ownership quarantines/blocks, never renews a grant. Existing positive epochs
+are not changed. Reader pins retain their bound epoch independently of later writer generations.
+This changes the E253 generation0 initialization contract, not what grants authorize.
+
+**(b) Retain generation0 genesis; explicitly support READ epoch0.** Keep registration0 and first
+writer1. Permit epoch0 for READ ViewRef and matching read-only operation/receipt context consistently
+across DTOs, wire validators and the actual authority. WRITE/owner grants remain strictly positive;
+shape acceptance alone cannot authorize a zero-generation write. No separate pin epoch allocator.
+This changes the positive-generation interface contract and needs contextual security negatives.
+
+Both preserve memory-only capabilities, durable pin retention before acknowledgement, no renewal
+on restart, Q75 exact cached replay, Q76 protected PlanRef, and final-SLICE6 live rollout.
+After selection update the affected contracts before code. Required proof: fresh-R0 reader without
+writer acquisition; writer remains exclusive; no pin mutation permission; old pin survives later
+generation; restart cannot reconstruct its token; durable metadata/receipt generation agree.
+Run C0/C3 native filesystem/authority tests and whole-owning-bank assertion-only producer kills.
+Plan actual service/tool/PTY read-pin witnesses in the existing E2E register; run on live host only
+at final SLICE6. C1/C2 and all four final duties remain open, not satisfied by this diagnostic.

@@ -3092,3 +3092,11 @@ E253  FACT  E253 constructs the actual WorkspaceAuthority existing-root/R0/write
     RootedViewIO and Q76 protected context, then actual CellBackend episodes/per-command records,
     startup owned-cell reconciliation/independent terminality and real factory/caller/mount cutover.
     SLICE1 remains NOT shipped; all35STEPS/four final duties open. Q59/Q75/Q76/final-SLICE6 rollout unchanged.
+
+E254  HOLD  Before implementation, loaded tests-writing and verified current E253 authority and
+CT102/103 pin contracts. New native actual-authority diagnostic: complete retained R0 with protected
+AVAILABLE/generation0; actual READ ViewRef(0) rejects. No writer acquired, no source/test edit, no
+mutation/completion credit. Promoted Q77 (positive genesis1 vs contextual READ0) rather than inventing
+an epoch or hiding a writer claim. Allowed edit scope exactly open-questions/spec/HANDOFF/ledger;
+fail-closed implementation hold until selection. Subsequent producer retention and C1/C2/live
+witnesses remain required; final host work stays SLICE6. Q75/Q76 remain resolved.

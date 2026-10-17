@@ -41,6 +41,14 @@ Ubuntu host test,OS isolation,managed nested acquisition or host supervisor deli
 only;Go is an indirect inherited hook-build diagnosis,not a new FA runtime/deployment requirement.
 PTY stays. Q69–Q73 resolved;Q72 remains its narrow46-links/15-files+banner repair decision.
 
+**E254 implementation hold — Q77, 2026-10-18:** Native actual-authority diagnostic confirms
+registration's complete R0 is AVAILABLE at generation0, but READ ViewRef/OperationRef/receipt
+contracts require positive generation. No source/test edited; no writer acquired or synthetic epoch.
+Operator decision needed before pins/views: recommended positive genesis1/first-writer2 with
+strict durable initialization of safe legacy0 records, OR contextual READ0 support while WRITE
+remains positive. See [Q77](planning-topology-and-executable-contracts-loop/notes/open-questions-2026-10-07.md#q77--genesis-reader-pin-generation-before-the-first-writer).
+Do not infer a selection from recommendation. All completion duties/SLICE1 remain open.
+
 **E253 CURRENT — actual existing-root/R0/writer owner implemented; SLICE1 NOT shipped:**
 E253 constructs the actual WorkspaceAuthority existing-root/R0/writer path, not a placeholder
 admission callback. Reuses the SAME OperationJournal.single_supervisor/startup recovery; one protected
@@ -114,7 +122,7 @@ SLICE2/all35STEPS/four final duties remain open. Q59/Q75/Q76/final-SLICE6 rollou
    admit/close-admission/drain with E245 RootedViewIO and Q76 protected PlanRef context.
 2. Join actual CellBackend episodes/command reservations/cancel/startup discovery and independent
    terminality; no temporary authority. Factory/main/caller/mount activation follows the real joins.
-3. Keep full-path Linux/Docker/deployed acceptance at final SLICE6. No new policy question identified.
+3. Resolve Q77 before the pin/view join. Keep full-path Linux/Docker/deployed acceptance at final SLICE6.
 
 **E251 retained historical result — explicit composition seam implemented; broader RED at that source:**
 E251 repairs the existing dispatcher composition seam, not the actual backend/authority.

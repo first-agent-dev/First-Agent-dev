@@ -622,6 +622,13 @@ unimplemented; no command or writable-view permission follows from this owner gr
 [Local component evidence](evidence/i03-e253/workspace-owner.json.gz),810owning/1330broader,
 15 whole-bank assertion-only kills. The prior pre-code contract above is retained.
 
+**E254 implementation hold — Q77:** E253's generation0/AVAILABLE complete R0 cannot supply the
+positive generation required by the existing READ ViewRef/operation/receipt contracts. Do not
+fabricate an epoch or acquire a writer merely to read. Resolve
+[genesis reader generation](open-questions-2026-10-07.md#q77--genesis-reader-pin-generation-before-the-first-writer)
+before pin/view implementation; this is an explicit unresolved contract join, not an exemption.
+Q75/Q76 and final-SLICE6 rollout remain unchanged.
+
 ### 4.2. Concrete IO/tool and lifecycle joins (E243)
 
 Use ONE WorkspaceAuthority for registration/generation/admission/materialization/rooted IO. Keep
