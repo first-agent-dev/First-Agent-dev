@@ -2886,3 +2886,32 @@ E244  DECIDED  User explicitly requires found issues corrected in plan docs befo
     Q76 unchanged, all35 steps/four final duties unchecked. [docs-first E244; no runtime proof]
     Docs-only verification: check_doc_links.py308 files/no broken links; git diff --check PASS;
     exact6slices/17FUNCTIONAL/35unchecked retained. No source/tests changed in this checkpoint.
+
+E245  FACT  After pushed docs-first checkpoint a7ba6d5, constructed internal descriptor-rooted
+    project text IO (view_io.py), not a second authority or endpoint. Whole-file bounded SHA/UTF-8
+    windows, expected absence/SHA, no-follow/single-link/protected paths, private same-FS staging,
+    native no-replace parent installation, safe cell UID/GID/modes and fsync/conflict/unknown results.
+    Existing project dirs are never chmod/chowned. Added93 real-FS C0/C3 cases; old tests unchanged.
+    Final whole93 bank baseline/restored PASS;17 assertion-only whole-bank kills (UID/GID ranges,
+    write/replace/fsync/mode/hash/read-only/PlanRef/no-follow/link/text/parent/byte gates), exact518
+    Python/build/lock hashes restored. Counts2/2/12/6/1/1/7/1/1/1/1/1/3/2/1/1/1. No skip/warning/
+    collection/runtime/infra kill credit; rejected/superseded trials retained, not relabelled.
+    Ruff/format26PASS; Mypy26/183PASS; configured+clean-path Pyrefly0errors(existing141suppressed/
+    50warnings). Broader27modules1001PASS50.19s, all setup/call/teardown clean. First989PASS2FAIL
+    was an external-path reporter rejected by the existing controller closure guard: installed the
+    test reporter in local .venv, no guard/test waiver. An ad-hoc command without tooling PATH had
+    117PASS6setupErrors (missing uv), rejected, not a product result or sensitivity proof.
+    Native owner-range gap:4 before-code assertions, then bounded before effects; no raised policy.
+    Test-only Python3.13.16/frozen deps restored; linked OpenSSL3.0.20/SQLite3.40.1, zlib header1.3.1/
+    runtime1.2.13, ShellCheck0.11.0, uv0.13.1. No application/lock/config change or deployment proof.
+    Evidence: notes/evidence/i03-e245/rooted-io.json.gz includes sources/runners/raw phases, rejected
+    diagnostics and toolchain provenance. Actual WorkspaceAuthority/admission/drain/R0/backend/
+    tool/session joins still absent; CT101–103/all35steps/four final duties remain incomplete.
+    Q59/Q75/Q76/final-SLICE6 actual host/full-path proof unchanged.
+    Final closure:309Markdown files/link check PASS; diff --check PASS;6slices/17FUNCTIONAL/
+    35unchecked retained; exactly6 existing docs +2 new Python files +1 archive, legacy source/
+    tests/dependency/config groups unchanged and ledger prefix retained. Final bank93PASS0.65s →
+    17 whole93 assertion kills → restored93PASS0.74s; broader1001PASS50.19s. Test metadata oracle
+    excludes permitted read-atime only; bounded parameter IDs avoid MiB payloads in collected IDs.
+    Earlier diagnostics retained losslessly (nested gzip+base64 with raw SHA), not sensitivity credit.
+    Final archive1514276bytes SHA256d3c09ff2dcfa854470144741ea548da9dee74874d2e5022527a71933dda01057.

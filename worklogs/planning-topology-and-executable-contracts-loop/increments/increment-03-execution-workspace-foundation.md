@@ -8,7 +8,7 @@ shipped: —
 
 # INCREMENT I03: Execution/workspace foundation and integrated acceptance
 
-**Planning state:** E230/E231 decisions retained; E243 mid-slice review rewrites remaining SLICE1/2 execution details.
+**Planning state:** E230/E231 retained; E243/E244 directly repair remaining joins/IO semantics before E245 construction.
 Q59 advisory/manual + EXISTING experimental suggestion injection, no required mode; Q60 delegated
 source-grounded reuse design in spec §7; Q63 four states/optional commentary/no reason enum; Q74
 per-stage/episode ordinary-edit checkpoints. E233 found F17/Q75; the operator explicitly selected
@@ -73,6 +73,15 @@ E243 closes the short-control-RPC/long-command reply defect and makes remaining 
 executable in spec §§2.2/4.2: one authority/admission gate, existing journal per command, live-only
 episode ownership, same-view read/search and safe SessionManager provisioning/cleanup. Component
 repair is not complete backend/authority delivery; all35STEPS/four final duties remain unfinished.
+
+E244 docs-first checkpoint `a7ba6d5` precedes E245 source. E245 constructs internal
+`execution/view_io.py`: pinned FD/no-follow text IO, private staging/no-clobber parents, expected-SHA
+writes, safe cell modes/UIDs and explicit uncertainty. Real-FS C0/C3 bank93/restored93;17 whole-bank
+assertion kills, exact518 Python/build/lock hashes; broader1001PASS, static/Pyrefly PASS. See
+[component evidence](../notes/evidence/i03-e245/rooted-io.json.gz). This is the STEP1 building block,
+NOT WorkspaceAuthority/admission/materialization, actual public tool/PTY joins or CT101–103 closure.
+All35STEPS/four final duties stay unchecked. Next: implement the one actual authority, not more
+standalone wrappers or a permissive service. Required host/full-path acceptance remains final SLICE6.
 
 ## Grounding, sequence and scope discipline
 

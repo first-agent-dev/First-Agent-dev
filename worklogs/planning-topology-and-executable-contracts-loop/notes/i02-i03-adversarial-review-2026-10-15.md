@@ -1100,3 +1100,26 @@ UTF-8 windows; cell ownership/modes; stale versus possible-effect/durability err
 claim. Existing SessionManager DB/provisioning, metadata/search attribution and SLICE3/4 joins remain
 mandatory. Implementation starts only after this docs checkpoint; local helper proof cannot close
 F21–F27 or CT101–103. Actual host/full-path proof remains final SLICE6.
+
+### E245 — first implementation after the E244 docs checkpoint
+
+Implemented only the internal descriptor IO building block in `execution/view_io.py`, not an
+admission fallback. Native file/descriptor tests exercise successful bytes/hash/ownership/modes,
+read-only/protected/alias/type denial, UTF-8/window/limit/conflict behavior, staged no-clobber parent
+creation, capture/publication races and fsync/ambiguous-error cleanup. Fixed two initially failing
+uncertainty-masking cases without weakening assertions; simplified private-temp cleanup rather than
+trust a publication flag. Added explicit Linux UID/GID upper bounds after four before-code failures.
+
+Final C0/C3 bank93PASS/restored93PASS;17 independent whole93-bank mutations fail executed assertions
+only, exact518 Python/build/lock hashes restored. Ruff/format26, Mypy26/183, configured+clean-path
+Pyrefly0errors (existing141suppressed/50warnings); broader27modules1001PASS50.19s. Rejected sensitivity
+trials (runtime/missing-file oracle and teardown residue), superseded83-case proof, first broader
+989PASS2FAIL reporter-origin issue, and development diagnostics remain in the
+[lossless archive](evidence/i03-e245/rooted-io.json.gz). No controller guard, old test assertion,
+application dependency, routing mode or approval gate changed.
+
+F21–F27 remain unfulfilled system-level implementation obligations: the component does not select
+principal/view/profile/PlanRef, register workspace roots, acquire/drain writers, materialize R0,
+select search/PDF paths, provision sessions or establish terminality/publication. The real authority
+must admit calls, supply trusted roots/exclusions/access and preserve descriptor lifetime through
+drain; expected-SHA remains non-kernel-CAS. No whole-contract, C1, Docker/host or release claim.

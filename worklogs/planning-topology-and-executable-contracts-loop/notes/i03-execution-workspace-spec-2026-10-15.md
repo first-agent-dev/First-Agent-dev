@@ -577,7 +577,8 @@ handlers finish; never close/reuse their FD numbers under a running handler.
   cell-writable guessed temp name. Install parents with Linux renameat2(RENAME_NOREPLACE), reopen/
   verify the exact installed identity; never chmod/chown an existing project directory. Existing
   regular targets must have configured cell UID/GID and no special mode bits; preserve their0777
-  access bits. New files0644, new directories0755, both assigned configured non-root cell UID/GID.
+  access bits. New files0644, new directories0755, both assigned configured non-root cell UID/GID
+  in Linux uid_t/gid_t range1..2**32-2 (reject bool, zero, negative, reserved -1 and overflow before IO).
   No service-owned0600 project outputs; unsupported no-replace/same-filesystem primitives fail closed.
 - Null-SHA file creation uses atomic no-clobber link from protected staging; replacement uses
   descriptor-relative atomic rename after another current-target/hash/identity check. Fsync staged
