@@ -1649,8 +1649,13 @@ negatives and eventual real authority composition; mere DTO/null acceptance is n
 
 ## Q77 — Genesis reader pin generation before the first writer
 
-**Status: OPEN — implementation hold at the reader/view seam, 2026-10-18 / E254.**
-No new production source/test change or completion claim. Q75/Q76 remain resolved.
+**Status: RESOLVED — operator delegated the production-engineering choice, 2026-10-18 / E254.**
+Operator requested the robust, maintainable, simple production-team solution rather than selecting
+an option. Engineering selects (a): one uniformly positive durable epoch, no access-dependent zero
+exceptions in DTOs/receipts. Genesis1/first-writer2; epoch initialization is not ownership or a grant.
+The native diagnostic below is historical evidence at the stated baseline, not current behavior.
+Implementation follows this contract; it does not claim reader/admission/backend completion.
+At the initial diagnostic there was no production source/test change or completion claim. Q75/Q76 remain resolved.
 
 Verified at `37e8af72b2f091886138fa9b134993e87a088658`:
 - `src/fa/execution/workspace.py:628` persists registration as generation0/AVAILABLE with complete R0.
@@ -1671,15 +1676,15 @@ No writer acquired, no synthetic generation issued, no production source/test ch
 A reader cannot select an invented positive epoch or secretly claim a writer to overcome the join.
 Choosing which side changes affects the identity/storage contract, so this is not a test-only fix.
 
-**(a) Recommended — positive genesis epoch.** Register complete R0 at generation1/AVAILABLE,
+**(a) SELECTED — positive genesis epoch.** Register complete R0 at generation1/AVAILABLE,
 without a writer/grant; the first writer durably advances to2. Keep positive ViewRef/OperationRef/
 receipt/owner-reply rules. Existing protected generation0/AVAILABLE records may initialize to1
 only durably under the original startup lock after validating R0, with no views, pending intent or
-owner; ambiguity or ownership quarantines/blocks, never renews a grant. Existing positive epochs
+owner and a successfully acquired native writer lock; ambiguity or ownership quarantines/blocks, never renews a grant. Existing positive epochs
 are not changed. Reader pins retain their bound epoch independently of later writer generations.
 This changes the E253 generation0 initialization contract, not what grants authorize.
 
-**(b) Retain generation0 genesis; explicitly support READ epoch0.** Keep registration0 and first
+**(b) Not selected — retain generation0 genesis; explicitly support READ epoch0.** Keep registration0 and first
 writer1. Permit epoch0 for READ ViewRef and matching read-only operation/receipt context consistently
 across DTOs, wire validators and the actual authority. WRITE/owner grants remain strictly positive;
 shape acceptance alone cannot authorize a zero-generation write. No separate pin epoch allocator.
@@ -1693,3 +1698,7 @@ generation; restart cannot reconstruct its token; durable metadata/receipt gener
 Run C0/C3 native filesystem/authority tests and whole-owning-bank assertion-only producer kills.
 Plan actual service/tool/PTY read-pin witnesses in the existing E2E register; run on live host only
 at final SLICE6. C1/C2 and all four final duties remain open, not satisfied by this diagnostic.
+
+**E254 implementation:** selected (a) implemented and locally proved;827owning/seven whole-bank
+assertion-only kills/restored827/broader1347. [Evidence](evidence/i03-e254/genesis.json.gz).
+Pin creation, actual admission/backend and live completion remain unimplemented, not implied by this fix.

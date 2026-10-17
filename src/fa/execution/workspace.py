@@ -557,11 +557,47 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
             self._recheck(binding)
             self._disjoint(binding)
             self._verify_revision(binding, time.monotonic() + 120)
+            self._initialize_genesis(binding)
             if metadata["status"] == "OWNED":
                 metadata["status"] = "QUARANTINED"
                 _replace_private_bytes(fd, "workspace.json", encode_json(metadata))
             self._stack.callback(binding.close_writer)
             self._bindings[workspace_id] = binding
+
+    @staticmethod
+    def _initialize_genesis(binding: _Binding) -> None:
+        """Initialize legacy unowned genesis, never recover or renew ownership."""
+        if binding.metadata["generation"] != 0:
+            return
+        if binding.metadata["status"] != "AVAILABLE" or any(
+            binding.metadata[key] is not None for key in ("owner_namespace", "active_actor")
+        ):
+            raise SupervisorError("CORRUPT_STATE")
+        views = os.open("views", _DIRECTORY, dir_fd=binding.fd)
+        try:
+            _private(views)
+            if os.listdir(views) or "intent.json" in os.listdir(binding.fd):
+                raise SupervisorError("CORRUPT_STATE")
+        finally:
+            os.close(views)
+        writer = os.open(
+            "writer.lock",
+            os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK,
+            0o600,
+            dir_fd=binding.fd,
+        )
+        try:
+            _private(writer, directory=False)
+            fcntl.flock(writer, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            if _read_json(binding.fd, "workspace.json", _WORKSPACE, 1024**2) != binding.metadata:
+                raise SupervisorError("CORRUPT_STATE")
+            initialized = {**binding.metadata, "generation": 1}
+            _replace_private_bytes(binding.fd, "workspace.json", encode_json(initialized))
+            if _read_json(binding.fd, "workspace.json", _WORKSPACE, 1024**2) != initialized:
+                raise SupervisorError("CORRUPT_STATE")
+            binding.metadata.update(initialized)
+        finally:
+            os.close(writer)
 
     def _disjoint(self, candidate: _Binding) -> None:
         for binding in self._bindings.values():
@@ -625,7 +661,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                     "relative_root": relative_root,
                     "root_dev": os.fstat(source).st_dev,
                     "root_ino": os.fstat(source).st_ino,
-                    "generation": 0,
+                    "generation": 1,
                     "owner_namespace": None,
                     "active_actor": None,
                     "status": "AVAILABLE",

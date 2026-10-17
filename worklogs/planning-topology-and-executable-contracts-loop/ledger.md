@@ -3100,3 +3100,37 @@ mutation/completion credit. Promoted Q77 (positive genesis1 vs contextual READ0)
 an epoch or hiding a writer claim. Allowed edit scope exactly open-questions/spec/HANDOFF/ledger;
 fail-closed implementation hold until selection. Subsequent producer retention and C1/C2/live
 witnesses remain required; final host work stays SLICE6. Q75/Q76 remain resolved.
+
+E254  PLAN  Q77 user delegated robust production engineering; selected uniform positive epoch1
+without ownership; writer2. Pre-code spec updated. Source scope workspace.py, generation-only old
+test expectations plus new native C0/C3 regressions. Guard legacy0 with original startup guard,
+validated R0, no owner/views/intent and native writer flock; persist/reread before work, no grant.
+Full owning-bank initialization/unsafe-state/persistence producer kills required; no C1/pin/backend
+or live claim. Target immutable-reader E2E witness remains planned for final SLICE6.
+
+E254  LOCAL  Q77 resolved by explicit operator delegation to production-engineering judgment: select one
+uniformly positive epoch. Registration now persists genesis1/AVAILABLE WITHOUT ownership or a
+grant; first writer durably advances to2. Existing positive identities/receipts stay strict; no
+READ-only zero exception, extra allocator, DB or token renewal. Old epoch0 initializes only under
+the original startup guard after R0 validation, no owner/views/intent and acquired native writer
+lock. Private atomic replace/fsync plus exact reread precede accepting work; ambiguity blocks.
+Source: src/fa/execution/workspace.py::_load:541, _initialize_genesis:568, register_existing:639.
+17 new native C0/C3 cases;94focusedPASS2.30s. Exactly17 pre-existing generation assertions shift
+by one; original test prefix otherwise exact except required helper imports. No old assertion
+removed/caught. New successful-startup tests reuse the existing closed-domain ok oracle; OS/runtime
+failures stay uncaught. Whole16-module827PASS46.39s → seven whole827-bank assertion-only kills
+19/12/2/2/1/5/1 → restored827PASS46.42s; all collection/setup/teardown clean, no runtime/
+infra credit. All600 frozen inputs exact. Ruff/format29PASS, Mypy29/184PASS, Pyrefly0errors with
+existing141suppressed/50warnings. Broader1347PASS59.74s. Fixture-only static diagnostics are
+retained in the archive without kill credit. Prior E253 evidence is unchanged.
+Evidence: `notes/evidence/i03-e254/genesis.json.gz`, 955682bytes SHA25653ebe8dca0e114c32a766cc75ca770767183ae9ee09bb34b9d4ed604e6c70428.
+This fixes genesis identity, NOT a reader grant or pin implementation. Actual immutable pins/views,
+admit/close-admission/drain, CellBackend episodes/restart/terminality, service/factory and caller/
+mount cutover remain next. SLICE1 NOT shipped; all35STEPS/four final duties remain open. Q75/Q76
+and final-SLICE6 host rollout unchanged. Inventory17surfaces/eight joins; all live UNEXECUTED.
+
+E254  DOC-DIAGNOSTIC  Closure helper final checkbox check named nonexistent plan.md and exited1
+after writing docs/archive. No source/test change and no sensitivity credit. Corrected independent
+checks compare actual roadmap/increment/ledger; checkbox markers unchanged. Internal links309PASS
+and diff check PASS. Original failed closure script and actual successful finalization retained
+in current E254 evidence; no historical archive rewritten.

@@ -1213,7 +1213,7 @@ Formal workflow cases retain the actual admitted plan; ordinary no-active-workfl
 | I03-LIVE-14 `src/fa/execution/view_io.py` | RootedViewIO and actual admitted text IO | Actual tool and PTY same-view read-your-writes; immutable readers stay pinned. Exercise no-follow/link/FIFO/owner/protected-PlanRef/size/UTF8/window/hash/expected-absence, parent-swap and fsync faults. Assert canonical/control sentinels, modes/UIDs, retained descriptors through drain and explicit conflict/uncertainty. | PLANNED / UNEXECUTED |
 | I03-LIVE-15 `src/fa/runtime/pty_pool.py` | Fractional PTY deadlines consumed by worker | Actual installed PTY backend receives subsecond remaining budget; normal/nonzero/timeout preserve result fields and responsiveness, no timeout truncation to zero or new process scope. Actual cgroup cleanup remains independently required. | PLANNED / UNEXECUTED |
 | I03-LIVE-16 `Dockerfile.fa` | Noneditable install and isolated build checks | Build actual approved immutable image; record wheel/image/dependency SHA, isolated help/origin checks and deployed entrypoint/mount facts. Build checks alone do not prove runtime cutover or kernel isolation. | PLANNED / UNEXECUTED |
-| I03-LIVE-17 `src/fa/execution/workspace.py` (E253 local ownership foundation) | Actual workspace registration/R0/writer owner | On approved Linux filesystem, quiesce legacy writers; register dirty roots, reject bind/inode/nested aliases/rebind and protected overlap; race two OS actors for one durably advanced writer; kill/restart with old owned views and verify quarantine/no renewed grant. Preserve canonical index/sentinels, enforce input/copy/fsync faults and retain revisions/pins. E253 local component proof is not deployed admission/backend integration. | PLANNED / UNEXECUTED |
+| I03-LIVE-17 `src/fa/execution/workspace.py` (E253/E254 local ownership foundation) | Actual workspace registration/R0/writer owner | On approved Linux filesystem, quiesce legacy writers; register dirty roots, reject bind/inode/nested aliases/rebind and protected overlap; race two OS actors for one durably advanced writer; kill/restart with old owned views and verify quarantine/no renewed grant. Preserve canonical index/sentinels, enforce input/copy/fsync faults and retain revisions/pins. E253 local component proof is not deployed admission/backend integration. | PLANNED / UNEXECUTED |
 
 ### Cross-module joins — all planned, not shipped composition
 
@@ -1346,3 +1346,22 @@ NEXT construct immutable pins/views and actual admit/close-admission/drain using
 RootedViewIO and Q76 protected context, then actual CellBackend episodes/per-command records,
 startup owned-cell reconciliation/independent terminality and real factory/caller/mount cutover.
 SLICE1 remains NOT shipped; all35STEPS/four final duties open. Q59/Q75/Q76/final-SLICE6 rollout unchanged.
+
+### E254 — planned genesis/read-pin live witnesses (NOT executed)
+
+Extend I03-LIVE-17 and I03-LIVE-S05 in the real `tests/integration/test_execution_boundary.py`
+suite once the actual pin/view/service composition exists; no skip/stub test is added now:
+- `test_fresh_genesis_reader_without_writer`: real UDS registration yields AVAILABLE/epoch1,
+  then actual pin_reader reads the exact dirty R0 before ANY writer acquisition. Read grant cannot
+  mutate. First writer is epoch2, never a hidden writer claim to make the reader work.
+- `test_legacy_zero_recovery_has_no_renewed_authority`: disposable validated legacy0 fixture
+  initializes durably under the installed service lock; owned/unknown/view/intent/contended-lock,
+  lost fsync/ack and corrupt R0 cases block without returned grants or canonical/index changes.
+- `test_genesis_read_pin_survives_writer_epoch_advance`: retain old bytes/context after actual
+  writer/PTY edits and publication; restart retains referenced revision but never reconstructs its
+  token or cached grant reply. Require independent actual backend/kernel evidence before release.
+All remain PLANNED/UNEXECUTED at final SLICE6, not early host/deployment prerequisites.
+E254 local827/seven kills/restored827/broader1347 proves only epoch construction/security;
+actual pins/admission/backend remain unimplemented. Inventory stays17surfaces/eight joins;
+current source hashes and omission counterfactual are archived in
+[evidence](evidence/i03-e254/genesis.json.gz). Historical E250/E253 snapshots are unchanged.

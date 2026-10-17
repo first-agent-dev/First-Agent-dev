@@ -1290,3 +1290,26 @@ NEXT construct immutable pins/views and actual admit/close-admission/drain using
 RootedViewIO and Q76 protected context, then actual CellBackend episodes/per-command records,
 startup owned-cell reconciliation/independent terminality and real factory/caller/mount cutover.
 SLICE1 remains NOT shipped; all35STEPS/four final duties open. Q59/Q75/Q76/final-SLICE6 rollout unchanged.
+
+### E254 — Q77 genesis contradiction closed; actual composition still open
+
+Q77 resolved by explicit operator delegation to production-engineering judgment: select one
+uniformly positive epoch. Registration now persists genesis1/AVAILABLE WITHOUT ownership or a
+grant; first writer durably advances to2. Existing positive identities/receipts stay strict; no
+READ-only zero exception, extra allocator, DB or token renewal. Old epoch0 initializes only under
+the original startup guard after R0 validation, no owner/views/intent and acquired native writer
+lock. Private atomic replace/fsync plus exact reread precede accepting work; ambiguity blocks.
+Source: src/fa/execution/workspace.py::_load:541, _initialize_genesis:568, register_existing:639.
+17 new native C0/C3 cases;94focusedPASS2.30s. Exactly17 pre-existing generation assertions shift
+by one; original test prefix otherwise exact except required helper imports. No old assertion
+removed/caught. New successful-startup tests reuse the existing closed-domain ok oracle; OS/runtime
+failures stay uncaught. Whole16-module827PASS46.39s → seven whole827-bank assertion-only kills
+19/12/2/2/1/5/1 → restored827PASS46.42s; all collection/setup/teardown clean, no runtime/
+infra credit. All600 frozen inputs exact. Ruff/format29PASS, Mypy29/184PASS, Pyrefly0errors with
+existing141suppressed/50warnings. Broader1347PASS59.74s. Fixture-only static diagnostics are
+retained in the archive without kill credit. Prior E253 evidence is unchanged.
+Evidence: `notes/evidence/i03-e254/genesis.json.gz`, 955682bytes SHA25653ebe8dca0e114c32a766cc75ca770767183ae9ee09bb34b9d4ed604e6c70428.
+This fixes genesis identity, NOT a reader grant or pin implementation. Actual immutable pins/views,
+admit/close-admission/drain, CellBackend episodes/restart/terminality, service/factory and caller/
+mount cutover remain next. SLICE1 NOT shipped; all35STEPS/four final duties remain open. Q75/Q76
+and final-SLICE6 host rollout unchanged. Inventory17surfaces/eight joins; all live UNEXECUTED.

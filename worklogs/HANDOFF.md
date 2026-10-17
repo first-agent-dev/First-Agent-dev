@@ -3,7 +3,7 @@
 > Read [`knowledge/llms.txt`](../knowledge/llms.txt) §MUST READ FIRST.
 > Current local delivery is distinct from final I03/deployed acceptance.
 
-## Current state — I02 LOCAL SHIPPED / I03 IMPLEMENTATION IN PROGRESS, 2026-10-18 / E253
+## Current state — I02 LOCAL SHIPPED / I03 IMPLEMENTATION IN PROGRESS, 2026-10-18 / E254
 
 Branch `arena/86633f17-first-agent-dev` only. Retained I02 runtime/test proof snapshot
 `a32a72fc58db4b9a5b048a9b6475649bcf3e32b4`. E230/E231 finalized planning; E232 adds the first
@@ -41,15 +41,30 @@ Ubuntu host test,OS isolation,managed nested acquisition or host supervisor deli
 only;Go is an indirect inherited hook-build diagnosis,not a new FA runtime/deployment requirement.
 PTY stays. Q69–Q73 resolved;Q72 remains its narrow46-links/15-files+banner repair decision.
 
-**E254 implementation hold — Q77, 2026-10-18:** Native actual-authority diagnostic confirms
-registration's complete R0 is AVAILABLE at generation0, but READ ViewRef/OperationRef/receipt
-contracts require positive generation. No source/test edited; no writer acquired or synthetic epoch.
-Operator decision needed before pins/views: recommended positive genesis1/first-writer2 with
-strict durable initialization of safe legacy0 records, OR contextual READ0 support while WRITE
-remains positive. See [Q77](planning-topology-and-executable-contracts-loop/notes/open-questions-2026-10-07.md#q77--genesis-reader-pin-generation-before-the-first-writer).
-Do not infer a selection from recommendation. All completion duties/SLICE1 remain open.
+**E254 CURRENT — positive genesis implemented; actual pins/views/backend NEXT:**
 
-**E253 CURRENT — actual existing-root/R0/writer owner implemented; SLICE1 NOT shipped:**
+Q77 resolved by explicit operator delegation to production-engineering judgment: select one
+uniformly positive epoch. Registration now persists genesis1/AVAILABLE WITHOUT ownership or a
+grant; first writer durably advances to2. Existing positive identities/receipts stay strict; no
+READ-only zero exception, extra allocator, DB or token renewal. Old epoch0 initializes only under
+the original startup guard after R0 validation, no owner/views/intent and acquired native writer
+lock. Private atomic replace/fsync plus exact reread precede accepting work; ambiguity blocks.
+Source: src/fa/execution/workspace.py::_load:541, _initialize_genesis:568, register_existing:639.
+17 new native C0/C3 cases;94focusedPASS2.30s. Exactly17 pre-existing generation assertions shift
+by one; original test prefix otherwise exact except required helper imports. No old assertion
+removed/caught. New successful-startup tests reuse the existing closed-domain ok oracle; OS/runtime
+failures stay uncaught. Whole16-module827PASS46.39s → seven whole827-bank assertion-only kills
+19/12/2/2/1/5/1 → restored827PASS46.42s; all collection/setup/teardown clean, no runtime/
+infra credit. All600 frozen inputs exact. Ruff/format29PASS, Mypy29/184PASS, Pyrefly0errors with
+existing141suppressed/50warnings. Broader1347PASS59.74s. Fixture-only static diagnostics are
+retained in the archive without kill credit. Prior E253 evidence is unchanged.
+Evidence: `notes/evidence/i03-e254/genesis.json.gz`, 955682bytes SHA25653ebe8dca0e114c32a766cc75ca770767183ae9ee09bb34b9d4ed604e6c70428.
+This fixes genesis identity, NOT a reader grant or pin implementation. Actual immutable pins/views,
+admit/close-admission/drain, CellBackend episodes/restart/terminality, service/factory and caller/
+mount cutover remain next. SLICE1 NOT shipped; all35STEPS/four final duties remain open. Q75/Q76
+and final-SLICE6 host rollout unchanged. Inventory17surfaces/eight joins; all live UNEXECUTED.
+
+**E253 retained — actual existing-root/R0/writer owner implemented; SLICE1 NOT shipped:**
 E253 constructs the actual WorkspaceAuthority existing-root/R0/writer path, not a placeholder
 admission callback. Reuses the SAME OperationJournal.single_supervisor/startup recovery; one protected
 JSON catalog, retained directory identities and per-workspace writer flock, no second DB/service.
@@ -122,7 +137,7 @@ SLICE2/all35STEPS/four final duties remain open. Q59/Q75/Q76/final-SLICE6 rollou
    admit/close-admission/drain with E245 RootedViewIO and Q76 protected PlanRef context.
 2. Join actual CellBackend episodes/command reservations/cancel/startup discovery and independent
    terminality; no temporary authority. Factory/main/caller/mount activation follows the real joins.
-3. Resolve Q77 before the pin/view join. Keep full-path Linux/Docker/deployed acceptance at final SLICE6.
+3. Q77 is resolved and implemented. Keep full-path Linux/Docker/deployed acceptance at final SLICE6.
 
 **E251 retained historical result — explicit composition seam implemented; broader RED at that source:**
 E251 repairs the existing dispatcher composition seam, not the actual backend/authority.

@@ -9,8 +9,9 @@ import os
 import subprocess
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Generator
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -113,7 +114,7 @@ def test_registers_real_dirty_r0_and_preserves_index_modes(site: Site) -> None:
         assert site.register(owner) == ids
         assert not (site.revision(ids) / "data/.git").exists()
         assert not (site.revision(ids) / "data/deleted.txt").exists()
-        assert site.metadata(ids)["generation"] == 0 and site.metadata(ids)["status"] == "AVAILABLE"
+        assert site.metadata(ids)["generation"] == 1 and site.metadata(ids)["status"] == "AVAILABLE"
         assert before == (site.source.stat().st_mode, (site.source / ".git/index").read_bytes())
         assert list((site.state / "pending").iterdir()) == []
 
@@ -167,7 +168,7 @@ def test_safe_relative_link_chain_is_copied_as_data(site: Site) -> None:
         ids = ok(lambda: site.register(owner))
         assert os.readlink(site.revision(ids) / "data/sub/link") == "../link"
         grant = ok(lambda: site.claim(owner, ids))
-        assert grant.generation == 1
+        assert grant.generation == 2
 
 
 @pytest.mark.parametrize(
@@ -230,7 +231,7 @@ def test_configured_alias_of_same_root_is_not_new_workspace(site: Site) -> None:
         ids = ok(lambda: site.register(owner))
         with pytest.raises(SupervisorError) as failure:
             owner.register_existing(PEER, ACTOR, root_id="alias", relative_root="project", deadline=until())
-        assert failure.value.code == "PATH_DENIED" and site.metadata(ids)["generation"] == 0
+        assert failure.value.code == "PATH_DENIED" and site.metadata(ids)["generation"] == 1
 
 
 @pytest.mark.parametrize("approved_root", [True, False])
@@ -243,7 +244,7 @@ def test_directory_rebind_is_not_silently_accepted(site: Site, approved_root: bo
         with pytest.raises(SupervisorError) as failure:
             site.claim(owner, ids)
         assert failure.value.code == "CORRUPT_STATE"
-        assert site.metadata(ids)["generation"] == 0
+        assert site.metadata(ids)["generation"] == 1
 
 
 def test_two_actor_claims_have_one_durable_grant_and_no_disk_secret(site: Site) -> None:
@@ -262,7 +263,7 @@ def test_two_actor_claims_have_one_durable_grant_and_no_disk_secret(site: Site) 
         assert len(grants) == 1 and outcomes.count("WORKSPACE_BUSY") == 1
         grant = grants[0]
         metadata = site.metadata(ids)
-        assert grant.generation == metadata["generation"] == 1 and metadata["status"] == "OWNED"
+        assert grant.generation == metadata["generation"] == 2 and metadata["status"] == "OWNED"
         assert metadata["owner_namespace"] == metadata["active_actor"] and grant.view_ref is None
         assert all(grant.capability.encode() not in p.read_bytes() for p in site.state.rglob("*.json"))
         assert grant.capability not in repr(grant) and grant.capability not in repr(owner)
@@ -274,7 +275,7 @@ def test_release_and_reacquire_advance_generation_and_retire_token(site: Site) -
         first = ok(lambda: site.claim(owner, ids))
         assert ok(lambda: site.release(owner, ids, first)) == {"released": True}
         second = ok(lambda: site.claim(owner, ids))
-        assert second.generation == site.metadata(ids)["generation"] == 2
+        assert second.generation == site.metadata(ids)["generation"] == 3
         assert first.capability != second.capability
         with pytest.raises(SupervisorError) as failure:
             site.release(owner, ids, first)
@@ -319,7 +320,7 @@ def test_restart_quarantines_old_ownership_and_never_renews_grants(site: Site) -
         grant = ok(lambda: site.claim(owner, ids))
     with site.owner() as recovered:
         assert site.metadata(ids)["status"] == "QUARANTINED"
-        assert site.metadata(ids)["generation"] == 1
+        assert site.metadata(ids)["generation"] == 2
         with pytest.raises(SupervisorError) as failure:
             site.claim(recovered, ids)
         assert failure.value.code == "WORKSPACE_BUSY"
@@ -357,7 +358,7 @@ def test_conflicting_or_corrupt_bytes_cannot_produce_new_writer(site: Site, chan
             (site.revision(ids) / "tree.json").write_text('{"schema_version":1,"schema_version":2}')
         with pytest.raises(SupervisorError) as failure:
             site.claim(owner, ids)
-        assert failure.value.code == "CORRUPT_STATE" and site.metadata(ids)["generation"] == 0
+        assert failure.value.code == "CORRUPT_STATE" and site.metadata(ids)["generation"] == 1
 
 
 def test_unknown_peer_or_expired_budget_has_no_registration_effect(site: Site) -> None:
@@ -391,7 +392,7 @@ def test_generation_fsync_failure_returns_no_grant_and_fences_owner(
         monkeypatch.setattr(workspace, "_replace_private_bytes", original)
         with pytest.raises(SupervisorError) as failure:
             site.claim(owner, ids, OTHER)
-        assert failure.value.code == "CORRUPT_STATE" and site.metadata(ids)["generation"] == 1
+        assert failure.value.code == "CORRUPT_STATE" and site.metadata(ids)["generation"] == 2
 
 
 def test_short_writes_are_completed_without_touching_canonical_data(
@@ -434,7 +435,7 @@ except SupervisorError as error:
             check=True,
         )
         assert json.loads(child.stdout)["owned"] is False and child.stderr == ""
-        assert site.metadata(ids)["generation"] == 0
+        assert site.metadata(ids)["generation"] == 1
 
 
 def test_private_tree_parser_does_not_inherit_wire_frame_limit(tmp_path: Path) -> None:
@@ -591,10 +592,10 @@ def test_shared_writer_flock_blocks_before_generation_claim(site: Site) -> None:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             with pytest.raises(SupervisorError) as failure:
                 site.claim(owner, ids)
-            assert failure.value.code == "WORKSPACE_BUSY" and site.metadata(ids)["generation"] == 0
+            assert failure.value.code == "WORKSPACE_BUSY" and site.metadata(ids)["generation"] == 1
         finally:
             os.close(fd)
-        assert ok(lambda: site.claim(owner, ids)).generation == 1
+        assert ok(lambda: site.claim(owner, ids)).generation == 2
 
 
 @pytest.mark.parametrize("deadline", [True, float("nan"), float("inf")])
@@ -627,7 +628,7 @@ def test_closed_owner_has_no_mutation_rights(site: Site) -> None:
         ids = ok(lambda: site.register(owner))
     with pytest.raises(SupervisorError) as failure:
         site.claim(owner, ids)
-    assert failure.value.code == "CORRUPT_STATE" and site.metadata(ids)["generation"] == 0
+    assert failure.value.code == "CORRUPT_STATE" and site.metadata(ids)["generation"] == 1
 
 
 def test_real_other_process_writer_lock_blocks_generation_claim(site: Site) -> None:
@@ -653,11 +654,11 @@ os.close(fd)
             assert child.stdout is not None and child.stdout.readline() == "owned\n"
             with pytest.raises(SupervisorError) as failure:
                 site.claim(owner, ids)
-            assert failure.value.code == "WORKSPACE_BUSY" and site.metadata(ids)["generation"] == 0
+            assert failure.value.code == "WORKSPACE_BUSY" and site.metadata(ids)["generation"] == 1
         finally:
             stdout, stderr = child.communicate("release\n", timeout=5)
         assert child.returncode == 0 and stdout == stderr == ""
-        assert ok(lambda: site.claim(owner, ids)).generation == 1
+        assert ok(lambda: site.claim(owner, ids)).generation == 2
 
 
 def test_deadline_expiring_during_generation_durability_cannot_issue_grant(
@@ -685,14 +686,14 @@ def test_deadline_expiring_during_generation_durability_cannot_issue_grant(
             with pytest.raises(SupervisorError) as failure:
                 site.claim(owner, ids)
             assert failure.value.code == "BACKEND_UNAVAILABLE" and persisted
-        assert site.metadata(ids)["status"] == "OWNED" and site.metadata(ids)["generation"] == 1
+        assert site.metadata(ids)["status"] == "OWNED" and site.metadata(ids)["generation"] == 2
         assert owner._bindings[ids["workspace_id"]].grant is None
 
 
 def test_directory_enumeration_stops_at_entry_limit_before_unbounded_allocation(
     site: Site, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from collections.abc import Generator, Iterator
+    from collections.abc import Iterator
     from contextlib import contextmanager
 
     original = os.scandir
@@ -768,7 +769,7 @@ def test_expired_queued_claim_returns_without_waiting_for_mutex_release(site: Si
                 owner._mutex.release()
             pending.result(2)
         assert len(outcome) == 1 and isinstance(outcome[0], SupervisorError)
-        assert outcome[0].code == "BACKEND_UNAVAILABLE" and site.metadata(ids)["generation"] == 0
+        assert outcome[0].code == "BACKEND_UNAVAILABLE" and site.metadata(ids)["generation"] == 1
 
 
 def test_mount_fact_failure_does_not_leak_the_selected_root_fd(site: Site, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -827,3 +828,193 @@ def test_valid_unicode_link_target_preserves_exact_utf8_bytes_and_hash(site: Sit
         entry = next(e for e in manifest["entries"] if e["path"] == "link")
         assert entry["sha256"] == hashlib.sha256(target.encode()).hexdigest()
         assert entry["size"] == len(target.encode())
+
+
+def legacy_genesis(site: Site, *, generation: int = 0, status: str = "AVAILABLE") -> dict[str, str]:
+    """Retain actual R0; encode the prior on-disk epoch, never fabricate a grant."""
+    with site.owner() as owner:
+        ids = ok(lambda: site.register(owner))
+    metadata = site.metadata(ids)
+    metadata.update(generation=generation, status=status)
+    if status != "AVAILABLE":
+        metadata.update(owner_namespace=ACTOR.to_dict(), active_actor=ACTOR.to_dict())
+    fd = os.open(site.state / "workspaces" / ids["workspace_id"], os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        _replace_private_bytes(fd, "workspace.json", json.dumps(metadata).encode())
+    finally:
+        os.close(fd)
+    return ids
+
+
+@contextmanager
+def admitted_owner(site: Site) -> Generator[WorkspaceAuthority]:
+    """Assert a successful closed-domain startup outcome; never catch OS/runtime errors."""
+    with ExitStack() as stack:
+        owner = ok(lambda: stack.enter_context(site.owner()))
+        yield owner
+
+
+def test_genesis_epoch_is_positive_without_writer_ownership(site: Site) -> None:
+    from fa.execution.types import Access, ViewPurpose, ViewRef
+
+    with site.owner() as owner:
+        ids = ok(lambda: site.register(owner))
+        metadata = site.metadata(ids)
+        assert metadata["generation"] == 1
+        assert metadata["status"] == "AVAILABLE"
+        assert metadata["owner_namespace"] is metadata["active_actor"] is None
+        # Shape compatibility only: this is NOT an issued or authorized pin.
+        ref = ViewRef(
+            ids["workspace_id"],
+            "view-" + "1" * 32,
+            ids["revision_id"],
+            ACTOR.run_id,
+            1,
+            Access.READ,
+            ViewPurpose.PROJECT,
+        )
+        assert ref.generation == metadata["generation"]
+        with pytest.raises(ExecutionContractError):
+            ViewRef(
+                ids["workspace_id"],
+                "view-" + "1" * 32,
+                ids["revision_id"],
+                ACTOR.run_id,
+                0,
+                Access.READ,
+                ViewPurpose.PROJECT,
+            )
+        grant = ok(lambda: site.claim(owner, ids))
+        assert grant.generation == 2
+        assert site.metadata(ids)["status"] == "OWNED"
+
+
+def test_legacy_zero_initializes_durably_once_without_ownership_or_data_changes(site: Site) -> None:
+    ids = legacy_genesis(site)
+    revision = site.revision(ids)
+    before = {str(p.relative_to(revision)): p.read_bytes() for p in revision.rglob("*") if p.is_file()}
+    assert site.metadata(ids)["generation"] == 0
+    with admitted_owner(site):
+        assert site.metadata(ids)["generation"] == 1
+        assert site.metadata(ids)["status"] == "AVAILABLE"
+        assert site.metadata(ids)["owner_namespace"] is site.metadata(ids)["active_actor"] is None
+    initialized = site.metadata(ids)
+    with admitted_owner(site) as owner:
+        assert site.metadata(ids) == initialized
+        grant = ok(lambda: site.claim(owner, ids))
+        assert grant.generation == 2
+    assert {str(p.relative_to(revision)): p.read_bytes() for p in revision.rglob("*") if p.is_file()} == before
+    assert (site.source / ".git/index").read_bytes() == b"canonical index sentinel"
+
+
+@pytest.mark.parametrize("generation", [1, 2, 257])
+def test_nonzero_available_epoch_is_never_initialized_or_rewritten(
+    site: Site, generation: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ids = legacy_genesis(site, generation=generation)
+    path = site.state / "workspaces" / ids["workspace_id"] / "workspace.json"
+    before = path.read_bytes()
+    writes: list[str] = []
+    original = _replace_private_bytes
+
+    def replace(fd: int, name: str, raw: bytes) -> None:
+        writes.append(name)
+        original(fd, name, raw)
+
+    monkeypatch.setattr(workspace, "_replace_private_bytes", replace)
+    with admitted_owner(site):
+        assert path.read_bytes() == before
+    assert writes == []
+
+
+@pytest.mark.parametrize("status", ["OWNED", "QUARANTINED"])
+def test_zero_epoch_with_ownership_is_not_initialized_or_renewed(site: Site, status: str) -> None:
+    ids = legacy_genesis(site, status=status)
+    before = site.metadata(ids)
+    with pytest.raises(SupervisorError) as failure, site.owner():
+        pass  # Entry must reject; otherwise pytest reports DID NOT RAISE.
+    assert failure.value.code == "CORRUPT_STATE"
+    assert site.metadata(ids) == before
+
+
+@pytest.mark.parametrize("blocker", ["view", "intent", "symlink-lock", "hardlink-lock", "mode-lock"])
+def test_unsafe_legacy_zero_retention_or_lock_blocks_initialization(site: Site, blocker: str) -> None:
+    ids = legacy_genesis(site)
+    path = site.state / "workspaces" / ids["workspace_id"]
+    if blocker == "view":
+        (path / "views" / ("view-" + "1" * 32)).mkdir()
+    elif blocker == "intent":
+        (path / "intent.json").write_text("unresolved")
+    elif blocker == "symlink-lock":
+        (path / "writer.lock").symlink_to(site.source / "untracked.txt")
+    elif blocker == "hardlink-lock":
+        (path / "writer.lock").write_text("lock")
+        (path / "writer.lock").chmod(0o600)
+        os.link(path / "writer.lock", path / "aliased-lock")
+    else:
+        (path / "writer.lock").write_text("lock")
+        (path / "writer.lock").chmod(0o644)
+    with pytest.raises(SupervisorError) as failure, site.owner():
+        pass  # Entry must reject; otherwise pytest reports DID NOT RAISE.
+    assert failure.value.code == "CORRUPT_STATE"
+    assert site.metadata(ids)["generation"] == 0
+    assert (site.source / "untracked.txt").read_text() == "untracked"
+
+
+def test_legacy_zero_competing_native_writer_lock_blocks_initialization(site: Site) -> None:
+    ids = legacy_genesis(site)
+    fd = os.open(site.state / "workspaces" / ids["workspace_id"] / "writer.lock", os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        with pytest.raises(SupervisorError) as failure, site.owner():
+            pass  # Entry must reject; otherwise pytest reports DID NOT RAISE.
+        assert failure.value.code == "CORRUPT_STATE"
+        assert site.metadata(ids)["generation"] == 0
+    finally:
+        os.close(fd)
+    with admitted_owner(site):
+        assert site.metadata(ids)["generation"] == 1
+
+
+def test_legacy_zero_corrupt_retained_bytes_block_before_epoch_effect(site: Site) -> None:
+    ids = legacy_genesis(site)
+    (site.revision(ids) / "data/untracked.txt").write_text("tampered retained bytes")
+    with pytest.raises(SupervisorError) as failure, site.owner():
+        pass  # Entry must reject; otherwise pytest reports DID NOT RAISE.
+    assert failure.value.code == "CORRUPT_STATE"
+    assert site.metadata(ids)["generation"] == 0
+
+
+@pytest.mark.parametrize("phase", ["before", "after", "wrong-reread"])
+def test_genesis_persistence_fault_never_admits_or_issues_a_grant(
+    site: Site, phase: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ids = legacy_genesis(site)
+    original = _replace_private_bytes
+
+    def replace(fd: int, name: str, raw: bytes) -> None:
+        if name == "workspace.json":
+            if phase == "before":
+                raise OSError("injected pre-effect persistence fault")
+            if phase == "wrong-reread":
+                value = json.loads(raw)
+                value["generation"] = 0
+                raw = json.dumps(value).encode()
+        original(fd, name, raw)
+        if name == "workspace.json" and phase == "after":
+            raise OSError("injected lost persistence acknowledgement")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(workspace, "_replace_private_bytes", replace)
+        with pytest.raises(SupervisorError) as failure, site.owner():
+            pass  # Entry must reject; otherwise pytest reports DID NOT RAISE.
+        assert failure.value.code == "CORRUPT_STATE"
+    metadata = site.metadata(ids)
+    assert metadata["generation"] == (1 if phase == "after" else 0)
+    assert metadata["status"] == "AVAILABLE"
+    assert metadata["owner_namespace"] is metadata["active_actor"] is None
+    # A separate startup can safely initialize or validate what actually persisted;
+    # it does not reconstruct a capability or turn the failed startup into success.
+    with admitted_owner(site) as owner:
+        assert site.metadata(ids)["generation"] == 1
+        assert ok(lambda: site.claim(owner, ids)).generation == 2

@@ -582,7 +582,8 @@ New-root install/provisioning remains the SLICE3 join; do not add a failing fact
 Before snapshot, deployment must already quiesce legacy canonical writers as §4 requires; ordinary
 metadata/hash checks detect conflicts, not a kernel CAS or proof of host rollout.
 
-Protected registration uses the exact §3.1 workspace.json schema, initially generation0/AVAILABLE.
+Protected registration uses the exact §3.1 workspace.json schema; E253 initially used generation0/AVAILABLE
+(historical initialization superseded by Q77/E254 genesis1 below).
 Freeze the private initial current.json schema as exactly {schema_version:1,revision_id,tree_sha256};
 the retained revision's tree.json is exactly {schema_version:1,revision_id,tree_sha256,entries}, entries
 use §5's sorted ordinary tree-entry fields, without deletions for R0. Tree hash is the existing
@@ -622,12 +623,20 @@ unimplemented; no command or writable-view permission follows from this owner gr
 [Local component evidence](evidence/i03-e253/workspace-owner.json.gz),810owning/1330broader,
 15 whole-bank assertion-only kills. The prior pre-code contract above is retained.
 
-**E254 implementation hold — Q77:** E253's generation0/AVAILABLE complete R0 cannot supply the
-positive generation required by the existing READ ViewRef/operation/receipt contracts. Do not
-fabricate an epoch or acquire a writer merely to read. Resolve
-[genesis reader generation](open-questions-2026-10-07.md#q77--genesis-reader-pin-generation-before-the-first-writer)
-before pin/view implementation; this is an explicit unresolved contract join, not an exemption.
-Q75/Q76 and final-SLICE6 rollout remain unchanged.
+**E254/Q77 resolved before code:** the operator delegated the robust production solution;
+engineering selects uniformly positive epochs. This supersedes E253's generation0 initialization:
+registration persists generation1/AVAILABLE without ownership; first writer advances to2. Existing
+AVAILABLE/generation0 records may initialize only under the existing startup lock, after exact R0
+validation and no-owner/no-views/no-intent checks plus native writer-lock acquisition. Persist and
+reread epoch1 before accepting work. Nonzero epochs never change here; unsafe or uncertain zero
+records block. No new counter, grant, protocol exception or restart renewal. See
+[Q77](open-questions-2026-10-07.md#q77--genesis-reader-pin-generation-before-the-first-writer).
+Pins/views/admission/backend still require actual implementation; positive identity shape is not
+a pin grant. Q75/Q76 and final-SLICE6 rollout remain unchanged.
+
+**E254 implementation checkpoint:** positive genesis and safe legacy initialization implemented;
+[827case/seven-kill/1347broader local evidence](evidence/i03-e254/genesis.json.gz).
+No reader grant/admission/backend or C1/C2 completion follows from positive shape compatibility.
 
 ### 4.2. Concrete IO/tool and lifecycle joins (E243)
 
