@@ -839,3 +839,161 @@ close/drain and a read-only journal send guard now exist inside the ONE Workspac
 advances CT99/CT100/CT101-103 preparation; it does not complete any SLICE step or contract.
 CT100 ManagedBashExecutor still lacks a CellBackend, so no command permit reaches a cell.
 All 35 STEP checkboxes, 17 FUNCTIONAL contracts and four final duties remain unchecked.
+
+### E258 — CellBackend episode owner, one-send discipline, cancel and restart (before code)
+
+E257 proved the authority side (admit/close/drain/trusted inputs). The remaining SLICE1
+STEP2 owner is the live cell lifecycle itself. Source-verified: there is NO backend module,
+NO episode map, NO one-send command owner and NO restart reconciliation. docker.py creates,
+inspects, attaches and force-stops; worker_client.py exchanges private frames; journal.py
+records per-operation claims. Nothing owns "one live cell per view with exactly one RUN
+send, cancelled before send, and no second cell after restart".
+
+Allowed production files: NEW src/fa/execution/backend.py; src/fa/execution/worker_client.py
+(split write from reply wait, existing semantics preserved); src/fa/execution/journal.py
+(read-only unfinished-record listing for reconciliation); src/fa/execution/docker.py
+(read-only journal accessor); src/fa/execution/workspace.py (read-only approved-profile
+accessor). NEW tests/test_execution_backend.py. Existing plan/increment/ledger/register/
+review/HANDOFF/index and E258 evidence. No new service, schema, history, receipt type or
+routing mode; the ONE journal and the ONE authority stay.
+
+Allowed test edits beyond the new module: tests/test_execution_attach.py and
+tests/test_execution_docker.py gain assertion-only oracles for their own success paths
+(an expected transport or daemon refusal becomes a failed ASSERTION about the expected
+outcome, never a leaked domain-error type). E258's producer mutations reach the worker
+transport and the owned stop, so those two modules must fail BY ASSERTION for the
+whole-bank kill to count; their expectations are unchanged, only the failure reporting
+is normalized. No existing assertion is deleted or weakened. The session configuration
+(pyproject.toml) may additionally filter ONE exact CPython 3.13 platform notice by its own
+message, as recorded in the amendments below.
+
+Mechanism:
+- CellBackend owns a private live episode map keyed by authenticated principal + NamespaceRef
+  + exact ViewRef + approved profile id. An episode holds the ORIGINAL creation request, the
+  original container id and the SOLE attach/WorkerClient. Worker PTY session ids stay
+  subordinate to the episode, so a different namespace/view can never reuse a shell named
+  "main".
+- execute() consumes the real WorkspaceAuthority admission. A fresh episode performs the
+  existing create_once -> durable CID -> start_once path and attaches once. A later command in
+  the SAME episode binds the original container id to its own journal record and reuses the
+  sole attach; it never creates or starts a second cell and never rebinds the original labels.
+- The single RUN frame write happens inside the journal send guard so a persisted cancel
+  linearizes against the WRITE, while the reply wait runs OUTSIDE that lock. A lost or late
+  reply is EXECUTION_UNKNOWN, never a resend and never a new operation id.
+- cancel() persists cancel intent for the exact command operation id BEFORE any stop, then
+  stops the OWNED cell through the original creation binding. Cancel intent is not a
+  terminal receipt and asserts no process death.
+- reconcile() inspects owned cells for uncertain records by id/name/labels and stops a
+  surviving cell; it never creates or starts a second cell and never re-runs a command.
+- The backend returns a CommandOutcome, NOT a receipt: worker text is untrusted, exit code is
+  the command's, and terminal_barrier is always False here because no independent container
+  or cgroup fact is established in this increment.
+- One cell per episode identity: concurrent commands on the same view share a single
+  per-identity creation lock, so a second cell is never created for a live episode and a
+  concurrent create is never a duplicate shell.
+- The admission scope stays open for the whole command because the work is still in
+  flight, while the journal send guard covers ONLY the RUN frame write. The reply wait
+  is outside that lock, so a cancel can be persisted while a command runs.
+- A daemon answer that violates the owned-cell contract (a foreign container name or
+  foreign labels) is PATH_DENIED, never a successful stop and never a synthetic
+  completion.
+
+Failure behaviour: unknown/duplicate operation id, forged principal/namespace/view, wrong
+profile, expired budget, closed view, cancelled-before-send and lost reply all fail closed
+with existing SupervisorError codes; no replay, no second cell, no synthetic completion.
+
+Binary DoD: native local worker over the real attach transport proves one create/start/attach
+per episode, shell state preserved across two commands in one cell with two durable records
+binding the SAME original container id, the original labels still naming the original
+operation, a foreign namespace/view getting its own cell, a duplicate operation id denied
+without a second send, cancel-before-send producing NO RUN frame, cancel during a running
+command persisting intent while the command is still running (the journal lock is not held
+across the reply wait), a lost reply yielding EXECUTION_UNKNOWN with exactly one RUN frame,
+and restart reconciliation stopping a surviving owned cell without creating a second one.
+Whole owning-bank assertion-only producer kills and exact restoration; statics and broader
+regression required. Negative proof must not rely on runtime/name errors.
+
+C0/C3 only. Actual CellBackend -> supervisor -> tool/PTY composition, receipts, independent
+terminality, seal/publication, factory/main and caller/mount cutover stay unimplemented.
+
+#### E258 amendment 1 — the scope retirement path and its killable equivalent
+
+execute() now retires the admission scope ONLY through the `with scope:` block; the
+redundant `finally: scope.close()` was removed, so there is exactly one retirement path
+and the scope's own context manager is the single owner of the admitted work.
+
+A producer mutation that leaves the scope open cannot be counted as a kill: the
+authority's shutdown waits for the gate's admitted work with NO deadline, so a leaked
+scope hangs the fixture teardown and a timeout is not a kill. The equivalent contract is
+therefore proven by a killable producer instead: the native case
+test_drain_waits_for_a_running_command_and_returns_when_it_retires requires the drain to
+STAY BLOCKED while a command is still running and to return only once that command has
+retired, and its producer mutation (WorkspaceAuthority._wait_drained: `while gate.active:`
+-> `while False:`) is killed by that assertion. The native case
+test_completed_command_leaves_no_admitted_work_behind still proves that a finished
+command leaves no admitted work behind, through the unchanged drain path.
+
+E258 amendment 2 (test-surface normalisation, no expectation changed): a command that runs
+off the main thread RECORDS its own outcome and the oracle checks that recorded outcome
+(EXECUTION_UNKNOWN or BACKEND_UNAVAILABLE for a stopped owned cell). An unhandled thread
+exception is a pytest warning, and a warning is never kill credit, so the recorded
+outcome replaces the raised one. The session filters ONE exact CPython 3.13 platform
+notice by message (the forkpty-in-a-multi-threaded-process DeprecationWarning) in
+pyproject.toml: in production the cell worker forks only on the cell's own main thread,
+while the native fixtures run that worker inside the pytest process. No assertion is
+added, removed or weakened, and no other warning class is filtered.
+
+E258 amendment 3 (the narrow warning filter is a SESSION filter): the forkpty notice can
+surface in any bank module, because a producer that wedges the transport leaves a live
+thread while a later native case forks its PTY. The single session level filter in
+pyproject.toml therefore replaces the per-module filters, so the rule is uniform and the
+proof's no-warning claim stays absolute. The notice stays VISIBLE in the pytest output of
+any run that does not use the project configuration, and the production cell worker keeps
+its own main-thread-only fork rule.
+
+E258 amendment 4 (kill credit): a kill is a call-phase ASSERTION. A setup failure means the
+case never ran and is never kill credit. A teardown failure under a producer that
+deliberately wedges the transport is a RECORDED signal and never kill credit: the baseline
+and the restored source must tear down completely clean, and every producer kill must come
+from at least one call-phase assertion with no other failure class in the call phase. The
+transport-wedging producer (the worker that never writes its frame) also trips the native
+fixture's own teardown assertion; that is recorded in the evidence, not credited.
+
+E258 amendment 5 (the declared docker.py accessor was not needed): the declaration allowed a
+read-only journal accessor in src/fa/execution/docker.py. The existing
+DockerEngine.inspect_owned and DockerCells.force_stop_owned paths already carry the
+owned-cell proof (the exact container name, the operation and view labels and the recorded
+container id), so docker.py is UNCHANGED by E258. The E258 producers reach that existing
+path to prove the owned stop, and the authority keeps the one trusted path triple.
+
+### E258 — CellBackend episode owner: local component proof (result)
+
+E258 implements the live cell episode owner in a NEW src/fa/execution/backend.py. A
+private episode map is keyed by the authenticated principal, the NamespaceRef, the EXACT
+ViewRef and the approved profile id, so a shell name alone is never an identity. One
+episode performs create -> durable container id -> start -> sole attach exactly once; a
+later command in the same episode binds the ORIGINAL container id to its OWN journal
+record and reuses the sole attach, so a second cell is never created for a live episode.
+Exactly ONE RUN frame write happens per command, inside the journal send guard, while
+the reply wait stays OUTSIDE that lock, so a cancel can be persisted while a command is
+still running. cancel() persists the exact-command intent BEFORE the owned stop, and a
+daemon answer that violates the owned-cell contract (a foreign container name or foreign
+labels) is PATH_DENIED, never a successful stop. reconcile() stops a surviving owned
+cell of an uncertain record and never creates, starts or re-runs anything. The backend
+returns a CommandOutcome, never a receipt: worker text is untrusted, the exit code is
+the command's own, and terminal_barrier is always False here because no independent
+container or cgroup fact is established in this increment. 19 new native C0/C3 cases;
+focused 7-module owning bank 369 PASS 26.05s. Whole 20-module owning bank 985 PASS 68.20s -> twenty-four whole
+985-bank assertion-only kills 1/1/2/3/1/3/2/1/1/1/5/2/1/2/16/26/6/1/40/4/7/6/15/15 ->
+restored 985 PASS 67.71s; clean collection and setup, no warning/skip/runtime/infra
+credit, every kill by a call-phase ASSERTION. All 605 frozen source/input hashes
+restored exactly. Ruff/format/Mypy clean; configured Pyrefly 0 errors with the existing
+141 suppressed/50 warnings. Broader 31-module 1505 PASS. Evidence
+notes/evidence/i03-e258/episodes.json.gz, 2666870 bytes SHA256
+299c301625545cd8f6fd69bb9a7b5bb74859f43c4e1f74f5697e040c54a30e90. NOT shipped: other
+view purposes, seal/publication/forward recovery, the real build_supervisor/main with
+closed handlers, the atomic SessionManager/tool/caller/mount cutover, receipts and
+independent terminality. SLICE1 NOT shipped; all 35 STEP checkboxes, 17 FUNCTIONAL
+contracts and four final duties remain open; all 17 production surfaces and eight joins
+stay PLANNED/UNEXECUTED at final SLICE6. No early host prerequisite, no new policy, no
+new routing mode.

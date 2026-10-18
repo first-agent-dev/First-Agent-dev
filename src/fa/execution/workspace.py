@@ -1689,6 +1689,26 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
     def _gate(self, ref: ViewRef) -> _WorkGate:
         return self._gates.setdefault(ref.view_id, _WorkGate())
 
+    @property
+    def approved_profile(self) -> ExecutionProfile | None:
+        """The single approved cell profile, or None when none was configured."""
+        return self._view_profile
+
+    def execution_trusted(self, view: ViewRef) -> tuple[NamespaceRef, Path, Path, Path] | None:
+        """The authority's own trusted namespace and source/scratch/cache triple.
+
+        A raw path is never an authorization. This exists so the backend can
+        prove that the paths it hands to Docker are the ones the authority
+        actually admitted, not paths chosen by a caller or a model.
+        """
+        inputs = self._inputs.get(view.view_id)
+        if inputs is None:
+            return None
+        owner = self._readers.get(view.view_id) if view.access is Access.READ else self._projects.get(view.view_id)
+        if owner is None or owner.ref != view:
+            return None
+        return (owner.namespace, inputs.source, inputs.scratch, inputs.cache)
+
     def _proof_only(
         self, peer: PeerIdentity, namespace: NamespaceRef, ref: ViewRef, capability: str
     ) -> _ReaderPin | _ProjectView:

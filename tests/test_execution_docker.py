@@ -404,6 +404,19 @@ def force_stop(case: Case, *, until: float | None = None) -> Any:
     return case.cells.force_stop_created(case.req, profile=profile(), deadline=deadline() if until is None else until)
 
 
+def force_stop_ok(case: Case, *, until: float | None = None) -> Any:
+    """An expected daemon refusal is a failed ASSERTION, never a leaked type.
+
+    The expected observation is unchanged; only the failure reporting is
+    normalized so a producer mutation cannot earn kill credit from an
+    unrelated error class.
+    """
+    try:
+        return force_stop(case, until=until)
+    except DockerUnavailableError as error:
+        raise AssertionError(f"expected a successful owned stop; observed {type(error).__name__}") from None
+
+
 @pytest.mark.parametrize(
     "state,known_cid",
     [("EXECUTING", False), ("EXECUTING", True), ("UNKNOWN", False), ("UNKNOWN", True), ("DONE", True)],
@@ -423,7 +436,7 @@ def test_force_stop_persists_original_cancel_before_every_daemon_leg(
     before = case.journal.lookup(OID, NS)
     assert before is not None
     endpoint.replies.extend([Reply(200, observation()), Reply(204), Reply(200, observation("exited"))])
-    observed = force_stop(case)
+    observed = force_stop_ok(case)
     assert observed.container_id == CID and observed.status == "exited" and observed.exit_code == 7
     assert not hasattr(observed, "terminal_barrier") and not hasattr(observed, "receipt")
     initial = CID if known_cid else "fa-job-" + OID.removeprefix("op-")
@@ -448,7 +461,7 @@ def test_force_stop_ack_is_not_terminality_and_409_still_observes(
 ) -> None:
     case = Case(endpoint, tmp_path)
     endpoint.replies.extend([Reply(200, observation()), Reply(ack), Reply(200, observation(status))])
-    observed = force_stop(case)
+    observed = force_stop_ok(case)
     assert observed.status == status and observed.running == (status in {"running", "paused"})
     assert observed.pid == (123 if observed.running else 0)
     assert observed.exit_code == (7 if status == "exited" else None)
@@ -464,7 +477,7 @@ def test_already_exited_force_stop_returns_fresh_inspection_without_signalling(
 ) -> None:
     case = Case(endpoint, tmp_path)
     endpoint.replies.append(Reply(200, observation("exited")))
-    observed = force_stop(case)
+    observed = force_stop_ok(case)
     assert observed.status == "exited" and observed.exit_code == 7 and len(endpoint.seen) == 1
     assert endpoint.seen[0]["method"] == "GET" and endpoint.seen[0]["journal"]["cancel_requested"] is True
     assert not hasattr(observed, "terminal_barrier")
@@ -613,8 +626,9 @@ def test_force_stop_one_absolute_deadline_and_no_late_followup(
         return data
 
     monkeypatch.setattr(case.cells._engine, "_request", observe_request)
-    with pytest.raises(TimeoutError):
+    with pytest.raises((TimeoutError, DockerUnavailableError)) as caught:
         force_stop(case, until=until)
+    assert isinstance(caught.value, TimeoutError), "the absolute deadline must expire as a timeout"
     assert len(endpoint.seen) == expire_after and budgets == [until] * (expire_after + 1)
     record = case.journal.lookup(OID, NS)
     assert record is not None and record["cancel_requested"] is True and record["state"] == "EXECUTING"
@@ -641,7 +655,7 @@ def test_force_stop_uses_actual_discovered_full_id_not_a_fixture_or_name(endpoin
     before, after = observation(), observation("exited")
     before["Id"] = after["Id"] = actual_id
     endpoint.replies.extend([Reply(200, before), Reply(204), Reply(200, after)])
-    observed = force_stop(case)
+    observed = force_stop_ok(case)
     assert observed.container_id == actual_id and observed.status == "exited"
     assert endpoint.seen[1]["path"] == f"/v1.45/containers/{actual_id}/kill?signal=SIGKILL"
     assert endpoint.seen[2]["path"] == f"/v1.45/containers/{actual_id}/json"
@@ -653,7 +667,7 @@ def test_force_stop_cancel_fences_unstarted_original_cid(endpoint: Endpoint, tmp
     case = Case(endpoint, tmp_path)
     case.journal.record_container(OID, NS, CID)
     endpoint.replies.extend([Reply(200, observation("created")), Reply(409), Reply(200, observation("created"))])
-    observed = force_stop(case)
+    observed = force_stop_ok(case)
     assert observed.status == "created" and observed.exit_code is None
     with pytest.raises(JournalError):
         with case.journal.start_once(OID, NS):

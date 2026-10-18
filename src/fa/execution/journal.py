@@ -433,6 +433,25 @@ class OperationJournal:
                         changed += 1
         return changed
 
+    def unfinished(self) -> list[dict[str, Any]]:
+        """Read-only listing of uncertain exec records for restart reconciliation.
+
+        This never creates, starts, re-runs or completes anything.
+        """
+        with self._transaction() as fd:
+            records: list[dict[str, Any]] = []
+            for name in sorted(os.listdir(fd)):
+                if not name.startswith("op-") or not name.endswith(".json"):
+                    continue
+                try:
+                    record = self._read(fd, name.removesuffix(".json"))
+                except ExecutionContractError:
+                    raise JournalError("CORRUPT_STATE") from None
+                if record is None or record["op"] != "exec" or record["state"] == "DONE":
+                    continue
+                records.append(record)
+            return records
+
     @contextmanager
     def send_guard(
         self, operation_id: str, namespace: NamespaceRef, *, view: ViewRef, input_sha256: str, deadline: float

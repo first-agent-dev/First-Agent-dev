@@ -1410,3 +1410,54 @@ candidate/verification/provisioning view owners, seal/publication/forward recove
 factory/main and atomic caller/mount cutover, other view purposes. SLICE1 NOT shipped; all 35
 STEPS/four final duties remain open; all 17 surfaces/eight joins live PLANNED/UNEXECUTED at
 final SLICE6; no early host prerequisite, no new policy or routing mode.
+
+### E258 — the cell episode owner exists; composition, receipts and terminality still open
+
+E258 source-verified the remaining SLICE1 before editing: there was NO CellBackend
+module, NO episode map, NO one-send command owner and NO restart reconciliation, and the
+journal exposed no unfinished-record listing. It now implements the live cell episode
+owner in a NEW src/fa/execution/backend.py over the existing DockerCells, WorkerClient
+and OperationJournal. The episode identity is the authenticated principal, the
+NamespaceRef, the EXACT ViewRef and the approved profile id, so a shell name is never an
+identity. One episode creates, starts and attaches exactly once; a later command in the
+same episode binds the ORIGINAL container id to its OWN journal record and reuses the
+sole attach. Exactly one RUN frame write happens per command, inside the journal send
+guard, with the reply wait OUTSIDE that lock, so a cancel can be persisted while a
+command is still running. cancel() persists the exact-command intent BEFORE the owned
+stop and refuses a cell whose name or labels are not the owned ones (PATH_DENIED).
+reconcile() stops a surviving owned cell of an uncertain record and never creates,
+starts or re-runs anything. The result is a CommandOutcome, never a receipt: worker text
+is untrusted, the exit code is the command's own, and terminal_barrier is always False
+here. 19 new native C0/C3 cases; focused 7-module owning bank 369 PASS 26.05s. Final whole 20-module owning
+bank 985 PASS 68.2s -> twenty-four whole 985-bank assertion-only kills
+1/1/2/3/1/3/2/1/1/1/5/2/1/2/16/26/6/1/40/4/7/6/15/15 -> restored 985 PASS 67.7s; clean
+collection and setup, no warning/skip/runtime/infra credit, every kill by a call-phase
+ASSERTION. All 605 frozen source/input hashes restored exactly. Ruff/format/Mypy clean;
+configured Pyrefly 0 errors with the existing 141 suppressed/50 warnings. Broader
+31-module 1505 PASS. Evidence `notes/evidence/i03-e258/episodes.json.gz`, 2666870 bytes
+SHA256 299c301625545cd8f6fd69bb9a7b5bb74859f43c4e1f74f5697e040c54a30e90; exact source,
+scripts, ordered outcomes and the pre-acceptance repairs are retained. Adversarial
+findings, all repaired BEFORE acceptance and all covered by a producer: (1) the reply
+wait sat INSIDE the journal send guard, so a cancel could not be persisted while a
+command ran, contradicting the already declared contract; the wait moved outside and the
+worker-reply-under-lock producer kills the regression; (2) execute() looked the episode
+map up itself and the create path re-checked it, so the one-cell-per-episode guard was
+masked by a second lookup; the single create-if-absent check now lives in
+_live_episode() under the per-identity creation lock; (3) the admission scope was
+retired twice (the `with scope:` block and a redundant `finally`), so no producer could
+show the retirement path; the finally was removed and the equivalent killable producer
+(the drain must wait for a running command) was added; (4) the thread-based cases raised
+their outcome out of the thread, which pytest records as a WARNING; the outcome is now
+recorded and judged by an oracle; (5) the proof plugin was loaded from outside the
+repository, which the controller import-closure audit inside the same bank correctly
+rejected, so the plugin is now loaded from inside the repository tree. One honest
+non-credit signal: the producer that wedges the worker transport (the worker that never
+writes its frame) also trips the native fixture's own teardown assertion. That teardown
+failure is recorded and never used as kill credit; the kill is the call-phase assertion,
+and the baseline and the restored source tear down completely clean. NOT shipped: other
+view purposes, seal/publication/forward recovery, the real build_supervisor/main with
+closed handlers, the atomic SessionManager/tool/caller/mount cutover, receipts and
+independent terminality. SLICE1 NOT shipped; all 35 STEP checkboxes, 17 FUNCTIONAL
+contracts and four final duties remain open; all 17 production surfaces and eight joins
+stay PLANNED/UNEXECUTED at final SLICE6. No early host prerequisite, no new policy, no
+new routing mode. Prior E257 unchanged.

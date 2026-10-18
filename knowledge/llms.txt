@@ -56,6 +56,7 @@ Task type → primary entrypoint, then secondary:
 
 ## § BY-DEMAND INDEX (Deprecated)
 
+[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e258/episodes.json.gz]: Actual CellBackend cell episode/one-send/cancel/restart;985owning/24kills/1505broader; other view purposes/seal/publication/factory/cutover/live remain open.
 [worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e257/admission.json.gz]: Actual dispatch admission/trusted inputs/close-drain;965owning/13kills/1485broader; CellBackend/cutover/other purposes/live remain open.
 [worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e256/project-views.json.gz]: Actual PROJECT working views/rooted writes;925owning/19kills/1445broader; execution admission/backend/factory/other purposes/live remain open.
 

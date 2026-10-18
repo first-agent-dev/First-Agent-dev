@@ -3,7 +3,7 @@
 > Read [`knowledge/llms.txt`](../knowledge/llms.txt) §MUST READ FIRST.
 > Current local delivery is distinct from final I03/deployed acceptance.
 
-## Current state — I02 LOCAL SHIPPED / I03 IMPLEMENTATION IN PROGRESS, 2026-10-18 / E257
+## Current state — I02 LOCAL SHIPPED / I03 IMPLEMENTATION IN PROGRESS, 2026-10-18 / E258
 
 Branch `arena/86633f17-first-agent-dev` only. Retained I02 runtime/test proof snapshot
 `a32a72fc58db4b9a5b048a9b6475649bcf3e32b4`. E230/E231 finalized planning; E232 adds the first
@@ -88,6 +88,41 @@ NOT shipped: CellBackend episodes/one-send ownership/cancel/restart/independent 
 candidate/verification/provisioning view owners, seal/publication/forward recovery, real
 factory/main and atomic caller/mount cutover. SLICE1 NOT shipped; all 35 STEPS/four final duties
 remain open; all 17 surfaces/eight joins live PLANNED/UNEXECUTED at final SLICE6. No early host
+prerequisite and no new policy or routing mode.
+
+**E258 CURRENT — the CellBackend cell episode owner; other purposes/seal/factory NEXT:**
+
+E258 implements the live cell episode owner that E257's admission now feeds: a private
+episode map keyed by authenticated principal + NamespaceRef + exact ViewRef + approved
+profile id; one create -> durable container id -> start -> sole attach per episode; a
+later command binds the ORIGINAL container id to its OWN journal record and reuses the
+sole attach, so a second cell is never created for a live episode. Exactly ONE RUN frame
+write per command, inside the journal send guard, with the reply wait OUTSIDE that lock,
+so a cancel is persisted while the command is still running. cancel() persists the
+exact-command intent BEFORE the owned stop and refuses a cell whose name or labels are
+not the owned ones (PATH_DENIED). reconcile() stops a surviving owned cell of an
+uncertain record and never creates, starts or re-runs anything. The result is a
+CommandOutcome, never a receipt: worker text is untrusted, the exit code is the
+command's own, terminal_barrier is always False here because no independent container or
+cgroup fact is established in this increment. The trusted inputs are the authority's own
+path triple; a substituted source/scratch/cache never reaches Docker. 19 new native
+C0/C3 cases; focused 7-module owning bank 369 PASS 26.05s. Whole 20-module owning bank 985 PASS 68.2s ->
+twenty-four whole 985-bank assertion-only kills
+1/1/2/3/1/3/2/1/1/1/5/2/1/2/16/26/6/1/40/4/7/6/15/15 -> restored 985 PASS 67.7s; clean
+collection and setup, no warning/skip/runtime/infra credit. All 605 frozen source/input
+hashes restored exactly. Ruff/format/Mypy clean; configured Pyrefly 0 errors with the
+existing 141 suppressed/50 warnings. Broader 31-module 1505 PASS. Evidence
+`notes/evidence/i03-e258/episodes.json.gz`, 2666870 bytes SHA256
+299c301625545cd8f6fd69bb9a7b5bb74859f43c4e1f74f5697e040c54a30e90. Five adversarial
+findings were repaired before acceptance and are covered by producers: the reply wait
+was inside the send guard; the episode map was looked up twice so the one-cell guard was
+masked; the scope was retired twice; the thread-based cases leaked their outcome as a
+pytest warning; and the proof plugin was loaded from outside the repository, which the
+controller import-closure audit in the same bank correctly rejected. NOT shipped: other
+view purposes, seal/publication/forward recovery, the real build_supervisor/main with
+closed handlers, the atomic SessionManager/tool/caller/mount cutover, receipts and
+independent terminality. SLICE1 NOT shipped; all 35 STEPS/four final duties remain open;
+all 17 surfaces/eight joins live PLANNED/UNEXECUTED at final SLICE6. No early host
 prerequisite and no new policy or routing mode.
 
 **E256 retained — actual PROJECT views/rooted writes:**

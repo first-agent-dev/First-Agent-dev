@@ -3,6 +3,9 @@
 One RUN and one control exchange in flight. Durable command reservation and
 exclusive episode ownership belong to the backend, not this transport. A lost,
 late, forged or unavailable reply poisons the channel; never reconnect/resend.
+
+The write and the reply wait are separate steps so a caller can hold a bounded
+journal guard across the FRAME WRITE only, never across a running command.
 """
 
 from __future__ import annotations
@@ -28,6 +31,16 @@ class _Pending:
     deadline: float
     event: threading.Event = field(default_factory=threading.Event)
     result: dict[str, Any] | None = None
+
+
+@dataclass
+class _Exchange:
+    """One in-flight exchange. The caller MUST await_reply or abandon it."""
+
+    request_id: str
+    pending: _Pending
+    gate: threading.Lock
+    retired: bool = False
 
 
 class WorkerClient:
@@ -82,7 +95,12 @@ class WorkerClient:
         except (OSError, DockerUnavailableError, ExecutionContractError):
             self._fail()
 
-    def request(self, raw: bytes, *, deadline: float) -> dict[str, Any]:
+    def begin(self, raw: bytes, *, deadline: float) -> _Exchange:
+        """Write ONE bounded frame and return its exchange. Never resends.
+
+        The caller must await_reply() or abandon() the returned exchange; the
+        transport stays poisoned after any write or reply failure.
+        """
         req = decode_cell_request(raw)  # Closed private request before IO/registration.
         gate = self._run_gate if req["action"] == "RUN" else self._control_gate
         if not gate.acquire(timeout=_remaining(deadline)):
@@ -103,22 +121,46 @@ class WorkerClient:
                 self._stream.write_frame(raw, deadline=deadline)
             finally:
                 self._writes.release()
-            if not pending.event.wait(_remaining(deadline)):
-                raise WorkerUnavailableError
-            _remaining(deadline)
-            if pending.result is None:
-                raise WorkerUnavailableError
-            return pending.result
         except (OSError, DockerUnavailableError, ExecutionContractError, WorkerUnavailableError):
             if registered:
                 self._fail()
+            gate.release()
+            raise WorkerUnavailableError from None
+        return _Exchange(request_id, pending, gate)
+
+    def await_reply(self, exchange: _Exchange, *, deadline: float) -> dict[str, Any]:
+        """Wait for the reply of an already sent exchange. No second frame."""
+        try:
+            limit = min(deadline, exchange.pending.deadline)
+            if not exchange.pending.event.wait(_remaining(limit)):
+                raise WorkerUnavailableError
+            _remaining(limit)
+            if exchange.pending.result is None:
+                raise WorkerUnavailableError
+            return exchange.pending.result
+        except (OSError, DockerUnavailableError, ExecutionContractError, WorkerUnavailableError):
+            self._fail()
             raise WorkerUnavailableError from None
         finally:
-            if registered:
-                with self._condition:
-                    self._pending.pop(request_id, None)
-                    self._condition.notify_all()
-            gate.release()
+            self._retire(exchange)
+
+    def abandon(self, exchange: _Exchange) -> None:
+        """Retire an exchange whose reply will never be used. Poisons nothing else."""
+        self._retire(exchange)
+
+    def _retire(self, exchange: _Exchange) -> None:
+        with self._condition:
+            if exchange.retired:
+                return
+            exchange.retired = True
+            self._pending.pop(exchange.request_id, None)
+            self._condition.notify_all()
+        exchange.gate.release()
+
+    def request(self, raw: bytes, *, deadline: float) -> dict[str, Any]:
+        """One bounded exchange: write, then wait for its own reply."""
+        exchange = self.begin(raw, deadline=deadline)
+        return self.await_reply(exchange, deadline=deadline)
 
     def close(self, *, deadline: float) -> None:
         self._fail()  # No STOP acknowledgement or process/cgroup assertion.

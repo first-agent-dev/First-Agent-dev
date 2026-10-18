@@ -6,7 +6,7 @@ import socket
 import struct
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
@@ -28,6 +28,18 @@ UPGRADE = (
     b"HTTP/1.1 101 UPGRADED\r\nContent-Type: application/vnd.docker.raw-stream\r\n"
     b"Connection: Upgrade\r\nUpgrade: tcp\r\n\r\n"
 )
+
+
+def ok[T](call: Callable[[], T]) -> T:
+    """An expected transport refusal is a failed ASSERTION, never a leaked type.
+
+    The expected outcome is unchanged; only the failure reporting is normalized
+    so a producer mutation cannot earn kill credit from an unrelated error class.
+    """
+    try:
+        return call()
+    except WorkerUnavailableError as error:
+        raise AssertionError(f"expected a successful worker exchange; observed {type(error).__name__}") from None
 
 
 @pytest.fixture
@@ -226,19 +238,26 @@ def test_real_worker_pty_state_and_controls_share_one_owned_attach(
     endpoint.replies.extend([Reply(200, observation()), Reply(raw=UPGRADE, upgraded=bridge)])
     client = WorkerClient(case.cells.attach_created(case.req, profile=profile(), deadline=until()))
     try:
-        assert client.request(run("export FA_ATTACH_CHECK=kept"), deadline=until())["exit_code"] == 0
-        observed = client.request(run('printf "%s" "$FA_ATTACH_CHECK"', "2" * 32), deadline=until())
+        assert ok(lambda: client.request(run("export FA_ATTACH_CHECK=kept"), deadline=until()))["exit_code"] == 0
+        observed = ok(lambda: client.request(run('printf "%s" "$FA_ATTACH_CHECK"', "2" * 32), deadline=until()))
         assert observed["exit_code"] == 0 and "kept" in observed["stdout"] and not observed["timed_out"]
-        assert client.request(message(rid="3" * 32), deadline=until())["sessions"] == ["main"]
+        assert ok(lambda: client.request(message(rid="3" * 32), deadline=until()))["sessions"] == ["main"]
         with ThreadPoolExecutor(max_workers=1) as executor:
-            busy = executor.submit(client.request, run("sleep 1", "4" * 32, timeout=2000), deadline=until(3))
-            control = client.request(message("LIST", rid="5" * 32), deadline=until(0.5))
+            busy = executor.submit(
+                lambda: ok(lambda: client.request(run("sleep 1", "4" * 32, timeout=2000), deadline=until(3)))
+            )
+            control = ok(lambda: client.request(message("LIST", rid="5" * 32), deadline=until(0.5)))
             assert control["sessions"] == ["main"] and not busy.done()
-            assert busy.result(3)["exit_code"] == 0
-        interrupted = client.request(message("INTERRUPT", {"session_id": "main"}, "6" * 32), deadline=until(0.5))
+            assert ok(lambda: busy.result(3))["exit_code"] == 0
+        interrupted = ok(
+            lambda: client.request(message("INTERRUPT", {"session_id": "main"}, "6" * 32), deadline=until(0.5))
+        )
         assert "message" in interrupted  # Idle Ctrl-C ACK, NOT process terminality.
-        assert client.request(message("CLOSE", {"session_id": "main"}, "7" * 32), deadline=until())["sessions"] == []
-        assert client.request(message("STOP", rid="8" * 32), deadline=until())["sessions"] == []
+        assert (
+            ok(lambda: client.request(message("CLOSE", {"session_id": "main"}, "7" * 32), deadline=until()))["sessions"]
+            == []
+        )
+        assert ok(lambda: client.request(message("STOP", rid="8" * 32), deadline=until()))["sessions"] == []
         assert len(endpoint.seen) == 2  # No per-command create/start/reattach.
     finally:
         client.close(deadline=until())
@@ -276,13 +295,15 @@ def test_out_of_order_control_and_run_are_correlated(endpoint: Endpoint) -> None
     client = WorkerClient(endpoint.engine().attach(CID, deadline=until()))
     try:
         with ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(client.request, run("literal, not executed"), deadline=until())
+            future = executor.submit(lambda: ok(lambda: client.request(run("literal, not executed"), deadline=until())))
             assert first.wait(1)
             assert (
-                client.request(message("INTERRUPT", {"session_id": "main"}, "2" * 32), deadline=until())["sessions"]
+                ok(lambda: client.request(message("INTERRUPT", {"session_id": "main"}, "2" * 32), deadline=until()))[
+                    "sessions"
+                ]
                 == []
             )
-            outcome = future.result(2)
+            outcome = ok(lambda: future.result(2))
         assert outcome["stdout"] == "ok" and outcome["exit_code"] == 7
         assert [request["action"] for request in seen] == ["RUN", "INTERRUPT"]
     finally:
@@ -374,7 +395,7 @@ def test_one_shot_status_survives_actual_worker_and_native_attach(
     worker_endpoint.replies.append(Reply(raw=UPGRADE, upgraded=bridge))
     client = WorkerClient(worker_endpoint.engine().attach(CID, deadline=until()))
     try:
-        outcome = client.request(run("printf one-shot; exit 7"), deadline=until())
+        outcome = ok(lambda: client.request(run("printf one-shot; exit 7"), deadline=until()))
         assert outcome["exit_code"] == 7 and not outcome["timed_out"]
         assert "one-shot" in outcome["stdout"] and "terminal_barrier" not in outcome
         assert done.wait(2) and exited == [7]  # Local function status, NOT actual container exit.
@@ -486,8 +507,8 @@ def test_queued_run_timeout_and_duplicate_pending_id_do_not_send_or_poison_origi
                 client.request(run("not sent", "2" * 32), deadline=until(0.03))
             with pytest.raises(WorkerUnavailableError):
                 client.request(message(), deadline=until())  # Duplicate outstanding request_id.
-            assert client.request(message(rid="3" * 32), deadline=until())["sessions"] == []
-            assert active.result(2)["stdout"] == "kept"
+            assert ok(lambda: client.request(message(rid="3" * 32), deadline=until()))["sessions"] == []
+            assert ok(lambda: active.result(2))["stdout"] == "kept"
         assert [req["request_id"] for req in seen] == ["1" * 32, "3" * 32]
         assert len(endpoint.seen) == 1
     finally:
@@ -650,15 +671,15 @@ def test_sequential_run_waits_for_atomic_reply_and_gate_retirement(
     with ThreadPoolExecutor(max_workers=1) as executor:
         pending = None
         try:
-            first = client.request(run("export FA_ATOMIC_REPLY=kept"), deadline=until(5))
+            first = ok(lambda: client.request(run("export FA_ATOMIC_REPLY=kept"), deadline=until(5)))
             assert first["exit_code"] == 0 and retiring.wait(3)
             pending = executor.submit(
-                client.request, run('printf "%s" "$FA_ATOMIC_REPLY"', "2" * 32), deadline=until(5)
+                lambda: ok(lambda: client.request(run('printf "%s" "$FA_ATOMIC_REPLY"', "2" * 32), deadline=until(5)))
             )
             assert next_at_publication.wait(3), "RUN2 did not reach the forced publication window"
             assert attempts == [True], "sequential RUN2 tested a still-retiring RUN gate"
             release_gate.set()
-            second = pending.result(5)
+            second = ok(lambda: pending.result(5))
             assert second["exit_code"] == 0 and "kept" in second["stdout"] and not second["timed_out"]
             assert attempts == [True, True] and len(endpoint.seen) == 2
         finally:

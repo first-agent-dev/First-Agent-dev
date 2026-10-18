@@ -1423,3 +1423,22 @@ tool/PTY path: cancelled queued command, private READ projection/source/scratch/
 root/cache substitution, original deadline caps and owner shutdown with live FDs. A drained
 dispatch scope is NOT worker or cgroup terminality. All live verdicts remain PLANNED/UNEXECUTED
 until final SLICE6.
+
+### E258 pre-code witness extension — PLANNED/UNEXECUTED
+
+Retain17surfaces/eight joins. I03-LIVE-17/S02/S05 must later exercise the real CellBackend
+through the installed service: one live cell per view, two commands sharing shell state with two
+durable records, cancel-before-send and cancel-during-run, lost reply, restart reconciliation of
+a surviving owned cell, and no second create/start. Local episode/one-send proof is not deployed
+cell/cgroup evidence. No host run before SLICE6.
+
+### E258 local checkpoint — the cell episode owner is local component proof
+
+The actual CellBackend now exists as code with native C0/C3 oracles over the real local
+worker and the real attach transport. The planned I03-LIVE witnesses must still exercise
+it inside the real installed service: one live cell per view under the real daemon, two
+commands sharing shell state with two durable records, cancel-before-send and
+cancel-during-run against a real container, a lost reply, restart reconciliation of a
+surviving owned cell, and no second create/start. A local episode, a drained dispatch
+scope and a daemon stop acknowledgement are NOT worker, descendant or cgroup terminality.
+All live verdicts remain PLANNED/UNEXECUTED until final SLICE6.
