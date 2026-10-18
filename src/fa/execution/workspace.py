@@ -1,7 +1,7 @@
 """Protected existing-workspace registration, R0 retention and exclusive writer.
 
 The actual owner, not a wire service or a temporary admission callback. New-root
-installation, execution admission, backend drain and publication are subsequent
+installation, backend drain and publication are subsequent
 construction steps. No factory is activated here. Legacy writers must already be
 quiesced by deployment; metadata/hash checks are not a kernel snapshot/CAS.
 """
@@ -45,9 +45,10 @@ from fa.execution.protocol import (
     _nullable,
     _object,
     _pairs,
+    decode_request,
     encode_json,
 )
-from fa.execution.supervisor import PeerIdentity, SupervisorError
+from fa.execution.supervisor import PeerIdentity, SupervisorError, operation_input_sha256
 from fa.execution.types import (
     Access,
     ExecutionContractError,
@@ -170,6 +171,107 @@ class _ProjectView:
             if fd >= 0:
                 setattr(self, name, -1)
                 os.close(fd)
+
+
+@dataclass
+class _WorkGate:
+    active: set[object] = field(default_factory=set)
+    closed: bool = False
+
+
+@dataclass(repr=False)
+class _ExecutionInputs:
+    source: Path
+    scratch: Path
+    cache: Path
+    source_fd: int
+    scratch_fd: int
+    cache_fd: int
+    context: ProtectedPlanContext
+    sealed_sha256: str | None = None
+    projection: Path | None = None
+
+    def close(self) -> None:
+        for name in ("source_fd", "scratch_fd", "cache_fd"):
+            fd = getattr(self, name)
+            if fd >= 0:
+                setattr(self, name, -1)
+                os.close(fd)
+
+
+@dataclass(repr=False)
+class WorkAdmission(AbstractContextManager["WorkAdmission"]):
+    """Actual authority-owned bounded DISPATCH scope, never a terminal receipt.
+
+    Hold through queue/create/start/send, end BEFORE waiting for command output.
+    Create/start use effect() plus journal's own once guards; RUN frame writes
+    use send(). Close/drain may win between legs. Neither scope wraps reply wait.
+    """
+
+    _owner: WorkspaceAuthority
+    _peer: PeerIdentity
+    _namespace: NamespaceRef
+    _ref: ViewRef
+    _capability: str
+    _request: dict[str, Any]
+    deadline: float
+    profile: ExecutionProfile
+    inputs: _ExecutionInputs
+    input_tree_sha256: str
+    _work: object
+    _closed: bool = False
+
+    @override
+    def __enter__(self) -> Self:
+        if self._closed:
+            raise SupervisorError("VIEW_CLOSED")
+        return self
+
+    @override
+    def __exit__(
+        self, exc_type: type[BaseException] | None, exc_value: BaseException | None, traceback: TracebackType | None
+    ) -> None:
+        self.close()
+
+    def close(self) -> None:
+        with self._owner._mutex:
+            if not self._closed:
+                self._closed = True
+                self._owner._gates[self._ref.view_id].active.discard(self._work)
+                self._owner._drained.notify_all()
+
+    @contextmanager
+    def effect(self) -> Generator[Self]:
+        with self._owner._transaction(self._peer, self.deadline):
+            if self._closed or self._owner._gate(self._ref).closed:
+                raise SupervisorError("VIEW_CLOSED")
+            self._owner._live_view(self._peer, self._namespace, self._ref, self._capability)
+            self._owner._execution_claim(
+                self._request, self._namespace, self._ref, deadline=self.deadline, continuing=True
+            )
+            self._owner._validate_inputs(self._ref, self.inputs, self.deadline)
+            _budget(self.deadline)
+            yield self
+
+    @contextmanager
+    def send(self) -> Generator[Self]:
+        """RUN frame write only. Never wrap WorkerClient's response wait here."""
+        with self.effect():
+            digest = operation_input_sha256(Operation.EXEC, self._namespace, self._ref, self._request["payload"])
+            try:
+                with self._owner.journal.send_guard(
+                    self._request["payload"]["operation_id"],
+                    self._namespace,
+                    view=self._ref,
+                    input_sha256=digest,
+                    deadline=self.deadline,
+                ):
+                    _budget(self.deadline)
+                    yield self
+            except JournalError as error:
+                if error.code in {"DURABILITY_UNKNOWN", "CORRUPT_STATE"}:
+                    self._owner._healthy = False
+                raise SupervisorError(error.code) from None
 
 
 def _budget(deadline: float) -> None:
@@ -490,7 +592,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
     """Own the existing operation journal and its startup guard for the lifetime.
 
     Existing-root ownership, immutable readers and WRITE/PROJECT working views
-    with rooted file IO are exposed. No command permit, candidate/provisioning
+    with rooted file IO and scoped dispatch admission are exposed. No candidate/provisioning
     view or backend terminality follows from this construction step.
     """
 
@@ -504,6 +606,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
         limits: InputLimits | None = None,
         excluded_paths: tuple[str, ...] = (),
         view_profile: ExecutionProfile | None = None,
+        approved_cache: Path | None = None,
     ) -> None:
         if not approved_roots or not controller_uids or any(type(uid) is not int or uid < 0 for uid in controller_uids):
             raise ExecutionContractError
@@ -511,6 +614,20 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
             not isinstance(view_profile, ExecutionProfile) or max(view_profile.uid, view_profile.gid) > 2**32 - 2
         ):
             raise ExecutionContractError
+        if approved_cache is not None and (
+            not isinstance(approved_cache, Path)
+            or not approved_cache.is_absolute()
+            or ".." in approved_cache.parts
+            or approved_cache == Path("/")
+            or approved_cache.is_relative_to(state_root)
+            or state_root.is_relative_to(approved_cache)
+            or any(
+                approved_cache.is_relative_to(root) or root.is_relative_to(approved_cache)
+                for root in approved_roots.values()
+            )
+        ):
+            raise ExecutionContractError
+        self._approved_cache = approved_cache
         self._view_profile = view_profile
         self._readers: dict[str, _ReaderPin] = {}
         self._projects: dict[str, _ProjectView] = {}
@@ -527,6 +644,9 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
         self._excluded = tuple(_parts(path, self._limits.max_depth) for path in excluded_paths)
         self._stack = ExitStack()
         self._mutex = threading.RLock()
+        self._drained = threading.Condition(self._mutex)
+        self._gates: dict[str, _WorkGate] = {}
+        self._inputs: dict[str, _ExecutionInputs] = {}
         self._bindings: dict[str, _Binding] = {}
         self._root_fds: dict[str, int] = {}
         self._catalog = -1
@@ -570,6 +690,10 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
     ) -> None:
         with self._mutex:
             self._healthy = False
+            for gate in self._gates.values():
+                gate.closed = True
+            while any(gate.active for gate in self._gates.values()):
+                self._drained.wait()
             self._stack.close()
 
     def _check(self, peer: PeerIdentity, deadline: float) -> None:
@@ -1155,8 +1279,8 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
         deadline: float,
     ) -> Generator[tuple[RootedViewIO, _ReaderPin]]:
         # Keep this coarse reader lock through IO: release/shutdown cannot close
-        # descriptors underneath a handler. Execution admission is separate work.
-        with self._transaction(peer, deadline):
+        # descriptors underneath a handler. File work shares the dispatch close/drain gate.
+        with self._transaction(peer, deadline), self._file_work(peer, namespace, view_ref, capability, deadline):
             try:
                 pin = self._reader(peer, namespace, view_ref, capability)
                 profile = self._view_profile
@@ -1223,7 +1347,13 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
         with self._transaction(peer, deadline):
             revoked = False
             try:
-                pin = self._reader_proof(peer, namespace, view_ref, capability)
+                pin = self._proof_only(peer, namespace, view_ref, capability)
+                if not isinstance(pin, _ReaderPin):
+                    raise SupervisorError("UNAUTHORIZED")
+                if pin.record["operation_ids"]:
+                    raise SupervisorError("WORKSPACE_BUSY")
+                self._gate(view_ref).closed = True
+                self._wait_drained(view_ref, deadline)
                 pin.capability = None
                 revoked = True
                 pin.record = {**pin.record, "state": "REJECTED"}
@@ -1491,7 +1621,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
         deadline: float,
         writable: bool = False,
     ) -> Generator[RootedViewIO]:
-        with self._transaction(peer, deadline):
+        with self._transaction(peer, deadline), self._file_work(peer, namespace, view_ref, capability, deadline):
             completed = False
             try:
                 view = self._project_view(peer, namespace, view_ref, capability)
@@ -1555,3 +1685,337 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
     @staticmethod
     def _write_rooted(io: RootedViewIO, path: str, content: str, expected_sha256: str | None) -> WriteResult:
         return io.write_file(path, content, expected_sha256=expected_sha256)
+
+    def _gate(self, ref: ViewRef) -> _WorkGate:
+        return self._gates.setdefault(ref.view_id, _WorkGate())
+
+    def _proof_only(
+        self, peer: PeerIdentity, namespace: NamespaceRef, ref: ViewRef, capability: str
+    ) -> _ReaderPin | _ProjectView:
+        validate_capability(capability)
+        if not isinstance(ref, ViewRef) or not isinstance(namespace, NamespaceRef):
+            raise ExecutionContractError
+        view = self._readers.get(ref.view_id) if ref.access is Access.READ else self._projects.get(ref.view_id)
+        if (
+            view is None
+            or view.capability is None
+            or not hmac.compare_digest(view.capability, capability)
+            or view.ref != ref
+            or view.namespace != namespace
+            or view.principal != peer.principal
+        ):
+            raise SupervisorError("UNAUTHORIZED")
+        return view
+
+    def _live_view(
+        self, peer: PeerIdentity, namespace: NamespaceRef, ref: ViewRef, capability: str
+    ) -> _ReaderPin | _ProjectView:
+        view = (
+            self._reader(peer, namespace, ref, capability)
+            if ref.access is Access.READ
+            else self._project_view(peer, namespace, ref, capability)
+        )
+        if self._gate(ref).closed or view.record["state"] != "OPEN":
+            raise SupervisorError("VIEW_CLOSED")
+        return view
+
+    @contextmanager
+    def _file_work(
+        self, peer: PeerIdentity, namespace: NamespaceRef, ref: ViewRef, capability: str, deadline: float
+    ) -> Generator[None]:
+        # Caller holds authority mutex through bounded native file IO.
+        _budget(deadline)
+        self._live_view(peer, namespace, ref, capability)
+        gate = self._gate(ref)
+        work = object()
+        gate.active.add(work)
+        try:
+            yield
+        finally:
+            gate.active.discard(work)
+            self._drained.notify_all()
+
+    def close_admission(
+        self, peer: PeerIdentity, namespace: NamespaceRef, *, view_ref: ViewRef, capability: str, deadline: float
+    ) -> None:
+        """Irreversible gate closure, NOT stop/terminality or permission to release."""
+        with self._transaction(peer, deadline):
+            view = self._proof_only(peer, namespace, view_ref, capability)
+            self._gate(view_ref).closed = True
+            if view.record["state"] == "OPEN":
+                view.record = {**view.record, "state": "STOPPING"}
+                try:
+                    _replace_private_bytes(view.directory, "view.json", encode_json(view.record))
+                    if _read_json(view.directory, "view.json", _VIEW_RECORD, 1024**2) != view.record:
+                        raise SupervisorError("DURABILITY_UNKNOWN")
+                    _budget(deadline)
+                except (OSError, SupervisorError):
+                    self._healthy = False
+                    raise SupervisorError("DURABILITY_UNKNOWN") from None
+
+    def _wait_drained(self, ref: ViewRef, deadline: float) -> None:
+        gate = self._gate(ref)
+        while gate.active:
+            _budget(deadline)
+            self._drained.wait(timeout=max(0, deadline - time.monotonic()))
+        _budget(deadline)
+
+    def drain(
+        self, peer: PeerIdentity, namespace: NamespaceRef, *, view_ref: ViewRef, capability: str, deadline: float
+    ) -> None:
+        with self._transaction(peer, deadline):
+            self._proof_only(peer, namespace, view_ref, capability)
+            if not self._gate(view_ref).closed:
+                raise SupervisorError("VIEW_CLOSED")
+            self._wait_drained(view_ref, deadline)
+
+    def _execution_claim(
+        self,
+        request: dict[str, Any],
+        namespace: NamespaceRef,
+        ref: ViewRef,
+        *,
+        deadline: float,
+        continuing: bool = False,
+    ) -> None:
+        try:
+            record = self.journal.lookup(request["payload"]["operation_id"], namespace, deadline=deadline)
+        except JournalError as error:
+            _budget(deadline)
+            raise SupervisorError(error.code) from None
+        digest = operation_input_sha256(Operation.EXEC, namespace, ref, request["payload"])
+        if (
+            record is None
+            or record["state"] not in ({"EXECUTING", "UNKNOWN"} if continuing else {"EXECUTING"})
+            or record["cancel_requested"]
+            or record["input_sha256"] != digest
+            or record["view_ref"] != ref.to_dict()
+        ):
+            raise SupervisorError("EXECUTION_UNKNOWN")
+
+    def admit(self, peer: PeerIdentity, request: dict[str, Any], *, deadline: float) -> WorkAdmission:
+        """Actual bounded command-dispatch admission for CellBackend, not a RUN sender."""
+        req = decode_request(encode_json(request))
+        if req["op"] != Operation.EXEC.value:
+            raise SupervisorError("INPUT_POLICY")
+        namespace = NamespaceRef(**req["namespace"])
+        raw = req["view_ref"]
+        ref = ViewRef(
+            workspace_id=raw["workspace_id"],
+            view_id=raw["view_id"],
+            base_revision=raw["base_revision"],
+            owner_run_id=raw["owner_run_id"],
+            generation=raw["generation"],
+            access=Access(raw["access"]),
+            purpose=ViewPurpose(raw["purpose"]),
+        )
+        with self._transaction(peer, deadline):
+            view = self._live_view(peer, namespace, ref, req["capability"])
+            profile = self._view_profile
+            payload = req["payload"]
+            if (
+                profile is None
+                or self._approved_cache is None
+                or payload["profile_id"] != profile.profile_id
+                or payload["timeout_ms"] > profile.max_command_ms
+                or profile.interactive != (payload["session_id"] is not None)
+            ):
+                raise SupervisorError("UNAPPROVED_PROFILE")
+            self._execution_claim(req, namespace, ref, deadline=deadline)
+            if payload["operation_id"] in view.record["operation_ids"]:
+                raise SupervisorError("EXECUTION_UNKNOWN")
+            gate = self._gate(ref)
+            work = object()
+            gate.active.add(work)
+            created = ref.view_id not in self._inputs
+            inputs: _ExecutionInputs | None = None
+            try:
+                inputs = self._ensure_inputs(view, profile, deadline)
+                self._validate_inputs(ref, inputs, deadline)
+                operation_id = payload["operation_id"]
+                if operation_id not in view.record["operation_ids"]:
+                    view.record = {**view.record, "operation_ids": [*view.record["operation_ids"], operation_id]}
+                    try:
+                        _replace_private_bytes(view.directory, "view.json", encode_json(view.record))
+                        if _read_json(view.directory, "view.json", _VIEW_RECORD, 1024**2) != view.record:
+                            raise SupervisorError("DURABILITY_UNKNOWN")
+                    except (OSError, SupervisorError):
+                        self._healthy = False
+                        raise SupervisorError("DURABILITY_UNKNOWN") from None
+                _budget(deadline)
+                return WorkAdmission(
+                    self,
+                    peer,
+                    namespace,
+                    ref,
+                    req["capability"],
+                    req,
+                    deadline,
+                    profile,
+                    inputs,
+                    view.record["input_tree_sha256"],
+                    work,
+                )
+            except BaseException:
+                gate.active.discard(work)
+                self._drained.notify_all()
+                if created:
+                    # A failed admission must not leave our own projection copy
+                    # behind; a leftover would permanently block a retry.
+                    self._inputs.pop(ref.view_id, None)
+                    if inputs is not None:
+                        inputs.close()
+                        self._discard_projection(inputs.projection)
+                raise
+
+    def _ensure_inputs(
+        self, view: _ReaderPin | _ProjectView, profile: ExecutionProfile, deadline: float
+    ) -> _ExecutionInputs:
+        existing = self._inputs.get(view.ref.view_id)
+        if existing is not None:
+            return existing
+        root = self._state / "workspaces" / view.ref.workspace_id / "views" / view.ref.view_id
+        cache = self._approved_cache
+        if cache is None:
+            raise SupervisorError("UNAPPROVED_PROFILE")
+        stage = self._state / "pending" / uuid4().hex
+        installed: Path | None = None
+        sealed: str | None = None
+        try:
+            with ExitStack() as opened:
+                cache_fd = _open_absolute(cache)
+                opened.callback(os.close, cache_fd)
+                info = os.fstat(cache_fd)
+                if info.st_uid != os.getuid() or info.st_mode & 0o022:
+                    raise SupervisorError("PATH_DENIED")
+                if isinstance(view, _ReaderPin):
+                    binding = self._binding(view.ref.workspace_id)
+                    with self._revision(binding, view.ref.base_revision, deadline) as (data, tree, _):
+                        with _private_artifact_directory(stage) as fd:
+                            for name in ("source", "scratch"):
+                                os.mkdir(name, 0o700, dir_fd=fd)
+                            self._materialize_input(data, fd, tree, profile, deadline)
+                            sealed = self._seal_readonly_source(fd, tree, deadline)
+                            _budget(deadline)
+                            parent = os.open(stage.parent, _DIRECTORY)
+                            try:
+                                _rename_directory(parent, stage.name, view.directory, "execution")
+                                installed = (
+                                    self._state
+                                    / "workspaces"
+                                    / view.ref.workspace_id
+                                    / "views"
+                                    / view.ref.view_id
+                                    / "execution"
+                                )
+                                os.fsync(parent)
+                                os.fsync(view.directory)
+                            finally:
+                                os.close(parent)
+                    root = root / "execution"
+                fds = []
+                for path in (root / "source", root / "scratch"):
+                    fd = _open_absolute(path)
+                    opened.callback(os.close, fd)
+                    fds.append(fd)
+                context = ProtectedPlanContext(root / "source", view.context.plan_ref, view.context.formal_evidence)
+                inputs = _ExecutionInputs(
+                    root / "source", root / "scratch", cache, fds[0], fds[1], cache_fd, context, sealed, installed
+                )
+                self._validate_inputs(view.ref, inputs, deadline)
+                self._stack.callback(inputs.close)
+                self._inputs[view.ref.view_id] = inputs
+                opened.pop_all()
+                return inputs
+        except OSError:
+            self._healthy = False
+            self._discard_projection(installed)
+            raise SupervisorError("DURABILITY_UNKNOWN") from None
+        except SupervisorError:
+            # Our own projection copy must not survive a failed admission.
+            self._discard_projection(installed)
+            raise
+        finally:
+            if stage.exists():
+                try:
+                    shutil.rmtree(stage)
+                except OSError:
+                    self._healthy = False
+                    raise SupervisorError("DURABILITY_UNKNOWN") from None
+
+    def _seal_readonly_source(self, stage: int, tree: dict[str, Any], deadline: float) -> str | None:
+        """READ execution source is service-owned and not cell-writable.
+
+        The container mount is read-only too; this closes the local copy so the
+        cell cannot silently corrupt its own READ source before the digest
+        recheck at the effect boundary notices. Write bits are stripped, so the
+        strict digest of the SEALED tree replaces the revision tree hash.
+        """
+        source = os.open("source", _DIRECTORY, dir_fd=stage)
+        try:
+            for entry in tree["entries"]:
+                if entry["type"] == "symlink":
+                    os.chown(entry["path"], os.getuid(), os.getgid(), dir_fd=source, follow_symlinks=False)
+                    continue
+                fd = os.open(entry["path"], _DIRECTORY if entry["type"] == "directory" else _FILE, dir_fd=source)
+                try:
+                    os.fchown(fd, os.getuid(), os.getgid())
+                    os.fchmod(fd, entry["mode"] & ~0o222)
+                finally:
+                    os.close(fd)
+            os.fchown(source, os.getuid(), os.getgid())
+            os.fchmod(source, 0o555)
+            os.fsync(source)
+            _, digest = self._snapshot(source, None, deadline)
+            return digest
+        finally:
+            os.close(source)
+
+    def _discard_projection(self, installed: Path | None) -> None:
+        """Remove ONLY our own private projection copy after a failed install.
+
+        A leftover projection would permanently block a later admission with a
+        no-clobber rename, so a failed install must not leave one behind.
+        """
+        if installed is None or not installed.exists():
+            return
+        try:
+            # A sealed READ projection is not writable; restore owner write bits
+            # on our own private copy before removing it.
+            for parent, directories, _ in os.walk(installed):
+                for name in directories:
+                    os.chmod(os.path.join(parent, name), 0o700)
+            os.chmod(installed, 0o700)
+            shutil.rmtree(installed)
+        except OSError:
+            self._healthy = False
+            raise SupervisorError("DURABILITY_UNKNOWN") from None
+
+    def _validate_inputs(self, ref: ViewRef, inputs: _ExecutionInputs, deadline: float) -> None:
+        _budget(deadline)
+        try:
+            for path, fd in (
+                (inputs.source, inputs.source_fd),
+                (inputs.scratch, inputs.scratch_fd),
+                (inputs.cache, inputs.cache_fd),
+            ):
+                current = _open_absolute(path)
+                try:
+                    if _identity(os.fstat(current)) != _identity(os.fstat(fd)):
+                        raise SupervisorError("CORRUPT_STATE")
+                finally:
+                    os.close(current)
+            cache = os.fstat(inputs.cache_fd)
+            if cache.st_uid != os.getuid() or cache.st_mode & 0o022:
+                raise SupervisorError("PATH_DENIED")
+            inputs.context.recheck()
+            if ref.access is Access.READ:
+                if inputs.sealed_sha256 is None:
+                    raise SupervisorError("CORRUPT_STATE")
+                _, digest = self._snapshot(inputs.source_fd, None, deadline)
+                if digest != inputs.sealed_sha256:
+                    raise SupervisorError("CORRUPT_STATE")
+        except ExecutionContractError:
+            raise SupervisorError("INPUT_POLICY") from None
+        except OSError:
+            raise SupervisorError("CORRUPT_STATE") from None

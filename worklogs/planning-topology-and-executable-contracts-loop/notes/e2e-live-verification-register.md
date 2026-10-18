@@ -1407,3 +1407,19 @@ cases to real installed service tests when actual admission/backend exists; no s
 All17production surfaces/eight joins retained; omission of workspace.py is rejected. Source hashes,
 pre-edit SLICE1 absence checks and local proof are in
 [evidence](evidence/i03-e256/project-views.json.gz); final-SLICE6 host order unchanged.
+
+### E257 pre-code witness extension — PLANNED/UNEXECUTED
+
+Retain17surfaces/eight joins. I03-LIVE-17/S02/S05 must later exercise actual WorkspaceAuthority
+admission/close/drain at real backend create/start/RUN send and tool handlers, cancelled queued
+commands, private READ projection/source/scratch/cache, root/cache substitution, original budgets
+and owner shutdown. Drained dispatch is not worker/cgroup terminality. No host run before SLICE6.
+
+### E257 local checkpoint — dispatch admission is local component proof
+
+Actual admission/close/drain now exists as authority code with native C0/C3 oracles. The planned
+I03-LIVE witnesses still must exercise it inside the real installed service, CellBackend and
+tool/PTY path: cancelled queued command, private READ projection/source/scratch/cache mounts,
+root/cache substitution, original deadline caps and owner shutdown with live FDs. A drained
+dispatch scope is NOT worker or cgroup terminality. All live verdicts remain PLANNED/UNEXECUTED
+until final SLICE6.

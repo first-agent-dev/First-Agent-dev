@@ -3,7 +3,7 @@
 > Read [`knowledge/llms.txt`](../knowledge/llms.txt) §MUST READ FIRST.
 > Current local delivery is distinct from final I03/deployed acceptance.
 
-## Current state — I02 LOCAL SHIPPED / I03 IMPLEMENTATION IN PROGRESS, 2026-10-18 / E256
+## Current state — I02 LOCAL SHIPPED / I03 IMPLEMENTATION IN PROGRESS, 2026-10-18 / E257
 
 Branch `arena/86633f17-first-agent-dev` only. Retained I02 runtime/test proof snapshot
 `a32a72fc58db4b9a5b048a9b6475649bcf3e32b4`. E230/E231 finalized planning; E232 adds the first
@@ -41,7 +41,56 @@ Ubuntu host test,OS isolation,managed nested acquisition or host supervisor deli
 only;Go is an indirect inherited hook-build diagnosis,not a new FA runtime/deployment requirement.
 PTY stays. Q69–Q73 resolved;Q72 remains its narrow46-links/15-files+banner repair decision.
 
-**E256 CURRENT — actual PROJECT views/rooted writes; execution admission/backend NEXT:**
+**E257 CURRENT — actual dispatch admission/close/drain; CellBackend/cutover NEXT:**
+
+E257 first corrected the reporting defect behind ten repetitive SLICE1 checkpoints: E232-E256 are
+local component implementations, NOT 1-2 completed whole contracts per checkpoint, and SLICE1
+presentation hid a real dependency order (authority is SLICE2, factory needs SLICE3, activation
+joins SLICE4). The explicit order is now recorded: admission/close/drain, then CellBackend
+episodes/one-send/cancel/restart/independent terminality, then other view purposes and
+seal/publication, then the real factory and atomic caller/mount cutover, then local full-path
+proof. Final live acceptance stays at SLICE6. No completion checkbox changed.
+
+E257 implements real authority-owned command-dispatch admission inside the SAME WorkspaceAuthority:
+admit() checks the live view proof, approved profile/timeout/mode, the original uncancelled
+journal claim and one-shot operation identity, and retains the operation id durably in view.json
+BEFORE any effect. WorkAdmission.effect() rechecks view/gate/journal/input identities under the
+original deadline; send() adds a read-only journal send guard so a persisted cancel linearizes
+against ONE bounded RUN frame write, never against reply waiting. Create/start keep their own
+once-guards; no scope wraps command output or terminality. Trusted inputs are real paths with
+pinned identities: WRITE/PROJECT uses the materialized working source plus private scratch; READ
+gets its own bounded materialized readonly projection and private scratch, never the service0600
+immutable revision. The approved dependency cache is private operator DI, absolute, service-owned,
+not group/world writable, rejected when it is a project root or the control state directory, and
+validated BEFORE any projection copy. READ projections are re-digested against the retained tree
+hash; substituted source/scratch/cache paths fail closed. PlanRef is rechecked at the effect
+boundary for both access kinds.
+
+close_admission() is irreversible: it closes the view gate, persists STOPPING with readback and
+fences the owner on retention failure. It is NOT stop, terminality or release. drain() waits for
+admitted work with the original deadline and never releases the writer, deletes source or asserts
+process death; expiry is BACKEND_UNAVAILABLE. The same gate governs file handlers, so a closed
+view denies read_file/write_file while other views stay usable. A reader holding execution
+references cannot be released as an unused file-only pin. Shutdown closes gates and waits for
+admitted scopes before releasing descriptors, so live native FDs survive until their scope retires.
+Journal lookups and the send guard are capped by the caller's absolute deadline.
+40 new native C0/C3 cases; focused 260 PASS 5.84s. Whole 19-module owning bank 965 PASS 47.8s ->
+thirteen whole 965-bank assertion-only kills 1/3/6/1/5/1/2/1/1/1/1/17/2 -> restored 965 PASS 48.5s;
+clean collection/setup/teardown, no warning/skip/runtime/infra credit. All 602 frozen source/input
+hashes restored exactly. Ruff/format/Mypy clean; configured Pyrefly 0 errors with existing
+141 suppressed/50 warnings. Broader 31-module 1485 PASS 62.19s. A native partial-send uncertainty
+defect (owner left healthy) was reproduced, repaired and covered before acceptance; the pre-fix
+failure is retained without credit. Repository tracking was restored from the verified remote
+commit b862632 after verifying all 1398 remote files matched the working tree byte-for-byte.
+Evidence `notes/evidence/i03-e257/admission.json.gz`, 2393565 bytes SHA256
+92ec2742c043cf914edb9610f0dad8b4312391d35e95cc08528cf9ae79f63275.
+NOT shipped: CellBackend episodes/one-send ownership/cancel/restart/independent terminality,
+candidate/verification/provisioning view owners, seal/publication/forward recovery, real
+factory/main and atomic caller/mount cutover. SLICE1 NOT shipped; all 35 STEPS/four final duties
+remain open; all 17 surfaces/eight joins live PLANNED/UNEXECUTED at final SLICE6. No early host
+prerequisite and no new policy or routing mode.
+
+**E256 retained — actual PROJECT views/rooted writes:**
 
 E256 source-verified remaining SLICE1 before editing: actual CellBackend/admit and factory/main
 are absent, not hidden behind completed component proof. Retain E255 readers; implement next actual
@@ -204,10 +253,12 @@ records and independent terminality; then real factory/caller/mount cutover. SLI
 SLICE2/all35STEPS/four final duties remain open. Q59/Q75/Q76/final-SLICE6 rollout unchanged.
 
 **Next (implementation, no host approval prerequisite):**
-1. Retain E253/E254 registration/writer epochs, E255 immutable readers and E256 PROJECT working views/rooted IO.
-   NEXT actual execution admit/close-admission/drain with protected profile/path triple and Q76 context.
-2. Join actual CellBackend episodes/command reservations/cancel/startup discovery and independent
-   terminality; no temporary authority. Factory/main/caller/mount activation follows the real joins.
+1. Retain E253/E254 registration/writer epochs, E255 immutable readers, E256 PROJECT working
+   views/rooted IO and E257 dispatch admission/close/drain with the approved profile/path triple.
+   NEXT actual CellBackend episodes/per-command begin/one-send/cancel/restart and independent
+   terminality, joined to the SAME authority; no temporary authority or second journal.
+2. Then other view purposes, seal/publication/recovery, real factory/main and the atomic
+   SessionManager/tool/caller/mount cutover. No permissive or failing-main stub.
 3. Q77 is resolved and implemented. Keep full-path Linux/Docker/deployed acceptance at final SLICE6.
 
 **E251 retained historical result — explicit composition seam implemented; broader RED at that source:**

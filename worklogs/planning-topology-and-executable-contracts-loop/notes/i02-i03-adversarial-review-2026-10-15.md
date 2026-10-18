@@ -1384,3 +1384,29 @@ mount cutover. Candidate/verification/provisioning view owners, seal/publication
 No generic purpose switch, dispatcher activation, temporary permit, GC or release/terminality claim.
 All35STEPS/four final duties remain open; SLICE1 NOT shipped. All17surfaces/eight joins live PLANNED/
 UNEXECUTED at final SLICE6; no early host prerequisite or new policy/routing mode.
+
+### E257 — verified remaining owners; admission component advances, composition still open
+
+E257 source-verified remaining SLICE1 before editing: actual CellBackend/admit and factory/main
+were absent. It now implements authority-owned dispatch admission, trusted execution inputs and
+irreversible close/drain in the SAME WorkspaceAuthority, with a read-only journal send guard.
+41 new native C0/C3 cases; focused 261 PASS. Final whole 19-module 966 PASS 49.5s -> sixteen
+whole 966-bank assertion-only kills 1/3/6/1/5/1/2/1/1/1/1/18/2/2/1/1 -> restored 966 PASS 47.9s;
+clean collection/setup/teardown, no warning/skip/runtime/infra credit. All 603 frozen source/input
+hashes restored exactly. Ruff/format/Mypy 31/184 clean, configured Pyrefly 0 errors with existing
+141 suppressed/50 warnings. Broader 31-module 1486 PASS 59.39s. A native partial-send uncertainty
+defect (owner left healthy) was reproduced, repaired and covered before acceptance; the pre-fix
+failure is retained without credit. The shared close gate now also governs file handlers, and a
+reader with execution references cannot be released as an unused file-only pin. Two review fixes
+were applied before acceptance: the READ execution projection is service-owned with write bits
+stripped and rechecked against the strict SEALED digest, and a failed admission removes its own
+projection copy so a retry is not permanently blocked by a no-clobber leftover.
+Evidence `notes/evidence/i03-e257/admission.json.gz`, 2393565 bytes SHA256
+92ec2742c043cf914edb9610f0dad8b4312391d35e95cc08528cf9ae79f63275; exact source/scripts, ordered
+outcomes, pre-freeze oracle diagnostic and the pre-fix partial-send failure are retained. Prior E256
+unchanged.
+NOT shipped: CellBackend episodes/one-send ownership/cancel/restart/independent terminality,
+candidate/verification/provisioning view owners, seal/publication/forward recovery, real
+factory/main and atomic caller/mount cutover, other view purposes. SLICE1 NOT shipped; all 35
+STEPS/four final duties remain open; all 17 surfaces/eight joins live PLANNED/UNEXECUTED at
+final SLICE6; no early host prerequisite, no new policy or routing mode.

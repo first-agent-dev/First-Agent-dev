@@ -1437,3 +1437,81 @@ exist; no other purpose/execution permit or cell/terminality owner.46new native 
 [Local evidence](evidence/i03-e256/project-views.json.gz). Native installed-stage-exit FD leak
 reproduced and repaired before proof; ownership now spans stage exit. Admission/backend/factory/
 candidate/provisioning/publication/caller integration remain next. No checkbox completion follows.
+
+### E257 — source assessment and explicit construction order (before code)
+
+At b862632 no complete I03 slice/product execution cutover is shipped. E232–256 are local
+component implementations, not 1–2 completed whole contracts per checkpoint. SLICE1 presentation
+hid dependencies: authority is SLICE2; factory requires SLICE3; activation joins SLICE4. Do not
+report repetitive pending steps as if component checkpoints shipped SLICE1. Actual ordering:
+1. Admission/irreversible close/drain + trusted profile/source/scratch/cache (E257 current).
+2. CellBackend episodes, per-command begin/one-send/cancel/restart/independent terminality.
+3. Other view purposes and terminal seal/publication/forward recovery.
+4. Real factory + atomic SessionManager/tool/caller/mount cutover; no permissive/failing stub.
+5. Local full-path C1/C2 and declared producer proofs; final live acceptance at SLICE6.
+No completion checkbox is changed by this clarification. All six slices/four final duties open.
+
+Allowed code workspace.py + NEW tests/test_execution_admission.py; existing spec/increment/ledger/
+register/review/HANDOFF/index + E257 evidence. Reuse one authority/journal/profile/copier, no new
+production module/service/schema/history. Approved dependency-cache path is private operator DI,
+never a wire/model path; absent config blocks execution admission, not file IO. READ execution
+gets its own bounded materialized readonly source/private scratch, not service0600 R0 mounts.
+Admission validates exact actual proof/profile/PlanRef/identities and original EXECUTING uncancelled
+journal binding before granting bounded dispatch work. Register work before effects; recheck at
+actual create/start/send boundary through scoped effect guard. Scope ends after dispatch, NOT the
+command reply/exit wait; stop must be able to signal a running command. File handlers use SAME
+view gate. Close wins => no late effect; admitted effect wins => close/drain waits for that bounded
+effect/handler. Gate active counts/conditions use existing authority lock for short transitions,
+never hold journal lock waiting on drain. Shared mutex serialization is NOT parallel scheduling.
+Persist STOPPING before acknowledging close; repeat close does not reopen. Drain waits with original
+deadline, never releases writer, deletes source, asserts terminality or interprets expiry as death.
+Persist actual operation retention before execution permission. A reader with execution references
+cannot be released as an unused file-only pin. Unknown durability fences owner. Shutdown retains
+FD owners until scoped work retires. New cache/projection identities must be rechecked before use.
+Binary C0/C3 DoD: native bytes/path triple; exact proof/profile/plan/journal/cancel negatives;
+queued close => zero effects; admitted effect => close waits; drain consumes deadline; other view
+unaffected; file IO closed by same gate; root shutdown does not close live FDs; faults retain refs/
+writer quarantine. Whole owning bank assertion-only producer mutations and exact restoration;
+actual backend/tool/PTY C1 and final-SLICE6 host proof remain unimplemented/unexecuted.
+
+### E257 implementation checkpoint — actual dispatch admission, close/drain and trusted inputs
+
+WorkspaceAuthority now owns real bounded command-dispatch admission. admit() validates the
+live view proof, the approved profile/timeout/mode, the original uncancelled journal claim and
+one-shot operation identity, then retains the operation id durably in view.json BEFORE any
+effect. WorkAdmission is an authority-owned scope: effect() rechecks view/gate/journal/input
+identities under the original deadline; send() adds the journal's read-only send guard so a
+persisted cancel linearizes against ONE bounded RUN frame write and never against reply waiting.
+Create/start keep their own once-guards; the scope never wraps command output or terminality.
+
+Trusted execution inputs are actual paths with pinned identities: a WRITE/PROJECT view uses its
+materialized working source plus private scratch; a READ view gets its own bounded materialized
+readonly projection and private scratch, never the service0600 immutable revision. The approved
+dependency cache is private operator DI, absolute, service-owned and not group/world writable; it
+is rejected when it is a project root, the control state directory or a relative path, and it is
+validated BEFORE any projection copy. READ projections are re-digested against the retained
+tree hash; substituted source/scratch/cache paths fail closed. PlanRef is rechecked at the effect
+boundary for both access kinds.
+
+close_admission() is irreversible: it closes the view gate, persists STOPPING with readback and
+fences the owner on retention failure. It is not stop, terminality or release. drain() waits for
+admitted work with the original deadline and never releases the writer, deletes source or asserts
+process death; expiry is BACKEND_UNAVAILABLE. The same gate governs file handlers, so a closed
+view denies read_file/write_file while other views stay usable. A reader holding execution
+operation references cannot be released as an unused file-only pin. Shutdown closes gates and waits
+for admitted scopes before releasing descriptors, so live native FDs survive until their scope
+retires. Journal lookups and the send guard are capped by the caller's absolute deadline, never
+by the journal's own budget alone.
+
+The READ execution projection is additionally sealed: it is service-owned with write bits
+stripped, so the cell cannot silently corrupt its own READ source, and the authority stores the
+strict digest of the SEALED tree for the effect-boundary recheck. A failed admission removes its
+own projection copy so a later retry is not permanently blocked by a no-clobber leftover.
+41 new native C0/C3 cases; focused 261 PASS. Whole 19-module owning bank 966 PASS 49.5s; sixteen
+whole-bank assertion-only producer kills 1/3/6/1/5/1/2/1/1/1/1/18/2/2/1/1 then restored 966 PASS
+47.9s; clean collection/setup/teardown, no warning/skip/runtime/infra credit. All 603 frozen
+source and input hashes restored exactly. Ruff/format, Mypy 31/184 and configured Pyrefly 0 errors
+pass; broader 31-module 1486 PASS 59.39s. A native partial-send fault originally left the owner healthy; that defect
+was reproduced, fixed and covered before acceptance. This is component proof only: CellBackend
+episodes, one-send command ownership, independent terminality, other view purposes, seal/publication,
+factory/caller/mount cutover and final-SLICE6 host acceptance remain unimplemented/unexecuted.

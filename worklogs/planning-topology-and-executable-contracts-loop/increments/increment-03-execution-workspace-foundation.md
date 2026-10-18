@@ -795,3 +795,47 @@ mount cutover. Candidate/verification/provisioning view owners, seal/publication
 No generic purpose switch, dispatcher activation, temporary permit, GC or release/terminality claim.
 All35STEPS/four final duties remain open; SLICE1 NOT shipped. All17surfaces/eight joins live PLANNED/
 UNEXECUTED at final SLICE6; no early host prerequisite or new policy/routing mode.
+
+### E257 — source assessment and explicit construction order (before code)
+
+At b862632 no complete I03 slice/product execution cutover is shipped. E232–256 are local
+component implementations, not 1–2 completed whole contracts per checkpoint. SLICE1 presentation
+hid dependencies: authority is SLICE2; factory requires SLICE3; activation joins SLICE4. Do not
+report repetitive pending steps as if component checkpoints shipped SLICE1. Actual ordering:
+1. Admission/irreversible close/drain + trusted profile/source/scratch/cache (E257 current).
+2. CellBackend episodes, per-command begin/one-send/cancel/restart/independent terminality.
+3. Other view purposes and terminal seal/publication/forward recovery.
+4. Real factory + atomic SessionManager/tool/caller/mount cutover; no permissive/failing stub.
+5. Local full-path C1/C2 and declared producer proofs; final live acceptance at SLICE6.
+No completion checkbox is changed by this clarification. All six slices/four final duties open.
+
+Allowed code workspace.py + NEW tests/test_execution_admission.py; existing spec/increment/ledger/
+register/review/HANDOFF/index + E257 evidence. Reuse one authority/journal/profile/copier, no new
+production module/service/schema/history. Approved dependency-cache path is private operator DI,
+never a wire/model path; absent config blocks execution admission, not file IO. READ execution
+gets its own bounded materialized readonly source/private scratch, not service0600 R0 mounts.
+Admission validates exact actual proof/profile/PlanRef/identities and original EXECUTING uncancelled
+journal binding before granting bounded dispatch work. Register work before effects; recheck at
+actual create/start/send boundary through scoped effect guard. Scope ends after dispatch, NOT the
+command reply/exit wait; stop must be able to signal a running command. File handlers use SAME
+view gate. Close wins => no late effect; admitted effect wins => close/drain waits for that bounded
+effect/handler. Gate active counts/conditions use existing authority lock for short transitions,
+never hold journal lock waiting on drain. Shared mutex serialization is NOT parallel scheduling.
+Persist STOPPING before acknowledging close; repeat close does not reopen. Drain waits with original
+deadline, never releases writer, deletes source, asserts terminality or interprets expiry as death.
+Persist actual operation retention before execution permission. A reader with execution references
+cannot be released as an unused file-only pin. Unknown durability fences owner. Shutdown retains
+FD owners until scoped work retires. New cache/projection identities must be rechecked before use.
+Binary C0/C3 DoD: native bytes/path triple; exact proof/profile/plan/journal/cancel negatives;
+queued close => zero effects; admitted effect => close waits; drain consumes deadline; other view
+unaffected; file IO closed by same gate; root shutdown does not close live FDs; faults retain refs/
+writer quarantine. Whole owning bank assertion-only producer mutations and exact restoration;
+actual backend/tool/PTY C1 and final-SLICE6 host proof remain unimplemented/unexecuted.
+
+### E257 checkpoint — SLICE1/2 admission foundation (no slice completion)
+
+Actual authority-owned dispatch admission, trusted source/scratch/cache inputs, irreversible
+close/drain and a read-only journal send guard now exist inside the ONE WorkspaceAuthority. This
+advances CT99/CT100/CT101-103 preparation; it does not complete any SLICE step or contract.
+CT100 ManagedBashExecutor still lacks a CellBackend, so no command permit reaches a cell.
+All 35 STEP checkboxes, 17 FUNCTIONAL contracts and four final duties remain unchecked.

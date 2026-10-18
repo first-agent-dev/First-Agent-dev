@@ -3259,3 +3259,94 @@ match archive, all old test files unchanged. Full proof925/19assertion-only kill
 broader1445 verified by independent closure checks; exact archive roundtrip. Internal links309PASS,
 diff-checkPASS. Actual owner/reader/view unit modules added to SLICE2 TESTS/verify path alongside
 all retained future integration paths, not substituted for them. No checkbox or policy changed.
+
+### E257 — source assessment and explicit construction order (before code)
+
+At b862632 no complete I03 slice/product execution cutover is shipped. E232–256 are local
+component implementations, not 1–2 completed whole contracts per checkpoint. SLICE1 presentation
+hid dependencies: authority is SLICE2; factory requires SLICE3; activation joins SLICE4. Do not
+report repetitive pending steps as if component checkpoints shipped SLICE1. Actual ordering:
+1. Admission/irreversible close/drain + trusted profile/source/scratch/cache (E257 current).
+2. CellBackend episodes, per-command begin/one-send/cancel/restart/independent terminality.
+3. Other view purposes and terminal seal/publication/forward recovery.
+4. Real factory + atomic SessionManager/tool/caller/mount cutover; no permissive/failing stub.
+5. Local full-path C1/C2 and declared producer proofs; final live acceptance at SLICE6.
+No completion checkbox is changed by this clarification. All six slices/four final duties open.
+
+Allowed code workspace.py + NEW tests/test_execution_admission.py; existing spec/increment/ledger/
+register/review/HANDOFF/index + E257 evidence. Reuse one authority/journal/profile/copier, no new
+production module/service/schema/history. Approved dependency-cache path is private operator DI,
+never a wire/model path; absent config blocks execution admission, not file IO. READ execution
+gets its own bounded materialized readonly source/private scratch, not service0600 R0 mounts.
+Admission validates exact actual proof/profile/PlanRef/identities and original EXECUTING uncancelled
+journal binding before granting bounded dispatch work. Register work before effects; recheck at
+actual create/start/send boundary through scoped effect guard. Scope ends after dispatch, NOT the
+command reply/exit wait; stop must be able to signal a running command. File handlers use SAME
+view gate. Close wins => no late effect; admitted effect wins => close/drain waits for that bounded
+effect/handler. Gate active counts/conditions use existing authority lock for short transitions,
+never hold journal lock waiting on drain. Shared mutex serialization is NOT parallel scheduling.
+Persist STOPPING before acknowledging close; repeat close does not reopen. Drain waits with original
+deadline, never releases writer, deletes source, asserts terminality or interprets expiry as death.
+Persist actual operation retention before execution permission. A reader with execution references
+cannot be released as an unused file-only pin. Unknown durability fences owner. Shutdown retains
+FD owners until scoped work retires. New cache/projection identities must be rechecked before use.
+Binary C0/C3 DoD: native bytes/path triple; exact proof/profile/plan/journal/cancel negatives;
+queued close => zero effects; admitted effect => close waits; drain consumes deadline; other view
+unaffected; file IO closed by same gate; root shutdown does not close live FDs; faults retain refs/
+writer quarantine. Whole owning bank assertion-only producer mutations and exact restoration;
+actual backend/tool/PTY C1 and final-SLICE6 host proof remain unimplemented/unexecuted.
+
+E257 pre-edit mechanism refinement: E243 explicitly permits the ORIGINAL admitted command's
+RUN after start_once leaves its journal UNKNOWN; initial admission must still be EXECUTING and
+one-shot. Use existing durable view.operation_ids to reject second admission; only the original
+live scope may continue across EXECUTING/UNKNOWN. No renewed begin or second RUN log. Active
+ownership uses in-memory identity sets, not decrementable counters, so idempotent scope cleanup
+cannot underflow or turn a missing registration into a shutdown hang. Same allowed files.
+
+E257 PRE-EDIT SEND BOUNDARY: add journal.py to allowed production files. Existing create_once/
+start_once hold journal cancellation boundary through bounded RPC; a pre-send lookup alone leaves
+a cancellation race. Add read-only OperationJournal.send_guard and WorkAdmission.send, holding
+existing journal lock ONLY through bounded worker frame write, never reply/command/drain. No second
+RUN log/claim; original scope can continue across start UNKNOWN. Native concurrent cancel-versus-
+send proof plus guard-producer mutation. Also validate approved cache BEFORE READ projection copy;
+policy denial must not install disposable execution input before configuration validation.
+
+E257 pre-edit deadline refinement: new journal send guard/authority lookup must cap lock wait by
+original caller deadline, not only journal's configured ceiling. Extend existing _transaction/lookup
+with optional deadline (old callers unchanged); send_guard requires deadline. Read-only pre-effect
+expiry may report BACKEND_UNAVAILABLE; never reclassify a failure after a possibly sent frame.
+
+E257 CONFIRMED PRE-FIX: native partial-send fault writes private sentinel then reports
+DURABILITY_UNKNOWN but leaves authority healthy (new regression assertion fails). Repair before
+acceptance: uncertain/corrupt send guard errors fence owner; retain effects and references, never
+retry or synthesize completion. Same declared source/tests; preserve failed native output.
+
+### E257 — actual dispatch admission, close/drain and trusted execution inputs
+
+Source-verified before editing: no admission owner, no close/drain gate, no execution input
+triple existed; E256 views/rooted IO were real but had no command-scope authority. Implemented in
+the SAME WorkspaceAuthority: admit(), WorkAdmission.effect()/send(), close_admission(), drain(),
+_file_work() shared gate, approved_cache private DI, READ execution projection, _ExecutionInputs
+identity pinning, and OperationJournal.send_guard with deadline-capped locking. 41 new native
+C0/C3 cases. Whole 966-owning-bank baseline 49.5s, sixteen whole-bank assertion-only kills
+1/3/6/1/5/1/2/1/1/1/1/18/2/2/1/1, restored 966 PASS 47.9s, 603 frozen hashes exact, broader
+1486 PASS 59.39s, statics clean. A partial-send uncertainty defect was found and repaired before
+acceptance; two review fixes sealed the READ projection and made a failed admission recoverable. Component proof only: CellBackend, one-send
+ownership, independent terminality, other purposes, seal/publication, factory/caller/mount
+cutover and all live acceptance remain open. SLICE1 NOT shipped; all 35 STEPS/four final duties
+open; 17 surfaces/eight joins stay PLANNED/UNEXECUTED at final SLICE6.
+
+E257 REVIEW FIX (before acceptance): READ execution projection was materialized with the cell's
+own UID and writable modes, so the cell could mutate its own READ source inside the container
+(detected later by the digest recheck, but a silent self-corruption). Production fix: seal the
+READ projection source to the service owner with no write bits, keep scratch cell-writable, and
+prove both by mode/ownership and by a privileged-tamper digest detection. Second fix: a failure
+AFTER the projection rename left a stale "execution" directory that permanently blocked retry;
+the authority now removes its own private projection copy on that failure and fences the owner if
+removal fails. Same allowed files; add native cases for both.
+
+E257 REVIEW FIX 2 (before acceptance): the READ projection digest was still compared to the
+REVISION tree hash, which is impossible once write bits are stripped. The authority now stores the
+strict digest of the SEALED projection and rechecks that, so a privileged tamper is still detected.
+Also a failed admission now removes its own projection copy and reopens the retry path instead of
+leaving a no-clobber blocker. Three new whole-bank producer kills cover seal, discard and recheck.

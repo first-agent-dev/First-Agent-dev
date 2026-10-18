@@ -8,10 +8,11 @@ Reuse the existing private IO primitives, not a second database/history.
 from __future__ import annotations
 
 import copy
+import math
 import os
 import stat
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -162,10 +163,15 @@ class OperationJournal:
             raise JournalError("DURABILITY_UNKNOWN") from None
 
     @contextmanager
-    def _transaction(self) -> Iterator[int]:
+    def _transaction(self, *, deadline: float | None = None) -> Iterator[int]:
+        if deadline is not None and (type(deadline) not in {int, float} or not math.isfinite(deadline)):
+            raise ExecutionContractError
+        limit = time.monotonic() + self._lock_timeout
+        if deadline is not None:
+            limit = min(limit, deadline)
         try:
             with _private_artifact_directory(self._directory) as fd:
-                with _admission_lock(fd, deadline=time.monotonic() + self._lock_timeout):
+                with _admission_lock(fd, deadline=limit):
                     yield fd
         except OSError:
             # A replace may already be visible when directory fsync fails. Never
@@ -262,8 +268,10 @@ class OperationJournal:
             self._write(fd, record, req["capability"])
             return Reservation(True, record)
 
-    def lookup(self, operation_id: str, namespace: NamespaceRef) -> dict[str, Any] | None:
-        with self._transaction() as fd:
+    def lookup(
+        self, operation_id: str, namespace: NamespaceRef, *, deadline: float | None = None
+    ) -> dict[str, Any] | None:
+        with self._transaction(deadline=deadline) as fd:
             return self._bound(fd, operation_id, namespace, missing_ok=True)
 
     def _bound(
@@ -424,3 +432,26 @@ class OperationJournal:
                         self._write(fd, record)
                         changed += 1
         return changed
+
+    @contextmanager
+    def send_guard(
+        self, operation_id: str, namespace: NamespaceRef, *, view: ViewRef, input_sha256: str, deadline: float
+    ) -> Generator[None]:
+        """Serialize cancel with ONE bounded frame write, never with reply waiting.
+
+        This is a read-only guard, NOT begin/reclaim or a second RUN journal.
+        The backend owns the sole send; original start may have left UNKNOWN.
+        """
+        _hex_id(input_sha256, "", 64)
+        with self._transaction(deadline=deadline) as fd:
+            record = self._bound(fd, operation_id, namespace)
+            if (
+                record is None
+                or record["op"] != "exec"
+                or record["state"] not in {"EXECUTING", "UNKNOWN"}
+                or record["cancel_requested"]
+                or record["view_ref"] != view.to_dict()
+                or record["input_sha256"] != input_sha256
+            ):
+                raise JournalError("EXECUTION_UNKNOWN")
+            yield
