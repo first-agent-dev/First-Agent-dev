@@ -294,13 +294,13 @@ CONTRACTS:
     registered workspace without transferring session DB/history ownership; one writer remains.
     Validate legacy manifests/run bindings; no blanket guard removal or second session manager.
     Future children inherit parent ownership/view/cancel scope; workflow subagents stay absent.
-TESTS: tests/test_execution_view_io.py, tests/test_managed_workspace.py, tests/test_session_lifecycle.py, tests/test_execution_project_tools.py, tests/integration/test_workspace_views.py   (NEW interfaces; existing session lifecycle tests retained)
+TESTS: tests/test_execution_view_io.py, tests/test_execution_workspace.py, tests/test_execution_readers.py, tests/test_execution_views.py, tests/test_managed_workspace.py, tests/test_session_lifecycle.py, tests/test_execution_project_tools.py, tests/integration/test_workspace_views.py   (NEW interfaces; existing session lifecycle tests retained)
 ```verify
-uv run pytest tests/test_execution_view_io.py tests/test_managed_workspace.py tests/test_session_lifecycle.py tests/test_execution_project_tools.py -q
+uv run pytest tests/test_execution_view_io.py tests/test_execution_workspace.py tests/test_execution_readers.py tests/test_execution_views.py tests/test_managed_workspace.py tests/test_session_lifecycle.py tests/test_execution_project_tools.py -q
 FA_REQUIRE_EXECUTION_HOST=1 uv run pytest tests/integration/test_workspace_views.py -q -m execution_host
 ```
-- [ ] STEP1: retain E245 internal execution/view_io.py and its real-descriptor C0/C3 bank per §4.2 E244 (no admission/CT completion claim); retain E253 actual WorkspaceAuthority protected existing-root registration/current/R0/writer generation/startup fencing; NEXT construct pins/views plus admit/close-admission/drain semantics per §§2.2/4.2, not a second lock service; reject root aliases/overlaps/rebind and quiesce before R0 (exit: two OS processes race for one workspace and exactly one obtains a durably advanced writer; denied/stale/closed admissions produce no launch/write; independent pins retain original bytes across generation changes)
-- [ ] STEP2: implement create_view/_materialize_input and rooted read/write/edit on admitted descriptors per §§4–4.2 before provisioning consumes them; keep private-metadata chmod helpers off project parents; preserve dirty/staged/untracked/deleted bytes and canonical index, enforce copy/link/secret/size policy and private-Git limitations; consume STEP1 descriptor IO under actual admission, private same-filesystem staging and explicit profile/protected-PlanRef binding (exit: exact tree/index/sentinel oracles pass; link/special/limit/root-swap failures leave no returned grant or partial revision; expected-SHA conflict and post-admission rename do not silently succeed or touch canonical/control paths)
+- [ ] STEP1: retain E245 internal execution/view_io.py and its real-descriptor C0/C3 bank per §4.2 E244 (no admission/CT completion claim); retain E253 actual WorkspaceAuthority protected existing-root registration/current/R0/writer generation/startup fencing; retain E255 actual immutable reader pins/rooted reads/release; retain E256 actual WRITE/PROJECT views/rooted IO; NEXT construct execution admit/close-admission/drain semantics per §§2.2/4.2, not a second lock service; reject root aliases/overlaps/rebind and quiesce before R0 (exit: two OS processes race for one workspace and exactly one obtains a durably advanced writer; denied/stale/closed admissions produce no launch/write; independent pins retain original bytes across generation changes)
+- [ ] STEP2: retain E256 actual WRITE/PROJECT create_view/_materialize_input and rooted read/write; NEXT complete other view purposes and actual execution-admitted read/write/edit on retained descriptors per §§4–4.2 before provisioning consumes them; keep private-metadata chmod helpers off project parents; preserve dirty/staged/untracked/deleted bytes and canonical index, enforce copy/link/secret/size policy and private-Git limitations; consume STEP1 descriptor IO under actual admission, private same-filesystem staging and explicit profile/protected-PlanRef binding (exit: exact tree/index/sentinel oracles pass; link/special/limit/root-swap failures leave no returned grant or partial revision; expected-SHA conflict and post-admission rename do not silently succeed or touch canonical/control paths)
 - [ ] STEP3: inject managed provisioner into existing SessionManager before _new_session provisioning, reserve its real provisioning RunContext via early existing DB/begin_run per §4.2, update both reverse-owner call sites for explicit registered references and fail non-READY; preserve session DB/run reservations and validate legacy records under authority; implement the publication-dependent provisioning leg with SLICE3, not host Git fallback (exit: new/resume/new-session-reuse, busy mutation, corrupt manifest, provision failure, DB/manifest failure after workspace commit and legacy run-ID tests pass; registered committed bytes are never rmtree cleanup targets)
 - [ ] STEP4: wire actual tool builders and SessionState internal binding per §4.2: controller fuzzy matching/telemetry, supervisor rooted writes, same-view bounded reads and cell-local existing search/reach/PDF implementations; no new public tools/search service or private state mount; join real authority/backend factory before disposable integration (exit: actual registry tools and PTY observe each other's edits with blackboard on/off and zero host Git/version-stamp reads, active search sees a new symbol, reader search stays pinned, artifacts retain their controller path, PDF/binary/large/truncated/helper-unavailable results are explicit and no canonical fallback occurs; seal/import alias tests complete with SLICE3)
 - [ ] STEP5: record CT101–CT103 whole-bank full-path producer kills plus same-inode/different-label contention, queued revoke/stop races, restart and cleanup; accumulate actual Docker/kernel runs for final SLICE6 without substituting unit fixtures (exit: every named producer removal breaks an executed assertion, including no late launch/write after closed admission; all required host cases non-skipped, exact source restored, no leftover live cell or lost pin)
@@ -730,3 +730,68 @@ Pins/read ownership is component proof, NOT writable create_view/materialization
 admit/close-admission/drain, CellBackend episodes/restart/terminality, service/factory or caller/mount
 cutover. Those are NEXT. SLICE1 NOT shipped; all35STEPS/four final duties remain open. Q75–77
 unchanged. Inventory17 production surfaces/eight joins; all live UNEXECUTED, final-SLICE6 only.
+
+### E256 pre-code — verified remaining SLICE1 and working PROJECT view dependency
+
+Source inspection at9fe2a6c: supervisor.py has dispatcher/reply cache, no build_supervisor/main;
+backend.py absent; WorkspaceAuthority has no create_view/write_file/admit/close-admission/drain.
+DockerCells and WorkerClient are implemented components, not episode/terminality owners. Retain
+E255 pins; do not call them unimplemented or equate their coarse IO lock with execution admission.
+SLICE1 STEP1 composition, STEP2 backend, STEP3 real factory/caller/mount cutover and STEP4 full-path
+host acceptance remain unchecked. Dependency-ready next: CT102/103 PROJECT working-view ownership.
+Allowed code workspace.py + NEW tests/test_execution_views.py; supporting existing spec/increment/
+ledger/register/review/HANDOFF/index + new E256 evidence. No new production module or service.
+Implement create_view for the concrete WRITE/PROJECT construction path; do not expose dispatcher
+handlers or pretend provisioning/candidate/verification views or execution permits exist. Trusted
+formal policy/actual PlanRef and explicit approved profile remain private required inputs. Owner
+proof authorizes creation, distinct view proof authorizes IO. Copy the validated current revision
+using existing bounded no-follow _Capture; only new copied files/directories get approved profile
+UID/GID and logical0777 modes (scratch/new source root0755). Canonical bytes/index/modes unchanged.
+Use private stage then fsync/no-clobber rename/exact view.json reread before acknowledgement; no
+secret-bearing metadata. Retain source/view FDs and exact namespace/principal/epoch/ref/context;
+read/write reuse E245 on the SAME materialized tree. Independent pins still use immutable revision.
+Recheck actual source/view/registration/plan identities under original-deadline IO lock. This is
+file-handler ownership, not command admission. Installation/post-write durability ambiguity fences
+owner; no rollback of installed data, cell terminality claim, view GC or unused-writer release.
+Binary DoD: native exact dirty/binary/link/mode/UID/tree/index observations; cross-proof denials,
+read-your-writes and simulated external private-tree edit visibility; old reader unchanged; stale
+SHA/protected/plan/root substitution/restart/fsync/deadline/cleanup negatives. C0/C3 only. Full owning
+bank baseline/assertion-only producer kills/restoration plus statics/broader required. Full tool/PTY,
+backend/factory/kernel C1/C2 and final-SLICE6 live evidence stay open. No new policy/routing mode.
+
+### E256 implementation checkpoint
+
+E256 source-verified remaining SLICE1 before editing: actual CellBackend/admit and factory/main
+are absent, not hidden behind completed component proof. Retain E255 readers; implement next actual
+CT102/103 dependency inside SAME WorkspaceAuthority: create_view for WRITE/PROJECT, bounded dirty
+input materialization, durable secret-free view retention and distinct principal/namespace/exact-ref
+view proof. Existing copier and RootedViewIO reused, no new service/module/dependency or clean Git
+checkout. Current retained input verified; canonical/root conflict denies. Newly copied source has
+logical0777 modes and explicit approved profile UID/GID; scratch0755, no protected Git/env/control
+copy. Native C0 uses actual service UID/GID to reach real operations, NOT deployed different-UID
+ownership or mount evidence. Install uses private stage/fsync/no-clobber/exact reread before grant.
+write_file/_write_rooted and read_file use SAME working tree; independent READ pins keep old bytes.
+Actual PlanRef is bound/rechecked; closed/stale/forged/substituted views deny before IO. Post-write
+identity/deadline/context-close/fsync ambiguity fences owner and retains effects, no clean success.
+File handlers hold original-deadline lock through IO; this is NOT command admission/drain.
+Source src/fa/execution/workspace.py:create_view:1259, _materialize_input:1366,
+_install_project:1409, _project_view:1431, _project_io:1484,
+write_file:1538, _write_rooted:1556.
+46 new C0/C3 native cases;192focusedPASS4.71s. ALL old test files unchanged. Native stage-context
+exit fault after install reproduced transient FD leak24!=23 before repair. ExitStack now owns
+transient descriptors across that boundary and transfers only after view registration; native
+negative proof/cleanup producer retained. No source acceptance before repair. Directory-swap fixture
+preserves exact valid metadata AND original source identity to avoid masked deletion. Rooted-write
+counterfactual returns closed typed hash/size data; byte/existence oracles run BEFORE consumers.
+Final whole18-module925PASS49.62s → nineteen whole925-bank assertion-only kills
+30/34/4/1/1/2/3/1/1/1/1/1/2/14/1/1/1/1/1 → restored925PASS46.28s. Clean collection/setup/teardown; no warning/skip/
+runtime/infra credit. All602 frozen source/input hashes restored. Ruff/format31PASS, Mypy31/184PASS;
+configured Pyrefly0errors with existing141suppressed/50warnings. Broader31-module1445PASS60.60s.
+Evidence `notes/evidence/i03-e256/project-views.json.gz`, 2153879bytes SHA256df5a5f4697dc31422f52bff943e420ebfc5a29307b73900f20498160277d7518; exact source/scripts/
+ordered outcomes/pre-fix diagnostics and pre-edit SLICE1 inventory retained. Prior E255 unchanged.
+NEXT actual per-workspace execution admission/close/drain with approved profile/path triple, then
+CellBackend episode/per-command/cancel/restart/independent terminality and actual factory/caller/
+mount cutover. Candidate/verification/provisioning view owners, seal/publication remain unimplemented.
+No generic purpose switch, dispatcher activation, temporary permit, GC or release/terminality claim.
+All35STEPS/four final duties remain open; SLICE1 NOT shipped. All17surfaces/eight joins live PLANNED/
+UNEXECUTED at final SLICE6; no early host prerequisite or new policy/routing mode.

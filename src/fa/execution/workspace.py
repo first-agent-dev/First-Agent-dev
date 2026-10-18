@@ -1,7 +1,7 @@
 """Protected existing-workspace registration, R0 retention and exclusive writer.
 
 The actual owner, not a wire service or a temporary admission callback. New-root
-installation, writable views/execution admission, backend drain and publication are subsequent
+installation, execution admission, backend drain and publication are subsequent
 construction steps. No factory is activated here. Legacy writers must already be
 quiesced by deployment; metadata/hash checks are not a kernel snapshot/CAS.
 """
@@ -65,6 +65,7 @@ from fa.execution.view_io import (
     ReadResult,
     RootedViewIO,
     ViewIOError,
+    WriteResult,
     _fingerprint,
     _identity,
     _parts,
@@ -144,6 +145,26 @@ class _ReaderPin:
     def close(self) -> None:
         self.capability = None
         self.entries.clear()
+        for name in ("source", "directory"):
+            fd = getattr(self, name)
+            if fd >= 0:
+                setattr(self, name, -1)
+                os.close(fd)
+
+
+@dataclass(repr=False)
+class _ProjectView:
+    ref: ViewRef
+    namespace: NamespaceRef
+    principal: str
+    capability: str | None
+    record: dict[str, Any]
+    source: int
+    directory: int
+    context: ProtectedPlanContext
+
+    def close(self) -> None:
+        self.capability = None
         for name in ("source", "directory"):
             fd = getattr(self, name)
             if fd >= 0:
@@ -468,9 +489,9 @@ class _Binding:
 class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
     """Own the existing operation journal and its startup guard for the lifetime.
 
-    Existing-root ownership and immutable reader retention/IO are exposed
-    in this construction step. There is no permit for a command or writable view
-    until the subsequent real view/admission/backend join is implemented.
+    Existing-root ownership, immutable readers and WRITE/PROJECT working views
+    with rooted file IO are exposed. No command permit, candidate/provisioning
+    view or backend terminality follows from this construction step.
     """
 
     def __init__(
@@ -492,6 +513,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
             raise ExecutionContractError
         self._view_profile = view_profile
         self._readers: dict[str, _ReaderPin] = {}
+        self._projects: dict[str, _ProjectView] = {}
         self._state = state_root
         self._roots = dict(approved_roots)
         for root_id, path in self._roots.items():
@@ -1176,6 +1198,11 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
         max_bytes: int,
         deadline: float,
     ) -> ReadResult:
+        if not isinstance(view_ref, ViewRef):
+            raise ExecutionContractError
+        if view_ref.access is Access.WRITE:
+            with self._project_io(peer, namespace, view_ref=view_ref, capability=capability, deadline=deadline) as io:
+                return io.read_file(path, offset_bytes=offset_bytes, max_bytes=max_bytes)
         with self._reader_io(peer, namespace, view_ref=view_ref, capability=capability, deadline=deadline) as (io, pin):
             result = io.read_file(path, offset_bytes=offset_bytes, max_bytes=max_bytes)
             entry = pin.entries.get(path)
@@ -1211,3 +1238,320 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                     self._healthy = False
                     raise SupervisorError("DURABILITY_UNKNOWN") from None
                 raise
+
+    def _writer_proof(
+        self, peer: PeerIdentity, namespace: NamespaceRef, workspace_id: str, capability: str
+    ) -> _Binding:
+        validate_capability(capability)
+        if not isinstance(namespace, NamespaceRef):
+            raise ExecutionContractError
+        binding = self._binding(workspace_id)
+        if (
+            binding.metadata["status"] != "OWNED"
+            or binding.principal != peer.principal
+            or binding.metadata["active_actor"] != namespace.to_dict()
+            or binding.grant is None
+            or not hmac.compare_digest(binding.grant, capability)
+        ):
+            raise SupervisorError("UNAUTHORIZED")
+        return binding
+
+    def create_view(
+        self,
+        peer: PeerIdentity,
+        namespace: NamespaceRef,
+        *,
+        workspace_id: str,
+        capability: str,
+        plan_ref: PlanRef | None,
+        formal_evidence: bool,
+        deadline: float,
+    ) -> GrantReply:
+        """Construct an actual WRITE/PROJECT view; not a command/execution permit.
+
+        Other purposes require their real candidate/provisioning owners, not a
+        caller-controlled purpose switch or a permissive generic view factory.
+        """
+        with self._transaction(peer, deadline):
+            binding = self._writer_proof(peer, namespace, workspace_id, capability)
+            profile = self._view_profile
+            if profile is None:
+                raise SupervisorError("UNAPPROVED_PROFILE")
+            stage = self._state / "pending" / uuid4().hex
+            installed = False
+            try:
+                self._unchanged(binding, deadline)
+                with (
+                    self._revision(binding, binding.current["revision_id"], deadline) as (data, tree, _),
+                    ExitStack() as descriptors,
+                ):
+                    context = ProtectedPlanContext(
+                        self._state / "workspaces" / workspace_id / "revisions" / tree["revision_id"] / "data",
+                        plan_ref,
+                        formal_evidence,
+                    )
+                    context.recheck()
+                    ref = ViewRef(
+                        workspace_id,
+                        "view-" + uuid4().hex,
+                        tree["revision_id"],
+                        namespace.run_id,
+                        binding.metadata["generation"],
+                        Access.WRITE,
+                        ViewPurpose.PROJECT,
+                    )
+                    grant = GrantReply(Operation.CREATE_VIEW, secrets.token_hex(32), ref, None, None)
+                    record = {
+                        "schema_version": 1,
+                        "view_ref": ref.to_dict(),
+                        "actor_namespace": namespace.to_dict(),
+                        "state": "OPEN",
+                        "input_tree_sha256": tree["tree_sha256"],
+                        "sealed_manifest_id": None,
+                        "operation_ids": [],
+                        "candidate_scope": None,
+                        "plan_ref": context.to_plan_ref(),
+                    }
+                    _check(_VIEW_RECORD, record)
+                    encoded = _canonical(record).decode("utf-8")
+                    if any(secret in encoded for secret in (capability, grant.capability)):
+                        raise ExecutionContractError
+                    with _private_artifact_directory(stage) as fd:
+                        for name in ("source", "scratch"):
+                            os.mkdir(name, 0o700, dir_fd=fd)
+                        self._materialize_input(data, fd, tree, profile, deadline)
+                        _replace_private_bytes(fd, "view.json", encode_json(record))
+                        self._unchanged(binding, deadline)
+                        _budget(deadline)
+                        directory = self._install_project(binding, stage, record, deadline)
+                        descriptors.callback(os.close, directory)
+                        installed = True
+                    source = os.open("source", _DIRECTORY, dir_fd=directory)
+                    descriptors.callback(os.close, source)
+                    context = ProtectedPlanContext(
+                        self._state / "workspaces" / workspace_id / "views" / ref.view_id / "source",
+                        plan_ref,
+                        formal_evidence,
+                    )
+                    context.recheck()
+                    _budget(deadline)
+                    view = _ProjectView(
+                        ref, namespace, peer.principal, grant.capability, record, source, directory, context
+                    )
+                    self._projects[ref.view_id] = view
+                    self._stack.callback(view.close)
+                    descriptors.pop_all()
+                    return grant
+            except SupervisorError:
+                if installed or not self._healthy:
+                    self._healthy = False
+                    raise SupervisorError("DURABILITY_UNKNOWN") from None
+                raise
+            except ExecutionContractError:
+                if installed:
+                    self._healthy = False
+                    raise SupervisorError("DURABILITY_UNKNOWN") from None
+                raise SupervisorError("INPUT_POLICY") from None
+            except OSError:
+                self._healthy = False
+                raise SupervisorError("DURABILITY_UNKNOWN") from None
+            finally:
+                if stage.exists():
+                    try:
+                        shutil.rmtree(stage)  # Only uninstalled private copy, never a view/revision.
+                    except OSError:
+                        self._healthy = False
+                        raise SupervisorError("DURABILITY_UNKNOWN") from None
+
+    def _materialize_input(
+        self,
+        data: int,
+        stage: int,
+        tree: dict[str, Any],
+        profile: ExecutionProfile,
+        deadline: float,
+    ) -> None:
+        with ExitStack() as stack:
+            source = os.open("source", _DIRECTORY, dir_fd=stage)
+            stack.callback(os.close, source)
+            actual, _ = self._snapshot(data, source, deadline)
+            if len(actual) != len(tree["entries"]):
+                raise SupervisorError("CORRUPT_STATE")
+            for got, wanted in zip(actual, tree["entries"], strict=True):
+                got["mode"] = wanted["mode"]
+                if got != wanted:
+                    raise SupervisorError("CORRUPT_STATE")
+            # All targets are new, private, fully copied and not yet reachable by cells.
+            # Children first: restoring a restrictive parent must not hinder its children.
+            for entry in sorted(tree["entries"], key=lambda e: e["path"].count("/"), reverse=True):
+                _budget(deadline)
+                path = entry["path"]
+                if entry["type"] == "symlink":
+                    os.chown(path, profile.uid, profile.gid, dir_fd=source, follow_symlinks=False)
+                else:
+                    fd = os.open(path, _DIRECTORY if entry["type"] == "directory" else _FILE, dir_fd=source)
+                    try:
+                        os.fchown(fd, profile.uid, profile.gid)
+                        os.fchmod(fd, entry["mode"])
+                        os.fsync(fd)
+                    finally:
+                        os.close(fd)
+            for name in ("source", "scratch"):
+                fd = os.open(name, _DIRECTORY, dir_fd=stage)
+                try:
+                    os.fchown(fd, profile.uid, profile.gid)
+                    os.fchmod(fd, 0o755)
+                    os.fsync(fd)
+                finally:
+                    os.close(fd)
+            os.fsync(stage)
+
+    def _install_project(self, binding: _Binding, stage: Path, record: dict[str, Any], deadline: float) -> int:
+        with ExitStack() as stack:
+            parent = os.open(stage.parent, _DIRECTORY)
+            stack.callback(os.close, parent)
+            views = os.open("views", _DIRECTORY, dir_fd=binding.fd)
+            stack.callback(os.close, views)
+            _private(views)
+            _budget(deadline)
+            _rename_directory(parent, stage.name, views, record["view_ref"]["view_id"])
+            os.fsync(parent)
+            os.fsync(views)
+            result = os.open(record["view_ref"]["view_id"], _DIRECTORY, dir_fd=views)
+            try:
+                _private(result)
+                if _read_json(result, "view.json", _VIEW_RECORD, 1024**2) != record:
+                    raise SupervisorError("DURABILITY_UNKNOWN")
+            except BaseException:
+                self._healthy = False
+                os.close(result)
+                raise
+            return result
+
+    def _project_view(
+        self,
+        peer: PeerIdentity,
+        namespace: NamespaceRef,
+        ref: ViewRef,
+        capability: str,
+    ) -> _ProjectView:
+        validate_capability(capability)
+        if not isinstance(ref, ViewRef) or not isinstance(namespace, NamespaceRef):
+            raise ExecutionContractError
+        view = self._projects.get(ref.view_id)
+        if (
+            view is None
+            or view.capability is None
+            or not hmac.compare_digest(view.capability, capability)
+            or view.principal != peer.principal
+            or view.namespace != namespace
+            or view.ref != ref
+        ):
+            raise SupervisorError("UNAUTHORIZED")
+        binding = self._binding(ref.workspace_id)
+        if (
+            binding.metadata["status"] != "OWNED"
+            or binding.grant is None
+            or binding.metadata["active_actor"] != namespace.to_dict()
+            or binding.metadata["generation"] != ref.generation
+            or binding.principal != peer.principal
+        ):
+            raise SupervisorError("STALE_REVISION")
+        if view.record["state"] != "OPEN":
+            raise SupervisorError("VIEW_CLOSED")
+        self._recheck(binding)
+        with ExitStack() as stack:
+            views = os.open("views", _DIRECTORY, dir_fd=binding.fd)
+            stack.callback(os.close, views)
+            directory = os.open(ref.view_id, _DIRECTORY, dir_fd=views)
+            stack.callback(os.close, directory)
+            _private(directory)
+            if _identity(os.fstat(directory)) != _identity(os.fstat(view.directory)):
+                raise SupervisorError("CORRUPT_STATE")
+            if _read_json(directory, "view.json", _VIEW_RECORD, 1024**2) != view.record:
+                raise SupervisorError("CORRUPT_STATE")
+            source = os.open("source", _DIRECTORY, dir_fd=directory)
+            stack.callback(os.close, source)
+            if _identity(os.fstat(source)) != _identity(os.fstat(view.source)):
+                raise SupervisorError("CORRUPT_STATE")
+        try:
+            view.context.recheck()
+        except ExecutionContractError:
+            raise SupervisorError("INPUT_POLICY") from None
+        return view
+
+    @contextmanager
+    def _project_io(
+        self,
+        peer: PeerIdentity,
+        namespace: NamespaceRef,
+        *,
+        view_ref: ViewRef,
+        capability: str,
+        deadline: float,
+        writable: bool = False,
+    ) -> Generator[RootedViewIO]:
+        with self._transaction(peer, deadline):
+            completed = False
+            try:
+                view = self._project_view(peer, namespace, view_ref, capability)
+                profile = self._view_profile
+                if profile is None:
+                    raise SupervisorError("UNAPPROVED_PROFILE")
+                with (
+                    _private_artifact_directory(self._state / "pending") as staging,
+                    RootedViewIO(
+                        view.source,
+                        staging,
+                        uid=profile.uid,
+                        gid=profile.gid,
+                        writable=writable,
+                        protected_paths=()
+                        if view.context.plan_ref is None
+                        else (view.context.plan_ref.workspace_relative_path,),
+                        excluded_paths=tuple("/".join(p) for p in self._excluded),
+                        max_file_bytes=self._limits.max_file_bytes,
+                        max_depth=self._limits.max_depth,
+                    ) as io,
+                ):
+                    _budget(deadline)
+                    yield io
+                    completed = True
+                    try:
+                        self._project_view(peer, namespace, view_ref, capability)
+                        _budget(deadline)
+                    except (OSError, SupervisorError):
+                        if writable:
+                            self._healthy = False
+                            raise SupervisorError("DURABILITY_UNKNOWN") from None
+                        raise
+            except ViewIOError as error:
+                if error.code == "DURABILITY_UNKNOWN":
+                    self._healthy = False
+                raise SupervisorError(error.code) from None
+            except OSError:
+                if writable and completed:
+                    self._healthy = False
+                    raise SupervisorError("DURABILITY_UNKNOWN") from None
+                raise SupervisorError("CORRUPT_STATE") from None
+
+    def write_file(
+        self,
+        peer: PeerIdentity,
+        namespace: NamespaceRef,
+        *,
+        view_ref: ViewRef,
+        capability: str,
+        path: str,
+        content: str,
+        expected_sha256: str | None,
+        deadline: float,
+    ) -> WriteResult:
+        with self._project_io(
+            peer, namespace, view_ref=view_ref, capability=capability, deadline=deadline, writable=True
+        ) as io:
+            return self._write_rooted(io, path, content, expected_sha256)
+
+    @staticmethod
+    def _write_rooted(io: RootedViewIO, path: str, content: str, expected_sha256: str | None) -> WriteResult:
+        return io.write_file(path, content, expected_sha256=expected_sha256)

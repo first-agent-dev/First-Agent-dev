@@ -1213,7 +1213,7 @@ Formal workflow cases retain the actual admitted plan; ordinary no-active-workfl
 | I03-LIVE-14 `src/fa/execution/view_io.py` | RootedViewIO and actual admitted text IO | Actual tool and PTY same-view read-your-writes; immutable readers stay pinned. Exercise no-follow/link/FIFO/owner/protected-PlanRef/size/UTF8/window/hash/expected-absence, parent-swap and fsync faults. Assert canonical/control sentinels, modes/UIDs, retained descriptors through drain and explicit conflict/uncertainty. | PLANNED / UNEXECUTED |
 | I03-LIVE-15 `src/fa/runtime/pty_pool.py` | Fractional PTY deadlines consumed by worker | Actual installed PTY backend receives subsecond remaining budget; normal/nonzero/timeout preserve result fields and responsiveness, no timeout truncation to zero or new process scope. Actual cgroup cleanup remains independently required. | PLANNED / UNEXECUTED |
 | I03-LIVE-16 `Dockerfile.fa` | Noneditable install and isolated build checks | Build actual approved immutable image; record wheel/image/dependency SHA, isolated help/origin checks and deployed entrypoint/mount facts. Build checks alone do not prove runtime cutover or kernel isolation. | PLANNED / UNEXECUTED |
-| I03-LIVE-17 `src/fa/execution/workspace.py` (E253–E255 local ownership foundation) | Actual workspace registration/R0/writer owner | On approved Linux filesystem, quiesce legacy writers; register dirty roots, reject bind/inode/nested aliases/rebind and protected overlap; race two OS actors for one durably advanced writer; kill/restart with old owned views and verify quarantine/no renewed grant. Preserve canonical index/sentinels, enforce input/copy/fsync faults and retain revisions/pins. E253 local component proof is not deployed admission/backend integration. | PLANNED / UNEXECUTED |
+| I03-LIVE-17 `src/fa/execution/workspace.py` (E253–E256 local ownership foundation) | Actual workspace registration/R0/writer owner | On approved Linux filesystem, quiesce legacy writers; register dirty roots, reject bind/inode/nested aliases/rebind and protected overlap; race two OS actors for one durably advanced writer; kill/restart with old owned views and verify quarantine/no renewed grant. Preserve canonical index/sentinels, enforce input/copy/fsync faults and retain revisions/pins. E253 local component proof is not deployed admission/backend integration. | PLANNED / UNEXECUTED |
 
 ### Cross-module joins — all planned, not shipped composition
 
@@ -1387,3 +1387,23 @@ E255 local component evidence is NOT actual UDS/tool/PTY/kernel acceptance. All 
 PLANNED/UNEXECUTED at final SLICE6; no intervening host approval is requested. Source hashes for all
 17surfaces/eight joins and omission counterfactual are in
 [evidence](evidence/i03-e255/readers.json.gz); historical inventories/evidence are unchanged.
+
+### E256 pre-code live witness rollforward — PLANNED/UNEXECUTED
+
+I03-LIVE-17/S02/S05 retain actual immutable readers; next local materialized PROJECT views must
+later be exercised through real installed tool/PTY/backend composition: dirty executable/binary/
+symlink input, canonical index unchanged, cell UID/modes, same-view tool↔shell edits, pinned old
+reader bytes, denied stale/protected/root-swapped writes, late-deadline and durability failures.
+No source path outside existing17surfaces is added. Local file-handler locking cannot prove command
+admission/drain or kernel isolation. All host cases remain final-SLICE6, with no early host request.
+
+### E256 local checkpoint — planned installed witnesses remain UNEXECUTED
+
+Actual PROJECT view source/working read/write now exists; actor proof, old pins, source/root swaps,
+stale SHA, PlanRef/protected destinations, native stage-exit FD cleanup and post-write uncertainty
+have local component oracles. These are NOT actual registry/PTY/backend/mount C1 or cgroup proof.
+Keep planned I03-LIVE-17/S02/S05 witnesses above and add injected stage-exit/write-fsync/lost-time
+cases to real installed service tests when actual admission/backend exists; no skipped stubs now.
+All17production surfaces/eight joins retained; omission of workspace.py is rejected. Source hashes,
+pre-edit SLICE1 absence checks and local proof are in
+[evidence](evidence/i03-e256/project-views.json.gz); final-SLICE6 host order unchanged.

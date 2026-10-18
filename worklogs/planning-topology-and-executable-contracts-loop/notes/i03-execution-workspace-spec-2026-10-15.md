@@ -1400,3 +1400,40 @@ Actual pin_reader/read_file/release_reader retention and proof path now exists;5
 [Local evidence](evidence/i03-e255/readers.json.gz). Successful release retires FDs/heavy maps
 idempotently after reader drain, retains disk references; no GC or token reconstruction. Writable
 views/execution admission/backend remain absent. The pre-code declaration above remains the scope.
+
+### E256 pre-code — verified remaining SLICE1 and working PROJECT view dependency
+
+Source inspection at9fe2a6c: supervisor.py has dispatcher/reply cache, no build_supervisor/main;
+backend.py absent; WorkspaceAuthority has no create_view/write_file/admit/close-admission/drain.
+DockerCells and WorkerClient are implemented components, not episode/terminality owners. Retain
+E255 pins; do not call them unimplemented or equate their coarse IO lock with execution admission.
+SLICE1 STEP1 composition, STEP2 backend, STEP3 real factory/caller/mount cutover and STEP4 full-path
+host acceptance remain unchecked. Dependency-ready next: CT102/103 PROJECT working-view ownership.
+Allowed code workspace.py + NEW tests/test_execution_views.py; supporting existing spec/increment/
+ledger/register/review/HANDOFF/index + new E256 evidence. No new production module or service.
+Implement create_view for the concrete WRITE/PROJECT construction path; do not expose dispatcher
+handlers or pretend provisioning/candidate/verification views or execution permits exist. Trusted
+formal policy/actual PlanRef and explicit approved profile remain private required inputs. Owner
+proof authorizes creation, distinct view proof authorizes IO. Copy the validated current revision
+using existing bounded no-follow _Capture; only new copied files/directories get approved profile
+UID/GID and logical0777 modes (scratch/new source root0755). Canonical bytes/index/modes unchanged.
+Use private stage then fsync/no-clobber rename/exact view.json reread before acknowledgement; no
+secret-bearing metadata. Retain source/view FDs and exact namespace/principal/epoch/ref/context;
+read/write reuse E245 on the SAME materialized tree. Independent pins still use immutable revision.
+Recheck actual source/view/registration/plan identities under original-deadline IO lock. This is
+file-handler ownership, not command admission. Installation/post-write durability ambiguity fences
+owner; no rollback of installed data, cell terminality claim, view GC or unused-writer release.
+Binary DoD: native exact dirty/binary/link/mode/UID/tree/index observations; cross-proof denials,
+read-your-writes and simulated external private-tree edit visibility; old reader unchanged; stale
+SHA/protected/plan/root substitution/restart/fsync/deadline/cleanup negatives. C0/C3 only. Full owning
+bank baseline/assertion-only producer kills/restoration plus statics/broader required. Full tool/PTY,
+backend/factory/kernel C1/C2 and final-SLICE6 live evidence stay open. No new policy/routing mode.
+
+### E256 implementation checkpoint
+
+Actual WRITE/PROJECT create_view/_materialize_input and same-view rooted read_file/write_file now
+exist; no other purpose/execution permit or cell/terminality owner.46new native cases,925owning/
+19assertion-only full-bank kills/restored925/broader1445.
+[Local evidence](evidence/i03-e256/project-views.json.gz). Native installed-stage-exit FD leak
+reproduced and repaired before proof; ownership now spans stage exit. Admission/backend/factory/
+candidate/provisioning/publication/caller integration remain next. No checkbox completion follows.

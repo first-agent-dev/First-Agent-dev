@@ -3,7 +3,7 @@
 > Read [`knowledge/llms.txt`](../knowledge/llms.txt) §MUST READ FIRST.
 > Current local delivery is distinct from final I03/deployed acceptance.
 
-## Current state — I02 LOCAL SHIPPED / I03 IMPLEMENTATION IN PROGRESS, 2026-10-18 / E255
+## Current state — I02 LOCAL SHIPPED / I03 IMPLEMENTATION IN PROGRESS, 2026-10-18 / E256
 
 Branch `arena/86633f17-first-agent-dev` only. Retained I02 runtime/test proof snapshot
 `a32a72fc58db4b9a5b048a9b6475649bcf3e32b4`. E230/E231 finalized planning; E232 adds the first
@@ -41,7 +41,44 @@ Ubuntu host test,OS isolation,managed nested acquisition or host supervisor deli
 only;Go is an indirect inherited hook-build diagnosis,not a new FA runtime/deployment requirement.
 PTY stays. Q69–Q73 resolved;Q72 remains its narrow46-links/15-files+banner repair decision.
 
-**E255 CURRENT — actual reader owner implemented; writable views/admission/backend NEXT:**
+**E256 CURRENT — actual PROJECT views/rooted writes; execution admission/backend NEXT:**
+
+E256 source-verified remaining SLICE1 before editing: actual CellBackend/admit and factory/main
+are absent, not hidden behind completed component proof. Retain E255 readers; implement next actual
+CT102/103 dependency inside SAME WorkspaceAuthority: create_view for WRITE/PROJECT, bounded dirty
+input materialization, durable secret-free view retention and distinct principal/namespace/exact-ref
+view proof. Existing copier and RootedViewIO reused, no new service/module/dependency or clean Git
+checkout. Current retained input verified; canonical/root conflict denies. Newly copied source has
+logical0777 modes and explicit approved profile UID/GID; scratch0755, no protected Git/env/control
+copy. Native C0 uses actual service UID/GID to reach real operations, NOT deployed different-UID
+ownership or mount evidence. Install uses private stage/fsync/no-clobber/exact reread before grant.
+write_file/_write_rooted and read_file use SAME working tree; independent READ pins keep old bytes.
+Actual PlanRef is bound/rechecked; closed/stale/forged/substituted views deny before IO. Post-write
+identity/deadline/context-close/fsync ambiguity fences owner and retains effects, no clean success.
+File handlers hold original-deadline lock through IO; this is NOT command admission/drain.
+Source src/fa/execution/workspace.py:create_view:1259, _materialize_input:1366,
+_install_project:1409, _project_view:1431, _project_io:1484,
+write_file:1538, _write_rooted:1556.
+46 new C0/C3 native cases;192focusedPASS4.71s. ALL old test files unchanged. Native stage-context
+exit fault after install reproduced transient FD leak24!=23 before repair. ExitStack now owns
+transient descriptors across that boundary and transfers only after view registration; native
+negative proof/cleanup producer retained. No source acceptance before repair. Directory-swap fixture
+preserves exact valid metadata AND original source identity to avoid masked deletion. Rooted-write
+counterfactual returns closed typed hash/size data; byte/existence oracles run BEFORE consumers.
+Final whole18-module925PASS49.62s → nineteen whole925-bank assertion-only kills
+30/34/4/1/1/2/3/1/1/1/1/1/2/14/1/1/1/1/1 → restored925PASS46.28s. Clean collection/setup/teardown; no warning/skip/
+runtime/infra credit. All602 frozen source/input hashes restored. Ruff/format31PASS, Mypy31/184PASS;
+configured Pyrefly0errors with existing141suppressed/50warnings. Broader31-module1445PASS60.60s.
+Evidence `notes/evidence/i03-e256/project-views.json.gz`, 2153879bytes SHA256df5a5f4697dc31422f52bff943e420ebfc5a29307b73900f20498160277d7518; exact source/scripts/
+ordered outcomes/pre-fix diagnostics and pre-edit SLICE1 inventory retained. Prior E255 unchanged.
+NEXT actual per-workspace execution admission/close/drain with approved profile/path triple, then
+CellBackend episode/per-command/cancel/restart/independent terminality and actual factory/caller/
+mount cutover. Candidate/verification/provisioning view owners, seal/publication remain unimplemented.
+No generic purpose switch, dispatcher activation, temporary permit, GC or release/terminality claim.
+All35STEPS/four final duties remain open; SLICE1 NOT shipped. All17surfaces/eight joins live PLANNED/
+UNEXECUTED at final SLICE6; no early host prerequisite or new policy/routing mode.
+
+**E255 retained — actual reader owner implemented; writable views/admission/backend NEXT:**
 
 E255 implements actual immutable READ retention, principal/namespace/token/exact-ref authorization,
 rooted read_file and release_reader in the SAME WorkspaceAuthority. Protected view.json uses the
@@ -167,8 +204,8 @@ records and independent terminality; then real factory/caller/mount cutover. SLI
 SLICE2/all35STEPS/four final duties remain open. Q59/Q75/Q76/final-SLICE6 rollout unchanged.
 
 **Next (implementation, no host approval prerequisite):**
-1. Retain E253/E254 registration/writer epochs and E255 actual immutable readers; NEXT construct
-   writable views/materialization plus actual execution admit/close-admission/drain, reusing E245 IO/Q76 context.
+1. Retain E253/E254 registration/writer epochs, E255 immutable readers and E256 PROJECT working views/rooted IO.
+   NEXT actual execution admit/close-admission/drain with protected profile/path triple and Q76 context.
 2. Join actual CellBackend episodes/command reservations/cancel/startup discovery and independent
    terminality; no temporary authority. Factory/main/caller/mount activation follows the real joins.
 3. Q77 is resolved and implemented. Keep full-path Linux/Docker/deployed acceptance at final SLICE6.

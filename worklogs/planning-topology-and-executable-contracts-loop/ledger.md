@@ -3182,3 +3182,80 @@ Pins/read ownership is component proof, NOT writable create_view/materialization
 admit/close-admission/drain, CellBackend episodes/restart/terminality, service/factory or caller/mount
 cutover. Those are NEXT. SLICE1 NOT shipped; all35STEPS/four final duties remain open. Q75–77
 unchanged. Inventory17 production surfaces/eight joins; all live UNEXECUTED, final-SLICE6 only.
+
+### E256 pre-code — verified remaining SLICE1 and working PROJECT view dependency
+
+Source inspection at9fe2a6c: supervisor.py has dispatcher/reply cache, no build_supervisor/main;
+backend.py absent; WorkspaceAuthority has no create_view/write_file/admit/close-admission/drain.
+DockerCells and WorkerClient are implemented components, not episode/terminality owners. Retain
+E255 pins; do not call them unimplemented or equate their coarse IO lock with execution admission.
+SLICE1 STEP1 composition, STEP2 backend, STEP3 real factory/caller/mount cutover and STEP4 full-path
+host acceptance remain unchecked. Dependency-ready next: CT102/103 PROJECT working-view ownership.
+Allowed code workspace.py + NEW tests/test_execution_views.py; supporting existing spec/increment/
+ledger/register/review/HANDOFF/index + new E256 evidence. No new production module or service.
+Implement create_view for the concrete WRITE/PROJECT construction path; do not expose dispatcher
+handlers or pretend provisioning/candidate/verification views or execution permits exist. Trusted
+formal policy/actual PlanRef and explicit approved profile remain private required inputs. Owner
+proof authorizes creation, distinct view proof authorizes IO. Copy the validated current revision
+using existing bounded no-follow _Capture; only new copied files/directories get approved profile
+UID/GID and logical0777 modes (scratch/new source root0755). Canonical bytes/index/modes unchanged.
+Use private stage then fsync/no-clobber rename/exact view.json reread before acknowledgement; no
+secret-bearing metadata. Retain source/view FDs and exact namespace/principal/epoch/ref/context;
+read/write reuse E245 on the SAME materialized tree. Independent pins still use immutable revision.
+Recheck actual source/view/registration/plan identities under original-deadline IO lock. This is
+file-handler ownership, not command admission. Installation/post-write durability ambiguity fences
+owner; no rollback of installed data, cell terminality claim, view GC or unused-writer release.
+Binary DoD: native exact dirty/binary/link/mode/UID/tree/index observations; cross-proof denials,
+read-your-writes and simulated external private-tree edit visibility; old reader unchanged; stale
+SHA/protected/plan/root substitution/restart/fsync/deadline/cleanup negatives. C0/C3 only. Full owning
+bank baseline/assertion-only producer kills/restoration plus statics/broader required. Full tool/PTY,
+backend/factory/kernel C1/C2 and final-SLICE6 live evidence stay open. No new policy/routing mode.
+
+E256 PRE-EDIT RESOURCE REVIEW: actual native stage-context exit fault AFTER durable install
+leaves a transient view FD open (assert24!=23). Confirmed in developmental source, not deferred.
+Use ExitStack across stage exit and transfer callbacks only after protected view registration.
+Allowed source/new test unchanged. Preserve pre-fix assertion; add cleanup-owner producer mutation.
+Installed view retained, owner fenced, no automatic rollback. C0/C3 resource lifetime repair.
+
+### E256 LOCAL
+
+E256 source-verified remaining SLICE1 before editing: actual CellBackend/admit and factory/main
+are absent, not hidden behind completed component proof. Retain E255 readers; implement next actual
+CT102/103 dependency inside SAME WorkspaceAuthority: create_view for WRITE/PROJECT, bounded dirty
+input materialization, durable secret-free view retention and distinct principal/namespace/exact-ref
+view proof. Existing copier and RootedViewIO reused, no new service/module/dependency or clean Git
+checkout. Current retained input verified; canonical/root conflict denies. Newly copied source has
+logical0777 modes and explicit approved profile UID/GID; scratch0755, no protected Git/env/control
+copy. Native C0 uses actual service UID/GID to reach real operations, NOT deployed different-UID
+ownership or mount evidence. Install uses private stage/fsync/no-clobber/exact reread before grant.
+write_file/_write_rooted and read_file use SAME working tree; independent READ pins keep old bytes.
+Actual PlanRef is bound/rechecked; closed/stale/forged/substituted views deny before IO. Post-write
+identity/deadline/context-close/fsync ambiguity fences owner and retains effects, no clean success.
+File handlers hold original-deadline lock through IO; this is NOT command admission/drain.
+Source src/fa/execution/workspace.py:create_view:1259, _materialize_input:1366,
+_install_project:1409, _project_view:1431, _project_io:1484,
+write_file:1538, _write_rooted:1556.
+46 new C0/C3 native cases;192focusedPASS4.71s. ALL old test files unchanged. Native stage-context
+exit fault after install reproduced transient FD leak24!=23 before repair. ExitStack now owns
+transient descriptors across that boundary and transfers only after view registration; native
+negative proof/cleanup producer retained. No source acceptance before repair. Directory-swap fixture
+preserves exact valid metadata AND original source identity to avoid masked deletion. Rooted-write
+counterfactual returns closed typed hash/size data; byte/existence oracles run BEFORE consumers.
+Final whole18-module925PASS49.62s → nineteen whole925-bank assertion-only kills
+30/34/4/1/1/2/3/1/1/1/1/1/2/14/1/1/1/1/1 → restored925PASS46.28s. Clean collection/setup/teardown; no warning/skip/
+runtime/infra credit. All602 frozen source/input hashes restored. Ruff/format31PASS, Mypy31/184PASS;
+configured Pyrefly0errors with existing141suppressed/50warnings. Broader31-module1445PASS60.60s.
+Evidence `notes/evidence/i03-e256/project-views.json.gz`, 2153879bytes SHA256df5a5f4697dc31422f52bff943e420ebfc5a29307b73900f20498160277d7518; exact source/scripts/
+ordered outcomes/pre-fix diagnostics and pre-edit SLICE1 inventory retained. Prior E255 unchanged.
+NEXT actual per-workspace execution admission/close/drain with approved profile/path triple, then
+CellBackend episode/per-command/cancel/restart/independent terminality and actual factory/caller/
+mount cutover. Candidate/verification/provisioning view owners, seal/publication remain unimplemented.
+No generic purpose switch, dispatcher activation, temporary permit, GC or release/terminality claim.
+All35STEPS/four final duties remain open; SLICE1 NOT shipped. All17surfaces/eight joins live PLANNED/
+UNEXECUTED at final SLICE6; no early host prerequisite or new policy/routing mode.
+
+E256 FINAL REVIEW: canonical source diff reviewed after proof restoration; all602 input hashes
+match archive, all old test files unchanged. Full proof925/19assertion-only kills/restored925 and
+broader1445 verified by independent closure checks; exact archive roundtrip. Internal links309PASS,
+diff-checkPASS. Actual owner/reader/view unit modules added to SLICE2 TESTS/verify path alongside
+all retained future integration paths, not substituted for them. No checkbox or policy changed.

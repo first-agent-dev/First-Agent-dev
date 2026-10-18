@@ -56,6 +56,8 @@ Task type → primary entrypoint, then secondary:
 
 ## § BY-DEMAND INDEX (Deprecated)
 
+[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e256/project-views.json.gz]: Actual PROJECT working views/rooted writes;925owning/19kills/1445broader; execution admission/backend/factory/other purposes/live remain open.
+
 [worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e255/readers.json.gz]: Actual immutable READ grants/rooted IO/release;879owning/16kills/1399broader; writable views/admission/backend/live still open.
 
 [worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e254/genesis.json.gz]: Q77 positive genesis1/first-writer2;827owning/sevenkills/1347broader; actual pins/admission/backend/host still open.
