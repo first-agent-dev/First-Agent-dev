@@ -1461,3 +1461,93 @@ independent terminality. SLICE1 NOT shipped; all 35 STEP checkboxes, 17 FUNCTION
 contracts and four final duties remain open; all 17 production surfaces and eight joins
 stay PLANNED/UNEXECUTED at final SLICE6. No early host prerequisite, no new policy, no
 new routing mode. Prior E257 unchanged.
+
+### E259 plan review — next slice (view purposes / SessionManager ownership / seal-publication) audited before code, 2026-10-18
+
+Scope: the next-slice plan = SLICE2 STEP2–3 (+ their joins into SLICE3/SLICE4) and SLICE3,
+against current code at 148a038. Method: trajectory check, ground-in-code, executability
+audit, correctness pass, then in-place plan rewrites (below). Confirmed defects vs
+suspicions separated; everything "fine" is stated briefly.
+
+**0) Trajectory.** The slice does advance the main plan where it matters (the authority's
+missing view purposes, the SessionManager seam, and the publication owner are exactly the
+declared gaps). No premature abstraction found: §1's module table already divides
+responsibilities without new services, and Q58/BOOTSTRAP/tool-reuse stay narrow. But two
+drift defects were confirmed:
+- T1 (CONFIRMED): two live orderings disagreed. The recorded construction order (increment
+  "E257 — source assessment") compressed the tail into "other view purposes + seal/
+  publication → factory + atomic SessionManager cutover", while the STEP structure puts
+  SessionManager (SLICE2 STEP3) BETWEEN view purposes (STEP2) and SLICE3. The SessionManager
+  ownership work was invisible in the compressed chain and only visible as the last item —
+  exactly why a reader could not tell what is next. FIXED: the construction order now lists
+  seven items mirroring the STEPs (increment lines ~1452).
+- T2 (CONFIRMED): "inject the managed provisioner into SessionManager BEFORE _new_session
+  provisioning" appeared identically in SLICE2 STEP3 and SLICE4 STEP2 with no layering
+  statement — a second implementation risk. FIXED: SLICE4 STEP2 now says route-only.
+- T3 (CONFIRMED): SLICE2 STEP3's exit mixed SLICE2-verifiable and SLICE3-verifiable
+  ("DB/manifest failure AFTER workspace commit") obligations. FIXED: the exit is split into
+  an SLICE2 half and an SLICE3 half that moves to SLICE3's evidence.
+- T4 (CONFIRMED): "other view purposes" was never enumerated; the admission combination
+  matrix is scattered across §2 table/§3.1/§5/§6/§4.1. FIXED: SLICE2 STEP2 now names the
+  four purposes and pins every permitted/denied combination.
+
+**1) Grounded in code — every stale/wrong assumption check, all CONFIRMED accurate:**
+- manager.py:293–294 provisions before SessionDatabase creation; cli.py:314/318 calls
+  begin_run only after create_or_attach_session; manager.py:441–472 begin_run needs no
+  active-manifest attach (path-identity check + open_existing DB only) → the §4.2
+  provisioning-RunContext design is executable against current begin_run unchanged.
+- manager.py:295–296 workspace_preparer runs AFTER provisioning and its return value is
+  discarded → "workspace_preparer alone is too late" (§4.1) correct.
+- cli.py:150–156 _prepare_managed_workspace is fail-open ("surface degradation without
+  blocking", returns state) → the plan's "must propagate not-READY, not log+continue" is a
+  real targeted defect, not a strawman.
+- manager.py:321–332 _new_session's finally rmtrees a provisioned workspace when later
+  steps fail (workspace_created at :282) → contradicts the "registered bytes never rmtree"
+  target; the plan's cleanup discriminator is necessary.
+- manager.py:193–207 rejects any cross-session reuse; exactly two call sites (:269, :415)
+  → "update both reverse-owner call sites" correct.
+- manager.py:214–233 + session/workspace.py:290 provision_git_workspace is the host-Git
+  clone path → removal-at-injection requirement is grounded.
+- edit_file.py:26 _find_fuzzy, write_file.py:113 build_scoped_write_file_tool,
+  mutation_guard.py:51/72 _base_commit/_file_hash, fs_reach.py:91 hardcoded
+  root/.fa/structural.db, fs_search.py:961 db_path arg, workflow_artifacts.py:566ff
+  _private_artifact_directory mkdir-0700 → every §4.2 reuse/warning claim verified.
+
+**2) Executability gaps (places a competent agent had to guess) — FIXED in place:**
+- G1: workspace_preparer not-READY contract (what raises, what both manager paths do) —
+  pinned: SessionManagerError("workspace_not_ready") in _new_session AND _attach_session.
+- G2: provisioner result shape — pinned frozen {registered, workspace_id, revision_id,
+  tree_sha256}; cleanup only registered-is-False provisioner-owned scratch.
+- G3/G4: purpose enumeration + create_view request extension to the §2
+  {workspace_id,base_revision,access,purpose,candidate_scope,plan_ref} shape — pinned with a
+  denied-combination oracle per forbidden tuple.
+- G5: SLICE3 STEP1 local-vs-integration split — pinned: state machine/export validation in
+  tests/test_workspace_publication.py over real local worker cells (E258 fixture pattern);
+  cgroup-populated barrier only in tests/integration under FA_REQUIRE_EXECUTION_HOST=1.
+- G6: bundle/install owners unnamed — pinned publication.py::prepare_bundle/install_project
+  per §1's responsibility table.
+- G7: STEP3 exit split (see T3).
+
+**3) Correctness.** C1: manager-finally vs registered-bytes contradiction is in current
+code and is the plan's target; the new discriminator (G2) makes the fix testable. C2: the
+sentence "do not ... keep host Git as a fallback until then" is a double negative an agent
+can read as permission to keep host Git; rewritten to "Host Git is NOT a fallback... removed
+at injection... typed BLOCKED (provisioning_unavailable) until the SLICE3 join". C3: the
+reference semantics of _check_reverse_workspace_ownership were underdetermined (what still
+rejects?); pinned: full manifest scan + validation remains, same-workspace match no longer
+raises, reference requires a SUPERVISOR-REGISTERED workspace, no DB/run/ownership transfer,
+one writer stays acquire_writer's arbitration. No race/invariant break found in §5's
+REVISION/PLAN/BOOTSTRAP irreversible-point table or the §6.1 state table — they are
+internally consistent and binary; they remain unshipped, not defective.
+
+**4) High-ROI changes implemented (plan-only; code changes stay inside their increment's
+declaration/proof cycle):** the seven in-place rewrites above (STEP2, STEP3, SLICE4 STEP2,
+SLICE3 STEP1/STEP3, §4.1 guard semantics, §4.2 preparer/provisioner contracts + host-Git
+sentence, corrected construction order). Simplification: no new services, no new schemas
+beyond the pinned frozen result, no second injection point.
+
+**5) Remaining guess budget:** none found in the next slice's STEP text after the rewrites;
+implementation still must follow per-edit declarations. SLICE3 STEP4's power-loss labelling
+remains inherently environment-bound ("approved filesystem"), stated as required evidence,
+not a plan defect. Register/HANDOFF inventory check is the separate follow-up of this
+session (E258 backend.py row), recorded there.

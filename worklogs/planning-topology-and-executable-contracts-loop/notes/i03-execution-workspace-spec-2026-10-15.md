@@ -487,7 +487,14 @@ between turns; a persistent conversation must not monopolize the workspace indef
 Current SessionManager rejects cross-session reuse. Change `_check_reverse_workspace_ownership`
 explicitly: new session + explicitly selected existing registered workspace is permitted as a new
 **reference**, not ownership transfer; acquire_writer still arbitrates all mutations by workspace
-identity. Session manifest/SQLite remain session-scoped; no mass rename/rekey or second session DB.
+identity. Exact guard semantics after the change (no wholesale deletion): scanning still READS and
+validates every manifest (corrupt/identity-mismatch/path-escape still raise), and the same-workspace
+match itself no longer raises. A permitted reference requires the path to be an existing
+SUPERVISOR-REGISTERED workspace (validated under authority at provisioning/attach) — a bare
+existing directory is still rejected; the new session's manifest simply names the workspace and
+creates no transfer of session DB/history, no new run reservation on attach, and no second writer
+(that is acquire_writer's arbitration). Both call sites (`_new_session` and
+`resolve_workflow_workspace`) use exactly these semantics. Session manifest/SQLite remain session-scoped; no mass rename/rekey or second session DB.
 Keep v1 session manifests unchanged where possible; validate all existing manifests, register their
 canonical roots under the supervisor lock, reject contradictory/corrupt records. Old run IDs remain
 reserved. Reuse never reruns Git remotes/hooks/readiness against a canonical live workspace.
@@ -775,8 +782,14 @@ filesystem authorization and alias handling remain in the supervisor or isolated
 
 **SessionManager ordering/recovery:** implement materialization/rooted authority before its managed
 provisioner. Inject that provisioner BEFORE `_new_session` calls `_provision_workspace`, not only via
-workspace_preparer. Its result must distinguish an uncommitted owned scratch from a registered/
-committed workspace and verify workspace/revision; existence-before-call is not cleanup ownership.
+workspace_preparer. Its result is a frozen value carrying exactly
+`{registered: bool, workspace_id: str, revision_id: str, tree_sha256: str}` (verify workspace and
+revision against these before any manager continuation); manager cleanup may delete only
+`registered is False` scratch the provisioner itself created, never a registered/committed
+workspace, and existence-before-call is not cleanup ownership. The `workspace_preparer`
+Callable keeps returning ReadyState, but the manager MUST treat a not-READY return as
+SessionManagerError("workspace_not_ready") in both `_new_session` and `_attach_session` —
+no log+continue anywhere in that chain.
 Close the new-session namespace cycle explicitly: `_new_session` currently provisions before DB
 creation, while CLI calls begin_run only AFTER create_or_attach_session. Before managed registration/
 provisioning, create the existing session DB under the still-`provisioning` manifest, build a PRIVATE
@@ -797,7 +810,11 @@ resume preserves original session DB. Update `_check_reverse_workspace_ownership
 `_new_session` and `resolve_workflow_workspace`: validate all relevant manifests and supervisor
 registration, permit a reference, retain DB/run ownership/corruption rejection. Do not delete the guard
 wholesale. Initial new workspace commit/publication is the SLICE3 join; do not claim that path ready
-from SLICE2 helper tests or keep host Git as a fallback until then. `_prepare_managed_workspace` must
+from SLICE2 helper tests. Host Git is NOT a fallback while waiting for that join: the manager's
+host-Git `_provision_workspace`/`provision_git_workspace` path is removed at provisioner injection,
+and until the SLICE3 join a new-workspace provisioning request returns the explicit typed BLOCKED
+disposition (SessionManagerError("provisioning_unavailable")), never a host clone.
+`_prepare_managed_workspace` must
 propagate not-READY after managed readiness runs, not log+continue. At SLICE4 atomic activation,
 manager no longer creates/chmods canonical project roots; deployment/supervisor own those roots.
 

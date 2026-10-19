@@ -3505,3 +3505,34 @@ independent terminality. SLICE1 NOT shipped; all 35 STEP checkboxes, 17 FUNCTION
 contracts and four final duties remain open; all 17 production surfaces and eight joins
 stay PLANNED/UNEXECUTED at final SLICE6. No early host prerequisite, no new policy, no
 new routing mode.
+
+### E259 plan review — next slice audited before code; E2E register corrected (2026-10-18)
+
+Adversarial plan review of the next slice (SLICE2 STEP2-3 view purposes + SessionManager
+managed-provisioner/ownership, and SLICE3 terminal seal/publication/forward recovery) against
+code at 148a038, per the operator's six-step review prompt. No code changed; this is plan and
+register maintenance only. Confirmed findings with file+line evidence and in-place fixes:
+(1) two disagreeing next-step orders — the compressed construction chain hid SLICE2 STEP3's
+SessionManager work behind the final "cutover" item; the construction order now mirrors the
+STEPs exactly; (2) the provisioner-injection sentence duplicated in SLICE2 STEP3 and SLICE4
+STEP2; SLICE4 is now explicitly route-only; (3) SLICE2 STEP3's exit mixed SLICE2-verifiable
+with SLICE3-verifiable ("after workspace commit") obligations; now split; (4) "other view
+purposes" never enumerated; now exactly CANDIDATE/VERIFICATION/MUTATION/PROVISIONING with a
+pinned admission-combination matrix and denied-combination oracle; (5) provisioner result and
+workspace_preparer not-READY contracts were unspecified (places an agent must guess); now
+frozen shapes and error codes; (6) "do not keep host Git as a fallback until then" was a
+double negative; now "removed at injection, typed BLOCKED (provisioning_unavailable) until the
+SLICE3 join"; (7) _check_reverse_workspace_ownership reference semantics pinned (full manifest
+validation remains, same-workspace match permits an explicit reference to a SUPERVISOR-
+REGISTERED workspace only, no DB/run/ownership transfer, one writer stays acquire_writer's);
+(8) SLICE3 STEP1 test split pinned (local worker-cell state machine vs execution_host cgroup
+barrier) and prepare_bundle/install_project owners named publication.py. All stale-assumption
+checks against SessionManager/cli/tools code confirmed the plan accurate (manager.py:293-294/
+295-296/321-332/441, cli.py:150-156/314/318, manager.py:193-207, session/workspace.py:290,
+edit_file.py:26, write_file.py:113, mutation_guard.py:51/72, fs_reach.py:91,
+workflow_artifacts.py:566). E2E live-verification register corrected per its own inventory
+growth rule: E258's src/fa/execution/backend.py added as I03-LIVE-18 (the E258 checkpoint
+should have added it and did not), S02/S03 stale "owners remain incomplete" prose replaced
+with local-component status, row 17 provenance extended through E258; surface count 17->18,
+eight joins unchanged; ALL live verdicts remain PLANNED/UNEXECUTED. No STEP/CT tick, no new
+policy, no code change. NEXT: implement SLICE2 STEP2 per the rewritten plan.

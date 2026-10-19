@@ -87,7 +87,8 @@ Evidence `notes/evidence/i03-e257/admission.json.gz`, 2393565 bytes SHA256
 NOT shipped: CellBackend episodes/one-send ownership/cancel/restart/independent terminality,
 candidate/verification/provisioning view owners, seal/publication/forward recovery, real
 factory/main and atomic caller/mount cutover. SLICE1 NOT shipped; all 35 STEPS/four final duties
-remain open; all 17 surfaces/eight joins live PLANNED/UNEXECUTED at final SLICE6. No early host
+remain open; all 18 surfaces/eight joins live PLANNED/UNEXECUTED at final SLICE6 (count grew
+17→18 when the 2026-10-18 register review added E258's backend.py row I03-LIVE-18). No early host
 prerequisite and no new policy or routing mode.
 
 **E258 CURRENT — the CellBackend cell episode owner; other purposes/seal/factory NEXT:**
@@ -122,8 +123,21 @@ controller import-closure audit in the same bank correctly rejected. NOT shipped
 view purposes, seal/publication/forward recovery, the real build_supervisor/main with
 closed handlers, the atomic SessionManager/tool/caller/mount cutover, receipts and
 independent terminality. SLICE1 NOT shipped; all 35 STEPS/four final duties remain open;
-all 17 surfaces/eight joins live PLANNED/UNEXECUTED at final SLICE6. No early host
+all 18 surfaces/eight joins live PLANNED/UNEXECUTED at final SLICE6. No early host
 prerequisite and no new policy or routing mode.
+
+**2026-10-18 plan review (pre-E259) + register correction:** the next slice (SLICE2 STEP2-3 and
+SLICE3) was adversarially reviewed against code at 148a038 before any code was written. Confirmed
+and fixed in the plan: two disagreeing next-step orders (SessionManager STEP3 was invisible in the
+compressed chain); the duplicated provisioner-injection sentence (SLICE4 is now route-only);
+STEP3's mixed SLICE2/SLICE3 exit (now split); the unenumerated view purposes (now pinned with
+denied-combination oracles); the unspecified provisioner/preparer contracts (now frozen shapes);
+the double-negative host-Git sentence (now removed-at-injection + typed BLOCKED); the
+_check_reverse_workspace_ownership reference semantics (now exact); and SLICE3 STEP1's
+local/integration test split. Every plan assumption about current SessionManager/cli code was
+verified accurate (file+line evidence in the adversarial review). The E2E register inventory now
+tracks E258's backend.py as I03-LIVE-18 (its own growth rule was missed at the E258 checkpoint):
+18 surfaces/eight joins, all live verdicts still PLANNED/UNEXECUTED.
 
 **E256 retained — actual PROJECT views/rooted writes:**
 
