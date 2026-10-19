@@ -1687,3 +1687,46 @@ independent terminality. SLICE1 NOT shipped; all 35 STEP checkboxes, 17 FUNCTION
 contracts and four final duties remain open; all 17 production surfaces and eight joins
 stay PLANNED/UNEXECUTED at final SLICE6. No early host prerequisite, no new policy, no
 new routing mode.
+
+**E259 pin (view purposes, before code):** the create_view matrix is exactly the §2 table
+row, and the authority REVALIDATES it independently of the codec. Two construction pins
+for clauses the earlier text left implicit: (1) MUTATION's "one permitted src/scripts
+target" is enforced in TWO layers with no new wire field — the authority confines the
+view's rooted writes to the approved mutation roots `src/` and `scripts/`
+(slice_verification._MUTATION_ROOTS; everything else, including tests/, .fa, .env, .git
+and the plan path, denies PATH_DENIED), while the controller's mutation edit remains a
+single-file expected_sha write per the I02 overlay discipline; (2) the CANDIDATE buffer is
+ONE supervisor-owned staged file addressed by the exact candidate_scope.candidate_path,
+written only through the scope-checked authority methods, never at canonical
+.fa/admission; PROVISIONING accepts a null plan_ref and is the view in which
+bootstrap/readiness commands run (its provisioner consumer is SLICE2 STEP3).
+
+### E259 — the four non-PROJECT view purposes: local component proof (result)
+
+E259 completes SLICE2 STEP2's view-purpose owners in src/fa/execution/workspace.py. create_view
+now takes the closed matrix (purpose, access, candidate_scope, plan_ref) and constructs exactly:
+VERIFICATION (READ, plan required) and CANDIDATE (READ, plan + exact scope) as immutable reader
+views reusing the one reader-registration path; MUTATION (WRITE, plan required) and PROVISIONING
+(WRITE, plan optional) as project views reusing the E256 materialization. Every other
+combination denies INPUT_POLICY before any filesystem effect, revalidated at the authority
+independent of the codec. The purpose write gate at the effect boundary confines MUTATION
+writes to the approved src//scripts roots and gives VERIFICATION/CANDIDATE no generic write
+path; the scoped candidate buffer is ONE supervisor-owned staged file written only through
+write_candidate/read_candidate with exact scope-path equality and expected-absence/exact-SHA
+semantics, never canonical .fa/admission. pin_reader stays the READ/PROJECT owner unchanged.
+10 new native C0/C3 cases; focused 4-module bank 202 PASS 5.1s. Whole 21-module owning bank
+995 PASS 65.6s -> eleven whole-bank assertion-only kills
+1/1/2/7/1/2/3/1/2/1/1 -> restored 995 PASS 64.9s; clean collection/setup/teardown,
+no warning/skip/runtime/infra credit, every kill a call-phase builtins.AssertionError. Source
+restored byte-exact. Ruff/format 35 files clean; Mypy 35+185 files clean; Pyrefly 0 errors with
+the existing 141 suppressed/50 warnings; broader 1515 PASS. Evidence
+notes/evidence/i03-e259/purposes.json.gz, 1343665 bytes SHA256 e689ea3b92258128c1ab20a2d4e7ed312e63bf7b81bdce53f4a52c4081e1b9bd.
+Honest notes: one candidate producer (a second path-traversal parser in the matrix) was found
+MASKED by the record-layer path rules (protocol._byte_limits) and DELETED as redundant rather
+than counted — the single enforcement point stays the record check. A first runner attempt
+aborted on a frozen-hash comparison poisoned by the git tracking pointer moving mid-run (an
+environmental artifact); restoration was then verified byte-exact against start-of-run bytes.
+NOT shipped: the candidate tool cutover (STEP4), the provisioning consumer (STEP3), seal/export
+of mutation/candidate outputs (SLICE3), receipts/independent terminality and live proof. SLICE1
+NOT shipped; all 35 STEP checkboxes, 17 FUNCTIONAL contracts and four final duties remain open;
+all live verdicts stay PLANNED/UNEXECUTED at final SLICE6. No new policy or routing mode.

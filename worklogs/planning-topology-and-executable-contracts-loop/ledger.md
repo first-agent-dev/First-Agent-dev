@@ -3536,3 +3536,59 @@ should have added it and did not), S02/S03 stale "owners remain incomplete" pros
 with local-component status, row 17 provenance extended through E258; surface count 17->18,
 eight joins unchanged; ALL live verdicts remain PLANNED/UNEXECUTED. No STEP/CT tick, no new
 policy, no code change. NEXT: implement SLICE2 STEP2 per the rewritten plan.
+
+### E259 — the four non-PROJECT view purposes (before code)
+
+IDEA: SLICE2 STEP2's view-purpose owners — every ViewPurpose becomes a real
+authority-constructed view with its exact admission combination, reusing E256
+materialization/install and E257 admitted IO. Allowed files: src/fa/execution/workspace.py
++ NEW tests/test_execution_purposes.py + plan/increment/ledger/register/review/HANDOFF/
+index + E259 evidence; no protocol/types/journal/worker/docker/supervisor/session change
+(wire validation already correct; authority revalidates independently). Current:
+create_view/pin_reader hard-code PROJECT purposes; wire purpose/candidate_scope never reach
+the authority. Target: create_view(purpose, access, candidate_scope, plan_ref) with the
+pinned matrix — VERIFICATION (READ, plan required, no write path), MUTATION (WRITE, plan
+required, writes confined to src//scripts/ roots, two-layer single-target discipline),
+CANDIDATE (plan + scope equal plan_refs, ONE supervisor staging buffer via
+write_candidate/read_candidate, never canonical .fa/admission), PROVISIONING (WRITE, null
+plan allowed, bootstrap view; consumer in STEP3); every other combination INPUT_POLICY
+before any filesystem effect. DoD: all allowed combos construct real materialized views;
+one denied-combination case per forbidden tuple denies with zero effect; buffer writes land
+only in staging; mutation writes outside roots deny; negative proof has no runtime-error
+credit; whole-bank assertion-only kills + exact restoration. Classes C0/C3 with kill-check
+on the per-purpose policy producer call sites; path inventory five purposes × access ×
+scope × plan. Producers: matrix-deny removal, plan-required removal, root-confinement
+removal, scope-equality removal, buffer fallthrough, wire-trust fallacy, effect-boundary
+recheck removal. E2E ledger: I03-LIVE-17 fixture gains purpose-matrix witnesses;
+I03-LIVE-S05 wording extended; surface count unchanged. C0/C3 only; STEP3/STEP4/SLICE3
+consumers stay open.
+
+### E259 — the four non-PROJECT view purposes: local component proof (result)
+
+E259 completes SLICE2 STEP2's view-purpose owners in src/fa/execution/workspace.py. create_view
+now takes the closed matrix (purpose, access, candidate_scope, plan_ref) and constructs exactly:
+VERIFICATION (READ, plan required) and CANDIDATE (READ, plan + exact scope) as immutable reader
+views reusing the one reader-registration path; MUTATION (WRITE, plan required) and PROVISIONING
+(WRITE, plan optional) as project views reusing the E256 materialization. Every other
+combination denies INPUT_POLICY before any filesystem effect, revalidated at the authority
+independent of the codec. The purpose write gate at the effect boundary confines MUTATION
+writes to the approved src//scripts roots and gives VERIFICATION/CANDIDATE no generic write
+path; the scoped candidate buffer is ONE supervisor-owned staged file written only through
+write_candidate/read_candidate with exact scope-path equality and expected-absence/exact-SHA
+semantics, never canonical .fa/admission. pin_reader stays the READ/PROJECT owner unchanged.
+10 new native C0/C3 cases; focused 4-module bank 202 PASS 5.1s. Whole 21-module owning bank
+995 PASS 65.6s -> eleven whole-bank assertion-only kills
+1/1/2/7/1/2/3/1/2/1/1 -> restored 995 PASS 64.9s; clean collection/setup/teardown,
+no warning/skip/runtime/infra credit, every kill a call-phase builtins.AssertionError. Source
+restored byte-exact. Ruff/format 35 files clean; Mypy 35+185 files clean; Pyrefly 0 errors with
+the existing 141 suppressed/50 warnings; broader 1515 PASS. Evidence
+notes/evidence/i03-e259/purposes.json.gz, 1343665 bytes SHA256 e689ea3b92258128c1ab20a2d4e7ed312e63bf7b81bdce53f4a52c4081e1b9bd.
+Honest notes: one candidate producer (a second path-traversal parser in the matrix) was found
+MASKED by the record-layer path rules (protocol._byte_limits) and DELETED as redundant rather
+than counted — the single enforcement point stays the record check. A first runner attempt
+aborted on a frozen-hash comparison poisoned by the git tracking pointer moving mid-run (an
+environmental artifact); restoration was then verified byte-exact against start-of-run bytes.
+NOT shipped: the candidate tool cutover (STEP4), the provisioning consumer (STEP3), seal/export
+of mutation/candidate outputs (SLICE3), receipts/independent terminality and live proof. SLICE1
+NOT shipped; all 35 STEP checkboxes, 17 FUNCTIONAL contracts and four final duties remain open;
+all live verdicts stay PLANNED/UNEXECUTED at final SLICE6. No new policy or routing mode.

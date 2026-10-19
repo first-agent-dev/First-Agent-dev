@@ -14,6 +14,7 @@ import hmac
 import json
 import math
 import os
+import re
 import secrets
 import shutil
 import stat
@@ -34,6 +35,7 @@ from fa.execution.plans import ProtectedPlanContext
 from fa.execution.profiles import ExecutionProfile, _configured_id
 from fa.execution.protocol import (
     CANDIDATE_SCOPE,
+    MAX_TEXT_BYTES,
     NAMESPACE,
     PLAN_REF,
     SHA,
@@ -128,6 +130,63 @@ _VIEW_RECORD = fastjsonschema.compile(
         plan_ref=_nullable(PLAN_REF),
     )
 )
+
+# E259: the closed create_view matrix. One row per approved purpose; every
+# other (purpose, access, plan, scope) combination is INPUT_POLICY before any
+# filesystem effect. The authority revalidates independently of the codec.
+_PURPOSE_MATRIX: dict[ViewPurpose, tuple[Access, bool, bool]] = {
+    ViewPurpose.PROJECT: (Access.WRITE, False, False),
+    ViewPurpose.VERIFICATION: (Access.READ, True, False),
+    ViewPurpose.MUTATION: (Access.WRITE, True, False),
+    ViewPurpose.CANDIDATE: (Access.READ, True, True),
+    ViewPurpose.PROVISIONING: (Access.WRITE, False, False),
+}
+# The approved mutation roots (slice_verification._MUTATION_ROOTS): a MUTATION
+# view's rooted writes are confined to these top-level trees. The single-target
+# discipline is completed by the controller's expected_sha one-file edit.
+_MUTATION_ROOTS = frozenset({"src", "scripts"})
+
+
+def _plan_ref_dict(plan_ref: PlanRef) -> dict[str, str]:
+    return {
+        "workspace_relative_path": plan_ref.workspace_relative_path,
+        "source_kind": plan_ref.source_kind,
+        "sha256": plan_ref.sha256,
+    }
+
+
+def _candidate_scope(
+    purpose: ViewPurpose,
+    access: Access,
+    candidate_scope: Mapping[str, Any] | None,
+    plan_ref: PlanRef | None,
+) -> dict[str, Any] | None:
+    """Revalidate the create_view matrix; deny every other combination."""
+    if not isinstance(purpose, ViewPurpose) or not isinstance(access, Access):
+        raise ExecutionContractError
+    expected_access, plan_required, scope_required = _PURPOSE_MATRIX[purpose]
+    if (
+        access is not expected_access
+        or (plan_required and plan_ref is None)
+        or (scope_required != (candidate_scope is not None))
+    ):
+        raise SupervisorError("INPUT_POLICY")
+    if not scope_required:
+        return None
+    if not isinstance(candidate_scope, Mapping) or set(candidate_scope) != {"candidate_path", "plan_ref"}:
+        raise ExecutionContractError
+    if not isinstance(plan_ref, PlanRef) or not isinstance(candidate_scope["plan_ref"], Mapping):
+        raise ExecutionContractError
+    # Path semantics (relative, no traversal/NUL) are enforced once at the
+    # record layer (protocol._byte_limits inside _check(_VIEW_RECORD)); this
+    # matrix owns only the combination rules, never a second path parser.
+    scope = {
+        "candidate_path": candidate_scope["candidate_path"],
+        "plan_ref": dict(candidate_scope["plan_ref"]),
+    }
+    if scope["plan_ref"] != _plan_ref_dict(plan_ref):
+        raise SupervisorError("INPUT_POLICY")
+    return scope
 
 
 @dataclass(repr=False)
@@ -1143,31 +1202,9 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                     _check(_VIEW_RECORD, record)
                     if grant.capability in _canonical(record).decode("utf-8"):
                         raise ExecutionContractError
-                    source = os.dup(data)
-                    directory = -1
-                    try:
-                        _budget(deadline)
-                        directory = self._retain_reader(binding, record, deadline)
-                        _budget(deadline)
-                        pin = _ReaderPin(
-                            ref,
-                            namespace,
-                            peer.principal,
-                            grant.capability,
-                            record,
-                            source,
-                            directory,
-                            _fingerprint(os.stat("tree.json", dir_fd=revision, follow_symlinks=False)),
-                            {e["path"]: e for e in tree["entries"]},
-                            context,
-                        )
-                        self._readers[ref.view_id] = pin
-                        self._stack.callback(pin.close)
-                    except BaseException:
-                        os.close(source)
-                        if directory >= 0:
-                            os.close(directory)
-                        raise
+                    self._register_reader_view(
+                        binding, namespace, peer, ref, grant, record, data, tree, revision, context, deadline
+                    )
                     return grant
             except ExecutionContractError:
                 raise SupervisorError("INPUT_POLICY") from None
@@ -1206,6 +1243,113 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
         finally:
             if not installed and stage.exists():
                 shutil.rmtree(stage)  # Only this uninstalled service-private record.
+
+    def _register_reader_view(
+        self,
+        binding: _Binding,
+        namespace: NamespaceRef,
+        peer: PeerIdentity,
+        ref: ViewRef,
+        grant: GrantReply,
+        record: dict[str, Any],
+        data: int,
+        tree: dict[str, Any],
+        revision: int,
+        context: ProtectedPlanContext,
+        deadline: float,
+    ) -> _ReaderPin:
+        """The one reader-view registration path (pin_reader and create_view)."""
+        source = os.dup(data)
+        directory = -1
+        try:
+            _budget(deadline)
+            directory = self._retain_reader(binding, record, deadline)
+            _budget(deadline)
+            pin = _ReaderPin(
+                ref,
+                namespace,
+                peer.principal,
+                grant.capability,
+                record,
+                source,
+                directory,
+                _fingerprint(os.stat("tree.json", dir_fd=revision, follow_symlinks=False)),
+                {e["path"]: e for e in tree["entries"]},
+                context,
+            )
+            self._readers[ref.view_id] = pin
+            self._stack.callback(pin.close)
+        except BaseException:
+            os.close(source)
+            if directory >= 0:
+                os.close(directory)
+            raise
+        return pin
+
+    def _create_read_view(
+        self,
+        binding: _Binding,
+        workspace_id: str,
+        capability: str,
+        namespace: NamespaceRef,
+        peer: PeerIdentity,
+        purpose: ViewPurpose,
+        scope: dict[str, Any] | None,
+        plan_ref: PlanRef | None,
+        formal_evidence: bool,
+        deadline: float,
+    ) -> GrantReply:
+        """VERIFICATION/CANDIDATE: one immutable reader view of the CURRENT revision.
+
+        The E257 admitted execution path already materializes a sealed read-only
+        source projection plus private scratch for reader views at admission, so
+        these purposes gain no second materialization mechanism.
+        """
+        try:
+            self._unchanged(binding, deadline)
+            with self._revision(binding, binding.current["revision_id"], deadline) as (data, tree, revision):
+                context = ProtectedPlanContext(
+                    self._state / "workspaces" / workspace_id / "revisions" / tree["revision_id"] / "data",
+                    plan_ref,
+                    formal_evidence,
+                )
+                context.recheck()
+                if context.to_plan_ref() is None:  # The matrix requires a real plan for these purposes.
+                    raise SupervisorError("INPUT_POLICY")
+                ref = ViewRef(
+                    workspace_id,
+                    "view-" + uuid4().hex,
+                    tree["revision_id"],
+                    namespace.run_id,
+                    binding.metadata["generation"],
+                    Access.READ,
+                    purpose,
+                )
+                grant = GrantReply(Operation.CREATE_VIEW, secrets.token_hex(32), ref, None, None)
+                record = {
+                    "schema_version": 1,
+                    "view_ref": ref.to_dict(),
+                    "actor_namespace": namespace.to_dict(),
+                    "state": "OPEN",
+                    "input_tree_sha256": tree["tree_sha256"],
+                    "sealed_manifest_id": None,
+                    "operation_ids": [],
+                    "candidate_scope": scope,
+                    "plan_ref": context.to_plan_ref(),
+                }
+                _check(_VIEW_RECORD, record)
+                encoded = _canonical(record).decode("utf-8")
+                if any(secret in encoded for secret in (capability, grant.capability)):
+                    raise ExecutionContractError
+                self._register_reader_view(
+                    binding, namespace, peer, ref, grant, record, data, tree, revision, context, deadline
+                )
+                return grant
+        except ExecutionContractError:
+            raise SupervisorError("INPUT_POLICY") from None
+        except OSError:
+            self._healthy = False
+            raise SupervisorError("DURABILITY_UNKNOWN") from None
 
     def _reader_proof(
         self,
@@ -1393,20 +1537,43 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
         *,
         workspace_id: str,
         capability: str,
+        purpose: ViewPurpose,
+        access: Access,
+        candidate_scope: Mapping[str, Any] | None,
         plan_ref: PlanRef | None,
         formal_evidence: bool,
         deadline: float,
     ) -> GrantReply:
-        """Construct an actual WRITE/PROJECT view; not a command/execution permit.
+        """Construct one view of an EXACT approved purpose; not a command/execution permit.
 
-        Other purposes require their real candidate/provisioning owners, not a
-        caller-controlled purpose switch or a permissive generic view factory.
+        The purpose matrix is closed (E259): PROJECT/MUTATION/PROVISIONING are
+        writable project views, VERIFICATION/CANDIDATE are immutable reader views
+        (CANDIDATE additionally owns one scoped supervisor-staging buffer). Every
+        combination is revalidated here before any filesystem effect, independent
+        of the codec: no caller-controlled purpose switch and no permissive
+        generic view factory exists.
         """
+        if type(formal_evidence) is not bool:
+            raise ExecutionContractError
+        scope = _candidate_scope(purpose, access, candidate_scope, plan_ref)
         with self._transaction(peer, deadline):
             binding = self._writer_proof(peer, namespace, workspace_id, capability)
             profile = self._view_profile
             if profile is None:
                 raise SupervisorError("UNAPPROVED_PROFILE")
+            if access is Access.READ:
+                return self._create_read_view(
+                    binding,
+                    workspace_id,
+                    capability,
+                    namespace,
+                    peer,
+                    purpose,
+                    scope,
+                    plan_ref,
+                    formal_evidence,
+                    deadline,
+                )
             stage = self._state / "pending" / uuid4().hex
             installed = False
             try:
@@ -1427,8 +1594,8 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                         tree["revision_id"],
                         namespace.run_id,
                         binding.metadata["generation"],
-                        Access.WRITE,
-                        ViewPurpose.PROJECT,
+                        access,
+                        purpose,
                     )
                     grant = GrantReply(Operation.CREATE_VIEW, secrets.token_hex(32), ref, None, None)
                     record = {
@@ -1620,10 +1787,15 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
         capability: str,
         deadline: float,
         writable: bool = False,
+        write_path: str | None = None,
     ) -> Generator[RootedViewIO]:
         with self._transaction(peer, deadline), self._file_work(peer, namespace, view_ref, capability, deadline):
             completed = False
             try:
+                if write_path is not None:
+                    # Identity first (a forged ref never reaches the policy),
+                    # then the E259 purpose gate at the effect boundary.
+                    self._purpose_write_policy(self._proof_only(peer, namespace, view_ref, capability).ref, write_path)
                 view = self._project_view(peer, namespace, view_ref, capability)
                 profile = self._view_profile
                 if profile is None:
@@ -1665,6 +1837,20 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                     raise SupervisorError("DURABILITY_UNKNOWN") from None
                 raise SupervisorError("CORRUPT_STATE") from None
 
+    @staticmethod
+    def _purpose_write_policy(ref: ViewRef, path: str) -> None:
+        """E259: the one purpose write gate, applied at the effect boundary.
+
+        VERIFICATION/CANDIDATE views have no generic write path at all (the
+        candidate buffer has its own scope-checked methods); MUTATION views are
+        confined to the approved mutation roots. PROJECT and PROVISIONING keep
+        the ordinary rooted-IO policy.
+        """
+        if ref.purpose in {ViewPurpose.VERIFICATION, ViewPurpose.CANDIDATE}:
+            raise SupervisorError("PATH_DENIED")
+        if ref.purpose is ViewPurpose.MUTATION and path.split("/", 1)[0] not in _MUTATION_ROOTS:
+            raise SupervisorError("PATH_DENIED")
+
     def write_file(
         self,
         peer: PeerIdentity,
@@ -1678,13 +1864,129 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
         deadline: float,
     ) -> WriteResult:
         with self._project_io(
-            peer, namespace, view_ref=view_ref, capability=capability, deadline=deadline, writable=True
+            peer, namespace, view_ref=view_ref, capability=capability, deadline=deadline, writable=True, write_path=path
         ) as io:
             return self._write_rooted(io, path, content, expected_sha256)
 
     @staticmethod
     def _write_rooted(io: RootedViewIO, path: str, content: str, expected_sha256: str | None) -> WriteResult:
         return io.write_file(path, content, expected_sha256=expected_sha256)
+
+    def _candidate_buffer(
+        self, peer: PeerIdentity, namespace: NamespaceRef, view_ref: ViewRef, capability: str, path: str
+    ) -> _ReaderPin:
+        """The one scoped candidate buffer binding: exact view, exact path."""
+        pin = self._reader_proof(peer, namespace, view_ref, capability)
+        if not isinstance(pin, _ReaderPin) or pin.ref.purpose is not ViewPurpose.CANDIDATE:
+            raise SupervisorError("UNAUTHORIZED")
+        scope = pin.record.get("candidate_scope")
+        if scope is None or path != scope["candidate_path"]:
+            raise SupervisorError("PATH_DENIED")
+        return pin
+
+    @staticmethod
+    def _buffer_bytes(pin: _ReaderPin) -> bytes | None:
+        try:
+            fd = os.open("candidate", os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK, dir_fd=pin.directory)
+        except FileNotFoundError:
+            return None
+        try:
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                raise SupervisorError("DURABILITY_UNKNOWN")
+            chunks: list[bytes] = []
+            while True:
+                chunk = os.read(fd, 65536)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+            return b"".join(chunks)
+        finally:
+            os.close(fd)
+
+    def write_candidate(
+        self,
+        peer: PeerIdentity,
+        namespace: NamespaceRef,
+        *,
+        view_ref: ViewRef,
+        capability: str,
+        path: str,
+        content: str,
+        expected_sha256: str | None,
+        deadline: float,
+    ) -> WriteResult:
+        """Write exactly the scoped candidate buffer; never any source or control path.
+
+        The buffer is the ONE supervisor-owned staged file of a CANDIDATE view
+        (E259, §5). Canonical .fa/admission is never written here; null
+        expected_sha256 means expected ABSENCE, never unconditional overwrite.
+        """
+        with self._transaction(peer, deadline), self._file_work(peer, namespace, view_ref, capability, deadline):
+            pin = self._candidate_buffer(peer, namespace, view_ref, capability, path)
+            if not isinstance(content, str) or (
+                expected_sha256 is not None
+                and (not isinstance(expected_sha256, str) or re.fullmatch(r"[0-9a-f]{64}", expected_sha256) is None)
+            ):
+                raise SupervisorError("INVALID_REQUEST")
+            try:
+                raw = content.encode("utf-8")
+            except UnicodeEncodeError:
+                raise SupervisorError("INVALID_REQUEST") from None
+            if b"\x00" in raw or len(raw) > MAX_TEXT_BYTES:
+                raise SupervisorError("INVALID_REQUEST")
+            if len(raw) > self._limits.max_file_bytes:
+                raise SupervisorError("INPUT_POLICY")
+            existing = self._buffer_bytes(pin)
+            if expected_sha256 is None:
+                if existing is not None:
+                    raise SupervisorError("STALE_REVISION")
+            elif existing is None or hashlib.sha256(existing).hexdigest() != expected_sha256:
+                raise SupervisorError("STALE_REVISION")
+            try:
+                _replace_private_bytes(pin.directory, "candidate", raw)
+            except OSError:
+                self._healthy = False
+                raise SupervisorError("DURABILITY_UNKNOWN") from None
+            return {"sha256": hashlib.sha256(raw).hexdigest(), "bytes": len(raw)}
+
+    def read_candidate(
+        self,
+        peer: PeerIdentity,
+        namespace: NamespaceRef,
+        *,
+        view_ref: ViewRef,
+        capability: str,
+        path: str,
+        offset_bytes: int,
+        max_bytes: int,
+        deadline: float,
+    ) -> ReadResult:
+        """Read the scoped candidate buffer with ordinary window/SHA semantics."""
+        with self._transaction(peer, deadline), self._file_work(peer, namespace, view_ref, capability, deadline):
+            pin = self._candidate_buffer(peer, namespace, view_ref, capability, path)
+            if (
+                type(offset_bytes) is not int
+                or offset_bytes < 0
+                or type(max_bytes) is not int
+                or not 1 <= max_bytes <= MAX_TEXT_BYTES
+            ):
+                raise SupervisorError("INVALID_REQUEST")
+            data = self._buffer_bytes(pin)
+            if data is None:
+                raise SupervisorError("STALE_REVISION")
+            try:
+                if b"\x00" in data:
+                    raise UnicodeError
+                data.decode("utf-8")
+                content = data[offset_bytes : offset_bytes + max_bytes].decode("utf-8")
+            except UnicodeError:
+                raise SupervisorError("INPUT_POLICY") from None
+            return {
+                "content": content,
+                "sha256": hashlib.sha256(data).hexdigest(),
+                "eof": offset_bytes + max_bytes >= len(data),
+            }
 
     def _gate(self, ref: ViewRef) -> _WorkGate:
         return self._gates.setdefault(ref.view_id, _WorkGate())

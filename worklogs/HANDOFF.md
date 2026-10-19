@@ -126,6 +126,26 @@ independent terminality. SLICE1 NOT shipped; all 35 STEPS/four final duties rema
 all 18 surfaces/eight joins live PLANNED/UNEXECUTED at final SLICE6. No early host
 prerequisite and no new policy or routing mode.
 
+**E259 CURRENT — the four non-PROJECT view purposes (SLICE2 STEP2 done as component):**
+
+E259 implements SLICE2 STEP2's view-purpose owners in workspace.py: create_view takes the
+closed matrix (purpose, access, candidate_scope, plan_ref) and constructs VERIFICATION
+(READ+plan) and CANDIDATE (READ+plan+scope) as immutable reader views, MUTATION (WRITE+plan)
+and PROVISIONING (WRITE, plan optional) as project views; every other combination denies
+INPUT_POLICY before any effect, revalidated at the authority. The purpose write gate at the
+effect boundary confines MUTATION writes to src//scripts and gives VERIFICATION/CANDIDATE no
+generic write path; the scoped candidate buffer is ONE supervisor-owned staged file via
+write_candidate/read_candidate (exact scope-path equality, expected-absence/exact-SHA), never
+canonical .fa/admission. 10 new native C0/C3 cases; focused 202 PASS; whole 21-module bank
+995 PASS -> eleven whole-bank assertion-only kills 1/1/2/7/1/2/3/1/2/1/1 -> restored 995 PASS
+byte-exact; Ruff/format/Mypy clean (35+185), Pyrefly 0 errors, broader 1515 PASS. Evidence
+`notes/evidence/i03-e259/purposes.json.gz` 1343665 bytes SHA256
+e689ea3b92258128c1ab20a2d4e7ed312e63bf7b81bdce53f4a52c4081e1b9bd. One masked duplicate
+path-parser was DELETED as redundant (record layer enforces), not counted. NOT shipped: STEP4
+tool cutover, STEP3 provisioning consumer, SLICE3 seal/export, live proof; SLICE1 still NOT
+shipped; all 35 STEPS/four final duties open; live verdicts PLANNED/UNEXECUTED. NEXT: SLICE2
+STEP3 (SessionManager provisioner/ownership, CT103a) per the rewritten plan.
+
 **2026-10-18 plan review (pre-E259) + register correction:** the next slice (SLICE2 STEP2-3 and
 SLICE3) was adversarially reviewed against code at 148a038 before any code was written. Confirmed
 and fixed in the plan: two disagreeing next-step orders (SessionManager STEP3 was invisible in the
