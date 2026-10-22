@@ -1523,3 +1523,22 @@ so the register remains the single inventory. All belong to join **S07** (compos
 
 **Status: PLANNED / UNEXECUTED.** No row above is evidence; E265's proof is component-level only.
 
+
+### E267 — nineteenth production surface: `execution/publication.py` (seal), PLANNED / UNEXECUTED
+
+E267 adds one production module, so the live surface count becomes **19 surfaces / eight joins**.
+Dated checkpoints above keep their own dated counts (E250's 18/8 was true when written); this is an
+inventory extension under the register's growth rule, not a re-statement of history and not a verdict.
+
+| ID / production surface | Producers / seam | Required live fixture and useful oracle | Live status |
+|---|---|---|---|
+| I03-LIVE-19 `src/fa/execution/publication.py` (E267 local seal component) | Post-barrier recompute, sealed manifest v1, tombstones, protected-plan boundary, `STOPPING → SEALED` with read-back, content-derived revision id | On the approved filesystem, with a real worker/attach cell: stop a view with real descendants, mutate the view's source *after* the barrier through a still-open descriptor and through a fork/double-fork/setsid writer, then seal. Observe: the sealed manifest's `tree_sha256` matches a recompute over the frozen bytes and not the pre-barrier input hash; a tombstone appears only for a genuinely removed base path; a changed plan path or a new/changed link is refused with the view left `STOPPING` and **no** `sealed.json`; a killed supervisor between manifest write and `SEALED` leaves either a re-sealable `STOPPING` view or a `SEALED` view whose stored manifest still matches its recompute. Negative controls: disable `_validate_sealed_tree`, and separately let the manifest write happen before the terminality precondition. | PLANNED / UNEXECUTED |
+| I03-LIVE-S06 (join, extended) | view → seal → current/intent → projection/recovery | E267 covers only the seal half locally. The live case must additionally prove that seal **cannot** run while any handler or cell is unsettled (E266's barrier plus this module's preconditions), and that a `SEALED` manifest is the exact byte identity a later fenced publication commits — which cannot be observed until CT106 lands. | PLANNED / UNEXECUTED |
+
+**What is local, and cannot be promoted here.** `tests/test_workspace_publication.py` proves the seal
+component over the real filesystem and the real authority (24 cases, 9/9 declared mutations killed). Two
+of those producers are **masked** in the seal flow: the terminal-receipt precondition by `mark_sealed`'s
+duplicate (the test now asserts the observable side effect instead), and the protected-plan rule by
+`prepare_seal`'s `ProtectedPlanContext.recheck` (oracle-tested directly, no end-to-end kill credit). No
+docker/cgroup fact, no installed service and no canonical publication was exercised; nothing here is a
+live PASS. The `FA_REQUIRE_EXECUTION_HOST=1` form of both rows stays BLOCKED in this session.

@@ -3896,3 +3896,105 @@ so the naive mutant was equivalent; (3) the read-back check needs a non-persisti
 **Not closed.** Seal (CT105), publish (CT106), recovery (CT107), the real Docker/cgroup barrier, restart
 durability, STEP5, and all live rows. `STOP_VIEW` still has no dispatcher route.
 
+
+### E267 — SLICE3 STEP1 (part 2): immutable export and seal: declaration (before code)
+
+**Ordering verified, not assumed.** Seal is SLICE3 STEP1's remainder, not STEP2: `increment-03:343`
+makes STEP1 the barrier *plus* immutable export validation, while `:344` makes STEP2 the
+intent/current/projection CAS. E266 shipped the barrier; E267 is STEP1 part 2 (`seal_view`, CT105) and
+the CAS/publish unit becomes E268. Seal's dependency loads are all shipped by E253/E255/E256/E257/
+E259/E266 — it needs no real cell, no Docker, no service composition, and it does **not** close SLICE2
+STEP3's provisioning leg (publish does).
+
+**Two source findings that shape the step.** (1) The wire names `seal-…` (`protocol.py:126,162`) while
+the persisted `_VIEW_RECORD.sealed_manifest_id` requires `manifest-…` (`workspace.py:127`); seal is the
+first writer, so the prefix must be reconciled now (decision D5). (2) Spec §5's seal manifest is not
+`_TREE`: different header, and tombstones where `_ENTRY` pins `deleted: false`. `publication.py` owns
+its own `_SEALED_MANIFEST` rather than widening the revision format readers verify.
+
+**Declared shape.** Preconditions = exact-view proof, closed gate, `STOPPING`, terminal receipt,
+`OWNED` binding at `ref.generation`, `current.revision_id == ref.base_revision`, source hash match and
+PlanRef recheck. Then recompute the tree with the one existing walker (`_Capture`), compare to base
+entries, derive tombstones, reject protected/PlanRef paths and ancestors, allow only unchanged base
+links, write manifest v1 then flip `SEALED` with read-back, idempotent on retry, `REJECTED` only on
+determinate validation failure (D3). Reply is exactly `{sealed_manifest_id, revision_id, tree_sha256}`.
+Files: new `execution/publication.py`, the D5 line in `workspace.py`, `tests/test_workspace_publication.py`,
+this plan, one new E2E register row. Nine declared kills, the named one being
+`seal_view -> _validate_sealed_tree`.
+
+**Environment, recorded rather than glossed.** No Docker in this session (host work stays BLOCKED), and
+the local CPython 3.13.7 build has no `_ctypes`/`_sqlite3`/`_ssl`/`zlib`. A disclosed out-of-repo shim
+makes local banks runnable; current baseline **1126 passed, 6 errors**, the six being offline
+installed-wheel builds. No shim number is a declared-gate result (decision D6).
+
+**Not ticked.** No STEP box, CT status, live row or acceptance duty changes. Approval of D1–D6
+precedes any `src/` edit.
+
+### E267a — E267 decision resolutions from existing records (no code)
+
+Operator instruction: research the plan documents and the shipped source before asking, and only reason
+freely where no record exists. Both open decisions had records; one of them reverses the declaration's
+own recommendation.
+
+**D2 (SEAL `revision_id`) → seal mints the id, publish materializes.** Spec §2.1:163 freezes the reply
+`{sealed_manifest_id, revision_id, tree_sha256}` and allows the revision to stay *unpublished*; §5's
+publish flow creates `Rnext` at its step 1; §5.1 discriminates recovery only through `intent.json`,
+whose REVISION row assumes an `Rnext` that already exists at `PREPARED`. A revision materialized at seal
+time would be invisible to that table. So the id is derived from the sealed bytes
+(`rev-` + `sha256(canonical(manifest))[:32]`) and publish recomputes it from the stored manifest — no
+caller-supplied id, no second field, tamper-evident.
+
+**D3 (durable `REJECTED`) → no state write.** Spec §5:884 fixes `OPEN → STOPPING → SEALED →
+PUBLISHED|REJECTED`: `REJECTED` hangs off `SEALED`, not `STOPPING`. The declaration's recommended
+option (a) would have invented a transition. Determinate seal failures therefore return their closed
+code and leave the view `STOPPING` with frozen bytes and a closed gate; `REJECTED` is E268's branch.
+
+**Also settled by the same evidence.** `UNKNOWN`/quarantined cannot seal (`TERMINALITY_UNKNOWN`, §5:884);
+D5 stays as approved (`seal-` prefix in the internal record, wire untouched); the sealed manifest keeps
+§5's frozen header, so the manifest id lives in `view.json` and the revision id is derived rather than
+stored.
+
+No `src/` change, no STEP tick, no CT status, no live verdict from this entry.
+
+### E267 result — SLICE3 STEP1 (part 2): immutable export and seal shipped as local proof
+
+**Shipped.** New `execution/publication.py` (`seal_view`, `_validate_sealed_tree`, `_SEALED_MANIFEST`,
+`derive_revision_id`, `SealResult`); `workspace.py` gains `prepare_seal` (preconditions + post-barrier
+recompute), `mark_sealed` (single durable `STOPPING → SEALED` with read-back), `_SealInputs`, and the
+D5 `seal-` id alignment. `tests/test_workspace_publication.py`: 13 new CT105 cases beside the retained
+11 CT104 cases.
+
+**Evidence.** Red: source reverted → collection error at `import fa.execution.publication` (recorded as
+such, not as per-rule red). Green: 24 passed in the owning file; **359 passed** across the seven-module
+execution bank; **1241 passed, 1 failed** in the broader execution/readiness/provisioning bank, the
+failure being `test_clean_candidate_real_readiness_commit_and_local_publication`
+(`precommit_prewarm_failed`) and **proved pre-existing** by reverting both source files and reproducing
+it identically. `ruff check`/`format --check` clean, `mypy` 19 files clean, `pyrefly` 0 errors.
+
+**Kills: 9/9**, assertion-only, sha256-verified restore after each mutant. Full mutant→killer table is in
+the increment's E267 result section.
+
+**Findings recorded because they change how this capability is believed.** (1) Two of the nine declared
+producers were **masked**: `mark_sealed` duplicated the terminal-receipt check, and the plan boundary is
+fully masked end-to-end by `prepare_seal`'s `ProtectedPlanContext.recheck` for WRITE views. The first
+was converted into an observable side-effect assertion (no `sealed.json` for an unproven view); the
+second is kept as manifest-level defence with a direct oracle and **no end-to-end kill credit**. (2)
+`_TREE` cannot represent tombstones and carries `revision_id`, so the seal manifest is its own schema.
+(3) Wire prefix `seal-` vs record prefix `manifest-` disagreed; the record moved, the wire did not.
+
+**Not closed.** SLICE3 STEP1 remains open (Q74 policy, real cgroup/Docker observer,
+`tests/integration/test_publication_recovery.py` under `FA_REQUIRE_EXECUTION_HOST=1`). STEP2 publish/CAS
+(CT106) = E268; STEP3 bundle/BOOTSTRAP/candidate seal, STEP4 recovery (CT107), STEP5 whole-bank kills
+all open. No `STOP_VIEW`/`SEAL` dispatcher route, no STEP tick, no CT status, no live row, no deployment
+claim; SLICE2 STEP3's provisioning leg still closes only with publish.
+
+### E267a-addendum — environment: the declared gate now runs unshimmed
+
+`knowledge/arena-env-build.md` (parent branch) was applied instead of the earlier disclosed shim: CPython
+**3.13.16** built from source with OpenSSL 3.0.22, zlib, libffi, bzip2 and SQLite 3.53.4 (FTS5), then
+`uv sync --frozen --extra dev`. The shim experiment from earlier in this session is **withdrawn and has
+no evidentiary value**; every number in the E267 result above comes from the conforming environment
+(`.venv/bin/python -VV` → 3.13.16). Two consequences worth keeping in the record: the toolchain lives
+under `$HOME/.cache` and the venv under the checkout, so both can vanish between sessions (rebuild cost
+≈10–15 min on 2 CPUs); and the sandbox still has **no Docker daemon**, so every `FA_REQUIRE_EXECUTION_HOST=1`
+item remains BLOCKED by design rather than by tooling.

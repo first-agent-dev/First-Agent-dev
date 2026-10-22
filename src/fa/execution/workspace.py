@@ -124,7 +124,7 @@ _VIEW_RECORD = fastjsonschema.compile(
         actor_namespace=NAMESPACE,
         state=_enum("OPEN", "STOPPING", "SEALED", "PUBLISHED", "REJECTED", "UNKNOWN"),
         input_tree_sha256=SHA,
-        sealed_manifest_id=_nullable(_id("manifest-")),
+        sealed_manifest_id=_nullable(_id("seal-")),
         operation_ids={"type": "array", "items": _id("op-")},
         candidate_scope=_nullable(CANDIDATE_SCOPE),
         plan_ref=_nullable(PLAN_REF),
@@ -633,6 +633,27 @@ class _Capture:
                 seen.add(key)
                 resolved.pop()
                 pending = found["link_target"].split("/") + pending
+
+
+@dataclass(frozen=True)
+class _SealInputs:
+    """Everything seal needs, validated once under the authority mutex.
+
+    Seal must not re-open roots of its own: the authority hands over the view it
+    already proved, the *recomputed* entries of that view's frozen source, the
+    base revision's entries and the caller's deadline. No descriptor is kept,
+    so a seal failure can never leak one.
+    """
+
+    view_ref: ViewRef
+    record: dict[str, Any]
+    directory: int
+    entries: tuple[dict[str, Any], ...]
+    base_entries: tuple[dict[str, Any], ...]
+    tree_sha256: str
+    base_revision: str
+    generation: int
+    plan_path: str | None
 
 
 @dataclass(repr=False)
@@ -2139,6 +2160,125 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                 self._healthy = False
                 raise SupervisorError("DURABILITY_UNKNOWN") from None
             return receipt
+
+    def prepare_seal(
+        self, peer: PeerIdentity, namespace: NamespaceRef, *, view_ref: ViewRef, capability: str, deadline: float
+    ) -> _SealInputs:
+        """Validate every seal precondition and recompute the frozen view's tree.
+
+        The recomputation is the point: the caller may not hand seal a manifest,
+        a tree hash or a directory, and the bytes are read *after* the barrier,
+        so nothing a cell wrote earlier can still move them. A view that is not
+        stopped-and-observed never reaches this method's success path: `OPEN`,
+        `SEALED`, `PUBLISHED`, `REJECTED` are `VIEW_CLOSED` here (E267 D3 keeps
+        `REJECTED` off this edge), and an `UNKNOWN` view is `TERMINALITY_UNKNOWN`
+        because nobody can prove its descendants are gone.
+        """
+        with self._transaction(peer, deadline):
+            view = self._proof_only(peer, namespace, view_ref, capability)
+            state = view.record["state"]
+            if state == "UNKNOWN":
+                raise SupervisorError("TERMINALITY_UNKNOWN")
+            # SEALED is allowed so a retried seal can answer from durable bytes;
+            # the transition itself is refused below when the state is not STOPPING.
+            if state not in {"STOPPING", "SEALED"}:
+                raise SupervisorError("VIEW_CLOSED")
+            if not self._gate(view_ref).closed:
+                raise SupervisorError("VIEW_CLOSED")
+            if _terminal_record(view.directory) is None:
+                raise SupervisorError("TERMINALITY_UNKNOWN")
+            try:
+                view.context.recheck()
+            except ExecutionContractError:
+                raise SupervisorError("INPUT_POLICY") from None
+            binding = self._binding(view_ref.workspace_id)
+            self._recheck(binding)
+            if binding.metadata["generation"] != view_ref.generation:
+                raise SupervisorError("STALE_GENERATION")
+            if (
+                binding.metadata["status"] != "OWNED"
+                or binding.grant is None
+                or binding.metadata["active_actor"] != namespace.to_dict()
+                or binding.principal != peer.principal
+            ):
+                raise SupervisorError("STALE_GENERATION")
+            if binding.current["revision_id"] != view_ref.base_revision:
+                raise SupervisorError("STALE_REVISION")
+            with self._revision(binding, view_ref.base_revision, deadline) as (_, base, _child):
+                if base["tree_sha256"] != view.record["input_tree_sha256"]:
+                    raise SupervisorError("STALE_REVISION")
+                base_entries = tuple(dict(entry) for entry in base["entries"])
+            source = self._sealed_source(view)
+            try:
+                entries, digest = self._snapshot(source, None, deadline)
+            finally:
+                os.close(source)
+            plan = view.record.get("plan_ref")
+            return _SealInputs(
+                view_ref=view_ref,
+                record={**view.record, "operation_ids": list(view.record["operation_ids"])},
+                directory=view.directory,
+                entries=tuple(entries),
+                base_entries=base_entries,
+                tree_sha256=digest,
+                base_revision=view_ref.base_revision,
+                generation=binding.metadata["generation"],
+                plan_path=None if plan is None else plan["workspace_relative_path"],
+            )
+
+    @staticmethod
+    def _sealed_source(view: _ReaderPin | _ProjectView) -> int:
+        """Open this view's own frozen source, refusing a swapped directory."""
+        if not isinstance(view, _ProjectView):
+            raise SupervisorError("VIEW_CLOSED")
+        source = os.open("source", _DIRECTORY, dir_fd=view.directory)
+        if _identity(os.fstat(source)) != _identity(os.fstat(view.source)):
+            os.close(source)
+            raise SupervisorError("CORRUPT_STATE")
+        return source
+
+    def mark_sealed(
+        self,
+        peer: PeerIdentity,
+        namespace: NamespaceRef,
+        *,
+        view_ref: ViewRef,
+        capability: str,
+        sealed_manifest_id: str,
+        deadline: float,
+    ) -> dict[str, Any]:
+        """The single durable `STOPPING -> SEALED` transition, and its read-back.
+
+        Only the manifest id is persisted here; the revision id is derived from
+        the sealed bytes (E267 D2), so a restart can recompute it instead of
+        trusting a stored claim. Anything short of a verified read-back is
+        `DURABILITY_UNKNOWN` and leaves the view `STOPPING` — seal never reports
+        success for a state it could not prove.
+        """
+        _hex_id(sealed_manifest_id, "seal-")
+        with self._transaction(peer, deadline):
+            view = self._proof_only(peer, namespace, view_ref, capability)
+            if not isinstance(view, _ProjectView):
+                raise SupervisorError("VIEW_CLOSED")  # A READ pin is never sealable (D4).
+            if view.record["state"] == "SEALED":
+                if view.record["sealed_manifest_id"] != sealed_manifest_id:
+                    raise SupervisorError("CORRUPT_STATE")
+                return dict(view.record)
+            if view.record["state"] != "STOPPING" or not self._gate(view_ref).closed:
+                raise SupervisorError("VIEW_CLOSED")
+            if _terminal_record(view.directory) is None:
+                raise SupervisorError("TERMINALITY_UNKNOWN")
+            updated = {**view.record, "state": "SEALED", "sealed_manifest_id": sealed_manifest_id}
+            try:
+                _replace_private_bytes(view.directory, "view.json", encode_json(updated))
+                if _read_json(view.directory, "view.json", _VIEW_RECORD, 1024**2) != updated:
+                    raise SupervisorError("DURABILITY_UNKNOWN")
+                _budget(deadline)
+            except (OSError, SupervisorError):
+                self._healthy = False
+                raise SupervisorError("DURABILITY_UNKNOWN") from None
+            view.record = updated
+            return dict(updated)
 
     def terminal_receipt(
         self, peer: PeerIdentity, namespace: NamespaceRef, *, view_ref: ViewRef, capability: str
