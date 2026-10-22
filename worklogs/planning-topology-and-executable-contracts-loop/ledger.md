@@ -4113,3 +4113,50 @@ Open decisions requiring sign-off are D1–D8 in the plan; the two that change b
 metadata.generation`, no migration shim because the three-key file was never a valid instance and no I03
 workspace has been deployed) and **D4** (canonical drift is `CORRUPT_STATE`, never adopted into the
 revision).
+
+### E269 review lock-in — peer review incorporated, Q78–Q81 recorded, plan approved
+
+**Who leads.** The operator named the implementing lead; the reviewing peer takes the final R5/R6/R9 diff
+(not the plan) as a second reader, and the lead accepted that condition. The review's own scorecard is
+recorded because it changed the plan, not to score points: **six findings held against source** (state-
+first precondition ordering; `PROJECTING` never written; `/repo` mounted `read_only: true`; `_unchanged`
+already being the drift check; the restart-clean publish→release path; and the `current.json` spec
+conflict), **one was right in diagnosis and wrong in prescription** (a durable stored receipt), and the
+lead's own two extra lines were withdrawn on review evidence (`operation_ids` append; over-broad restart
+claim). Full per-finding disposition is in the increment's E269 header, E269.3–E269.4.
+
+**Register repaired first.** `notes/open-questions-2026-10-07.md` ended at **Q77**; Q78 and Q79 existed
+only as ledger mentions, so nothing below could be cited. Both are now backfilled with their full bodies
+(Q78 = readiness boundary, resolved (B); Q79 = binary-format contract, open, re-scoped) before Q80/Q81
+were numbered.
+
+**Q80 — `current.json` shapes. RESOLVED (B), and it reverses the plan's own D2.** spec:658 says
+"initial `current.json` … exactly three keys" while §5.1 says "exactly five"; the plan asserted the
+three-key file was "an incomplete instance", which is **false**. (A) union schema was rejected: it
+accommodates a state with no deployed instance and no committed fixture (checked: no test writes a
+3-key `current.json`), makes the ownership invariant conditional on precisely the files that establish
+ownership, and leaves the contradiction standing. (B): one five-key shape, `_register` writes it,
+spec:658 carries an explicit SUPERSEDED note (amendment, not a silent edit), `_load` enforces
+`current.workspace_id == workspace_id` and `current.generation <= metadata.generation` **after**
+`_initialize_genesis` normalizes a legacy 0→1 (equality is not required: release + re-claim legally
+advances `workspace.json` past the epoch that committed the pointer).
+
+**Q81 — canonical roots on the deployed host. DECIDED (A).** `/repo` ships `read_only: true`; publish is
+the first canonical writer in the repository, and the failure would otherwise surface *after* the
+irreversible pointer. Composition must refuse a non-writable root; `prepare_publish` probes without
+writing (`os.fstatvfs(fd).f_flag & os.ST_RDONLY`, verified `os.ST_RDONLY == 1`, plus euid-vs-mode) and
+fails `PATH_DENIED` before any effect. No free-space/ENOSPC pre-check (advisory, racy, recovery must exist
+anyway). Mount choice verified at SLICE6; no production `WorkspaceAuthority(` composition exists yet, so
+this is a composition rule, not a bug fix.
+
+**Plan deltas locked in.** R1 state-first ordering; R9 replay keyed on state with the caller's own
+`operation_id` and **no** `operation_ids` append (D10: that field's only meaning is EXEC's duplicate-id
+uncertainty, so a second idempotent meaning would overload it — and Q79 keeps exactly one precedent);
+`phase=PROJECTING` durable before the first canonical byte; D4 = call `_unchanged` and accept its global
+unhealthy flag as the established rule (five callers), with a test; R13 restated as "restart-clean iff
+released"; E269.9 records the unbounded `revisions/<derived>` + `pending/<uuid>` leak for STEP4. Tests
+25→**28**, kills 9→**10** (the new one is state-first ordering).
+
+**Discipline carried forward.** The lead produced two wrong claims in two passes by reading a function's
+opening lines and inferring the rest (`_unchanged`). Rule now: quote whole function bodies in evidence
+before asserting behaviour, and prefer `git`-pinned/symbol citations over line numbers.

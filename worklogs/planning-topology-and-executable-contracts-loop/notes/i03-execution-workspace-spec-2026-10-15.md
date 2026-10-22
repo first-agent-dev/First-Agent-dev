@@ -661,6 +661,14 @@ the retained revision's tree.json is exactly {schema_version:1,revision_id,tree_
 use §5's sorted ordinary tree-entry fields, without deletions for R0. Tree hash is the existing
 canonical-JSON nondeleted-entry hash. This is data retention, not a second operation history or seal.
 Private manifest cap64MiB is independent of the4MiB wire cap; supported traversal depth is1..64.
+**SUPERSEDED 2026-10-22 — Q80/E269.** The "initial" three-key `current.json` above is replaced by §5.1's
+single shape: `{schema_version:1,workspace_id,generation,revision_id,tree_sha256}`, written at
+registration and after every publish. The three-key shape never shipped in a deployed workspace and has
+no committed fixture anywhere in the tree, so this is an amendment rather than a migration; a field
+3-key file would need a migration, not a union schema. `generation` is the ownership epoch the pointer
+was committed under, and `_load` enforces `current.workspace_id == workspace_id` and
+`current.generation <= metadata.generation` (equality is deliberately not required: release + re-claim
+legally advances `workspace.json` past the epoch that committed the current revision).
 Count directory entries while enumerating, before unbounded list allocation. Mutex queueing and
 post-generation checks consume the original deadline; expiry cannot issue a grant.
 Copy dirty filesystem bytes under descriptor roots, excluding .git/.fa/.venv/.env and configured
@@ -919,6 +927,33 @@ bytes is `CORRUPT_STATE` and touches no pointer. For an ordinary REVISION the ir
 `PREPARED` legitimately exists on both sides of the CAS, so phase alone can never decide whether the
 commit happened. Publish ends by flipping the view record to `PUBLISHED`, which is what settles the
 owner for later reuse.
+
+**E269 review rules (normative for STEP2's implementation).**
+- **State first, equality second.** Precondition evaluation is ordered by *view state* before the
+  base-revision equality chain. A `PUBLISHED` view skips that chain entirely and goes to replay: its
+  `current.revision_id` is the derived revision, so an equality check against `view_ref.base_revision`
+  would make a legitimate retry impossible — the exact case replay exists for.
+- **Replay is state-driven and stores nothing new.** A new request observing `PUBLISHED` re-verifies
+  `current.revision_id == derive_revision_id(stored manifest)` plus the canonical projection, and answers
+  `_COMMITTED` with **the caller's own** `operation_id`. Exact same-id replays never reach publish (the
+  dispatcher serves them from the journal), and a stored receipt carrying a foreign operation id would
+  fail the caller's own operation-binding check. Publish does **not** append to
+  `view.record["operation_ids"]`: that field's only existing meaning is EXEC's "this operation id was
+  already used" → `EXECUTION_UNKNOWN`, and giving it an idempotent meaning would overload one field with
+  two policies. Publish's own operation id lives in `intent.json.operation_id` (§5.1).
+- **`PROJECTING` is written, not inferred.** `phase=PROJECTING` is durable before the first canonical
+  byte, so recovery dispatches instead of inferring "projection may be incomplete" from `COMMITTED`.
+- **Canonical drift is `CORRUPT_STATE`, and it reuses the established check.** Publish calls the existing
+  `workspace.py::_unchanged` (canonical re-walk vs `current.tree_sha256`) rather than a second drift
+  checker. The consequence is deliberate and global: `_unchanged` marks the authority unhealthy, so one
+  drifted project tree disables the supervisor until restart. That is the project's existing ownership
+  rule (five callers already rely on it), now stated rather than inherited.
+- **A non-writable canonical root fails at prepare (Q81).** `prepare_publish` proves writability without
+  writing — `os.fstatvfs(fd).f_flag & os.ST_RDONLY` plus euid-vs-mode — and refuses `PATH_DENIED` before
+  any filesystem effect. ENOSPC/EIO remain genuinely unpredictable and belong to recovery.
+- **Idempotent projection.** Projection is a pure function of the committed revision: a path already
+  matching `(type, mode, size, sha256)` is skipped. This makes forward recovery correct by construction
+  rather than by a recovery-time decision.
 
 Use materialized immutable revisions and one current manifest; no live overlay lowerdir or Git CAS.
 Managed readers read revisions, never a partially updated canonical working directory. A canonical
