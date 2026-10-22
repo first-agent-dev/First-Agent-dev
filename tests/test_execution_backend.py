@@ -2,6 +2,15 @@
 
 The Docker engine is a literal HTTP peer and the cell worker is the real local
 PTY worker. No container, cgroup, descendant barrier or receipt is proven here.
+
+Cancel path inventory (I03 SLICE1 STEP2, spec §2.2 + E262 note):
+  G1 interactive episode cancel: episode map -> intent -> original creation cell.
+  G2 one-shot cancel of a RUNNING operation: journal record -> intent -> that CID.
+  G3 one-shot cancel from another view: UNAUTHORIZED, no journal write, no request.
+  G4 one-shot cancel of an unknown operation: EXECUTION_UNKNOWN, no request.
+  G5 one-shot cancel before any cell exists: durable intent, `not_created`, and
+     the refused operation can never create/start afterwards.
+  G6 one-shot cancel with a fresh backend: no in-memory episode map is required.
 """
 
 from __future__ import annotations
@@ -13,7 +22,7 @@ import struct
 import threading
 import time
 from collections.abc import Callable, Iterator
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from functools import partial
 from pathlib import Path
 from typing import Any, override
@@ -1062,3 +1071,263 @@ def test_failing_command_reports_its_own_exit_code(backend: Backend) -> None:
     assert outcome.terminal_barrier is False
     assert outcome.container_id == CID
     assert outcome.session_id == "main"
+
+
+# ---------------------------------------------------------------------------
+# G2-G6: one-shot cancellation ownership (SLICE1 STEP2, spec §2.2 / E262).
+# A noninteractive cell is created for ONE operation and is never in the
+# persistent episode map, so its cancel must resolve the durable journal CID.
+# ---------------------------------------------------------------------------
+
+NONINTERACTIVE = replace(native_profile(), profile_id="verification", interactive=False)
+
+
+class InFlightWorkerStream:
+    """A one-shot attach whose RUN stays in flight until the test releases it.
+
+    It is not a worker: it makes the cancel window observable and deterministic,
+    so "cancel while the command runs" is a real state, not a race.
+    """
+
+    def __init__(self) -> None:
+        self.requests: list[dict[str, Any]] = []
+        self.received = threading.Event()
+        self.release = threading.Event()
+        self.closed = False
+
+    def write_frame(self, raw: bytes, *, deadline: float) -> None:
+        if time.monotonic() >= deadline:
+            raise OSError("fake_worker_deadline")
+        self.requests.append(decode_cell_request(raw))
+        self.received.set()
+
+    def read_frame(self, *, deadline: float) -> bytes:
+        if not self.release.wait(max(0.0, deadline - time.monotonic())):
+            raise OSError("fake_worker_deadline")
+        raise OSError("fake_worker_closed")  # A stopped cell never answers.
+
+    def close(self) -> None:
+        self.closed = True
+        self.release.set()
+
+
+@dataclass
+class OneShot:
+    """A noninteractive backend over the SAME real authority/journal/daemon peer."""
+
+    case: Backend
+    streams: list[InFlightWorkerStream]
+
+
+def one_shot(site: Site, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> OneShot:
+    case = Backend(site, tmp_path, profile_override=NONINTERACTIVE)
+    private = tmp_path / "private"
+    private.mkdir(mode=0o700)
+    peer = Endpoint(private / "engine.sock")
+    case.peer = peer
+    case.engine = ObservedEngine(peer.path, daemon_uid=os.getuid(), api_version="1.45", rpc_timeout_ms=1000)
+    case.backend = CellBackend(case.authority, case.engine, case.authority.journal)
+    streams: list[InFlightWorkerStream] = []
+
+    def attach(container_id: str, *, deadline: float) -> InFlightWorkerStream:
+        stream = InFlightWorkerStream()
+        streams.append(stream)
+        return stream
+
+    monkeypatch.setattr(case.engine, "attach", attach)
+    return OneShot(case, streams)
+
+
+@pytest.fixture
+def one_shot_case(site: Site, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[OneShot]:
+    """A noninteractive backend that is always torn down, even on failure."""
+    one = one_shot(site, tmp_path, monkeypatch)
+    try:
+        yield one
+    finally:
+        try:
+            one.case.close()  # The real authority/journal/worker teardown, never a leak.
+        finally:
+            one.case.peer.close()
+
+
+def one_shot_request(case: Backend, rid: str, command: str) -> dict[str, Any]:
+    request = exec_request(case.grant, rid, command)
+    request["payload"].update(profile_id=NONINTERACTIVE.profile_id, session_id=None)
+    claim(case.authority, request)
+    return request
+
+
+def one_shot_replies(case: Backend, operation_id: str) -> list[Reply]:
+    return [
+        Reply(201, {"Id": CID, "Warnings": []}),
+        Reply(204),
+        Reply(200, observation(operation_id, case.view.view_id)),
+    ]
+
+
+def cancel_replies(operation_id: str, view_id: str) -> list[Reply]:
+    return [
+        Reply(200, observation(operation_id, view_id)),
+        Reply(204),
+        Reply(200, observation(operation_id, view_id, status="exited")),
+    ]
+
+
+def cancel_request(case: Backend, operation_id: str, *, view: Any = None, rid: str = "c" * 32) -> dict[str, Any]:
+    return {
+        "protocol_version": 1,
+        "request_id": rid,
+        "op": "cancel",
+        "namespace": ACTOR.to_dict(),
+        "view_ref": (case.view if view is None else view).to_dict(),
+        "capability": case.grant.capability,
+        "payload": {"operation_id": operation_id},
+    }
+
+
+def eventually(predicate: Callable[[], bool], *, timeout: float = 5.0) -> bool:
+    """Poll a cross-thread condition; a fixed sleep is never the oracle."""
+    limit = time.monotonic() + timeout
+    while time.monotonic() < limit:
+        if predicate():
+            return True
+        time.sleep(0.01)
+    return predicate()
+
+
+def start_one_shot(
+    one: OneShot, rid: str, command: str
+) -> tuple[dict[str, Any], str, list[Exception], threading.Thread]:
+    """Claim and launch one noninteractive command; return its in-flight state."""
+    operation_id = "op-" + rid
+    request = one_shot_request(one.case, rid, command)
+    one.case.peer.replies.extend(one_shot_replies(one.case, operation_id))
+    failures: list[Exception] = []
+    thread = command_thread(one.case, request, failures)
+    return request, operation_id, failures, thread
+
+
+def test_running_one_shot_cancel_stops_the_journal_bound_cid(one_shot_case: OneShot) -> None:
+    """G2 / C3: a running one-shot is stopped by its own durable CID.
+
+    kill-check: removing the noninteractive branch of CellBackend.cancel (or the
+    journal-derived CID) leaves this cancel at EXECUTION_UNKNOWN.
+    """
+    one = one_shot_case
+    _, operation_id, failures, thread = start_one_shot(one, "a" * 32, "sleep 5")
+    try:
+        assert eventually(lambda: bool(one.streams) and one.streams[0].received.is_set()), (
+            f"the RUN never reached the one-shot cell: {failures}"
+        )
+        one.case.peer.replies.extend(cancel_replies(operation_id, one.case.view.view_id))
+        cancelled = ok_backend(
+            lambda: one.case.owner().cancel(PEER, cancel_request(one.case, operation_id), deadline=until())
+        )
+        assert cancelled == {"container_id": CID, "status": "exited"}
+        paths = [seen["path"] for seen in one.case.peer.seen]
+        assert sum(1 for path in paths if "/containers/create" in path) == 1
+        assert sum(1 for path in paths if path.endswith("/start")) == 1
+        assert sum(1 for path in paths if path.endswith("/kill?signal=SIGKILL")) == 1
+        record = one.case.authority.journal.lookup(operation_id, ACTOR)
+        assert record is not None and record["cancel_requested"] is True
+        assert len(one.streams) == 1
+        assert len(one.streams[0].requests) == 1, "a cancelled command must never be re-sent"
+    finally:
+        for stream in one.streams:
+            stream.release.set()
+        thread.join(5)
+    assert len(failures) == 1, f"the command must end in exactly one closed outcome: {failures}"
+    assert_cancelled_command_outcome(failures)
+
+
+def test_one_shot_cancel_from_another_view_is_unauthorized_without_effect(one_shot_case: OneShot) -> None:
+    """G3 / C3: the exact ViewRef gate runs BEFORE any intent write or daemon stop."""
+    one = one_shot_case
+    _, operation_id, failures, thread = start_one_shot(one, "b" * 32, "sleep 5")
+    try:
+        assert eventually(lambda: bool(one.streams) and one.streams[0].received.is_set()), (
+            f"the RUN never reached the one-shot cell: {failures}"
+        )
+        other = ok(
+            lambda: one.case.authority.pin_reader(
+                PEER,
+                ACTOR,
+                workspace_id=one.case.view.workspace_id,
+                revision_id=one.case.view.base_revision,
+                plan_ref=None,
+                formal_evidence=False,
+                deadline=until(),
+            )
+        )
+        assert other.view_ref is not None
+        before = one.case.authority.journal.lookup(operation_id, ACTOR)
+        seen_before = len(one.case.peer.seen)
+        denied(
+            "UNAUTHORIZED",
+            lambda: one.case.owner().cancel(
+                PEER, cancel_request(one.case, operation_id, view=other.view_ref), deadline=until()
+            ),
+        )
+        after = one.case.authority.journal.lookup(operation_id, ACTOR)
+        assert after == before and before is not None and before["cancel_requested"] is False
+        assert len(one.case.peer.seen) == seen_before, "a foreign-view cancel must reach no daemon"
+    finally:
+        for stream in one.streams:
+            stream.release.set()
+        thread.join(5)
+    assert_cancelled_command_outcome(failures)
+
+
+def test_one_shot_cancel_of_an_unknown_operation_touches_no_cell(one_shot_case: OneShot) -> None:
+    """G4 / C0-C3: an unknown operation is refused without any daemon contact."""
+    one = one_shot_case
+    seen_before = len(one.case.peer.seen)
+    denied(
+        "EXECUTION_UNKNOWN",
+        lambda: one.case.owner().cancel(PEER, cancel_request(one.case, "op-" + "d" * 32), deadline=until()),
+    )
+    assert len(one.case.peer.seen) == seen_before
+    assert one.case.authority.journal.lookup("op-" + "d" * 32, ACTOR) is None
+
+
+def test_one_shot_cancel_before_creation_persists_intent_and_blocks_the_cell(one_shot_case: OneShot) -> None:
+    """G5 / C3: with no CID the durable intent is the outcome, and no cell appears.
+
+    kill-check: returning a fake "exited"/stopped observation (or skipping the
+    intent write) breaks the guarantee that create/start can never follow.
+    """
+    one = one_shot_case
+    operation_id = "op-" + "e" * 32
+    request = one_shot_request(one.case, "e" * 32, "sleep 5")
+    cancelled = ok_backend(
+        lambda: one.case.owner().cancel(PEER, cancel_request(one.case, operation_id), deadline=until())
+    )
+    assert cancelled == {"container_id": None, "status": "not_created"}
+    record = one.case.authority.journal.lookup(operation_id, ACTOR)
+    assert record is not None and record["cancel_requested"] is True and record["container_id"] is None
+    seen_before = len(one.case.peer.seen)
+    denied("EXECUTION_UNKNOWN", lambda: one.case.owner().execute(PEER, request, deadline=until()))
+    assert len(one.case.peer.seen) == seen_before, "a cancelled operation must never create or start a cell"
+    assert one.streams == []
+
+
+def test_one_shot_cancel_does_not_depend_on_the_interactive_episode_map(one_shot_case: OneShot) -> None:
+    """G6 / C3: a restart-fresh backend (no episodes) still stops the live cell."""
+    one = one_shot_case
+    _, operation_id, failures, thread = start_one_shot(one, "f" * 32, "sleep 5")
+    try:
+        assert eventually(lambda: bool(one.streams) and one.streams[0].received.is_set()), (
+            f"the RUN never reached the one-shot cell: {failures}"
+        )
+        restarted = CellBackend(one.case.authority, one.case.engine, one.case.authority.journal)
+        assert restarted.episode_count() == 0
+        one.case.peer.replies.extend(cancel_replies(operation_id, one.case.view.view_id))
+        cancelled = ok_backend(lambda: restarted.cancel(PEER, cancel_request(one.case, operation_id), deadline=until()))
+        assert cancelled == {"container_id": CID, "status": "exited"}
+        assert any(seen["path"].endswith("/kill?signal=SIGKILL") for seen in one.case.peer.seen)
+    finally:
+        for stream in one.streams:
+            stream.release.set()
+        thread.join(5)
+    assert_cancelled_command_outcome(failures)

@@ -388,7 +388,14 @@ class OperationJournal:
         *,
         view: ViewRef,
         deadline: float | None = None,
-    ) -> None:
+    ) -> dict[str, Any]:
+        """Durably record one cancel intent and return the record it wrote.
+
+        Missing/foreign/other-op identities are refused here, so a caller that
+        needs the durable container id reads it from THIS transaction instead of
+        a separate lookup: a create that landed just before the intent is then
+        still stopped, and a create after it is impossible.
+        """
         if not isinstance(view, ViewRef):
             raise ExecutionContractError
         with self._transaction(deadline=deadline) as fd:
@@ -400,6 +407,7 @@ class OperationJournal:
             self._before_deadline(deadline)
             record["cancel_requested"] = True
             self._write(fd, record)
+            return record
 
     def complete(
         self,

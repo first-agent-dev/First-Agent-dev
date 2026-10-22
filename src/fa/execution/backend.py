@@ -19,6 +19,7 @@ from typing import Any
 from fa.execution.cell_protocol import encode_cell_request
 from fa.execution.docker import DockerCells, DockerEngine, DockerUnavailableError
 from fa.execution.journal import JournalError, OperationJournal
+from fa.execution.profiles import ExecutionProfile
 from fa.execution.protocol import decode_request, encode_json
 from fa.execution.supervisor import PeerIdentity, SupervisorError
 from fa.execution.types import ExecutionContractError, NamespaceRef, Operation, ViewRef
@@ -348,6 +349,9 @@ class CellBackend:
         """Persist cancel intent for the exact command, then stop the OWNED cell.
 
         Cancel intent is not a terminal receipt and asserts no process death.
+        An interactive view resolves its cell through the live episode identity;
+        a noninteractive one-shot has no episode, so its own journal record is
+        the identity (spec §2.2 / E262).
         """
         req = decode_request(encode_json(request))
         if req["op"] != Operation.CANCEL.value:
@@ -361,6 +365,8 @@ class CellBackend:
         profile = self._authority.approved_profile
         if profile is None:
             raise SupervisorError("UNAPPROVED_PROFILE")
+        if not profile.interactive:
+            return self._cancel_operation(operation_id, namespace, view, profile, deadline=deadline)
         with self._bounded_mutex(deadline):
             key = _EpisodeKey.build(peer, namespace, view, profile.profile_id)
             episode = self._episodes.get(key)
@@ -386,6 +392,41 @@ class CellBackend:
             raise SupervisorError("PATH_DENIED" if error.status is None else "BACKEND_UNAVAILABLE") from None
         except TimeoutError:
             raise SupervisorError("BACKEND_UNAVAILABLE") from None
+        return {"container_id": observed.container_id, "status": observed.status}
+
+    def _cancel_operation(
+        self,
+        operation_id: str,
+        namespace: NamespaceRef,
+        view: ViewRef,
+        profile: ExecutionProfile,
+        *,
+        deadline: float,
+    ) -> dict[str, Any]:
+        """Stop a one-shot operation through its own durable record.
+
+        No episode map, no creation request and no replacement cell: the record
+        binds the namespace and CID, and the requested view must match exactly.
+        """
+        try:
+            observed = self._cells.force_stop_operation(
+                operation_id=operation_id,
+                namespace=namespace,
+                view=view,
+                profile=profile,
+                deadline=deadline,
+            )
+        except JournalError as error:
+            raise SupervisorError(error.code) from None
+        except ExecutionContractError:
+            raise SupervisorError("PATH_DENIED") from None
+        except DockerUnavailableError as error:
+            raise SupervisorError("PATH_DENIED" if error.status is None else "BACKEND_UNAVAILABLE") from None
+        except TimeoutError:
+            raise SupervisorError("BACKEND_UNAVAILABLE") from None
+        if observed is None:
+            # Durable intent only: the operation provably cannot create or start now.
+            return {"container_id": None, "status": "not_created"}
         return {"container_id": observed.container_id, "status": observed.status}
 
     def reconcile(self, *, deadline: float) -> list[dict[str, Any]]:

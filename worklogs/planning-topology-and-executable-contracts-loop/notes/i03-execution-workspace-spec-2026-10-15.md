@@ -338,6 +338,26 @@ facts; never a receipt/terminal_barrier, journal DONE or lease release. Actual d
 emptiness, per-command cancel routing, admission/drain/restart enumeration remain obligations of
 the real backend/authority join, not fulfilled by these native lifecycle operations.
 
+**E262 one-shot CANCEL resolution (implementation note for the §2.2 rule above).** The gap that
+E261 recorded is closed by a third
+owned-stop entry point on the same owner, `DockerCells.force_stop_operation(operation_id, namespace,
+view, profile, deadline)`, not by a second registry: it durably records cancel intent through
+`OperationJournal.request_cancel`, which alone refuses an unknown operation, another op kind, or a
+`ViewRef` that is not exactly the requested one, and which now returns the record it wrote in that same
+transaction; only then does it call the existing engine `force_stop_owned` with that record's own
+durable CID/labels. Identity, intent and CID are therefore one journal decision point rather than a
+lookup followed by a write — a separate lookup would duplicate the checks (a masked producer) and, worse,
+leave a create-then-cancel window in which a just-created cell is recorded as cancelled but never
+stopped. No episode-map entry, no creation
+request and no cell replacement is needed, so the path also works after a backend restart. When the
+record has no CID yet the persisted intent is the whole outcome: `create_once`/`start_once` already
+refuse a cancelled record, so the operation provably cannot create or start afterwards, and the
+caller gets a distinct `not_created` observation instead of a false `exited`/`CANCELLED`. The
+interactive branch keeps its existing episode-identity gate and `force_stop_created` stop; the two
+branches differ only in how the durable CID is resolved, never in the stop mechanism. Unifying them
+is not authorized here because it would change interactive restart semantics, which R4/reconcile
+owns.
+
 **E252 worker reply/RUN handoff repair (before code):** completion-reply publication and acceptance
 of the next RUN must share one synchronization boundary. The caller can receive a reply before
 its sender's write returns; releasing the RUN gate only afterward without coordinating admission

@@ -3704,3 +3704,46 @@ mutation) regressions. SLICE2 STEP3 (managed provisioner injection into SessionM
 declaration and prototype were prepared but are not in this tree.
 All live verdicts remain PLANNED/UNEXECUTED; no STEP box, FUNCTIONAL contract or E223 duty changes;
 no production deployment authorized.
+
+### E262 — one-shot CANCEL ownership: declaration (before code)
+
+Closes the E261 GAP. Allowed files: src/fa/execution/docker.py (one method on DockerCells),
+src/fa/execution/backend.py (cancel branch), tests/test_execution_backend.py, plan/ledger/register.
+Mechanism: `DockerCells.force_stop_operation` persists cancel intent through
+`journal.request_cancel` (which alone refuses unknown/other-op/foreign-view identities and now returns
+the record it wrote in the same transaction), then reuses engine `force_stop_owned` with that record's
+own durable CID; a record without a CID returns `not_created` because create_once/start_once already
+refuse a cancelled record. Interactive cancel unchanged (episode gate + force_stop_created). No new
+registry, protocol, schema, admission rule or service composition. Tests C0/C3 in the existing backend
+module; five declared producer kills. Live witnesses stay PLANNED/UNEXECUTED; no checkbox or acceptance
+status changes.
+
+### E262 — one-shot CANCEL ownership: result
+
+**Shipped and committed (branch `arena/86633f17-first-agent-dev`).** Files: `src/fa/execution/docker.py`
+(`force_stop_operation`), `src/fa/execution/backend.py` (`cancel` branch + `_cancel_operation`),
+`src/fa/execution/journal.py` (`request_cancel` returns the written record; no new validation or
+schema), `tests/test_execution_backend.py` (G1–G6 path inventory + five C0/C3 cases).
+
+**Evidence (actual outputs).** Red first: 4 failed / 2 passed, failing at the cancel call
+(`SupervisorError`) — the E261 gap reproduced. Green: `pytest tests/test_execution_backend.py -q` →
+30 passed in 19.35s; seven-module execution bank → 462 passed in 36.62s. Statics: `ruff check src tests`
+→ All checks passed!; `ruff format --check src tests` → 498 files already formatted; `mypy
+src/fa/execution` → Success: no issues found in 16 source files; `pyrefly check src/fa/execution` → 0
+errors.
+
+**Mutation run: 5/5 assertion-only kills** (each mutant restored byte-exact by SHA256, bank re-run green
+between mutants): noninteractive branch deleted → G2/G3/G5/G6; exact-`ViewRef` check deleted → G3 + two
+journal tests; `request_cancel` replaced by a read-only `lookup` → G2/G3/G4/G5; CID replaced by `None` →
+G2/G6; `not_created` reported as `exited` → G5.
+
+**Design correction the mutation run forced (kept in the record).** The first version looked up the
+record, re-checked op/view locally, then called `request_cancel`, then read the CID from the earlier
+lookup. Two defects: the local checks were masked duplicates of checks inside `request_cancel` (E259
+pattern, deleted), and reading the CID outside the intent transaction leaves a create-then-cancel window
+where a just-created cell would be marked cancelled but never stopped. Fixed by returning the record
+from `request_cancel`, making identity, intent and CID one transaction. Consequently kill (2) is credited
+to the reused journal producer, not claimed as new code evidence.
+
+**Not closed.** No STEP checkbox, FUNCTIONAL contract, or E223 transferred duty. I03-LIVE-18 / S04 stay
+PLANNED/UNEXECUTED (implemented locally only); surface count 18/8 unchanged; no deployment authorized.

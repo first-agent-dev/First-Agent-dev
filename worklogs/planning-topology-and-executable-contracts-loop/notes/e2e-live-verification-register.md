@@ -1489,9 +1489,17 @@ to the persistent interactive `_episodes` map, while `CellBackend.cancel()` curr
 through that map. The passing sequential one-shot tests therefore do not prove cancellation of an
 in-flight one-shot command. No new runtime test was run here and no local PASS is assigned.
 
-SLICE1 STEP2 remedy is to use the existing operation journal's exact namespace/`ViewRef` binding and
-durable CID plus the existing owned-cell Docker stop/observation path; do not add a second registry or
-create a replacement. Before production, add a local backend regression for same-view cancel of a live
-one-shot command and cross-view denial, then execute I03-LIVE-18/S04 against the actual service/daemon
-and require the independent cgroup barrier. Until then, one-shot cancellation is open and all live rows
-remain PLANNED / UNEXECUTED.
+SLICE1 STEP2 remedy (E262): the existing operation journal's exact namespace/`ViewRef` binding and
+durable CID plus the existing owned-cell Docker stop/observation path; no second registry, no
+replacement cell.
+
+**Local regression status: IMPLEMENTED (E262).** `CellBackend.cancel` has a noninteractive path that
+persists intent through `journal.request_cancel` and stops the record's own durable CID via
+`force_stop_owned`; same-view cancel of a live one-shot, cross-view denial with no journal/Docker
+mutation, unknown operation with no cell contact, cancel-before-create (`not_created`, later
+create/start refused), and a fresh backend with an empty episode map all have local C0/C3 cases
+(five changes, five assertion-only mutations killed). This is component evidence only.
+
+**Live status: PLANNED / UNEXECUTED.** I03-LIVE-18/S04 still require the actual installed
+service + approved daemon + independent cgroup barrier. Until those runs exist, one-shot cancellation
+is locally implemented but not live-verified and every live row remains PLANNED / UNEXECUTED.

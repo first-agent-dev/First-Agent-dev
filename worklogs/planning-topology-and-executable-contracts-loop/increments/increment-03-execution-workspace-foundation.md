@@ -1199,3 +1199,124 @@ journal/daemon mutation. The host seam is I03-LIVE-18/S04 and remains PLANNED/UN
 **Status:** open until the owner path and regression are implemented and reviewed in I03; final real
 daemon/cgroup proof remains at SLICE6. This audit does not edit product source or claim release
 readiness.
+
+### E262 — one-shot CANCEL ownership: declaration before code
+
+**Idea.** Close the seam E261 recorded: a CANCEL issued while a *noninteractive one-shot* EXEC is
+running must stop that operation's own journal-bound cell. Today it cannot, because the only
+cancel path resolves the cell through the interactive episode map.
+
+**Contract/gap IDs.** I03 SLICE1 STEP2 (exit clause "live one-shot cancel by exact journal-bound
+CID"), CT100, CT103a lineage; spec §2.2 (cancel must match namespace + exact `ViewRef` in the same
+journal transaction, applies to in-flight one-shot, never create a replacement) and the §E262
+implementation note; E261 GAP record in the ledger and the I03-LIVE-18 / S04 witness.
+
+**Allowed files.** `src/fa/execution/docker.py` (one new method on the existing `DockerCells`),
+`src/fa/execution/backend.py` (`CellBackend.cancel` branch), `src/fa/execution/journal.py`
+(`request_cancel` return value only — no new validation, no schema change),
+`tests/test_execution_backend.py`
+(new C0/C3 cases + docstring path inventory), plan docs/ledger/E2E register. No new module, no
+second registry, no protocol/schema change, no supervisor or service composition, no admission
+change for cancel.
+
+**Current behaviour (source-verified).** `CellBackend.cancel` builds an `_EpisodeKey` and reads
+`self._episodes`; only the interactive branch of `_live_episode` inserts there (backend.py:281), so
+for a noninteractive profile the lookup returns `None` and cancel raises `EXECUTION_UNKNOWN` before
+persisting anything — even while the one-shot cell is running. `DockerCells` already owns two
+owned-stop entry points (`force_stop_created`, and the engine-level `force_stop_owned`) and
+`OperationJournal.request_cancel` already enforces the exact-`ViewRef` match.
+
+**Target behaviour.** Noninteractive cancel resolves the EXEC record by `operation_id` under the
+original namespace, verifies `op == exec` and exact `ViewRef`, persists cancel intent, and stops the
+record's own durable CID through the existing `force_stop_owned` path (which re-validates
+name/labels/image/CID before one fixed SIGKILL and independently re-inspects the same CID). If the
+record has no CID yet, the intent alone is durable and the operation is refused a later
+create/start; the caller receives a distinct `not_created` observation. Interactive cancel is
+unchanged. Return values remain observations, never receipts or terminality.
+
+**Mechanism.** `OperationJournal.request_cancel` returns the record it durably wrote inside its own
+transaction (identity, exact view, intent and read of the CID are then one decision point — an extra
+`lookup` before it would both duplicate the checks and open a create-then-cancel race). New
+`DockerCells.force_stop_operation(*, operation_id, namespace, view, profile, deadline) ->
+ContainerObservation | None`: type checks, `journal.request_cancel(...)` (sole authority for
+unknown/other-op/foreign-view refusal and for durable intent), then `engine.force_stop_owned(...)`
+with `record["container_id"]`, or `None` when it is absent. `CellBackend.cancel` branches once on
+`profile.interactive`: the existing episode path, or `force_stop_operation` mapped through the same
+error surface (`JournalError → SupervisorError(code)`, `ExecutionContractError → PATH_DENIED`,
+`DockerUnavailableError → PATH_DENIED` when no status else `BACKEND_UNAVAILABLE`, `TimeoutError →
+BACKEND_UNAVAILABLE`).
+
+**Production best practice.** Reuse the existing journal as the single source of durable truth
+instead of adding in-memory state; make identity checks precede effects; keep one stop
+implementation (`force_stop_owned`) for every path; express "nothing to stop yet" as data, not as an
+exception or a false success; keep the deadline and the error surface uniform across paths.
+
+**Failure behaviour.** Unknown/foreign/other-op id → `EXECUTION_UNKNOWN`; foreign view → 
+`UNAUTHORIZED` with no journal write and no daemon request; journal or Docker unavailability →
+`BACKEND_UNAVAILABLE`; malformed/foreign observation → `PATH_DENIED`; expired deadline →
+`BACKEND_UNAVAILABLE` with no late effect. A stopped cell makes the concurrent command end in
+`EXECUTION_UNKNOWN`/`BACKEND_UNAVAILABLE`, never success.
+
+**DoD.** Same-view cancel of a running one-shot: intent durable, one SIGKILL to the exact CID, the
+concurrent command ends in a legal closed outcome, exactly one RUN frame, no second create/start/
+attach. Cross-view cancel: `UNAUTHORIZED`, `cancel_requested` still false, no daemon request at all.
+Unknown operation: `EXECUTION_UNKNOWN`, no daemon request. Cancel before creation: intent durable,
+`not_created`, the later execute refuses to create/start and sends zero frames. A fresh
+`CellBackend` over the same journal (no episode map) still stops the live one-shot cell.
+**Negative proof:** deleting the new branch, the exact-view check, the intent write, or the
+CID-based stop each fails a named test.
+
+**Tests-writing class.** C0/C3 (this module's proven level: real authority/journal, literal HTTP
+Docker peer, real PTY worker; no container/cgroup/terminality claim). Classes and path inventory are
+recorded in the test module docstring.
+
+**Producer kill-check targets (declared, 4 new + 1 reused).** (1) the noninteractive branch in
+`CellBackend.cancel`; (2) the exact-`ViewRef` comparison in `journal.request_cancel` — **reused**
+pre-existing producer, already killed by journal tests, so not claimed as new evidence; (3) the
+durable `request_cancel` intent (mutant: read-only `lookup` instead); (4) the
+`record["container_id"]` argument to `force_stop_owned`; (5) the `None`/`not_created` handling for a
+record without a CID.
+
+**E2E ledger.** Existing I03-LIVE-18 / S04 witnesses already name the required live case; the
+register's open-gap paragraph is updated to "implemented locally, live still PLANNED". Surface
+count unchanged (18/8). No STEP checkbox, FUNCTIONAL contract or E223 duty is closed by this
+component work.
+
+#### E262 result — implementation, evidence and one design correction
+
+**Shipped.** `journal.request_cancel` now returns the record it wrote (behaviour otherwise identical);
+`DockerCells.force_stop_operation` in front of `attach_created`; `CellBackend.cancel` branches once on
+`profile.interactive` into `_cancel_operation`. Four new producers, one reused.
+
+**Correction found by mutation testing (recorded, not hidden).** The first implementation looked up the
+record, then checked op and view, then called `request_cancel`, then read the CID from the *earlier*
+lookup. Mutation exposed both defects: deleting the local checks did not fail anything (they were
+duplicates of checks inside `request_cancel` — a masked producer, the E259 pattern), and reading the
+CID outside the intent transaction leaves a create-then-cancel window in which a freshly created cell
+would be recorded as cancelled but never stopped. Both were fixed by having `request_cancel` return the
+record it wrote, so identity, intent and CID belong to one journal transaction. The declared kill (2)
+is therefore attributed to the journal, and the `request_cancel` mutation was changed from "delete the
+call" to "replace with a read-only lookup", which is the mutation that exists in the final design.
+
+**Red→green.** Before the implementation, the red run was 4 failed / 2 passed with the failure at the
+cancel call (`SupervisorError`). After: `pytest tests/test_execution_backend.py -q` → 30 passed in
+19.35s; the seven-module execution bank (`backend docker journal dispatch attach client cell_worker`)
+→ **462 passed in 36.62s**.
+
+**Static checks (actual output).** `ruff check src tests` → `All checks passed!`; `ruff format --check
+src tests` → `498 files already formatted`; `mypy src/fa/execution` → `Success: no issues found in 16
+source files`; `pyrefly check src/fa/execution` → `0 errors`.
+
+**Targeted mutation run (assertion-only credit; source SHA256-restored after each mutant and the bank
+re-run green).** 5/5 kills:
+
+| Mutant | File | Killed by |
+| --- | --- | --- |
+| noninteractive branch deleted | `backend.py` | G2, G5, G6 (and G3, since the episode path is taken) |
+| exact-`ViewRef` check deleted | `journal.py` | G3 + 2 journal cancel tests (**reused**) |
+| `request_cancel` → read-only `lookup` | `docker.py` | G2, G3, G4, G5 |
+| `record["container_id"]` → `None` | `docker.py` | G2, G6 |
+| `not_created` → `exited` | `backend.py` | G5 |
+
+**Scope unchanged.** No STEP checkbox, FUNCTIONAL contract, or E223 duty is closed. I03-LIVE-18 / S04
+remain PLANNED/UNEXECUTED; surface count 18/8.

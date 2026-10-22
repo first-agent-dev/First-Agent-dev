@@ -545,6 +545,41 @@ class DockerCells:
             deadline=deadline,
         )
 
+    def force_stop_operation(
+        self,
+        *,
+        operation_id: str,
+        namespace: NamespaceRef,
+        view: ViewRef,
+        profile: ExecutionProfile,
+        deadline: float,
+    ) -> ContainerObservation | None:
+        """Stop ONE named EXEC by its own durable record, with no creation request.
+
+        A noninteractive one-shot operation has no episode to look up, so its
+        journal record IS the identity. `request_cancel` alone decides: it
+        refuses unknown/other-op/foreign-view identities and durably writes the
+        intent in one transaction, returning that record. Because `create_once`
+        and `start_once` refuse a cancelled record, a container id read from this
+        transaction is the complete set: either it exists and is stopped, or none
+        exists and none can appear. `None` therefore means "no cell exists and
+        none can be created", never "already finished".
+        """
+        if not isinstance(namespace, NamespaceRef) or not isinstance(view, ViewRef):
+            raise ExecutionContractError
+        record = self._journal.request_cancel(operation_id, namespace, view=view, deadline=deadline)
+        container_id = record["container_id"]
+        if container_id is None:
+            return None
+        _remaining(deadline)
+        return self._engine.force_stop_owned(
+            operation_id=operation_id,
+            view=view,
+            profile=profile,
+            container_id=container_id,
+            deadline=deadline,
+        )
+
     def attach_created(
         self,
         creation_request: dict[str, Any],
