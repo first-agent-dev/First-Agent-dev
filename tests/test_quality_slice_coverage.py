@@ -17,6 +17,7 @@ from fa.inner_loop.planner_dispatch import PlannerDispatch
 from fa.inner_loop.registry import ToolRegistry, ToolResult, ToolSchemaPortabilityError, ToolSpec
 from fa.inner_loop.state import EventLog, SessionState
 from fa.inner_loop.subagent_runner import SubagentRunner
+from fa.inner_loop.tools.workspace_port import WorkspacePort
 from fa.stats import aggregate_sessions, parse_session, render_session_json
 
 
@@ -145,8 +146,11 @@ def test_profile_registry_propagates_schema_contract_failure(
         bash_timeout: int = 30,
         *,
         planner_dispatch: PlannerDispatch | None = None,
+        workspace_io: WorkspacePort | None = None,
     ) -> dict[str, Callable[[], ToolSpec]]:
-        del bash_timeout, planner_dispatch
+        # Mirror the production composition-root signature; a drifting double
+        # turns the guard under test into a TypeError from the fallback path.
+        del bash_timeout, planner_dispatch, workspace_io
         return {"fs_run_bash": lambda: _nonportable_spec("fs_run_bash")}
 
     monkeypatch.setattr(profile_module, "_build_tool_builders", broken_builders)

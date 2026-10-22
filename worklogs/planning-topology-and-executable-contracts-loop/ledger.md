@@ -3796,3 +3796,46 @@ cutover task for SLICE4 STEP2.
 SLICE4 routing/composition, all live rows (18/8 PLANNED/UNEXECUTED), STEP boxes and FUNCTIONAL
 contracts. No deployment authorized.
 
+### E264 — SLICE2 STEP4 (part A): injectable workspace port: declaration (before code)
+
+Gives `fs_read_file`/`fs_write_file`/`fs_edit_file` one injectable IO port so they operate on the
+admitted view through `WorkspaceAuthority.read_file`/`write_file` instead of resolving host paths, and
+carries the binding on `SessionState.workspace_io` (§4.2 internal execution binding; Q76 view-bound,
+no plan hash needed for ordinary execution). New `fa/inner_loop/tools/workspace_port.py` (Protocol +
+`port_relative` + closed error codes, no execution import) and `fa/execution/tool_port.py` (the adapter,
+the only place that knows authority call/error shapes). Tools keep parse/framing/telemetry/blackboard
+behaviour and swap one IO seam each; `edit_file` gains optimistic concurrency by passing the base
+`sha256` it read, so a concurrent PTY/process write becomes `stale` instead of a lost update. Registry
+and role-builder forwarding makes the port reach `build_baseline_registry`; absence of a port preserves
+today's behaviour (pre-cutover composition). Part B (search/reach pinning, PTY parity, artifacts,
+PDF/binary/helper-unavailable) follows as E265. Tests C0/C1/C3; six declared producer kills. No live
+row, STEP box or FUNCTIONAL contract is closed by this component work.
+
+### E264 — SLICE2 STEP4 (part A): injectable workspace port: result
+
+**Shipped.** `fa/inner_loop/tools/workspace_port.py` (Protocol + `port_relative` + closed codes +
+`PORT_READ_MAX_BYTES`), `fa/execution/tool_port.py` (`AuthorityWorkspacePort` over
+`WorkspaceAuthority.read_file`/`write_file`, closed error mapping), the `fs_read_file`/`fs_write_file`/
+`fs_edit_file` seams, role-builder/registry forwarding, and `SessionState.workspace_io`. Files:
+`src/fa/inner_loop/tools/{workspace_port,read_file,write_file,edit_file,__init__}.py`,
+`src/fa/inner_loop/{profiles,state}.py`, `src/fa/execution/tool_port.py`, `tests/test_execution_tool_port.py`,
+`tests/test_prompt_registry_coherence.py` (double signature).
+
+**Evidence.** Red first (`ModuleNotFoundError`); 21 passed in the new module, 210 passed across the
+tool/registry/CLI bank; ruff + format clean; `mypy` 23 files clean; `pyrefly check` 0 errors;
+**7/7 assertion-only mutation kills** with byte-exact restoration.
+
+**Recorded findings.** (1) `SessionState` ← `artifacts` cycle forced `TYPE_CHECKING` imports. (2) the
+port's read bound had to mirror the substrate's 1 MiB `MAX_TEXT_BYTES` (8 MiB failed every read as
+`input_policy`); a test now asserts the two agree. (3) absence is not disclosed (`PATH_DENIED`), so the
+port has no `not_found` code. (4) dropping the edit's `expected_sha256` is an *equivalent* mutant: the
+substrate already refuses a digest-less overwrite, so the tool's digest is defence in depth and kill
+credit for no-clobber stays with `test_execution_views`. (5) a composition-root signature change must
+be mirrored in doubles: `test_prompt_registry_coherence`'s rogue builder silently swallowed the new
+keyword until its signature matched — and the full-suite run then caught **three** such doubles
+across two further suites before this change was committed (see the increment's E264 result).
+
+**Not closed.** STEP4 part B (search/reach pinning, PTY parity, artifacts, PDF/binary), STEP5, every
+live row (18/8 PLANNED/UNEXECUTED), STEP boxes and FUNCTIONAL contracts. No service composes the port
+yet; host-path tools remain the deployed behaviour until SLICE4 STEP2.
+

@@ -37,6 +37,9 @@ from fa.inner_loop.session_db import SessionDatabase
 from fa.output import LogKind, OutputEvent
 from fa.paths import fa_session_log_root, private_opener
 
+if TYPE_CHECKING:
+    from fa.inner_loop.tools.workspace_port import WorkspacePort
+
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
@@ -364,6 +367,10 @@ class SessionState:
     artifact_store: ArtifactStore | None = None
     pty_pool: Any | None = None  # PtyPool — optional module, keep Any
     bash_executor: BashExecutor | None = None  # Protocol from fa.runtime.bash_executor (user Q1)
+    # E264: admitted-view port for the file tools (internal execution binding).
+    # Never rendered into a prompt or persisted; None keeps the historical
+    # host-path tools of the pre-cutover composition.
+    workspace_io: WorkspacePort | None = None
     worktree_manager: WorktreeManager | None = None
     session_db: SessionDatabase | None = None
     # The CLI wires this after bootstrap; pending events are flushed on attach.

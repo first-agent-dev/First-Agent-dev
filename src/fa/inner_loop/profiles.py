@@ -14,12 +14,15 @@ import logging
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fa.inner_loop.planner_dispatch import PlannerDispatch, PlannerDispatchError, PlannerDispatchKind
 from fa.inner_loop.registry import ToolRegistry, ToolResult, ToolSchemaPortabilityError, ToolSpec, ToolWireNameError
 from fa.inner_loop.tool_names import is_valid_wire_name
 from fa.inner_loop.tools.base import resolve_workspace_path
+
+if TYPE_CHECKING:
+    from fa.inner_loop.tools.workspace_port import WorkspacePort
 
 logger = logging.getLogger(__name__)
 
@@ -190,13 +193,15 @@ TYPED_PROFILES: dict[str, RoleProfile] = {
 }
 
 
-def _add_optional_tool_builders(builders: dict[str, Callable[[], ToolSpec]], root: Path) -> None:
+def _add_optional_tool_builders(
+    builders: dict[str, Callable[[], ToolSpec]], root: Path, *, workspace_io: WorkspacePort | None = None
+) -> None:
     # edit_file may not exist yet, placeholder
     try:
         # Try to import if exists in future
         from fa.inner_loop.tools.edit_file import build_edit_file_tool
 
-        builders["fs_edit_file"] = lambda: build_edit_file_tool(root)
+        builders["fs_edit_file"] = lambda: build_edit_file_tool(root, workspace_io=workspace_io)
     except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable, edit_file optional
         logger.warning(f"edit_file builder not available: {exc}")
 
@@ -316,7 +321,11 @@ def _build_limited_write(root: Path, planner_dispatch: PlannerDispatch | None) -
 
 
 def _build_tool_builders(
-    workspace_root: Path, bash_timeout: int = 30, *, planner_dispatch: PlannerDispatch | None = None
+    workspace_root: Path,
+    bash_timeout: int = 30,
+    *,
+    planner_dispatch: PlannerDispatch | None = None,
+    workspace_io: WorkspacePort | None = None,
 ) -> dict[str, Callable[[], ToolSpec]]:
     """Map tool name -> builder lambda, uses existing builders, graceful degradation.
 
@@ -331,7 +340,7 @@ def _build_tool_builders(
     try:
         from fa.inner_loop.tools.read_file import build_read_file_tool
 
-        builders["fs_read_file"] = lambda: build_read_file_tool(root)
+        builders["fs_read_file"] = lambda: build_read_file_tool(root, workspace_io=workspace_io)
     except Exception as exc:  # noqa: BLE001
         logger.warning(f"Failed to setup builder fs_read_file: {exc}")
 
@@ -352,7 +361,7 @@ def _build_tool_builders(
     try:
         from fa.inner_loop.tools.write_file import build_write_file_tool
 
-        builders["fs_write_file"] = lambda: build_write_file_tool(root)
+        builders["fs_write_file"] = lambda: build_write_file_tool(root, workspace_io=workspace_io)
 
         builders["fs_write_file_limited"] = lambda: _build_limited_write(root, planner_dispatch)
 
@@ -395,7 +404,7 @@ def _build_tool_builders(
     except Exception as exc:  # noqa: BLE001
         logger.warning(f"Failed to setup builder fs_blackboard_query: {exc}")
 
-    _add_optional_tool_builders(builders, root)
+    _add_optional_tool_builders(builders, root, workspace_io=workspace_io)
 
     candidate_dispatch = _candidate_dispatch(planner_dispatch)
     if candidate_dispatch is not None:
@@ -413,6 +422,7 @@ def build_registry_for_role(
     *,
     bash_timeout: int = 30,
     planner_dispatch: PlannerDispatch | None = None,
+    workspace_io: WorkspacePort | None = None,
 ) -> ToolRegistry:
     """Build ToolRegistry with only tools for given role, token efficient.
 
@@ -426,7 +436,12 @@ def build_registry_for_role(
         raise PlannerDispatchError
     profile = PROFILES_RAW[role]
     wanted = profile.get("tools", [])
-    builders = _build_tool_builders(workspace_root, bash_timeout=bash_timeout, planner_dispatch=planner_dispatch)
+    builders = _build_tool_builders(
+        workspace_root,
+        bash_timeout=bash_timeout,
+        planner_dispatch=planner_dispatch,
+        workspace_io=workspace_io,
+    )
 
     registry = ToolRegistry()
     for tool_name in wanted:

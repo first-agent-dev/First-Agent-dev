@@ -9,6 +9,7 @@ from fa.inner_loop.planner_dispatch import PlannerDispatch, PlannerDispatchError
 from fa.inner_loop.registry import ToolResult, ToolSpec
 from fa.inner_loop.tools.base import require_string, resolve_workspace_path
 from fa.inner_loop.tools.mutation_guard import check_mutation_allowed, record_mutation
+from fa.inner_loop.tools.workspace_port import WorkspacePort, WorkspacePortError, port_relative
 from fa.inner_loop.workflow_artifacts import _private_artifact_directory, _replace_private_bytes
 
 logger = logging.getLogger(__name__)
@@ -67,27 +68,46 @@ def _write_with_guard(
     )
 
 
-def build_write_file_tool(workspace_root: Path) -> ToolSpec:
+def build_write_file_tool(workspace_root: Path, *, workspace_io: WorkspacePort | None = None) -> ToolSpec:
+    """Write inside the workspace.
+
+    With ``workspace_io`` the bytes go to the admitted view through the port and
+    the host path is only a display value; without it the historical host-path
+    writer is used unchanged (the pre-cutover composition).
+    """
     root = workspace_root.resolve()
 
     def handler(params: Mapping[str, object]) -> ToolResult:
         data = dict(params)
         try:
-            path = resolve_workspace_path(root, require_string(data, "path"))
+            raw_path = require_string(data, "path")
             content = require_string(data, "content")
+            if workspace_io is None:
+                path = resolve_workspace_path(root, raw_path)
+                rel_path = str(path.relative_to(root))
+            else:
+                rel_path = port_relative(raw_path)
+                path = root / rel_path
+        except WorkspacePortError as exc:
+            return ToolResult.fail("invalid_params", f"path rejected: {exc.code}", retryable=True)
         except (OSError, PermissionError, ValueError) as exc:
             return ToolResult.fail("write_failed", str(exc), retryable=True)
 
+        if workspace_io is None:
+
+            def writer() -> None:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(content, encoding="utf-8")
+
+        else:
+
+            def writer() -> None:
+                workspace_io.write_file(rel_path, content)
+
         try:
-            rel_path = str(path.relative_to(root))
-        except ValueError:
-            rel_path = str(path)
-
-        def writer() -> None:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(content, encoding="utf-8")
-
-        return _write_with_guard(root, path, rel_path, content, writer)
+            return _write_with_guard(root, path, rel_path, content, writer)
+        except WorkspacePortError as exc:
+            return _port_failure(exc)
 
     return ToolSpec(
         name="fs_write_file",
@@ -108,6 +128,19 @@ def build_write_file_tool(workspace_root: Path) -> ToolSpec:
         handler=handler,
         tags=("fs", "write"),
     )
+
+
+def _port_failure(exc: WorkspacePortError) -> ToolResult:
+    """Map a substrate refusal onto the tool vocabulary; never a silent success."""
+    codes = {
+        "stale": ("write_failed", False),
+        "denied": ("permission_denied", False),
+        "invalid_request": ("invalid_params", True),
+        "input_policy": ("write_failed", False),
+        "unavailable": ("write_failed", True),
+    }
+    code, retryable = codes.get(exc.code, ("write_failed", True))
+    return ToolResult.fail(code, f"workspace refused the write: {exc.code}", retryable=retryable)
 
 
 def build_scoped_write_file_tool(workspace_root: Path, dispatch: PlannerDispatch) -> ToolSpec:

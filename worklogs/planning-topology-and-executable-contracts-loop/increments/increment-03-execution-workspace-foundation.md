@@ -1471,3 +1471,133 @@ preserving registered bytes), the SLICE4 caller routing, every live row (18 surf
 PLANNED/UNEXECUTED), all STEP checkboxes and FUNCTIONAL contracts. `ManagedProvisioner` is a component
 adapter: it is not composed into any running service yet.
 
+### E264 — SLICE2 STEP4 (part A): injectable workspace port for the file tools
+
+**Idea.** `fs_read_file`, `fs_write_file` and `fs_edit_file` reach the filesystem by resolving a host
+path under `workspace_root` and calling `Path.read_text`/`write_text`. That is a second, un-rooted write
+path beside the supervisor's rooted view IO, so CT103's "tools use the same authorized view as shell"
+cannot hold and the view's CAS/policy never applies to model edits. This increment gives those three
+tools one injectable IO port, implemented by the execution authority over an admitted view, and carries
+that binding on `SessionState` as the internal execution binding §4.2 asks for.
+
+**Contract/gap IDs.** I03 SLICE2 STEP4 (part A; part B — search/reach, PTY parity, artifacts, PDF/
+binary — follows as E265); CT103 (actual write/edit tools use supervisor rooted IO against the same
+authorized open view as shell; deny protected/PlanRef/control destinations and alias escapes; no
+canonical fallback); CT103a lineage; spec §4.2; Q76 (the binding carries the exact `ViewRef`; ordinary
+non-workflow execution needs no plan hash).
+
+**Allowed files.** New `src/fa/inner_loop/tools/workspace_port.py` (port protocol, result values,
+`port_relative`, error codes; no `fa.execution` import, preserving today's layering where nothing
+outside `fa.execution` imports it), new `src/fa/execution/tool_port.py` (adapter over
+`WorkspaceAuthority.read_file`/`write_file`), `src/fa/inner_loop/tools/{read_file,write_file,edit_file}.py`
+(one optional `workspace_io` parameter and one swapped IO seam each), `src/fa/inner_loop/profiles.py`
+and `src/fa/inner_loop/tools/__init__.py` (forward the port; the role builder is the composition point
+`build_baseline_registry` already uses), `src/fa/inner_loop/state.py` (`SessionState.workspace_io`),
+tests, plan/ledger. No change to fs_search/reach, run_bash, the registry schema, or the CLI.
+
+**Current behaviour (source-verified).** `build_write_file_tool`/`build_edit_file_tool`/
+`build_read_file_tool` take only `workspace_root`; handlers call `resolve_workspace_path` then POSIX IO;
+`edit_file` reads the whole file and rewrites it with `path.write_text` (no CAS, so a concurrent writer —
+a PTY shell, another process — is silently overwritten). `WorkspaceAuthority.read_file`/`write_file`
+already provide bounded rooted reads with `sha256`/`eof` and atomic writes with an optional
+`expected_sha256` that raises `STALE_REVISION`, and `SessionState` has no execution binding at all. No
+production module outside `fa.execution` imports `fa.execution` yet.
+
+**Target behaviour.** With a workspace port present, the three tools read and write only through the
+admitted view: relative POSIX paths validated by the port (no host resolution, no absolute paths, no
+`..`, no NUL), bounded reads that return the exact `sha256`, and writes that carry the base `sha256`
+observed by the edit so a concurrent change is a reported conflict instead of a silent overwrite.
+Without a port the tools keep today's behaviour exactly (the pre-cutover composition); the port is the
+seam SLICE4 wires into the real factory, never a second implementation of the tools.
+
+**Mechanism.** `workspace_port.py`: frozen `PortRead{content, sha256, eof}`, `PortWrite{sha256, bytes}`,
+`WorkspacePortError(code)` with a closed code set (`invalid_request`, `denied`, `stale`, `input_policy`,
+`unavailable`, `not_found`), `port_relative(raw) -> str` (rejects empty, absolute, `..`, NUL; normalizes
+`/`), and a `WorkspacePort` Protocol with `read_file(path, *, max_bytes)` /
+`write_file(path, content, *, expected_sha256)`. `tool_port.py`: `AuthorityWorkspacePort(authority, *,
+peer, namespace, view_ref, capability, deadline_factory)` maps `SupervisorError`/`ViewIOError` codes onto
+the port vocabulary and passes `deadline` per call. Each tool gains `workspace_io: WorkspacePort | None`
+and swaps exactly one seam (`_read_file_text` / the `writer` closure / the read+write pair), keeping its
+parsing, framing, telemetry, blackboard guard and result shapes unchanged.
+
+**Production best practice.** One implementation per behaviour with a seam, not a fork: the port is a
+Protocol (the tools do not import the execution layer), the adapter is the only place that knows
+authority call shapes and error codes, and optimistic concurrency comes from the substrate that already
+implements it rather than from a new lock. Failure is expressed as a closed code the tool turns into a
+`ToolResult.fail`, so a denied or stale write is never a silent success.
+
+**Failure behaviour.** Path outside the view / absolute / `..` / NUL → `invalid_request` before any IO;
+reader view or revoked capability → `denied`; changed base bytes → `stale` with the file left untouched;
+too large or binary → `input_policy`; authority timeout or unavailable → `unavailable`; unknown file →
+`not_found`. Each maps to a non-retryable or retryable `ToolResult.fail` per its class; no host fallback
+occurs when the port is present.
+
+**DoD.** Real tools built with a real `AuthorityWorkspacePort` over a real registered workspace write,
+read and edit only the admitted view's bytes; an edit whose base changed between read and write reports
+`stale` and leaves the other writer's bytes intact; a READ view denies writes; traversal and NUL are
+rejected before the authority is touched; `build_baseline_registry(..., workspace_io=...)` and
+`SessionState.workspace_io` carry the port to `fs_write_file`. **Negative proof:** removing the port
+write, the read, the `expected_sha256` argument, `port_relative`'s traversal check, the adapter's error
+mapping, or the registry forwarding each fails a named test.
+
+**Tests-writing class.** C0 for `port_relative`/error mapping, C1 for the tools+registry over a real
+authority and view (producer-level kill), C3 for traversal/reader-write denial. No PTY, container or
+live claim in this part.
+
+**Producer kill-check targets (declared, 6).** (1) the port write seam in `write_file`; (2) the port read
+seam in `read_file`; (3) the `expected_sha256` base passed by `edit_file`; (4) `port_relative`'s
+traversal/NUL rejection; (5) `AuthorityWorkspacePort`'s error mapping; (6) registry/profile forwarding
+of `workspace_io`.
+
+#### E264 result — part A shipped, and one mutant that turned out to be equivalent
+
+**Shipped.** `fa/inner_loop/tools/workspace_port.py` (Protocol, `PortRead`/`PortWrite`, closed codes,
+`port_relative`, `PORT_READ_MAX_BYTES` mirroring the substrate's single-read bound),
+`fa/execution/tool_port.py` (`AuthorityWorkspacePort` over `WorkspaceAuthority.read_file`/`write_file`
+with the closed error mapping), the three tool seams (`fs_read_file`/`fs_write_file`/`fs_edit_file`
+each take `workspace_io=` and swap exactly one IO seam), registry/role-builder forwarding
+(`build_registry_for_role`, `_build_tool_builders`, `_add_optional_tool_builders`,
+`build_baseline_registry`), and `SessionState.workspace_io` as the §4.2 internal binding.
+
+**Evidence (actual outputs).** Red first (`ModuleNotFoundError: fa.execution.tool_port`). Green:
+`pytest tests/test_execution_tool_port.py -q` → 21 passed; the tool/registry bank
+(`test_inner_loop_tools`, `test_inner_loop_registry`, `test_write_file_expected_root`,
+`test_s127_fs_surface`, `test_s11_session_state_typing`, `test_prompt_registry_coherence`,
+`test_fs_search`, `test_fs_reach`, `test_tools_common`, `test_coverage_tools_batch`, `test_cli`) →
+210 passed. Statics: `ruff check src tests` → All checks passed!; `ruff format --check` → clean;
+`mypy` on the changed modules → Success: no issues found in 23 source files; `pyrefly check` → 0
+errors. Targeted mutation: **7/7 assertion-only kills** with byte-exact restoration.
+
+**Findings the work forced (recorded, not hidden).**
+1. *Circular import*: `SessionState` is imported by `fa.inner_loop.artifacts`, so a runtime import of
+   the port from `state.py` re-entered the tools package. Fixed with `TYPE_CHECKING` imports in
+   `state.py`/`profiles.py`; the annotation-only dependency is also the correct layering signal.
+2. *Bound drift*: the first `PORT_READ_MAX_BYTES` (8 MiB) exceeded the substrate's 1 MiB single-read
+   limit, so every full-file read would have failed as `input_policy`. The constant now mirrors
+   `protocol.MAX_TEXT_BYTES` and the test asserts both values agree, so drift fails loudly.
+3. *Absence is not disclosed*: a missing path surfaces as `PATH_DENIED`, not `NOT_FOUND`. The port
+   vocabulary therefore has no `not_found` code; the tools report `read_failed` and say the file is
+   missing *or* not permitted, which is the substrate's actual guarantee.
+4. *Equivalent mutant*: removing `expected_sha256` from the edit write is **not** observable, because
+   `RootedViewIO._target` already refuses to overwrite an existing file without a base digest. The
+   tool's digest is defence in depth; the load-bearing mutant is a *wrong* digest, which fails the
+   ordinary-edit test. Kill credit for the no-clobber rule stays with the substrate's own bank
+   (`test_execution_views`), not with this increment.
+5. *Test-double drift*: `test_prompt_registry_coherence`'s rogue builder did not accept the new
+   `workspace_io` keyword, so the composition root's failure was swallowed by the fallback and the
+   wire-name guard stopped firing. The double now mirrors the real signature — a reminder that a
+   composition-root signature change must be reflected in every double that stands in for it.
+   The full-suite run then found **two more** such doubles (`test_s13_10_tool_names` rogue and
+   with_workflow, `test_quality_slice_coverage` broken_builders), each failing with
+   `TypeError: ... unexpected keyword argument 'workspace_io'`. This is the same failure mode as (5)
+   and worth naming plainly: the targeted bank passed while three suites outside it were red, so the
+   *composition-root* signature is a cross-suite contract and only the full run proves it. All three
+   doubles now mirror the real signature and take the real `WorkspacePort | None` type instead of an
+   `object` stand-in (a weaker type hid the mismatch from mypy as well).
+
+**Not closed.** STEP4 part B (fs_search/fs_reach pinning, PTY mutual visibility, artifact path
+retention, PDF/binary/helper-unavailable results, seal/import alias with SLICE3), STEP5's whole-bank
+producer kills, all live rows (18 surfaces / 8 joins PLANNED/UNEXECUTED), STEP boxes and FUNCTIONAL
+contracts. `AuthorityWorkspacePort` is a component adapter: nothing composes it into a running service
+yet (SLICE4 STEP2), so the pre-cutover host-path tools remain the deployed behaviour.
+

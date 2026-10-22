@@ -19,6 +19,7 @@ from fa.inner_loop.tool_names import is_valid_wire_name
 from fa.inner_loop.tools.prepare_pr import build_prepare_pr_tool
 from fa.inner_loop.tools.read_file import build_read_file_tool
 from fa.inner_loop.tools.run_bash import build_run_bash_tool
+from fa.inner_loop.tools.workspace_port import WorkspacePort
 from fa.inner_loop.tools.write_file import build_write_file_tool
 
 logger = logging.getLogger(__name__)
@@ -156,6 +157,7 @@ def build_baseline_registry(
     workspace_root: Path,
     *,
     bash_timeout_seconds: int = DEFAULT_BASH_TIMEOUT_SECONDS,
+    workspace_io: WorkspacePort | None = None,
 ) -> ToolRegistry:
     """Baseline = implementer profile (read,write,edit,bash,fs_search,blackboard_query) + observability + pair.
 
@@ -164,7 +166,12 @@ def build_baseline_registry(
     try:
         from fa.inner_loop.profiles import build_registry_for_role
 
-        registry = build_registry_for_role("implementer", workspace_root, bash_timeout=bash_timeout_seconds)
+        registry = build_registry_for_role(
+            "implementer",
+            workspace_root,
+            bash_timeout=bash_timeout_seconds,
+            workspace_io=workspace_io,
+        )
     except (ToolSchemaPortabilityError, ToolWireNameError):
         # D12: both are correctness failures, not availability failures.
         # The generic fallback below exists for a missing/broken optional
@@ -176,8 +183,8 @@ def build_baseline_registry(
     except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
         logger.warning(f"Failed to build implementer registry via profiles, fallback baseline: {exc}")
         registry = ToolRegistry()
-        registry.register(build_read_file_tool(workspace_root))
-        registry.register(build_write_file_tool(workspace_root))
+        registry.register(build_read_file_tool(workspace_root, workspace_io=workspace_io))
+        registry.register(build_write_file_tool(workspace_root, workspace_io=workspace_io))
         registry.register(build_run_bash_tool(workspace_root, timeout_seconds=bash_timeout_seconds))
 
     _register_extra_tools(

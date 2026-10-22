@@ -15,6 +15,13 @@ from fa.inner_loop.tools.base import (
     optional_string,
     resolve_workspace_path,
 )
+from fa.inner_loop.tools.workspace_port import (
+    PORT_READ_MAX_BYTES,
+    PortRead,
+    WorkspacePort,
+    WorkspacePortError,
+    port_relative,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -423,7 +430,33 @@ def _parse_read_params(
     return path_raw, artifact_id, start_line, end_line
 
 
-def build_read_file_tool(workspace_root: Path) -> ToolSpec:
+def _read_port_text(port: WorkspacePort, relative: str) -> str | ToolResult:
+    """Whole-file read through the port; windows are applied by the caller."""
+    try:
+        read: PortRead = port.read_file(relative, max_bytes=PORT_READ_MAX_BYTES)
+    except WorkspacePortError as exc:
+        codes = {
+            # The substrate does not disclose existence, so a missing path and a
+            # refused one are the same closed code; the message says so.
+            "denied": ("read_failed", False),
+            "stale": ("read_failed", True),
+            "invalid_request": ("invalid_params", True),
+            "input_policy": ("read_failed", False),
+            "unavailable": ("read_failed", True),
+        }
+        code, retryable = codes.get(exc.code, ("read_failed", True))
+        return ToolResult.fail(code, f"workspace refused the read: {exc.code}", retryable=retryable)
+    if not read.eof:
+        return ToolResult.fail(
+            "read_failed",
+            f"file exceeds the {PORT_READ_MAX_BYTES}-byte read bound; request a line window instead",
+            retryable=True,
+        )
+    return read.content
+
+
+def build_read_file_tool(workspace_root: Path, *, workspace_io: WorkspacePort | None = None) -> ToolSpec:
+    """Read inside the workspace, from the admitted view when a port is present."""
     root = Path(workspace_root).resolve()
 
     def handler(params: Mapping[str, object]) -> ToolResult:
@@ -434,12 +467,22 @@ def build_read_file_tool(workspace_root: Path) -> ToolSpec:
         path_raw, artifact_id, start_line, end_line = parsed
         if artifact_id is not None:
             return _read_artifact(artifact_id, start_line, end_line)
+        relative: str | None = None
         try:
-            path = resolve_workspace_path(root, path_raw)
+            if workspace_io is None:
+                path = resolve_workspace_path(root, path_raw)
+            else:
+                relative = port_relative(path_raw)
+                path = root / relative
+        except WorkspacePortError as exc:
+            return ToolResult.fail("invalid_params", f"path rejected: {exc.code}", retryable=True)
         except (ValueError, PermissionError) as exc:
             return ToolResult.fail("invalid_params", str(exc), retryable=True)
 
-        text_or_fail = _read_file_text(path)
+        if workspace_io is None or relative is None:
+            text_or_fail = _read_file_text(path)
+        else:
+            text_or_fail = _read_port_text(workspace_io, relative)
         if isinstance(text_or_fail, ToolResult):
             return text_or_fail
         text = text_or_fail
