@@ -4205,3 +4205,29 @@ choreography (real cell, real pin, SIGKILL rows, two negative controls); S06's j
 halves exist locally and remain host-blocked.
 
 **No STEP ticked, no CT status changed, no live verdict, no deployment claim.**
+
+### E271 — STEP3 unit A: trusted bundle renderer + private store (Q82 raised)
+
+**Implemented.** `publication.render_bundle` (pure, spec §7.1's literal three-file layout with
+controller-owned frontmatter, fixed ledger heading, exact `## Intent`/`## Out-of-scope` rules, slice
+grammar, disguised-metadata scan outside fences) and `publication.prepare_bundle` →
+`WorkspaceAuthority.store_bundle` (OWNER grant, no unsettled view, no intent, exact `base_revision` CAS,
+staging under `pending/` renamed in with `RENAME_NOREPLACE`, one self-contained
+`bundles/<id>/{bundle.json, worklogs/<slug>/…}` per bundle).
+
+**Evidence.** Owning bank **67 passed** (9 new); execution bank **1220 passed**; ruff/format clean (507
+files); mypy 19 files; pyrefly 0 errors; authoring `exit_code 0`. **7/7 kills** with sha256-verified
+restore. Register row **I03-LIVE-21** added (`PLANNED / UNEXECUTED`) with the host choreography and three
+negative controls.
+
+**Recorded fixes during implementation.** (1) `protocol._check`'s `_byte_limits` already refuses `.`/`..`
+path components, so the authority translates that contract error to `INPUT_POLICY` rather than reinventing
+a validator (its own guard stays as defence in depth). (2) A shared `bundles/index.json` was dropped: each
+bundle owns its manifest so two prepares cannot overwrite each other. (3) `os.open(..., O_CREAT)` cannot
+create a directory — `mkdir` + open, with the parent descriptor closed in `finally`.
+
+**Blocked and not started.** `install_project` → **Q82** (sibling vs in-place destination; it changes what
+`_COMMITTED.revision_id` means and which root may be created in — the mechanism is settled, the
+destination is not). `publish_plan`/Q58 → not started: PLAN inverts E269's ordering (the canonical replace
+is the irreversible point, before any pointer), so it needs its own phase plan rather than a tail-end
+copy of the REVISION path. **STEP3 remains open.**

@@ -461,7 +461,7 @@ reproducible by the command beside it:
 | CT declarations (17 FUNCTIONAL + 7 CONSTRAINT) | **24** | `grep -cE '^\s+CT[0-9]+[a-z]? \[(FUNCTIONAL|CONSTRAINT|PRESERVATION)\]' increments/increment-03-*.md` |
 | Declared `kill:` directives | **17** (one per FUNCTIONAL contract; a `grep -c 'kill:'` returns more because prose lines quote the word) | `grep -cE '^\s+kill: remove-call ' increments/increment-03-*.md` |
 | Closed wire operations | **19** | `grep -cE '^\s+[A-Z_]+ = "' src/fa/execution/primitives.py` |
-| E2E live surfaces / joins | **20 / 8** (E250 recorded 18/8; E267 added `publication.py` as I03-LIVE-19; E269 added the publish path as I03-LIVE-20) | `grep -o 'I03-LIVE-[0-9]\{2\}' notes/e2e-live-verification-register.md \| sort -u \| wc -l` |
+| E2E live surfaces / joins | **21 / 8** (E250 recorded 18/8; E267 added `publication.py` as I03-LIVE-19; E269 the publish path as I03-LIVE-20; E271 the bundle path as I03-LIVE-21) | `grep -o 'I03-LIVE-[0-9]\{2\}' notes/e2e-live-verification-register.md \| sort -u \| wc -l` |
 | Six slices, thirty-five STEPs | **6 / 35** | `grep -cE '^- \[.\] STEP[0-9]+:' increments/increment-03-*.md` |
 
 If a later edit changes a count, the edit updates the table and the ledger entry that introduced the
@@ -939,6 +939,47 @@ Q58/BOOTSTRAP path, no retention/GC, no live host. The "published but not releas
 case is asserted as the STEP4 limit, and "publish → release ⇒ restart-clean" is the one claimed clean
 path. Register: `I03-LIVE-20` added (`PLANNED / UNEXECUTED`) with the full host choreography and the two
 negative controls; the S06 join row updated to say both halves now exist locally.
+
+### E271 result — STEP3 unit A: trusted bundle renderer + private store (Q58/install open)
+
+**Status: unit A of SLICE3 STEP3 implemented and locally proved. `install_project` is BLOCKED on Q82 and
+`publish_plan` (Q58) is not started — STEP3 is NOT done, and nothing here ticks it.**
+
+**What runs now.** `publication.render_bundle` is a pure renderer over plain prose producing exactly the
+three spec §7.1 paths, with controller-owned frontmatter (`RM-<slug>`, `RM-<slug>-I01`, created, statuses,
+actual slice count, `shipped: —`), a fixed ledger heading, and a fixed Artifacts/Increments table.
+`publication.prepare_bundle` validates and stores it through
+`WorkspaceAuthority.store_bundle`: OWNER grant + no view + no intent, exact `base_revision` CAS, staging
+under `pending/` renamed in with `RENAME_NOREPLACE`, and one self-contained directory
+`bundles/<bundle-id>/{bundle.json, worklogs/<slug>/…}` — no shared index a concurrent prepare could
+corrupt. The reply is `{validated_bundle_id, bundle_sha256}` per the wire row.
+
+**Evidence.** `tests/test_workspace_publication.py` **67 passed** (9 new: 5 C0 renderer, 3 C1 storage, 1
+C3 traversal); execution bank with it **1220 passed**; `ruff check`/`format --check` clean (507 files);
+`mypy` 19 files; `pyrefly` 0 errors; `authoring check` `exit_code 0`, `diagnostics []`. **7/7 new kills**
+executed with sha256-verified restore: disguised-metadata scan, exact-heading rule, slice contiguity, fixed
+frontmatter, bundle base CAS, unsettled-view refusal, bundle path traversal.
+
+**Two things the implementation changed, both recorded.**
+
+1. **Path traversal is refused twice, deliberately.** `protocol._check`'s `_byte_limits` already rejects
+   `.`/`..`/empty components for any `path` key, so `store_bundle` now translates that
+   `ExecutionContractError` into `INPUT_POLICY` instead of letting it escape as an authority failure; the
+   writer keeps its own component guard as defence in depth. Reuse first, duplicate second, never invent.
+2. **A bundle is one directory, not a directory plus an index.** The first draft kept a shared
+   `bundles/index.json`; a second prepare would have overwritten it. Each bundle now owns its manifest, so
+   "the bundle I prepared" and "the bundle I install" cannot be confused.
+
+**Deliberately not done, with the reason.**
+
+- **`install_project` is blocked on Q82** — whether a bundle installs as a sibling project directory or in
+  place inside the preparing workspace changes what `_COMMITTED`'s `revision_id` means and which root may
+  be created in. The mechanism (no-clobber rename, BOOTSTRAP intent before install, never delete an
+  installed bundle) is settled; the destination is not, so no code was written for it.
+- **`publish_plan` (Q58) is not started.** It is the inverse of E269's order — the canonical plan replace
+  *is* the irreversible point, before any pointer commit — and it needs its own PLAN-kind phase ordering.
+  Starting it late in a session to claim STEP3 would be the same defect this project keeps recording.
+- No dispatcher route, no auto-registration of an installed project, no GC for stored bundles.
 
 ## Scope and ownership handoff
 

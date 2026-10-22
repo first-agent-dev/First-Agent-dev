@@ -21,6 +21,7 @@ project execution.
 from __future__ import annotations
 
 import hashlib
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -29,7 +30,7 @@ from uuid import uuid4
 import fastjsonschema  # type: ignore[import-untyped]  # Existing schema library has no typing metadata.
 
 from fa.execution.primitives import ExecutionContractError
-from fa.execution.protocol import _check
+from fa.execution.protocol import CONFIG_ID, _check
 from fa.execution.supervisor import PeerIdentity, SupervisorError
 from fa.execution.types import NamespaceRef, ViewRef
 from fa.execution.workspace import (
@@ -44,6 +45,8 @@ from fa.execution.workspace import (
 from fa.inner_loop.workflow_artifacts import _replace_private_bytes
 
 MANIFEST_NAME = "sealed.json"
+_CONFIG_ID = re.compile(str(CONFIG_ID["pattern"]))
+_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _MAX_MANIFEST_BYTES = 64 * 1024**2
 _MAX_DEPTH = 64
 # The walker already drops these; a manifest that still names one was forged.
@@ -460,4 +463,189 @@ def _read_sealed_manifest(
     return manifest
 
 
-__all__ = ["MANIFEST_NAME", "PublishResult", "SealResult", "derive_revision_id", "publish_view", "seal_view"]
+# --- prepared bundle (E271 / STEP3): the trusted bounded renderer ----------
+#
+# Spec §7.1 fixes the literal layout and the controller-owned frontmatter; no
+# model-supplied file map exists anywhere on this path. The renderer is pure so
+# every rule below is a C0 oracle, and `prepare_bundle` only stores its output.
+
+BUNDLE_ROOT = "worklogs"
+_LEDGER_BODY = "# Ledger — decision and evidence log\n\nFixed heading only; entries are appended by the run.\n"
+_MAX_BUNDLE_BYTES = 4 * 1024**2
+_ROADMAP_HEADINGS = ("## Intent", "## Out-of-scope")
+_METADATA_LINE = re.compile(r"^\s*(?:Roadmap-ID|Increment-ID|status|slices|shipped|active-increment)\s*:", re.M)
+_SLICE_HEADING = re.compile(r"^## SLICE(\d+):", re.M)
+
+
+@dataclass(frozen=True)
+class BundleResult:
+    """The `prepare_bundle` reply (`protocol.py`): a private id and its digest."""
+
+    validated_bundle_id: str
+    bundle_sha256: str
+
+    def to_wire(self) -> dict[str, str]:
+        return {"validated_bundle_id": self.validated_bundle_id, "bundle_sha256": self.bundle_sha256}
+
+
+def bundle_paths(project_slug: str, increment_slug: str) -> tuple[str, str, str]:
+    """The three canonical paths, in the order the renderer emits them."""
+    root = f"{BUNDLE_ROOT}/{project_slug}"
+    return (f"{root}/roadmap.md", f"{root}/ledger.md", f"{root}/increments/increment-01-{increment_slug}.md")
+
+
+def render_bundle(
+    project_slug: str, increment_slug: str, roadmap_text: str, increment_text: str, *, created: str
+) -> dict[str, bytes]:
+    """Render exactly three files from prose that has been strictly validated.
+
+    The controller owns every piece of metadata: ids, dates, statuses, the slice
+    count and the ledger header. The caller supplies prose only, so a model can
+    never smuggle a frontmatter field, a second increment or a lifecycle claim
+    into a new project.
+    """
+    _validate_bundle_text(project_slug, increment_slug, roadmap_text, increment_text, created)
+    slices = _slice_numbers(increment_text)
+    roadmap_path, ledger_path, increment_path = bundle_paths(project_slug, increment_slug)
+    roadmap = (
+        "---\n"
+        f"Roadmap-ID: RM-{project_slug}\n"
+        f"slug: {project_slug}\n"
+        f"created: {created}\n"
+        "status: IN PROGRESS\n"
+        "active-increment: I01\n"
+        "---\n\n"
+        f"# Roadmap — {project_slug}\n\n"
+        "## Artifacts\n\n"
+        "| Artifact | Path | Status |\n"
+        "| --- | --- | --- |\n"
+        f"| Roadmap | `{roadmap_path}` | IN PROGRESS |\n"
+        f"| Increment | `{increment_path}` | IN PROGRESS |\n"
+        f"| Ledger | `{ledger_path}` | — |\n\n"
+        "## Increments\n\n"
+        "| ID | Slug | Status |\n"
+        "| --- | --- | --- |\n"
+        f"| I01 | [{increment_slug}]({increment_path}) | IN PROGRESS |\n\n" + roadmap_text.rstrip("\n") + "\n"
+    )
+    increment = (
+        "---\n"
+        f"Increment-ID: RM-{project_slug}-I01\n"
+        f"Roadmap-ID: RM-{project_slug}\n"
+        f"slug: {increment_slug}\n"
+        "status: IN PROGRESS\n"
+        f"slices: {max(slices) if slices else 0}\n"
+        "shipped: —\n"
+        "---\n\n" + increment_text.rstrip("\n") + "\n"
+    )
+    return {
+        roadmap_path: roadmap.encode("utf-8"),
+        ledger_path: _LEDGER_BODY.encode("utf-8"),
+        increment_path: increment.encode("utf-8"),
+    }
+
+
+def _validate_bundle_text(
+    project_slug: str, increment_slug: str, roadmap_text: str, increment_text: str, created: str
+) -> None:
+    """Every refusal here is `INPUT_POLICY`: prose in, metadata out."""
+    for slug in (project_slug, increment_slug):
+        if len(slug) > 48 or not _CONFIG_ID.fullmatch(slug):
+            raise SupervisorError("INPUT_POLICY")
+    if not _DATE.fullmatch(created):
+        raise SupervisorError("INPUT_POLICY")
+    for text in (roadmap_text, increment_text):
+        if not isinstance(text, str) or len(text.encode("utf-8")) > _MAX_BUNDLE_BYTES:
+            raise SupervisorError("INPUT_POLICY")
+        if "\x00" in text:
+            raise SupervisorError("INPUT_POLICY")
+        if _METADATA_LINE.search(_outside_fences(text)):
+            raise SupervisorError("INPUT_POLICY")  # no disguised controller metadata
+    if roadmap_text.lstrip("\n").startswith("---"):
+        raise SupervisorError("INPUT_POLICY")
+    if increment_text.lstrip("\n").startswith("---"):
+        raise SupervisorError("INPUT_POLICY")
+    headings = [line.strip() for line in _outside_fences(roadmap_text).splitlines() if line.startswith("## ")]
+    if headings != list(_ROADMAP_HEADINGS):
+        raise SupervisorError("INPUT_POLICY")  # both prose sections, exactly, in order
+    slices = _slice_numbers(increment_text)
+    if not slices:
+        raise SupervisorError("INPUT_POLICY")
+    if sorted(slices) != list(range(1, len(slices) + 1)):
+        raise SupervisorError("INPUT_POLICY")  # contiguous, unique, starting at one
+
+
+def _slice_numbers(increment_text: str) -> list[int]:
+    return [int(number) for number in _SLICE_HEADING.findall(_outside_fences(increment_text))]
+
+
+def _outside_fences(text: str) -> str:
+    """Drop fenced blocks before any structural rule.
+
+    A fence cannot carry controller metadata, and the grammar-looking text inside
+    one is deliberately left uninterpreted (spec §7.1: no substring deletion and
+    no second Markdown parser).
+    """
+    kept: list[str] = []
+    fenced = False
+    for line in text.splitlines():
+        if line.lstrip().startswith("```"):
+            fenced = not fenced
+            continue
+        if not fenced:
+            kept.append(line)
+    return "\n".join(kept)
+
+
+def prepare_bundle(
+    authority: WorkspaceAuthority,
+    peer: PeerIdentity,
+    namespace: NamespaceRef,
+    *,
+    capability: str,
+    project_slug: str,
+    increment_slug: str,
+    roadmap_text: str,
+    increment_text: str,
+    expected_base_revision: str,
+    operation_id: str,
+    created: str,
+    deadline: float,
+) -> BundleResult:
+    """Render, validate and durably store a bundle; mint its id privately.
+
+    OWNER grant, no view, all writers settled, exact base revision: a bundle is
+    a *pre-install* object, so it is bound to the generation and base it was
+    prepared against and can never be reused against a different one.
+    """
+    if not isinstance(authority, WorkspaceAuthority):
+        raise SupervisorError("UNAUTHORIZED")
+    files = render_bundle(project_slug, increment_slug, roadmap_text, increment_text, created=created)
+    stored = authority.store_bundle(
+        peer,
+        namespace,
+        capability=capability,
+        project_slug=project_slug,
+        increment_slug=increment_slug,
+        files=files,
+        expected_base_revision=expected_base_revision,
+        operation_id=operation_id,
+        deadline=deadline,
+    )
+    return BundleResult(
+        validated_bundle_id=str(stored["validated_bundle_id"]), bundle_sha256=str(stored["bundle_sha256"])
+    )
+
+
+__all__ = [
+    "BUNDLE_ROOT",
+    "MANIFEST_NAME",
+    "BundleResult",
+    "PublishResult",
+    "SealResult",
+    "bundle_paths",
+    "derive_revision_id",
+    "prepare_bundle",
+    "publish_view",
+    "render_bundle",
+    "seal_view",
+]

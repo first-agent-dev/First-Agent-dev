@@ -106,6 +106,25 @@ _CURRENT = fastjsonschema.compile(
     )
 )
 
+# A prepared bundle is a private, pre-install object: paths and digests only,
+# bound to the workspace/generation/base it was prepared against (E271).
+_BUNDLE_FILE = _object(path={"type": "string", "maxLength": 4096}, sha256=SHA, size=_UINT)
+_BUNDLE = fastjsonschema.compile(
+    _object(
+        schema_version={"type": "integer", "const": 1},
+        kind={"type": "string", "const": "BUNDLE"},
+        bundle_id=_id("bundle-"),
+        operation_id=_id("op-"),
+        workspace_id=_id("ws-"),
+        generation=_UINT,
+        base_revision=_id("rev-"),
+        project_slug={"type": "string", "maxLength": 48},
+        increment_slug={"type": "string", "maxLength": 48},
+        files={"type": "array", "items": _BUNDLE_FILE},
+        bundle_sha256=SHA,
+    )
+)
+
 # Spec §5.1's exact intent vocabulary. E269 produces only kind=REVISION; PLAN
 # arrives with the Q58 path and BOOTSTRAP with install_project. `phase` is
 # advisory for recovery: `current.json` alone discriminates a commit.
@@ -2389,6 +2408,158 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
     ) -> dict[str, Any] | None:
         """Read-only: the receipt for this exact view, or None."""
         return _terminal_record(self._proof_only(peer, namespace, view_ref, capability).directory)
+
+    # -- Prepared bundle (E271 / STEP3): stored, validated, installable ------
+
+    def store_bundle(
+        self,
+        peer: PeerIdentity,
+        namespace: NamespaceRef,
+        *,
+        capability: str,
+        project_slug: str,
+        increment_slug: str,
+        files: Mapping[str, bytes],
+        expected_base_revision: str,
+        operation_id: str,
+        deadline: float,
+    ) -> dict[str, str]:
+        """Durably store one rendered bundle and mint its id. Writes no project.
+
+        The owner must hold the grant, own no unsettled view and extend exactly
+        the base revision the caller named: a bundle prepared against revision A
+        must never be installable against revision B.
+        """
+        _hex_id(operation_id, "op-")
+        _hex_id(expected_base_revision, "rev-")
+        with self._transaction(peer, deadline):
+            binding = self._owner_only(peer, namespace, capability)
+            if binding.current["revision_id"] != expected_base_revision:
+                raise SupervisorError("STALE_REVISION")
+            views = os.open("views", _DIRECTORY, dir_fd=binding.fd)
+            try:
+                _private(views)
+                if self._has_unsettled_views(binding, views) or self._read_intent(binding.fd) is not None:
+                    raise SupervisorError("WORKSPACE_BUSY")
+            finally:
+                os.close(views)
+            bundle_id = "bundle-" + uuid4().hex
+            manifest = {
+                "schema_version": 1,
+                "kind": "BUNDLE",
+                "bundle_id": bundle_id,
+                "operation_id": operation_id,
+                "workspace_id": binding.metadata["workspace_id"],
+                "generation": binding.metadata["generation"],
+                "base_revision": expected_base_revision,
+                "project_slug": project_slug,
+                "increment_slug": increment_slug,
+                "files": [
+                    {"path": path, "sha256": hashlib.sha256(raw).hexdigest(), "size": len(raw)}
+                    for path, raw in sorted(files.items())
+                ],
+                "bundle_sha256": hashlib.sha256(
+                    _canonical([[path, hashlib.sha256(files[path]).hexdigest()] for path in sorted(files)])
+                ).hexdigest(),
+            }
+            try:
+                _check(_BUNDLE, manifest)
+            except ExecutionContractError:
+                raise SupervisorError("INPUT_POLICY") from None
+            self._write_bundle(binding, manifest, files, deadline)
+            return {"validated_bundle_id": bundle_id, "bundle_sha256": manifest["bundle_sha256"]}
+
+    def _owner_only(self, peer: PeerIdentity, namespace: NamespaceRef, capability: str) -> _Binding:
+        """A view-less owner proof: OWNER grant, active actor, principal, all exact."""
+        validate_capability(capability)
+        binding = next(
+            (
+                candidate
+                for candidate in self._bindings.values()
+                if candidate.grant is not None
+                and candidate.principal == peer.principal
+                and candidate.metadata["active_actor"] == namespace.to_dict()
+            ),
+            None,
+        )
+        if binding is None or not hmac.compare_digest(binding.grant or "", capability):
+            raise SupervisorError("UNAUTHORIZED")
+        self._recheck(binding)
+        if binding.metadata["status"] != "OWNED" or binding.principal != peer.principal:
+            raise SupervisorError("STALE_GENERATION")
+        return binding
+
+    def _write_bundle(
+        self, binding: _Binding, manifest: dict[str, Any], files: Mapping[str, bytes], deadline: float
+    ) -> None:
+        """Stage one self-contained directory under `pending/`, then rename it in.
+
+        A partial bundle is therefore never visible, and each bundle owns its
+        own manifest: there is no shared index that a concurrent prepare could
+        overwrite.
+        """
+        stage = self._state / "pending" / uuid4().hex
+        installed = False
+        try:
+            with _private_artifact_directory(stage) as stage_fd:
+                for path, raw in sorted(files.items()):
+                    self._write_bundle_file(stage, path, raw, deadline)
+                _replace_private_bytes(stage_fd, "bundle.json", _canonical(manifest))
+                if _read_json(stage_fd, "bundle.json", _BUNDLE, 1024**2) != manifest:
+                    raise SupervisorError("DURABILITY_UNKNOWN")
+                try:
+                    os.mkdir("bundles", 0o700, dir_fd=binding.fd)
+                    os.fsync(binding.fd)
+                except FileExistsError:
+                    pass
+                bundles = os.open("bundles", _DIRECTORY, dir_fd=binding.fd)
+                try:
+                    parent = os.open(stage.parent, _DIRECTORY)
+                    try:
+                        _budget(deadline)
+                        _rename_directory(parent, stage.name, bundles, manifest["bundle_id"])
+                        installed = True
+                        os.fsync(bundles)
+                    finally:
+                        os.close(parent)
+                finally:
+                    os.close(bundles)
+            os.fsync(binding.fd)
+        except OSError:
+            self._healthy = False
+            raise SupervisorError("DURABILITY_UNKNOWN") from None
+        finally:
+            if not installed and stage.exists():
+                shutil.rmtree(stage)
+
+    @staticmethod
+    def _write_bundle_file(stage: Path, path: str, raw: bytes, deadline: float) -> None:
+        """Create only ordinary nested directories, never a link or a dot path."""
+        parts = path.split("/")
+        if any(part in {"", ".", ".."} or part.startswith(".") for part in parts):
+            raise SupervisorError("INPUT_POLICY")
+        parent = os.open(stage, _DIRECTORY)
+        try:
+            for part in parts[:-1]:
+                try:
+                    os.mkdir(part, 0o700, dir_fd=parent)
+                except FileExistsError:
+                    pass
+                child = os.open(part, _DIRECTORY, dir_fd=parent)
+                os.close(parent)
+                parent = child
+            _budget(deadline)
+            fd = os.open(
+                parts[-1], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600, dir_fd=parent
+            )
+            try:
+                _write_all(fd, raw)
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+            os.fsync(parent)
+        finally:
+            os.close(parent)
 
     # -- Publication (E269 / CT106): intent, pointer, projection ------------
 

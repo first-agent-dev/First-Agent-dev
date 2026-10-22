@@ -1723,3 +1723,205 @@ def test_publish_refuses_a_valid_manifest_that_belongs_to_another_view(site: Sit
         assert refused.value.code == "CORRUPT_STATE"
         assert _current(site, ids)["revision_id"] == ids["revision_id"]
         assert _state(site, second) == "SEALED"
+
+
+# ---------------------------------------------------------------------------
+# E271 — prepare_bundle: the trusted bounded renderer and its private store
+#
+# C0 for the pure renderer (literal fixtures), C1 for storage through the real
+# authority, C3 for the metadata-smuggling and traversal refusals.
+# ---------------------------------------------------------------------------
+
+_ROADMAP_PROSE = "## Intent\n\nShip the thing.\n\n## Out-of-scope\n\nEverything else.\n"
+_INCREMENT_PROSE = "## SLICE1: first\n\nSteps.\n\n## SLICE2: second\n\nSteps.\n"
+
+
+def _bundle_digest(files: dict[str, bytes]) -> str:
+    canonical = json.dumps(
+        [[path, hashlib.sha256(files[path]).hexdigest()] for path in sorted(files)],
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def test_the_renderer_emits_exactly_three_files_with_controller_metadata() -> None:
+    """producer-kill-check: let the caller own any frontmatter field (spec §7.1)."""
+    from fa.execution.publication import bundle_paths, render_bundle
+
+    files = render_bundle("demo-project", "first-increment", _ROADMAP_PROSE, _INCREMENT_PROSE, created="2026-10-22")
+
+    assert sorted(files) == sorted(bundle_paths("demo-project", "first-increment"))
+    roadmap = files["worklogs/demo-project/roadmap.md"].decode()
+    increment = files["worklogs/demo-project/increments/increment-01-first-increment.md"].decode()
+    ledger = files["worklogs/demo-project/ledger.md"].decode()
+    assert roadmap.startswith(
+        "---\nRoadmap-ID: RM-demo-project\nslug: demo-project\ncreated: 2026-10-22\n"
+        "status: IN PROGRESS\nactive-increment: I01\n---\n"
+    )
+    assert "| I01 | [first-increment](worklogs/demo-project/increments/increment-01-first-increment.md) |" in roadmap
+    assert roadmap.endswith(_ROADMAP_PROSE)
+    assert increment.startswith(
+        "---\nIncrement-ID: RM-demo-project-I01\nRoadmap-ID: RM-demo-project\nslug: first-increment\n"
+        "status: IN PROGRESS\nslices: 2\nshipped: —\n---\n"
+    )
+    assert ledger == "# Ledger — decision and evidence log\n\nFixed heading only; entries are appended by the run.\n"
+
+
+def test_the_renderer_refuses_metadata_the_caller_disguised_outside_a_fence() -> None:
+    """producer-kill-check: drop the disguised-metadata scan (C3)."""
+    from fa.execution.publication import render_bundle
+
+    for prose, kind in (
+        ("## Intent\n\nRoadmap-ID: RM-evil\n\n## Out-of-scope\n\nnone\n", "roadmap"),
+        ("## SLICE1: a\n\nslices: 99\n", "increment"),
+        ("## SLICE1: a\n\n---\nIncrement-ID: X\n", "increment"),
+    ):
+        roadmap_text, increment_text = (_ROADMAP_PROSE, prose) if kind == "increment" else (prose, _INCREMENT_PROSE)
+        with pytest.raises(SupervisorError) as refused:
+            render_bundle("demo", "inc", roadmap_text, increment_text, created="2026-10-22")
+        assert refused.value.code == "INPUT_POLICY"
+
+    # The same words inside a fence are inert prose, not metadata.
+    fenced = "## SLICE1: a\n\n```\nstatus: IN PROGRESS\n```\n"
+    assert render_bundle("demo", "inc", _ROADMAP_PROSE, fenced, created="2026-10-22")
+
+
+def test_the_renderer_refuses_a_roadmap_body_with_the_wrong_sections() -> None:
+    """producer-kill-check: drop the exact-heading rule (a model could add sections)."""
+    from fa.execution.publication import render_bundle
+
+    for prose in (
+        "## Intent\n\nonly one section\n",
+        "## Out-of-scope\n\nthen\n\n## Intent\n\nreversed\n",
+        "## Intent\n\nx\n\n## Out-of-scope\n\ny\n\n## Extra\n\nz\n",
+    ):
+        with pytest.raises(SupervisorError) as refused:
+            render_bundle("demo", "inc", prose, _INCREMENT_PROSE, created="2026-10-22")
+        assert refused.value.code == "INPUT_POLICY"
+
+
+def test_the_renderer_refuses_non_contiguous_or_absent_slices() -> None:
+    """producer-kill-check: drop the slice-contiguity rule (the count would lie)."""
+    from fa.execution.publication import render_bundle
+
+    for prose in ("no slices here\n", "## SLICE2: a\n\nx\n", "## SLICE1: a\n\n## SLICE3: c\n"):
+        with pytest.raises(SupervisorError) as refused:
+            render_bundle("demo", "inc", _ROADMAP_PROSE, prose, created="2026-10-22")
+        assert refused.value.code == "INPUT_POLICY"
+
+
+def test_the_renderer_refuses_a_bad_slug_or_date() -> None:
+    """producer-kill-check: skip slug/date grammar (a path component would be caller-shaped)."""
+    from fa.execution.publication import render_bundle
+
+    for slug, created in (
+        ("Demo", "2026-10-22"),
+        ("demo-", "2026-10-22"),
+        ("demo", "22-10-2026"),
+        ("d" * 49, "2026-10-22"),
+    ):
+        with pytest.raises(SupervisorError) as refused:
+            render_bundle(slug, "inc", _ROADMAP_PROSE, _INCREMENT_PROSE, created=created)
+        assert refused.value.code == "INPUT_POLICY"
+
+
+def _prepare_bundle(owner: WorkspaceAuthority, ids: dict[str, str], lease: GrantReply, **kwargs: Any) -> Any:
+    from fa.execution.publication import prepare_bundle
+
+    return prepare_bundle(
+        owner,
+        PEER,
+        ACTOR,
+        capability=kwargs.pop("capability", lease.capability),
+        project_slug=kwargs.pop("project_slug", "demo-project"),
+        increment_slug=kwargs.pop("increment_slug", "first-increment"),
+        roadmap_text=kwargs.pop("roadmap_text", _ROADMAP_PROSE),
+        increment_text=kwargs.pop("increment_text", _INCREMENT_PROSE),
+        expected_base_revision=kwargs.pop("expected_base_revision", ids["revision_id"]),
+        operation_id=kwargs.pop("operation_id", _op()),
+        created=kwargs.pop("created", "2026-10-22"),
+        deadline=until(),
+    )
+
+
+def test_prepare_bundle_stores_a_private_bundle_bound_to_its_base(site: Site) -> None:
+    """producer-kill-check: store nothing / bind nothing (C1 over the real authority)."""
+    from fa.execution.publication import bundle_paths
+
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+
+        result = _prepare_bundle(owner, ids, lease)
+
+        stored = _workspace(site, ids) / "bundles" / result.validated_bundle_id
+        manifest = json.loads((stored / "bundle.json").read_text())
+        assert manifest["base_revision"] == ids["revision_id"]
+        assert manifest["workspace_id"] == ids["workspace_id"]
+        assert manifest["kind"] == "BUNDLE"
+        assert [entry["path"] for entry in manifest["files"]] == sorted(bundle_paths("demo-project", "first-increment"))
+        for entry in manifest["files"]:
+            raw = (stored / entry["path"]).read_bytes()
+            assert len(raw) == entry["size"]
+            assert hashlib.sha256(raw).hexdigest() == entry["sha256"]
+        assert result.bundle_sha256 == _bundle_digest(
+            {entry["path"]: (stored / entry["path"]).read_bytes() for entry in manifest["files"]}
+        )
+        # Nothing was installed: a bundle is a pre-install object.
+        assert not (site.source / "worklogs").exists()
+
+
+def test_prepare_bundle_is_deterministic_and_refuses_a_stale_base(site: Site) -> None:
+    """producer-kill-check: drop the base CAS (a bundle could be installed on another revision)."""
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        first = _prepare_bundle(owner, ids, lease)
+        second = _prepare_bundle(owner, ids, lease)
+
+        assert first.bundle_sha256 == second.bundle_sha256  # same bytes, same digest
+        assert first.validated_bundle_id != second.validated_bundle_id  # a fresh private id each time
+
+        with pytest.raises(SupervisorError) as refused:
+            _prepare_bundle(owner, ids, lease, expected_base_revision="rev-" + "0" * 32)
+
+        assert refused.value.code == "STALE_REVISION"
+
+
+def test_prepare_bundle_requires_the_owner_grant_and_no_open_view(site: Site) -> None:
+    """producer-kill-check: accept a view capability / ignore an unsettled view."""
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        with pytest.raises(SupervisorError) as unauthorized:
+            _prepare_bundle(owner, ids, lease, capability="0" * 64)
+        assert unauthorized.value.code == "UNAUTHORIZED"
+
+        _view(owner, ids, lease)
+        with pytest.raises(SupervisorError) as busy:
+            _prepare_bundle(owner, ids, lease)
+        assert busy.value.code == "WORKSPACE_BUSY"
+
+
+def test_store_bundle_refuses_a_path_that_escapes_the_bundle(site: Site) -> None:
+    """producer-kill-check: drop the dot/`..` component guard (C3 traversal)."""
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        for path in ("../escape.txt", "worklogs/./x.md", "worklogs/.hidden/x.md"):
+            with pytest.raises(SupervisorError) as refused:
+                owner.store_bundle(
+                    PEER,
+                    ACTOR,
+                    capability=lease.capability,
+                    project_slug="demo",
+                    increment_slug="inc",
+                    files={path: b"x"},
+                    expected_base_revision=ids["revision_id"],
+                    operation_id=_op(),
+                    deadline=until(),
+                )
+            assert refused.value.code == "INPUT_POLICY"
+        assert not (site.source / "escape.txt").exists()

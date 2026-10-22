@@ -1945,3 +1945,45 @@ mount decision. The two probe branches are tested separately: the mode branch wi
 directory, and the read-only-mount branch with a **disclosed** `os.fstatvfs` double (E266/E259 pattern for
 a kernel fact that cannot be manufactured in a writable sandbox). No free-space or ENOSPC pre-check is
 added: it is advisory and racy, and the recovery path must exist regardless.
+
+---
+
+## Q82 — Where does a prepared bundle install, and what identifies the project it creates?
+
+**Status: OPEN — blocks `install_project` only. Raised 2026-10-22 (E271). `prepare_bundle` and its
+renderer are implemented and unaffected; the install half stops here rather than guessing.**
+
+**What is already fixed by record.** Spec §7.1 freezes the *bundle*: project directory
+`worklogs/<project_slug>/`, `roadmap.md`, `ledger.md`, `increments/increment-01-<increment_slug>.md`;
+controller-owned frontmatter (`Roadmap-ID: RM-<slug>`, `Increment-ID: RM-<slug>-I01`, created/status/
+active-increment, `slices` = actual count, `shipped: —`); ledger = fixed heading only; roadmap body =
+`## Intent` + `## Out-of-scope` prose only; increment body = slice grammar only. Spec §5 fixes the
+*mechanism*: real `renameat2(RENAME_NOREPLACE)`, never existence-check + ordinary rename, its own durable
+`intent.json` (`kind=BOOTSTRAP`, `target_relative`, `new_sha256` = bundle-manifest hash) **before** the
+install, no automatic deletion of an installed bundle, forward recovery only.
+
+**What is not fixed.** `install_project`'s wire payload is only `{validated_bundle_id, project_slug}`,
+while the prepare call is bound to a *workspace* (`expected_base_revision`, generation, owner grant). Two
+readings remain, and they differ in a way that matters:
+
+- **(A) sibling directory.** The bundle installs at `<approved root>/<project_slug>/` — a new project next
+  to the registered workspace — and a later `register_workspace` registers it. Matches "new project
+  directory install" and keeps `_COMMITTED`'s `workspace_id` pointing at the *preparing* workspace.
+- **(B) in place.** The bundle installs into the preparing workspace's own root (`relative_root`), adding
+  `worklogs/<project_slug>/` to an existing project. Then no new workspace is needed, but the bootstrap is
+  no longer "new project install" and §5's BOOTSTRAP/RENAME_NOREPLACE row loses its subject.
+
+**Recommendation: (A)**, with three binding rules: the destination is `<root>/<project_slug>` where root
+is the prepare-time approved root; `project_slug` is re-validated against `CONFIG_ID` and re-checked
+against the stored bundle's slug (a caller cannot retarget an id); and the install refuses (`COLLISION`)
+when the destination exists — with the existing project's bytes verified untouched, which is exactly
+STEP3's stated exit criterion.
+
+**Why this is a question and not a detail.** (A) writes a *new* canonical tree outside the workspace that
+owns the grant, so it needs an explicit rule for which root it may create in and how that root is proven
+(for example: same approved root, same mount, no symlinked component). Deciding it silently inside an
+implementer's `os.mkdir` is precisely the class of decision this project records instead of assuming.
+
+**Not asked here.** Whether the installed project is auto-registered as a workspace (a SLICE5/controller
+question) and whether `_COMMITTED`'s `revision_id` names the new project's genesis revision or the
+preparing workspace's (follows from (A) vs (B)).
