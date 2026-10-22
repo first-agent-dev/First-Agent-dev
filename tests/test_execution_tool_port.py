@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -185,6 +186,10 @@ class RacingPort:
     inner: AuthorityWorkspacePort
     tamper: Callable[[], None]
     reads: int = 0
+
+    @property
+    def cache_dir(self) -> Path | None:
+        return self.inner.cache_dir
 
     def read_file(self, path: str, *, max_bytes: int = 1024 * 1024) -> PortRead:
         result = self.inner.read_file(path, max_bytes=max_bytes)

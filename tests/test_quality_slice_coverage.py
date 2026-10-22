@@ -67,8 +67,9 @@ def test_extra_tool_registration_failures_and_duplicates_are_observable(tmp_path
     )
     original = {name: getattr(tool_module, name) for name in names}
     try:
-        # fs_search succeeds → present
-        def build_fs_search(_db_path: Path, _workspace_root: Path) -> ToolSpec:
+        # fs_search succeeds → present (signature mirrors the real builder)
+        def build_fs_search(_db_path: Path, _workspace_root: Path, *, workspace_io: object = None) -> ToolSpec:
+            del workspace_io
             return _spec("fs_search")
 
         tool_module.build_fs_search_tool = build_fs_search
@@ -174,7 +175,8 @@ def test_extra_registry_propagates_schema_contract_failure(
 ) -> None:
     """C1: extra-tool source defects hard-fail while ordinary failures degrade."""
 
-    def build_bad_fs_search(_db_path: Path, _workspace_root: Path) -> ToolSpec:
+    def build_bad_fs_search(_db_path: Path, _workspace_root: Path, *, workspace_io: object = None) -> ToolSpec:
+        del workspace_io
         return _nonportable_spec("fs_search")
 
     monkeypatch.setattr(tool_module, "build_fs_search_tool", build_bad_fs_search)

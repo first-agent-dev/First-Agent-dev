@@ -15,6 +15,7 @@ tool layer keeps no dependency on the execution subsystem.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol
 
 #: Upper bound for one full-file model read. It mirrors the substrate's own
@@ -60,7 +61,18 @@ class PortWrite:
 
 
 class WorkspacePort(Protocol):
-    """The two operations the file tools need; nothing else is exposed."""
+    """The workspace view operations the tools need; nothing else is exposed.
+
+    ``cache_dir`` is the view's own private scratch location. It exists because
+    a tool that keeps an index (``fs_search``, ``fs_reach``) must not write that
+    index into the tree it is searching: the tree is the artefact under
+    validation, and a reader pinned to one revision must not have its answers
+    depend on another view's writes. ``None`` means the composition supplied no
+    private home, and the tools refuse rather than fall back to project bytes.
+    """
+
+    @property
+    def cache_dir(self) -> Path | None: ...
 
     def read_file(self, path: str, *, max_bytes: int = PORT_READ_MAX_BYTES) -> PortRead: ...
 
@@ -87,11 +99,36 @@ def port_relative(raw: object) -> str:
     return "/".join(parts)
 
 
+def index_db(port: WorkspacePort | None, root: Path, filename: str, fallback: Path) -> Path:
+    """Where an index may live: the view's private cache, never project bytes.
+
+    Without a port the caller keeps today's host-mode location (``fallback``).
+    With a port the index must live in the view's cache home and must resolve
+    outside the searched tree; anything else is a closed ``unavailable``
+    refusal, so a misconfigured composition fails instead of silently writing
+    into the view. One implementation of the rule, shared by both index tools.
+
+    Resolution happens per call (not at build time) because the cache home is
+    part of the view the composition binds, not of the tool definition.
+    """
+
+    if port is None:  # defensive: callers pass None for host mode
+        return fallback
+    cache = port.cache_dir
+    if cache is None:
+        raise WorkspacePortError("unavailable")
+    candidate = Path(cache) / filename
+    if candidate.resolve().is_relative_to(Path(root).resolve()):
+        raise WorkspacePortError("unavailable")
+    return candidate
+
+
 __all__ = [
     "PORT_READ_MAX_BYTES",
     "PortRead",
     "PortWrite",
     "WorkspacePort",
     "WorkspacePortError",
+    "index_db",
     "port_relative",
 ]

@@ -30,6 +30,7 @@ from fa.inner_loop.tools.outline import (
     fold_markdown,
     fold_python_source,
 )
+from fa.inner_loop.tools.workspace_port import WorkspacePort, WorkspacePortError, index_db
 
 if TYPE_CHECKING:
     from fa.memory.search_index import SearchIndex, SearchParams
@@ -958,7 +959,7 @@ def _handle(
 # ---------------------------------------------------------------------------
 
 
-def build_fs_search_tool(db_path: Path, workspace_root: Path) -> ToolSpec:
+def build_fs_search_tool(db_path: Path, workspace_root: Path, *, workspace_io: WorkspacePort | None = None) -> ToolSpec:
     """Build the fs_search ToolSpec bound to a workspace and FTS DB path.
 
     Registers an ``atexit`` handler that closes the held
@@ -970,11 +971,30 @@ def build_fs_search_tool(db_path: Path, workspace_root: Path) -> ToolSpec:
     to prevent resource-leak regressions.
     """
     root = Path(workspace_root).resolve()
-    db = Path(db_path)
-    holder = _IndexHolder(db)
-    atexit.register(holder.close)
+    host_db = Path(db_path)
+
+    def _resolve_index() -> tuple[_IndexHolder | None, Path | None]:
+        """Bind the index home per call: the view may not be known at build time."""
+        try:
+            db = index_db(workspace_io, root, "search.db", host_db)
+        except WorkspacePortError:
+            return None, None
+        holder = _IndexHolder(db)
+        atexit.register(holder.close)
+        return holder, db
+
+    holder, db = _resolve_index()
 
     def handler(params: Mapping[str, object]) -> ToolResult:
+        nonlocal holder, db
+        if holder is None or db is None:
+            # A managed view without a private cache home: refuse, never index
+            # into the tree being searched (it is the artefact under validation).
+            return ToolResult.fail(
+                "search_failed",
+                "no index location outside the managed view; the view supplied no private cache home",
+                retryable=False,
+            )
         try:
             return _handle(params, holder, root, db)
         except Exception as exc:

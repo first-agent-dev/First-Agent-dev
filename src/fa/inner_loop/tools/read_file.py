@@ -430,18 +430,37 @@ def _parse_read_params(
     return path_raw, artifact_id, start_line, end_line
 
 
+_PDF_MANAGED_MESSAGE = (
+    "PDF extraction is not available through the managed view: the workspace substrate "
+    "delivers UTF-8 text only. Read the PDF from a host-path workspace."
+)
+
+
 def _read_port_text(port: WorkspacePort, relative: str) -> str | ToolResult:
-    """Whole-file read through the port; windows are applied by the caller."""
+    """Whole-file read through the port; windows are applied by the caller.
+
+    Every closed code becomes a *named* outcome. The two the model can act on
+    differently are ``input_policy`` (the bytes are not text — the substrate
+    answers this for NUL bytes and invalid UTF-8, which is also what a PDF or
+    any binary file produces) and an oversized file (``eof`` is false). A line
+    window cannot be served here — the port reads whole files — so the message
+    does not pretend otherwise, and nothing falls back to the host path.
+    """
     try:
         read: PortRead = port.read_file(relative, max_bytes=PORT_READ_MAX_BYTES)
     except WorkspacePortError as exc:
+        if exc.code == "input_policy":
+            return ToolResult.fail(
+                "read_failed",
+                "binary or non-UTF-8 content: the managed view delivers text only",
+                retryable=False,
+            )
         codes = {
             # The substrate does not disclose existence, so a missing path and a
             # refused one are the same closed code; the message says so.
             "denied": ("read_failed", False),
             "stale": ("read_failed", True),
             "invalid_request": ("invalid_params", True),
-            "input_policy": ("read_failed", False),
             "unavailable": ("read_failed", True),
         }
         code, retryable = codes.get(exc.code, ("read_failed", True))
@@ -449,8 +468,8 @@ def _read_port_text(port: WorkspacePort, relative: str) -> str | ToolResult:
     if not read.eof:
         return ToolResult.fail(
             "read_failed",
-            f"file exceeds the {PORT_READ_MAX_BYTES}-byte read bound; request a line window instead",
-            retryable=True,
+            f"file exceeds the {PORT_READ_MAX_BYTES}-byte managed read bound; the managed view serves whole files only",
+            retryable=False,
         )
     return read.content
 
@@ -481,6 +500,11 @@ def build_read_file_tool(workspace_root: Path, *, workspace_io: WorkspacePort | 
 
         if workspace_io is None or relative is None:
             text_or_fail = _read_file_text(path)
+        elif path.suffix.lower() == ".pdf":
+            # Refuse before IO: the portable text contract cannot carry PDF
+            # bytes, so extraction would have to read the host path — the one
+            # thing a managed read must never do.
+            return ToolResult.fail("read_failed", _PDF_MANAGED_MESSAGE, retryable=False)
         else:
             text_or_fail = _read_port_text(workspace_io, relative)
         if isinstance(text_or_fail, ToolResult):

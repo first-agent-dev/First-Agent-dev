@@ -136,6 +136,13 @@ def _git_ls_files(root: Path, timeout: float = 5.0) -> list[str] | None:
     set used by ``glob.py``'s ``git_ls_files`` helper in the existing
     codebase (cross-checked in preflight).
     """
+    # A root with no ``.git`` cannot be enumerated by git (a managed view never
+    # carries one: ``.git`` is excluded from projections). Skip the subprocess
+    # instead of paying a guaranteed exit-128 plus a WARNING on every walk —
+    # this is also what keeps a managed search free of host Git invocations.
+    if not (root / ".git").exists():
+        logger.debug("no .git under %s; using os.walk", root)
+        return None
     git_bin = shutil.which("git")
     if git_bin is None:
         logger.debug("git binary not found on PATH; using os.walk fallback")

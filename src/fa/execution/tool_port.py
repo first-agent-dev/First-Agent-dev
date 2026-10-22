@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
+from pathlib import Path
 
 from fa.execution.protocol import MAX_TEXT_BYTES
 from fa.execution.supervisor import PeerIdentity, SupervisorError
@@ -41,7 +42,7 @@ _SHA256 = re.compile(r"[0-9a-f]{64}")
 class AuthorityWorkspacePort:
     """Bind one admitted view and translate its refusals into port codes."""
 
-    __slots__ = ("_authority", "_capability", "_deadline_factory", "_namespace", "_peer", "_view_ref")
+    __slots__ = ("_authority", "_cache_dir", "_capability", "_deadline_factory", "_namespace", "_peer", "_view_ref")
 
     def __init__(
         self,
@@ -52,6 +53,7 @@ class AuthorityWorkspacePort:
         view_ref: ViewRef,
         capability: str,
         deadline_factory: Callable[[], float],
+        cache_dir: Path | None = None,
     ) -> None:
         if not isinstance(authority, WorkspaceAuthority):
             raise ExecutionContractError
@@ -61,12 +63,20 @@ class AuthorityWorkspacePort:
             raise ExecutionContractError
         if not callable(deadline_factory):
             raise ExecutionContractError
+        if cache_dir is not None and not isinstance(cache_dir, Path):
+            raise ExecutionContractError
         self._authority = authority
         self._peer = peer
         self._namespace = namespace
         self._view_ref = view_ref
         self._capability = capability
         self._deadline_factory = deadline_factory
+        self._cache_dir = cache_dir
+
+    @property
+    def cache_dir(self) -> Path | None:
+        """The view's private cache home (``ViewInputs.cache``), supplied by the composition."""
+        return self._cache_dir
 
     def read_file(self, path: str, *, max_bytes: int = PORT_READ_MAX_BYTES) -> PortRead:
         if type(max_bytes) is not int or max_bytes < 1:

@@ -3839,3 +3839,34 @@ across two further suites before this change was committed (see the increment's 
 live row (18/8 PLANNED/UNEXECUTED), STEP boxes and FUNCTIONAL contracts. No service composes the port
 yet; host-path tools remain the deployed behaviour until SLICE4 STEP2.
 
+### E265 — SLICE2 STEP4 (part B-1): declaration
+
+Cell-local search/reach indexes (view cache home, refuse when absent/in-view), named PDF/binary/oversize
+read outcomes with no canonical fallback, artifact reads pinned to the controller store, and no host-Git
+tools in the managed registry. Files: `tools/{workspace_port,fs_search,fs_reach,read_file,__init__}.py`,
+`inner_loop/profiles.py`, `execution/tool_port.py`, new `tests/test_execution_tool_index.py`.
+Part B-2 (PTY parity/blackboard) and seal/import alias remain open.
+
+### E265 — SLICE2 STEP4 (part B-1): result
+
+**Shipped.** View-cache index homes for `fs_search`/`fs_reach` (shared `index_db` rule, refusal when
+absent or in-view), named PDF/binary/oversize read outcomes with no host fallback, artifacts confirmed
+on the controller store, host-Git tools omitted from the managed registry, and `_safe_walk` no longer
+spawning `git` outside a repo. Files: `tools/{workspace_port,fs_search,fs_reach,read_file,__init__}.py`,
+`inner_loop/profiles.py`, `execution/tool_port.py`, `memory/_safe_walk.py`, new
+`tests/test_execution_tool_index.py`, plus the live-E2E plan note.
+
+**Evidence.** Red first (9/14 red). 21 passed in the new module, 80 in the index bank, 285 in the
+targeted regression bank; ruff/format clean; mypy 493 files; pyrefly 0 errors; **10/10 assertion-only
+mutation kills**.
+
+**Recorded findings.** (1) a fail-degraded producer hides its own deletion — the host-Git oracle had to
+count invocations instead of catching an exception (E259 pattern); (2) three more composition-root
+doubles drifted on the new keyword, the third recurrence in this series; (3) `index_db` typing fixed to
+`WorkspacePort | None`; (4) managed PDF reads cannot reach the extractor chain under the text-only
+substrate → raised as Q79; (5) index locality is now structural, so the pinned-reader case holds by
+construction.
+
+**Not closed.** Part B-2 (PTY parity/blackboard, needs the real cell), seal/import alias (SLICE3), STEP5,
+all live rows, STEP boxes and FUNCTIONAL contracts. No service composes the port yet.
+

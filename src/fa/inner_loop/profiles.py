@@ -354,7 +354,7 @@ def _build_tool_builders(
     try:
         from fa.inner_loop.tools.fs_reach import build_fs_reach_tool
 
-        builders["fs_reach"] = lambda: build_fs_reach_tool(root)
+        builders["fs_reach"] = lambda: build_fs_reach_tool(root, workspace_io=workspace_io)
     except Exception as exc:  # noqa: BLE001
         logger.warning(f"Failed to setup builder fs_reach: {exc}")
 
@@ -391,7 +391,9 @@ def _build_tool_builders(
             fts_path = ".fa/fts.db"
 
         def _build_fs_search(bp: str = fts_path) -> Any:
-            return build_fs_search_tool(root / bp, root)
+            # With a port the builder derives the index home from the view's
+            # cache, so ``root / bp`` is only the host-mode location.
+            return build_fs_search_tool(root / bp, root, workspace_io=workspace_io)
 
         builders["fs_search"] = _build_fs_search
     except Exception as exc:  # noqa: BLE001

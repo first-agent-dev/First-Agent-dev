@@ -25,7 +25,7 @@ from fa.inner_loop.tools.write_file import build_write_file_tool
 logger = logging.getLogger(__name__)
 
 # fs_search (S14b.1) replaces fs_glob, fs_grep, fs_instant_grep.
-build_fs_search_tool: Callable[[Path, Path], ToolSpec] | None
+build_fs_search_tool: Callable[..., ToolSpec] | None
 try:
     from fa.inner_loop.tools.fs_search import build_fs_search_tool
 except ImportError as exc:
@@ -124,13 +124,26 @@ def _register_extra_tools(
     *,
     include_pair: bool = True,
     include_observability: bool = True,
+    workspace_io: WorkspacePort | None = None,
 ) -> None:
-    """Register extra tools while preserving optional availability policy."""
+    """Register extra tools while preserving optional availability policy.
+
+    ``include_pair`` also gates the host-Git tools. A managed view must never
+    gain ``fs_checkpoint``/``fs_undo``/``fs_diff``: they shell out to host
+    ``git`` against the workspace directory, which is exactly the canonical read
+    the execution boundary forbids. They are omitted (not silently broken) and
+    the omission is logged once, so a managed session shows a smaller, honest
+    tool set instead of a tool that would mutate host state.
+    """
+
+    if workspace_io is not None and include_pair:
+        logger.info("managed workspace bound: omitting host-Git tools (fs_checkpoint/fs_undo/fs_diff)")
+        include_pair = False
 
     fs_search_builder = (
         None
         if build_fs_search_tool is None
-        else lambda: build_fs_search_tool(_resolve_fts_path(workspace_root), workspace_root)
+        else lambda: build_fs_search_tool(_resolve_fts_path(workspace_root), workspace_root, workspace_io=workspace_io)
     )
     _register_optional_tool(registry, "fs_search", fs_search_builder)
 
@@ -192,6 +205,7 @@ def build_baseline_registry(
         workspace_root,
         include_pair=True,
         include_observability=True,
+        workspace_io=workspace_io,
     )
     return registry
 

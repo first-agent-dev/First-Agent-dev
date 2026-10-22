@@ -16,6 +16,7 @@ from typing import Any
 
 from fa.inner_loop.registry import DEFAULT_TOOL_CONTEXT_BYTES, ToolResult, ToolSpec
 from fa.inner_loop.tools.base import require_string
+from fa.inner_loop.tools.workspace_port import WorkspacePort, WorkspacePortError, index_db
 
 logger = logging.getLogger(__name__)
 
@@ -86,14 +87,29 @@ def _parse_enum(
     return value, None
 
 
-def build_fs_reach_tool(workspace_root: Path) -> ToolSpec:
+def build_fs_reach_tool(workspace_root: Path, *, workspace_io: WorkspacePort | None = None) -> ToolSpec:
     """Build the ``fs_reach`` ToolSpec bound to a workspace (CT-6)."""
     root = Path(workspace_root).resolve()
-    db = root / ".fa" / "structural.db"
-    holder = _ReachHolder(db)
-    atexit.register(holder.close)
+    host_db = root / ".fa" / "structural.db"
+
+    def _resolve_index() -> _ReachHolder | None:
+        try:
+            db = index_db(workspace_io, root, "structural.db", host_db)
+        except WorkspacePortError:
+            return None
+        holder = _ReachHolder(db)
+        atexit.register(holder.close)
+        return holder
+
+    holder = _resolve_index()
 
     def handler(params: Mapping[str, object]) -> ToolResult:
+        if holder is None:
+            return ToolResult.fail(
+                "reach_failed",
+                "no index location outside the managed view; the view supplied no private cache home",
+                retryable=False,
+            )
         try:
             return _handle(params, holder, root)
         except Exception as exc:

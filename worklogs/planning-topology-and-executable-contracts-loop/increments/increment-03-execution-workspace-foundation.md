@@ -1601,3 +1601,148 @@ producer kills, all live rows (18 surfaces / 8 joins PLANNED/UNEXECUTED), STEP b
 contracts. `AuthorityWorkspacePort` is a component adapter: nothing composes it into a running service
 yet (SLICE4 STEP2), so the pre-cutover host-path tools remain the deployed behaviour.
 
+### E265 — SLICE2 STEP4 (part B-1): cell-local indexes, explicit read outcomes, no host Git
+
+**Idea.** Part A gave the file tools a port for *bytes*. The rest of the tool surface still assumes
+it owns the filesystem: `fs_search` writes its FTS index to `<root>/.fa/fts.db`, `fs_reach` hardcodes
+`<root>/.fa/structural.db`, `fs_checkpoint`/`fs_undo`/`fs_diff` shell out to host `git`, and a `.pdf`
+read goes to `_read_file_text`, which opens the *host* path. Under an admitted view those are three
+distinct violations of the STEP4 exit clause — a tool writing into project bytes the supervisor owns,
+a host Git read, and a canonical read that bypasses the port. This increment makes each one closed and
+explicit: indexes move to the view's private cache (never project bytes), the two tools refuse rather
+than index in-place when no such home exists, PDF/binary/oversized reads become named results instead
+of a generic refusal, artifacts keep resolving through the controller's store, and the managed
+composition stops shipping host-Git tools at all.
+
+**Contract/gap IDs.** I03 SLICE2 STEP4 exit clauses (b) zero host Git/version-stamp reads, (c) active
+search sees a new symbol while a reader stays pinned, (d) artifacts retain their controller path,
+(e) PDF/binary/large/truncated/helper-unavailable results explicit with no canonical fallback;
+increment line 309; spec §4.2 ("same-view bounded reads and cell-local existing search/reach
+implementations; no new public tools/search service or private state mount"). Part B-2 (PTY/tool
+mutual visibility with blackboard on/off) and the seal/import alias stay open — see "Not closed".
+
+**Allowed files.** `src/fa/inner_loop/tools/workspace_port.py` (add the view's private cache home to
+the port contract plus one shared index-placement helper), `src/fa/execution/tool_port.py` (adapter
+supplies it), `src/fa/inner_loop/tools/fs_search.py`, `src/fa/inner_loop/tools/fs_reach.py` (derive the
+index path from the port, refuse in-place indexing), `src/fa/inner_loop/tools/read_file.py` (explicit
+PDF/binary/oversize outcomes and no host read on the port path), `src/fa/inner_loop/profiles.py` and
+`src/fa/inner_loop/tools/__init__.py` (thread the port to search/reach; suppress host-Git pair tools
+when it is bound), new `tests/test_execution_tool_index.py`, plan/ledger/E2E register. No new public
+tool, no new search service, no private state mount, no substrate change, no change to the host-mode
+(default) behaviour of any tool.
+
+**Current behaviour (source-verified).** `build_fs_search_tool(db_path, workspace_root)` builds
+`_IndexHolder(db_path)` and calls `SearchIndex.ensure_indexed(root)`; `profiles._build_tool_builders`
+passes `root/<fts_db_path>` (default `.fa/fts.db`) and `tools/__init__._resolve_fts_path` does the same,
+so the index lives *inside* the workspace. `build_fs_reach_tool(workspace_root)` hardcodes
+`root/.fa/structural.db`. Both index the host directory tree directly (that is the intended "cell-local
+existing implementation" — the defect is only where the index is *written*). `_register_extra_tools`
+registers `fs_checkpoint`/`fs_undo`/`fs_diff`/`fs_send_ctrl_c`, and `pair_tools` runs
+`git status|add|commit|rev-parse|branch|stash|checkout|reset|diff` with `cwd=root`. In `read_file`,
+`handler` branches to `_read_file_text(path)` only when no port is bound; with a port it calls
+`_read_port_text`, which returns `read_failed` for every closed code with a message that only names the
+code — a `input_policy` refusal (the substrate's non-UTF-8/NUL answer) is therefore reported as a
+generic workspace refusal, and `.pdf` (whose bytes the port cannot deliver) is reported the same way.
+Artifacts never touch either path: `_read_artifact` resolves through `session.artifact_store` and the
+run's projection store — the controller's own roots.
+
+**Target behaviour.** With a `workspace_io`, `fs_search`/`fs_reach` place their index under the view's
+private cache home (`workspace_io.cache_dir`) and **refuse** (typed, no IO, no index write) when that
+home is absent or resolves inside the workspace root. Only the index location changes: both tools still
+read the cell's own materialized tree, so an active view sees a symbol written a moment ago while a
+pinned reader's index — a different cache home — keeps answering from its own revision. A `.pdf` read
+through the port is refused by name before any IO (the substrate is text-only by contract); a
+non-UTF-8/NUL refusal (`input_policy`) is named as binary content; an oversized read names the exact
+managed bound and does not offer a line-window workaround the port cannot serve. Artifact reads are
+unaffected: they resolve through the controller store even with a port bound. With a port bound, the
+composition ships no tool that runs host `git`; host mode keeps all three pair tools unchanged.
+
+**Mechanism.** `workspace_port.py` gains `WorkspacePort.cache_dir -> Path | None` (the view's private
+scratch, deliberately *not* project bytes) and `index_db(port, root, filename, fallback) -> Path` which
+returns `fallback` when no port is bound, else `cache_dir/filename`, raising
+`WorkspacePortError("unavailable")` when `cache_dir` is None or is inside `root` — one implementation of
+the placement rule for both tools. `tool_port.AuthorityWorkspacePort` takes `cache_dir=` and exposes it
+(no authority change: the composition already knows the view's cache from `ViewInputs.cache`).
+`fs_search`/`fs_reach` take `workspace_io=None`, resolve their index through `index_db` at *handler*
+time (build time stays side-effect free) and return a `search_failed`/`reach_failed` non-retryable
+result naming the missing index home. `read_file` maps the closed codes to named outcomes:
+`input_policy` → "binary or non-UTF-8 content"; `not read.eof` → the managed bound; `.pdf` →
+refusal before IO. `profiles`/`__init__` pass `workspace_io` to both builders and pass
+`include_pair=False` when it is bound, logging the omission once (a silent drop would be the worse
+failure).
+
+**Production best practice.** Keep the index out of the artifact under validation (writing a cache into
+the tree you are hashing invalidates the hash and makes a reader's answer depend on someone else's
+write); make "I have nowhere to put this" a typed refusal rather than an implicit fallback to the
+canonical tree; keep the default (host) path byte-identical so the pre-cutover behaviour cannot regress;
+and let one helper own the placement rule so search and reach cannot drift.
+
+**Failure behaviour.** No port → today's behaviour exactly. Port without a usable cache home → typed
+non-retryable failure, zero index writes, zero host reads. Port with a cache home → index under it;
+the returned tool result names neither the host path nor the cache path. PDF/binary/oversize → named
+non-retryable or retryable-per-reason failures with no host-path mention. A pair tool is simply absent
+from the managed registry (the model sees a smaller, honest tool set).
+
+**DoD and negative proof.** New tests: managed search writes no index into the view and answers from
+its cache; no cache home and an in-view cache home are both refused with no index file created;
+`fs_reach` resolves from its cache home; an active view finds a newly added symbol while a pinned view
+with a separate cache home does not; a `.pdf` read refuses without calling the port; `input_policy`
+is named as binary content; an oversized read names the bound; an artifact read succeeds while the
+bound port refuses any call; the managed registry contains no `fs_checkpoint`/`fs_undo`/`fs_diff`
+while the host registry still does. Negative proof: delete `index_db`'s placement check → the in-view
+case indexes inside the view; drop the `workspace_io` argument to the search builder → the view gains
+`.fa/fts.db`; re-add `include_pair=True` under a port → the managed-registry test fails; restore the
+generic `input_policy` message → the binary assertion fails.
+
+**Not closed.** PTY/tool mutual visibility with blackboard on/off (needs the cell's PTY inside the
+admission, i.e. the real backend — SLICE4/6), the seal/import alias (SLICE3), STEP5's whole-bank
+producer kills, and every live row. Nothing composes `AuthorityWorkspacePort` yet, so the deployed
+behaviour is still the host path.
+
+#### E265 result — part B-1 shipped; one oracle had to be rewritten before it could hold
+
+**Shipped.** `WorkspacePort.cache_dir` (the view's private cache home) and the shared `index_db`
+placement helper; `AuthorityWorkspacePort(cache_dir=…)`; `fs_search`/`fs_reach` resolve their index
+per call and refuse when the home is missing or inside the searched tree; `read_file` refuses `.pdf`
+before any IO and names `input_policy` as binary content and a non-`eof` read as the exact bound;
+`profiles`/`tools/__init__` forward the port to both index tools and drop the host-Git pair tools under
+a bound port; `_safe_walk` skips its `git ls-files` fast path when the root has no `.git`.
+
+**Evidence (actual outputs).** Red first (9 of 14 new cases failed on the unmodified tree). Green:
+`tests/test_execution_tool_index.py` → 21 passed; the index/search/reach bank (`+ test_fs_search`,
+`test_fs_reach`) → 80 passed. Targeted regression bank (tool, registry, session, provisioning, CLI
+suites) → 285 passed. Statics: `ruff check src tests` → All checks passed; `ruff format --check` → 505
+files clean; project `mypy` → Success, 493 source files; `pyrefly check` → 0 errors. Targeted mutation:
+**10/10 assertion-only kills**, sources restored byte-exact.
+
+**Findings the work forced.**
+1. *A fail-degraded producer hides its own deletion.* The first version of the host-Git case made
+   `subprocess.run` raise and asserted the search still worked. With the guard removed the search still
+   passed: `_git_ls_files` catches every exception and falls back to `os.walk`, so the exception never
+   reached the test — a masked producer in exactly the E259 pattern. The case now records invocations
+   and asserts the list is empty; only then does deleting the guard fail it. Rule for the rest of
+   SLICE2: when the code under test is fail-degraded by design, assert the *call*, never the exception.
+2. *Three more composition-root doubles drifted* (`test_quality_slice_coverage` ×2, and the same class
+   as E264's five): each failed with `TypeError: … unexpected keyword argument 'workspace_io'` because
+   `_register_extra_tools`/`profiles` now pass the port to `build_fs_search_tool`. This is the third
+   time this increment series has paid for that; the doubles now mirror the real signature and the
+   real type, and the lesson is recorded once here rather than rediscovered per slice.
+3. *`index_db` was typed for a port that "cannot be None"* while every caller passes `None` in host
+   mode; `mypy` caught it only after the first draft. The signature is now `WorkspacePort | None` and
+   the helper owns the host-mode fallback, so callers carry no `type: ignore`.
+4. *PDF extraction cannot follow the bytes into the view.* The substrate is text-only by contract
+   (`MAX_TEXT_BYTES`, NUL/UTF-8 rejection), so managed PDF reads have no path to the extractor chain.
+   The refusal is explicit and named rather than silent — but this is a **capability difference against
+   host mode**, so it is raised as Q79 below, not decided here.
+5. *Index locality is now structural, not conventional.* Because both tools derive the index home from
+   the view's cache, two views cannot share an index even in principle; the pinned-reader case asserts
+   that by construction (distinct homes → distinct answers) rather than by timing.
+
+**Not closed.** STEP4 part B-2 (PTY/tool mutual visibility with blackboard on/off — needs the real
+cell), the seal/import alias (SLICE3), STEP5's whole-bank producer kills, every live row (18 surfaces /
+8 joins still `PLANNED / UNEXECUTED`), and the STEP boxes and FUNCTIONAL contracts. `AuthorityWorkspacePort`
+is still a component adapter: nothing composes it into a running service, so the deployed behaviour
+remains the host path until SLICE4 STEP2. The live verification plan for these cases (including the
+`PATH`-shim and `strace` oracles) is
+[notes/i03-live-e2e-test-plan-2026-10-22.md](../notes/i03-live-e2e-test-plan-2026-10-22.md).
+

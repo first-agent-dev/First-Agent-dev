@@ -1503,3 +1503,23 @@ create/start refused), and a fresh backend with an empty episode map all have lo
 **Live status: PLANNED / UNEXECUTED.** I03-LIVE-18/S04 still require the actual installed
 service + approved daemon + independent cgroup barrier. Until those runs exist, one-shot cancellation
 is locally implemented but not live-verified and every live row remains PLANNED / UNEXECUTED.
+
+### E265 — planned live cases for the tool seams (all unexecuted)
+
+The suite-build plan for these is
+[i03-live-e2e-test-plan-2026-10-22.md](i03-live-e2e-test-plan-2026-10-22.md) §4; they are listed here
+so the register remains the single inventory. All belong to join **S07** (composed service) and
+**S05/S02** for the view/pin ordering, and none can be written before SLICE4 STEP2's composition:
+
+| Planned case | Register row | Oracle | Negative control |
+| :--- | :--- | :--- | :--- |
+| L-TOOL-1 port write/read/edit | I03-LIVE-14, S05 | bytes in the admitted view, canonical untouched | drop the injection → host write observed |
+| L-TOOL-2 stale-base edit conflict | I03-LIVE-14 | conflict result + preserved concurrent bytes | disable digest check → lost update |
+| L-TOOL-3 PDF/binary/oversize named refusals | I03-LIVE-14 | three deterministic results; no open outside the view (`strace`) | restore host read → trace shows it |
+| L-TOOL-4 artifacts on the controller store | I03-LIVE-14, S07 | artifact content matches; no view IO | route via port → refusal |
+| L-TOOL-5 cell-local search/reach indexes | I03-LIVE-14/17, S05 | index only under the view cache; no `*.db` in the view; pinned view answers R0 | index in `<view>/.fa` → tree gains a db |
+| L-TOOL-6 zero host-Git reads | I03-LIVE-14, S07 | `git` shim sentinel empty; no pair tools in the inventory | re-enable pair tools → sentinel non-empty |
+| L-TOOL-7 tool/PTY mutual visibility | I03-LIVE-14/15, S03 | PTY sees the tool's write and vice versa, blackboard on/off | drop the shared view → stale bytes |
+
+**Status: PLANNED / UNEXECUTED.** No row above is evidence; E265's proof is component-level only.
+
