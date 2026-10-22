@@ -1320,7 +1320,9 @@ def test_one_shot_cancel_does_not_depend_on_the_interactive_episode_map(one_shot
         assert eventually(lambda: bool(one.streams) and one.streams[0].received.is_set()), (
             f"the RUN never reached the one-shot cell: {failures}"
         )
-        restarted = CellBackend(one.case.authority, one.case.engine, one.case.authority.journal)
+        engine = one.case.engine
+        assert engine is not None
+        restarted = CellBackend(one.case.authority, engine, one.case.authority.journal)
         assert restarted.episode_count() == 0
         one.case.peer.replies.extend(cancel_replies(operation_id, one.case.view.view_id))
         cancelled = ok_backend(lambda: restarted.cancel(PEER, cancel_request(one.case, operation_id), deadline=until()))

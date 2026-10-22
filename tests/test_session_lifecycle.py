@@ -10,6 +10,15 @@ Path inventory:
   D: workspace containment and reverse ownership rejection
   E: run-id reuse rejection and DB binding persistence
   F: read-only existing-DB open does not create missing paths
+  G: managed provisioner injection (E263)
+     G1 explicit reference: provisioner owns the bytes, receives a real
+        provisioning run namespace, host cloning never runs
+     G2 new-root provisioning without the SLICE3 publication join is the typed
+        BLOCKED disposition `provisioning_unavailable`
+     G3 not-READY readiness blocks new session AND attach (`workspace_not_ready`)
+     G4 a registered result is never an rmtree target after a later failure
+     G5 registered reference to another session's workspace is permitted without
+        transferring its DB/run/manifest; an unregistered conflict stays rejected
 """
 
 from __future__ import annotations
@@ -23,6 +32,7 @@ import pytest
 
 from fa.inner_loop.session_db import SessionDatabase, SessionDatabaseError
 from fa.session.manager import SessionManager, SessionManagerError
+from fa.session.provisioning import ProvisionedWorkspace, ProvisionMode, ProvisionRequest
 from fa.workspace_bootstrap import ReadyState, ReadyStatus
 
 
@@ -37,19 +47,50 @@ def _ready_state(workspace: Path) -> ReadyState:
     )
 
 
+def _degraded_state(workspace: Path) -> ReadyState:
+    return ReadyState(
+        status=ReadyStatus.DEGRADED_ENVIRONMENT,
+        fingerprint=None,
+        reason_code="tool_missing",
+        log_path=workspace / ".fa" / "bootstrap.log",
+        repaired=False,
+        elapsed_ms=1,
+    )
+
+
+def _registered(workspace_id: str, revision_id: str, digest: str) -> ProvisionedWorkspace:
+    return ProvisionedWorkspace(
+        registered=True,
+        workspace_id=workspace_id,
+        revision_id=revision_id,
+        tree_sha256=digest,
+    )
+
+
+def _scratch() -> ProvisionedWorkspace:
+    return ProvisionedWorkspace(registered=False, workspace_id=None, revision_id=None, tree_sha256=None)
+
+
+def _registers(_request: ProvisionRequest) -> ProvisionedWorkspace:
+    """Managed-composition provisioner: claims supervisor ownership, creates nothing."""
+    return _registered("ws-test", "rev-test", "a" * 64)
+
+
 def _manager(
     tmp_path: Path,
     *,
     workspace_preparer: Callable[[Path], ReadyState] | None = None,
+    workspace_provisioner: Callable[[ProvisionRequest], ProvisionedWorkspace] | None = None,
 ) -> SessionManager:
     source = tmp_path / "source"
-    source.mkdir()
+    source.mkdir(exist_ok=True)
     (source / "README.md").write_text("source", encoding="utf-8")
     return SessionManager(
         state_root=tmp_path / "state",
         workspace_root=tmp_path / "workspaces",
         source_workspace=source,
         workspace_preparer=workspace_preparer,
+        workspace_provisioner=workspace_provisioner,
     )
 
 
@@ -312,3 +353,158 @@ def test_partial_workspace_provision_is_removed_on_failure(tmp_path: Path, monke
 
     assert not list(manager.sessions_root.iterdir())
     assert not list(manager.workspace_root.iterdir())
+
+
+def test_managed_provisioner_owns_workspace_bytes_and_receives_a_real_run_namespace(tmp_path: Path) -> None:
+    """C1 G1: the provisioner runs instead of host provisioning, after DB+run admission."""
+
+    observed: dict[str, object] = {}
+
+    def provision(request: ProvisionRequest) -> ProvisionedWorkspace:
+        manifest = json.loads(
+            (tmp_path / "state" / "sessions" / request.session_id / "manifest.json").read_text(encoding="utf-8")
+        )
+        database = SessionDatabase.open_existing(Path(str(manifest["session_db_path"])), session_id=request.session_id)
+        observed.update(
+            mode=request.mode,
+            session_id=request.session_id,
+            existed=request.workspace_path.exists(),
+            status=manifest["status"],
+            run_bound=database.get_run_binding(request.run_id) is not None,
+            run_dir=(tmp_path / "state" / "session-log" / request.run_id).is_dir(),
+            run_id=request.run_id,
+        )
+        request.workspace_path.mkdir(parents=True)
+        (request.workspace_path / "supervisor.txt").write_text("own bytes", encoding="utf-8")
+        return _scratch()
+
+    manager = _manager(tmp_path, workspace_provisioner=provision)
+    workspace = tmp_path / "workspaces" / "explicit"
+    session = manager.provision_entrypoint_session(session_id="session-a", workspace_override=workspace)
+
+    assert session.workspace_path == workspace
+    assert observed["mode"] is ProvisionMode.PROVISION
+    assert observed["session_id"] == "session-a"
+    assert observed["existed"] is False
+    assert observed["status"] == "provisioning"
+    assert observed["run_bound"] is True
+    assert observed["run_dir"] is True
+    assert isinstance(observed["run_id"], str) and observed["run_id"].startswith("run-")
+    assert (workspace / "supervisor.txt").read_text(encoding="utf-8") == "own bytes"
+    assert not (workspace / "README.md").exists(), "host provisioning must not run when the provisioner is injected"
+    assert json.loads(session.manifest_path.read_text(encoding="utf-8"))["status"] == "active"
+
+
+def test_new_root_provisioning_without_publication_is_a_typed_blocked_disposition(tmp_path: Path) -> None:
+    """C3 G2: no host-Git fallback; the new-root leg is explicitly BLOCKED until SLICE3."""
+
+    calls: list[ProvisionRequest] = []
+
+    def provision(request: ProvisionRequest) -> ProvisionedWorkspace:
+        calls.append(request)
+        raise SessionManagerError("provisioning_unavailable", "publication join is SLICE3")
+
+    manager = _manager(tmp_path, workspace_provisioner=provision)
+    workspace = tmp_path / "workspaces" / "fresh"
+
+    with pytest.raises(SessionManagerError) as blocked:
+        manager.provision_entrypoint_session(session_id="session-fresh", workspace_override=workspace)
+
+    assert blocked.value.code == "provisioning_unavailable"
+    assert [request.mode for request in calls] == [ProvisionMode.PROVISION]
+    assert not workspace.exists()
+    assert not (tmp_path / "state" / "sessions" / "session-fresh").exists()
+    # The provisioning run reservation survives rollback: the id is never reusable.
+    assert len(list((tmp_path / "state" / "session-log").iterdir())) == 1
+
+
+def test_not_ready_readiness_blocks_new_session_and_attach(tmp_path: Path) -> None:
+    """C1 G3: readiness degradation is closed in both lifecycle paths (managed composition)."""
+
+    creator = _manager(tmp_path)
+    created = creator.create_or_attach_session(session_id=None, workspace_override=None)
+    before = json.loads(created.manifest_path.read_text(encoding="utf-8"))
+
+    attach_manager = _manager(tmp_path, workspace_preparer=_degraded_state, workspace_provisioner=_registers)
+    with pytest.raises(SessionManagerError) as attach_error:
+        attach_manager.create_or_attach_session(
+            session_id=created.session_id,
+            workspace_override=created.workspace_path,
+        )
+    assert attach_error.value.code == "workspace_not_ready"
+    assert json.loads(created.manifest_path.read_text(encoding="utf-8"))["last_used_at"] == before["last_used_at"]
+
+    new_manager = _manager(tmp_path, workspace_preparer=_degraded_state, workspace_provisioner=_registers)
+    with pytest.raises(SessionManagerError) as new_error:
+        new_manager.create_or_attach_session(session_id=None, workspace_override=None)
+    assert new_error.value.code == "workspace_not_ready"
+    assert len(list((tmp_path / "state" / "sessions").iterdir())) == 1
+
+
+def test_registered_workspace_bytes_survive_a_later_session_failure(tmp_path: Path) -> None:
+    """C1 G4: only uncommitted scratch is cleanup-eligible, never registered bytes."""
+
+    workspace = tmp_path / "workspaces" / "registered"
+    workspace.mkdir(parents=True)
+    (workspace / "canonical.txt").write_text("registered bytes", encoding="utf-8")
+
+    def provision(_request: ProvisionRequest) -> ProvisionedWorkspace:
+        return _registered("ws-1", "rev-1", "0" * 64)
+
+    def fail(_workspace: Path) -> ReadyState:
+        raise RuntimeError("readiness contract breach")
+
+    manager = _manager(tmp_path, workspace_preparer=fail, workspace_provisioner=provision)
+    with pytest.raises(SessionManagerError, match="session_provision_failed"):
+        manager.provision_entrypoint_session(session_id="session-registered", workspace_override=workspace)
+
+    assert (workspace / "canonical.txt").read_text(encoding="utf-8") == "registered bytes"
+    assert not (tmp_path / "state" / "sessions" / "session-registered").exists()
+
+
+def test_registered_conflicting_reference_is_permitted_without_transferring_ownership(tmp_path: Path) -> None:
+    """C1/C3 G5: CT103a reference succeeds; an unregistered conflict still fails closed."""
+
+    shared = tmp_path / "workspaces" / "shared"
+    shared.mkdir(parents=True)
+    (shared / "canonical.txt").write_text("shared", encoding="utf-8")
+
+    def provision(request: ProvisionRequest) -> ProvisionedWorkspace:
+        return _registered("ws-shared", "rev-1", "1" * 64)
+
+    owner = _manager(tmp_path, workspace_provisioner=provision)
+    first = owner.provision_entrypoint_session(session_id="session-owner", workspace_override=shared)
+    first_run = owner.begin_run(first, None)
+    first_manifest = first.manifest_path.read_bytes()
+    first_database = first.session_db_path.read_bytes()
+
+    referrer = _manager(tmp_path, workspace_provisioner=provision)
+    second = referrer.provision_entrypoint_session(session_id="session-referrer", workspace_override=shared)
+    assert second.workspace_path == shared
+    assert first.manifest_path.read_bytes() == first_manifest
+    assert first.session_db_path.read_bytes() == first_database
+    database = SessionDatabase.open_existing(first.session_db_path, session_id="session-owner")
+    assert database.get_run_binding(first_run.run_id) is not None
+    assert second.session_db_path != first.session_db_path
+
+    def scratch_provision(_request: ProvisionRequest) -> ProvisionedWorkspace:
+        return _scratch()
+
+    rejecting = _manager(tmp_path, workspace_provisioner=scratch_provision)
+    with pytest.raises(SessionManagerError) as conflict:
+        rejecting.provision_entrypoint_session(session_id="session-reject", workspace_override=shared)
+    assert conflict.value.code == "workspace_already_owned"
+    assert not (tmp_path / "state" / "sessions" / "session-reject").exists()
+
+
+def test_readiness_degradation_without_a_managed_provisioner_stays_non_blocking(tmp_path: Path) -> None:
+    """C3 G3b: pre-cutover host composition reports readiness but does not block.
+
+    SLICE4 STEP2 injects the provisioner and therefore removes this path; the
+    case exists so that the transition is explicit rather than accidental.
+    """
+
+    manager = _manager(tmp_path, workspace_preparer=_degraded_state)
+    session = manager.create_or_attach_session(session_id=None, workspace_override=None)
+
+    assert json.loads(session.manifest_path.read_text(encoding="utf-8"))["status"] == "active"

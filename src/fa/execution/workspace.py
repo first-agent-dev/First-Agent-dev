@@ -930,7 +930,12 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
     def register_existing(
         self, peer: PeerIdentity, namespace: NamespaceRef, *, root_id: str, relative_root: str, deadline: float
     ) -> dict[str, str]:
-        """Register quiescent existing bytes, never create/chmod a canonical root."""
+        """Register quiescent existing bytes, never create/chmod a canonical root.
+
+        Returns the committed identity `{workspace_id, revision_id, tree_sha256}`;
+        the digest is the verified tree of that revision, so a caller can bind
+        session ownership to exactly the bytes it was given.
+        """
         if not isinstance(namespace, NamespaceRef):
             raise ExecutionContractError
         with self._transaction(peer, deadline):
@@ -944,6 +949,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                         return {
                             "workspace_id": binding.metadata["workspace_id"],
                             "revision_id": binding.current["revision_id"],
+                            "tree_sha256": binding.current["tree_sha256"],
                         }
                 metadata = {
                     "schema_version": 1,
@@ -1020,7 +1026,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
             binding.fd = os.open(workspace_id, _DIRECTORY, dir_fd=self._catalog)
             self._stack.callback(binding.close)
             self._bindings[workspace_id] = binding
-            return {"workspace_id": workspace_id, "revision_id": revision_id}
+            return {"workspace_id": workspace_id, "revision_id": revision_id, "tree_sha256": digest}
         finally:
             if not installed and stage.exists():
                 shutil.rmtree(stage)  # Only this uninstalled, service-private staging tree.

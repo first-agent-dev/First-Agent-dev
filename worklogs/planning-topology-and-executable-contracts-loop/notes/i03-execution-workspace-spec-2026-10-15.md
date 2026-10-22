@@ -1814,3 +1814,18 @@ register's I03-LIVE-11/18 and S02/S03/S04 are the explicit future witnesses; all
 PLANNED/UNEXECUTED. See the E260 audit in the increment and append-only ledger for the gap-to-slice
 map. No new runtime module, service, wire protocol, session manager, lock service or production
 policy is approved by this clarification.
+
+**E263 provisioning seam and the Q78 readiness boundary.** The manager now delegates workspace-byte
+ownership to an injected provisioner: it creates the `provisioning` manifest and session DB, reserves
+one real provisioning run through `begin_run(session, None)`, passes `{mode, session_id, run_id,
+workspace_path, deadline}` and consumes the frozen `{registered, workspace_id, revision_id,
+tree_sha256}` result. Ownership is the only cleanup discriminator: `registered=True` bytes are never an
+rmtree target, `registered=False` scratch is, and a provisioner that never returned leaves no
+manager-created workspace to delete. A reverse-owner conflict becomes a *reference* when registration
+proves supervisor ownership (CT103a) and stays `workspace_already_owned` otherwise; the manager never
+transfers the other session's manifest, DB or run bindings. New-root provisioning remains the typed
+BLOCKED `provisioning_unavailable` until the SLICE3 publication join: no host-Git fallback survives
+injection. Readiness is a closed `workspace_not_ready` **in the managed composition** (Q78): the same
+code path that receives the provisioner result decides, so the rule activates exactly at SLICE4 STEP2's
+cutover and the pre-cutover host composition keeps its visible-but-non-blocking report until then.
+

@@ -1320,3 +1320,154 @@ re-run green).** 5/5 kills:
 
 **Scope unchanged.** No STEP checkbox, FUNCTIONAL contract, or E223 duty is closed. I03-LIVE-18 / S04
 remain PLANNED/UNEXECUTED; surface count 18/8.
+
+### E263 — SLICE2 STEP3 (SLICE2 half): managed provisioner injection into SessionManager
+
+**Idea.** `SessionManager` is still the host-Git owner of workspaces: `_new_session` materializes a
+directory with `provision_git_workspace`/`copytree`, and the supervisor never learns that the workspace
+exists. STEP3 reverses that ownership inside the existing manager: the supervisor becomes the only
+creator/registrar of canonical workspace bytes, the manager keeps its manifest/DB/run duties, and the
+provisioner receives a real provisioning run identity before it acts. This increment implements the
+SLICE2 half only (component injection + contract); the publication-dependent new-root leg is SLICE3's
+join and the remaining inventory callers are routed at SLICE4 STEP2 (the same provisioner, never a
+second one).
+
+**Contract/gap IDs.** I03 SLICE2 STEP3 (SLICE2 half) exit clauses; CT103a; CT100 lineage; spec §4.1
+("Registration and SessionManager cutover") and the §"SessionManager ordering/recovery" note; increment
+line 308 (STEP3 declaration) and 297 (CT103a); I03-LIVE rows that consume the provisioning route.
+
+**Allowed files.** New `src/fa/session/provisioning.py` (request/result values + provisioner callable
+type; no execution imports, so the session layer stays execution-agnostic), new
+`src/fa/execution/provisioning.py` (the adapter that turns `WorkspaceAuthority.register_existing` into
+the frozen result), `src/fa/session/manager.py` (injection point, provisioning run reservation,
+not-READY enforcement, cleanup ownership, reverse-owner confirmation),
+`src/fa/execution/workspace.py` (`register_existing` returns `tree_sha256` as well — no new validation,
+no behaviour change), `tests/test_session_lifecycle.py`, new `tests/test_execution_provisioning.py`,
+plan/ledger/E2E register. No second provisioner, no new session manager, no manifest schema change, no
+CLI/composition change (SLICE4 owns that), no publication code.
+
+**Current behaviour (source-verified).** `SessionManager.__init__` accepts only
+`workspace_preparer`; `_new_session` writes a `provisioning` manifest, calls `_provision_workspace`
+(host Git clone when `source_workspace` has `.git`, else `copytree`), creates `SessionDatabase`, calls
+`workspace_preparer(workspace_path)` and *ignores its `ReadyState`*, then writes `active`.
+`_attach_session` likewise ignores a not-READY result. `_check_reverse_workspace_ownership` rejects any
+workspace path equal to another session's manifest path. Nothing in the manager knows a run identity
+before the CLI's later `begin_run`, so a supervisor-side provisioner would have to invent one.
+`WorkspaceAuthority.register_existing` already registers quiescent existing bytes idempotently (returns
+the existing ids and re-verifies unchanged bytes when already registered) and returns only
+`{workspace_id, revision_id}`.
+
+**Target behaviour.** With a provisioner injected: the manager never clones, copies or chmods canonical
+bytes; it creates the manifest (`provisioning`) and session DB, reserves one real provisioning
+`RunContext` through the existing `begin_run(session, None)`, passes that namespace plus the session and
+workspace root to the provisioner, enforces readiness, and only then writes `active`. A provisioner
+result is exactly `{registered, workspace_id, revision_id, tree_sha256}`: `registered=True` means the
+supervisor committed and verified those bytes and the manager must never delete them; `registered=False`
+means provisioner-created scratch that only the manager may clean up. A new workspace whose bytes do not
+exist becomes the typed BLOCKED disposition `provisioning_unavailable` (no host-Git fallback) until
+SLICE3 joins publication. A not-READY `ReadyState` is `workspace_not_ready` in both `_new_session` and
+`_attach_session`. An explicit reference to another session's registered workspace is permitted
+(CT103a: reference, not ownership transfer — the other session keeps its DB/run bindings and manifest),
+while an unregistered conflict stays `workspace_already_owned`. Without a provisioner the manager keeps
+today's exact behaviour, because SLICE4 STEP2 performs the actual cutover.
+
+**Mechanism.** `fa/session/provisioning.py`: frozen `ProvisionRequest{mode, session_id, run_id,
+workspace_path, deadline}` with `ProvisionMode{REUSE, PROVISION}`, frozen
+`ProvisionedWorkspace{registered, workspace_id, revision_id, tree_sha256}` whose `__post_init__` rejects
+partial results, and `WorkspaceProvisioner = Callable[[ProvisionRequest], ProvisionedWorkspace]`.
+`fa/execution/provisioning.py`: `ManagedProvisioner(authority, *, peer, root_id, relative_root)` — REUSE
+maps to `register_existing(...)` built from the request's `NamespaceRef`, returns the frozen result with
+`registered=True`; PROVISION raises `SessionManagerError("provisioning_unavailable")` before any effect;
+`SupervisorError` maps to explicit session codes (`CORRUPT_STATE → workspace_corrupt`,
+`UNAUTHORIZED/EXECUTION_UNKNOWN → workspace_denied`, everything else → `workspace_provision_failed`).
+Manager: `__init__(workspace_provisioner=...)`; in `_new_session` the reserved run id comes from
+`begin_run` on a provisional `SessionContext` under the `provisioning` manifest; the provisioner is
+called after DB creation and *before* the readiness gate (so readiness runs against registered bytes,
+matching SLICE4 where it executes inside provisioning cells), asking for `PROVISION` when the manager
+would have had to create the root and `REUSE` for a named existing directory; its result drives a
+three-state cleanup (`None` = never ran,
+`False` = scratch, `True` = registered) where only `None`-with-`workspace_created` and `False` are
+rmtree-eligible. The reverse-owner scan returns conflicting owners instead of raising when a provisioner
+is injected, and the conflict is confirmed after the result is known.
+
+**Production best practice.** Keep one owner per responsibility (manager: identity/DB/run; supervisor:
+canonical bytes), express ownership as data in a frozen result rather than as side-channel flags, make
+the ordering observable through the injected callable, fail closed with typed dispositions instead of
+host fallbacks, and never delete bytes whose registration the manager cannot disprove.
+
+**Failure behaviour.** Provisioner exception → no active session, no workspace deletion unless the
+result was `registered is False`; `provisioning_unavailable` for a new root; `workspace_not_ready` for a
+degraded/failed readiness result in both paths, with `last_used_at` untouched on attach; conflict without
+registration → `workspace_already_owned`; corrupt/unavailable authority → typed session error, no
+partial result; run reservations survive rollback, so an issued run id never becomes reusable.
+
+**DoD.** Injection ordering proven (the provisioner observes the workspace absent, creates it itself, and
+no source bytes are copied); the request carries an existing session DB binding and run directory;
+registered bytes survive a later readiness failure while the session dir is removed; a registered
+conflicting workspace can be referenced by a second session with the first session's manifest/DB/run
+bindings byte-identical; an unregistered conflict is rejected with no session dir; new-root provisioning
+is a typed BLOCKED disposition; not-READY blocks new *and* attach; corrupt-manifest and legacy run-ID
+tests still pass. **Negative proof:** deleting the injection call, the run reservation, either readiness
+check, the registered-cleanup guard, or either half of the conflict confirmation each fails a named test.
+
+**Tests-writing class.** C1 for the manager (real filesystem, real `SessionDatabase`, injected
+provisioner boundary double) and C0/C1 for the adapter (real `WorkspaceAuthority` over a temporary
+approved root). No container, no cgroup, no live deployment claim.
+
+**Producer kill-check targets (declared, 8).** (1) the provisioner invocation in `_new_session`;
+(2) the provisioning `begin_run` reservation (its namespace must exist before the call);
+(3) not-READY enforcement in `_new_session`; (4) not-READY enforcement in `_attach_session`;
+(5) the registered-aware cleanup guard; (6) the "permit registered reference" branch; (7) the
+"reject unregistered conflict" branch; (8) the typed `provisioning_unavailable` disposition in
+`ManagedProvisioner`.
+
+**E2E ledger.** No surface count change (18/8); live rows stay PLANNED/UNEXECUTED. No STEP checkbox,
+FUNCTIONAL contract or E223 duty is closed by a component increment.
+
+#### E263 result — SLICE2 half shipped, with the Q78 readiness boundary
+
+**Shipped.** `src/fa/session/provisioning.py` (frozen `ProvisionRequest`/`ProvisionedWorkspace`,
+`ProvisionMode`, callable type, no execution imports), `src/fa/execution/provisioning.py`
+(`ManagedProvisioner` over `register_existing`), `register_existing` now also returns `tree_sha256`,
+and `SessionManager` gains `workspace_provisioner`, the provisioning `begin_run` reservation, the
+frozen-result cleanup ownership, the reverse-owner confirmation and the readiness gate. Files:
+`src/fa/session/{manager,provisioning}.py`, `src/fa/execution/{provisioning,workspace}.py`,
+`tests/test_session_lifecycle.py`, `tests/test_execution_provisioning.py`.
+
+**Evidence (actual outputs).** Red first: `ModuleNotFoundError: fa.session.provisioning`. Green:
+`pytest tests/test_session_lifecycle.py tests/test_execution_provisioning.py -q` → 22 passed in 0.92s;
+`test_cli.py` + `test_s10c_artifact_posture.py` → 54 passed. Statics: `ruff check src tests` → All
+checks passed!; `ruff format --check` → clean; `mypy src/fa/session src/fa/execution` → Success: no
+issues found in 21 source files; `python -m pyrefly check` → 0 errors. Targeted mutation: **11/11
+assertion-only kills** (the provisioner call, the run reservation, both readiness call sites, the
+readiness condition, the cleanup discriminator, both conflict branches, the PROVISION/REUSE mode
+selection, the pre-cutover guard and the adapter's blocked disposition), sources restored byte-exact
+with the bank green after every mutant.
+
+**Q78 — when is not-READY a closed error?** Enforcing the declared rule unconditionally made the full
+suite 141 failed / 6115 passed, of which **130 were one cause** (`workspace_not_ready` on bare `tmp_path`
+workspaces) across 14 CLI/workflow modules, plus the sandbox's own repo classifying
+`degraded_environment: precommit_prewarm_failed`. That would both hide real regressions in a long-red
+suite and turn the inherited STEP10 toolchain gap into a hard product block. Decision (recorded, not
+assumed): readiness is enforced **in the managed composition** — the configuration that injects the
+provisioner, i.e. exactly the composition SLICE4 STEP2 creates when it removes fail-open readiness. The
+pre-cutover host composition keeps reporting readiness without blocking, proven explicitly by
+`test_readiness_degradation_without_a_managed_provisioner_stays_non_blocking` so the transition cannot
+silently persist. After the change the suite returns to its pre-existing state (6181 passed / 81
+failed, of which 78+2 are `T0 baseline unavailable` and 1 is the blocked readiness-integration case;
+all 81 reproduce identically with this change stashed).
+
+**SLICE4 STEP2 migration obligation (measured, not deferred silently).** When the provisioner is
+injected into the CLI composition, these tests assert the pre-cutover contract and must be migrated to
+a registered/real project workspace (or drive the managed provisioner): `test_verify_gate_live` 81,
+`test_s8_workflow_controller` 16, `test_s10b_cli_parity` 8, `test_s10a_cli_coverage` 7,
+`test_s10c_workflow_exit_contract` 6, `test_cli_ergonomics` 6, `test_s10c_artifact_posture` 6,
+`test_s9_stats_projection` 4, `test_s7_cli_run_paths` 3, `test_verify_slice` 2,
+`test_scope_hint_cache_key` 2, `test_readiness_announcement` 2, `test_workflow_global_history` 1,
+`test_iteration_cap` 1, `test_cli` 1. Total 146 occurrences. This is a cutover task, not a defect.
+
+**Not closed.** STEP3's SLICE3 half (publication-dependent new-root provisioning, post-commit failure
+preserving registered bytes), the SLICE4 caller routing, every live row (18 surfaces / 8 joins remain
+PLANNED/UNEXECUTED), all STEP checkboxes and FUNCTIONAL contracts. `ManagedProvisioner` is a component
+adapter: it is not composed into any running service yet.
+

@@ -3747,3 +3747,52 @@ to the reused journal producer, not claimed as new code evidence.
 
 **Not closed.** No STEP checkbox, FUNCTIONAL contract, or E223 transferred duty. I03-LIVE-18 / S04 stay
 PLANNED/UNEXECUTED (implemented locally only); surface count 18/8 unchanged; no deployment authorized.
+
+### E263 — SLICE2 STEP3 (SLICE2 half): managed provisioner injection: declaration (before code)
+
+Moves workspace-byte ownership from the manager's host-Git path to the supervisor-side provisioner,
+inside the existing SessionManager. New `fa/session/provisioning.py` (frozen request/result + callable
+type, no execution imports) and `fa/execution/provisioning.py` (`ManagedProvisioner` over
+`WorkspaceAuthority.register_existing`, which now also returns `tree_sha256`). Manager: inject
+`workspace_provisioner`, reserve one real provisioning RunContext through the existing
+`begin_run(session, None)` under the `provisioning` manifest, call the provisioner after DB+readiness,
+treat a frozen result as `registered/scratch/never-ran` for cleanup ownership, enforce not-READY as
+`workspace_not_ready` in `_new_session` AND `_attach_session`, keep `provisioning_unavailable` as the
+typed BLOCKED disposition for new roots (no host-Git fallback when injected), and confirm reverse-owner
+conflicts against registration (CT103a reference permitted; unregistered conflict still rejected).
+No new session manager, no second provisioner, no manifest schema change, no CLI/composition edit
+(SLICE4 STEP2 routes the inventory callers through this same provisioner). Tests C1 at the manager and
+C0/C1 at the adapter; eight declared producer kills. Live rows stay PLANNED/UNEXECUTED; no checkbox or
+acceptance status changes; the publication-dependent new-root leg is SLICE3's join.
+
+### E263 — SLICE2 STEP3 (SLICE2 half): managed provisioner injection: result
+
+**Shipped.** `fa/session/provisioning.py` (frozen request/result + `ProvisionMode`, execution-agnostic),
+`fa/execution/provisioning.py` (`ManagedProvisioner` over `WorkspaceAuthority.register_existing`, now
+returning `tree_sha256`), `SessionManager.workspace_provisioner` with the provisioning `begin_run`
+reservation, frozen-result cleanup ownership (three states: never ran / scratch / registered), reverse-
+owner confirmation against registration (CT103a reference permitted, unregistered conflict rejected),
+and readiness gated to the managed composition. Tests: `tests/test_session_lifecycle.py` (G1–G5),
+`tests/test_execution_provisioning.py` (P1–P5).
+
+**Evidence.** Red first (`ModuleNotFoundError`), then 22 passed in the two owner modules and 54 passed
+with the CLI/posture banks; ruff/format clean, `mypy src/fa/session src/fa/execution` 21 files clean,
+`pyrefly check` 0 errors; **11/11 assertion-only mutation kills** with byte-exact restoration.
+
+**Q78 (readiness boundary), decided and recorded.** Unconditional enforcement produced 141 failures /
+130 of them a single `workspace_not_ready` cause across 14 CLI/workflow modules, and blocked the product
+in this sandbox (`precommit_prewarm_failed`). Readiness is enforced strictly in the managed
+(injected-provisioner) composition — the configuration SLICE4 STEP2 introduces with "remove fail-open
+readiness" — and the pre-cutover host composition keeps reporting without blocking, proven by an
+explicit test. Full suite after the change: 6181 passed / 81 failed / 1 xfailed, and all 81 reproduce
+with the change stashed (78+2 `T0 baseline unavailable` environment data gaps, 1 blocked
+readiness-integration case).
+
+**Migrated at SLICE4, not now (inventory).** 146 occurrences across 15 modules assume bare temp-dir
+workspaces and pre-cutover readiness; they are listed in the increment's E263 result section and are a
+cutover task for SLICE4 STEP2.
+
+**Not closed.** SLICE3 half of STEP3 (publication/new-root provisioning and post-commit durability),
+SLICE4 routing/composition, all live rows (18/8 PLANNED/UNEXECUTED), STEP boxes and FUNCTIONAL
+contracts. No deployment authorized.
+
