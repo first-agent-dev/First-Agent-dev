@@ -3592,3 +3592,76 @@ NOT shipped: the candidate tool cutover (STEP4), the provisioning consumer (STEP
 of mutation/candidate outputs (SLICE3), receipts/independent terminality and live proof. SLICE1
 NOT shipped; all 35 STEP checkboxes, 17 FUNCTIONAL contracts and four final duties remain open;
 all live verdicts stay PLANNED/UNEXECUTED at final SLICE6. No new policy or routing mode.
+
+E260 PLAN-AUDIT 2026-10-22. After product commit 18baf14 and its preserved-history merge
+88f028e, audited the 2026-10-21 R1–R5 lifecycle review and its “open integration and production
+gaps” against the normative I03 execution spec, six-slice plan, roadmap and live verification
+register. Code/test evidence remains in `notes/i02-i03-adversarial-review-2026-10-21.md`; this
+ledger entry records plan ownership and future acceptance, not a new test run or production proof.
+
+Confirmed plan/document gaps and corrections:
+- R1: E258's generic “one live cell per view” did not expressly distinguish persistent interactive
+  reuse from noninteractive one-shot use. Spec §§2.1–2.2 and CT100/SLICE1 STEP2 now state: null
+  session only for the approved one-shot profile; a fresh cell/attach and one RUN per distinct
+  noninteractive EXEC; never cache/reuse that worker; duplicate-op replay never creates a replacement.
+  Future witnesses: I03-LIVE-11/18, S03.
+- R2: E257/§2.2 described ordering, but did not explicitly say `admit()` is not the side-effect
+  guard or that create/start/attach all use `WorkAdmission.effect()`. Spec §2.2 and SLICE2 STEP1/5
+  now pin that exact existing-authority seam; `send()` remains the RUN-frame guard. Close-first means
+  zero effects; effect-first is drained. Future witnesses: I03-LIVE-18, S02/S04.
+- R3: the plan did not require the exact `ViewRef` comparison for CANCEL. Spec §2.2 now requires
+  namespace + exact-view comparison against the EXEC journal record in the same transaction that
+  persists cancel, with cross-view denial before daemon stop. Future witnesses: I03-LIVE-18, S04.
+- R4: normative §2.2 already required discovery of DONE-created live cells, but E258's summary and
+  future witness were too weak. Clarified a read-only inventory of every EXEC record with durable
+  CID (including DONE), distinct from `unfinished()`, and exact-CID stop/inspect with no rewriting
+  DONE/recreating/replaying. CT104's independent cgroup terminality remains separate. Future
+  witnesses: I03-LIVE-07/18, S03/S04.
+- R5: deadline prose named the whole request, but not the authority/episode mutex and each journal
+  lock wait or the pre-transaction error distinction. Spec §2.2 and SLICE1 STEP2 now pass the same
+  monotonic deadline through those existing locks/transactions and Docker/attach/RUN: expiry before
+  body/effect is BACKEND_UNAVAILABLE/no effect; possible durable/external mutation remains uncertain;
+  no reset or late follow-up. Future witnesses: I03-LIVE-06/18, S02/S03.
+
+Open-gap plan audit: Q66 is directly owned by CT109/SLICE5 STEP4–5 and SLICE6 DoD; real factory,
+private-UDS supervisor and atomic caller/mount cutover by CT99/SLICE1 STEP3/SLICE4 STEP2; sealing,
+publication, forward recovery and descendant terminality by CT104–CT107/SLICE3 STEP1–5; real
+Ubuntu/Docker/image/source-to-behaviour proof by CT100a/SLICE1 STEP4/final SLICE6/E223. These
+already had direct later-slice owners; E260 makes their matching live seams explicit: S08;
+LIVE-01/06/07 + S01/S02/S07; LIVE-13/14/17 + S04/S05/S06; LIVE-01/02/05/13/16 + final joins.
+Named independent review and operator release signoff remain directly owned by CT89, SLICE6
+STEP7/10 and the binary DoD; S01–S08 supply evidence to the E223 acceptance package but never
+self-approve. These review duties remain open until actual E2E evidence exists.
+
+SLICE6 STEP10 now also gives direct remedies for inherited verification blockers without weakening
+E19 or inventing a product runtime dependency: CPython 3.13 with zlib + frozen wheel dependencies
+for installed-controller tests; approved ShellCheck so all 12 gated cases execute; trusted Go
+1.24.11 plus pinned Gitleaks/pre-commit dependencies/cache for the real readiness→hook→commit→
+publication check. Go is an indirect test-hook build dependency, not an FA runtime requirement.
+Missing prerequisites remain BLOCKED; no skips, setup errors, hook bypass or old red result may be
+relabelled PASS.
+
+Register impact: extend existing I03-LIVE-11/18 and joins S01–S04/S07/S08; no new module, surface,
+join or protocol. Inventory remains 18 production surfaces / eight joins. Every live row remains
+PLANNED / UNEXECUTED; no E2E/host/deployment test was run in this documentation audit. I03 remains
+OUTLINED, all 35 STEP boxes and four transferred E223 acceptance duties remain open, and no
+production deployment is authorized by this entry. No Q59–Q66, E19, Q53(c), I01 ownership or
+append-only ledger decision changed.
+
+E261 GAP 2026-10-22. Source-only plan audit found an unproved in-flight one-shot CANCEL owner.
+`CellBackend.execute()` returns a noninteractive `_Episode` without inserting it in the persistent
+interactive `_episodes` map; `CellBackend.cancel()` currently looks up that map and returns
+EXECUTION_UNKNOWN when no entry exists. The passing sequential one-shot regressions in R1 do not
+exercise cancellation while the worker is running. No runtime regression was run for this observation;
+do not report it as a passing or independently reproduced test.
+
+Direct remedy is assigned to existing I03 SLICE1 STEP2, before service/caller cutover: persist cancel
+intent after matching the EXEC journal record's namespace and exact ViewRef, resolve the running
+operation's durable CID/original labels from the existing journal, then use the existing owned-cell
+Docker stop/observation path. Keep interactive cancellation unchanged; do not add a second session
+manager/registry, create a replacement, resend RUN, or infer terminality from the stop ACK. Add a local
+backend test for same-view CANCEL of a running one-shot and a same-namespace cross-view denial with
+no journal/Docker mutation. Future host witness: I03-LIVE-18/S04; require independent cgroup emptiness
+before terminal receipt/release. This seam remains open until source and tests are corrected/reviewed.
+All live statuses remain PLANNED/UNEXECUTED; no change to I03 outline, E223 duties, production release
+status, or policy decisions.

@@ -156,7 +156,7 @@ Complete payload additions/results (every object has exactly the named keys; IDs
 | create_view | `{workspace_id,base_revision,access,purpose,candidate_scope,plan_ref}` / `{view_ref,capability}`; purpose PROJECT/PROVISIONING/VERIFICATION/MUTATION/CANDIDATE; candidate_scope null except exact `{candidate_path,plan_ref}` for CANDIDATE, with identical top-level plan_ref; grant checks permitted combinations before copy |
 | read_file | `{path,offset_bytes,max_bytes}` / `{content,sha256,eof}`; max_bytes1MiB, exact bounded UTF-8 file snapshot; reject unsupported binary/split-codepoint rather than silently corrupt; SHA covers whole input-policy-bounded file, not the returned window; larger files use the bounded read-only window policy in §4.2, never partial SHA for edits |
 | write_file / edit_file | `{path,content,expected_sha256}` / `{sha256,bytes}`; expected_sha256 nullable only for write(create-if-absent); edit requires hash; conflict is STALE_REVISION with no silent retry |
-| exec | `{operation_id,profile_id,command,cwd,timeout_ms,session_id}` / `{receipt}`; session_id nonnull only for interactive profile; fixed simple identifier≤64chars, scoped to namespace+view |
+| exec | `{operation_id,profile_id,command,cwd,timeout_ms,session_id}` / `{receipt}`; `session_id` is nonnull for interactive profiles and null only for an approved noninteractive one-shot profile; fixed simple identifier≤64chars, scoped to namespace+view |
 | inspect / cancel | `{operation_id}` / `{receipt}`; cancel requests stop, not success or terminality until independently confirmed |
 | pty_control | `{action:INTERRUPT|CLOSE|LIST,session_id}` / `{sessions,message}`; LIST uses null ID; other actions require ID; namespace/view scoped, never process-global main |
 | stop_view | `{}` / `{view_id,terminal:bool}`; false/unknown cannot seal/release |
@@ -182,7 +182,13 @@ lost reply and indeterminate/timeout results never synthesize normal completion.
 exit78 is not itself a command outcome; a genuine command exit78/124 remains distinguishable by
 a complete determinate RUN result, matched actual container exit and independent terminal facts.
 The Docker backend must independently observe actual exit, enforce its deadline and confirm the
-cgroup barrier; a one-shot result/process code alone cannot issue an authoritative receipt.
+cgroup barrier; a one-shot result/process code alone cannot issue an authoritative receipt. In
+CellBackend, interactive profiles reuse only their exact live view episode; each distinct noninteractive
+EXEC gets a fresh cell and attach, sends one null-session RUN, and closes that worker instead of
+putting it in the interactive episode map. A subsequent distinct operation receives a fresh one-shot
+cell; replay of the same operation ID follows the existing durable deduplication/inspection path and
+never creates a replacement to recover a lost result. This lifecycle split adds no profile, wire field,
+or second episode registry.
 
 `BashExecutor.run/send_ctrl_c/close/list_sessions` map to exec/pty_control. Preserve stateful cwd,
 environment and PTY session between commands in ONE open episode. Interrupt/close timeout is
@@ -283,23 +289,39 @@ manager, HTTP supervisor, scheduler, lease daemon or configurable backend matrix
   SLICE1 work, real ownership/IO is SLICE2, publication SLICE3, atomic caller/mount cutover SLICE4.
   `DEPS` expresses construction order, not a demand to tick SLICE1 before constructing its authority.
 
-**One-command ordering, including reused shells:** dispatcher authenticates/validates, checks the
-exact cached-completion path, authorizes, reserves and calls existing `journal.begin()` once. For a
-fresh cell, retain `create_once → durable CID → start_once` and original creation labels. For a later
-command in the SAME live episode, use `record_container(new_command_id, namespace, original_CID)`
-before its one RUN send; never call `launch_new/start_once` again or rebind original labels to the new
-command. `begin()` is the durable per-command claim: duplicate dispatch/restart cannot claim it again.
-No second RUN log or redundant claim API is needed. The original first command may already be in
-journal UNKNOWN after its one start RPC; that write-ahead stage is not permission to retry it.
+**One-command ordering and profile-specific episode lifetime:** dispatcher authenticates/validates,
+checks the exact cached-completion path, authorizes, reserves and calls existing `journal.begin()` once.
+For an interactive profile, the first command retains `create_once → durable CID → start_once`, then
+attaches once under the original creation labels. A later command in the SAME live interactive episode
+uses `record_container(new_command_id, namespace, original_CID)` before its one RUN send; it never
+creates/starts another cell or rebinds the original labels. For a noninteractive one-shot profile, each
+distinct EXEC operation retains its own `create_once → durable CID → start_once → attach → one RUN`
+sequence with `session_id=null`; close the one-shot worker after the command, do not cache it as an
+interactive episode, and do not reuse its exited cell. The duplicate-operation path is still the existing
+durable deduplication/inspection path, never a new cell or RUN. `begin()` is the durable per-command
+claim: duplicate dispatch/restart cannot claim it again. No second RUN log or redundant claim API is
+needed. The original first command may already be in journal UNKNOWN after its one start RPC; that
+write-ahead stage is not permission to retry it. A one-shot worker exit is not an independent
+terminality barrier.
 
-Acquire actual admission before any create/start/RUN/write effect and recheck cancellation at the
-bounded send/start boundary. Gate registration and close-admission must linearize: if revoke/stop
-wins, no late send/write; if admission wins, stop owns that in-flight work and cannot finish before
-it drains. Persist cancel intent before acknowledging cancel; it is not a terminal receipt. Close
-admission before STOPPING, wait active file handlers and queued/dispatching sends, stop cells, then
-observe real exit/cgroup emptiness. Do not hold the global journal lock while waiting for a command,
-handler drain or cgroup. Lock order is workspace admission before short journal transitions; any
-cancel path that records intent first releases its journal transaction before waiting for admission.
+Admission is not itself the side-effect guard. For both interactive and one-shot creation paths,
+run the bounded Docker create → durable-CID → start → attach sequence inside the authority-owned
+`WorkAdmission.effect()`; it revalidates the live view, open gate, durable execution claim and trusted
+inputs under the original deadline. Do not issue create/start/attach merely because `admit()` returned.
+The RUN frame write uses `WorkAdmission.send()` and the journal send guard; never hold that send
+lock across reply waiting. Gate registration and close-admission must linearize: if revoke/close wins
+before the scoped effect, issue zero Docker create/start/attach/RUN effects; if the effect wins, close/drain
+owns and waits for that bounded effect/handler. A close between attach and RUN still denies the later
+RUN. Persist cancel intent before acknowledging cancel; it is not a terminal receipt. CANCEL must
+match the journal record’s namespace and exact `ViewRef` inside the same journal transaction that
+writes the cancel flag; an operation from another view in the same namespace is `UNAUTHORIZED` before
+any daemon stop. This applies to an in-flight noninteractive one-shot operation too: resolve and stop
+its exact operation/journal-bound CID without assuming it is in the persistent interactive episode map;
+never create a replacement to make CANCEL succeed. Close admission before STOPPING, wait active file
+handlers and queued/dispatching sends, stop cells, then observe real exit/cgroup emptiness. Do not hold the global journal lock while
+waiting for a command, handler drain or cgroup. Lock order is workspace admission before short journal
+transitions; any cancel path that records intent first releases its journal transaction before waiting
+for admission.
 
 **E248 owned force-stop contract (native operations implemented E249):** extend the existing private Docker transport,
 not the wire operation set. `DockerCells.force_stop_created(original_creation_request, profile,
@@ -335,9 +357,12 @@ WorkspaceAuthority/CellBackend composition or deployed CT98–100 acceptance. Se
 
 **Restart and loss:** mark uncertain operations with existing `recover_uncertain()` but also discover
 and inspect ALL owned cells by original name/CID/labels, including cells whose creation command is
-DONE. An idle shell/background writer can outlive a completed interactive command. Memory episode
-loss does not permit reconnect/reconstruction/new RUN or replay-cache reconstruction. Stop/inspect
-old cells before fresh writer admission; unknown ownership/exit/barrier quarantines, never lease expiry.
+DONE. `unfinished()` is not a complete ownership inventory: use a separate read-only journal listing
+(e.g. `owned_cells()`) of every EXEC record with a durable container ID, preserving DONE result state.
+An idle interactive shell/background writer can outlive a completed command. Memory episode loss
+does not permit reconnect/reconstruction/new RUN or replay-cache reconstruction. Stop/inspect only
+the exact durable CID/name/labels before fresh writer admission; no create/start/attach/RUN and no
+change to the historical DONE result. Unknown ownership/exit/barrier quarantines, never lease expiry.
 A missing cell is not a successful historical command. Build receipts from the reserved command/view,
 approved profile, trusted protected input/PlanRef and independently observed execution facts. An
 interactive command can be EXITED with barrier=false; one-shot normal completion additionally joins
@@ -350,9 +375,16 @@ cannot revive expired input. Client keeps connect/request send on the short budg
 sending the validated frame;
 controls/unapproved exec do not borrow it. E243 implements this transport repair only. The actual
 service/backend still need one absolute command deadline measured from request receipt, consuming
-queue/admission/create/start/RUN time, not a fresh timeout for each phase. SLICE4's controller clamps
-the request to remaining actual workflow budget; profile and backend ceilings still apply. Transport
-waiting/expiry is not evidence of command timeout or descendant death. Typed error handling must
+queue/admission/create/start/RUN time, not a fresh timeout for each phase. The same monotonic deadline
+also caps authority/registry and per-episode creation-lock waits, every request-path journal
+transaction/flock (reserve, begin, create/start claim, container binding, cancel, completion and
+reconciliation), and each Docker/attach/RUN leg; pass it through unchanged rather than resetting a
+journal lock budget. Expiry before a transaction body or effect can mutate returns
+`BACKEND_UNAVAILABLE` with no effect; once a durable write or external effect may have started, retain
+the existing `DURABILITY_UNKNOWN`/`EXECUTION_UNKNOWN` classification and never retry or follow up late.
+SLICE4's controller clamps the request to remaining actual workflow budget; profile and backend
+ceilings still apply. Transport waiting/expiry is not evidence of command timeout or descendant death.
+Typed error handling must
 cover ERROR envelopes as well as receipts: unknown/durability/terminality errors stay uncertain,
 backend unavailability stays unavailable, policy denial remains denial. Never normalize a denial
 or missing receipt to exit0/FAIL. Exec uncertainty uses original exec inspect/cancel; uncertain
@@ -1730,3 +1762,35 @@ NOT shipped: the candidate tool cutover (STEP4), the provisioning consumer (STEP
 of mutation/candidate outputs (SLICE3), receipts/independent terminality and live proof. SLICE1
 NOT shipped; all 35 STEP checkboxes, 17 FUNCTIONAL contracts and four final duties remain open;
 all live verdicts stay PLANNED/UNEXECUTED at final SLICE6. No new policy or routing mode.
+
+### E260 — post-implementation plan clarification for R1–R5 (2026-10-22)
+
+This addendum refines E258's generic episode wording against the 2026-10-21 local lifecycle review;
+it does not erase the pre-code record or convert component tests into integration evidence. The
+local lifecycle implementation reuses the existing authority scope, per-operation journal and Docker/worker transports:
+
+- R1: persistent episode reuse is interactive-only. A fixed noninteractive one-shot profile accepts
+  `session_id=null`, gets a fresh cell/attach per distinct EXEC, sends one RUN, then closes the worker;
+  same-op replay never launches a replacement. CANCEL while that RUN is active must resolve its exact
+  operation/journal-bound CID without relying on the interactive episode map. No generic reuse across
+  one-shot operations.
+- R2: `admit()` only registers bounded work. `WorkAdmission.effect()` is required around actual
+  create/start/attach; `WorkAdmission.send()` remains the one-RUN guard. Close-before-effect means
+  zero Docker/RUN effects; effect-before-close is drained.
+- R3: `request_cancel` compares namespace and exact `ViewRef` to the EXEC record in the same journal
+  transaction that persists cancellation. Same-namespace cross-view cancellation is `UNAUTHORIZED`
+  before Docker contact; no protocol field or second authority is introduced.
+- R4: restart discovery uses the existing journal as a read-only owner inventory of every EXEC with a
+  durable container ID, including DONE. It inspects/stops only the original labelled CID and does not
+  recreate/replay or rewrite the completed command result. The independent cgroup barrier remains CT104.
+- R5: the original monotonic request deadline caps authority and episode locks, every request-path
+  journal transaction and each Docker/attach/RUN leg. A pre-body/pre-effect expiry is
+  `BACKEND_UNAVAILABLE`; a possible durable/external mutation keeps its uncertainty classification.
+  No per-phase reset or late follow-up.
+
+Plan ownership: R1/R2/R3/R4/R5 remain in SLICE1 STEP2 and SLICE2 STEP1/STEP5 as appropriate;
+actual composition is delayed to SLICE1 STEP3/SLICE4 STEP2 and final proof to SLICE6. The live
+register's I03-LIVE-11/18 and S02/S03/S04 are the explicit future witnesses; all remain
+PLANNED/UNEXECUTED. See the E260 audit in the increment and append-only ledger for the gap-to-slice
+map. No new runtime module, service, wire protocol, session manager, lock service or production
+policy is approved by this clarification.
