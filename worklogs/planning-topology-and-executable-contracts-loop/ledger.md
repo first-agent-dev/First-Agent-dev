@@ -4160,3 +4160,48 @@ released"; E269.9 records the unbounded `revisions/<derived>` + `pending/<uuid>`
 **Discipline carried forward.** The lead produced two wrong claims in two passes by reading a function's
 opening lines and inferring the rest (`_unchanged`). Rule now: quote whole function bodies in evidence
 before asserting behaviour, and prefer `git`-pinned/symbol citations over line numbers.
+
+### E269 — SLICE3 STEP2 implemented: CT106 publish (intent / pointer / projection)
+
+**Scope.** `publication.publish_view` + four authority phase methods in `workspace.py`; `_CURRENT` moves to
+Q80's five-key shape; `_INTENT` implements §5.1's full vocabulary. No dispatcher route, no Q58/BOOTSTRAP
+path, no recovery hook, no GC — those stay STEP3/STEP4/SLICE1 STEP3.
+
+**Evidence (commands actually run at HEAD).**
+- `pytest tests/test_workspace_publication.py -q` → **58 passed** (32 pre-existing + **26 new CT106**).
+- `pytest tests/test_workspace_publication.py tests/test_execution_*.py tests/test_s10a_cli_coverage.py -q`
+  → **1211 passed**.
+- `ruff check src tests` → clean; `ruff format --check` → 507 files; `mypy src/fa/execution` → 19 files, no
+  issues; `pyrefly check src/fa/execution` → 0 errors; `authoring check` → `exit_code 0`, `diagnostics []`.
+- **10/10 declared kills**, each executed alone (never concurrent with another pytest process — the E267b
+  rule), with sha256-verified byte-exact restore: (1) `publish_view -> _commit_current`, (2)
+  `publish_view -> materialize_publication`, (3) manifest-vs-record cross-check, (4) copied-tree-vs-manifest
+  comparison, (5) skip-if-equal inverted, (6) canonical projection proof, (7) `_unchanged` pre-flight, (8)
+  `PUBLISHED` replay branch, (9) durable pointer CAS, (10) state-first ordering.
+
+**Mutant 3 survived the first sweep and needed a new oracle.** Every existing case failed *before* the
+cross-check could matter — the seal validator caught a tampered digest, the copied-tree comparison caught
+moved bytes. The check only binds when a manifest is internally valid but belongs to another grant, so the
+new case seals two views of the same revision and copies one view's `sealed.json` into the other: identity
+fields become the only thing separating a sibling's provenance from this grant. That is a C3 substitution
+case, not a synthetic unit.
+
+**Implementation findings.**
+1. **D11 (recorded, flagged).** Projection-time destination-type conflicts were failing *after* the pointer
+   and surfacing as `DURABILITY_UNKNOWN`; `prepare_publish` now pre-flights destination types and refuses
+   `PATH_DENIED` before any write. Classified as a refinement of D7/D9, **not** a new policy — flagged in
+   the increment so the operator can promote it if that reading is wrong.
+2. `_derive_revision_id` moved into `workspace.py` (the id names a `revisions/` directory); `publication`
+   delegates, so one formula serves both modules instead of two that can drift.
+3. `tree.json` stores live entries only — `_TREE` pins `deleted` to `False`, so tombstones remain a
+   manifest fact. Asserted, not assumed.
+4. `_load` enforces Q80's pointer identity **after** `_initialize_genesis` normalizes a legacy 0→1; the
+   ordering matters because a genesis-0 record legitimately pairs with a generation-1 pointer.
+
+**Not proved, stated.** No Docker/cgroup barrier, no route, no restart recovery, no retention. The
+"published but not released ⇒ restart quarantines" case is asserted as STEP4's limit; "publish → release ⇒
+restart-clean" is the one clean path. Register: `I03-LIVE-20` (`PLANNED / UNEXECUTED`) with the full host
+choreography (real cell, real pin, SIGKILL rows, two negative controls); S06's join row now says both
+halves exist locally and remain host-blocked.
+
+**No STEP ticked, no CT status changed, no live verdict, no deployment claim.**

@@ -394,7 +394,7 @@ def test_record_terminal_is_durable_and_idempotent(site: Site) -> None:
 #   * canonical roots, `current.json`, revisions and reader pins are untouched.
 
 
-def _stopped(
+def _view(
     owner: WorkspaceAuthority,
     ids: dict[str, str],
     lease: GrantReply,
@@ -402,9 +402,9 @@ def _stopped(
     plan_ref: Any = None,
     purpose: ViewPurpose = ViewPurpose.PROJECT,
 ) -> GrantReply:
-    """Create one view and stop it through the real barrier (CT104's flow)."""
+    """Create one view without stopping it (so a case can still write)."""
     writable = purpose in {ViewPurpose.PROJECT, ViewPurpose.MUTATION, ViewPurpose.PROVISIONING}
-    grant = owner.create_view(
+    return owner.create_view(
         PEER,
         ACTOR,
         workspace_id=ids["workspace_id"],
@@ -416,9 +416,25 @@ def _stopped(
         formal_evidence=False,
         deadline=until(),
     )
+
+
+def _stop(owner: WorkspaceAuthority, grant: GrantReply) -> None:
     stopper = ViewStopper(owner, cells=RecordingCells(owner, grant, verdicts=[True]), poll_interval_s=0.001)
     result = stopper.stop_view(PEER, ACTOR, view_ref=ref(grant), capability=grant.capability, deadline=until())
     assert result.terminal is True, "the fixture could not stop its own view"
+
+
+def _stopped(
+    owner: WorkspaceAuthority,
+    ids: dict[str, str],
+    lease: GrantReply,
+    *,
+    plan_ref: Any = None,
+    purpose: ViewPurpose = ViewPurpose.PROJECT,
+) -> GrantReply:
+    """Create one view and stop it through the real barrier (CT104's flow)."""
+    grant = _view(owner, ids, lease, plan_ref=plan_ref, purpose=purpose)
+    _stop(owner, grant)
     return grant
 
 
@@ -921,3 +937,789 @@ def test_create_view_accepts_the_current_base_and_binds_it(site: Site) -> None:
 
         assert ref(grant).base_revision == ids["revision_id"]
         assert _record(site, grant)["state"] == "OPEN"
+
+
+# ---------------------------------------------------------------------------
+# CT106 — publish: intent, pointer, projection (E269 / SLICE3 STEP2)
+#
+# Classes: C1 composition-root (real authority, real views, real barrier, real
+# filesystem), C3 for the canonical-domain refusals, C0 for the pure manifest
+# reader. Every case names the rule and the producer it kills.
+# ---------------------------------------------------------------------------
+
+
+def _op() -> str:
+    from uuid import uuid4
+
+    return "op-" + uuid4().hex
+
+
+def _publish(
+    owner: WorkspaceAuthority,
+    grant: GrantReply,
+    sealed: SealResult,
+    *,
+    operation_id: str | None = None,
+    deadline: float | None = None,
+) -> Any:
+    from fa.execution.publication import publish_view
+
+    return publish_view(
+        owner,
+        PEER,
+        ACTOR,
+        view_ref=ref(grant),
+        capability=grant.capability,
+        sealed_manifest_id=sealed.sealed_manifest_id,
+        expected_base_revision=ref(grant).base_revision,
+        operation_id=_op() if operation_id is None else operation_id,
+        deadline=until() if deadline is None else deadline,
+    )
+
+
+def _workspace(site: Site, ids: dict[str, str]) -> Path:
+    return site.state / "workspaces" / ids["workspace_id"]
+
+
+def _current(site: Site, ids: dict[str, str]) -> dict[str, Any]:
+    value = json.loads((_workspace(site, ids) / "current.json").read_text())
+    assert isinstance(value, dict)
+    return value
+
+
+def _intent(site: Site, ids: dict[str, str]) -> dict[str, Any] | None:
+    path = _workspace(site, ids) / "intent.json"
+    if not path.exists():
+        return None
+    value = json.loads(path.read_text())
+    assert isinstance(value, dict)
+    return value
+
+
+def _state(site: Site, grant: GrantReply) -> str:
+    return str(_record(site, grant)["state"])
+
+
+def test_publish_commits_the_pointer_projects_and_returns_the_committed_receipt(site: Site) -> None:
+    """producer-kill-check: remove publish_view -> materialize/commit (R1,R4,R6,R7,R8)."""
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        grant = _view(owner, ids, lease)
+        owner.write_file(
+            PEER,
+            ACTOR,
+            view_ref=ref(grant),
+            capability=grant.capability,
+            path="added.txt",
+            content="added by the view\n",
+            expected_sha256=None,
+            deadline=until(),
+        )
+        _stop(owner, grant)
+        sealed = _seal(owner, grant)
+        untouched_inode = (site.source / "dirty.txt").stat().st_ino
+
+        result = _publish(owner, grant, sealed)
+
+        derived = derive_revision_id(_manifest(site, grant))
+        assert result.revision_id == derived
+        assert result.tree_sha256 == sealed.tree_sha256
+        assert result.projection_complete is True
+        assert _current(site, ids) == {
+            "schema_version": 1,
+            "workspace_id": ids["workspace_id"],
+            "generation": site.metadata(ids)["generation"],
+            "revision_id": derived,
+            "tree_sha256": sealed.tree_sha256,
+        }
+        assert (site.source / "added.txt").read_text() == "added by the view\n"
+        # R7 skip-if-equal: an identical file is never rewritten (same inode),
+        # which is what makes a resumed projection converge instead of churn.
+        assert (site.source / "dirty.txt").stat().st_ino == untouched_inode
+        base_tree = json.loads((site.revision(ids) / "tree.json").read_text())
+        assert base_tree["revision_id"] == ids["revision_id"]  # revisions are immutable
+        revision = _workspace(site, ids) / "revisions" / derived
+        tree = json.loads((revision / "tree.json").read_text())
+        assert tree["tree_sha256"] == sealed.tree_sha256
+        assert {entry["path"] for entry in tree["entries"]} == {"dirty.txt", "untracked.txt", "added.txt"}
+        assert all(entry["deleted"] is False for entry in tree["entries"])
+        assert _intent(site, ids) is None
+        assert _state(site, grant) == "PUBLISHED"
+        # The wire contract, decoded by the same validator the dispatcher uses.
+        from fa.execution.protocol import decode_reply, encode_json
+
+        decode_reply(
+            encode_json(
+                {
+                    "protocol_version": 1,
+                    "request_id": result.operation_id.removeprefix("op-"),
+                    "status": "OK",
+                    "result": result.to_wire(),
+                    "error": None,
+                }
+            ),
+            operation=__import__("fa.execution.primitives", fromlist=["Operation"]).Operation.PUBLISH,
+            request_id=result.operation_id.removeprefix("op-"),
+        )
+
+
+def test_publish_restores_logical_modes_instead_of_retention_modes(site: Site) -> None:
+    """producer-kill-check: project retention modes (0600) instead of manifest modes (R7)."""
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        grant = _stopped(owner, ids, lease)
+        target = _source_root(site, grant) / "untracked.txt"
+        target.chmod(0o755)
+        sealed = _seal(owner, grant)
+
+        _publish(owner, grant, sealed)
+
+        assert site.source.joinpath("untracked.txt").stat().st_mode & 0o777 == 0o755
+
+
+def test_publish_removes_a_tombstoned_path_from_canonical(site: Site) -> None:
+    """producer-kill-check: skip tombstones during projection (R7, spec §5)."""
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        grant = _stopped(owner, ids, lease)
+        (_source_root(site, grant) / "untracked.txt").unlink()
+        sealed = _seal(owner, grant)
+
+        _publish(owner, grant, sealed)
+
+        assert not (site.source / "untracked.txt").exists()
+        derived = derive_revision_id(_manifest(site, grant))
+        tree = json.loads((_workspace(site, ids) / "revisions" / derived / "tree.json").read_text())
+        assert "untracked.txt" not in {entry["path"] for entry in tree["entries"]}
+
+
+def test_publish_leaves_git_and_excluded_trees_byte_identical(site: Site) -> None:
+    """producer-kill-check: traverse an excluded component while projecting (R7,R10)."""
+    (site.source / ".fa" / "artifacts").mkdir(parents=True)
+    (site.source / ".fa" / "artifacts" / "keep.txt").write_text("artifact\n")
+    (site.source / ".venv").mkdir()
+    (site.source / ".venv" / "sentinel").write_text("venv\n")
+    before = {
+        path: (site.source / path).read_bytes() for path in (".git/index", ".fa/artifacts/keep.txt", ".venv/sentinel")
+    }
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        grant = _view(owner, ids, lease)
+        owner.write_file(
+            PEER,
+            ACTOR,
+            view_ref=ref(grant),
+            capability=grant.capability,
+            path="added.txt",
+            content="x\n",
+            expected_sha256=None,
+            deadline=until(),
+        )
+        _stop(owner, grant)
+        sealed = _seal(owner, grant)
+
+        _publish(owner, grant, sealed)
+
+        assert {path: (site.source / path).read_bytes() for path in before} == before
+
+
+def test_publish_refuses_a_base_that_moved_after_the_view(site: Site) -> None:
+    """producer-kill-check: drop the base-revision CAS in R1 (STALE_REVISION)."""
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        grant = _stopped(owner, ids, lease)
+        sealed = _seal(owner, grant)
+        current = _current(site, ids)
+
+        with pytest.raises(SupervisorError) as refused:
+            from fa.execution.publication import publish_view
+
+            publish_view(
+                owner,
+                PEER,
+                ACTOR,
+                view_ref=ref(grant),
+                capability=grant.capability,
+                sealed_manifest_id=sealed.sealed_manifest_id,
+                expected_base_revision="rev-" + "0" * 32,
+                operation_id=_op(),
+                deadline=until(),
+            )
+
+        assert refused.value.code == "STALE_REVISION"
+        assert _current(site, ids) == current
+        assert not (_workspace(site, ids) / "revisions" / sealed.revision_id).exists()
+
+
+def test_publish_refuses_a_manifest_id_the_view_did_not_seal(site: Site) -> None:
+    """producer-kill-check: drop the sealed_manifest_id binding in R1."""
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        grant = _stopped(owner, ids, lease)
+        _seal(owner, grant)
+
+        with pytest.raises(SupervisorError) as refused:
+            from fa.execution.publication import publish_view
+
+            publish_view(
+                owner,
+                PEER,
+                ACTOR,
+                view_ref=ref(grant),
+                capability=grant.capability,
+                sealed_manifest_id="seal-" + "0" * 32,
+                expected_base_revision=ref(grant).base_revision,
+                operation_id=_op(),
+                deadline=until(),
+            )
+
+        assert refused.value.code == "STALE_REVISION"
+        assert _state(site, grant) == "SEALED"
+
+
+def test_publish_refuses_an_open_view_and_a_wrong_capability(site: Site) -> None:
+    """producer-kill-check: dispatch on anything but SEALED/PUBLISHED; drop the proof."""
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        grant = _project_view(owner, ids, lease)
+        sealed = SealResult("seal-" + "0" * 32, "rev-" + "0" * 32, "0" * 64)
+
+        with pytest.raises(SupervisorError) as open_view:
+            _publish(owner, grant, sealed)
+        assert open_view.value.code == "VIEW_CLOSED"
+
+        stopped = _stopped(owner, ids, lease)
+        sealed = _seal(owner, stopped)
+        with pytest.raises(SupervisorError) as unauthorized:
+            from fa.execution.publication import publish_view
+
+            publish_view(
+                owner,
+                PEER,
+                ACTOR,
+                view_ref=ref(stopped),
+                capability="0" * 64,
+                sealed_manifest_id=sealed.sealed_manifest_id,
+                expected_base_revision=ref(stopped).base_revision,
+                operation_id=_op(),
+                deadline=until(),
+            )
+        assert unauthorized.value.code == "UNAUTHORIZED"
+
+
+def test_publish_refuses_a_manifest_whose_digest_disagrees_with_its_bytes(site: Site) -> None:
+    """producer-kill-check: skip the seal validator when re-reading the manifest (R2)."""
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        grant = _stopped(owner, ids, lease)
+        sealed = _seal(owner, grant)
+        manifest = _manifest(site, grant)
+        manifest["entries"][0]["sha256"] = "0" * 64
+        (_view_root(site, grant) / MANIFEST_NAME).write_text(json.dumps(manifest))
+
+        with pytest.raises(SupervisorError) as refused:
+            _publish(owner, grant, sealed)
+
+        assert refused.value.code == "CORRUPT_STATE"
+        assert _current(site, ids)["revision_id"] == ids["revision_id"]
+        assert not (_workspace(site, ids) / "revisions" / sealed.revision_id).exists()
+
+
+def test_publish_settles_the_owner_and_a_reclaim_advances_generation(site: Site) -> None:
+    """producer-kill-check: write any state but PUBLISHED on completion (R8, E268 D1)."""
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        grant = _stopped(owner, ids, lease)
+        sealed = _seal(owner, grant)
+        _publish(owner, grant, sealed)
+
+        assert site.release(owner, ids, lease) == {"released": True}
+        assert site.metadata(ids)["status"] == "AVAILABLE"
+
+        again = ok(lambda: site.claim(owner, ids))
+        assert site.metadata(ids)["generation"] == lease.generation + 1
+        assert again.capability != lease.capability
+
+
+def test_publish_then_release_is_restart_clean_and_publish_without_release_is_not(site: Site) -> None:
+    """producer-kill-check: quarantine a settled workspace / keep an owned one usable (R13)."""
+    (site.roots / "second").mkdir()
+    (site.roots / "second" / "file.txt").write_text("second\n")
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        grant = _stopped(owner, ids, lease)
+        sealed = _seal(owner, grant)
+        _publish(owner, grant, sealed)
+        assert site.release(owner, ids, lease) == {"released": True}
+
+        ids2 = ok(lambda: site.register(owner, "second"))
+        lease2 = ok(lambda: site.claim(owner, ids2))
+        grant2 = _stopped(owner, ids2, lease2)
+        sealed2 = _seal(owner, grant2)
+        _publish(owner, grant2, sealed2)
+
+    # Released: the published workspace survives a restart and stays reclaimable.
+    with site.owner() as reopened:
+        assert site.metadata(ids)["status"] == "AVAILABLE"
+        assert _state(site, grant) == "PUBLISHED"
+        assert _current(site, ids)["revision_id"] == derive_revision_id(_manifest(site, grant))
+        assert ok(lambda: site.claim(reopened, ids)).generation == lease.generation + 1
+    # Published but still owned: STEP4's limit, recorded rather than hidden.
+    with site.owner() as reopened:
+        assert site.metadata(ids2)["status"] == "QUARANTINED"
+
+
+def test_publish_is_idempotent_and_replay_uses_the_callers_operation_id(site: Site) -> None:
+    """producer-kill-check: drop the PUBLISHED replay branch (R9) — a retry would re-commit."""
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        grant = _stopped(owner, ids, lease)
+        sealed = _seal(owner, grant)
+        first = _publish(owner, grant, sealed)
+        current = _current(site, ids)
+
+        second = _publish(owner, grant, sealed)
+
+        assert (second.revision_id, second.tree_sha256) == (first.revision_id, first.tree_sha256)
+        assert second.operation_id != first.operation_id
+        assert _current(site, ids) == current
+        assert _intent(site, ids) is None
+        assert _state(site, grant) == "PUBLISHED"
+
+
+def test_publish_refuses_to_start_on_top_of_a_foreign_intent(site: Site) -> None:
+    """producer-kill-check: ignore an existing intent (a second attempt would overwrite it)."""
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        grant = _stopped(owner, ids, lease)
+        sealed = _seal(owner, grant)
+        planted = {
+            "schema_version": 1,
+            "kind": "REVISION",
+            "operation_id": _op(),
+            "workspace_id": ids["workspace_id"],
+            "generation": site.metadata(ids)["generation"],
+            "base_revision": ids["revision_id"],
+            "next_revision": sealed.revision_id,
+            "tree_sha256": sealed.tree_sha256,
+            "phase": "PREPARED",
+            "target_relative": None,
+            "old_sha256": None,
+            "new_sha256": None,
+        }
+        planted_path = _workspace(site, ids) / "intent.json"
+        planted_path.write_text(json.dumps(planted))
+        planted_path.chmod(0o600)  # `_private` refuses a world-readable control artifact
+        current = _current(site, ids)
+
+        with pytest.raises(SupervisorError) as refused:
+            _publish(owner, grant, sealed)
+
+        assert refused.value.code == "WORKSPACE_BUSY"
+        assert _current(site, ids) == current
+
+
+def test_a_projection_failure_after_the_pointer_is_durability_unknown_and_never_a_receipt(
+    site: Site, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """producer-kill-check: report success, roll back, or stay usable after a partial projection (R13)."""
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        grant = _view(owner, ids, lease)
+        owner.write_file(
+            PEER,
+            ACTOR,
+            view_ref=ref(grant),
+            capability=grant.capability,
+            path="added.txt",
+            content="added\n",
+            expected_sha256=None,
+            deadline=until(),
+        )
+        _stop(owner, grant)
+        sealed = _seal(owner, grant)
+        real_replace = os.replace
+
+        def exploding(source: Any, destination: Any = None, **kwargs: Any) -> None:
+            if isinstance(source, str) and source.endswith(".publish"):
+                raise OSError(5, "injected projection failure")
+            real_replace(source, destination, **kwargs)
+
+        monkeypatch.setattr(workspace_module.os, "replace", exploding)
+
+        with pytest.raises(SupervisorError) as refused:
+            _publish(owner, grant, sealed)
+
+        assert refused.value.code == "DURABILITY_UNKNOWN"
+        # The pointer DID move: `current.json` is the discriminator, not the phase.
+        assert _current(site, ids)["revision_id"] == sealed.revision_id
+        assert _state(site, grant) == "SEALED"
+        intent = _intent(site, ids)
+        assert intent is not None and intent["phase"] == "PROJECTING"
+        assert not (site.source / "added.txt").exists()
+        # No further work is accepted from an authority that cannot prove its state.
+        with pytest.raises(SupervisorError) as poisoned:
+            site.release(owner, ids, lease)
+        assert poisoned.value.code == "CORRUPT_STATE"
+
+
+def test_publish_refuses_canonical_drift_before_any_write(site: Site) -> None:
+    """producer-kill-check: drop the `_unchanged` pre-flight (D4) — stray bytes would publish."""
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        grant = _stopped(owner, ids, lease)
+        sealed = _seal(owner, grant)
+        (site.source / "stray.txt").write_text("written behind the authority's back\n")
+        current = _current(site, ids)
+
+        with pytest.raises(SupervisorError) as refused:
+            _publish(owner, grant, sealed)
+
+        assert refused.value.code == "CORRUPT_STATE"
+        assert _current(site, ids) == current
+        assert not (_workspace(site, ids) / "revisions" / sealed.revision_id).exists()
+        with pytest.raises(SupervisorError) as poisoned:
+            site.release(owner, ids, lease)
+        assert poisoned.value.code == "CORRUPT_STATE"
+
+
+def test_publish_refuses_a_canonical_root_it_could_not_project_into(site: Site) -> None:
+    """producer-kill-check: drop the mode branch of the Q81 no-write probe."""
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        grant = _stopped(owner, ids, lease)
+        sealed = _seal(owner, grant)
+        current = _current(site, ids)
+        before = sorted(path.name for path in site.source.iterdir())
+        site.source.chmod(0o555)
+        try:
+            with pytest.raises(SupervisorError) as refused:
+                _publish(owner, grant, sealed)
+        finally:
+            site.source.chmod(0o755)
+
+        assert refused.value.code == "PATH_DENIED"
+        assert _current(site, ids) == current
+        assert sorted(path.name for path in site.source.iterdir()) == before  # the probe wrote nothing
+
+
+def test_publish_refuses_a_read_only_mount_before_any_write(site: Site, monkeypatch: pytest.MonkeyPatch) -> None:
+    """producer-kill-check: drop the read-only-mount branch of the Q81 probe.
+
+    The mount flag cannot be manufactured in a writable sandbox; the kernel fact
+    is doubled at its seam and disclosed, like the cgroup observer (E266 pattern).
+    """
+    from types import SimpleNamespace
+
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        grant = _stopped(owner, ids, lease)
+        sealed = _seal(owner, grant)
+        monkeypatch.setattr(os, "fstatvfs", lambda _fd: SimpleNamespace(f_flag=os.ST_RDONLY))
+
+        with pytest.raises(SupervisorError) as refused:
+            _publish(owner, grant, sealed)
+
+        monkeypatch.undo()
+        assert refused.value.code == "PATH_DENIED"
+        assert _current(site, ids)["revision_id"] == ids["revision_id"]
+
+
+def test_publish_refuses_source_bytes_that_moved_after_the_barrier(site: Site) -> None:
+    """producer-kill-check: skip the copied-tree-vs-manifest comparison (R4/R12)."""
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        grant = _stopped(owner, ids, lease)
+        sealed = _seal(owner, grant)
+        (_source_root(site, grant) / "untracked.txt").write_text("moved after the barrier\n")
+
+        with pytest.raises(SupervisorError) as refused:
+            _publish(owner, grant, sealed)
+
+        assert refused.value.code == "CORRUPT_STATE"
+        assert _current(site, ids)["revision_id"] == ids["revision_id"]
+        assert not (_workspace(site, ids) / "revisions" / sealed.revision_id).exists()
+
+
+def test_publish_refuses_a_symlink_standing_where_a_file_must_go(site: Site) -> None:
+    """producer-kill-check: rewrite through/replace a link instead of refusing (D7, C3)."""
+    (site.source / "link").symlink_to("untracked.txt")
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        grant = _stopped(owner, ids, lease)
+        replacement = _source_root(site, grant) / "link"
+        replacement.unlink()
+        replacement.write_text("now a regular file\n")
+        sealed = _seal(owner, grant)
+
+        with pytest.raises(SupervisorError) as refused:
+            _publish(owner, grant, sealed)
+
+        assert refused.value.code == "PATH_DENIED"
+        assert (site.source / "link").is_symlink()
+        assert _current(site, ids)["revision_id"] == ids["revision_id"]
+
+
+def test_pinned_readers_keep_the_old_revision_across_publish(site: Site) -> None:
+    """producer-kill-check: mutate a pinned revision's bytes while publishing (R7,R10)."""
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        old = ok(
+            lambda: owner.pin_reader(
+                PEER,
+                ACTOR,
+                workspace_id=ids["workspace_id"],
+                revision_id=ids["revision_id"],
+                plan_ref=None,
+                formal_evidence=False,
+                deadline=until(),
+            )
+        )
+        grant = _view(owner, ids, lease)
+        original = hashlib.sha256((site.source / "untracked.txt").read_bytes()).hexdigest()
+        owner.write_file(
+            PEER,
+            ACTOR,
+            view_ref=ref(grant),
+            capability=grant.capability,
+            path="untracked.txt",
+            content="changed by the view\n",
+            expected_sha256=original,
+            deadline=until(),
+        )
+        _stop(owner, grant)
+        sealed = _seal(owner, grant)
+
+        _publish(owner, grant, sealed)
+
+        assert (site.source / "untracked.txt").read_text() == "changed by the view\n"
+        assert (
+            owner.read_file(
+                PEER,
+                ACTOR,
+                view_ref=ref(old),
+                capability=old.capability,
+                path="untracked.txt",
+                offset_bytes=0,
+                max_bytes=64,
+                deadline=until(),
+            )["content"]
+            == "untracked"
+        )
+        fresh = ok(
+            lambda: owner.pin_reader(
+                PEER,
+                ACTOR,
+                workspace_id=ids["workspace_id"],
+                revision_id=sealed.revision_id,
+                plan_ref=None,
+                formal_evidence=False,
+                deadline=until(),
+            )
+        )
+        assert (
+            owner.read_file(
+                PEER,
+                ACTOR,
+                view_ref=ref(fresh),
+                capability=fresh.capability,
+                path="untracked.txt",
+                offset_bytes=0,
+                max_bytes=64,
+                deadline=until(),
+            )["content"]
+            == "changed by the view\n"
+        )
+
+
+def test_registration_writes_the_five_key_pointer_and_load_refuses_a_foreign_one(site: Site) -> None:
+    """producer-kill-check: keep the three-key shape / drop the _load identity check (Q80)."""
+    with site.owner() as owner:
+        ids = ok(lambda: site.register(owner))
+        assert set(_current(site, ids)) == {
+            "schema_version",
+            "workspace_id",
+            "generation",
+            "revision_id",
+            "tree_sha256",
+        }
+        assert _current(site, ids)["workspace_id"] == ids["workspace_id"]
+
+    path = _workspace(site, ids) / "current.json"
+    current = json.loads(path.read_text())
+    current["workspace_id"] = "ws-" + "0" * 32
+    path.write_text(json.dumps(current))
+    with pytest.raises(SupervisorError) as refused, site.owner():
+        pytest.fail("a pointer naming another workspace was accepted")
+    assert refused.value.code == "CORRUPT_STATE"
+
+
+def test_load_refuses_a_pointer_from_a_future_epoch_but_accepts_an_older_one(site: Site) -> None:
+    """producer-kill-check: tolerate a generation ahead of its owner metadata (Q80)."""
+    with site.owner() as owner:
+        ids = ok(lambda: site.register(owner))
+
+    path = _workspace(site, ids) / "current.json"
+    current = json.loads(path.read_text())
+    current["generation"] = current["generation"] + 1
+    path.write_text(json.dumps(current))
+    with pytest.raises(SupervisorError) as refused, site.owner():
+        pytest.fail("a pointer from a future epoch was accepted")
+    assert refused.value.code == "CORRUPT_STATE"
+
+    current["generation"] = 1  # older than the metadata epoch is legal after release + re-claim
+    path.write_text(json.dumps(current))
+    with site.owner() as reopened:
+        assert _current(site, ids)["generation"] == 1
+        assert site.metadata(ids)["status"] == "AVAILABLE"
+        del reopened
+
+
+def test_publish_refuses_a_stopped_but_unsealed_view(site: Site) -> None:
+    """producer-kill-check: accept STOPPING as publishable (seal is the only SEALED edge)."""
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        grant = _stopped(owner, ids, lease)
+        assert _state(site, grant) == "STOPPING"
+
+        with pytest.raises(SupervisorError) as refused:
+            _publish(owner, grant, SealResult("seal-" + "0" * 32, "rev-" + "0" * 32, "0" * 64))
+
+        assert refused.value.code == "VIEW_CLOSED"
+        assert _state(site, grant) == "STOPPING"
+
+
+def test_publish_refuses_a_writer_generation_that_moved_after_the_view(site: Site) -> None:
+    """producer-kill-check: drop the generation equality in R1 (STALE_GENERATION)."""
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        grant = _stopped(owner, ids, lease)
+        sealed = _seal(owner, grant)
+        owner._bindings[ids["workspace_id"]].metadata["generation"] += 1  # white-box epoch move
+
+        with pytest.raises(SupervisorError) as refused:
+            _publish(owner, grant, sealed)
+
+        assert refused.value.code == "STALE_GENERATION"
+        assert _state(site, grant) == "SEALED"
+
+
+def test_the_projection_verifier_refuses_a_tree_that_differs_from_the_manifest(site: Site) -> None:
+    """producer-kill-check: make `_verify_projection` a no-op (R8's completion proof)."""
+    from dataclasses import replace
+
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        grant = _stopped(owner, ids, lease)
+        sealed = _seal(owner, grant)
+        _publish(owner, grant, sealed)
+        inputs = owner.prepare_publish(
+            PEER,
+            ACTOR,
+            view_ref=ref(grant),
+            capability=grant.capability,
+            sealed_manifest_id=sealed.sealed_manifest_id,
+            expected_base_revision=ref(grant).base_revision,
+            operation_id=_op(),
+            manifest_reader=publication_module._read_sealed_manifest,
+            deadline=until(),
+        )
+        ghost = {
+            "path": "ghost.txt",
+            "type": "file",
+            "mode": 0o644,
+            "size": 1,
+            "sha256": "0" * 64,
+            "deleted": False,
+            "link_target": None,
+        }
+
+        with pytest.raises(SupervisorError) as refused:
+            owner._verify_projection(
+                owner._binding(ids["workspace_id"]), replace(inputs, entries=(*inputs.entries, ghost)), until()
+            )
+
+        assert refused.value.code == "CORRUPT_STATE"
+
+
+def test_commit_refuses_a_pointer_that_moved_between_prepare_and_commit(site: Site) -> None:
+    """producer-kill-check: drop the durable CAS read in R6 — a newer pointer would be overwritten."""
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        grant = _stopped(owner, ids, lease)
+        sealed = _seal(owner, grant)
+        inputs = owner.prepare_publish(
+            PEER,
+            ACTOR,
+            view_ref=ref(grant),
+            capability=grant.capability,
+            sealed_manifest_id=sealed.sealed_manifest_id,
+            expected_base_revision=ref(grant).base_revision,
+            operation_id=_op(),
+            manifest_reader=publication_module._read_sealed_manifest,
+            deadline=until(),
+        )
+        owner.materialize_publication(PEER, ACTOR, capability=grant.capability, inputs=inputs, deadline=until())
+
+        moved = _current(site, ids)
+        moved["revision_id"] = "rev-" + "1" * 32
+        path = _workspace(site, ids) / "current.json"
+        path.write_text(json.dumps(moved))
+        path.chmod(0o600)
+
+        with pytest.raises(SupervisorError) as refused:
+            owner.commit_revision_current(PEER, ACTOR, capability=grant.capability, inputs=inputs, deadline=until())
+
+        assert refused.value.code == "STALE_REVISION"
+        assert _current(site, ids)["revision_id"] == "rev-" + "1" * 32
+
+
+def test_publish_refuses_a_valid_manifest_that_belongs_to_another_view(site: Site) -> None:
+    """producer-kill-check: drop the manifest-vs-record cross-check in R2 (C3 substitution).
+
+    Two views of the same revision can hold byte-identical trees, so a manifest
+    stolen from a sibling view would pass every byte comparison. Only the
+    identity fields (`view_id`, `workspace_id`, `generation`, `base_revision`)
+    tie it to this grant — that is the whole point of the cross-check.
+    """
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        first = _stopped(owner, ids, lease)
+        first_sealed = _seal(owner, first)
+        second = _stopped(owner, ids, lease)
+        second_sealed = _seal(owner, second)
+        assert first_sealed.revision_id != second_sealed.revision_id
+
+        stolen = (_view_root(site, first) / MANIFEST_NAME).read_bytes()
+        (_view_root(site, second) / MANIFEST_NAME).write_bytes(stolen)
+
+        with pytest.raises(SupervisorError) as refused:
+            _publish(owner, second, second_sealed)
+
+        assert refused.value.code == "CORRUPT_STATE"
+        assert _current(site, ids)["revision_id"] == ids["revision_id"]
+        assert _state(site, second) == "SEALED"

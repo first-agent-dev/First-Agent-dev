@@ -9,9 +9,10 @@ The three irreversible operations of spec §5 are deliberately separate:
 
 * **seal** (this module) recomputes the view's tree after the terminal barrier,
   validates it and durably records the manifest plus the `SEALED` state;
-* **publish** (`E268`) materializes the immutable revision under the id this
-  module derives, then commits the current pointer and projects it;
-* **recovery** (`E269`) inspects intent/current after a crash.
+* **publish** (this module, E269/CT106) materializes the immutable revision under
+  the id this module derives, CAS-commits `current.json`, then projects it and
+  proves the projection before answering;
+* **recovery** (E270/STEP4) inspects intent/current after a crash.
 
 Nothing here is a live/host verdict, and no receipt from this module authorizes
 project execution.
@@ -31,7 +32,15 @@ from fa.execution.primitives import ExecutionContractError
 from fa.execution.protocol import _check
 from fa.execution.supervisor import PeerIdentity, SupervisorError
 from fa.execution.types import NamespaceRef, ViewRef
-from fa.execution.workspace import WorkspaceAuthority, _budget, _canonical, _read_json, _SealInputs
+from fa.execution.workspace import (
+    WorkspaceAuthority,
+    _budget,
+    _canonical,
+    _derive_revision_id,
+    _PublishInputs,
+    _read_json,
+    _SealInputs,
+)
 from fa.inner_loop.workflow_artifacts import _replace_private_bytes
 
 MANIFEST_NAME = "sealed.json"
@@ -106,9 +115,11 @@ def derive_revision_id(manifest: Mapping[str, Any]) -> str:
 
     The id is a function of the sealed bytes, so publish recomputes it from the
     stored manifest instead of accepting one from a caller, and a swapped or
-    edited manifest changes the id it claims.
+    edited manifest changes the id it claims. The formula lives in
+    `workspace` (it names a directory under `revisions/`) and is re-exported
+    here so there is exactly one implementation.
     """
-    return "rev-" + hashlib.sha256(_canonical(dict(manifest))).hexdigest()[:32]
+    return _derive_revision_id(manifest)
 
 
 def seal_view(
@@ -331,4 +342,122 @@ def _write_manifest(directory: int, manifest: Mapping[str, Any], deadline: float
         raise SupervisorError("DURABILITY_UNKNOWN") from None
 
 
-__all__ = ["MANIFEST_NAME", "SealResult", "derive_revision_id", "seal_view"]
+@dataclass(frozen=True)
+class PublishResult:
+    """The publish reply (`protocol.py:138` `_COMMITTED`), plus the caller's op id.
+
+    `revision_id` is derived from the sealed bytes, `tree_sha256` comes from the
+    manifest, `workspace_id` is the workspace's identity, and `operation_id` is
+    **the caller's own** (`"op-" + request_id`). Nothing here is stored: an exact
+    replay is served from the operation journal one layer up, and a fresh request
+    observing `PUBLISHED` re-derives the rest (E269 R9).
+    """
+
+    workspace_id: str
+    revision_id: str
+    tree_sha256: str
+    operation_id: str
+    projection_complete: bool = True
+
+    def to_wire(self) -> dict[str, Any]:
+        return {
+            "workspace_id": self.workspace_id,
+            "revision_id": self.revision_id,
+            "tree_sha256": self.tree_sha256,
+            "operation_id": self.operation_id,
+            "projection_complete": self.projection_complete,
+        }
+
+
+def publish_view(
+    authority: WorkspaceAuthority,
+    peer: PeerIdentity,
+    namespace: NamespaceRef,
+    *,
+    view_ref: ViewRef,
+    capability: str,
+    sealed_manifest_id: str,
+    expected_base_revision: str,
+    operation_id: str,
+    deadline: float,
+) -> PublishResult:
+    """Commit one SEALED view's bytes to the canonical tree, or prove it is done.
+
+    Four durable boundaries, one transaction each (E269 D3), mirroring seal's
+    `prepare_seal`/`mark_sealed` split rather than inventing a longer critical
+    section: validate (no writes) → materialize revision + intent → CAS the
+    pointer → project, prove, publish. A determinate failure before the pointer
+    discards only this attempt's revision; anything at or after the pointer is
+    `DURABILITY_UNKNOWN` and belongs to recovery, never to a silent retry.
+    """
+    if not isinstance(authority, WorkspaceAuthority):
+        raise SupervisorError("UNAUTHORIZED")
+    inputs = authority.prepare_publish(
+        peer,
+        namespace,
+        view_ref=view_ref,
+        capability=capability,
+        sealed_manifest_id=sealed_manifest_id,
+        expected_base_revision=expected_base_revision,
+        operation_id=operation_id,
+        manifest_reader=_read_sealed_manifest,
+        deadline=deadline,
+    )
+    if inputs.record["state"] == "PUBLISHED":
+        return _result(
+            authority.verify_publication(peer, namespace, capability=capability, inputs=inputs, deadline=deadline)
+        )
+    try:
+        authority.materialize_publication(peer, namespace, capability=capability, inputs=inputs, deadline=deadline)
+        _commit_current(authority, peer, namespace, capability=capability, inputs=inputs, deadline=deadline)
+    except SupervisorError as error:
+        if error.code in {"STALE_REVISION", "STALE_GENERATION"}:
+            authority.abandon_publication(peer, namespace, capability=capability, inputs=inputs, deadline=deadline)
+        raise
+    return _result(
+        authority.project_publication(peer, namespace, capability=capability, inputs=inputs, deadline=deadline)
+    )
+
+
+def _commit_current(
+    authority: WorkspaceAuthority,
+    peer: PeerIdentity,
+    namespace: NamespaceRef,
+    *,
+    capability: str,
+    inputs: _PublishInputs,
+    deadline: float,
+) -> None:
+    """The pointer commit, isolated so CT106's kill target is one call (E269 D1).
+
+    Removing this call leaves `current.json` at the base revision: no functional
+    publish case can pass, and no revision is ever reachable by a reader.
+    """
+    authority.commit_revision_current(peer, namespace, capability=capability, inputs=inputs, deadline=deadline)
+
+
+def _result(receipt: Mapping[str, Any]) -> PublishResult:
+    return PublishResult(
+        workspace_id=str(receipt["workspace_id"]),
+        revision_id=str(receipt["revision_id"]),
+        tree_sha256=str(receipt["tree_sha256"]),
+        operation_id=str(receipt["operation_id"]),
+        projection_complete=bool(receipt["projection_complete"]),
+    )
+
+
+def _read_sealed_manifest(
+    directory: int, plan_path: str | None, base_entries: Sequence[Mapping[str, Any]]
+) -> dict[str, Any]:
+    """Read and re-validate the stored manifest; never re-derive one from a tree.
+
+    The same `_validate_sealed_tree` that seal used runs again here, so a
+    manifest edited on disk is refused for what it is (path/fact/base/plan/digest)
+    rather than being trusted because it parses.
+    """
+    manifest = _read_json(directory, MANIFEST_NAME, _SEALED_MANIFEST, _MAX_MANIFEST_BYTES)
+    _validate_sealed_tree(manifest, plan_path=plan_path, base_entries=base_entries)
+    return manifest
+
+
+__all__ = ["MANIFEST_NAME", "PublishResult", "SealResult", "derive_revision_id", "publish_view", "seal_view"]

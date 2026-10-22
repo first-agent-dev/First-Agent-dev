@@ -20,7 +20,7 @@ import shutil
 import stat
 import threading
 import time
-from collections.abc import Callable, Generator, Mapping
+from collections.abc import Callable, Generator, Mapping, Sequence
 from contextlib import AbstractContextManager, ExitStack, contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
@@ -92,11 +92,37 @@ _WORKSPACE = fastjsonschema.compile(
         status=_enum("AVAILABLE", "OWNED", "QUARANTINED"),
     )
 )
+# Q80/E269: ONE shape, five keys, written at registration and after every
+# publish (spec §5.1). The "initial" three-key form in §4 never shipped in a
+# deployed workspace and has no committed fixture, so this is an amendment, not
+# a migration; a field three-key file would need a migration, not a union.
 _CURRENT = fastjsonschema.compile(
     _object(
         schema_version={"type": "integer", "const": 1},
+        workspace_id=_id("ws-"),
+        generation=_UINT,
         revision_id=_id("rev-"),
         tree_sha256=SHA,
+    )
+)
+
+# Spec §5.1's exact intent vocabulary. E269 produces only kind=REVISION; PLAN
+# arrives with the Q58 path and BOOTSTRAP with install_project. `phase` is
+# advisory for recovery: `current.json` alone discriminates a commit.
+_INTENT = fastjsonschema.compile(
+    _object(
+        schema_version={"type": "integer", "const": 1},
+        kind=_enum("REVISION", "PLAN", "BOOTSTRAP"),
+        operation_id=_id("op-"),
+        workspace_id=_id("ws-"),
+        generation=_UINT,
+        base_revision=_id("rev-"),
+        next_revision=_id("rev-"),
+        tree_sha256=SHA,
+        phase=_enum("PREPARED", "COMMITTED", "PROJECTING", "DONE"),
+        target_relative=_nullable({"type": "string", "maxLength": 4096}),
+        old_sha256=_nullable(SHA),
+        new_sha256=_nullable(SHA),
     )
 )
 _ENTRY = _object(
@@ -150,6 +176,34 @@ _PURPOSE_MATRIX: dict[ViewPurpose, tuple[Access, bool, bool]] = {
 # view's rooted writes are confined to these top-level trees. The single-target
 # discipline is completed by the controller's expected_sha one-file edit.
 _MUTATION_ROOTS = frozenset({"src", "scripts"})
+# Components the canonical projection never traverses or writes, at any depth.
+# `_Capture` drops them from every revision, so a manifest naming one is forged.
+_PROTECTED_COMPONENTS = frozenset({".git", ".fa", ".venv", ".env"})
+
+
+def _derive_revision_id(manifest: Mapping[str, Any]) -> str:
+    """Content-address the revision a sealed manifest describes (E267 D2).
+
+    Lives here, not in `publication`, because the id names a directory under
+    `revisions/`: storage owns the formula, publication re-exports it. One
+    implementation means a drifted derivation cannot silently disagree.
+    """
+    return "rev-" + hashlib.sha256(_canonical(dict(manifest))).hexdigest()[:32]
+
+
+def _require_manifest_match(copied: Sequence[dict[str, Any]], sealed: Sequence[Mapping[str, Any]]) -> None:
+    """The copied tree must be exactly the manifest's live entries.
+
+    Seal hashed these bytes after the barrier; the copy is the last moment the
+    two can disagree before a revision becomes installable. Modes are compared
+    strictly (unlike retention copies), because a view source keeps logical modes.
+    """
+    live = [dict(entry) for entry in sealed if not entry["deleted"]]
+    if len(copied) != len(live):
+        raise SupervisorError("CORRUPT_STATE")
+    for got, wanted in zip(copied, live, strict=True):
+        if got != wanted:
+            raise SupervisorError("CORRUPT_STATE")
 
 
 def _plan_ref_dict(plan_ref: PlanRef) -> dict[str, str]:
@@ -656,6 +710,27 @@ class _SealInputs:
     plan_path: str | None
 
 
+@dataclass
+class _PublishInputs:
+    """Everything publish needs, validated once under the authority mutex.
+
+    Deliberately carries **no capability**: the secret is passed as an argument
+    to each phase and re-proved there, so a retained `_PublishInputs` can never
+    act on its own. `entries` includes tombstones; `revision_id` is recomputed
+    from the manifest, never supplied by a caller.
+    """
+
+    view_ref: ViewRef
+    record: dict[str, Any]
+    directory: int
+    entries: tuple[dict[str, Any], ...]
+    revision_id: str
+    tree_sha256: str
+    base_revision: str
+    generation: int
+    operation_id: str
+
+
 @dataclass(repr=False)
 class _Binding:
     metadata: dict[str, Any]
@@ -866,6 +941,12 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
             self._disjoint(binding)
             self._verify_revision(binding, time.monotonic() + 120)
             self._initialize_genesis(binding)
+            # Q80: after genesis normalizes a legacy 0 to 1, the pointer must
+            # name this workspace and no later epoch than its owner metadata.
+            # Equality is NOT required: release + re-claim legally advances
+            # workspace.json past the epoch that committed the pointer.
+            if current["workspace_id"] != workspace_id or current["generation"] > binding.metadata["generation"]:
+                raise SupervisorError("CORRUPT_STATE")
             if metadata["status"] == "OWNED":
                 metadata["status"] = "QUARANTINED"
                 _replace_private_bytes(fd, "workspace.json", encode_json(metadata))
@@ -1042,7 +1123,13 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                     os.fsync(revisions)
                 finally:
                     os.close(revisions)
-                binding.current = {"schema_version": 1, "revision_id": revision_id, "tree_sha256": digest}
+                binding.current = {
+                    "schema_version": 1,
+                    "workspace_id": workspace_id,
+                    "generation": binding.metadata["generation"],
+                    "revision_id": revision_id,
+                    "tree_sha256": digest,
+                }
                 _replace_private_bytes(fd, "current.json", encode_json(binding.current))
                 _replace_private_bytes(fd, "workspace.json", encode_json(binding.metadata))
                 os.mkdir("views", 0o700, dir_fd=fd)
@@ -2302,6 +2389,644 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
     ) -> dict[str, Any] | None:
         """Read-only: the receipt for this exact view, or None."""
         return _terminal_record(self._proof_only(peer, namespace, view_ref, capability).directory)
+
+    # -- Publication (E269 / CT106): intent, pointer, projection ------------
+
+    def prepare_publish(
+        self,
+        peer: PeerIdentity,
+        namespace: NamespaceRef,
+        *,
+        view_ref: ViewRef,
+        capability: str,
+        sealed_manifest_id: str,
+        expected_base_revision: str,
+        operation_id: str,
+        manifest_reader: Callable[[int, str | None, tuple[dict[str, Any], ...]], dict[str, Any]],
+        deadline: float,
+    ) -> _PublishInputs:
+        """Prove every precondition and read the sealed manifest. Writes nothing.
+
+        Ordering is deliberate and load-bearing (E269 R1): **state first, then
+        equality**. A `PUBLISHED` view's `current.revision_id` *is* the derived
+        revision, so checking base equality before dispatch would refuse the
+        very retry replay exists for.
+
+        `manifest_reader` receives this view's directory descriptor, the plan
+        path and the base entries, and must return a validated manifest without
+        retaining the descriptor: the filesystem stays the authority's, the
+        manifest rules stay `publication`'s.
+        """
+        _hex_id(operation_id, "op-")
+        _hex_id(expected_base_revision, "rev-")
+        with self._transaction(peer, deadline):
+            view = self._proof_only(peer, namespace, view_ref, capability)
+            if not isinstance(view, _ProjectView):
+                raise SupervisorError("VIEW_CLOSED")
+            state = view.record["state"]
+            if state == "UNKNOWN":
+                raise SupervisorError("TERMINALITY_UNKNOWN")
+            if state not in {"SEALED", "PUBLISHED"}:
+                raise SupervisorError("VIEW_CLOSED")
+            if not self._gate(view_ref).closed:
+                raise SupervisorError("VIEW_CLOSED")
+            if _terminal_record(view.directory) is None:
+                raise SupervisorError("TERMINALITY_UNKNOWN")
+            try:
+                view.context.recheck()
+            except ExecutionContractError:
+                raise SupervisorError("INPUT_POLICY") from None
+            binding = self._binding(view_ref.workspace_id)
+            self._recheck(binding)
+            if (
+                binding.metadata["status"] != "OWNED"
+                or binding.grant is None
+                or binding.metadata["active_actor"] != namespace.to_dict()
+                or binding.principal != peer.principal
+                or binding.metadata["generation"] != view_ref.generation
+            ):
+                raise SupervisorError("STALE_GENERATION")
+            if sealed_manifest_id != view.record["sealed_manifest_id"]:
+                raise SupervisorError("STALE_REVISION")
+            if expected_base_revision != view_ref.base_revision:
+                raise SupervisorError("STALE_REVISION")
+            base_entries: tuple[dict[str, Any], ...] = ()
+            if state == "SEALED":
+                if binding.current["revision_id"] != view_ref.base_revision:
+                    raise SupervisorError("STALE_REVISION")
+                with self._revision(binding, view_ref.base_revision, deadline) as (_, base, _child):
+                    base_entries = tuple(dict(entry) for entry in base["entries"])
+            # Canonical bytes must still be the revision this publish extends.
+            # Reuses the one established drift check (D4); its global
+            # "unhealthy" consequence is deliberate and tested.
+            self._unchanged(binding, deadline)
+            plan = view.record.get("plan_ref")
+            plan_path = None if plan is None else plan["workspace_relative_path"]
+            manifest = manifest_reader(view.directory, plan_path, base_entries)
+            if (
+                manifest["workspace_id"] != view_ref.workspace_id
+                or manifest["view_id"] != view_ref.view_id
+                or manifest["base_revision"] != view_ref.base_revision
+                or manifest["generation"] != view_ref.generation
+            ):
+                raise SupervisorError("CORRUPT_STATE")
+            revision_id = _derive_revision_id(manifest)
+            if state == "PUBLISHED":
+                if binding.current["revision_id"] != revision_id:
+                    raise SupervisorError("CORRUPT_STATE")
+            else:
+                self._probe_writable(binding)
+                self._preflight_projection(binding, manifest["entries"])
+            return _PublishInputs(
+                view_ref=view_ref,
+                record=dict(view.record),
+                directory=view.directory,
+                entries=tuple(dict(entry) for entry in manifest["entries"]),
+                revision_id=revision_id,
+                tree_sha256=str(manifest["tree_sha256"]),
+                base_revision=view_ref.base_revision,
+                generation=binding.metadata["generation"],
+                operation_id=operation_id,
+            )
+
+    def materialize_publication(
+        self, peer: PeerIdentity, namespace: NamespaceRef, *, capability: str, inputs: _PublishInputs, deadline: float
+    ) -> None:
+        """Stage the revision from the sealed manifest, install it, write intent.
+
+        No canonical byte is written here and `current.json` is untouched. The
+        copy is verified entry-by-entry against the manifest **before** install,
+        so a source that moved after the barrier cannot land a revision.
+        """
+        with self._transaction(peer, deadline):
+            view, binding = self._publish_owner(peer, namespace, capability, inputs)
+            pending = self._read_intent(binding.fd)
+            if pending is not None and pending["operation_id"] != inputs.operation_id:
+                raise SupervisorError("WORKSPACE_BUSY")
+            if not self._revision_exists(binding, inputs.revision_id, deadline):
+                self._install_revision(binding, view, inputs, deadline)
+            self._write_intent(
+                binding.fd,
+                {
+                    "schema_version": 1,
+                    "kind": "REVISION",
+                    "operation_id": inputs.operation_id,
+                    "workspace_id": inputs.view_ref.workspace_id,
+                    "generation": inputs.generation,
+                    "base_revision": inputs.base_revision,
+                    "next_revision": inputs.revision_id,
+                    "tree_sha256": inputs.tree_sha256,
+                    "phase": "PREPARED",
+                    "target_relative": None,
+                    "old_sha256": None,
+                    "new_sha256": None,
+                },
+            )
+
+    def commit_revision_current(
+        self, peer: PeerIdentity, namespace: NamespaceRef, *, capability: str, inputs: _PublishInputs, deadline: float
+    ) -> None:
+        """CAS the current pointer to Rnext, then mark the projection phase.
+
+        The pointer replace is the irreversible point. Everything before it is
+        discardable; everything after it is forward-only and `current.json`
+        alone says whether it happened.
+        """
+        with self._transaction(peer, deadline):
+            _view, binding = self._publish_owner(peer, namespace, capability, inputs)
+            intent = self._read_intent(binding.fd)
+            if (
+                intent is None
+                or intent["operation_id"] != inputs.operation_id
+                or intent["next_revision"] != inputs.revision_id
+                or intent["phase"] != "PREPARED"
+            ):
+                raise SupervisorError("WORKSPACE_BUSY")
+            if binding.metadata["generation"] != inputs.generation:
+                raise SupervisorError("STALE_GENERATION")
+            try:
+                current = _read_json(binding.fd, "current.json", _CURRENT, 1024**2)
+            except (OSError, SupervisorError):
+                self._healthy = False
+                raise SupervisorError("DURABILITY_UNKNOWN") from None
+            if current["revision_id"] != inputs.base_revision:
+                raise SupervisorError("STALE_REVISION")
+            updated = {
+                "schema_version": 1,
+                "workspace_id": inputs.view_ref.workspace_id,
+                "generation": inputs.generation,
+                "revision_id": inputs.revision_id,
+                "tree_sha256": inputs.tree_sha256,
+            }
+            try:
+                _replace_private_bytes(binding.fd, "current.json", encode_json(updated))
+                if _read_json(binding.fd, "current.json", _CURRENT, 1024**2) != updated:
+                    raise SupervisorError("DURABILITY_UNKNOWN")
+            except (OSError, SupervisorError):
+                self._healthy = False
+                raise SupervisorError("DURABILITY_UNKNOWN") from None
+            binding.current = updated
+            try:
+                # Durable BEFORE the first canonical byte, so recovery
+                # dispatches instead of inferring "projection may be partial".
+                self._set_intent_phase(binding.fd, intent, "PROJECTING")
+            except (OSError, SupervisorError):
+                self._healthy = False
+                raise SupervisorError("DURABILITY_UNKNOWN") from None
+
+    def project_publication(
+        self, peer: PeerIdentity, namespace: NamespaceRef, *, capability: str, inputs: _PublishInputs, deadline: float
+    ) -> dict[str, Any]:
+        """Apply the committed revision to canonical, prove it, then publish.
+
+        Idempotent by construction: every entry that already matches is skipped,
+        so a resumed projection after a crash converges instead of rewriting.
+        """
+        with self._transaction(peer, deadline):
+            view, binding = self._publish_owner(peer, namespace, capability, inputs)
+            intent = self._read_intent(binding.fd)
+            if intent is None or intent["next_revision"] != inputs.revision_id or intent["phase"] != "PROJECTING":
+                raise SupervisorError("WORKSPACE_BUSY")
+            if binding.current["revision_id"] != inputs.revision_id:
+                raise SupervisorError("CORRUPT_STATE")
+            published = {**view.record, "state": "PUBLISHED"}
+            try:
+                self._project_entries(binding, view, inputs, deadline)
+                self._verify_projection(binding, inputs, deadline)
+                self._set_intent_phase(binding.fd, intent, "DONE")
+                self._clear_intent(binding.fd)
+                _replace_private_bytes(view.directory, "view.json", encode_json(published))
+                if _read_json(view.directory, "view.json", _VIEW_RECORD, 1024**2) != published:
+                    raise SupervisorError("DURABILITY_UNKNOWN")
+            except (OSError, SupervisorError):
+                self._healthy = False
+                raise SupervisorError("DURABILITY_UNKNOWN") from None
+            view.record = published
+            return self._published_receipt(inputs)
+
+    def verify_publication(
+        self, peer: PeerIdentity, namespace: NamespaceRef, *, capability: str, inputs: _PublishInputs, deadline: float
+    ) -> dict[str, Any]:
+        """Replay: prove an already-published revision without committing again."""
+        with self._transaction(peer, deadline):
+            view, binding = self._publish_owner(peer, namespace, capability, inputs)
+            if view.record["state"] != "PUBLISHED" or binding.current["revision_id"] != inputs.revision_id:
+                raise SupervisorError("CORRUPT_STATE")
+            self._unchanged(binding, deadline)
+            self._verify_projection(binding, inputs, deadline)
+            return self._published_receipt(inputs)
+
+    def abandon_publication(
+        self, peer: PeerIdentity, namespace: NamespaceRef, *, capability: str, inputs: _PublishInputs, deadline: float
+    ) -> None:
+        """Discard this attempt's uncommitted revision; never touch committed bytes."""
+        with self._transaction(peer, deadline):
+            _view, binding = self._publish_owner(peer, namespace, capability, inputs)
+            if binding.current["revision_id"] != inputs.base_revision:
+                return
+            intent = self._read_intent(binding.fd)
+            if intent is not None and intent["operation_id"] == inputs.operation_id:
+                self._clear_intent(binding.fd)
+            self._discard_revision(binding, inputs.revision_id)
+
+    def _publish_owner(
+        self, peer: PeerIdentity, namespace: NamespaceRef, capability: str, inputs: _PublishInputs
+    ) -> tuple[_ProjectView, _Binding]:
+        """Re-prove the exact view, actor and epoch on every phase boundary."""
+        view = self._proof_only(peer, namespace, inputs.view_ref, capability)
+        if not isinstance(view, _ProjectView):
+            raise SupervisorError("VIEW_CLOSED")
+        binding = self._binding(inputs.view_ref.workspace_id)
+        self._recheck(binding)
+        if (
+            binding.metadata["status"] != "OWNED"
+            or binding.grant is None
+            or binding.metadata["active_actor"] != namespace.to_dict()
+            or binding.principal != peer.principal
+            or binding.metadata["generation"] != inputs.generation
+        ):
+            raise SupervisorError("STALE_GENERATION")
+        return view, binding
+
+    @staticmethod
+    def _published_receipt(inputs: _PublishInputs) -> dict[str, Any]:
+        return {
+            "workspace_id": inputs.view_ref.workspace_id,
+            "revision_id": inputs.revision_id,
+            "tree_sha256": inputs.tree_sha256,
+            "operation_id": inputs.operation_id,
+            "projection_complete": True,
+        }
+
+    def _probe_writable(self, binding: _Binding) -> None:
+        """Refuse a canonical root we could not project into, before any write (Q81)."""
+        try:
+            mount = os.fstatvfs(binding.source)
+        except OSError:
+            self._healthy = False
+            raise SupervisorError("DURABILITY_UNKNOWN") from None
+        if mount.f_flag & os.ST_RDONLY:
+            raise SupervisorError("PATH_DENIED")
+        info = os.fstat(binding.source)
+        if not stat.S_ISDIR(info.st_mode):
+            raise SupervisorError("PATH_DENIED")
+        if os.geteuid() == 0:
+            return
+        if info.st_uid == os.geteuid():
+            bits = (info.st_mode >> 6) & 0o7
+        elif info.st_gid == os.getegid():
+            bits = (info.st_mode >> 3) & 0o7
+        else:
+            bits = info.st_mode & 0o7
+        if bits & 0o3 != 0o3:
+            raise SupervisorError("PATH_DENIED")
+
+    def _preflight_projection(self, binding: _Binding, entries: Sequence[Mapping[str, Any]]) -> None:
+        """Refuse an impossible destination type BEFORE the irreversible pointer (D7).
+
+        Every type conflict here is predictable at prepare time; discovering it
+        during projection would turn a policy refusal into `DURABILITY_UNKNOWN`
+        plus a half-projected tree, which is the one outcome this design exists
+        to avoid.
+        """
+        for entry in entries:
+            if entry["deleted"]:
+                continue
+            try:
+                parent = self._project_parent(binding.source, entry["path"])
+            except FileNotFoundError:
+                continue  # A missing ancestor is created by projection.
+            except OSError:
+                raise SupervisorError("PATH_DENIED") from None
+            try:
+                name = entry["path"].rsplit("/", 1)[-1]
+                try:
+                    info = os.stat(name, dir_fd=parent, follow_symlinks=False)
+                except FileNotFoundError:
+                    continue
+                if entry["type"] == "directory":
+                    if not stat.S_ISDIR(info.st_mode):
+                        raise SupervisorError("PATH_DENIED")
+                elif entry["type"] == "symlink":
+                    if not stat.S_ISLNK(info.st_mode) or os.readlink(name, dir_fd=parent) != entry["link_target"]:
+                        raise SupervisorError("PATH_DENIED")
+                elif not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                    raise SupervisorError("PATH_DENIED")
+            finally:
+                os.close(parent)
+
+    def _revision_exists(self, binding: _Binding, revision_id: str, deadline: float) -> bool:
+        revisions = os.open("revisions", _DIRECTORY, dir_fd=binding.fd)
+        try:
+            try:
+                child = os.open(revision_id, _DIRECTORY, dir_fd=revisions)
+            except FileNotFoundError:
+                return False
+            os.close(child)
+        finally:
+            os.close(revisions)
+        with self._revision(binding, revision_id, deadline) as (_data, tree, _child):
+            return bool(tree["revision_id"] == revision_id)
+
+    def _install_revision(self, binding: _Binding, view: _ProjectView, inputs: _PublishInputs, deadline: float) -> None:
+        """Copy the frozen view source into revisions/<derived>, verified, then rename."""
+        source = os.open("source", _DIRECTORY, dir_fd=view.directory)
+        stage = self._state / "pending" / uuid4().hex
+        installed = False
+        try:
+            if _identity(os.fstat(source)) != _identity(os.fstat(view.source)):
+                raise SupervisorError("CORRUPT_STATE")
+            with _private_artifact_directory(stage) as stage_fd:
+                os.mkdir("revisions", 0o700, dir_fd=stage_fd)
+                staged = os.open("revisions", _DIRECTORY, dir_fd=stage_fd)
+                try:
+                    os.mkdir(inputs.revision_id, 0o700, dir_fd=staged)
+                    revision = os.open(inputs.revision_id, _DIRECTORY, dir_fd=staged)
+                    try:
+                        os.mkdir("data", 0o700, dir_fd=revision)
+                        data = os.open("data", _DIRECTORY, dir_fd=revision)
+                        try:
+                            entries, _digest = self._snapshot(source, data, deadline)
+                        finally:
+                            os.close(data)
+                        _require_manifest_match(entries, inputs.entries)
+                        # `_TREE` pins `deleted` to False: tombstones are a
+                        # manifest/transport fact and never live in a revision.
+                        tree = {
+                            "schema_version": 1,
+                            "revision_id": inputs.revision_id,
+                            "tree_sha256": inputs.tree_sha256,
+                            "entries": [dict(entry) for entry in inputs.entries if not entry["deleted"]],
+                        }
+                        _replace_private_bytes(revision, "tree.json", _canonical(tree))
+                        os.fsync(revision)
+                    finally:
+                        os.close(revision)
+                    os.fsync(staged)
+                    revisions = os.open("revisions", _DIRECTORY, dir_fd=binding.fd)
+                    try:
+                        _budget(deadline)
+                        _rename_directory(staged, inputs.revision_id, revisions, inputs.revision_id)
+                        installed = True
+                        os.fsync(revisions)
+                    finally:
+                        os.close(revisions)
+                finally:
+                    os.close(staged)
+        finally:
+            os.close(source)
+            if not installed and stage.exists():
+                shutil.rmtree(stage)  # Only this uninstalled, service-private staging tree.
+
+    def _project_entries(self, binding: _Binding, view: _ProjectView, inputs: _PublishInputs, deadline: float) -> None:
+        """Apply live entries (directories, files, links) then tombstones."""
+        directories = sorted(
+            (entry for entry in inputs.entries if entry["type"] == "directory" and not entry["deleted"]),
+            key=lambda entry: (entry["path"].count("/"), entry["path"]),
+        )
+        for entry in directories:
+            _budget(deadline)
+            self._project_directory(binding, entry)
+        for entry in inputs.entries:
+            if entry["deleted"] or entry["type"] == "directory":
+                continue
+            _budget(deadline)
+            if entry["type"] == "symlink":
+                self._project_link(binding, entry)
+            else:
+                self._project_file(binding, view, entry, deadline)
+        for entry in sorted(
+            (entry for entry in inputs.entries if entry["deleted"]),
+            key=lambda entry: entry["path"].count("/"),
+            reverse=True,
+        ):
+            _budget(deadline)
+            self._project_tombstone(binding, entry)
+
+    def _project_directory(self, binding: _Binding, entry: dict[str, Any]) -> None:
+        parent = self._project_parent(binding.source, entry["path"])
+        try:
+            name = entry["path"].rsplit("/", 1)[-1]
+            try:
+                info = os.stat(name, dir_fd=parent, follow_symlinks=False)
+            except FileNotFoundError:
+                os.mkdir(name, 0o700, dir_fd=parent)
+            else:
+                if not stat.S_ISDIR(info.st_mode):
+                    raise SupervisorError("PATH_DENIED")
+            child = os.open(name, _DIRECTORY, dir_fd=parent)
+            try:
+                if stat.S_IMODE(os.fstat(child).st_mode) != entry["mode"]:
+                    os.fchmod(child, entry["mode"])
+                os.fsync(child)
+            finally:
+                os.close(child)
+            os.fsync(parent)
+        finally:
+            os.close(parent)
+
+    def _project_link(self, binding: _Binding, entry: dict[str, Any]) -> None:
+        parent = self._project_parent(binding.source, entry["path"])
+        try:
+            name = entry["path"].rsplit("/", 1)[-1]
+            try:
+                info = os.stat(name, dir_fd=parent, follow_symlinks=False)
+            except FileNotFoundError:
+                os.symlink(entry["link_target"], name, dir_fd=parent)
+                os.fsync(parent)
+                return
+            if not stat.S_ISLNK(info.st_mode):
+                raise SupervisorError("PATH_DENIED")
+            if os.readlink(name, dir_fd=parent) != entry["link_target"]:
+                raise SupervisorError("PATH_DENIED")
+        finally:
+            os.close(parent)
+
+    def _project_file(self, binding: _Binding, view: _ProjectView, entry: dict[str, Any], deadline: float) -> None:
+        parent = self._project_parent(binding.source, entry["path"])
+        try:
+            name = entry["path"].rsplit("/", 1)[-1]
+            if self._project_matches(parent, name, entry):
+                return
+            source = self._open_relative(view.source, entry["path"])
+            temporary = f".{name}.{uuid4().hex}.publish"
+            created = False
+            target = -1
+            try:
+                target = os.open(
+                    temporary,
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+                    0o600,
+                    dir_fd=parent,
+                )
+                created = True
+                digest = hashlib.sha256()
+                size = 0
+                while True:
+                    _budget(deadline)
+                    raw = os.read(source, 65536)
+                    if not raw:
+                        break
+                    size += len(raw)
+                    if size > self._limits.max_file_bytes:
+                        raise SupervisorError("INPUT_POLICY")
+                    digest.update(raw)
+                    _write_all(target, raw)
+                if size != entry["size"] or digest.hexdigest() != entry["sha256"]:
+                    raise SupervisorError("CORRUPT_STATE")
+                os.fchmod(target, entry["mode"])
+                os.fsync(target)
+                os.close(target)
+                target = -1
+                os.replace(temporary, name, src_dir_fd=parent, dst_dir_fd=parent)
+                created = False
+                os.fsync(parent)
+            except OSError:
+                raise SupervisorError("DURABILITY_UNKNOWN") from None
+            finally:
+                if target != -1:
+                    os.close(target)
+                os.close(source)
+                if created:
+                    try:
+                        os.unlink(temporary, dir_fd=parent)
+                    except FileNotFoundError:
+                        pass
+        finally:
+            os.close(parent)
+
+    @staticmethod
+    def _project_matches(parent: int, name: str, entry: dict[str, Any]) -> bool:
+        """Idempotence oracle: exact bytes, mode and type, or the entry is rewritten."""
+        try:
+            info = os.stat(name, dir_fd=parent, follow_symlinks=False)
+        except FileNotFoundError:
+            return False
+        # Type first: a symlink, directory, special file or hard link at a file
+        # path is drift or an attack, never something a rewrite may clobber (D7).
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+            raise SupervisorError("PATH_DENIED")
+        if stat.S_IMODE(info.st_mode) != entry["mode"] or info.st_size != entry["size"]:
+            return False
+        fd = os.open(name, _FILE, dir_fd=parent)
+        try:
+            if _fingerprint(info) != _fingerprint(os.fstat(fd)):
+                return False
+            digest = hashlib.sha256()
+            while True:
+                raw = os.read(fd, 65536)
+                if not raw:
+                    break
+                digest.update(raw)
+            return bool(digest.hexdigest() == entry["sha256"])
+        finally:
+            os.close(fd)
+
+    def _project_tombstone(self, binding: _Binding, entry: dict[str, Any]) -> None:
+        try:
+            parent = self._project_parent(binding.source, entry["path"])
+        except FileNotFoundError:
+            return  # Ancestor already gone: the deletion is complete.
+        try:
+            name = entry["path"].rsplit("/", 1)[-1]
+            try:
+                info = os.stat(name, dir_fd=parent, follow_symlinks=False)
+            except FileNotFoundError:
+                return
+            if stat.S_ISDIR(info.st_mode):
+                os.rmdir(name, dir_fd=parent)
+            elif stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode):
+                os.unlink(name, dir_fd=parent)
+            else:
+                raise SupervisorError("PATH_DENIED")
+            os.fsync(parent)
+        except OSError:
+            raise SupervisorError("DURABILITY_UNKNOWN") from None
+        finally:
+            os.close(parent)
+
+    def _project_parent(self, root: int, path: str) -> int:
+        """Open the entry's parent without following a single component."""
+        try:
+            parts = _parts(path, self._limits.max_depth)
+        except ViewIOError as error:
+            raise SupervisorError(error.code) from None
+        if any(part in _PROTECTED_COMPONENTS for part in parts):
+            raise SupervisorError("PATH_DENIED")
+        if any(parts[: len(exclusion)] == exclusion for exclusion in self._excluded):
+            raise SupervisorError("PATH_DENIED")
+        fd = os.dup(root)
+        try:
+            for part in parts[:-1]:
+                previous = fd
+                fd = os.open(part, _DIRECTORY, dir_fd=previous)
+                os.close(previous)
+            return fd
+        except BaseException:
+            os.close(fd)
+            raise
+
+    def _open_relative(self, root: int, path: str) -> int:
+        """Open one existing file under `root`, refusing symlinked components."""
+        parent = self._project_parent(root, path)
+        try:
+            return os.open(path.rsplit("/", 1)[-1], _FILE, dir_fd=parent)
+        finally:
+            os.close(parent)
+
+    def _verify_projection(self, binding: _Binding, inputs: _PublishInputs, deadline: float) -> None:
+        """The complete canonical tree must equal the manifest's live entries."""
+        actual, digest = self._snapshot(binding.source, None, deadline)
+        live = [dict(entry) for entry in inputs.entries if not entry["deleted"]]
+        if len(actual) != len(live):
+            raise SupervisorError("CORRUPT_STATE")
+        for got, wanted in zip(actual, live, strict=True):
+            if got != wanted:
+                raise SupervisorError("CORRUPT_STATE")
+        if digest != inputs.tree_sha256:
+            raise SupervisorError("CORRUPT_STATE")
+
+    def _read_intent(self, fd: int) -> dict[str, Any] | None:
+        try:
+            return _read_json(fd, "intent.json", _INTENT, 1024**2)
+        except FileNotFoundError:
+            return None
+
+    def _write_intent(self, fd: int, intent: dict[str, Any]) -> None:
+        try:
+            _replace_private_bytes(fd, "intent.json", encode_json(intent))
+            if _read_json(fd, "intent.json", _INTENT, 1024**2) != intent:
+                raise SupervisorError("DURABILITY_UNKNOWN")
+        except (OSError, SupervisorError):
+            self._healthy = False
+            raise SupervisorError("DURABILITY_UNKNOWN") from None
+
+    def _set_intent_phase(self, fd: int, intent: dict[str, Any], phase: str) -> None:
+        self._write_intent(fd, {**intent, "phase": phase})
+
+    def _clear_intent(self, fd: int) -> None:
+        try:
+            os.unlink("intent.json", dir_fd=fd)
+            os.fsync(fd)
+        except (OSError, SupervisorError):
+            self._healthy = False
+            raise SupervisorError("DURABILITY_UNKNOWN") from None
+
+    def _discard_revision(self, binding: _Binding, revision_id: str) -> None:
+        revisions = os.open("revisions", _DIRECTORY, dir_fd=binding.fd)
+        try:
+            try:
+                child = os.open(revision_id, _DIRECTORY, dir_fd=revisions)
+            except FileNotFoundError:
+                return
+            os.close(child)
+        finally:
+            os.close(revisions)
+        try:
+            shutil.rmtree(self._state / "workspaces" / binding.metadata["workspace_id"] / "revisions" / revision_id)
+        except OSError:
+            self._healthy = False
+            raise SupervisorError("DURABILITY_UNKNOWN") from None
 
     def _execution_claim(
         self,

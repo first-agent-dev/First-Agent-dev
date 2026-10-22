@@ -461,7 +461,7 @@ reproducible by the command beside it:
 | CT declarations (17 FUNCTIONAL + 7 CONSTRAINT) | **24** | `grep -cE '^\s+CT[0-9]+[a-z]? \[(FUNCTIONAL|CONSTRAINT|PRESERVATION)\]' increments/increment-03-*.md` |
 | Declared `kill:` directives | **17** (one per FUNCTIONAL contract; a `grep -c 'kill:'` returns more because prose lines quote the word) | `grep -cE '^\s+kill: remove-call ' increments/increment-03-*.md` |
 | Closed wire operations | **19** | `grep -cE '^\s+[A-Z_]+ = "' src/fa/execution/primitives.py` |
-| E2E live surfaces / joins | **19 / 8** (E250 recorded 18/8; E267 added `publication.py` as I03-LIVE-19) | `grep -o 'I03-LIVE-[0-9]\{2\}' notes/e2e-live-verification-register.md \| sort -u \| wc -l` |
+| E2E live surfaces / joins | **20 / 8** (E250 recorded 18/8; E267 added `publication.py` as I03-LIVE-19; E269 added the publish path as I03-LIVE-20) | `grep -o 'I03-LIVE-[0-9]\{2\}' notes/e2e-live-verification-register.md \| sort -u \| wc -l` |
 | Six slices, thirty-five STEPs | **6 / 35** | `grep -cE '^- \[.\] STEP[0-9]+:' increments/increment-03-*.md` |
 
 If a later edit changes a count, the edit updates the table and the ledger entry that introduced the
@@ -701,8 +701,9 @@ changed are marked **(R)** with the reason.
   the value R1 validated) and `workspace.json` (still `OWNED`, same generation), replaces `current.json`
   with the five §5.1 keys `{schema_version:1, workspace_id, generation, revision_id, tree_sha256}`,
   read-back verifies. Then — **before the first canonical byte** — advances the intent to
-  `phase=PROJECTING`. `COMMITTED` is written only when projection is skipped (empty change set), and
-  `phase` remains advisory in every case: `current.json` alone discriminates whether the commit happened.
+  `phase=PROJECTING`. `COMMITTED` is **not** produced in E269: projection is always entered (and is a no-op when nothing
+  differs), so the phase goes `PREPARED → PROJECTING → DONE`. `phase` remains advisory in every case:
+  `current.json` alone discriminates whether the commit happened.
   A **determinate** pre-commit failure (CAS lost, generation moved) discards only this attempt's own
   `revisions/<derived>` and clears the intent, leaving `current.json` byte-identical.
 - **R7 projection is a pure function of the committed revision.** For each live entry: if the canonical
@@ -890,6 +891,54 @@ is publish → `release`.
   lines and inferring the rest. Mitigation is procedural: quote whole function bodies in evidence, and the
   R5/R6/R9 commit seam gets a second reader on the final diff, not on the plan.
 
+
+### E269 result — CT106 publish implemented and locally proved (SLICE3 STEP2)
+
+**Status: implemented as a local C1/C3 component. No STEP ticked, no contract `VERIFIED`, no live verdict,
+no deployment.** The dispatcher route, the bundle/Q58 half (STEP3) and restart recovery (STEP4) remain
+open, so SLICE2's provisioning leg is *not* closed by this.
+
+**What runs now.** `publication.publish_view` drives four durable boundaries, each its own authority
+transaction: `prepare_publish` (validate, zero writes) → `materialize_publication` (copy the frozen view
+source, verify every entry against the sealed manifest, install `revisions/<derived>`, write
+`intent.json` `PREPARED`) → `_commit_current` (CAS `current.json`, then `PROJECTING`) →
+`project_publication` (idempotent canonical projection, re-walk proof, `DONE`, clear intent,
+`PUBLISHED`, receipt). `verify_publication` is the `PUBLISHED` replay; `abandon_publication` discards only
+a provably uncommitted revision.
+
+**Evidence (all re-run at `HEAD`, commands in the ledger).** `tests/test_workspace_publication.py`
+**58 passed** (32 pre-existing CT104/CT105 + **26 new CT106 cases**); execution bank with it
+**1146 passed**; `ruff check`/`ruff format --check` clean; `mypy src/fa/execution` 19 files; `pyrefly` 0
+errors; `authoring check` `exit_code 0`, `diagnostics []`. **10/10 declared kills executed** with
+sha256-verified byte-exact restore (one needed a new oracle: see mutant 3 below).
+
+**Three implementation findings, recorded rather than smoothed over.**
+
+1. **D11 — destination-type pre-flight (implementation refinement of D7/D9).** The first draft let a
+   symlink-standing-where-a-file-must-go fail during projection, i.e. *after* the pointer, which
+   surfaced as `DURABILITY_UNKNOWN`. That is exactly the failure class D9 exists to prevent, so
+   `prepare_publish` now type-checks every non-deleted destination (regular single-link file / matching
+   symlink / directory) before the pointer and refuses `PATH_DENIED`. Judged a refinement, not a new
+   policy: same refusal, earlier and typed. **If the operator disagrees, this is the line to promote.**
+2. **`_derive_revision_id` lives in `workspace.py`.** The id names a directory under `revisions/`, so the
+   storage module owns the formula and `publication.derive_revision_id` delegates. One implementation
+   means a drifted derivation cannot silently disagree with itself (the E259/E264/E265 drift pattern).
+3. **`tree.json` never carries tombstones.** `_TREE` pins `deleted` to `False`, so the revision stores
+   the manifest's live entries only; tombstones stay a manifest/transport fact. Asserted in the happy
+   path rather than assumed.
+
+**Mutant 3 needed a new oracle, which is the interesting part.** Removing the manifest-vs-record
+cross-check survived the first sweep: every existing test failed *earlier*, either in the seal validator
+(a tampered digest) or in the copied-tree comparison (moved bytes). The cross-check only matters when a
+manifest is internally valid but belongs to another grant, so the new case seals two views of the same
+revision and copies one view's `sealed.json` into the other. Its identity fields are then the only thing
+standing between a sibling's provenance and this grant — `CORRUPT_STATE` at prepare, pointer untouched.
+
+**Explicitly not proved here.** No Docker/cgroup barrier, no dispatcher route, no restart recovery, no
+Q58/BOOTSTRAP path, no retention/GC, no live host. The "published but not released ⇒ restart quarantines"
+case is asserted as the STEP4 limit, and "publish → release ⇒ restart-clean" is the one claimed clean
+path. Register: `I03-LIVE-20` added (`PLANNED / UNEXECUTED`) with the full host choreography and the two
+negative controls; the S06 join row updated to say both halves now exist locally.
 
 ## Scope and ownership handoff
 
