@@ -10,12 +10,14 @@ import copy
 import hashlib
 import hmac
 import json
+import logging
 import math
 import socket
 import struct
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
+from enum import StrEnum
 from threading import Lock
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -45,6 +47,9 @@ from fa.execution.types import (
 
 if TYPE_CHECKING:
     from fa.execution.journal import OperationJournal
+    from fa.execution.workspace import WorkspaceAuthority
+
+logger = logging.getLogger(__name__)
 
 
 class ReplyUnavailableError(RuntimeError):
@@ -470,3 +475,129 @@ class SupervisorDispatcher:
             except (OSError, ExecutionContractError):
                 # Lost replies never roll back durable state or replay a handler.
                 return
+
+
+class TerminalVerdict(StrEnum):
+    """The only three answers a descendant observation may give.
+
+    There is no "probably" and no timeout-as-success: a view that cannot be
+    *observed* empty stays owned and unsealed.
+    """
+
+    TERMINAL = "terminal"
+    POPULATED = "populated"
+    UNKNOWN = "unknown"
+
+
+@dataclass(frozen=True)
+class ViewStopResult:
+    """Outcome of one stop flow. ``terminal`` is the only wire fact (STOP_VIEW)."""
+
+    view_id: str
+    terminal: bool
+    verdict: TerminalVerdict
+    reason: str | None = None
+
+    def to_wire(self) -> dict[str, Any]:
+        """The protocol's STOP_VIEW reply is exactly ``{view_id, terminal}``."""
+        return {"view_id": self.view_id, "terminal": self.terminal}
+
+
+class CellTermination(Protocol):
+    """Backend seam: stop this view's cells, then answer the kernel question.
+
+    Two methods, not one, because stopping is a request and emptiness is an
+    observation. ``cells_terminal`` returns True (proven empty), False (still
+    populated) or None (cannot tell); the caller never infers the first from the
+    other two.
+    """
+
+    def stop_cells(self, namespace: NamespaceRef, view_ref: ViewRef, *, deadline: float) -> None: ...
+
+    def cells_terminal(self, namespace: NamespaceRef, view_ref: ViewRef) -> bool | None: ...
+
+
+class ViewStopper:
+    """CT104's terminal barrier: close admission, drain, stop cells, then OBSERVE.
+
+    The authority stays the single owner of view state and of the durable
+    receipt; this class only decides *when* to ask it. Every step is bounded by
+    the caller's deadline and the flow is idempotent: a view that already has a
+    terminal receipt is returned as terminal without touching a cell.
+    """
+
+    def __init__(
+        self,
+        authority: WorkspaceAuthority,
+        *,
+        cells: CellTermination | None = None,
+        poll_interval_s: float = 0.05,
+    ) -> None:
+        # Lazy import: workspace imports this module for SupervisorError/PeerIdentity.
+        from fa.execution.workspace import WorkspaceAuthority
+
+        if not isinstance(authority, WorkspaceAuthority):
+            raise ExecutionContractError
+        if cells is not None and (
+            not callable(getattr(cells, "stop_cells", None)) or not callable(getattr(cells, "cells_terminal", None))
+        ):
+            raise ExecutionContractError
+        if type(poll_interval_s) is not float or not math.isfinite(poll_interval_s) or poll_interval_s <= 0:
+            raise ExecutionContractError
+        self._authority = authority
+        self._cells = cells
+        self._poll_interval_s = poll_interval_s
+
+    def stop_view(
+        self,
+        peer: PeerIdentity,
+        namespace: NamespaceRef,
+        *,
+        view_ref: ViewRef,
+        capability: str,
+        deadline: float,
+    ) -> ViewStopResult:
+        if not isinstance(namespace, NamespaceRef) or not isinstance(view_ref, ViewRef):
+            raise ExecutionContractError
+        _require_budget(deadline)
+        # Idempotence first: an already-proven view costs no cell traffic.
+        if self._authority.terminal_receipt(peer, namespace, view_ref=view_ref, capability=capability) is not None:
+            return ViewStopResult(view_ref.view_id, True, TerminalVerdict.TERMINAL, "already terminal")
+
+        # Irreversible closure, then a drained handler set. A drain that cannot
+        # finish inside the budget raises; the view then stays STOPPING, owned.
+        self._authority.close_admission(peer, namespace, view_ref=view_ref, capability=capability, deadline=deadline)
+        self._authority.drain(peer, namespace, view_ref=view_ref, capability=capability, deadline=deadline)
+
+        if self._cells is None:
+            return ViewStopResult(view_ref.view_id, False, TerminalVerdict.UNKNOWN, "no descendant observer configured")
+        self._cells.stop_cells(namespace, view_ref, deadline=deadline)
+        verdict, reason = self._wait_descendants_terminal(namespace, view_ref, deadline)
+        if verdict is not TerminalVerdict.TERMINAL:
+            return ViewStopResult(view_ref.view_id, False, verdict, reason)
+        self._authority.record_terminal(peer, namespace, view_ref=view_ref, capability=capability, deadline=deadline)
+        return ViewStopResult(view_ref.view_id, True, TerminalVerdict.TERMINAL)
+
+    def _wait_descendants_terminal(
+        self, namespace: NamespaceRef, view_ref: ViewRef, deadline: float
+    ) -> tuple[TerminalVerdict, str | None]:
+        """Poll the observation to the deadline; nothing but True is terminality."""
+        cells = self._cells
+        if cells is None:  # caller checked; keep mypy honest without an assert
+            return TerminalVerdict.UNKNOWN, "no descendant observer configured"
+        while True:
+            try:
+                observed = cells.cells_terminal(namespace, view_ref)
+            except Exception as exc:  # noqa: BLE001 - an unreadable kernel fact is UNKNOWN, not terminal
+                logger.warning("descendant observation failed for %s: %s", view_ref.view_id, exc)
+                return TerminalVerdict.UNKNOWN, "descendant observation failed"
+            if observed is True:
+                return TerminalVerdict.TERMINAL, None
+            if observed is None:
+                return TerminalVerdict.UNKNOWN, "descendant observation unavailable"
+            if observed is not False:
+                return TerminalVerdict.UNKNOWN, "descendant observation was not a verdict"
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return TerminalVerdict.POPULATED, "descendants still populated at the deadline"
+            time.sleep(min(self._poll_interval_s, remaining))

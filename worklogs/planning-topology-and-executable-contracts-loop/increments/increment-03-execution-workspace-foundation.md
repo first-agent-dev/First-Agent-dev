@@ -1746,3 +1746,117 @@ remains the host path until SLICE4 STEP2. The live verification plan for these c
 `PATH`-shim and `strace` oracles) is
 [notes/i03-live-e2e-test-plan-2026-10-22.md](../notes/i03-live-e2e-test-plan-2026-10-22.md).
 
+### E266 — SLICE3 STEP1 (part 1): the terminal barrier (CT104)
+
+**Idea implemented now.** Closing a view's write admission is already possible and already durable; what
+does not exist is the other half of the contract — proving the view's *cells* are dead before anything
+downstream treats the tree as frozen. This increment adds exactly that half: a stop flow that closes
+admission, drains live handlers, stops the view's cells, and then waits for a positive observation that
+the cgroup is empty before the view may become `TERMINAL`. Everything short of that observation leaves
+the view `STOPPING` (quarantined), because "we asked it to stop" is not terminality.
+
+**Contract/gap IDs.** CT104 (and its named producer `supervisor.py::stop_view ->
+_wait_descendants_terminal`); I03 SLICE3 STEP1 (terminal barrier/view state machine half; the seal and
+immutable-export half is the next increment); spec §4.2 ("actual terminality plus sealed-tree/protected-
+path validation is the publication authority").
+
+**Allowed files.** `src/fa/execution/workspace.py` (add `mark_terminal` only — the authority stays the
+single owner of view state), `src/fa/execution/supervisor.py` (`ViewStopper`, `CellTermination`,
+`TerminalVerdict`, `ViewStopResult`, `_wait_descendants_terminal`), new
+`tests/test_workspace_publication.py` (the plan's fixed filename for the local half), plan/ledger.
+Not touched: `publication.py` (seal/publish — next increment), `docker.py` (no cgroup reader yet), the
+backend, the CLI/service composition, any wire schema.
+
+**Current behaviour (source-verified).** `WorkspaceAuthority.close_admission` sets the per-view gate
+closed, moves `view.record["state"]` from `OPEN` to `STOPPING` with fsync + read-back, and turns every
+subsequent file operation into `VIEW_CLOSED` via `_live_view`. `drain` waits for the gate's active set
+and refuses if admission is not already closed. Nothing anywhere transitions `STOPPING` to anything
+else: `grep -rn "def stop_view\|_wait_descendants_terminal" src/fa/execution` is empty, `docker.py`
+documents "Deliberately no terminal_barrier: Docker stopped != cgroup populated=0", and
+`CellBackend.close` is a backend-wide teardown rather than a per-view stop plus observation. So a view
+can be admission-closed while its cells still write: the CT104 hole, exactly.
+
+**Target behaviour.** `stop_view` is the only path that may produce `TERMINAL`, and it produces it only
+after: (1) irreversible admission closure, (2) a drained handler set, (3) a stop call for the view's
+cells, (4) a *positive* observation of descendant emptiness inside the remaining budget. A view whose
+cells are still populated, whose observation is unavailable, whose observer raises, or whose budget runs
+out stays `STOPPING` and keeps its ownership — no release, no seal, no reuse. A `TERMINAL` view is
+idempotent: stopping it again touches no cell. `mark_terminal` alone can advance `STOPPING`, never
+`OPEN`, so the barrier cannot be short-circuited by calling the state transition directly.
+
+**Exact mechanism.** `WorkspaceAuthority.mark_terminal(peer, namespace, *, view_ref, capability,
+deadline)`: proof, then `VIEW_CLOSED` unless the gate is closed; `OPEN` is refused explicitly; `TERMINAL`
+is a no-op; otherwise rewrite `view.json` through the existing `_replace_private_bytes` and read it back —
+a mismatch or OS error marks the authority unhealthy and raises `DURABILITY_UNKNOWN`, exactly as
+`close_admission` does. `supervisor.CellTermination` is the two-method seam the real backend will
+implement (`stop_cells`, `cells_terminal -> bool | None`; `None` means "cannot tell"). `ViewStopper
+.stop_view` sequences close → drain → stop → `_wait_descendants_terminal` → `mark_terminal`, and returns a
+frozen `ViewStopResult{state, verdict, reason}`. `_wait_descendants_terminal` polls on a small interval
+until the deadline, treating `False` as "not yet", `None` and any exception as `UNKNOWN`, and the deadline
+itself as `UNKNOWN` — never as success.
+
+**Production best practice.** The state owner stays single: the authority writes view records, the
+stopper only decides when to ask it to. The barrier is an injected seam because the observation is a
+kernel fact that cannot be faked in-process; a missing seam is a closed refusal, not a bypass. Polling
+exists because stopping a container is asynchronous — the API returning is explicitly not the kernel
+fact. And the whole flow is bounded: a hung observer must not hang the supervisor.
+
+**Failure behaviour.** Live cells → `POPULATED`, state `STOPPING`, ownership retained. Observer absent,
+raising, or unreadable → `UNKNOWN`, state `STOPPING`. Budget exhausted while draining or observing →
+`SupervisorError` from the drain or `UNKNOWN` from the observation; either way nothing is marked. Record
+persistence failure at the mark → `DURABILITY_UNKNOWN` and the authority goes unhealthy. Repeated stop on
+a `TERMINAL` view → `TERMINAL` with no cell traffic.
+
+**DoD and negative proof.** New tests (C0 for `mark_terminal`, C3 for the orchestration over the real
+authority, real view records on disk and a recording barrier): write denial is observable *at* cell-stop
+time (proving admission closed first); polling continues until a positive observation; a populated view
+stays `STOPPING` with its on-disk record unchanged; an exception is `UNKNOWN`; no observer is `UNKNOWN`
+and stops no cells; a terminal view is idempotent; `mark_terminal` refuses `OPEN`, is idempotent for
+`TERMINAL`, and persists durably. Negative proofs: deleting the `close_admission`, `drain`, or
+`stop_cells` call, treating `None`/exception as terminal, treating a deadline as terminal, or dropping
+`mark_terminal`'s state guard each breaks a named assertion. Classes: C0 + C3. The kernel fact
+(`/sys/fs/cgroup/**/cgroup.events` `populated 0`) is C-host and belongs to
+`tests/integration/test_publication_recovery.py` under `FA_REQUIRE_EXECUTION_HOST=1`; it is NOT claimed
+here and the local tests use an observer double only where the observation is genuinely external.
+
+**Not closed.** Seal and immutable-export validation (CT105), publish (CT106), recovery (CT107), the real
+cgroup reader and the Docker-backed `CellTermination`, "restart cannot release a live old writer"
+(durability of the stop intent), and every live row.
+
+#### E266 result — the barrier exists, and two "obvious" oracles had to be replaced
+
+**Shipped.** `WorkspaceAuthority.record_terminal` / `terminal_receipt` (a durable, separate
+`terminal.json` receipt; the view keeps the closed state vocabulary the protocol publishes) and
+`supervisor.ViewStopper` with `stop_view` + `_wait_descendants_terminal`, the `CellTermination`
+seam and typed `TerminalVerdict` / `ViewStopResult` (`to_wire()` == the protocol's `{view_id,
+terminal}`). Every path that cannot *observe* emptiness leaves the view `STOPPING` and owned.
+
+**Evidence (actual outputs).** `pytest tests/test_workspace_publication.py` → 11 passed. Execution
+bank (`workspace`, `views`, `readers`, `purposes`, `view_io`, `backend`, `journal`, `dispatch`,
+`client`, `supervisor`) → 643 passed. Statics: `ruff check src tests` → All checks passed;
+`ruff format --check` → 506 files clean; project `mypy` → Success, 494 source files; `pyrefly check`
+→ 0 errors. Targeted mutation: **9/9 assertion-only kills**, sources restored byte-exact.
+
+**Findings the work forced.**
+1. *A receipt, not a state.* My first design minted a `TERMINAL` view state; the compiled
+   `_VIEW_RECORD` schema publishes the closed set `OPEN/STOPPING/SEALED/PUBLISHED/REJECTED/UNKNOWN`,
+   so terminality had to become a **separate durable receipt** that sealing will consume. This is the
+   better contract anyway: terminality is a precondition of seal, not a view phase.
+2. *`drain` is load-bearing only for dispatch work.* Under the authority mutex a file handler
+   serializes against `close_admission`, so "skip the drain" was initially an **equivalent mutant**.
+   The real window is a `WorkAdmission` held across create/start/send (outside the mutex); the test
+   that holds one proves cells are not stopped under a live dispatch. Without that test the drain
+   call could have been deleted with no red anywhere.
+3. *A read-back needs a non-persisting write to be observable.* Deleting the post-write verification
+   survived until a test replaced `_replace_private_bytes` with a no-op and required
+   `DURABILITY_UNKNOWN` — the honest oracle for "the write claimed success but did not land".
+4. *Three mutation expectations named the wrong test.* The mutants were killed, but by the new
+   cases, not the ones listed. The `expect` lists now name the test that actually holds each
+   producer; a kill attributed to a test that does not assert the property is not evidence.
+
+**Not closed.** Seal and immutable-export validation (CT105), publish (CT106), recovery (CT107), the
+Docker-backed `CellTermination` + real cgroup reader (C-host, `tests/integration/test_publication_recovery.py`
+under `FA_REQUIRE_EXECUTION_HOST=1`), "restart cannot release a live old writer", STEP5's full-bank
+kills, and every live row (18 surfaces / 8 joins still `PLANNED / UNEXECUTED`). Nothing composes
+`ViewStopper` into the service yet: `STOP_VIEW` has an encoded reply but no dispatcher route.
+

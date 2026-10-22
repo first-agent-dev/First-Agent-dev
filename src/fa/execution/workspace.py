@@ -131,6 +131,11 @@ _VIEW_RECORD = fastjsonschema.compile(
     )
 )
 
+# Terminality is a *precondition of sealing*, not a view state: the state
+# vocabulary above is the closed one the protocol publishes, so the barrier
+# records its positive observation in its own small receipt file.
+_TERMINAL_RECEIPT = fastjsonschema.compile(_object(schema_version={"type": "integer", "const": 1}, view_ref=VIEW))
+
 # E259: the closed create_view matrix. One row per approved purpose; every
 # other (purpose, access, plan, scope) combination is INPUT_POLICY before any
 # filesystem effect. The authority revalidates independently of the codec.
@@ -401,6 +406,14 @@ def _private(fd: int, *, directory: bool = True) -> None:
     kind = stat.S_ISDIR(info.st_mode) if directory else stat.S_ISREG(info.st_mode) and info.st_nlink == 1
     if not kind or info.st_uid != os.getuid() or info.st_mode & 0o077:
         raise SupervisorError("CORRUPT_STATE")
+
+
+def _terminal_record(directory: int) -> dict[str, Any] | None:
+    """The durable "descendants observed empty" receipt, or None when absent."""
+    try:
+        return _read_json(directory, "terminal.json", _TERMINAL_RECEIPT, 1024)
+    except FileNotFoundError:
+        return None
 
 
 def _read_json(fd: int, name: str, validator: Callable[..., Any], limit: int) -> dict[str, Any]:
@@ -2096,6 +2109,42 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
             if not self._gate(view_ref).closed:
                 raise SupervisorError("VIEW_CLOSED")
             self._wait_drained(view_ref, deadline)
+
+    def record_terminal(
+        self, peer: PeerIdentity, namespace: NamespaceRef, *, view_ref: ViewRef, capability: str, deadline: float
+    ) -> dict[str, Any]:
+        """Durably record that this view's descendants were observed empty.
+
+        Deliberately NOT a view state: ``view.json`` keeps the closed vocabulary
+        the protocol publishes, and terminality is a precondition of sealing.
+        An OPEN view (or one whose admission is still open) is refused, so this
+        cannot be used to skip close/drain; an existing receipt is returned
+        unchanged, so a retried stop pays no second write. A failed rewrite is
+        uncertainty, never permission to retry into a success.
+        """
+        with self._transaction(peer, deadline):
+            view = self._proof_only(peer, namespace, view_ref, capability)
+            if view.record["state"] == "OPEN" or not self._gate(view_ref).closed:
+                raise SupervisorError("VIEW_CLOSED")
+            existing = _terminal_record(view.directory)
+            if existing is not None:
+                return existing
+            receipt = {"schema_version": 1, "view_ref": view_ref.to_dict()}
+            try:
+                _replace_private_bytes(view.directory, "terminal.json", encode_json(receipt))
+                if _terminal_record(view.directory) != receipt:
+                    raise SupervisorError("DURABILITY_UNKNOWN")
+                _budget(deadline)
+            except (OSError, SupervisorError):
+                self._healthy = False
+                raise SupervisorError("DURABILITY_UNKNOWN") from None
+            return receipt
+
+    def terminal_receipt(
+        self, peer: PeerIdentity, namespace: NamespaceRef, *, view_ref: ViewRef, capability: str
+    ) -> dict[str, Any] | None:
+        """Read-only: the receipt for this exact view, or None."""
+        return _terminal_record(self._proof_only(peer, namespace, view_ref, capability).directory)
 
     def _execution_claim(
         self,

@@ -3870,3 +3870,29 @@ construction.
 **Not closed.** Part B-2 (PTY parity/blackboard, needs the real cell), seal/import alias (SLICE3), STEP5,
 all live rows, STEP boxes and FUNCTIONAL contracts. No service composes the port yet.
 
+### E266 — SLICE3 STEP1 (part 1): declaration
+
+Terminal barrier: `ViewStopper.stop_view` = close admission → drain → stop the view's cells → positive
+descendant observation → `mark_terminal`; anything less leaves the view `STOPPING` and owned.
+`WorkspaceAuthority.mark_terminal` is the single durable state transition (STOPPING→TERMINAL only).
+Files: `execution/workspace.py`, `execution/supervisor.py`, new `tests/test_workspace_publication.py`.
+Seal/publish (CT105/106), recovery (CT107) and the real cgroup reader remain open.
+
+### E266 — SLICE3 STEP1 (part 1): result
+
+**Shipped.** `record_terminal`/`terminal_receipt` (durable `terminal.json` receipt, view state stays in the
+protocol's closed vocabulary) and `ViewStopper.stop_view` + `_wait_descendants_terminal` with the
+`CellTermination` seam and typed verdicts. Files: `execution/workspace.py`, `execution/supervisor.py`,
+new `tests/test_workspace_publication.py`.
+
+**Evidence.** 11 passed in the new module, 643 in the execution bank; ruff/format clean; mypy 494 files;
+pyrefly 0 errors; **9/9 assertion-only mutation kills**.
+
+**Recorded findings.** (1) terminality is a receipt, not a state (the schema's vocabulary is closed);
+(2) `drain` is only observable through a held `WorkAdmission` — a file handler serializes on the mutex,
+so the naive mutant was equivalent; (3) the read-back check needs a non-persisting write to be seen;
+(4) three mutation expectations had to be re-attributed to the tests that actually hold the property.
+
+**Not closed.** Seal (CT105), publish (CT106), recovery (CT107), the real Docker/cgroup barrier, restart
+durability, STEP5, and all live rows. `STOP_VIEW` still has no dispatcher route.
+
