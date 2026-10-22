@@ -342,7 +342,7 @@ FA_REQUIRE_EXECUTION_HOST=1 uv run pytest tests/integration/test_publication_rec
 ```
 - [ ] STEP1: implement selected Q74 per-stage/episode checkpoint policy and spec §6.1 stage transition table; implement terminal barrier/view state machine and immutable export validation in execution/publication.py plus supervisor.py::stop_view -> _wait_descendants_terminal (CT104's named producers). **Progress and the remaining parts of THIS step:** the terminal barrier shipped in E266 and the immutable export/seal in E267 (both local C0/C3); what STEP1 still owes is (a) the Q74 per-stage/episode checkpoint policy wired to §6.1's transition table, (b) the real Docker/cgroup `CellTermination` implementation behind the existing seam, and (c) `tests/integration/test_publication_recovery.py` running the kernel-observed barrier under `FA_REQUIRE_EXECUTION_HOST=1`. STEP1 is one step with three parts, not one checkbox per part; it closes only when all three exist, and (b)/(c) are host-blocked in any session without an approved Docker daemon. Test split is fixed, no guessing: the view-state machine and immutable export validation run in tests/test_workspace_publication.py over the real local worker/attach cells (E258's fixture pattern) and prove seal/publish is refused while any handler or cell is unsettled; the actual cgroup-populated-empty descendant barrier runs only in tests/integration/test_publication_recovery.py under FA_REQUIRE_EXECUTION_HOST=1 (kernel fact, never mocked). Tests launch fork/double-fork/setsid/background writers in real cells and hold active file operations (exit: none can seal/publish while still writable)
 - [ ] STEP2: implement exact intent/current/projection schemas/order/dir fsync and generation/base CAS per spec §5, including canonical Git-index preservation and spec §5.1 exact Q58/bootstrap forward-recovery phases. Materialize Rnext **from the sealed manifest**, re-verifying every digest against the view's frozen source, and materialize it under the id `seal_view` derived (`derive_revision_id`), never a caller-supplied id; the irreversible point for an ordinary revision is the `current.json` replace, and the recovery discriminator is `current.json`, not the phase value. Publish flips the view record to `PUBLISHED` and thereby **settles the owner**: `release_unused_writer` accepts only PUBLISHED/REJECTED WRITE views and refuses OPEN/STOPPING/UNKNOWN/SEALED (retained predicate from the E268 review) (exit: complete old/new pinned-reader and stale/fault unit matrix passes; publishing a SEALED view makes a subsequent `release` succeed and a later re-claim advance generation; publishing a view whose manifest hash or source bytes moved is `CORRUPT_STATE` with no `current.json` change)
-- [ ] STEP3: integrate the existing inner_loop/plan_promotion.py Q58 buffer/hash/promotion primitives and this authority's no-clobber bundle primitives (execution/publication.py::prepare_bundle / install_project, per §5's bundle handoff; §1 already assigns no-clobber project install to publication.py) with the same authority; no managed-acquisition UI/protocol before SLICE5 integration (exit: direct controller-authorized tests prove collisions preserve old bytes and post-commit failure never rolls back). **Progress and what this step still owes:** the bundle renderer/store (E271), the `RENAME_NOREPLACE` install under the Q82 (B) ruling (E271 unit B) and the same-path plan replacement with its forward-only commit (E273) are implemented and locally proved. What remains is the controller leg — `_promote_validated_plan` still calls `inner_loop/plan_promotion.publish_plan_buffer` directly and must be moved onto the authority once the dispatcher route exists (SLICE1 STEP3), deleting that transport in the same change so exactly one writer owns the canonical plan. The step closes only when that leg is proved end to end; the two components above are not a substitute for it.
+- [ ] STEP3: integrate the existing inner_loop/plan_promotion.py Q58 buffer/hash/promotion primitives and this authority's no-clobber bundle primitives (execution/publication.py::prepare_bundle / install_project, per §5's bundle handoff; §1 already assigns no-clobber project install to publication.py) with the same authority; no managed-acquisition UI/protocol before SLICE5 integration (exit: direct controller-authorized tests prove collisions preserve old bytes and post-commit failure never rolls back). **Progress and what this step still owes:** the bundle renderer/store (E271), the `RENAME_NOREPLACE` install under the Q82 (B) ruling (E271 unit B) and the same-path plan replacement with its forward-only commit (E273) are implemented and locally proved. The dispatcher's pre-reservation `authorize` seam is now real (E274); what remains is the nineteen route handlers plus `build_supervisor/main`, and then the controller leg — `_promote_validated_plan` still calls `inner_loop/plan_promotion.publish_plan_buffer` directly and must be moved onto the authority's `publish` of a CANDIDATE view, deleting that transport in the same change so exactly one writer owns the canonical plan. The step closes only when that leg is proved end to end; the components above are not a substitute for it.
 - [ ] STEP4: recover from supervisor/process death at each durable boundary, before/after pointer replace and during projection; require approved filesystem and separately label process-crash versus power-loss evidence. The hook points are fixed by existing code: `WorkspaceAuthority.__enter__` calls `journal.recover_uncertain()` then `_load()`, and `_load` currently QUARANTINES every `OWNED` workspace with no forward path — `recover_workspace` must run there, before the quarantine decision, for every workspace with `intent.json`; and `_initialize_genesis` already refuses a non-empty `views/` or a present `intent.json`, so nothing else may assume a pristine workspace. Stale `pending/` staging from a hard kill is NEVER swept today (`__enter__` creates the directory and moves on), so recovery must also classify those directories as owned scratch (discard) versus unknown (quarantine), and must not delete a directory referencing a committed revision (exit: real recovery tests expose only complete current revisions or quarantine, no success from uncertain state; a killed supervisor mid-projection leaves no orphan `pending/` entry that a later authority silently ignores)
 - [ ] STEP5: record full declared-path CT104–CT107 kills and cleanup/ownership evidence (exit: all four producers killed by useful executed oracles; no cells/pins/intent abandoned without disposition)
 
@@ -461,7 +461,7 @@ reproducible by the command beside it:
 | CT declarations (17 FUNCTIONAL + 7 CONSTRAINT) | **24** | `grep -cE '^\s+CT[0-9]+[a-z]? \[(FUNCTIONAL|CONSTRAINT|PRESERVATION)\]' increments/increment-03-*.md` |
 | Declared `kill:` directives | **17** (one per FUNCTIONAL contract; a `grep -c 'kill:'` returns more because prose lines quote the word) | `grep -cE '^\s+kill: remove-call ' increments/increment-03-*.md` |
 | Closed wire operations | **19** | `grep -cE '^\s+[A-Z_]+ = "' src/fa/execution/primitives.py` |
-| E2E live surfaces / joins | **23 / 8** (E250 recorded 18/8; E267 added `publication.py` as I03-LIVE-19; E269 the publish path as I03-LIVE-20; E271 the bundle path as I03-LIVE-21; E272 the install path as I03-LIVE-22; E273 the plan-replacement path as I03-LIVE-23) | `grep -o 'I03-LIVE-[0-9]\{2\}' notes/e2e-live-verification-register.md \| sort -u \| wc -l` |
+| E2E live surfaces / joins | **24 / 8** (E250 recorded 18/8; E267 added `publication.py` as I03-LIVE-19; E269 the publish path as I03-LIVE-20; E271 the bundle path as I03-LIVE-21; E272 the install path as I03-LIVE-22; E273 the plan-replacement path as I03-LIVE-23; E274 the authorizer as I03-LIVE-24) | `grep -o 'I03-LIVE-[0-9]\{2\}' notes/e2e-live-verification-register.md \| sort -u \| wc -l` |
 | Six slices, thirty-five STEPs | **6 / 35** | `grep -cE '^- \[.\] STEP[0-9]+:' increments/increment-03-*.md` |
 
 If a later edit changes a count, the edit updates the table and the ledger entry that introduced the
@@ -1131,12 +1131,66 @@ canonical-vs-revision drift refusal, which is asserted).
 
 **Deliberately not done, with the reason.** The controller leg: `_promote_validated_plan` still calls
 `inner_loop/plan_promotion.publish_plan_buffer` directly, because the authority route needs the dispatcher
-(SLICE1 STEP3) and a controller-side client handle. Until that lands, the transitional rule is explicit: the
+(SLICE1 STEP3) and a controller-side client handle. That route is the **`publish` of a CANDIDATE view**
+(§5: "publish of CANDIDATE uses PLAN intent at the scoped canonical PlanRef path"), not a twentieth
+operation — the closed enum stays nineteen, so `publish_plan` is the authority's primitive and never a
+wire verb. Until the route lands, the transitional rule is explicit: the
 authority refuses any seal whose plan bytes moved outside it (`_validate_plan_boundary`), so mixing the two
 writers fails closed instead of silently forking the plan; the switch to a single writer must delete
 `publish_plan_buffer`, not keep it as a fallback. Recovery of a `PLAN` intent is CT107/STEP4 — the intent this
 unit leaves is its input. `I03-LIVE-23` is PLANNED / UNEXECUTED: no Docker/cgroup barrier, no installed
 service, no restart.
+
+### E274 result — SLICE1 STEP3 part 1: the pre-reservation authority check (CT99)
+
+**Status: the dispatcher's `authorize` seam is real. STEP3 is NOT done — the nineteen handlers and
+`build_supervisor/main` are the next part — and nothing here ticks a STEP or assigns a CT verdict.**
+
+**What was missing.** `SupervisorDispatcher` existed with an injected `authorize`/`handle` pair, but
+every construction of it was a test double (`tests/test_execution_dispatch.py`,
+`tests/test_execution_context.py`): "authorized" meant "a fixture said so", and the authority's grants
+were only proved *inside* each handler, after a journal reservation. A request that could never own
+anything therefore still consumed a reservation.
+
+**What runs now.** `WorkspaceAuthority.authorize(peer, request, *, deadline)` — CT99's
+`_authorize_request` owner — decodes the closed envelope, proves the grant the operation names
+(`_owner_only` for a view-less request, `_proof_only` for a view-scoped one; `RELEASE` therefore keeps
+exactly its two shapes without a special case), and returns the **stored** `ProtectedPlanContext` for
+`pin_reader`, `create_view` and `exec`, rechecked against the pinned bytes. It reserves nothing, mints
+nothing, writes nothing, and is not admission: every state rule (view state, publication ordering,
+collision, CAS) stays with the handler, which re-proves under its own transaction.
+
+**The layering decision, found by two survivors.** The first version also re-derived the §2.1 envelope
+shape inside the authorizer (`_VIEWLESS_OPERATIONS`, `_CAPABILITY_FREE_OPERATIONS`). Three mutants
+survived because those rules **could never fire**: `authorize` decodes with the same
+`decode_request` the dispatcher uses, and that decoder already enforces the null-capability set, the
+null-namespace-only-for-health rule and the null-view set. The tables and the duplicate checks are
+deleted: the closed wire decoder owns shape, the authority owns proof. The cases stay in the bank as
+the composed guarantee (they must still refuse `INVALID_REQUEST`), but they no longer pretend to kill a
+second implementation. Two further mutants were retargeted rather than dropped: "any live view instead
+of this one" and "namespace not proved" (the second needed a unique anchor inside `_proof_only`).
+
+**One boundary default recorded.** The wire carries no formal-evidence claim, so a plan context built
+on the wire has `formal_evidence=False`; only the internal API can set it true. A wire request can
+therefore bind a plan but can never claim formal evidence for it.
+
+**Classification is derived, not retyped.** `supervisor.py` now owns `READONLY_OPERATIONS` and
+`AUTHORITY_GATED_OPERATIONS`; the dispatcher refuses to construct if a mutator could ever be classified
+readonly, and `_dispatch` uses the constant instead of an inline literal set.
+
+**Evidence.** `tests/test_workspace_authorize.py` **10 passed** (C1 over the real authority, C0 for the
+classification); execution bank + publication + this bank **1200 passed**; `ruff check`/`format --check`
+clean; `mypy src/fa/execution` 19 files; `pyrefly check src/fa/execution` 0 errors; `fa authoring-check`
+`exit_code 0`, `diagnostics 0`. **7/7 mutants killed** with sha256-verified byte-exact restore: no owner
+proof, any live view instead of this one, no workspace claim check, namespace not proved, pin context
+not proved, exec context not proved, named revision not opened.
+
+**Deliberately not done, with the reason.** The nineteen `handle` routes and `build_supervisor/main`:
+each route needs its own reply-shape proof, and shipping a table of half-wired owners would be the
+"failing-main stub" §4 forbids. Also untouched: service config/install/image and the atomic caller
+cutover (SLICE4), and the CANDIDATE `publish` leg that carries Q58's plan replacement onto the wire —
+that is the `publish` route for a CANDIDATE view (§5), **not** a twentieth operation; the closed enum
+stays nineteen. `I03-LIVE-24` is PLANNED / UNEXECUTED: no installed service, no UDS, no restart.
 
 ## Scope and ownership handoff
 

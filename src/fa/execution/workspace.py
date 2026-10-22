@@ -255,6 +255,14 @@ def _require_manifest_match(copied: Sequence[dict[str, Any]], sealed: Sequence[M
             raise SupervisorError("CORRUPT_STATE")
 
 
+def _recheck_context(context: ProtectedPlanContext) -> None:
+    """A plan-bound pre-flight proves the plan bytes it is about to authorize."""
+    try:
+        context.recheck()
+    except ExecutionContractError:
+        raise SupervisorError("INPUT_POLICY") from None
+
+
 def _plan_ref_dict(plan_ref: PlanRef) -> dict[str, str]:
     return {
         "workspace_relative_path": plan_ref.workspace_relative_path,
@@ -4188,6 +4196,132 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
             or record["view_ref"] != ref.to_dict()
         ):
             raise SupervisorError("EXECUTION_UNKNOWN")
+
+    # -- Wire authorization (SLICE1 STEP3): the pre-reservation authority check --
+
+    def authorize(self, peer: PeerIdentity, request: dict[str, Any], *, deadline: float) -> ProtectedPlanContext | None:
+        """Prove this exact request may reserve work; never reserve or start it.
+
+        CT99's `_authorize_request` owner. The closed wire decoder owns the
+        envelope shape (§2.1, including which operations may omit a view or a
+        capability); this owns proof: it proves the grant the operation names and
+        returns the *stored*
+        `ProtectedPlanContext` for the operations that bind a plan. It is not a
+        second policy engine and it is not admission: every operation-specific
+        state rule (view state, publication ordering, collision, CAS) stays with
+        its handler, which re-proves under its own transaction, and a pass here
+        authorizes nothing on its own.
+        """
+        try:
+            req = decode_request(encode_json(request))
+        except ExecutionContractError:
+            raise SupervisorError("INVALID_REQUEST") from None
+        operation = Operation(req["op"])
+        if operation is Operation.HEALTH:
+            # The one operation with no namespace, view or grant at all; the
+            # decoder already refused any envelope that gives it one.
+            return None
+        if req["namespace"] is None:  # decoder-proved; kept so the type is honest
+            raise SupervisorError("INVALID_REQUEST")
+        namespace = NamespaceRef(**req["namespace"])
+        with self._transaction(peer, deadline):
+            return self._authorize_operation(peer, namespace, operation, req, deadline)
+
+    def _authorize_operation(
+        self,
+        peer: PeerIdentity,
+        namespace: NamespaceRef,
+        operation: Operation,
+        req: Mapping[str, Any],
+        deadline: float,
+    ) -> ProtectedPlanContext | None:
+        payload = req["payload"]
+        view_data = req["view_ref"]
+        try:
+            view = None if view_data is None else ViewRef.from_dict(view_data)
+        except ExecutionContractError:
+            raise SupervisorError("INVALID_REQUEST") from None
+        capability = req["capability"]
+
+        if view is None:
+            # The closed decoder has already proved the envelope shape (§2.1):
+            # a null view_ref is legal only for the owner/pre-grant operations,
+            # and a null capability only for the pre-grant ones. This side owns
+            # proof, not shape. A view-less request is either pre-grant, or
+            # proved against this workspace's OWNER grant — never against the
+            # payload's claim that it owns something.
+            binding = None if capability is None else self._owner_only(peer, namespace, capability)
+            claimed = payload.get("workspace_id")
+            # Only a proved grant can contradict the claim; the pre-grant
+            # operations have no binding yet and are authorized by the controller
+            # identity alone (§2.1), so there is nothing to compare there.
+            if claimed is not None and binding is not None and binding.metadata["workspace_id"] != claimed:
+                raise SupervisorError("UNAUTHORIZED")
+            if operation is Operation.PIN_READER:
+                binding = self._binding(payload["workspace_id"])
+                self._recheck(binding)
+                return self._pinned_plan_context(binding, payload["revision_id"], payload["plan_ref"], deadline)
+            if operation is Operation.CREATE_VIEW:
+                if binding is None:  # capability-free create is impossible by §2.1
+                    raise SupervisorError("UNAUTHORIZED")
+                return self._pinned_plan_context(binding, payload["base_revision"], payload["plan_ref"], deadline)
+            return None
+
+        # View-scoped: the exact actor/view/access binding, nothing weaker.
+        proved = self._proof_only(peer, namespace, view, capability)
+        if operation is Operation.EXEC:
+            # EXEC binds the plan the VIEW was admitted with, never a claim in
+            # the payload (there is no plan field on the wire for it).
+            context = proved.context
+            _recheck_context(context)
+            return context
+        return None
+
+    def _pinned_plan_context(
+        self,
+        binding: _Binding,
+        revision_id: str,
+        plan_ref: Mapping[str, Any] | None,
+        deadline: float,
+    ) -> ProtectedPlanContext:
+        """The plan context of the revision a pre-view operation names.
+
+        Authorization is not integrity: the revision's own full proof stays with
+        `_revision` in the handler. Here the service only has to prove that the
+        root it hands out is this workspace's own immutable revision data.
+        """
+        _hex_id(revision_id, "rev-")
+        _budget(deadline)
+        try:
+            revisions = os.open("revisions", _DIRECTORY, dir_fd=binding.fd)
+        except OSError:
+            raise SupervisorError("CORRUPT_STATE") from None
+        try:
+            try:
+                revision = os.open(revision_id, _DIRECTORY, dir_fd=revisions)
+            except FileNotFoundError:
+                raise SupervisorError("STALE_REVISION") from None
+            except OSError:
+                raise SupervisorError("PATH_DENIED") from None
+        finally:
+            os.close(revisions)
+        try:
+            _private(revision)  # this service's own private revision, no links
+            os.close(revision)
+        except OSError:
+            raise SupervisorError("PATH_DENIED") from None
+        try:
+            context = ProtectedPlanContext(
+                self._state / "workspaces" / binding.metadata["workspace_id"] / "revisions" / revision_id / "data",
+                None if plan_ref is None else PlanRef(**plan_ref),
+                False,  # the wire carries no formal-evidence claim; only the internal API sets it
+            )
+        except ExecutionContractError:
+            raise SupervisorError("INPUT_POLICY") from None
+        # The plan the operation will bind is proved here, so a stale or missing
+        # plan costs no reservation (the handler re-proves it anyway).
+        _recheck_context(context)
+        return context
 
     def admit(self, peer: PeerIdentity, request: dict[str, Any], *, deadline: float) -> WorkAdmission:
         """Actual bounded command-dispatch admission for CellBackend, not a RUN sender."""

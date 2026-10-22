@@ -232,6 +232,25 @@ class RequestHandler(Protocol):
     ) -> GrantReply | dict[str, Any]: ...
 
 
+# Spec §2.1 / E268: the operations that mutate canonical or supervisor state and
+# therefore MUST pass the authority check before any reservation. Derived from
+# the closed enum and validated at construction, never a parallel string list.
+AUTHORITY_GATED_OPERATIONS = frozenset(
+    {
+        Operation.STOP_VIEW,
+        Operation.SEAL,
+        Operation.PUBLISH,
+        Operation.INSTALL_PROJECT,
+        Operation.PREPARE_BUNDLE,
+        Operation.HANDOFF,
+        Operation.RELEASE,
+    }
+)
+# The only operations the dispatcher may serve without a durable reservation:
+# health, an immutable read, and observation of an already-reserved operation.
+READONLY_OPERATIONS = frozenset({Operation.HEALTH, Operation.READ_FILE, Operation.INSPECT})
+
+
 def _require_budget(deadline: float) -> None:
     if type(deadline) not in {int, float} or not math.isfinite(deadline):
         raise ExecutionContractError
@@ -265,6 +284,10 @@ class SupervisorDispatcher:
         if not profiles or len({profile.profile_id for profile in profiles}) != len(profiles):
             raise ExecutionContractError
         if not callable(authorize) or not callable(handle):
+            raise ExecutionContractError
+        # A classed-as-readonly mutator would skip the authority check and the
+        # reservation entirely, so the classification is refused, not repaired.
+        if not AUTHORITY_GATED_OPERATIONS <= frozenset(Operation) or READONLY_OPERATIONS & AUTHORITY_GATED_OPERATIONS:
             raise ExecutionContractError
         self._uids = frozenset(client_uids)
         self._timeout_ms = rpc_timeout_ms
@@ -385,7 +408,7 @@ class SupervisorDispatcher:
         namespace: NamespaceRef | None = None
         try:
             operation = Operation(request["op"])
-            readonly = operation in {Operation.HEALTH, Operation.READ_FILE, Operation.INSPECT}
+            readonly = operation in READONLY_OPERATIONS
             readonly = readonly or (operation is Operation.PTY_CONTROL and request["payload"]["action"] == "LIST")
             if readonly:
                 self._authorize_request(peer, request, deadline=deadline)
