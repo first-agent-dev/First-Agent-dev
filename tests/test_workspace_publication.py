@@ -2112,3 +2112,317 @@ def test_owner_only_finds_the_binding_whose_grant_matches(site: Site) -> None:
         stored = _workspace(site, ids2) / "bundles" / result.validated_bundle_id
         assert json.loads((stored / "bundle.json").read_text())["workspace_id"] == ids2["workspace_id"]
         assert not (_workspace(site, ids) / "bundles").exists()
+
+
+# ---------------------------------------------------------------------------
+# STEP3 unit B — `install_project`: BOOTSTRAP a bundle in place (Q82 (B))
+#
+# §5.1's BOOTSTRAP order is the opposite of publish's: the directory appears
+# first (irreversible), then the revision and pointer describe it. Every case
+# below therefore also asserts that a refusal wrote nothing.
+# ---------------------------------------------------------------------------
+
+
+def _install(
+    owner: WorkspaceAuthority,
+    ids: dict[str, str],
+    lease: GrantReply,
+    bundle: Any,
+    *,
+    project_slug: str = "demo-project",
+    capability: str | None = None,
+) -> Any:
+    from fa.execution.publication import install_project
+
+    return install_project(
+        owner,
+        PEER,
+        ACTOR,
+        capability=lease.capability if capability is None else capability,
+        validated_bundle_id=bundle.validated_bundle_id,
+        project_slug=project_slug,
+        deadline=until(),
+    )
+
+
+def _bundle_root(site: Site, ids: dict[str, str], bundle: Any) -> Path:
+    return _workspace(site, ids) / "bundles" / bundle.validated_bundle_id
+
+
+def test_install_creates_the_project_commits_it_and_returns_the_wire_receipt(site: Site) -> None:
+    """producer-kill-check: install writes the tree but never commits a revision."""
+    import fastjsonschema
+
+    from fa.execution.protocol import RESULTS, Operation
+
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        bundle = _prepare_bundle(owner, ids, lease)
+
+        result = _install(owner, ids, lease, bundle)
+
+        root = site.source / "worklogs" / "demo-project"
+        assert (root / "roadmap.md").read_text().startswith("---\nRoadmap-ID: RM-demo-project\n")
+        assert (root / "ledger.md").exists()
+        assert (root / "increments" / "increment-01-first-increment.md").exists()
+        assert (root / "roadmap.md").stat().st_mode & 0o777 == 0o644
+        assert root.stat().st_mode & 0o777 == 0o755
+        assert root.joinpath("increments").stat().st_mode & 0o777 == 0o755
+
+        current = _current(site, ids)
+        assert current["revision_id"] == result.revision_id
+        assert current["tree_sha256"] == result.tree_sha256
+        tree = json.loads((_workspace(site, ids) / "revisions" / result.revision_id / "tree.json").read_text())
+        assert result.tree_sha256 == hashlib.sha256(workspace_module._canonical(tree["entries"])).hexdigest()
+        assert "worklogs/demo-project/roadmap.md" in {entry["path"] for entry in tree["entries"]}
+        assert _intent(site, ids) is None
+        # A bundle is retained, never consumed by the install.
+        assert (_bundle_root(site, ids, bundle) / "bundle.json").exists()
+        # The receipt is exactly the wire's `_COMMITTED`, not a private shape.
+        fastjsonschema.validate(
+            RESULTS[Operation.INSTALL_PROJECT],
+            {
+                "workspace_id": result.workspace_id,
+                "revision_id": result.revision_id,
+                "tree_sha256": result.tree_sha256,
+                "operation_id": result.operation_id,
+                "projection_complete": result.projection_complete,
+            },
+        )
+
+    # A fresh authority must accept the committed revision as its baseline:
+    # `_load` re-verifies the revision and `_unchanged` requires canonical bytes
+    # to be exactly that revision, which is only true if install wrote both.
+    with site.owner(view_profile=native_profile()) as reopened:
+        assert site.register(reopened)["revision_id"] == result.revision_id
+
+
+def test_install_refuses_an_existing_project_and_preserves_its_bytes(site: Site) -> None:
+    """producer-kill-check: existence-check then ordinary rename (a silent overwrite)."""
+    existing = site.source / "worklogs" / "demo-project"
+    existing.mkdir(parents=True)
+    (existing / "roadmap.md").write_text("someone else's roadmap\n")
+    before = (existing / "roadmap.md").read_bytes()
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        bundle = _prepare_bundle(owner, ids, lease)
+        base_revision = _current(site, ids)["revision_id"]
+
+        with pytest.raises(SupervisorError) as refused:
+            _install(owner, ids, lease, bundle)
+
+        assert refused.value.code == "COLLISION"
+        assert (existing / "roadmap.md").read_bytes() == before
+        assert _current(site, ids)["revision_id"] == base_revision
+        assert _intent(site, ids) is None
+
+
+def test_install_never_overwrites_even_when_the_target_appears_after_the_check(
+    site: Site, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """producer-kill-check: rely on the pre-check instead of RENAME_NOREPLACE."""
+    real_rename = workspace_module._rename_directory
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        bundle = _prepare_bundle(owner, ids, lease)
+        base_revision = _current(site, ids)["revision_id"]
+
+        def racing(source: int, name: str, destination: int, leaf: str) -> None:
+            # An *empty* destination is the case an ordinary rename would silently
+            # replace; only RENAME_NOREPLACE refuses it.
+            os.mkdir(leaf, 0o700, dir_fd=destination)
+            real_rename(source, name, destination, leaf)
+
+        monkeypatch.setattr(workspace_module, "_rename_directory", racing)
+        with pytest.raises(SupervisorError) as refused:
+            _install(owner, ids, lease, bundle)
+        monkeypatch.undo()
+
+        assert refused.value.code == "COLLISION"
+        installed = site.source / "worklogs" / "demo-project"
+        assert installed.is_dir() and list(installed.iterdir()) == []
+        assert _current(site, ids)["revision_id"] == base_revision
+        assert _intent(site, ids) is None
+
+
+def test_install_refuses_a_bundle_prepared_against_another_revision(site: Site) -> None:
+    """producer-kill-check: drop the base-revision CAS on install."""
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        bundle = _prepare_bundle(owner, ids, lease)
+        grant = _stopped(owner, ids, lease)
+        _publish(owner, grant, _seal(owner, grant))
+        assert _current(site, ids)["revision_id"] != ids["revision_id"]
+
+        with pytest.raises(SupervisorError) as refused:
+            _install(owner, ids, lease, bundle)
+
+        assert refused.value.code == "STALE_REVISION"
+        assert not (site.source / "worklogs").exists()
+
+
+def test_install_refuses_another_workspaces_bundle_and_a_retargeted_slug(site: Site) -> None:
+    """producer-kill-check: trust the caller's bundle id and slug (cross-project install)."""
+    second = site.roots / "second"
+    second.mkdir()
+    (second / "file.txt").write_text("second\n")
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        ids2 = ok(lambda: site.register(owner, "second"))
+        lease2 = ok(lambda: site.claim(owner, ids2))
+        foreign = _prepare_bundle(owner, ids2, lease2)
+        mine = _prepare_bundle(owner, ids, lease)
+
+        # Bundles are per-workspace private storage, so an id that lives
+        # elsewhere is simply not here: the refusal is the same closed code as
+        # for any unknown id, and nothing about workspace 2's store leaks.
+        with pytest.raises(SupervisorError) as absent:
+            _install(owner, ids, lease, foreign)
+        assert absent.value.code == "INPUT_POLICY"
+
+        with pytest.raises(SupervisorError) as retargeted:
+            _install(owner, ids, lease, mine, project_slug="someone-else")
+        assert retargeted.value.code == "INPUT_POLICY"
+
+        assert not (site.source / "worklogs").exists()
+
+        # Defence in depth: a bundle directory copied into the wrong store is
+        # refused by identity, not by luck of the lookup.
+        import shutil
+
+        shutil.copytree(_bundle_root(site, ids2, foreign), _bundle_root(site, ids, foreign))
+        with pytest.raises(SupervisorError) as foreign_workspace:
+            _install(owner, ids, lease, foreign)
+        assert foreign_workspace.value.code == "UNAUTHORIZED"
+        assert not (site.source / "worklogs").exists()
+
+
+def test_install_refuses_a_live_view(site: Site) -> None:
+    """producer-kill-check: install while a writer view is still unsettled."""
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        bundle = _prepare_bundle(owner, ids, lease)
+        _view(owner, ids, lease)  # deliberately left open
+
+        with pytest.raises(SupervisorError) as busy:
+            _install(owner, ids, lease, bundle)
+
+        assert busy.value.code == "WORKSPACE_BUSY"
+        assert not (site.source / "worklogs").exists()
+
+
+def test_install_refuses_a_missing_bundle_and_a_wrong_capability(site: Site) -> None:
+    """producer-kill-check: install without the owner grant, or for an unknown id."""
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        bundle = _prepare_bundle(owner, ids, lease)
+
+        with pytest.raises(SupervisorError) as absent:
+            _install(owner, ids, lease, type("B", (), {"validated_bundle_id": "bundle-" + "0" * 32})())
+        assert absent.value.code == "INPUT_POLICY"
+
+        with pytest.raises(SupervisorError) as unauthorized:
+            _install(owner, ids, lease, bundle, capability="0" * 64)
+        assert unauthorized.value.code == "UNAUTHORIZED"
+        assert not (site.source / "worklogs").exists()
+
+
+def test_install_refuses_a_tampered_bundle_before_writing_anything(site: Site) -> None:
+    """producer-kill-check: copy bundle bytes without proving them against the manifest."""
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        bundle = _prepare_bundle(owner, ids, lease)
+        staged = _bundle_root(site, ids, bundle) / "worklogs" / "demo-project" / "roadmap.md"
+        # Same length, different digest: only the digest check can catch this,
+        # exactly like corruption that preserves size.
+        original = staged.read_bytes()
+        staged.write_bytes(bytes([original[0] ^ 0x01]) + original[1:])
+        assert len(staged.read_bytes()) == len(original)
+
+        with pytest.raises(SupervisorError) as refused:
+            _install(owner, ids, lease, bundle)
+
+        assert refused.value.code == "CORRUPT_STATE"
+        assert not (site.source / "worklogs").exists()
+        assert _intent(site, ids) is None
+
+
+def test_a_failure_after_the_rename_keeps_the_project_and_its_intent(
+    site: Site, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """producer-kill-check: roll an installed project back, or install without an intent."""
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        bundle = _prepare_bundle(owner, ids, lease)
+        base_revision = _current(site, ids)["revision_id"]
+
+        def exploding(*_args: Any, **_kwargs: Any) -> None:
+            raise OSError(5, "injected post-rename failure")
+
+        monkeypatch.setattr(WorkspaceAuthority, "_install_write_revision", exploding)
+        with pytest.raises(SupervisorError) as failed:
+            _install(owner, ids, lease, bundle)
+        monkeypatch.undo()
+
+        assert failed.value.code == "DURABILITY_UNKNOWN"
+        # The irreversible step happened: the project stays, byte for byte.
+        assert (site.source / "worklogs" / "demo-project" / "roadmap.md").exists()
+        # And the durable intent survives, so recovery dispatches instead of
+        # guessing; the pointer is still the base revision.
+        intent = _intent(site, ids)
+        assert intent is not None
+        assert intent["kind"] == "BOOTSTRAP"
+        assert intent["target_relative"] == "worklogs/demo-project"
+        assert intent["phase"] == "PREPARED"
+        assert intent["base_revision"] == base_revision
+        assert _current(site, ids)["revision_id"] == base_revision
+
+
+def test_install_orders_entries_as_the_capture_walks(site: Site) -> None:
+    """producer-kill-check: sort expected entries by plain path, not by components."""
+    worklogs = site.source / "worklogs"
+    worklogs.mkdir()
+    # Plain string order and depth-first order disagree here: "demo-project.md"
+    # sorts before "demo-project/increments", which a walk would visit first.
+    # `_Capture.finish` sorts by path string, so that is the canonical order.
+    (worklogs / "demo-project.md").write_text("stray notes\n")
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        bundle = _prepare_bundle(owner, ids, lease)
+
+        result = _install(owner, ids, lease, bundle)
+
+        tree = json.loads((_workspace(site, ids) / "revisions" / result.revision_id / "tree.json").read_text())
+        paths = [entry["path"] for entry in tree["entries"]]
+        assert paths.index("worklogs/demo-project.md") < paths.index("worklogs/demo-project/roadmap.md")
+        assert paths.index("worklogs/demo-project") < paths.index("worklogs/demo-project.md")
+        assert (worklogs / "demo-project.md").read_text() == "stray notes\n"
+
+
+def test_install_preserves_an_existing_worklogs_directory_and_its_mode(site: Site) -> None:
+    """producer-kill-check: rewrite a pre-existing directory's mode from the bundle."""
+    worklogs = site.source / "worklogs"
+    worklogs.mkdir()
+    worklogs.chmod(0o700)
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        bundle = _prepare_bundle(owner, ids, lease)
+
+        result = _install(owner, ids, lease, bundle)
+
+        assert worklogs.stat().st_mode & 0o777 == 0o700  # not ours to change
+        tree = json.loads((_workspace(site, ids) / "revisions" / result.revision_id / "tree.json").read_text())
+        modes = {entry["path"]: entry["mode"] for entry in tree["entries"]}
+        assert modes["worklogs"] == 0o700
+        assert modes["worklogs/demo-project"] == 0o755

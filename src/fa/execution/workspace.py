@@ -8,6 +8,7 @@ quiesced by deployment; metadata/hash checks are not a kernel snapshot/CAS.
 
 from __future__ import annotations
 
+import errno
 import fcntl
 import hashlib
 import hmac
@@ -35,6 +36,7 @@ from fa.execution.plans import ProtectedPlanContext
 from fa.execution.profiles import ExecutionProfile, _configured_id
 from fa.execution.protocol import (
     CANDIDATE_SCOPE,
+    CONFIG_ID,
     MAX_TEXT_BYTES,
     NAMESPACE,
     PLAN_REF,
@@ -215,6 +217,10 @@ _PROTECTED_COMPONENTS = frozenset({".git", ".fa", ".venv", ".env"})
 # replace) but inside `.fa`, which every walk excludes at any depth.
 _PROJECTION_SCRATCH = (".fa", "publish-tmp")
 _TEMPORARY_SUFFIX = ".publish"
+# Install (Q82 (B)): a new project lives at `<canonical root>/worklogs/<slug>`,
+# the same workspace-relative path §7.1 freezes for a rendered project.
+_INSTALL_ROOT = "worklogs"
+_SLUG = re.compile(str(CONFIG_ID["pattern"]))
 
 
 def _derive_revision_id(manifest: Mapping[str, Any]) -> str:
@@ -765,6 +771,30 @@ class _PublishInputs:
     base_revision: str
     generation: int
     operation_id: str
+
+
+@dataclass(frozen=True)
+class _InstallInputs:
+    """Everything install needs, proved once under the authority mutex (Q82 (B)).
+
+    Carries **no capability**, like `_PublishInputs`. `entries` is the complete
+    post-install tree, computed before the irreversible rename so the intent can
+    name the revision and digest it will commit.
+    """
+
+    workspace_id: str
+    generation: int
+    base_revision: str
+    revision_id: str
+    tree_sha256: str
+    operation_id: str
+    bundle_id: str
+    project_slug: str
+    target_relative: str
+    bundle_sha256: str
+    files: tuple[dict[str, Any], ...]
+    entries: tuple[dict[str, Any], ...]
+    intent: dict[str, Any]
 
 
 @dataclass(repr=False)
@@ -2588,6 +2618,498 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
             os.fsync(parent)
         finally:
             os.close(parent)
+
+    # -- Install (STEP3 unit B, Q82 (B)): BOOTSTRAP one bundle in place --------
+
+    def install_project(
+        self,
+        peer: PeerIdentity,
+        namespace: NamespaceRef,
+        *,
+        capability: str,
+        validated_bundle_id: str,
+        project_slug: str,
+        deadline: float,
+    ) -> dict[str, Any]:
+        """Install one prepared bundle as `<root>/worklogs/<project_slug>`.
+
+        The order is §5.1's BOOTSTRAP row, not REVISION's: a durable intent, then
+        the irreversible no-clobber rename, then the revision and pointer that
+        describe the directory that now exists, then the proof. Everything after
+        the rename is forward-only — no path here deletes installed bytes.
+
+        The wire carries no operation id for this call, so it is derived from the
+        bundle it names: retrying the same install converges on the same
+        operation instead of inventing a second one (Q83).
+        """
+        _hex_id(validated_bundle_id, "bundle-")
+        with self._transaction(peer, deadline):
+            binding = self._owner_only(peer, namespace, capability)
+            inputs = self._install_prepare(binding, validated_bundle_id, project_slug, deadline)
+            parent, created = self._install_destination(binding.source, inputs.target_relative)
+            scratch = -1
+            renamed = False
+            try:
+                try:
+                    os.stat(inputs.project_slug, dir_fd=parent, follow_symlinks=False)
+                except FileNotFoundError:
+                    pass
+                else:
+                    raise SupervisorError("COLLISION")  # determinate; nothing written
+                scratch = self._install_stage(binding, inputs, deadline)
+                # Durable BEFORE the first irreversible byte (spec §5.1).
+                self._write_intent(binding.fd, inputs.intent)
+                try:
+                    _rename_directory(scratch, inputs.operation_id, parent, inputs.project_slug)
+                except OSError as error:
+                    if error.errno in {errno.EEXIST, errno.ENOTEMPTY}:
+                        raise SupervisorError("COLLISION") from None
+                    if error.errno == errno.ENOSYS:
+                        raise SupervisorError("BACKEND_UNAVAILABLE") from None
+                    raise SupervisorError("DURABILITY_UNKNOWN") from None
+                renamed = True
+                os.fsync(parent)
+            except SupervisorError:
+                if not renamed:
+                    # Nothing irreversible happened: discard only this attempt's
+                    # scratch, the directories it created, and its intent.
+                    self._install_abort(binding, inputs, scratch, created)
+                raise
+            except OSError:
+                if not renamed:
+                    self._install_abort(binding, inputs, scratch, created)
+                    raise SupervisorError("DURABILITY_UNKNOWN") from None
+                # The directory exists but its durability is unknown: keep the
+                # intent for forward recovery and block further work.
+                self._healthy = False
+                raise SupervisorError("DURABILITY_UNKNOWN") from None
+            finally:
+                os.close(parent)
+                if scratch != -1:
+                    os.close(scratch)
+            return self._install_finish(binding, inputs, deadline)
+
+    def _install_prepare(
+        self, binding: _Binding, validated_bundle_id: str, project_slug: str, deadline: float
+    ) -> _InstallInputs:
+        """Prove every precondition and compute the exact tree that will exist."""
+        if not isinstance(project_slug, str) or _SLUG.fullmatch(project_slug) is None:
+            raise SupervisorError("INPUT_POLICY")
+        views = os.open("views", _DIRECTORY, dir_fd=binding.fd)
+        try:
+            _private(views)
+            if self._has_unsettled_views(binding, views) or self._read_intent(binding.fd) is not None:
+                raise SupervisorError("WORKSPACE_BUSY")
+        finally:
+            os.close(views)
+        self._probe_writable(binding)
+        # The canonical tree must still be exactly the current revision, so the
+        # expected tree below is the truth rather than a hope.
+        self._unchanged(binding, deadline)
+        bundles = os.open("bundles", _DIRECTORY, dir_fd=binding.fd)
+        try:
+            try:
+                bundle = os.open(validated_bundle_id, _DIRECTORY, dir_fd=bundles)
+            except FileNotFoundError:
+                raise SupervisorError("INPUT_POLICY") from None  # no such bundle here
+            try:
+                _private(bundle)
+                manifest = _read_json(bundle, "bundle.json", _BUNDLE, 1024**2)
+            finally:
+                os.close(bundle)
+        finally:
+            os.close(bundles)
+        if manifest["bundle_id"] != validated_bundle_id:
+            raise SupervisorError("CORRUPT_STATE")  # directory name vs its own manifest
+        if manifest["workspace_id"] != binding.metadata["workspace_id"]:
+            raise SupervisorError("UNAUTHORIZED")  # another workspace's bundle
+        if manifest["generation"] != binding.metadata["generation"]:
+            raise SupervisorError("STALE_GENERATION")
+        if manifest["base_revision"] != binding.current["revision_id"]:
+            raise SupervisorError("STALE_REVISION")  # prepared against other bytes
+        if manifest["project_slug"] != project_slug:
+            raise SupervisorError("INPUT_POLICY")  # an id cannot be retargeted
+        target = f"{_INSTALL_ROOT}/{project_slug}"
+        files = tuple(self._install_file_record(entry, project_slug) for entry in manifest["files"])
+        with self._revision(binding, binding.current["revision_id"], deadline) as (_, base, _child):
+            base_entries = tuple(dict(entry) for entry in base["entries"])
+        entries = self._install_entries(base_entries, files)
+        tree_sha256 = hashlib.sha256(_canonical(list(entries))).hexdigest()
+        operation_id = "op-" + validated_bundle_id.removeprefix("bundle-")
+        install_manifest = {
+            "schema_version": 1,
+            "kind": "BOOTSTRAP",
+            "operation_id": operation_id,
+            "workspace_id": binding.metadata["workspace_id"],
+            "generation": binding.metadata["generation"],
+            "base_revision": binding.current["revision_id"],
+            "project_slug": project_slug,
+            "bundle_sha256": manifest["bundle_sha256"],
+            "tree_sha256": tree_sha256,
+            "entries": list(entries),
+        }
+        revision_id = _derive_revision_id(install_manifest)
+        return _InstallInputs(
+            workspace_id=binding.metadata["workspace_id"],
+            generation=binding.metadata["generation"],
+            base_revision=binding.current["revision_id"],
+            revision_id=revision_id,
+            tree_sha256=tree_sha256,
+            operation_id=operation_id,
+            bundle_id=validated_bundle_id,
+            project_slug=project_slug,
+            target_relative=target,
+            bundle_sha256=str(manifest["bundle_sha256"]),
+            files=files,
+            entries=entries,
+            intent={
+                "schema_version": 1,
+                "kind": "BOOTSTRAP",
+                "operation_id": operation_id,
+                "workspace_id": binding.metadata["workspace_id"],
+                "generation": binding.metadata["generation"],
+                "base_revision": binding.current["revision_id"],
+                "next_revision": revision_id,
+                "tree_sha256": tree_sha256,
+                "phase": "PREPARED",
+                "target_relative": target,
+                "old_sha256": None,
+                "new_sha256": str(manifest["bundle_sha256"]),
+            },
+        )
+
+    @staticmethod
+    def _install_file_record(entry: Mapping[str, Any], project_slug: str) -> dict[str, Any]:
+        """One bundle file, re-validated as a path inside this project."""
+        path = str(entry["path"])
+        parts = tuple(path.split("/"))
+        if len(parts) < 3 or parts[:2] != (_INSTALL_ROOT, project_slug):
+            raise SupervisorError("INPUT_POLICY")
+        if any(part in {"", ".", ".."} or part.startswith(".") for part in parts):
+            raise SupervisorError("INPUT_POLICY")
+        if any(part in _PROTECTED_COMPONENTS for part in parts):
+            raise SupervisorError("INPUT_POLICY")
+        return {
+            "path": path,
+            "relative_path": "/".join(parts[2:]),
+            "sha256": str(entry["sha256"]),
+            "size": int(entry["size"]),
+            "mode": int(entry["mode"]),
+        }
+
+    @staticmethod
+    def _install_entries(
+        base_entries: Sequence[Mapping[str, Any]], files: Sequence[Mapping[str, Any]]
+    ) -> tuple[dict[str, Any], ...]:
+        """The complete post-install tree: base plus this project, nothing else.
+
+        Directories this install creates are `_BUNDLE_DIRECTORY_MODE`; a
+        directory that already exists keeps its recorded base entry, so an
+        existing `worklogs` mode is preserved instead of silently rewritten.
+        """
+        by_path = {str(entry["path"]): dict(entry) for entry in base_entries if not entry["deleted"]}
+        needed: set[str] = set()
+        for record in files:
+            parts = str(record["path"]).split("/")[:-1]
+            for depth in range(1, len(parts) + 1):
+                needed.add("/".join(parts[:depth]))
+        for path in sorted(needed):
+            if path not in by_path:
+                by_path[path] = {
+                    "path": path,
+                    "type": "directory",
+                    "mode": _BUNDLE_DIRECTORY_MODE,
+                    "size": 0,
+                    "sha256": None,
+                    "deleted": False,
+                    "link_target": None,
+                }
+        for record in files:
+            if str(record["path"]) in by_path:
+                raise SupervisorError("COLLISION")  # a bundle never overwrites bytes
+            by_path[str(record["path"])] = {
+                "path": str(record["path"]),
+                "type": "file",
+                "mode": int(record["mode"]),
+                "size": int(record["size"]),
+                "sha256": str(record["sha256"]),
+                "deleted": False,
+                "link_target": None,
+            }
+        # `_Capture.finish` orders entries by plain path string, and the tree
+        # digest is taken over that list: reproducing it exactly is what makes
+        # the expected tree byte-identical to the snapshot the revision is
+        # written from. (Component-wise order would put `a/b` before `a.md`.)
+        return tuple(by_path[path] for path in sorted(by_path))
+
+    def _install_destination(self, root: int, relative: str) -> tuple[int, list[str]]:
+        """Open (creating) every component above the leaf; never follow a link."""
+        try:
+            parts = _parts(relative, self._limits.max_depth)
+        except ViewIOError as error:
+            raise SupervisorError(error.code) from None
+        if any(part in _PROTECTED_COMPONENTS for part in parts) or any(
+            parts[: len(exclusion)] == exclusion for exclusion in self._excluded
+        ):
+            raise SupervisorError("PATH_DENIED")
+        fd = os.dup(root)
+        created: list[str] = []
+        try:
+            for index, part in enumerate(parts[:-1]):
+                try:
+                    child = os.open(part, _DIRECTORY, dir_fd=fd)
+                except FileNotFoundError:
+                    os.mkdir(part, _BUNDLE_DIRECTORY_MODE, dir_fd=fd)
+                    child = os.open(part, _DIRECTORY, dir_fd=fd)
+                    os.fchmod(child, _BUNDLE_DIRECTORY_MODE)
+                    created.append("/".join(parts[: index + 1]))
+                os.close(fd)
+                fd = child
+            return fd, created
+        except OSError:
+            os.close(fd)
+            raise SupervisorError("PATH_DENIED") from None
+        except BaseException:
+            os.close(fd)
+            raise
+
+    def _install_stage(self, binding: _Binding, inputs: _InstallInputs, deadline: float) -> int:
+        """Copy the bundle into project scratch, fsynced, before the rename.
+
+        Staging inside the canonical root is what makes the next step a real
+        same-filesystem `renameat2(RENAME_NOREPLACE)`; the bundle itself may sit
+        on another filesystem and is never moved, mutated or consumed.
+        """
+        scratch = self._temporary_directory(binding.source)
+        try:
+            self._discard_stage(scratch, inputs.operation_id)
+            os.mkdir(inputs.operation_id, _BUNDLE_DIRECTORY_MODE, dir_fd=scratch)
+            stage = os.open(inputs.operation_id, _DIRECTORY, dir_fd=scratch)
+            try:
+                os.fchmod(stage, _BUNDLE_DIRECTORY_MODE)
+                bundles = os.open("bundles", _DIRECTORY, dir_fd=binding.fd)
+                try:
+                    bundle = os.open(inputs.bundle_id, _DIRECTORY, dir_fd=bundles)
+                    try:
+                        for record in inputs.files:
+                            _budget(deadline)
+                            self._install_copy(bundle, stage, record, deadline)
+                    finally:
+                        os.close(bundle)
+                finally:
+                    os.close(bundles)
+                os.fsync(stage)
+            finally:
+                os.close(stage)
+            return scratch
+        except BaseException:
+            os.close(scratch)
+            raise
+
+    def _install_copy(self, bundle: int, stage: int, record: Mapping[str, Any], deadline: float) -> None:
+        """Copy one file, proving size and digest against the stored manifest."""
+        parts = str(record["relative_path"]).split("/")
+        parent = os.dup(stage)
+        try:
+            for part in parts[:-1]:
+                try:
+                    os.mkdir(part, _BUNDLE_DIRECTORY_MODE, dir_fd=parent)
+                except FileExistsError:
+                    pass
+                child = os.open(part, _DIRECTORY, dir_fd=parent)
+                os.fchmod(child, _BUNDLE_DIRECTORY_MODE)
+                os.close(parent)
+                parent = child
+            source = self._open_relative(bundle, str(record["path"]))
+            target = -1
+            try:
+                target = os.open(
+                    parts[-1],
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+                    int(record["mode"]),
+                    dir_fd=parent,
+                )
+                os.fchmod(target, int(record["mode"]))
+                digest = hashlib.sha256()
+                size = 0
+                while True:
+                    _budget(deadline)
+                    raw = os.read(source, 65536)
+                    if not raw:
+                        break
+                    size += len(raw)
+                    digest.update(raw)
+                    _write_all(target, raw)
+                if size != record["size"] or digest.hexdigest() != record["sha256"]:
+                    raise SupervisorError("CORRUPT_STATE")  # stored bytes are not the manifest
+                os.fsync(target)
+            finally:
+                if target != -1:
+                    os.close(target)
+                os.close(source)
+            os.fsync(parent)
+        finally:
+            os.close(parent)
+
+    def _install_abort(self, binding: _Binding, inputs: _InstallInputs, scratch: int, created: Sequence[str]) -> None:
+        """Discard only what this attempt created, before the irreversible step.
+
+        Cleanup failures are deliberately not raised over the refusal that
+        caused them: a leftover intent blocks the workspace visibly on the next
+        call, while a masked `COLLISION` would misreport why nothing happened.
+        """
+        try:
+            if scratch != -1:
+                self._discard_stage(scratch, inputs.operation_id)
+            for path in reversed(created):  # deepest first
+                try:
+                    parts = path.split("/")
+                    parent = os.open(
+                        "." if len(parts) == 1 else "/".join(parts[:-1]), _DIRECTORY, dir_fd=binding.source
+                    )
+                    try:
+                        os.rmdir(parts[-1], dir_fd=parent)
+                    finally:
+                        os.close(parent)
+                except OSError:
+                    pass  # not ours to empty: someone else's bytes already live here
+            if self._read_intent(binding.fd) is not None:
+                self._clear_intent(binding.fd)
+        except (OSError, SupervisorError):
+            pass  # the original refusal is the fact the caller must see
+
+    def _discard_stage(self, scratch: int, name: str) -> None:
+        """Remove this operation's own staging directory, if a prior attempt left one."""
+        try:
+            info = os.stat(name, dir_fd=scratch, follow_symlinks=False)
+        except FileNotFoundError:
+            return
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
+            raise SupervisorError("PATH_DENIED")  # not the scratch this operation owns
+        directory = os.open(name, _DIRECTORY, dir_fd=scratch)
+        try:
+            self._discard_tree(directory)
+        finally:
+            os.close(directory)
+        os.rmdir(name, dir_fd=scratch)
+
+    def _discard_tree(self, directory: int, depth: int = 0) -> None:
+        """Remove this operation's own staging entries, bounded by `max_depth`.
+
+        Never follows a link and never recurses past the depth the copy could
+        have created, so a crafted entry cannot turn cleanup into a traversal.
+        """
+        if depth > self._limits.max_depth:
+            raise SupervisorError("PATH_DENIED")
+        for child in os.listdir(directory):
+            info = os.stat(child, dir_fd=directory, follow_symlinks=False)
+            if stat.S_ISDIR(info.st_mode):
+                nested = os.open(child, _DIRECTORY, dir_fd=directory)
+                try:
+                    self._discard_tree(nested, depth + 1)
+                finally:
+                    os.close(nested)
+                os.rmdir(child, dir_fd=directory)
+            else:
+                os.unlink(child, dir_fd=directory)
+
+    def _install_finish(self, binding: _Binding, inputs: _InstallInputs, deadline: float) -> dict[str, Any]:
+        """Revision, pointer, proof, DONE — all forward-only after the rename."""
+        try:
+            self._install_write_revision(binding, inputs, deadline)
+            self._install_commit_current(binding, inputs)
+            _, digest = self._snapshot(binding.source, None, deadline)
+            if digest != inputs.tree_sha256:
+                raise SupervisorError("CORRUPT_STATE")
+            self._set_intent_phase(binding.fd, inputs.intent, "DONE")
+        except OSError:
+            # The directory exists; only forward recovery may finish this.
+            self._healthy = False
+            raise SupervisorError("DURABILITY_UNKNOWN") from None
+        except SupervisorError as error:
+            self._healthy = False
+            if error.code == "CORRUPT_STATE":
+                raise  # determinate: the bytes on disk are not the manifest's
+            raise SupervisorError("DURABILITY_UNKNOWN") from None
+        self._clear_intent(binding.fd)
+        return {
+            "workspace_id": inputs.workspace_id,
+            "revision_id": inputs.revision_id,
+            "tree_sha256": inputs.tree_sha256,
+            "operation_id": inputs.operation_id,
+            "projection_complete": True,
+        }
+
+    def _install_write_revision(self, binding: _Binding, inputs: _InstallInputs, deadline: float) -> None:
+        """Write `revisions/<derived>` from the canonical tree the install created."""
+        stage = self._state / "pending" / uuid4().hex
+        installed = False
+        try:
+            with _private_artifact_directory(stage) as stage_fd:
+                os.mkdir("revisions", 0o700, dir_fd=stage_fd)
+                staged = os.open("revisions", _DIRECTORY, dir_fd=stage_fd)
+                try:
+                    os.mkdir(inputs.revision_id, 0o700, dir_fd=staged)
+                    revision = os.open(inputs.revision_id, _DIRECTORY, dir_fd=staged)
+                    try:
+                        os.mkdir("data", 0o700, dir_fd=revision)
+                        data = os.open("data", _DIRECTORY, dir_fd=revision)
+                        try:
+                            entries, digest = self._snapshot(binding.source, data, deadline)
+                        finally:
+                            os.close(data)
+                        _require_manifest_match(entries, inputs.entries)
+                        if digest != inputs.tree_sha256:
+                            raise SupervisorError("CORRUPT_STATE")
+                        tree = {
+                            "schema_version": 1,
+                            "revision_id": inputs.revision_id,
+                            "tree_sha256": inputs.tree_sha256,
+                            "entries": [dict(entry) for entry in inputs.entries],
+                        }
+                        _replace_private_bytes(revision, "tree.json", _canonical(tree))
+                        os.fsync(revision)
+                    finally:
+                        os.close(revision)
+                    os.fsync(staged)
+                    revisions = os.open("revisions", _DIRECTORY, dir_fd=binding.fd)
+                    try:
+                        _budget(deadline)
+                        _rename_directory(staged, inputs.revision_id, revisions, inputs.revision_id)
+                        installed = True
+                        os.fsync(revisions)
+                    finally:
+                        os.close(revisions)
+                finally:
+                    os.close(staged)
+        finally:
+            if not installed and stage.exists():
+                shutil.rmtree(stage)  # Only this uninstalled, service-private staging tree.
+
+    def _install_commit_current(self, binding: _Binding, inputs: _InstallInputs) -> None:
+        """CAS the pointer from the base revision to the installed one."""
+        try:
+            current = _read_json(binding.fd, "current.json", _CURRENT, 1024**2)
+        except (OSError, SupervisorError):
+            raise SupervisorError("DURABILITY_UNKNOWN") from None
+        if current["revision_id"] != inputs.base_revision:
+            raise SupervisorError("STALE_REVISION")
+        updated = {
+            "schema_version": 1,
+            "workspace_id": inputs.workspace_id,
+            "generation": inputs.generation,
+            "revision_id": inputs.revision_id,
+            "tree_sha256": inputs.tree_sha256,
+        }
+        try:
+            _replace_private_bytes(binding.fd, "current.json", encode_json(updated))
+            if _read_json(binding.fd, "current.json", _CURRENT, 1024**2) != updated:
+                raise SupervisorError("DURABILITY_UNKNOWN")
+        except (OSError, SupervisorError):
+            raise SupervisorError("DURABILITY_UNKNOWN") from None
+        binding.current = updated
+        # Durable before the proof, so recovery dispatches instead of inferring.
+        self._set_intent_phase(binding.fd, inputs.intent, "PROJECTING")
 
     # -- Publication (E269 / CT106): intent, pointer, projection ------------
 

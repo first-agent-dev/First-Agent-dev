@@ -480,6 +480,17 @@ _SLICE_HEADING = re.compile(r"^## SLICE(\d+):", re.M)
 
 
 @dataclass(frozen=True)
+class InstallResult:
+    """The `install_project` reply (protocol `_COMMITTED`): one committed revision."""
+
+    workspace_id: str
+    revision_id: str
+    tree_sha256: str
+    operation_id: str
+    projection_complete: bool
+
+
+@dataclass(frozen=True)
 class BundleResult:
     """The `prepare_bundle` reply (`protocol.py`): a private id and its digest."""
 
@@ -639,14 +650,52 @@ def prepare_bundle(
     )
 
 
+def install_project(
+    authority: WorkspaceAuthority,
+    peer: PeerIdentity,
+    namespace: NamespaceRef,
+    *,
+    capability: str,
+    validated_bundle_id: str,
+    project_slug: str,
+    deadline: float,
+) -> InstallResult:
+    """Install a prepared bundle into this workspace and return the committed receipt.
+
+    One call, one irreversible step: the authority owns the intent, the
+    no-clobber rename, the revision and the pointer, so a caller cannot install
+    half a project or leave a bundle consumed. The wire's `_COMMITTED` is the
+    only reply, and it is returned only after the canonical tree is proved.
+    """
+    if not isinstance(authority, WorkspaceAuthority):
+        raise SupervisorError("UNAUTHORIZED")
+    receipt = authority.install_project(
+        peer,
+        namespace,
+        capability=capability,
+        validated_bundle_id=validated_bundle_id,
+        project_slug=project_slug,
+        deadline=deadline,
+    )
+    return InstallResult(
+        workspace_id=str(receipt["workspace_id"]),
+        revision_id=str(receipt["revision_id"]),
+        tree_sha256=str(receipt["tree_sha256"]),
+        operation_id=str(receipt["operation_id"]),
+        projection_complete=bool(receipt["projection_complete"]),
+    )
+
+
 __all__ = [
     "BUNDLE_ROOT",
     "MANIFEST_NAME",
     "BundleResult",
+    "InstallResult",
     "PublishResult",
     "SealResult",
     "bundle_paths",
     "derive_revision_id",
+    "install_project",
     "prepare_bundle",
     "publish_view",
     "render_bundle",

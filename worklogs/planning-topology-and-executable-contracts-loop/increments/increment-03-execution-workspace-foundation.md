@@ -461,7 +461,7 @@ reproducible by the command beside it:
 | CT declarations (17 FUNCTIONAL + 7 CONSTRAINT) | **24** | `grep -cE '^\s+CT[0-9]+[a-z]? \[(FUNCTIONAL|CONSTRAINT|PRESERVATION)\]' increments/increment-03-*.md` |
 | Declared `kill:` directives | **17** (one per FUNCTIONAL contract; a `grep -c 'kill:'` returns more because prose lines quote the word) | `grep -cE '^\s+kill: remove-call ' increments/increment-03-*.md` |
 | Closed wire operations | **19** | `grep -cE '^\s+[A-Z_]+ = "' src/fa/execution/primitives.py` |
-| E2E live surfaces / joins | **21 / 8** (E250 recorded 18/8; E267 added `publication.py` as I03-LIVE-19; E269 the publish path as I03-LIVE-20; E271 the bundle path as I03-LIVE-21) | `grep -o 'I03-LIVE-[0-9]\{2\}' notes/e2e-live-verification-register.md \| sort -u \| wc -l` |
+| E2E live surfaces / joins | **22 / 8** (E250 recorded 18/8; E267 added `publication.py` as I03-LIVE-19; E269 the publish path as I03-LIVE-20; E271 the bundle path as I03-LIVE-21; E272 the install path as I03-LIVE-22) | `grep -o 'I03-LIVE-[0-9]\{2\}' notes/e2e-live-verification-register.md \| sort -u \| wc -l` |
 | Six slices, thirty-five STEPs | **6 / 35** | `grep -cE '^- \[.\] STEP[0-9]+:' increments/increment-03-*.md` |
 
 If a later edit changes a count, the edit updates the table and the ledger entry that introduced the
@@ -1016,6 +1016,49 @@ killed** with sha256-verified byte-exact restore (`F1`, `F2` location, `F2` swee
 
 Not proved, and not claimed: the Docker/cgroup barrier, the dispatcher route, restart recovery (CT107,
 STEP4), Q58/`publish_plan`, retention/GC, and the live host.
+
+### E271 unit B result — `install_project` implemented on the Q82 (B) ruling
+
+**Status: SLICE3 STEP3's install half is implemented and locally proved. STEP3 is still NOT done —
+`publish_plan` (Q58) remains — and nothing here ticks a STEP or assigns a CT verdict.**
+
+**What runs now.** `publication.install_project` validates and hands off; `WorkspaceAuthority.install_project`
+owns the whole irreversible step. Order is §5.1's BOOTSTRAP row, deliberately *not* publish's: preconditions
+(owner grant, no settled view, no intent, canonical bytes still the current revision, bundle bound to this
+workspace/generation/base/slug) → the complete post-install tree is computed and digested *before* any write
+→ `intent.json` (`kind=BOOTSTRAP`, `target_relative=worklogs/<slug>`, `new_sha256` = bundle manifest hash) →
+the bundle is copied into `<root>/.fa/publish-tmp/<op>` and fsynced (same filesystem, invisible to every
+walk) → `renameat2(RENAME_NOREPLACE)` → revision from the canonical tree the rename just created →
+`current.json` → projection proof → `DONE`. The bundle is never moved, mutated or deleted.
+
+**Two decisions recorded.** Q82 is settled as **(B) in place** (see the open-questions file for the four
+grounds). Q83 records why the operation id is derived from the bundle (`op-` + the bundle's hex): the wire
+carries none for this call, and a retried install must correlate to the *same* operation for §5.1 recovery.
+
+**One defect found by the unit's own kill-check, and fixed.** The expected entry list was first sorted
+component-wise (`a/b` before `a.md`), but `_Capture.finish` orders entries by **plain path string**, so a
+workspace containing a file whose name sorts next to the project directory produced a tree whose digest
+could never match. The test written for that refactor (`test_install_orders_entries_as_the_capture_walks`)
+caught it at once; the sort is now the capture's own order and the case stays as the oracle.
+
+**What is refused, with nothing written.** `COLLISION` for an existing destination (including the
+check-then-rename race, where an *empty* racing directory would have been silently replaced by an ordinary
+rename), `STALE_REVISION` for a bundle prepared against another revision, `STALE_GENERATION`, `UNAUTHORIZED`
+for a bundle directory copied into the wrong store, `INPUT_POLICY` for an unknown id or a retargeted slug,
+`WORKSPACE_BUSY` for an unsettled view.
+
+**Evidence.** `tests/test_workspace_publication.py` **87 passed** (10 install cases); execution bank + CLI
+**1240 passed**; `ruff check`/`format --check` clean on the changed files; `mypy src/fa/execution` 19 files;
+`pyrefly check src/fa/execution` 0 errors; `fa authoring-check` `exit_code 0`, `diagnostics 0`. **8/8 mutants
+killed** with sha256-verified byte-exact restore: no base CAS, ordinary rename instead of `RENAME_NOREPLACE`,
+no pointer commit, no bundle digest check, no durable intent, empty base entries, chmod of an existing
+`worklogs`, component-wise entry order.
+
+**Deliberately not done, with the reason.** Recovery (`CT107`, STEP4) — the intent this unit leaves behind is
+the input to it, and no recovery row is implemented or claimed; the dispatcher route (SLICE1 STEP3);
+auto-registration of the installed project (SLICE5); bundle GC/retention; and `publish_plan` (Q58), which
+is the inverse ordering (the canonical plan replace *is* the irreversible point) and needs its own phase
+analysis. `I03-LIVE-22` is PLANNED / UNEXECUTED: no Docker/cgroup barrier, no installed service, no restart.
 
 ## Scope and ownership handoff
 

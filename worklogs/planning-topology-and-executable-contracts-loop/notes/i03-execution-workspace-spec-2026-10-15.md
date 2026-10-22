@@ -1028,7 +1028,7 @@ Revisions/intent are protected supervisor state, never cell/model-authored contr
 | --- | --- |
 | REVISION | durable current pointer commit; PREPARED+old pointer can discard owned uncommitted scratch only; never canonical projection before commit |
 | PLAN | same-path validated buffer replacement, NOT pointer commit; PREPARED must inspect exact canonical hash: old→no commit, new→complete new revision/current/projection forward, neither→quarantine; never rollback a replaced plan |
-| BOOTSTRAP | RENAME_NOREPLACE of rendered directory; PREPARED must inspect installed directory's full approved manifest/hash: absent→no commit, exact new→finish revision/current forward, conflicting→quarantine; never delete installed bundle |
+| BOOTSTRAP | RENAME_NOREPLACE of rendered directory; PREPARED must inspect installed directory's full approved manifest/hash: absent→no commit, exact new→finish revision/current forward, conflicting→quarantine; never delete installed bundle. E272 implementation order (Q82 (B)): intent (`target_relative = worklogs/<project_slug>`, `new_sha256` = bundle manifest hash) → staged copy fsynced inside `<root>/.fa/publish-tmp/<op>` → `renameat2` into the canonical `worklogs/` → revision written from the canonical tree the install just verified → `current.json` → projection proof → `DONE` |
 
 Prepare and fsync complete Rnext plus intent BEFORE any PLAN/BOOTSTRAP replace/install. After their
 irreversible point, fsync directory, complete current/projection/DONE forward, then acknowledge.

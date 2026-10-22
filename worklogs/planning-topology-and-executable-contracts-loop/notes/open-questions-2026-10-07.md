@@ -2027,3 +2027,31 @@ the destination path is refused (`PATH_DENIED`) before any write.
 
 **Still not decided here.** Auto-registration (no), and whether a later `REGISTER_WORKSPACE` of the
 installed directory is what makes it a first-class workspace (yes, SLICE5).
+
+---
+
+## Q83 — What identifies an `install_project` operation?
+
+**Status: ANSWERED by implementation (2026-10-23, E271 unit B), reviewable — not blocking.**
+
+**The gap.** `PLAN_REF`, `SEAL`, `PUBLISH` and the exec paths all carry a caller-supplied `operation_id`,
+but the wire's `INSTALL_PROJECT` payload is only `{validated_bundle_id, project_slug}` while its reply
+(`_COMMITTED`) must contain `operation_id`, and §5.1's `intent.json` makes `operation_id` mandatory. The
+authority therefore has to name the operation itself.
+
+**Decision taken: derive it from the bundle.** `operation_id = "op-" + validated_bundle_id[7:]`, i.e.
+the bundle's own 32 hex characters under the `op-` prefix. Reasons, in order:
+
+1. **Determinism is the property that matters.** A retried install of the same bundle must correlate to
+   the same operation, because §5.1 recovery is "inspect the SAME operation"; a random id per call would
+   make a retry indistinguishable from a new attempt and no recovery row could match the intent.
+2. **Uniqueness is already given.** A successful install makes `worklogs/<slug>` exist, so the same
+   bundle can never be installed twice; ids derived from it are unique for all installable inputs.
+3. **No wire change, no second source of truth.** Inventing a payload field would change the frozen
+   protocol table for one caller's convenience, and deriving from the bundle keeps the correlation
+   visible in both artefacts (bundle manifest and intent) without a new store.
+
+**What would reopen it.** If the controller ever wants one operation to install several bundles (a
+multi-project bootstrap) or to retry a *failed* install under a new identity, the derivation stops being
+sufficient and the payload must carry the id. Nothing in the current plan asks for either.
+
