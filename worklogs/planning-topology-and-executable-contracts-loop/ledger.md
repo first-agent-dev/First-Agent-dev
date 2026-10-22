@@ -3896,3 +3896,338 @@ so the naive mutant was equivalent; (3) the read-back check needs a non-persisti
 **Not closed.** Seal (CT105), publish (CT106), recovery (CT107), the real Docker/cgroup barrier, restart
 durability, STEP5, and all live rows. `STOP_VIEW` still has no dispatcher route.
 
+
+### E267 — SLICE3 STEP1 (part 2): immutable export and seal: declaration (before code)
+
+**Ordering verified, not assumed.** Seal is SLICE3 STEP1's remainder, not STEP2: `increment-03:343`
+makes STEP1 the barrier *plus* immutable export validation, while `:344` makes STEP2 the
+intent/current/projection CAS. E266 shipped the barrier; E267 is STEP1 part 2 (`seal_view`, CT105) and
+the CAS/publish unit becomes E268. Seal's dependency loads are all shipped by E253/E255/E256/E257/
+E259/E266 — it needs no real cell, no Docker, no service composition, and it does **not** close SLICE2
+STEP3's provisioning leg (publish does).
+
+**Two source findings that shape the step.** (1) The wire names `seal-…` (`protocol.py:126,162`) while
+the persisted `_VIEW_RECORD.sealed_manifest_id` requires `manifest-…` (`workspace.py:127`); seal is the
+first writer, so the prefix must be reconciled now (decision D5). (2) Spec §5's seal manifest is not
+`_TREE`: different header, and tombstones where `_ENTRY` pins `deleted: false`. `publication.py` owns
+its own `_SEALED_MANIFEST` rather than widening the revision format readers verify.
+
+**Declared shape.** Preconditions = exact-view proof, closed gate, `STOPPING`, terminal receipt,
+`OWNED` binding at `ref.generation`, `current.revision_id == ref.base_revision`, source hash match and
+PlanRef recheck. Then recompute the tree with the one existing walker (`_Capture`), compare to base
+entries, derive tombstones, reject protected/PlanRef paths and ancestors, allow only unchanged base
+links, write manifest v1 then flip `SEALED` with read-back, idempotent on retry, `REJECTED` only on
+determinate validation failure (D3). Reply is exactly `{sealed_manifest_id, revision_id, tree_sha256}`.
+Files: new `execution/publication.py`, the D5 line in `workspace.py`, `tests/test_workspace_publication.py`,
+this plan, one new E2E register row. Nine declared kills, the named one being
+`seal_view -> _validate_sealed_tree`.
+
+**Environment, recorded rather than glossed.** No Docker in this session (host work stays BLOCKED), and
+the local CPython 3.13.7 build has no `_ctypes`/`_sqlite3`/`_ssl`/`zlib`. A disclosed out-of-repo shim
+makes local banks runnable; current baseline **1126 passed, 6 errors**, the six being offline
+installed-wheel builds. No shim number is a declared-gate result (decision D6).
+
+**Not ticked.** No STEP box, CT status, live row or acceptance duty changes. Approval of D1–D6
+precedes any `src/` edit.
+
+### E267a — E267 decision resolutions from existing records (no code)
+
+Operator instruction: research the plan documents and the shipped source before asking, and only reason
+freely where no record exists. Both open decisions had records; one of them reverses the declaration's
+own recommendation.
+
+**D2 (SEAL `revision_id`) → seal mints the id, publish materializes.** Spec §2.1:163 freezes the reply
+`{sealed_manifest_id, revision_id, tree_sha256}` and allows the revision to stay *unpublished*; §5's
+publish flow creates `Rnext` at its step 1; §5.1 discriminates recovery only through `intent.json`,
+whose REVISION row assumes an `Rnext` that already exists at `PREPARED`. A revision materialized at seal
+time would be invisible to that table. So the id is derived from the sealed bytes
+(`rev-` + `sha256(canonical(manifest))[:32]`) and publish recomputes it from the stored manifest — no
+caller-supplied id, no second field, tamper-evident.
+
+**D3 (durable `REJECTED`) → no state write.** Spec §5:884 fixes `OPEN → STOPPING → SEALED →
+PUBLISHED|REJECTED`: `REJECTED` hangs off `SEALED`, not `STOPPING`. The declaration's recommended
+option (a) would have invented a transition. Determinate seal failures therefore return their closed
+code and leave the view `STOPPING` with frozen bytes and a closed gate; `REJECTED` is E268's branch.
+
+**Also settled by the same evidence.** `UNKNOWN`/quarantined cannot seal (`TERMINALITY_UNKNOWN`, §5:884);
+D5 stays as approved (`seal-` prefix in the internal record, wire untouched); the sealed manifest keeps
+§5's frozen header, so the manifest id lives in `view.json` and the revision id is derived rather than
+stored.
+
+No `src/` change, no STEP tick, no CT status, no live verdict from this entry.
+
+### E267 result — SLICE3 STEP1 (part 2): immutable export and seal shipped as local proof
+
+**Shipped.** New `execution/publication.py` (`seal_view`, `_validate_sealed_tree`, `_SEALED_MANIFEST`,
+`derive_revision_id`, `SealResult`); `workspace.py` gains `prepare_seal` (preconditions + post-barrier
+recompute), `mark_sealed` (single durable `STOPPING → SEALED` with read-back), `_SealInputs`, and the
+D5 `seal-` id alignment. `tests/test_workspace_publication.py`: 13 new CT105 cases beside the retained
+11 CT104 cases.
+
+**Evidence.** Red: source reverted → collection error at `import fa.execution.publication` (recorded as
+such, not as per-rule red). Green: 24 passed in the owning file; **359 passed** across the seven-module
+execution bank; **1241 passed, 1 failed** in the broader execution/readiness/provisioning bank, the
+failure being `test_clean_candidate_real_readiness_commit_and_local_publication`
+(`precommit_prewarm_failed`) and **proved pre-existing** by reverting both source files and reproducing
+it identically. `ruff check`/`format --check` clean, `mypy` 19 files clean, `pyrefly` 0 errors.
+
+**Kills: 9/9**, assertion-only, sha256-verified restore after each mutant. Full mutant→killer table is in
+the increment's E267 result section.
+
+**Findings recorded because they change how this capability is believed.** (1) Two of the nine declared
+producers were **masked**: `mark_sealed` duplicated the terminal-receipt check, and the plan boundary is
+fully masked end-to-end by `prepare_seal`'s `ProtectedPlanContext.recheck` for WRITE views. The first
+was converted into an observable side-effect assertion (no `sealed.json` for an unproven view); the
+second is kept as manifest-level defence with a direct oracle and **no end-to-end kill credit**. (2)
+`_TREE` cannot represent tombstones and carries `revision_id`, so the seal manifest is its own schema.
+(3) Wire prefix `seal-` vs record prefix `manifest-` disagreed; the record moved, the wire did not.
+
+**Not closed.** SLICE3 STEP1 remains open (Q74 policy, real cgroup/Docker observer,
+`tests/integration/test_publication_recovery.py` under `FA_REQUIRE_EXECUTION_HOST=1`). STEP2 publish/CAS
+(CT106) = E268; STEP3 bundle/BOOTSTRAP/candidate seal, STEP4 recovery (CT107), STEP5 whole-bank kills
+all open. No `STOP_VIEW`/`SEAL` dispatcher route, no STEP tick, no CT status, no live row, no deployment
+claim; SLICE2 STEP3's provisioning leg still closes only with publish.
+
+### E267a-addendum — environment: the declared gate now runs unshimmed
+
+`knowledge/arena-env-build.md` (parent branch) was applied instead of the earlier disclosed shim: CPython
+**3.13.16** built from source with OpenSSL 3.0.22, zlib, libffi, bzip2 and SQLite 3.53.4 (FTS5), then
+`uv sync --frozen --extra dev`. The shim experiment from earlier in this session is **withdrawn and has
+no evidentiary value**; every number in the E267 result above comes from the conforming environment
+(`.venv/bin/python -VV` → 3.13.16). Two consequences worth keeping in the record: the toolchain lives
+under `$HOME/.cache` and the venv under the checkout, so both can vanish between sessions (rebuild cost
+≈10–15 min on 2 CPUs); and the sandbox still has **no Docker daemon**, so every `FA_REQUIRE_EXECUTION_HOST=1`
+item remains BLOCKED by design rather than by tooling.
+
+### E267b — full-suite classification, one self-caught rule violation, and a false flake
+
+**Full suite (conforming 3.13.16 environment):** `6232 passed, 82 failed, 14 skipped, 1 xfailed` in
+7m11s. Every failure classified by name, none left unexplained:
+
+| Count | Test file | Cause | Status |
+| --- | --- | --- | --- |
+| 78 | `test_verify_gate_live.py` (all at `:3811`, `_ct91_public` exits 2) | `T0 baseline unavailable` environment data gap, the historical 78+2 class | pre-existing |
+| 2 | `test_verify_slice.py` | same T0 baseline class | pre-existing |
+| 1 | `test_workspace_readiness_integration.py` | `degraded_environment: precommit_prewarm_failed` (needs Go/Gitleaks/ShellCheck) | pre-existing, reproduced with this change reverted |
+| 1 | `test_s10a_cli_coverage.py` | **caused by this change** — `FA-AUTHORING-V2-EXPORTS-COMPLETENESS` HARD-BLOCK on three module-public constants in `publication.py` | **fixed** |
+
+**Rule violation, caught by the repo's own gate and fixed rather than waived.** `publication.py`
+defined `MAX_MANIFEST_BYTES`, `MAX_DEPTH` and `EXCLUDED_COMPONENTS` as public symbols outside `__all__`.
+The authoring kernel blocked it (`dispatched_count: 3`, remediation "add to `__all__` or rename private").
+They are implementation detail, so they became `_MAX_MANIFEST_BYTES`, `_MAX_DEPTH`,
+`_EXCLUDED_COMPONENTS`; `MANIFEST_NAME` stays public because tests and future recovery code must name
+the durable file. Re-run: `authoring check` → `diagnostics: []`, `exit_code: 0`; `test_s10a_cli_coverage`
++ `test_workspace_publication` → 86 passed; execution bank + s10a → **1177 passed**.
+
+**A false flake, recorded so nobody chases it.** One combined run reported
+`test_seal_accepts_an_unchanged_link_and_refuses_a_new_one` failing once. Cause: this session started the
+mutation sweep in the same tool call as a test run, so a mutant was live in `publication.py` while the
+other process imported it. Repeated clean runs (8× owning file, 3× combined) are all green, and the
+sweep re-ran 9/9 afterwards. **Operational rule for later increments: never run a mutation sweep
+concurrently with any other test process.** The failure was not product or test behaviour and is not
+counted as either.
+
+**Still not closed.** No STEP checkbox, CT status, live row or acceptance duty moved. SLICE3 STEP1 stays
+open (Q74 policy, real cgroup observer); publish/CAS remains E268.
+
+### E268 — adversarial review of the remaining I03: 5 confirmed defects, 4 suspicions, plan rewritten
+
+**Method.** Every remaining slice read against the modules it touches and their callers; each suspected
+defect reproduced before it was believed; confirmed defects separated from suspicions. No STEP, contract
+or live row changed by the review itself.
+
+**Confirmed defects.** (D1) `release_unused_writer` refused settlement for ANY non-READ view regardless
+of state, contradicting spec §2.1's "no writable/live/unknown jobs or unfinished projection" — with
+E267's SEALED and E269's PUBLISHED a finished view kept the writer forever, then a restart quarantined
+the workspace. Reproduced (`release REFUSED: WORKSPACE_BUSY` after seal). Fixed with
+`_has_unsettled_views`/`_SETTLED_VIEW_STATES`; SEALED still holds the writer (an unpublished candidate is
+unpublishable once the grant dies). 4 cases, 3/3 mutants killed. (D2) `create_view` accepted
+`protocol.py:102`'s required `base_revision` and silently ignored it — a caller naming revision A got a
+view over B, the exact stale-base confusion CT102/CT106 exist to prevent. Fixed with STALE_REVISION
+before any filesystem effect; 2 cases, mutant killed; SLICE1 STEP3 now requires the dispatcher to forward
+it. (D3) `_install_project` installs a *view*, colliding with spec §5's *project* install name — renamed
+`_install_view`. (D4) E267's own line citations drifted after its own edit — citations normalized to
+symbols, with a new project rule: a line number only alongside a symbol and a pinned sha. (D5) E250's
+"18 surfaces" had no growth rule — now stated, count is 19/8.
+
+**Suspicions, each with an owner (not fixed).** S1 a composed service without a real `CellTermination`
+returns `terminal=false` forever (SLICE1 STEP3 must refuse to start). S2 `_load` quarantines OWNED
+workspaces with no recovery, and stale `pending/` staging is never swept (SLICE3 STEP4, hook points now
+named in the step). S3 `_Capture` excludes `.git/.fa/.venv/.env` components at any depth, so a nested
+`.fa/x.py` never enters a revision and "protected" is name-only (STEP2 §5 wording). S4 sealed/published
+views persist bytes+manifest with no GC (E269 receipt contract + I06 disposition).
+
+**Verified fine, recorded so nobody re-opens it.** `17` kills is correct (17 FUNCTIONAL contracts, 17
+distinct directives; a raw grep returns 19 only because prose quotes the word) — the DoD now derives it.
+Spec §5 steps 1–3 and the §5.1 table are consistent for REVISION; the clarification worth stating (now
+normative) is that the discriminator is `current.json`, not `phase`. Gate/drain versus a running command
+matches E257's documented intent and needs no change. The `prepare_seal`/`mark_sealed` duplicate checks
+are intentional defence.
+
+**Plan text rewritten (executability).** SLICE1 STEP3 now enumerates all nineteen operations, requires
+authority for the non-readonly ones, forbids a silent fallback and adds a route-coverage test that reads
+the `Operation` enum. SLICE3 STEP1 now names its three remaining parts (Q74 policy, real cgroup observer,
+`FA_REQUIRE_EXECUTION_HOST=1` integration test) so it cannot be closed on local evidence. STEP2 now says
+what publish materializes, under which id, what the irreversible point is, and that PUBLISHED is what
+settles the owner. STEP4 now names the real hook points (`__enter__` before the quarantine decision;
+`_initialize_genesis`'s refusals; unswept `pending/`). The DoD derives every count by command and proves
+*collection* (a missing `TESTS:` path exits 4, not 0). The spec note gains the E268 review rules in §2.2
+and §5.
+
+**Evidence.** Execution bank + owning file **1123 passed**; `ruff`/format clean (507 files); `mypy` 19
+files; `pyrefly` 0 errors; authoring kernel `0` diagnostics. 4 new mutants (3 settlement + 1 base CAS),
+all killed with sha256-verified restore.
+
+**Deferred with reasons.** STEP3 bundle/Q58/BOOTSTRAP stays after publish (two commit paths with
+different failure vocabularies if integrated early); candidate-buffer seal stays with §5's PLAN intent;
+host proofs and deployment stay SLICE6/BLOCKED. Implementation numbering: **E269 = SLICE3 STEP2**.
+
+### E269 (pre-code) — SLICE3 STEP2 plan declared; no code written
+
+Plan is `increment-03-execution-workspace-foundation.md` §"E269" (E269.0–E269.9). Status: **awaiting
+operator approval**; no source file, STEP, contract or live row was touched by declaring it.
+
+Ordering: E267 closed STEP1 part 2 (seal); STEP2 (intent/current/projection + generation/base CAS) needs
+no cell, no Docker and no service route, so it is the next unit. The wire already fixes publish's shape
+(`protocol.py::PUBLISH` in `{sealed_manifest_id, expected_base_revision}` → `_COMMITTED` with
+`projection_complete:true`), which is why the plan derives the revision id instead of accepting one and
+cannot reply before projection verifies.
+
+**Q79 does not block E269.** Checked against surface, not assumption: Q79 governs managed tool views
+(`derive_text`, role→port threading, role registries) and gates SLICE4 STEP2; its allowed-file list is
+disjoint from E269's; its "outside the sealed tree" derivative cache is already structurally outside
+(`_Capture` walks `source/`, never `scratch/`); and its `.fa/artifacts` observation is consistent with
+publish, because `.fa` is excluded at any depth and can never enter a revision. Three future touchpoints
+are named in the plan (publish becomes the first non-EXEC `operation_ids` writer; retention/GC spans both
+stores; `scratch/` lifetime is view-scoped by construction) rather than absorbed silently.
+
+Source facts the plan rests on, each re-verified at `6b7f300`: `current.json` has exactly one writer
+(`_register`); `revisions/<rev>/data` is a retention copy while `tree.json` carries logical modes, and
+`_materialize_input` restores logical modes onto the view source — therefore publishing modes is
+faithful; `_Capture` fsyncs every copied file and destination directory; `_replace_private_bytes` fsyncs
+file+directory, so intent/pointer writes are durable by construction; no code writes canonical bytes
+after registration; `_project_view` refuses anything but `OPEN`.
+
+Open decisions requiring sign-off are D1–D8 in the plan; the two that change behaviour most are **D2**
+(`current.json` gains `workspace_id`+`generation` per §5.1, invariant `current.generation <=
+metadata.generation`, no migration shim because the three-key file was never a valid instance and no I03
+workspace has been deployed) and **D4** (canonical drift is `CORRUPT_STATE`, never adopted into the
+revision).
+
+### E269 review lock-in — peer review incorporated, Q78–Q81 recorded, plan approved
+
+**Who leads.** The operator named the implementing lead; the reviewing peer takes the final R5/R6/R9 diff
+(not the plan) as a second reader, and the lead accepted that condition. The review's own scorecard is
+recorded because it changed the plan, not to score points: **six findings held against source** (state-
+first precondition ordering; `PROJECTING` never written; `/repo` mounted `read_only: true`; `_unchanged`
+already being the drift check; the restart-clean publish→release path; and the `current.json` spec
+conflict), **one was right in diagnosis and wrong in prescription** (a durable stored receipt), and the
+lead's own two extra lines were withdrawn on review evidence (`operation_ids` append; over-broad restart
+claim). Full per-finding disposition is in the increment's E269 header, E269.3–E269.4.
+
+**Register repaired first.** `notes/open-questions-2026-10-07.md` ended at **Q77**; Q78 and Q79 existed
+only as ledger mentions, so nothing below could be cited. Both are now backfilled with their full bodies
+(Q78 = readiness boundary, resolved (B); Q79 = binary-format contract, open, re-scoped) before Q80/Q81
+were numbered.
+
+**Q80 — `current.json` shapes. RESOLVED (B), and it reverses the plan's own D2.** spec:658 says
+"initial `current.json` … exactly three keys" while §5.1 says "exactly five"; the plan asserted the
+three-key file was "an incomplete instance", which is **false**. (A) union schema was rejected: it
+accommodates a state with no deployed instance and no committed fixture (checked: no test writes a
+3-key `current.json`), makes the ownership invariant conditional on precisely the files that establish
+ownership, and leaves the contradiction standing. (B): one five-key shape, `_register` writes it,
+spec:658 carries an explicit SUPERSEDED note (amendment, not a silent edit), `_load` enforces
+`current.workspace_id == workspace_id` and `current.generation <= metadata.generation` **after**
+`_initialize_genesis` normalizes a legacy 0→1 (equality is not required: release + re-claim legally
+advances `workspace.json` past the epoch that committed the pointer).
+
+**Q81 — canonical roots on the deployed host. DECIDED (A).** `/repo` ships `read_only: true`; publish is
+the first canonical writer in the repository, and the failure would otherwise surface *after* the
+irreversible pointer. Composition must refuse a non-writable root; `prepare_publish` probes without
+writing (`os.fstatvfs(fd).f_flag & os.ST_RDONLY`, verified `os.ST_RDONLY == 1`, plus euid-vs-mode) and
+fails `PATH_DENIED` before any effect. No free-space/ENOSPC pre-check (advisory, racy, recovery must exist
+anyway). Mount choice verified at SLICE6; no production `WorkspaceAuthority(` composition exists yet, so
+this is a composition rule, not a bug fix.
+
+**Plan deltas locked in.** R1 state-first ordering; R9 replay keyed on state with the caller's own
+`operation_id` and **no** `operation_ids` append (D10: that field's only meaning is EXEC's duplicate-id
+uncertainty, so a second idempotent meaning would overload it — and Q79 keeps exactly one precedent);
+`phase=PROJECTING` durable before the first canonical byte; D4 = call `_unchanged` and accept its global
+unhealthy flag as the established rule (five callers), with a test; R13 restated as "restart-clean iff
+released"; E269.9 records the unbounded `revisions/<derived>` + `pending/<uuid>` leak for STEP4. Tests
+25→**28**, kills 9→**10** (the new one is state-first ordering).
+
+**Discipline carried forward.** The lead produced two wrong claims in two passes by reading a function's
+opening lines and inferring the rest (`_unchanged`). Rule now: quote whole function bodies in evidence
+before asserting behaviour, and prefer `git`-pinned/symbol citations over line numbers.
+
+### E269 — SLICE3 STEP2 implemented: CT106 publish (intent / pointer / projection)
+
+**Scope.** `publication.publish_view` + four authority phase methods in `workspace.py`; `_CURRENT` moves to
+Q80's five-key shape; `_INTENT` implements §5.1's full vocabulary. No dispatcher route, no Q58/BOOTSTRAP
+path, no recovery hook, no GC — those stay STEP3/STEP4/SLICE1 STEP3.
+
+**Evidence (commands actually run at HEAD).**
+- `pytest tests/test_workspace_publication.py -q` → **58 passed** (32 pre-existing + **26 new CT106**).
+- `pytest tests/test_workspace_publication.py tests/test_execution_*.py tests/test_s10a_cli_coverage.py -q`
+  → **1211 passed**.
+- `ruff check src tests` → clean; `ruff format --check` → 507 files; `mypy src/fa/execution` → 19 files, no
+  issues; `pyrefly check src/fa/execution` → 0 errors; `authoring check` → `exit_code 0`, `diagnostics []`.
+- **10/10 declared kills**, each executed alone (never concurrent with another pytest process — the E267b
+  rule), with sha256-verified byte-exact restore: (1) `publish_view -> _commit_current`, (2)
+  `publish_view -> materialize_publication`, (3) manifest-vs-record cross-check, (4) copied-tree-vs-manifest
+  comparison, (5) skip-if-equal inverted, (6) canonical projection proof, (7) `_unchanged` pre-flight, (8)
+  `PUBLISHED` replay branch, (9) durable pointer CAS, (10) state-first ordering.
+
+**Mutant 3 survived the first sweep and needed a new oracle.** Every existing case failed *before* the
+cross-check could matter — the seal validator caught a tampered digest, the copied-tree comparison caught
+moved bytes. The check only binds when a manifest is internally valid but belongs to another grant, so the
+new case seals two views of the same revision and copies one view's `sealed.json` into the other: identity
+fields become the only thing separating a sibling's provenance from this grant. That is a C3 substitution
+case, not a synthetic unit.
+
+**Implementation findings.**
+1. **D11 (recorded, flagged).** Projection-time destination-type conflicts were failing *after* the pointer
+   and surfacing as `DURABILITY_UNKNOWN`; `prepare_publish` now pre-flights destination types and refuses
+   `PATH_DENIED` before any write. Classified as a refinement of D7/D9, **not** a new policy — flagged in
+   the increment so the operator can promote it if that reading is wrong.
+2. `_derive_revision_id` moved into `workspace.py` (the id names a `revisions/` directory); `publication`
+   delegates, so one formula serves both modules instead of two that can drift.
+3. `tree.json` stores live entries only — `_TREE` pins `deleted` to `False`, so tombstones remain a
+   manifest fact. Asserted, not assumed.
+4. `_load` enforces Q80's pointer identity **after** `_initialize_genesis` normalizes a legacy 0→1; the
+   ordering matters because a genesis-0 record legitimately pairs with a generation-1 pointer.
+
+**Not proved, stated.** No Docker/cgroup barrier, no route, no restart recovery, no retention. The
+"published but not released ⇒ restart quarantines" case is asserted as STEP4's limit; "publish → release ⇒
+restart-clean" is the one clean path. Register: `I03-LIVE-20` (`PLANNED / UNEXECUTED`) with the full host
+choreography (real cell, real pin, SIGKILL rows, two negative controls); S06's join row now says both
+halves exist locally and remain host-blocked.
+
+**No STEP ticked, no CT status changed, no live verdict, no deployment claim.**
+
+### E271 — STEP3 unit A: trusted bundle renderer + private store (Q82 raised)
+
+**Implemented.** `publication.render_bundle` (pure, spec §7.1's literal three-file layout with
+controller-owned frontmatter, fixed ledger heading, exact `## Intent`/`## Out-of-scope` rules, slice
+grammar, disguised-metadata scan outside fences) and `publication.prepare_bundle` →
+`WorkspaceAuthority.store_bundle` (OWNER grant, no unsettled view, no intent, exact `base_revision` CAS,
+staging under `pending/` renamed in with `RENAME_NOREPLACE`, one self-contained
+`bundles/<id>/{bundle.json, worklogs/<slug>/…}` per bundle).
+
+**Evidence.** Owning bank **67 passed** (9 new); execution bank **1220 passed**; ruff/format clean (507
+files); mypy 19 files; pyrefly 0 errors; authoring `exit_code 0`. **7/7 kills** with sha256-verified
+restore. Register row **I03-LIVE-21** added (`PLANNED / UNEXECUTED`) with the host choreography and three
+negative controls.
+
+**Recorded fixes during implementation.** (1) `protocol._check`'s `_byte_limits` already refuses `.`/`..`
+path components, so the authority translates that contract error to `INPUT_POLICY` rather than reinventing
+a validator (its own guard stays as defence in depth). (2) A shared `bundles/index.json` was dropped: each
+bundle owns its manifest so two prepares cannot overwrite each other. (3) `os.open(..., O_CREAT)` cannot
+create a directory — `mkdir` + open, with the parent descriptor closed in `finally`.
+
+**Blocked and not started.** `install_project` → **Q82** (sibling vs in-place destination; it changes what
+`_COMMITTED.revision_id` means and which root may be created in — the mechanism is settled, the
+destination is not). `publish_plan`/Q58 → not started: PLAN inverts E269's ordering (the canonical replace
+is the irreversible point, before any pointer), so it needs its own phase plan rather than a tail-end
+copy of the REVISION path. **STEP3 remains open.**

@@ -1702,3 +1702,356 @@ at final SLICE6. C1/C2 and all four final duties remain open, not satisfied by t
 **E254 implementation:** selected (a) implemented and locally proved;827owning/seven whole-bank
 assertion-only kills/restored827/broader1347. [Evidence](evidence/i03-e254/genesis.json.gz).
 Pin creation, actual admission/backend and live completion remain unimplemented, not implied by this fix.
+
+---
+
+## Q78 — Workspace readiness boundary: enforce everywhere or only in the managed composition?
+
+**Status: RESOLVED — option (B), recorded in E265, 2026-10-22. Backfilled here from `ledger.md` (E265).**
+This entry was missing from the register while Q79+ were raised; the register is the citation surface, so
+the body is restored rather than referenced by ledger offset.
+
+**Question.** A canonical workspace that is not ready (missing toolchain, stale `.venv`, corrupt lock
+state) can fail a managed command in a way that looks like a code defect. Should readiness enforcement be
+unconditional across every composition, or scoped to the composition that owns execution?
+
+**Measured.** Unconditional enforcement produced **141 failures**, of which **130 shared a single
+`workspace_not_ready` cause across 14 CLI/workflow modules**, and it blocked the product in this sandbox
+(`precommit_prewarm_failed`) — i.e. the failure was the enforcement, not the readiness.
+
+**Decision (B).** Readiness is enforced **strictly in the managed (injected-provisioner) composition** —
+exactly the configuration SLICE4 STEP2 introduces with "remove fail-open readiness" — and the pre-cutover
+host composition keeps **reporting** readiness without blocking. A test proves the non-blocking branch
+explicitly so the scoping is a recorded property, not a gap.
+
+**Why not unconditional (A).** It converts an environment fact into a product refusal for every role and
+every command, including read-only ones that need no toolchain; and it makes the pre-cutover composition
+unusable before the composition that can actually provision exists.
+
+**Not closed by this decision.** SLICE4 STEP2 still owns removing fail-open readiness at cutover, and the
+declared live rows for readiness stay unexecuted until SLICE6.
+
+---
+
+## Q79 — Managed-view reads are text-only: what is the binary-format contract for chat and workflow?
+
+**Status: OPEN (re-scoped 2026-10-22). Recorded decision + staged work order. Backfilled here from the
+E265/operator record; it gates SLICE4 STEP2's cutover, not SLICE3 STEP2 (see E269.0).**
+
+**Question.** The managed substrate delivers UTF-8 text only. `fa run --role chat` is the general front
+door and must read arbitrary file types; `fa workflow`'s planner consumes PDF/DOCX at workflow start.
+What is the durable contract, and what must exist before the SLICE4 STEP2 cutover?
+
+**Options.** (a) accept the refusal permanently; (b) add a bounded-bytes channel to the wire; (c) convert
+inside the sandbox and return text; (d) pre-convert and keep derivatives outside the sealed tree.
+**(b) rejected unconditionally:** `ReadResult.sha256` is computed over raw bytes while `content` is a
+decoded window, so every consumer (the `expected_sha256` CAS in `fs_edit_file`, projection, blackboard,
+telemetry) must branch; base64 fights the 4 MiB frame cap; and binaries would land in the process holding
+provider keys. **(d) rejected as a publication concern**, but its mechanism is adopted at Stage 1 as a
+content-addressed, view-private cache.
+
+**Measured (source-verified at the time of decision).** `fa run --role chat` is the default (`cli.py:597`);
+both modes share one `SessionManager` (`cli.py:313-314`) and one session-wide port (`state.py:373` →
+`build_registry_for_role`, `profiles.py:427-445`). The port reaches only `build_baseline_registry`
+(`tools/__init__.py:169-174`); `build_planner_registry` (:213-218), `build_eval_registry` (:251-255) and
+`build_chat_registry` (:287-291) take no `workspace_io` and fall back to host-path tools (:233-237,
+:325-329). So the coder is the only manageable role today, and a cutover would leave chat and planner
+writing canonical host bytes while the coder writes the view — breaking cross-stage visibility (L-TOOL-7)
+and the no-canonical-write invariant before any format question arises. Substrate bounds: whole-file
+NUL/UTF-8 rejection before windowing (`view_io.py:353-380`); one read ≤ 1 MiB (`protocol.py:21`); every
+TEXT field on the control wire ≤ `MAX_TEXT_BYTES` (`protocol.py:34`, :220); EXEC stdout tail-trimmed to
+64 KiB (`cell_worker.py:89-91`) while frames allow 4 MiB (`protocol.py:20`); nineteen closed control
+operations with READ_FILE already routed readonly (`primitives.py:22`, `supervisor.py:388`); cell mounts
+`/workspace` (RO for READ views), `/scratch` (RW, host-visible to the supervisor), `/opt/toolchain-cache`
+(RO), image pinned by digest — and the port's `cache_dir` is that RO mount (`tool_port.py:71-74`), so it
+is controller-writable but not cell-writable. `session.artifact_store` is `workspace/.fa/artifacts`
+(`state.py:482`), inside the validated tree and unreachable through the port (`.fa` is a blocked
+component); the run-log store (`state.py:56`) is outside it. `ArtifactStore.put` is content-addressed with
+no size cap (`artifacts.py:42-50`). `fs_write_file` has no text/binary guard (`write_file.py:18-46`);
+managed mode is protected only because `view_io._target` raises `STALE_REVISION` when `expected_sha256`
+is None and the file exists — i.e. managed `fs_write_file` is **create-only by accident**. No host
+fallback is permitted (spec:771). The deployed image ships no extractor (`Dockerfile.fa:96` —
+`uv sync --frozen --no-dev --no-editable`; pymupdf/pdfminer.six/pypdf are the optional runtime extra).
+SLICE2 STEP4's exit criterion requires only that PDF/binary results be explicit with no canonical
+fallback (`increment-03…md:309`) — the shipped refusal already satisfies it.
+
+**Decision — one format-agnostic derivation seam; buy the seam now, the converters later.** Bytes live in
+the sandbox and the workspace; only text and code cross the controller boundary; derived text is a
+distinct result kind, not file content. Derived text carries `derived: true`, `source_path`,
+`source_sha256`, `converter_id`, and **no CAS token**, so `fs_edit_file` cannot overwrite a binary with
+its own extract.
+
+**Stage 0 — pre-cutover prerequisite (no sandbox work, no protocol change).** (1) Thread
+`workspace_io: WorkspacePort | None` through `build_planner_registry`, `build_eval_registry`,
+`build_chat_registry` and their fallback paths, and update every composition-root double (this has
+drifted three times — E265 finding 2); a role whose tools silently fall back to host paths must not
+exist. (2) Move text-only-ness from the suffix test (`read_file.py:503`) to a port capability probe:
+`WorkspacePort.capabilities -> frozenset[str]` (e.g. `{"derive_text"}`), not a new Protocol method;
+`AuthorityWorkspacePort` returns an empty set today. (3) Named outcome `unsupported_format` (not
+`read_failed`), added to `_CODE_TO_CATEGORY` → `POLICY_DENIED` → `ESCALATE` (`classify.py:80-89`,
+:124-137). (4) Tool description becomes capability-aware — it currently promises PDF the image cannot
+deliver (`read_file.py:557`). (5) Explicit refusal to write over existing non-text content in both modes,
+so protection stops resting on the CAS accident. (6) Instrument `unsupported_format` (format × role) to
+select the first converter from data.
+
+**Stage 1 — gated on measured demand, a pinned cell image, and a non-interactive EXEC adapter.**
+Mechanism: EXEC + `/scratch`, no new operation. Run the pinned converter in the cell writing
+`/scratch/derived/<sha256(converter_id ‖ source_sha256)>.txt`; the supervisor reads that host path,
+validates it (size cap 16 MiB, NUL-free, valid UTF-8), and returns ≤ 1 MiB of TEXT per reply with
+`eof`/`truncated` (paging by offset, since the wire caps TEXT at 1 MiB); larger results are offloaded to
+the run-log artifact store with provenance inside the payload — **never** `session.artifact_store`.
+Reuses existing EXEC receipts/terminal barrier; converter output is validated like any other untrusted
+worker output. Named blocker: `ManagedBashExecutor` refuses a non-interactive profile (`client.py:148`)
+and the supervisor requires `profile.interactive == (session_id is not None)` (`supervisor.py:462-466`),
+so one-shot derivation needs the non-interactive adapter the spec names but nobody has built — or an
+interactive profile with a session, at the cost of holding a PTY. Cache lives in a cell-writable,
+view-private home (`inputs.scratch`, not `inputs.cache`); lifetime = the view. First converter chosen by
+the counter; no registry and no plugin framework until a second converter exists.
+
+**Roles** (capability granted by the binding, not by role names in the tool layer). chat and planner:
+`derive_text` yes; implementer, verifier, researcher: no — keeping verification narrow and
+deterministic. Planner commits extracts as `knowledge/research/<stem>.md`, inside its existing allowlist
+(`profiles.py:153-155`), so plans cite named, reviewable files and binaries are normalised at the
+workflow boundary instead of carried downstream.
+
+**Allowed files (Stage 0).** `src/fa/inner_loop/tools/__init__.py`, `…/workspace_port.py`,
+`…/{read_file,write_file,edit_file}.py`, `src/fa/inner_loop/profiles.py`,
+`src/fa/inner_loop/recovery/classify.py`, `src/fa/execution/tool_port.py`, new
+`tests/test_workspace_capability.py`, plus register/ledger/increment. **Not touched:** `protocol.py`,
+`primitives.py`, `view_io.py`, `supervisor.py`, `docker.py`, any wire schema. Hard invariant: with no port
+bound, host-mode behaviour stays byte-identical.
+
+**DoD (binary, testable).** Each of the four builders forwards the port and its fallback builds port-bound
+tools (parameterized test, doubles updated). A bound port yields no tool that resolves a host path.
+`unsupported_format` classifies `POLICY_DENIED → ESCALATE`. The description asserts PDF only when the
+capability is present (coherence test beside `tests/test_prompt_registry_coherence.py`). A write over an
+existing non-text path fails in host and managed mode. Stage 1: derived output appears only under
+`/scratch`, never under `/workspace`; non-UTF-8/NUL/oversize/converter-missing/timeouts are four distinct
+named refusals; a second call with the same source digest issues no second EXEC; a changed
+`converter_id` misses the cache; no file is created under `workspace/.fa/artifacts`; provenance fields are
+present in the stored payload. Negative proof (mutation kills): drop a builder's port forwarding →
+host-path test fails; restore `read_failed` → classify test fails; drop the NUL check → invalid output is
+accepted; drop scratch containment → file lands in `/workspace`; drop `converter_id` from the cache key →
+cache-hit test fails. Live rows: L-TOOL-3 (named refusals, zero host opens) stays valid throughout.
+
+**Not closed.** No cell image exists (no cell Dockerfile; image pinned by digest); no non-interactive EXEC
+adapter; converter set unchosen; derived text is not yet searchable by `fs_search`; read_set/telemetry
+attribution for derived reads is undefined; artifact-store size caps and GC are unspecified; the
+coder/eval → profile mapping must be verified before any registry DoD is written
+(`WORKFLOW_STAGE_ROLES` is `{"planner","coder","eval"}` at `workflow_controller.py:141`, but
+`PROFILES_RAW` has no such keys); the host branch's fate (purist: dies at cutover — versus a
+sunset-dated pragmatic bridge for chat) is the one operator decision that changes this text.
+
+**Interaction with I03 SLICE3 STEP2 (recorded 2026-10-22, E269 review).** Q79 does not block publish:
+its file set is disjoint from `execution/workspace.py`/`execution/publication.py`; a `scratch/`-private
+derivative is already outside the sealed domain (`_Capture` walks `source/`, never `scratch/`); and `.fa`
+being excluded at any depth means an artifact can never enter a revision or tombstone. The one shared
+surface is **who may append to a view record**: publish was going to append `operation_ids`, and it will
+not (E269 R9), so this question keeps exactly **one** precedent (EXEC's duplicate check at
+`workspace.py::admit`), which is what Stage 0's rule must stay consistent with.
+
+---
+
+## Q80 — `current.json` has two frozen shapes in the same spec (3-key "initial" vs 5-key §5.1)
+
+**Status: RESOLVED — option (B), single five-key shape; spec:658 amended explicitly. Raised and closed in
+the E269 review, 2026-10-22. Operator delegated the engineering choice to the implementing lead, who
+accepted the reviewing peer's dissent against the lead's own initial recommendation (A).**
+
+**Question.** Two normative lines disagree, verbatim:
+
+- spec §4-ish (line 658): *"Freeze the private **initial** `current.json` schema as exactly
+  `{schema_version:1,revision_id,tree_sha256}`; the retained revision's `tree.json` is exactly
+  `{schema_version:1,revision_id,tree_sha256,entries}` …"*
+- spec §5.1 (line 986): *"`current.json` exactly `{schema_version:1,workspace_id,generation,revision_id,
+  tree_sha256}`."*
+
+The word **initial** is normative, so the spec describes a real two-shape evolution. E269's plan asserted
+the opposite ("today's three-key file is an incomplete instance, not an older version") and that
+justification was **false**. Two documents cannot both be right, and with `additionalProperties: False` a
+3-key file is not merely old — it becomes unreadable once the schema tightens.
+
+**Options.**
+
+- **(A)** honour both: union schema, 3-key at registration, 5-key after the first publish; readers accept
+  either.
+- **(B) SELECTED** — one shape: `_CURRENT` is five keys everywhere, `_register` writes all five, and
+  spec:658 is amended as superseded by §5.1.
+- **(C)** drop `generation` from `current.json` and take it from `workspace.json` — rejected: it breaks
+  §5.1's explicit pairing of `generation` with the pointer, which is the CAS anchor.
+
+**Why (B), reversing the lead's (A).**
+
+1. **(A) accommodates a state that provably cannot exist.** No I03 workspace has ever been deployed
+   (deployment is out of scope; Docker work is `BLOCKED`), `current.json` is produced **only** by
+   `WorkspaceAuthority` (`_register` is its single writer), and the reviewing peer verified there is **no
+   committed 3-key `current.json` fixture anywhere in the tree**. A union would exist for a hypothetical.
+2. **`_register` already holds both extra values** — `binding.metadata["workspace_id"]` and
+   `binding.metadata["generation"]` (registration is `generation: 1`, `workspace.py::register_existing`) —
+   so (B) is **less** code, not more.
+3. **The invariant stops being conditional.** Under (A), `_load`'s new checks
+   (`current.workspace_id == workspace_id`, `current.generation <= metadata.generation`) would be
+   unevaluable on exactly the files that establish ownership — conditional validity is the rot pattern
+   this codebase already paid for three times (E259/E264/E265 double drift).
+4. **(A) leaves the normative contradiction standing** for the next reader, which is precisely the defect
+   I3 exposed. (B) repairs it at the source.
+
+**Ruling.** `current.json` is exactly `{schema_version:1, workspace_id, generation, revision_id,
+tree_sha256}` — at registration and after every publish. `generation` is the ownership epoch **at the time
+the pointer was committed**; the invariant at `_load` is `current.workspace_id == workspace_id` and
+`current.generation <= metadata.generation` (equality is deliberately **not** required: a release
+followed by a re-claim advances `workspace.json` past the generation that committed the current revision,
+and that is legal). spec:658 keeps its sentence with an explicit supersession note rather than a silent
+edit; §5.1 becomes the single authority for the file's shape.
+
+**Evidence that this is safe rather than a migration.** `grep` finds no `current.json` fixture in `tests/`
+that carries the old shape as a committed expectation (the ones that exist are written by a live
+authority in a temp root); no deployed workspace exists; and the change is confined to one schema constant
+plus `_register`. If a 3-key state is ever actually found in the field, the answer is a migration, not a
+union — that sentence is the tripwire.
+
+**Kill/proof.** `_load` refuses a `current.json` whose `workspace_id` disagrees, refuses
+`generation > metadata.generation`, and accepts `generation < metadata.generation`; a registration is
+asserted to write exactly five keys and to reopen cleanly.
+
+---
+
+## Q81 — Which approved roots may be canonical on the deployed host, given `/repo` is mounted read-only?
+
+**Status: DECIDED — (A), canonical roots must be supervisor-writable; composition refuses a root that
+fails the no-write probe; deployment mounts verified at SLICE6. Raised in the E269 review, 2026-10-22.**
+
+**Question.** Publish is the first code in the repository that writes canonical bytes. The shipped
+compose file mounts `/srv/first-agent/repo/First-Agent-dev` at `/repo` with `read_only: true`
+(`docker-compose.fa.yml:95-99`) while sessions are RW. If a canonical root is a read-only mount, publish
+would discover it **after** the irreversible `current.json` replace, i.e. as `DURABILITY_UNKNOWN` plus
+quarantine plus a half-projected tree.
+
+**Facts.** No production `WorkspaceAuthority(...)` composition exists yet (tests only), so `approved_roots`
+is decided by SLICE1 STEP3's factory — the mount question is therefore a composition/policy decision, not
+a bug in E269. `os.fstatvfs(fd).f_flag & os.ST_RDONLY` (verified available: `os.ST_RDONLY == 1`) reports
+the mount flag without writing; euid-vs-mode covers the rest.
+
+**Options.** **(A) SELECTED** — canonical roots must be writable by the supervisor uid; composition
+refuses a root that fails a no-write probe, and the deployment mounts project roots RW (either
+`/repo:rw`, or canonical roots under `/sessions`), verified during SLICE6 acceptance. **(B)** canonical
+becomes a projection under `/sessions` with a separate user-visible path — rejected: contradicts §5's
+"the canonical working tree remains the exact user-visible path". **(C)** a privileged helper to write
+`/repo` — rejected: a second writer with root authority is exactly the escalation this design removes.
+
+**Consequence recorded now.** E269 refuses a non-writable canonical root at **prepare** time with a typed
+error, before any write; the refusal is a *fail-fast* for a composition error, not a licence to defer the
+mount decision. The two probe branches are tested separately: the mode branch with a real `0o555`
+directory, and the read-only-mount branch with a **disclosed** `os.fstatvfs` double (E266/E259 pattern for
+a kernel fact that cannot be manufactured in a writable sandbox). No free-space or ENOSPC pre-check is
+added: it is advisory and racy, and the recovery path must exist regardless.
+
+---
+
+## Q82 — Where does a prepared bundle install, and what identifies the project it creates?
+
+**Status: ANSWERED (2026-10-22, E272 review) — (B), install in place. Blocks nothing further; the
+install itself is the next unit. Raised 2026-10-22 (E271); `prepare_bundle` and its renderer are
+implemented and unaffected.**
+
+**What is already fixed by record.** Spec §7.1 freezes the *bundle*: project directory
+`worklogs/<project_slug>/`, `roadmap.md`, `ledger.md`, `increments/increment-01-<increment_slug>.md`;
+controller-owned frontmatter (`Roadmap-ID: RM-<slug>`, `Increment-ID: RM-<slug>-I01`, created/status/
+active-increment, `slices` = actual count, `shipped: —`); ledger = fixed heading only; roadmap body =
+`## Intent` + `## Out-of-scope` prose only; increment body = slice grammar only. Spec §5 fixes the
+*mechanism*: real `renameat2(RENAME_NOREPLACE)`, never existence-check + ordinary rename, its own durable
+`intent.json` (`kind=BOOTSTRAP`, `target_relative`, `new_sha256` = bundle-manifest hash) **before** the
+install, no automatic deletion of an installed bundle, forward recovery only.
+
+**What is not fixed.** `install_project`'s wire payload is only `{validated_bundle_id, project_slug}`,
+while the prepare call is bound to a *workspace* (`expected_base_revision`, generation, owner grant). Two
+readings remain, and they differ in a way that matters:
+
+- **(A) sibling directory.** The bundle installs at `<approved root>/<project_slug>/` — a new project next
+  to the registered workspace — and a later `register_workspace` registers it. Matches "new project
+  directory install" and keeps `_COMMITTED`'s `workspace_id` pointing at the *preparing* workspace.
+- **(B) in place.** The bundle installs into the preparing workspace's own root (`relative_root`), adding
+  `worklogs/<project_slug>/` to an existing project. Then no new workspace is needed, but the bootstrap is
+  no longer "new project install" and §5's BOOTSTRAP/RENAME_NOREPLACE row loses its subject.
+
+**Recommendation: (A)**, with three binding rules: the destination is `<root>/<project_slug>` where root
+is the prepare-time approved root; `project_slug` is re-validated against `CONFIG_ID` and re-checked
+against the stored bundle's slug (a caller cannot retarget an id); and the install refuses (`COLLISION`)
+when the destination exists — with the existing project's bytes verified untouched, which is exactly
+STEP3's stated exit criterion.
+
+**Why this is a question and not a detail.** (A) writes a *new* canonical tree outside the workspace that
+owns the grant, so it needs an explicit rule for which root it may create in and how that root is proven
+(for example: same approved root, same mount, no symlinked component). Deciding it silently inside an
+implementer's `os.mkdir` is precisely the class of decision this project records instead of assuming.
+
+**Not asked here.** Whether the installed project is auto-registered as a workspace (a SLICE5/controller
+question) and whether `_COMMITTED`'s `revision_id` names the new project's genesis revision or the
+preparing workspace's (follows from (A) vs (B)).
+
+---
+
+### Q82 ruling (2026-10-22, E272 review) — (B) in place, superseding the (A) recommendation above
+
+**The ruling.** A bundle installs at `<workspace root>/worklogs/<project_slug>`, i.e. inside the
+*preparing* workspace's canonical root. `_COMMITTED`'s `revision_id` is that workspace's new revision.
+There is no auto-registration: `register_workspace` stays a separate operation (SLICE5 territory).
+
+**Why (B) and not (A)** — four recorded facts, not a preference:
+
+1. §7.1's frozen paths are **workspace-relative** (`worklogs/<project_slug>/roadmap.md`,
+   `increments/increment-01-<slug>.md`). (A) would make the same bundle render paths that are relative
+   to a *different* root than the one §7.1 names, and every consumer of those rendered paths (the
+   roadmap's own Artifacts table, the increment's `Roadmap-ID`) would describe a tree the preparing
+   workspace cannot see.
+2. The canonical grammar already has **several projects coexisting under one `worklogs/`**
+   (`notes/artifact-schema-and-grammar.md` §1: `worklogs/<slug>/`, "one per project" — and this
+   repository's own `worklogs/` holds many such slugs). "A new project directory" therefore means a new
+   directory under `worklogs/`, not necessarily a new canonical root.
+3. §5.1's BOOTSTRAP row is honest only if the **preparing** workspace's own tree changes: the row's
+   recovery rule inspects "the installed directory's full approved manifest/hash", and the revision
+   and `current.json` writes that follow it are the *same workspace's*. Under (A) the preparing
+   workspace would need a revision for bytes it does not contain.
+4. `worklogs` appears in neither `_PROTECTED_COMPONENTS` nor `_excluded`, so the installed files are
+   captured into the preparing workspace's next revision — which is exactly what
+   `RESULTS[INSTALL_PROJECT] = _COMMITTED` claims.
+
+**Binding rules for the install, implied by (B).** The destination is `worklogs/<project_slug>` under
+the canonical root the bundle's base revision belongs to; `project_slug` is re-validated against
+`CONFIG_ID` *and* re-checked against the stored bundle's own slug (an id cannot be retargeted); the
+install refuses (`COLLISION`) when the destination exists, with the existing bytes verified untouched;
+`worklogs` is created idempotently **before** the irreversible `RENAME_NOREPLACE`, and the
+directories an attempt created are recorded in the BOOTSTRAP intent so recovery can remove exactly
+those (never a pre-existing one) when the rename never happened; a symlinked component anywhere on
+the destination path is refused (`PATH_DENIED`) before any write.
+
+**Still not decided here.** Auto-registration (no), and whether a later `REGISTER_WORKSPACE` of the
+installed directory is what makes it a first-class workspace (yes, SLICE5).
+
+---
+
+## Q83 — What identifies an `install_project` operation?
+
+**Status: ANSWERED by implementation (2026-10-23, E271 unit B), reviewable — not blocking.**
+
+**The gap.** `PLAN_REF`, `SEAL`, `PUBLISH` and the exec paths all carry a caller-supplied `operation_id`,
+but the wire's `INSTALL_PROJECT` payload is only `{validated_bundle_id, project_slug}` while its reply
+(`_COMMITTED`) must contain `operation_id`, and §5.1's `intent.json` makes `operation_id` mandatory. The
+authority therefore has to name the operation itself.
+
+**Decision taken: derive it from the bundle.** `operation_id = "op-" + validated_bundle_id[7:]`, i.e.
+the bundle's own 32 hex characters under the `op-` prefix. Reasons, in order:
+
+1. **Determinism is the property that matters.** A retried install of the same bundle must correlate to
+   the same operation, because §5.1 recovery is "inspect the SAME operation"; a random id per call would
+   make a retry indistinguishable from a new attempt and no recovery row could match the intent.
+2. **Uniqueness is already given.** A successful install makes `worklogs/<slug>` exist, so the same
+   bundle can never be installed twice; ids derived from it are unique for all installable inputs.
+3. **No wire change, no second source of truth.** Inventing a payload field would change the frozen
+   protocol table for one caller's convenience, and deriving from the bundle keeps the correlation
+   visible in both artefacts (bundle manifest and intent) without a new store.
+
+**What would reopen it.** If the controller ever wants one operation to install several bundles (a
+multi-project bootstrap) or to retry a *failed* install under a new identity, the derivation stops being
+sufficient and the payload must carry the id. Nothing in the current plan asks for either.
+

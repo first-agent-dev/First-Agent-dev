@@ -165,7 +165,7 @@ Complete payload additions/results (every object has exactly the named keys; IDs
 | prepare_bundle | `{project_slug,increment_slug,roadmap_text,increment_text,expected_base_revision}` / `{validated_bundle_id,bundle_sha256}`; OWNER grant, fixed three-file renderer/ledger header, recomputed caps/grammar/hash in supervisor; no model file map |
 | install_project | `{validated_bundle_id,project_slug}` / same committed result as publish; bundle created by trusted bounded renderer, not arbitrary model file map |
 | handoff | `{target_namespace}` / `{view_ref:null,capability,generation,revision_id}`; current actor's views must be terminal/settled; target bound to existing parent-child run relationship; same root owner/generation, exactly one active mutator grant |
-| release | `{}` / `{released:true}`; revokes only its grant/pin; writer release requires no writable/live/unknown jobs or unfinished projection; READ release cannot revoke another actor |
+| release | `{}` / `{released:true}`; revokes only its grant/pin; writer release requires no writable/live/unknown jobs or unfinished projection — concretely: every WRITE view is `PUBLISHED` or `REJECTED`, none is `OPEN`/`STOPPING`/`UNKNOWN`, and no `intent.json` exists. A `SEALED`-but-unpublished view still holds the writer, because releasing it would strand a candidate whose capability dies with the grant. READ release cannot revoke another actor |
 
 Cell-private stdio frames carry exactly `{version:1,request_id,action,payload}`; actions
 RUN/INTERRUPT/CLOSE/LIST/STOP. RUN payload exactly `{command,cwd,timeout_ms,session_id}`; control
@@ -357,6 +357,19 @@ interactive branch keeps its existing episode-identity gate and `force_stop_crea
 branches differ only in how the durable CID is resolved, never in the stop mechanism. Unifying them
 is not authorized here because it would change interactive restart semantics, which R4/reconcile
 owns.
+
+**E268 review rules (normative for STEP2 and the service composition).**
+- `create_view` revalidates the wire's `base_revision` as a CAS precondition inside the same transaction
+  that proves the writer: a named base different from `current` is `STALE_REVISION` before any copy. A
+  handler that drops the field has disabled the check; the authority is the owner, the handler only
+  forwards it.
+- Owner settlement is state-aware (`workspace.py::_has_unsettled_views`): `PUBLISHED`/`REJECTED` settle,
+  `SEALED` does not, `OPEN`/`STOPPING`/`UNKNOWN` never do. Publication is therefore the only way a used
+  workspace becomes reusable, which makes the publish exit criteria load-bearing for the stage loop in
+  §6.1 rather than paperwork.
+- The dispatcher must route all nineteen closed operations. `stop_view`, `seal`, `publish`,
+  `install_project`, `prepare_bundle`, `handoff` and `release` are not readonly and must pass the
+  authority check; a missing route is a closed-code refusal, never a silent success.
 
 **E252 worker reply/RUN handoff repair (before code):** completion-reply publication and acceptance
 of the next RUN must share one synchronization boundary. The caller can receive a reply before
@@ -648,6 +661,14 @@ the retained revision's tree.json is exactly {schema_version:1,revision_id,tree_
 use §5's sorted ordinary tree-entry fields, without deletions for R0. Tree hash is the existing
 canonical-JSON nondeleted-entry hash. This is data retention, not a second operation history or seal.
 Private manifest cap64MiB is independent of the4MiB wire cap; supported traversal depth is1..64.
+**SUPERSEDED 2026-10-22 — Q80/E269.** The "initial" three-key `current.json` above is replaced by §5.1's
+single shape: `{schema_version:1,workspace_id,generation,revision_id,tree_sha256}`, written at
+registration and after every publish. The three-key shape never shipped in a deployed workspace and has
+no committed fixture anywhere in the tree, so this is an amendment rather than a migration; a field
+3-key file would need a migration, not a union schema. `generation` is the ownership epoch the pointer
+was committed under, and `_load` enforces `current.workspace_id == workspace_id` and
+`current.generation <= metadata.generation` (equality is deliberately not required: release + re-claim
+legally advances `workspace.json` past the epoch that committed the current revision).
 Count directory entries while enumerating, before unbounded list allocation. Mutex queueing and
 post-generation checks consume the original deadline; expiry cannot issue a grant.
 Copy dirty filesystem bytes under descriptor roots, excluding .git/.fa/.venv/.env and configured
@@ -897,6 +918,43 @@ Deleted entries must match base entries; tree_sha256 hashes canonical JSON of no
 (sort keys, compact separators, UTF-8), not transient run/view IDs. Recompute data hashes before
 accepting the manifest; never trust a cell's purported tree hash. No bool-as-integer acceptance.
 
+Publish materializes Rnext **from the sealed manifest** (`sealed.json`, E267), re-verifying each entry's
+digest against the view's frozen source, and under the id the seal derived
+(`derive_revision_id`, a function of the manifest's canonical bytes) — never a caller-supplied id, and
+never by re-walking the view as if the manifest did not exist. A mismatch between manifest and source
+bytes is `CORRUPT_STATE` and touches no pointer. For an ordinary REVISION the irreversible point is the
+`current.json` replace, and the recovery discriminator is `current.json` itself, not `phase`:
+`PREPARED` legitimately exists on both sides of the CAS, so phase alone can never decide whether the
+commit happened. Publish ends by flipping the view record to `PUBLISHED`, which is what settles the
+owner for later reuse.
+
+**E269 review rules (normative for STEP2's implementation).**
+- **State first, equality second.** Precondition evaluation is ordered by *view state* before the
+  base-revision equality chain. A `PUBLISHED` view skips that chain entirely and goes to replay: its
+  `current.revision_id` is the derived revision, so an equality check against `view_ref.base_revision`
+  would make a legitimate retry impossible — the exact case replay exists for.
+- **Replay is state-driven and stores nothing new.** A new request observing `PUBLISHED` re-verifies
+  `current.revision_id == derive_revision_id(stored manifest)` plus the canonical projection, and answers
+  `_COMMITTED` with **the caller's own** `operation_id`. Exact same-id replays never reach publish (the
+  dispatcher serves them from the journal), and a stored receipt carrying a foreign operation id would
+  fail the caller's own operation-binding check. Publish does **not** append to
+  `view.record["operation_ids"]`: that field's only existing meaning is EXEC's "this operation id was
+  already used" → `EXECUTION_UNKNOWN`, and giving it an idempotent meaning would overload one field with
+  two policies. Publish's own operation id lives in `intent.json.operation_id` (§5.1).
+- **`PROJECTING` is written, not inferred.** `phase=PROJECTING` is durable before the first canonical
+  byte, so recovery dispatches instead of inferring "projection may be incomplete" from `COMMITTED`.
+- **Canonical drift is `CORRUPT_STATE`, and it reuses the established check.** Publish calls the existing
+  `workspace.py::_unchanged` (canonical re-walk vs `current.tree_sha256`) rather than a second drift
+  checker. The consequence is deliberate and global: `_unchanged` marks the authority unhealthy, so one
+  drifted project tree disables the supervisor until restart. That is the project's existing ownership
+  rule (five callers already rely on it), now stated rather than inherited.
+- **A non-writable canonical root fails at prepare (Q81).** `prepare_publish` proves writability without
+  writing — `os.fstatvfs(fd).f_flag & os.ST_RDONLY` plus euid-vs-mode — and refuses `PATH_DENIED` before
+  any filesystem effect. ENOSPC/EIO remain genuinely unpredictable and belong to recovery.
+- **Idempotent projection.** Projection is a pure function of the committed revision: a path already
+  matching `(type, mode, size, sha256)` is skipped. This makes forward recovery correct by construction
+  rather than by a recovery-time decision.
+
 Use materialized immutable revisions and one current manifest; no live overlay lowerdir or Git CAS.
 Managed readers read revisions, never a partially updated canonical working directory. A canonical
 working tree remains the exact user-visible path, but is a publisher-maintained projection:
@@ -928,7 +986,10 @@ Q58 is **single canonical plan replacement**: use its validated byte buffer and 
 alternate active path. I03 routes this through the same supervisor authority, pins a new revision,
 and returns only after exact canonical path/projection is verified; preserve I02 pre/post-replace
 failure obligations. Bootstrap is **new project directory install** with Linux renameat2
-RENAME_NOREPLACE and a fixed controller-rendered three-file bundle; never overwrite an existing
+RENAME_NOREPLACE and a fixed controller-rendered three-file bundle — the new project directory is
+`worklogs/<project_slug>` **inside the preparing workspace's canonical root** (E272/Q82, §5.1's
+`target_relative`), not a sibling canonical root, which is what makes the BOOTSTRAP row's "finish
+revision/current forward" describe this workspace; never overwrite an existing
 project or implement existence-check+ordinary-rename. Both integrate intent/recovery but are not
 mislabelled as the multi-file current-pointer commit. A successful no-replace rename is irreversible:
 post-install admission failure retains valid bundle and blocks, never deletes it automatically.
@@ -967,12 +1028,20 @@ Revisions/intent are protected supervisor state, never cell/model-authored contr
 | --- | --- |
 | REVISION | durable current pointer commit; PREPARED+old pointer can discard owned uncommitted scratch only; never canonical projection before commit |
 | PLAN | same-path validated buffer replacement, NOT pointer commit; PREPARED must inspect exact canonical hash: old→no commit, new→complete new revision/current/projection forward, neither→quarantine; never rollback a replaced plan |
-| BOOTSTRAP | RENAME_NOREPLACE of rendered directory; PREPARED must inspect installed directory's full approved manifest/hash: absent→no commit, exact new→finish revision/current forward, conflicting→quarantine; never delete installed bundle |
+| BOOTSTRAP | RENAME_NOREPLACE of rendered directory; PREPARED must inspect installed directory's full approved manifest/hash: absent→no commit, exact new→finish revision/current forward, conflicting→quarantine; never delete installed bundle. E272 implementation order (Q82 (B)): intent (`target_relative = worklogs/<project_slug>`, `new_sha256` = bundle manifest hash) → staged copy fsynced inside `<root>/.fa/publish-tmp/<op>` → `renameat2` into the canonical `worklogs/` → revision written from the canonical tree the install just verified → `current.json` → projection proof → `DONE` |
 
 Prepare and fsync complete Rnext plus intent BEFORE any PLAN/BOOTSTRAP replace/install. After their
 irreversible point, fsync directory, complete current/projection/DONE forward, then acknowledge.
-Missing COMMITTED phase write is not evidence that replacement did not happen. No next writer on
-uncertainty; inspect the SAME operation. Fault matrix for EACH kind: before intent; after intent;
+Missing COMMITTED phase write is not evidence that replacement did not happen.
+
+**E272 note (F8).** An implementation may therefore never write `COMMITTED`, and no recovery row may
+branch on its absence — the discriminator is always the inspected target (revision directory /
+canonical plan hash / installed directory). Recovery keys on `intent.json` (`kind`, `target_relative`,
+`old_sha256`, `new_sha256`, `phase`) plus that inspection, never on a phase value that may simply
+never have been written. The current implementation uses `PREPARED → PROJECTING → DONE` for that
+reason; STEP4's CT107 must not add a `COMMITTED` check.
+
+No next writer on uncertainty; inspect the SAME operation. Fault matrix for EACH kind: before intent; after intent;
 after irreversible syscall before fsync; after fsync before phase update; current replace; midway
 projection; after DONE before reply; artifact append failure; supervisor kill/restart at each point.
 Include ENOSPC, EIO and unsupported file/directory fsync. Process-kill tests are not power-loss proof.
