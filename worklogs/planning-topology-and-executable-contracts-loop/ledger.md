@@ -4081,3 +4081,35 @@ all killed with sha256-verified restore.
 **Deferred with reasons.** STEP3 bundle/Q58/BOOTSTRAP stays after publish (two commit paths with
 different failure vocabularies if integrated early); candidate-buffer seal stays with §5's PLAN intent;
 host proofs and deployment stay SLICE6/BLOCKED. Implementation numbering: **E269 = SLICE3 STEP2**.
+
+### E269 (pre-code) — SLICE3 STEP2 plan declared; no code written
+
+Plan is `increment-03-execution-workspace-foundation.md` §"E269" (E269.0–E269.9). Status: **awaiting
+operator approval**; no source file, STEP, contract or live row was touched by declaring it.
+
+Ordering: E267 closed STEP1 part 2 (seal); STEP2 (intent/current/projection + generation/base CAS) needs
+no cell, no Docker and no service route, so it is the next unit. The wire already fixes publish's shape
+(`protocol.py::PUBLISH` in `{sealed_manifest_id, expected_base_revision}` → `_COMMITTED` with
+`projection_complete:true`), which is why the plan derives the revision id instead of accepting one and
+cannot reply before projection verifies.
+
+**Q79 does not block E269.** Checked against surface, not assumption: Q79 governs managed tool views
+(`derive_text`, role→port threading, role registries) and gates SLICE4 STEP2; its allowed-file list is
+disjoint from E269's; its "outside the sealed tree" derivative cache is already structurally outside
+(`_Capture` walks `source/`, never `scratch/`); and its `.fa/artifacts` observation is consistent with
+publish, because `.fa` is excluded at any depth and can never enter a revision. Three future touchpoints
+are named in the plan (publish becomes the first non-EXEC `operation_ids` writer; retention/GC spans both
+stores; `scratch/` lifetime is view-scoped by construction) rather than absorbed silently.
+
+Source facts the plan rests on, each re-verified at `6b7f300`: `current.json` has exactly one writer
+(`_register`); `revisions/<rev>/data` is a retention copy while `tree.json` carries logical modes, and
+`_materialize_input` restores logical modes onto the view source — therefore publishing modes is
+faithful; `_Capture` fsyncs every copied file and destination directory; `_replace_private_bytes` fsyncs
+file+directory, so intent/pointer writes are durable by construction; no code writes canonical bytes
+after registration; `_project_view` refuses anything but `OPEN`.
+
+Open decisions requiring sign-off are D1–D8 in the plan; the two that change behaviour most are **D2**
+(`current.json` gains `workspace_id`+`generation` per §5.1, invariant `current.generation <=
+metadata.generation`, no migration shim because the three-key file was never a valid instance and no I03
+workspace has been deployed) and **D4** (canonical drift is `CORRUPT_STATE`, never adopted into the
+revision).

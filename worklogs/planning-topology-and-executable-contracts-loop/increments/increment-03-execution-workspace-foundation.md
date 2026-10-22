@@ -579,6 +579,243 @@ pinned to a commit sha (`workspace.py:2054 @ a299c12`). Line-only citations are 
   would produce a half-specified path.
 - **Host proofs (Docker/cgroup), deployment and every live verdict** remain SLICE6 or `BLOCKED`.
 
+## E269 — SLICE3 STEP2 pre-code plan: publish (CT106), intent/current/projection (awaiting approval)
+
+Declared 2026-10-22 **before any code**, per the standing rule. No STEP is ticked, no contract changes
+state and no verdict is assigned by this section. Numbering follows E268: **E269 = SLICE3 STEP2**,
+`E270` = STEP3 (Q58/BOOTSTRAP bundle), `E271` = STEP5 kills; recovery stays inside STEP4.
+
+### E269.0 Blocking questions — Q79 is not one
+
+**Verdict: Q79 does not block E269.** Q79 is about the managed *tool view* (text-only reads, `derive_text`
+capability, role→port threading) and gates **SLICE4 STEP2's cutover**. E269 writes no tool, no port, no
+registry and no role. Checked against E269's actual surface rather than assumed:
+
+| Q79 claim that could touch publish | Verified position | Verdict |
+| --- | --- | --- |
+| "`d` (pre-convert outside the sealed tree) is rejected as a publication concern; Stage 1 adopts a content-addressed, view-private cache" | E269 has no converter, no `/scratch` reader and no cache. A view-private cache under `scratch/` is already outside the sealed domain (`_Capture` walks `source/`, not `scratch/`), so nothing in E269 can freeze a derivative. | **not blocking** |
+| `session.artifact_store` is `workspace/.fa/artifacts`, inside the validated tree and unreachable through the port | `.fa` is an excluded component at any depth (`_Capture._excluded`), so artifacts can never enter a revision, a manifest or a tombstone. E269's projection never touches `.fa`. This is the *consistent* outcome; whether artifacts should be publishable at all is Q79 Stage 1's question. | **not blocking; agreement recorded** |
+| "managed `fs_write_file` is create-only by accident (STALE_REVISION when `expected_sha256` is None)" | That is `write_file`/`edit_file` semantics inside SLICE2. E269 changes no file handler. | **not blocking** |
+| Q79 Stage 0 allowed-files list | `tools/__init__.py`, `workspace_port.py`, `read_file.py`, `write_file.py`, `edit_file.py`, `profiles.py`, `recovery/classify.py`, `tool_port.py` — **disjoint** from E269's list (`execution/workspace.py`, `execution/publication.py`, one test file). | **no collision** |
+
+The three Q79 sub-items that *will* land on E269's contract later, so they are named rather than
+silently absorbed: (a) `view.record["operation_ids"]` gains its first non-EXEC writer here (publish), so
+the "managed records must not carry empty `operation_ids`" rule from §6 has a precedent to follow;
+(b) sealed/published views retain bytes with no GC (E268 S4) — Q79's artifact-store GC discussion must
+decide retention for *both* stores; (c) a derived-text cache under `scratch/` is view-lifetime by
+construction, which E269 makes true structurally rather than by convention.
+
+### E269.1 Ordering verification
+
+| Claim | Verified against | Result |
+| --- | --- | --- |
+| publish is the next unit | E267 closed STEP1 part 2; STEP1's remaining parts are Q74 policy + cgroup observer + the host test; STEP2 is "intent/current/projection schemas/order/dir fsync and generation/base CAS" | **holds** — STEP2 needs no cell, no Docker, no service route |
+| publish's preconditions all shipped | `prepare_seal`/`mark_sealed`/`_SealInputs` (E267), terminal receipt (E266), `_revision`/`_Capture`/`_snapshot`/`_rename_directory`/`_replace_private_bytes` | **holds** |
+| the wire already defines publish | `protocol.py::PUBLISH` request `{sealed_manifest_id, expected_base_revision}`; result `_COMMITTED = {workspace_id, revision_id, tree_sha256, operation_id, projection_complete: true}` | **holds — and it constrains the design**: publish must not reply before projection verifies, and the revision id is *not* a caller field |
+| publish needs no dispatcher route | `_dispatch`/`_handle` are injected seams; tests call owners directly (E267 precedent) | **holds**, SLICE1 STEP3 |
+| STEP2 does not need STEP4 | STEP2 ships intent/current/projection in-process; restart recovery (`_load` hook) is STEP4 | **holds — stated as a limit, not fudged** |
+
+### E269.2 Current behaviour (source-verified, `6b7f300`)
+
+- `current.json` is `{schema_version, revision_id, tree_sha256}` (`workspace.py::_CURRENT`), written in
+  exactly one place today: `_register` (`::_register`), under a `pending/<uuid>` staging tree that is
+  renamed in with `renameat2(RENAME_NOREPLACE)`.
+- `revisions/<rev>/` = `{tree.json, data/}`; `_revision()` re-walks `data/` and compares it to
+  `tree.json` with `mode` substituted, because `data/` is a **retention copy** (0600/0700) while
+  `tree.json` carries **logical** modes. `create_view` restores logical modes onto `views/<v>/source/`
+  through `_materialize_input`, so a sealed manifest already records the modes a projection must apply.
+- `_Capture` fsyncs every copied file and every destination directory it descends through, so a
+  materialized tree is durable per level before the walk returns; `_replace_private_bytes` fsyncs the
+  file *and* the directory (intent/current writes are durable by construction).
+- There is no `intent.json` producer, no `revisions/` writer outside `_register`, and no code that
+  writes canonical bytes after registration: `publication.py` is seal-only (`seal_view`,
+  `_validate_sealed_tree`, `_derive_revision_id`) and states in its module docstring that publish is
+  E268/E269's job.
+- `SEALED` is terminal-in-process: seal writes `sealed.json` + flips `view.json`, and `_project_view`
+  refuses any state but `OPEN`, so a sealed view's bytes cannot move through the authority again.
+- `release_unused_writer` now settles on `PUBLISHED|REJECTED` (E268 D1) — a state nothing can reach
+  today, because no producer writes it.
+
+### E269.3 Target behaviour (the rules the tests will hold)
+
+- **R1 preconditions (one transaction, no writes).** `_proof_only` capability+principal proof; state
+  exactly `SEALED`; gate closed; `terminal.json` present; `ProtectedPlanContext.recheck()`;
+  `binding.metadata["status"] == "OWNED"` with this actor and grant; `view_ref.generation ==
+  metadata.generation == manifest.generation` else `STALE_GENERATION`;
+  `expected_base_revision == view_ref.base_revision == manifest.base_revision == current.revision_id`
+  else `STALE_REVISION`; payload `sealed_manifest_id == record.sealed_manifest_id` else
+  `STALE_REVISION`; `OPEN|STOPPING|REJECTED` → `VIEW_CLOSED`, `UNKNOWN` → `TERMINALITY_UNKNOWN`,
+  `PUBLISHED` → R9 replay.
+- **R2 manifest is read, recomputed against, never re-derived from a directory.** `sealed.json` is read
+  from the view directory and re-validated with the *same* `_validate_sealed_tree` seal used
+  (`plan_path`/`base_entries` from `prepare_publish`), and cross-checked against the record
+  (`view_id`, `workspace_id`, `generation`, `base_revision`). A manifest that disagrees with the record
+  is `CORRUPT_STATE`; a malformed one is `INPUT_POLICY`; neither writes anything.
+- **R3 id derivation.** `revision_id = derive_revision_id(manifest)` (already shipped, content-addressed
+  over the canonical manifest). No caller-supplied id exists on the wire, so none can be honoured.
+- **R4 materialization verifies every digest.** Copy the frozen `views/<v>/source/` into
+  `pending/<uuid>/revisions/<derived>/data/` with `_Capture`, then compare the copied tree to the
+  manifest's **non-deleted** entries on `(path, type, size, sha256, link_target)` in sorted order,
+  requiring the same length. Extra path, missing path or moved byte ⇒ `CORRUPT_STATE` and no revision is
+  installed. `tree.json` is written from the manifest (`revision_id=derived`, `entries=live`,
+  `tree_sha256=manifest.tree_sha256`), never from the walk's own hash. A directory that already exists at
+  `revisions/<derived>` is accepted only after `_revision()` re-verifies it equals the manifest.
+- **R5 install + intent, then nothing canonical.** `renameat2(RENAME_NOREPLACE)` the staged revision
+  into `revisions/<derived>`, fsync `revisions/` and `pending/`, then durably write `intent.json`
+  (`kind=REVISION`, `phase=PREPARED`, `base_revision`, `next_revision`, `tree_sha256`, `operation_id`,
+  `target_relative/old_sha256/new_sha256` null, plus the §5.1 keys) with read-back equality. **No
+  canonical byte is written in this phase**, and the intent precedes the pointer.
+- **R6 the irreversible point is the pointer.** `_commit_current` re-reads `current.json` (CAS against
+  the value R1 validated) and `workspace.json` (still `OWNED`, same generation), replaces
+  `current.json` with the five §5.1 keys `{schema_version:1, workspace_id, generation, revision_id,
+  tree_sha256}`, read-back verifies, then advances the intent phase to `COMMITTED`. `phase` is advisory
+  and a missing `COMMITTED` write is never read as "did not commit" — `current.json` is the
+  discriminator. A **determinate** pre-commit failure (CAS lost, generation moved) discards only this
+  attempt's own `revisions/<derived>` and clears the intent, leaving `current.json` byte-identical.
+- **R7 projection is a pure function of the committed revision.** For each live entry: if the canonical
+  path already matches `(type, mode, size, sha256)` it is skipped (this makes forward recovery
+  idempotent); otherwise a directory is created, or a file is written to a sibling temp with the
+  manifest's logical mode, fsynced and `os.replace`d into place. Tombstones unlink the canonical path
+  when present (`no-follow`) and are otherwise no-ops. Rules: never traverse a symlink, never touch a
+  path with an excluded component at **any** depth (`.git`, `.fa`, `.venv`, `.env`, configured
+  exclusions), and refuse (`PATH_DENIED`) a destination that is a symlink, a special file or a
+  hard-linked regular file. `.git/index` and every excluded tree are therefore untouched structurally,
+  not by luck.
+- **R8 completion proof.** After projection, re-walk the canonical root with `_snapshot` and require it
+  to equal the manifest's live entries exactly (this is the "no partial current state" test, including
+  extra-path drift). Then intent phase `DONE` + clear, then flip `view.json` to `PUBLISHED` appending
+  this `operation_id`, with read-back equality; return `_COMMITTED`
+  `{workspace_id, revision_id, tree_sha256, operation_id, projection_complete: true}`.
+- **R9 idempotence and uncertainty.** A retried publish on a `PUBLISHED` view whose `current` is the
+  derived revision re-verifies the projection and returns the same receipt (no second commit, no second
+  `operation_ids` entry); if `current` moved it is `CORRUPT_STATE`. A publish that finds an existing
+  `intent.json` for this workspace in any other situation is `WORKSPACE_BUSY`: uncertain state belongs
+  to recovery (STEP4), never to a second attempt. Any failure after the pointer replaced is
+  `DURABILITY_UNKNOWN`, marks the authority unhealthy, durably quarantines the workspace where the state
+  allows it, and never returns a receipt — the view stays `SEALED`, which keeps the writer captive (E268
+  D1) and makes reuse impossible until recovery finishes it forward.
+- **R10 no side effects beyond the contract.** No canonical write before the pointer commit; no revision
+  write after it; no change to `.git`, `.fa`, `.venv`, `.env`, other views, reader pins, scratch, cell
+  state or the journal; no Docker call; nothing found in the tree is executed; no model metadata is read.
+- **R11 bounds and observability.** Every phase is deadline-bounded (`_budget`), bounded by
+  `InputLimits`, and reports the closed error vocabulary (`INPUT_POLICY`, `PATH_DENIED`, `STALE_*`,
+  `VIEW_CLOSED`, `TERMINALITY_UNKNOWN`, `WORKSPACE_BUSY`, `DURABILITY_UNKNOWN`, `CORRUPT_STATE`,
+  `UNAUTHORIZED`). No new error code: the wire list is closed and adding one would be a protocol change.
+- **R12 replay of seal stays authoritative.** If `sealed.json`'s digest no longer matches a re-walk of
+  the view source (bytes moved after the barrier), publish is `CORRUPT_STATE` **before** any write —
+  the check R4 performs is the same one, ordered before install so a moved source cannot land a
+  revision.
+
+### E269.4 Decisions requested (answer these; no code until then)
+
+- **D1 — kill placement (keeps CT106 honest).** CT106's declared kill is
+  `publication.py::publish_view -> _commit_current`. `_commit_current` will be a private function **in
+  `publication.py`** that owns the pointer phase and calls `authority.commit_revision_current(...)`; it is
+  called directly by `publish_view`. Removing that call leaves `current.json` at the base revision, so
+  every functional case fails — the declared kill stays literal and load-bearing. Recommended.
+- **D2 — `current.json` gains `workspace_id` + `generation` (frozen §5.1 shape).** Required by §5.1's
+  `current.json exactly {schema_version:1, workspace_id, generation, revision_id, tree_sha256}`.
+  Invariant enforced at `_load`: `current.workspace_id == workspace_id` and
+  `current.generation <= metadata.generation` (equality is **not** an invariant: a release + re-claim
+  advances `workspace.json` past the generation that committed the revision). `schema_version` stays `1`
+  because the frozen schema always had five keys — today's three-key file is an incomplete instance, not
+  an older version. No migration shim, and none is needed: `current.json` is produced only by this
+  authority, `_register` creates it fresh, and no I03 workspace has ever been deployed (deployment is
+  out of scope and Docker work is `BLOCKED`).
+- **D3 — four durable boundaries, one transaction each** (mirrors seal's `prepare_seal`/`mark_sealed`
+  split rather than inventing one long critical section): `prepare_publish` (validate, no writes),
+  `materialize_publication` (copy + verify + install + intent), `_commit_current` (CAS + pointer),
+  `project_publication` (projection + proof + `PUBLISHED`). The copy runs under the authority mutex
+  exactly as `create_view`'s materialization does today, so no new locking model is introduced.
+- **D4 — canonical drift is corruption, never adoption.** Pre-flight requires the canonical tree to
+  equal the base revision before any write; a stray file written straight into the project while the
+  workspace is `OWNED` is an ownership violation ⇒ `CORRUPT_STATE`, nothing written. Recommended and
+  testable; the alternative (adopt drift into the revision) would let an unmanaged writer publish.
+- **D5 — deterministic failures write nothing; uncertain ones write no success.** Pre-commit determinate
+  failure ⇒ discard only this attempt's revision + clear intent, `current.json` byte-identical.
+  Post-commit failure ⇒ `DURABILITY_UNKNOWN`, view stays `SEALED`, intent remains for STEP4.
+- **D6 — intent vocabulary is complete, producers are not.** `_INTENT` implements all of §5.1's keys and
+  the full `kind ∈ {REVISION, PLAN, BOOTSTRAP}` / `phase ∈ {PREPARED, COMMITTED, PROJECTING, DONE}`
+  vocabulary, but E269 produces **only** `kind=REVISION`. `PLAN` arrives with STEP3's Q58 path and
+  `BOOTSTRAP` with `install_project`; recovery rows for all three are STEP4's.
+- **D7 — projection refuses a symlink/special/hard-linked destination (`PATH_DENIED`).** The manifest can
+  only carry *unchanged* symlinks (seal R6), so any other destination type is either drift or an attack.
+- **D8 — scope.** No dispatcher route, no `prepare_bundle`/`install_project`, no CANDIDATE-buffer seal,
+  no recovery hook, no GC, no `rejected` producer (nothing in STEP2 can legitimately reject a sealed
+  view; `REJECTED` remains reachable only by a later operator/verification decision).
+
+### E269.5 Allowed files (nothing else)
+
+- `src/fa/execution/workspace.py` — `_CURRENT` (5 keys) + `_INTENT` schema; `_write_intent`/`_read_intent`/
+  `_set_intent_phase`/`_clear_intent`; `_PublishInputs`; `prepare_publish`, `materialize_publication`,
+  `commit_revision_current`, `project_publication`; `_load`'s `current.generation` invariant.
+- `src/fa/execution/publication.py` — `PublishResult`, `publish_view`, `_read_sealed_manifest`,
+  `_commit_current`, `_project_entry` helpers that stay pure; `__all__` extended.
+- `tests/test_workspace_publication.py` — new CT106 cases beside the CT104/CT105 banks.
+- Docs: this section, `ledger.md` E269 result (after code), and the spec note only if a rule above needs
+  to become normative.
+- **Forbidden:** `protocol.py`, `primitives.py`, `supervisor.py`, `docker.py`, `backend.py`, `client.py`,
+  `view_io.py`, any tool/port/profile file (Q79's surface), any second lock, any second walker, any GC.
+
+### E269.6 Tests (C0/C3, real filesystem, real authority, real cells for the barrier)
+
+Fixture: the existing `Site`/`native_profile`/`_stopped`/`_seal` helpers, then `publish_view` directly.
+Cases, each naming its rule: happy path (R1,R4,R6,R7,R8: pointer advances to the derived id, `_revision`
+verifies, canonical bytes equal the sealed bytes, mode restored, receipt equals `_COMMITTED` via
+`protocol.decode_reply`); stale `expected_base_revision` (R1, `current.json` byte-identical); wrong
+`sealed_manifest_id` (R1); `OPEN`/`STOPPING` view (R1); tampered manifest entry digest (R2, no revision
+installed); source bytes moved after seal (R12, no revision, `current` unchanged); tombstone projection
+(R7: file gone from canonical, absent from `tree.json`, digest over live entries only); `.git/index`,
+`.fa/artifacts` and a `.venv` sentinel byte-identical (R7,R10); canonical drift before publish (D4);
+publish settles the owner and a re-claim advances generation (R8 + E268 D1, real state not white-box);
+pinned reader keeps the old bytes while a new pin reads the new revision (R7,R8); a second publish is
+idempotent (R9); `intent.json` present ⇒ `WORKSPACE_BUSY` (R9); injected `os.replace` failure mid-
+projection ⇒ `DURABILITY_UNKNOWN`, `current` **is** the new revision, view still `SEALED`, intent still
+on disk, `release` refused and the authority refuses further work (R9); wrong capability (R1,
+`UNAUTHORIZED`).
+
+### E269.7 Negative proof — declared kills (assertion-only, byte-exact restore)
+
+1. `publication.py::publish_view -> _commit_current` (CT106's named producer).
+2. `publish_view -> materialize_publication` (no revision, no intent, no pointer).
+3. `_read_sealed_manifest`'s record cross-check (R2: an edited `sealed.json` would publish).
+4. R4's copied-tree-vs-manifest comparison (a moved source byte would land).
+5. R7's skip-if-equal / idempotent forward rule (a resumed projection would rewrite or fail).
+6. R8's canonical re-verification (a partial projection would report success).
+7. D4's pre-flight drift check (unmanaged bytes would publish).
+8. R9's `PUBLISHED` replay branch (a retry would double-commit).
+9. R6's CAS read-back on `current.json` (a lost CAS would overwrite a newer pointer).
+
+Reused and **not** claimed as new credit: `_Capture` (walk, fsync, fingerprint staleness, link rules),
+`_revision`, `_rename_directory`, `_replace_private_bytes`, `_validate_sealed_tree` (E267),
+`_proof_only`, `_gate`, `terminal_receipt`.
+
+### E269.8 Definition of done
+
+Red-first evidence per case; `tests/test_workspace_publication.py` + the execution bank
+(`tests/test_execution_*.py`) green; `ruff check`, `ruff format --check`, `mypy src/fa/execution`,
+`pyrefly check src/fa/execution` clean; `authoring check` `exit_code 0`; all nine kills executed with
+byte-exact restore and provenance; `ledger.md` E269 result; register row `I03-LIVE-19`
+(`publication.py`) unchanged in wording and status (same file, no new surface) — **no** STEP tick, **no**
+CT `VERIFIED`, **no** live verdict, **no** deployment. Known and stated: after a successful publish a
+supervisor restart still quarantines the workspace until STEP4's `recover_workspace` exists.
+
+### E269.9 Out of scope and risks
+
+- R1 — *size*: ~420 lines in `workspace.py`, ~250 in `publication.py`, ~25 cases. The phases are ordered
+  so each is independently verifiable; if approval prefers smaller units I will split at
+  `materialize` / `project` and keep CT106's kill in the first unit.
+- R2 — *mode fidelity depends on `_materialize_input`*: it restores logical modes onto the view source,
+  which is why publishing modes is faithful. A future change that stops restoring modes would make
+  every publish rewrite canonical modes to 0600 — the happy-path mode assertion is the tripwire.
+- R3 — *hard-linked canonical files* are refused (D7). A workspace whose tree contains a hard link is
+  already refused by `_Capture` at registration, so this is consistency, not new behaviour.
+- R4 — *the `.fa` exclusion is load-bearing for artifacts*: publication can never carry `.fa`, so an
+  artifact-store file is invisible to revisions by construction. This is the boundary Q79 Stage 1 must
+  reason about; E269 must not "fix" it by widening the manifest domain.
+- R5 — *no GC*: every published revision and every sealed manifest persists. Retention is E268 S4 and
+  must be decided together with Q79's artifact store.
+
 ## Scope and ownership handoff
 
 Migration groups A/B/C/E/D/F map respectively to SLICE1/2/3/4/5/6. CT96/CT97 original producer
