@@ -108,7 +108,19 @@ _CURRENT = fastjsonschema.compile(
 
 # A prepared bundle is a private, pre-install object: paths and digests only,
 # bound to the workspace/generation/base it was prepared against (E271).
-_BUNDLE_FILE = _object(path={"type": "string", "maxLength": 4096}, sha256=SHA, size=_UINT)
+# Modes are recorded per file now, while the schema is still unshipped: at
+# install these bytes become the project's genesis revision, and a mode chosen
+# at install time would be frozen into every later revision of that project.
+_BUNDLE_FILE = _object(
+    path={"type": "string", "maxLength": 4096},
+    sha256=SHA,
+    size=_UINT,
+    mode={"type": "integer", "minimum": 0, "maximum": 511},
+)
+# The manifest states what install will apply; the staging copy itself stays
+# private (0700) so a half-written bundle is never world-readable.
+_BUNDLE_FILE_MODE = 0o644
+_BUNDLE_DIRECTORY_MODE = 0o755
 _BUNDLE = fastjsonschema.compile(
     _object(
         schema_version={"type": "integer", "const": 1},
@@ -121,6 +133,7 @@ _BUNDLE = fastjsonschema.compile(
         project_slug={"type": "string", "maxLength": 48},
         increment_slug={"type": "string", "maxLength": 48},
         files={"type": "array", "items": _BUNDLE_FILE},
+        directory_mode={"type": "integer", "minimum": 0, "maximum": 511},
         bundle_sha256=SHA,
     )
 )
@@ -198,6 +211,10 @@ _MUTATION_ROOTS = frozenset({"src", "scripts"})
 # Components the canonical projection never traverses or writes, at any depth.
 # `_Capture` drops them from every revision, so a manifest naming one is forged.
 _PROTECTED_COMPONENTS = frozenset({".git", ".fa", ".venv", ".env"})
+# Projection scratch: inside the canonical root (same filesystem, atomic
+# replace) but inside `.fa`, which every walk excludes at any depth.
+_PROJECTION_SCRATCH = (".fa", "publish-tmp")
+_TEMPORARY_SUFFIX = ".publish"
 
 
 def _derive_revision_id(manifest: Mapping[str, Any]) -> str:
@@ -2455,9 +2472,15 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                 "project_slug": project_slug,
                 "increment_slug": increment_slug,
                 "files": [
-                    {"path": path, "sha256": hashlib.sha256(raw).hexdigest(), "size": len(raw)}
+                    {
+                        "path": path,
+                        "sha256": hashlib.sha256(raw).hexdigest(),
+                        "size": len(raw),
+                        "mode": _BUNDLE_FILE_MODE,
+                    }
                     for path, raw in sorted(files.items())
                 ],
+                "directory_mode": _BUNDLE_DIRECTORY_MODE,
                 "bundle_sha256": hashlib.sha256(
                     _canonical([[path, hashlib.sha256(files[path]).hexdigest()] for path in sorted(files)])
                 ).hexdigest(),
@@ -2479,10 +2502,11 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                 if candidate.grant is not None
                 and candidate.principal == peer.principal
                 and candidate.metadata["active_actor"] == namespace.to_dict()
+                and hmac.compare_digest(candidate.grant, capability)
             ),
             None,
         )
-        if binding is None or not hmac.compare_digest(binding.grant or "", capability):
+        if binding is None:
             raise SupervisorError("UNAUTHORIZED")
         self._recheck(binding)
         if binding.metadata["status"] != "OWNED" or binding.principal != peer.principal:
@@ -2550,9 +2574,13 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                 parent = child
             _budget(deadline)
             fd = os.open(
-                parts[-1], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600, dir_fd=parent
+                parts[-1],
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+                _BUNDLE_FILE_MODE,
+                dir_fd=parent,
             )
             try:
+                os.fchmod(fd, _BUNDLE_FILE_MODE)
                 _write_all(fd, raw)
                 os.fsync(fd)
             finally:
@@ -2621,12 +2649,19 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                 raise SupervisorError("STALE_REVISION")
             if expected_base_revision != view_ref.base_revision:
                 raise SupervisorError("STALE_REVISION")
-            base_entries: tuple[dict[str, Any], ...] = ()
-            if state == "SEALED":
-                if binding.current["revision_id"] != view_ref.base_revision:
-                    raise SupervisorError("STALE_REVISION")
-                with self._revision(binding, view_ref.base_revision, deadline) as (_, base, _child):
-                    base_entries = tuple(dict(entry) for entry in base["entries"])
+            if state == "SEALED" and binding.current["revision_id"] != view_ref.base_revision:
+                raise SupervisorError("STALE_REVISION")
+            # The base entries are ALWAYS loaded, not only on the first publish:
+            # the replay path re-validates the same manifest with the same
+            # validator, and three of that validator's rules (tombstones,
+            # symlinks, the plan boundary) compare each entry against its base.
+            # An empty base would refuse every manifest carrying a deletion, a
+            # link or a plan — i.e. the replay would fail precisely where it
+            # matters. Revisions are retained forever (no GC), so the base is
+            # always available; if a future GC removes it, replay must fail
+            # closed rather than validate against nothing.
+            with self._revision(binding, view_ref.base_revision, deadline) as (_, base, _child):
+                base_entries: tuple[dict[str, Any], ...] = tuple(dict(entry) for entry in base["entries"])
             # Canonical bytes must still be the revision this publish extends.
             # Reuses the one established drift check (D4); its global
             # "unhealthy" consequence is deliberate and tested.
@@ -2951,6 +2986,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
 
     def _project_entries(self, binding: _Binding, view: _ProjectView, inputs: _PublishInputs, deadline: float) -> None:
         """Apply live entries (directories, files, links) then tombstones."""
+        self._sweep_temporaries(binding.source)
         directories = sorted(
             (entry for entry in inputs.entries if entry["type"] == "directory" and not entry["deleted"]),
             key=lambda entry: (entry["path"].count("/"), entry["path"]),
@@ -3013,14 +3049,69 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
         finally:
             os.close(parent)
 
+    def _temporary_directory(self, root: int) -> int:
+        """Open (creating) the projection scratch dir under the canonical root.
+
+        `.fa` is excluded from every walk at any depth, so an interrupted
+        projection's debris is *invisible* to `_unchanged` and
+        `_verify_projection` instead of poisoning them — the difference between a
+        resumable projection and a workspace that quarantines itself. It lives
+        inside the canonical root because `os.replace` is only atomic within one
+        filesystem, and `pending/` staging may be on another.
+        """
+        fd = os.dup(root)
+        try:
+            for name in _PROJECTION_SCRATCH:
+                try:
+                    os.mkdir(name, 0o700, dir_fd=fd)
+                except FileExistsError:
+                    pass
+                child = os.open(name, _DIRECTORY, dir_fd=fd)
+                os.close(fd)
+                fd = child
+            # Not `_private`: `.fa` is the project's own artifact directory and
+            # legitimately carries the project's mode (a 0755 `.fa` must not
+            # refuse every publish). This directory is inside the user's tree and
+            # is therefore no security boundary -- it only has to be a real
+            # directory of ours (`O_NOFOLLOW` above already refused a link).
+            info = os.fstat(fd)
+            if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
+                raise SupervisorError("PATH_DENIED")
+            return fd
+        except OSError:
+            os.close(fd)
+            raise SupervisorError("PATH_DENIED") from None
+        except SupervisorError:
+            os.close(fd)
+            raise
+
+    def _sweep_temporaries(self, root: int) -> None:
+        """Discard only our own abandoned temporaries; bounded, one directory."""
+        directory = self._temporary_directory(root)
+        try:
+            for name in os.listdir(directory):
+                if not (name.startswith(".") and name.endswith(_TEMPORARY_SUFFIX)):
+                    continue
+                try:
+                    info = os.stat(name, dir_fd=directory, follow_symlinks=False)
+                    if stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and info.st_uid == os.getuid():
+                        os.unlink(name, dir_fd=directory)
+                except FileNotFoundError:
+                    continue
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+
     def _project_file(self, binding: _Binding, view: _ProjectView, entry: dict[str, Any], deadline: float) -> None:
         parent = self._project_parent(binding.source, entry["path"])
+        scratch = -1
         try:
             name = entry["path"].rsplit("/", 1)[-1]
             if self._project_matches(parent, name, entry):
                 return
             source = self._open_relative(view.source, entry["path"])
-            temporary = f".{name}.{uuid4().hex}.publish"
+            scratch = self._temporary_directory(binding.source)
+            temporary = f".{name}.{uuid4().hex}{_TEMPORARY_SUFFIX}"
             created = False
             target = -1
             try:
@@ -3028,7 +3119,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                     temporary,
                     os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
                     0o600,
-                    dir_fd=parent,
+                    dir_fd=scratch,
                 )
                 created = True
                 digest = hashlib.sha256()
@@ -3049,7 +3140,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                 os.fsync(target)
                 os.close(target)
                 target = -1
-                os.replace(temporary, name, src_dir_fd=parent, dst_dir_fd=parent)
+                os.replace(temporary, name, src_dir_fd=scratch, dst_dir_fd=parent)
                 created = False
                 os.fsync(parent)
             except OSError:
@@ -3060,10 +3151,12 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                 os.close(source)
                 if created:
                     try:
-                        os.unlink(temporary, dir_fd=parent)
+                        os.unlink(temporary, dir_fd=scratch)
                     except FileNotFoundError:
                         pass
         finally:
+            if scratch != -1:
+                os.close(scratch)
             os.close(parent)
 
     @staticmethod

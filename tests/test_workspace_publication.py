@@ -1925,3 +1925,190 @@ def test_store_bundle_refuses_a_path_that_escapes_the_bundle(site: Site) -> None
                 )
             assert refused.value.code == "INPUT_POLICY"
         assert not (site.source / "escape.txt").exists()
+
+
+# ---------------------------------------------------------------------------
+# E272 — replay must survive a real manifest (F1) and crash debris (F2)
+#
+# Every pre-E272 publish test used a tree with no tombstone, no symlink and no
+# plan, so R9's replay was only ever exercised against a degenerate manifest.
+# Making the manifest representative is what exposed F1.
+# ---------------------------------------------------------------------------
+
+
+def test_replay_returns_the_receipt_for_a_manifest_with_a_tombstone(site: Site) -> None:
+    """producer-kill-check: load base entries only for a SEALED view (F1)."""
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        grant = _stopped(owner, ids, lease)
+        (_source_root(site, grant) / "untracked.txt").unlink()
+        sealed = _seal(owner, grant)
+        assert any(entry["deleted"] for entry in _manifest(site, grant)["entries"])
+
+        first = _publish(owner, grant, sealed)
+        second = _publish(owner, grant, sealed)
+
+        assert (second.revision_id, second.tree_sha256) == (first.revision_id, first.tree_sha256)
+        assert second.operation_id != first.operation_id
+        assert not (site.source / "untracked.txt").exists()
+
+
+def test_replay_returns_the_receipt_for_a_tree_that_contains_a_symlink(site: Site) -> None:
+    """producer-kill-check: an empty base makes every symlink entry unpublishable (F1)."""
+    (site.source / "linked.txt").symlink_to("untracked.txt")
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        grant = _stopped(owner, ids, lease)
+        sealed = _seal(owner, grant)
+        assert any(entry["type"] == "symlink" for entry in _manifest(site, grant)["entries"])
+
+        first = _publish(owner, grant, sealed)
+        second = _publish(owner, grant, sealed)
+
+        assert second.revision_id == first.revision_id
+        assert (site.source / "linked.txt").is_symlink()
+
+
+def test_replay_returns_the_receipt_for_a_plan_bound_view(site: Site) -> None:
+    """producer-kill-check: an empty base makes the plan boundary refuse the plan entry (F1)."""
+    (site.source / "plan.md").write_text("# admitted plan\n")
+    admitted = read_plan_snapshot(site.source, Path("plan.md")).ref
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        grant = _stopped(owner, ids, lease, plan_ref=admitted)
+        sealed = _seal(owner, grant)
+
+        first = _publish(owner, grant, sealed)
+        second = _publish(owner, grant, sealed)
+
+        assert second.revision_id == first.revision_id
+        assert (site.source / "plan.md").read_text() == "# admitted plan\n"
+
+
+def test_projection_temporaries_never_exist_inside_the_canonical_tree(
+    site: Site, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """producer-kill-check: put the projection temporary in the user's tree (F2)."""
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        grant = _stopped(owner, ids, lease)
+        # Projection then has to rewrite this file, which is where a temporary
+        # would be created; an unchanged file takes the fast path instead.
+        (_source_root(site, grant) / "untracked.txt").write_text("changed after the barrier\n")
+        sealed = _seal(owner, grant)
+        scratch = site.source / ".fa" / "publish-tmp"
+        seen: list[dict[str, Any]] = []
+        real_replace = os.replace
+
+        def recording(source: Any, destination: Any = None, **kwargs: Any) -> None:
+            if isinstance(source, str) and source.endswith(workspace_module._TEMPORARY_SUFFIX):
+                seen.append(dict(kwargs))
+                # At the exact instant the temporary exists, it must be nowhere
+                # the project -- or any later `_unchanged` walk -- can see it.
+                for path in site.source.rglob("*"):
+                    assert ".fa" in path.parts or not path.name.endswith(workspace_module._TEMPORARY_SUFFIX), path
+                assert Path(os.readlink(f"/proc/self/fd/{kwargs['src_dir_fd']}")) == scratch
+                assert kwargs["src_dir_fd"] != kwargs["dst_dir_fd"]
+            real_replace(source, destination, **kwargs)
+
+        monkeypatch.setattr(workspace_module.os, "replace", recording)
+        _publish(owner, grant, sealed)
+        monkeypatch.undo()
+
+    assert seen, "the fixture never rewrote a projected file"
+    assert (site.source / "untracked.txt").read_text() == "changed after the barrier\n"
+
+
+def test_publish_sweeps_abandoned_projection_temporaries(site: Site) -> None:
+    """producer-kill-check: leave abandoned temporaries to accumulate forever (F2)."""
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        grant = _stopped(owner, ids, lease)
+        sealed = _seal(owner, grant)
+        scratch = site.source / ".fa" / "publish-tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        abandoned = scratch / ".stale.txt.deadbeef.publish"
+        abandoned.write_text("left behind by a killed process")
+        abandoned.chmod(0o600)
+        # Debris the sweep does not recognise is not its business to delete.
+        foreign = scratch / "keep.txt"
+        foreign.write_text("not ours\n")
+
+        result = _publish(owner, grant, sealed)
+
+        assert result.revision_id.startswith("rev-")
+        assert not abandoned.exists()
+        assert foreign.exists()
+
+
+def test_the_renderer_treats_tilde_and_indented_code_as_code_not_prose() -> None:
+    """producer-kill-check: hand-rolled fence scanning instead of MarkdownIt (F4)."""
+    from fa.execution.publication import render_bundle
+
+    # `~~~` is a fence in CommonMark, so the metadata-looking line is code.
+    tilde = "## SLICE1: a\n\n~~~\nstatus: IN PROGRESS\n~~~\n"
+    assert render_bundle("demo", "inc", _ROADMAP_PROSE, tilde, created="2026-10-22")
+
+    # So is a 4-space indented block.
+    indented = "## SLICE1: a\n\n    status: IN PROGRESS\n"
+    assert render_bundle("demo", "inc", _ROADMAP_PROSE, indented, created="2026-10-22")
+
+    # A heading inside a fence is not a slice either.
+    fenced_heading = "## SLICE1: a\n\n```\n## SLICE2: fake\n```\n"
+    rendered = render_bundle("demo", "inc", _ROADMAP_PROSE, fenced_heading, created="2026-10-22")
+    assert b"slices: 1\n" in rendered["worklogs/demo/increments/increment-01-inc.md"]
+
+    # Outside any code block it is still metadata smuggling, and still refused.
+    for prose in ("## SLICE1: a\n\nstatus: IN PROGRESS\n", "## SLICE1: a\n\n  shipped: yes\n"):
+        with pytest.raises(SupervisorError) as refused:
+            render_bundle("demo", "inc", _ROADMAP_PROSE, prose, created="2026-10-22")
+        assert refused.value.code == "INPUT_POLICY"
+
+
+def test_the_increment_header_counts_the_slices_it_rendered() -> None:
+    """Pins the metadata line; `max` was equivalent only because §7.1 forces contiguity (F5)."""
+    from fa.execution.publication import render_bundle
+
+    rendered = render_bundle("demo", "inc", _ROADMAP_PROSE, _INCREMENT_PROSE, created="2026-10-22")
+    body = rendered["worklogs/demo/increments/increment-01-inc.md"].decode()
+    assert [line for line in body.splitlines() if line.startswith("slices:")] == ["slices: 2"]
+
+
+def test_the_bundle_manifest_records_the_mode_install_will_apply(site: Site) -> None:
+    """producer-kill-check: omit the mode (install would freeze a staging 0600) (F3)."""
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        result = _prepare_bundle(owner, ids, lease)
+
+        stored = _workspace(site, ids) / "bundles" / result.validated_bundle_id
+        manifest = json.loads((stored / "bundle.json").read_text())
+        assert manifest["directory_mode"] == 0o755
+        assert {entry["mode"] for entry in manifest["files"]} == {0o644}
+        for entry in manifest["files"]:
+            assert (stored / entry["path"]).stat().st_mode & 0o777 == 0o644
+
+
+def test_owner_only_finds_the_binding_whose_grant_matches(site: Site) -> None:
+    """producer-kill-check: select by principal/actor, then compare the capability (F7)."""
+    second = site.roots / "second"
+    second.mkdir()
+    (second / "file.txt").write_text("second\n")
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        ids2 = ok(lambda: site.register(owner, "second"))
+        lease2 = ok(lambda: site.claim(owner, ids2))
+        assert lease.capability != lease2.capability
+
+        # Two OWNED bindings share principal and actor; only the grant differs.
+        result = _prepare_bundle(owner, ids2, lease2)
+
+        stored = _workspace(site, ids2) / "bundles" / result.validated_bundle_id
+        assert json.loads((stored / "bundle.json").read_text())["workspace_id"] == ids2["workspace_id"]
+        assert not (_workspace(site, ids) / "bundles").exists()

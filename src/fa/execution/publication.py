@@ -28,6 +28,7 @@ from typing import Any
 from uuid import uuid4
 
 import fastjsonschema  # type: ignore[import-untyped]  # Existing schema library has no typing metadata.
+from markdown_it import MarkdownIt
 
 from fa.execution.primitives import ExecutionContractError
 from fa.execution.protocol import CONFIG_ID, _check
@@ -45,6 +46,7 @@ from fa.execution.workspace import (
 from fa.inner_loop.workflow_artifacts import _replace_private_bytes
 
 MANIFEST_NAME = "sealed.json"
+_MARKDOWN = MarkdownIt("commonmark")
 _CONFIG_ID = re.compile(str(CONFIG_ID["pattern"]))
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _MAX_MANIFEST_BYTES = 64 * 1024**2
@@ -533,7 +535,7 @@ def render_bundle(
         f"Roadmap-ID: RM-{project_slug}\n"
         f"slug: {increment_slug}\n"
         "status: IN PROGRESS\n"
-        f"slices: {max(slices) if slices else 0}\n"
+        f"slices: {len(slices)}\n"
         "shipped: —\n"
         "---\n\n" + increment_text.rstrip("\n") + "\n"
     )
@@ -579,21 +581,22 @@ def _slice_numbers(increment_text: str) -> list[int]:
 
 
 def _outside_fences(text: str) -> str:
-    """Drop fenced blocks before any structural rule.
+    """Blank every code block, keeping line positions intact.
 
-    A fence cannot carry controller metadata, and the grammar-looking text inside
-    one is deliberately left uninterpreted (spec §7.1: no substring deletion and
-    no second Markdown parser).
+    Spec §7.1 asks for MarkdownIt tokens rather than substring surgery or a
+    second parser, so the existing dependency decides what a code block is:
+    ```/~~~ fences and 4-space indented blocks behave exactly as CommonMark
+    says. A blanked line keeps its newline so line-based rules stay aligned.
     """
-    kept: list[str] = []
-    fenced = False
-    for line in text.splitlines():
-        if line.lstrip().startswith("```"):
-            fenced = not fenced
+    lines = text.splitlines()
+    masked = list(lines)
+    for token in _MARKDOWN.parse(text):
+        if token.type not in {"fence", "code_block"} or token.map is None:
             continue
-        if not fenced:
-            kept.append(line)
-    return "\n".join(kept)
+        start, end = token.map
+        for index in range(start, min(end, len(masked))):
+            masked[index] = ""
+    return "\n".join(masked)
 
 
 def prepare_bundle(

@@ -981,6 +981,42 @@ frontmatter, bundle base CAS, unsettled-view refusal, bundle path traversal.
   Starting it late in a session to claim STEP3 would be the same defect this project keeps recording.
 - No dispatcher route, no auto-registration of an installed project, no GC for stored bundles.
 
+### E272 result — adversarial review of `e4fcfae`: eight findings verified, seven closed
+
+**Status: the review's findings are closed and the owning bank is green. STEP3 is still NOT done
+(install and `publish_plan` remain) and nothing here ticks a STEP or assigns a CT verdict.**
+
+**Method.** Each finding was re-derived from source before any edit; none was accepted on assertion,
+and none was rejected. Where a fix was possible two ways, the one that removes the defect *class* was
+chosen over the one that repairs the instance (F2 below is the clearest case).
+
+| # | Finding | Verdict | Disposition |
+| --- | --- | --- | --- |
+| F1 | `prepare_publish` loaded base entries only when the view was `SEALED`, so any replay validated the manifest against an empty base. Three `_validate_against_base` rules compare each entry with its base, so replay of any manifest carrying a tombstone, a symlink or a plan was refused — i.e. replay was unreachable for every real workflow. | **real, functional** | Base entries now load unconditionally; only the pointer-equality check stays in the `SEALED` branch. Three replay cases (tombstone / symlink / plan) added; mutant killed. |
+| F2 | Projection temporaries were created as `.<name>.<uuid>.publish` **in the canonical directory**, so a killed process left debris that `_verify_projection` and `_unchanged` would see as drift, quarantining a workspace whose only sin was being interrupted. | **real, class-wide** | The class is removed, not swept: temporaries live in `<root>/.fa/publish-tmp` (same filesystem for atomic `os.replace`, and `.fa` is excluded at any depth so debris is structurally invisible), and every projection sweeps its own abandoned `*.publish` files first. Mutants killed: temporary-in-canonical-dir, no-sweep, and the scratch-mode regression below. |
+| F2a | Second-order defect found while testing F2: `_temporary_directory` demanded `_private` (0700) on every component, but `.fa` is the project's own artifact directory and is normally 0755 — that would have refused **every** publish in a real project, with `CORRUPT_STATE`. | **real, introduced by F2** | Only "a real directory of ours" is required (`O_NOFOLLOW` already refuses a link); no mode demand on a directory inside the user's own tree. Pinned by a case that plants a 0755 scratch. |
+| F3 | `_BUNDLE_FILE` had no `mode`, so install would have chosen one at install time and frozen it into the project's genesis revision. | **real** | `mode` is now recorded per file (0644) and once per bundle for directories (0755). Done now, while the schema is still unshipped. |
+| F4 | `_outside_fences` was a hand-rolled ``` scanner, so `~~~` fences and 4-space indented blocks were read as prose: metadata could be smuggled inside either, and a fenced `## SLICE2:` could be counted. §7.1 asks for the existing MarkdownIt tokens. | **real** | The project's existing `markdown_it` dependency yields the tokens; code blocks are blanked (line positions preserved), everything else unchanged. Hand-rolled-scanner mutant killed. |
+| F5 | `slices: {max(slices)}` where §7.1 says "actual extracted count". | **cosmetic** | Behaviourally equivalent: the same validator refuses non-contiguous slice numbers, so `max == len` whenever rendering succeeds. Changed to `len` for honesty; no kill exists and none is claimed. |
+| F6 | Every `prepare_bundle` mints a fresh id, so identical retries accumulate bundles under `bundles/`. | **accepted by design** | Ids are never reused, because "the bundle I prepared" must not be confusable with an earlier attempt's. Retention is a GC concern for a later increment; recorded here so it is not rediscovered as a defect. |
+| F7 | `_owner_only` selected the first binding matching principal+actor and *then* compared the digest, so a caller holding a valid grant on a second workspace got `UNAUTHORIZED` whenever the first matching binding was someone else's. | **real** | The capability is now part of the selection predicate. Mutant killed. |
+| F8 | `COMMITTED` is never written (`PREPARED → PROJECTING → DONE`). | **not a defect, needs a record** | §5.1 already says a missing `COMMITTED` write is not evidence that the replacement happened; the recovery decision inspects the target directory, so writing the phase would add a durable write with no branch depending on it. Recorded for STEP4: **recovery must never key on `COMMITTED`** (see the §5.1 note). |
+
+**Q82 settled.** The install destination is **(B) in place** — `<workspace root>/worklogs/<project_slug>`,
+with `_COMMITTED.revision_id` naming the preparing workspace's new revision. The ruling, its four
+evidentiary grounds and the binding rules it implies are recorded in
+[`notes/open-questions-2026-10-07.md`](../notes/open-questions-2026-10-07.md#q82--where-does-a-prepared-bundle-install-and-what-identifies-the-project-it-creates).
+
+**Evidence.** `tests/test_workspace_publication.py` **76 passed** (9 new: three F1 replay cases, two F2
+cases — the sweep case also pins the 0755 scratch mode —, F4, F5 pin, F3, F7); execution bank + CLI **1229 passed**; `ruff
+check`/`format --check` clean on the three changed files; `mypy src/fa/execution` 19 files; `pyrefly
+check src/fa/execution` 0 errors; `fa authoring-check` `exit_code 0`, `diagnostics 0`. **7/7 mutants
+killed** with sha256-verified byte-exact restore (`F1`, `F2` location, `F2` sweep, `F2a` scratch mode,
+`F3`, `F4`, `F7`); F5 has no mutant because none exists.
+
+Not proved, and not claimed: the Docker/cgroup barrier, the dispatcher route, restart recovery (CT107,
+STEP4), Q58/`publish_plan`, retention/GC, and the live host.
+
 ## Scope and ownership handoff
 
 Migration groups A/B/C/E/D/F map respectively to SLICE1/2/3/4/5/6. CT96/CT97 original producer

@@ -986,7 +986,10 @@ Q58 is **single canonical plan replacement**: use its validated byte buffer and 
 alternate active path. I03 routes this through the same supervisor authority, pins a new revision,
 and returns only after exact canonical path/projection is verified; preserve I02 pre/post-replace
 failure obligations. Bootstrap is **new project directory install** with Linux renameat2
-RENAME_NOREPLACE and a fixed controller-rendered three-file bundle; never overwrite an existing
+RENAME_NOREPLACE and a fixed controller-rendered three-file bundle — the new project directory is
+`worklogs/<project_slug>` **inside the preparing workspace's canonical root** (E272/Q82, §5.1's
+`target_relative`), not a sibling canonical root, which is what makes the BOOTSTRAP row's "finish
+revision/current forward" describe this workspace; never overwrite an existing
 project or implement existence-check+ordinary-rename. Both integrate intent/recovery but are not
 mislabelled as the multi-file current-pointer commit. A successful no-replace rename is irreversible:
 post-install admission failure retains valid bundle and blocks, never deletes it automatically.
@@ -1029,8 +1032,16 @@ Revisions/intent are protected supervisor state, never cell/model-authored contr
 
 Prepare and fsync complete Rnext plus intent BEFORE any PLAN/BOOTSTRAP replace/install. After their
 irreversible point, fsync directory, complete current/projection/DONE forward, then acknowledge.
-Missing COMMITTED phase write is not evidence that replacement did not happen. No next writer on
-uncertainty; inspect the SAME operation. Fault matrix for EACH kind: before intent; after intent;
+Missing COMMITTED phase write is not evidence that replacement did not happen.
+
+**E272 note (F8).** An implementation may therefore never write `COMMITTED`, and no recovery row may
+branch on its absence — the discriminator is always the inspected target (revision directory /
+canonical plan hash / installed directory). Recovery keys on `intent.json` (`kind`, `target_relative`,
+`old_sha256`, `new_sha256`, `phase`) plus that inspection, never on a phase value that may simply
+never have been written. The current implementation uses `PREPARED → PROJECTING → DONE` for that
+reason; STEP4's CT107 must not add a `COMMITTED` check.
+
+No next writer on uncertainty; inspect the SAME operation. Fault matrix for EACH kind: before intent; after intent;
 after irreversible syscall before fsync; after fsync before phase update; current replace; midway
 projection; after DONE before reply; artifact append failure; supervisor kill/restart at each point.
 Include ENOSPC, EIO and unsupported file/directory fsync. Process-kill tests are not power-loss proof.

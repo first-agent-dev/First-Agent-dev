@@ -1950,8 +1950,9 @@ added: it is advisory and racy, and the recovery path must exist regardless.
 
 ## Q82 — Where does a prepared bundle install, and what identifies the project it creates?
 
-**Status: OPEN — blocks `install_project` only. Raised 2026-10-22 (E271). `prepare_bundle` and its
-renderer are implemented and unaffected; the install half stops here rather than guessing.**
+**Status: ANSWERED (2026-10-22, E272 review) — (B), install in place. Blocks nothing further; the
+install itself is the next unit. Raised 2026-10-22 (E271); `prepare_bundle` and its renderer are
+implemented and unaffected.**
 
 **What is already fixed by record.** Spec §7.1 freezes the *bundle*: project directory
 `worklogs/<project_slug>/`, `roadmap.md`, `ledger.md`, `increments/increment-01-<increment_slug>.md`;
@@ -1987,3 +1988,42 @@ implementer's `os.mkdir` is precisely the class of decision this project records
 **Not asked here.** Whether the installed project is auto-registered as a workspace (a SLICE5/controller
 question) and whether `_COMMITTED`'s `revision_id` names the new project's genesis revision or the
 preparing workspace's (follows from (A) vs (B)).
+
+---
+
+### Q82 ruling (2026-10-22, E272 review) — (B) in place, superseding the (A) recommendation above
+
+**The ruling.** A bundle installs at `<workspace root>/worklogs/<project_slug>`, i.e. inside the
+*preparing* workspace's canonical root. `_COMMITTED`'s `revision_id` is that workspace's new revision.
+There is no auto-registration: `register_workspace` stays a separate operation (SLICE5 territory).
+
+**Why (B) and not (A)** — four recorded facts, not a preference:
+
+1. §7.1's frozen paths are **workspace-relative** (`worklogs/<project_slug>/roadmap.md`,
+   `increments/increment-01-<slug>.md`). (A) would make the same bundle render paths that are relative
+   to a *different* root than the one §7.1 names, and every consumer of those rendered paths (the
+   roadmap's own Artifacts table, the increment's `Roadmap-ID`) would describe a tree the preparing
+   workspace cannot see.
+2. The canonical grammar already has **several projects coexisting under one `worklogs/`**
+   (`notes/artifact-schema-and-grammar.md` §1: `worklogs/<slug>/`, "one per project" — and this
+   repository's own `worklogs/` holds many such slugs). "A new project directory" therefore means a new
+   directory under `worklogs/`, not necessarily a new canonical root.
+3. §5.1's BOOTSTRAP row is honest only if the **preparing** workspace's own tree changes: the row's
+   recovery rule inspects "the installed directory's full approved manifest/hash", and the revision
+   and `current.json` writes that follow it are the *same workspace's*. Under (A) the preparing
+   workspace would need a revision for bytes it does not contain.
+4. `worklogs` appears in neither `_PROTECTED_COMPONENTS` nor `_excluded`, so the installed files are
+   captured into the preparing workspace's next revision — which is exactly what
+   `RESULTS[INSTALL_PROJECT] = _COMMITTED` claims.
+
+**Binding rules for the install, implied by (B).** The destination is `worklogs/<project_slug>` under
+the canonical root the bundle's base revision belongs to; `project_slug` is re-validated against
+`CONFIG_ID` *and* re-checked against the stored bundle's own slug (an id cannot be retargeted); the
+install refuses (`COLLISION`) when the destination exists, with the existing bytes verified untouched;
+`worklogs` is created idempotently **before** the irreversible `RENAME_NOREPLACE`, and the
+directories an attempt created are recorded in the BOOTSTRAP intent so recovery can remove exactly
+those (never a pre-existing one) when the rename never happened; a symlinked component anywhere on
+the destination path is refused (`PATH_DENIED`) before any write.
+
+**Still not decided here.** Auto-registration (no), and whether a later `REGISTER_WORKSPACE` of the
+installed directory is what makes it a first-class workspace (yes, SLICE5).
