@@ -339,7 +339,7 @@ class SupervisorDispatcher:
     ) -> dict[str, Any]:
         operation_id = "op-" + binding.request_id
         _require_budget(deadline)
-        self._journal.begin(operation_id, binding.namespace)
+        self._journal.begin(operation_id, binding.namespace, deadline=deadline)
         _require_budget(deadline)
         produced = self._handle(peer, copy.deepcopy(request), deadline=deadline)
         if binding.operation in {
@@ -361,7 +361,15 @@ class SupervisorDispatcher:
             if context is None:
                 raise ExecutionContractError
             context.check_receipt_plan(snapshot.to_wire_result()["receipt"]["plan_sha256"])
-        self._journal.complete(operation_id, binding.namespace, produced, original_proof=request["capability"])
+        # The handler may return a truthful result just after the caller-facing
+        # deadline. Persist that result using the journal's bounded lock timeout;
+        # write_frame still enforces the independent transport/reply deadline.
+        self._journal.complete(
+            operation_id,
+            binding.namespace,
+            produced,
+            original_proof=request["capability"],
+        )
         self._replies.remember_completed(binding, request["capability"], snapshot)
         return snapshot.to_wire_result()
 
@@ -385,22 +393,8 @@ class SupervisorDispatcher:
                 namespace = NamespaceRef(**request["namespace"])
                 # The wire-validated ViewRef is included in the exact-input hash;
                 # never use its mere shape as proof that a resource exists.
-                from fa.execution.types import Access, ViewPurpose
-
                 view_data = request["view_ref"]
-                view = (
-                    None
-                    if view_data is None
-                    else ViewRef(
-                        workspace_id=view_data["workspace_id"],
-                        view_id=view_data["view_id"],
-                        base_revision=view_data["base_revision"],
-                        owner_run_id=view_data["owner_run_id"],
-                        generation=view_data["generation"],
-                        access=Access(view_data["access"]),
-                        purpose=ViewPurpose(view_data["purpose"]),
-                    )
-                )
+                view = None if view_data is None else ViewRef.from_dict(view_data)
                 binding = ReplayBinding(
                     peer.principal,
                     namespace,
@@ -408,12 +402,12 @@ class SupervisorDispatcher:
                     request["request_id"],
                     operation_input_sha256(operation, namespace, view, request["payload"]),
                 )
-                existing = self._journal.lookup("op-" + binding.request_id, namespace)
+                existing = self._journal.lookup("op-" + binding.request_id, namespace, deadline=deadline)
                 if existing is not None:
                     value = self._completed(existing, binding, request["capability"])
                 else:
                     context = self._authorize_request(peer, request, deadline=deadline)
-                    reserved = self._journal.reserve(request)
+                    reserved = self._journal.reserve(request, deadline=deadline)
                     if reserved.fresh:
                         reserved_id = reserved.record["operation_id"]
                         value = self._execute_reserved(peer, request, binding, context, deadline=deadline)
@@ -424,8 +418,15 @@ class SupervisorDispatcher:
         except Exception as exc:  # noqa: BLE001 — private boundary must sanitize arbitrary backend exceptions.
             if reserved_id is not None and namespace is not None:
                 try:
+                    # Closing an already-reserved operation is safe journal
+                    # finalization, not fresh work. It retains its own bounded
+                    # lock timeout so an expired request does not strand the
+                    # record in EXECUTING and invite ambiguous recovery.
                     self._journal.mark_unknown(reserved_id, namespace)
-                except (JournalError, OSError, ExecutionContractError):
+                except JournalError as mark_error:
+                    code = "EXECUTION_UNKNOWN" if mark_error.code == "BACKEND_UNAVAILABLE" else "DURABILITY_UNKNOWN"
+                    return self._reply(request["request_id"], error=SupervisorError(code, reserved_id))
+                except (OSError, ExecutionContractError):
                     return self._reply(request["request_id"], error=SupervisorError("DURABILITY_UNKNOWN", reserved_id))
             if isinstance(exc, SupervisorError):
                 error = exc

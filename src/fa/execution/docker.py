@@ -26,7 +26,7 @@ from fa.execution.journal import JournalError, OperationJournal
 from fa.execution.profiles import ExecutionProfile
 from fa.execution.protocol import MAX_FRAME_BYTES, MAX_TAIL_BYTES, _loads, decode_request, encode_json, read_frame
 from fa.execution.supervisor import operation_input_sha256
-from fa.execution.types import Access, ExecutionContractError, NamespaceRef, Operation, ViewPurpose, ViewRef, _hex_id
+from fa.execution.types import ExecutionContractError, NamespaceRef, Operation, ViewRef, _hex_id
 
 
 class DockerUnavailableError(RuntimeError):
@@ -462,15 +462,7 @@ class DockerCells:
         ):
             raise ExecutionContractError
         namespace = NamespaceRef(**req["namespace"])
-        view = ViewRef(
-            workspace_id=req["view_ref"]["workspace_id"],
-            view_id=req["view_ref"]["view_id"],
-            base_revision=req["view_ref"]["base_revision"],
-            owner_run_id=req["view_ref"]["owner_run_id"],
-            generation=req["view_ref"]["generation"],
-            access=Access(req["view_ref"]["access"]),
-            purpose=ViewPurpose(req["view_ref"]["purpose"]),
-        )
+        view = ViewRef.from_dict(req["view_ref"])
         digest = operation_input_sha256(Operation.EXEC, namespace, view, req["payload"])
         return req, namespace, view, digest
 
@@ -501,8 +493,9 @@ class DockerCells:
                 cache=cache,
                 deadline=deadline,
             ),
+            deadline=deadline,
         )
-        with self._journal.start_once(operation_id, namespace) as owned_id:
+        with self._journal.start_once(operation_id, namespace, deadline=deadline) as owned_id:
             self._engine.start(owned_id, deadline=deadline)
         return container_id  # Start ACK, NOT command success or terminality.
 
@@ -514,7 +507,7 @@ class DockerCells:
         deadline: float,
     ) -> ContainerObservation:
         req, namespace, view, digest = self._binding(creation_request, profile)
-        record = self._journal.lookup(req["payload"]["operation_id"], namespace)
+        record = self._journal.lookup(req["payload"]["operation_id"], namespace, deadline=deadline)
         if record is None or record["input_sha256"] != digest:
             raise JournalError("EXECUTION_UNKNOWN")
         return self._engine.inspect_owned(
@@ -539,11 +532,11 @@ class DockerCells:
         """
         _remaining(deadline)
         req, namespace, view, digest = self._binding(creation_request, profile)
-        record = self._journal.lookup(req["payload"]["operation_id"], namespace)
+        record = self._journal.lookup(req["payload"]["operation_id"], namespace, deadline=deadline)
         if record is None or record["input_sha256"] != digest:
             raise JournalError("EXECUTION_UNKNOWN")
         _remaining(deadline)
-        self._journal.request_cancel(record["operation_id"], namespace)
+        self._journal.request_cancel(record["operation_id"], namespace, view=view, deadline=deadline)
         return self._engine.force_stop_owned(
             operation_id=record["operation_id"],
             view=view,

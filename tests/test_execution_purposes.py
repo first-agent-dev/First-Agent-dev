@@ -391,6 +391,48 @@ def test_candidate_buffer_expected_sha_is_absence_or_exact_never_unconditional(s
         assert not (site.source / ".fa").exists()
 
 
+def test_candidate_buffer_read_and_write_recheck_the_protected_plan(site: Site) -> None:
+    with setup(site) as (owner, ids, lease, plan_ref):
+        grant = create(
+            owner,
+            ids,
+            lease,
+            purpose=ViewPurpose.CANDIDATE,
+            access=Access.READ,
+            plan_ref=plan_ref,
+            candidate_scope=scope_for(plan_ref),
+        )
+        pin = owner._readers[ref(grant).view_id]
+        (pin.context.source_root / "plan.md").write_text("# changed after view creation\n")
+        denied(
+            "INPUT_POLICY",
+            lambda: owner.read_candidate(
+                PEER,
+                ACTOR,
+                view_ref=ref(grant),
+                capability=grant.capability,
+                path=SCOPE_PATH,
+                offset_bytes=0,
+                max_bytes=1024,
+                deadline=until(),
+            ),
+        )
+        denied(
+            "INPUT_POLICY",
+            lambda: owner.write_candidate(
+                PEER,
+                ACTOR,
+                view_ref=ref(grant),
+                capability=grant.capability,
+                path=SCOPE_PATH,
+                content="# candidate\n",
+                expected_sha256=None,
+                deadline=until(),
+            ),
+        )
+        assert not (views_root(owner, grant) / "candidate").exists()
+
+
 def test_mutation_writes_are_confined_to_the_approved_roots(site: Site) -> None:
     with setup(site) as (owner, ids, lease, plan_ref):
         grant = create(owner, ids, lease, purpose=ViewPurpose.MUTATION, access=Access.WRITE, plan_ref=plan_ref)

@@ -41,12 +41,10 @@ from fa.execution.protocol import (
 from fa.execution.supervisor import operation_input_sha256
 from fa.execution.types import (
     GRANT_OPERATIONS,
-    Access,
     ExecutionContractError,
     GrantReply,
     NamespaceRef,
     Operation,
-    ViewPurpose,
     ViewRef,
     _hex_id,
     _positive_integer,
@@ -166,17 +164,39 @@ class OperationJournal:
     def _transaction(self, *, deadline: float | None = None) -> Iterator[int]:
         if deadline is not None and (type(deadline) not in {int, float} or not math.isfinite(deadline)):
             raise ExecutionContractError
+        if deadline is not None and deadline <= time.monotonic():
+            raise JournalError("BACKEND_UNAVAILABLE")
         limit = time.monotonic() + self._lock_timeout
         if deadline is not None:
             limit = min(limit, deadline)
+        acquired = False
         try:
             with _private_artifact_directory(self._directory) as fd:
-                with _admission_lock(fd, deadline=limit):
-                    yield fd
+                try:
+                    with _admission_lock(fd, deadline=limit):
+                        acquired = True
+                        if deadline is not None and deadline <= time.monotonic():
+                            raise JournalError("BACKEND_UNAVAILABLE")
+                        yield fd
+                except JournalError:
+                    raise
+                except OSError:
+                    if not acquired:
+                        # No transaction body ran: a contended/expired lock is
+                        # backend unavailability, not uncertain durable state.
+                        raise JournalError("BACKEND_UNAVAILABLE") from None
+                    # A replace may already be visible when directory fsync fails.
+                    raise JournalError("DURABILITY_UNKNOWN") from None
+        except JournalError:
+            raise
         except OSError:
-            # A replace may already be visible when directory fsync fails. Never
-            # translate that uncertainty into a fresh reservation or launch.
-            raise JournalError("DURABILITY_UNKNOWN") from None
+            # Opening the private directory failed before any mutation began.
+            raise JournalError("BACKEND_UNAVAILABLE") from None
+
+    @staticmethod
+    def _before_deadline(deadline: float | None) -> None:
+        if deadline is not None and deadline <= time.monotonic():
+            raise JournalError("BACKEND_UNAVAILABLE")
 
     @staticmethod
     def _name(operation_id: str) -> str:
@@ -224,25 +244,14 @@ class OperationJournal:
             raise ExecutionContractError
         _replace_private_bytes(fd, record["operation_id"] + ".json", raw)
 
-    def reserve(self, request: dict[str, Any]) -> Reservation:
+    def reserve(self, request: dict[str, Any], *, deadline: float | None = None) -> Reservation:
         req = decode_request(encode_json(request))  # Capture/validate, never retain raw credentials/input.
+        self._before_deadline(deadline)
         op = Operation(req["op"])
         if op is Operation.HEALTH:
             raise ExecutionContractError
         namespace = NamespaceRef(**req["namespace"])
-        view = (
-            None
-            if req["view_ref"] is None
-            else ViewRef(
-                workspace_id=req["view_ref"]["workspace_id"],
-                view_id=req["view_ref"]["view_id"],
-                base_revision=req["view_ref"]["base_revision"],
-                owner_run_id=req["view_ref"]["owner_run_id"],
-                generation=req["view_ref"]["generation"],
-                access=Access(req["view_ref"]["access"]),
-                purpose=ViewPurpose(req["view_ref"]["purpose"]),
-            )
-        )
+        view = None if req["view_ref"] is None else ViewRef.from_dict(req["view_ref"])
         record = {
             "schema_version": 1,
             "operation_id": "op-" + req["request_id"],
@@ -256,8 +265,9 @@ class OperationJournal:
             "cancel_requested": False,
             "result": None,
         }
-        with self._transaction() as fd:
+        with self._transaction(deadline=deadline) as fd:
             previous = self._read(fd, record["operation_id"])
+            self._before_deadline(deadline)
             if previous is not None:
                 if any(
                     previous[key] != record[key]
@@ -285,12 +295,13 @@ class OperationJournal:
             raise JournalError("UNAUTHORIZED")
         return record
 
-    def begin(self, operation_id: str, namespace: NamespaceRef) -> None:
+    def begin(self, operation_id: str, namespace: NamespaceRef, *, deadline: float | None = None) -> None:
         """One claim BEFORE side effects/Docker create. Retry/restart never reclaims."""
-        with self._transaction() as fd:
+        with self._transaction(deadline=deadline) as fd:
             record = self._bound(fd, operation_id, namespace)
             if record is None or record["state"] != "RESERVED" or record["cancel_requested"]:
                 raise JournalError("EXECUTION_UNKNOWN")
+            self._before_deadline(deadline)
             record["state"] = "EXECUTING"
             self._write(fd, record)
 
@@ -301,6 +312,7 @@ class OperationJournal:
         *,
         input_sha256: str,
         create: Callable[[], str],
+        deadline: float | None = None,
     ) -> str:
         """One bounded create RPC, write-ahead uncertainty, then durable CID.
 
@@ -309,7 +321,7 @@ class OperationJournal:
         A lost create/CID-fsync reply NEVER regains creation permission.
         """
         _hex_id(input_sha256, "", 64)
-        with self._transaction() as fd:
+        with self._transaction(deadline=deadline) as fd:
             record = self._bound(fd, operation_id, namespace)
             if (
                 record is None
@@ -321,34 +333,39 @@ class OperationJournal:
                 raise JournalError("EXECUTION_UNKNOWN")
             if record["input_sha256"] != input_sha256:
                 raise JournalError("COLLISION")
+            self._before_deadline(deadline)
             record["state"] = "UNKNOWN"
             self._write(fd, record)
+            self._before_deadline(deadline)
             container_id = create()
             _hex_id(container_id, "", 64)
             record.update(state="EXECUTING", container_id=container_id)
             self._write(fd, record)
             return container_id
 
-    def record_container(self, operation_id: str, namespace: NamespaceRef, container_id: str) -> None:
+    def record_container(
+        self, operation_id: str, namespace: NamespaceRef, container_id: str, *, deadline: float | None = None
+    ) -> None:
         _hex_id(container_id, "", 64)
-        with self._transaction() as fd:
+        with self._transaction(deadline=deadline) as fd:
             record = self._bound(fd, operation_id, namespace)
             if record is None or record["op"] != "exec" or record["state"] != "EXECUTING":
                 raise JournalError("EXECUTION_UNKNOWN")
             if record["container_id"] not in {None, container_id}:
                 raise JournalError("COLLISION")
+            self._before_deadline(deadline)
             record["container_id"] = container_id
             self._write(fd, record)
 
     @contextmanager
-    def start_once(self, operation_id: str, namespace: NamespaceRef) -> Iterator[str]:
+    def start_once(self, operation_id: str, namespace: NamespaceRef, *, deadline: float | None = None) -> Iterator[str]:
         """Write-ahead uncertainty and lock through ONE bounded Docker start RPC.
 
         The caller must set a finite daemon RPC timeout. Persisted cancellation
         linearizes before or after this critical section, never inside it. No
         retry can regain this claim; actual completion/reconciliation follows.
         """
-        with self._transaction() as fd:
+        with self._transaction(deadline=deadline) as fd:
             record = self._bound(fd, operation_id, namespace)
             if (
                 record is None
@@ -358,15 +375,29 @@ class OperationJournal:
                 or record["cancel_requested"]
             ):
                 raise JournalError("EXECUTION_UNKNOWN")
+            self._before_deadline(deadline)
             record["state"] = "UNKNOWN"
             self._write(fd, record)
+            self._before_deadline(deadline)
             yield record["container_id"]
 
-    def request_cancel(self, operation_id: str, namespace: NamespaceRef) -> None:
-        with self._transaction() as fd:
+    def request_cancel(
+        self,
+        operation_id: str,
+        namespace: NamespaceRef,
+        *,
+        view: ViewRef,
+        deadline: float | None = None,
+    ) -> None:
+        if not isinstance(view, ViewRef):
+            raise ExecutionContractError
+        with self._transaction(deadline=deadline) as fd:
             record = self._bound(fd, operation_id, namespace)
             if record is None or record["op"] != "exec":
                 raise JournalError("EXECUTION_UNKNOWN")
+            if record["view_ref"] != view.to_dict():
+                raise JournalError("UNAUTHORIZED")
+            self._before_deadline(deadline)
             record["cancel_requested"] = True
             self._write(fd, record)
 
@@ -377,9 +408,10 @@ class OperationJournal:
         result: GrantReply | dict[str, Any],
         *,
         original_proof: str | None,
+        deadline: float | None = None,
     ) -> None:
         """Trusted owner supplies an observed result; not an attestation factory."""
-        with self._transaction() as fd:
+        with self._transaction(deadline=deadline) as fd:
             record = self._bound(fd, operation_id, namespace)
             if record is None:
                 raise JournalError("EXECUTION_UNKNOWN")
@@ -396,6 +428,7 @@ class OperationJournal:
             _check(_RESULTS[op], public)
             if op is Operation.EXEC:
                 _validate_completed_receipt(record, public["receipt"])
+            self._before_deadline(deadline)
             if record["state"] == "DONE":
                 if record["result"] != public:
                     raise JournalError("COLLISION")
@@ -405,12 +438,13 @@ class OperationJournal:
             record.update(state="DONE", result=public)
             self._write(fd, record, original_proof, issued)
 
-    def mark_unknown(self, operation_id: str, namespace: NamespaceRef) -> None:
-        with self._transaction() as fd:
+    def mark_unknown(self, operation_id: str, namespace: NamespaceRef, *, deadline: float | None = None) -> None:
+        with self._transaction(deadline=deadline) as fd:
             record = self._bound(fd, operation_id, namespace)
             if record is None:
                 raise JournalError("EXECUTION_UNKNOWN")
             if record["state"] != "DONE":
+                self._before_deadline(deadline)
                 record.update(state="UNKNOWN", result=None)
                 self._write(fd, record)
 
@@ -433,14 +467,15 @@ class OperationJournal:
                         changed += 1
         return changed
 
-    def unfinished(self) -> list[dict[str, Any]]:
+    def unfinished(self, *, deadline: float | None = None) -> list[dict[str, Any]]:
         """Read-only listing of uncertain exec records for restart reconciliation.
 
         This never creates, starts, re-runs or completes anything.
         """
-        with self._transaction() as fd:
+        with self._transaction(deadline=deadline) as fd:
             records: list[dict[str, Any]] = []
             for name in sorted(os.listdir(fd)):
+                self._before_deadline(deadline)
                 if not name.startswith("op-") or not name.endswith(".json"):
                     continue
                 try:
@@ -450,6 +485,26 @@ class OperationJournal:
                 if record is None or record["op"] != "exec" or record["state"] == "DONE":
                     continue
                 records.append(record)
+            return records
+
+    def owned_cells(self, *, deadline: float | None = None) -> list[dict[str, Any]]:
+        """Read-only inventory of every exec record that still binds a cell ID.
+
+        DONE is included: an interactive cell can outlive the command that
+        created it. This inventory never starts, re-runs, completes or grants.
+        """
+        with self._transaction(deadline=deadline) as fd:
+            records: list[dict[str, Any]] = []
+            for name in sorted(os.listdir(fd)):
+                self._before_deadline(deadline)
+                if not name.startswith("op-") or not name.endswith(".json"):
+                    continue
+                try:
+                    record = self._read(fd, name.removesuffix(".json"))
+                except ExecutionContractError:
+                    raise JournalError("CORRUPT_STATE") from None
+                if record is not None and record["op"] == "exec" and record["container_id"] is not None:
+                    records.append(record)
             return records
 
     @contextmanager

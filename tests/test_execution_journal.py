@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import stat
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
@@ -137,7 +139,7 @@ def test_cancel_before_start_persists_and_prevents_late_start(tmp_path: Path, af
     if after_begin:
         owner.begin(OID, NS)
         owner.record_container(OID, NS, CID)
-    owner.request_cancel(OID, NS)
+    owner.request_cancel(OID, NS, view=VIEW)
     record = owner.lookup(OID, NS)
     assert record is not None and record["cancel_requested"] is True
     with pytest.raises(JournalError):
@@ -146,6 +148,29 @@ def test_cancel_before_start_persists_and_prevents_late_start(tmp_path: Path, af
                 pytest.fail("persisted cancellation permitted start")
         else:
             owner.begin(OID, NS)
+
+
+def test_cancel_intent_requires_the_exact_operation_view(tmp_path: Path) -> None:
+    owner = journal(tmp_path)
+    owner.reserve(request())
+    owner.begin(OID, NS)
+    before = owner.lookup(OID, NS)
+    foreign_view = ViewRef(
+        VIEW.workspace_id,
+        "view-" + "9" * 32,
+        VIEW.base_revision,
+        VIEW.owner_run_id,
+        VIEW.generation,
+        VIEW.access,
+        VIEW.purpose,
+    )
+    with pytest.raises(JournalError) as caught:
+        owner.request_cancel(OID, NS, view=foreign_view)
+    assert caught.value.code == "UNAUTHORIZED"
+    assert owner.lookup(OID, NS) == before
+    owner.request_cancel(OID, NS, view=VIEW)
+    record = owner.lookup(OID, NS)
+    assert record is not None and record["cancel_requested"] is True
 
 
 @pytest.mark.parametrize("after_begin", [False, True])
@@ -165,6 +190,18 @@ def test_restart_marks_unfinished_unknown_and_never_returns_fresh(tmp_path: Path
     assert restarted.reserve(request()).fresh is False
     with pytest.raises(JournalError):
         restarted.begin(OID, NS)
+
+
+def test_owned_cell_inventory_includes_done_exec_records_but_unfinished_does_not(tmp_path: Path) -> None:
+    owner = journal(tmp_path)
+    owner.reserve(request())
+    owner.begin(OID, NS)
+    owner.record_container(OID, NS, CID)
+    owner.complete(OID, NS, result(), original_proof=CAP)
+    record = owner.lookup(OID, NS)
+    assert record is not None and record["state"] == "DONE"
+    assert owner.unfinished() == []
+    assert owner.owned_cells() == [record]
 
 
 def test_grant_completion_persists_only_projection_never_secret(tmp_path: Path) -> None:
@@ -342,7 +379,7 @@ def test_uncertain_or_denied_create_claim_never_regains_permission(tmp_path: Pat
         return "invalid"
 
     if bad == "cancel":
-        journal.request_cancel(OID, NS)
+        journal.request_cancel(OID, NS, view=VIEW)
     digest = "9" * 64 if bad == "input" else reserved.record["input_sha256"]
     with pytest.raises((RuntimeError, ExecutionContractError)):
         journal.create_once(OID, NS, input_sha256=digest, create=create)
@@ -380,6 +417,39 @@ def test_failed_cid_persistence_keeps_unknown_and_cannot_retry_create(
     with pytest.raises(JournalError):
         owner.create_once(OID, NS, input_sha256=admission.record["input_sha256"], create=create)
     assert calls == ["create"]
+
+
+def test_deadline_expiring_on_journal_lock_is_backend_unavailable_before_create(tmp_path: Path) -> None:
+    owner = journal(tmp_path)
+    admission = owner.reserve(request())
+    owner.begin(OID, NS)
+    assert owner.lookup(OID, NS) is not None  # Create the lock file before holding it.
+    lock_path = tmp_path / "operations" / ".admission.lock"
+    lock_fd = os.open(lock_path, os.O_RDWR | os.O_CLOEXEC)
+    fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    calls: list[str] = []
+    deadline = time.monotonic() + 0.05
+
+    def create() -> str:
+        calls.append("create")
+        return CID
+
+    try:
+        with pytest.raises(JournalError) as caught:
+            owner.create_once(
+                OID,
+                NS,
+                input_sha256=admission.record["input_sha256"],
+                create=create,
+                deadline=deadline,
+            )
+        assert caught.value.code == "BACKEND_UNAVAILABLE"
+        assert calls == []
+    finally:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        os.close(lock_fd)
+    record = owner.lookup(OID, NS)
+    assert record is not None and record["state"] == "EXECUTING" and record["container_id"] is None
 
 
 def test_concurrent_create_claims_share_one_durable_permission(tmp_path: Path) -> None:

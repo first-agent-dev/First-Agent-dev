@@ -8,53 +8,23 @@ A well-shaped ViewRef does not prove that the view exists or is authorized.
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import asdict, dataclass
 from enum import StrEnum
 from typing import Any
 
+from fa.execution.primitives import (
+    ExecutionContractError as ExecutionContractError,
+)
+from fa.execution.primitives import (
+    Operation as Operation,
+)
+from fa.execution.primitives import (
+    _hex_id as _hex_id,
+)
+from fa.execution.primitives import (
+    _positive_integer as _positive_integer,
+)
 from fa.session.manager import SessionManager, SessionManagerError
-
-
-class ExecutionContractError(ValueError):
-    """Sanitized structural failure; never include caller data or grants."""
-
-    def __init__(self) -> None:
-        super().__init__("execution_contract_invalid")
-
-
-def _hex_id(value: object, prefix: str, length: int = 32) -> None:
-    if not isinstance(value, str) or re.fullmatch(prefix + rf"[0-9a-f]{{{length}}}", value) is None:
-        raise ExecutionContractError
-
-
-def _positive_integer(value: object) -> None:
-    if type(value) is not int or value <= 0:
-        raise ExecutionContractError
-
-
-class Operation(StrEnum):
-    """The nineteen closed v1 operation names; not executable callbacks."""
-
-    HEALTH = "health"
-    REGISTER_WORKSPACE = "register_workspace"
-    ACQUIRE_WRITER = "acquire_writer"
-    PIN_READER = "pin_reader"
-    CREATE_VIEW = "create_view"
-    READ_FILE = "read_file"
-    WRITE_FILE = "write_file"
-    EDIT_FILE = "edit_file"
-    EXEC = "exec"
-    INSPECT = "inspect"
-    CANCEL = "cancel"
-    STOP_VIEW = "stop_view"
-    SEAL = "seal"
-    PUBLISH = "publish"
-    INSTALL_PROJECT = "install_project"
-    RELEASE = "release"
-    PTY_CONTROL = "pty_control"
-    HANDOFF = "handoff"
-    PREPARE_BUNDLE = "prepare_bundle"
 
 
 @dataclass(frozen=True)
@@ -121,6 +91,33 @@ class ViewRef:
             "access": self.access.value,
             "purpose": self.purpose.value,
         }
+
+    @classmethod
+    def from_dict(cls, raw: object) -> ViewRef:
+        """Construct one validated identity from an already decoded record."""
+        keys = {
+            "workspace_id",
+            "view_id",
+            "base_revision",
+            "owner_run_id",
+            "generation",
+            "access",
+            "purpose",
+        }
+        if type(raw) is not dict or set(raw) != keys:
+            raise ExecutionContractError
+        try:
+            return cls(
+                workspace_id=raw["workspace_id"],
+                view_id=raw["view_id"],
+                base_revision=raw["base_revision"],
+                owner_run_id=raw["owner_run_id"],
+                generation=raw["generation"],
+                access=Access(raw["access"]),
+                purpose=ViewPurpose(raw["purpose"]),
+            )
+        except (KeyError, TypeError, ValueError):
+            raise ExecutionContractError from None
 
 
 _OWNER_GRANT_OPERATIONS = frozenset({Operation.ACQUIRE_WRITER, Operation.HANDOFF})

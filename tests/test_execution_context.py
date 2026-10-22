@@ -181,20 +181,20 @@ def test_authorization_consuming_deadline_cannot_begin_or_dispatch_fresh_effect(
     begun: list[str] = []
     original = case.journal.begin
 
-    def begin(oid: str, namespace: NamespaceRef) -> None:
+    def begin(oid: str, namespace: NamespaceRef, *, deadline: float | None = None) -> None:
         begun.append(oid)
-        original(oid, namespace)
+        original(oid, namespace, deadline=deadline)
 
     monkeypatch.setattr(case.journal, "begin", begin)
     reply = case.exchange(execution_request(op))
     if op is Operation.EXEC:
-        assert reply is not None and reply["error"]["code"] == "EXECUTION_UNKNOWN"
+        assert reply is not None and reply["error"]["code"] == "BACKEND_UNAVAILABLE"
     else:
         assert reply is None  # Control execution and reply share the short deadline.
     assert len(case.auth) == 1 and case.handled == [] and begun == []
     if op is not Operation.HEALTH:
         record = case.journal.lookup("op-" + RID, NamespaceRef(**request(op)["namespace"]))
-        assert record is not None and record["state"] == "UNKNOWN" and record["result"] is None
+        assert record is None  # Expiry before reserve is not a durable operation.
 
 
 @pytest.mark.parametrize("op", [Operation.RELEASE, Operation.EXEC])
@@ -206,8 +206,8 @@ def test_durable_begin_consuming_deadline_cannot_invoke_backend_or_reclaim_opera
     case = Probe(tmp_path, clock)
     original = case.journal.begin
 
-    def begin(oid: str, namespace: NamespaceRef) -> None:
-        original(oid, namespace)
+    def begin(oid: str, namespace: NamespaceRef, *, deadline: float | None = None) -> None:
+        original(oid, namespace, deadline=deadline)
         clock[0] = 4.0
 
     monkeypatch.setattr(case.journal, "begin", begin)

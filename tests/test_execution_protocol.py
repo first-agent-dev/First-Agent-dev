@@ -23,7 +23,17 @@ from fa.execution.protocol import (
     read_frame,
     write_frame,
 )
-from fa.execution.types import ExecutionContractError, ExecutionReceipt, JobState, NamespaceRef, Operation, OperationRef
+from fa.execution.types import (
+    Access,
+    ExecutionContractError,
+    ExecutionReceipt,
+    JobState,
+    NamespaceRef,
+    Operation,
+    OperationRef,
+    ViewPurpose,
+    ViewRef,
+)
 
 RID = "1" * 32
 WS = "ws-" + "2" * 32
@@ -167,6 +177,21 @@ def response(op: Operation) -> dict[str, Any]:
     return copy.deepcopy(
         {"protocol_version": 1, "request_id": RID, "status": "OK", "result": RESULTS[op], "error": None}
     )
+
+
+def test_view_ref_from_dict_has_one_closed_validating_constructor() -> None:
+    expected = ViewRef(WS, VID, REV, "run-1", 1, Access.WRITE, ViewPurpose.PROJECT)
+    assert ViewRef.from_dict(VIEW) == expected
+    assert expected.to_dict() == VIEW
+    for invalid in (
+        None,
+        {key: value for key, value in VIEW.items() if key != "purpose"},
+        {**VIEW, "extra": "ignored fields are not allowed"},
+        {**VIEW, "generation": True},
+        {**VIEW, "access": "UNKNOWN"},
+    ):
+        with pytest.raises(ExecutionContractError):
+            ViewRef.from_dict(invalid)
 
 
 @pytest.mark.parametrize("op", list(Operation))

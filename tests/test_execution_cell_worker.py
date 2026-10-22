@@ -30,8 +30,17 @@ def message(action: str, payload: dict[str, Any], request_id: str = "1" * 32) ->
     return encode_json({"version": 1, "request_id": request_id, "action": action, "payload": payload})
 
 
-def run_message(command: str, *, cwd: str = ".", timeout_ms: int = 2000, request_id: str = "1" * 32) -> bytes:
-    return message("RUN", {"command": command, "cwd": cwd, "timeout_ms": timeout_ms, "session_id": "main"}, request_id)
+def run_message(
+    command: str,
+    *,
+    cwd: str = ".",
+    timeout_ms: int = 2000,
+    request_id: str = "1" * 32,
+    session_id: str | None = "main",
+) -> bytes:
+    return message(
+        "RUN", {"command": command, "cwd": cwd, "timeout_ms": timeout_ms, "session_id": session_id}, request_id
+    )
 
 
 def test_real_local_pty_preserves_export_cwd_and_full_result(worker: CellWorker, tmp_path: Path) -> None:
@@ -209,6 +218,34 @@ def test_one_shot_timeout_is_not_normal_worker_or_command_success(worker: CellWo
     assert worker.stopped and worker._pool.list_sessions() == []
 
 
+def test_noninteractive_one_shot_accepts_null_session_and_returns_no_reusable_session(tmp_path: Path) -> None:
+    from io import BytesIO
+
+    from fa.execution.cell_worker import _StdioConnection, serve_once
+
+    one_shot = CellWorker(
+        PtyPool(base_cwd=tmp_path, run_id="cell-one-shot"),
+        workspace=tmp_path,
+        max_command_ms=3000,
+        one_shot=True,
+    )
+    raw = run_message("printf one-shot; touch completed", session_id=None)
+    output = BytesIO()
+    status = serve_once(one_shot, _StdioConnection(BytesIO(len(raw).to_bytes(4, "big") + raw), output))
+    response = _loads(read_frame(_StdioConnection(BytesIO(output.getvalue()), BytesIO())))
+    assert status == 0
+    assert response["result"]["session_id"] is None
+    assert "one-shot" in response["result"]["stdout"]
+    assert one_shot.stopped and one_shot._pool.list_sessions() == []
+    assert (tmp_path / "completed").exists()
+
+
+def test_interactive_worker_rejects_a_null_session_before_creating_a_pty(worker: CellWorker) -> None:
+    with pytest.raises(ExecutionContractError):
+        worker.handle(run_message("touch forbidden", session_id=None))
+    assert worker._pool.list_sessions() == []
+
+
 @pytest.mark.parametrize("bad", ["LIST", "missing-cwd", "unknown-key", "invalid-id", "short-frame"])
 def test_one_shot_bad_input_starts_no_project_command(worker: CellWorker, tmp_path: Path, bad: str) -> None:
     from io import BytesIO
@@ -248,7 +285,7 @@ def test_one_shot_main_selects_real_worker_status_with_fixed_cell_paths_substitu
 
     from fa.execution import cell_worker
 
-    raw = run_message("touch main-ran; (exit 7)")
+    raw = run_message("touch main-ran; (exit 7)", session_id=None)
     output = BytesIO()
 
     def fixed_path(path: str) -> Path:

@@ -12,6 +12,7 @@ import sys
 import threading
 from pathlib import Path
 from typing import Any, BinaryIO
+from uuid import uuid4
 
 from fa.execution.cell_protocol import decode_cell_request
 from fa.execution.protocol import (
@@ -26,11 +27,15 @@ from fa.runtime.pty_pool import PtyPool, PtySession
 
 
 class CellWorker:
-    def __init__(self, pool: PtyPool, *, workspace: Path, max_command_ms: int) -> None:
+    def __init__(self, pool: PtyPool, *, workspace: Path, max_command_ms: int, one_shot: bool = False) -> None:
         _positive_integer(max_command_ms)
+        if type(one_shot) is not bool:
+            raise ExecutionContractError
         self._pool = pool
         self._workspace = workspace.resolve(strict=True)
         self._max_command_ms = max_command_ms
+        self._one_shot = one_shot
+        self._one_shot_consumed = False
         self.stopped = False
 
     def handle(self, raw: bytes) -> dict[str, Any]:
@@ -66,7 +71,17 @@ class CellWorker:
         return self._pool.acquire(payload["session_id"], workdir=str(cwd))
 
     def _run(self, payload: dict[str, Any]) -> dict[str, Any]:
-        session = self._acquire(payload)
+        requested_session_id = payload["session_id"]
+        if self._one_shot:
+            if requested_session_id is not None or self._one_shot_consumed:
+                raise ExecutionContractError
+            self._one_shot_consumed = True
+            worker_session_id = "oneshot-" + uuid4().hex
+        else:
+            if requested_session_id is None:
+                raise ExecutionContractError
+            worker_session_id = requested_session_id
+        session = self._acquire({**payload, "session_id": worker_session_id})
         outcome = session.run(payload["command"], timeout=min(payload["timeout_ms"], self._max_command_ms) / 1000)
         if outcome.exit_code < 0 and not outcome.timed_out:
             raise ExecutionContractError  # Legacy missing/EOF fallback is not a normal exit.
@@ -79,7 +94,7 @@ class CellWorker:
             "stdout": stdout,
             "exit_code": outcome.exit_code,
             "truncated": outcome.truncated or trimmed,
-            "session_id": outcome.session_id,
+            "session_id": None if requested_session_id is None else outcome.session_id,
             "timed_out": outcome.timed_out,
         }
 
@@ -226,7 +241,9 @@ def main() -> int:
         for directory in (Path("/scratch/home"), Path("/scratch/tmp")):
             directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         pool = PtyPool(base_cwd=Path("/workspace"))
-        worker = CellWorker(pool, workspace=Path("/workspace"), max_command_ms=args.max_command_ms)
+        worker = CellWorker(
+            pool, workspace=Path("/workspace"), max_command_ms=args.max_command_ms, one_shot=args.one_shot
+        )
         connection = _StdioConnection(sys.stdin.buffer, sys.stdout.buffer)
         if args.one_shot:
             return serve_once(worker, connection)

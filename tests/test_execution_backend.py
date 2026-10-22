@@ -7,22 +7,25 @@ PTY worker. No container, cgroup, descendant barrier or receipt is proven here.
 from __future__ import annotations
 
 import os
+import queue
 import socket
 import struct
 import threading
 import time
 from collections.abc import Callable, Iterator
 from dataclasses import replace
+from functools import partial
 from pathlib import Path
 from typing import Any, override
 
 import pytest
 
-from fa.execution.backend import CellBackend
+from fa.execution.backend import CellBackend, CommandOutcome, _EpisodeKey
 from fa.execution.cell_protocol import decode_cell_request, encode_cell_request
 from fa.execution.cell_worker import CellWorker, serve
 from fa.execution.docker import DockerEngine, DockerUnavailableError
 from fa.execution.journal import JournalError
+from fa.execution.protocol import encode_json
 from fa.execution.supervisor import SupervisorError
 from fa.execution.types import ExecutionContractError, NamespaceRef
 from fa.execution.workspace import WorkspaceAuthority
@@ -103,6 +106,54 @@ class MuxWorker:
         self._peer.sendall(mux(data))
 
 
+class FakeWorkerStream:
+    """Private protocol peer for backend lifecycle tests, not worker proof."""
+
+    def __init__(self) -> None:
+        self.requests: list[dict[str, Any]] = []
+        self._replies: queue.Queue[bytes | None] = queue.Queue()
+        self.closed = False
+
+    def write_frame(self, raw: bytes, *, deadline: float) -> None:
+        if time.monotonic() >= deadline:
+            raise OSError("fake_worker_deadline")
+        request = decode_cell_request(raw)
+        self.requests.append(request)
+        result = {
+            "stdout": "fake one-shot result",
+            "exit_code": 0,
+            "truncated": False,
+            "session_id": request["payload"]["session_id"],
+            "timed_out": False,
+        }
+        self._replies.put(
+            encode_json(
+                {
+                    "version": 1,
+                    "request_id": request["request_id"],
+                    "result": result,
+                    "error": None,
+                }
+            )
+        )
+
+    def read_frame(self, *, deadline: float) -> bytes:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise OSError("fake_worker_deadline")
+        try:
+            reply = self._replies.get(timeout=remaining)
+        except queue.Empty:
+            raise OSError("fake_worker_deadline") from None
+        if reply is None:
+            raise OSError("fake_worker_closed")
+        return reply
+
+    def close(self) -> None:
+        self.closed = True
+        self._replies.put(None)
+
+
 def mux(raw: bytes, kind: int = 1) -> bytes:
     return bytes([kind, 0, 0, 0]) + struct.pack("!I", len(raw)) + raw
 
@@ -130,7 +181,8 @@ class ObservedEngine(DockerEngine):
 class Backend:
     """Real authority + journal + literal HTTP Docker peer + real local worker."""
 
-    def __init__(self, site: Site, tmp_path: Path) -> None:
+    def __init__(self, site: Site, tmp_path: Path, *, profile_override: Any | None = None) -> None:
+        self.profile = native_profile() if profile_override is None else profile_override
         self.cache = tmp_path / "approved-cache"
         self.cache.mkdir(mode=0o755)
         self.authority = WorkspaceAuthority(
@@ -138,7 +190,7 @@ class Backend:
             approved_roots={"projects": site.roots},
             controller_uids=frozenset({PEER.uid}),
             lock_timeout_ms=1000,
-            view_profile=native_profile(),
+            view_profile=self.profile,
             approved_cache=self.cache,
         )
         self.authority.__enter__()
@@ -146,7 +198,9 @@ class Backend:
         lease = ok(lambda: site.claim(self.authority, ids))
         self.grant = ok(lambda: create_view(self.authority, ids, lease))
         self.worker = CountingWorker(
-            PtyPool(base_cwd=tmp_path, run_id="backend-cell"), workspace=tmp_path, max_command_ms=5000
+            PtyPool(base_cwd=tmp_path, run_id="backend-cell"),
+            workspace=tmp_path,
+            max_command_ms=self.profile.max_command_ms,
         )
         self.backend: CellBackend | None = None
         self.engine: DockerEngine | None = None
@@ -305,6 +359,39 @@ def running(backend: Backend, rid: str, command: str) -> dict[str, Any]:
     return req
 
 
+def complete_execution(backend: Backend, request: dict[str, Any]) -> None:
+    view = request["view_ref"]
+    receipt = {
+        "schema_version": 1,
+        "operation_id": request["payload"]["operation_id"],
+        "namespace": request["namespace"],
+        "workspace_id": view["workspace_id"],
+        "view_id": view["view_id"],
+        "owner_run_id": view["owner_run_id"],
+        "generation": view["generation"],
+        "revision_id": view["base_revision"],
+        "original_revision_id": view["base_revision"],
+        "input_tree_sha256": "c" * 64,
+        "plan_sha256": None,
+        "profile_id": request["payload"]["profile_id"],
+        "image_digest": backend.profile.image_digest,
+        "state": "EXITED",
+        "exit_code": 0,
+        "timed_out": False,
+        "stdout_tail": "fixture result",
+        "stderr_tail": "",
+        "truncated": False,
+        "duration_ms": 1,
+        "terminal_barrier": False,
+    }
+    backend.authority.journal.complete(
+        request["payload"]["operation_id"],
+        NamespaceRef(**request["namespace"]),
+        {"receipt": receipt},
+        original_proof=request["capability"],
+    )
+
+
 def test_two_commands_share_one_cell_and_two_durable_records(backend: Backend) -> None:
     first = prepare(backend, "1" * 32, "export FA_BACKEND=kept")
     second = prepare(backend, "2" * 32, 'printf "%s" "$FA_BACKEND"')
@@ -326,6 +413,60 @@ def test_two_commands_share_one_cell_and_two_durable_records(backend: Backend) -
     assert second_record["view_ref"] == first_record["view_ref"]
 
 
+def test_noninteractive_commands_use_null_sessions_and_fresh_one_shot_cells(
+    site: Site, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    profile = replace(native_profile(), profile_id="verification", interactive=False)
+    case = Backend(site, tmp_path, profile_override=profile)
+    private = tmp_path / "private"
+    private.mkdir(mode=0o700)
+    peer = Endpoint(private / "engine.sock")
+    case.peer = peer
+    case.engine = ObservedEngine(peer.path, daemon_uid=os.getuid(), api_version="1.45", rpc_timeout_ms=1000)
+    case.backend = CellBackend(case.authority, case.engine, case.authority.journal)
+    streams: list[FakeWorkerStream] = []
+
+    def attach(container_id: str, *, deadline: float) -> FakeWorkerStream:
+        stream = FakeWorkerStream()
+        streams.append(stream)
+        return stream
+
+    monkeypatch.setattr(case.engine, "attach", attach)
+    try:
+        for rid in ("2" * 32, "3" * 32):
+            request = exec_request(case.grant, rid, "printf noninteractive")
+            request["payload"].update(profile_id=profile.profile_id, session_id=None)
+            claim(case.authority, request)
+            peer.replies.extend(
+                [
+                    Reply(201, {"Id": CID, "Warnings": []}),
+                    Reply(204),
+                    Reply(200, observation(request["payload"]["operation_id"], case.view.view_id)),
+                ]
+            )
+            execute: Callable[[], CommandOutcome] = partial(case.owner().execute, PEER, request, deadline=until())
+            outcome = ok_backend(execute)
+            assert outcome.exit_code == 0 and outcome.session_id is None and outcome.terminal_barrier is False
+        assert case.owner().episode_count() == 0
+        assert len(streams) == 2 and all(stream.closed for stream in streams)
+        for stream in streams:
+            assert len(stream.requests) == 1
+            sent = stream.requests[0]
+            assert sent["action"] == "RUN"
+            assert sent["payload"] == {
+                "command": "printf noninteractive",
+                "cwd": ".",
+                "timeout_ms": 500,
+                "session_id": None,
+            }
+        paths = [seen["path"] for seen in peer.seen]
+        assert sum("/containers/create" in path for path in paths) == 2
+        assert sum(path.endswith("/start") for path in paths) == 2
+    finally:
+        case.close()
+        peer.close()
+
+
 def test_duplicate_operation_id_is_denied_without_a_second_send(backend: Backend) -> None:
     request = prepare(backend, "3" * 32, "printf once")
     backend.peer.replies.extend(backend.episode_replies("op-" + "3" * 32))
@@ -336,7 +477,7 @@ def test_duplicate_operation_id_is_denied_without_a_second_send(backend: Backend
 
 def test_cancel_before_send_produces_no_run_frame(backend: Backend) -> None:
     request = prepare(backend, "4" * 32, "printf cancelled")
-    backend.authority.journal.request_cancel("op-" + "4" * 32, ACTOR)
+    backend.authority.journal.request_cancel("op-" + "4" * 32, ACTOR, view=backend.view)
     denied("EXECUTION_UNKNOWN", lambda: backend.owner().execute(PEER, request, deadline=until()))
     assert backend.worker.runs == 0
 
@@ -418,6 +559,46 @@ def test_second_view_gets_its_own_cell_and_never_reuses_the_first_shell(backend:
     assert sum(1 for path in paths if "/attach" in path) == 2
 
 
+def test_cancel_cannot_name_an_operation_from_another_view_in_same_namespace(backend: Backend) -> None:
+    first = prepare(backend, "a3" * 16, "export FA_VIEW=A")
+    backend.peer.replies.extend(backend.episode_replies(first["payload"]["operation_id"]))
+    ok_backend(lambda: backend.owner().execute(PEER, first, deadline=until()))
+
+    second_view = ok(
+        lambda: backend.authority.pin_reader(
+            PEER,
+            ACTOR,
+            workspace_id=backend.view.workspace_id,
+            revision_id=backend.view.base_revision,
+            plan_ref=None,
+            formal_evidence=False,
+            deadline=until(),
+        )
+    )
+    assert second_view.view_ref is not None
+    second = exec_request(second_view, "a4" * 16, "export FA_VIEW=B")
+    claim(backend.authority, second)
+    backend.peer.replies.extend(
+        backend.episode_replies(second["payload"]["operation_id"], second_view.view_ref.view_id)
+    )
+    ok_backend(lambda: backend.owner().execute(PEER, second, deadline=until()))
+    before = backend.authority.journal.lookup(second["payload"]["operation_id"], ACTOR)
+    assert before is not None and before["cancel_requested"] is False
+    seen_before = len(backend.peer.seen)
+    cancel = {
+        "protocol_version": 1,
+        "request_id": "a5" * 16,
+        "op": "cancel",
+        "namespace": ACTOR.to_dict(),
+        "view_ref": backend.view.to_dict(),
+        "capability": backend.grant.capability,
+        "payload": {"operation_id": second["payload"]["operation_id"]},
+    }
+    denied("UNAUTHORIZED", lambda: backend.owner().cancel(PEER, cancel, deadline=until()))
+    after = backend.authority.journal.lookup(second["payload"]["operation_id"], ACTOR)
+    assert after == before and len(backend.peer.seen) == seen_before
+
+
 def test_cancel_of_a_later_command_cancels_that_command_not_the_creation(backend: Backend) -> None:
     first = prepare(backend, "4a" * 16, "export FA_SIDE=one")
     backend.peer.replies.extend(backend.episode_replies("op-" + "4a" * 16))
@@ -478,6 +659,33 @@ def test_reconcile_stops_a_surviving_owned_cell_without_creating_another(backend
     assert any(path.endswith("/kill?signal=SIGKILL") for path in paths)
 
 
+def test_reconcile_inspects_done_owned_cell_after_backend_restart(backend: Backend) -> None:
+    request = prepare(backend, "8a" * 16, "printf completed-but-cell-survives")
+    backend.peer.replies.extend(backend.episode_replies(request["payload"]["operation_id"]))
+    ok_backend(lambda: backend.owner().execute(PEER, request, deadline=until()))
+    complete_execution(backend, request)
+    record = backend.authority.journal.lookup(request["payload"]["operation_id"], ACTOR)
+    assert record is not None and record["state"] == "DONE" and record["container_id"] == CID
+
+    backend.owner().close(deadline=until())
+    engine = backend.engine
+    assert engine is not None
+    backend.backend = CellBackend(backend.authority, engine, backend.authority.journal)
+    backend.peer.replies.extend(
+        [
+            Reply(200, observation(request["payload"]["operation_id"], backend.view.view_id)),
+            Reply(204),
+            Reply(200, observation(request["payload"]["operation_id"], backend.view.view_id, status="exited")),
+        ]
+    )
+    results = ok_backend(lambda: backend.owner().reconcile(deadline=until()))
+    assert results == [{"operation_id": request["payload"]["operation_id"], "status": "exited"}]
+    paths = [seen["path"] for seen in backend.peer.seen]
+    assert not any("/containers/create" in path or path.endswith("/start") or "/attach" in path for path in paths[4:])
+    assert any(path.endswith("/kill?signal=SIGKILL") for path in paths)
+    assert backend.authority.journal.lookup(request["payload"]["operation_id"], ACTOR) == record
+
+
 def test_episode_lookup_is_bound_to_principal_namespace_and_view(backend: Backend) -> None:
     request = prepare(backend, "1a" * 16, "export FA_BIND=one")
     backend.peer.replies.extend(backend.episode_replies("op-" + "1a" * 16))
@@ -524,6 +732,154 @@ def test_expired_budget_never_starts_a_cell(backend: Backend) -> None:
     denied("BACKEND_UNAVAILABLE", lambda: backend.owner().execute(PEER, request, deadline=time.monotonic() - 1))
     assert not backend.peer.seen
     assert backend.worker.runs == 0
+
+
+def test_episode_creation_lock_uses_the_absolute_request_deadline(backend: Backend) -> None:
+    request = prepare(backend, "d4" * 16, "printf lock-timeout")
+    owner = backend.owner()
+    namespace = NamespaceRef(**request["namespace"])
+    view = owner._view_of(request["view_ref"])
+    key = _EpisodeKey.build(PEER, namespace, view, backend.profile.profile_id)
+    attempted, lock = threading.Event(), threading.Lock()
+    assert lock.acquire(blocking=False)
+
+    class ContendedLock:
+        timeout: float | None = None
+        attempted_at: float | None = None
+        acquired = False
+
+        def acquire(self, *, timeout: float) -> bool:
+            self.timeout = timeout
+            self.attempted_at = time.monotonic()
+            attempted.set()
+            self.acquired = lock.acquire(timeout=timeout)
+            return self.acquired
+
+        def release(self) -> None:
+            if not self.acquired:
+                raise AssertionError("a lock that was not acquired must not be released")
+            lock.release()
+
+    contended = ContendedLock()
+    owner._creations[key] = contended  # type: ignore[assignment]
+    started_at = time.monotonic()
+    deadline = started_at + 1
+    failures: list[Exception] = []
+    finished = threading.Event()
+    finished_at: list[float] = []
+
+    def execute() -> None:
+        try:
+            owner.execute(PEER, request, deadline=deadline)
+        except DOMAIN_ERRORS as error:
+            failures.append(error)
+        finally:
+            finished_at.append(time.monotonic())
+            finished.set()
+
+    thread = threading.Thread(target=execute)
+    thread.start()
+    try:
+        assert attempted.wait(3), "request never reached the contended episode lock"
+        thread.join(3)
+        assert not thread.is_alive() and finished.is_set()
+        assert len(failures) == 1 and isinstance(failures[0], SupervisorError)
+        assert failures[0].code == "BACKEND_UNAVAILABLE"
+        assert contended.timeout is not None and contended.attempted_at is not None
+        assert finished_at[0] >= contended.attempted_at + contended.timeout - 0.05
+        assert backend.peer.seen == [] and backend.worker.runs == 0
+    finally:
+        lock.release()
+        thread.join(3)
+
+
+def test_close_admission_that_wins_before_effect_prevents_create_start_attach_and_run(
+    backend: Backend, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    request = prepare(backend, "d2" * 16, "printf closed")
+    entered, resume = threading.Event(), threading.Event()
+    failures: list[Exception] = []
+    owner = backend.owner()
+    original = owner._live_episode
+
+    def pause_before_effect(scope: Any, req: dict[str, Any], key: Any, *, deadline: float) -> Any:
+        entered.set()
+        assert resume.wait(5), "the deterministic admission race was not released"
+        return original(scope, req, key, deadline=deadline)
+
+    monkeypatch.setattr(owner, "_live_episode", pause_before_effect)
+    thread = command_thread(backend, request, failures)
+    try:
+        assert entered.wait(3), "the request never reached the pre-effect pause"
+        close(backend.authority, backend.grant)
+        resume.set()
+        thread.join(5)
+    finally:
+        resume.set()
+        thread.join(5)
+    assert not thread.is_alive()
+    assert len(failures) == 1 and isinstance(failures[0], SupervisorError)
+    assert failures[0].code == "VIEW_CLOSED"
+    assert backend.peer.seen == [] and backend.worker.runs == 0
+
+
+def test_effect_that_wins_blocks_close_until_create_attach_finish_then_drain_completes(
+    backend: Backend, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    request = prepare(backend, "d3" * 16, "printf closed-after-create")
+    backend.peer.replies.extend(backend.episode_replies(request["payload"]["operation_id"]))
+    entered, resume, effect_finished, closed = (threading.Event() for _ in range(4))
+    failures: list[Exception] = []
+    owner = backend.owner()
+    original_launch = owner._cells.launch_new
+    original_live = owner._live_episode
+
+    def pause_launch(*args: Any, **kwargs: Any) -> str:
+        entered.set()
+        assert resume.wait(5), "the deterministic effect race was not released"
+        return original_launch(*args, **kwargs)
+
+    def wait_after_effect(scope: Any, req: dict[str, Any], key: Any, *, deadline: float) -> Any:
+        episode = original_live(scope, req, key, deadline=deadline)
+        effect_finished.set()
+        assert closed.wait(5), "close did not follow the completed admitted effect"
+        return episode
+
+    def close_thread() -> None:
+        close(backend.authority, backend.grant)
+        closed.set()
+
+    monkeypatch.setattr(owner._cells, "launch_new", pause_launch)
+    monkeypatch.setattr(owner, "_live_episode", wait_after_effect)
+    thread = command_thread(backend, request, failures)
+    closer: threading.Thread | None = None
+    try:
+        assert entered.wait(3), "the create effect was not reached"
+        closer = threading.Thread(target=close_thread)
+        closer.start()
+        assert not closed.wait(0.1), "close passed an effect that already owned the authority gate"
+        resume.set()
+        assert effect_finished.wait(5), "create/start/attach did not finish under the effect guard"
+        assert closed.wait(5), "close did not finish after the effect guard retired"
+        thread.join(5)
+    finally:
+        resume.set()
+        thread.join(5)
+        if closer is not None:
+            closer.join(5)
+    assert not thread.is_alive() and (closer is None or not closer.is_alive())
+    assert len(failures) == 1 and isinstance(failures[0], SupervisorError)
+    assert failures[0].code == "VIEW_CLOSED"
+    paths = [seen["path"] for seen in backend.peer.seen]
+    assert any("/containers/create" in path for path in paths)
+    assert any(path.endswith("/start") for path in paths)
+    assert any("/attach" in path for path in paths)
+    assert backend.worker.runs == 0
+    ok(
+        lambda: backend.authority.drain(
+            PEER, ACTOR, view_ref=backend.view, capability=backend.grant.capability, deadline=until()
+        )
+    )
 
 
 def test_created_cell_binds_only_the_authority_trusted_paths(backend: Backend) -> None:

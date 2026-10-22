@@ -15,7 +15,7 @@ from typing import Any, Protocol
 
 import fastjsonschema  # type: ignore[import-untyped]  # Existing dependency ships no typing metadata.
 
-from fa.execution.types import ExecutionContractError, Operation, _positive_integer
+from fa.execution.primitives import ExecutionContractError, Operation, _positive_integer
 
 MAX_FRAME_BYTES = 4 * 1024 * 1024
 MAX_TEXT_BYTES = 1024 * 1024

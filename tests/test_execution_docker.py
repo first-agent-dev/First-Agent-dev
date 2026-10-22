@@ -231,7 +231,7 @@ def test_all_prelaunch_gates_precede_daemon_contact(endpoint: Endpoint, tmp_path
     if bad == "binding":
         case.denied = True
     elif bad == "cancel":
-        case.journal.request_cancel(OID, NS)
+        case.journal.request_cancel(OID, NS, view=VIEW)
     elif bad == "input":
         case.req["payload"]["command"] = "different command"
     elif bad == "profile":

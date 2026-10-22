@@ -6,6 +6,7 @@ ownership, issuer, daemon activation, Docker jobs or descendant terminality.
 
 from __future__ import annotations
 
+import fcntl
 import os
 import socket
 import struct
@@ -166,6 +167,27 @@ def test_changed_input_and_proof_never_reinvoke_completed_handler(tmp_path: Path
         response = exchange(case.service, encode_json(req))
         assert response is not None and response["error"]["code"] == code
     assert case.auth_calls == case.handler_calls == 1
+
+
+def test_dispatcher_journal_lock_wait_uses_request_deadline_without_fencing_state(tmp_path: Path) -> None:
+    case = Fixture(tmp_path)
+    assert case.journal.lookup("op-" + RID, NS) is None
+    lock_path = tmp_path / "operations" / ".admission.lock"
+    lock_fd = os.open(lock_path, os.O_RDWR | os.O_CLOEXEC)
+    fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    peer = PeerIdentity(os.getpid(), os.getuid(), os.getgid())
+    try:
+        response = case.service._dispatch(
+            peer,
+            decode_request(encode_json(request())),
+            deadline=time.monotonic() + 0.05,
+        )
+    finally:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        os.close(lock_fd)
+    assert response["error"]["code"] == "BACKEND_UNAVAILABLE"
+    assert case.auth_calls == case.handler_calls == 0
+    assert case.journal.lookup("op-" + RID, NS) is None
 
 
 def test_cache_loss_blocks_without_fresh_authority_or_reissuing_grant(tmp_path: Path) -> None:

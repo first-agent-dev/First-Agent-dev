@@ -162,7 +162,7 @@ def test_durable_original_journal_claim_required_before_admission(site: Site, ki
             if kind == "unknown":
                 owner.journal.mark_unknown(req["payload"]["operation_id"], ACTOR)
             if kind == "cancelled":
-                owner.journal.request_cancel(req["payload"]["operation_id"], ACTOR)
+                owner.journal.request_cancel(req["payload"]["operation_id"], ACTOR, view=ref(grant))
             if kind == "different-input":
                 req["payload"]["command"] = "different"
         with pytest.raises(SupervisorError) as failure:
@@ -238,7 +238,7 @@ def test_cancellation_after_admit_blocks_send_without_reclaim_or_reexecution(sit
         req = request(grant)
         claim(owner, req)
         with ok(lambda: owner.admit(PEER, req, deadline=until())) as scope:
-            owner.journal.request_cancel(req["payload"]["operation_id"], ACTOR)
+            owner.journal.request_cancel(req["payload"]["operation_id"], ACTOR, view=ref(grant))
             with pytest.raises(SupervisorError) as failure:
                 with scope.effect():
                     (scope.inputs.scratch / "cancelled-effect").write_text("must not happen")
@@ -439,7 +439,7 @@ def test_bounded_run_send_serializes_native_cancel_before_ack(site: Site) -> Non
 
             def cancel() -> None:
                 cancelling.set()
-                owner.journal.request_cancel(req["payload"]["operation_id"], ACTOR)
+                owner.journal.request_cancel(req["payload"]["operation_id"], ACTOR, view=ref(grant))
 
             with ThreadPoolExecutor(max_workers=2) as pool:
                 sending = pool.submit(send)

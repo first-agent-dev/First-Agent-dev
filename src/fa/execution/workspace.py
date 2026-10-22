@@ -2122,15 +2122,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
             raise SupervisorError("INPUT_POLICY")
         namespace = NamespaceRef(**req["namespace"])
         raw = req["view_ref"]
-        ref = ViewRef(
-            workspace_id=raw["workspace_id"],
-            view_id=raw["view_id"],
-            base_revision=raw["base_revision"],
-            owner_run_id=raw["owner_run_id"],
-            generation=raw["generation"],
-            access=Access(raw["access"]),
-            purpose=ViewPurpose(raw["purpose"]),
-        )
+        ref = ViewRef.from_dict(raw)
         with self._transaction(peer, deadline):
             view = self._live_view(peer, namespace, ref, req["capability"])
             profile = self._view_profile

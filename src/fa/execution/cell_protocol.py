@@ -26,7 +26,7 @@ from fa.execution.protocol import (
 from fa.execution.types import ExecutionContractError
 
 _PAYLOADS = {
-    "RUN": _object(command=TEXT, cwd=PATH, timeout_ms=POSITIVE, session_id=SESSION_ID),
+    "RUN": _object(command=TEXT, cwd=PATH, timeout_ms=POSITIVE, session_id=_nullable(SESSION_ID)),
     "INTERRUPT": _object(session_id=SESSION_ID),
     "CLOSE": _object(session_id=SESSION_ID),
     "LIST": _object(),
@@ -54,7 +54,7 @@ _RUN = fastjsonschema.compile(
         stdout=TEXT,
         exit_code={"type": "integer"},
         truncated=BOOL,
-        session_id=SESSION_ID,
+        session_id=_nullable(SESSION_ID),
         timed_out=BOOL,
     )
 )

@@ -10,6 +10,9 @@ never created for a live episode.
 from __future__ import annotations
 
 import threading
+import time
+from collections.abc import Generator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 
@@ -18,7 +21,7 @@ from fa.execution.docker import DockerCells, DockerEngine, DockerUnavailableErro
 from fa.execution.journal import JournalError, OperationJournal
 from fa.execution.protocol import decode_request, encode_json
 from fa.execution.supervisor import PeerIdentity, SupervisorError
-from fa.execution.types import Access, ExecutionContractError, NamespaceRef, Operation, ViewPurpose, ViewRef
+from fa.execution.types import ExecutionContractError, NamespaceRef, Operation, ViewRef
 from fa.execution.worker_client import WorkerClient, WorkerUnavailableError
 from fa.execution.workspace import WorkAdmission, WorkspaceAuthority
 
@@ -75,7 +78,7 @@ class CommandOutcome:
     stderr: str
     timed_out: bool
     truncated: bool
-    session_id: str
+    session_id: str | None
     terminal_barrier: bool = False
 
 
@@ -110,6 +113,16 @@ class CellBackend:
     @property
     def journal(self) -> OperationJournal:
         return self._journal
+
+    @contextmanager
+    def _bounded_mutex(self, deadline: float) -> Generator[None]:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0 or not self._mutex.acquire(timeout=remaining):
+            raise SupervisorError("BACKEND_UNAVAILABLE")
+        try:
+            yield
+        finally:
+            self._mutex.release()
 
     def episode_count(self) -> int:
         with self._mutex:
@@ -148,15 +161,7 @@ class CellBackend:
 
     @staticmethod
     def _view_of(raw: dict[str, Any]) -> ViewRef:
-        return ViewRef(
-            workspace_id=raw["workspace_id"],
-            view_id=raw["view_id"],
-            base_revision=raw["base_revision"],
-            owner_run_id=raw["owner_run_id"],
-            generation=raw["generation"],
-            access=Access(raw["access"]),
-            purpose=ViewPurpose(raw["purpose"]),
-        )
+        return ViewRef.from_dict(raw)
 
     def _admitted(
         self, peer: PeerIdentity, request: dict[str, Any], *, deadline: float
@@ -180,7 +185,20 @@ class CellBackend:
         with scope:
             key = _EpisodeKey.build(peer, namespace, view, scope.profile.profile_id)
             episode = self._live_episode(scope, req, key, deadline=deadline)
-            return self._run(episode, scope, req, namespace, deadline=deadline)
+            if scope.profile.interactive:
+                return self._run(episode, scope, req, namespace, deadline=deadline)
+            failure: BaseException | None = None
+            try:
+                return self._run(episode, scope, req, namespace, deadline=deadline)
+            except BaseException as error:
+                failure = error
+                raise
+            finally:
+                try:
+                    episode.worker.close(deadline=deadline)
+                except (OSError, WorkerUnavailableError, ExecutionContractError):
+                    if failure is None:
+                        raise SupervisorError("EXECUTION_UNKNOWN") from None
 
     def _live_episode(
         self,
@@ -197,37 +215,73 @@ class CellBackend:
         same view share this creation, so a second cell is never created for a
         live episode.
         """
-        with self._mutex:
+        if not scope.profile.interactive:
+            if req["payload"]["session_id"] is not None:
+                raise SupervisorError("INPUT_POLICY")
+            inputs = scope.inputs
+            try:
+                with scope.effect():
+                    container_id = self._cells.launch_new(
+                        req,
+                        profile=scope.profile,
+                        source=inputs.source,
+                        scratch=inputs.scratch,
+                        cache=inputs.cache,
+                        deadline=deadline,
+                    )
+                    stream = self._cells.attach_created(req, profile=scope.profile, deadline=deadline)
+            except JournalError as error:
+                raise SupervisorError(error.code) from None
+            except ExecutionContractError:
+                raise SupervisorError("PATH_DENIED") from None
+            except DockerUnavailableError:
+                raise SupervisorError("BACKEND_UNAVAILABLE") from None
+            except TimeoutError:
+                raise SupervisorError("BACKEND_UNAVAILABLE") from None
+            return _Episode(req, container_id, WorkerClient(stream))
+
+        if req["payload"]["session_id"] is None:
+            raise SupervisorError("INPUT_POLICY")
+        with self._bounded_mutex(deadline):
+            existing = self._episodes.get(key)
             creation = self._creations.setdefault(key, threading.Lock())
-        with creation:
-            with self._mutex:
+        if existing is not None:
+            return existing
+        remaining = deadline - time.monotonic()
+        if remaining <= 0 or not creation.acquire(timeout=remaining):
+            raise SupervisorError("BACKEND_UNAVAILABLE")
+        try:
+            with self._bounded_mutex(deadline):
                 existing = self._episodes.get(key)
             if existing is not None:
                 return existing
             inputs = scope.inputs
             try:
-                container_id = self._cells.launch_new(
-                    req,
-                    profile=scope.profile,
-                    source=inputs.source,
-                    scratch=inputs.scratch,
-                    cache=inputs.cache,
-                    deadline=deadline,
-                )
-                stream = self._cells.attach_created(req, profile=scope.profile, deadline=deadline)
+                with scope.effect():
+                    container_id = self._cells.launch_new(
+                        req,
+                        profile=scope.profile,
+                        source=inputs.source,
+                        scratch=inputs.scratch,
+                        cache=inputs.cache,
+                        deadline=deadline,
+                    )
+                    stream = self._cells.attach_created(req, profile=scope.profile, deadline=deadline)
+                    worker = WorkerClient(stream)
+            except JournalError as error:
+                raise SupervisorError(error.code) from None
             except ExecutionContractError:
                 raise SupervisorError("PATH_DENIED") from None
             except DockerUnavailableError:
                 raise SupervisorError("BACKEND_UNAVAILABLE") from None
-            worker = WorkerClient(stream)
-            episode = _Episode(
-                creation_request=req,
-                container_id=container_id,
-                worker=worker,
-            )
-            with self._mutex:
+            except TimeoutError:
+                raise SupervisorError("BACKEND_UNAVAILABLE") from None
+            episode = _Episode(req, container_id, worker)
+            with self._bounded_mutex(deadline):
                 self._episodes[key] = episode
             return episode
+        finally:
+            creation.release()
 
     def _run(
         self,
@@ -242,20 +296,21 @@ class CellBackend:
         payload = req["payload"]
         operation_id = payload["operation_id"]
         session_id = payload["session_id"]
-        if session_id is None:
+        if scope.profile.interactive != (session_id is not None):
             raise SupervisorError("INPUT_POLICY")
+        view = self._view_of(req["view_ref"])
         # The command keeps its OWN journal record; only the cell is shared.
         try:
-            record = self._journal.lookup(operation_id, namespace)
+            with scope.effect():
+                record = self._journal.lookup(operation_id, namespace, deadline=deadline)
+                if record is None:
+                    raise SupervisorError("EXECUTION_UNKNOWN")
+                if record["view_ref"] != view.to_dict():
+                    raise SupervisorError("UNAUTHORIZED")
+                if record["container_id"] != episode.container_id:
+                    self._journal.record_container(operation_id, namespace, episode.container_id, deadline=deadline)
         except JournalError as error:
             raise SupervisorError(error.code) from None
-        if record is None:
-            raise SupervisorError("EXECUTION_UNKNOWN")
-        if record["container_id"] != episode.container_id:
-            try:
-                self._journal.record_container(operation_id, namespace, episode.container_id)
-            except JournalError as error:
-                raise SupervisorError(error.code) from None
         frame = encode_cell_request(
             request_id=operation_id.removeprefix("op-"),
             action="RUN",
@@ -306,13 +361,13 @@ class CellBackend:
         profile = self._authority.approved_profile
         if profile is None:
             raise SupervisorError("UNAPPROVED_PROFILE")
-        with self._mutex:
+        with self._bounded_mutex(deadline):
             key = _EpisodeKey.build(peer, namespace, view, profile.profile_id)
             episode = self._episodes.get(key)
         if episode is None:
             raise SupervisorError("EXECUTION_UNKNOWN")
         try:
-            self._journal.request_cancel(operation_id, namespace)
+            self._journal.request_cancel(operation_id, namespace, view=view, deadline=deadline)
         except JournalError as error:
             raise SupervisorError(error.code) from None
         try:
@@ -321,12 +376,16 @@ class CellBackend:
                 profile=profile,
                 deadline=deadline,
             )
+        except JournalError as error:
+            raise SupervisorError(error.code) from None
         except ExecutionContractError:
             raise SupervisorError("PATH_DENIED") from None
         except DockerUnavailableError as error:
             # A malformed or foreign observation means the cell we were told to
             # stop is not provably the owned one. It is never a successful stop.
             raise SupervisorError("PATH_DENIED" if error.status is None else "BACKEND_UNAVAILABLE") from None
+        except TimeoutError:
+            raise SupervisorError("BACKEND_UNAVAILABLE") from None
         return {"container_id": observed.container_id, "status": observed.status}
 
     def reconcile(self, *, deadline: float) -> list[dict[str, Any]]:
@@ -335,7 +394,10 @@ class CellBackend:
         if profile is None:
             raise SupervisorError("UNAPPROVED_PROFILE")
         results: list[dict[str, Any]] = []
-        records = self._journal.unfinished()
+        try:
+            records = self._journal.owned_cells(deadline=deadline)
+        except JournalError as error:
+            raise SupervisorError(error.code) from None
         for container_id in sorted({r["container_id"] for r in records if r["container_id"]}):
             candidates = [r for r in records if r["container_id"] == container_id]
             stopped = False
@@ -360,7 +422,7 @@ class CellBackend:
 
     def close(self, *, deadline: float) -> None:
         """Release the local attach handles. Never asserts cell or descendant death."""
-        with self._mutex:
+        with self._bounded_mutex(deadline):
             episodes = list(self._episodes.values())
             self._episodes.clear()
         for episode in episodes:
