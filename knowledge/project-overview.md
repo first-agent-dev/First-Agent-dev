@@ -387,9 +387,29 @@ test из §1.2 (pre-UC5) или KPI-delta-test (post-UC5). Test reference
 - **General-purpose multi-repo write**: PR-write is restricted to
   FA itself + a controlled allow-list of 1–2 user repos (config).
 
+## 5. Planning topology and executable contracts
+
+> Canonical: [`worklogs/planning-topology-and-executable-contracts-loop/roadmap.md`](../worklogs/planning-topology-and-executable-contracts-loop/roadmap.md) — supersedes the 27-chapter `PLAN-slice-ceremony-harness-enforcement.md`.
+
+Project follows the **planning topology** `feature → increment (one run) → SLICE# (one commit, CONTRACTS+TESTS+DEPS+STEPS) → STEP#`. Planner authors the test for its slice; harness proves non-vacuity via `kill:` on that slice. `verify` is fact (exit code), `eval` is judgment (different model family, blind). Evidence is append-only in `ledger.md`.
+
+### 5.1. Execution workspace
+
+> Normative: [`notes/i03-execution-workspace-spec-2026-10-15.md`](../worklogs/planning-topology-and-executable-contracts-loop/notes/i03-execution-workspace-spec-2026-10-15.md).
+
+All project-code execution is confined to cells. A single privileged supervisor on the host owns `WorkspaceAuthority` (`workspace.json`/`view.json` with exact schemas) and publishes `ViewRef`. A cell sees the world as `/workspace` (read-only snapshot) + `/scratch` (writable) + `/opt/toolchain-cache`.
+
+* **Port:** `WorkspacePort` (tool protocol) → `AuthorityWorkspacePort` (adapter over `WorkspaceAuthority`) → `RootedViewIO` (FD-rooted IO, `1 MiB`, `NUL/UTF-8` → `INPUT_POLICY`, `sha256`). `fs_search`/`fs_reach` index only in the view's `cache_dir`, never in the project tree. PDF in a managed view is an explicit pre-IO refusal — the workspace substrate delivers UTF-8 text only.
+* **Provisioner:** `ManagedProvisioner` is injected into `SessionManager` before `provision_git_workspace`, reserves `RunContext` via `begin_run(session,None)` and delegates to `WorkspaceAuthority.register_existing`.
+* **Barrier:** `stop_view` closes `admission`, waits for `drain`, stops cells, and requires the kernel `cgroup populated=0` — only that yields `terminal.json`. Then `seal` recomputes `tree_sha256`, `publish` advances `intent → current → projection` with forward recovery.
+
+Evidence for each slice is carried in the append-only `ledger.md` — `verify` (fact) vs `eval` (judgment, different family, blind) and `kill:` for non-vacuity.
+
+This substrate turns `fa run`, `fa workflow`, `fa update`, and `fa stats` from host processes into managed operations.
+
 ## 6. Key constraints
 
-- **Runtime:** Python 3.11+, async where it pays off (LLM concurrency,
+- **Runtime:** Python 3.13 (сборка из исходников в песочнице требует `openssl-3.0`/`zlib`/`libffi`/`bzip2`/`sqlite FTS5`; см. `knowledge/arena-env-build.md`), async где выгодно (LLM-конкурентность,
   inbox watcher). Single-process. No daemon required for v0.1; an
   optional foreground watcher for `notes/inbox/`.
 - **LLM providers (v0.1):** **mix per-model in config**.

@@ -1,7 +1,7 @@
 ---
 title: План live-сервера: CI, безопасность, harness и GitHub governance
 status: ready-for-live-execution
-last-reviewed: 2026-07-21
+last-reviewed: 2026-10-22
 language: ru
 ---
 
@@ -237,6 +237,26 @@ uv run mutmut export-cicd-stats
 Не использовать `|| true`, чтобы сделать локальный результат зелёным. В CI
 advisory jobs `continue-on-error` допустим только если это явно является
 политикой workflow и failure всё равно виден оператору.
+
+### 3.4 Управляемое исполнение — проверки хоста
+
+Проверки обязательны:
+
+```bash
+# cgroup v2 — терминальный барьер
+stat -fc %T /sys/fs/cgroup          # ожидаем cgroup2fs
+docker info | grep -i cgroup        # Cgroup Driver: systemd, Version: 2
+
+# Супервизор — единственный держатель Docker-сокета
+ls -l /run/fa/supervisor.sock       # 0600, группа контроллера
+ss -lpn | grep supervisor
+
+# Представление — дескрипторный ввод-вывод, а не хост-путь
+FA_REQUIRE_EXECUTION_HOST=1 uv run pytest tests/integration/test_publication_recovery.py -q -m execution_host
+FA_REQUIRE_EXECUTION_HOST=1 uv run pytest tests/test_workspace_publication.py -q
+```
+
+`terminal.json` после `stop_view` содержит `populated=0`; отсутствие `*.db` в `/workspace` — признак здоровья, индексы живут в `cache/<view>/`.
 
 ---
 

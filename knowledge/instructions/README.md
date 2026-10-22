@@ -10,6 +10,7 @@
 |---------|---------|
 | **Развернуть с нуля** (новый сервер: BIOS → Ubuntu → Docker → Tailscale → первый запуск) — делается **один раз** | [`01-install.md`](./01-install.md) |
 | **Обслуживать работающий деплой** (обновление, пересборка, бэкапы, перезапуск, диагностика, запуск задач) — **повседневно** | [`02-operations.md`](./02-operations.md) |
+| **Понять анатомию деплоя** (куда что монтируется, где ключи, где представления) | [`../../worklogs/DEPLOYMENT-ANATOMY.md`](../../worklogs/DEPLOYMENT-ANATOMY.md) |
 | **Проверить CI и governance на live-сервере** (S9, security, harness, GitHub, коммит) | [`03-live-server-ci-governance-plan-ru.md`](./03-live-server-ci-governance-plan-ru.md) |
 | **Усилить защиту SSH** (firewall, fail2ban, Tailscale ACL) | [`../../scripts/ssh-tailscale/README.md`](../../scripts/ssh-tailscale/README.md) |
 
@@ -24,6 +25,7 @@
 - Логика усиления SSH живёт в **одном** месте —
   [`scripts/ssh-tailscale/README.md`](../../scripts/ssh-tailscale/README.md);
   обе инструкции ссылаются на него, не дублируя шаги.
+- **Анатомия деплоя** — в [`worklogs/DEPLOYMENT-ANATOMY.md`](../../worklogs/DEPLOYMENT-ANATOMY.md): bind-mounts, куда попадает код, где `fa.env` и где `workspaces`/`cgroup`/`supervisor.sock`.
 
 Так каждый документ остаётся в пределах своего объёма и читается линейно под
 конкретную задачу, а пересечений между файлами нет.

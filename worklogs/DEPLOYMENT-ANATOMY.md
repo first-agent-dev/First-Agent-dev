@@ -1,115 +1,145 @@
-# FA host/deployment anatomy (для агентов)
+# FA host/deployment anatomy (for humans and agents)
 
-Проверенная сводка по стенду `fa@fa-HP` (актуально на 2026-08-09).
+Verified summary for host `fa@fa-HP` (as of 2026-10-22). Execution is via managed workspace (managed views + cells) — see `knowledge/project-overview.md §5.1` and `i03-execution-workspace-spec`.
 
-## Участники
-- **Хост:** `fa@fa-HP` (Ubuntu), пользователь `fa` (не-root, нужен `sudo` для `/srv/first-agent`, docker).
-- **Репозиторий:** `/srv/first-agent/repo/First-Agent-dev` (НЕ `~/First-Agent-dev`).
-- **Wrapper `/usr/local/bin/fa`** → symlink на `<repo>/scripts/fa`.
-- **Контейнер `first-agent`** — Python-код FA, **не имеет LLM-ключей**.
-- **Контейнер `fa-egress-proxy`** — подставляет ключи в upstream, слушает `http://fa-egress-proxy:8080`.
+## Participants
+- **Host:** `fa@fa-HP` (Ubuntu), user `fa` (non-root, needs `sudo` for `/srv/first-agent`, docker).
+- **Repository:** `/srv/first-agent/repo/First-Agent-dev` (NOT `~/First-Agent-dev`).
+- **Wrapper `/usr/local/bin/fa`** → symlink to `<repo>/scripts/fa`.
+- **Container `first-agent`** — FA Python code, **has no LLM keys**.
+- **Container `fa-egress-proxy`** — injects keys upstream, listens at `http://fa-egress-proxy:8080`.
 
 ## Bind mounts (`docker-compose.fa.yml`)
-| host source | container target | режим | содержимое |
+
+| host source | container target | mode | contents |
 |---|---|---|---|
-| `<repo>` | `/repo` | ro | исходники (build-context, не runtime-import) |
-| `/srv/first-agent/sessions` | `/sessions` | rw | per-session workspace-клоны |
+| `<repo>` | `/repo` | ro | sources (build-context, not runtime import) |
+| `/srv/first-agent/sessions` | `/sessions` | rw | per-session workspace clones |
 | `/srv/first-agent/state` | `/home/fa/.fa` | rw | state root: runs, session.db, drafts |
-| `/srv/first-agent/routing/models.yaml` | `/home/fa/.fa/models.yaml` | ro | действующая конфигурация ролей |
-| `/srv/first-agent/secrets/fa_proxy_token` | `/run/secrets/fa_proxy_token` | ro | fa→proxy токен |
-| `/srv/first-agent/secrets/fa.env` | `/run/secrets/fa.env` | ro, **только proxy** | реальные API-ключи |
+| `/srv/first-agent/routing/models.yaml` | `/home/fa/.fa/models.yaml` | ro | active role routing |
+| `/srv/first-agent/secrets/fa_proxy_token` | `/run/secrets/fa_proxy_token` | ro | fa→proxy token |
+| `/srv/first-agent/secrets/fa.env` | `/run/secrets/fa.env` | ro, **proxy only** | real API keys |
 
-Агент **не видит** `fa.env` с ключами — proxy inject их сам.
+Agent **does not see** `fa.env` — the proxy injects keys itself.
 
-## Как код попадает в контейнер
-- `Dockerfile.fa` копирует `src/` в `/opt/first-agent/src` и делает `uv sync --frozen --no-dev` → `/opt/fa-venv` во время `docker build`.
-- Runtime imports идут из `/opt/first-agent/src`, venv `/opt/fa-venv`.
-- `/repo` bind-mount не используется для рантайм-импорта.
-- Изменения Python-кода требуют `fa update` (git pull + build + up + smoke).
-- `/usr/local/bin/fa` в контейнере = `scripts/fa-entrypoint.sh`, он в итоге вызывает `fa` из `/opt/fa-venv/bin`.
+### Managed workspace mounts
 
-## Путь команды `fa ...` с хоста
-`scripts/fa` (хостовый wrapper):
+| host source | container target | mode | contents |
+|---|---|---|---|
+| `/srv/first-agent/workspaces` | `/workspaces` (ro FD) | `RootedViewIO` | materialized views (`view.json`/`terminal.json`/`seal/manifest.json`) — supervisor opens via `O_NOFOLLOW\|O_CLOEXEC` |
+| `/srv/first-agent/workspaces/<ws>/views/<view>/cache` | `cache_dir` | rw | private indexes `search.db`/`structural.db` — not in project tree |
+| private UDS `supervisor.sock` (0600) | `supervisor.sock` | — | `WorkspaceAuthority` + `CellBackend` — only supervisor holds Docker socket; controller/cells do not see it |
+| `cgroup v2` `populated` | — | — | `stop_view` waits for `populated=0` — terminal barrier |
+
+## Host prerequisites
+
+- **cgroup v2** with `populated` — `stat -fc %T /sys/fs/cgroup` must be `cgroup2fs`; `docker info | grep -i cgroup` must show `systemd, Version: 2`. `stop_view` waits for `cgroup populated=0`.
+- **Docker CE** with `live-restore` and log rotation (`10m/3`); image is pre-installed and immutable (`/opt/first-agent/src` + `/opt/fa-venv`), not `pip install` at runtime.
+- **Private UDS** `supervisor.sock` at `/run/fa/supervisor.sock` (`0600`, controller group only) — only the supervisor holds the Docker socket; controller/cells see only the UDS.
+- **Filesystem:** `/srv/first-agent/workspaces` (managed views), `/srv/first-agent/sessions` (`/sessions`), `/srv/first-agent/state` (`~/.fa`), `/srv/first-agent/routing/models.yaml`, and `/opt/toolchain-cache` (read-only toolchain cache in cells).
+- **Check on any host:**
+  ```bash
+  stat -fc %T /sys/fs/cgroup; docker info | grep -i cgroup; ls -l /run/fa/supervisor.sock; ls -ld /srv/first-agent/workspaces
+  ```
+
+## How code gets into the container
+- `Dockerfile.fa` copies `src/` into `/opt/first-agent/src` and runs `uv sync --frozen --no-dev` → `/opt/fa-venv` during `docker build`.
+- Runtime imports come from `/opt/first-agent/src`, venv `/opt/fa-venv`.
+- `/repo` bind-mount is **not** used for runtime import.
+- Python code changes require `fa update` (git pull + build + up + smoke).
+- `/usr/local/bin/fa` inside the container is `scripts/fa-entrypoint.sh`, which ultimately calls `fa` from `/opt/fa-venv/bin`.
+
+## How `fa ...` is routed from the host
+`scripts/fa` (host wrapper):
 1. `COMPOSE=(docker compose -f <repo>/docker-compose.fa.yml)`.
-2. Infra-глаголы (`logs|status|up|down|restart|update|shell|...`) запускает на хосте через `exec "${COMPOSE[@]}" ...`.
-3. Прочие команды (`run|probe|conformance|selfcheck|workflow|...`) → `exec "${COMPOSE[@]}" exec first-agent fa "$@"` **внутри контейнера**.
-4. `TTY_FLAG=(-T)` если stdin не терминал; иначе пусто (проброс TTY).
-5. **Env vars хоста не пробрасываются** в `docker compose exec` по умолчанию. Нужен флаг `-e VAR=...`.
+2. Infra verbs (`logs|status|up|down|restart|update|shell|...`) run on the host via `exec "${COMPOSE[@]}" ...`.
+3. Other commands (`run|probe|conformance|selfcheck|workflow|...`) → `exec "${COMPOSE[@]}" exec first-agent fa "$@"` **inside the container**.
+4. `TTY_FLAG=(-T)` if stdin is not a terminal; otherwise empty (TTY passthrough).
+5. **Host env vars are not forwarded** into `docker compose exec` by default. Use `-e VAR=...`.
 
-## Артефакты внутри контейнера
-| путь | что |
+## Artifacts inside the container
+| path | what |
 |---|---|
-| `~/.fa/models.yaml` | bind на `/srv/first-agent/routing/models.yaml` (ro) |
+| `~/.fa/models.yaml` | bind to `/srv/first-agent/routing/models.yaml` (ro) |
 | `~/.fa/session-log/<run_id>/` | per-run logs: `events.jsonl`, `llm_bodies.jsonl`, `manifest.json` |
-| `~/.fa/session-log/conformance/conf-<prov>-<ts>/` | результаты live-conformance |
-| `~/.fa/sessions/<uuid>/session.db` | authoritative SQLite (таблица `event_log`, в т.ч. usage-строки) |
-| `/sessions/<session-id>/` | workspace-клон текущей сессии |
-| `/run/secrets/fa_proxy_token` | fa→proxy токен |
+| `~/.fa/session-log/conformance/conf-<prov>-<ts>/` | live-conformance results |
+| `~/.fa/sessions/<uuid>/session.db` | authoritative SQLite (`event_log` table, including usage rows) |
+| `/sessions/<session-id>/` | workspace clone for the current session (`/workspace` in cell) |
+| `/run/secrets/fa_proxy_token` | fa→proxy token |
 
-`events.jsonl` — проекция; для cache-ratio читай `session.db`.
+`events.jsonl` is a projection; read `session.db` for cache-ratio.
 
-## Proxy-режим (критично!)
-При выставленном `FA_EGRESS_PROXY_URL` (в контейнере он есть):
-- Агент работает с `SecretStore({})` (пустой), ключи не нужны локально.
-- Обязателен вызов `_proxy_rewrite_chain(chain, proxy_url)` → переписывает `entry.base_url`
-  на `<proxy>/route/<name>` и добавляет `X-FA-Proxy-Token` в `extra_headers`. **Пропустил → 401 на все запросы.**
-- Это уже сделано в `_cmd_probe`, `_cmd_run`, после фикса — в `_run_live_conformance`. Новые команды CLI, бьющие в провайдер, должны повторять эту схему.
+### View artifacts (authority is the supervisor, not `~/.fa`)
+
+| path (inside cell) | what |
+|---|---|
+| `/workspace` | read-only snapshot of `base_revision` (what `RootedViewIO` sees) |
+| `/scratch` | writable view scratch (where tools write) |
+| `/opt/toolchain-cache` | read-only toolchain cache |
+| `workspaces/<ws>/views/<view>/terminal.json` | receipt `TERMINAL` after `cgroup populated=0` |
+| `workspaces/<ws>/views/<view>/seal/manifest.json` | `tree_sha256` + entries (immutable export) |
+
+## Proxy mode (critical!)
+When `FA_EGRESS_PROXY_URL` is set (it is inside the container):
+- Agent runs with `SecretStore({})` (empty); no local keys needed.
+- Must call `_proxy_rewrite_chain(chain, proxy_url)` → rewrites `entry.base_url` to `<proxy>/route/<name>` and adds `X-FA-Proxy-Token` to `extra_headers`. **Miss it → 401 on every request.**
+- Already done in `_cmd_probe`, `_cmd_run`, and after the fix — in `_run_live_conformance`. New CLI commands that hit a provider must repeat this pattern.
 - `SecretRedactor.from_models_config(secrets, models, extra_values=_proxy_redactor_extra(), allow_empty=True)`.
 
-## Live-conformance на отдельный провайдер
-- `fa conformance --provider X` всегда тестирует роль **`coder`**, её **`chain[0]`**.
-- Чтобы протестировать провайдер, не затрагивая действующий `models.yaml`, создай временный yaml в `/tmp/conf-X.yaml` с одной ролью `coder`, чья chain[0] указывает на нужного провайдера, и запускай:
+## Live conformance for a single provider
+- `fa conformance --provider X` always tests role **`coder`**, its **`chain[0]`**.
+- To test a provider without touching the live `models.yaml`, create a temporary yaml at `/tmp/conf-X.yaml` with a single role `coder` whose chain[0] points to the desired provider, then run:
   ```bash
   docker compose ... exec -e FA_DEBUG_LLM_BODIES=1 first-agent \
     fa conformance --provider X --config /tmp/conf-X.yaml
   ```
-- `--provider X` влияет только на run-id/метки, реальная chain берётся из `coder.chain`.
+- `--provider X` only affects run-id/labels; the real chain is taken from `coder.chain`.
 
-## Отладка: как запускать с хоста
-### Принудительный env в контейнер:
+## Debugging: running from the host
+### Forcing env into the container:
 ```bash
 docker compose -f <repo>/docker-compose.fa.yml exec -e FA_DEBUG_LLM_BODIES=1 first-agent fa <cmd>
 ```
-Для не-интерактивных добавляй `-T`, иначе оставляй TTY.
+Add `-T` for non-interactive; otherwise keep TTY.
 
 ### llm_bodies.jsonl:
-Включается `FA_DEBUG_LLM_BODIES=1`; для conformance лежит в `~/.fa/session-log/conformance/conf-<prov>-<ts>/llm_bodies.jsonl`. Запись потока обеспечивает `wrap_transport_for_debug_bodies` — его тоже надо вызвать в новой CLI-команде.
+Enabled with `FA_DEBUG_LLM_BODIES=1`; for conformance it lives at `~/.fa/session-log/conformance/conf-<prov>-<ts>/llm_bodies.jsonl`. Stream capture requires `wrap_transport_for_debug_bodies` — call it in any new CLI command as well.
 
 ### Cache-hit ratio:
-Формула: `cache_read / (cache_read + cache_creation + uncached_input)` по строкам `kind='usage'` в `session.db`.
-Поля ответа: `cache_read_input_tokens`, `cache_creation_input_tokens`, `input_tokens`. Искать `session.db`, связанный с данным run_id, надо перебором `~/.fa/sessions/**/session.db` по подстроке `run_id` в content.
+Formula: `cache_read / (cache_read + cache_creation + uncached_input)` over rows with `kind='usage'` in `session.db`.
+Response fields: `cache_read_input_tokens`, `cache_creation_input_tokens`, `input_tokens`. Find the `session.db` for a given run_id by scanning `~/.fa/sessions/**/session.db` for `run_id` substring in content.
 
-## Чек-лист агента при написании live-теста
-1. Делай правки в sandbox `/home/user/First-Agent-dev`.
-2. `uv run pytest -q` — полный зелёный прогон.
-3. `bash -n scripts/*.sh`; проверь вручную, что функции определены до вызовов.
-4. Для proxy-mode команда должна:
-   - загрузить `models` с `require_api_keys=not proxy_mode`,
-   - вызвать `_proxy_rewrite_chain`,
-   - обернуть transport через `wrap_transport_for_debug_bodies` с `SecretRedactor(..., allow_empty=True)`.
-5. Сгенерируй patch, проверь `git apply` в **чистом checkout** нужного HEAD.
-6. Давай пользователю команды через heredoc `cat >/tmp/patch <<'EOF' ... EOF` (самый надёжный путь по SSH).
-7. Порядок обновления стенда у пользователя: `git apply` → `commit/push` → `fa update` → live-проверки через прямой `docker compose exec -e ...`.
+## Agent checklist for live tests
+1. Edit in sandbox `/home/user/First-Agent-dev`.
+2. `uv run pytest -q` — full green run.
+3. `bash -n scripts/*.sh`; verify manually that functions are defined before use.
+4. For proxy-mode commands must:
+   - load `models` with `require_api_keys=not proxy_mode`,
+   - call `_proxy_rewrite_chain`,
+   - wrap transport via `wrap_transport_for_debug_bodies` with `SecretRedactor(..., allow_empty=True)`.
+5. Generate patch, verify `git apply` in a **clean checkout** of the target HEAD.
+6. Give the user commands via heredoc `cat >/tmp/patch <<'EOF' ... EOF` (most reliable over SSH).
+7. Host update order for the user: `git apply` → `commit/push` → `fa update` → live checks via direct `docker compose exec -e ...`.
 
-## Частые грабли
-1. Не используй `fa <cmd> -e VAR=...` — wrapper не пробрасывает env.
-2. Не расширяй рабочий `~/.fa/models.yaml` в экспериментах — делай `/tmp/conf-*.yaml`.
-3. Не делай `cd ~/First-Agent-dev`; репо в `/srv/first-agent/repo/First-Agent-dev`.
-4. `fa-update.sh` использует `flock -n /tmp/fa-update.lock`. Если "Another fa-update is running" — проверь `ps -p <pid>`, не убивай слепо.
-5. Никогда не делай `set -m` + `kill -- -$$` в shell-скриптах — ломает sudo (pgroup-сигнал от sudo + паника EXIT-trap → "Убито"). Уборка детей — по PID, трекая долгих потомков.
-6. Функции в bash — всегда выше точки вызова.
-7. Всегда указывай базовый коммит для патча; если пользователь уже закоммитил предыдущую версию — инкрементальный patch или сначала `git checkout <base-sha> -- <file>`.
+## Common pitfalls
+1. Do not use `fa <cmd> -e VAR=...` — wrapper does not forward env.
+2. Do not extend the live `~/.fa/models.yaml` in experiments — use `/tmp/conf-*.yaml`.
+3. Do not `cd ~/First-Agent-dev`; repo is at `/srv/first-agent/repo/First-Agent-dev`.
+4. `fa-update.sh` uses `flock -n /tmp/fa-update.lock`. If "Another fa-update is running" — check `ps -p <pid>`, don't kill blindly.
+5. Never use `set -m` + `kill -- -$$` in shell scripts — breaks sudo (pgroup signal from sudo + EXIT-trap panic → "Killed"). Reap children by PID, tracking long-lived descendants.
+6. Bash functions must be defined above their call site.
+7. Always state the base commit for a patch; if the user already committed a previous version — incremental patch or first `git checkout <base-sha> -- <file>`.
 
-## Полезные однострочники (хост)
+## Useful one-liners (host)
 ```bash
-# Зомби/lock после fa-update
+# Zombie/lock after fa-update
 for p in $(ps -eo pid,cmd | grep -E 'fa-update\.sh|docker compose -f .*docker-compose\.fa\.yml' \
            | grep -v grep | awk '{print $1}'); do kill -KILL $p 2>/dev/null; done
 rm -f /tmp/fa-update.lock
 
-# Logs агента
+# Agent logs
 docker compose -f <repo>/docker-compose.fa.yml logs --tail=200 first-agent
 
-# Проверка proxy
+# Proxy check
 docker compose -f <repo>/docker-compose.fa.yml exec first-agent fa probe
 ```

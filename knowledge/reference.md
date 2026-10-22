@@ -14,6 +14,7 @@
 | How to find artifacts/files by content? | `fs_blackboard_query(type="skill")` for typed artifacts; `fs_search(query="auth", output_mode="files", limit=10)` for repo-wide content/path search (S14b.1 unified BM25+trigram). See AGENTS.md §Querying Artifacts. |
 | How to see cross-run stats? | `fa stats --global-history` reads `~/.fa/global_history.db`. |
 | Is JSONL authoritative? | No. If JSONL and session.db disagree, session.db wins. JSONL is human-readability surface. |
+| Where is managed file IO? | Via `WorkspacePort` → `WorkspaceAuthority.read_file` → `RootedViewIO` (1 MiB, UTF-8, fail-closed on NUL/binary). Host `Path.open()` for project code is forbidden — all project file access goes exclusively via `WorkspacePort`. PDF → explicit refusal `PDF extraction is not available through the managed view`. |
 
 ---
 
@@ -107,6 +108,19 @@ Short definitions of terms used in First-Agent and this wiki.
 | **Two-tier TCB** | Authoring-guardrail Trusted Computing Base: frozen *Level 0 kernel* + allowlisted *Level 1 rules*. See [ADR-11 §Decision](./adr/ADR-11-authoring-guardrails.md#decision). |
 | **UC1 — UC5** | Use case labels from [`project-overview.md` §4](./project-overview.md#4-scope) + [ADR-1](./adr/ADR-1-v01-use-case-scope.md). |
 | **Vector DB** | Database for similarity search over embeddings. Not used in v0.1. |
+| **Managed View / ViewRef** | Private isolated workspace view materialized by `WorkspaceAuthority` at `base_revision` + `generation`. `ViewRef{workspace_id, generation, base_revision, view_id, owner_run_id, access:READ\|WRITE, purpose:PROJECT\|CANDIDATE\|VERIFICATION\|MUTATION\|PROVISIONING, ...}` is the passport every tool uses to address files. Access is exclusively via `WorkspacePort`. See `src/fa/execution/workspace.py`, `src/fa/inner_loop/tools/workspace_port.py`. |
+| **WorkspaceAuthority** | Single owner of workspaces: registers `workspace.json`/`view.json` with exact schemas, holds root FDs, issues `ViewRef`, tracks generation, enforces `admission`/`drain`, and routes `stop_view` → `ViewStopper` → cgroup. Lives in the supervisor, mounted as `~/.fa`/`/sessions`. Code: `src/fa/execution/workspace.py`. |
+| **Admission / Drain / Close** | Dispatch gate for managed operations: `admit(peer, request, deadline)` validates grant, namespace, view state and protected source, registers bounded work under the workspace lock; `close` is irreversible (persisted `STOPPING` before ack); `drain` waits for in-flight handlers/cells with the original deadline. `Close` wins over late effects, admitted effects win over late close. See `src/fa/execution/workspace.py` (admission) and `src/fa/execution/supervisor.py` (close/drain). |
+| **RootedViewIO** | FD-rooted IO inside a view: `openat(root_fd, leaf, O_NOFOLLOW)`, `NUL`/`UTF-8` check, `1 MiB` window limit (`MAX_TEXT_BYTES`), `sha256`, `eof`, and `protected_paths` guard. Code: `src/fa/execution/view_io.py`. |
+| **WorkspacePort / AuthorityWorkspacePort** | Narrow port through which `fs_read_file`/`fs_write_file`/`fs_edit_file`/`fs_search`/`fs_reach` reach bytes. `WorkspacePort` is the `inner_loop` protocol; `AuthorityWorkspacePort` is the adapter over `WorkspaceAuthority` in `execution/tool_port.py`. `search`/`reach` indexes live only in the view's `cache_dir`, never in the project tree. |
+| **Terminal Barrier (CT104)** | Gate that must be passed before publication: `stop_view` closes `admission`, drains the handler set, stops cells, and requires a positive kernel observation `cgroup populated=0`. Anything shorter leaves the view `STOPPING`. Code: `src/fa/execution/supervisor.py::ViewStopper`. |
+| **Seal / Publication** | `seal` recomputes `tree_sha256` after the barrier and checks protected paths/symlinks; `publish` advances `intent → current → projection` with forward recovery. Pinned readers observe only completed revisions. Code: `src/fa/execution/publication.py`. |
+| **Operation Journal** | Durable per-operation write-ahead log in `operations/<op_id>.json` (journal) + `supervisor.sock` private UDS. Records `RESERVED → EXECUTING → UNKNOWN` claim stages, cancel intent, and container identity before Docker create/start. Never reuses an operation ID; lost reply is `EXECUTION_UNKNOWN`, not a resend. Planned: `src/fa/execution/journal.py`, `src/fa/execution/supervisor.py`. |
+| **Execution Cell / PTY** | Linux/Docker cell for all project-code execution: one `create→CID→start→attach→one RUN` per command (one-shot) or one cell per interactive session; PTY via `PtyPool`. `CellBackend` owns the episode `principal+NamespaceRef+ViewRef+profile`. Code: `src/fa/execution/backend.py`. |
+| **Managed Provisioner** | Injectable `SessionManager` provider that materializes the workspace on the supervisor via `WorkspaceAuthority.register_existing` and reserves `RunContext` via `begin_run(session,None)`. Code: `src/fa/execution/provisioning.py`, `src/fa/session/provisioning.py`. |
+| **Planning Topology** | Hierarchy `feature → increment (one run) → SLICE# (one commit, CONTRACTS+TESTS+DEPS+STEPS) → STEP#`. Rolling wave; planner authors a test for its slice, harness proves non-vacuity via `kill:`. `verify` is fact (exit code), `eval` is judgment (different model family, blind). See `worklogs/planning-topology-and-executable-contracts-loop/roadmap.md`. |
+
+| **E2E Live-Host Verification Register** | Append-only table `notes/e2e-live-verification-register.md` marking every producer for verification on the live host (`/sessions/<id>/` + bootstrapped `.venv` + real `file://` pack). `unit` = proven by in-repo kill-check; `e2e` = proven on live host. See `worklogs/planning-topology-and-executable-contracts-loop/notes/e2e-live-verification-register.md`. |
 
 ---
 
@@ -139,6 +153,18 @@ Two-tier authoring TCB: frozen stdlib-only Level-0 kernel + allowlisted Level-1 
 ### Token-Efficient Retrieval
 
 Mechanical Wiki: filesystem-canon Markdown + SQLite FTS5 BM25. No vector DB, no embeddings in v0.1. Tools have `max_context_bytes` with automatic head/tail elision.
+
+### Evidence Ledger
+
+Append-only `ledger.md` in `worklogs/planning-topology-and-executable-contracts-loop/` — every `FACT`/`DECIDED`/`GAP` carries provenance. Planner reads it at increment start; eval appends per slice. The format and rolling-wave discipline are normative. See `roadmap.md` §Standing decisions.
+
+### Managed Execution Workspace
+
+All project-code execution is confined to Docker cells via `WorkspacePort`. Private views (`ViewRef`) are materialized by `WorkspaceAuthority` at a trusted `base_revision`; reads go only through `RootedViewIO` (`1 MiB`, `NUL/UTF-8` → `INPUT_POLICY`), writes require `expected_sha256`, indexes live in the view's `cache_dir`. Host `Path.open()` for project code is forbidden — all access is via `WorkspacePort`.
+
+### Terminal Barrier, Seal & Publication
+
+`stop_view` closes `admission`, waits for `drain`, stops cells, and requires a positive kernel observation `cgroup populated=0` — only that yields `TERMINAL` (`terminal.json`). Then `seal` recomputes `tree_sha256`, and `publish` advances `intent → current → projection` with forward recovery. Pinned readers observe only completed revisions.
 
 ---
 
@@ -198,6 +224,15 @@ For the operator-facing description of session data, see `knowledge/instructions
 | `artifacts/` | Content-addressed tool result offloads | Complements event_log |
 | `subagents/<task_id>.json` | Subagent spawn results | Standalone |
 | `fts.db` | FTS5 full-text search index | Disposable cache |
+
+### Managed view artifacts (`/sessions/<ws>/` — авторитет супервизора, не `~/.fa`)
+
+| Path | Role | Authority |
+|------|------|-----------|
+| `workspaces/<ws>/views/<view>/view.json` | `ViewRef`, `generation`, `base_revision`, `state:OPEN\|STOPPING\|SEALED\|PUBLISHED` | **Yes** (`WorkspaceAuthority`) |
+| `workspaces/<ws>/views/<view>/terminal.json` | Receipt `TERMINAL` after `cgroup populated=0` | **Yes** |
+| `workspaces/<ws>/views/<view>/seal/manifest.json` | Immutable manifest `tree_sha256` + entries | **Yes** |
+| `cache/<view>/search.db` / `structural.db` | FTS5 / structural индексы представления | Disposable, per-view |
 
 ### Cross-run artifacts
 

@@ -362,6 +362,7 @@ bash scripts/fa-post-setup.sh
 - `hostname: first-agent` — узнаваемо в логах и `docker ps`.
 - tmpfs для `/tmp`, `~/.cache`, `~/.local`, `/tmp/uv-cache` — запись без нарушения
   read-only корня.
+- **Управляемое исполнение:** хост обеспечивает `cgroup v2` с поддержкой `populated`, `Docker CE` с `live-restore` и приватный сокет супервизора (`0600`, доступен только группе контроллера). Супервизор (`WorkspaceAuthority`/`RootedViewIO`/`AuthorityWorkspacePort`) монтирует `/workspaces` и `supervisor.sock` через `docker-compose.fa.yml`; проверьте, что `stat -fc %T /sys/fs/cgroup` возвращает `cgroup2fs`, а `docker info | grep -i cgroup` — `cgroupfs`.
 
 **Политика перезапуска:** в compose стоит `restart: unless-stopped`:
 

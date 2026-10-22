@@ -183,6 +183,25 @@ just doctor
   подключает существующую managed session; restart не очищает её автоматически.
   Для намеренно новой рабочей области запускайте без явного session ID.
 
+### 🧬 Управляемое исполнение — ячейки и представления
+
+> *Если ADR-13 приучил агента не трогать оригинал, то управляемое исполнение учит не трогать и копию голыми руками. Между руками и материалом — защищённый стол: перчатки, вытяжка, протокол.*
+
+Каждый `fa run` работает через управляемое представление. `fs_read_file` идёт через `WorkspacePort`, `fs_search` пишет индексы в `cache_dir` представления, а не в дерево.
+
+**Представление — View.** Это не папка, а паспорт: `ViewRef{workspace_id, generation, base_revision, view_id, owner_run_id, access:READ|WRITE, purpose:PROJECT|CANDIDATE|VERIFICATION|MUTATION|PROVISIONING}`. Материализует его `WorkspaceAuthority` (в супервизоре) — два продублированных дескриптора `root_fd` + `staging_fd`, открытых с `O_NOFOLLOW|O_CLOEXEC` и проверкой `st_dev/st_ino`, `protected_paths`, `excluded_paths`. Внутри ячейки вы видите его как `/workspace` (снимок read-only) + `/scratch` (запись) + `/opt/toolchain-cache`.
+
+**Порт.** Инструменты не вызывают `Path.open()`. Любой `fs_read_file`/`fs_write_file`/`fs_edit_file` проходит узкий `WorkspacePort` → `AuthorityWorkspacePort` → `RootedViewIO.read_file(path, offset, max_bytes)`. Там — ровно `1 MiB` на окно (`MAX_TEXT_BYTES`), отказ на `NUL` или не-UTF-8 (`INPUT_POLICY`), ответ — `content + sha256 + eof`. `fs_search`/`fs_reach` пишут индексы только в `cache_dir` представления — никогда в дерево. PDF в managed-представлении получает отказ ещё до обращения к диску: *«PDF extraction is not available through the managed view: the workspace substrate delivers UTF-8 text only»* — субстрат по договору текстовый.
+
+**Жизнь ячейки.** Весь код проекта исполняется в Docker-ячейке. `CellBackend` владеет эпизодом `principal+NamespaceRef+ViewRef+profile`. Интерактивный профиль держит одну ячейку на сессию, one-shot — `create→CID→start→attach→one RUN` на команду. `stop_view` закрывает `admission`, ждёт `drain`, останавливает ячейки и требует от ядра `cgroup populated=0` — только так появляется `terminal.json`. Затем `seal` пересчитывает `tree_sha256`, `publish` атомарно продвигает `intent → current → projection` с forward recovery. Закреплённые читатели видят только завершённые ревизии.
+
+**Что это меняет для вас как оператора:**
+* Диагностика файлов — через `port.read_file` и авторитет; `strace` с фильтром `openat(root_fd` — ваш рентген.
+* Индексы — в `cache/<view>/search.db`, а не в `/sessions/.../.fa/fts.db`; отсутствие `*.db` в представлении — признак здоровья.
+* PDF и бинарники — не «баг», а договор: извлекатель — как операция внутри ячейки, а не байтовый провод в контроллер.
+
+Подробная норма: `worklogs/planning-topology-and-executable-contracts-loop/notes/i03-execution-workspace-spec-2026-10-15.md` и `worklogs/DEPLOYMENT-ANATOMY.md`.
+
 ### FeatureFlags (опциональный ~/.fa/config.yaml)
 
 Файл `~/.fa/config.yaml` (на хосте: `/srv/first-agent/state/config.yaml`) управляет
