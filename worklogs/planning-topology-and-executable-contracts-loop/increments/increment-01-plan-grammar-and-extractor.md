@@ -1,34 +1,51 @@
 ---
 Increment-ID: RM-planning-topology-I01
 Roadmap-ID: RM-planning-topology
-status: READY
-slices: 4
+status: IN PROGRESS
+slices: 6
+shipped: SLICE1, SLICE1b, SLICE1c, SLICE2
 ---
 
 # INCREMENT I01: Plan grammar & extractor
 
-**Shippable when:** `extract_plan_ids` parses `## SLICE<n>:`, `CT<n> [CLASS]:`, `TESTS:`,
-`STEPS: prescriptive|outcome`, and per-slice records; and the pre-check lints an increment
-plan before any coder runs.
+**Shippable when:** the three emitters (schema §4, both planning skills, the planner prompt)
+produce `## SLICE<n>:`, `CT<n> [CLASS]:`, `TESTS:`, `STEPS: prescriptive|outcome`;
+`extract_plan_ids` parses them into per-slice records; and the pre-check lints an increment
+plan before any coder runs. Emission is in scope because `workflow_controller.py:332` returns
+early on an empty `.slices`, so a parser with no emitter changes nothing observable (E52).
 
-**Ground truth (verified @ tip 0e08ece — read these before editing):**
-- `src/fa/inner_loop/plan_ids.py:55` — `_SLICE_RE` matches `### S<n>:` / `### Step S<n>:`.
-- `src/fa/inner_loop/plan_ids.py:92-104` — `PlanIds` is a frozen dataclass of flat tuples.
-- `src/fa/inner_loop/plan_ids.py:61` — `_CONTRACT_RE` is `\bCT(\d+[a-z]?)\b`.
-- `tests/test_plan_ids.py` (279 lines) exists and uses `### Step S<n>:` fixtures.
+**Ground truth (re-verified @ 2f6b8c1, 2026-10-06 — read these before editing):**
+- `src/fa/inner_loop/plan_ids.py` — `_SLICE_RE`, `SliceRecord` and `slice_records` are present
+  (SLICE1 shipped in `c0a8f429`). `commands_for`, `section`, `contract_class`, `tests_for` and
+  `steps_mode` are absent.
+- `src/fa/inner_loop/plan_ids.py` — `_CONTRACT_RE` is `\bCT(\d+[a-z]?)\b`, applied to every line
+  of a slice section (see CT17/CT18).
+- `tests/test_plan_ids.py` is **367 lines**; the SLICE1/STEP3 migration is complete
+  (`grep -nE '### (Step )?S[0-9]' tests/test_plan_ids.py` matches only the legacy-rejection
+  assertion at `:367`). Live anchors: `:61`, `:202`, `:213`, `:264`.
 - `src/fa/inner_loop/workflow_controller.py:332` and `:461` read `.slices`.
+- `grep -c SLICE src/fa/inner_loop/prompt.py` is **0**. The planner emits its own runtime format,
+  so a freshly authored plan parses to empty `.slices` and the coverage gate at `:332` no-ops.
+  SLICE1b closes this.
 
 **Decisions (do exactly):**
 - Recognize `SLICE#` only. Do not keep an `S#` pattern and do not add a dual grammar.
 - Retain the flat fields (`.slices/.gaps/.contracts/.tests/.commands`) unchanged.
 - Add `slice_records: tuple[SliceRecord, ...]` beside them; do not substitute.
 - Pre-rename `S#` plans are archived and parse to empty `.slices`. Accepted.
+- **The authoring contract is written before the parser changes.** SLICE1b fixes the grammar in
+  `notes/artifact-schema-and-grammar.md` §4 and in the skills and planner prompt; SLICE2 makes
+  the parser conform to it; SLICE3 lints it. Never invent a grammar rule inside the parser.
+- The planner emits schema §4 **directly**, plus a free-form `## Grounding` block. Code performs
+  admission (parse, validate, default and stamp, persist) and **never infers**: anything not
+  derivable by rule fails loudly back to the planner.
 
 ---
 
 ## SLICE1: New grammar tokens + per-slice records (+ migrate the existing test)
 STEPS: prescriptive
 DEPS: —
+SHIPPED: c0a8f429 (PR #69, merged 2026-09-10)
 INTENT: `plan_ids.py` parses the new grammar and builds `slice_records`, without breaking
   the flat fields or the two `.slices` callers.
 CONTRACTS:
@@ -54,14 +71,15 @@ TESTS: tests/test_plan_ids.py
 uv run pytest tests/test_plan_ids.py -q
 uv run ruff check src/fa/inner_loop/plan_ids.py tests/test_plan_ids.py
 ```
-- [ ] STEP1: Edit `plan_ids.py:55`. Do exactly: set `_SLICE_RE` to match `## SLICE<n>:`;
+- [x] STEP1: Edit `plan_ids.py:55`. Do exactly: set `_SLICE_RE` to match `## SLICE<n>:`;
       add `_STEP_RE` for `STEP<n>:`; delete the `S#` pattern.
       (exit: a `SLICE#` fixture yields `slices=("SLICE1","SLICE2")`; an `S#`-only string
       yields `()`.)
-- [ ] STEP2: Add the contract-class capture and define `SliceRecord`; populate
+- [x] STEP2: Add the contract-class capture and define `SliceRecord`; populate
       `slice_records` with intent, classed contracts, test_paths, steps_mode, the slice's
       verify commands, and the section span. (exit: CT2/CT5/CT6/CT7 fixtures green.)
-- [ ] STEP3: Migrate `tests/test_plan_ids.py`. After it, `grep -nE '### (Step )?S[0-9]'
+- [x] STEP3: Migrate `tests/test_plan_ids.py`. (Anchors below are **pre-migration** and kept
+      verbatim as the shipped record; the file is now 367 lines.) After it, `grep -nE '### (Step )?S[0-9]'
       tests/test_plan_ids.py` returns nothing and the file is green. Do exactly:
       - `:34` and `:38` — `PLAN_FIXTURE` headings → `## SLICE<n>:`.
       - `:63` — `test_slices_include_lettered_suffix` expects `("SLICE1","SLICE5a")`.
@@ -76,40 +94,192 @@ uv run ruff check src/fa/inner_loop/plan_ids.py tests/test_plan_ids.py
         narrow the `real = [...]` filter to exclude only `plan_ids.py` commands; keep
         `any("ruff" in c for c in real)`.
       (exit: the grep above is empty and the file is green.)
-- [ ] STEP4: Add a regression test that `workflow_controller.py:332` and `:461` resolve
+- [x] STEP4: Add a regression test that `workflow_controller.py:332` and `:461` resolve
       `.slices` for a `SLICE#` plan. (exit: CT11 green.)
-- [ ] STEP5: Add a test pinning CT13. (exit: CT13 green.)
+- [x] STEP5: Add a test pinning CT13. (exit: CT13 green.)
 
 ---
 
-## SLICE2: Per-slice accessors over the records
+## SLICE1b: The authoring contract (schema + planning skills)
 STEPS: prescriptive
 DEPS: SLICE1
-INTENT: expose the read API I02 and I03 consume, over `slice_records`.
+SHIPPED: 5773ddf (branch arena/ca4c996c-first-agent-dev, 2026-10-06)
+INTENT: the grammar is defined once, in schema §4, and §4 carries a worked example the parser
+  must reproduce, so the specification and the code cannot drift apart unnoticed.
 CONTRACTS:
-  CT3 [FUNCTIONAL]: `commands_for("SLICE2")` returns only SLICE2's ```verify commands.
-  CT4 [FUNCTIONAL]: `section("SLICE2")` returns exactly SLICE2's block (heading through the
-    line before the next `## SLICE` heading).
-  CT4b [CONSTRAINT]: a ```verify block before any slice heading goes to a plan-level bucket
-    (`commands_for(None)`); it is never dropped or attributed to SLICE1.
-  CT4c [PRESERVATION]: the flat `.commands` equals the concatenation of all slices'
-    commands.
+  CT21 [FUNCTIONAL]: schema §4 ends with a ````text-wrapped miniature two-slice increment
+    exercising every boundary rule, and `extract_plan_ids` over the **unwrapped inner block**
+    returns exactly the slice ids, section spans and contract set §4 documents beside it. The
+    test slices the inner block out of the `.md` itself, so §4 and the parser cannot drift.
+    Consumer: SLICE2 conforms the parser to this fixture; SLICE4 reuses it.
+  CT21b [CONSTRAINT]: adding that example makes the schema document itself yield a slice and a
+    command to any caller that parses it — the ````text wrapper does **not** make it inert
+    (SLICE1/CT13, `tests/test_plan_ids.py:233-261`). Therefore: the schema document is never
+    fed to the pre-check, and the totality corpus in `tests/test_plan_ids.py:202` keeps globbing
+    `*/increments/increment-*.md` only, never `notes/`. Catches: the example's `CT1`/`CT2`
+    surfacing as duplicate declarations (CT34) or phantom commands the moment someone widens a
+    glob to "all planning docs".
+  CT22 [FUNCTIONAL]: each planning skill embeds a fenced ```skeleton block, and that block
+    parses via `extract_plan_ids` with non-empty `.slices`, a `TESTS:` path and an explicit
+    `STEPS:` mode on every slice.
+  CT23 [CONSTRAINT]: every `CONSTRAINT`-class contract carries a rationale naming the wrong
+    implementation it catches, on the entry's continuation lines. Catches: a constraint nobody
+    can review because its intent was never written down.
+  CT24 [PRESERVATION]: the skills' other ID grammar (`GAP#`, `CT#`, `T#`, `Q#`, `RK#`) is
+    unchanged; only the slice and step anchors and the new fields are added.
+TESTS: tests/test_skill_grammar_emit.py  (NEW — author it; absent at 2f6b8c1)
+```verify
+uv run pytest tests/test_skill_grammar_emit.py -q
+uv run ruff check knowledge/skills tests/test_skill_grammar_emit.py
+```
+- [x] STEP1: Read the four boundary rules already normative in
+      `notes/artifact-schema-and-grammar.md` §4 "Section boundaries" — section span by relative
+      heading depth, increment-level sections after the last slice, `CONTRACTS:`-block scope by
+      indentation, one-entry-one-contract with whole-entry text — and restate each as one
+      assertion over the §4 example. Do not reword the rules; if one is wrong, stop and raise a
+      question rather than edit the parser to match. (exit: four assertions exist, one per
+      rule.)
+- [x] STEP2: Append the ````text-wrapped example to §4 and document its expected parse beside
+      it. The example must use literal ids (`## SLICE1:`, `CT1`), not `<n>` placeholders, or it
+      does not parse and proves nothing. (exit: CT21 green — the test reads the fence out of the
+      `.md`, strips the wrapper and compares against the documented result, so editing §4
+      without editing the parser turns the test red.)
+- [x] STEP2b: Pin the blast radius of STEP2 with a test asserting the glob at
+      `tests/test_plan_ids.py:202` does not reach `notes/`. (exit: CT21b green.)
+- [x] STEP3: Add the `## Grounding` block to §4, marked "prose, never parsed", with its
+      mandatory first line naming what the planner understood the request to be and what it
+      deliberately excluded. (exit: parsing the §4 example, whose slices each carry a
+      `### Grounding` subsection, yields no contract, test or command from that subsection.
+      Use `###`, not `##`: under the CT16 depth rule a `##` heading would end the slice.)
+- [x] STEP4: Add a §4 subsection "Authoring guidance (not checked)" holding the rules that are
+      judgement, not lint: `STEPS:` defaults from the TRIVIAL/STANDARD/LARGE classifier and the
+      planner may override it with a one-line reason; `N <= 7` slices per increment, and a
+      decomposition needing more means the increment is mis-scoped and must be split; keep a
+      slice brief under roughly 1.5-2K tokens. (exit: the subsection exists and is titled so
+      that no pre-check rule may key on it.)
+- [x] STEP5: Edit `knowledge/skills/plan-authoring/SKILL.md` and
+      `knowledge/skills/feature-planning/SKILL.md`: replace each plan skeleton with the
+      ```skeleton fence, and replace the duplicated authoring prose with a link to §4
+      "Authoring guidance". Write steps as exact imperatives with file:line targets and runnable
+      exit checks (schema §1); no rationale inline. (exit: CT22 and CT24 green.)
+- [x] STEP6: Add the rationale rule for `CONSTRAINT` contracts to §4 and both skills. (exit:
+      CT23 green.)
+
+---
+
+## SLICE1c: The planner prompt emits schema §4
+STEPS: prescriptive
+DEPS: SLICE1b
+SHIPPED: d2faea4 (branch arena/ca4c996c-first-agent-dev, 2026-10-06)
+INTENT: the planner is the third emitter; until it emits slices, the coverage gate at
+  `workflow_controller.py:332` returns early and every downstream contract is untested in
+  production.
+CONTRACTS:
+  CT31 [FUNCTIONAL]: a plan generated from the planner prompt's plan section parses via
+    `extract_plan_ids` with non-empty `.slices`, and every slice carries `TESTS:` and `STEPS:`.
+  CT32 [PRESERVATION]: the Evidence, Assumptions and Risks content the prompt asks for today is
+    routed into `## Grounding`, not deleted; the planner's other output sections are unchanged.
+    Catches: a reformat that silently drops the planner's uncertainty reporting.
+TESTS: tests/test_planner_emits_schema4.py  (NEW — author it; absent at 2f6b8c1)
+```verify
+uv run pytest tests/test_planner_emits_schema4.py -q
+uv run ruff check src/fa/inner_loop/prompt.py tests/test_planner_emits_schema4.py
+```
+- [x] STEP1: Edit the planner's plan section in `src/fa/inner_loop/prompt.py` to emit schema §4,
+      reusing the §4 ```skeleton wording rather than restating it. (exit: CT31 green — the test
+      renders the prompt, extracts its embedded skeleton, and parses it; a `grep` for the token
+      `SLICE` is not an acceptable check because a comment satisfies it.)
+- [x] STEP2: Route Evidence, Assumptions and Risks into `## Grounding`. (exit: CT32 green.)
+
+## SLICE2: Per-slice accessors over the records
+STEPS: prescriptive
+DEPS: SLICE1b
+SHIPPED: 7156c03 (branch arena/ca4c996c-first-agent-dev, 2026-10-06)
+INTENT: the parser is conformed to the SLICE1b specification — the §4 example is the oracle —
+  and exposes the read API I02 consumes, over `slice_records`.
+CONTRACTS:
+  CT3 [FUNCTIONAL]: `commands_for("SLICE2")` returns only SLICE2's ```verify commands, in
+    document order, de-duplicated within the slice.
+  CT4 [FUNCTIONAL]: `section("SLICE2")` returns exactly SLICE2's block, spanning its heading
+    through the line before the next heading at the same or shallower depth (CT16).
+  CT4b [CONSTRAINT]: a ```verify block lying **outside every slice section** — the prologue,
+    and any increment-level section after the last slice — is stored in a new
+    `PlanIds.plan_commands: tuple[str, ...]` field and returned by `commands_for(None)`;
+    `SliceRecord` is not widened and no sentinel slice id is invented. Catches: a verify block
+    that is reachable from the flat field but from no record, so a per-slice consumer silently
+    never runs it. Scoped to "unowned" rather than "prologue" by Q35: CT16 stops the last slice
+    at the increment-level sections, which newly orphans any verify block in them — the very
+    harm this contract names. "Unowned" makes the partition total, so nothing can be orphaned
+    by construction. Measured at d2faea4: this file has zero post-last-slice verify blocks, so
+    the broadened scope changes no present behaviour.
+  CT4c [PRESERVATION]: `.commands` keeps returning every ```verify command in the document, in
+    document order, de-duplicated **globally** — prologue and increment-level blocks included.
+    It is therefore a superset of, and not equal to, the concatenation of `commands_for(s)` over
+    all slices, which de-duplicates per slice. No test may assert that equality. Catches: a
+    reader "preserving" the flat field by re-deriving it from the slices, which changes the
+    behaviour its name promises. Measured on this file at 2f6b8c1: flat 10, concatenation 12.
+    Because Q35 made ownership total, the superset relation is pinned by an exact identity over
+    sets, which a bare `⊇` assertion would not catch (it holds vacuously when `plan_commands`
+    is empty and tolerates junk in the flat field):
+    `set(.commands) == set(.plan_commands) | set of every record's commands`.
+  CT16 [CONSTRAINT]: a slice section ends at the first later line that is a heading of depth
+    less than or equal to the depth of that slice's own heading, or at end of document. The
+    depth is read from the matched heading, never hardcoded: `_SLICE_RE` admits `##` to `####`,
+    so a fixed `^#{1,2}` terminator is wrong for a `###` slice. Catches: the final slice
+    silently absorbing the increment-level sections that follow it, and every contract id
+    mentioned in them.
+  CT17 [CONSTRAINT]: the `CONTRACTS:` block runs from the `CONTRACTS:` line to the first later
+    non-blank line that begins at column 0, or to the end of the section. Indentation is the
+    only terminator — no allowlist of field names, because a new column-0 field (`SHIPPED:`)
+    would silently extend the block. Catches: a stray contract id typed in step text becoming a
+    contract of the slice.
+  CT18 [CONSTRAINT]: one entry declares one contract. An entry starts at an indented line
+    matching `CT<n>[a-z]? [[CLASS]]:` and continues through every following line indented more
+    deeply. The id and class are read from the entry's first line only; the contract **text is
+    the whole entry**, continuation lines joined with single spaces. Catches two defects at
+    once: CT2's illustrative example giving SLICE1 a second, differently-classed `CT3`; and
+    `line.split("]:", 1)[1]` truncating every contract at its first line, which would silently
+    discard exactly the CT23 rationale that SLICE1b mandates.
+  CT19 [FUNCTIONAL]: `contract_class("CT3")` returns the class declared under CT17 and CT18; an
+    id declared nowhere returns `None`. If one id is declared more than once the function is
+    still deterministic — first declaration in document order wins — and the pre-check reports
+    it (CT34). Consumer: I02.
+  CT20 [FUNCTIONAL]: `tests_for("SLICE2")` returns that slice's `TESTS:` paths. Consumer: I02.
+  CT33 [FUNCTIONAL]: the trailing annotation on a `TESTS:` line — the `(NEW — …)` note that
+    `_test_paths` discards at the `(` — is preserved on the record as
+    `SliceRecord.tests_note: str`. I01 preserves it and assigns it no meaning; I02 decides what
+    `NEW` licenses. Consumer: I02, whose fail-before filter keys on it
+    (`notes/i02-handoff-verify-gate.md` §2) and which has no other source for it.
 TESTS: tests/test_plan_ids.py
 ```verify
 uv run pytest tests/test_plan_ids.py -q
 uv run ruff check src/fa/inner_loop/plan_ids.py tests/test_plan_ids.py
 ```
-- [ ] STEP1: Implement `commands_for(slice_id)` and `section(slice_id)` over
-      `slice_records`. An unknown id returns `()` / `""`. (exit: CT3/CT4 green.)
-- [ ] STEP2: Implement the plan-level bucket for pre-heading verify blocks. (exit: CT4b
-      green.)
-- [ ] STEP3: Assert the flat `.commands` is unchanged. (exit: CT4c green.)
+- [x] STEP1: Change the section span in `_slice_sections` (`src/fa/inner_loop/plan_ids.py:198`)
+      to end at the next heading of depth ≤ the slice heading's own depth, taking the depth from
+      the match. (exit: CT16 green against the schema §4 example, and this increment's last
+      slice no longer absorbs the increment-level sections.)
+- [x] STEP2: Restrict `_section_contracts` (`:234`) to the `CONTRACTS:` block by the
+      indentation rule, group each entry with its continuation lines, read id and class from the
+      first line, and join the entry for the text. (exit: CT17 and CT18 green — SLICE1's
+      contracts no longer include a `CONSTRAINT`-classed `CT3`, and CT23's "Catches:" sentence
+      survives into `contract.text`.)
+- [x] STEP3: Add `PlanIds.plan_commands` and populate it from ```verify blocks outside every
+      slice section (document order, de-duplicated); make `commands_for(None)` return it.
+      (exit: CT4b green, and the CT4c set identity holds on this file.)
+- [x] STEP4: Implement `commands_for(slice_id)` and `section(slice_id)` over `slice_records`.
+      An unknown id returns `()` / `""`. (exit: CT3/CT4 green.)
+- [x] STEP5: Pin the flat-field behaviour with a test that asserts the documented superset
+      relation and asserts the two are **not** equal on this increment file. (exit: CT4c green.)
+- [x] STEP6: Implement `contract_class(contract_id)`, `tests_for(slice_id)`, and carry
+      `tests_note` onto `SliceRecord`. (exit: CT19, CT20 and CT33 green.)
 
 ---
 
 ## SLICE3: Plan pre-check (static lint, pure code)
 STEPS: prescriptive
-DEPS: SLICE1, SLICE2
+DEPS: SLICE2
+SHIPPED: e58eeca (branch arena/ca4c996c-first-agent-dev, 2026-10-07)
 INTENT: lint an increment plan in code before the controller loop; plan errors cost an
   assertion, not a burned slice.
 CONTRACTS:
@@ -118,47 +288,182 @@ CONTRACTS:
   CT9 [CONSTRAINT]: the pre-check FAILS a `prescriptive` slice containing a `STEP#` block
     with no `(exit: …)`. A `STEP#` block is the `- [ ] STEP<n>:` line plus its indented
     continuation lines.
-  CT10 [CONSTRAINT]: the pre-check FAILS on a cyclic `DEPS:` graph or a reference to an
-    undefined `SLICE#`/`CT#`.
-  CT10b [FUNCTIONAL]: the pre-check WARNS (never fails) when the slice count is outside 4–7,
-    or a `verify` command references a file path that does not exist. The command is never
-    executed here.
-TESTS: tests/test_plan_precheck.py  (NEW — author it; absent at tip 0e08ece)
+  CT10 [CONSTRAINT]: the pre-check FAILS on a cyclic `DEPS:` graph or on a `DEPS:` reference
+    to a `SLICE#` this increment does not define. Scoped to slice ids by Q38: an undefined
+    slice is a broken edge in the execution graph, so the run order is undefined and the plan
+    cannot be executed at all. Undefined **contract** references are CT27's WARN, and the one
+    dangerous sub-case — a declaration lost to a column-0 wrap — is CT35's FAIL. Slice count is
+    an authoring rule in SLICE1b, not a check.
+  CT25 [FUNCTIONAL]: the pre-check returns every violation in one pass, each naming `file:line`
+    and a rule id; it never stops at the first failure.
+  CT26 [FUNCTIONAL]: a line matching `^#{2,4}\s+SLI?CE?\s*\d` (case-insensitive) that does not
+    parse as a slice heading produces a near-miss **FAIL** naming the line and the intended
+    form. Severity was unspecified when this contract was written and is fixed here (E96):
+    FAIL, because a near-miss heading declares no slice, so that slice's contracts, steps and
+    test paths are absent from the plan the harness gates against — the author sees a slice
+    and the machine sees prose, and nothing downstream can detect the difference. The match is
+    case-insensitive because a lower-case heading is one of the drift modes STEP5 must cover.
+  CT27 [FUNCTIONAL]: a `CT#` referenced anywhere in the increment but declared in no
+    `CONTRACTS:` block produces a WARN — never a FAIL — naming the referencing line. WARN
+    because a plan legitimately cites a contract owned by a neighbouring increment, and a FAIL
+    would force an escape hatch that then hides real misses (Q38). Reported once per id, at
+    its first mention. Ids already reported by CT35 are suppressed (E97): a declaration eaten
+    by a margin wrap is trivially "declared nowhere" too, and emitting both sends the operator
+    to a prose mention instead of to the broken block.
+  CT34 [CONSTRAINT]: the pre-check FAILS when one `CT#` is declared in more than one
+    `CONTRACTS:` block, naming both `file:line`s. Schema §4 requires ids unique per increment
+    and nothing enforced it: CT10 covers undefined references, not duplicate declarations.
+    Catches: two slices each believing they own `CT11`, so `contract_class` answers for one of
+    them and the other's class is unreachable.
+  CT35 [CONSTRAINT]: the pre-check FAILS when a line inside a slice matches a contract
+    declaration (`CT<n>[a-z]? [[CLASS]]:` after optional indentation) but that id is absent
+    from the slice's parsed contracts, naming the line. Catches the one Markdown habit that
+    breaks the grammar silently: a continuation wrapped back to column 0 closes the
+    `CONTRACTS:` block, truncating that entry **and deleting every contract after it**.
+    Measured at 7156c03 — a two-contract block whose first entry wraps to the margin parses to
+    exactly one contract with no error (Q36). Deliberately a check and not parser tolerance:
+    deciding "is this column-0 line a field?" is the allowlist CT17 exists to avoid.
+TESTS: tests/test_plan_precheck.py  (authored in this slice; absent at 2f6b8c1)
 ```verify
 uv run pytest tests/test_plan_precheck.py -q
 uv run ruff check src/fa/inner_loop/plan_ids.py tests/test_plan_precheck.py
 ```
-- [ ] STEP1: Build a runner of pluggable assertions returning pass/fail/warn, aggregated.
+- [x] STEP1: Build a runner of pluggable assertions returning pass/fail/warn, aggregated.
       (exit: an empty plan passes; results aggregate.)
-- [ ] STEP2: Implement CT8/CT9/CT10, parsing `STEP#` as a multi-line block. (exit: each
+- [x] STEP2: Implement CT8/CT9/CT10, parsing `STEP#` as a multi-line block. (exit: each
       fails its seeded bad plan and passes the good fixture.)
-- [ ] STEP3: Implement the CT10b warnings. (exit: CT10b green.)
+- [x] STEP3: Make the runner aggregate every violation before returning, each carrying
+      `file:line` and a rule id. (exit: CT25 green — a plan seeded with three distinct
+      violations reports three.)
+- [x] STEP4: Add the near-miss heading diagnostic, the undeclared-contract warning, the
+      duplicate-declaration failure and the lost-declaration failure. (exit: CT26, CT27, CT34
+      and CT35 green.)
+- [x] STEP5: Create `tests/data/plan-drift-corpus/`, one file per observed drift mode: a space
+      in the slice heading, a lower-case heading, a wrong-level heading without a colon, a
+      contract declared outside the `CONTRACTS:` block, one `CT#` declared in two slices, and
+      a contract whose continuation is wrapped back to column 0. (exit: every corpus file
+      produces at least one named diagnostic and none parses silently to empty.)
+      The drafted seventh mode — a slice followed by an increment-level heading — was dropped
+      from the corpus and inverted into a positive assertion (E98): CT16 made that shape
+      legal in SLICE2, so a corpus entry for it would have to produce a diagnostic for a
+      construct the grammar now mandates.
 
 ---
 
-## SLICE4: Migrate the planning skills + conformance fixture
-STEPS: outcome
-DEPS: SLICE1, SLICE2, SLICE3
-INTENT: `feature-planning` and `plan-authoring` emit the new grammar so a planner-authored
-  plan parses and pre-checks clean.
+## SLICE3b: Close the silent-loss gaps the suspicion register left open
+STEPS: prescriptive
+DEPS: SLICE3
+SHIPPED: d65fc4f (branch arena/ca4c996c-first-agent-dev, 2026-10-07)
+INTENT: four drift modes reach the parser today and lose content without a word; make each one
+  loud. Closes suspicions S-b, S-c, S-d and S-e from `notes/adversarial-review-2026-10-06.md`.
 CONTRACTS:
-  CT14 [FUNCTIONAL]: a sample increment authored strictly from the migrated skill text
-    parses via `extract_plan_ids` and passes the SLICE3 pre-check with zero failures.
-  CT15 [PRESERVATION]: the skills' other ID grammar (`GAP#`, `CT#`, `T#`, `Q#`, `RK#`) is
-    unchanged; only the slice/step anchors and new fields are added.
-TESTS: tests/test_skill_conformance.py  (NEW — author it; absent at tip 0e08ece)
+  CT36 [CONSTRAINT]: a `STEP#` checkbox marker is normalised (strip inner whitespace, casefold)
+    and matched against one vocabulary: empty → to do, `x`/`✓`/`✔` → done, `>` → in progress.
+    Any other marker on an otherwise well-formed `STEP#` line FAILS as `step-marker-unknown`.
+    Catches: `- [X] STEP2:` with a capital X, which today is not a step at all — the step
+    vanishes from the lint in silence. Measured: `[ ]`, `[x]`, `[>]` parse; `[X]`, `[-]`, `[~]`
+    do not. The vocabulary is ratified in schema §6, which previously knew only two states
+    while `prompt.py:687` instructed the coder to write a third.
+  CT37 [CONSTRAINT]: an abbreviated id is never guessed. Inside a plan, `DEPS:` resolves only
+    `SLICE<n>[a-z]?`; `## S1: …` FAILS as `heading-near-miss`; `- [ ] S1: …` FAILS as
+    `step-near-miss`. Rationale, and the reason this is a FAIL rather than a translation: a
+    plan carries two id namespaces, so `S1` is ambiguous between `SLICE1` and `STEP1`, and
+    picking one silently is the failure class this increment exists to remove.
+    Deliberately NOT changed: `canonical_slice_id` stays lenient at the eval-report boundary
+    (`workflow_controller.py:336`), because a report reconciles against slice ids only — one
+    namespace, so `S1` is unambiguous there. Tolerance is a property of that boundary, not of
+    the grammar. Pinned by `tests/test_slice_id_validation.py::test_legacy_s_ids_normalise_to_canonical_space`.
+  CT38 [FUNCTIONAL]: a plan declaring 7 or more slices produces a WARN naming the count and the
+    ceiling. `supersedes: E78` for this rule only — E78 placed `N ≤ 7` under "Authoring guidance
+    (not checked)". Operator decision 2026-10-07: signal, never block, because the ceiling is
+    admission control (Q16) and a FAIL would turn a judgement call into a gate. WARN at exactly
+    7 rather than 8: 7 is legal and means the headroom is gone, which is the moment worth
+    knowing about.
+  CT39 [CONSTRAINT]: every grammar-bearing line must sit inside a slice section. A field line
+    (`STEPS:`/`DEPS:`/`INTENT:`/`CONTRACTS:`/`TESTS:`), a `STEP#` checkbox or a contract
+    declaration found outside every slice span FAILS as `orphaned-slice-field`, naming the line.
+    This is a conservation rule, not an enumeration of bad constructs: it asserts that the
+    parser accounted for the grammar the document contains, so it covers drift modes nobody has
+    thought of yet. Catches the measured S-e defect — a `## Grounding` heading inside a slice
+    ends that slice under CT16's depth rule, so the `TESTS:` line after it belongs to no slice
+    and is lost. Today that is either silent, or surfaces as CT8 claiming the slice "has no
+    TESTS: line" when the author plainly wrote one. Measured false positives on every real
+    artifact in the repository: zero (template documents with `## SLICE<n>:` placeholders are
+    out of scope by CT21b, which forbids pre-checking a grammar or notes document).
+TESTS: tests/test_plan_precheck.py
 ```verify
-uv run pytest tests/test_skill_conformance.py -q
+uv run pytest tests/test_plan_precheck.py tests/test_plan_ids.py tests/test_slice_id_validation.py -q
+uv run ruff check src/fa/inner_loop/plan_ids.py tests/test_plan_precheck.py
+```
+- [x] STEP1: Add `parse_slice_id` (strict, validating, `None` for a non-slice token) and route
+      `_declared_deps` through it. (exit: `DEPS: S1` FAILS as `deps-undefined-slice`; the eval
+      boundary test in `tests/test_slice_id_validation.py` still passes.)
+- [x] STEP2: Normalise step markers and add `step-marker-unknown`; ratify the three-state
+      vocabulary in schema §6. (exit: CT36 green; `[]`, `[ ]`, `[X]`, `[✓]` all classify.)
+- [x] STEP3: Add `step-near-miss` and extend the near-miss heading pattern to the abbreviated
+      `## S<n>:` form. (exit: CT37 green.)
+- [x] STEP4: Add the slice-count warning. (exit: CT38 green; this increment itself emits it.)
+- [x] STEP5: Add `orphaned-slice-field`. (exit: CT39 green; the live increment still
+      pre-checks with zero failures.)
+- [x] STEP6: Extend the drift corpus with one file per newly covered mode. (exit: every corpus
+      file still produces the specific rule it exists for.)
+
+---
+
+## SLICE4: Skill-to-parser conformance + historical migration note
+STEPS: outcome
+DEPS: SLICE1c, SLICE3
+INTENT: prove the authoring chain closes — a plan authored strictly from the migrated skill
+  text parses and pre-checks clean — and tell a human what happened to the old grammar.
+  Renamed from "End-to-end conformance": CT14 runs no loop and boots no composition root, so
+  the old title promised a live gate this slice does not deliver. Under SD-C the live gate is
+  named, not skipped — it lands in I02, where the verify gate actually executes
+  `commands_for` (`notes/i02-handoff-verify-gate.md` §7).
+  Scope grew 2026-10-07 (Q40, Q41, Q42 — `notes/open-questions-2026-10-07.md`): "the migrated
+  skill text" turned out not to be migrated. The skeleton could not pre-check clean, and the
+  prose around it still taught the pre-rename `S#` tier, so conformance against it would have
+  proved nothing. Finishing that migration is therefore part of this slice. Grammar tokens in
+  the coder-stage `INJECT.md` are I01's too; its *behaviour* text stays I03's (E45/E47).
+CONTRACTS:
+  CT14 [FUNCTIONAL]: a sample increment authored strictly from the migrated skill text parses
+    via `extract_plan_ids` and passes the SLICE3 pre-check with zero failures.
+  CT40 [FUNCTIONAL]: each `PLAN-SKELETON` block is itself a valid plan — it parses and
+    pre-checks with zero FAIL diagnostics. Measured before the change: three
+    `deps-undefined-slice` failures in each skill, all from the one alternation line
+    (Q40 resolved (b): the skeleton is a plan, not a template with its own notation).
+  CT41 [CONSTRAINT]: no live producer text teaches the pre-rename `S#` tier. Both `SKILL.md`
+    files and every `INJECT.md` contain zero bare `S#` tokens. Measured before the change:
+    plan-authoring 10, feature-planning 8, feature-planning/INJECT.md 3, prompt.py already 0.
+    Catches: a half-migrated skill that hands the planner one document declaring `S#` in its
+    id table and `STEP1:` in its skeleton — two incompatible grammars, with the parser
+    rejecting the one the id table declares.
+  CT42 [CONSTRAINT]: the CT14 fixture is *derived* from the skeleton text at test time by a
+    documented placeholder substitution, never stored as a hand-written copy.
+    Catches: a fixture tuned to pass the lint while the skeleton it claims to represent
+    drifts away from the grammar.
+  CT43 [PRESERVATION]: CT22's "the skeleton parses" assertion and the §4 executable oracle
+    stay green, and the `PLAN-SKELETON` and `SCHEMA4` marker names are unchanged — the
+    existing tests key on them.
+TESTS: tests/test_skill_conformance.py  (NEW — author it; absent at 2f6b8c1)
+```verify
+uv run pytest tests/test_skill_conformance.py tests/test_skill_grammar_emit.py -q
 uv run ruff check knowledge/skills tests/test_skill_conformance.py
 ```
-- [ ] STEP1: Update both skills' plan skeletons and ID sections to the new grammar.
-      (exit: a fixture written from the skill text parses.)
-- [ ] STEP2: Add authoring guidance for contract classes, `TESTS:`, and `STEPS:` mode. Write
-      the skill's instructions as exact imperatives with file:line targets and runnable exit
-      checks (schema §1 authoring rule); no rationale inline.
-      (exit: the fixture pre-checks clean, including CT8.)
-- [ ] STEP3: Add a migration note: pre-rename (`S#`) plans are archived, not parsed.
-      (exit: CT15 green; the note exists.)
+- [ ] STEP1: Make both `PLAN-SKELETON` blocks valid plans: replace the dependency alternation
+      line with a literal value, and move the "or list the slices you depend on" teaching into
+      prose beside the block. Do the same for any other field whose alternation notation the
+      parser reads as data. (exit: CT40 green — zero FAIL diagnostics for each skeleton.)
+- [ ] STEP2: Add a migration note for humans: pre-rename plans are archived, not parsed, and no
+      compatibility shim is provided. (exit: the note exists and names the three conditions,
+      recorded in the ledger, under which zero-deprecation removal was acceptable.)
+- [ ] STEP3: Migrate the prose of both `SKILL.md` off the pre-rename tier, including the id
+      table in `plan-authoring/SKILL.md` that still defines `S#` as the step tier. Rewrite the
+      id, do not delete the row. (exit: CT41 green for both files.)
+- [ ] STEP4: Fix the grammar tokens in `feature-planning/INJECT.md`. Grammar only — its
+      behaviour text belongs to I03 and must not be rewritten here. (exit: CT41 green for it.)
+- [ ] STEP5: Author the conformance fixture by substituting placeholders into the skeleton read
+      from the skill file at test time — not from the schema §4 example, which SLICE2 already
+      conformed the parser to. (exit: CT14 and CT42 green.)
 
 ---
 
@@ -167,20 +472,41 @@ uv run ruff check knowledge/skills tests/test_skill_conformance.py
 - [ ] Every `CT#` is satisfied: its slice's `verify` command exits 0. (`VERIFIED` is not
       claimed here; it additionally requires I02 and I03.)
 - [ ] `tests/test_plan_ids.py` is green and no `S#` assertion survives.
-- [ ] The SLICE3 pre-check runs clean on this increment file.
+- [ ] The SLICE3 pre-check runs clean on this increment file — including CT34. Parsed with the
+      2f6b8c1 extractor this file reports ten duplicate ids, because SLICE4 absorbs the
+      document tail (CT16) and step prose is read as declarations (CT17). Every one of them is
+      an artefact of those two defects and must disappear once SLICE2 lands. If any survives,
+      the plan is wrong, not the lint.
 - [ ] A skill-authored sample plan parses and pre-checks clean (CT14).
 - [ ] `workflow_controller` `.slices` readers unbroken (CT11).
+- [ ] A planner-generated plan yields non-empty `.slices`, so the coverage gate at
+      `workflow_controller.py:332` no longer silently no-ops (CT31). A `grep` for the token
+      `SLICE` in `prompt.py` is not evidence — a comment satisfies it.
+- [ ] Every name in schema §7 has a call site outside tests, or is marked pending with a named
+      consumer increment.
 - [ ] Full suite: no regression against a stash-measured baseline.
+- [ ] SD-C: I01 ships **no** live-path test and says so deliberately. Its whole surface is a
+      pure parser plus two prompt strings; the only shipped consumer is
+      `workflow_controller.py:332`, held by CT11/CT31. The live gate for this chain is a named
+      I02 contract, not an omission.
 
 ## Out of scope (moved, not dropped)
 
 - **EVIDENCE ledger parser** — moved to I04. Do not build it here. The ledger format is in
   `notes/artifact-schema-and-grammar.md` §5.
+- **Pinned invariants re-injected on every call** — moved to I04, where the roadmap already
+  schedules "pinned invariants". It was drafted as an I01 slice this session and that was scope
+  creep: it edits prompt composition, not plan grammar, and it consumed `contract_class` before
+  I02 — its first real consumer — exists. Banked with its contracts in
+  `notes/role-prompts-conformance.md` §"Banked for I04"; ledger E70/E71.
 
 ## Hand-off to I02 (banked context, not a plan)
 
-I01 delivers the interface I02 consumes: `commands_for`, `section`,
-`SliceRecord.test_paths`, and the `TESTS: … (NEW)` marker. Do not build the gate here.
+I01 delivers the interface I02 consumes: `commands_for`, `section`, `contract_class`,
+`tests_for`, `SliceRecord.test_paths`, and `SliceRecord.tests_note` — the preserved `(NEW — …)`
+annotation (CT33). I01 preserves that string and gives it no meaning; open question 2 in the
+hand-off note (prose marker vs machine token) stays I02's to answer, but it is now answerable,
+because the text reaches I02 instead of being discarded at the `(`. Do not build the gate here.
 Context for the I02 review lives in:
 - `notes/verify-block-design.svg` and `notes/verify-block-design.md`.
 - `notes/i02-handoff-verify-gate.md` — grounded facts and the open questions.

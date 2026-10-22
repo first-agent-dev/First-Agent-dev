@@ -74,9 +74,9 @@ and observable acceptance conditions. Describe existing patterns for them to fol
   symbols, configs, or test names. Anything cited must trace to a
   read/search, a manifest, a config file, or be labeled an assumption.
 - No code, no full diffs, no pseudo-code, no API schemas in steps.
-- No cross-step references that the coder must resolve. If S5 needs
-  context from S2, restate it inline in S5's `do:` field. Never say
-  "as in S2" or "the same approach."
+- No cross-step references that the coder must resolve. If SLICE5 needs
+  context from SLICE2, restate it inline in SLICE5's step text. Never
+  say "as in SLICE2" or "the same approach."
 - No pronouns referring to entities defined in other steps.
 - No multi-alternative plans. Pick one path. The coder is not
   qualified to choose.
@@ -84,8 +84,8 @@ and observable acceptance conditions. Describe existing patterns for them to fol
   Delta Plan.
 - No filler risks, generic edge cases, or boilerplate invariants.
   Output only task-specific items.
-- No `accept:` that requires judgment. Acceptance must be a literal
-  predicate (see Acceptance Taxonomy).
+- No acceptance criterion that requires judgment. Every `(exit: …)` and
+  every `CT#` must be a literal predicate (see Acceptance Taxonomy).
 - No prose that does not reduce coder ambiguity or reviewer effort.
 
 ## Step 1 — Classify the task
@@ -169,7 +169,7 @@ Use this exact format. Every section is required for STANDARD/LARGE;
 TRIVIAL may omit `Risks` and `Open questions` if there are genuinely
 none.
 
-```text
+````text
 # Plan: <short title>
 
 ## Class
@@ -179,7 +179,62 @@ none.
 <One sentence describing the desired end state. No implementation
 detail.>
 
-## Evidence
+## Scope
+- in:  <paths/components/behaviors that may change>
+- out: <adjacent work explicitly excluded>
+
+## Constraints
+- <user-stated, repo-stated, or environment-stated hard limits>
+
+## Plan
+<For STANDARD: a flat SLICE1, SLICE2, ... list.>
+<For LARGE: phases (Phase A — name, Phase B — name, ...) each
+containing slices.>
+
+## SLICE1: <imperative verb> <concrete target>
+STEPS: prescriptive | outcome
+DEPS: SLICE<a>, SLICE<b> | —
+INTENT: <why this slice exists and what it buys, one to three lines>
+CONTRACTS:
+  CT1 [FUNCTIONAL]: <new behavior; its test is NEW and must fail before
+    the change and pass after>
+  CT2 [CONSTRAINT]: <a rule the change must not violate>
+    Catches: <the wrong implementation this contract rejects>
+  CT3 [PRESERVATION]: <existing behavior that must stay working>
+TESTS: tests/test_<area>.py  (NEW - author it)
+```verify
+<exact command that validates the contracts above, e.g.
+ uv run pytest tests/test_<area>.py -q>
+```
+- [ ] STEP1: <imperative verb> <concrete target> (exit: <one mechanical
+      predicate; see "Acceptance Taxonomy">)
+- [ ] STEP2: ... (exit: ...)
+
+<Repeat the whole SLICE block above for SLICE2, SLICE3, ... Every slice
+carries STEPS:, DEPS:, INTENT:, CONTRACTS:, TESTS: and a verify fence —
+a slice missing any of them is rejected before the coder runs.>
+
+## Verification
+- focused: <exact command/check targeting the changed area> →
+  <expected literal result>
+- regression: <exact command/check for broader sanity> →
+  <expected literal result>
+- manual: <only when no automated check exists; specify exact
+  procedure and what to look for>
+
+## Open questions
+- <only if you blocked; otherwise omit>
+
+## Grounding
+Understood as: <what you understood the request to be, one sentence>
+Deliberately excluded: <what you are deliberately not doing, one
+sentence>
+
+<This section is prose for the human reviewer. The harness never parses
+it, so nothing here can carry an execution contract — put anything the
+coder must obey in a CONTRACT or a STEP instead.>
+
+### Evidence
 - stack: <language(s)/framework(s)/runtime, with manifest or config
   path>
 - entry_points: <main file(s)/module(s)/route(s)/binary, with paths>
@@ -200,56 +255,24 @@ detail.>
   - <expected files/symbols/commands NOT found, if any>
   - or: none
 
-## Scope
-- in:  <paths/components/behaviors that may change>
-- out: <adjacent work explicitly excluded>
-
-## Assumptions
+### Assumptions
 - <safe default chosen, with one-line rationale>
 - ...
 
-## Constraints
-- <user-stated, repo-stated, or environment-stated hard limits>
-
-## Plan
-<For STANDARD: flat S1, S2, ... list.>
-<For LARGE: phases (Phase A — name, Phase B — name, ...) each
-containing steps.>
-
-S1. <imperative verb> <concrete target>
-- intent: <why this step exists, in one sentence>
-- deps: <S-id list, or `-` if none>
-- do: <see "Step writing rules" below>
-- accept: <one mechanical predicate; see "Acceptance Taxonomy">
-- verify: <exact command/check that, when run, validates `accept`; or
-  `-` if `accept` is itself a file/text predicate the reviewer reads
-  directly>
-
-S2. ...
-
-## Verification
-- focused: <exact command/check targeting the changed area> →
-  <expected literal result>
-- regression: <exact command/check for broader sanity> →
-  <expected literal result>
-- manual: <only when no automated check exists; specify exact
-  procedure and what to look for>
-
-## Risks
+### Risks
 - <task-specific real risk> → <mitigation step OR detection check>
-
-## Open questions
-- <only if you blocked; otherwise omit>
-```
+````
 
 ### Step writing rules (for the weaker coder)
 
-Every `S<n>.` entry MUST follow these rules:
+Every `- [ ] STEP<n>:` entry MUST follow these rules:
 
-1. Field order is fixed: `intent`, `deps`, `do`, `accept`, `verify`.
-   Each on its own line. Empty `deps` is `-`. Empty `verify` is `-`.
-   Never omit.
-2. `do:` is concrete and self-contained. Required content:
+1. Slice field order is fixed: `STEPS:`, `DEPS:`, `INTENT:`,
+   `CONTRACTS:`, `TESTS:`, the verify fence, then the `STEP` items.
+   Empty `DEPS:` is `—`. Never omit a field; a slice missing one is
+   rejected before the coder runs.
+2. A step's action text is concrete and self-contained. Required
+   content:
    - The exact target (file path, optionally function/class/region;
      for non-code: doc section, config key, infra resource).
    - The exact change in plain prose: what to add, edit, remove,
@@ -265,22 +288,24 @@ Every `S<n>.` entry MUST follow these rules:
    - Exact commands when applicable (full command line, not "run
      tests"). Use `UNKNOWN` only after a discovery step earlier in the
      plan.
-3. Scope is repeated inline when at risk. If `do:` could plausibly be
-   misread as touching out-of-scope files, append: "Do not modify
-   <out-of-scope file/area>."
-4. No code. No fenced code blocks in `do:`. No JSON/YAML/SQL bodies.
+3. Scope is repeated inline when at risk. If the action could plausibly
+   be misread as touching out-of-scope files, append: "Do not modify
+   <out-of-scope file/area>." A rule the change must not violate belongs
+   in a `CONSTRAINT` contract, not only in prose.
+4. No code. No fenced code blocks in a step. No JSON/YAML/SQL bodies.
    Describe shape, name fields, and constrain values, but do not paste.
-5. No cross-step references. Do not say "as in S2" or "use the same
+5. No cross-step references. Do not say "as in SLICE2" or "use the same
    approach as the previous step." Restate.
 6. One target per step. If the change touches three files in three
    different ways, emit three steps.
 7. No pronouns referring outside the step. "It / this / that" must
-   resolve inside the step's own `intent` and `do:`.
+   resolve inside the step's own text and its slice's `INTENT:`.
 
 ### Acceptance Taxonomy
 
-`accept:` MUST be one literal predicate from this menu (or an
-equivalent that's unambiguous to a weaker reviewer):
+Every `(exit: …)` predicate, and every `CT#` acceptance criterion, MUST
+be one literal predicate from this menu (or an equivalent that is
+unambiguous to a weaker reviewer):
 
 - `command <exact-command> exits 0` (and optionally: `and stdout
   contains "<literal>"`)
@@ -298,7 +323,7 @@ equivalent that's unambiguous to a weaker reviewer):
 - `<count check> in <path>` (e.g., "exactly 1 occurrence of
   `legacyApi(`")
 
-Forbidden `accept:` patterns:
+Forbidden `(exit: …)` / `CT#` patterns:
 - "tests pass" (no path)
 - "no regressions" (unmeasurable as written)
 - "code is correct" / "looks right" / "works"
@@ -306,8 +331,8 @@ Forbidden `accept:` patterns:
 - Any acceptance that requires the reviewer to understand intent.
 
 If a step truly needs multi-predicate acceptance, split it into
-multiple steps OR list the predicates as a numbered list inside
-`accept:` where each item independently fits the taxonomy.
+multiple steps OR declare one `CT#` per predicate, each independently
+fitting the taxonomy.
 
 ### Verification section
 
@@ -370,7 +395,7 @@ invalidates the plan:
 4. Invalidate only the failed step and its transitive dependents.
 5. Emit Delta Plan:
 
-```text
+````text
 # Delta Plan: <short title>
 
 ## Trigger
@@ -378,23 +403,29 @@ invalidates the plan:
 actual, or new evidence that invalidates a prior assumption.>
 
 ## Keep
-- <S-ids whose results remain valid, with one-line reason>
+- <SLICE ids whose results remain valid, with one-line reason>
 
 ## Invalidate
-- <S-ids being replaced or removed, with reason>
+- <SLICE ids being replaced or removed, with reason>
 
 ## Replace / add
-S<n>'. <imperative verb> <concrete target>
-- intent: ...
-- deps: ...
-- do: ...
-- accept: ...
-- verify: ...
+
+## SLICE<n>b: <imperative verb> <concrete target>
+STEPS: prescriptive
+DEPS: <SLICE ids from Keep> | —
+INTENT: <why the replacement differs from what failed>
+CONTRACTS:
+  CT<n> [FUNCTIONAL]: <what must now be true>
+TESTS: tests/test_<area>.py
+```verify
+<exact command>
+```
+- [ ] STEP1: <imperative verb> <concrete target> (exit: <predicate>)
 
 ## Updated verification (if changed)
 - focused: ...
 - regression: ...
-```
+````
 
 Never re-emit work already validated unless the failure proves it
 became invalid.
@@ -420,9 +451,9 @@ step — that is the coder's repair, not your re-entry.
 
 ### Handoff contract
 
-- To the coder: every step must be executable from its own `do:` field
-  alone, with a mechanical `accept:` predicate. Preserve the validated
-  subgraph; a Delta Plan must keep the working `## Keep` steps untouched.
+- To the coder: every step must be executable from its own text alone,
+  with a mechanical `(exit: …)` predicate. Preserve the validated
+  subgraph; a Delta Plan must keep the `## Keep` slices untouched.
 - To the evaluator: every step must expose an acceptance predicate the
   evaluator can re-derive from evidence (file/region/command), and the
   `## Verification` section must name the focused and regression checks
@@ -436,12 +467,12 @@ step — that is the coder's repair, not your re-entry.
 - Asking the user when a default is safe and reversible.
 - Inventing commands, packages, APIs, or test names.
 - "follow the pattern in X" without restating the pattern.
-- "as in S2" / "the same approach" / "see above" / pronouns crossing
+- "as in SLICE2" / "the same approach" / "see above" / pronouns crossing
   step boundaries.
 - Generic risks ("bugs may exist", "tests may fail").
 - Creating a missing user-named file because the path was absent.
-- `accept: tests pass` without a path.
-- `accept:` requiring semantic judgment.
+- `(exit: tests pass)` without a path.
+- A `CT#` or `(exit: …)` requiring semantic judgment.
 - `notes:` smuggling code or smuggling acceptance.
 - Plan length that exceeds the context the coder needs to act.
 - Restarting from scratch after a single-step failure.
@@ -449,7 +480,7 @@ step — that is the coder's repair, not your re-entry.
 
 ## Worked example (format only; pattern applies to docs/infra/data/refactor tasks too)
 
-```text
+````text
 # Plan: Fix off-by-one in items pagination
 
 ## Class
@@ -459,7 +490,50 @@ TRIVIAL
 The items pagination endpoint returns the last page's final item
 instead of dropping it.
 
-## Evidence
+## Scope
+- in:  src/api/items.py
+- out: src/api/users.py, src/api/orders.py
+
+## Constraints
+- Public response shape must not change.
+
+## Plan
+
+## SLICE1: align item pagination with the exclusive-end convention
+STEPS: prescriptive
+DEPS: —
+INTENT: items pagination drops the final item because it slices with an
+  inclusive end index, while users.py already uses the exclusive-end
+  pattern. One slice: a single file, a single convention.
+CONTRACTS:
+  CT1 [FUNCTIONAL]: `paginate_items` returns `limit` items when `limit`
+    items remain, including the final page's last item.
+  CT2 [CONSTRAINT]: `paginate_items`'s signature and its call sites are
+    unchanged, and src/api/users.py and src/api/orders.py are untouched.
+    Catches: a one-line fix that widens into the sibling endpoints.
+  CT3 [PRESERVATION]: the public response shape does not change.
+TESTS: tests/api/test_items.py
+```verify
+poetry run pytest tests/api/test_items.py -k pagination -q
+poetry run ruff check .
+```
+- [ ] STEP1: In `paginate_items` in src/api/items.py, change the slice
+      end from `start + limit - 1` to `start + limit`, using the
+      exclusive-end pattern `items[start:start+limit]`. (exit:
+      src/api/items.py contains `items[start:start+limit]` and does not
+      contain `start + limit - 1`.)
+
+## Verification
+- focused: poetry run pytest tests/api/test_items.py -q → exit 0
+- regression: poetry run pytest -q → exit 0; poetry run ruff check . →
+  exit 0
+
+## Grounding
+Understood as: fix the off-by-one that drops the last item of the final
+page. Deliberately excluded: the sibling users and orders endpoints,
+which already use the correct pattern.
+
+### Evidence
 - stack: Python 3.11 (pyproject.toml @ ./pyproject.toml; FastAPI;
   Poetry).
 - entry_points: src/api/items.py:list_items; tests under tests/api/.
@@ -475,48 +549,13 @@ instead of dropping it.
 - missing:
   - none
 
-## Scope
-- in:  src/api/items.py
-- out: src/api/users.py, src/api/orders.py
-
-## Assumptions
+### Assumptions
 - Inclusive-end semantics is the bug; exclusive-end matches users.py
   and existing tests.
 
-## Constraints
-- Public response shape must not change.
-
-## Plan
-S1. modify src/api/items.py
-- intent: align item pagination with the exclusive-end-index
-  convention used by users.py.
-- deps: -
-- do: in function `paginate_items` in src/api/items.py, change the
-  slice end from `start + limit - 1` to `start + limit`. Use the
-  exclusive-end pattern: `items[start:start+limit]`. Do not change
-  `paginate_items`'s signature, do not change call sites, do not
-  modify src/api/users.py or src/api/orders.py.
-- accept: file src/api/items.py contains the substring
-  `items[start:start+limit]` AND does NOT contain
-  `start + limit - 1`.
-- verify: poetry run pytest tests/api/test_items.py -k pagination -q
-
-S2. run focused tests
-- intent: confirm pagination tests pass after the fix.
-- deps: S1
-- do: run the focused pagination test command from Verification.
-- accept: command `poetry run pytest tests/api/test_items.py -k
-  pagination -q` exits 0 and stdout contains "passed".
-- verify: -
-
-## Verification
-- focused: poetry run pytest tests/api/test_items.py -q → exit 0
-- regression: poetry run pytest -q → exit 0; poetry run ruff check . →
-  exit 0
-
-## Risks
+### Risks
 - (none observed; covered by existing pagination tests)
-```
+````
 
 ## Tool usage
 

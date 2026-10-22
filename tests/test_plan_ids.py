@@ -15,13 +15,15 @@ contract, including the failure modes the caller depends on to stay advisory.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
 
-from fa.inner_loop.plan_ids import PlanIds, extract_plan_ids
+from fa.inner_loop.plan_ids import PlanIds, canonical_slice_id, extract_plan_ids
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+PLAN_DIR = REPO_ROOT / "worklogs" / "planning-topology-and-executable-contracts-loop" / "increments"
 
 
 # ── the grammar, as a realistic plan fragment ──────────────────────────────
@@ -365,3 +367,634 @@ class TestSliceRecords:
         # workflow_controller.py:332 and :461 read exactly this attribute.
         assert extract_plan_ids(RECORD_FIXTURE).slices
         assert extract_plan_ids("### Step S1: legacy").slices == ()
+
+
+# ── SLICE2: per-slice accessors over the records ──────────────────────────
+#
+# root=plan_ids class=C0/C0p claim=CT3,CT4,CT4b,CT4c,CT16-CT20,CT33
+# oracle=exact tuples, exact section spans, exact contract text.
+# producer-kill-check: each test below names the production mechanism whose
+# removal makes it fail. A parser has no `output.emit()`, so the producer is
+# the parsing rule itself; "the test fails if the rule is deleted" is the
+# same proof obligation in a different shape.
+#
+# C0 is "incomplete alone" for a product claim. The product claim for the new
+# accessors is owned by I02 (CT19/CT20/CT33 name it as their consumer), which
+# is not built; SD-B forbids shipping an accessor without a named consumer
+# increment, and names it. What IS live today is `.slices`, read at
+# workflow_controller.py:332 and :461 — so the C1 live-path proof below
+# asserts that the span change does not disturb that reader.
+
+#: Prologue block, two slices, and an increment-level tail that carries its
+#: own verify block. Before CT16 the tail belonged to SLICE2.
+SPAN_FIXTURE = """\
+# PLAN: span
+
+```verify
+uv run ruff check .
+```
+
+## SLICE1: first
+STEPS: prescriptive
+INTENT: do the first thing.
+CONTRACTS:
+  CT1 [FUNCTIONAL]: the first rule holds.
+    Catches: the rationale that must survive the join.
+  CT2 [CONSTRAINT]: the second rule holds.
+TESTS: tests/test_first.py  (NEW - author it; absent at 2f6b8c1)
+```verify
+uv run pytest tests/test_first.py -q
+uv run pytest tests/test_first.py -q
+```
+- [ ] STEP1: cite CT9 in step prose (exit: CT1 green.)
+
+## SLICE2: second
+STEPS: outcome
+INTENT: do the second thing.
+CONTRACTS:
+  CT3 [PRESERVATION]: the third rule holds.
+SHIPPED: abc1234
+  CT8 [FUNCTIONAL]: declared after a column-zero line, so not a contract.
+TESTS: tests/test_second.py
+```verify
+uv run pytest tests/test_second.py -q
+```
+
+## Increment definition of done
+```verify
+uv run pytest -q
+```
+"""
+
+
+class TestSectionSpan:
+    """CT16 — a slice section ends at the next heading of depth <= its own."""
+
+    def test_last_slice_no_longer_absorbs_the_increment_level_tail(self) -> None:
+        # producer-kill-check: revert the terminator in `_slice_spans` to
+        # "next slice heading only" and this fails.
+        rec = extract_plan_ids(SPAN_FIXTURE).slice_records[-1]
+        assert rec.slice_id == "SLICE2"
+        assert "## Increment definition of done" not in rec.section
+        assert rec.section.rstrip().endswith("```")
+
+    def test_terminator_depth_is_read_from_the_matched_heading(self) -> None:
+        """Kill-check for a hardcoded `^#{1,2}` terminator.
+
+        `_SLICE_RE` admits `##`..`####`. For a `###` slice the terminator must
+        be depth <= 3, so a sibling `### Notes` ends it. A fixed `^#{1,2}`
+        would run straight through and swallow the sibling.
+        """
+        text = "### SLICE1: deep\nbody\n\n### Notes\nnot mine\n"
+        rec = extract_plan_ids(text).slice_records[0]
+        assert "### Notes" not in rec.section
+        assert "not mine" not in rec.section
+
+    def test_a_deeper_heading_stays_inside_the_section(self) -> None:
+        """The converse kill-check: depth <= own, not "any heading".
+
+        A `####` subsection belongs to the `###` slice that introduces it.
+        A terminator of "any heading" would truncate the slice at its own
+        first subsection — which is how `## Grounding`-style subsections get
+        lost.
+        """
+        text = "### SLICE1: deep\n#### Grounding\nmine\n\n### Notes\nnot mine\n"
+        rec = extract_plan_ids(text).slice_records[0]
+        assert "#### Grounding" in rec.section
+        assert "mine" in rec.section
+        assert "not mine" not in rec.section
+
+    def test_a_slice_heading_terminates_regardless_of_depth(self) -> None:
+        """Preservation: sections never overlap.
+
+        Depth <= own alone would let a `### SLICE2` nest inside a `## SLICE1`,
+        so one command would belong to two records and the CT4c partition
+        would double-count. This guarantee predates CT16 and must survive it.
+        """
+        text = "## SLICE1: outer\nmine\n### SLICE2: inner\nnot mine\n"
+        recs = extract_plan_ids(text).slice_records
+        assert [r.slice_id for r in recs] == ["SLICE1", "SLICE2"]
+        assert "not mine" not in recs[0].section
+
+    def test_the_live_increment_last_slice_is_bounded(self) -> None:
+        path = (
+            REPO_ROOT
+            / "worklogs"
+            / "planning-topology-and-executable-contracts-loop"
+            / "increments"
+            / "increment-01-plan-grammar-and-extractor.md"
+        )
+        assert path.is_file(), f"increment artifact missing: {path}"
+        rec = extract_plan_ids(path.read_text(encoding="utf-8")).slice_records[-1]
+        for heading in ("## Increment definition of done", "## Out of scope", "## Hand-off to I02"):
+            assert heading not in rec.section, heading
+
+
+class TestContractsBlock:
+    """CT17/CT18 — declaration is scoped to the block, entry text is whole."""
+
+    def test_a_contract_id_in_step_prose_is_not_a_contract(self) -> None:
+        # producer-kill-check: drop the CONTRACTS:-block scoping in
+        # `_section_contracts` and CT9 reappears.
+        rec = extract_plan_ids(SPAN_FIXTURE).slice_records[0]
+        assert [cid for cid, _, _ in rec.contracts] == ["CT1", "CT2"]
+
+    def test_a_column_zero_line_ends_the_block_even_if_unknown(self) -> None:
+        """Kill-check for a field-name allowlist.
+
+        `SHIPPED:` is not a plan field an allowlist would have listed, and it
+        was added to the grammar after the parser. Indentation is the only
+        terminator precisely so that the next new field cannot silently
+        extend the block.
+        """
+        rec = extract_plan_ids(SPAN_FIXTURE).slice_records[1]
+        assert [cid for cid, _, _ in rec.contracts] == ["CT3"]
+
+    def test_contract_text_joins_continuation_lines(self) -> None:
+        # producer-kill-check: restore `line.split("]:", 1)[1]` and the
+        # Catches: sentence vanishes.
+        rec = extract_plan_ids(SPAN_FIXTURE).slice_records[0]
+        text = {cid: body for cid, _, body in rec.contracts}["CT1"]
+        assert text == "the first rule holds. Catches: the rationale that must survive the join."
+
+    def test_class_is_read_from_the_entry_first_line_only(self) -> None:
+        """A bracketed class inside a continuation must not re-class or split.
+
+        This is CT18's first defect: an illustrative `CT3 [CONSTRAINT]` quoted
+        inside CT2's explanation used to become a second, differently-classed
+        contract of the slice.
+        """
+        text = (
+            "## SLICE1: x\nCONTRACTS:\n"
+            "  CT1 [FUNCTIONAL]: outer rule.\n"
+            "    For example CT3 [CONSTRAINT]: an illustration, not a declaration.\n"
+            "TESTS: tests/t.py\n"
+        )
+        rec = extract_plan_ids(text).slice_records[0]
+        assert [(cid, cls) for cid, cls, _ in rec.contracts] == [("CT1", "FUNCTIONAL")]
+
+    def test_unclassed_entry_still_defaults_to_functional(self) -> None:
+        rec = extract_plan_ids(RECORD_FIXTURE).slice_records[0]
+        assert {cid: cls for cid, cls, _ in rec.contracts} == {
+            "CT1": "FUNCTIONAL",
+            "CT2": "CONSTRAINT",
+            "CT3": "FUNCTIONAL",
+        }
+
+
+class TestAccessors:
+    """CT3/CT4/CT19/CT20/CT33 — the read API I02 consumes."""
+
+    def test_commands_for_returns_only_that_slice_deduped(self) -> None:
+        ids = extract_plan_ids(SPAN_FIXTURE)
+        assert ids.commands_for("SLICE1") == ("uv run pytest tests/test_first.py -q",)
+        assert ids.commands_for("SLICE2") == ("uv run pytest tests/test_second.py -q",)
+
+    def test_section_returns_exactly_that_slice(self) -> None:
+        ids = extract_plan_ids(SPAN_FIXTURE)
+        assert ids.section("SLICE1").startswith("## SLICE1: first")
+        assert "## SLICE2" not in ids.section("SLICE1")
+
+    def test_unknown_ids_are_empty_not_raising(self) -> None:
+        ids = extract_plan_ids(SPAN_FIXTURE)
+        assert ids.commands_for("SLICE99") == ()
+        assert ids.section("SLICE99") == ""
+        assert ids.tests_for("SLICE99") == ()
+        assert ids.contract_class("CT99") is None
+
+    def test_contract_class_resolves_across_slices(self) -> None:
+        ids = extract_plan_ids(SPAN_FIXTURE)
+        assert ids.contract_class("CT1") == "FUNCTIONAL"
+        assert ids.contract_class("CT2") == "CONSTRAINT"
+        assert ids.contract_class("CT3") == "PRESERVATION"
+        assert ids.contract_class("CT8") is None
+
+    def test_duplicate_declaration_is_deterministic_first_wins(self) -> None:
+        text = (
+            "## SLICE1: a\nCONTRACTS:\n  CT5 [FUNCTIONAL]: first.\nTESTS: tests/a.py\n"
+            "## SLICE2: b\nCONTRACTS:\n  CT5 [CONSTRAINT]: second.\nTESTS: tests/b.py\n"
+        )
+        assert extract_plan_ids(text).contract_class("CT5") == "FUNCTIONAL"
+
+    def test_tests_for_returns_the_slice_paths(self) -> None:
+        ids = extract_plan_ids(SPAN_FIXTURE)
+        assert ids.tests_for("SLICE1") == ("tests/test_first.py",)
+        assert ids.tests_for("SLICE2") == ("tests/test_second.py",)
+
+    def test_tests_note_is_preserved_verbatim(self) -> None:
+        # CT33. I02's fail-before filter keys on it and has no other source.
+        recs = extract_plan_ids(SPAN_FIXTURE).slice_records
+        assert recs[0].tests_note == "(NEW - author it; absent at 2f6b8c1)"
+        assert recs[1].tests_note == ""
+
+
+class TestCommandOwnership:
+    """CT4b/CT4c + Q35 — ownership of every verify command is total."""
+
+    def test_unowned_commands_are_reachable_from_plan_commands(self) -> None:
+        ids = extract_plan_ids(SPAN_FIXTURE)
+        assert ids.plan_commands == ("uv run ruff check .", "uv run pytest -q")
+        assert ids.commands_for(None) == ids.plan_commands
+
+    def test_no_sentinel_slice_is_invented_for_them(self) -> None:
+        # CT4b: SliceRecord is not widened and no fake id appears.
+        ids = extract_plan_ids(SPAN_FIXTURE)
+        assert [r.slice_id for r in ids.slice_records] == ["SLICE1", "SLICE2"]
+        assert "uv run ruff check ." not in [c for r in ids.slice_records for c in r.commands]
+
+    def test_ownership_partitions_the_flat_field(self) -> None:
+        """Q35: the exact identity, not a vacuous superset.
+
+        A bare `flat >= concat` assertion passes when `plan_commands` is empty
+        and tolerates junk in the flat field. This one fails if any command is
+        dropped, duplicated into the wrong slice, or misattributed.
+        """
+        ids = extract_plan_ids(SPAN_FIXTURE)
+        owned = {c for r in ids.slice_records for c in r.commands}
+        assert set(ids.commands) == set(ids.plan_commands) | owned
+
+    def test_flat_commands_stay_a_strict_superset_on_the_live_plan(self) -> None:
+        """CT4c preservation, measured on the real artifact."""
+        path = (
+            REPO_ROOT
+            / "worklogs"
+            / "planning-topology-and-executable-contracts-loop"
+            / "increments"
+            / "increment-01-plan-grammar-and-extractor.md"
+        )
+        ids = extract_plan_ids(path.read_text(encoding="utf-8"))
+        concat = [c for r in ids.slice_records for c in r.commands]
+        assert set(ids.commands) >= set(concat)
+        assert list(ids.commands) != concat, "flat field was re-derived from the slices"
+        assert set(ids.commands) == set(ids.plan_commands) | set(concat)
+
+
+class TestLivePathUndisturbed:
+    """C1 — the only shipped consumer of this module must not move."""
+
+    def test_workflow_controller_still_sees_every_declared_slice(self) -> None:
+        """CT11 preservation under CT16.
+
+        workflow_controller.py:332 returns early on an empty `.slices`, so a
+        span change that dropped a slice would silently disable the per-slice
+        coverage gate rather than fail loudly. `.slices` is derived from
+        headings, not spans; this pins that.
+        """
+        ids = extract_plan_ids(SPAN_FIXTURE)
+        assert ids.slices == ("SLICE1", "SLICE2")
+        path = (
+            REPO_ROOT
+            / "worklogs"
+            / "planning-topology-and-executable-contracts-loop"
+            / "increments"
+            / "increment-01-plan-grammar-and-extractor.md"
+        )
+        text = path.read_text(encoding="utf-8")
+        live = extract_plan_ids(text)
+
+        # A differential oracle, not a snapshot. An earlier version hardcoded
+        # the slice list of the live increment, so it went red every time the
+        # plan legitimately gained a slice -- which trains the next agent to
+        # edit the expectation rather than read the failure. What the gate
+        # actually needs is that `.slices` accounts for every heading in the
+        # document, checked against a scan written independently of the
+        # parser, plus that it is never empty (`workflow_controller.py:332`
+        # returns early on empty and the coverage gate silently no-ops).
+        from_headings = tuple(
+            f"SLICE{m.group(1)}" for m in re.finditer(r"^#{2,4} +SLICE(\d+[a-z]?):", text, re.MULTILINE)
+        )
+        assert from_headings, "fixture lost: the live increment declares no slices"
+        assert live.slices == from_headings
+
+
+class TestMutationHardening:
+    """C4 follow-up — oracles added for mutants that survived the first sweep.
+
+    Each test names the mutation it kills. These are not implementation
+    mirrors: every one asserts a behaviour a plan author can observe, and the
+    sweep is what revealed the fixture gap that hid it.
+    """
+
+    def test_nested_slice_does_not_leak_into_its_parent(self) -> None:
+        """Kills `matches[i + 1]` -> `matches[i - 1]` in `_slice_spans`.
+
+        Two slices cannot distinguish the two indices: `matches[-1]` is the
+        next slice. It takes three, with a *deeper* middle one, for the wrong
+        index to make SLICE1 swallow SLICE2.
+        """
+        text = "## SLICE1: outer\nmine\n### SLICE2: nested\nnot mine\n## SLICE3: last\nalso not\n"
+        recs = extract_plan_ids(text).slice_records
+        assert [r.slice_id for r in recs] == ["SLICE1", "SLICE2", "SLICE3"]
+        assert "### SLICE2" not in recs[0].section
+        assert "not mine" not in recs[0].section
+
+    def test_a_plan_opening_with_a_verify_fence_keeps_it(self) -> None:
+        """Kills `cursor = 0` -> `cursor = 1` in `_unowned_commands`.
+
+        Dropping one character is invisible unless the very first byte of the
+        document is part of a fence.
+        """
+        text = "```verify\nuv run ruff check .\n```\n\n## SLICE1: x\nTESTS: tests/t.py\n"
+        assert extract_plan_ids(text).plan_commands == ("uv run ruff check .",)
+
+    def test_a_single_space_is_enough_indentation(self) -> None:
+        """Kills `line[:1].isspace()` -> `line[:2].isspace()` in `_contracts_block`.
+
+        CT17 says indentation is the terminator — any indentation. Reading two
+        characters misclassifies a one-space entry as a column-zero line and
+        truncates the block before it.
+        """
+        text = "## SLICE1: x\nCONTRACTS:\n CT1 [FUNCTIONAL]: shallow but indented.\nTESTS: tests/t.py\n"
+        rec = extract_plan_ids(text).slice_records[0]
+        assert [cid for cid, _, _ in rec.contracts] == ["CT1"]
+
+    def test_a_hash_note_is_a_tests_note_too(self) -> None:
+        """Kills the `"#"` literal in the TESTS:-note pattern."""
+        text = "## SLICE1: x\nTESTS: tests/a.py  # run under -k slow\n"
+        rec = extract_plan_ids(text).slice_records[0]
+        assert rec.test_paths == ("tests/a.py",)
+        assert rec.tests_note == "# run under -k slow"
+
+    def test_absent_fields_fall_back_to_their_documented_defaults(self) -> None:
+        """Kills the `""` / `"prescriptive"` fallbacks in `_build_record`.
+
+        RECORD_FIXTURE states every field explicitly, so the `else` arms were
+        never evaluated and could be changed to anything at all.
+        """
+        rec = extract_plan_ids("## SLICE1: bare\n- [ ] STEP1: do (exit: x)\n").slice_records[0]
+        assert rec.intent == ""
+        assert rec.steps_mode == "prescriptive"
+        assert rec.test_paths == ()
+        assert rec.tests_note == ""
+        assert rec.contracts == ()
+
+    def test_a_duplicate_id_inside_one_slice_keeps_the_first(self) -> None:
+        """Kills `seen.add(cid)` -> `seen.add(None)`.
+
+        The cross-slice duplicate test exercises `contract_class`'s scan
+        order, not the per-slice de-duplication set.
+        """
+        text = (
+            "## SLICE1: x\nCONTRACTS:\n"
+            "  CT1 [FUNCTIONAL]: the first one.\n"
+            "  CT1 [CONSTRAINT]: the second one.\n"
+            "  CT2 [PRESERVATION]: a later, distinct one.\n"
+            "TESTS: tests/t.py\n"
+        )
+        rec = extract_plan_ids(text).slice_records[0]
+        # The trailing CT2 also kills `continue` -> `break`: skipping a
+        # duplicate must not abandon the rest of the block.
+        assert [(cid, cls) for cid, cls, _ in rec.contracts] == [
+            ("CT1", "FUNCTIONAL"),
+            ("CT2", "PRESERVATION"),
+        ]
+
+    def test_a_line_at_entry_indent_closes_the_entry(self) -> None:
+        """Kills `<= indent` -> `< indent` and the `len(line) + len(...)` flip.
+
+        Only a *more* indented line continues an entry. A line at the same
+        indent is a sibling, and joining it would merge two contracts' text.
+        """
+        text = (
+            "## SLICE1: x\nCONTRACTS:\n"
+            "  CT1 [FUNCTIONAL]: the rule.\n"
+            "    deeper, so part of CT1.\n"
+            "  stray prose at entry indent.\n"
+            "TESTS: tests/t.py\n"
+        )
+        rec = extract_plan_ids(text).slice_records[0]
+        assert [body for _, _, body in rec.contracts] == ["the rule. deeper, so part of CT1."]
+
+    def test_an_entry_may_start_its_text_on_the_continuation_line(self) -> None:
+        """Kills the `if p` filter in the join — it would leave a leading space."""
+        text = "## SLICE1: x\nCONTRACTS:\n  CT1 [FUNCTIONAL]:\n    all of it is here.\nTESTS: tests/t.py\n"
+        rec = extract_plan_ids(text).slice_records[0]
+        assert [body for _, _, body in rec.contracts] == ["all of it is here."]
+
+    def test_a_deeper_entry_is_a_declaration_not_continuation_text(self) -> None:
+        """Kills the four `stop` mutants in `_section_contracts`.
+
+        An indented line that *itself* begins `CT<n> [CLASS]:` is an entry
+        wherever it sits, so it must not also be folded into the previous
+        entry's text. Three entries are needed: with two, `starts[-1]` and
+        `starts[position + 1]` are the same element.
+        """
+        text = (
+            "## SLICE1: x\nCONTRACTS:\n"
+            "  CT1 [FUNCTIONAL]: first.\n"
+            "    CT2 [CONSTRAINT]: deeper, still its own declaration.\n"
+            "  CT3 [PRESERVATION]: third.\n"
+            "    CT4 [FUNCTIONAL]: deeper, and last.\n"
+            "TESTS: tests/t.py\n"
+        )
+        rec = extract_plan_ids(text).slice_records[0]
+        # A deeper entry in the *middle* and a deeper entry at the *end*
+        # exercise different arms of the stop index; the last-but-one entry
+        # is the only position where an off-by-one in the guard shows up.
+        assert [(cid, body) for cid, _, body in rec.contracts] == [
+            ("CT1", "first."),
+            ("CT2", "deeper, still its own declaration."),
+            ("CT3", "third."),
+            ("CT4", "deeper, and last."),
+        ]
+
+    def test_a_blank_line_does_not_truncate_an_entry(self) -> None:
+        """Kills `continue` -> `break` on the blank-line skip.
+
+        A blank line inside the block is visual spacing, not a terminator;
+        only indentation terminates (CT17). Pinned because the grammar does
+        not say so in words.
+        """
+        text = (
+            "## SLICE1: x\nCONTRACTS:\n"
+            "  CT1 [FUNCTIONAL]: opening clause.\n"
+            "\n"
+            "    Catches: the clause after the blank line.\n"
+            "TESTS: tests/t.py\n"
+        )
+        rec = extract_plan_ids(text).slice_records[0]
+        assert [body for _, _, body in rec.contracts] == ["opening clause. Catches: the clause after the blank line."]
+
+    def test_accessors_require_the_canonical_id_grammar(self) -> None:
+        """Q43(ii) — the accessors are strict; `SLICE` and `S`/`STEP` are distinct.
+
+        These accessors used to canonicalise, so `S1` resolved to `SLICE1`.
+        That made them a second lenient surface beside the one E106 sanctioned,
+        and a dangerous one: inside a plan `S2` is ambiguous between a slice
+        and a step, so a caller holding a *step* id was handed the
+        like-numbered *slice*'s commands and could not tell. Returning nothing
+        is the only answer that cannot be mistaken for a right one.
+
+        Leniency is not abolished, only confined to the boundary E106 scoped it
+        to, which the final assertion pins.
+        """
+        ids = extract_plan_ids(SPAN_FIXTURE)
+
+        assert ids.commands_for("SLICE1") != ()
+        assert ids.tests_for("SLICE2") == ("tests/test_second.py",)
+        assert ids.section("SLICE1").startswith("## SLICE1: first")
+
+        assert ids.commands_for("S1") == ()
+        assert ids.tests_for("S2") == ()
+        assert ids.section("S1") == ""
+
+        assert canonical_slice_id("S1") == "SLICE1"
+        assert ids.commands_for(canonical_slice_id("S1")) == ids.commands_for("SLICE1")
+
+    def test_test_path_tokens_are_stripped_of_list_punctuation(self) -> None:
+        """Kills `t.strip(",;")` -> `strip(None)` / a corrupted strip set."""
+        rec = extract_plan_ids("## SLICE1: x\nTESTS: tests/a.py, tests/b.py;\n").slice_records[0]
+        assert rec.test_paths == ("tests/a.py", "tests/b.py")
+
+    def test_only_list_punctuation_is_stripped_from_a_path(self) -> None:
+        """The strip set is `,;` exactly — letters at a token edge survive.
+
+        Kills a widened strip set. A path is an opaque token to this parser;
+        trimming anything but the separators the grammar allows would corrupt
+        a legitimate filename.
+        """
+        rec = extract_plan_ids("## SLICE1: x\nTESTS: tests/fooX, tests/b.py\n").slice_records[0]
+        assert rec.test_paths == ("tests/fooX", "tests/b.py")
+
+
+class TestCanonicalSliceId:
+    """The id mapping the accessors depend on — `_record` canonicalises first.
+
+    Reached only through the workflow controller before SLICE2, so its
+    branches were never pinned. Each case names the mutation it kills.
+    """
+
+    def test_lowercase_prefix_is_canonicalised(self) -> None:
+        # kills `"slice"` -> `"SLICE"` (never true against a lowered string).
+        assert canonical_slice_id("slice1") == "SLICE1"
+        assert canonical_slice_id("Slice2b") == "SLICE2b"
+
+    def test_legacy_short_form_is_canonicalised(self) -> None:
+        assert canonical_slice_id("S1") == "SLICE1"
+        assert canonical_slice_id("S5a") == "SLICE5a"
+
+    def test_a_non_slice_token_is_returned_unchanged(self) -> None:
+        # kills the two `and` -> `or` flips: "step" must not become
+        # "SLICEtep", and "X9" must not become "SLICE9".
+        assert canonical_slice_id("step") == "step"
+        assert canonical_slice_id("X9") == "X9"
+
+    def test_a_bare_s_does_not_index_past_the_end(self) -> None:
+        # kills `len(text) > 1` -> `>= 1`, which raises IndexError instead.
+        assert canonical_slice_id("s") == "s"
+        assert canonical_slice_id("") == ""
+
+
+class TestContractSourcePositions:
+    """CT78 — the parser remembers where it read each contract.
+
+    root=pure function class=C0 claim=CT78 path=T3
+    oracle=the 1-based document line of a declaration, against the real plans.
+
+    A parser that returns structure without source positions forces every
+    consumer to re-parse the document to recover them, and a consumer's second
+    grammar drifts from the first. That is measured history here, not theory:
+    I02 carried such a copy and it disagreed with this module about unclassed
+    entries, so a correct plan was accused of omitting a kill directive.
+    """
+
+    def test_a_declaration_line_is_recovered_exactly(self) -> None:
+        """The real plan, where the interesting cases actually live."""
+        path = PLAN_DIR / "increment-01-plan-grammar-and-extractor.md"
+        text = path.read_text(encoding="utf-8")
+        lines = text.splitlines()
+
+        ids = extract_plan_ids(text)
+
+        for contract_id in ("CT3", "CT17", "CT18", "CT34"):
+            line = ids.contract_line(contract_id)
+            assert lines[line - 1].lstrip().startswith(f"{contract_id} ["), (
+                f"{contract_id}: line {line} is {lines[line - 1]!r}"
+            )
+
+    def test_a_forward_reference_does_not_become_the_declaration(self) -> None:
+        """The case that decided Q45, kept as the regression it is.
+
+        `CT17` is declared on line 231 of increment-01 but first *mentioned* on
+        line 22, in the prose "see CT17/CT18" — 209 lines early. Any locator
+        keyed on "first occurrence of the id" reports line 22 and sends its
+        reader 209 lines from the defect, with full confidence.
+        """
+        text = (PLAN_DIR / "increment-01-plan-grammar-and-extractor.md").read_text(encoding="utf-8")
+        lines = text.splitlines()
+
+        ids = extract_plan_ids(text)
+        declared_at = ids.contract_line("CT17")
+        first_mention = next(i for i, line in enumerate(lines, start=1) if "CT17" in line)
+
+        assert first_mention < declared_at, "precondition: the id is cited before it is declared"
+        assert lines[first_mention - 1].lstrip().startswith("of a slice section")
+        assert lines[declared_at - 1].lstrip().startswith("CT17 [CONSTRAINT]:")
+
+    def test_a_contract_quoted_as_an_illustration_is_not_a_declaration(self) -> None:
+        """CT18's own case, now also guarding positions.
+
+        CT2's body quotes ``CT3 [CONSTRAINT]: …`` as an example. It sits in the
+        same CONTRACTS block as CT3's real declaration, so scoping a search to
+        the section does not save a naive locator — only the entry grammar
+        does, which is why it must live here.
+        """
+        text = (PLAN_DIR / "increment-01-plan-grammar-and-extractor.md").read_text(encoding="utf-8")
+        lines = text.splitlines()
+
+        line = extract_plan_ids(text).contract_line("CT3")
+
+        assert "`CT3 [CONSTRAINT]" not in lines[line - 1]
+        assert lines[line - 1].lstrip().startswith("CT3 [FUNCTIONAL]:")
+
+    def test_an_unclassed_contract_still_gets_a_line(self) -> None:
+        """The entry grammar makes the class optional, so positions must too."""
+        plan = "## SLICE1: a thing\nCONTRACTS:\n  CT1: an unclassed contract.\n"
+
+        ids = extract_plan_ids(plan)
+
+        assert ids.contract_class("CT1") == "FUNCTIONAL"
+        assert ids.contract_line("CT1") == 3
+
+    def test_a_referenced_contract_has_no_line(self) -> None:
+        """0 is "this parse has no line for that id", never a guess.
+
+        A wrong line is worse than no line: it sends the reader somewhere with
+        confidence. The sentinel has to be distinguishable from line 1.
+        """
+        ids = extract_plan_ids("## SLICE1: a thing\nCONTRACTS:\n  CT1 [FUNCTIONAL]: cites CT99.\n")
+
+        assert ids.contract_line("CT1") == 3
+        assert "CT99" in ids.contracts
+        assert ids.contract_line("CT99") == 0
+        assert ids.contract_line("CT404") == 0
+
+    def test_a_record_knows_where_its_slice_begins(self) -> None:
+        """`start_line` is what lifts a section-relative offset into the document."""
+        plan = "# Title\n\nprose\n\n## SLICE1: first\nCONTRACTS:\n  CT1 [FUNCTIONAL]: a thing.\n"
+
+        record = extract_plan_ids(plan).slice_records[0]
+
+        assert record.start_line == 5
+        assert record.contract_lines == (("CT1", 7),)
+
+    def test_positions_are_absolute_in_the_second_slice_too(self) -> None:
+        """Kills an implementation that forgets to offset per section."""
+        plan = (
+            "## SLICE1: first\nCONTRACTS:\n  CT1 [FUNCTIONAL]: a.\n"
+            "## SLICE2: second\nCONTRACTS:\n  CT2 [FUNCTIONAL]: b.\n"
+        )
+
+        ids = extract_plan_ids(plan)
+
+        assert ids.contract_line("CT1") == 3
+        assert ids.contract_line("CT2") == 6
+
+    def test_every_declared_contract_in_both_real_plans_has_a_line(self) -> None:
+        """Non-vacuity: the surface answers for the whole corpus, not a fixture."""
+        for name in ("increment-01-plan-grammar-and-extractor.md", "increment-02-verify-gate-and-kill-checks.md"):
+            ids = extract_plan_ids((PLAN_DIR / name).read_text(encoding="utf-8"))
+            declared = [c for c in ids.contracts if ids.contract_class(c) is not None]
+
+            assert len(declared) > 30, f"{name}: fixture lost its contracts"
+            assert [c for c in declared if ids.contract_line(c) == 0] == []

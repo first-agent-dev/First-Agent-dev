@@ -1,0 +1,354 @@
+{
+  "audit": {
+    "exact_set": true,
+    "modified_surfaces": 2,
+    "modules": 14,
+    "omitted_module_controls_failed": 16,
+    "seams": 8
+  },
+  "audited_git": "1f20d94c904d8ca47720fc7c0b1073b836740ae2",
+  "base_git": "a32a72fc58db4b9a5b048a9b6475649bcf3e32b4",
+  "modules": [
+    {
+      "fixture_oracle": "Boot actual image entrypoint/wrapper/help/auto-run/session with hostile CWD/PYTHONPATH/editable-pth/project venv. Assert installed module origins and unchanged controller/control sentinels; no project import before cell admission.",
+      "id": "I03-LIVE-01",
+      "live_status": "PLANNED_UNEXECUTED",
+      "path": "src/fa/controller_entry.py",
+      "producers": "Installed isolated entry and dependency/origin closure",
+      "sha256": "c61f3966f13fc923cfb4bf7a8ca223352dfe751b2cac8ae349f38f6ce33fa439",
+      "top_level_symbols": [
+        "ControllerImportError",
+        "_within",
+        "_read_install_text",
+        "_audit_pth",
+        "_audit_customization",
+        "_audit_site",
+        "_assert_installation",
+        "_assert_controller_import_closure",
+        "_assert_loaded_origins",
+        "_main"
+      ]
+    },
+    {
+      "fixture_oracle": "Build/install frozen wheel in actual controller and cell images; assert execution package origins/dependency closure and no source/editable shadow. Package marker has no independent runtime producer.",
+      "id": "I03-LIVE-02",
+      "live_status": "PLANNED_UNEXECUTED",
+      "path": "src/fa/execution/__init__.py",
+      "producers": "Execution package installation",
+      "sha256": "b1a2ccb5ea927fbd365a2dcf84bceb2495eaad8d5c7096de4cb4d9af4978f61c",
+      "top_level_symbols": []
+    },
+    {
+      "fixture_oracle": "Actual UDS wrong namespace/view/generation, forged receipt and malformed grant cases deny before effects. Read persisted receipt identities; durable journals contain no capability; IDs alone authorize nothing.",
+      "id": "I03-LIVE-03",
+      "live_status": "PLANNED_UNEXECUTED",
+      "path": "src/fa/execution/types.py",
+      "producers": "Namespace/view/operation/receipt/grant projections",
+      "sha256": "125c241fedf94659274efe448ebe88a3c5daf4839ca577ec369ff15b42c28caf",
+      "top_level_symbols": [
+        "ExecutionContractError",
+        "_hex_id",
+        "_positive_integer",
+        "Operation",
+        "NamespaceRef",
+        "Access",
+        "ViewPurpose",
+        "ViewRef",
+        "validate_capability",
+        "GrantReply",
+        "JobState",
+        "OperationRef",
+        "ExecutionReceipt",
+        "PublicReply"
+      ]
+    },
+    {
+      "fixture_oracle": "Actual socket partial/oversize/duplicate-key/nonfinite/unknown-field frames, expired input and command-over-control-budget. Assert zero denied create/RUN, bounded replies, no reset or automatic replay.",
+      "id": "I03-LIVE-04",
+      "live_status": "PLANNED_UNEXECUTED",
+      "path": "src/fa/execution/protocol.py",
+      "producers": "Closed codec, bounded frames, DeadlineConnection",
+      "sha256": "2e48c70c2cf3ec49936e743f0032b75c0a520796bf4c5063131bb1c0e4a3d6bc",
+      "top_level_symbols": [
+        "_object",
+        "_enum",
+        "_nullable",
+        "_pattern",
+        "_id",
+        "InvalidRequestError",
+        "_byte_limits",
+        "_check",
+        "_pairs",
+        "_nonfinite",
+        "_loads",
+        "encode_json",
+        "decode_request",
+        "_request_bindings",
+        "validate_plan_ref",
+        "validate_receipt",
+        "decode_reply",
+        "FrameConnection",
+        "DeadlineConnection",
+        "_read_exact",
+        "read_frame",
+        "write_frame"
+      ]
+    },
+    {
+      "fixture_oracle": "Actual image/inspect/host facts: pinned image, nonroot, private namespaces, capdrop/NNP/seccomp/resource limits, network none and only approved source/scratch/cache mounts. Deny raw image/mount/env/daemon overrides; inspect is not host attestation.",
+      "id": "I03-LIVE-05",
+      "live_status": "PLANNED_UNEXECUTED",
+      "path": "src/fa/execution/profiles.py",
+      "producers": "Approved profile rendering",
+      "sha256": "0f183a69ab1049be45585b9c7d1e02c8383e615358c6b564e7e0d2c151c4b55a",
+      "top_level_symbols": [
+        "_configured_id",
+        "ExecutionProfile"
+      ]
+    },
+    {
+      "fixture_oracle": "Real private UDS kernel peer authentication, exact input reservation, durable begin/DONE and original reply replay. Exercise revoked-proof Q75, cache loss/saturation/restart and denied peer; no callback/reexecution/grant reconstruction. Verify peer and original absolute deadline reach actual admission/backend.",
+      "id": "I03-LIVE-06",
+      "live_status": "PLANNED_UNEXECUTED",
+      "path": "src/fa/execution/supervisor.py",
+      "producers": "PeerIdentity, dispatcher, completed-reply cache and input hash",
+      "sha256": "cb5d65dc79fe9e05c0fb8572523c57273a426cb5aca53f62b95dc955e30d731e",
+      "top_level_symbols": [
+        "ReplyUnavailableError",
+        "ReplayConflictError",
+        "operation_input_sha256",
+        "ReplayBinding",
+        "_validate_original_proof",
+        "_CompletedReply",
+        "_authorize_replay",
+        "CompletedReplyCache",
+        "PeerIdentity",
+        "SupervisorError",
+        "SupervisorDispatcher"
+      ]
+    },
+    {
+      "fixture_oracle": "Kill supervisor at each durable boundary, including lost create/start and completed-creation/live-cell cases. Observe original IDs/CIDs, unknown fencing, durable cancel before signal and secret-free files; no renewed begin/create/start/RUN.",
+      "id": "I03-LIVE-07",
+      "live_status": "PLANNED_UNEXECUTED",
+      "path": "src/fa/execution/journal.py",
+      "producers": "Single supervisor, reservation/begin/create/start/CID/cancel/completion/recovery",
+      "sha256": "d2a670b177d0527658969f0a9a842cd5188b91f2fadfd648afbe3bd9602f585e",
+      "top_level_symbols": [
+        "JournalError",
+        "Reservation",
+        "_projection_schema",
+        "_validate_completed_receipt",
+        "_validate_record",
+        "OperationJournal"
+      ]
+    },
+    {
+      "fixture_oracle": "Actual protected view/context and controller-admitted PlanRef; change source/hash before admission/exec and forge worker plan hash. Deny effects or completion. Ordinary no-active-workflow null allowed; formal evidence null denied. Never infer ordinary mode from null or PROJECT alone.",
+      "id": "I03-LIVE-08",
+      "live_status": "PLANNED_UNEXECUTED",
+      "path": "src/fa/execution/plans.py",
+      "producers": "ProtectedPlanContext and actual plan recheck",
+      "sha256": "0fbad35bdad1b8f3e5563ae20bb1b0cf2e5a653ac5c366968046bd761e207856",
+      "top_level_symbols": [
+        "ProtectedPlanContext"
+      ]
+    },
+    {
+      "fixture_oracle": "Actual tool/PTY run/INTERRUPT/CLOSE/LIST with 15 closed errors, supplied/missing references, timeout and disconnect. Persist truthful typed outcomes; no host shell/reconnect/resend. Control uncertainty replays original control input, never exec-inspects its request ID.",
+      "id": "I03-LIVE-09",
+      "live_status": "PLANNED_UNEXECUTED",
+      "path": "src/fa/execution/client.py",
+      "producers": "ExecutionClient and all ManagedBashExecutor methods",
+      "sha256": "564da71bc680f1b002aec573fbf2718a13c1d1ab7a2d86e563e766cf993afde8",
+      "top_level_symbols": [
+        "ExecutionUnavailableError",
+        "ExecutionUncertainError",
+        "ExecutionTimedOutError",
+        "ExecutionRejectedError",
+        "_connect_authenticated",
+        "ExecutionClient",
+        "ManagedBashExecutor"
+      ]
+    },
+    {
+      "fixture_oracle": "Actual non-TTY cell stream with split/oversize/malformed frames, wrong request/session binding and command/control concurrency. Reject invalid frames without privilege/grant/path leakage or invented success.",
+      "id": "I03-LIVE-10",
+      "live_status": "PLANNED_UNEXECUTED",
+      "path": "src/fa/execution/cell_protocol.py",
+      "producers": "Private worker codec",
+      "sha256": "e2d9deb8e6db2a7910c2ebd3917bce7efa25453c87a51829dc3ad39c484aa614",
+      "top_level_symbols": [
+        "decode_cell_request",
+        "encode_cell_request",
+        "decode_cell_reply"
+      ]
+    },
+    {
+      "fixture_oracle": "Two commands retain shell state in one owned cell; independent namespace/view main sessions stay separate. Real one-shot nonzero/timeout, concurrent interrupt/close/list/STOP and EOF. STOP/worker exit is not cgroup emptiness.",
+      "id": "I03-LIVE-11",
+      "live_status": "PLANNED_UNEXECUTED",
+      "path": "src/fa/execution/cell_worker.py",
+      "producers": "Persistent worker, one-shot worker and module main",
+      "sha256": "ff84600eb9971fb690c441347229b96343d6c286180f061f20f217514822f7ef",
+      "top_level_symbols": [
+        "CellWorker",
+        "_StdioConnection",
+        "_reply",
+        "serve_once",
+        "serve",
+        "main"
+      ]
+    },
+    {
+      "fixture_oracle": "Real Docker attach one RUN plus concurrent controls, correlation mismatch and forced stream loss. All affected requests become uncertain without resend/reconnect; verify no duplicate command sentinel.",
+      "id": "I03-LIVE-12",
+      "live_status": "PLANNED_UNEXECUTED",
+      "path": "src/fa/execution/worker_client.py",
+      "producers": "Sole attach, RUN/control multiplexing and stream-loss handling",
+      "sha256": "958f32bc976c4075c1a135c8ae32ff687c0a5bcc23abeb369203abf60db4dd8b",
+      "top_level_symbols": [
+        "WorkerUnavailableError",
+        "_Pending",
+        "WorkerClient"
+      ]
+    },
+    {
+      "fixture_oracle": "Real approved daemon: owned labels/image/CID, original-name recovery, attach Upgrade/mux/stderr limits, fixed full-CID SIGKILL after durable cancel and independent same-CID inspect. Foreign/rebound identity, 409/404/loss/malformed replies remain truthful; no ACK-as-terminal barrier.",
+      "id": "I03-LIVE-13",
+      "live_status": "PLANNED_UNEXECUTED",
+      "path": "src/fa/execution/docker.py",
+      "producers": "Authenticated native HTTP, create/start/inspect/attach/force-stop",
+      "sha256": "628a9ba1112cb53d247cefe8ed0d7767bd03732c4ad07040bfa91833c67d9179",
+      "top_level_symbols": [
+        "DockerUnavailableError",
+        "_remaining",
+        "_DeadlineSocket",
+        "ContainerObservation",
+        "DockerAttachStream",
+        "DockerEngine",
+        "DockerCells"
+      ]
+    },
+    {
+      "fixture_oracle": "Actual tool and PTY same-view read-your-writes; immutable readers stay pinned. Exercise no-follow/link/FIFO/owner/protected-PlanRef/size/UTF8/window/hash/expected-absence, parent-swap and fsync faults. Assert canonical/control sentinels, modes/UIDs, retained descriptors through drain and explicit conflict/uncertainty.",
+      "id": "I03-LIVE-14",
+      "live_status": "PLANNED_UNEXECUTED",
+      "path": "src/fa/execution/view_io.py",
+      "producers": "RootedViewIO and actual admitted text IO",
+      "sha256": "9ebced10cfe5b956ec50a4719862eca7c172d87e60e602af1c9f7bede581135d",
+      "top_level_symbols": [
+        "ViewIOError",
+        "ReadResult",
+        "WriteResult",
+        "_identity",
+        "_fingerprint",
+        "_parts",
+        "_prefix",
+        "_rename_directory",
+        "_Snapshot",
+        "_Progress",
+        "_Staged",
+        "RootedViewIO"
+      ]
+    },
+    {
+      "fixture_oracle": "Actual installed PTY backend receives subsecond remaining budget; normal/nonzero/timeout preserve result fields and responsiveness, no timeout truncation to zero or new process scope. Actual cgroup cleanup remains independently required.",
+      "id": "I03-LIVE-15",
+      "live_status": "PLANNED_UNEXECUTED",
+      "path": "src/fa/runtime/pty_pool.py",
+      "producers": "Fractional PTY deadlines consumed by worker",
+      "sha256": "ad187d83498fa52e46bdcf7d20af921fbeb8f9162f2599bc0b9ae30b2dd08f16",
+      "top_level_symbols": [
+        "_tail_keep",
+        "resolve_cr",
+        "_normalize_cr",
+        "PtyResult",
+        "_TmuxSessionLike",
+        "_TmuxServerLike",
+        "PoolExhaustedError",
+        "PtySession",
+        "PtyPool"
+      ]
+    },
+    {
+      "fixture_oracle": "Build actual approved immutable image; record wheel/image/dependency SHA, isolated help/origin checks and deployed entrypoint/mount facts. Build checks alone do not prove runtime cutover or kernel isolation.",
+      "id": "I03-LIVE-16",
+      "live_status": "PLANNED_UNEXECUTED",
+      "path": "Dockerfile.fa",
+      "producers": "Noneditable install and isolated build checks",
+      "sha256": "949c0e4645c6d8c6f7367923dab58780df7f47b2beed69c859e029c61431fe3a",
+      "top_level_symbols": []
+    }
+  ],
+  "production_diff": [
+    "Dockerfile.fa",
+    "src/fa/controller_entry.py",
+    "src/fa/execution/__init__.py",
+    "src/fa/execution/cell_protocol.py",
+    "src/fa/execution/cell_worker.py",
+    "src/fa/execution/client.py",
+    "src/fa/execution/docker.py",
+    "src/fa/execution/journal.py",
+    "src/fa/execution/plans.py",
+    "src/fa/execution/profiles.py",
+    "src/fa/execution/protocol.py",
+    "src/fa/execution/supervisor.py",
+    "src/fa/execution/types.py",
+    "src/fa/execution/view_io.py",
+    "src/fa/execution/worker_client.py",
+    "src/fa/runtime/pty_pool.py"
+  ],
+  "runner_source": "import ast,hashlib,json,pathlib,subprocess\nr=pathlib.Path('/home/user/First-Agent-dev');b=r/'worklogs/planning-topology-and-executable-contracts-loop';base='a32a72fc58db4b9a5b048a9b6475649bcf3e32b4';head=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()\nrows=[\n('src/fa/controller_entry.py','Installed isolated entry and dependency/origin closure','Boot actual image entrypoint/wrapper/help/auto-run/session with hostile CWD/PYTHONPATH/editable-pth/project venv. Assert installed module origins and unchanged controller/control sentinels; no project import before cell admission.'),\n('src/fa/execution/__init__.py','Execution package installation','Build/install frozen wheel in actual controller and cell images; assert execution package origins/dependency closure and no source/editable shadow. Package marker has no independent runtime producer.'),\n('src/fa/execution/types.py','Namespace/view/operation/receipt/grant projections','Actual UDS wrong namespace/view/generation, forged receipt and malformed grant cases deny before effects. Read persisted receipt identities; durable journals contain no capability; IDs alone authorize nothing.'),\n('src/fa/execution/protocol.py','Closed codec, bounded frames, DeadlineConnection','Actual socket partial/oversize/duplicate-key/nonfinite/unknown-field frames, expired input and command-over-control-budget. Assert zero denied create/RUN, bounded replies, no reset or automatic replay.'),\n('src/fa/execution/profiles.py','Approved profile rendering','Actual image/inspect/host facts: pinned image, nonroot, private namespaces, capdrop/NNP/seccomp/resource limits, network none and only approved source/scratch/cache mounts. Deny raw image/mount/env/daemon overrides; inspect is not host attestation.'),\n('src/fa/execution/supervisor.py','PeerIdentity, dispatcher, completed-reply cache and input hash','Real private UDS kernel peer authentication, exact input reservation, durable begin/DONE and original reply replay. Exercise revoked-proof Q75, cache loss/saturation/restart and denied peer; no callback/reexecution/grant reconstruction. Verify peer and original absolute deadline reach actual admission/backend.'),\n('src/fa/execution/journal.py','Single supervisor, reservation/begin/create/start/CID/cancel/completion/recovery','Kill supervisor at each durable boundary, including lost create/start and completed-creation/live-cell cases. Observe original IDs/CIDs, unknown fencing, durable cancel before signal and secret-free files; no renewed begin/create/start/RUN.'),\n('src/fa/execution/plans.py','ProtectedPlanContext and actual plan recheck','Actual protected view/context and controller-admitted PlanRef; change source/hash before admission/exec and forge worker plan hash. Deny effects or completion. Ordinary no-active-workflow null allowed; formal evidence null denied. Never infer ordinary mode from null or PROJECT alone.'),\n('src/fa/execution/client.py','ExecutionClient and all ManagedBashExecutor methods','Actual tool/PTY run/INTERRUPT/CLOSE/LIST with 15 closed errors, supplied/missing references, timeout and disconnect. Persist truthful typed outcomes; no host shell/reconnect/resend. Control uncertainty replays original control input, never exec-inspects its request ID.'),\n('src/fa/execution/cell_protocol.py','Private worker codec','Actual non-TTY cell stream with split/oversize/malformed frames, wrong request/session binding and command/control concurrency. Reject invalid frames without privilege/grant/path leakage or invented success.'),\n('src/fa/execution/cell_worker.py','Persistent worker, one-shot worker and module main','Two commands retain shell state in one owned cell; independent namespace/view main sessions stay separate. Real one-shot nonzero/timeout, concurrent interrupt/close/list/STOP and EOF. STOP/worker exit is not cgroup emptiness.'),\n('src/fa/execution/worker_client.py','Sole attach, RUN/control multiplexing and stream-loss handling','Real Docker attach one RUN plus concurrent controls, correlation mismatch and forced stream loss. All affected requests become uncertain without resend/reconnect; verify no duplicate command sentinel.'),\n('src/fa/execution/docker.py','Authenticated native HTTP, create/start/inspect/attach/force-stop','Real approved daemon: owned labels/image/CID, original-name recovery, attach Upgrade/mux/stderr limits, fixed full-CID SIGKILL after durable cancel and independent same-CID inspect. Foreign/rebound identity, 409/404/loss/malformed replies remain truthful; no ACK-as-terminal barrier.'),\n('src/fa/execution/view_io.py','RootedViewIO and actual admitted text IO','Actual tool and PTY same-view read-your-writes; immutable readers stay pinned. Exercise no-follow/link/FIFO/owner/protected-PlanRef/size/UTF8/window/hash/expected-absence, parent-swap and fsync faults. Assert canonical/control sentinels, modes/UIDs, retained descriptors through drain and explicit conflict/uncertainty.'),\n('src/fa/runtime/pty_pool.py','Fractional PTY deadlines consumed by worker','Actual installed PTY backend receives subsecond remaining budget; normal/nonzero/timeout preserve result fields and responsiveness, no timeout truncation to zero or new process scope. Actual cgroup cleanup remains independently required.'),\n('Dockerfile.fa','Noneditable install and isolated build checks','Build actual approved immutable image; record wheel/image/dependency SHA, isolated help/origin checks and deployed entrypoint/mount facts. Build checks alone do not prove runtime cutover or kernel isolation.'),\n]\nseams=[\n('S01','Installed launch \u2192 controller \u2192 private authenticated UDS','Real entry/help/auto-run/session paths, unavailable backend and hostile project imports: zero project host/controller commands.'),\n('S02','Dispatcher \u2192 actual WorkspaceAuthority.admit \u2192 CellBackend','Real actor/generation/pin/profile/PlanRef check and same original deadline, register active work before effects; revoke/stop races permit no late send/write. Current actor/deadline handler propagation and actual owners are incomplete.'),\n('S03','Journal \u2192 original creation/CID \u2192 attach \u2192 reused per-command RUN','Two commands, two durable operations, one cell/attach; duplication/loss/restart including creator-DONE never permits another RUN or replacement cell. No second history.'),\n('S04','Cancel/close-admission \u2192 drain \u2192 force-stop \u2192 kernel barrier','Hold active file handler and queued RUN while stopping; fork/double-fork/setsid writers remain fenced until actual owned cgroup populated=0. 204/409/404/STOP/worker exit are not release proof; unknown quarantines.'),\n('S05','Registered root/writer \u2192 dirty R0 \u2192 view/rooted IO \u2192 pinned reader','Two OS actors race alias/bind/nested registrations and writer generation; exactly one writer. Copy actual staged/unstaged/untracked/deleted bytes without canonical index changes; tools/PTY share writer view, independent pins survive newer generation.'),\n('S06','Actual view \u2192 seal/current/intent \u2192 projection/recovery','Freeze after terminal barrier; inject death/fsync failure at every irreversible boundary. Complete old/new immutable revisions or quarantine, no committed rollback; protect Git index and user sentinels, safe no-replace new-project install.'),\n('S07','SessionManager/provisioner/tool builders/verifier \u2192 actual composed service','New/resume/new-session explicit reuse and real provisioning namespace before RPC; all execution/import/Git/readiness/search/PDF/mutation routes stay cell-local. Atomic caller/mount cutover; unavailable dependencies have no host fallback. These callers/owners are still unimplemented.'),\n('S08','Outer chat/nested workflow \u2192 source handoff/eval \u2192 final release proof','Real-provider CONTINUE_EXISTING and actual outer-chat delegated witness plus controlled bootstrap/failure/concurrency/isolation cases. Preserve Q59 suggestion/manual behavior, Q56/Q73 negative/indeterminate outcomes and Q74 checkpoints. Freeze/review final fixtures before approval/deploy; final SLICE6 only.'),\n]\nrecords=[]\nfor i,(path,producers,fixture) in enumerate(rows,1):\n raw=(r/path).read_bytes();tree=ast.parse(raw) if path.endswith('.py') else None\n symbols=[] if tree is None else [n.name for n in tree.body if isinstance(n,(ast.FunctionDef,ast.ClassDef,ast.AsyncFunctionDef))]\n records.append({'id':f'I03-LIVE-{i:02}','path':path,'sha256':hashlib.sha256(raw).hexdigest(),'top_level_symbols':symbols,'producers':producers,'fixture_oracle':fixture,'live_status':'PLANNED_UNEXECUTED'})\ndiff=subprocess.check_output(['git','diff','--name-only',base,head,'--','src','scripts','Dockerfile.fa','docker-compose.fa.yml','pyproject.toml'],text=True).splitlines();assert set(diff)=={x['path'] for x in records};assert len([x for x in records if x['path'].startswith('src/fa/execution/') or x['path']=='src/fa/controller_entry.py'])==14\nassert all(set(diff)!={x['path'] for x in records if x['path']!=missing} for missing in diff)\np=b/'notes/e2e-live-verification-register.md';old=p.read_text();assert '## E250 \u2014 I03' not in old\nsection='''\\n## E250 \u2014 I03 complete source/seam inventory, 2026-10-18 \u2014 PLANNED / UNEXECUTED\n\nSource audit at `1f20d94`, relative to retained I02 `a32a72f`: the prior register ended at E229\nand did NOT explicitly inventory I03. Corrected here in the SAME ledger, not another acceptance\nowner. Exactly14 added Python modules plus2 modified production surfaces below match the complete\nproduction diff. Source hashes and AST symbol inventory are in\n[evidence/i03-e250/e2e-inventory.json](evidence/i03-e250/e2e-inventory.json).\nEvery row is future live coverage, NOT an implemented test, C1 claim, host PASS or completion tick.\nLocal component evidence E232\u2013E249 remains separate. Future production additions must extend this\ninventory in the same implementation checkpoint; do not infer a live verdict from a source hash.\n\n**Target-scope clarification for historical I02 rows:** their workspace-first PYTHONPATH/venv/Git/\nmutation assertions apply INSIDE the authorized verification cell against its pinned source/scratch.\nThey do not authorize project imports/execution in the immutable controller or direct canonical\nmounts. The standing session/artifact requirements now join actual registered private views;\ncanonical `/sessions/<id>` is not a substitute for proving which source the cell executed.\nFormal workflow cases retain the actual admitted plan; ordinary no-active-workflow null follows Q76.\n\n| ID / production surface | Producers / seam | Required live fixture and useful oracle | Live status |\n|---|---|---|---|\n'''\nfor x in records:section+=f\"| {x['id']} `{x['path']}` | {x['producers']} | {x['fixture_oracle']} | PLANNED / UNEXECUTED |\\n\"\nsection+='\\n### Cross-module joins \u2014 all planned, not shipped composition\\n\\n| ID | Join | Required live fixture/oracle | Live status |\\n|---|---|---|---|\\n'\nfor key,join,oracle in seams:section+=f'| I03-LIVE-{key} | {join} | {oracle} | PLANNED / UNEXECUTED |\\n'\nsection+='''\n**Fixture implementation/execution owner:** accumulate local `tests/integration/` cases as actual\ncomposition exists; required invocation uses FA_REQUIRE_EXECUTION_HOST=1 and cannot skip missing\nDocker/cgroup/profile. Final reviewed `e2e/I03/` package/case index and independently reviewed drivers\nremain final SLICE6 per spec\u00a79.1, not an early live-host prerequisite. Every source producer/path,\nincluding internal guards and error/cleanup branches in the hash-backed symbol inventory, must be\naccounted for when freezing that final index; this table is NOT a contract\u2192test kill mapping or a\nclaim that merely naming a module proves every producer. Freeze actual factory/caller inventory,\nprove full-bank sensitivity with actual producer removals and retain complete raw phases, source\nrestoration, timing/cost, persisted receipts/artifacts and host sentinel/cgroup evidence. Runtime/\ncollection/setup/infra errors cannot prove kills. Record provider mode REAL/CONTROLLED explicitly.\n\n**Cleanup/safety:** disposable approved authority/profile/labels and roots disjoint from live user\nroots/secrets, bounded teardown with independent cgroup emptiness; uncertainty retains fencing and\nfails the case. No root deletion while writers may survive. No permissive authority, injected live\nsuccess, new approval gate or early deployment; all four transferred acceptance duties stay open.\n'''\np.write_text(old+section)\na={'base_git':base,'audited_git':head,'scope':'I03 production diff and planned live module/seam inventory; no runtime/live verdict','production_diff':diff,'modules':records,'seams':[{'id':'I03-LIVE-'+k,'join':j,'fixture_oracle':o,'live_status':'PLANNED_UNEXECUTED'} for k,j,o in seams],'audit':{'exact_set':True,'modules':14,'modified_surfaces':2,'seams':len(seams),'omitted_module_controls_failed':len(diff)},'runner_source':pathlib.Path(__file__).read_text()};p=b/'notes/evidence/i03-e250/e2e-inventory.json';p.parent.mkdir(parents=True,exist_ok=True);p.write_text(json.dumps(a,indent=2,sort_keys=True)+'\\n')\np=b/'increments/increment-03-execution-workspace-foundation.md';s=p.read_text();s+='''\\n## E250 \u2014 E2E source/seam inventory repaired before further implementation\n\nThe existing live register previously omitted explicit I03 entries. It now tracks all14 added\nPython modules, both modified production surfaces and8 cross-module joins against exact source\nhashes/AST inventory.16 omitted-module controls fail; no live case is implemented/executed by this\ninventory. Historical I02 project-import/env assertions apply inside cells, not the controller.\nNext dependency-ready STEP1 seam: dispatcher must pass authenticated peer and original absolute\ndeadline explicitly through authorization/handler to actual backend/admission (\u00a72.2, F20/F21),\nnot infer identity from namespace or reset command budget. Actual owners/SLICE2 remain unfinished.\n''';p.write_text(s)\np=b/'ledger.md';p.write_text(p.read_text()+'''\\nE250  FACT  Source audit finds missing I03 coverage in existing E2E live register through E229.\n    Added14 new-module +2 modified-surface rows,8 joins, exact diff/hash/AST inventory and16 omission\n    controls; all live statuses PLANNED/UNEXECUTED. Existing rows retained verbatim as prefix;\n    role-aware target clarification keeps workspace imports in cells, never immutable controller.\n    Final reviewed host package/execution remains SLICE6; all35STEPS/four duties open. Next actual\n    dispatcher peer/deadline propagation closes defined F20/F21 seam, not authority completion.\n''')\np=r/'worklogs/HANDOFF.md';s=p.read_text();a='**E249 CURRENT \u2014';assert a in s;s=s.replace(a,'''**E250 CURRENT \u2014 E2E ledger inventory verified/repaired:** source diff exactly14 added Python\nmodules +2 modified production surfaces, now16 explicit planned live rows +8 joins in existing\nE2E register, with SHA/AST evidence and16 omission controls. No live verdict. Next repair the\nspec\u00a72.2 dispatcher peer/deadline seam before actual backend/authority construction; all owners,\nSLICE2 and final SLICE6 duties remain open. No blocking policy question found in this audit.\n\n**E249 retained \u2014''',1);s=s.replace('2026-10-17 / E249','2026-10-18 / E250');p.write_text(s)\nprint('Inventory exact: 14 added modules, 2 modified surfaces, 8 seams; 16 omission controls fail; live results: NONE')\n",
+  "scope": "I03 production diff and planned live module/seam inventory; no runtime/live verdict",
+  "seams": [
+    {
+      "fixture_oracle": "Real entry/help/auto-run/session paths, unavailable backend and hostile project imports: zero project host/controller commands.",
+      "id": "I03-LIVE-S01",
+      "join": "Installed launch \u2192 controller \u2192 private authenticated UDS",
+      "live_status": "PLANNED_UNEXECUTED"
+    },
+    {
+      "fixture_oracle": "Real actor/generation/pin/profile/PlanRef check and same original deadline, register active work before effects; revoke/stop races permit no late send/write. Current actor/deadline handler propagation and actual owners are incomplete.",
+      "id": "I03-LIVE-S02",
+      "join": "Dispatcher \u2192 actual WorkspaceAuthority.admit \u2192 CellBackend",
+      "live_status": "PLANNED_UNEXECUTED"
+    },
+    {
+      "fixture_oracle": "Two commands, two durable operations, one cell/attach; duplication/loss/restart including creator-DONE never permits another RUN or replacement cell. No second history.",
+      "id": "I03-LIVE-S03",
+      "join": "Journal \u2192 original creation/CID \u2192 attach \u2192 reused per-command RUN",
+      "live_status": "PLANNED_UNEXECUTED"
+    },
+    {
+      "fixture_oracle": "Hold active file handler and queued RUN while stopping; fork/double-fork/setsid writers remain fenced until actual owned cgroup populated=0. 204/409/404/STOP/worker exit are not release proof; unknown quarantines.",
+      "id": "I03-LIVE-S04",
+      "join": "Cancel/close-admission \u2192 drain \u2192 force-stop \u2192 kernel barrier",
+      "live_status": "PLANNED_UNEXECUTED"
+    },
+    {
+      "fixture_oracle": "Two OS actors race alias/bind/nested registrations and writer generation; exactly one writer. Copy actual staged/unstaged/untracked/deleted bytes without canonical index changes; tools/PTY share writer view, independent pins survive newer generation.",
+      "id": "I03-LIVE-S05",
+      "join": "Registered root/writer \u2192 dirty R0 \u2192 view/rooted IO \u2192 pinned reader",
+      "live_status": "PLANNED_UNEXECUTED"
+    },
+    {
+      "fixture_oracle": "Freeze after terminal barrier; inject death/fsync failure at every irreversible boundary. Complete old/new immutable revisions or quarantine, no committed rollback; protect Git index and user sentinels, safe no-replace new-project install.",
+      "id": "I03-LIVE-S06",
+      "join": "Actual view \u2192 seal/current/intent \u2192 projection/recovery",
+      "live_status": "PLANNED_UNEXECUTED"
+    },
+    {
+      "fixture_oracle": "New/resume/new-session explicit reuse and real provisioning namespace before RPC; all execution/import/Git/readiness/search/PDF/mutation routes stay cell-local. Atomic caller/mount cutover; unavailable dependencies have no host fallback. These callers/owners are still unimplemented.",
+      "id": "I03-LIVE-S07",
+      "join": "SessionManager/provisioner/tool builders/verifier \u2192 actual composed service",
+      "live_status": "PLANNED_UNEXECUTED"
+    },
+    {
+      "fixture_oracle": "Real-provider CONTINUE_EXISTING and actual outer-chat delegated witness plus controlled bootstrap/failure/concurrency/isolation cases. Preserve Q59 suggestion/manual behavior, Q56/Q73 negative/indeterminate outcomes and Q74 checkpoints. Freeze/review final fixtures before approval/deploy; final SLICE6 only.",
+      "id": "I03-LIVE-S08",
+      "join": "Outer chat/nested workflow \u2192 source handoff/eval \u2192 final release proof",
+      "live_status": "PLANNED_UNEXECUTED"
+    }
+  ]
+}

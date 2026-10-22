@@ -55,6 +55,10 @@ class FeatureFlags:
     # payload untouched, so an unconfigured run still cannot have its prompt
     # rewritten -- while the harness reports what it WOULD have injected.
     coder_slice_ceremony_mode: str = "observe"
+    # I02/CT77c: the verify gate is observable before it is blocking.
+    # Operators may switch to enforce after reviewing live verification.json
+    # artifacts; missing/invalid configuration stays in the rollout-safe mode.
+    workflow_verify_gate_mode: str = "observe"
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -72,6 +76,7 @@ class FeatureFlags:
             "max_chain_retries": self.max_chain_retries,
             "intent_guard.mode": self.intent_guard_mode,
             "injections.coder_slice_ceremony.mode": self.coder_slice_ceremony_mode,
+            "workflow.verify_gate.mode": self.workflow_verify_gate_mode,
         }
 
 
@@ -109,6 +114,9 @@ FAIL_OPEN_FLAGS: frozenset[str] = frozenset(
         # only "enforce" alters the payload -- so the permissive direction
         # here costs telemetry, never a rewritten context.
         "coder_slice_ceremony_mode",
+        # I02/CT77c: config failure does not cold-enable a new blocking gate;
+        # operators inspect observe artifacts before explicitly enforcing.
+        "workflow_verify_gate_mode",
     }
 )
 
@@ -146,6 +154,8 @@ _KNOWN_FLAGS: dict[str, str] = {
     "intent_guard_mode": "str",
     "injections.coder_slice_ceremony.mode": "str",
     "coder_slice_ceremony_mode": "str",
+    "workflow.verify_gate.mode": "str",
+    "workflow_verify_gate_mode": "str",
 }
 
 
@@ -312,14 +322,28 @@ def load_feature_flags(text: str) -> FeatureFlagsLoadResult:
             ["coder_slice_ceremony_mode"],
             "observe",
         ),
+        workflow_verify_gate_mode=_get_str(
+            found,
+            "workflow.verify_gate.mode",
+            ["workflow_verify_gate_mode"],
+            "observe",
+        ),
     )
 
     return FeatureFlagsLoadResult(flags=flags, warnings=tuple(warnings))
 
 
 def load_feature_flags_from_path(
-    path: Path = DEFAULT_CONFIG_PATH,
+    path: Path | None = None,
 ) -> FeatureFlagsLoadResult:
+    """Read flags from ``path``; resolve the default config location at call time.
+
+    Deferred lookup keeps a process that changes HOME before startup and tests
+    that redirect ``DEFAULT_CONFIG_PATH`` isolated from the import-time value.
+    Explicit paths retain their existing behavior.
+    """
+    if path is None:
+        path = DEFAULT_CONFIG_PATH
     try:
         text = path.read_text(encoding="utf-8")
     except FileNotFoundError:

@@ -13,7 +13,7 @@
 
 <rect width="1460" height="2060" fill="#f6f8fa"/>
 <text x="40" y="52" font-size="30" font-weight="700" fill="#12192a">The verification block — how it fits the planned workflow</text>
-<text x="40" y="80" font-size="15" fill="#5a6577">Four tiers, three verification levels, ONE deterministic hard gate. Grounded at tip 0e08ece · research note F8 / F11 / F12 / §4E / §7 items 1 &amp; 5</text>
+<text x="40" y="80" font-size="12.5" fill="#5a6577">Historical pre-Q49 baseline sketch. Current I02 contract: one T0 JUnitXML baseline per pytest nodeid (CT68/69/85/86); see the plan.</text>
 
 <!-- ══════════════ PANEL 1 : TIERS ══════════════ -->
 <rect x="40" y="104" width="1380" height="330" rx="12" fill="#ffffff" stroke="#d8dde6"/>

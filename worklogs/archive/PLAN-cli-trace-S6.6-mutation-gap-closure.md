@@ -3,9 +3,9 @@
 # PLAN — S6.6: mutation-gap closure for the S1–S6 substrate
 
 - **Status:** S6.6a–S6.6d COMPLETE (2026-07-29). Whole-`src` scope is a separate
-  operator decision — see [`REPORT-full-src-mutation-scan-2026-07-29.md`](./REPORT-full-src-mutation-scan-2026-07-29.md).
+  operator decision — see [`REPORT-full-src-mutation-scan-2026-07-29.md`](../implementation-plans/REPORT-full-src-mutation-scan-2026-07-29.md).
 - **Date:** 2026-07-29
-- **Parent:** [`cli-trace-substrate-rebaseline-2026-07-25.md`](./cli-trace-substrate-rebaseline-2026-07-25.md)
+- **Parent:** [`cli-trace-substrate-rebaseline-2026-07-25.md`](../implementation-plans/cli-trace-substrate-rebaseline-2026-07-25.md)
 - **Predecessor:** [`PLAN-cli-trace-S6-observability-contracts.md`](./PLAN-cli-trace-S6-observability-contracts.md) §S6 mutation sweep
 
 ## 1. Why this slice exists

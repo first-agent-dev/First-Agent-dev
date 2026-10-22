@@ -14,7 +14,7 @@
   after the main workplan.** Container findings: **I-36, I-37, I-38, I-39** —
   recorded, zero fixes applied, per the sheet's stop rule.
 - **Date:** 2026-07-29
-- **Parent:** [`cli-trace-substrate-rebaseline-2026-07-25.md`](./cli-trace-substrate-rebaseline-2026-07-25.md) §Step S7 (line 1703)
+- **Parent:** [`cli-trace-substrate-rebaseline-2026-07-25.md`](../implementation-plans/cli-trace-substrate-rebaseline-2026-07-25.md) §Step S7 (line 1703)
 - **Depends-on:** S5 (`57f574a`) and S6 (`6bdd85f`) — both complete
 - **Traces-to:** G4, G5, CT1, CT2, CT3, CT5, CT7, CT8
 - **Predecessors:** [`PLAN-cli-trace-S6-observability-contracts.md`](./PLAN-cli-trace-S6-observability-contracts.md), [`PLAN-cli-trace-S6.6-mutation-gap-closure.md`](./PLAN-cli-trace-S6.6-mutation-gap-closure.md)

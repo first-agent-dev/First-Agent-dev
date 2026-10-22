@@ -179,6 +179,8 @@ def _tool(workflow: _RecordingWorkflow, ctx: WorkflowInvocationContext | None) -
 
 
 def _call(spec: ToolSpec, **params: object) -> ToolResult:
+    # Q70: delegation tests use non-coder roles; default coder refusal is tested separately.
+    params.setdefault("roles", "planner")
     return spec.handler(params)
 
 
@@ -395,7 +397,7 @@ def test_defaults_are_applied_in_the_handler(tmp_path: Path) -> None:
     _call(_tool(workflow, _ctx(tmp_path)), task="x")
     call = workflow.calls[0]
     assert call["mode"] == "linear"
-    assert call["roles"] == ["planner", "coder", "eval"]
+    assert call["roles"] == ["planner"]
     assert call["max_repairs"] == 2
     assert call["max_replans"] == 1
     assert call["per_role_task"] == {}
@@ -408,14 +410,14 @@ def test_explicit_arguments_are_forwarded(tmp_path: Path) -> None:
     _call(
         _tool(workflow, _ctx(tmp_path)),
         task="x",
-        mode="adaptive",
-        roles="coder,eval",
+        mode="linear",
+        roles="planner,eval",
         max_repairs=3,
         max_replans=0,
     )
     call = workflow.calls[0]
-    assert call["mode"] == "adaptive"
-    assert call["roles"] == ["coder", "eval"]
+    assert call["mode"] == "linear"
+    assert call["roles"] == ["planner", "eval"]
     assert call["max_repairs"] == 3
     assert call["max_replans"] == 0
 
@@ -627,14 +629,14 @@ class TestInjectOverrideInheritance:
         overrides = {CODER_SLICE_CEREMONY.name: MODE_ENFORCE}
         workflow = _RecordingWorkflow()
         spec = _tool(workflow, _ctx(tmp_path, inject_overrides=overrides))
-        _payload(_call(spec, roles="planner,coder", task="do the slice"))
+        _payload(_call(spec, roles="planner,eval", task="do the slice"))
         assert workflow.calls[0]["inject_overrides"] == overrides
 
     def test_default_context_inherits_nothing(self, tmp_path: Path) -> None:
         """Absent --inject, the nested pipeline is byte-identical to before."""
         workflow = _RecordingWorkflow()
         spec = _tool(workflow, _ctx(tmp_path))
-        _payload(_call(spec, roles="planner,coder", task="do the slice"))
+        _payload(_call(spec, roles="planner,eval", task="do the slice"))
         assert workflow.calls[0]["inject_overrides"] == {}
 
     def test_context_default_is_not_shared_between_instances(self, tmp_path: Path) -> None:
@@ -653,7 +655,72 @@ class TestInjectOverrideInheritance:
         overrides = {CODER_SLICE_CEREMONY.name: MODE_ENFORCE}
         workflow = _RecordingWorkflow()
         spec = _tool(workflow, _ctx(tmp_path, inject_overrides=overrides))
-        _payload(_call(spec, roles="planner,coder", task="do the slice"))
+        _payload(_call(spec, roles="planner,eval", task="do the slice"))
         forwarded = workflow.calls[0]["inject_overrides"]
         assert set(forwarded) == {CODER_SLICE_CEREMONY.name}
         assert forwarded[CODER_SLICE_CEREMONY.name] == MODE_ENFORCE
+
+
+@pytest.mark.parametrize("roles", [None, "coder", "planner,coder,eval", "eval,coder", " coder "])
+def test_acquisition_unavailable_before_child_or_handoff(tmp_path: Path, roles: str | None) -> None:
+    """Q70/CT95: no child ID, handoff, credit or controller call for unsupported acquisition."""
+    from dataclasses import replace
+
+    workflow = _RecordingWorkflow()
+    handoffs: list[bool] = []
+
+    def facts() -> dict[str, Any]:
+        handoffs.append(True)
+        return {}
+
+    ctx = replace(_ctx(tmp_path), session_facts_provider=facts)
+    spec = _tool(workflow, ctx)
+    params: dict[str, object] = {"task": "implement"}
+    if roles is not None:
+        params["roles"] = roles
+    for _ in range(3):
+        result = spec.handler(params)
+        assert _error_code(result) == "acquisition_unavailable"
+        assert result.result is None and result.error is not None and result.error.retryable is False
+    assert not workflow.calls and not handoffs
+    # Refusals do not consume the two actual-delegation credits or allocate child IDs.
+    accepted = spec.handler({"task": "plan", "roles": "planner"})
+    assert _payload(accepted)["run_id"] == "run-parent-wf1"
+    assert len(workflow.calls) == 1
+
+
+@pytest.mark.parametrize("params", [{"roles": "unknown"}, {"roles": "planner,planner"}, {"mode": "adaptive"}])
+def test_noncoder_request_validation_precedes_child_delegation(tmp_path: Path, params: dict[str, object]) -> None:
+    workflow = _RecordingWorkflow()
+    spec = _tool(workflow, _ctx(tmp_path))
+    assert _error_code(_call(spec, task="review", **params)) == "workflow_context_error"
+    assert workflow.calls == []
+    assert _payload(_call(spec, task="review"))["run_id"] == "run-parent-wf1"
+
+
+@pytest.mark.parametrize("fault", ["missing-session", "missing-run", "mismatched-run"])
+def test_noncoder_child_rejects_invalid_parent_authority(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str
+) -> None:
+    from dataclasses import replace
+
+    from fa.session.manager import SessionManager
+
+    state = tmp_path / "state"
+    monkeypatch.setenv("FA_STATE_ROOT", str(state))
+    manager = SessionManager(state_root=state, workspace_root=tmp_path / "workspaces")
+    session = manager.provision_entrypoint_session(
+        session_id="parent-session", workspace_override=tmp_path / "workspaces/workspace"
+    )
+    parent = manager.begin_run(session, requested_run_id="run-parent")
+    context = replace(_ctx(tmp_path), workspace=session.workspace_path, session_context=session, run_context=parent)
+    if fault == "missing-session":
+        context = replace(context, session_context=None)
+    elif fault == "missing-run":
+        context = replace(context, run_context=None)
+    else:
+        context = replace(context, run_context=replace(parent, run_id="other-parent"))
+    workflow = _RecordingWorkflow()
+    assert _error_code(_call(_tool(workflow, context), task="review")) == "workflow_context_error"
+    assert workflow.calls == []
+    assert not (state / "session-log/run-parent-wf1").exists()

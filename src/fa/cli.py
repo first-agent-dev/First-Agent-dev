@@ -63,6 +63,8 @@ from fa.inner_loop.injections import (
     parse_inject_overrides,
     resolve_injection_modes,
 )
+from fa.inner_loop.plan_admission import PlanRefError, _require_plan_for_coder, read_plan_snapshot
+from fa.inner_loop.planner_dispatch import PlannerDispatch
 from fa.inner_loop.pr_draft import PrDraftStore
 from fa.inner_loop.prompt import render_tool_specs
 from fa.inner_loop.recovery.attempt_history import AttemptHistory
@@ -84,13 +86,14 @@ from fa.inner_loop.tools.workflow_tool import (
 from fa.inner_loop.workflow_controller import (
     DEFAULT_MAX_REPAIRS,
     DEFAULT_MAX_REPLANS,
+    WORKFLOW_STAGE_ROLES,
+    WorkflowRequestError,
+    _validate_workflow_request,
+    _validate_workflow_run_id,
     run_workflow,
 )
 from fa.inner_loop.workflow_controller import (
     WORKFLOW_MODES as _WORKFLOW_MODES,
-)
-from fa.inner_loop.workflow_controller import (
-    WORKFLOW_STAGE_ROLES as _WORKFLOW_STAGE_ROLES,
 )
 from fa.inner_loop.workflow_controller import (
     eval_system_prompt_extra as _eval_system_prompt_extra,
@@ -759,12 +762,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         metavar="PATH",
-        help=(
-            "Plan artifact this run executes against. Optional; when given, the "
-            "harness records it and can check the run against the plan's own "
-            "contracts. Never inferred -- guessing the contract is worse than "
-            "having none."
-        ),
+        help=COMMANDS["workflow"]["args"]["--plan"]["en"],
     )
     workflow_parser.add_argument(
         "--inject",
@@ -1347,102 +1345,87 @@ def _cmd_workflow(
     parsing, validation, and session lifecycle resolution; the pipeline
     logic lives in ``workflow_controller.py``.
     """
-    roles = [r.strip() for r in str(args.roles).split(",") if r.strip()]
-    if not roles:
-        print("fa workflow: provide at least one role, e.g. planner,coder,eval", file=sys.stderr)
-        return 2
-
-    # RK8 (S5): reject roles that are not pipeline stages. Before this check,
-    # `--roles planner,chat,eval` and even `--roles bogus_role` ran happily:
-    # the split had no membership test and status_for_role() silently maps an
-    # unknown role to 'CODING'. Validation belongs HERE, at the CLI boundary,
-    # for two reasons — it is the last point where the operator's intent still
-    # exists as text, and stages run in separate call frames, so no in-process
-    # guard can see a `chat` stage building its own invoke_workflow.
-    #
-    # Placed ahead of run_id allocation and any artifact write so a rejected
-    # invocation leaves nothing behind on disk.
-    # S12a: fail fast on a plan that is not there. Placed with the role check
-    # -- ahead of run_id allocation and any artifact write -- so a mistyped
-    # path leaves nothing behind and the operator learns immediately, rather
-    # than after a full pipeline silently ran with no contract.
-    plan_path: Path | None = getattr(args, "plan", None)
-    if plan_path is not None and not plan_path.is_file():
-        print(f"fa workflow: --plan not found: {plan_path}", file=sys.stderr)
-        return 2
-
-    unknown_roles = [r for r in roles if r not in _WORKFLOW_STAGE_ROLES]
-    if unknown_roles:
-        _allowed = ", ".join(sorted(_WORKFLOW_STAGE_ROLES))
-        _bad = ", ".join(repr(r) for r in unknown_roles)
-        print(
-            f"fa workflow: unsupported stage role(s): {_bad}. --roles must be drawn from: {_allowed}",
-            file=sys.stderr,
-        )
-        return 2
-
-    mode = getattr(args, "mode", None) or "linear"
-    if mode not in _WORKFLOW_MODES:
-        _modes_str = ", ".join(_WORKFLOW_MODES)
-        print(
-            f"fa workflow: --mode must be one of {_modes_str} (got {mode!r})",
-            file=sys.stderr,
-        )
-        return 2
-
-    run_id = args.run_id
-    if run_id and not _valid_run_id(run_id):
-        print("fa workflow: --run-id must match [A-Za-z0-9_.-]{1,128}", file=sys.stderr)
-        return 2
+    # Identity/configuration must be valid before lifecycle can provision a
+    # workspace or claim a session/run. Direct API uses the same normalizer.
     base_task = getattr(args, "task", None)
-    if not run_id:
-        seed = base_task or roles[0]
-        run_id = f"wf-{int(time.time())}-{_slugify_task(seed)}"
-
     per_role_task = {role: getattr(args, f"task_{role}", None) for role in ("planner", "coder", "eval")}
-    for role in roles:
-        if not (per_role_task.get(role) or base_task):
-            print(
-                f'fa workflow: no task for role {role!r} — pass a shared task or --task-{role} "..."',
-                file=sys.stderr,
+    run_id = args.run_id
+    mode = getattr(args, "mode", "linear")
+    try:
+        if not isinstance(args.roles, str):
+            raise WorkflowRequestError("roles")
+        raw_inject = getattr(args, "inject", None)
+        if raw_inject is not None and (
+            not isinstance(raw_inject, list) or any(not isinstance(value, str) for value in raw_inject)
+        ):
+            raise WorkflowRequestError("injection")
+        inject_overrides = parse_inject_overrides(raw_inject)
+        request = _validate_workflow_request(
+            roles=args.roles.split(","),
+            mode=mode,
+            max_repairs=getattr(args, "max_repairs", None),
+            max_replans=getattr(args, "max_replans", None),
+            run_id=run_id,
+            task=base_task,
+            per_role_task=per_role_task,
+            inject_overrides=inject_overrides,
+            allow_missing_run_id=True,
+        )
+        roles = list(request.roles)
+        max_repairs, max_replans = request.max_repairs, request.max_replans
+        if run_id is None:
+            run_id = f"wf-{int(time.time())}-{_slugify_task(base_task or roles[0])}"
+        _validate_workflow_run_id(run_id)
+    except (WorkflowRequestError, InjectionFlagError) as error:
+        code = error.code if isinstance(error, WorkflowRequestError) else "injection"
+        if code == "roles" and isinstance(args.roles, str):
+            # Preserve the established CLI diagnostic, not the admission JSON
+            # vocabulary. repr escapes terminal controls; validation already denied.
+            unknown = [
+                role.strip()
+                for role in args.roles.split(",")
+                if role.strip() and role.strip() not in WORKFLOW_STAGE_ROLES
+            ]
+            if unknown:
+                bad = ", ".join(repr(role) for role in unknown)
+                allowed = ", ".join(sorted(WORKFLOW_STAGE_ROLES))
+                print(
+                    f"fa workflow: unsupported stage role(s): {bad}. --roles must be drawn from: {allowed}",
+                    file=sys.stderr,
+                )
+                return 2
+        print(f"fa workflow: invalid workflow request: {code}", file=sys.stderr)
+        return 2
+
+    plan_path: Path | None = getattr(args, "plan", None)
+    selected_workspace: Path | None = None
+    try:
+        _require_plan_for_coder(roles, plan_path)
+        if plan_path is not None:
+            selected_workspace = _session_manager_for_args(args).resolve_workflow_workspace(
+                session_id=getattr(args, "session_id", None),
+                workspace_override=getattr(args, "workspace", None),
             )
-            return 2
-
-    # Resolve max_repairs / max_replans inline (simple enough to keep here)
-    raw_repairs = getattr(args, "max_repairs", None)
-    max_repairs = DEFAULT_MAX_REPAIRS if raw_repairs is None else min(max(int(raw_repairs), 0), 3)
-    raw_replans = getattr(args, "max_replans", None)
-    max_replans = DEFAULT_MAX_REPLANS if raw_replans is None else min(max(int(raw_replans), 0), 2)
-
-    if mode == "adaptive":
-        # D4: only coder+eval are required. A planner is optional — without one
-        # the workflow still runs bounded coder→eval repair rounds, which is
-        # exactly what the removed ``repair`` mode provided. A return_to_planner
-        # route then terminates instead of looping (workflow_controller.py).
-        missing = [r for r in ("coder", "eval") if r not in roles]
-        if missing:
-            _missing_str = " and ".join(missing)
-            _roles_str = ",".join(roles)
-            print(
-                f"fa workflow: --mode adaptive requires roles to include {_missing_str} (got {_roles_str})",
-                file=sys.stderr,
-            )
-            return 2
-
+            snapshot = read_plan_snapshot(selected_workspace, plan_path)
+            plan_path = selected_workspace / snapshot.ref.workspace_relative_path
+    except PlanRefError as error:
+        guidance = "--plan not found or unreadable" if error.rule == "unreadable" else "--plan"
+        print(f"fa workflow: invalid plan reference: {error.rule} ({guidance})", file=sys.stderr)
+        return 2
+    except SessionManagerError as error:
+        print(
+            f"fa workflow: workspace preflight: {error.code}; choose an existing --workspace/--session-id",
+            file=sys.stderr,
+        )
+        return 2
     try:
         run_id, session_context, run_context, session_db = _resolve_workflow_lifecycle(args, run_id)
     except SessionManagerError as exc:
         print(f"fa workflow: session error [{exc.code}]: {exc}", file=sys.stderr)
         return 2
 
-    # PLAN S5a / Q8: parse --inject before any stage runs. A malformed value is
-    # fatal here rather than ignored: the operator asked for a specific
-    # injection, so a typo must not produce a run that looks configured and is
-    # not (plan Q6 -- fail closed, never guess).
-    try:
-        inject_overrides = parse_inject_overrides(getattr(args, "inject", None))
-    except InjectionFlagError as exc:
-        print(f"fa workflow: {exc}", file=sys.stderr)
+    if selected_workspace is not None and Path(args.workspace).resolve() != selected_workspace:
+        print("fa workflow: workspace preflight: workspace-mismatch", file=sys.stderr)
         return 2
 
     exit_code, _terminal_state = run_workflow(
@@ -1469,7 +1452,7 @@ def _cmd_workflow(
     return exit_code
 
 
-def _validate_run_args(args: argparse.Namespace) -> str | None:
+def _validate_run_args(args: argparse.Namespace, *, planner_dispatch: PlannerDispatch | None = None) -> str | None:
     """Validate ``fa run``'s arguments; return the operator message, or ``None`` if valid.
 
     Extracted from ``_cmd_run`` (S10b.2). Pure apart from one documented
@@ -1492,6 +1475,8 @@ def _validate_run_args(args: argparse.Namespace) -> str | None:
     ``test_s10b_parity_validation_prologue`` pins each one by its unique
     wording (plan RK4).
     """
+    if not _valid_planner_dispatch(planner_dispatch, getattr(args, "role", None), getattr(args, "run_id", None)):
+        return "fa run: invalid planner dispatch"
     resolved = _resolve_task(getattr(args, "task_pos", None), getattr(args, "task", None))
     if resolved is None:
         return "fa run: provide a task — positional (fa run \"...\"), --task, or '-' for stdin"
@@ -1598,7 +1583,9 @@ def _build_compactor_chain(
     return _build_provider_chain(compactor_config, transport=transport, secrets=secrets)
 
 
-def _build_role_registry(role: str, workspace: Path, *, bash_timeout_seconds: int) -> ToolRegistry:
+def _build_role_registry(
+    role: str, workspace: Path, *, bash_timeout_seconds: int, planner_dispatch: PlannerDispatch | None = None
+) -> ToolRegistry:
     """Select the role-appropriate tool registry.
 
     Extracted from ``_cmd_run`` (S10b.2). Role-aware capability scoping:
@@ -1616,7 +1603,9 @@ def _build_role_registry(role: str, workspace: Path, *, bash_timeout_seconds: in
     write+bash tools, and that is what the shipped CLI does today.
     """
     if role == "planner":
-        return build_planner_registry(workspace, bash_timeout_seconds=bash_timeout_seconds)
+        return build_planner_registry(
+            workspace, bash_timeout_seconds=bash_timeout_seconds, planner_dispatch=planner_dispatch
+        )
     if role == "eval":
         return build_eval_registry(workspace, bash_timeout_seconds=bash_timeout_seconds)
     if role == "chat":
@@ -1766,6 +1755,7 @@ def _build_run_tool_registry(
     workflow_ctx: Callable[[], WorkflowInvocationContext | None] | None = None,
     scope_point: OperatingPoint | None = None,
     gate_enabled: bool = True,
+    planner_dispatch: PlannerDispatch | None = None,
 ) -> ToolRegistry:
     """Build the exact role tool corpus used by a live ``fa run``.
 
@@ -1791,7 +1781,9 @@ def _build_run_tool_registry(
     estimate (the conformance path, test fixtures) are unaffected.
     """
 
-    registry = _build_role_registry(role, workspace, bash_timeout_seconds=bash_timeout_seconds)
+    registry = _build_role_registry(
+        role, workspace, bash_timeout_seconds=bash_timeout_seconds, planner_dispatch=planner_dispatch
+    )
     registry = _apply_escalation_gate(registry, role=role, scope_point=scope_point, gate_enabled=gate_enabled)
     registry.register(build_prepare_pr_tool(draft_store))
     if role == "chat":
@@ -2165,12 +2157,19 @@ def _publish_scope_estimate(
     return hint
 
 
+def _valid_planner_dispatch(dispatch: PlannerDispatch | None, role: object, run_id: object) -> bool:
+    return dispatch is None or (
+        isinstance(dispatch, PlannerDispatch) and role == "planner" and dispatch.run_id == run_id
+    )
+
+
 def _cmd_run(
     args: argparse.Namespace,
     *,
     transport: Transport | None = None,
     secrets: Mapping[str, str] | None = None,
     outcome_sink: list[SessionOutcome] | None = None,
+    planner_dispatch: PlannerDispatch | None = None,
 ) -> int:
     """Drive an LLM-driven coder session.
 
@@ -2183,7 +2182,7 @@ def _cmd_run(
     the resolved secrets file (strict, file-only — never ``os.environ``);
     tests inject a :class:`SecretStore`/mapping directly.
     """
-    prologue_error = _validate_run_args(args)
+    prologue_error = _validate_run_args(args, planner_dispatch=planner_dispatch)
     if prologue_error is not None:
         print(prologue_error, file=sys.stderr)
         return 2
@@ -2309,6 +2308,7 @@ def _cmd_run(
         draft_store=draft_store,
         scope_point=scope_point,
         gate_enabled=limits.chat_escalation_gate,
+        planner_dispatch=planner_dispatch,
         workflow_ctx=_make_workflow_ctx_provider(
             parent_run_id=run_id,
             config=config_path,

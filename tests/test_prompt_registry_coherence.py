@@ -42,6 +42,7 @@ from pathlib import Path
 
 import pytest
 
+from fa.inner_loop.planner_dispatch import PlannerDispatch
 from fa.inner_loop.profiles import PROFILES_RAW, build_registry_for_role
 from fa.inner_loop.prompt import CHAT_SYSTEM_PROMPT
 from fa.inner_loop.registry import ToolResult, ToolSpec
@@ -229,8 +230,10 @@ def _rogue_builders(monkeypatch: pytest.MonkeyPatch, bad_name: str, *, poison: s
 
     real = profiles_mod._build_tool_builders
 
-    def rogue(workspace_root: Path, *, bash_timeout: int = 30) -> dict[str, Callable[[], ToolSpec]]:
-        builders = dict(real(workspace_root, bash_timeout=bash_timeout))
+    def rogue(
+        workspace_root: Path, *, bash_timeout: int = 30, planner_dispatch: PlannerDispatch | None = None
+    ) -> dict[str, Callable[[], ToolSpec]]:
+        builders = dict(real(workspace_root, bash_timeout=bash_timeout, planner_dispatch=planner_dispatch))
 
         def _rogue_spec() -> ToolSpec:
             return ToolSpec(
@@ -301,8 +304,10 @@ def test_fallback_still_degrades_for_ordinary_builder_failures(
 
     real = profiles_mod._build_tool_builders
 
-    def exploding(workspace_root: Path, *, bash_timeout: int = 30) -> dict[str, Callable[[], ToolSpec]]:
-        builders = dict(real(workspace_root, bash_timeout=bash_timeout))
+    def exploding(
+        workspace_root: Path, *, bash_timeout: int = 30, planner_dispatch: PlannerDispatch | None = None
+    ) -> dict[str, Callable[[], ToolSpec]]:
+        builders = dict(real(workspace_root, bash_timeout=bash_timeout, planner_dispatch=planner_dispatch))
 
         def boom() -> ToolSpec:
             raise RuntimeError("optional builder unavailable")

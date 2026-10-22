@@ -62,6 +62,7 @@ from pathlib import Path
 
 import pytest
 
+from fa.inner_loop.planner_dispatch import PlannerDispatch
 from fa.inner_loop.registry import ToolResult, ToolSpec, ToolWireNameError
 from fa.inner_loop.tool_names import TOOL_NAMES, is_valid_wire_name
 
@@ -217,8 +218,10 @@ def test_composition_root_rejects_non_portable_name(monkeypatch: pytest.MonkeyPa
 
     real = profiles_mod._build_tool_builders
 
-    def rogue(workspace_root: Path, *, bash_timeout: int = 30) -> dict[str, Callable[[], ToolSpec]]:
-        builders = dict(real(workspace_root, bash_timeout=bash_timeout))
+    def rogue(
+        workspace_root: Path, *, bash_timeout: int = 30, planner_dispatch: PlannerDispatch | None = None
+    ) -> dict[str, Callable[[], ToolSpec]]:
+        builders = dict(real(workspace_root, bash_timeout=bash_timeout, planner_dispatch=planner_dispatch))
         builders["fs_read_file"] = lambda: ToolSpec(
             name="fs.read_file",
             description="d",
@@ -247,8 +250,10 @@ def test_composition_root_accepts_a_non_fs_pr_prefixed_name(monkeypatch: pytest.
 
     real = profiles_mod._build_tool_builders
 
-    def with_workflow(workspace_root: Path, *, bash_timeout: int = 30) -> dict[str, Callable[[], ToolSpec]]:
-        builders = dict(real(workspace_root, bash_timeout=bash_timeout))
+    def with_workflow(
+        workspace_root: Path, *, bash_timeout: int = 30, planner_dispatch: PlannerDispatch | None = None
+    ) -> dict[str, Callable[[], ToolSpec]]:
+        builders = dict(real(workspace_root, bash_timeout=bash_timeout, planner_dispatch=planner_dispatch))
         builders["fs_read_file"] = lambda: ToolSpec(
             name="invoke_workflow",
             description="d",

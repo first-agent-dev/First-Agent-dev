@@ -166,3 +166,3429 @@ E48 DECIDED (operator) Agent-executable text = exact imperatives; high signal/lo
     citations/history/rationale inline. increment-01 rewritten as the exemplar (18 CTs /
     4 slices / verify blocks preserved; dogfood PASS). Schema §4 token rules rewritten as
     imperatives; §1 and the roadmap carry the authoring rule as a standing decision.
+E49 FACT  I01/SLICE1 shipped in c0a8f429 (PR #69, merged 2026-09-10): `_SLICE_RE`, `SliceRecord`
+    and `slice_records` are live; `tests/test_plan_ids.py` is 367 lines and carries no `S#`
+    fixture except the legacy-rejection assertion at `:367`. supersedes: E1, E22, E29, E30 —
+    those describe pre-migration code.  [verified @ 2f6b8c1, 2026-10-06]
+E50 FACT  `increment-01` said `status: READY` with every `STEP#` box unticked while SLICE1 was
+    merged. Plan-vs-reality drift, closed this session.  [verified @ 2f6b8c1]
+E51 DECIDED (operator) Until the I03 harness exists, the **operator** ticks shipped `STEP#`
+    boxes and sets `shipped:` in the increment frontmatter; the model never ticks them. Schema
+    §6 carries the exception and its expiry.  [ask_user 2026-10-06]
+E52 FACT  `grep -c SLICE src/fa/inner_loop/prompt.py` is 0. The planner emits
+    Class/Goal/Evidence/Scope/Assumptions/Constraints/Plan/Verification/Risks with `S1.` steps,
+    so a freshly authored plan parses to empty `.slices`, `workflow_controller.py:332` returns
+    early and the coverage gate no-ops **silently**. Live defect, not archival.
+    [verified @ 2f6b8c1, 2026-10-06]
+E53 FACT  The planner's `S1.` items are step-sized (one mechanical `accept:` each), so the
+    honest mapping is `S#` → `STEP#`. The runtime format has **no source for the `SLICE#` tier
+    at all**: grouping steps into commit-sized slices is a judgement, not a transform. Any
+    runtime→increment compiler would have to invent that tier.  [verified @ 2f6b8c1]
+E54 DECIDED (operator) ASK#-01 resolved as (b′): the planner emits schema §4 directly plus a
+    free-form `## Grounding` block; code performs admission (parse → validate → default and
+    stamp → persist) under a no-inference rule. Rejected: a runtime→increment compiler, per
+    E53. supersedes: the `assumed:` roadmap row on plan-format translation.  [ask_user
+    2026-10-06]
+E55 FACT  `_slice_sections` ends a section at the next `SLICE` heading or EOF, so the last
+    slice absorbs the increment tail. Reproduced on the 2026-10-06 rewrite of increment-01:
+    SLICE5 acquires `CT14` and `CT11` from the definition-of-done and hand-off sections.
+    Addressed by CT16.  [verified by dogfooding plan_ids.py @ 2f6b8c1]
+E56 FACT  `_section_contracts` scans every line of a section for `\bCT(\d+[a-z]?)\b`, so prose
+    references become declarations: SLICE1 acquires a `CONSTRAINT`-classed `CT3` from CT2's
+    illustrative text while SLICE2 declares `CT3` as `FUNCTIONAL`. One id, two classes, so
+    `contract_class("CT3")` is undefined. Addressed by CT17 and CT18.  [verified by dogfooding]
+E57 DECIDED (operator) The A3/A4 fixes land as parser conformance to a written authoring
+    contract, in that order: schema §4 states the rule (SLICE1b), the parser implements it
+    (SLICE2 CT16/CT17/CT18), the pre-check warns on undeclared references (SLICE3 CT27).
+    Rejected: convention-plus-pinning-test, the CT13 precedent — there the correct behaviour was
+    genuinely ambiguous; here it is not.  [ask_user 2026-10-06]
+E58 DECIDED (operator) **The prompt is primary; the parser conforms to it.** For any grammar
+    question the order is: authoring contract (schema §4 + skills + planner prompt) → parser →
+    pre-check. The prompt sets the mental model the plan's quality depends on. I01's slice order
+    is rebuilt on this: SLICE1 → SLICE1b → SLICE2 → SLICE3 → SLICE4, with SLICE5 independent.
+    [ask_user 2026-10-06]
+E59 DECIDED (operator) No accessor ships without a named consumer increment and a wiring step in
+    that consumer. Grounded in E2/E3/E5: the flat `.commands` shipped with zero readers and has
+    none today. Schema §7 now carries `consumer:` on every name; `steps_mode` is marked pending
+    and is **not** built in I01.  [ask_user 2026-10-06]
+E60 FACT  `src/fa/blackboard/blackboard.py` (389 lines) provides typed durable entries with
+    `content_hash` (sha256 over sorted-key JSON), `parent_id` lineage, `read_set`/`write_set`,
+    `assumptions`, `version_dependencies`, `toolchain_digest` and `run_id`, plus
+    `detect_conflict` with write/write, read/write and write/read overlap detection and
+    `_assumption_violated`. `TelemetryLogger` provides an append-only event log with secret-key
+    detection and value elision. `EventBus` (`fa/output.py`) is a console renderer bus, not a
+    durable log. **The planning loop touches none of it.**  [verified @ 2f6b8c1, 2026-10-06]
+E61 FACT  E60 makes several proposed mechanisms redundant before they are built: a typed
+    attempt record (`BlackboardEntry(type="attempt")` chained by `parent_id`), a failure
+    signature canonicalisation spec (`content_hash` already canonicalises), hash-link
+    provenance, the `tree_hash`/`HEAD` freshness stamp (`version_dependencies`), stale-fact
+    detection for ledger FACTs (`assumptions` + `detect_conflict`), syntactic parallel-slice
+    safety (`read_set`/`write_set`, deferred item #11) and record redaction. The gap is
+    **integration, not design** — the same shape as E2/E3/E5.  [verified @ 2f6b8c1]
+E62 DECIDED (operator) Markdown stays the authoring substrate as a staged decision. The
+    strangler's destination is named concretely: project slice records into the existing
+    `Blackboard` (E60), not a new store. Taken now: the golden drift corpus and the near-miss
+    heading lint (SLICE3), which double as the fixtures for CT16/CT17/CT18. Deferred: the
+    silent-mis-parse counter and the first-pass-rate SLI — no runs, no baseline, so the numbers
+    would be decoration. Declined: ARCH's Phase-0-substrate-first build order.  [ask_user
+    2026-10-06]
+E63 DECIDED (operator) Test non-vacuity: one scoped mutation run per slice, **as a gate**, with
+    appeal — the planner may dismiss a survivor with a one-line reason appended here via the
+    existing `GUESS→decided:` flow. No exceptions for refactor-only slices: a refactor claims
+    behaviour is preserved, so a survivor there is signal, not noise. Rejected as over-built: a
+    findings format, a routing mechanism, a top-K cap, a shadow phase and a pre-registered
+    graduation rule. An arid list, if ever needed, derives from repeated dismissals.
+    [ask_user 2026-10-06]
+E64 DECIDED (operator) Authorship-vs-acceptance (principle 8) separates into two failure modes.
+    Weak acceptance — a test that does not enforce its stated contract — is closed by E63.
+    A wrong specification is irreducibly human, because any check derived from the plan inherits
+    the plan's error. The control is the operator's review, recorded as such, plus two readback
+    mechanisms: the mandatory understood-and-excluded line in `## Grounding`, and one rationale
+    line per `CONSTRAINT` contract. Eval-authored held-out tests are **rejected as specified** —
+    the eval reads the same plan and inherits the same misunderstanding.  [ask_user 2026-10-06]
+E65 GAP  Schema §6 defined `VERIFIED` as pass^k for stochastic gates without stating what resets
+    k, so passes could accumulate across different code states. Closed: any change to the diff,
+    the test file, the verify command or the model family resets k to zero.  [verified @ 2f6b8c1]
+E66 GAP  `notes/verify-block-design.md` specifies baselines as "run the slice's commands once on
+    the untouched tree", which is O(slices × suite-time). Baselines must be hermetic and
+    **affected-path scoped**. Recorded against I02 before the design is built.
+E67 GAP  The schema has **no `RISK` vocabulary**, so a rule-based risk floor (auth, crypto,
+    permissions, billing, migrations ⇒ at least elevated) has no field to raise. It is a new
+    concept, not a rider. Banked for I05 with this dependency stated.  [verified @ 2f6b8c1]
+E68 FACT  Citation audit of the research note: MAST's FM-2.2 is **6.80%** in v3 (1642 traces),
+    not the 11.65% of v1/v2 that the note cites, so the justification for the clarifying-question
+    item is roughly 1.7× weaker than written. The architecture census transcribes a superseded
+    version whose current data **reverses** its conclusion — in this project's favour, since a
+    code-owned scripted pipeline is the group that now leads. `2206.10498` is PlanBench, not
+    LLM-Modulo. Root cause of both consequential errors: arXiv ids cited without versions or
+    retrieval dates.  [verified against primary sources, 2026-10-06]
+E69 DECIDED (operator) The research note is corrected **in place** rather than superseded, since
+    `knowledge/research/` is a working reference the planner reads. The provenance trail is
+    preserved here instead: one ledger line per correction with the old value, the new value and
+    the source. E15's citation is swapped 2410.21819 → 2404.13076 — the cited paper attributes
+    the bias to perplexity, not self-generation, so it does not support the different-family
+    rule. E14's SWE-Gate 34.3% is exact; no action.  [ask_user 2026-10-06]
+E70 GAP  Adversarial review of I01 found **CT4c is false as written and false by construction**.
+    It claims the flat `.commands` equals the concatenation of the slices' commands. Measured on
+    `increment-01` with the 2f6b8c1 extractor: flat **10**, concatenation **12**. Cause:
+    `_ordered_unique` (`plan_ids.py:169`) dedupes globally at `:280` but per-section at `:249`,
+    and SLICE1/SLICE2 share two identical verify commands. A PRESERVATION contract that misstates
+    current behaviour is the worst kind — it instructs the implementer to *change* behaviour to
+    satisfy a wrong spec. Restated as the true superset relation, with the measurement inline and
+    an explicit ban on asserting equality.  [measured 2026-10-06 @ 2f6b8c1]
+E71 GAP  CT4b ("a pre-heading verify block goes to a plan-level bucket") had **no data structure
+    to land in**. `PlanIds` has no plan-level command field and `SliceRecord.slice_id` is typed
+    `str`, so no sentinel record can key one; `_slice_sections` (`:198`) deliberately excludes the
+    prologue. Confirmed: a pre-heading block reaches the flat field and **no** `SliceRecord`.
+    Closed by specifying `PlanIds.plan_commands` in schema §7 and ordering it before the
+    accessors in SLICE2.  [measured 2026-10-06 @ 2f6b8c1]
+E72 GAP  CT16's "same or shallower level" was under-specified in a way that invites a latent bug.
+    `_SLICE_RE` is `^#{2,4}\s+SLICE(\d+[a-z]?)\s*:` (`:58`) and all three depths parse, so the
+    terminator must be computed **relative to each slice's own matched heading depth**; a
+    hardcoded `^#{1,2}` is wrong for a `###` slice. Fixed in CT16 and in schema §4.
+    [measured 2026-10-06 @ 2f6b8c1]
+E73 GAP  Three-way interface mismatch across SLICE1b/SLICE2/SLICE5. `_section_contracts` (`:234`)
+    takes contract text as `line.split("]:", 1)[1]` — **first line only** — while CT23 requires the
+    `CONSTRAINT` rationale on a continuation line and the pinned-invariants slice required
+    `CONSTRAINT` text **verbatim**. Confirmed by extraction: CT23's own text truncates before its
+    "Catches:" sentence. Closed by making the contract text the whole entry (CT18, schema §4);
+    id and class stay first-line-only.  [measured 2026-10-06 @ 2f6b8c1]
+E74 DECIDED CT17's terminator is the **indentation rule** — the `CONTRACTS:` block ends at the
+    first non-blank line beginning at column 0 — replacing the enumerated allowlist
+    `^(TESTS|STEPS|DEPS|INTENT):` + fence + `- [ ]` + heading. The allowlist was already
+    incomplete: the `SHIPPED:` field added to SLICE1 this session is not in it, so the block would
+    have silently swallowed it. One total rule instead of a list that must be maintained.
+E75 GAP  I01 destroyed the one datum I02 is specified to key on. `_test_paths` (`:212`) stops at
+    the first `(`, discarding the `(NEW — …)` annotation, while `notes/i02-handoff-verify-gate.md`
+    §2 states I02's fail-before filter keys on exactly that marker and names no other source for
+    it. Closed by CT33: `SliceRecord.tests_note` preserves the string verbatim; I01 assigns it no
+    meaning, so the handoff's open question 2 (prose vs machine token) stays I02's to answer but
+    becomes answerable.  [verified @ 2f6b8c1]
+E76 GAP  Schema §4 required `CT#` ids unique per increment and **nothing enforced it**; CT10
+    covers references to undefined ids, not duplicate declarations, and `contract_class`'s
+    behaviour on a duplicate was undefined. Closed by pre-check CT34 (FAIL, naming both
+    `file:line`s) plus a determinism rule in CT19 — first declaration in document order wins — so
+    a malformed plan degrades into a reported violation, never a parse-order-dependent answer.
+E77 DECIDED (plan) SLICE1b is split into **SLICE1b** (schema §4 + both planning skills) and
+    **SLICE1c** (the planner prompt). The single slice edited `src/fa/inner_loop/prompt.py` in
+    STEP4 while its `TESTS:` and verify block covered only `tests/test_skill_grammar_emit.py` and
+    `ruff check knowledge/skills` — the code change was unverified, and its exit check
+    (`grep -c SLICE prompt.py` non-zero) is satisfied by a comment. A slice whose verify block does
+    not cover the files its steps edit is not a slice. Supersedes the SLICE1b of E58.
+    supersedes: E58 (slice boundary only; the SD-A ordering it records stands)
+E78 DECIDED (plan) Prose-assertion exits ("each sentence is present in both skills") are replaced
+    by an **executable oracle**: schema §4 carries a fenced ```example increment, each planning
+    skill a fenced ```skeleton, and the tests parse those fences with `extract_plan_ids` and
+    compare against the documented result. Rationale: a `grep` for a sentence proves the sentence
+    was pasted, not that the grammar it describes is the grammar the parser implements, and it
+    goes stale on the first reword. The duplicated authoring prose in the two skills collapses
+    into one §4 subsection, "Authoring guidance (not checked)", that both skills link to.
+E79 DECIDED (operator, self-correction) The pinned-invariants slice is **moved out of I01 to I04**,
+    where this roadmap has scheduled "pinned invariants" since it was written. Accepting bridge R2
+    as an I01 slice was scope creep: it edits prompt composition rather than plan grammar, it fails
+    I01's own "Shippable when", and it consumed `contract_class` before I02 — the accessor's first
+    named consumer — exists, which is the inversion SD-B was created to prevent. Its three
+    contracts are banked verbatim in `notes/role-prompts-conformance.md`. Moving it also removed
+    the last `DEPS:` defect in I01: the slice declared `DEPS: SLICE1` while consuming SLICE2's
+    output.  supersedes: E57
+E80 FACT  Pre-implementation check of SLICE1b against SLICE1's shipped code found schema §4's
+    authoring rule to be **false**. §4 told authors "wrap the example fence in ````text, or it is
+    extracted as a real command". Measured: a ````text-wrapped ```verify block still yields its
+    command, and a wrapped `## SLICE1:` heading still yields the slice. The shipped test
+    `tests/test_plan_ids.py:233-261` asserts precisely this and documents the decision not to fix
+    it in code; SLICE1/CT13 pins it. So the wrapper is a marker for humans and the real protection
+    is CT13's second clause — the pre-check is never run on a grammar document. §4 corrected, and
+    CT21b added so that adding the §4 example cannot leak a phantom slice into the totality corpus
+    or a duplicate `CT1` into CT34.  [measured 2026-10-06 @ 2f6b8c1]
+E81 FACT  CT12's three pinned tests re-simulated against the rewritten increment-01 after the
+    adversarial-review edits: `:212` (SLICE1 in `.slices`, CT1 in `.contracts`) holds; `:202`
+    totality holds over 33 files; `:264` holds — 10 commands, all genuine, `ruff` present. The
+    inline triple backticks introduced in the new CT21/CT22 prose do **not** open phantom fences.
+    SLICE1 and the rewritten plan are compatible; SLICE1b is unblocked.  [measured 2026-10-06]
+E82 FACT  The repo's documented bootstrap (`just install` → `scripts/bootstrap/workspace.py
+    ensure` → `uv sync --frozen`) **cannot complete in this sandbox**, and the repo instructions
+    are not at fault. Two stages fail: `hook_ownership` (`hook_seat_collision`) because the
+    platform installs its own `.git/hooks/commit-msg`, and then `uv_sync` (rc=2) because no
+    interpreter ≥3.13 is obtainable. Every distribution channel is blocked by egress policy —
+    `astral.sh` (TLS reset), GitHub release assets via `objects.githubusercontent.com`,
+    `www.python.org`, anaconda, `raw.githubusercontent.com`, and `deb.debian.org` (so no apt and
+    no openssl/zlib/ffi headers, which also rules out building CPython from source). PyPI and
+    `codeload.github.com` are reachable, which is why `uv` itself installs fine.
+    [measured 2026-10-06]
+E83 FACT  A substitute environment at `.venv` gives a usable gate: CPython 3.11.2 plus two
+    `.pth` files — one putting `src/` on the path (what an editable install does; `uv pip
+    install -e .` is refused by `requires-python >=3.13`), one shimming `typing.override`, which
+    is the **only** 3.12+ construct in `src/` (7 files; no PEP 695 anywhere) and is a no-op
+    decorator at runtime. Result: **4008 passed, 3 failed, 15 skipped, 1 xfailed** in 3m33s, and
+    `ruff check src tests` clean. The three failures are fully accounted for: two are the
+    deliberately-red doc gates E19 must never "fix"
+    (`test_doc_links::test_repo_has_no_broken_internal_file_links`,
+    `test_deploy_scripts::test_historical_workspace_docs_have_top_level_superseded_banner`), and
+    the third,
+    `test_cli_ergonomics::test_workflow_per_role_overrides_parse`, is a CPython version artifact
+    — reproduced in 12 lines of stdlib `argparse` with no project code: 3.11 cannot reclaim a
+    positional that follows an optional, 3.13 can. **Zero unexplained failures.** Treat this as
+    the regression baseline for I01; it is not a substitute for the real 3.13 gate, and any
+    result that depends on interpreter version must be re-run by the operator.
+    [measured 2026-10-06]
+E84 FACT  I01/SLICE1b implemented. Schema §4 now carries a marker-delimited worked example and a
+    machine-readable expectation beside it; `tests/test_skill_grammar_emit.py` slices both out of
+    the `.md`, parses the example and compares, so §4 and `plan_ids.py` can no longer drift in
+    silence. Both planning skills embed a `PLAN-SKELETON` block that the same test parses, which
+    retires the `### Step S#:` anchor the parser stopped accepting in SLICE1 (E52's emitter half,
+    for the skills). Result: **16 passed, 4 xfailed**; ruff and pyrefly clean.
+    The four xfails are deliberate and `strict=True`: CT16 section spans, CT17 declaration scope
+    and CT18 whole-entry text are SLICE2's to implement, so the assertions encode SLICE2's
+    acceptance criteria today and will XPASS — and therefore fail the suite — the moment SLICE2
+    lands, forcing the marker to be removed rather than letting a silent pass accumulate.
+    Omitting them instead would have left SLICE2 with no executable oracle.  [measured 2026-10-06]
+E85 FACT  I01/SLICE1c implemented: the planner prompt is now the third emitter of schema §4.
+    `PLANNER_SYSTEM_PROMPT`'s plan template, its worked example and its Delta Plan template all
+    emit `## SLICE<n>:` with `STEPS:`, `DEPS:`, `INTENT:`, `CONTRACTS:`, `TESTS:` and a verify
+    fence, and `tests/test_planner_emits_schema4.py` parses those blocks out of the prompt string
+    rather than grepping for the token `SLICE` — a comment satisfies a grep, and the property that
+    matters is that what the planner is told to emit is what `extract_plan_ids` can read. This
+    closes the production half of E52: `workflow_controller.py:332` returns early on an empty
+    `.slices`, so until now every per-slice gate silently no-opped against real planner output.
+    Evidence, Assumptions and Risks were **rerouted** under `## Grounding`, not deleted (CT32),
+    with the mandatory understood/excluded readback line from schema §4.
+    Result: 11 passed; ruff and pyrefly clean; full suite 4035 passed with the same three
+    baseline failures as E83. The prompt's fenced templates had to move from ```` ```text ```` to
+    ```` ````text ````: a plan block now contains a nested ```verify fence, which would otherwise
+    close the wrapper early.  [measured 2026-10-06]
+E86 GAP  The **evaluator** prompt still speaks the retired `S#` grammar
+    (`prompt.py:802` "For each plan step (S1, S2, ...)", `:805` the step's `do:` field, `:905`
+    the `- S1: PASS | FAIL` report shape). That is deliberately out of SLICE1c's contract, whose
+    CT32 scopes the change to the planner. It is not harmless: `canonical_slice_id` forgivingly
+    maps a reported `S1` onto `SLICE1`, so the mismatch is invisible today and will stay invisible
+    until something stops being forgiving. Banked against I04 with the other eval-prompt deltas in
+    `notes/role-prompts-conformance.md`.
+E87 DECISION  Q35 — `plan_commands` holds every command **unowned by a slice**, not merely the
+    prologue; `commands_for(None)` means "unowned". Raised while implementing SLICE2: CT4b was
+    written before CT16, and CT16 stops the last slice at the increment-level sections, which
+    newly orphans any ```verify block sitting in them — a command present in the flat
+    `.commands` but reachable from no record, which is verbatim the harm CT4b exists to catch.
+    Rejected: prologue-only plus a SLICE3 WARN (more machinery, warns about a legitimate DoD
+    verify block, and leaves the command unreachable anyway) and prologue-only plus a recorded
+    gap (knowingly shipping a visible defect). The chosen scope satisfies CT4b's letter, since
+    the prologue is a subset of the unowned, and makes the partition total so nothing can be
+    orphaned by construction rather than by a guard. Second-order benefit: it upgrades CT4c
+    from `⊇` — which holds vacuously when `plan_commands` is empty — to the exact identity
+    `set(.commands) == set(.plan_commands) | ⋃ set(record.commands)`, an oracle that fails if a
+    command is dropped, duplicated into the wrong slice, or misattributed.
+    Measured at d2faea4: zero post-last-slice verify blocks in this file, so present behaviour
+    is unchanged and the broadening is purely future-proofing.  [operator-confirmed 2026-10-06]
+E88 FACT  I01/SLICE2 implemented: the parser now conforms to the SLICE1b specification and
+    exposes the read API I02 consumes. `_slice_spans` replaces `_slice_sections` and ends a
+    section at the first later heading of depth ≤ the slice's own, reading the depth from the
+    match (CT16); `_contracts_block` + `_section_contracts` scope declaration to the
+    `CONTRACTS:` block by indentation alone and group each entry with its continuation lines
+    (CT17/CT18); `commands_for`, `section`, `tests_for` and `contract_class` land on `PlanIds`
+    (CT3/CT4/CT19/CT20); `plan_commands` and `SliceRecord.tests_note` are new fields
+    (CT4b/CT33). Red-before was honest: 18 of the 20 new tests failed, and the two that passed
+    were the preservation cases, which is what preservation means.
+    The four `xfail(strict=True)` markers SLICE1b planted in `tests/test_skill_grammar_emit.py`
+    reported XPASS the moment this landed and failed the file, exactly as designed; they were
+    removed, not re-marked. Measured: 4079 passed, 3 failed — the E83 baseline trio, unchanged.
+E89 FACT  Targeted mutation sweep over `src/fa/inner_loop/plan_ids.py`, mutmut 3.6.0, test
+    selection `test_plan_ids.py` + `test_skill_grammar_emit.py` + `test_plan_reference.py`.
+    First sweep: 274 mutants, 44 survived. Final: 226 mutants, **225 killed, 1 survived**.
+    The sweep paid for itself three times over, and not by demanding more tests:
+      * Six survivors were dead initialisers in `_section_contracts` and two no-op guards in
+        `_unowned_commands`. The answer was to **delete the code**, not to assert on it — a
+        two-pass entry grouping has no running scalars to initialise, and
+        `_extract_commands("")` already returns `()`.
+      * `_slice_sections` survived as "no tests" because SLICE2 had left it **dead**: every
+        caller moved to `_slice_spans`. Removed.
+      * Four `stop`-index mutants in `_section_contracts` were NOT equivalent, contrary to first
+        reading: `stop` is what keeps a *more deeply indented* `CT<n> [CLASS]:` line from being
+        both its own declaration and continuation text of the entry above. Killing them needed
+        a fixture with a deeper entry in the middle **and** one at the end — with fewer, the
+        off-by-one indices coincide and the mutant is invisible.
+      * `canonical_slice_id` had **no direct test anywhere in `tests/`** (15 survivors). SLICE2
+        made that matter: `PlanIds._record` canonicalises, so the accessors are now its first
+        in-module caller. Pinned.
+    The one accepted survivor is equivalent: `extract_plan_id`'s `text or ""` → `text or "XXXX"`
+    — `_PLAN_ID_RE` cannot match either, so no observable behaviour differs. It is in
+    pre-existing code outside this slice, so no `# pragma: no mutate` was added to code SLICE2
+    does not own.  [measured 2026-10-06]
+E90 FACT  The repo pins mutmut to 3.6.0 and enforces it: installing 3.8.0 for the sweep turned
+    `test_slice_mutmut.py` from 21 skipped into a hard failure reading
+    `tool_version_mismatch: expected 'mutmut, version 3.6.0', got '3.8.0'`. Proven to be the
+    cause rather than a SLICE2 regression by stashing all three changed files and reproducing
+    the failure. Downgrading to 3.6.0 cleared it and, as a side effect, that suite now *runs*
+    in this sandbox instead of skipping — 4079 passed against E83's 4008. Recorded because the
+    next operator to reach for a mutation sweep will install the newest mutmut by reflex.
+E91 FACT  A grammar rule SLICE2 had to settle and the schema does not state: **a blank line
+    inside a `CONTRACTS:` block does not terminate an entry** — only indentation does (CT17).
+    Visual spacing between clauses is therefore legal. Pinned by
+    `test_a_blank_line_does_not_truncate_an_entry` so the choice cannot drift silently.
+    Candidate for a one-line addition to schema §4 if the operator wants it written rather than
+    merely tested; not escalated to a Q# because it binds no consumer and no contract.
+E92 DECISION  Q36 — a continuation line wrapped back to column 0 silently truncates a slice's
+    `CONTRACTS:` block, losing that entry's tail **and every contract declared after it**.
+    Found by an adversarial prose probe against the shipped parser, not by reading: of eight
+    Markdown habits tested (blank line inside an entry, blank line between entries, sub-bullet
+    lists, tabs, trailing blanks, a column-0 field, a 4-space block after a blank), seven
+    behave as specified and this one deletes data without an error. Measured at 7156c03: a
+    two-contract block whose first entry wraps to the margin parses to exactly one contract.
+    The risk is not theoretical — the planner is a language model and wrapping prose to the
+    left margin is the default Markdown habit.
+    Operator chose (c): the parser stays strict, the SLICE3 pre-check FAILS on a declaration
+    line whose id is absent from the parsed contracts (CT35), and schema §4 states the hazard
+    in the authoring text. Rejected: making the parser tolerant of column-0 continuations,
+    which reintroduces the "is this line a field name?" allowlist that CT17 removed on purpose
+    — the next new column-0 field would silently extend the block again.
+    A second, milder divergence is recorded but not fixed: a blank line followed by a 4-space
+    indent *renders* as a Markdown code block while the parser folds it into contract text, so
+    reader and harness see different things. Left alone — CT35 does not fire on it and no
+    contract depends on it.  [measured + operator-confirmed 2026-10-06]
+E93 DECISION  Q37 — the planning folder specified **no live-path test anywhere**. Audited:
+    roadmap I02–I06 are one-line outlines that never mention one; increment-01's nine-point DoD
+    is entirely static; and SLICE4 was titled "End-to-end conformance" while CT14 only asserts
+    that fixture text parses and pre-checks clean — it boots no composition root and runs no
+    loop, so the title promised a gate the slice does not deliver. The only live-run language
+    in the folder was a Phase-1 exit criterion in `ARCHITECTURE-REVIEW.md` that was never
+    carried into the roadmap.
+    Operator chose (cb): add standing decision **SD-C** — no increment is DONE without one test
+    that boots the real composition root with only `ProviderChain.request` mocked, asserting an
+    observable effect and naming the production call site whose deletion fails it — and put the
+    first real one in I02, where the verify gate actually executes commands
+    (`notes/i02-handoff-verify-gate.md` §7). SLICE4 renamed to "Skill-to-parser conformance".
+    I01 ships no live-path test *deliberately* and now says so in its DoD, with I02 named as
+    the increment that adds it — the same shape as SD-B's `consumer:` rule.
+    Note the asymmetry this corrects: I01's static gates are strong (SD-B, "a grep for the
+    token SLICE is not evidence", strict-xfail forcing functions, a mutation sweep) yet every
+    one of them answers "does this string parse?" and none answers "does anything call it?".
+    Both failure modes SD-C targets have already occurred in this project — E89 and E52.
+E94 DECISION  Q38 — CT10 and CT27 assigned the same condition two different severities: CT10
+    FAILED on "a reference to an undefined `SLICE#`/`CT#`" while CT27 WARNed on "a contract id
+    referenced anywhere but declared in no `CONTRACTS:` block". A contradiction inside the plan
+    itself, found while reading SLICE3 before writing code.
+    Resolved by splitting the subjects, operator-confirmed: **CT10 owns slice ids and keeps
+    FAIL** — an undefined `SLICE#` in `DEPS:` is a broken edge, so the execution order is
+    undefined and the plan cannot run at all — while **CT27 owns contract ids and keeps WARN**,
+    because a plan legitimately cites a contract owned by a neighbouring increment and a FAIL
+    there would force an escape hatch, which then hides the real misses. The genuinely
+    dangerous sub-case, a declaration lost to a column-0 wrap, is already a FAIL under CT35, so
+    nothing hazardous degrades to a warning.
+E95 DECISION  Q39 — CT10b (WARN on a `verify` command naming a non-existent path) contradicted
+    the module contract in schema §7: "all functions pure, total, stdlib-only", and
+    `plan_ids.py`'s own docstring, "no filesystem access". **Deferred to I02** rather than
+    reconciled, and the reason is stronger than the conflict: at pre-check time the check is
+    false by construction. The pre-check runs *before* the coder, and a new slice's `TESTS:`
+    path is annotated `(NEW — author it)` precisely because it does not exist yet — so CT10b
+    would warn on every new test file, which is noise, not signal. The only true positive left
+    is a typo in a path, and that fails loudly the first time I02's gate runs the command,
+    costing one gate run rather than a burned slice — exactly the trade SLICE3's INTENT names.
+    Path existence also belongs to I02 on the merits: that is where the filesystem is already
+    in play and where `tests_note` is interpreted by the fail-before filter.
+    Rejected: injecting an `exists` probe and splitting out a second impure entry point. Both
+    work, both add a seam whose only purpose is to host a check that should not run here.
+    `precheck` therefore stays a single pure stdlib-only function. SLICE3 drops to 8 contracts
+    and 5 steps.
+
+E96 DECISION  CT26 severity was never stated. Fixed as **FAIL**. The class convention does not
+    decide it — CT25/CT26/CT27 are all `[FUNCTIONAL]` and CT27 says WARN explicitly, so the
+    contract text is the authority and CT26's was silent. FAIL because a near-miss heading is
+    the same failure class as CT35, not a cosmetic one: `## SLICE 1:` declares no slice, so
+    every contract, step and test path under it is absent from the plan the harness gates
+    against. There is nothing downstream to catch it, because there is nothing downstream.
+    The matching regex is also made case-insensitive, which the plan already required of it
+    implicitly: STEP5 lists "a lower-case heading" as a drift mode the corpus must cover, and
+    the case-sensitive pattern as written in CT26 does not match one.
+
+E97 DECISION  CT35 suppresses CT27 for the ids it claims. Measured on the corpus: a contract
+    lost to a margin wrap was reported twice — FAIL `contract-declaration-lost` at the broken
+    block, and WARN `contract-reference-undeclared` at an earlier prose mention. The warning
+    is both redundant and the misleading one of the pair, since it points at a sentence rather
+    than at the block that ate the declaration. One defect, one diagnostic, at the line the
+    operator must edit.
+
+E98 CORRECTION  STEP5's drafted corpus listed seven drift modes; one was dropped and inverted.
+    "A slice followed by an increment-level heading" was a defect when SLICE3 was planned and
+    stopped being one when CT16 shipped in SLICE2 — the parser now ends a slice section at a
+    later heading of depth ≤ its own, which is the mandated shape. A corpus entry for it would
+    have had to assert a diagnostic against correct grammar. It is now a positive assertion
+    instead (`test_a_trailing_increment_section_is_not_a_violation`), so the lint is pinned
+    not to re-flag what SLICE2 legalised. Corpus ships six files.
+
+E99 EVIDENCE  SLICE3 implemented red-before-green. `tests/test_plan_precheck.py` was written
+    first and failed to collect (`ImportError: cannot import name 'precheck'`), then 42 tests
+    green. Full suite **4123P / 3F / 12S / 1X**; the three failures are the E19 baseline trio
+    and are unchanged. Rules ship under stable mnemonic ids — `slice-without-tests`,
+    `step-without-exit`, `deps-undefined-slice`, `deps-cycle`, `heading-near-miss`,
+    `contract-reference-undeclared`, `contract-declared-twice`, `contract-declaration-lost` —
+    not `CT#`. Contract ids renumber when an increment is re-planned; a rule id ends up in
+    operator muscle memory, commit messages and suppressions, so it has to outlive the plan
+    that introduced it. The owning CT is named in each rule function's docstring.
+    The live increment artifact pre-checks clean (0 FAIL, 0 WARN), which the increment DoD
+    requires and `TestAgainstTheLiveIncrement` asserts.
+
+E100 EVIDENCE  Mutation sweep on `plan_ids.py`, mutmut 3.6.0, three rounds: 44 survivors → 17
+    → **11, all equivalent** (602 mutants, 377 rejected by the type checker, 214 killed of 225
+    viable). The sweep found four real gaps the hand-written suite missed — a `continue` that
+    could become a `break` in three separate scans, and `_line_at`'s off-by-one reachable only
+    through the slice-anchored rules rather than the line-scanning ones — and they are now
+    pinned in `TestMutationDrivenGaps`.
+    Three survivors were answered by deleting code rather than adding tests, per the standing
+    preference. (1) `_step_blocks` carried a lookahead to the next `STEP#` that could never
+    fire: a step marker is itself unindented, so the "ends at the next unindented line" rule
+    already stops there. (2) The same function re-matched `_STEP_RE` on the block it had just
+    built, giving an unreachable "a step" fallback name; it now returns the id. (3) The
+    hand-rolled colour-map DFS for `DEPS:` cycles was replaced by `graphlib.TopologicalSorter`
+    — stdlib, so purity holds — which also fixed a real defect the DFS had: it reported only
+    one cycle, while the replacement drops the closing edge and retries, so independent cycles
+    are all reported in the single pass CT25 asks for.
+    One mutant was *more correct than the code*: it moved the cycle diagnostic's line from
+    `cycle[0]` to `cycle[1]`. `cycle[i]` precedes `cycle[i+1]`, so `cycle[1]`'s `DEPS:` line is
+    the one declaring the first edge of the printed path — a line the operator can edit to
+    break the cycle. Adopted, and pinned by an exact-render assertion.
+    The 11 remaining survivors are equivalent, two of them verified by execution rather than
+    argument (`_step_blocks` offset base and `_contract_declaration_sites` count base, both
+    differing only if a section begins with a newline — impossible, a section begins at its
+    `#` heading). `extract_plan_id`'s `text or ""` survivor is the one carried over from
+    SLICE2 and sits in code SLICE3 does not own. `pyproject.toml` restored byte-identical
+    (`git diff --quiet` verified); `mutants/` and `.mutmut-cache` removed.
+
+E101 EVIDENCE  The repository's own authoring gate caught a real defect in this slice that
+    ruff, pyrefly and vulture all passed: `FA-AUTHORING-V2-EXPORTS-COMPLETENESS` flagged the
+    public `FAIL`/`WARN` severity constants as missing from `__all__`
+    (`tests/test_s10a_cli_coverage.py::test_s10a_authoring_check_runs_on_a_real_workspace`).
+    Resolved by exporting them: a consumer cannot filter a report without naming a severity,
+    and a bare `"FAIL"` literal at each call site is how a typo becomes a silently empty
+    filter. Recorded because it is evidence the gate earns its place.
+
+E102 DECISION  `PrecheckReport` ships `failures` and `ok` but **no** `warnings`, under SD-B:
+    nothing consumes a warning list yet, and the one-line comprehension is there when I02's
+    gate renderer needs it. Noted so the asymmetry reads as a decision rather than an
+    oversight.
+
+E103 EVIDENCE  SD-C, stated not assumed: I01/SLICE3 ships **no live-path test**, because
+    `precheck` is pure, total and stdlib-only and no composition root reaches it — there is no
+    `drive_session` path to boot. The increment that adds the first live gate is **I02**, spec
+    in `notes/i02-handoff-verify-gate.md` §7. SLICE3's classification is C0 throughout.
+
+E104 DECISION  Suspicion S-a closed as obsolete. "SLICE2 now carries ten contracts" asked
+    whether the slice was unwieldy; SLICE2 shipped at `7156c03` with all ten green and a clean
+    mutation sweep. The question was about a decomposition that no longer has a decision
+    pending.
+
+E105 DECISION  S-b — the step marker vocabulary had three disagreeing authorities. Schema §6
+    defined `[ ]` → `[x]`; `prompt.py:687` instructed the coder to write `[>]`; the parser
+    accepted all three and, measured, rejected `[X]`, `[-]` and `[~]`. Operator decision
+    2026-10-07: **three states, ratified in §6**, with markers normalised before matching
+    (inner whitespace stripped, case folded) so `[]`, `[ ]`, `[  ]` all mean to do and `[x]`,
+    `[X]`, `[✓]`, `[✔]` all mean done. Anything else is a FAIL (CT36), not a third spelling of
+    done: a marker outside the vocabulary usually means the author wanted a state the schema
+    does not have, and guessing which is the silent mismatch the rule replaces.
+    `[>]` kept rather than removed because it is already produced in production; deleting it
+    would change coder behaviour for the sake of vocabulary tidiness. The separate defect in
+    that prompt line — it tells the *model* to tick, which §1/§6 reserve for the harness —
+    remains the unmerged E44 delta in `notes/role-prompts-conformance.md`.
+    The real find here was `[X]`: a capital X renders as ticked everywhere and parsed as no
+    step at all, so a step marked done with it escaped the lint entirely.
+
+E106 DECISION  S-c — the leniency was mine, introduced in SLICE3, and is reversed. CT37.
+    `_declared_deps` resolved `DEPS: S1` to `SLICE1` through `canonical_slice_id`, while
+    `## S1:` declares no slice: the same token legal in one position and invisible in the
+    other, inside one document. It was even pinned by a test
+    (`test_an_em_dash_and_a_legacy_id_both_resolve`), which cemented the contradiction; that
+    test is rewritten.
+    The operator named the root cause more precisely than the review did: inside a plan `S1`
+    is **ambiguous**, because a plan carries both `SLICE#` and `STEP#`. So the rule is not
+    "translate carefully" but *never guess* — `parse_slice_id` validates `^SLICE(\d+[a-z]?)$`
+    and returns `None` otherwise, and the abbreviation is reported wherever it appears:
+    `## S1:` as `heading-near-miss`, `- [ ] S1:` as `step-near-miss`, `DEPS: S1` as
+    `deps-undefined-slice`.
+    `canonical_slice_id` keeps its leniency and its job at the eval-report boundary
+    (`workflow_controller.py:336`), and the reason is now stated rather than assumed: a report
+    reconciles against slice ids **only** — one namespace — so `S1` is unambiguous there and
+    dropping it would discard a usable verdict. Tolerance is a property of that boundary, not
+    of the grammar. Pinned by `tests/test_slice_id_validation.py::test_legacy_s_ids_normalise_to_canonical_space`.
+    `parse_slice_id` also *validates* instead of rewriting a prefix, which removes a second
+    wart: `canonical_slice_id("slices")` returns `"SLICEs"`, so a junk token used to arrive in
+    an error message looking like a plausible id.
+
+E107 DECISION  supersedes: E78 (for the `N ≤ 7` rule only). S-d observed the ceiling was
+    exactly met. E78 had placed `N ≤ 7` under "Authoring guidance (not checked)" and told the
+    pre-check not to key on it. Operator decision 2026-10-07: **WARN, never FAIL** (CT38).
+    The rest of E78 stands — `STEPS:` default and brief size remain unchecked guidance. The
+    distinction that justifies splitting them: slice count is a number the parser already has,
+    so reporting it costs nothing and cannot be wrong, whereas "is this brief the right size"
+    is a judgement a lint can only approximate. WARN and not FAIL because the ceiling is
+    admission control (Q16): a gate would convert a planner's judgement into a refusal.
+    Reported at 7 rather than 8 because 7 is legal and means the headroom is gone — the moment
+    worth knowing before the next split. I01 now declares 7 slices and emits this warning
+    against itself, which is the signal working as intended rather than a defect.
+
+E108 DECISION  S-e was a live defect, and the fix generalises past it. Measured: a
+    `## Grounding` heading written *inside* a slice ends that slice under CT16's depth rule,
+    so the `TESTS:` line below it belongs to no slice and is lost. With contracts present this
+    surfaced as CT8 insisting the slice "has no TESTS: line" — actively false, the author wrote
+    one — and with no contracts it was completely silent.
+    Rather than an authoring rule saying "Grounding must be `###`", CT39 asserts a
+    **conservation property**: every grammar-bearing line (a field, a `STEP#`, a contract
+    declaration) must sit inside a slice section. This covers drift modes nobody has predicted,
+    which an enumeration of forbidden constructs cannot. Measured false positives across every
+    real artifact in the repository: zero. The only matches outside increments were in
+    `artifact-schema-and-grammar.md` and `prompt.py`, both grammar templates with
+    `## SLICE<n>:` placeholders, and both out of scope by CT21b.
+    CT8 is suppressed for a slice whose `TESTS:` line CT39 found orphaned — same principle as
+    E97, one defect one diagnostic, and here the suppressed message was not merely redundant
+    but untrue.
+
+E109 EVIDENCE  SLICE3b red-before-green: 9 failures before implementation, 60 tests green
+    after. Mutation sweep on `plan_ids.py`: 770 mutants, 484 rejected by the type checker,
+    **274 killed of 286 viable, 12 survivors all equivalent** (the 11 carried from E100 plus
+    `_orphaned_tests_owners`' `<` vs `<=`, which cannot differ because a slice's own heading
+    line is inside its span and so can never also be an orphan — verified by execution against
+    the corpus and the live increment, not by argument). First sweep found 5 real gaps: the
+    ceiling diagnostic's line, two unnamed `what` branches in the orphan message, and a
+    `continue`→`break` that would have let a non-TESTS orphan abort CT8's suppression.
+    `pyproject.toml` restored byte-identical.
+    One pre-existing test was rewritten rather than updated: `TestLivePathUndisturbed` had
+    hardcoded the live increment's slice list, so it went red merely because the plan gained
+    SLICE3b. A snapshot of plan content inside a parser test trains the next agent to edit the
+    expectation instead of reading the failure. It now compares `.slices` against an
+    independent heading scan — a differential oracle that survives legitimate plan edits and
+    still fails if the parser drops a slice.
+    Drift corpus extended to nine files. I01 now stands at 7 slices (the ceiling), 40
+    contracts, and pre-checks with zero failures and one warning — its own CT38.
+
+E110 EVIDENCE  I01/SLICE4 STEP2 — the human migration note for the `S#` → `SLICE#` rename
+    ships at `notes/migration-s-to-slice.md`. It names the three conditions the roadmap
+    requires for a zero-deprecation removal, and all three were **re-measured** rather than
+    restated. (1) No live consumers: the extractor's authoring glob
+    `worklogs/*/increments/increment-*.md` contains zero documents using the old anchors.
+    (2) Inert corpus: 31 documents repo-wide still carry `## S<n>:` or `### Step S<n>`, and
+    feeding every one to `extract_plan_ids` yields **0 with a non-empty `.slices`** — E24's
+    "accepted silent no-op" is confirmed by execution, not assumed. (3) The note itself.
+    Two corrections the measurement forced, which restating the roadmap would have hidden:
+    the roadmap calls the corpus "archived", but only 16 of the 31 are under
+    `worklogs/archive/`; the other 15 sit in `implementation-plans/`, `reviews/`,
+    `pr-notes/`, `knowledge/research/` and `HANDOFF.md`. The condition still holds because
+    what it needs is **inertness**, not archival — but the word was load-bearing and wrong.
+    And of the 32 `implementation-plans/` documents the totality tests already feed to the
+    parser, exactly one (`PLAN-complexity-aware-execution-chat-role.md`) emits pre-check
+    failures: 9 × `heading-near-miss`, which is CT26 correctly catching a pre-grammar
+    document. The note records it as expected so nobody "fixes" a historical plan.
+    Doc-links gate unchanged at its 46-link expected-red baseline, measured with and
+    without the new file by stash.
+
+E111 DECISION  Live/e2e verification for I01 is **registered, not written** (operator,
+    2026-10-07): collect the targets now, write the tests later, distributed across the
+    increments that own them; no e2e run before I02 closes. The register is
+    `notes/deferred-verification-register.md`, rows D1-D7, each naming the owning increment
+    and the kill-check its test must satisfy. Standing rule attached: an increment may not
+    be DONE while it owns an unticked row.
+    The measurement that motivated it. `precheck` -- the whole 11-rule engine from SLICE3
+    and SLICE3b -- has **zero call sites outside `plan_ids.py` and the test suite** (D2).
+    SD-B is satisfied, because schema §7:388 names its consumer ("I01 SLICE3 + the I03
+    admission step"), but nothing executes it in production, so every rule in it is
+    currently unfalsifiable in the live system. Same for the entire read API (D4).
+    Also recorded: the skill->prompt chain is live and was traced to source (D3).
+    `expansion.py:136` selects the skill, and `coder_loop.py:895` injects it with
+    `read_skill_for_injection`'s **default `file_name="SKILL.md"`** -- the full body,
+    skeleton included -- from inside `_drive_session_inner`. The coder-stage ceremony at
+    `coder_loop.py:247` is a *different* path using `INJECT.md`, and `plan-authoring/` has
+    no `INJECT.md` at all; a test assuming one injection path would be wrong.
+    Proposed and deliberately NOT built: an executable guard that fails the build when a
+    name in `plan_ids.__all__` has neither a production call site nor a register row. It
+    would need its own CT# and is a new policy choice.
+
+E112 EVIDENCE  Three open questions raised during I01/SLICE4 and recorded in
+    `notes/open-questions-2026-10-07.md`: Q40 (the skill skeleton cannot pre-check clean,
+    blocks CT14), Q41 (the planner skills are half-migrated), Q42 (is INJECT.md in CT14's
+    conformance scope). Next free question id: Q43.
+    The measurement behind Q41, which was not previously recorded anywhere. Counting the
+    bare `S#` token against the post-rename ids in every live producer text:
+    `plan-authoring/SKILL.md` 10 vs SLICE 4 / STEP 5; `feature-planning/SKILL.md` 8 vs 6/4;
+    `feature-planning/INJECT.md` 3 vs 0/0; `tests-writing/INJECT.md` 0; `prompt.py` **0**
+    vs 15/5. SLICE1c migrated the prompt completely; SLICE1b added a `SLICE#`/`STEP#`
+    skeleton to the skills but left the prose around it on the pre-rename grammar.
+    `plan-authoring/SKILL.md:173` still *defines* the tier as "S#  Step / task card", so
+    the planner reads one document teaching two incompatible id grammars, and the parser
+    rejects the one the id table declares (E106/CT37).
+    The measurement behind Q42. `feature-planning/INJECT.md` contains no PLAN-SKELETON and
+    not one plan-grammar token; it passes the parser **vacuously** (nothing to parse), so
+    "INJECT.md passes the parser" is not evidence of anything. The planner receives
+    `SKILL.md`, not `INJECT.md` -- two different injection paths at two different stages
+    (`coder_loop.py:895` L2 planning vs `coder_loop.py:247` coder slice entry) -- which
+    settles SKILL.md as CT14's conformance target. What stays open is who owns INJECT.md's
+    three stale `S#` tokens, since E45/E47 give coder behaviour to I03 while grammar is
+    I01's.
+
+E113 DECIDED (operator, 2026-10-07)  Q40 -> (b): the PLAN-SKELETON is a **plan, not a
+    template with its own notation**. Alternation notation is removed from every line the
+    parser reads as data, and the choice it used to express moves into prose beside the
+    block. Q41 -> (i): I01/SLICE4 finishes migrating both `SKILL.md` off the pre-rename
+    `S#` tier. Q42 -> (i): I01 fixes the grammar tokens inside the coder-stage `INJECT.md`;
+    its behaviour text stays I03's (E45/E47). Contracts added: CT40, CT41, CT42, CT43.
+    Rationale carried by the precedent, not by taste: SLICE1b/STEP2 already ruled that the
+    schema §4 example must use literal ids "or it does not parse and proves nothing". A
+    skeleton has the same job, so it inherits the same rule.
+    Migration rule used for the 21 `S#` occurrences, recorded so a reviewer can check the
+    judgement rather than trust it: `S#` -> `SLICE#` where the referent is the unit that
+    carries CONTRACTS/TESTS/DEPS or owns artifacts (mapping, coverage, ownership, gating,
+    and every place the surrounding text says "slice"); `S#` -> `STEP#` only where the text
+    literally says "step" (`plan-authoring` I-IP-2 and the "follow steps in ... order"
+    line). The id table row was not deleted but split into two rows, one per tier, because
+    the single row was the root of the ambiguity E13 removed.
+
+E114 EVIDENCE  I01/SLICE4 implemented. Red-before-green: 5 failures before the change
+    (CT40 x2, CT14 pre-check half x2, CT41 x1), 15 passed after, in the new
+    `tests/test_skill_conformance.py`. Measured before: both skeletons emitted three
+    `deps-undefined-slice` failures from the single line `DEPS: SLICE<a>, SLICE<b> | -`;
+    `S#` counts were plan-authoring 10, feature-planning 8, feature-planning/INJECT.md 3,
+    and are now 0 across the whole `knowledge/skills/` tree.
+    A defect the tests caught in their own helper: the first fence stripper matched three
+    or more backticks and so deleted the nested ```verify fence, silently robbing every
+    derived sample of its commands. Only the `record.commands` assertion failed, which is
+    why that assertion was written; a test that merely checked "it parsed" would have
+    shipped the bug.
+    CT42 is the anti-theater mechanism: the sample is *computed* from the skill file on
+    every run by one documented rule -- every `<...>` placeholder becomes the literal word
+    `sample` -- so it cannot be tuned until the lint passes, and a kill-check proves it
+    tracks the file rather than being a frozen copy.
+    Adequacy layer, in place of a mutmut sweep: SLICE4 adds **no production Python**
+    (`git diff -- src/` is empty, so SLICE3b's 770-mutant sweep still covers `plan_ids.py`
+    unchanged), so the mutable surface is the producer artifact. Nine realistic corruptions
+    of the skill text were applied and reverted byte-identically: drop the TESTS: line,
+    strip a STEP exit, point DEPS at a missing slice, break the slice heading, abbreviate
+    STEP1 to S1, reintroduce the pre-rename tier, rename the skeleton marker, change a
+    contract class, and restore the alternation notation. **9 killed, 0 survivors.**
+    Static: ruff format clean, ruff check clean, pyrefly 0 errors. Full suite
+    **4156 passed / 3 failed / 12 skipped / 1 xfailed** -- +15 against the 4141 baseline,
+    and the three failures re-run individually are the known expected-red trio (E19 x2 plus
+    `test_workflow_per_role_overrides_parse`).
+    Not done, deliberately: no live-path test. Rows D1 and D3 of
+    `notes/deferred-verification-register.md` own it, I02 is the named increment, and the
+    chain this slice closes is still only proven over text (SD-C, E93/E103).
+
+E115 EVIDENCE  I01 Definition-of-Done walk, 2026-10-07, recorded in
+    `notes/i01-dod-walk-2026-10-07.md`. Eight of nine lines passed on first measurement:
+    all 14 verify commands across the 7 slices exit 0; the increment pre-checks clean
+    (0 FAIL, 1 WARN -- its own CT38); CT11, CT14 and CT31 green; full suite 4156 passed /
+    3 failed / 12 skipped / 1 xfailed, the three being the expected-red trio re-run by
+    name; and zero `drive_session` boots across all six I01 test files, which is SD-C's
+    "no live-path test, deliberately" confirmed rather than assumed.
+    **DoD line 7 failed on measurement.** `parse_slice_id` was in `plan_ids.__all__` and
+    absent from the schema document entirely, and `canonical_slice_id` was absent from §7.
+    SLICE3b grew the public surface and never grew the spec. Fixed here, documentation
+    only: §7 now specifies both, with their consumers and -- the part that matters -- the
+    reason they differ, one strict for use inside a plan and one lenient only at the
+    eval-report boundary. The DoD line as literally phrased still passed, because it
+    polices §7 names lacking consumers while the drift ran the other way; that asymmetry is
+    now a registered gap, D8, owned by I02. No guard test was added: I01 is complete, and
+    attaching an unowned contract to a closed increment is the drift this project exists to
+    prevent.
+    Two things recorded rather than silently settled. DoD line 2's wording ("no `S#`
+    assertion survives") predates E106 and now reads as if it forbade the four assertions
+    that pin the canonicalisation mapping E106 deliberately kept. And **Q43**: E106 scoped
+    the surviving leniency to the eval-report boundary, but `commands_for`, `tests_for` and
+    `section` canonicalise too -- a second lenient surface the decision never named, which
+    I02 is about to build on.
+    Verdict: I01 is content-complete -- 7 slices, 42 contracts. `VERIFIED` is not claimed;
+    the increment itself says that additionally requires I02 and I03.
+
+E116 EVIDENCE  I02 planning readiness assessed, recorded in
+    `notes/i02-planning-readiness-2026-10-07.md`. The handoff's §2 contract boundary was
+    written before SLICE2-SLICE4 shipped, so every promise in it was **executed against the
+    shipped code** rather than re-read: `commands_for` (slice and `None`), `section`,
+    `tests_for`, `contract_class`, `SliceRecord.tests_note`, `.test_paths`. All live.
+    `commands_for(None)` returns `()` on increment-01, i.e. ownership is total and no verify
+    block in it is unowned.
+    Second spec defect found while checking it, and fixed: schema §7 wrote
+    `plan.steps_mode("SLICE2")` as a method on `PlanIds`, but `steps_mode` is a **field on
+    `SliceRecord`** -- a call that never existed. Corrected in place with the old form
+    quoted so the correction is auditable. Together with E115's `parse_slice_id` gap, two of
+    the surface spec's entries were wrong in ways a planner building on them would only
+    discover at implementation time; both were documentation, neither needed code.
+    Decision backlog split by what it blocks, which is the part that was missing. Blocking
+    the *shape* of the plan: H4 (result shape and home -- a subprocess runner cannot live in
+    the pure stdlib-only `plan_ids.py`, so this decides the module boundary and therefore
+    the slices), H2 (`NEW` semantics, including the third option that derives NEW-ness from
+    `HEAD` and removes the marker from the trust path), H1 (fail-before granularity), and
+    the new Q43. Blocking implementation only: H3, H5, H7, CT10b. Not a question but a live
+    external risk: H6, the S16 proposal to delete `.commands` for having "no consumers" --
+    measured today, `commands_for` still has zero production call sites, so that argument is
+    correct until I02 becomes the consumer that falsifies it.
+
+E117 CORRECTION  H4 ("where does the verify runner live, and what shape is its result?") was
+    **never an open question**, and raising it was my process error, not a gap in the plans.
+    `roadmap.md:147` already maps the superseded plan's slice **S6** -- "harness runs
+    verification (GAP5/GAP13)" -- onto I02. That slice is
+    `worklogs/implementation-plans/PLAN-slice-ceremony-harness-enforcement.md` §Step S6,
+    line 700, and it specifies the runner in full. I followed the handoff note's open-question
+    list without following the roadmap's own pointer to the parent document. Operator caught
+    it. Lesson for the I02 review: an "open question" inherited from a context bank must be
+    checked against the superseded plan before it is re-asked.
+    What S6 already decided, re-verified at the tip 2026-10-07: the module is
+    `src/fa/inner_loop/verification.py` with `VerificationResult` + `run_verification`
+    (**file still absent**, so it is to be built, not found); the result is typed and carries
+    the real integer `exit_code`; reuse the *policy pieces only* from `run_bash.py:233-250`
+    (`build_scrubbed_env`, now at `tools/bash_env.py:70`, plus the venv-PATH prepend and the
+    timeout/binary-decode handling) and explicitly **not** `_run_subprocess_fallback`, which
+    is private, tool-shaped and carries side effects a verifier must not have (F-5);
+    per-command `bash_timeout_seconds` plus a run-deadline check between commands via
+    `_deadline_exceeded` (`workflow_controller.py:536`); no commands means `skipped: true`
+    and no block (G8); and commands come from the plan, never from model output -- which is
+    exactly what I01's `commands_for` now supplies.
+    Routing was also already settled as **Q10, answered 2026-09-07 option (a)**: a non-zero
+    exit must NOT return `REPAIR_REQUIRED`, because nothing branches on that constant. The
+    harness synthesises an eval report with `route_decision="return_to_coder"`, marked
+    harness-origin, and the `repair_round` cap (`workflow_artifacts.py:277`) governs it so a
+    permanently failing command terminates non-DONE instead of looping.
+    Consequence: **H4 and H5 are answered and H7 is partly answered.** I02 must re-verify and
+    absorb S6, not re-decide it. Remaining plan-shaping decisions: H2, H1, Q43.
+
+E118 DECIDED (operator, 2026-10-07)  The producer+consumer rule (SD-B) is satisfied by a
+    *planned* pair, not only by a shipped one. Its origin, stated by the operator: features
+    were once shipped to production with dead code behind them, presented as working. The
+    rule exists to stop that, so when both the producer and its consumer are scheduled, the
+    rule is formally met and work proceeds. The remaining obligation is not to re-litigate
+    ownership but to **prove at the end, with e2e tests, that every feature works as planned
+    and none was lost** -- which is what `notes/deferred-verification-register.md` exists to
+    make unforgettable.
+    Applied to H6 / S16: the proposal to delete `.commands` for having "no consumers" is not
+    acted on. `commands_for` has zero production call sites today and I02 is its scheduled
+    consumer, so the pair is planned and the accessor stays. supersedes: the framing in E116
+    that treated H6 as an unresolved external risk; it is now a tracked dependency, with
+    row D4 of the register carrying the e2e obligation.
+
+E119 FACT  The missing link between the monster plan and this roadmap is
+    `worklogs/reviews/SIMPLIFICATION-the-elegant-path.md` (204 lines). Operator was right
+    that one existed; neither the roadmap's `## Sources` nor `i02-handoff-verify-gate.md`
+    cites it, which is why two passes of reading missed it. The roadmap's frontmatter
+    `supersedes:` the monster plan, and **this note is the document that caused the
+    supersession**: it argues that every hard question of the preceding weeks (Q17, Q20, the
+    T51 normalisation matrix, `tool_choice` work, Q21) is downstream of one design choice --
+    asking a model a question that has a factual answer -- and that `PlanIds.commands` was
+    already being extracted and thrown away. "29 GAPs, 46 verification rows" was the price of
+    making an unreliable narrator trustworthy.
+    So there is **no single latest iteration** of the verify-runner idea; there are three
+    layers, none contradicting, none complete on its own:
+    (1) MECHANICS -- monster plan §Step S6 line 700 (~2026-09-07): module
+    `src/fa/inner_loop/verification.py`, env/timeout policy reuse, and routing settled as
+    Q10(a). Nothing later contradicts it.
+    (2) RATIONALE AND SCOPE -- `SIMPLIFICATION-the-elegant-path.md`: proposes S16 as "one new
+    function, one call site, plus tests", explicitly against the 29-GAP apparatus.
+    (3) NON-VACUITY -- `notes/verify-block-design.md` + the I02 handoff (2026-09-09 onward):
+    the four-phase ritual and seven-row truth table. This layer is NEW relative to (1) and
+    (2) and is where fail-before/pass-after was introduced.
+
+E120 FACT  A design regression found by reading E119's note: SIMPLIFICATION §4 "What it does
+    NOT solve" names four boundaries, and the two that matter for test strength were never
+    carried into the I02 design. Its answers were (2) a command that does not actually test
+    the slice -- `pytest -q` on an empty file exits 0 -- "which is why the *judge stays*,
+    reviewing whether the test is honest is exactly the **kill-check discipline the skill
+    already mandates**"; and (3) a coder that edits the test to pass -- mitigated by the diff
+    reaching the judge. `notes/verify-block-design.md` contains **zero** occurrences of
+    "kill-check"; it replaced that answer with fail-before/pass-after, which is a strictly
+    weaker proxy.
+    The kill-check discipline is already normative in all three skills and is not a new idea
+    to be invented: `feature-planning/SKILL.md:332` requires
+    `producer-kill-check=<exact producer/write/render/gate removal fails test>`, its §12
+    gives a seven-step manual protocol ending "restore code; report which tests failed";
+    `tests-writing/SKILL.md:68` makes a kill-check whose call site does not exist VACUOUS;
+    `plan-authoring/SKILL.md:62` requires one per product claim. A `mutation-clearing` skill
+    exists. ADR-15 already establishes git-worktree isolation, which is where a harness could
+    apply a kill-check without touching the operator's tree.
+
+E121 FACT  Handoff §5 and §6.4 contradict each other, and the tie breaks toward §6.4.
+    §5 forbids "mutation/failure-injection proof in the core (that is the I06
+    verifier-co-evolution story)"; §6.4 mandates "non-vacuity = one scoped mutation run per
+    slice, **as a gate**, with appeal" and cites **E63, an operator decision**. Two facts
+    decide it: there is **no verifier-co-evolution increment** -- I06 in the roadmap is
+    "Telemetry & distillation" -- so §5 defers mutation to an increment that does not exist,
+    i.e. to never; and §5's bullet carries no decision id while §6.4 carries E63.
+    Mutation-as-gate was therefore already sanctioned, and the operator's choice of the
+    declared kill-check is the compliant option, not an exception to a guardrail.
+    Recorded so the next reader does not "restore" §5. supersedes: the §5 bullet forbidding
+    failure-injection in the core.
+
+E122 DECIDED (operator, 2026-10-07)  Test non-vacuity is proven by **executing a declared
+    kill-check**, not by asking whether a test is new. Rejected on the operator's own
+    challenge: deriving NEW-ness from `HEAD` is fragile because `HEAD` moves -- an
+    intermediate commit inside a slice puts the new test into `HEAD` and the vacuity check
+    silently disables itself -- and more fundamentally "is the test new" is a proxy for "is
+    the test bound to the production code", and proxies drift and can be gamed. The
+    kill-check asks the real question directly, works on pre-existing tests, needs no git
+    archaeology, and catches a coder that weakens a test.
+    Design drafted in `notes/i02-slice-verification-design.md`, for module
+    `src/fa/inner_loop/slice_verification.py` (the operator's `slice-verification.py` is not
+    an importable Python name; S6's bare `verification.py` is too broad a bucket).
+    Two mechanisms were **executed before being recommended**, not asserted. (1) A `kill:`
+    directive written as an indented continuation under its contract rides inside the
+    contract body through the shipped parser: all four fields extract with a strict regex,
+    `commands` and `test_paths` are unaffected, and `precheck` returns ok=True with zero
+    diagnostics -- so **I01 needs no change** and stays closed. (2) An AST `remove-call`
+    transformer deletes the producer call and leaves the rest of the file intact, and its
+    `hits` counter separates `PRODUCER_ABSENT` (hits==0, the feature was never wired) from
+    `VACUOUS` (hits==1 but the test still passes, the test is weak) -- the distinction that
+    answers the operator's founding failure mode of dead code shipped as a working feature.
+    Deliberately NOT merged with E63's generated-mutant sweep: that is tool-generated,
+    minutes per slice, and says "some mutant survived somewhere"; a declared kill-check is
+    planner-authored, one extra test run per contract, and says "**this** producer is not
+    bound to **this** test". Complementary, not alternatives. Open forks for review: F1
+    grammar placement, F2 operator set, F3 appeal on VACUOUS, F4 FUNCTIONAL-only scope.
+
+E123 CORRECTION  F1 was re-examined on operator challenge and **my recommendation was wrong
+    in its mechanism**, though right in its placement. (a) as drafted said I02 would extract
+    the `kill:` directive from the parsed contract **body**. But `_section_contracts` joins
+    continuation lines with single spaces, so the line boundary is destroyed. Measured over
+    six cases: a directive followed by trailing prose does **not** match; two directives on
+    one contract silently resolve to the last; a typo'd keyword or a missing `::` is
+    indistinguishable from "none declared". Four of six degrade to "no kill-check found",
+    and that is indistinguishable from "the planner declared none" -- a silently disabled
+    gate, the precise failure this project exists to prevent. End-anchoring the regex causes
+    the trailing-prose miss; un-anchoring is worse, because with the line boundary gone the
+    token class runs on into the prose.
+    Fix: placement is unchanged -- the directive stays indented under its contract, which is
+    what stops a kill-check and the claim it proves from drifting apart -- but the reader
+    becomes **`section()`**, the raw slice text, where newlines survive. Re-measured on the
+    same corpus: per-contract attribution is exact, trailing prose is harmless, and a
+    PRESERVATION contract correctly yields none.
+    Safety does not come from placement, so a fail-loud validator is specified: a soft
+    pattern meaning "the planner intended to declare" compared against the strict one, which
+    converts every silent case into `kill-directive-missing`, `-malformed` or `-ambiguous`,
+    each naming `file:line`, each a FAIL, each raised **pre-coder**. A keyword typo escapes
+    the soft pattern and lands as `missing` -- still loud, still blocking, message imprecise
+    -- so a near-miss rule in the manner of CT26/CT37 is specified as CT51.
+    Option (b), a `KILLS:` block, was measured too: it also passes the shipped pre-check
+    cleanly, so it would also not have required an I01 change. Rejected anyway on this
+    project's own evidence that two parallel lists drift apart, as the id table did.
+    **I01 is not reopened.** supersedes: the F1 recommendation in E122.
+
+E124 FACT  I02 planned in full:
+    `increments/increment-02-verify-gate-and-kill-checks.md`. Six slices, **33 contracts
+    CT44-CT76**, two verify commands each. Operator decisions carried in: F2 the operator set
+    stays closed at two; F3 `VACUOUS` and `PRODUCER_ABSENT` block with no appeal; F4
+    kill-checks run on `FUNCTIONAL` contracts only.
+    Slices: 1 the command runner, three-state with ERROR never PASS, scrubbed env and
+    between-command deadline; 2 kill-directive parse and loud validation; 3 the two AST
+    operators with the `hits` counter; 4 worktree isolation including the untracked-file
+    trap; 5 verdict assembly; 6 controller wiring plus the SD-C live-path proof, which
+    discharges register rows D1, D3, D4 and D5.
+    The plan was run through the gates it will itself be judged by, rather than asserted
+    ready: shipped `precheck` returns **ok=True**, with three WARNs all of class
+    `contract-reference-undeclared` -- CT26 and CT37 cited as precedent for the near-miss
+    rule, and CT10b named in Out of scope -- which is exactly the cross-increment case CT27
+    is a WARN for. `commands_for(None)` returns `()`, so command ownership is total. The
+    SLICE2 validator prototype was run against the plan itself: **20 kill directives, all
+    well-formed, every FUNCTIONAL contract carrying exactly one.**
+    Six items are explicitly out of scope and named with their owner, chief among them E63's
+    generated-mutant sweep, which is a different mechanism from a declared kill-check and
+    must not be collapsed into it.
+
+E125 CORRECTION  Adversarial review of the I02 plan at 158b610, recorded in
+    `notes/i02-plan-review-2026-10-07.md`. **Seven confirmed defects, three of which would
+    have shipped a gate that was inverted rather than broken.** All fixed in the plan.
+    **D1, critical.** The kill-check would have been invisible. Executed: with the package
+    installed so an absolute path is on `sys.path`, running a test with `cwd` in a mutated
+    copy still imports the ORIGINAL module. The plan said nothing about `PYTHONPATH`, so
+    every kill-check would have run against unmutated code, every test would have passed,
+    and every contract would have been reported VACUOUS -- blocking every correct slice while
+    never detecting a weak test. Fixed by `PYTHONPATH=<overlay>/src` plus a **mandatory
+    provenance probe** (CT62) that returns ERROR unless the target module provably resolves
+    inside the overlay; relying on PYTHONPATH silently is the same fragility that caused the
+    bug.
+    **D2, critical.** `_run_stage` (`workflow_controller.py:511`) takes a role, not a slice,
+    and no per-slice loop exists -- the only slice code is post-hoc `validate_slice_ids`
+    (`:281`). CT71/74/75 named "that slice", which an agent could only have satisfied by
+    silently building I03's dispatch loop. Rewritten to verify every declared slice after the
+    single coder stage, with CT76 now asserting per-slice command attribution instead of the
+    vacuous "another slice's commands did not run".
+    **D3, critical.** `drive_session` is called BY `_cmd_run` (`cli.py:2408`), which the
+    controller receives as `run_stage_fn` (`cli.py:1460`) -- so it sits below `_run_stage`
+    and cannot exercise it. The SD-C test as written would have been green and meaningless:
+    the VACUOUS class, shipped inside the increment built to detect it. Rewritten onto the
+    only existing end-to-end precedent, `tests/test_workflow_global_history.py:123-141`.
+    **D4/D5, major.** `remove-call` restricted to bare `ast.Expr` statements saw 1 of 4 real
+    call forms (measured), giving false PRODUCER_ABSENT on an assigned producer; now replaces
+    every matching `ast.Call` with `None`, re-measured at 4 of 4. And CT55's "byte-identical"
+    invariant was false -- `ast.unparse` drops comments and layout -- so it now compares
+    against the round-trip baseline.
+    **D6, major.** `_run_initial_roles:908-909` keeps the LAST stage's eval report, so a
+    synthetic report attached to the coder stage would have been overwritten by the eval
+    stage and the route lost entirely: the run finishes green with a failed verification. New
+    CT73 stops the role loop, asserted on stage count.
+    **D7, minor.** Three stale references corrected: `repair_round` governs at
+    `WorkflowProgress`/`:188` and is capped at `:944-957`, not `workflow_artifacts.py:277`;
+    `_run_stage` is at `:511`, not S6's `:310`; and `EvalReport` has **no** provenance field,
+    so harness origin is carried in `evaluation_id` rather than by widening the dataclass.
+
+E126 DECIDED  The git-worktree sandbox is deleted as premature abstraction and replaced by a
+    copy of `src/` alone -- measured at 2.4 MB, 162 files, ~7 ms. It removes `git worktree
+    add/remove`, piping `git diff HEAD` into `git apply`, and the separate untracked-file
+    copy that existed only because the planner-authored test is new. Beyond simplicity it is
+    **more correct**: copying only `src/` makes test files structurally impossible for a
+    kill-check to mutate, where a worktree copied them too and left the oracle rewritable;
+    git state stops mattering, which matters here because this checkout is shallow; and
+    "the operator's tree is unchanged" becomes structurally true instead of asserted.
+    Recommendation recorded, not yet decided by the operator: ship SLICE1-3 and SLICE6 as a
+    first PR so the plain command gate that closes D1 lands even if the kill-check needs
+    another pass, with SLICE4-5 following. supersedes: SLICE4 as written in E124.
+
+E127 FACT  D2 investigated to the bottom at operator request; it is **not an architectural
+    break, it is my plan having assumed an execution model that does not exist**. The model
+    today: `fa workflow` runs three sequential ROLE sessions. The planner writes a plan file;
+    the coder gets one session with the task and `plan_path` and works the WHOLE plan; the
+    eval gets one session with the diff plus "Plan slices to judge (N): ..."
+    (`workflow_controller.py:461-465`) and judges per slice; `:944` reruns coder+eval while
+    `route_decision == "return_to_coder"`, capped by `max_repairs`.
+    **Slices are therefore a judging and accounting vocabulary, not an execution unit.** The
+    only slice-aware code is `validate_slice_ids` (`:281`), which cross-checks the eval's
+    *self-declared* slice ids against the plan and reports `unreported_slices`.
+    This makes I02's gate a good fit rather than a compromise, and it is exactly what
+    SIMPLIFICATION §5 proposed: read the commands per slice, "a slice is complete iff its
+    commands exit 0" -- a completion CHECK, not an execution unit. The win is precise: today
+    the harness can only detect what the judge *omitted* from its own claims; after I02 it
+    holds a fact per slice. Per-slice DISPATCH -- one coder session per slice, with slice
+    selection, DEPS ordering and partial-failure resume -- is a far larger change and is
+    I03's, as the roadmap already says.
+    One consequence of reading this properly: SIMPLIFICATION's fourth S16 bullet, "feed the
+    results into the evidence block the judge already receives", had been dropped from my
+    plan. Restored as **CT77** -- verdicts reach `_eval_evidence_block` (`:440-470`) whether
+    or not they block, because a gate that only speaks when it fails leaves the judge
+    self-declaring coverage on every green run.
+
+E128 FACT  `worklogs/DEPLOYMENT-ANATOMY.md` read at operator instruction, and it decides every
+    path in I02. In production the harness's own code is baked at `/opt/first-agent/src` with
+    venv `/opt/fa-venv` (`Dockerfile.fa:89-96`); the repo is bind-mounted **read-only** at
+    `/repo` and is NOT used for runtime import; the code the coder edits is a per-session
+    workspace clone under `/sessions/<id>/`, arriving as `run_workflow(workspace=...)`.
+    Consequences, all now in the plan. (1) Every kill-directive path is relative to the
+    **workspace**, never to the harness's source tree, and `mutation_overlay` copies
+    `workspace/src`. (2) `/repo` being read-only is an independent, deployment-level reason
+    the git-worktree sandbox deleted in E126 could never have worked -- it was not merely
+    over-built. (3) The mechanism that makes workspace code win over the baked image is
+    `PYTHONPATH` precedence and nothing else: `scripts/fa-entrypoint.sh:237` prepends
+    `<workspace>/src`, and `docker-compose.fa.yml:220` deliberately withholds it from the
+    proxy so that container keeps running the immutable image. The overlay therefore
+    **prepends** ahead of the inherited value in the same idiom rather than replacing it.
+    (4) Measured and load-bearing: `PYTHONPATH` is on the scrubber's allowlist
+    (`tools/bash_env.py:41`), which is the only reason the plain command gate tests the
+    coder's edits at all. That single line in an unrelated module is the highest-impact
+    silent inversion available in this system -- drop it and every verify command imports the
+    baked image, so the gate passes regardless of what the coder wrote. Pinned as new
+    **CT49b**, a PRESERVATION contract, because nothing protected it.
+
+E129 CORRECTION  A third instance of the D2/D6 defect class, found by walking the real
+    dispatch spine rather than the plan. `_run_linear` (`:1061`) carries the **same**
+    `if result.eval_report is not None: eval_report = result.eval_report` idiom as
+    `_run_initial_roles`, at `:1078-1079`. CT73's short-circuit, written against
+    `_run_initial_roles` alone, would therefore have left `--mode linear` **silently
+    ungated** -- the gate would compute a blocking verdict and the run would finish anyway.
+    Fixed: the guard goes in both loops; downstream they diverge correctly without further
+    work, adaptive into the routing loop at `:944` and linear into `_write_terminal_state`
+    ending non-DONE. CT73's kill-check now targets `_run_linear`, the path that would
+    otherwise have been forgotten.
+    Recorded because the class is now three for three: every defect so far came from writing
+    a contract against ONE code path I had read, when the dispatch fans out to four
+    (`:897`, `:965`, `:1031`, `:1067`). CT71 now states explicitly why the gate belongs at
+    the `_run_stage` choke point -- the same justification the codebase already gives for
+    putting the deadline check there (S4b/RK6, `:536`) -- rather than in any loop body.
+
+E130 DECIDED  I02 is split into shipping phases, Phase A being the live-testable system:
+    SLICE1 + a command-only verdict + the SLICE6 wiring. It closes D1, is ~150 lines over
+    three touch points in one file, and is what the host can exercise. Phase B -- directive
+    parse, AST operators, overlay, and the VACUOUS/PRODUCER_ABSENT arms -- carries two thirds
+    of the complexity and all the unmeasured risk, and **does not start until Phase A has
+    produced a measured per-command cost from a real run**. A Phase A verdict may only be
+    PASS, FAILING, ERROR or SKIPPED.
+
+E131 FACT  Three live-contour blockers found by reading the deployment path end to end. Each
+    would have wasted a real host session.
+    (1) **`DEFAULT_BASH_TIMEOUT_SECONDS = 30`** (`runtime_limits.py:71`). The planner is
+    instructed to emit `uv run pytest ...` (`prompt.py:205-207`) and `uv` is on the image
+    PATH (`Dockerfile.fa:59-67`), so a verify command may first sync a venv in the session
+    workspace. A timeout is ERROR and ERROR blocks, so inheriting a budget sized for
+    interactive shell calls would have blocked **every slice on the first live run** for
+    purely environmental reasons. Pinned as CT49d: the runner owns its timeout, default 600s.
+    (2) **`--plan` is optional and defaults to None** (`cli.py:758-763`) and is an INPUT, not
+    something populated from what the planner just wrote. Running
+    `fa workflow --roles planner,coder,eval` without `--plan` leaves `plan_text()` None, so
+    `extract_plan_ids` never runs and the gate skips: the live test would have exercised
+    nothing while appearing to pass. This is the system-level form of the vacuous pass the
+    increment exists to detect. Operationally the first live test must therefore be two-step,
+    or `--plan` must point at the planner's output.
+    (3) **cwd**: commands must run in the session workspace (`/sessions/<id>/`), never the
+    harness's own tree. Pinned as CT49c.
+    Also added **CT77b**: the run writes `verification.json` beside `eval_report.json` on
+    every run, blocking or not, reachable on the host at
+    `/srv/first-agent/state/session-log/<run_id>/`. Without it a live run's gate output exists
+    only as stderr and cannot be reviewed after the fact, which is precisely how the operator
+    intends to evaluate the first real sessions.
+
+E132 DECIDED  The gate ships in **observe mode** first (operator's call). It computes the
+    verdict, writes `verification.json` and adds the evidence lines, but returns no synthetic
+    report and never routes; enforce mode is a separate operator switch, recorded in the
+    artifact. Pinned as CT77c. Rationale is deployment practice, not timidity: a blocking gate
+    switched on cold turns the first environmental hiccup into a repair loop and burns a live
+    session on noise before anyone has seen one honest run. Enforce is enabled after the first
+    real run is reviewed.
+
+E133 FACT  The `uv run` worry is **answered by a system that already exists**, and the operator
+    was right to raise it. `workspace_bootstrap.py` (`check_workspace_ready:691`,
+    `ensure_workspace_ready:730`) hands the session a built `.venv`, and `cli.py:165-170` tells
+    the agent verbatim: "the project venv is at ./.venv -- run tests with `uv run pytest ...`
+    (or `.venv/bin/pytest`); never reinstall or rebuild the environment." The comment above it
+    records the incident that produced the rule: a session burned 12 of 20 turns on
+    `find / -name pytest`. **So verify commands run verbatim** -- the planner emits what the
+    agent was told to emit, the env is already correct, and normalising would split the plan
+    text from the executed fact for no gain. My earlier fear of a cold venv build was wrong.
+    It did expose a real gap of the same class as the PYTHONPATH one: `UV_PROJECT_ENVIRONMENT`
+    is pinned by the bootstrap (`workspace_bootstrap.py:243-259`) but is **not** on the
+    scrubber allowlist (`tools/bash_env.py:29-50`, which carries `UV_CACHE_DIR` and not this).
+    In the gate's env `uv run` is therefore unpinned and resolves `./.venv` by current
+    directory instead -- which works **only because cwd is the workspace**, making CT49c
+    load-bearing for command resolution and not merely for verifying the right tree. Residual,
+    unmeasured: `uv run`'s implicit lockfile sync reaching for a network the container lacks.
+    Recommended and NOT yet decided: add `UV_PROJECT_ENVIRONMENT` and a no-sync posture
+    (`UV_NO_SYNC`) to the allowlist so the pin survives scrubbing and the gate cannot touch the
+    network. Operator decision, because it widens a security-relevant allowlist.
+
+E134 FACT  On requiring a plan, the operator judges `--plan`-optional to be legacy: today the
+    no-plan path is `fa chat`, while `fa workflow` is heavy artillery for serious changes. The
+    flag's own help preserves the original reason it is never inferred -- "guessing the
+    contract is worse than having none". **That argument is against heuristic discovery**
+    (globbing for a likely `.md`) and it stands; it is not an argument against **deterministic
+    capture**. Persisting the planner stage's final text as the plan is no more a guess than
+    the eval stage's final text already becoming `eval_report.json` (`:634-646`), and it is the
+    same mechanism. No planner artifact exists today -- the planner's output lives only in its
+    transcript, which is precisely why the gate is blind without `--plan`.
+    Proposed, pending the operator: the planner stage writes `plan.md` into the run artifact
+    directory and that becomes `plan_path` for later stages; `fa workflow` then refuses to
+    start with neither `--plan` nor a `planner` role. Flagged as scope: this is a third thing
+    beside I01 and I02 and needs an owning increment before it is built.
+    Separately recorded, deliberately NOT touched here: the operator observes that the
+    linear/adaptive split likely predates the contract and verification system and may also be
+    legacy. Out of scope for I02; noted so it is not lost.
+
+E135 DECIDED  Do **not** widen the scrubber allowlist for `UV_PROJECT_ENVIRONMENT` /
+    `UV_NO_SYNC`. An allowlist passes AMBIENT state through, so inheriting the name imports
+    whatever the parent happened to hold -- including a stale pin from a *different* session's
+    workspace, under which `uv run` would silently use another session's venv. That failure is
+    silent and cross-session, i.e. worse than having no pin at all. It would also widen a
+    security boundary globally, for the agent's shell and not just the gate, to obtain a value
+    the gate can compute exactly. And a guarantee that depends on who launched the process is
+    not a guarantee: `UV_NO_SYNC` inherited would leave the gate's offline posture at the
+    mercy of the caller.
+    **The house pattern is already compute-and-inject**: `run_bash.py:233-236` scrubs with
+    `build_scrubbed_env`, then SETS `env["PATH"]` to the workspace's `.venv/bin` prepended --
+    it does not widen the allowlist to inherit PATH shaping. The gate follows it exactly.
+    Pinned as CT49e. Principle, worth keeping: an allowlist is for what you cannot know; a
+    computed value is for what you can.
+
+E136 FACT  CT49c needs **no architectural change** -- the operator asked whether the cwd
+    requirement forces one, and it does not. `run_bash.py:240` already runs the agent's shell
+    with `cwd=root`, the session workspace. CT49c therefore states conformance with existing
+    behaviour ("the gate must not invent its own working directory"), not a new requirement,
+    and the contract has been reworded to say so. Nothing in the workspace model is proposed
+    for change. Continuing as planned.
+
+E137 CORRECTION  My proposal that the planner write `plan.md` into the run artifact directory
+    was **wrong and would have created a duplicate surface**. The operator corrected it: the
+    planner's artifact is the whole project folder, exactly like
+    `worklogs/planning-topology-and-executable-contracts-loop/`. On checking, **this is already
+    the canonical spec** -- `notes/artifact-schema-and-grammar.md` §1 defines
+    `worklogs/<slug>/` with `roadmap.md`, `ledger.md`, `increments/increment-NN-<slug>.md` and
+    `notes/`, and its ownership table already assigns `roadmap.md`, the increment plan body and
+    `notes/` to the **planner**. The same section explicitly rules my proposal out: "Ephemeral
+    run records (`eval_report.json`, `events.jsonl`, telemetry) do **not** live here -- they
+    stay in the session-log root. This folder is the durable, readable planning layer." So no
+    new surface is created, and none should be. supersedes: the `plan.md` capture proposed in
+    E134.
+    The folder also **resolves the autodiscovery question against autodiscovery**. One planner
+    run produces a roadmap with N increments; one coder run executes ONE increment. With
+    several candidate files present, auto-picking one IS the guess `cli.py:762-766` warns
+    against -- "guessing the contract is worse than having none". The two-step invocation is
+    therefore not a workaround but the correct shape, and it is how this very project has been
+    run all along: plan, then `--plan <one increment file>`.
+    Refined rule to replace "workflow requires a plan": **a `fa workflow` invocation that
+    includes the `coder` role requires `--plan`**; a planner-only run does not, because it is
+    producing one. Small, precise, no new surface.
+    Remaining gap, owned by I01 (planner grammar): both planning skills cite the schema as
+    normative (`plan-authoring/SKILL.md:655`, `feature-planning/SKILL.md:179`) but neither they
+    nor `prompt.py` name `roadmap.md` or `increments/` inline, so the layout reaches the
+    planner only if it opens the doc. That is a prompt delta of the kind already banked in
+    `notes/role-prompts-conformance.md`, not new machinery.
+
+E138 CORRECTION  Readiness audit of I02 before building: **we were not ready.** Dumping all 27
+    kill directives as a table and checking each target against what the code can actually
+    express found **three broken ones, and the first was in SLICE1 STEP-range** -- i.e. we
+    would have hit it immediately.
+    (1) **CT45** named `remove-call _run_one -> TimeoutExpired`. `TimeoutExpired` appears only
+    as `except subprocess.TimeoutExpired:` (`run_bash.py:264`) -- an exception handler is not
+    a call site, so the operator would find `hits=0` and report PRODUCER_ABSENT against
+    working code. Retargeted to `neutralise ::_timeout_result`.
+    (2) **CT51** named the compiled regex `_NEAR_MISS_RE` as callee, but a regex is reached as
+    `_NEAR_MISS_RE.match(...)`, whose `ast.Call.func` is an Attribute with `attr == "match"`.
+    The callee name would never match. Retargeted to a `_near_miss` helper.
+    (3) **CT56** named `_Silence -> visit_Call`. Two faults at once: `visit_Call` is dispatched
+    by `ast.NodeVisitor.visit` and never called by name, and `_Silence` is a CLASS, which the
+    directive grammar `<file>::<symbol>` cannot descend into.
+    That third one exposed a **grammar gap**: `<symbol>` could only name a bare top-level
+    function, so no contract could ever target a method. Closed as new **CT50b** -- `<symbol>`
+    accepts `name` or dotted `Class.method`, and both operators resolve both.
+    Also fixed: SLICE1's letter-suffixed contracts were ordered CT49c, CT49e, CT49d, CT49b and
+    are now b/c/d/e; CT44 said `root` where CT49c said workspace; CT46 said "the repo's .venv"
+    where deployment makes it the **workspace's**; and STEP2's exit check was
+    `grep -c ... prints 0`, which **exits 1** when the count is zero -- mechanically the
+    opposite of what an `(exit: ...)` check promises. Now `! grep -q ... exits 0`.
+    Note for the implementer, not yet a defect: `neutralise` of a timeout-producing function
+    (CT49d) removes the bound on the test it then runs, so that kill-check terminates only on
+    the runner's own 600 s cap. Correct but slow; worth a narrower target if it bites.
+
+E139 FACT  The artifact-schema folder is a **pure gap in the planner prompt**, confirmed by
+    exhaustive search rather than inference. Across `knowledge/` and `src/fa/` there are
+    exactly two mentions of the schema -- `feature-planning/SKILL.md:179` and
+    `plan-authoring/SKILL.md:656` -- and **both cite §4 only**, the slice-section grammar.
+    Neither cites §1, the four artifacts and the ownership table. `knowledge/prompts/
+    architect-fa.md`, named at `prompt.py:32` as the source of the planner prompt, contains
+    **zero** occurrences of `worklogs`, `roadmap` or `increment`, and its "Step 4 -- Write the
+    plan" emits a SINGLE document (`## Class`, `## Goal`, `## Evidence`, `## Scope`, ...).
+    The schema doc is injected nowhere at runtime.
+    So the mismatch is structural, not cosmetic: the prompt's deliverable shape is one
+    document, while the schema's is a folder whose roadmap indexes N increments. Adding the
+    layout to the planner prompt is the right fix and the operator's proposal is adopted;
+    owner is **I01** (planner grammar), as a delta of the kind already banked in
+    `notes/role-prompts-conformance.md`.
+    It does **not** block the first live run: the gate needs a file containing `## SLICE#`
+    sections with verify fences, and `prompt.py:194-213` already teaches exactly that. The
+    folder is a separate improvement, not a precondition.
+
+E140 BUILD SLICE1 of I02 shipped: `src/fa/inner_loop/slice_verification.py` (254 lines) and
+    `tests/test_slice_verification_runner.py` (36 oracles, class C0+C0p+C3). All four STEP exit
+    checks and both `verify` commands exit 0; CT49's PRESERVATION holds (`plan_ids.py`
+    untouched, zero subprocess/os.environ/write hits). Full suite **4192P / 3F / 12S / 1X** --
+    the baseline 4156P plus exactly the 36 new tests, with the three deliberately-red doc gates
+    unchanged. No C1 test here by design: nothing boots the composition root until SLICE6 wires
+    the runner into `_run_stage`, and a composition-root test over an uncalled module would be
+    theatre (SD-C's "no live path yet" clause; the owing increment is SLICE6).
+
+E141 EVIDENCE The SLICE1 kill-check battery ran in full and all seven directives are PROVEN,
+    each file restored byte-identical: CT44/CT45/CT49d (`neutralise` of `run_commands`,
+    `_timeout_result`, `_command_timeout`), CT48/CT49c/CT49e (`remove-call` into
+    `_empty_result`, `_workspace_cwd`, `_pin_uv_environment`), and CT49b (`delete-line`
+    `bash_env.py:41`). CT49b is the one worth naming: deleting a single `PYTHONPATH` entry from
+    an allowlist in an **unrelated** module turns the tests red, which is precisely the silent
+    inversion the contract was written to catch.
+
+E142 DEFECT Mutation testing of the new module (165 mutants, scoped `[tool.mutmut]`, config
+    restored byte-identical) found a real hole the 29 passing oracles had hidden: **12 mutants
+    reported "no tests"**, all of them in `_spawn_failure_result` -- the OSError branch, the
+    single place where "the harness could not ask" must not become "the command failed", had
+    no oracle at all. Three further survivor classes were genuine: `_tail`'s `errors="ignore"`
+    (handler names, unlike codec names, are case-sensitive), the `- started` duration
+    subtraction in both the success and spawn-failure paths, and the `'PATH'` key in
+    `_build_env`, whose mis-spelling silently swaps the inherited PATH for `os.defpath`.
+    Seven oracles added; result **48 killed / 9 survived / 0 uncovered**, and the nine
+    remaining are exactly the set classified as equivalent *before* re-running -- stdlib
+    defaults written explicitly, case-insensitive codec names, an unreachable float equality,
+    and operator-facing prose. All nine are now rows in
+    `knowledge/mutation-survivors-workplan.md`'s accepted-equivalent ledger, with rationale.
+
+E143 EVIDENCE Two measurements worth keeping, both of which a guess would have got wrong.
+    (a) `/bin/sh` in this container is **dash**, and dash's `printf` does not implement
+    `\xHH`: the first invalid-UTF-8 oracle emitted the literal text `ok\xff\xfe`, put no bad
+    byte on the pipe, and killed nothing. The octal form `\377\376` does. (b) The first PATH
+    oracle asserted only the first entry and so survived the key mutant, because
+    `os.defpath` is itself `:/bin:/usr/bin` and satisfied every weaker assertion. Replacing it
+    with a **differential** oracle -- measure the PATH with no workspace venv, then assert the
+    venv case equals that value with one entry prepended -- kills the mutant without
+    restating the implementation.
+
+E144 DEFECT The repository's own `fa authoring check` gate caught a real public-surface defect
+    in the new module that ruff, mypy and pyrefly all passed: `TAIL_LIMIT` was defined but
+    absent from `__all__` (HARD-BLOCK, `slice_verification.py:62`). It surfaced as a full-suite
+    regression in `test_s10a_cli_coverage::test_s10a_authoring_check_runs_on_a_real_workspace`,
+    which audits this checkout rather than a synthetic tree. The tell was already in my own
+    test file -- it imported `TAIL_LIMIT` from inside a function body, the smell of a symbol
+    the author knows is public but has not declared. Fixed in both places.
+
+E145 DEFECT The I02 shipping-order rationale rested on a factual error, found by checking the
+    claim instead of repeating it. The plan said Phase A "closes D1 -- the register row this
+    whole increment exists for". D1 in fact conflated two claims, and the first was already
+    closed by code in the tree: `tests/test_slice_id_validation.py:199`
+    `test_live_workflow_persists_the_adjusted_report` boots the real `run_workflow` with a real
+    `plan_path` and asserts on the **persisted** `eval_report.json` -- invented `SLICE404`
+    absent from disk, `unreported_slices == ["SLICE5","SLICE5a"]` -- neither of which is
+    reachable unless `extract_plan_ids(plan_text).slices` was non-empty at
+    `workflow_controller.py:332`.
+    Verified by executing D1's own named kill-check rather than reasoning about it: replacing
+    that line with `declared = ()` yields `6 failed, 7 passed` in that file, the live test
+    among them; restored byte-identical. So **D1a is CLOSED and owes I02 nothing.**
+    What Phase A actually closes is **D4**: `commands_for` gains its first production reader,
+    ending the SD-B violation I01 left standing. Register and plan both corrected.
+
+E146 RISK  Splitting D1 exposed an unproven precondition under the whole verify gate, now
+    recorded as **D1b**. Every parser test to date, including the live one above, feeds the
+    parser a **fixture** plan. Nothing shows that a plan the *model* writes -- following the
+    skeleton injected at `coder_loop.py:895` via `read_skill_for_injection` -- parses into
+    slices carrying `verify` fences. SLICE6's gate reads a slice's commands from that plan, so
+    if the assumption is false the gate ships as a silent no-op: the exact defect I01 was
+    created to kill, one storey up.
+    Consequence for sequencing: **D1b/D3 is a precondition of Phase A, not a successor.** It is
+    roughly one test file, it retires the remainder of the highest-priority register row, and
+    it is strictly cheaper than discovering the no-op after SLICE5 and SLICE6 are wired. The
+    dependency-driven order (four leaf slices, then assembly, then wiring) was never the
+    constraint -- SLICE1-4 all declare `DEPS: -`, so the order was always a risk choice, and
+    this is the risk that was mispriced.
+
+E147 BUILD D1b closed — `tests/test_plan_grammar_live_chain.py`, C1, 5 oracles, the live
+    precondition of the whole verify gate. Boots the real `drive_session` with only
+    `ProviderChain.request` mocked (SD-C), arms expansion level 2 with a `src/` read, symlinks
+    the real skills tree into the workspace because `default_skills_root` resolves it from
+    `state.workspace_root`, and reads the bytes that actually crossed the provider boundary.
+    Oracle: the `PLAN-SKELETON` on the wire is byte-for-byte the one on disk, and that text
+    parses to `SLICE1` carrying `('uv run pytest tests/test_<area>.py -q',)`.
+    **Kill-check PROVEN:** neutralising the `read_skill_for_injection` call in `coder_loop.py`'s
+    L2 block reddens 3 of the 5 oracles; restored byte-identical. Worth recording what the
+    degraded payload becomes — not nothing, but a bare pointer: `Reference:
+    knowledge/skills/plan-authoring/SKILL.md`. The model is told where the grammar lives and
+    not given it, which is precisely the failure a substring assertion on the skill *name*
+    would have missed.
+    No mutation sweep: this increment adds **no production code**, so there is nothing new to
+    mutate. Saying so explicitly rather than silently skipping the step.
+
+E148 EVIDENCE The live payload does **not** parse, and must not be asserted to. Measured: the
+    skill body crosses the wire JSON-escaped — `\n` as a two-character literal, `\u00a7` for §
+    — so no `## SLICE` heading ever sits at a line start and `extract_plan_ids` correctly
+    returns zero slices. This killed the obvious version of the D1b test before it was written.
+    The parser's input is the markdown plan the model *writes*, never the prompt it reads, so
+    "feed the payload to the parser" asserts a falsehood. The real risk was always drift
+    between the taught grammar and the readable one, so the oracle became identity: encode the
+    known-good skeleton the way the transport encodes it, and find it verbatim in what was
+    sent.
+
+E149 FACT  Session baseline moved to **4 expected-red**, not 3. `tests/test_cli.py::
+    test_fa_run_verify_only_bash_allowed_before_pr_prepare` now fails, and it is **not** a
+    regression from this work: proven by removing every file of this increment from `tests/`
+    and re-running it in isolation, where it still fails. It is an artifact of this turn's
+    fresh `.venv` rebuild (different resolved package versions than the previous build);
+    `bash` and `git` are both present on PATH, so it is not a missing-binary skip. Recorded so
+    the next session does not mistake it for damage, and does not "fix" it blindly either.
+
+E150 BUILD I02/SLICE2 shipped into `slice_verification.py`: `KillOperator`, frozen
+    `KillDirective`, `_split_dotted`, `_scan_directives`, `parse_kill_directives`,
+    `_near_miss`, `validate_kill_directives`. Tests `tests/test_kill_directives.py`, 37
+    oracles, class **C0/C0p** plus one structural oracle for CT53. All four STEP exit checks
+    and both `verify` commands exit 0. Full suite **4233P / 4F / 12S / 1X** -- the E149
+    baseline plus exactly the 37 new tests.
+    No C1, deliberately and with the operator's agreement: these functions have no production
+    caller until SLICE5 assembles the verdict and SLICE6 wires it in. A composition-root test
+    over an uncalled function passes whether or not the function exists. The live proof is
+    registered instead -- see E155.
+    Cross-validation worth keeping: run against the real I02 plan the parser recovers **28
+    directives and reports zero diagnostics**, independently matching the readiness audit's
+    count (E138); against the I01 plan it reports **19 `kill-directive-missing`**, correct
+    because I01 predates the grammar. The second is the non-vacuity proof for the first.
+
+E151 EVIDENCE SLICE2 kill-checks: CT50 (`neutralise parse_kill_directives`) -> 6 failed,
+    CT52 (`neutralise validate_kill_directives`) -> 8 failed, CT51 (`remove-call
+    validate_kill_directives -> _near_miss`) -> 3 failed. All PROVEN; file restored
+    byte-identical by sha comparison against a pre-check snapshot, not against HEAD -- HEAD
+    does not yet carry this slice, so `git diff --quiet` would have been the wrong oracle and
+    said so.
+    **CT50b's kill-check cannot fire in SLICE2 and is deferred, not satisfied.** It names
+    `remove-call … ::_resolve_symbol -> _split_dotted`, and `_resolve_symbol` is SLICE3's AST
+    concern -- `grep` finds zero occurrences. The *parse* half of CT50b is implemented and
+    covered here (`_split_dotted`, plus a dotted symbol surviving the strict regex); the kill
+    directive becomes executable when SLICE3 lands. Recorded rather than quietly ticked.
+
+E152 DEFECT Mutation testing found a real defect, not a coverage gap. I01 makes a contract's
+    class bracket **optional** and defaults such an entry to `FUNCTIONAL`
+    (`plan_ids.py:82-85`), so `  CT1: text` is a legal declaration. SLICE2's contract locator
+    required the bracket, which made every unclassed contract invisible: its `kill:` line went
+    unattributed, and the contract was then reported as declaring none. A false
+    `kill-directive-missing` against a correct plan is worse than a miss -- it teaches the
+    operator to distrust the gate. Fixed by mirroring `plan_ids._CONTRACT_ENTRY_RE`, and the
+    agreement between the two copies is now pinned by a drift oracle over both real plans.
+    Sweep: 348 mutants, **108 killed / 10 survived / 0 uncovered** (from 100/18 before the
+    follow-up oracles). Nine survivors are SLICE1's documented equivalents; the tenth is the
+    now-unreachable `contract_line.get(cid, 0)` fallback, added to the accepted-equivalent
+    ledger with its reasoning.
+    The survivor class worth naming: four `continue` -> `break` mutants all survived, each one
+    a scan that stops at the first finding. The sharpest is in the exemption loop, where a
+    single CONSTRAINT contract would have switched the missing-directive check off for every
+    contract after it -- a gate disabling itself, which is the one failure this module exists
+    to prevent. Every fixture had held exactly one defect, so stopping was indistinguishable
+    from skipping.
+
+E153 FACT  `PlanIds.contracts` is every contract id **mentioned**, not every id declared --
+    measured: 44 mentions against 41 declarations in the I02 plan, the difference being
+    I01's CT26/CT37/CT10b, which this plan cites in prose. `contract_class` returns `None` for
+    a citation and is therefore also the declaration test. SLICE2's missing-directive rule was
+    correct only because of that, which was **accidental** -- it iterates `ids.contracts`.
+    The reliance is now stated in the code and pinned by a test, because the next reader would
+    otherwise have to rediscover it the hard way.
+
+E154 DEFECT The plan's own STEP3 exit check was vacuous. `pytest tests/test_kill_directives.py
+    -q -k validate` selected **1 test of 37**, and that one was the purity test, matched on its
+    parameter id `[validate_kill_directives]` rather than on any validation behaviour. The step
+    would have been ticked green without the validator being exercised at all. Replaced with
+    `-k "near_miss or malformed or ambiguous or missing"`, which selects 11. Exactly the class
+    of defect the readiness audit (E138) found in the kill directives, now found in the exit
+    checks -- worth a sweep of the remaining slices' `-k` filters before they are relied on.
+
+E155 DECISION Operator instruction, 2026-10-08: every producer this plan creates is to be
+    marked for a future end-to-end test and verified with fixtures on the **live host**. New
+    artifact `notes/e2e-live-verification-register.md` carries one row per producer -- what the
+    host fixture must arrange, what it must observe, and a `unit`/`e2e` status. SLICE1's nine
+    and SLICE2's four are entered; later slices append. Standing fixture requirements are
+    stated once at the top (a real `/sessions/<id>/` workspace rather than `tmp_path`, `--plan`
+    supplied because nothing infers it, assertions read from the persisted session-log
+    artifacts, observe-mode first). A producer is not finished until its row reads `e2e`.
+
+E156 DECISION Q45 resolved **(B)** by operator ruling, 2026-10-08, overriding the provisional
+    Q44(i): source positions move into I01 and I02 keeps no grammar of its own. The ruling's
+    reasoning, recorded because it is the standing rule now and not only this fix: a parser
+    that turns text into structure and discards where it found it is defective by design;
+    making the consumer re-read the file with its own regex to guess where the first parser
+    looked breaks Single Source of Truth, and the consumer's copy is guaranteed to degrade as
+    soon as planners format a plan slightly differently. The drift oracle shipped in E152 was
+    a brace on a crack, acceptable to unblock a slice and not acceptable to keep.
+    Implemented as SLICE2b, CT78/CT79/CT80.
+
+E157 BUILD I01 grew source positions: `SliceRecord.start_line`, `SliceRecord.contract_lines`,
+    and `PlanIds.contract_line(id)` -- the positional twin of `contract_class`, same
+    first-declaration-wins rule, `0` for "this parse has no line for that id". No new scanning
+    was needed: `_contract_declaration_sites` was already documented as "the single source of
+    truth for which lines declare a contract" and already returned offsets; `_build_record`
+    now lifts them into document numbering. The parser had the answer and was throwing it
+    away.
+    I02 deleted `_CONTRACT_ENTRY_RE` (`grep -c` = 0) and gained `_owner_at`, which only asks
+    which supplied declaration most recently preceded a line. `parse_kill_directives` now
+    takes the `SliceRecord` rather than loose text, because attribution needs the raw section
+    *and* the declaration positions and only I01 can produce both from one parse; CT50's
+    signature was amended to match rather than left to drift from the code.
+    Kill-checks PROVEN by execution: neutralise `contract_line` -> 7 failed; `contract_lines =
+    ()` in `_build_record` -> **27 failed across both test files**; neutralise `_owner_at` ->
+    17 failed. The middle one is the one worth keeping: deleting I01's positions reddens I02's
+    suite, which is the single-source-of-truth coupling made observable instead of asserted.
+    Both files restored byte-identical by sha comparison.
+
+E158 DECISION Q43 resolved **(ii) tighten**, by operator ruling: SLICE and STEP are to be
+    distinguished everywhere -- in the skills, in the artifacts, and in the code that parses
+    them. `PlanIds._record` no longer canonicalises, so `commands_for("S1")` returns `()`
+    instead of SLICE1's commands. E106 had made `parse_slice_id` strict inside a plan for
+    exactly this reason and then left the accessors lenient, which meant a caller holding a
+    *step* id was handed the like-numbered *slice*'s commands with no way to tell. Leniency
+    survives only where E106 scoped it: `canonical_slice_id` at the eval-report boundary,
+    which the test now pins alongside the strictness.
+    Safe to do now and cheaper than later: the accessors still have no production caller
+    (grep: tests only), so the tightening lands before I02/I03 build on the old behaviour.
+
+E159 EVIDENCE Mutation sweeps after the move. `slice_verification.py`: 341 mutants, **102
+    killed / 11 survived / 0 uncovered** -- nine SLICE1 documented equivalents plus two new
+    ones, both off-by-one boundaries in the new arithmetic, both equivalent for one shared
+    reason: a contract entry matches `^\s+CT\d+…` and a directive matches `^\s*kill:`, both
+    anchored at line start, so a declaration line can never also be a directive line and the
+    `site_line == line` boundary the mutants move is unreachable. The old `contract_line.get(…,
+    0)` survivor is gone -- the fallback it mutated no longer exists.
+    `plan_ids.py` swept for the first time: 785 mutants, **275 killed / 16 survived / 0
+    uncovered**. One survivor was real and was fixed in the code rather than pinned by a test:
+    `_build_record`'s `start_line: int = 0` default was unreachable -- every production call
+    passes the argument -- so the default was dead surface and is now required (784/274/15).
+    Two more are `str.count(sub, 0, end)` -> `count(sub, None, end)`, a language-level
+    identity.
+    **Recorded for I01, not fixed here:** twelve survivors predate this change and live in
+    `extract_plan_id` (4), `_declared_deps` (3), `_step_blocks` (2), `_dependency_cycles`,
+    `_orphaned_tests_owners` and `precheck`. I01 shipped without a sweep on this module. They
+    are listed in the workplan and belong to whoever reopens I01.
+
+E160 DEFECT (tooling, no product impact) The scoped mutation config must pass
+    `--output-format=json --summary=none --progress-bar=no` to `pyrefly`: mutmut parses the
+    type checker's JSON and aborts with "type check command did not return JSON" otherwise,
+    after printing a wall of legitimate-looking type errors that reads like a code failure.
+    Cost an hour of misdirected debugging; recorded so the next scoped sweep copies the flags
+    from `[tool.mutmut]` rather than the path list alone.
+
+E161 CORRECTION The regression baseline is **3 expected-red, not 4**. E149 recorded
+    `test_cli::test_fa_run_verify_only_bash_allowed_before_pr_prepare` as a fourth; it passes
+    whenever `uv` is on `PATH` and fails when it is not, so it was measuring the harness
+    rather than the code. Same cause as the three `test_semgrep_pin` / `test_targeted_gates`
+    failures seen once this session: `pytest` invoked as `.venv/bin/pytest` without exporting
+    `PATH` leaves `uv` unfindable. Export `PATH="$PWD/.venv/bin:$PATH"` and the baseline is
+    `test_doc_links`, `test_deploy_scripts::…superseded_banner` and
+    `test_cli_ergonomics::test_workflow_per_role_overrides_parse` -- the three that must never
+    be "fixed" (E19).
+
+E162 BUILD I02/SLICE4 shipped into `slice_verification.py`: `OverlayError`, `_copy_src`,
+    `_overlay_target`, `mutation_overlay` (a `@contextmanager`), `_prepend_pythonpath`,
+    `_overlay_env`, `_PROVENANCE_PROBE` and `_assert_overlay_wins`. Tests
+    `tests/test_mutation_overlay.py`, **33 oracles**, classes **C0 + C3**. All four STEP exit
+    checks and both `verify` commands exit 0. Full suite **4271P / 3F** -- the three
+    permanently-red doc gates and nothing else.
+    No C1, for the same reason as SLICE2 and with the same compensation: these functions have
+    no production caller until SLICE5 assembles a verdict, so a composition-root test would
+    exercise none of them. Every producer is entered in
+    `notes/e2e-live-verification-register.md` instead.
+    **Proven end to end, by hand, against this repository before any test was written:** the
+    overlay is built, `fa.inner_loop.plan_ids` imports from inside it, the mutation is
+    visible, and the tree is removed. That is the measured defect of E125/D1 -- an installed
+    package winning over a mutated copy -- demonstrated closed rather than argued closed.
+
+E163 EVIDENCE SLICE4 kill-checks, all executed, file restored byte-identical by sha
+    comparison (`7dfb0005…`): CT60 (`remove-call mutation_overlay -> _copy_src`) -> **17
+    failed**; CT61 (`remove-call _overlay_env -> _prepend_pythonpath`) -> 3 failed; CT63
+    (copy the whole tree instead of `src`) -> 1 failed; containment guard deleted -> **5
+    failed**; and `_assert_overlay_wins` neutralised -> 4 failed.
+    **CT62's directive cannot fire in SLICE4 and is deferred, not satisfied** -- it names
+    `remove-call … ::_run_kill_check -> _assert_overlay_wins`, and `_run_kill_check` is
+    SLICE5's producer (`grep` = 0). The producer it protects is implemented and its own
+    neutralisation is proven above. Second instance of this pattern after CT50b; worth a
+    sweep of the remaining directives for producers that do not exist yet.
+    The containment number is the interesting one. It first read **1 failed**, because four
+    of the five escape paths were also absent from the overlay and were being refused by the
+    existence check rather than by the guard under test -- the guard was untested while
+    looking tested. Asserting the *rule* (`match="resolves outside"`) instead of the exception
+    type alone took it to 5. Section 10 of the tests-writing skill, met in the wild.
+
+E164 DECISION Phase B's own gate was crossed knowingly. The plan says "Phase B does not start
+    until Phase A has produced a measured per-command cost from a real run", and SLICE2,
+    SLICE2b and now SLICE4 are all Phase B. The operator directed the order; recorded here so
+    the deviation is visible rather than discovered later.
+    Partial payment on the debt: the overlay's own cost is now measured rather than feared --
+    **15 ms** to copy this repository's `src` (2.4 MB, 163 files), against a 600 s command
+    budget. The sandbox is not where Phase B's cost lives; running the slice's tests once per
+    kill-check is. That number still needs a real run.
+
+E165 EVIDENCE Mutation sweep, `slice_verification.py` with all three test files selected: 439
+    mutants, **135 killed / 23 survived**, then **438 / 144 / 13** after the follow-up. Ten of
+    the twelve new survivors were real:
+    - **Eight** mutated the `__pycache__` / `*.pyc` exclusion in `_copy_src`, which no fixture
+      contained, so the exclusion could have been deleted in silence. It is not hygiene: a
+      `.pyc` copied beside its module is bytecode compiled from the *pre-mutation* source,
+      and a mutated module running unmutated is a VACUOUS verdict against a good test.
+    - One reached the `OSError`/`ValueError` arm of `_overlay_target`, which ran in no test. A
+      NUL byte in a planner-authored path makes `Path.resolve` raise, and without that arm it
+      escapes as a bare `ValueError` that reads like a harness bug.
+    - One exposed **dead surface I had added myself**: `_assert_overlay_wins` carried a
+      `timeout_s` parameter beyond CT62's signature, no caller passed it, so
+      `_command_timeout(timeout_s)` and `_command_timeout(None)` were indistinguishable.
+      Removed rather than pinned by a test for a caller that does not exist (SD-B). Promoted
+      the underlying choice to **Q46** instead of deciding it quietly.
+    Two survivors are equivalent (`env.get("PYTHONPATH", "")` -> `None`; both falsy) and are
+    in the workplan with their reasoning.
+
+E166 DECISION Q46 resolved **(b)** by operator ruling, 2026-10-08, overriding my provisional
+    (a). `DEFAULT_PROBE_TIMEOUT_SECONDS = 30.0` is declared beside the verify budget and used
+    directly by `_assert_overlay_wins`.
+    The ruling corrects the premise I had reasoned from. 600 s sizes *the work a slice asked
+    for*; a provenance probe is an **infrastructure assertion** about the execution
+    environment. One timeout over both is a leaky abstraction -- it can only be tuned for one
+    of them, and it would be tuned for the wrong one. My consistency argument does hold for
+    scrubbing, `cwd` and output handling, which must match the command being vouched for; it
+    does not hold for the budget, which measures something else. Deferring the constant to
+    SLICE5 "once a distribution exists" was perfectionism pointed backwards: a hang from an
+    agent bug arrives before any such measurement.
+    **Measured.** Executing the regression -- probe restored to the verify budget -- made the
+    hanging-probe oracle take **600.6 s** instead of ~1 s. The 9.5 minutes are on the record
+    rather than in an argument.
+    Kill-checks PROVEN, file restored byte-identical (`f3600837…`): probe silently borrowing
+    the verify budget -> 2 failed; the two constants collapsed into one -> 2 failed. Three new
+    oracles: the budget actually passed to `_run_one` (spy), the separation invariant, and a
+    behavioural one driving a probe that never returns and asserting `ERROR` on the probe's
+    own schedule. The last exists because a constant no code path honours is documentation.
+    The value equals `runtime_limits.DEFAULT_BASH_TIMEOUT_SECONDS` by coincidence, not
+    derivation; both the code comment and a test forbid collapsing them, since a change made
+    for the model's interactive shell must not retune this gate's failure detection.
+
+E167 SHIPPED I02/SLICE3 — the two mutation operators, AST-level and pure. `KillApplication`,
+    `_resolve_targets`, `_dotted_text`, `_callee_matches`, `_Silence`, `_neutralise_body`,
+    `apply_kill` in `src/fa/inner_loop/slice_verification.py`; 26 oracles in
+    `tests/test_kill_operators.py` (NEW).
+    Q47 resolved (d) + exact qualified name by operator ruling. The ruling's framing, which is
+    now CT57: merging two notions into one `hits` was an architectural design bug. `targets`
+    is a question of **search** -- locating the anchor in the AST -- and must be strictly 1.
+    `edits` is a question of **transformation**, always 1 for `neutralise` and legitimately
+    0..N for `remove-call`. The defect was live: under the old CT57 the four-call sample CT56
+    exists to defend reported `hits == 4` and was rejected by the slice's own gate as an
+    ambiguous target.
+    `source: str | None`, `None` unless `targets == 1 and edits > 0`, with the invariant
+    enforced in `__post_init__` on operator advice -- a constructor that cannot assemble a
+    lying result beats a convention. It makes the worst available misreport a type error:
+    running the slice's tests against unmutated source shows them green, which the caller
+    would record as `VACUOUS` -- a sound test accused of being weak when the producer was
+    merely absent.
+    Resolution is the exact qualified name anchored at the module root. The suffix rule I had
+    provisionally adopted manufactures the ambiguity it then reports, and no directive needs
+    it: every one written so far spells the name out. Callee matching stays deliberately
+    asymmetric (an undotted directive matches `Name.id` or `Attribute.attr`) because a
+    definition has one canonical name and a call site does not -- `emit`, `self.emit` and
+    `mod.emit` are the same producer.
+    **Six kill-checks PROVEN, five of them executed by the new operator against its own
+    source** -- apply, write, run, restore -- which demonstrates the slice end to end before
+    SLICE5 has a consumer: CT55 `neutralise apply_kill` 22F · CT56 `neutralise
+    _Silence.visit_Call` 9F · CT57 `remove-call apply_kill -> _resolve_targets` 22F ·
+    `_neutralise_body` 6F · `KillApplication.__post_init__` 2F · exactness rule relaxed to a
+    suffix 1F. File restored byte-identical (sha `9c9ab692a8196e1c`).
+    Deviation from STEP1, recorded: no `_Neutralise(ast.NodeTransformer)` class. Both
+    operators need the same enclosing-symbol lookup, and a second walker with its own prefix
+    tracking would be the Single-Source-of-Truth failure the Q45-B ruling turned on. The step
+    text was amended; no contract named `_Neutralise`, so no kill directive was lost.
+    CT57's directive was amended `-> _count_hits` to `-> _resolve_targets`, the function that
+    now answers the search question.
+
+E168 MEASUREMENT the directive audit SLICE3 made possible. `_resolve_targets` was pointed at
+    every `kill:` directive in both increment plans: **14 of 30 cannot fire today.** Twelve
+    name SLICE5/SLICE6 producers that do not exist yet (expected, registered); CT62 is the
+    DEFERRED case logged with SLICE4; CT50b is a defect in a shipped slice -- it names
+    `_resolve_symbol`, SLICE2's guess at a name SLICE3 shipped as `_resolve_targets`.
+    Measured before proposing a fix: the renamed directive leaves SLICE2's own tests
+    **36 passed, green**, and reddens SLICE3's 18 of 27. So the rename would convert an honest
+    `PRODUCER_ABSENT` into a `VACUOUS` -- a sound test file accused of weakness. CT50b makes
+    two claims living in two slices, and the evidence lattice is per-slice. Promoted to Q48;
+    left untouched pending a ruling, because wrong-but-honest beats wrong-and-confident.
+    The audit is the long-outstanding sweep for directives naming absent producers, which had
+    no tool until now. It is worth running at every slice boundary.
+
+E169 DECISION Q48 resolved **(c)** by operator ruling, 2026-10-08: a `kill:` directive may name
+    only a producer its own slice builds. The operator's diagnosis, now normative in schema §4
+    and in the roadmap's standing decisions: two notions had been mixed. An *interface
+    contract* ("a future module must provide `_run_kill_check`") is a legitimate architectural
+    requirement; a *kill directive* ("cut this call and my current tests fail") is an
+    instrument of test-suite quality hardening and is physically incapable of specifying an
+    interface for code that does not exist. It can only guess the future private name, or
+    mutate code the declaring slice's tests never execute.
+    Both traps are measured, not argued. Name guessing: SLICE2 wrote `_resolve_symbol`, SLICE3
+    shipped `_resolve_targets`. Foreign tests: renaming the directive leaves SLICE2's suite 36
+    passed, fully green, while SLICE3's goes 18 of 27 red -- a `VACUOUS` verdict against a
+    sound test file.
+    Relocations, each measured against the tests of the slice that now owns it before being
+    written down: CT50b -> `neutralise ::_split_dotted` **4F**; CT81 (new, SLICE3) takes the
+    resolution half -> `remove-call ::_resolve_targets -> _split_dotted` **18F**; CT62 folds
+    into SLICE4 -> `neutralise ::_assert_overlay_wins` **9F**; CT82 (new, SLICE5) takes CT62's
+    wiring half, fires when SLICE5 is built. SLICE4's INTENT now carries the cross-slice
+    expectation as prose, which is where §4 says it goes. CT67 was also brought onto the Q47
+    vocabulary (`targets`/`edits`, not `hits`).
+    Enforcement is CT83 + STEP5/STEP6 in SLICE5: a check script failing when a slice whose STEP
+    boxes are all ticked declares a directive that does not resolve. The tick is the trigger
+    because an unfinished slice is *expected* to point at absent code. CT84 states the rule as
+    a CONSTRAINT.
+    **Correction to E168's headline.** "14 of 30 dead" conflated two populations. Twelve were
+    the plan legitimately ahead of the code and will fire when their own slice is built; two
+    were the category error. After the relocation the audit reports **0 defects on ticked
+    slices**, 14 pending on unfinished ones. The safety net was not half fiction -- but it had
+    no way to tell the two apart, which is the defect that is now fixed.
+    Declined and recorded: a `PRODUCES:` grammar field would move the check from tick time to
+    authoring time, and the pre-check tolerates the new field with no new diagnostics, but it
+    duplicates what the code already states and is I01 grammar, which is closed. No new slice
+    was created: I02 sits on the 7-slice ceiling, and `_rule_slice_count` reads an eighth as a
+    mis-scoped increment. The work went to SLICE5, which already owns `PRODUCER_ABSENT`.
+
+E170 CORRECTION three defects in I02's own definition of done, found by assessing the
+    increment against the code rather than against the plan's narration.
+    (i) Item 9 demanded `git diff --stat src/fa/inner_loop/plan_ids.py` be empty. Measured
+    from the end of I01: **+60 / -3**. The item is what is wrong, not the code -- Q45-B ruled
+    that source positions belong to the parser that read the document. Rewritten to bound the
+    change to the three sanctioned names rather than forbid it.
+    (ii) Item 8 pinned a `4156P / 3F / 12S / 1X` baseline; the suite stands at **4304P** with
+    the same 3F/12S/1X. Worse than stale, the formulation compared totals, which is the
+    self-defeating tripwire this project has already been bitten by: the only available fix
+    when the number moves is to bump the number, which teaches the next reader to bump it
+    too. Replaced with a test-by-test rule -- no test green at `ed4ebca` may fail -- and the
+    totals kept only as a recorded observation.
+    (iii) Item 7 listed register rows D1, D3, D4, D5. **D8 is also owned by I02** and was
+    added to the register after the list was written. The standing rule admits no increment
+    that still owns an unticked row, so the omission would have let I02 close over an open
+    obligation. Added.
+    None of the three is a code defect; all three would have let the increment be declared
+    done on a false reading.
+
+E171 DECISION Q49 resolved **(a) with two corrections**, 2026-10-08, absorbing the long-open
+    H3 (baseline storage and lifetime) and H7 (regression attribution scope), neither of which
+    had ever been answered. H1 and H2 are recorded closed at the same time: H1 is answered by
+    CT69 ("the kill-check phase runs only the contract's own test") and H2 was dissolved by
+    E122's move to declared kill-checks, which removed any need for the gate to know which
+    test is NEW.
+    The seam: **SLICE5 accepts a baseline it does not gather**, SLICE6 captures it (CT86).
+    That keeps the pure half testable and puts the one stage-loop edit in the slice whose job
+    is wiring.
+    Correction 1, **nodeid not file** (CT68). A file-keyed baseline reports `REGRESSION` where
+    the truth is `FAILING` the moment an agent adds a deliberately-red test to an existing
+    file -- the common case in this system, not the rare one. The consequence is structural:
+    both the T0 and the "now" side must be harness-issued `--junitxml` runs, because the
+    planner's verify commands run verbatim (`cli.py:165-170`) and surrender only an exit code
+    and a truncated tail. CT69 now states that distinction.
+    Correction 2, **capture once at T0** (CT85, enforced by CT86). `repair_round` admits
+    several coder stages; a recapturing round would launder a regression into the baseline and
+    report nothing. The writer refuses to overwrite, so the rule is structural rather than a
+    convention the call site is trusted to keep.
+    Two further review risks were checked against source and found **already closed**: the
+    probe timeout (Q46(b), `88e8040`) and the `uv` pin (`_pin_uv_environment` sets
+    `UV_PROJECT_ENVIRONMENT` and `UV_NO_SYNC=1`, `_overlay_env` inherits it by construction).
+    Both have oracles -- `tests/test_mutation_overlay.py:580,593` and
+    `tests/test_slice_verification_runner.py:235` -- so they are proven, not merely present.
+E172 SHIPPED SLICE5 STEP1 + STEP2, 2026-10-08. `SliceVerdict` (seven members, design note
+    §3.2) and `_run_kill_check` in `src/fa/inner_loop/slice_verification.py`, with
+    `tests/test_verify_slice.py` (NEW, 20 oracles). Order inside the kill-check is
+    load-bearing and asserted: `apply_kill` (pure) -> `mutation_overlay` (the only copy on
+    disk) -> `_assert_overlay_wins` (CT82) -> the contract's own test. An oracle spies on
+    `run_commands` to prove a failed probe never reaches the test, so a broken environment
+    costs a probe rather than the full test budget, and can never present as a pass.
+    Verdicts: test red under mutation -> PROVEN; test still green -> VACUOUS; `targets == 0`
+    or `edits == 0` or the file missing -> PRODUCER_ABSENT; `targets > 1`, a failed probe, an
+    `OverlayError` or an unrunnable test -> ERROR.
+    Gates, run verbatim: STEP1 `len(SliceVerdict)==7` exit 0; STEP2
+    `pytest tests/test_verify_slice.py -q -k kill_check` 15 passed, 5 deselected;
+    slice `verify` fence 20 passed + `ruff check` clean. mypy and pyrefly clean.
+E173 EVIDENCE Eight hand-mutants on the SLICE5 producers, all killed, source restored
+    byte-identical, 2026-10-08. Probe check deleted -> 1F; VACUOUS reported as PROVEN -> 1F;
+    PASS/FAIL inverted -> 2F; PRODUCER_ABSENT folded into VACUOUS -> 3F; `targets > 1`
+    accepted -> 1F; `_module_name` keeping the `src` prefix -> 5F; `run_commands` ignoring the
+    injected environment -> 1F; the `KillCheck` verdict guard removed -> 1F. The fourth is the
+    one that matters: folding PRODUCER_ABSENT into VACUOUS is the collapse this increment
+    exists to prevent, and three separate oracles refuse it.
+    Full suite: 4324P / 3F / 12S / 1X. Compared **test-by-test** per the corrected DoD item 8:
+    the three reds are exactly the EXPECTED-RED set of E161, and the 20 new passes are this
+    slice's. No test moved from green to red.
+E174 FINDING A pre-existing cross-test pollution defect in `tests/test_workspace_bootstrap.py`
+    (`monkeypatch.setattr(os, "name", "nt")` at :1970 and :2011), 2026-10-08. With `os.name`
+    patched, pytest's own `_repr_failure_py` builds a `Path` and raises
+    `NotImplementedError: cannot instantiate 'WindowsPath' on your system`, aborting the
+    reporter with `INTERNALERROR>`. Reproduced on `tests/test_workspace_bootstrap.py` plus
+    `tests/test_doc_links.py` alone -- **99 passed and the INTERNALERROR still fired**, with
+    no file from this increment loaded, so it is neither new nor caused by SLICE5. It is
+    recorded rather than repaired: the fix belongs with whoever owns that file, and silently
+    touching an unrelated test from inside I02 would be the cross-increment edit the plan
+    grammar forbids. Consequence worth noting -- the reporter dies *after* the counts are
+    computed, so a test-by-test baseline comparison (CT68) is unaffected, but a human reading
+    only the tail of a run could mistake it for a harness failure.
+
+E175 DECISION Q50 RESOLVED (a) by operator; Q51 RESOLVED (a) on agent recommendation after
+    the operator asked whether (a) was the most correct, 2026-10-08. A constrained shared
+    `SliceVerdict` avoids a second reporting vocabulary; `uv run pytest {path} -q` is grounded
+    in the deployed uv workspace, the pinned env and the replaceable module constant. It avoids
+    parsing planner-owned shell text or adding a caller policy unsupported by any second runner.
+    Corrected the final Q49 seam to `Mapping[str, bool] | None` keyed by pytest nodeid, not
+    path. Reconciled `i02-slice-verification-design.md`'s earlier per-command baseline sketch;
+    labeled the older `verify-block-design.{md,svg}` as historical.
+E176 OPEN QUESTION Q52, 2026-10-08. SLICE5 STEP3 cannot safely choose a slice verdict from
+    simultaneous `CommandResult.FAIL` and a JUnitXML-proven green→red nodeid without resolving
+    command-failure versus regression precedence. CT65 exposes only one `SliceVerdict`; STEP3
+    explicitly specifies only `ERROR` dominance. CT68's “red-to-red … does not block” also
+    conflicts with Phase 2's “any non-zero → FAILING” if a verify command includes that test.
+    Q52 asks whether command exits remain independently blocking or per-test evidence refines
+    them, and what attribution is sufficient. No implementation change was made.
+
+E177 DECISION Q52 RESOLVED (a) by agent after operator said “Continue”, 2026-10-08. The
+    planner-owned verify command runs verbatim and exposes only its exit code + tail (CT69);
+    without causal attribution, the harness must not suppress a non-zero exit because a
+    separate JUnitXML report contains red-to-red failures. Precedence in `_classify`: ERROR
+    (including missing baseline/current JUnit report) > SKIPPED when there are no verify
+    commands > FAILING on any declared non-zero exit > REGRESSION on a T0-green/current-red
+    nodeid when commands pass > PRODUCER_ABSENT > VACUOUS > PROVEN. An absent nodeid row on
+    either side is unknown, not false. CT68's red-to-red “does not block” is read as “does not
+    produce REGRESSION”; it does not override a separate command failure.
+
+E178 SHIPPED SLICE5 STEP3, 2026-10-08. `_compare_baseline` returns sorted existing nodeids
+    that are true at T0 and false now; a missing row on either side is unknown. `_classify`
+    applies Q52(a): command ERROR / kill ERROR -> ERROR; no verify commands -> SKIPPED; missing
+    JUnit report with commands -> ERROR; any declared non-zero exit -> FAILING; only then
+    green→red nodeids -> REGRESSION; then PRODUCER_ABSENT > VACUOUS > PROVEN. The producer
+    `_producer_absent` is a named predicate called from `_classify` (CT67); `_compare_baseline`
+    is called from `_classify` (CT68). E2E-live rows added for all three producers; no composition
+    root reaches them until SLICE6 (SD-C).
+    Gates: exact STEP3 `uv run pytest tests/test_verify_slice.py -q -k classify` -> 14 passed,
+    21 deselected; full current `tests/test_verify_slice.py` -> 35 passed. Ruff clean; mypy
+    clean on source + test; pyrefly clean. Plan `precheck` still reports 4 known diagnostics
+    (`contract-reference-undeclared`, `slice-count-at-ceiling`); unchanged from the baseline.
+E179 EVIDENCE Nine hand-mutants on STEP3, all killed; production source restored byte-identically,
+    2026-10-08. `_classify` omits `_compare_baseline` -> 1F; command FAIL no longer blocks ->
+    1F; absent current row treated as red -> 2F; command ERROR no longer dominates -> 1F;
+    kill ERROR no longer dominates -> 1F; `_producer_absent` omitted -> 1F; missing verify
+    commands no longer SKIPPED -> 1F; unavailable JUnit report can pass -> 1F; red-to-red
+    mislabeled regression -> 3F. One first mutation attempt did not run: the source string was
+    non-unique; it was narrowed to the classifier's second check and the mutant then died.
+
+E180 FINDING / IMPLEMENTATION Pytest's stock `--junitxml` does not serialize exact `Item.nodeid`,
+    2026-10-08. Measured against pytest 9.1.1 with a real nested class + parameterized test:
+    output had only `classname` and `name`, no `file` or nodeid field. Implemented the minimal
+    `src/fa/inner_loop/junit_nodeid_plugin.py::pytest_itemcollected` hook to append
+    `fa_pytest_nodeid=item.nodeid` to `user_properties`; pytest's real JUnit reporter serialized
+    all three exact nodeids. `tests/test_verify_slice.py::test_harness_junitxml_records_exact_pytest_nodeids`
+    boots the real subprocess/plugin/reporter, 35-test file passes, and two hand-mutants were
+    killed (property omitted -> 1F; `item.name` substituted for `item.nodeid` -> 1F), source
+    restored byte-identically. This is a mechanism required by the accepted nodeid policy, not a
+    file/classname reconstruction. Added its future live-host row; the XML parser/capture path
+    remains to be integrated.
+E181 OPEN QUESTION Q53, 2026-10-08. `TESTS:` is slice-level, but CT69 requires one contract's
+    own test. `SliceRecord.test_paths` and `parse_kill_directives(record)` expose no mapping
+    from contract id to pytest nodeid; `_run_kill_check` cannot be composed into `verify_slice`
+    without choosing a mapping. Running every slice test per directive can falsely attribute an
+    unrelated contract's failure; selecting the first path is a guess. The schema itself
+    deferred this attribution to I02 (schema §1, line 454). Q53 asks whether to add explicit
+    per-contract nodeids, enforce a test-name convention, or re-scope CT69. No Step4 composition
+    or contract-to-test mapping has been implemented.
+
+E182 REGRESSION BASELINE, 2026-10-08. Full suite with JUnitXML after STEP3 + exact-nodeid
+    plugin: **4339 passed / 3 failed / 12 skipped / 1 xfailed**, plus the already-recorded
+    pytest reporter `INTERNALERROR` caused by `os.name="nt"` pollution (E174). Test-by-test vs
+    E161 / the immediate 4324P pre-STEP3 run: the only three failed tests are the same
+    EXPECTED-RED set — `test_workflow_per_role_overrides_parse`,
+    `test_historical_workspace_docs_have_top_level_superseded_banner`, and
+    `test_repo_has_no_broken_internal_file_links` — and 15 new tests pass (20 → 35 in
+    `test_verify_slice.py`). The INTERNALERROR remains separate from a test failure and is
+    reproduced on tests outside this increment (E174). All 46 broken link targets printed by
+    `test_doc_links` are under `worklogs/archive/`; none point into the planning folder. Do not
+    repair the deliberately-red archive gate (E19).
+
+E183 DECISION Q53, 2026-10-08. The operator selected option (c): every slice `TESTS:` path runs
+    under every `FUNCTIONAL` contract's kill-check. No contract-to-test mapping or naming
+    convention is inferred. CT69 and design §3.5 are amended. Accepted cost is O(functional
+    contracts × slice test paths); a red unrelated path can falsely make a contract `PROVEN`.
+    The risk is explicit in the Q53 resolution, plan CT66/CT69, design note and live-host
+    e2e register.
+
+E184 IMPLEMENTATION SLICE5 STEP4, 2026-10-08. Added frozen `SliceVerification` and
+    `verify_slice(record, *, root, baseline, now, deadline)`. It retains command results,
+    `(contract_id, KillCheck)` pairs, regressions and current failing nodeids. It receives
+    harness-issued baseline/current nodeid maps and does not recapture T0. No verify commands
+    -> `SKIPPED`; functional contracts missing a parsed directive or slice test paths -> `ERROR`
+    before commands run. Extended `_run_kill_check` to run every declared path, in one pytest
+    invocation, for every functional contract; any non-zero test-run result is `PROVEN` as
+    selected, and command/probe uncertainty remains `ERROR`.
+
+E185 VERIFICATION SLICE5 STEP4, 2026-10-08. `tests/test_verify_slice.py`: **46 passed**;
+    affected verifier/kill subsystem (`test_verify_slice.py`, `test_mutation_overlay.py`,
+    `test_kill_operators.py`, `test_kill_directives.py`, `test_slice_verification_runner.py`):
+    **181 passed**. Ruff, mypy and Pyrefly clean for the changed Python files; `git diff --check`
+    clean. The test class remains C0 with real subprocesses; SD-C's real `drive_session` proof is
+    still outstanding in SLICE6.
+
+E186 MUTATION EVIDENCE SLICE5 STEP4, 2026-10-08. Six source mutants were killed and production
+    source restored byte-identically: neutralising CT65 `verify_slice` -> 1F; removing the
+    CT66 `verify_slice -> _run_kill_check` call -> 1F; removing CT67 `_classify ->
+    _producer_absent` -> 1F; truncating the Q53(c) path tuple to its first path -> 1F; suppressing
+    new-red-at-T0-absent `FAILING` -> 1F; treating red-to-red as newly `FAILING` -> 1F. Each
+    mutant was exercised through a real overlay and subprocess test run.
+
+E187 OPEN QUESTION Q54, 2026-10-08. CT83's planned mutation targets
+    `scripts/check_kill_directive_ownership.py`, while SLICE4's `mutation_overlay` only copies
+    `src/` and `_overlay_target` refuses targets outside `overlay/src`. Running that exact CT83
+    directive through the real `_run_kill_check` produces `ERROR`, so `verify_slice` would block
+    the now-complete SLICE5 when every functional kill is run. Options recorded in Q54: re-home
+    the checker core under `src/fa` and keep a script wrapper, or extend the mutation overlay to
+    support `scripts/`. Await the operator's architectural choice; do not tick STEP5/STEP6 or
+    claim I02 complete before the kill is executable.
+
+E188 RESEARCH Q54, 2026-10-08, at operator request after reading
+    `worklogs/DEPLOYMENT-ANATOMY.md`. Runtime imports are `/opt/first-agent/src`; Dockerfile.fa
+    copies `src/` and only the shell `scripts/fa-entrypoint.sh`, while pyproject packages only
+    `src/fa`. The checker is a developer gate, not a runtime command. Global mutmut copies
+    `scripts` as a test dependency (`also_copy`) but explicitly keeps mutation authority in its
+    src-only `source_paths`; CT63 likewise protects tests by copying only src. Assessment:
+    broad repository copying is not good practice. A separately allowlisted `scripts/` overlay
+    root is a defensible scoped exception to keep the checker out of the runtime package, but it
+    needs containment + exact import provenance, CT60-63 amendments, and tests proving tests
+    remain outside the overlay. Recommendation recorded: narrow extension to scripts, subject
+    to the operator's explicit confirmation.
+
+
+E189 DECISION Q54, 2026-10-08. The operator selected the narrow `scripts/` mutation root
+    alongside `src/`, keeping `tests/` outside and leaving mutmut's global `source_paths`
+    unchanged. The reason is deployment-specific: CT83 is a developer gate intentionally not
+    packaged under `src/fa`. Implementation must copy the two roots separately, reject
+    cross-root/traversal/symlink writes, preserve `<overlay>/src` imports, and prove the exact
+    `scripts` module came from `<overlay>/scripts`. A real subprocess experiment established
+    that `PYTHONPATH` alone loses to the workspace-root `scripts` package during pytest import;
+    the selected mechanism therefore requires a pre-collection pytest bootstrap plus a fail-closed
+    provenance check. CT60–CT63 and e2e rows are being amended. STEP5–STEP6 remain unticked until
+    CT83's producer kill returns `PROVEN` through `_run_kill_check`; SLICE6's SD-C composition-root
+    proof remains mandatory for I02 completion.
+
+
+E190 IMPLEMENTATION Q54 / SLICE5 STEP5-STEP6, 2026-10-08. Added the explicit `scripts/`
+    overlay root beside required `src/`, with root-specific resolved containment, source-root
+    symlink refusal, no test-tree copy, and exact module provenance. Because pytest prepends the
+    workspace root for the repository's `tests` package, the scripts-only bootstrap installs a
+    scoped `scripts.*` meta-path finder before initial conftests; collection then verifies the exact
+    target `__file__`, emitting a sentinel that `_run_kill_check` maps to `ERROR`, never `PROVEN`.
+    Both positive and fail-closed subprocess tests pass. With the exact CT83 directive
+    (`remove-call scripts/check_kill_directive_ownership.py::main -> _unresolved_directives`)
+    and `tests/test_verify_slice.py`, `_run_kill_check` returned **PROVEN**; a synthetic real
+    `SliceRecord` through `verify_slice` returned slice `PROVEN`, CT83 kill `PROVEN`, detail empty
+    (4.3 s). The real ownership audit exits 0 on current plans. SLICE5 STEP5 and STEP6 are now
+    ticked.
+
+E191 VERIFICATION Q54 / SLICE5, 2026-10-08. Affected subsystem
+    (`test_verify_slice.py`, `test_mutation_overlay.py`, `test_kill_operators.py`,
+    `test_kill_directives.py`, `test_slice_verification_runner.py`): **190 passed**; the isolated
+    ownership oracle: **1 passed, 46 deselected**. Ruff, mypy (`MYPYPATH=src`), Pyrefly and
+    `git diff --check` pass. Four targeted source mutants were killed and each file restored
+    byte-identically: remove `scripts` from the root allowlist; append (rather than prepend) the
+    scripts finder; make target provenance optional; copy `tests/` into the overlay.
+
+E192 FULL-SUITE OBSERVATION, 2026-10-08. Full pytest stopped at the known E174 reporter
+    `INTERNALERROR` (`os.name="nt"` leaves `WindowsPath` on POSIX): **4356 passed / 6 failed /
+    12 skipped / 1 xfailed**, exit 3. Three failures are the existing expected-red set (E161/E19).
+    Three additional order-dependent failures were `test_selfcheck_ok_when_routes_match_and_keys_present`,
+    `test_selfcheck_reports_missing_proxy_key`, and
+    `test_run_stateless_researcher_role_preserved`; each passed when rerun in isolation. No changes
+    were made to those unrelated areas; the full-suite attribution remains unresolved. The targeted
+    I02 subsystem is green. Do not fix E19.
+
+
+E193 DECISION + IMPLEMENTATION Q55/Q56, 2026-10-08. SLICE6 now uses always-eval-then-reconcile:
+    after a successful coder dispatch, the real eval stage receives that attempt's typed
+    `PlanVerification`, even when the result blocks. No harness-synthesized `EvalReport` is
+    produced or used to suppress eval. In observe mode eval owns the route. In enforce mode,
+    verifier evidence can change only eval `complete`: a determinate block becomes
+    `return_to_coder`; ERROR/harness fault/missing plan or other indeterminate evidence becomes
+    `blocked`. Every eval-authored non-complete route remains authoritative. `eval_report.json`
+    retains the actual provider-authored report; `flow_state.json` stores the effective route.
+    A missing `--plan` is now an explicit verification error after a successful coder, rather
+    than an empty `PlanVerification` that could be mistaken for a pass. Role normalization is
+    centralized at `run_workflow`: one eval follows each coder, including when callers omit eval
+    or list it early. Q55/Q56 and CT71–CT77c/CT86 were synchronized across the increment,
+    design note, open questions, e2e register, and tests. The SD-C test calls real
+    `run_workflow` → `_cmd_run` → `drive_session`; only `ProviderChain.request` is mocked.
+    SLICE6 remains unshipped until the remaining DoD and operator-owned progress synchronization
+    are resolved.
+
+E194 VERIFICATION SLICE6 / I02 PATHS, 2026-10-08. Final `tests/test_verify_gate_live.py -q`:
+    **12 passed in 101.12 s**. The C1 test requested planner+coder only and observed actual
+    planner/coder/eval calls, a plan-level command writing its marker then exiting 7, two
+    attributed slice commands, a persisted T0 baseline, typed verifier evidence in the eval
+    request, the actual eval `PASS` report on disk, and terminal `REPAIR_REQUIRED` /
+    `return_to_coder` / exit 1. Its nine declared functional kills (CT71/72/73/75/76/77b/77c/77/86)
+    all asserted `PROVEN` with empty details, including CT71's `verify_plan` call-site removal
+    and CT72's neutralised route reconciler. Q53(c) ran the full declared path for each contract:
+    9 contracts × 1 path, O(contracts × paths), with the accepted risk that an unrelated failure
+    can falsely prove a kill; no contract-to-nodeid mapping was inferred. Earlier combined I02
+    slice paths plus `test_plan_reference.py`: **308 passed in 105.38 s**; related feature-flag /
+    plan-reference checks: **43 passed in 6.25 s**. Ruff, `compileall`, `git diff --check`, full
+    Pyrefly (0 errors; 139 suppressed / 53 warnings not shown), and targeted Mypy on the four
+    SLICE6 Python files passed. The full-repository Mypy check is still red with **9 diagnostics
+    in 5 files** (`plan_ids.py`, `test_slice_verification_runner.py`, `test_skill_grammar_emit.py`,
+    `test_inject_condensates.py`, `test_mutation_overlay.py`); the changed SLICE6 files passed
+    targeted Mypy, and no fixes were made to those other files. A full `pytest -q` retry ran
+    345.4 s and exited 1 near 96% with the known E174 `WindowsPath` reporter `INTERNALERROR`
+    (`NotImplementedError: cannot instantiate 'WindowsPath' on this system`); pytest emitted no
+    final summary, so the visible `F` markers cannot be attributed from that run. E19 was not
+    changed. I02 is **not claimed complete**: the full-suite comparison remains unresolved and
+    the live-host register rows are still future work.
+
+E195 DECIDED I02 CALIBRATION DEFERRAL, 2026-10-14. The operator explicitly defers the
+    20-slice calibration corpus and ≥95% rejection criterion; it is not an I02 implementation,
+    merge/deploy, live-E2E, or `SHIPPED` gate. The future owner/trigger are not operator-ratified;
+    I02 planning proposes I06 ownership before its first calibrated gate-quality/reliability
+    claim or gate-policy change, with separate calibration and held-out regression data.
+    This is a scope decision, not evidence of gate accuracy or test completion. [operator, this session]
+
+E196 OPERATOR CLARIFICATIONS Q45/Q64/Q66, 2026-10-14. Q45 is ratified as option (B): I01's
+    source-position expansion was already approved; retain `SliceRecord.start_line`,
+    `contract_lines`, and `PlanIds.contract_line()` and keep the I02 locator removed. Q64 is
+    deferred to I06; the 20-slice/≥95% criterion remains outside I02, with detailed ownership and
+    trigger to be settled in I06. Q66 is resolved at the public API level: do not add a separate
+    `context` field to `invoke_workflow`; the nested planner is intended to inherit current chat
+    context as input alongside its own role prompt/skills. Runtime propagation is not evidenced
+    by current code and remains an implementation/test obligation. Q59–Q63 remain open; no
+    CT96/CT97 design is thereby ratified, and no implementation, calibration accuracy, live result,
+    readiness, or `SHIPPED` status is claimed. [operator, this session]
+
+E197 OPERATOR DIRECTIONS EXECUTION/WORKSPACE AND I02→I03 SCOPE, 2026-10-15. The operator
+    confirms fail-closed execution backend behavior and accepts the proposed direction for
+    PTY/lifecycle, publication/recovery, PlanRef/evidence and acquisition/admission, requiring
+    simple maintainable constructs rather than an expanded framework. During a workflow, other
+    managed sources should be read-only; the review adopts exclusive workspace writer ownership,
+    private execution views and one controller publisher. Worker means a tool-execution
+    environment, not an additional LLM role. The operator simplifies Q66: ordinary inherited
+    context logging is permitted; advanced context/privacy policy is deferred. No public context
+    field is added and credential redaction remains required. Kill evidence must not treat
+    collection/timeout/runner/infrastructure errors as successful kills; Q53(c)'s slice-level
+    attribution remains, with no per-contract mapping. The operator directs I02 to end at SLICE6,
+    moves the main execution/workspace/nested-workflow foundation into a new I03, and moves the
+    old I02/SLICE7 E2E package to that I03's final slice. The existing I03 per-slice-loop outline
+    must be preserved as deferred successor work, not silently deleted or included wholesale.
+    Detailed adopted design, scope mappings, migration safeguards and future oracles are in
+    notes/execution-workspace-and-i02-i03-scope-decisions-2026-10-15.md. Plans/DoD still require
+    explicit migration; no implementation, live PASS, readiness or SHIPPED status is established.
+    Q64 remains deferred to I06. [operator, this session; adopted design distinguished in note]
+
+E198 ADOPTED DESIGN REFINEMENTS AFTER INDEPENDENT REVIEW, 2026-10-15. The operator requests
+    updating the context-bearing execution/workspace note before a separate scope-reduction
+    check. The note now specifies a private host-supervisor socket/allowlisted management API
+    and explicit host/kernel/daemon trust assumptions, immutable pinned reader revisions with
+    atomic current-manifest publication, local ownership generation/fencing, and single-host
+    locking/recovery assumptions. Q66 permits existing child conversation/debug logging with
+    credential redaction but does not relax exact control artifacts or R5 distilled retry
+    packets; automatic transcript retention cleanup is not assumed. Zero-executed/all-skipped
+    and stale reports cannot prove a kill; a new clean-control baseline policy is not adopted.
+    The adopted status recommendation lets reduced I02 reach SHIPPED only after actual retained
+    DoD/review, without claiming moved I03 integration/E2E delivery. Capability references to
+    the old I03 tracker/L2 eval must be migrated, not accidentally satisfied by the new I03.
+    Concrete mechanisms are adopted design/pending proof; exact open-question ratifications,
+    implementation, live verdicts, readiness and status ticks are not inferred. Scope-reduction
+    analysis is the next distinct step. [operator request; reviewer design refinements]
+
+E199 FACT SOURCE-GROUNDED EXECUTION FOUNDATION REUSE AUDIT, 2026-10-15. A separate audit
+    records existing session/run/DB authority, executor/PTY/tool facades, live workflow context
+    seams, JUnit capture/parser, and bootstrap private-open/flock patterns with their limits.
+    Current SessionManager rejects another session's owned workspace (`workspace_already_owned`);
+    the primary decision note corrects desired versus implemented lifecycle rather than removing
+    the guard. Isolated actual-source-body diagnostics confirm that skip/failure/testcase-error
+    can have the same false nodeid projection, the existing artifact writer fsyncs the file but
+    not its parent directory, and the bootstrap lock excludes another process while held and
+    rejects a leaf symlink. These are bounded diagnostics, not package-suite or Docker proof.
+    The audit proposes one local ownership/publication domain, materialized revisions, existing
+    execution/workflow adapters, one detailed JUnit parser and scoped initial planner context,
+    avoiding duplicate managers/DBs/frameworks. A compact six-group I03 outline is a recommendation,
+    not operator ratification, plan migration or status completion. Mandatory isolation,
+    terminal sealing, fencing/durability, admission and integrated E2E obligations remain.
+    Product source, plans/DoD, question dispositions and status trackers are unchanged.
+    [verified: src/fa/session/manager.py::_check_reverse_workspace_ownership;
+    tests/test_session_lifecycle.py::test_workspace_cannot_be_owned_by_two_sessions;
+    notes/execution-foundation-scope-reduction-and-reuse-audit-2026-10-15.md §9 diagnostic evidence;
+    product source d9109f489c84cb7f1ab3568b609d96e5b2b61ae2]
+
+E200 DECIDED FORMAL I02 SCOPE/DOD AND I03 OBLIGATION MIGRATION, 2026-10-15. The operator
+    explicitly requests reducing I02/SLICE6 so its retained DoD can be completed before I03,
+    moving the remaining SLICE6 work and all SLICE7 work into foundation I03. The active I02
+    plan now has seven actual sections (including SLICE2b), retains explicit-plan Q57/Q58
+    admission/repair/promotion, artifact/path/budget guards, T0 and direct local composition
+    proofs, and removes nested successful acquisition/context/OS isolation and deployed-host
+    acceptance from its shipping prerequisites. Amended CT66/SLICE5 STEP7 retains error/skip/
+    stale kill-classification proof. CT96/CT97 and CT88/CT89 plus mixed managed clauses have
+    explicit I03 outline ownership; old SLICE7 and DoD are preserved verbatim in the migration
+    bank, with all original STEP/GAP dispositions. Reduced I02 may be SHIPPED only after its
+    actual local contracts, full-suite disposition and independent/operator review; not from
+    this edit and not as safe integrated/deployed acceptance. I03 final acceptance still covers
+    all unique I02+I03 producers. The existing FastAPI server is recorded as an optional PTY
+    transport reuse seam, not host authority or an independent I02 shipping task (reviewer
+    recommendation). I03 remains OUTLINED, not an executable completed plan. No progress boxes,
+    implementation/live verdicts, Q59–Q63 exact ratifications or full-suite failures are inferred
+    closed. Retained SLICE6 has 16 FUNCTIONAL kill obligations, not 18; the schema ceiling stays
+    seven. Capability/roadmap references are reconciled in the next distinct step.
+    [operator, this session; plans/migration bank; E197–E199 directions/reuse evidence]
+
+E201 DERIVED CROSS-DOCUMENT OWNER/CAPABILITY RECONCILIATION, 2026-10-15. Following E200,
+    roadmap links reduced I02 local DoD and the foundation I03 ownership outline, preserves the
+    old I03 slice-loop/tracker/L2-eval as a named deferred successor without renumbering I04–I06,
+    and migrates activation/ticking/VERIFIED/read-API/prompt references to actual capability.
+    Foundation I03 shipping does not expire operator ticking or supply L2 judgment. Deferred
+    verification owners and E2E design/register guidance now distinguish retained direct I02
+    proof from I03 final reviewed deployed I02+I03 acceptance; all original live producer rows
+    remain unchanged. Verification design excludes error/skip/stale report false kills without
+    adding clean-control or per-contract attribution. Question readiness distinguishes moved
+    owners and exact pending dispositions; Q66 uses initial user-task input, ordinary logs with
+    credential redaction and distilled replan packets, not SYSTEM context or transcript-free
+    logging architecture. Primary decision note records applied planning migration, not runtime
+    delivery. No product code, skill text, progress ticks, live status, exact Q59–Q63 ratification,
+    full-suite disposition or numeric successor scheduling is changed by this docs-only step.
+    [derived from E197–E200; source-grounded E199 audit; operator migration request]
+
+E202 DERIVED ADVERSARIAL I02 PLAN REVIEW, 2026-10-15. Source-grounded review records ten
+    confirmed specification defects/gaps separately from unproved deployment/race suspicions.
+    Revised SLICE6/DoD and new exact explicit-admission spec define pure preflight/workspace
+    resolution, safe rejection classes, explicit Q55 order exception, EXPLICIT_INPUT schema and
+    closed validator rules, descriptor-rooted candidate/Q58 IO, T0 failure/state, pinned eval and
+    non-waivable integrity floor in both modes, plus identity-level full-suite acceptance.
+    Existing CT/STEP lineage, seven sections, sixteen FUNCTIONAL and checked markers preserved.
+    Q62 spec table supplied, not implementation proof; historical question statuses unchanged.
+    Q43 current strict-source correction does not ratify its historical policy choice.
+    Pure extractor/AST/table checks and whitespace pass after correcting AST harness locations;
+    pytest/type/Docker/full-suite/operator acceptance remain unproved. No product source changes.
+    [operator adversarial-review request; named source evidence and validation in review note]
+
+E203 DERIVED ADVERSARIAL I03 FOUNDATION REVIEW AND CONCRETE CONDITIONAL BRIEFS, 2026-10-15.
+    Twelve source-grounded I03 findings/gaps cover parent artifact aliasing, PTY replay/timeout
+    loss, early readiness/imports, hidden metadata Git, credential-bearing chat subagents,
+    workspace lifecycle, sealing/publication/recovery and stale live spawn-failure oracle.
+    I03 remains OUTLINED but has six briefs A/B/C/E/D/F, seventeen planned FUNCTIONAL kills,
+    exact core wire/view/receipt/manifest mechanics, proposed managed v2, binary host/local DoD
+    and an OPEN inspected execution inventory. Whole execution closure precedes nested C1.
+    CT96/CT97 original kill and CT88/CT89/STEP lineage preserved; no second authority/session DB,
+    PTY deletion, unsafe fallback, CAS/overlay matrix, parallel scheduler or advanced privacy.
+    Follow-up I02 finding: absent 3c0caad cannot be a runnable DoD baseline; use available
+    d9109f4 without inferring historical approval. Correct exact validator call signature.
+    Actual bounded source probes confirm timed_out projection loss and shell missing-binary
+    exit 127/FAIL. Actual leaf/selected-AST checks pass for I02/I03 grammar/kill ownership;
+    all new targets remain planned, not executed mutation proof. Embedded example, new links,
+    question-status/progress/history/source/roadmap invariants and whitespace pass. Historical
+    I01 no-kill directives are not relabelled a new I02/I03 failure or edited to satisfy the probe.
+    Q59/Q60/Q63 and profile/input/Git/maintenance acceptance remain explicit gates, not ratified
+    policy. No implementation, pytest/type/Docker/main-host acceptance or shipped/live tick.
+    [operator strict-review request; named file:line evidence and actual checks in review/specs]
+
+E204  FACT  Implement amended I02 SLICE5 STEP7/CT66 from base ea77299: replace shell-FAIL
+    inference with one detailed JUnit parser, baseline-compatible bool projection and fresh
+    per-invocation report/run-ID binding. Preserve overlay provenance, scripts guard, Q53(c)
+    unrelated genuine-failure sensitivity and existing baseline policy. Missing/stale/malformed,
+    collection/setup/teardown/runner/timeout errors, counter disagreement and zero/all-skipped
+    evidence fail closed. No new runtime policy, dependency or global mutation-scope change.
+    Build real CPython 3.13.16 environment; frozen dev sync succeeds. Actual pre-edit 131 tests;
+    final three suites 195 passed; exact STEP7 two-suite exit 151 passed. CT66 exact remove-call
+    verify_slice->_run_kill_check: targets=1, edits=1, PROVEN via real overlay/subprocess/report.
+    Targeted mutmut: 223 selected, initially 183 killed/40 survived; strengthen tests, refresh
+    coverage, rerun all 40: 38 killed/2 provably unobservable. Aggregate 221 killed, 2 documented
+    equivalents, no source suppressions; not a fresh final 223-run claim. Ruff, targeted mypy
+    and pylint pass; unchanged formatter hunks and two pre-existing overlay-test mypy errors
+    independently reproduced, not hidden or repaired. Check only STEP7, append new producer
+    host cases H01-H07 with C1/I03 C3 prerequisites and safe handoff; no live fixture execution,
+    no new C1/C2/C3 evidence, no I02 SHIPPED or GAP-01–15 closure. Q59/Q60/Q63 remain open.
+    [actual commands/results/config/IDs/equivalence proofs: notes/i02-slice-verification-design.md
+    §6; future host cases: notes/e2e-live-verification-register.md amended CT66 section]
+
+E205  FACT  Partial I02 SLICE6 CT74/CT95 request-entry chunk from 68c0aa6: share pure strict
+    role/mode/order/task/budget/run-ID/injection/context validation between CLI and direct API,
+    before lifecycle/artifact allocation. Parse CLI injections before session resolution;
+    preserve escaped actionable unsupported-role diagnostics and CT73 explicit Q55 insertion.
+    No PlanRef/admission/promotion/T0 implementation or full SLICE6 completion claim.
+    Final four suites: 262 passed (141.48s); 89 new boundary cases, all 12 original live test
+    function ASTs unchanged. Supplementary normalizer remove-call kills at both public roots:
+    PROVEN, each targets=1/edits=1. Fresh six-helper targeted mutation: 209 selected,
+    207 killed, 2 proven equivalent/unobservable, no other statuses; no profile suppressions.
+    Ruff/mypy three changed Python files clean; pylint two production files 10.00/10;
+    diff whitespace clean. Two deadline failures independently reproduce on clean 68c0aa6;
+    not waived and not substituted for mandatory d9109f4/candidate full-suite comparison.
+    Append seven planned host cases covering all new producers/record/error, with I03 F
+    ownership, fixture/evidence/dual-path/mode controls and explicit pending C1/C3/host proof.
+    STEP12/STEP13/DoD remain open; no I02 SHIPPED/live/integrated-security claim.
+    [commands, final hash/counts/equivalence proofs, baseline identities and host obligations:
+    notes/e2e-live-verification-register.md, E205 request-entry boundary section]
+
+E206  FACT  Continue retained I02 SLICE6 CT90/CT95 STEP13 from 1741daf: read-only workspace
+    resolution before CLI lifecycle, named coder-plan presence guard, frozen exact-byte PlanRef
+    snapshot with rooted no-follow/nonblocking descriptor walk, strict UTF-8/nonempty/1 MiB cap,
+    source-change detection and owned-FD cleanup including close faults. No new dependency,
+    acquisition framework or execution-isolation claim. Manager construction no longer allocates
+    roots; normal _new_session preserves private-root provisioning. CLI rechecks workspace after
+    allocation, updates shared bilingual/JSON help and five explicit workspace/plan examples.
+    Final 13 targeted suites: 619 passed/234.82s; 49 appended live cases, original functions AST-
+    identical. Declared shared CLI fixture + seven tests migrated to approved explicit-plan/typed
+    request contract; stage/budget/routing/history oracles unchanged. Five CLI suites 170 passed;
+    pre-migration 33 failures classified against clean 1741daf (6 existing, 27 plan-less fixtures).
+    Final CT90 full live test-path remove-call: PROVEN, targets=1/edits=1, 36.104s. Fresh targeted
+    mutmut 244 selected: 238 killed, 6 exact Python-default/truthiness equivalents; no other
+    statuses/suppressions. Scratch instrumentation adapter preserves real chdir tests. Ruff/mypy
+    six files pass, pylint four production files 10/10, whitespace clean. Nine new planned I03 F
+    host cases account for every new producer/model/error/help and changed lifecycle boundary.
+    Direct durable admission/Q57/Q58/T0/pinned evidence/acquisition/full 16-run acceptance and
+    independent/operator DoD remain open; existing deadline failures unwaived. No STEP tick,
+    I02 close/SHIPPED/deployed result or security acceptance claimed.
+    [exact commands, source hashes, equivalence proofs, TEST-EDITS/baseline identities and host
+    arrangements/oracles: notes/e2e-live-verification-register.md, E206 section]
+
+E207  FACT  Partial retained I02 SLICE6 CT92/CT95 STEP9/STEP13 GAP-03/GAP-10 from 5b10409:
+    closed admission v1 schema/all-history diagnostics-route-hash checks; private descriptor IO,
+    no-follow process-shared bounded flock, validated locked append, same-directory unique temp,
+    file/replace/directory-fsync publication with irreversible durability-unknown handling.
+    Direct controller now calls the named coder-plan guard before artifact derivation and writes
+    safely addressed BLOCKED admission plus best-effort FAILED/blocked flow on missing/unreadable
+    references, with separate sanitized storage failures and zero provider/T0/verification/eval.
+    Shared normal flow/eval atomic IO also hardened, so fallback cannot follow an artifact alias.
+    No dependency/framework/profile suppression/new policy or successful-admission claim.
+    Final boundary 181 passed/150 deselected; real subprocess 4x4 append, locale/provenance,
+    hostile path, mode, corruption, serialization and pre/post-publication fault controls.
+    Existing real C1 uses a disposable contained source/test workspace; original oracles retained.
+    Final full live-path producer kills CT95 run_workflow->_require_plan_for_coder and CT92
+    _record_admission_attempt->write_admission_record: PROVEN, each 1 target/1 edit,
+    139.719s/67.552s. No selector laundering; Q53(c) slice-level attribution risk retained.
+    Fresh final targeted mutation 794 selected: 759 killed/35 proven equivalents, no other selected
+    statuses; complete IDs/proofs and source/test hashes recorded. Initial timeouts not called kills;
+    independent assertion alarms and actual child import provenance close those evidence gaps.
+    Ruff/mypy ten Python files pass, pylint three production modules 10/10, whitespace clean.
+    Declared fixture extraction/migrations preserve routing/budget/history/deadline assertions;
+    only superseded public silent-no-plan test replaced. Final twenty-suite run 864 passed,
+    6 failed/473.61s: five independently reproduced on archived 5b10409 (5 failed/19 passed,
+    same interpreter/module-origin check), plus NEW unresolved implicit-child history failure
+    from the now-blocked missing PlanRef. None waived; nested unavailable acquisition/diagnostic
+    still needs proper wiring, not a pretend successful child or suppressed assertion.
+    Eight planned I03 F host cases cover every new schema/IO/root/error/shared-writer surface;
+    no deployed or scoped-registry/OS C3 result. Valid-plan validation/Q57/Q58, admitted T0,
+    pinned verifier/eval, unsupported acquisition, all16 final kills, d9109f4 full comparison,
+    independent/operator DoD remain pending. No STEP tick, SHIPPED or complete-security claim.
+    [exact scope, commands, TEST-EDITS, unwaived identities, equivalences, hashes and host cases:
+    notes/e2e-live-verification-register.md, E207 checkpoint section]
+
+E208  FACT  Partial retained I02 SLICE6 STEP9 CT93 GAP-04–GAP-06 prerequisite from 4eaa32c:
+    reviewed remaining plan/spec/source, no blocking policy question. Frozen/slotted separate
+    planner dispatch kinds, run/active/path-bound private stage→CLI→registry capability;
+    mandatory exact-target provider schema and real writer, no optional-builder/fallback
+    degradation. Reuse extracted descriptor byte publication and existing mutation bookkeeping,
+    not a new transaction framework or generic checked-path write. Ordinary writer retains
+    prefixes but denies admission storage and active path/resolved/same-inode aliases; no
+    worklogs expansion, arbitrary-shell containment or OS-isolation claim. No public scope flag.
+    Append-only tests: all 104 original module AST nodes unchanged, 47 new cases. Real C1/C3
+    uses production pr_prepare/IntentGuard and only replaces provider IO; inside-workspace
+    ancestor/terminal/hardlink cases prove actual descriptor-origin rejection. Final focused
+    409 passed/1 deselected; CT93-only 47 passed/331 deselected. Final named CT93 whole live-path
+    remove-call _build_tool_builders→build_scoped_write_file_tool: PROVEN, 1 target/1 edit,
+    144.939s; Q53(c) attribution risk retained, not all16 acceptance. Seventeen explicit targeted
+    semantic mutations all detected with fresh 47-case JUnit, zero errors and overlay import
+    provenance; no whole-module mutmut score/equivalence waiver. Final source/test hashes recorded.
+    Ruff/Mypy eight files clean; Pylint three production modules 10/10; Pyrefly seven production
+    modules 0 errors. Full test-file Pyrefly has 59 old fixture-unpacking errors, identically
+    reproduced against exact E207 source/test bytes; unwaived, no suppression or all-static-green
+    claim. Final22-suite compatibility run excludes one expensive original live workflow test:
+    942 passed/6 failed/1 deselected, 137.20s. Intermediate full-path22-suite run (before final14
+    appended cases) 929 passed/6 failed, 748.52s, including unmutated verifier/eval C1. Exactly
+    the same six E207 failures, no assertion edits/waivers. Five planned ADM-H09–H13 host cases
+    cover every new capability/root/registry/writer/error/shared-guard consumer, I03 F ownership.
+    No STEP tick or admission/repair success claim: scoped tool errors still require CT91
+    controller BLOCKED consumption, CT94 fresh seed/promotion, ADMITTED/T0/pinned evidence and
+    unsupported acquisition routing. Full comparisons/review/operator DoD/I03 boundary remain.
+    [exact declaration, source findings, commands, mutation table/provenance, failures, hashes,
+    host inventory and handoff: notes/e2e-live-verification-register.md, E208 section]
+
+
+E209  FACT  Partial retained I02 SLICE6 STEP9/10 CT94 prerequisite from 175617e:
+    fresh private no-clobber repair/replan candidates preserve latest rejected progress; shared
+    strict descriptor/buffer reader; controller-owned two-validator immutable receipt with closed
+    diagnostics. Q58 publisher uses approved canonical namespace, process-shared target lock,
+    no-follow/single-link/source-hash+metadata CAS, exclusive sibling staging, preserved mode,
+    file/replace/directory-fsync and post-hash/mode verification. Pre-replace unchanged;
+    post-replace typed uncertainty and no rollback. No OS/malicious-writer isolation claim.
+    CT87/91/GAP-06/12/15 supported, not closed; GAP-04/05 remain I03 F. No new policy/dependency.
+    52 new cases; final targeted 52 passed/378 deselected, focused534 passed/1 deselected.
+    Actual scoped stage→CLI→session/registry writer composition for both kinds, actual competing
+    publisher processes and real held-lock deadline; provider seam only mocked in session cases.
+    Existing91 test/fixture/class ASTs unchanged except import statements, no old oracle edits.
+    Supplemental28 explicit mutations all detected, each52 cases/rc1/failures>0/zero errors/skips,
+    source+test hashes and actual overlay/child provenance checked. Not named CT94/full-path proof:
+    _run_admission_repair producer absent, public workflow integration still unwired.
+    Ruff/Mypy four files clean; Pylint three production modules10/10; production Pyrefly0errors
+    with five old warnings. Test-inclusive Pyrefly59 old fixture errors exactly matched archived
+    E208 message/file/column (+3 line offsets); unwaived, no suppression/all-static-green claim.
+    Final22-suite compatibility excludes one original expensive live-workflow test:
+    994passed/6failed/1deselected92.06s; same six E208 identities/categories, unwaived.
+    Six proposed ADM-H14–H19 cases inventory all new/changed surfaces for I03 F; no live result.
+    Public Q57/CT91 shared credits/error consumption, final admission barrier, owned-terminal
+    cleanup, admitted T0/pinned verifier+eval and unavailable routing remain pending. No STEP tick,
+    all16 kills, full-suite d9109f4 comparison, independent/operator DoD, shipped/security claim.
+    [declaration/allowed files, actual commands, TEST-EDITS, mutation table/provenance, hashes,
+    failures, host inventory and concrete handoff: notes/e2e-live-verification-register.md, E209]
+
+
+E210  FACT  Remaining I02 contract source review from 4b6e362; no production/test edits.
+    Shared initial repair/adaptive replan integration paused for explicit Q67 disposition:
+    eval-only replan can start from validator-PASS, but v1 RETRY requires real FAIL and
+    EVAL_REPLAN/ADMITTED requires completed promotion. Real schema probe accepts old canonical
+    ADMITTED, rejects both unpromoted pending encodings, accepts unchanged-history persistence.
+    Recommend retaining canonical ADMITTED with durable unchanged barrier until actual candidate
+    outcome; alternative requires specified/versioned pending evidence. Neither ratified.
+    Q67 is OPEN; no fake diagnostic, weakened schema, public helper wiring or acceptance claim.
+    Append-only question/register/ledger changes only; E209 runtime limits/debts remain.
+    [notes/open-questions-2026-10-07.md Q67; notes/e2e-live-verification-register.md E210]
+
+
+E211  FACT  Public explicit-admission major-chunk checkpoint from e56ace2; partial I02 only.
+    Operator explicitly selected Q67(a), later Q68(a); canonical v1 ADMITTED/unchanged durable
+    barrier before first eval-only revision, actual candidate outcome, RETRY only actual FAIL.
+    Q68 rejects scoped publication-tool errors even if recovered, permits recovered read errors.
+    Shared reserved credits, latest-draft retries, mandatory _run_admission_repair publication
+    producer, final durable admission, independent T0 state/symmetric identity, pinned verifier/
+    eval and real post-coder eval under integrity failures now wired to run_workflow.
+    Fixed gate-before-deadline ordering and retained deadline marker/exit, budget exit1/version.
+    51 new cases:45 public-root+6unit; precise six old-definition migrations, no deadline-test edits.
+    Focused480passed/1deselected55.83s; Ruff/Mypy six files clean; Pylint production10/10.
+    Pyrefly production rc1/6warnings, test-inclusive59 old errors+6warnings, unwaived, no suppression.
+    Compatibility1031passed/6failed/2deselected285.86s, same six standing identities; hygiene1pass.
+    Supplemental15 mutations detected, each33cases/rc1/failures>0/zero errors/skips with actual
+    import provenance and unchanged hashes. Not named all16 whole-path acceptance. Unfiltered
+    baseline stopped after >10min in recursive C1; no final result. Interrupted kills not PROVEN.
+    CT95 unsupported acquisition guard, six failures, whole-path baseline/all16kills/full-repo
+    comparison/static debt/independent/operator DoD remain open. No STEP/SHIPPED/boundary claim.
+    [notes/i02-ct91-public-admission-e211-2026-10-16.md: declaration, commands, TEST-EDITS, hashes,
+    actual mutation table/harness, captured failures, exact next implementation, ADM-H20–H25]
+
+
+E212  FACT  Remaining I02 architecture/readiness review from e94b62b; retained local explicit-plan
+    design remains sound, not managed/security acceptance. Operator explicitly approved Q69
+    nonrecursive original-C1 fixture factoring and Q70 coder-containing-only unavailable guard.
+    Preserve noncoder delegation using actual child SessionManager binding, not parent RunContext;
+    real CLI/chat C1 checks refusal and child session/DB/history. Q55 deadline/no-eval migrations
+    retain deadline/exit/stage and actual-judgment oracles. Raw-input fixture typing fixes59 old
+    Pyrefly errors without suppressions/oracle changes. Two predeclared test fixtures added.
+    Whole public baseline486passed106.92s; final combined604passed117.09s; final tool91passed2.11s.
+    Changed-file Ruff/format/Mypy/Pyrefly clean; full deptry/Pylint rc0 (10/10).
+    Final all16 normative full-path mutations plus2 additional guard/child-allocation removals
+    PROVEN, each exact486nodeids, rc1/failures>0/errors0/skips0, fresh UUID JUnit, import provenance,
+    one target/edit and unchanged source/test hashes. Actual table/hashes/reproduction in E212
+    continuation of E211 note. STEP17 checked only for these frozen versions; not SLICE6/SHIPPED.
+    Broader checks remain red: eight same-identity baseline/candidate Mypy errors; authoring five
+    baseline plus three new candidate public-export blocks; formatting debt; doc-links46 old
+    archive targets (five changed Markdown files clean). No blanket baseline disposition.
+    Full candidate5027 and isolated d9109f4 baseline4477 test runs started, no terminal comparison
+    claimed here. Managed readiness refused existing foreign Arena commit-msg hook (preserved).
+    Independent/operator DoD and I03 work remain open. Handoff updated with exact next actions.
+    [notes/i02-ct91-public-admission-e211-2026-10-16.md E212; Q69/Q70; explicit spec §7]
+
+
+E213  FACT  Completed preliminary full-repository execution supersedes E212's running status,
+    not its frozen16+2 source proof. Normal summaries, no reporter crash: candidate just check rc1,
+    4994passed20failed12skipped1xfail2warnings1053.50s, coverage83.19%; archived d9109f4 just test rc1,
+    4451passed11failed14skipped1xfail2warnings902.76s. Exact JUnit IDs for all5027/4477 cases,
+    errors0; failure phase call for all. Common4 / candidate-only16 / baseline-only7 identities
+    retained individually in E212 note; archive/Git-sensitive failures need classification, not
+    inferred improvements. Candidate full-run UUID env typo means no UUID property; fresh path,
+    exact nodeids intact. All normative reports have correct UUIDs. Final acceptance report not
+    created. Separate CLI function coverage floor rc0,27floors/78functions.
+    Six new Q70 handoff/K fixtures requested default coder; declared only test_handoff_payload.py
+    migration to planner/eval, preserving oracles and no-context refusal. Handoff+invoke112passed
+    0.78s; checks clean with actual source-module Mypy context. Frozen normative inputs unchanged.
+    Ten other candidate-only failures and three new authoring exports remain to repair; new full
+    candidate execution, exact dispositions and independent/operator review still required.
+    No blanket baseline waiver, complete SLICE6, SHIPPED or I03 claim.
+    [notes/i02-ct91-public-admission-e211-2026-10-16.md: completed reports/identity sets/TEST-EDITS]
+
+
+E214  FACT  Source review from c881621 stopped at explicit documentation-oracle ambiguity Q71.
+    Existing stale-claim guard's second bare-term trigger flags actual alias-denial/security-risk
+    evidence in three current project paths, not an obsolete capability assertion. Append-only
+    ledger cannot be rewritten to appease a substring check. Fresh exact C0 test:1failed0.54s,
+    rc1, same complete three-path set as E213. Proposed exact three-path/second-trigger exception
+    with two-sided controls; not ratified or implemented. No source/test-oracle changes, runtime
+    policy, skip/waiver, source-proof invalidation, new checkbox or acceptance claim. Evidence-only
+    allowed files: open questions, this ledger, register and HANDOFF. This is a blocking-Q stop,
+    not completion of the remaining ten failures/exports/reviews. Existing frozen16+2 remains
+    unchanged; Q69/Q70 remain resolved. Resume implementation only after operator Q71 disposition.
+    [notes/open-questions-2026-10-07.md Q71; tests/test_deploy_scripts.py:847–879 @ c881621]
+
+
+E215  FACT  Q71 custom reply authorized a robust maintainable construction, not the proposed
+    exact-path whitelist. Adopted bounded recipe/lifecycle-claim detection; alias terminology
+    alone is permitted in denial/risk evidence everywhere. Existing historical exceptions
+    unchanged. Two-sided controls cover unsafe transport flags/intervening flags/continuations,
+    safe no-sharing transport and security evidence. No historical evidence rewritten for this
+    guard. Typed registry fixtures forward planner_dispatch; CLI anchor78 names actual added
+    _valid_planner_dispatch while retaining independent AST truth; LogKind uses canonical AST
+    append-producer scanner, not other kind namespaces. New admission implementation types are
+    private; existing verification compatibility facades are explicitly exported. Authoring0.
+    Targeted152passed12skipped2.52s (shellcheck missing). Changed8-file Ruff/Mypy/Pyrefly clean.
+    Historical banner oracle now reads the existing relocated archive, not a nonexistent file.
+    Baseline typing8 fixed without suppressions or assertion deletion; configured Mypy450 files
+    clean. Whole Ruff check/format901 clean. All46 broken relative links repaired by target-only
+    relocation edits in15 existing files; whole308-file documentation scan clean. Formatter-only
+    runtime/profile/scanner changes retain identical ASTs. No lock/requirement/environment policy
+    changes. Pre-format public-bank487passed111.85s is diagnostic, not the final frozen baseline.
+    Controller/public-bank bytes changed: STEP17 reopened; E21216+2 remains historical/exact-hash
+    evidence only. Final baseline, fresh16+2 whole-bank audit and final full repository run pending.
+    No local DoD/SHIPPED/I03 acceptance, blanket baseline waiver or foreign-hook replacement.
+    [notes/open-questions-2026-10-07.md Q71; E215 continuation in E211 note]
+
+
+E216  CORRECTION / BLOCKING-Q  E215 quality cleanup overran standing E19 scope. Re-reading
+    ledger E19 and deferred-register D7 found explicit operator “STAY RED / do not fix” for
+    doc-links and historical-banner guards. Q71 did not ratify superseding that requirement.
+    Checkpoint0f7814d already contains15 target-only archived link repairs and one banner-fixture
+    path correction; assertions unchanged, but those edits are proposed/unratified, not accepted
+    E19 disposition. Agent acknowledges scope error; stopped further implementation at Q72.
+    Recommend explicit narrow approval to retain repaired invariants/real guards; alternative
+    exact protected-scope restore, without undoing Q71 or unrelated repairs. No unilateral
+    rollback/waiver/checkmark. E19 historical entry unchanged. Final frozen focused699passed
+    346.07s; configured non-test chain rc0 (Pyrefly139suppressed43hidden warnings, not warning-free).
+    Scanner C0 extracted controls12pass; disabled guard7fail5pass; disabled producer1fail11pass;
+    no errors. Full487-bank16+2 audit5PROVEN so far/incomplete, full candidate running. Isolated
+    d910 archive now has exact d910 Git index/HEAD (same session branch name), clean source;
+    original two archive-no-Git failures are not product regressions. Git-complete baseline
+    rerun started using the same compiled Python3.13 PATH. In-flight observations may finish
+    but cannot authorize protected repairs or DoD. Root foreign Arena hook remains untouched.
+    [notes/open-questions-2026-10-07.md Q72; retained plan DoD; deferred-verification-register D7]
+
+
+E217  DECIDED (operator) Q72 selected “Approve these E19 repairs”: retain exactly46 relative-
+    link target fixes in15 archived files and one historical-banner fixture path correction.
+    Supersedes E19 required-red rule only for these two repaired causes; guard assertions stay
+    real/active. No other baseline waiver, acceptance or scope expansion. D7 updated to record
+    actual narrow disposition, historical E19 untouched. Already-running frozen observations
+    may be assessed; all22 Python hashes unchanged. Full final comparison and independent/
+    operator DoD review still required. Q69/Q70/Q71/Q72 resolved; do not re-ask.
+
+
+E218  FACT / VERIFIED ENVIRONMENT STOP  Fresh repaired699-case baseline passed346.07s. All16
+    normative+2supplemental full487-case public-path mutations PROVEN: exact manifests, one
+    AST target/edit, overlay provenance, invocation UUIDs, real assertion failures, no skips/
+    errors,22 frozen Python hashes unchanged. Complete counts/durations/hashes/reproduction in
+    E218 note. Baseline and mutations launched concurrently: required STEP17 ordering NOT met.
+    All18 mechanical results are diagnostic for that procedure; serial rerun required, box open.
+    D2 local production precheck caller+kill is observed; no overall acceptance.
+    Final candidate5040:5026pass1fail12skip1xfail1094.49s/coverage83.20%; exact Git-complete
+    d910 baseline4477:4455pass9fail12skip1xfail872.47s; normal summaries/errors0. Common1,
+    candidate-only0, baseline-only8;3old identities deliberately replaced under Q55/CT95,
+    explicitly mapped (not counted as passes). Candidate UUID valid; old d910 plugin lacks
+    run-ID feature, disclosed rather than fabricated. All exact nodeids/failure-call phases
+    retained. Non-test chain rc0, configured Mypy450 clean, authoring0, CLI floors27/78 rc0.
+    Q72 approval recorded; no other baseline waiver. Actual final composite just wrappers not
+    rerun; expanded exact constituent commands retained, no false successful-check claim.
+    Common readiness integration now reaches precommit prewarm and fails rc75: no Go SDK,
+    Gitleaks bootstrap calls go.dev outside sandbox allowlist, SSL EOF/URLError. Unchanged
+    diagnostic retained precommit log; no hook/readiness/test weakening. External dependency
+    blocker reached; stop implementation until suitable Go/toolchain/network environment.
+    Root foreign Arena hook unchanged. D8/prompt/reader reconciliation, remaining per-case
+    operator dispositions and independent review still open. No actual acceptance report,
+    SLICE6 overall/local DoD/SHIPPED/I03 acceptance.
+
+
+E219  IMPLEMENTATION / CLOSURE ASSESSMENT  Retained local closure still needs ordered final
+    producer proof, final composite gates/readiness, reader reconciliation, exact per-case
+    operator dispositions and independent review. Implemented missing D8 export/schema7 named-
+    consumer guard in existing skill-grammar tests/table (no new module/API/parser semantics).
+    D5 real shipped chain factory+role registry+drive_session asserts both planner grammar
+    blocks cross actual ProviderChain.request. D3 now proves both cold/warm skill routes on
+    real ProviderChain, not a mocked chain; only request mocked. Existing pure checks retained;
+    tmp fixture replaces leaked manual temp. Targeted43pass0.70s, Ruff/format and warning-level
+    Pyrefly clean, configured Mypy450 clean. Single-test Mypy without source context reports
+    import-untyped and is not counted; no ignores added. Initial real-chain fixture missed its
+    required factory:1fail6errors, corrected to shipped _build_provider_chain, not proof.
+    Three actual source-overlay sensitivity controls: D8 unknown export1fail22pass; D5 missing
+    role prompt1fail11pass after real provider invocation; D3 removed read_skill_for_injection
+    6fail2pass across warm/cold. All no errors/skips, provenance/UUID checked; tracked Python/
+    Git status unchanged. These are supplemental C0/C1 controls, not extra normative contracts.
+    Schema reader annotations now distinguish live direct record fields from unwired compatibility
+    accessors and already-deferred tests_note semantics; no dummy reader or new scope policy.
+    No Go SDK at usual paths: readiness environment blocker persists, no bypass. Next freeze
+    and complete whole retained-bank baseline before launching ANY declared producer mutations.
+
+
+E220  FACT / VERIFICATION  c4cb55f ordered877pass0skip baseline completed before all43
+    retained producer/supplemental runs;40FUNCTIONAL+CT79+2supplemental all PROVEN, actual
+    exact manifests/UUID/provenance, no skips/errors, source/status unchanged at exit0.
+    CT66 reproof110pass5fail; SLICE6 all16normative+2supplemental full487 paths. STEP17
+    and local D1/D2/D3/D4a/D5/D8 reconciliation complete; D4b readers remain successor debt.
+    Rejected recursion-env876pass1skip and v2external-runner edit-count/script-root defects
+    retained as diagnostics; v3 reran all43 using the verified actual completed877 baseline.
+    Actual just check/test rc1:5033pass1fail12skip1xfail5047,83.18%,570.71s; other blocking
+    subgates pass, CLI27/78 independently pass. Exact d910 comparison0newfail1common8oldfail,
+    six superseded IDs mapped; eight Mypy fixes proposed individually, not blanket waiver.
+    Lossless compressed original evidence/hash inventory in notes/evidence/i02-e220;
+    notes/i02-local-acceptance.md explicitly BLOCKED/NOT ACCEPTED. Go>=1.24.11+dependencies
+    needed for real Gitleaks readiness; no bypass/foreign-hook replacement. Operator case
+    dispositions, independent review and actual final green gates/signoff outstanding.
+    No SHIPPED/I03/deployed acceptance; E19 untouched. [verified: E220 local acceptance record]
+
+
+E221  FACT / REASSESSMENT  At4b78084 clean/matching remote: all81 durable artifacts verified
+    by compressed/original hashes;877baseline/43ordered mutations/5047candidate native report
+    bindings revalidated. Runtime/test hashes unchanged; seven retained contract/path/command/
+    directive signatures unchanged despite status-only plan edit. All11distinct SLICE6 STEP
+    selectors collect nonempty rc0 and are subsets of actual877passing baseline (not fresh
+    selected executions). Fresh parser/PlanRef/slice-ID regressions115pass1.95s; plan_ids delta
+    against d910 is one explicit set[int] annotation only, no extractor rewrite. No new local
+    implementation gap found by bounded checks, not independent assurance. Go still absent,
+    foreign208byte hook intact; readiness provision/reexecution, operator dispositions,
+    historical ninth context, independent review/signoff remain open. No status/waiver change.
+    [verified: notes/i02-local-acceptance.md E221, current source/hashes/actual command output]
+
+
+E222  CORRECTION / SCOPE RECONCILIATION  Operator reaffirmed Ubuntu/Docker/Python target
+    and final deployed E2E at end-I03. Retained I02 DoD already permits local SHIPPED before
+    I03 after actual full-suite outcomes and operator-reviewed per-case baseline dispositions.
+    E220/E221 overstated Go provisioning and green composite as unconditional I02 prerequisites.
+    Go diagnosis belongs to inherited Gitleaks hook-build infrastructure, not FA's language or
+    a new deployed-host gate. Actual common readiness failure remains red; explicit disposition
+    still required, no automatic waiver/repair/migration approved by scope clarification.
+    Current remaining work: retained local clause/source/scoped-mutation evidence review,
+    independent plan/implementation/evidence/I03-mapping review, exact operator dispositions
+    including historical ninth context, final local acceptance/signoff. No known new retained
+    implementation gap; not independent assurance. Records corrected; no runtime/test/hooks/
+    dependencies changed, no DoD/SHIPPED/I03 acceptance. [verified: retained DoD/spec6;
+    .pre-commit-config.yaml:135-138; test_workspace_readiness_integration.py; acceptance E222]
+
+
+E223  DECIDED / SCOPE MIGRATION  Operator explicitly approves moving to final I03 acceptance:
+    deployed functional/source-to-behaviour verification; environment/readiness and inherited
+    baseline acceptance review; broad independent implementation/evidence review; integrated
+    E2E/deployment signoff. I02 keeps local implementation/checks, truthful outcomes and only
+    plan-versus-diff review before moving on; new local regressions/findings must be resolved.
+    Revised I02 DoD/spec/closeout record, I03 SLICE6 STEP7/9/10/DoD/spec9, migration bank9,
+    decision note, roadmap/registers/HANDOFF consistently. All four successors explicitly
+    INCOMPLETE/unchecked; no requirements marked fulfilled by transfer, no CT/STEP/status reuse,
+    no runtime/test/hook/evidence changes or failure relabeled PASS. Historical E19 and Q69–Q72
+    intact; E220–E222 closure-boundary statements superseded, actual evidence not rewritten.
+    Documentation-only update; no diff/source review performed or started, no code tweaks,
+    SHIPPED or I03/deployment acceptance. Push then WAIT for next operator command before review.
+    [verified: operator scope instruction; I02 DoD; I03 SLICE6; migration bank9; local record E223]
+    Documentation verification:171 local doc/parser/grammar/directive/skill conformance tests
+    passed1.30s;13 claim/ownership checks passed0.43s;309Markdown files no broken links;
+    both plans0precheck FAIL,7/6sections, unchanged CT/path/command/kill-directive signatures,
+    no new checked markers;only12existing Markdown files changed;diff whitespace clean.
+
+
+E224  IN PROGRESS / ACTUAL DIFF REVIEW  Operator's next command authorizes retained-I02 source
+    review/fixes/local closeout, superseding E223 STOP. Traced plan versus core implementation
+    and reproduced two gaps: unguarded flow-state IO escapes/required-eval suppression, and
+    no final deadline recheck after preparation. Added22 public-path failing regressions first;
+    typed flow-only persistence boundary, post-coder real eval integrity floor, best-effort
+    terminal failure and actual-dispatch deadline check now pass26 focused cases24.28s.
+    Four added stale-receipt cases: first test-authoring AttributeError rejected, corrected4
+    fail before recovery fix, pass afterward. Intermediate509 public cases126.28s pass; final
+    bank now513 not yet executed. Ruff clean after stage announcement/task helper factoring.
+    Original logs/hashes retained in notes/evidence/i02-e224. Full checks/affected mutation
+    refresh and remaining diff review pending; no local closeout/SHIPPED/deployed acceptance.
+
+
+E225  IN PROGRESS / SOURCE FREEZE  Remaining actual review reproduces T0 accepting all-pass
+    JUnit rows from actual pytest exit3.20 public runner-exit1–5 negatives all fail before fix;
+    share runner/report consistency with kill checks, retaining genuine red/empty T0 semantics.
+    All46 review regressions pass36.87s, Ruff clean. No new module/dependency/evidence schema.
+    Stopped initial affected mutation process before completed proof when this third gap was
+    discovered; no verdict claimed. Intermediate abf1bdc just check rc1/log archived as red,
+    not final. Freeze source next, refresh whole-path baseline/affected shared-verifier producers
+    and final local checks; actual diff-review closeout remains pending. I03 acceptance incomplete.
+
+
+E226  IN PROGRESS / COMBINED STORAGE FAULT  Final trace of first finding shows initial admission
+    lock timeout + failed deadline receipt escaped outside the typed boundary; ordinary initial
+    admission+failure-flow error returned PLANNING.4 public negatives fail before fix. Extend
+    the same typed boundary over post-context initialization and reject in-progress terminal
+    readback.50 focused review cases pass37.61s, Ruff and configured450-file Mypy pass. New
+    intermediate abf1bdc test-import Mypy errors fixed in8b2a17f, not inherited. Interrupted
+    proof/check attempts discarded; failed edit assertion wrote nothing, repeated pre-fix log
+    retained as diagnostic. Restart final frozen-source proof/checks; no acceptance claim yet.
+
+
+E227  COMPLETED / HISTORICAL FROZEN PROOF  b2b2830:927pass/no-skip baseline before46 full-path
+    producer invocations,40FUNCTIONAL+CT79+5SUP all PROVEN;21 SLICE6 runs537 cases each.113 raw
+    artifacts archived losslessly/native bindings checked;source/status unchanged. Actual check
+    rc1,5083pass1fail12skip1xfail/5097,1212.45s,83.37%;other subgates PASS,CLI27/78 PASS.
+    Exact d910 comparison0new/1common/8baseline-only failure,6missing/626new IDs; common readiness
+    rc75/precommit_prewarm_failed retained. New operator message supplies peer findings before
+    closeout; this completed source snapshot is historical, not post-follow-up acceptance.
+
+E228  DECIDED / PEER FINDINGS VERIFIED  Q73 operator explicitly selects fail-closed present
+    indeterminate evidence in both modes; determinate observe remains advisory and Q56 negative
+    eval authority/report preserved. Independently reproduced peer missing-evidence and ordinary
+    capture-exception findings;T0 status finding overlaps already-fixed code. Help example finding
+    NOT reproduced:existing+independent tests parse all5, no pointless help change. Add before-fix
+    negatives, both-mode evidence/route matrix, pre/post-coder AssertionError/TypeError cases,
+    BaseException propagation, bounded diagnostics,15-row T0 table and real red baseline. Capture
+    Exception boundary logs+persists indeterminate, does not swallow BaseException.95 targeted
+    peer/T0 cases PASS35.49s;intermediate595 public cases PASS186.68s;current596 public/131 verifier.
+    One generated fixture syntax error rejected/log archived. Ruff+configured450 Mypy clean.
+    Refresh affected SLICE5/6 proof and actual wrappers before local closeout;I03 remains incomplete.
+
+
+E229  LOCAL CLOSEOUT / DIFF REVIEW COMPLETE  a32a72f source/test snapshot; available d910 baseline.
+    All43 changed Python files reviewed against retained plan/spec;five confirmed failure-path
+    defects fixed,125 new review cases pass. Peer help defect not reproduced:all5 examples parse;
+    no unnecessary edit. Q73 ratified fail-closed both modes while determinate observe advisory
+    and Q56 negative authority/report remain. E228's “CT71” policy-label typo means CT72; actual
+    source/contract changed correctly.1002pass/no-skip actual baseline preserved at original UUID/
+    timestamps before all29 final affected invocations:22FUNCTIONAL+6SUP+1 review-only exception
+    revert all killed, full native manifests/provenance,23 SLICE6 runs596 cases each.19 unchanged
+    earlier leaf proofs (18FUNCTIONAL+CT79) revalidated, not rerun. All40 retained FUNCTIONAL covered.
+    External glob omitted295 root Python files;first affected attempt stopped/not closure. v2
+    inventories every tracked Python file and verifies committed bodies;valid1002 baseline reuse
+    explicit. Old missing per-file hashes not invented; Git-derived comparison origins disclosed.
+    Actual check rc1:5158pass1fail12skip1xfail/5172,83.22% coverage;all other
+    blocking subgates pass,CLI27/78 separately pass. Exact d9100new/1common/8baseline-only failures,
+    6missing/701new IDs;common readiness rc75/precommit_prewarm_failed remains red. Historical ninth
+    Mypy context/readiness/hook acceptance remain I03;new defects were not deferred as inherited.
+    I02 local SHIPPED = implemented+diff-reviewed pending E2E as I03 ships. Four final I03 acceptance
+    successors remain unchecked;no deployed/OS-isolation/broad independent acceptance or I03 runtime
+    delivered. Source bytes/status restored before documentation closeout;final archive i02-e229.
+    E229 documentation follow-up:202 doc/parser/skill/compatibility tests pass;13 ownership guards
+    pass77deselected;authoring0diagnostics/exit0;all475Python hashes and extractor binding/positions
+    unchanged;I03 plan/spec bytes unchanged;historical211artifact compressed/original hashes verified;
+    one worktree,foreign208-byte hook unchanged. No rerun/green label assigned to the failed wrapper.
+
+
+E230  I03 PLAN FINALIZATION REVIEW  2026-10-16;source1132eee/runtimea32a72f, not historical d910.
+    Read current execution/session/workflow/tool/launch callers.16 source-backed plan findings in
+    existing adversarial review;revised existing six-slice plan/spec/inventory directly. Scope is
+    live whole-plan explicit+nested workflow,not deferred per-slice/tracker/L2. Added mandatory two
+    real-provider final witnesses,closed PTY/capability/handoff/bundle protocol,protected host state
+    and ROcanonical mounts,overlap-root exclusion,provisioner-before-manager cleanup,three-kind
+    recovery,stage/checkpoint/verification/Q66 handoffs and local-vs-final-host review order. No new
+    runtime subsystem or implementation. Q59/Q60/Q63 remain OPEN;Q74 checkpoint policy is an explicit
+    new pending choice,not ratified by review. All35STEPS unchecked;17FUNCTIONAL IDs/classes preserved,
+    CT96/97 original lineage,CT108 reuses existing allocator. Actual stdlib parser/precheck/kill
+    grammar validation0FAIL/6retained cross-increment WARNs;doc checker308filesPASS;diffwhitespaceclean.
+    Python3.11 below supported>=3.13 and pytest/uv/Docker absent:no runtime/kernel/live result.
+    I02 remains locallySHIPPED;allfour finalI03acceptance obligations and I03implementation incomplete.
+
+E231  I03 PLAN FINALIZED AFTER OPERATOR ANSWERS  2026-10-16;frozen review inputffc8b6a,
+    actual I02 runtimea32a72f/1132eee unchanged. Q59 advisory/manual+EXISTING experimental mid-chat
+    suggestion,NO required mode;Q60 verify source/reuse then delegated engineering design,not
+    blanket packet ratification;Q63 exactly NOT RUN/PASS/FAIL/BLOCKED,optional short commentary
+    onALL/no mandatory reason/variant enum;Q74 per-stage/episode checkpoints after terminality/
+    security seal,including failed stages,no rollback promise. Current plan/spec/questions/schema/
+    roadmap/HANDOFF reconciled;older proposals explicitly historical. Verified actual child allocator,
+    PlannerDispatch,SessionOutcome,admission/repair/validators and pr_prepare producer/digest seam;
+    chosen design extends ONE machine/shared budget,not a second engine. v2 distinguishes captured
+    selected-source hash from actual bootstrap promotion/receipt;v1 unchanged. ACQUISITION filters
+    existing post-profile pr_prepare registration;no new draft/supervisor subsystem. Pure narrow
+    choice/resolve/render adapters reuse existing YAML/Markdown/plan grammar,not an I04 ledger parser.
+    Planning checks0FAIL/6retainedWARN;6slices17FUNCTIONAL35uncheckedSTEPS;CT96/97 lineage and
+    CT108 allocator retained;current symbol ranges checked;308doclinksPASS;diffclean. No supported
+    runtime/kernel/live test under Python3.11/no uv/pytest/Docker. No runtime/tests/scripts/knowledge/
+    deployment change,implementation tick or live PASS. I03 OUTLINED/unimplemented;allfour final
+    transferred acceptance duties incomplete. Ready for authorized implementation,not deployment;
+    live whole-plan direct+nested target remains distinct from deferred slice-loop/tracker/L2.
+
+E232  I03 IMPLEMENTATION START — PARTIAL SLICE1/CT98  2026-10-16;operator-authorized.
+    New installed controller_entry with real main guard, pre-site -I -S install audit and runtime
+    isolated-origin admission before CLI; existing fa.cli.main reused. F16 launch/build gap and
+    F15 owning TESTS; no wrapper/image/production activation yet. New30C0/C2/C3 tests build/install
+    real noneditable wheel offline from existing uv.lock; source/wheel byte binding. Malformed JSON,
+    nested-customizer and deep-package-symlink gaps found/fixed; no unresolved policy choice.
+    Actual30PASS;new+existing entrypoint/parser/skill174PASS6.79s;RuffPASS/format2unchanged;
+    targetedMypy2PASS/sourceMypy170PASS. Python3.13.16 test-only build/SSL/SQLite/zlib repaired in
+    external cache;earlier pre-collection/fixture/static errors not kills or inherited waivers.
+    Six developmental mutations,ALL30tests each: CALL failures4/17/5/4/1/2,exit1/zeroerrors/zeroskips;
+    baseline/restored30PASS/sourcehash exact. Lossless notes/evidence/i03-e232/controller-entry.json.gz.
+    NOT normative full-SLICE1 CT98PROVEN:remaining declared test paths/cells/launch integration absent.
+    No STEP tick,CT/READY/SHIPPED/live result. All35STEPS and four final acceptance duties incomplete.
+    Existing production paths still unsafe until full boundary/cutover;no Docker/main-host run.
+
+E233  I03 SLICE1 IMPLEMENTATION STOP — NEW Q75/F17  2026-10-16;source15dc7cb verified.
+    Restored files exactly pushed checkpoint;temporary-index proof preceded safe Git metadata
+    alignment,no byte changes. Protocol/supervisor/client absent. Before code edit found closed-wire
+    recovery contradiction: non-exec inspect promises vs ExecutionReceipt/view/grant requirements;
+    literal typed journal grant replies vs memory-only secrets; lost handoff reply after revocation.
+    Promoted Q75: whether exact authorized completed-request cached reply may return original grant
+    after revocation,or strict rejection/maintenance. Both forbid durable tokens/re-execution/fresh
+    grants before safe reconciliation. Proposed recommendation(a),NOT approved. Paused runtime per
+    operator stop rule;existing plan/spec/questions/roadmap/review/HANDOFF directly flag blocker.
+    E232 source/tests/evidence untouched;no runtime suite/mutation/kernel/live test,CT/STEP tick or
+    acceptance assigned. All35STEPS/allfour final duties remain incomplete. Await exact Q75 answer.
+    E233 planning checks:actual-source leaf0FAIL/6retainedWARN,6slices17FUNCTIONAL35uncheckedSTEPS;
+    doc308filesPASS;EOFblank-line repaired/diffclean;source/tests/deploy/lock/E232 evidence unchanged.
+
+E234  I03 SLICE1 Q75(a) RESOLVED / REPLAY FOUNDATION  2026-10-16;operator-selected exact_cached_replay.
+    F17 policy join closed by explicit selection, not inferred recommendation. Tracker/spec/plan/
+    roadmap/HANDOFF aligned; E233 historical finding retained. One nonsecret journal, memory-only
+    original reply, exact authenticated principal/namespace/request/input/original-proof binding;
+    revoked-proof exception cannot authorize fresh work/renewal. Restart/cache loss blocks.
+    New execution types and CompletedReplyCache plus64 C0/C3 cases; no service/decoder/journal/
+    issuer/client/real authority. Explicit journal projection omits grant and checks both known
+    secrets before durability. Caller must establish durable DONE before remember_completed.
+    Final owning baseline/restored64PASS0.44s;broader383PASS7.97s;RuffPASS/format4unchanged;
+    Mypy4target/173sourcePASS. Nine developmental full64case mutations:7/7/1/2/1/5/1/1/14CALLfail,
+    eachrc1,zero runner/collection/setup/teardown errors/skips;exact source restoration. Not normative
+    CT99/CT100/wholeSLICE1 proof. Evidence:notes/evidence/i03-e234/replay.json.gz with raw reports,
+    hashes/commands/mutations/driver/toolchain provenance. E232 source/evidence unchanged.
+    Source-built external Python3.13.16/frozen dev env restored;optional stdlib modules absent,
+    no full readiness claim. Draft vocabulary/static/typing errors repaired,not kills/waivers.
+    Review records new real-service lost-ack/revocation/restart/durable-fault/saturation E2E duties;
+    none run. All35STEPS/four final acceptance duties remain incomplete;no activation/status tick.
+    Final planning:0FAIL/6retainedWARN,6slices17FUNCTIONAL35uncheckedSTEPS;IDs/classes/kill grammar
+    preserved;doc309filesPASS;whitespace clean;E232 exact/E234 final-source hashes match.
+
+E235  I03 SLICE1 CLOSED WIRE/RECEIPT CHUNK  2026-10-16;independent continuation before roadblock questions.
+    Complete19op payload/results/error schemas;bounded framed UTF8JSON;strict keys/types/duplicates/
+    paths/byte limits/reservedID/correlation;frozen fullReceipt/OperationRef;no execution or authority.
+    72new+64existing cases:baseline136PASS0.77s/restored136PASS0.86s;RuffPASS/format5unchanged;
+    Mypy5filesPASS. Eight full136case developmental mutations:28/1/1/1/2/1/2/1CALLfails;zero errors/
+    skips;exact restore. notes/evidence/i03-e235/wire.json.gz. Owning SLICE1 test inventory updated.
+    DockerCLI/socket absent;external3.13.16/frozen dev restored. All35STEPS/four final duties open;
+    no normative CT99/100 proof or service activation. Continue unblocked profile/client/dispatch.
+
+E236  I03 PROFILES/CLIENT/CELL PTY ADAPTER  2026-10-16;C0/C3 construction,not activation.
+    Digest-pinned fixed-profile renderer;single-attempt peer-authenticated UDS;bound receipts;
+    allfour BashExecutor methods;real module cell worker/private framed stdio/stateful PTY/controls.
+    Source deadline annotations int→float only;forkpty-thread warning fixed by main-thread creation.
+    Full219case bank baseline24.50s/restored24.27s PASS,no warnings/skips;installed-entry30PASS3.81s;
+    RuffPASS/format11unchanged;Mypy11target/178sourcePASS including independent journal WIP.
+    Nine ALL219case mutations:24/12/1/1/1/2/5/1/1CALLfails,zero runner/collection/setup errors/skips,
+    exact restore;notes/evidence/i03-e236/client-worker.json.gz. Not normative service/kernel proof.
+    Collected PlanRef/receipt join;finish independent journal work before questions. No production
+    main/authority/grant issuer/live test or CT/STEP tick. All35STEPS/four final duties incomplete.
+
+E237  I03 JOURNAL/DISPATCH CONSTRUCTION  2026-10-16;CT99/100,F17/Q75,F15;not activation.
+    Protected secret-free JSON reuses private IO/flock/fsync;single execution/start claim,persistent
+    cancel,startup singleton+UNKNOWN. Real per-connection SO_PEERCRED transport;required actual
+    authority/backend callbacks,completed-cache read before fresh auth;no handler replay/reissuance.
+    Public non-grant snapshots and absolute whole-RPC deadline;sanitized backend uncertainty.
+    Final286PASS27.89s/restored286PASS28.07s;nine full286kills10/27/3/2/2/1/10/1/1CALLfails.
+    Callback-copy full286kills1/1,baseline28.06s/restored27.90s;zero runner errors/skips,exact restore.
+    RuffPASS/format14unchanged/Mypy14target+178sourcePASS;entry30PASS2.95s. Earlier reporter-root
+    baseline failure/fixture repair retained,not counted as kills. Raw final+copy+earlier evidence
+    in notes/evidence/i03-e237. No actual authority,daemon/main,issuer or Docker/cgroup reconciliation.
+    Existing spec already defers real ownership/service integration;all35STEPS/four final duties
+    remain open. E238 immutable build/install proof in progress;F18 active PlanRef join collected.
+
+E238  I03 IMMUTABLE BUILD/INSTALLED CLI  2026-10-16;CT98,F16,F15;not deployment.
+    Existing Docker uv lock/no-dev now --no-editable;pre-site -I-S audit before real -I CLI help.
+    Real rebuilt runtime-only installed CLI C2/C3 + byte-matched sources;both profile/session mode
+    negatives before callbacks. Owning294PASS30.13s/restored294PASS30.03s;four full294kills5/1/1/2
+    CALLfails,including actual rebuilt installed producer. Recipe cases staticC0,not Docker proof.
+    Fourth selector precheck formatting miss preserved/repaired with exact hashes,not a kill.
+    RuffPASS/format17unchanged/Mypy17target+178sourcePASS;entry30PASS2.84s. Broader690PASS12SKIP
+    diagnosedmissingShellCheck,not credited;supplied verified test-only PyPI shellcheck-py wheel,
+    deploy90PASS2.93s;final broader702PASS37.75s zero skips/warnings. Raw notes/evidence/i03-e238.
+    F18/Q76 OPEN:authoritative active PlanRef absent from normal view schema;nullable-only-provision
+    receipt language conflicts with ordinary/Q59 no-workflow execution. Recommend view-bound actual
+    admitted plan,ordinary-null allowed,formal workflow evidence nonnull;NOT ratified. Ask after all
+    independent construction. No real authority/backend/main/host facts or production cutover.
+    All35STEPS/four transferred final duties remain unfinished. No I01/I04–06 or I02 rewrite.
+
+
+E239  I03 Q76(a) ADMITTED PLAN CONTEXT JOIN  2026-10-17;F18,CT99–CT100;not activation.
+    Operator explicitly selected view_bound_nullable_ordinary;Q76 RESOLVED. Required nullable
+    pin/create admission PlanRef,candidate equality,protected frozen context from REQUIRED authority,
+    actual bounded/no-follow source hash recheck BEFORE reserve,receipt binding BEFORE DONE/cache.
+    Ordinary no-active-workflow null permitted,formal evidence actual admitted plan;no new mode,
+    invented hash,worker choice,token persistence or ViewRef change. Q59/Q75 preserved.
+    Full owning12module347PASS28.65s/restored347PASS28.54s;six full347kills4/6/3/1/2/1 CALL assertions,
+    clean phases/no skips/warnings/exact restore. Initial347PASS + mutation oracle TypeError retained
+    without complete kill credit;status/shape strengthened before fresh whole-bank proof.
+    RuffPASS/format19unchanged/Mypy19target+179sourcePASS;broader23modules768PASS39.87s no skips/warnings.
+    Existing PlanRef regression + actual rebuilt installed CLI included. Raw notes/evidence/i03-e239.
+    Snapshot cache/bookkeeping recovery1355 direct blob+mode matches0mismatch,no source replacement;
+    supported3.13.16 test toolchain recovered,no app dependency/lock changes. Not host readiness.
+    Actual protected loader/persistence/controller bridge,WorkspaceAuthority/issuer,real Docker
+    backend/recovery/service/wrappers and approved host/kernel facts remain. F18 integrated proof
+    remains open,not DTO authorization. All35STEPS/four final duties incomplete;no STEP/READY tick.
+    Final audit0FAIL6WARN/6slices17FUNCTIONAL35unchecked;kill grammar clean,doc309PASS,diffPASS.
+    Tested source hashes exact;I02 source/lock/deps/Dockerfile/wrappers/compose unchanged from ba50092.
+
+
+E240  I03 TARGET/ROLLOUT CORRECTION + NONINTERACTIVE LIFETIME  2026-10-17;F19,CT100.
+    User reaffirms ALL target contracts, contradictions first. Existing verification schedule already
+    permits construction without early host; no new deployment approval/host-choice question pending.
+    No deployment/Actions dispatch/live-host test. Host/full-path acceptance remains final SLICE6.
+    Verified same persistent worker for both profiles + unconditional main exit0 mismatched target
+    noninteractive natural exit. Fixed private profile one-shot flag, main→serve_once, exactly one
+    framed RUN, determinate exit status; timeout/error never synthetic success. Interactive unchanged;
+    worker output/close still not authority or cgroup barrier. No extra runtime/dependency or fake main.
+    Owning12module361PASS31.70s/restored361PASS30.48s;three full361kills1/1/8 CALL assertions,
+    clean phases/no skips/warnings/exact restore. RuffPASS/format19unchanged/Mypy19+179sourcePASS;
+    broader23modules782PASS44.40s no skips/warnings. Focused fixture stream error corrected honestly,
+    not product fallback weakening/proof credit. Raw notes/evidence/i03-e240.
+    Continue actual backend/resource authority/service/controller/wrapper implementation toward
+    TARGET; don't substitute present helpers for contracts. All35STEPS/final duties remain open.
+    Final audit0FAIL6WARN/6slices17FUNCTIONAL35unchecked,kill grammar clean;doc309PASS,diffPASS.
+    Retained original runner provenance + explicit correction of inherited checkout metadata only;
+    no execution records altered/recredited. Tested sources exact;I02/deps/wrappers unchanged.
+
+
+E241  I03 PRIVATE DOCKER LAUNCH/OWNED OBSERVATION CONSTRUCTION  2026-10-17;CT99–CT100.
+    Actual fixed create/start/inspect HTTP over authenticated private AF_UNIX; required UID/socket/
+    explicit API/bounded RPC config, no TCP/DOCKER_HOST/pull/retry/redirect. Reused client peer check,
+    fixed profile and journal. Required resource validator; not actual authority or a temp issuer.
+    create_once checks reserved exec/input, durably UNKNOWN before callback then CID before start;
+    lost replies/CID durability faults cannot regain launch permission; cancellation/concurrent
+    claims serialized. Start ACK returns CID only, NOT command result/receipt or terminality.
+    Owned original-name/ID inspection validates identity/labels/pinned ref, reports actual config
+    image ID (not deployment approval), withholds provisional non-exited codes; no cgroup barrier.
+    Native Unix HTTP + actual journal files/locks are C0/C3, not Docker/kernel/real-authority/C1 proof.
+    Focused119PASS3.10s; owning13module415PASS32.38s/restored415PASS32.11s; ten full415mutations
+    assertion kills2/6/2/1/3/2/2/1/7/1, clean phases/no skips/warnings/exact source restoration.
+    Ruff/format21PASS;Mypy21target+180sourcePASS;broader24modules836PASS42.82s, clean. Initial style/
+    lookup typing diagnostics repaired, no failed diagnostic counted as proof. HTTP204 declared
+    body-discard edge repaired and regression proved. Source snapshots/raw phases/mutations/full
+    fetched primary Moby API hash/provenance in notes/evidence/i03-e241; no app dependency changes.
+    Original interactive cell/creation binding MUST be reused for later RUNs with separate command
+    reservations; do not wire launch_new as exec handler. Real episode/attach/control/lifecycle/
+    cgroup/reconciliation,WorkspaceAuthority/controller bridge/service/wrapper cutover remain.
+    All35STEPS/four final duties unfinished; no host request/activation or rollout waiver.
+    Final audit0FAIL6WARN/6slices17FUNCTIONAL35unchecked;kill grammar clean;doc309PASS/diffPASS;
+    tested hashes exact;I02/session/dependency/Dockerfile/wrapper/compose sources unchanged fromf92d9b5.
+
+
+E242  I03 OWNED ATTACH + CLOSED PRIVATE WORKER CLIENT  2026-10-17;CT99–CT100.
+    Fixed authenticated Docker Upgrade/stdin/stdout/stderr/live-only attach, bounded header+non-TTY
+    mux/stdio frames and stderr diagnostics; no CLI/environment endpoint, logs replay/reconnect/
+    resend/fallback. Per-response wire limit is not lifetime cap; absolute nonblocking duplex
+    budgets keep concurrent controls from resetting RUN reads. Owned journal+running inspection
+    before attach; not exclusive episode ownership or fresh resource authorization.
+    Shared closed cell codec consumed by existing persistent/one-shot worker and WorkerClient;
+    one RUN plus concurrent control with exact reply/session binding, full timeout/truncation data,
+    bounded UTF-8 tails, poison/wake pending on uncertainty. No durable command admission/receipts.
+    Actual local native Unix→worker/PTY state reuse + one-shot command7 tested at C0/C3, NOT Docker/
+    kernel/authority/C1 proof. Original live cell/creation binding reused; command claims stay distinct.
+    Focused125PASS5.69s;owning14modules467PASS34.34s/restored467PASS33.49s;ten full467assertion
+    kills1/1/1/1/1/1/1/1/5/1, clean phases/no skips/warnings/exact restore. Initial fixture fork/race
+    and mixed assertion/runtime mutant rejected, retained separately; no failed attempt credited.
+    Full configured Pyrefly20 execution errors repaired without suppression/policy change: explicit
+    validated ViewRef fields and @override/fixture map annotations; old assertions unchanged.
+    Ruff/format24PASS;Mypy24target+182sourcePASS;Pyrefly0errors (existing141suppressed/50warnings).
+    Broader26modules894PASS49.46s, incl6 real Pyrefly cases, clean. Evidence driver expected892
+    miscount retained with original rc1/raw rc0 report; validated actual894 phases/sources and
+    completed remaining checks without unchanged test rerun. No relabelled test/kill result.
+    Primary Moby attach API/full source hashes and raw source/report/runner provenance in i03-e242.
+    Next protected episode registry/durable backend command/control, Docker kill/reconciliation/
+    terminality barrier,real WorkspaceAuthority/controller bridge,service/config/provisioner/wrappers.
+    All35STEPS/four duties unfinished; final host/full-path acceptance schedule/Q59/Q75/Q76 unchanged.
+    Final audit0FAIL6WARN/6slices17FUNCTIONAL35unchecked;kill grammar clean;doc309PASS/diffPASS;
+    all198 tested hashes exact. I02/session/deps/Dockerfile/wrapper/compose/client/profile/public
+    protocol/plan/types/controller entry preserved from1aed729. No service/cutover/host dispatch.
+
+E243  FACT  Mid-slice adversarial SLICE1/2 review at e736082: F20 actual short-control-RPC/
+    long-command reply defect repaired; F21–F27 confirmed target-interface/ordering gaps directly
+    rewritten in increment nine STEPS/CT103 and normative spec §§2.2/4.2. One WorkspaceAuthority
+    admission/drain gate, existing begin/record_container per reused command, original creation
+    identity, restart drain includes creation-DONE, same writer view/independent pinned readers,
+    reuse discovery/PDF inside cell with scratch DB, safe metadata-versus-project IO and committed
+    workspace cleanup. Early existing DB/begin_run supplies real private provisioning namespace;
+    both reverse-reference callers retained with corruption/run-ownership checks. No second DB/log/
+    search service or guessed issuer. Publication joins SLICE3, atomic caller/mount cutover SLICE4.
+    Added14 C0/C3 regressions, no old assertion changes. Owning481PASS34.21s/restored481PASS34.01s; nine
+    whole481-bank assertion kills1/1/1/1/2/1/3/1/1, clean phases/no skip/warnings, exact198 tested hashes.
+    Ruff/format24 + Mypy24/182PASS; configured and clean-PYTHONPATH Pyrefly0errors, existing141
+    suppressed/50warnings. Broader908PASS48.03s, clean. Rejected development fixture/assertion
+    mistakes retained as diagnostics, not proof. Raw commands/sources/reports/runners in i03-e243.
+    All35STEPS/four duties unfinished; no backend/authority/service completion, actual deployment,
+    full-repo baseline PASS or early-host approval. Required host/full-path release proof stays
+    final SLICE6; Q59/Q75/Q76 unchanged. [review: F20–F27; spec §§2.2/4.2; i03-e243 evidence]
+    Final client phase review preserves short connect/request budget, adds exec time only for reply.
+    Passing v1 proof retained separately and its static/broader archive embedded in final verification;
+    final changed source re-proved with extra input-phase mutation, no unchanged-code audit rerun.
+    Final closure audit0FAIL6WARN/6slices17FUNCTIONAL35unchecked;kill grammar clean;doc309PASS/
+    diffPASS;198 hashes exact/old assertions+ledger prefix preserved, only12 declared tracked files.
+    Final repair archive SHA256728a228c8f9e1ecf10400bb8a90f2a996ed089556b5f9b83c670bc6ea702c587;
+    verification+closure SHA25659cfc0cba71d2457cd1d5d275f63f784eda8b16de2a15339ec462fdc7d33262e.
+
+E244  DECIDED  User explicitly requires found issues corrected in plan docs before implementation.
+    Tightened existing I03 spec§4.2 and SLICE2 STEP1–2 in dependency order: internal descriptor IO
+    first, then one WorkspaceAuthority/admission/materialization, then existing consumer joins.
+    Defined no-follow/private-stage/no-replace, safe ownership/modes, whole-file hash/window/text,
+    expected-absence, conflict/durability and non-CAS semantics; retained F21–F27 as unfulfilled
+    implementation obligations. No new authority/service/public operation/rollout gate; Q59/Q75/
+    Q76 unchanged, all35 steps/four final duties unchecked. [docs-first E244; no runtime proof]
+    Docs-only verification: check_doc_links.py308 files/no broken links; git diff --check PASS;
+    exact6slices/17FUNCTIONAL/35unchecked retained. No source/tests changed in this checkpoint.
+
+E245  FACT  After pushed docs-first checkpoint a7ba6d5, constructed internal descriptor-rooted
+    project text IO (view_io.py), not a second authority or endpoint. Whole-file bounded SHA/UTF-8
+    windows, expected absence/SHA, no-follow/single-link/protected paths, private same-FS staging,
+    native no-replace parent installation, safe cell UID/GID/modes and fsync/conflict/unknown results.
+    Existing project dirs are never chmod/chowned. Added93 real-FS C0/C3 cases; old tests unchanged.
+    Final whole93 bank baseline/restored PASS;17 assertion-only whole-bank kills (UID/GID ranges,
+    write/replace/fsync/mode/hash/read-only/PlanRef/no-follow/link/text/parent/byte gates), exact518
+    Python/build/lock hashes restored. Counts2/2/12/6/1/1/7/1/1/1/1/1/3/2/1/1/1. No skip/warning/
+    collection/runtime/infra kill credit; rejected/superseded trials retained, not relabelled.
+    Ruff/format26PASS; Mypy26/183PASS; configured+clean-path Pyrefly0errors(existing141suppressed/
+    50warnings). Broader27modules1001PASS50.19s, all setup/call/teardown clean. First989PASS2FAIL
+    was an external-path reporter rejected by the existing controller closure guard: installed the
+    test reporter in local .venv, no guard/test waiver. An ad-hoc command without tooling PATH had
+    117PASS6setupErrors (missing uv), rejected, not a product result or sensitivity proof.
+    Native owner-range gap:4 before-code assertions, then bounded before effects; no raised policy.
+    Test-only Python3.13.16/frozen deps restored; linked OpenSSL3.0.20/SQLite3.40.1, zlib header1.3.1/
+    runtime1.2.13, ShellCheck0.11.0, uv0.13.1. No application/lock/config change or deployment proof.
+    Evidence: notes/evidence/i03-e245/rooted-io.json.gz includes sources/runners/raw phases, rejected
+    diagnostics and toolchain provenance. Actual WorkspaceAuthority/admission/drain/R0/backend/
+    tool/session joins still absent; CT101–103/all35steps/four final duties remain incomplete.
+    Q59/Q75/Q76/final-SLICE6 actual host/full-path proof unchanged.
+    Final closure:309Markdown files/link check PASS; diff --check PASS;6slices/17FUNCTIONAL/
+    35unchecked retained; exactly6 existing docs +2 new Python files +1 archive, legacy source/
+    tests/dependency/config groups unchanged and ledger prefix retained. Final bank93PASS0.65s →
+    17 whole93 assertion kills → restored93PASS0.74s; broader1001PASS50.19s. Test metadata oracle
+    excludes permitted read-atime only; bounded parameter IDs avoid MiB payloads in collected IDs.
+    Earlier diagnostics retained losslessly (nested gzip+base64 with raw SHA), not sensitivity credit.
+    Final archive1514276bytes SHA256d3c09ff2dcfa854470144741ea548da9dee74874d2e5022527a71933dda01057.
+
+E246  FACT  User asks whether updated SLICE1 is fully shipped. Verified at437ee25: NO. Four
+    unchecked STEPS correspond to real gaps: generic client ERROR misclassification; missing
+    CellBackend/WorkspaceAuthority admission, stop/kill/episode/restart/drain; missing composed
+    supervisor factory/listener/config/install and atomic caller cutover; absent boundary suite
+    and actual final host facts/full-path proof. Existing source references recorded in review
+    and increment E246 menu. Typed client repair FIRST, owned Docker control NEXT, then real
+    backend–authority composition; no new helper/authority/history/approval gate. [source grep/read]
+
+E247  FACT  E247 closes only the first E246 menu item: existing client ERROR taxonomy, not SLICE1 delivery.
+    `client.py` now preserves closed uncertainty codes/original-or-supplied operation references and
+    backend-unavailable metadata across run/INTERRUPT/CLOSE/LIST, with fixed sanitized messages and no
+    resend. Existing exception constructors/timeout subtype remain compatible; no wire/schema change.
+    TEST-EDITS: `tests/test_execution_client.py` fixture gains optional error metadata; all old defaults
+    and assertions retained.142 new cases cover15 codes ×4methods ×2retryable, supplied references and
+    constructor/closed-bank compatibility. Before repair:61 assertion failures/80pass in141 selected.
+    Full owning14-module bank623PASS43.09s → six whole623-bank assertion-only kills48/12/36/32/4/141 →
+    restored623PASS42.15s; all setup/teardown pass, no skips/warnings/collection/runtime/infra credit.
+    Exact597 tracked non-knowledge/worklogs hashes restored. Ruff/format26PASS, Mypy26/183PASS,
+    configured+clean-path Pyrefly0errors (existing141suppressed/50warnings); broader27modules1143PASS54.92s,
+    all phases clean. Local Python3.13.16/frozen tooling, not host/deployment/full just-check acceptance.
+    Evidence `notes/evidence/i03-e247/typed-errors.json.gz` includes snapshots, mutations, raw phases,
+    pre-code failures, runners and toolchain provenance; 795957bytes SHA256d85358b63274ce97cbb510b6ded8445667c8bdf39cc1e8d424984d1a43db8f63.
+    NEXT remains owned Docker termination/observation, then actual CellBackend–WorkspaceAuthority and
+    factory/caller composition in existing dependency order. All35STEPS/four final duties stay unchecked;
+    Q59/Q75/Q76/final-SLICE6 host/full-path proof unchanged. No fake authority or early-host gate.
+
+E248  DECIDED  Clarified existing next owned Docker lifecycle leg in spec§2.2 before code:
+    original creation journal/input binding + durable cancel intent → owned inspect → one fixed
+    full-CID SIGKILL → independent same-CID observation, using one absolute deadline. No receipt,
+    terminal barrier, replay/replacement, signal/grace settings or new authority/history/service.
+    Docker409 still needs inspect;404/loss fail closed. Actual backend/authority admission/drain/
+    per-command routing/startup discovery/cgroup proof remain open; all35STEPS unchanged. [docs-first]
+
+E249  FACT  E249 implements the existing E248 native force-stop contract in DockerCells/Engine only.
+    Original creation namespace/input binding → durable cancel intent → owned inspect → one fixed
+    full-CID SIGKILL → independent SAME-CID observation. Already-exited needs only fresh inspect;
+    409 still observes;404/lost/malformed replies stay unavailable/uncertain, never terminal receipts.
+    No create/start/RUN/reconnect/resend, no signal/grace setting, no result rewrite or lease release.
+    Recheck the one absolute deadline after journal lookup and at each native HTTP leg. A completed
+    creation command's still-live cell is stoppable without replacing its original result.
+    TEST-EDITS:61 appended real-journal/literal-UDS C0/C3 cases; old Docker tests are an exact byte prefix.
+    Final whole14-module bank684PASS42.05s → nine whole684-bank assertion-only kills48/7/4/32/1/1/1/1/3 →
+    restored684PASS42.35s; exact597 tracked non-knowledge/worklogs hashes, clean setup/teardown,
+    no skips/warnings/collection/runtime/infra credit. Ruff/format26PASS; Mypy26/183PASS; configured+
+    clean-path Pyrefly0errors (existing141suppressed/50warnings). Broader27modules1204PASS54.79s,
+    all phases clean. First invalid DONE-without-CID fixture and two overly restrictive proof-checker
+    rejections retained, not relabelled or sensitivity credit. No old assertion/suppression/dependency change.
+    Evidence `notes/evidence/i03-e249/owned-stop.json.gz` contains source snapshots, raw phases/runners,
+    restoration, rejected diagnostics and full hash-verified Moby API reference (not host facts).
+    Archive1407639bytes SHA25650340b4a9e421c8d9dfcf8be1ed4d578218787f041e6bc464be179a0a8b12991. Local tooling only, not full just-check/deployment acceptance.
+    SLICE1 remains NOT shipped: actual CellBackend–WorkspaceAuthority admission/episodes/per-command
+    routing/drain/startup discovery/cgroup barrier and factory/callers remain next in existing order.
+    All35STEPS/four final duties unchecked; Q59/Q75/Q76/final-SLICE6 actual host/full-path proof unchanged.
+    Final closure:309Markdown links PASS, diff --check PASS;6slices/17FUNCTIONAL/35unchecked
+    preserved; exactly2 modified Python files +6 existing docs/index +1 evidence archive. All old
+    Docker tests byte-prefix exact and prior ledger prefix retained; no active production server.
+
+E250  FACT  Source audit finds missing I03 coverage in existing E2E live register through E229.
+    Added14 new-module +2 modified-surface rows,8 joins, exact diff/hash/AST inventory and16 omission
+    controls; all live statuses PLANNED/UNEXECUTED. Existing rows retained verbatim as prefix;
+    role-aware target clarification keeps workspace imports in cells, never immutable controller.
+    Final reviewed host package/execution remains SLICE6; all35STEPS/four duties open. Next actual
+    dispatcher peer/deadline propagation closes defined F20/F21 seam, not authority completion.
+
+E251  FACT  E251 repairs the existing dispatcher composition seam, not the actual backend/authority.
+    DeadlineConnection retains one monotonic request start and exposes read-only start/reply deadline;
+    required typed authorizer/
+    handler protocols receive authenticated PeerIdentity and keyword execution deadline through
+    readonly/reserved operations. Exec deadline = original start + requested command budget; reply
+    waiting alone keeps the separate control+command allowance. Valid but command-late input invokes
+    neither authority nor backend. No clock reset, raw-wire identity or fallback callback. Expiry before fresh
+    authorization/begin/backend prevents late calls; reserved failure remains UNKNOWN. Actual returned
+    results still persist truthfully even when transport reply expires; Q75 cached original replay
+    invokes neither callback. Actual admission/drain/command budget/terminality owners remain absent.
+    TEST-EDITS: dispatch/plan fixtures and direct calls gain explicit peer/deadline arguments; all old
+    assertion ASTs retained except required deadline keyword in asserted private calls.48 new C0/C3
+    real-socket/journal cases cover all19 operations, mutating PTY controls, invalid/expired budgets,
+    authorization/begin elapsed time and no replay. No fake production authority or C1 claim.
+    Owning15modules732PASS43.34s → nine full732-bank assertion-only kills26/62/26/26/4/16/2/2/1 → restored732PASS42.05s;
+    all setup/call/teardown clean except intended mutant CALL assertions; no skips/warnings/collection/
+    runtime/infra credit.598 declared source/input hashes (including new test) exact. Ruff/format27PASS,
+    Mypy27/183PASS, configured+clean-path Pyrefly0errors (existing141suppressed/50warnings); broader
+    28modules1251PASS/1FAIL53.71s: immediate second RUN raises WorkerUnavailableError.
+    This is a real unresolved worker reply/gate race, NOT inherited noise or a green broader gate. Initial missing-keyword fixture migration/lint diagnostics
+    and missing formatted mutation anchor retained/described, not final kill credit. Superseded
+    transport-budget source proof and three Pyrefly fixture-unpack errors retained; corrected explicit
+    ViewRef fields without suppression, fresh final-source baseline/nine kills/restored run PASS.
+    Evidence `notes/evidence/i03-e251/context-seam.json.gz`, 1929361bytes SHA25689dafdfa8f9fa14c479f21e7d68d76c0acceefa1277a3344aece41941fbd63f7,
+    contains raw phases/snapshots/runners/restoration and E250 inventory rollforward; all16 production
+    surfaces/eight joins remain tracked, live verdicts still PLANNED/UNEXECUTED. No actual host run.
+    NEXT fix the confirmed worker reply/gate handoff race with deterministic scheduling proof; then
+    actual WorkspaceAuthority registration/generation/materialization/admit/drain joined to the
+    real CellBackend; no temporary issuer. SLICE1/2/all35STEPS/four final duties remain unfinished;
+    Q59/Q75/Q76 and final-SLICE6 host/full-path release proof unchanged. No new policy adopted.
+
+E252  CONFIRMED  Broader E2511251PASS1FAIL: test_real_worker_pty_state_and_controls_share_one_owned_attach
+    receives WorkerUnavailableError on second sequential RUN. Source publishes RUN reply before
+    gate retirement; main reader checks the gate without reply-write coordination. Spec/increment
+    corrected BEFORE code: shared existing write lock linearizes publication/gate retirement and
+    next RUN admission, preserve controls and main-thread PTY acquisition. FIRST fix, not inherited.
+
+E252  FACT  E252 repairs the E251-confirmed reply-visible/RUN-gate-retirement race in cell_worker.serve.
+    Production best practice: use the existing publication lock as one linearization boundary for
+    next-RUN admission and completed-RUN gate retirement, including reply-write failure cleanup.
+    No retry, scheduler, timeout increase, policy change or parallel command execution. Concurrent
+    controls and main-thread PTY acquisition/prior-thread join remain. Unavailable stream is still
+    uncertain; STOP/worker exit remains no cgroup/terminality proof.
+    TEST-EDITS: tests/test_execution_attach.py — append one deterministic real worker/PTY/UDS/attach
+    scheduling regression; old file is an exact byte prefix. Native-lock wrappers expose the window,
+    not fake worker results. Unfixed source fails the admission assertion [True, False] != [True]
+    (1failed/52deselected0.70s, clean setup/teardown); fixed focused127PASS5.53s.
+    Final whole15-module owning bank733PASS43.25s → eleven whole733-bank assertion-only kills
+    26/62/26/26/4/16/2/2/1/1/1 → restored733PASS42.43s. Both worker producers (admission coordination,
+    retirement-inside-publication) kill independently. All phases clean except intended mutant CALL
+    assertions; no skips/warnings/collection/runtime/infra credit. All598 source/input hashes
+    exact; supervisor.py AND cell_worker.py independently match frozen snapshots. Ruff/format27PASS,
+    Mypy27/183PASS; configured+clean-path Pyrefly0errors (existing141suppressed/50warnings).
+    Broader28modules1253PASS57.98s, including the actual E251 failing sequential-RUN test.
+    E2511251PASS1FAIL remains immutable red history, repaired by this changed source, not a rerun waiver.
+    Evidence `notes/evidence/i03-e252/worker-handoff.json.gz`, 1173316bytes SHA25683da84e828616b1b109579c83866c166f9cefb08348a0eb06fe285fbba4f7c40.
+    C0/C3 component proof only; C1 actual authority/backend factory and C2 deployed callers remain absent.
+    E250 inventory unchanged:16 production surfaces/eight joins, all live PLANNED/UNEXECUTED; extend
+    I03-LIVE-11/S03 with the forced reply-publication/next-RUN schedule. No early host/deployment run.
+    NEXT implement actual WorkspaceAuthority registration/writer generation/readers/materialization/
+    admit/drain, reusing E245 RootedViewIO, joined to actual CellBackend per-view episodes/per-command
+    records and independent terminality; then real factory/caller/mount cutover. SLICE1 is NOT shipped;
+    SLICE2/all35STEPS/four final duties remain open. Q59/Q75/Q76/final-SLICE6 rollout unchanged.
+
+E253  PLAN  Actual owner existing-root/R0/writer foundation before code; spec§4 E253 freezes private storage and binary proof. SLICE1/2/CT101–103 not complete.
+
+E253  DIAGNOSTIC  First806 baseline and two valid trials retained; copy-write trial rejected because two consumer domain exceptions preceded byte assertions. Before test edit: assert actual retained bytes before idempotency/restart consumers in the two NEW tests; no exception reclassification or old-test change. Fresh full-bank proof required.
+
+E253  REVIEW  Stopped intermediate proof without acceptance credit: _select mount-fact read can raise before child FD ownership transfer, leaking one FD. Before edit: transfer child into the cleanup-owned variable before fallible mount reads; append real /proc FD-count fault regression, then fresh complete owning-bank sensitivity. Same allowed Python files, no policy change.
+
+E253  TEST-REVIEW  Counterfactual directory-mount fixture assigned a foreign mount ID only to its directory, not descendant file; this does not model real kernel mount membership and lets the file guard mask directory-guard deletion. Before edit: assign the same foreign mount ID to the whole fixture subtree, then development-preflight all producers on the new module and run fresh full owning-bank sensitivity. Stopped partial full-bank trial retained, no final credit; no production contract/policy change.
+
+E253  INPUT-REVIEW  Complete807/14assertionkills/1327broader retained as superseded source proof. Before final edit: non-UTF8 symlink target must return existing INPUT_POLICY rather than raw UnicodeError; add malformed-name/target and valid Unicode link-data tests plus narrow encoder-boundary rejection. No policy/wire change; fresh whole-bank sensitivity required after source changes.
+
+E253  FACT  E253 constructs the actual WorkspaceAuthority existing-root/R0/writer path, not a placeholder
+    admission callback. Reuses the SAME OperationJournal.single_supervisor/startup recovery; one protected
+    JSON catalog, retained directory identities and per-workspace writer flock, no second DB/service.
+    Source evidence: src/fa/execution/workspace.py::WorkspaceAuthority:406, register_existing:603, acquire_writer:717, _claim_generation:765, _load:541, release_unused_writer:774.
+    Registration captures dirty/binary/untracked filesystem bytes and relative safe link chains under
+    bounded no-follow descriptors, excludes control/Git/env/cache data, rejects root/inode/physical
+    ancestry/bind aliases and nested mount crossings, then stages/fsyncs/no-clobber installs private R0.
+    Canonical bytes/index/modes are untouched. Manifest retention cap64MiB is independent of4MiB wire;
+    entry enumeration allocates only within the limit; input traversal supports1..64 levels.
+    Writer generation/owner/actor persists and is reread before a memory-only principal/namespace grant;
+    mutex queueing and post-durability checks consume the original deadline. Unused release cannot settle
+    views/intents. Restart quarantines old ownership without renewal; persistence ambiguity fences owner.
+    Legacy-writer quiescence remains the deployment prerequisite, not proved by source/hash checks.
+    77 new C0/C3 cases, real Linux FS/FDs/flocks and child processes; bind-mount counterfactuals explicitly
+    simulate kernel facts, NOT actual deployed mount proof. No existing source/test changed. Found root
+    selection FD leak: actual new fault regression fails unfixed source by assertion1!=0, repaired via
+    FD ownership transfer before fallible mount reads, not retry/suppression. Focused77PASS (exact timing in raw proof).
+    Final whole16-module bank810PASS43.84s → fifteen whole810-bank assertion-only kills
+    1/4/17/1/14/1/1/1/1/1/1/2/1/1/1 → restored810PASS42.77s. All phases clean except intended mutant CALL
+    assertions; no skips/warnings/collection/runtime/infra credit. All600 source/input hashes restored
+    exactly. Ruff/format29PASS, Mypy29/184PASS, configured clean-path Pyrefly0errors (existing141suppressed/
+    50warnings). Broader29modules1330PASS58.06s. First806 trial's copy mutation rejected for two escaping
+    consumer domain exceptions; two NEW tests now assert authoritative retained bytes BEFORE idempotency/
+    restart consumers, no catch/reclassification/old assertion weakening. Controlled stopped FD-review
+    baseline also preserved without credit. Corrected inconsistent directory-mount counterfactual to
+    assign the whole subtree one foreign mount ID; development77-case producer preflight retained
+    WITHOUT final sensitivity credit. Complete prior807/14/1327 proof superseded by final review fix:
+    non-UTF8 symlink targets now return INPUT_POLICY, not escaping UnicodeError; malformed filename/
+    target and valid Unicode preservation checked. Pre-fix runtime diagnostic is NOT a mutation kill.
+    Only fresh final-source full-bank proof above counts.
+    Evidence `notes/evidence/i03-e253/workspace-owner.json.gz`, 3894523bytes SHA2561d60a28c98cfb4588ce885670e0c3bc98c73bbd6afa381b16288942fd4206faf.
+    E2E inventory now17 production surfaces/eight joins; new module tracked before coding and omission
+    counterfactual rejects its removal. E250 historical hashes/E251 red/E252 proof unchanged; ALL live
+    verdicts PLANNED/UNEXECUTED. No C1/C2/service/host/CT101–103 completion or checkbox tick.
+    NEXT construct immutable pins/views and actual admit/close-admission/drain using retained E245
+    RootedViewIO and Q76 protected context, then actual CellBackend episodes/per-command records,
+    startup owned-cell reconciliation/independent terminality and real factory/caller/mount cutover.
+    SLICE1 remains NOT shipped; all35STEPS/four final duties open. Q59/Q75/Q76/final-SLICE6 rollout unchanged.
+
+E254  HOLD  Before implementation, loaded tests-writing and verified current E253 authority and
+CT102/103 pin contracts. New native actual-authority diagnostic: complete retained R0 with protected
+AVAILABLE/generation0; actual READ ViewRef(0) rejects. No writer acquired, no source/test edit, no
+mutation/completion credit. Promoted Q77 (positive genesis1 vs contextual READ0) rather than inventing
+an epoch or hiding a writer claim. Allowed edit scope exactly open-questions/spec/HANDOFF/ledger;
+fail-closed implementation hold until selection. Subsequent producer retention and C1/C2/live
+witnesses remain required; final host work stays SLICE6. Q75/Q76 remain resolved.
+
+E254  PLAN  Q77 user delegated robust production engineering; selected uniform positive epoch1
+without ownership; writer2. Pre-code spec updated. Source scope workspace.py, generation-only old
+test expectations plus new native C0/C3 regressions. Guard legacy0 with original startup guard,
+validated R0, no owner/views/intent and native writer flock; persist/reread before work, no grant.
+Full owning-bank initialization/unsafe-state/persistence producer kills required; no C1/pin/backend
+or live claim. Target immutable-reader E2E witness remains planned for final SLICE6.
+
+E254  LOCAL  Q77 resolved by explicit operator delegation to production-engineering judgment: select one
+uniformly positive epoch. Registration now persists genesis1/AVAILABLE WITHOUT ownership or a
+grant; first writer durably advances to2. Existing positive identities/receipts stay strict; no
+READ-only zero exception, extra allocator, DB or token renewal. Old epoch0 initializes only under
+the original startup guard after R0 validation, no owner/views/intent and acquired native writer
+lock. Private atomic replace/fsync plus exact reread precede accepting work; ambiguity blocks.
+Source: src/fa/execution/workspace.py::_load:541, _initialize_genesis:568, register_existing:639.
+17 new native C0/C3 cases;94focusedPASS2.30s. Exactly17 pre-existing generation assertions shift
+by one; original test prefix otherwise exact except required helper imports. No old assertion
+removed/caught. New successful-startup tests reuse the existing closed-domain ok oracle; OS/runtime
+failures stay uncaught. Whole16-module827PASS46.39s → seven whole827-bank assertion-only kills
+19/12/2/2/1/5/1 → restored827PASS46.42s; all collection/setup/teardown clean, no runtime/
+infra credit. All600 frozen inputs exact. Ruff/format29PASS, Mypy29/184PASS, Pyrefly0errors with
+existing141suppressed/50warnings. Broader1347PASS59.74s. Fixture-only static diagnostics are
+retained in the archive without kill credit. Prior E253 evidence is unchanged.
+Evidence: `notes/evidence/i03-e254/genesis.json.gz`, 955682bytes SHA25653ebe8dca0e114c32a766cc75ca770767183ae9ee09bb34b9d4ed604e6c70428.
+This fixes genesis identity, NOT a reader grant or pin implementation. Actual immutable pins/views,
+admit/close-admission/drain, CellBackend episodes/restart/terminality, service/factory and caller/
+mount cutover remain next. SLICE1 NOT shipped; all35STEPS/four final duties remain open. Q75/Q76
+and final-SLICE6 host rollout unchanged. Inventory17surfaces/eight joins; all live UNEXECUTED.
+
+E254  DOC-DIAGNOSTIC  Closure helper final checkbox check named nonexistent plan.md and exited1
+after writing docs/archive. No source/test change and no sensitivity credit. Corrected independent
+checks compare actual roadmap/increment/ledger; checkbox markers unchanged. Internal links309PASS
+and diff check PASS. Original failed closure script and actual successful finalization retained
+in current E254 evidence; no historical archive rewritten.
+
+E255  PLAN  Before code: actual immutable READ pin retention/authorization/rooted read/release;
+exact scope/mechanism/DoD/classes/producer kills in E255 spec and increment declaration. Q75–77
+resolved. No new policy question; no fake execution admission, pin GC, wire fields or early host run.
+
+E255  PRE-EDIT DIAGNOSTIC  Whole51-case developmental preflight read-only mutation survived:
+native service UID/GID1001 versus sample cell1000 caused fchown EPERM, masking gate deletion.
+Only the NEW read-only case uses actual native fixture UID/GID (root fixture fallback1000) so
+otherwise-permitted creation sensitizes readonly construction; no production config change,
+permission mock or host approval. Rejected development reports retained, no final kill credit.
+
+E255  PRE-EDIT LIFETIME REPAIR  Native probe executed frozen original source independently
+of active mutation files: three completed releases leave six unnecessary FDs and retained entry
+maps. Stop/preserve current proof without final-source credit. Close released reader FDs/maps
+after handler drain; idempotent close prevents shutdown callback FD-number reuse. New native
+FD-count/retention/revocation regression plus release-close producer; full fresh owning proof.
+
+E255  LOCAL  E255 implements actual immutable READ retention, principal/namespace/token/exact-ref authorization,
+rooted read_file and release_reader in the SAME WorkspaceAuthority. Protected view.json uses the
+existing exact schema; durable no-clobber install/fsync/reread precedes acknowledgement. Retained
+revision/source descriptors, manifest identity, full-file SHA and actual admitted PlanRef rechecks
+prevent canonical fallback or stale private input. Reuses E245 RootedViewIO with read-only access;
+required trusted formal policy and explicit approved profile are private DI, not wire/model fields.
+READ pins do not compare the newest writer epoch; valid READ retention no longer blocks unused
+writer release. Read/release/shutdown share the original-deadline coarse authority lock THROUGH IO,
+not a global journal lock. This is reader lifetime serialization, NOT execution admission/drain.
+Revocation does not depend on a still-valid plan. Post-revocation uncertainty fences the owner;
+successful release closes descriptors/discards heavy entry maps idempotently after readers drain,
+retains on-disk references/data, and cannot close reused FD numbers at shutdown. No pin GC/token
+reconstruction/new service/dependency or cell permission. Source src/fa/execution/workspace.py:
+pin_reader:949, _retain_reader:1032, _reader:1088,
+_reader_io:1126, read_file:1167, release_reader:1186.
+52 new C0/C3 native cases; combined146PASS3.71s. ALL old test files unchanged. Native UID1001 vs
+sample1000 originally masked the read-only mutant with fchown EPERM; corrected only the NEW
+counterfactual fixture to permit creation absent readonly. Rejected51-case run retained without
+credit. Native three-release FD leak reproduced BEFORE repair by assertion28!=22; controlled
+old-source proof stop retained without credit. Actual release-close and reused-FD regression added.
+Final whole17-module879PASS48.16s → sixteen whole879-bank assertion-only kills
+46/1/2/1/5/3/2/1/27/1/2/1/1/2/1/1 → restored879PASS43.48s; collection/setup/teardown clean, no runtime,
+warning, skip or infrastructure credit. All601 source/input hashes restored exactly. Ruff/format30
+PASS, Mypy30/184PASS; configured Pyrefly0errors, existing141suppressed/50warnings. Broader30-module
+1399PASS63.44s. Producer call replacements use explicit closed counterfactuals, not None-deref
+runtime failures; exact scripts/outputs/ordered IDs/source snapshots and diagnostics archived.
+Evidence `notes/evidence/i03-e255/readers.json.gz`, 2157199bytes SHA2565f0d802f4665b135aedab84b8cbd6bc1638f618b7eef1eb1f95280c20d363acf.
+Pins/read ownership is component proof, NOT writable create_view/materialization, actual execution
+admit/close-admission/drain, CellBackend episodes/restart/terminality, service/factory or caller/mount
+cutover. Those are NEXT. SLICE1 NOT shipped; all35STEPS/four final duties remain open. Q75–77
+unchanged. Inventory17 production surfaces/eight joins; all live UNEXECUTED, final-SLICE6 only.
+
+### E256 pre-code — verified remaining SLICE1 and working PROJECT view dependency
+
+Source inspection at9fe2a6c: supervisor.py has dispatcher/reply cache, no build_supervisor/main;
+backend.py absent; WorkspaceAuthority has no create_view/write_file/admit/close-admission/drain.
+DockerCells and WorkerClient are implemented components, not episode/terminality owners. Retain
+E255 pins; do not call them unimplemented or equate their coarse IO lock with execution admission.
+SLICE1 STEP1 composition, STEP2 backend, STEP3 real factory/caller/mount cutover and STEP4 full-path
+host acceptance remain unchecked. Dependency-ready next: CT102/103 PROJECT working-view ownership.
+Allowed code workspace.py + NEW tests/test_execution_views.py; supporting existing spec/increment/
+ledger/register/review/HANDOFF/index + new E256 evidence. No new production module or service.
+Implement create_view for the concrete WRITE/PROJECT construction path; do not expose dispatcher
+handlers or pretend provisioning/candidate/verification views or execution permits exist. Trusted
+formal policy/actual PlanRef and explicit approved profile remain private required inputs. Owner
+proof authorizes creation, distinct view proof authorizes IO. Copy the validated current revision
+using existing bounded no-follow _Capture; only new copied files/directories get approved profile
+UID/GID and logical0777 modes (scratch/new source root0755). Canonical bytes/index/modes unchanged.
+Use private stage then fsync/no-clobber rename/exact view.json reread before acknowledgement; no
+secret-bearing metadata. Retain source/view FDs and exact namespace/principal/epoch/ref/context;
+read/write reuse E245 on the SAME materialized tree. Independent pins still use immutable revision.
+Recheck actual source/view/registration/plan identities under original-deadline IO lock. This is
+file-handler ownership, not command admission. Installation/post-write durability ambiguity fences
+owner; no rollback of installed data, cell terminality claim, view GC or unused-writer release.
+Binary DoD: native exact dirty/binary/link/mode/UID/tree/index observations; cross-proof denials,
+read-your-writes and simulated external private-tree edit visibility; old reader unchanged; stale
+SHA/protected/plan/root substitution/restart/fsync/deadline/cleanup negatives. C0/C3 only. Full owning
+bank baseline/assertion-only producer kills/restoration plus statics/broader required. Full tool/PTY,
+backend/factory/kernel C1/C2 and final-SLICE6 live evidence stay open. No new policy/routing mode.
+
+E256 PRE-EDIT RESOURCE REVIEW: actual native stage-context exit fault AFTER durable install
+leaves a transient view FD open (assert24!=23). Confirmed in developmental source, not deferred.
+Use ExitStack across stage exit and transfer callbacks only after protected view registration.
+Allowed source/new test unchanged. Preserve pre-fix assertion; add cleanup-owner producer mutation.
+Installed view retained, owner fenced, no automatic rollback. C0/C3 resource lifetime repair.
+
+### E256 LOCAL
+
+E256 source-verified remaining SLICE1 before editing: actual CellBackend/admit and factory/main
+are absent, not hidden behind completed component proof. Retain E255 readers; implement next actual
+CT102/103 dependency inside SAME WorkspaceAuthority: create_view for WRITE/PROJECT, bounded dirty
+input materialization, durable secret-free view retention and distinct principal/namespace/exact-ref
+view proof. Existing copier and RootedViewIO reused, no new service/module/dependency or clean Git
+checkout. Current retained input verified; canonical/root conflict denies. Newly copied source has
+logical0777 modes and explicit approved profile UID/GID; scratch0755, no protected Git/env/control
+copy. Native C0 uses actual service UID/GID to reach real operations, NOT deployed different-UID
+ownership or mount evidence. Install uses private stage/fsync/no-clobber/exact reread before grant.
+write_file/_write_rooted and read_file use SAME working tree; independent READ pins keep old bytes.
+Actual PlanRef is bound/rechecked; closed/stale/forged/substituted views deny before IO. Post-write
+identity/deadline/context-close/fsync ambiguity fences owner and retains effects, no clean success.
+File handlers hold original-deadline lock through IO; this is NOT command admission/drain.
+Source src/fa/execution/workspace.py:create_view:1259, _materialize_input:1366,
+_install_project:1409, _project_view:1431, _project_io:1484,
+write_file:1538, _write_rooted:1556.
+46 new C0/C3 native cases;192focusedPASS4.71s. ALL old test files unchanged. Native stage-context
+exit fault after install reproduced transient FD leak24!=23 before repair. ExitStack now owns
+transient descriptors across that boundary and transfers only after view registration; native
+negative proof/cleanup producer retained. No source acceptance before repair. Directory-swap fixture
+preserves exact valid metadata AND original source identity to avoid masked deletion. Rooted-write
+counterfactual returns closed typed hash/size data; byte/existence oracles run BEFORE consumers.
+Final whole18-module925PASS49.62s → nineteen whole925-bank assertion-only kills
+30/34/4/1/1/2/3/1/1/1/1/1/2/14/1/1/1/1/1 → restored925PASS46.28s. Clean collection/setup/teardown; no warning/skip/
+runtime/infra credit. All602 frozen source/input hashes restored. Ruff/format31PASS, Mypy31/184PASS;
+configured Pyrefly0errors with existing141suppressed/50warnings. Broader31-module1445PASS60.60s.
+Evidence `notes/evidence/i03-e256/project-views.json.gz`, 2153879bytes SHA256df5a5f4697dc31422f52bff943e420ebfc5a29307b73900f20498160277d7518; exact source/scripts/
+ordered outcomes/pre-fix diagnostics and pre-edit SLICE1 inventory retained. Prior E255 unchanged.
+NEXT actual per-workspace execution admission/close/drain with approved profile/path triple, then
+CellBackend episode/per-command/cancel/restart/independent terminality and actual factory/caller/
+mount cutover. Candidate/verification/provisioning view owners, seal/publication remain unimplemented.
+No generic purpose switch, dispatcher activation, temporary permit, GC or release/terminality claim.
+All35STEPS/four final duties remain open; SLICE1 NOT shipped. All17surfaces/eight joins live PLANNED/
+UNEXECUTED at final SLICE6; no early host prerequisite or new policy/routing mode.
+
+E256 FINAL REVIEW: canonical source diff reviewed after proof restoration; all602 input hashes
+match archive, all old test files unchanged. Full proof925/19assertion-only kills/restored925 and
+broader1445 verified by independent closure checks; exact archive roundtrip. Internal links309PASS,
+diff-checkPASS. Actual owner/reader/view unit modules added to SLICE2 TESTS/verify path alongside
+all retained future integration paths, not substituted for them. No checkbox or policy changed.
+
+### E257 — source assessment and explicit construction order (before code)
+
+At b862632 no complete I03 slice/product execution cutover is shipped. E232–256 are local
+component implementations, not 1–2 completed whole contracts per checkpoint. SLICE1 presentation
+hid dependencies: authority is SLICE2; factory requires SLICE3; activation joins SLICE4. Do not
+report repetitive pending steps as if component checkpoints shipped SLICE1. Actual ordering:
+1. Admission/irreversible close/drain + trusted profile/source/scratch/cache (E257 current).
+2. CellBackend episodes, per-command begin/one-send/cancel/restart/independent terminality.
+3. Other view purposes and terminal seal/publication/forward recovery.
+4. Real factory + atomic SessionManager/tool/caller/mount cutover; no permissive/failing stub.
+5. Local full-path C1/C2 and declared producer proofs; final live acceptance at SLICE6.
+No completion checkbox is changed by this clarification. All six slices/four final duties open.
+
+Allowed code workspace.py + NEW tests/test_execution_admission.py; existing spec/increment/ledger/
+register/review/HANDOFF/index + E257 evidence. Reuse one authority/journal/profile/copier, no new
+production module/service/schema/history. Approved dependency-cache path is private operator DI,
+never a wire/model path; absent config blocks execution admission, not file IO. READ execution
+gets its own bounded materialized readonly source/private scratch, not service0600 R0 mounts.
+Admission validates exact actual proof/profile/PlanRef/identities and original EXECUTING uncancelled
+journal binding before granting bounded dispatch work. Register work before effects; recheck at
+actual create/start/send boundary through scoped effect guard. Scope ends after dispatch, NOT the
+command reply/exit wait; stop must be able to signal a running command. File handlers use SAME
+view gate. Close wins => no late effect; admitted effect wins => close/drain waits for that bounded
+effect/handler. Gate active counts/conditions use existing authority lock for short transitions,
+never hold journal lock waiting on drain. Shared mutex serialization is NOT parallel scheduling.
+Persist STOPPING before acknowledging close; repeat close does not reopen. Drain waits with original
+deadline, never releases writer, deletes source, asserts terminality or interprets expiry as death.
+Persist actual operation retention before execution permission. A reader with execution references
+cannot be released as an unused file-only pin. Unknown durability fences owner. Shutdown retains
+FD owners until scoped work retires. New cache/projection identities must be rechecked before use.
+Binary C0/C3 DoD: native bytes/path triple; exact proof/profile/plan/journal/cancel negatives;
+queued close => zero effects; admitted effect => close waits; drain consumes deadline; other view
+unaffected; file IO closed by same gate; root shutdown does not close live FDs; faults retain refs/
+writer quarantine. Whole owning bank assertion-only producer mutations and exact restoration;
+actual backend/tool/PTY C1 and final-SLICE6 host proof remain unimplemented/unexecuted.
+
+E257 pre-edit mechanism refinement: E243 explicitly permits the ORIGINAL admitted command's
+RUN after start_once leaves its journal UNKNOWN; initial admission must still be EXECUTING and
+one-shot. Use existing durable view.operation_ids to reject second admission; only the original
+live scope may continue across EXECUTING/UNKNOWN. No renewed begin or second RUN log. Active
+ownership uses in-memory identity sets, not decrementable counters, so idempotent scope cleanup
+cannot underflow or turn a missing registration into a shutdown hang. Same allowed files.
+
+E257 PRE-EDIT SEND BOUNDARY: add journal.py to allowed production files. Existing create_once/
+start_once hold journal cancellation boundary through bounded RPC; a pre-send lookup alone leaves
+a cancellation race. Add read-only OperationJournal.send_guard and WorkAdmission.send, holding
+existing journal lock ONLY through bounded worker frame write, never reply/command/drain. No second
+RUN log/claim; original scope can continue across start UNKNOWN. Native concurrent cancel-versus-
+send proof plus guard-producer mutation. Also validate approved cache BEFORE READ projection copy;
+policy denial must not install disposable execution input before configuration validation.
+
+E257 pre-edit deadline refinement: new journal send guard/authority lookup must cap lock wait by
+original caller deadline, not only journal's configured ceiling. Extend existing _transaction/lookup
+with optional deadline (old callers unchanged); send_guard requires deadline. Read-only pre-effect
+expiry may report BACKEND_UNAVAILABLE; never reclassify a failure after a possibly sent frame.
+
+E257 CONFIRMED PRE-FIX: native partial-send fault writes private sentinel then reports
+DURABILITY_UNKNOWN but leaves authority healthy (new regression assertion fails). Repair before
+acceptance: uncertain/corrupt send guard errors fence owner; retain effects and references, never
+retry or synthesize completion. Same declared source/tests; preserve failed native output.
+
+### E257 — actual dispatch admission, close/drain and trusted execution inputs
+
+Source-verified before editing: no admission owner, no close/drain gate, no execution input
+triple existed; E256 views/rooted IO were real but had no command-scope authority. Implemented in
+the SAME WorkspaceAuthority: admit(), WorkAdmission.effect()/send(), close_admission(), drain(),
+_file_work() shared gate, approved_cache private DI, READ execution projection, _ExecutionInputs
+identity pinning, and OperationJournal.send_guard with deadline-capped locking. 41 new native
+C0/C3 cases. Whole 966-owning-bank baseline 49.5s, sixteen whole-bank assertion-only kills
+1/3/6/1/5/1/2/1/1/1/1/18/2/2/1/1, restored 966 PASS 47.9s, 603 frozen hashes exact, broader
+1486 PASS 59.39s, statics clean. A partial-send uncertainty defect was found and repaired before
+acceptance; two review fixes sealed the READ projection and made a failed admission recoverable. Component proof only: CellBackend, one-send
+ownership, independent terminality, other purposes, seal/publication, factory/caller/mount
+cutover and all live acceptance remain open. SLICE1 NOT shipped; all 35 STEPS/four final duties
+open; 17 surfaces/eight joins stay PLANNED/UNEXECUTED at final SLICE6.
+
+E257 REVIEW FIX (before acceptance): READ execution projection was materialized with the cell's
+own UID and writable modes, so the cell could mutate its own READ source inside the container
+(detected later by the digest recheck, but a silent self-corruption). Production fix: seal the
+READ projection source to the service owner with no write bits, keep scratch cell-writable, and
+prove both by mode/ownership and by a privileged-tamper digest detection. Second fix: a failure
+AFTER the projection rename left a stale "execution" directory that permanently blocked retry;
+the authority now removes its own private projection copy on that failure and fences the owner if
+removal fails. Same allowed files; add native cases for both.
+
+E257 REVIEW FIX 2 (before acceptance): the READ projection digest was still compared to the
+REVISION tree hash, which is impossible once write bits are stripped. The authority now stores the
+strict digest of the SEALED projection and rechecks that, so a privileged tamper is still detected.
+Also a failed admission now removes its own projection copy and reopens the retry path instead of
+leaving a no-clobber blocker. Three new whole-bank producer kills cover seal, discard and recheck.
+
+### E258 — CellBackend episode owner, one-send discipline, cancel and restart (before code)
+
+E257 proved the authority side (admit/close/drain/trusted inputs). The remaining SLICE1
+STEP2 owner is the live cell lifecycle itself. Source-verified: there is NO backend module,
+NO episode map, NO one-send command owner and NO restart reconciliation. docker.py creates,
+inspects, attaches and force-stops; worker_client.py exchanges private frames; journal.py
+records per-operation claims. Nothing owns "one live cell per view with exactly one RUN
+send, cancelled before send, and no second cell after restart".
+
+Allowed production files: NEW src/fa/execution/backend.py; src/fa/execution/worker_client.py
+(split write from reply wait, existing semantics preserved); src/fa/execution/journal.py
+(read-only unfinished-record listing for reconciliation); src/fa/execution/docker.py
+(read-only journal accessor); src/fa/execution/workspace.py (read-only approved-profile
+accessor). NEW tests/test_execution_backend.py. Existing plan/increment/ledger/register/
+review/HANDOFF/index and E258 evidence. No new service, schema, history, receipt type or
+routing mode; the ONE journal and the ONE authority stay.
+
+Allowed test edits beyond the new module: tests/test_execution_attach.py and
+tests/test_execution_docker.py gain assertion-only oracles for their own success paths
+(an expected transport or daemon refusal becomes a failed ASSERTION about the expected
+outcome, never a leaked domain-error type). E258's producer mutations reach the worker
+transport and the owned stop, so those two modules must fail BY ASSERTION for the
+whole-bank kill to count; their expectations are unchanged, only the failure reporting
+is normalized. No existing assertion is deleted or weakened. The session configuration
+(pyproject.toml) may additionally filter ONE exact CPython 3.13 platform notice by its own
+message, as recorded in the amendments below.
+
+Mechanism:
+- CellBackend owns a private live episode map keyed by authenticated principal + NamespaceRef
+  + exact ViewRef + approved profile id. An episode holds the ORIGINAL creation request, the
+  original container id and the SOLE attach/WorkerClient. Worker PTY session ids stay
+  subordinate to the episode, so a different namespace/view can never reuse a shell named
+  "main".
+- execute() consumes the real WorkspaceAuthority admission. A fresh episode performs the
+  existing create_once -> durable CID -> start_once path and attaches once. A later command in
+  the SAME episode binds the original container id to its own journal record and reuses the
+  sole attach; it never creates or starts a second cell and never rebinds the original labels.
+- The single RUN frame write happens inside the journal send guard so a persisted cancel
+  linearizes against the WRITE, while the reply wait runs OUTSIDE that lock. A lost or late
+  reply is EXECUTION_UNKNOWN, never a resend and never a new operation id.
+- cancel() persists cancel intent for the exact command operation id BEFORE any stop, then
+  stops the OWNED cell through the original creation binding. Cancel intent is not a
+  terminal receipt and asserts no process death.
+- reconcile() inspects owned cells for uncertain records by id/name/labels and stops a
+  surviving cell; it never creates or starts a second cell and never re-runs a command.
+- The backend returns a CommandOutcome, NOT a receipt: worker text is untrusted, exit code is
+  the command's, and terminal_barrier is always False here because no independent container
+  or cgroup fact is established in this increment.
+- One cell per episode identity: concurrent commands on the same view share a single
+  per-identity creation lock, so a second cell is never created for a live episode and a
+  concurrent create is never a duplicate shell.
+- The admission scope stays open for the whole command because the work is still in
+  flight, while the journal send guard covers ONLY the RUN frame write. The reply wait
+  is outside that lock, so a cancel can be persisted while a command runs.
+- A daemon answer that violates the owned-cell contract (a foreign container name or
+  foreign labels) is PATH_DENIED, never a successful stop and never a synthetic
+  completion.
+
+Failure behaviour: unknown/duplicate operation id, forged principal/namespace/view, wrong
+profile, expired budget, closed view, cancelled-before-send and lost reply all fail closed
+with existing SupervisorError codes; no replay, no second cell, no synthetic completion.
+
+Binary DoD: native local worker over the real attach transport proves one create/start/attach
+per episode, shell state preserved across two commands in one cell with two durable records
+binding the SAME original container id, the original labels still naming the original
+operation, a foreign namespace/view getting its own cell, a duplicate operation id denied
+without a second send, cancel-before-send producing NO RUN frame, cancel during a running
+command persisting intent while the command is still running (the journal lock is not held
+across the reply wait), a lost reply yielding EXECUTION_UNKNOWN with exactly one RUN frame,
+and restart reconciliation stopping a surviving owned cell without creating a second one.
+Whole owning-bank assertion-only producer kills and exact restoration; statics and broader
+regression required. Negative proof must not rely on runtime/name errors.
+
+C0/C3 only. Actual CellBackend -> supervisor -> tool/PTY composition, receipts, independent
+terminality, seal/publication, factory/main and caller/mount cutover stay unimplemented.
+
+E258 amendment 1 (scope retirement): execute() retires the admission scope ONLY through the
+`with scope:` block; the redundant `finally: scope.close()` was removed, so the scope's own
+context manager is the single retirement path for the admitted work. A producer mutation
+that leaves the scope open cannot be counted as a kill, because the authority's shutdown
+waits for the gate's admitted work with NO deadline: a leaked scope hangs the fixture
+teardown and a timeout is not a kill. The equivalent contract is therefore proven by a
+killable producer instead. The native case
+test_drain_waits_for_a_running_command_and_returns_when_it_retires requires the drain to
+stay blocked while a command is still running and to return only after that command has
+retired, and its producer mutation (WorkspaceAuthority._wait_drained: `while gate.active:`
+-> `while False:`) is killed by that assertion. The native case
+test_completed_command_leaves_no_admitted_work_behind still proves that a finished command
+leaves no admitted work behind.
+
+E258 amendment 2 (test-surface normalisation, no expectation changed): a command that runs
+off the main thread RECORDS its own outcome and the oracle checks that recorded outcome
+(EXECUTION_UNKNOWN or BACKEND_UNAVAILABLE for a stopped owned cell). An unhandled thread
+exception is a pytest warning, and a warning is never kill credit, so the recorded
+outcome replaces the raised one. The session filters ONE exact CPython 3.13 platform
+notice by message (the forkpty-in-a-multi-threaded-process DeprecationWarning) in
+pyproject.toml: in production the cell worker forks only on the cell's own main thread,
+while the native fixtures run that worker inside the pytest process. No assertion is
+added, removed or weakened, and no other warning class is filtered.
+
+E258 amendment 3 (the narrow warning filter is a SESSION filter): the forkpty notice can
+surface in any bank module, because a producer that wedges the transport leaves a live
+thread while a later native case forks its PTY. The single session level filter in
+pyproject.toml therefore replaces the per-module filters, so the rule is uniform and the
+proof's no-warning claim stays absolute. The notice stays VISIBLE in the pytest output of
+any run that does not use the project configuration, and the production cell worker keeps
+its own main-thread-only fork rule.
+
+E258 amendment 4 (kill credit): a kill is a call-phase ASSERTION. A setup failure means the
+case never ran and is never kill credit. A teardown failure under a producer that
+deliberately wedges the transport is a RECORDED signal and never kill credit: the baseline
+and the restored source must tear down completely clean, and every producer kill must come
+from at least one call-phase assertion with no other failure class in the call phase. The
+transport-wedging producer (the worker that never writes its frame) also trips the native
+fixture's own teardown assertion; that is recorded in the evidence, not credited.
+
+E258 amendment 5 (the declared docker.py accessor was not needed): the declaration allowed a
+read-only journal accessor in src/fa/execution/docker.py. The existing
+DockerEngine.inspect_owned and DockerCells.force_stop_owned paths already carry the
+owned-cell proof (the exact container name, the operation and view labels and the recorded
+container id), so docker.py is UNCHANGED by E258. The E258 producers reach that existing
+path to prove the owned stop, and the authority keeps the one trusted path triple.
+
+### E258 — CellBackend episode owner: local component proof (result)
+
+E258 implements the live cell episode owner in a NEW src/fa/execution/backend.py. A
+private episode map is keyed by the authenticated principal, the NamespaceRef, the EXACT
+ViewRef and the approved profile id, so a shell name alone is never an identity. One
+episode performs create -> durable container id -> start -> sole attach exactly once; a
+later command in the same episode binds the ORIGINAL container id to its OWN journal
+record and reuses the sole attach, so a second cell is never created for a live episode.
+Exactly ONE RUN frame write happens per command, inside the journal send guard, while
+the reply wait stays OUTSIDE that lock, so a cancel can be persisted while a command is
+still running. cancel() persists the exact-command intent BEFORE the owned stop, and a
+daemon answer that violates the owned-cell contract (a foreign container name or foreign
+labels) is PATH_DENIED, never a successful stop. reconcile() stops a surviving owned
+cell of an uncertain record and never creates, starts or re-runs anything. The backend
+returns a CommandOutcome, never a receipt: worker text is untrusted, the exit code is
+the command's own, and terminal_barrier is always False here because no independent
+container or cgroup fact is established in this increment. 19 new native C0/C3 cases;
+focused 7-module owning bank 369 PASS 26.05s. Whole 20-module owning bank 985 PASS 68.20s -> twenty-four whole
+985-bank assertion-only kills 1/1/2/3/1/3/2/1/1/1/5/2/1/2/16/26/6/1/40/4/7/6/15/15 ->
+restored 985 PASS 67.71s; clean collection and setup, no warning/skip/runtime/infra
+credit, every kill by a call-phase ASSERTION. All 605 frozen source/input hashes
+restored exactly. Ruff/format/Mypy clean; configured Pyrefly 0 errors with the existing
+141 suppressed/50 warnings. Broader 31-module 1505 PASS. Evidence
+notes/evidence/i03-e258/episodes.json.gz, 2666870 bytes SHA256
+299c301625545cd8f6fd69bb9a7b5bb74859f43c4e1f74f5697e040c54a30e90. NOT shipped: other
+view purposes, seal/publication/forward recovery, the real build_supervisor/main with
+closed handlers, the atomic SessionManager/tool/caller/mount cutover, receipts and
+independent terminality. SLICE1 NOT shipped; all 35 STEP checkboxes, 17 FUNCTIONAL
+contracts and four final duties remain open; all 17 production surfaces and eight joins
+stay PLANNED/UNEXECUTED at final SLICE6. No early host prerequisite, no new policy, no
+new routing mode.
+
+### E259 plan review — next slice audited before code; E2E register corrected (2026-10-18)
+
+Adversarial plan review of the next slice (SLICE2 STEP2-3 view purposes + SessionManager
+managed-provisioner/ownership, and SLICE3 terminal seal/publication/forward recovery) against
+code at 148a038, per the operator's six-step review prompt. No code changed; this is plan and
+register maintenance only. Confirmed findings with file+line evidence and in-place fixes:
+(1) two disagreeing next-step orders — the compressed construction chain hid SLICE2 STEP3's
+SessionManager work behind the final "cutover" item; the construction order now mirrors the
+STEPs exactly; (2) the provisioner-injection sentence duplicated in SLICE2 STEP3 and SLICE4
+STEP2; SLICE4 is now explicitly route-only; (3) SLICE2 STEP3's exit mixed SLICE2-verifiable
+with SLICE3-verifiable ("after workspace commit") obligations; now split; (4) "other view
+purposes" never enumerated; now exactly CANDIDATE/VERIFICATION/MUTATION/PROVISIONING with a
+pinned admission-combination matrix and denied-combination oracle; (5) provisioner result and
+workspace_preparer not-READY contracts were unspecified (places an agent must guess); now
+frozen shapes and error codes; (6) "do not keep host Git as a fallback until then" was a
+double negative; now "removed at injection, typed BLOCKED (provisioning_unavailable) until the
+SLICE3 join"; (7) _check_reverse_workspace_ownership reference semantics pinned (full manifest
+validation remains, same-workspace match permits an explicit reference to a SUPERVISOR-
+REGISTERED workspace only, no DB/run/ownership transfer, one writer stays acquire_writer's);
+(8) SLICE3 STEP1 test split pinned (local worker-cell state machine vs execution_host cgroup
+barrier) and prepare_bundle/install_project owners named publication.py. All stale-assumption
+checks against SessionManager/cli/tools code confirmed the plan accurate (manager.py:293-294/
+295-296/321-332/441, cli.py:150-156/314/318, manager.py:193-207, session/workspace.py:290,
+edit_file.py:26, write_file.py:113, mutation_guard.py:51/72, fs_reach.py:91,
+workflow_artifacts.py:566). E2E live-verification register corrected per its own inventory
+growth rule: E258's src/fa/execution/backend.py added as I03-LIVE-18 (the E258 checkpoint
+should have added it and did not), S02/S03 stale "owners remain incomplete" prose replaced
+with local-component status, row 17 provenance extended through E258; surface count 17->18,
+eight joins unchanged; ALL live verdicts remain PLANNED/UNEXECUTED. No STEP/CT tick, no new
+policy, no code change. NEXT: implement SLICE2 STEP2 per the rewritten plan.
+
+### E259 — the four non-PROJECT view purposes (before code)
+
+IDEA: SLICE2 STEP2's view-purpose owners — every ViewPurpose becomes a real
+authority-constructed view with its exact admission combination, reusing E256
+materialization/install and E257 admitted IO. Allowed files: src/fa/execution/workspace.py
++ NEW tests/test_execution_purposes.py + plan/increment/ledger/register/review/HANDOFF/
+index + E259 evidence; no protocol/types/journal/worker/docker/supervisor/session change
+(wire validation already correct; authority revalidates independently). Current:
+create_view/pin_reader hard-code PROJECT purposes; wire purpose/candidate_scope never reach
+the authority. Target: create_view(purpose, access, candidate_scope, plan_ref) with the
+pinned matrix — VERIFICATION (READ, plan required, no write path), MUTATION (WRITE, plan
+required, writes confined to src//scripts/ roots, two-layer single-target discipline),
+CANDIDATE (plan + scope equal plan_refs, ONE supervisor staging buffer via
+write_candidate/read_candidate, never canonical .fa/admission), PROVISIONING (WRITE, null
+plan allowed, bootstrap view; consumer in STEP3); every other combination INPUT_POLICY
+before any filesystem effect. DoD: all allowed combos construct real materialized views;
+one denied-combination case per forbidden tuple denies with zero effect; buffer writes land
+only in staging; mutation writes outside roots deny; negative proof has no runtime-error
+credit; whole-bank assertion-only kills + exact restoration. Classes C0/C3 with kill-check
+on the per-purpose policy producer call sites; path inventory five purposes × access ×
+scope × plan. Producers: matrix-deny removal, plan-required removal, root-confinement
+removal, scope-equality removal, buffer fallthrough, wire-trust fallacy, effect-boundary
+recheck removal. E2E ledger: I03-LIVE-17 fixture gains purpose-matrix witnesses;
+I03-LIVE-S05 wording extended; surface count unchanged. C0/C3 only; STEP3/STEP4/SLICE3
+consumers stay open.
+
+### E259 — the four non-PROJECT view purposes: local component proof (result)
+
+E259 completes SLICE2 STEP2's view-purpose owners in src/fa/execution/workspace.py. create_view
+now takes the closed matrix (purpose, access, candidate_scope, plan_ref) and constructs exactly:
+VERIFICATION (READ, plan required) and CANDIDATE (READ, plan + exact scope) as immutable reader
+views reusing the one reader-registration path; MUTATION (WRITE, plan required) and PROVISIONING
+(WRITE, plan optional) as project views reusing the E256 materialization. Every other
+combination denies INPUT_POLICY before any filesystem effect, revalidated at the authority
+independent of the codec. The purpose write gate at the effect boundary confines MUTATION
+writes to the approved src//scripts roots and gives VERIFICATION/CANDIDATE no generic write
+path; the scoped candidate buffer is ONE supervisor-owned staged file written only through
+write_candidate/read_candidate with exact scope-path equality and expected-absence/exact-SHA
+semantics, never canonical .fa/admission. pin_reader stays the READ/PROJECT owner unchanged.
+10 new native C0/C3 cases; focused 4-module bank 202 PASS 5.1s. Whole 21-module owning bank
+995 PASS 65.6s -> eleven whole-bank assertion-only kills
+1/1/2/7/1/2/3/1/2/1/1 -> restored 995 PASS 64.9s; clean collection/setup/teardown,
+no warning/skip/runtime/infra credit, every kill a call-phase builtins.AssertionError. Source
+restored byte-exact. Ruff/format 35 files clean; Mypy 35+185 files clean; Pyrefly 0 errors with
+the existing 141 suppressed/50 warnings; broader 1515 PASS. Evidence
+notes/evidence/i03-e259/purposes.json.gz, 1343665 bytes SHA256 e689ea3b92258128c1ab20a2d4e7ed312e63bf7b81bdce53f4a52c4081e1b9bd.
+Honest notes: one candidate producer (a second path-traversal parser in the matrix) was found
+MASKED by the record-layer path rules (protocol._byte_limits) and DELETED as redundant rather
+than counted — the single enforcement point stays the record check. A first runner attempt
+aborted on a frozen-hash comparison poisoned by the git tracking pointer moving mid-run (an
+environmental artifact); restoration was then verified byte-exact against start-of-run bytes.
+NOT shipped: the candidate tool cutover (STEP4), the provisioning consumer (STEP3), seal/export
+of mutation/candidate outputs (SLICE3), receipts/independent terminality and live proof. SLICE1
+NOT shipped; all 35 STEP checkboxes, 17 FUNCTIONAL contracts and four final duties remain open;
+all live verdicts stay PLANNED/UNEXECUTED at final SLICE6. No new policy or routing mode.

@@ -25,7 +25,7 @@ implementation is the S7.C3 tautology again; T3 is now a two-part assertion;
 **(D)** no artifact ledger (v2 skill requires one) and three dangling
 cross-plan IDs.
 Upstream context: parent
-[`cli-trace-substrate-rebaseline-2026-07-25.md`](./cli-trace-substrate-rebaseline-2026-07-25.md)
+[`cli-trace-substrate-rebaseline-2026-07-25.md`](../implementation-plans/cli-trace-substrate-rebaseline-2026-07-25.md)
 §Step S10. **Predecessor (hard gate):**
 [`PLAN-cli-trace-S10a-cli-coverage.md`](./PLAN-cli-trace-S10a-cli-coverage.md).
 

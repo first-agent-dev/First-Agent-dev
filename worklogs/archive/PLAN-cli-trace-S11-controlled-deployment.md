@@ -16,7 +16,7 @@ operator.
 Depth: **P2** — evidence-gathering on a live deployment plus a controlled
 failure-mode exercise. **No source edits during execution.**
 
-Parent: [`cli-trace-substrate-rebaseline-2026-07-25.md`](./cli-trace-substrate-rebaseline-2026-07-25.md)
+Parent: [`cli-trace-substrate-rebaseline-2026-07-25.md`](../implementation-plans/cli-trace-substrate-rebaseline-2026-07-25.md)
 §Step S11 — the final step of the workplan.
 
 Prior protocol this mirrors (and extends):

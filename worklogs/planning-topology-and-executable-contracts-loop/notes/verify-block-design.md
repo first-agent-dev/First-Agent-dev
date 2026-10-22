@@ -3,6 +3,8 @@
 Companion to `verify-block-design.svg`. Grounded at tip `0e08ece` (2026-09-07); research
 citations are the paper IDs in `PRODUCTION-NOTE-planning-big-tasks-for-ai-agents.md`.
 
+**Historical baseline model, superseded for I02 by Q49 and CT68/CT69/CT85/CT86.** The per-command table below records the earlier design, not the implemented contract. The I02 baseline is captured once at T0 and keyed by pytest nodeid using harness-issued `--junitxml`; see `increments/increment-02-verify-gate-and-kill-checks.md`.
+
 **Answer to "does the research note have this?": yes, and it is unusually direct.**
 F8 ("multi-level, baseline-aware, planner-authored, non-vacuous"), F11 ("contracts must be
 executable"), F12 (pass^k, one green run is a sample), §4E (gates get gamed and must be

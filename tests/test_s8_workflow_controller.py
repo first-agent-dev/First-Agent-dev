@@ -546,7 +546,8 @@ def test_s8_adaptive_round_stage_failure_is_recorded(tmp_path: Path, monkeypatch
     assert code == 2
     state = load_flow_state(home / ".fa" / "session-log" / "wf-adpfail" / "flow_state.json")
     assert state.status == "FAILED"
-    assert "exited 2" in state.blocked_reason
+    assert state.blocked_reason == "admission/promotion/prepare-failed"
+    assert state.replan_round == 1, "failed scoped planner must consume its reserved credit"
     assert transport.eval_calls >= 1
 
 

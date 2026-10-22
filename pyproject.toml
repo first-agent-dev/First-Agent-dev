@@ -209,8 +209,14 @@ testpaths = ["tests"]
 # these entries prevent CPython/pytest-cov bookkeeping warnings from being
 # classified as owned leaks. The regex matches sqlite3's repr string (which
 # contains a hex address — hence ``0x[0-9a-fA-F]+``).
+# CPython 3.13 warns when pexpect forks a PTY inside a multi-threaded process.
+# The cell worker forks only on the cell's own main thread in production; the
+# native test fixtures run that worker inside the pytest process, so the
+# platform notice is filtered by its exact message. The regex matches the
+# notice text (it contains regex metacharacters, hence ``.*``).
 filterwarnings = [
   "ignore:unclosed database in <sqlite3.Connection object at 0x[0-9a-fA-F]+>:ResourceWarning",
+  "ignore:This process .* is multi-threaded, use of forkpty.*:DeprecationWarning",
 ]
 # Tests import shared fixtures and repository checker modules as namespace
 # packages (`tests.*`, `scripts.*`). Keep the repository root on pytest's

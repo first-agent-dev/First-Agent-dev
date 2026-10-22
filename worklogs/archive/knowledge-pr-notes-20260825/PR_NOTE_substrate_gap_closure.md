@@ -15,30 +15,30 @@ Instead of verbose feature list, this note points to the workplans that schedule
 
 **Decision Freeze & Workplans (scheduling):**
 
-- Decision freeze D8/D9/D10: [`substrate-decision-freeze-2026-07-15.md`](../research/substrate-decision-freeze-2026-07-15.md)
-- Gap-closure workplan round2 (FIND-001..018, 11 slices): [`substrate-gap-closure-workplan-round2-2026-07-15.md`](../research/substrate-gap-closure-workplan-round2-2026-07-15.md)
+- Decision freeze D8/D9/D10: [`substrate-decision-freeze-2026-07-15.md`](../../../knowledge/research/substrate-decision-freeze-2026-07-15.md)
+- Gap-closure workplan round2 (FIND-001..018, 11 slices): [`substrate-gap-closure-workplan-round2-2026-07-15.md`](../../../knowledge/research/substrate-gap-closure-workplan-round2-2026-07-15.md)
 
 **Slice implementation plans (execution):**
 
-- Slice 0/1 prep: [`substrate-slice0-slice1-implementation-plan-2026-07-15.md`](../research/substrate-slice0-slice1-implementation-plan-2026-07-15.md)
-- Slice 1 closure + Slice 2 init: [`substrate-slice1-closure-pass-and-slice2-init-2026-07-15.md`](../research/substrate-slice1-closure-pass-and-slice2-init-2026-07-15.md)
-- Slice 2 patch design (observability): [`substrate-slice2-patch-design-2026-07-15.md`](../research/substrate-slice2-patch-design-2026-07-15.md)
-- Slice 3 patch design (Stage C): [`substrate-slice3-patch-design-2026-07-15.md`](../research/substrate-slice3-patch-design-2026-07-15.md)
-- Slice 4 patch design (governance): [`substrate-slice4-patch-design-2026-07-15.md`](../research/substrate-slice4-patch-design-2026-07-15.md)
-- Slice 5-7 closure (safety & execution truthfulness): [`substrate-slice5-6-7-closure-2026-07-15.md`](../research/substrate-slice5-6-7-closure-2026-07-15.md) + state assessment [`substrate-state-assessment-2026-07-15-round3.md`](../research/substrate-state-assessment-2026-07-15-round3.md)
+- Slice 0/1 prep: [`substrate-slice0-slice1-implementation-plan-2026-07-15.md`](../../../knowledge/research/substrate-slice0-slice1-implementation-plan-2026-07-15.md)
+- Slice 1 closure + Slice 2 init: [`substrate-slice1-closure-pass-and-slice2-init-2026-07-15.md`](../../../knowledge/research/substrate-slice1-closure-pass-and-slice2-init-2026-07-15.md)
+- Slice 2 patch design (observability): [`substrate-slice2-patch-design-2026-07-15.md`](../../../knowledge/research/substrate-slice2-patch-design-2026-07-15.md)
+- Slice 3 patch design (Stage C): [`substrate-slice3-patch-design-2026-07-15.md`](../../../knowledge/research/substrate-slice3-patch-design-2026-07-15.md)
+- Slice 4 patch design (governance): [`substrate-slice4-patch-design-2026-07-15.md`](../../../knowledge/research/substrate-slice4-patch-design-2026-07-15.md)
+- Slice 5-7 closure (safety & execution truthfulness): [`substrate-slice5-6-7-closure-2026-07-15.md`](../../../knowledge/research/substrate-slice5-6-7-closure-2026-07-15.md) + state assessment [`substrate-state-assessment-2026-07-15-round3.md`](../../../knowledge/research/substrate-state-assessment-2026-07-15-round3.md)
 
 **Slice 9 (global history):**
 
-- Patch design: [`substrate-slice9-patch-design-2026-07-15.md`](../research/substrate-slice9-patch-design-2026-07-15.md)
-- Closure: [`substrate-slice9-closure-2026-07-15.md`](../research/substrate-slice9-closure-2026-07-15.md)
+- Patch design: [`substrate-slice9-patch-design-2026-07-15.md`](../../../knowledge/research/substrate-slice9-patch-design-2026-07-15.md)
+- Closure: [`substrate-slice9-closure-2026-07-15.md`](../../../knowledge/research/substrate-slice9-closure-2026-07-15.md)
 
 **Authoring hardening (ADR-11 I9):**
 
-- Amendment I9: [`ADR-11-authoring-guardrails.md`](../adr/ADR-11-authoring-guardrails.md) Amendment 2026-07-15
-- Skill: [`tests-writing`](../skills/tests-writing/SKILL.md)
-- Compliance review: [`substrate-tests-writing-compliance-2026-07-15.md`](../research/substrate-tests-writing-compliance-2026-07-15.md)
-- Workplan v1: [`authoring-hardening-workplan-2026-07-16.md`](../research/authoring-hardening-workplan-2026-07-16.md)
-- Workplan v2 (gap review + ROI): [`authoring-hardening-workplan-v2-2026-07-16.md`](../research/authoring-hardening-workplan-v2-2026-07-16.md)
+- Amendment I9: [`ADR-11-authoring-guardrails.md`](../../../knowledge/adr/ADR-11-authoring-guardrails.md) Amendment 2026-07-15
+- Skill: [`tests-writing`](../../../knowledge/skills/tests-writing/SKILL.md)
+- Compliance review: [`substrate-tests-writing-compliance-2026-07-15.md`](../../../knowledge/research/substrate-tests-writing-compliance-2026-07-15.md)
+- Workplan v1: [`authoring-hardening-workplan-2026-07-16.md`](../../../knowledge/research/authoring-hardening-workplan-2026-07-16.md)
+- Workplan v2 (gap review + ROI): [`authoring-hardening-workplan-v2-2026-07-16.md`](../../../knowledge/research/authoring-hardening-workplan-v2-2026-07-16.md)
 
 ---
 

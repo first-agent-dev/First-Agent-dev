@@ -31,7 +31,7 @@ read *"80 (pre-serve only)"* while the gate scores the **whole function** —
 measured 23 pre-`serve` statements vs 2 after, so ~93% is reachable and a
 plain 80% whole-function floor is both achievable and unambiguous.
 Upstream context: parent
-[`cli-trace-substrate-rebaseline-2026-07-25.md`](./cli-trace-substrate-rebaseline-2026-07-25.md)
+[`cli-trace-substrate-rebaseline-2026-07-25.md`](../implementation-plans/cli-trace-substrate-rebaseline-2026-07-25.md)
 §Step S10; depends on S2, S3, S7, S8, S9 — all COMPLETE.
 **Successor:** `PLAN-cli-trace-S10b-cli-decomposition.md` — **must not start
 until S10a's DoD is met.**

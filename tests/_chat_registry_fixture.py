@@ -14,12 +14,14 @@ from production.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 
 from fa.cli import _build_run_tool_registry, _make_workflow_ctx_provider
 from fa.inner_loop.pr_draft import PrDraftStore
 from fa.inner_loop.registry import ToolRegistry
 from fa.inner_loop.runtime_limits import RuntimeLimits
+from fa.providers.base import Transport
 
 
 def build_live_chat_registry(
@@ -28,6 +30,8 @@ def build_live_chat_registry(
     role: str = "chat",
     parent_run_id: str = "run-parent",
     with_workflow_ctx: bool = True,
+    transport: Transport | None = None,
+    secrets: Mapping[str, str] | None = None,
 ) -> ToolRegistry:
     """Build the exact registry a live ``fa run --role <role>`` would use.
 
@@ -46,8 +50,8 @@ def build_live_chat_registry(
             session_context=None,
             run_context=None,
             session_db=None,
-            transport=None,
-            secrets=None,
+            transport=transport,
+            secrets=secrets,
         )
     return _build_run_tool_registry(
         role,

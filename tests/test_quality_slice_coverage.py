@@ -13,6 +13,7 @@ import pytest
 import fa.inner_loop.profiles as profile_module
 import fa.inner_loop.tools as tool_module
 from fa.blackboard.blackboard import Blackboard, BlackboardEntry
+from fa.inner_loop.planner_dispatch import PlannerDispatch
 from fa.inner_loop.registry import ToolRegistry, ToolResult, ToolSchemaPortabilityError, ToolSpec
 from fa.inner_loop.state import EventLog, SessionState
 from fa.inner_loop.subagent_runner import SubagentRunner
@@ -142,8 +143,10 @@ def test_profile_registry_propagates_schema_contract_failure(
     def broken_builders(
         _workspace_root: Path,
         bash_timeout: int = 30,
+        *,
+        planner_dispatch: PlannerDispatch | None = None,
     ) -> dict[str, Callable[[], ToolSpec]]:
-        del bash_timeout
+        del bash_timeout, planner_dispatch
         return {"fs_run_bash": lambda: _nonportable_spec("fs_run_bash")}
 
     monkeypatch.setattr(profile_module, "_build_tool_builders", broken_builders)

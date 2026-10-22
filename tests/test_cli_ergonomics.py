@@ -235,7 +235,11 @@ def test_workflow_per_role_overrides_parse() -> None:
 
 
 def _workflow_args(tmp_path: Path, config: Path, **over: Any) -> argparse.Namespace:
+    from tests.workflow_fixtures import write_explicit_plan
+
+    plan = write_explicit_plan(tmp_path)
     base = {
+        "plan": plan,
         "roles": "planner,coder,eval",
         "task": "do the thing",
         "workspace": tmp_path,
@@ -273,7 +277,7 @@ def test_workflow_session_manager_uses_one_invocation_run_context(
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("USERPROFILE", str(home))
-    args = _workflow_args(tmp_path, config, run_id="", session_id=None)
+    args = _workflow_args(tmp_path, config, run_id=None, session_id=None)
 
     # Q35b (S10c.2): the eval verdict here is BLOCKED, so the exit code is 1.
     # The assertion below is about session/run identity, which is unaffected.
@@ -438,14 +442,15 @@ def test_adaptive_without_planner_terminates_on_return_to_planner(
     args = _workflow_args(tmp_path, config, roles="coder,eval", mode="adaptive", max_repairs=2)
 
     code = _cmd_workflow(args, transport=transport, secrets=_TEST_SECRETS)
-    # Q35b (S10c.2): terminal status is REPLAN_REQUIRED, not DONE, so the
-    # exit code is now 1. The loop/budget assertions below are unchanged.
+    # Q57: inability to replan now hard-blocks; runtime rejection still exits 1.
+    # Original loop/budget/counter/version assertions remain unchanged.
     assert code == 1
     assert transport.coder_calls == 1  # no repair coder round
     assert transport.eval_calls == 1
     state = load_flow_state(session_dir / "flow_state.json")
-    assert state.status == "REPLAN_REQUIRED"
-    assert state.last_route_decision == "return_to_planner"
+    assert state.status == "FAILED"
+    assert state.blocked_reason == "admission/planner-unavailable"
+    assert state.last_route_decision == "blocked"
     assert state.repair_round == 0
 
 
@@ -455,8 +460,7 @@ def test_adaptive_mode_requires_coder_and_eval_roles(tmp_path: Path, capsys: Cap
     code = _cmd_workflow(args, transport=_ScriptedTransport())
     assert code == 2
     err = capsys.readouterr().err
-    assert "requires roles to include" in err
-    assert "coder and eval" in err
+    assert err == "fa workflow: invalid workflow request: adaptive-roles\n"
 
 
 def test_repair_mode_is_no_longer_accepted(tmp_path: Path, capsys: CaptureFixture[str]) -> None:
@@ -468,9 +472,10 @@ def test_repair_mode_is_no_longer_accepted(tmp_path: Path, capsys: CaptureFixtur
     args = _workflow_args(tmp_path, tmp_path / "models.yaml", mode="repair")
     assert _cmd_workflow(args, transport=_ScriptedTransport()) == 2
     err = capsys.readouterr().err
-    assert "--mode must be one of" in err
-    assert "linear, adaptive" in err
-    assert "repair" not in err.split("(got")[0]
+    from fa.inner_loop.workflow_controller import WORKFLOW_MODES
+
+    assert err == "fa workflow: invalid workflow request: mode\n"
+    assert WORKFLOW_MODES == ("linear", "adaptive")
 
 
 def test_adaptive_accepts_planner_less_roles(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -510,7 +515,8 @@ def test_adaptive_without_planner_does_not_spin_on_replan_route(
     assert transport.coder_calls == 1, "replan loop ran despite there being no planner"
     assert transport.eval_calls == 1
     state = load_flow_state(session_dir / "flow_state.json")
-    assert state.status == "REPLAN_REQUIRED"
+    assert state.status == "FAILED"
+    assert state.blocked_reason == "admission/planner-unavailable"
     assert state.replan_round == 0
 
 
@@ -518,7 +524,7 @@ def test_workflow_invalid_mode_rejected(tmp_path: Path, capsys: CaptureFixture[s
     args = _workflow_args(tmp_path, tmp_path / "models.yaml", mode="bogus")
     code = _cmd_workflow(args, transport=_ScriptedTransport())
     assert code == 2
-    assert "--mode must be one of" in capsys.readouterr().err
+    assert capsys.readouterr().err == "fa workflow: invalid workflow request: mode\n"
 
 
 def test_workflow_parses_mode_and_max_repairs() -> None:
@@ -531,7 +537,7 @@ def test_workflow_rejects_empty_roles(tmp_path: Path, capsys: CaptureFixture[str
     args = _workflow_args(tmp_path, tmp_path / "models.yaml", roles=" , ")
     code = _cmd_workflow(args, transport=_ScriptedTransport())
     assert code == 2
-    assert "at least one role" in capsys.readouterr().err
+    assert capsys.readouterr().err == "fa workflow: invalid workflow request: roles\n"
 
 
 def test_workflow_requires_task_for_each_role(tmp_path: Path, capsys: CaptureFixture[str]) -> None:
@@ -545,7 +551,7 @@ def test_workflow_requires_task_for_each_role(tmp_path: Path, capsys: CaptureFix
     )
     code = _cmd_workflow(args, transport=_ScriptedTransport())
     assert code == 2
-    assert "no task for role 'eval'" in capsys.readouterr().err
+    assert capsys.readouterr().err == "fa workflow: invalid workflow request: task\n"
 
 
 # ── help registry ──────────────────────────────────────────────────────────
@@ -644,18 +650,19 @@ def test_adaptive_mode_enforces_replan_budget(tmp_path: Path, monkeypatch: pytes
     args = _workflow_args(tmp_path, config, mode="adaptive", max_repairs=2, max_replans=1)
 
     code = _cmd_workflow(args, transport=transport, secrets=_TEST_SECRETS)
-    # Q35b (S10c.2): terminal status is REPLAN_REQUIRED, not DONE, so the
-    # exit code is now 1. The loop/budget assertions below are unchanged.
+    # Q57: inability to replan now hard-blocks; runtime rejection still exits 1.
+    # Original loop/budget/counter/version assertions remain unchanged.
     assert code == 1
     assert transport.planner_calls == 2
     assert transport.coder_calls == 2
     assert transport.eval_calls == 2
 
     state = load_flow_state(session_dir / "flow_state.json")
-    assert state.status == "REPLAN_REQUIRED"
+    assert state.status == "FAILED"
+    assert state.blocked_reason == "admission/planner-budget"
     assert state.replan_round == 1
     assert state.active_plan_version == 2
-    assert state.last_route_decision == "return_to_planner"
+    assert state.last_route_decision == "blocked"
 
 
 def test_adaptive_mode_can_mix_repair_then_replan(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -687,8 +694,8 @@ def test_adaptive_mode_can_mix_repair_then_replan(tmp_path: Path, monkeypatch: p
     assert state.active_plan_version == 2
 
 
-def test_adaptive_mode_requires_planner_coder_eval_roles() -> None:
-    args = _workflow_args(Path("."), Path("models.yaml"), roles="coder,eval", mode="adaptive")
+def test_adaptive_mode_requires_planner_coder_eval_roles(tmp_path: Path) -> None:
+    args = _workflow_args(tmp_path, tmp_path / "models.yaml", roles="coder,eval", mode="adaptive")
     assert _cmd_workflow(args, transport=_ScriptedTransport(), secrets=_TEST_SECRETS) == 2
 
 

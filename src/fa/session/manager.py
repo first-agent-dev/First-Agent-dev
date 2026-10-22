@@ -88,8 +88,6 @@ class SessionManager:
         self.workspace_preparer = workspace_preparer
         self.sessions_root = self.state_root / "sessions"
         self.run_root = self.state_root / "session-log"
-        self.sessions_root.mkdir(parents=True, exist_ok=True, mode=PRIVATE_DIR_MODE)
-        self.workspace_root.mkdir(parents=True, exist_ok=True)
 
     @staticmethod
     def validate_session_id(value: str) -> str:
@@ -271,6 +269,9 @@ class SessionManager:
         self._check_reverse_workspace_ownership(workspace_path, except_session_id=None)
         db_path = (session_dir / "session.db").resolve()
         created_at = self._now()
+        # Provision roots only at the lifecycle write boundary, never preflight.
+        self.sessions_root.mkdir(parents=True, exist_ok=True, mode=PRIVATE_DIR_MODE)
+        self.workspace_root.mkdir(parents=True, exist_ok=True)
         # 0700: the session dir holds session.db and the manifest (I-36).
         session_dir.mkdir(parents=True, exist_ok=False, mode=PRIVATE_DIR_MODE)
         # Record ownership before provisioning so a partial copytree failure
@@ -369,6 +370,38 @@ class SessionManager:
         if manifest_path.is_file():
             return self._attach_session(validated, override)
         return self._new_session(validated, override)
+
+    def resolve_workflow_workspace(
+        self,
+        *,
+        session_id: str | None,
+        workspace_override: Path | None,
+    ) -> Path:
+        """Select a workflow workspace without preparing, touching or claiming it.
+
+        Fresh generated session directories cannot already contain an explicit
+        plan. The operator must select an existing workspace for that case.
+        Lifecycle still revalidates ownership and identity when allocating.
+        """
+        override = self._validate_workspace_override(workspace_override)
+        if session_id is not None:
+            validated = self.validate_session_id(session_id)
+            manifest = self._manifest_path(validated)
+            if not manifest.is_file():
+                raise SessionManagerError("unknown_session", "session does not exist")
+            data = self._read_manifest(manifest, expected_session_id=validated)
+            selected = Path(str(data["workspace_path"]))
+            if override is not None and override != selected:
+                raise SessionManagerError("workspace_mismatch", "workspace disagrees with session")
+            if not selected.is_dir():
+                raise SessionManagerError("workspace_missing", "session workspace is missing")
+            return selected
+        if override is None:
+            raise SessionManagerError(
+                "workspace_required", "create or choose an existing workspace with --workspace first"
+            )
+        self._check_reverse_workspace_ownership(override, except_session_id=None)
+        return override
 
     def create_or_attach_session(
         self,

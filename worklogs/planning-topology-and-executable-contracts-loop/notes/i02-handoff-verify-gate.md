@@ -5,6 +5,12 @@
 memory. It banks what is known (verified @ tip `0e08ece`, 2026-09-07) and lists what is still
 open, so the I02 review has material instead of re-deriving it.
 
+**Current consumer boundary, 2026-10-15 (E200–E201):** this old grounding bank is not current
+source proof. Active I02 ends at SLICE6 and retains explicit-plan admission/Q57/Q58/local gate/eval
+composition. Nested CT96/CT97/runtime and all old SLICE7 host acceptance belong to foundation I03;
+old I03 slice-loop/tracker/L2 consumers follow the named deferred successor. Use the active plan
+and [migration bank](i02-to-i03-scope-migration-2026-10-15.md) for ownership/DoD.
+
 Companion artifacts:
 - `notes/verify-block-design.svg` — the picture (four tiers, ritual, seven-row truth table).
 - `notes/verify-block-design.md` — the reasoning in prose, with research citations.
@@ -34,8 +40,11 @@ Companion artifacts:
 - `commands_for("SLICEn")` — the slice's verify commands only (CT3).
 - `section("SLICEn")` — the coder's scoped brief (CT4); I02 runs commands in the slice's
   scope, the coder never sees the rest of the plan.
-- `TESTS: <path> (NEW)` — the marker I02's fail-before filter keys on. **It is prose today;
-  I02 must decide whether to make it machine-parseable** (open Q).
+- `TESTS: <path> (NEW)` — the marker I02's fail-before filter keys on. **At 2f6b8c1 it does not
+  reach I02 at all**: `_test_paths` (`plan_ids.py:212`) stops at the first `(` and discards the
+  annotation, so this row described an interface that did not exist. I01/CT33 now preserves the
+  raw string as `SliceRecord.tests_note` and deliberately gives it **no** meaning. Open question
+  2 below is unchanged in substance and now has data to decide on (ledger E75).
 - `SliceRecord.test_paths` — per-slice test paths (renamed from `.tests` to avoid colliding
   with the flat `PlanIds.tests` `T#`-ID field).
 
@@ -53,7 +62,11 @@ advisory; `ERROR` is never PASS. Two postures: pre-check forgiving, verify gate 
    fail-before phase (fine-grained), while the pass-after phase may run the slice's commands
    as written.
 2. **The `NEW` marker.** Prose `(NEW)` vs a machine-readable token on `TESTS:`. Prose is
-   forgiving for authors; a token is checkable. The tension is exactly the pre-check's.
+   forgiving for authors; a token is checkable. The tension is exactly the pre-check's. I01
+   delivers the raw annotation in `SliceRecord.tests_note`; I02 chooses the semantics. Note the
+   third option the two-sided framing hides: derive NEW-ness from the repository — a path absent
+   from `HEAD` *is* new — and treat the annotation as an authoring hint the pre-check cross-checks
+   rather than as the source of truth. That removes the marker from the trust path entirely.
 3. **Baseline storage.** Must be ephemeral (session-log root), never in the project folder
    (schema rule). Since it only needs to live within a run, decide the exact path + lifetime.
 4. **Result shape + home.** A frozen three-state dataclass; where it lives (new
@@ -71,6 +84,118 @@ advisory; `ERROR` is never PASS. Two postures: pre-check forgiving, verify gate 
 
 - No DSL for verify blocks. The block stays a command list; discipline lives in code.
 - No fence-depth parsing for the grammar-collision trap (pre-check WARN instead).
-- No mutation/failure-injection proof in the core (that is the I06 verifier-co-evolution
-  story).
+- No broad generated-mutant sweep or verifier-co-evolution/failure-injection campaign in the
+  core; that is I06's broader story. This does **not** remove I02's declared Q53(c) contract-kill
+  proofs, which run every declared test path for each FUNCTIONAL contract, or CT92's focused
+  artifact-write failure cases.
 - No `VERIFIED` status from I02 alone — `VERIFIED` needs I03's eval L2 on top (schema §6).
+
+## 6. Banked from the 2026-10-06 review walk (decided; build in I02)
+
+Rationale for each: `notes/decisions-qa-2026-10-06.md`. Ledger: E63–E66.
+
+**6.1 Historical calibration proposal — explicitly deferred by the operator on 2026-10-14.**
+An earlier design proposed that the gate reject **≥95%** of patches that pass functional tests
+but violate a stated constraint, measured on a 20-slice known-good/known-bad corpus under
+`tests/data/`. The operator chose to defer that threshold and corpus. It is **not** an I02
+implementation, merge, deploy, live-E2E, or `SHIPPED` gate. I02 may claim that the implementation
+and its declared tests satisfy their local contracts, but must not claim measured ≥95% gate
+accuracy before the corpus is run. The operator has deferred the corpus/criterion to I06; it is
+not an I02 gate. I06 must define the owner, trigger, and non-overlapping calibration/held-out
+regression split before making a calibrated gate-quality/reliability claim or changing gate policy.
+The earlier “before first claim or policy change” trigger is a recommendation for I06, not an
+additional I02 requirement.
+
+**6.2 Baselines are hermetic and affected-path scoped.** §3's "run the slice's commands once on
+the untouched tree" is O(slices × suite-time) and will not survive a real increment. Scope the
+baseline to the paths the slice touches. (E66.)
+
+**6.3 `TEST-DEFECT` is a first-class verdict** with its own budget. Today "the test is wrong" is
+not an expressible outcome, so a wrong test burns the whole repair ladder and wedges the loop.
+This is a liveness requirement, not a quality one. A flaky *planner-authored* test is a planner
+defect, not an environment defect: quarantine it, do not merely re-run it.
+
+**6.4 Historical generated-mutant proposal — superseded for I02.** E63 originally proposed
+one changed-line mutant sweep per slice with a ledger dismissal/appeal. I02's later contracts
+instead define exact contract-owned `kill:` mutations and Q53(c): execute every declared test path
+for each `FUNCTIONAL` contract (O(functional contracts × test paths)); preserve the acknowledged
+unrelated-red-path attribution risk. CT70 explicitly gives `VACUOUS` and `PRODUCER_ABSENT` no
+appeal. A broad generated-mutant sweep and ledger dismissal workflow remain deferred; do not use
+this older E63 wording to narrow Q53(c), add an appeal, widen mutmut roots, or treat plan text as
+mutation evidence.
+
+**6.5 Boundary coverage.** The pre-check requires at least one boundary or edge test per
+`FUNCTIONAL` contract. Every evaluated model systematically omits `None`/`inf`/`NaN` cases.
+
+**6.6 Attempt accounting keys on the work unit, not the tool signature.** `attempt_count` keys
+on `(tool_name, params_hash)`, and LoopGuard deliberately treats distinct params as progress,
+so three different failed fixes for one contract are invisible. Note before designing: per E60
+`BlackboardEntry` already supplies the typed record and `content_hash` already canonicalises —
+an attempt is `type="attempt"` chained by `parent_id`, not a new type.
+
+**6.7 Verification integrity — banked whole, IntentGuard untouched this cycle.** Five controls:
+`TESTS:` paths read-only to the coder; verify runs where the coder cannot write; hash the
+verification surface at baseline and re-check at the gate; deny-list `conftest.py`, test config
+and CI workflows; a derivation-vs-retrieval telemetry category. Per E60, four of the five are
+**assertions over `BlackboardEntry.write_set`, not new machinery** — audit before building.
+I01 supplies the input via `tests_for` (CT20). The diff-path assertion itself belongs here, not
+in the pre-check: a pre-check is static and pre-coder, and there is no diff to inspect yet.
+
+**6.8 Eval calibration before trust.** k=2 is not trustworthy until a labelled calibration set
+(≥100 verdicts) exists. Family switching changes the *direction* of judge error, not its size.
+
+## 7. The live gate I02 owes (SD-C, operator decision Q37, 2026-10-06)
+
+I01 ships no live-path test and says so in its DoD. That is legitimate only because I02 is
+named here as the increment that adds one — the same discipline SD-B applies to accessors.
+
+**What I02 must prove, and why static conformance cannot.** I01's gates all answer "does this
+string parse?". None answers "does anything call the parser?". The project has already produced
+both failure modes this is aimed at: a dead `_slice_sections` shipped *inside* the slice that
+orphaned it, caught only by a mutation sweep (E89); and the per-slice coverage gate at
+`workflow_controller.py:332` silently no-opping for the entire life of I01 because real planner
+output carried no slices (E52). Neither is visible to a fixture test, and both would survive an
+agent reporting the work complete.
+
+**Shape.** Boot the real composition root — `drive_session` with the shipped factories,
+`hooks=HookRegistry()`, a real workspace in `tmp_path`; mock **only** `ProviderChain.request`,
+returning a plan authored from the SLICE1b skill text. Then assert observable effects, not the
+absence of an exception:
+
+- the slice's own `commands_for(SLICE#)` commands ran, in order, and nothing else did;
+- a command belonging to a *different* slice did **not** run — the per-slice scoping is the
+  whole point, and a gate that runs everything passes a naive test;
+- `commands_for(None)` ran at plan level exactly once;
+- a non-zero exit routes to REPAIR_REQUIRED rather than PASS;
+- `request.call_count` is 0 after the gate fires on a fail-before (early-stop efficiency).
+
+**Producer kill-check, named in the test docstring:** deleting the `commands_for` call site in
+the gate must fail the test. A kill-check aimed at the consumer or at `extract_plan_ids` does
+not count — it would stay green with the gate unwired, which is precisely the condition this
+exists to detect.
+
+**`tests/fixtures/session_wiring.py`** already builds this harness for other suites; reuse it
+rather than assembling a parallel one.
+
+## 8. CT10b moved here from I01/SLICE3 (Q39, operator decision 2026-10-06)
+
+**The rule.** A `verify` command, or a slice's `TESTS:` entry, that names a path which does not
+exist is reported. In I01 this was specified as a pre-check WARN; it is I02's because the
+pre-check is pure and stdlib-only by contract, and — more importantly — because the check is
+*false by construction* before the coder runs: a new slice's `TESTS:` path is annotated
+`(NEW — author it)` precisely because it does not exist yet, so a pre-check warning fires on
+every new test file.
+
+**Why it becomes real here.** I02 already touches the filesystem and already reads
+`SliceRecord.tests_note` for its fail-before filter (§2). That makes `(NEW)` interpretable:
+
+- path absent **and** `tests_note` marks it NEW → expected; the gate's job is to require that
+  the coder creates it, and that it fails before the change and passes after.
+- path absent **and** no NEW marker → a real defect: the plan names a baseline test that is
+  not there. Report it before running anything.
+- path present **and** marked NEW → the annotation is stale, or the author mis-marked it.
+  Worth a warning: the fail-before semantics differ for an existing file.
+
+Note the shape: the useful rule is not "does this path exist" but "does its existence agree
+with what the plan claims about it". That distinction is only available where `tests_note` and
+the filesystem are both in hand, which is here and not in a pure pre-check.

@@ -170,7 +170,9 @@ reference each other without ambiguity:
 
   M#   Matrix row                     (flag, env, provider, backend, role, browser, OS)
 
-  S#   Step / task card               (§8)
+  SLICE#  Slice: the unit carrying CONTRACTS/TESTS/DEPS  (§8)
+
+  STEP#   Atomic action inside a slice, with an exit check (§8)
 
   T#   Verification item              (test, static check, mutation, monitor, manual proxy)
 
@@ -183,7 +185,7 @@ reference each other without ambiguity:
 Rule (plan self-lint): every ID referenced anywhere in the plan MUST
 resolve to a row that actually exists. Dangling references (a step citing
 CT7 that was never defined) are a planning defect — fix before READY.
-Every G# must map to ≥1 GAP#, CT#, S#, T#, and A# or explicit non-goal.
+Every G# must map to ≥1 GAP#, CT#, SLICE#, T#, and A# or explicit non-goal.
 
 ═══════════════════════════════════════════════════════════════════════
 2. PREFLIGHT (mandatory, recorded, run before drafting steps)
@@ -291,7 +293,7 @@ TO-BE (machine-checkable facts, not adjectives):
 
   - New/changed types, fields, EventTypes, APIs, CLI flags
 
-  - GAP# ledger: each verified current→target gap with owner S#/T#
+  - GAP# ledger: each verified current→target gap with owner SLICE#/T#
 
   - State transitions (STATE: <name> — AS-IS: ... → TO-BE: ...)
 
@@ -392,7 +394,7 @@ as a stated non-goal with a follow-up reference — never leave it silent.
 
 7.1 Path inventory (built via preflight, not guessed):
 
-  P#  | Trigger condition | File:line/symbol | Flag state | Covering S#
+  P#  | Trigger condition | File:line/symbol | Flag state | Covering SLICE#
 
   Coverage gate: every path has ≥1 covering step and ≥1 verification.
   Uncovered paths are explicit non-goals, never silent gaps.
@@ -425,13 +427,15 @@ Default ordering (adapt, never skip the rationale for reordering):
   path/matrix completion → adversarial cases if security → contract/CI
   gate → docs/ADR if invariant-level.
 
-Template — use for every step, no exceptions:
+Template — use for every step, no exceptions. The harness parses only the
+anchor line; everything beneath it is indented continuation prose, which
+schema §4 defines as unparsed (so write it for the reviewer, not the parser):
 
-### Step S#: <title>
+- [ ] STEP#: <atomic action>  (exit: <observable, independently checkable>)
 
 Traces-to: G# (intent), GAP# (verified gap), CT# (contract(s))
 
-Depends-on: S# | none          Parallelizable-with: S# | none
+Depends-on: STEP# | none       Parallelizable-with: STEP# | none
 
 Target liveness: L?→L?
 
@@ -552,7 +556,7 @@ ROLLBACK (required P2+)
 OPEN QUESTIONS
 
   BLOCKING (Q#) — executor must stop and get an answer before the
-    dependent step; list exactly which S# is gated.
+    dependent step; list exactly which SLICE# is gated.
 
   NON-BLOCKING (Q#) — a default decision is recorded here; executor
     proceeds with the default and flags it in the handoff. Every
@@ -566,7 +570,7 @@ OPEN QUESTIONS
 11a. RESEARCH-NOTE DISPOSITION (mandatory — every substantive item)
 
   RN# | Note item | Verdict (Accept/Reject/Rewrite/Defer) | Why
-      (codebase fit? kill-checkable? conflicts with invariant?) | Anchor (S#/CT#)
+      (codebase fit? kill-checkable? conflicts with invariant?) | Anchor (SLICE#/CT#)
 
   Reject: theater, unowned scope, unverifiable claims, or duplicates of
   existing L3 behavior. Rewrite: good idea, wrong mechanism/location.
@@ -575,7 +579,7 @@ OPEN QUESTIONS
 
   [ ] Every referenced symbol verified via preflight or marked NEW
 
-  [ ] Every G# maps to ≥1 CT# and ≥1 S# and ≥1 verification (no orphans)
+  [ ] Every G# maps to ≥1 CT# and ≥1 SLICE# and ≥1 verification (no orphans)
 
   [ ] Every signal CT# has BOTH producer and consumer, or explicit defer
 
@@ -597,7 +601,7 @@ OPEN QUESTIONS
 
   [ ] Security contracts have ≥1 adversarial case
 
-  [ ] All ID references (§1) resolve — no dangling S#/CT#/G#/Q#/RN#/RK#
+  [ ] All ID references (§1) resolve — no dangling SLICE#/STEP#/CT#/G#/Q#/RN#/RK#
 
   This is a CONJUNCTION: all boxes must hold simultaneously. A plan that
   satisfies 90% is not "mostly ready" — it is NOT READY.
@@ -647,6 +651,13 @@ OPEN QUESTIONS
 12. OUTPUT SKELETON (always this shape)
 ═══════════════════════════════════════════════════════════════════════
 
+The slice sections are the shape the harness parses. The grammar and its worked
+example are normative in `worklogs/planning-topology-and-executable-contracts-loop/
+notes/artifact-schema-and-grammar.md` §4; `tests/test_skill_grammar_emit.py` parses
+this very block to prove it still conforms.
+
+<!-- PLAN-SKELETON:BEGIN -->
+````text
 # PLAN: <short name>                        Plan-ID: PLAN-<slug>
 Status: DRAFT | READY | BLOCKED             Depth: P0|P1|P2|P3
 Revision: v<N>   Changed-since-last: <summary, or "initial">
@@ -666,6 +677,22 @@ Upstream context: <chat/issue/research refs>
 
 ## 5. Step-by-step implementation    (§8)
 
+## SLICE1: <title>
+STEPS: prescriptive
+DEPS: —
+INTENT: <what + why, one to three lines>
+CONTRACTS:
+  CT1 [FUNCTIONAL]: <new behaviour; its test is NEW and must fail before the change>
+  CT2 [CONSTRAINT]: <a rule the change must not violate>
+    Catches: <the wrong implementation this contract rejects>
+  CT3 [PRESERVATION]: <existing behaviour that must stay green>
+TESTS: tests/test_<area>.py  (NEW - author it)
+```verify
+uv run pytest tests/test_<area>.py -q
+```
+- [ ] STEP1: <atomic action> (exit: <observable criterion>)
+- [ ] STEP2: <atomic action> (exit: <observable criterion>)
+
 ## 6. Verification plan              (§9)
 
 ## 7. Risks, rollback, open questions(§10)
@@ -678,7 +705,31 @@ Upstream context: <chat/issue/research refs>
 
 ## 11. Artifacts inventory
 
-      Artifact | Path | Action (add/edit/delete) | Owner S#
+      Artifact | Path | Action (add/edit/delete) | Owner SLICE#
+````
+<!-- PLAN-SKELETON:END -->
+
+The skeleton is a **valid plan, not a template**: copy it, fill in the placeholders, and
+the pre-check passes on the spot. That is why `DEPS:` and `STEPS:` each carry a single
+literal value instead of a menu — the parser reads those two lines as *data*, so a
+notation like `a | b` is parsed as a dependency literally named `|`. Pick the other value
+on the line itself when your slice needs it:
+
+- `STEPS:` — `prescriptive` (exact imperatives the coder follows) or `outcome` (a goal the
+  coder must reach, with the route left open).
+- `DEPS:` — an em dash when the slice depends on nothing, or a comma-separated list of the
+  slice ids it must run after, as in `DEPS: SLICE1, SLICE2`. Every id listed must be a
+  slice this same plan declares, or the pre-check fails the plan.
+
+Every `CT#` carries one class. `FUNCTIONAL` is new behaviour, `PRESERVATION` is
+existing behaviour that must stay green, and `CONSTRAINT` is a rule the change must
+not violate. A `CONSTRAINT` additionally carries a **rationale** on its continuation
+lines naming the wrong implementation it rejects: a constraint whose intent was never
+written down cannot be reviewed, and that rationale is the only prose a plan body may
+carry.
+
+Slice sizing, `STEPS:` defaults and brief length are judgement, not lint — they live
+once in schema §4 "Authoring guidance (not checked)" instead of being restated here.
 
 ═══════════════════════════════════════════════════════════════════════
 13. ESCALATION TABLE
@@ -837,7 +888,7 @@ PREFLIGHT LOG:
 
 I-IP-1  Every product claim ends at liveness L3 with a PRODUCER kill-check.
 
-I-IP-2  Every goal item (G#) maps to ≥1 contract (CT#), ≥1 step (S#), and
+I-IP-2  Every goal item (G#) maps to ≥1 contract (CT#), ≥1 step (STEP#), and
         ≥1 verification — no orphans in either direction.
 
 I-IP-3  Every observable signal has a two-sided contract (producer +
@@ -924,7 +975,7 @@ TASK:
 18. EXECUTOR HANDOFF CONTRACT (attach when handing a READY plan off)
 ═══════════════════════════════════════════════════════════════════════
 
-- Follow steps in S# order; honor Depends-on and Parallelizable-with.
+- Follow steps in STEP# order; honor Depends-on and Parallelizable-with.
 
 - For P2/P3 or risky data/security changes, work as a pair partner:
   checkpoint before destructive edits, surface diffs frequently, and

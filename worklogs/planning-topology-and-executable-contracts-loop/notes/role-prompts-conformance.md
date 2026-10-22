@@ -1,7 +1,8 @@
 # Role-prompt conformance — exact text to insert (banked, not merged)
 
 **Status: banked (operator decision 2026-09-09); implement per owner** — planner→I01,
-coder→I03, eval→I04. Prompts live at `src/fa/inner_loop/prompt.py`; line anchors @ tip
+coder→deferred slice-loop/tracker successor, eval-ledger→I04; L2 judgment→actual eval successor
+(E201). Prompts live at `src/fa/inner_loop/prompt.py`; line anchors @ tip
 `0e08ece` (re-verify before editing). All inserted text is written in the same
 "do this exactly" style the schema §1 requires.
 
@@ -29,7 +30,7 @@ Replace the `S#`-native step/plan wording with:
   the plan.
 ```
 
-## Coder (CODER_SYSTEM_PROMPT, :533) → I03
+## Coder (CODER_SYSTEM_PROMPT, :533) → deferred slice-loop successor
 
 Replace the "mark it `[x]`/`[>]`" line (:648) and add:
 
@@ -58,3 +59,80 @@ ledger writer exists, keep the PR-draft review summary as eval's durable record 
 
 Prompts state behavior (ownership, scope, harness control). The schema states format.
 Rationale lives in notes/. One source of truth each; do not duplicate the schema in prompts.
+
+---
+
+# Addendum — merged from the bridge brief, 2026-10-06
+
+One bank, not two. Scope-aligned owners (E201): planner grammar → I01, coder slice behaviour →
+deferred slice-loop/tracker successor (formerly I03), eval ledger wiring → I04. Foundation I03
+does not satisfy these consumers merely by sharing the old number. Rationale: `notes/decisions-qa-2026-10-06.md`.
+
+## Planner → I01 (lands with SLICE1b)
+
+- Emit schema §4 sections directly: `## SLICE<n>:`, `STEPS:`, `DEPS:`, `INTENT:`,
+  `CONTRACTS:` with `CT<n> [CLASS]:`, `TESTS:`, a verify fence, `- [ ] STEP<n>: … (exit: …)`.
+- Emit a `## Grounding` block for conventions, scope-outs, assumptions and risks. It is prose
+  and is never parsed. Its first line states what you understood the request to be and what you
+  deliberately excluded.
+- Give every `CONSTRAINT` contract one rationale line naming the wrong implementation it
+  catches.
+- The mechanical self-checks move out of the prompt into the pre-check. Do not restate them.
+
+## Coder → deferred slice-loop/tracker successor
+
+- Do not tick `STEP#` boxes; the harness owns them (E44 — `prompt.py:648` currently says
+  otherwise; change with the actual tracker capability, not merely foundation I03 shipping).
+- Recon budget and stop conditions as drafted in the bridge brief.
+- **Delivery condition, not a blocker:** the line *"the harness runs the acceptance checks; you
+  do not re-run them"* is correct only with the actual owning harness acceptance capability.
+  Ship it with that consumer, not merely because foundation I03 exists. The operator's harness sees changes only during live e2e runs, so e2e
+  is the designated place this would surface if the order were wrong.
+- Retry context: a clean context plus a typed attempt record, **built mechanically** — parse the
+  test and lint output, extract the assertion diff, the failing test id and one `file:line`.
+  Never an LLM summary of the transcript: a hallucinating summariser makes the coder repair a
+  defect that never happened. No fixed line cap as a rule; truncation is a last resort. Per E60
+  the record is a `BlackboardEntry`, not a new type. Carry `tree_hash` and the test version, and
+  sanitise tracebacks and fenced blocks before sending — provider WAFs reject raw ones, and the
+  rejection looks like a model failure.
+
+## Eval → actual L2-eval successor / I04 ledger wiring
+
+- The `S#` token in `prompt.py` (`- S1: PASS`) is overloaded **three** ways: the planner's step
+  vocabulary, the controller's slice vocabulary via `validate_slice_ids`, and the eval's verdict
+  vocabulary. Whoever implements this must disambiguate all three, not two.
+- L2 verdicts cite **test ids**, not diff hunks — hunks rot on rebase.
+
+---
+
+## Banked for I04 — pinned invariants re-injected on every call
+
+Drafted on 2026-10-06 as I01/SLICE5 from bridge R2, then moved out: the roadmap has scheduled
+"pinned invariants" under I04 since it was written, the work edits prompt composition rather than
+plan grammar, and it consumed `contract_class` before I02 — that accessor's first named consumer —
+exists, which is exactly the inversion SD-B forbids (ledger E79). Nothing below is lost; it is
+banked so I04's planner starts from it instead of rediscovering it.
+
+**Intent.** The contracts the coder must not violate survive context compaction, because they are
+re-injected rather than remembered.
+
+**Contracts, as drafted** (renumber when I04 is planned — these ids are released back to the pool):
+
+- `[FUNCTIONAL]` a pinned-invariants block is registered in `INJECTION_SPECS` and appears in every
+  composed coder prompt, behind a `FeatureFlags` field.
+- `[CONSTRAINT]` the assembled block is capped at roughly 1.5K tokens; past the cap the oldest
+  non-`CONSTRAINT` entries drop first and each drop is logged. Catches: an insurance mechanism
+  quietly eating the context budget it exists to protect.
+- `[PRESERVATION]` the cacheable prompt prefix is byte-identical before and after, proven by a
+  golden-file snapshot rather than by inspection. Catches: a silent prompt-cache miss that
+  surfaces only as a cost regression weeks later.
+
+**Two dependencies I04 must honour, both discovered after the slice was drafted:**
+
+1. The block is populated with the current slice's `CONSTRAINT`-class contracts **verbatim**. That
+   requires contract text to be the *whole* entry, not its first line — I01/CT18 now delivers
+   that, but at 2f6b8c1 `_section_contracts` truncates at the first line and the rationale that
+   makes a constraint reviewable is exactly what would have been dropped (ledger E73). Do not
+   build this before I01 lands.
+2. `contract_class` must have shipped **and** have a live consumer in I02 first. If I04 is the
+   accessor's only reader, SD-B says the accessor should not have been built in I01.

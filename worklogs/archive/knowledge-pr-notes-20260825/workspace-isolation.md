@@ -4,8 +4,8 @@
 > **HISTORICAL / SUPERSEDED (2026-08-13).** This body records the original
 > workspace-isolation landing and is not current operator guidance. Do not reuse
 > its transport or lifecycle commands. Current authority:
-> [ADR-13](../adr/ADR-13-workspace-isolation.md) and
-> [AP-004](../anti-patterns/AP-004-symptom-chasing-without-model.md).
+> [ADR-13](../../../knowledge/adr/ADR-13-workspace-isolation.md) and
+> [AP-004](../../../knowledge/anti-patterns/AP-004-symptom-chasing-without-model.md).
 
 **Intent:** IMPLEMENT
 **Goal Lens:** Isolate agent writes from the host worktree using a read-only bind mount and per-session writable clones.

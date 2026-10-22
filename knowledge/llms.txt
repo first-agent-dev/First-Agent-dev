@@ -56,6 +56,68 @@ Task type → primary entrypoint, then secondary:
 
 ## § BY-DEMAND INDEX (Deprecated)
 
+[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e259/purposes.json.gz]: Four non-PROJECT view purposes/candidate buffer;995owning/11kills/1515broader; STEP3 SessionManager/STEP4 tools/SLICE3 seal/live remain open.
+[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e258/episodes.json.gz]: Actual CellBackend cell episode/one-send/cancel/restart;985owning/24kills/1505broader; other view purposes/seal/publication/factory/cutover/live remain open.
+[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e257/admission.json.gz]: Actual dispatch admission/trusted inputs/close-drain;965owning/13kills/1485broader; CellBackend/cutover/other purposes/live remain open.
+[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e256/project-views.json.gz]: Actual PROJECT working views/rooted writes;925owning/19kills/1445broader; execution admission/backend/factory/other purposes/live remain open.
+
+[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e255/readers.json.gz]: Actual immutable READ grants/rooted IO/release;879owning/16kills/1399broader; writable views/admission/backend/live still open.
+
+[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e254/genesis.json.gz]: Q77 positive genesis1/first-writer2;827owning/sevenkills/1347broader; actual pins/admission/backend/host still open.
+
+[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e253/workspace-owner.json.gz]: Actual existing-root/R0/writer owner;810owning/15kills/1330broader, exact restoration; views/admit/backend/C1/host proof remain open.
+
+[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e252/worker-handoff.json.gz]: Worker reply/RUN race repair;733owning/11kills/1253broader, exact restoration; E251 red retained, actual authority/backend/host proof open.
+
+[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e251/context-seam.json.gz]: Explicit authenticated peer/absolute deadline C0/C3 seam;732owning/nine kills/broader1251PASS1FAIL worker handoff race, E2E source rollforward; actual authority/backend/C1/host acceptance incomplete.
+
+[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e249/owned-stop.json.gz]: E249 native force-stop C0/C3;684owning/nine assertion-only kills/1204broader; actual backend/authority/cgroup/service/callers still incomplete.
+
+[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e247/typed-errors.json.gz]: E247 client typed ERROR C0/C3,623owning/six assertion-only kills/1143broader; SLICE1 backend/authority/service/callers still incomplete.
+
+[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e245/rooted-io.json.gz]: E245 rooted descriptor IO C0/C3/C4,93cases/17whole-bank kills, static/broader1001 and rejected diagnostics; no authority/C1/host acceptance.
+
+[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e243/deadline-review.json.gz]: E243 mid-slice review repair: short-RPC/command budget, whole481case producer kills; not authority/backend/C1/host acceptance.
+[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e243/deadline-review-v1.json.gz]: Superseded passing v1 proof; final review tightened short client input framing, final-source proof is deadline-review.json.gz.
+[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e243/verification.json.gz]: E243 restored static/full Pyrefly/broader908 results and source/plan/doc closure audit; all35STEPS unchecked.
+
+[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e242/attach-worker.json.gz]: Native attach/codec/worker C0/C3 full-bank developmental proof; not Docker/kernel/C1 acceptance.
+[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e242/attach-worker-initial.json.gz]: Rejected mixed runtime/assertion timeout mutant, exact restoration retained; no final kill credit.
+[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e242/verification.json.gz]: E242 restored static/full Pyrefly/broader results and honest developmental diagnostics.
+[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e242/source-plan.json.gz]: E242 final source/plan/doc audit, all35STEPS unchecked.
+[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e242/primary-attach.json.gz]: Full hash-verified Moby attach sources/API provenance; not approved deployment facts.
+
+[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e241/docker-launch.json.gz]: Private Docker launch/journal C0/C3 + full415case developmental kills; not C1/host proof.
+[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e241/verification.json.gz]: E241 restored static/broader raw results; no deployed acceptance.
+[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e241/source-plan.json.gz]: E241 source-preservation/plan/doc audit; all35STEPS unchecked.
+[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e241/primary-api.json.gz]: Hash-verified full Moby API reference/provenance, not approved host facts.
+
+[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e232/controller-entry.json.gz]: CT98 local developmental evidence only.
+[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e234/replay.json.gz]: Q75(a) C0/C3 replay/type evidence, not service/live proof.
+
+[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e235/wire.json.gz]: Closed wire/receipt C0/C3 evidence, not service or host proof.
+
+[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e236/client-worker.json.gz]: C0/C3 fixed profile, UDS client and cell PTY evidence; no host proof.
+
+[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e237/journal-dispatch-final.json.gz]: Final C0/C3 journal/dispatcher286case bank; no service/kernel activation.
+[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e237/callback-copies.json.gz]: Full286case private callback-copy sensitivity.
+[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e237/journal-dispatch.json.gz]: Earlier285case development/harness history, superseded by final286 bank.
+
+[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e238/installed-build.json.gz]: Real installed CLI C2/C3 + all294case developmental sensitivity; no Docker/host activation.
+[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e238/broader.json.gz]: Initial broader690PASS12SKIP, missing ShellCheck not credited.
+[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e238/broader-final.json.gz]: Final702PASS with verified external test-only ShellCheck; zero skips/warnings, not deployed signoff.
+
+[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e238/source-plan.json.gz]: Source-preservation/plan/doc audit;0FAIL6WARN,6slices17FUNCTIONAL35unchecked; Q76 was then OPEN (E239 now ratifies a).
+
+[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e239/plan-binding.json.gz]: Q76(a) protected context/source/receipt C0/C3;347case bank and six full-bank mutations, no authority/service proof.
+[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e239/verification.json.gz]: Static19/179source and broader768PASS, zero skips/warnings; supported recovered test toolchain, not host readiness.
+[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e239/plan-binding-initial.json.gz]: Rejected initial mutation oracle TypeError/history, exact restore; not complete kill credit.
+[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e239/source-plan.json.gz]: Final Q76 approval/doc/plan/source-preservation audit; no construction or final-acceptance ticks.
+
+[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e240/one-shot.json.gz]: F19 one-shot mode/status C0/C3;361case bank plus three full-bank producer kills, not host proof.
+[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e240/verification.json.gz]: Static19/179source and broader782PASS; no skips/warnings, no deployment.
+[worklogs/planning-topology-and-executable-contracts-loop/notes/evidence/i03-e240/source-plan.json.gz]: Target/schedule/source preservation and final doc/plan audit; no acceptance ticks.
+
 **Deleted files (merged into knowledge/reference.md):** `knowledge/architecture.md`, `knowledge/glossary.md`, `knowledge/overview/FEATURES.md`. If you see references to these, they now live in `knowledge/reference.md`.
 
 **Archived 2026-08-25 (b_full) — moved to `worklogs/archive/`:**

@@ -33,7 +33,7 @@ covered" claim and found it too aggressive — added **G5/CT6/S8.6** for termina
 smaller; **(3)** Q34 resolved (second gate); **(4)** Q35 raised (exit code on
 BLOCKED verdict); **(5)** 3 file:line anchors corrected.
 Upstream context: parent
-[`cli-trace-substrate-rebaseline-2026-07-25.md`](./cli-trace-substrate-rebaseline-2026-07-25.md)
+[`cli-trace-substrate-rebaseline-2026-07-25.md`](../implementation-plans/cli-trace-substrate-rebaseline-2026-07-25.md)
 §Step S8 (line 1753); predecessor
 [`PLAN-cli-trace-S7-direct-run-vertical-slice.md`](./PLAN-cli-trace-S7-direct-run-vertical-slice.md)
 (COMPLETE); container evidence

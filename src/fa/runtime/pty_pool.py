@@ -291,7 +291,7 @@ class PtySession:
             logger.warning("Failed to write heredoc script file: %s, running inline (may hang)", exc)
             return command, None
 
-    def _run_fallback(self, command: str, timeout: int) -> PtyResult:
+    def _run_fallback(self, command: str, timeout: float) -> PtyResult:
         if self._is_fallback:
             if self._fallback is None:
                 return PtyResult(
@@ -354,7 +354,7 @@ class PtySession:
             return PtyResult(stdout=clean.strip(), exit_code=exit_code, truncated=truncated, session_id=self.session_id)
         return PtyResult(stdout="No fallback available", exit_code=-1, truncated=False, session_id=self.session_id)
 
-    def _run_tmux(self, command: str, timeout: int) -> PtyResult:
+    def _run_tmux(self, command: str, timeout: float) -> PtyResult:
         if self.pane is None:
             return PtyResult(stdout="No pane available", exit_code=-1, truncated=False, session_id=self.session_id)
 
@@ -505,7 +505,7 @@ class PtySession:
         except OSError:
             pass  # best-effort cleanup; a leaked temp file is not a correctness issue
 
-    def run(self, command: str, timeout: int = 30) -> PtyResult:
+    def run(self, command: str, timeout: float = 30) -> PtyResult:
         """Run one command while serializing cwd/session access."""
         with self._cwd_lock:
             if self._is_fallback:

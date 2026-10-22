@@ -1,6 +1,6 @@
 # HANDOFF.md — next agent/session
 
-> Read [`knowledge/llms.txt`](../knowledge/llms.txt) §MUST READ FIRST.
+> Read [`knowledge/llms.txt`](../../knowledge/llms.txt) §MUST READ FIRST.
 > This file records the verified state and the next bounded action.
 
 ## S14 blackboard substrate completion — READY for operator application (2026-08-10)
@@ -1008,7 +1008,7 @@ clean-state precondition.
 
 `cli.py` **59% → 83.5%**. All 11 target functions clear their coverage floors;
 a `just`-invoked gate now pins them. Full per-step table, mutation results and
-findings: [plan §11](./implementation-plans/PLAN-cli-trace-S10a-cli-coverage.md).
+findings: [plan §11](PLAN-cli-trace-S10a-cli-coverage.md).
 
 **Gate:** 2334 passed · ruff clean · bare `mypy` 316 files · `pylint` 10.00/10 ·
 `authoring-check` 0 · **0 new `noqa`** · tree clean.
@@ -1046,7 +1046,7 @@ execution reach the real blocking `serve()` and the 300s timeout scored as
 All seven steps executed. Gate: **2272 passed** / 14 skipped / 1 xfailed ·
 bare `mypy` **315 files clean** · `ruff` clean · `pylint src/fa` **10.00/10** ·
 `fa authoring-check` **0** · **0 new `noqa`**. Per-step table and kill-check
-matrix: [plan §11](./implementation-plans/PLAN-cli-trace-S9-stats-projections.md).
+matrix: [plan §11](PLAN-cli-trace-S9-stats-projections.md).
 
 **One production defect fixed (F6).** `_parse_since("-5d")` returned
 `-432000.0`; both call sites compute `cutoff = time.time() - since`, so a
@@ -1204,7 +1204,7 @@ Plan now: **6 goals, 7 contracts, 8 steps, 16 named tests, 12 paths, 8 risks.**
 
 ## S8 plan — v2 record (superseded by v3 above)
 
-[`PLAN-cli-trace-S8-workflow-controller-surface.md`](./implementation-plans/PLAN-cli-trace-S8-workflow-controller-surface.md)
+[`PLAN-cli-trace-S8-workflow-controller-surface.md`](PLAN-cli-trace-S8-workflow-controller-surface.md)
 **v2, status READY**, depth P2. Six steps (S8.0–S8.6). Recommended order:
 S8.0 → {S8.2, S8.3, S8.6 in parallel} → S8.4 → S8.5 (mutation).
 
@@ -1267,7 +1267,7 @@ diff rather than silent drift. Decide with S9/S10.
 
 **S7 is now complete (local + container).** The operator ran S7.C0–S7.C7 on
 `fa@fa-HP` against deployment revision **`6262e7d`**. Full per-step verdict
-table and verbatim evidence: [`PLAN-cli-trace-S7-container-verification.md`](./implementation-plans/PLAN-cli-trace-S7-container-verification.md)
+table and verbatim evidence: [`PLAN-cli-trace-S7-container-verification.md`](PLAN-cli-trace-S7-container-verification.md)
 §3 "Execution record".
 
 | Step | Verdict |
@@ -1316,10 +1316,10 @@ S8 opportunistically.
 
 | ID | Severity | One line |
 |---|---|---|
-| [`BACKLOG I-36`](../knowledge/BACKLOG.md) | P2 | `llm_bodies.jsonl` is `0644` while the session manifest is `0600` — the most sensitive artifact is the most permissive. Fix with an `opener=` (atomic), **not** post-hoc `chmod` (race window). Also covers `events.jsonl` and the run-dir `mkdir`. |
-| [`BACKLOG I-37`](../knowledge/BACKLOG.md) | P2 | Tool schemas transmitted **twice** per request (inline system message + native `tools` array), 12,130 B of pure duplication on every call. **And**: the `AGENTS.md` map is **48.4%** of the live request — bigger than `AGENTS.md` on disk. 84.5% of every request is standing context; the task is 0.1%. Characterise the map *before* optimising the tool block. |
-| [`BACKLOG I-38`](../knowledge/BACKLOG.md) / **Q31** | P2 | `--output-mode quiet` writes **34 bytes** to stdout (`cli.py:2212` 29 B + `:2214` 5 B) while `QuietRenderer`'s docstring promises "nothing on stdout … so `> result.txt` stays parseable". The renderer is innocent — those `print()`s bypass the `EventBus`, so no renderer test can see them. **Policy fork, promoted not decided**; Q31 is in the S7 plan §9. Recommend (a) status line → stderr. **Resolve before S9**, the next consumer of parseable CLI output. |
-| [`BACKLOG I-39`](../knowledge/BACKLOG.md) | P3 | `prompt_cache_retention` is emitted by the composer and silently dropped for every Mistral route (not in `MISTRAL_RECOGNIZED_PROVIDER_PARAMS_KEYS`). Reaches `openai_compat`, never Mistral. `routing_lint.py` check 3 cannot see composer-injected extras. |
+| [`BACKLOG I-36`](../BACKLOG.md) | P2 | `llm_bodies.jsonl` is `0644` while the session manifest is `0600` — the most sensitive artifact is the most permissive. Fix with an `opener=` (atomic), **not** post-hoc `chmod` (race window). Also covers `events.jsonl` and the run-dir `mkdir`. |
+| [`BACKLOG I-37`](../BACKLOG.md) | P2 | Tool schemas transmitted **twice** per request (inline system message + native `tools` array), 12,130 B of pure duplication on every call. **And**: the `AGENTS.md` map is **48.4%** of the live request — bigger than `AGENTS.md` on disk. 84.5% of every request is standing context; the task is 0.1%. Characterise the map *before* optimising the tool block. |
+| [`BACKLOG I-38`](../BACKLOG.md) / **Q31** | P2 | `--output-mode quiet` writes **34 bytes** to stdout (`cli.py:2212` 29 B + `:2214` 5 B) while `QuietRenderer`'s docstring promises "nothing on stdout … so `> result.txt` stays parseable". The renderer is innocent — those `print()`s bypass the `EventBus`, so no renderer test can see them. **Policy fork, promoted not decided**; Q31 is in the S7 plan §9. Recommend (a) status line → stderr. **Resolve before S9**, the next consumer of parseable CLI output. |
+| [`BACKLOG I-39`](../BACKLOG.md) | P3 | `prompt_cache_retention` is emitted by the composer and silently dropped for every Mistral route (not in `MISTRAL_RECOGNIZED_PROVIDER_PARAMS_KEYS`). Reaches `openai_compat`, never Mistral. `routing_lint.py` check 3 cannot see composer-injected extras. |
 
 Sequencing note: **I-37 and I-39 both touch request composition**; do them in
 one slice. **I-36 and I-38 are independent** and small. I-38 has a hard
@@ -1359,7 +1359,7 @@ property of a base, not of the finding.*
 controller surface, parent plan line 1753.** Original text follows for context.
 
 **~~Next bounded action~~ — S7 container half.** Run
-[`PLAN-cli-trace-S7-container-verification.md`](./implementation-plans/PLAN-cli-trace-S7-container-verification.md)
+[`PLAN-cli-trace-S7-container-verification.md`](PLAN-cli-trace-S7-container-verification.md)
 after deploying this branch: eight steps (S7.C0–S7.C7) with exact
 `docker compose exec` commands and EXPECT lines. **Order matters** — S7.C6 is
 the regression check for the S7.5 fix, so it must run *after* deployment; the
@@ -1382,7 +1382,7 @@ stripped two waivers the hook then demanded back. Upgrading is now
 
 **New backlog items opened this session:**
 
-- [`PLAN-ble001-waiver-reduction.md`](./implementation-plans/PLAN-ble001-waiver-reduction.md)
+- [`PLAN-ble001-waiver-reduction.md`](../implementation-plans/PLAN-ble001-waiver-reduction.md)
   — **DRAFT, needs Q30.** Measured: **197** broad catches are waived vs **37**
   that satisfy BLE001, i.e. 84 % waived, so the rule no longer carries
   information. Classified A/B/E with the conversion traps recorded (notably:

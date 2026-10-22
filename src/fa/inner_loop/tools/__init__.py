@@ -12,6 +12,7 @@ import logging
 from collections.abc import Callable
 from pathlib import Path
 
+from fa.inner_loop.planner_dispatch import PlannerDispatch, PlannerDispatchError
 from fa.inner_loop.registry import ToolRegistry, ToolSchemaPortabilityError, ToolSpec, ToolWireNameError
 from fa.inner_loop.runtime_limits import DEFAULT_BASH_TIMEOUT_SECONDS
 from fa.inner_loop.tool_names import is_valid_wire_name
@@ -192,12 +193,15 @@ def build_planner_registry(
     workspace_root: Path,
     *,
     bash_timeout_seconds: int = DEFAULT_BASH_TIMEOUT_SECONDS,
+    planner_dispatch: PlannerDispatch | None = None,
 ) -> ToolRegistry:
     """Planner = planner profile (fs_search,read,write for research docs,blackboard_query) + observability."""
     try:
         from fa.inner_loop.profiles import build_registry_for_role
 
-        registry = build_registry_for_role("planner", workspace_root, bash_timeout=bash_timeout_seconds)
+        registry = build_registry_for_role(
+            "planner", workspace_root, bash_timeout=bash_timeout_seconds, planner_dispatch=planner_dispatch
+        )
     except (ToolSchemaPortabilityError, ToolWireNameError):
         # D12: both are correctness failures, not availability failures.
         # The generic fallback below exists for a missing/broken optional
@@ -206,7 +210,9 @@ def build_planner_registry(
         # dropping tools the role's prompt promises (measured: chat falls
         # from 9 tools to 6, losing fs_write_file and fs_edit_file).
         raise
-    except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
+    except Exception as exc:  # graceful degradation per Phase 0.5, failure-observable WARNING
+        if planner_dispatch is not None:
+            raise PlannerDispatchError from exc
         logger.warning(f"Failed to build planner registry via profiles, fallback: {exc}")
         registry = ToolRegistry()
         registry.register(build_read_file_tool(workspace_root))

@@ -11,10 +11,10 @@ real ``plan_id``; **S12** (validate slice IDs) and **S13** (give eval the plan
 and diff) are the consumers. Shipping the reference first keeps each step
 falsifiable on its own.
 
-**Why ``--plan`` is optional.** Most runs, and every pre-S12a caller, have no
-plan artifact. An absent plan must degrade silently -- no warnings about a
-contract the operator never supplied. The standing rule that legacy plans
-failing extraction is expected, and is not a kill signal, applies here.
+**I02 supersession.** Public coder workflows now require an explicit usable
+plan and persist BLOCKED evidence on a safely addressed direct rejection.
+Private context fallback tests below remain leaf compatibility checks, not
+permission for a public coder workflow to proceed without a plan.
 
 Classes: **C0** for the extractor and the identity fallback, **C1** for the
 composition root (real ``run_workflow``, only the stage dispatcher injected),
@@ -34,6 +34,7 @@ from typing import Any
 from unittest.mock import patch
 
 from fa.cli import build_parser
+from fa.inner_loop.coder_loop import SessionOutcome
 from fa.inner_loop.plan_ids import extract_plan_id
 from fa.inner_loop.workflow_controller import (
     WorkflowContext,
@@ -55,8 +56,20 @@ class _SilentStage:
     def __init__(self) -> None:
         self.roles: list[str] = []
 
-    def __call__(self, args: argparse.Namespace, **_kwargs: Any) -> int:
-        self.roles.append(str(getattr(args, "role", "?")))
+    def __call__(self, args: argparse.Namespace, **kwargs: Any) -> int:
+        role = str(getattr(args, "role", "?"))
+        self.roles.append(role)
+        if role == "eval":
+            sink = kwargs.get("outcome_sink")
+            if isinstance(sink, list):
+                sink.append(
+                    SessionOutcome(
+                        exit_code=0,
+                        stop_reason="stopped_by_llm",
+                        turns=1,
+                        final_text="### Verdict\nPASS\n### Step results\n- S1: PASS - ok\n",
+                    )
+                )
         return 0
 
 
@@ -180,8 +193,9 @@ def test_plan_path_is_recorded_in_flow_state(tmp_path: Path) -> None:
     Removing the ``plan_path=`` assignment in ``_write_terminal_state`` fails
     here, which is exactly what leaves S12/S13 with no input.
     """
-    plan = tmp_path / "P.md"
-    plan.write_text(_PLAN_BODY, encoding="utf-8")
+    from tests.workflow_fixtures import write_explicit_plan
+
+    plan = write_explicit_plan(tmp_path)
 
     exit_code, state = _run(tmp_path, run_id="pp-1", plan_path=plan)
 
@@ -191,13 +205,20 @@ def test_plan_path_is_recorded_in_flow_state(tmp_path: Path) -> None:
     assert _flow_state("pp-1")["plan_path"] == str(plan)
 
 
-def test_absent_plan_degrades_silently(tmp_path: Path) -> None:
-    """T20b — no ``--plan`` means empty, no warning, behaviour unchanged."""
+def test_absent_coder_plan_is_blocked_before_dispatch(tmp_path: Path) -> None:
+    """CT95 supersedes advisory T20b: no guessed plan or silent success."""
     exit_code, state = _run(tmp_path, run_id="pp-2", plan_path=None)
 
-    assert exit_code == 0
-    assert state is not None
-    assert state.plan_path == "", "no plan supplied must record empty, not a guess"
+    assert exit_code == 2
+    assert state is not None and state.status == "FAILED"
+    assert state.plan_path == ""
+    assert state.last_route_decision == "blocked"
+    assert state.blocked_reason == "plan-ref/missing"
+    paths = workflow_artifact_paths("pp-2")
+    assert json.loads(paths.admission.read_bytes())["status"] == "BLOCKED"
+    assert not paths.eval_report.exists()
+    assert not paths.verification.exists()
+    assert not paths.verify_baseline.exists()
 
 
 # ── C2: T20c — the CLI boundary ────────────────────────────────────────────
