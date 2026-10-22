@@ -3665,3 +3665,42 @@ no journal/Docker mutation. Future host witness: I03-LIVE-18/S04; require indepe
 before terminal receipt/release. This seam remains open until source and tests are corrected/reviewed.
 All live statuses remain PLANNED/UNEXECUTED; no change to I03 outline, E223 duties, production release
 status, or policy decisions.
+
+MERGE/AUDIT 2026-10-22 (branch arena/86633f17-first-agent-dev). Merged the reviewed E260/E261
+history (18baf14 code, 88f028e preserved-history merge, c2ecd9d doc audit) into this branch as
+1519173. Every conflict was resolved to that side after proving it is a superset: the merged tree
+is byte-identical to c2ecd9d (`git diff --cached --stat c2ecd9d` empty before commit). No file of
+this branch was dropped (no delete entries in `git diff --diff-filter=D 9be0a0a 18baf14`).
+
+Independent re-verification of the merged code on a locally rebuilt CPython 3.13.16 toolchain
+(zlib + FTS5 + rpath, uv sync --frozen): whole repository suite 6245 passed / 1 failed / 1 xfailed,
+0 errors, 575 s. Execution owning bank (17 modules) 1039 passed. Ruff check + format (498 files)
+clean, Mypy src/fa/execution clean. The 11 installed-controller setup errors reported in
+notes/i02-i03-adversarial-review-2026-10-21.md did NOT reproduce here: that toolchain had no zlib,
+this one does, so those tests executed and passed. Of the previous environment-caused failures, 10
+FTS5 search tests and ~80 verify tests also now pass (FTS5-enabled sqlite; `python` resolving to the
+venv interpreter). The single remaining failure is test_workspace_readiness_integration
+`precommit_prewarm_failed` — `pre-commit install-hooks` needs the pinned Go/Gitleaks hook toolchain;
+that is the STEP10 release-environment prerequisite, recorded BLOCKED, not a code defect and not a
+PASS.
+
+Review of the E261 code changes: the R1 one-shot lifecycle (nullable RUN session, one RUN per
+one-shot worker, never cached), R2 create/start/attach inside `WorkAdmission.effect()`, R3
+exact-ViewRef cancel comparison inside the persisting transaction, R4 `owned_cells()` DONE-inclusive
+inventory feeding exact-CID stop, R5 monotonic deadline through the journal/locks (`_before_deadline`,
+`_bounded_mutex`) plus `ViewRef.from_dict`/`primitives.py` deduplication are implemented as described
+and are covered by the new regressions in test_execution_backend.py/test_execution_journal.py. One
+pre-existing defect of this branch was found by running the whole suite rather than the owning bank:
+test_vulture_clean flagged the protocol-mandated `__exit__` parameters; fixed in dc3a62e by the
+underscore convention. No defect was found in the merged source beyond the already-recorded E261 gap.
+
+E261's one-shot CANCEL gap is confirmed in the current source and remains OPEN: `cancel()` resolves
+the owned cell only from `self._episodes` (written exclusively for interactive profiles at
+backend.py:281) and raises EXECUTION_UNKNOWN before persisting any cancel intent, so a running
+one-shot operation cannot be cancelled. Next code chunk: resolve the durable CID from the EXEC
+journal record, persist cancel intent under the existing exact-view check, and stop via the existing
+`force_stop_owned` path; add same-view live-one-shot cancel and cross-view denial (no journal/Docker
+mutation) regressions. SLICE2 STEP3 (managed provisioner injection into SessionManager) follows; its
+declaration and prototype were prepared but are not in this tree.
+All live verdicts remain PLANNED/UNEXECUTED; no STEP box, FUNCTIONAL contract or E223 duty changes;
+no production deployment authorized.
