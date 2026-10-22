@@ -165,7 +165,7 @@ Complete payload additions/results (every object has exactly the named keys; IDs
 | prepare_bundle | `{project_slug,increment_slug,roadmap_text,increment_text,expected_base_revision}` / `{validated_bundle_id,bundle_sha256}`; OWNER grant, fixed three-file renderer/ledger header, recomputed caps/grammar/hash in supervisor; no model file map |
 | install_project | `{validated_bundle_id,project_slug}` / same committed result as publish; bundle created by trusted bounded renderer, not arbitrary model file map |
 | handoff | `{target_namespace}` / `{view_ref:null,capability,generation,revision_id}`; current actor's views must be terminal/settled; target bound to existing parent-child run relationship; same root owner/generation, exactly one active mutator grant |
-| release | `{}` / `{released:true}`; revokes only its grant/pin; writer release requires no writable/live/unknown jobs or unfinished projection; READ release cannot revoke another actor |
+| release | `{}` / `{released:true}`; revokes only its grant/pin; writer release requires no writable/live/unknown jobs or unfinished projection — concretely: every WRITE view is `PUBLISHED` or `REJECTED`, none is `OPEN`/`STOPPING`/`UNKNOWN`, and no `intent.json` exists. A `SEALED`-but-unpublished view still holds the writer, because releasing it would strand a candidate whose capability dies with the grant. READ release cannot revoke another actor |
 
 Cell-private stdio frames carry exactly `{version:1,request_id,action,payload}`; actions
 RUN/INTERRUPT/CLOSE/LIST/STOP. RUN payload exactly `{command,cwd,timeout_ms,session_id}`; control
@@ -357,6 +357,19 @@ interactive branch keeps its existing episode-identity gate and `force_stop_crea
 branches differ only in how the durable CID is resolved, never in the stop mechanism. Unifying them
 is not authorized here because it would change interactive restart semantics, which R4/reconcile
 owns.
+
+**E268 review rules (normative for STEP2 and the service composition).**
+- `create_view` revalidates the wire's `base_revision` as a CAS precondition inside the same transaction
+  that proves the writer: a named base different from `current` is `STALE_REVISION` before any copy. A
+  handler that drops the field has disabled the check; the authority is the owner, the handler only
+  forwards it.
+- Owner settlement is state-aware (`workspace.py::_has_unsettled_views`): `PUBLISHED`/`REJECTED` settle,
+  `SEALED` does not, `OPEN`/`STOPPING`/`UNKNOWN` never do. Publication is therefore the only way a used
+  workspace becomes reusable, which makes the publish exit criteria load-bearing for the stage loop in
+  §6.1 rather than paperwork.
+- The dispatcher must route all nineteen closed operations. `stop_view`, `seal`, `publish`,
+  `install_project`, `prepare_bundle`, `handoff` and `release` are not readonly and must pass the
+  authority check; a missing route is a closed-code refusal, never a silent success.
 
 **E252 worker reply/RUN handoff repair (before code):** completion-reply publication and acceptance
 of the next RUN must share one synchronization boundary. The caller can receive a reply before
@@ -896,6 +909,16 @@ directory SHA/link_target null. Unchanged safe input symlinks only; changed/new 
 Deleted entries must match base entries; tree_sha256 hashes canonical JSON of nondeleted entries
 (sort keys, compact separators, UTF-8), not transient run/view IDs. Recompute data hashes before
 accepting the manifest; never trust a cell's purported tree hash. No bool-as-integer acceptance.
+
+Publish materializes Rnext **from the sealed manifest** (`sealed.json`, E267), re-verifying each entry's
+digest against the view's frozen source, and under the id the seal derived
+(`derive_revision_id`, a function of the manifest's canonical bytes) — never a caller-supplied id, and
+never by re-walking the view as if the manifest did not exist. A mismatch between manifest and source
+bytes is `CORRUPT_STATE` and touches no pointer. For an ordinary REVISION the irreversible point is the
+`current.json` replace, and the recovery discriminator is `current.json` itself, not `phase`:
+`PREPARED` legitimately exists on both sides of the CAS, so phase alone can never decide whether the
+commit happened. Publish ends by flipping the view record to `PUBLISHED`, which is what settles the
+owner for later reuse.
 
 Use materialized immutable revisions and one current manifest; no live overlay lowerdir or Git CAS.
 Managed readers read revisions, never a partially updated canonical working directory. A canonical

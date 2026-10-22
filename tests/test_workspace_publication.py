@@ -784,3 +784,140 @@ def test_seal_refuses_a_writer_generation_that_moved_after_the_view(site: Site) 
         assert refused.value.code == "STALE_GENERATION"
         assert _record(site, grant)["state"] == "STOPPING"
         assert not (_view_root(site, grant) / MANIFEST_NAME).exists()
+
+
+# ---------------------------------------------------------------------------
+# Owner settlement — when may a writer be released? (spec §2.1 release row)
+# ---------------------------------------------------------------------------
+
+
+def _set_state(site: Site, grant: GrantReply, state: str) -> None:
+    """White-box: publish/REJECTED are E268's transitions, not this build's."""
+    path = record_path(site, grant)
+    record = json.loads(path.read_text())
+    record["state"] = state
+    path.write_text(json.dumps(record))
+
+
+def test_a_sealed_view_still_holds_the_writer(site: Site) -> None:
+    """producer-kill-check: treat SEALED as settled (an unpublishable candidate is stranded)."""
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        grant = _stopped(owner, ids, lease)
+        _seal(owner, grant)
+
+        with pytest.raises(SupervisorError) as refused:
+            site.release(owner, ids, lease)
+
+        assert refused.value.code == "WORKSPACE_BUSY"
+        assert site.metadata(ids)["status"] == "OWNED"
+
+
+def test_a_published_view_settles_the_owner(site: Site) -> None:
+    """producer-kill-check: refuse settlement on any non-READ view, whatever its state."""
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        grant = _stopped(owner, ids, lease)
+        _seal(owner, grant)
+        _set_state(site, grant, "PUBLISHED")
+
+        assert site.release(owner, ids, lease) == {"released": True}
+        assert site.metadata(ids)["status"] == "AVAILABLE"
+
+        # A settled owner can be re-claimed, and the generation advances durably.
+        again = ok(lambda: site.claim(owner, ids))
+        assert site.metadata(ids)["generation"] == lease.generation + 1
+        assert site.metadata(ids)["status"] == "OWNED"
+        assert again.capability != lease.capability
+
+
+def test_a_rejected_view_also_settles_the_owner(site: Site) -> None:
+    """producer-kill-check: an allowlist that names only PUBLISHED."""
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        grant = _stopped(owner, ids, lease)
+        _set_state(site, grant, "REJECTED")
+
+        assert site.release(owner, ids, lease) == {"released": True}
+        assert site.metadata(ids)["status"] == "AVAILABLE"
+
+
+@pytest.mark.parametrize("state", ["OPEN", "STOPPING", "UNKNOWN"])
+def test_an_unsettled_view_keeps_the_writer(site: Site, state: str) -> None:
+    """producer-kill-check: allow settlement while a view can still change or is unproven."""
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        grant = _stopped(owner, ids, lease)
+        _set_state(site, grant, state)
+
+        with pytest.raises(SupervisorError) as refused:
+            site.release(owner, ids, lease)
+
+        assert refused.value.code == "WORKSPACE_BUSY"
+        assert site.metadata(ids)["status"] == "OWNED"
+
+
+# ---------------------------------------------------------------------------
+# View base CAS — the wire's `base_revision` is enforced, not ignored
+# ---------------------------------------------------------------------------
+
+
+def test_create_view_refuses_a_named_base_that_is_not_current(site: Site) -> None:
+    """producer-kill-check: drop the base_revision comparison (silent newer-bytes view).
+
+    `Operation.CREATE_VIEW` carries `base_revision` (`protocol.py:102`); before
+    this check the authority accepted the payload, ignored it, and built the view
+    on whatever `current` happened to be — a caller asking for revision A could
+    receive revision B with no error.
+    """
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        stale = "rev-" + "0" * 32
+
+        with pytest.raises(SupervisorError) as refused:
+            owner.create_view(
+                PEER,
+                ACTOR,
+                workspace_id=ids["workspace_id"],
+                capability=lease.capability,
+                purpose=ViewPurpose.PROJECT,
+                access=Access.WRITE,
+                candidate_scope=None,
+                plan_ref=None,
+                formal_evidence=False,
+                deadline=until(),
+                base_revision=stale,
+            )
+
+        assert refused.value.code == "STALE_REVISION"
+        views = site.state / "workspaces" / ids["workspace_id"] / "views"
+        assert list(views.iterdir()) == [], "a refused view still materialized bytes"
+
+
+def test_create_view_accepts_the_current_base_and_binds_it(site: Site) -> None:
+    """producer-kill-check: accept any well-formed id (comparison removed)."""
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+
+        grant = owner.create_view(
+            PEER,
+            ACTOR,
+            workspace_id=ids["workspace_id"],
+            capability=lease.capability,
+            purpose=ViewPurpose.PROJECT,
+            access=Access.WRITE,
+            candidate_scope=None,
+            plan_ref=None,
+            formal_evidence=False,
+            deadline=until(),
+            base_revision=ids["revision_id"],
+        )
+
+        assert ref(grant).base_revision == ids["revision_id"]
+        assert _record(site, grant)["state"] == "OPEN"

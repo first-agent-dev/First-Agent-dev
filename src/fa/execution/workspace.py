@@ -1156,7 +1156,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                 self._recheck(binding)
                 views = os.open("views", _DIRECTORY, dir_fd=binding.fd)
                 try:
-                    if self._has_writer_views(binding, views) or "intent.json" in os.listdir(binding.fd):
+                    if self._has_unsettled_views(binding, views) or "intent.json" in os.listdir(binding.fd):
                         raise SupervisorError("WORKSPACE_BUSY")
                 finally:
                     os.close(views)
@@ -1172,8 +1172,17 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                 self._healthy = False
                 raise SupervisorError("DURABILITY_UNKNOWN") from None
 
-    @staticmethod
-    def _has_writer_views(binding: _Binding, views: int) -> bool:
+    # Settled = no further writer-owned work can arrive: publish finished the
+    # view (PUBLISHED) or publication rejected it (REJECTED). Everything else on
+    # a WRITE view is either writable, stopping, or unknown, and must keep the
+    # owner (spec §2.1 release row: "no writable/live/unknown jobs or unfinished
+    # projection"). A SEALED view is unfinished *publication*, so it still holds
+    # the writer: releasing it would strand an unpublishable candidate whose
+    # capability dies with the grant.
+    _SETTLED_VIEW_STATES = frozenset({"PUBLISHED", "REJECTED"})
+
+    @classmethod
+    def _has_unsettled_views(cls, binding: _Binding, views: int) -> bool:
         for name in os.listdir(views):
             # Unknown scratch is not safe unused-owner settlement.
             if len(name) != 37 or not name.startswith("view-"):
@@ -1185,7 +1194,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                 ref = record["view_ref"]
                 if ref["workspace_id"] != binding.metadata["workspace_id"] or ref["view_id"] != name:
                     raise SupervisorError("CORRUPT_STATE")
-                if ref["access"] != Access.READ.value:
+                if ref["access"] != Access.READ.value and record["state"] not in cls._SETTLED_VIEW_STATES:
                     return True
             finally:
                 os.close(child)
@@ -1583,6 +1592,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
         plan_ref: PlanRef | None,
         formal_evidence: bool,
         deadline: float,
+        base_revision: str | None = None,
     ) -> GrantReply:
         """Construct one view of an EXACT approved purpose; not a command/execution permit.
 
@@ -1596,8 +1606,15 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
         if type(formal_evidence) is not bool:
             raise ExecutionContractError
         scope = _candidate_scope(purpose, access, candidate_scope, plan_ref)
+        if base_revision is not None:
+            _hex_id(base_revision, "rev-")
         with self._transaction(peer, deadline):
             binding = self._writer_proof(peer, namespace, workspace_id, capability)
+            # The wire's base_revision is a CAS precondition, not decoration: a
+            # caller that names different bytes than current must be refused
+            # before any copy, never silently given the newer revision.
+            if base_revision is not None and base_revision != binding.current["revision_id"]:
+                raise SupervisorError("STALE_REVISION")
             profile = self._view_profile
             if profile is None:
                 raise SupervisorError("UNAPPROVED_PROFILE")
@@ -1660,7 +1677,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                         _replace_private_bytes(fd, "view.json", encode_json(record))
                         self._unchanged(binding, deadline)
                         _budget(deadline)
-                        directory = self._install_project(binding, stage, record, deadline)
+                        directory = self._install_view(binding, stage, record, deadline)
                         descriptors.callback(os.close, directory)
                         installed = True
                     source = os.open("source", _DIRECTORY, dir_fd=directory)
@@ -1743,7 +1760,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                     os.close(fd)
             os.fsync(stage)
 
-    def _install_project(self, binding: _Binding, stage: Path, record: dict[str, Any], deadline: float) -> int:
+    def _install_view(self, binding: _Binding, stage: Path, record: dict[str, Any], deadline: float) -> int:
         with ExitStack() as stack:
             parent = os.open(stage.parent, _DIRECTORY)
             stack.callback(os.close, parent)

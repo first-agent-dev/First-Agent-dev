@@ -4029,3 +4029,55 @@ counted as either.
 
 **Still not closed.** No STEP checkbox, CT status, live row or acceptance duty moved. SLICE3 STEP1 stays
 open (Q74 policy, real cgroup observer); publish/CAS remains E268.
+
+### E268 — adversarial review of the remaining I03: 5 confirmed defects, 4 suspicions, plan rewritten
+
+**Method.** Every remaining slice read against the modules it touches and their callers; each suspected
+defect reproduced before it was believed; confirmed defects separated from suspicions. No STEP, contract
+or live row changed by the review itself.
+
+**Confirmed defects.** (D1) `release_unused_writer` refused settlement for ANY non-READ view regardless
+of state, contradicting spec §2.1's "no writable/live/unknown jobs or unfinished projection" — with
+E267's SEALED and E269's PUBLISHED a finished view kept the writer forever, then a restart quarantined
+the workspace. Reproduced (`release REFUSED: WORKSPACE_BUSY` after seal). Fixed with
+`_has_unsettled_views`/`_SETTLED_VIEW_STATES`; SEALED still holds the writer (an unpublished candidate is
+unpublishable once the grant dies). 4 cases, 3/3 mutants killed. (D2) `create_view` accepted
+`protocol.py:102`'s required `base_revision` and silently ignored it — a caller naming revision A got a
+view over B, the exact stale-base confusion CT102/CT106 exist to prevent. Fixed with STALE_REVISION
+before any filesystem effect; 2 cases, mutant killed; SLICE1 STEP3 now requires the dispatcher to forward
+it. (D3) `_install_project` installs a *view*, colliding with spec §5's *project* install name — renamed
+`_install_view`. (D4) E267's own line citations drifted after its own edit — citations normalized to
+symbols, with a new project rule: a line number only alongside a symbol and a pinned sha. (D5) E250's
+"18 surfaces" had no growth rule — now stated, count is 19/8.
+
+**Suspicions, each with an owner (not fixed).** S1 a composed service without a real `CellTermination`
+returns `terminal=false` forever (SLICE1 STEP3 must refuse to start). S2 `_load` quarantines OWNED
+workspaces with no recovery, and stale `pending/` staging is never swept (SLICE3 STEP4, hook points now
+named in the step). S3 `_Capture` excludes `.git/.fa/.venv/.env` components at any depth, so a nested
+`.fa/x.py` never enters a revision and "protected" is name-only (STEP2 §5 wording). S4 sealed/published
+views persist bytes+manifest with no GC (E269 receipt contract + I06 disposition).
+
+**Verified fine, recorded so nobody re-opens it.** `17` kills is correct (17 FUNCTIONAL contracts, 17
+distinct directives; a raw grep returns 19 only because prose quotes the word) — the DoD now derives it.
+Spec §5 steps 1–3 and the §5.1 table are consistent for REVISION; the clarification worth stating (now
+normative) is that the discriminator is `current.json`, not `phase`. Gate/drain versus a running command
+matches E257's documented intent and needs no change. The `prepare_seal`/`mark_sealed` duplicate checks
+are intentional defence.
+
+**Plan text rewritten (executability).** SLICE1 STEP3 now enumerates all nineteen operations, requires
+authority for the non-readonly ones, forbids a silent fallback and adds a route-coverage test that reads
+the `Operation` enum. SLICE3 STEP1 now names its three remaining parts (Q74 policy, real cgroup observer,
+`FA_REQUIRE_EXECUTION_HOST=1` integration test) so it cannot be closed on local evidence. STEP2 now says
+what publish materializes, under which id, what the irreversible point is, and that PUBLISHED is what
+settles the owner. STEP4 now names the real hook points (`__enter__` before the quarantine decision;
+`_initialize_genesis`'s refusals; unswept `pending/`). The DoD derives every count by command and proves
+*collection* (a missing `TESTS:` path exits 4, not 0). The spec note gains the E268 review rules in §2.2
+and §5.
+
+**Evidence.** Execution bank + owning file **1123 passed**; `ruff`/format clean (507 files); `mypy` 19
+files; `pyrefly` 0 errors; authoring kernel `0` diagnostics. 4 new mutants (3 settlement + 1 base CAS),
+all killed with sha256-verified restore.
+
+**Deferred with reasons.** STEP3 bundle/Q58/BOOTSTRAP stays after publish (two commit paths with
+different failure vocabularies if integrated early); candidate-buffer seal stays with §5's PLAN intent;
+host proofs and deployment stay SLICE6/BLOCKED. Implementation numbering: **E269 = SLICE3 STEP2**.
