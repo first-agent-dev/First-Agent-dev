@@ -3998,3 +3998,34 @@ no evidentiary value**; every number in the E267 result above comes from the con
 under `$HOME/.cache` and the venv under the checkout, so both can vanish between sessions (rebuild cost
 ≈10–15 min on 2 CPUs); and the sandbox still has **no Docker daemon**, so every `FA_REQUIRE_EXECUTION_HOST=1`
 item remains BLOCKED by design rather than by tooling.
+
+### E267b — full-suite classification, one self-caught rule violation, and a false flake
+
+**Full suite (conforming 3.13.16 environment):** `6232 passed, 82 failed, 14 skipped, 1 xfailed` in
+7m11s. Every failure classified by name, none left unexplained:
+
+| Count | Test file | Cause | Status |
+| --- | --- | --- | --- |
+| 78 | `test_verify_gate_live.py` (all at `:3811`, `_ct91_public` exits 2) | `T0 baseline unavailable` environment data gap, the historical 78+2 class | pre-existing |
+| 2 | `test_verify_slice.py` | same T0 baseline class | pre-existing |
+| 1 | `test_workspace_readiness_integration.py` | `degraded_environment: precommit_prewarm_failed` (needs Go/Gitleaks/ShellCheck) | pre-existing, reproduced with this change reverted |
+| 1 | `test_s10a_cli_coverage.py` | **caused by this change** — `FA-AUTHORING-V2-EXPORTS-COMPLETENESS` HARD-BLOCK on three module-public constants in `publication.py` | **fixed** |
+
+**Rule violation, caught by the repo's own gate and fixed rather than waived.** `publication.py`
+defined `MAX_MANIFEST_BYTES`, `MAX_DEPTH` and `EXCLUDED_COMPONENTS` as public symbols outside `__all__`.
+The authoring kernel blocked it (`dispatched_count: 3`, remediation "add to `__all__` or rename private").
+They are implementation detail, so they became `_MAX_MANIFEST_BYTES`, `_MAX_DEPTH`,
+`_EXCLUDED_COMPONENTS`; `MANIFEST_NAME` stays public because tests and future recovery code must name
+the durable file. Re-run: `authoring check` → `diagnostics: []`, `exit_code: 0`; `test_s10a_cli_coverage`
++ `test_workspace_publication` → 86 passed; execution bank + s10a → **1177 passed**.
+
+**A false flake, recorded so nobody chases it.** One combined run reported
+`test_seal_accepts_an_unchanged_link_and_refuses_a_new_one` failing once. Cause: this session started the
+mutation sweep in the same tool call as a test run, so a mutant was live in `publication.py` while the
+other process imported it. Repeated clean runs (8× owning file, 3× combined) are all green, and the
+sweep re-ran 9/9 afterwards. **Operational rule for later increments: never run a mutation sweep
+concurrently with any other test process.** The failure was not product or test behaviour and is not
+counted as either.
+
+**Still not closed.** No STEP checkbox, CT status, live row or acceptance duty moved. SLICE3 STEP1 stays
+open (Q74 policy, real cgroup observer); publish/CAS remains E268.

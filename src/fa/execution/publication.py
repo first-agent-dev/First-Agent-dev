@@ -35,10 +35,10 @@ from fa.execution.workspace import WorkspaceAuthority, _budget, _canonical, _rea
 from fa.inner_loop.workflow_artifacts import _replace_private_bytes
 
 MANIFEST_NAME = "sealed.json"
-MAX_MANIFEST_BYTES = 64 * 1024**2
-MAX_DEPTH = 64
+_MAX_MANIFEST_BYTES = 64 * 1024**2
+_MAX_DEPTH = 64
 # The walker already drops these; a manifest that still names one was forged.
-EXCLUDED_COMPONENTS = frozenset({".git", ".fa", ".venv", ".env"})
+_EXCLUDED_COMPONENTS = frozenset({".git", ".fa", ".venv", ".env"})
 _PRIVILEGE_BITS = 0o7000
 
 _SHA = {"type": "string", "pattern": "^[0-9a-f]{64}\\Z"}
@@ -150,7 +150,7 @@ def seal_view(
 
 def _replay_seal(directory: int, sealed_manifest_id: str, inputs: _SealInputs) -> SealResult:
     """A retried seal answers from durable bytes, or refuses loudly (R8)."""
-    stored = _read_json(directory, MANIFEST_NAME, _SEALED_MANIFEST, MAX_MANIFEST_BYTES)
+    stored = _read_json(directory, MANIFEST_NAME, _SEALED_MANIFEST, _MAX_MANIFEST_BYTES)
     _validate_sealed_tree(stored, plan_path=inputs.plan_path, base_entries=inputs.base_entries)
     # The bytes are frozen after the barrier, so a reseal must observe the same
     # digest; anything else means the view or its manifest moved underneath us.
@@ -233,9 +233,9 @@ def _validate_paths(entries: Sequence[Mapping[str, Any]]) -> None:
         if path <= previous:
             raise SupervisorError("INPUT_POLICY")  # Sorted and unique, or the digest is meaningless.
         previous = path
-        if len(parts) > MAX_DEPTH or any(part in {"", ".", ".."} for part in parts):
+        if len(parts) > _MAX_DEPTH or any(part in {"", ".", ".."} for part in parts):
             raise SupervisorError("INPUT_POLICY")
-        if parts[0] in EXCLUDED_COMPONENTS:
+        if parts[0] in _EXCLUDED_COMPONENTS:
             raise SupervisorError("INPUT_POLICY")
 
 
@@ -322,7 +322,7 @@ def _write_manifest(directory: int, manifest: Mapping[str, Any], deadline: float
     """Manifest first, and prove it; the `SEALED` flip happens after this."""
     try:
         _replace_private_bytes(directory, MANIFEST_NAME, _canonical(dict(manifest)))
-        if _read_json(directory, MANIFEST_NAME, _SEALED_MANIFEST, MAX_MANIFEST_BYTES) != manifest:
+        if _read_json(directory, MANIFEST_NAME, _SEALED_MANIFEST, _MAX_MANIFEST_BYTES) != manifest:
             raise SupervisorError("DURABILITY_UNKNOWN")
         _budget(deadline)
     except SupervisorError:
