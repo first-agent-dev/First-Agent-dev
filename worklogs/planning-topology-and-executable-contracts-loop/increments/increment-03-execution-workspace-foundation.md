@@ -342,7 +342,7 @@ FA_REQUIRE_EXECUTION_HOST=1 uv run pytest tests/integration/test_publication_rec
 ```
 - [ ] STEP1: implement selected Q74 per-stage/episode checkpoint policy and spec §6.1 stage transition table; implement terminal barrier/view state machine and immutable export validation in execution/publication.py plus supervisor.py::stop_view -> _wait_descendants_terminal (CT104's named producers). **Progress and the remaining parts of THIS step:** the terminal barrier shipped in E266 and the immutable export/seal in E267 (both local C0/C3); what STEP1 still owes is (a) the Q74 per-stage/episode checkpoint policy wired to §6.1's transition table, (b) the real Docker/cgroup `CellTermination` implementation behind the existing seam, and (c) `tests/integration/test_publication_recovery.py` running the kernel-observed barrier under `FA_REQUIRE_EXECUTION_HOST=1`. STEP1 is one step with three parts, not one checkbox per part; it closes only when all three exist, and (b)/(c) are host-blocked in any session without an approved Docker daemon. Test split is fixed, no guessing: the view-state machine and immutable export validation run in tests/test_workspace_publication.py over the real local worker/attach cells (E258's fixture pattern) and prove seal/publish is refused while any handler or cell is unsettled; the actual cgroup-populated-empty descendant barrier runs only in tests/integration/test_publication_recovery.py under FA_REQUIRE_EXECUTION_HOST=1 (kernel fact, never mocked). Tests launch fork/double-fork/setsid/background writers in real cells and hold active file operations (exit: none can seal/publish while still writable)
 - [ ] STEP2: implement exact intent/current/projection schemas/order/dir fsync and generation/base CAS per spec §5, including canonical Git-index preservation and spec §5.1 exact Q58/bootstrap forward-recovery phases. Materialize Rnext **from the sealed manifest**, re-verifying every digest against the view's frozen source, and materialize it under the id `seal_view` derived (`derive_revision_id`), never a caller-supplied id; the irreversible point for an ordinary revision is the `current.json` replace, and the recovery discriminator is `current.json`, not the phase value. Publish flips the view record to `PUBLISHED` and thereby **settles the owner**: `release_unused_writer` accepts only PUBLISHED/REJECTED WRITE views and refuses OPEN/STOPPING/UNKNOWN/SEALED (retained predicate from the E268 review) (exit: complete old/new pinned-reader and stale/fault unit matrix passes; publishing a SEALED view makes a subsequent `release` succeed and a later re-claim advance generation; publishing a view whose manifest hash or source bytes moved is `CORRUPT_STATE` with no `current.json` change)
-- [ ] STEP3: integrate the existing inner_loop/plan_promotion.py Q58 buffer/hash/promotion primitives and this authority's no-clobber bundle primitives (execution/publication.py::prepare_bundle / install_project, per §5's bundle handoff; §1 already assigns no-clobber project install to publication.py) with the same authority; no managed-acquisition UI/protocol before SLICE5 integration (exit: direct controller-authorized tests prove collisions preserve old bytes and post-commit failure never rolls back)
+- [ ] STEP3: integrate the existing inner_loop/plan_promotion.py Q58 buffer/hash/promotion primitives and this authority's no-clobber bundle primitives (execution/publication.py::prepare_bundle / install_project, per §5's bundle handoff; §1 already assigns no-clobber project install to publication.py) with the same authority; no managed-acquisition UI/protocol before SLICE5 integration (exit: direct controller-authorized tests prove collisions preserve old bytes and post-commit failure never rolls back). **Progress and what this step still owes:** the bundle renderer/store (E271), the `RENAME_NOREPLACE` install under the Q82 (B) ruling (E271 unit B) and the same-path plan replacement with its forward-only commit (E273) are implemented and locally proved. What remains is the controller leg — `_promote_validated_plan` still calls `inner_loop/plan_promotion.publish_plan_buffer` directly and must be moved onto the authority once the dispatcher route exists (SLICE1 STEP3), deleting that transport in the same change so exactly one writer owns the canonical plan. The step closes only when that leg is proved end to end; the two components above are not a substitute for it.
 - [ ] STEP4: recover from supervisor/process death at each durable boundary, before/after pointer replace and during projection; require approved filesystem and separately label process-crash versus power-loss evidence. The hook points are fixed by existing code: `WorkspaceAuthority.__enter__` calls `journal.recover_uncertain()` then `_load()`, and `_load` currently QUARANTINES every `OWNED` workspace with no forward path — `recover_workspace` must run there, before the quarantine decision, for every workspace with `intent.json`; and `_initialize_genesis` already refuses a non-empty `views/` or a present `intent.json`, so nothing else may assume a pristine workspace. Stale `pending/` staging from a hard kill is NEVER swept today (`__enter__` creates the directory and moves on), so recovery must also classify those directories as owned scratch (discard) versus unknown (quarantine), and must not delete a directory referencing a committed revision (exit: real recovery tests expose only complete current revisions or quarantine, no success from uncertain state; a killed supervisor mid-projection leaves no orphan `pending/` entry that a later authority silently ignores)
 - [ ] STEP5: record full declared-path CT104–CT107 kills and cleanup/ownership evidence (exit: all four producers killed by useful executed oracles; no cells/pins/intent abandoned without disposition)
 
@@ -461,7 +461,7 @@ reproducible by the command beside it:
 | CT declarations (17 FUNCTIONAL + 7 CONSTRAINT) | **24** | `grep -cE '^\s+CT[0-9]+[a-z]? \[(FUNCTIONAL|CONSTRAINT|PRESERVATION)\]' increments/increment-03-*.md` |
 | Declared `kill:` directives | **17** (one per FUNCTIONAL contract; a `grep -c 'kill:'` returns more because prose lines quote the word) | `grep -cE '^\s+kill: remove-call ' increments/increment-03-*.md` |
 | Closed wire operations | **19** | `grep -cE '^\s+[A-Z_]+ = "' src/fa/execution/primitives.py` |
-| E2E live surfaces / joins | **22 / 8** (E250 recorded 18/8; E267 added `publication.py` as I03-LIVE-19; E269 the publish path as I03-LIVE-20; E271 the bundle path as I03-LIVE-21; E272 the install path as I03-LIVE-22) | `grep -o 'I03-LIVE-[0-9]\{2\}' notes/e2e-live-verification-register.md \| sort -u \| wc -l` |
+| E2E live surfaces / joins | **23 / 8** (E250 recorded 18/8; E267 added `publication.py` as I03-LIVE-19; E269 the publish path as I03-LIVE-20; E271 the bundle path as I03-LIVE-21; E272 the install path as I03-LIVE-22; E273 the plan-replacement path as I03-LIVE-23) | `grep -o 'I03-LIVE-[0-9]\{2\}' notes/e2e-live-verification-register.md \| sort -u \| wc -l` |
 | Six slices, thirty-five STEPs | **6 / 35** | `grep -cE '^- \[.\] STEP[0-9]+:' increments/increment-03-*.md` |
 
 If a later edit changes a count, the edit updates the table and the ledger entry that introduced the
@@ -1059,6 +1059,84 @@ the input to it, and no recovery row is implemented or claimed; the dispatcher r
 auto-registration of the installed project (SLICE5); bundle GC/retention; and `publish_plan` (Q58), which
 is the inverse ordering (the canonical plan replace *is* the irreversible point) and needs its own phase
 analysis. `I03-LIVE-22` is PLANNED / UNEXECUTED: no Docker/cgroup barrier, no installed service, no restart.
+
+### E273 result — SLICE3 STEP3 unit C: `publish_plan` (Q58) implemented and locally proved
+
+**Status: STEP3's plan half is implemented. STEP3 is still NOT complete — routing the controller through
+it (the dispatcher leg) is what remains — and nothing here ticks a STEP or assigns a CT verdict.**
+
+**The order is the inverse of publish, on purpose.** `publication.publish_plan` validates and hands off;
+`WorkspaceAuthority.publish_plan` owns the boundary. Every precondition and the *complete* post-replace tree
+are computed before any write (owner grant; no unsettled view; no intent; canonical bytes still the current
+revision; the ref's path is exactly `worklogs/<slug>/increments/<name>.md`; the buffer passes the plan rules —
+strict UTF-8, non-empty, ≤ 1 MiB; the ref's hash is not the hash of the bytes being written) → durable
+`intent.json` (`kind=PLAN`, `target_relative`, `old_sha256`, `new_sha256`, `next_revision`, `phase=PREPARED`) →
+`os.replace` of a staged, fsynced, mode-preserving sibling **at the same path** (the irreversible point) →
+parent fsync → revision from the canonical tree the replace just created → `current.json` → projection proof →
+`DONE`. After the replace there is no step that can restore the old bytes: recovery is forward, by design.
+
+**One mechanism, shared with install (refactor, behaviour-neutral).** `_install_write_revision` and
+`_install_commit_current` are now `_write_revision_from_canonical` / `_commit_pointer`, and both forward-only
+kinds call them; install is the case where the directory was renamed, replacement the case where the file was.
+`_forward_gates` (view/intent check, writability probe, `unchanged` proof) is likewise one helper now. The
+install bank stayed at its full size through the refactor — the one test that patched the old private names by
+string was re-pointed, and that is the only edit the refactor needed.
+
+**What is shared with `inner_loop/plan_promotion.py`, and what supersedes it.** The *rules* are imported,
+never retyped: `_decode_plan_bytes` (strict UTF-8, non-empty, ≤ 1 MiB), `PlanRef`, `PlanSnapshot` from
+`plan_admission`. The *transport* cannot be reused from inside the authority: `publish_plan_buffer` reopens the
+workspace by host path (which §4's rooted, no-follow IO exists to forbid) and takes a second, path-keyed lock
+inside the authority's own mutex. So the promotion discipline — prove the source hash, stage a unique sibling,
+fsync, replace the same path, prove the result, never leave a second active plan — is reproduced on
+descriptors, and serialization comes from the authority mutex plus the pointer CAS instead of a lock file. The
+old transport is not a fallback: it is deleted when the controller is routed (see the last paragraph).
+
+**Two checks were deleted because they could not disagree with the copy proof (found by the unit's own
+mutants, which survived).** (a) The revision-level source CAS in `_plan_prepare` was dropped: the pre-replace
+re-proof compares the ref's `old_sha256` against the bytes that `_forward_gates`/`_unchanged` has just proved
+equal to the current revision, so the two comparisons cannot differ — the surviving double is the one that also
+closes the TOCTOU window. (b) The post-replace hash/mode re-check was dropped for the same reason:
+`_write_revision_from_canonical` copies this exact path and refuses the whole tree unless every entry's size,
+digest, type and mode match *before a revision or pointer exists*. Q58's "post-hash/mode checks" are therefore
+satisfied by the copy, not by a second check that could never fire on its own.
+
+**The path shape is enforced here, not by callers.** `publish_plan` is not a general controller file-write API
+(spec §7.1, Q58's "not an arbitrary model file-map API"): exactly four components, `worklogs/<slug>/increments/`
+and a `.md` leaf, no `.`/`..`/empty component, no protected component. Anything else is `INPUT_POLICY`, or
+`PATH_DENIED` for a protected component.
+
+**Refusals, all with nothing written.** `STALE_REVISION` for a stale ref hash (also when the plan vanished
+between prepare and replace), for a concurrent host write detected by the pre-replace re-proof, and for a plan
+whose bytes are the ones already there is `INPUT_POLICY` (a replacement must replace something);
+`PATH_DENIED` for a link swapped in after staging (`O_NOFOLLOW` + `O_NONBLOCK` open, then regular-file and
+single-link `fstat`); `INPUT_POLICY` for bytes that are not a plan, for a path that is not the canonical plan,
+and for an entry that is not a committed regular file; `UNAUTHORIZED` for a capability that is not this
+workspace's owner grant; `WORKSPACE_BUSY` for an unsettled view or an existing intent. A symlinked plan can
+never reach a revision at all: admission refuses the ref (`symlink`) and registration refuses the tree.
+
+**Failures after the replace keep the truth and stop serving.** `DURABILITY_UNKNOWN` for an I/O failure
+(including the parent fsync), `CORRUPT_STATE` when the copied tree provably differs from the expectation; in
+both cases the intent stays `PREPARED`, `_healthy` goes false, and a later operation is refused because the
+canonical tree no longer matches any committed revision. No rollback, no replay, no receipt.
+
+**Evidence.** `tests/test_workspace_publication.py` **99 passed** (12 replacement cases, C1 over the real
+authority); execution bank + publication **1190 passed**; `ruff check`/`format --check` clean on the three
+changed files; `mypy src/fa/execution` 19 files; `pyrefly check src/fa/execution` 0 errors; `fa
+authoring-check` `exit_code 0`, `diagnostics 0`. **10/10 mutants killed** with sha256-verified byte-exact
+restore: no pre-replace re-proof, no durable intent, no mode preservation, follow the replace path, no plan byte
+rules, any path replaceable, no revision commit, rollback after replace, identical bytes accepted, no forward
+gates. Two further candidate mutants were removed from the sweep rather than "fixed": the parent-fsync ordering
+and the `_healthy` flag are not observable in-process (the API-visible consequence of the latter is the
+canonical-vs-revision drift refusal, which is asserted).
+
+**Deliberately not done, with the reason.** The controller leg: `_promote_validated_plan` still calls
+`inner_loop/plan_promotion.publish_plan_buffer` directly, because the authority route needs the dispatcher
+(SLICE1 STEP3) and a controller-side client handle. Until that lands, the transitional rule is explicit: the
+authority refuses any seal whose plan bytes moved outside it (`_validate_plan_boundary`), so mixing the two
+writers fails closed instead of silently forking the plan; the switch to a single writer must delete
+`publish_plan_buffer`, not keep it as a fallback. Recovery of a `PLAN` intent is CT107/STEP4 — the intent this
+unit leaves is its input. `I03-LIVE-23` is PLANNED / UNEXECUTED: no Docker/cgroup barrier, no installed
+service, no restart.
 
 ## Scope and ownership handoff
 

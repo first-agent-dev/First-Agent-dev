@@ -76,7 +76,8 @@ from fa.execution.view_io import (
     _parts,
     _rename_directory,
 )
-from fa.inner_loop.plan_admission import PlanRef
+from fa.inner_loop.plan_admission import MAX_PLAN_BYTES as _MAX_PLAN_BYTES
+from fa.inner_loop.plan_admission import PlanRef, PlanRefError, _decode_plan_bytes
 from fa.inner_loop.workflow_artifacts import _private_artifact_directory, _replace_private_bytes
 
 _UINT = {"type": "integer", "minimum": 0}
@@ -221,6 +222,12 @@ _TEMPORARY_SUFFIX = ".publish"
 # the same workspace-relative path §7.1 freezes for a rendered project.
 _INSTALL_ROOT = "worklogs"
 _SLUG = re.compile(str(CONFIG_ID["pattern"]))
+# Q58 replacement targets exactly the canonical plan shape of §7.1, never a
+# caller-chosen file: `worklogs/<slug>/increments/<name>.md`.
+_PLAN_PARENT = "worklogs"
+_PLAN_SEGMENT = "increments"
+_PLAN_SUFFIX = ".md"
+_SHA_TEXT = re.compile(str(SHA["pattern"]))
 
 
 def _derive_revision_id(manifest: Mapping[str, Any]) -> str:
@@ -793,6 +800,32 @@ class _InstallInputs:
     target_relative: str
     bundle_sha256: str
     files: tuple[dict[str, Any], ...]
+    entries: tuple[dict[str, Any], ...]
+    intent: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class _PlanInputs:
+    """A prepared same-path plan replacement; no capability, like the others.
+
+    `entries` is the complete post-replace tree, so the revision id and digest
+    exist before the irreversible step and the intent can name both.
+    """
+
+    workspace_id: str
+    generation: int
+    base_revision: str
+    revision_id: str
+    tree_sha256: str
+    operation_id: str
+    plan_relative: str
+    plan_source_kind: str
+    name: str
+    old_sha256: str
+    new_sha256: str
+    mode: int
+    buffer: bytes
+    temporary: str
     entries: tuple[dict[str, Any], ...]
     intent: dict[str, Any]
 
@@ -2695,17 +2728,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
         """Prove every precondition and compute the exact tree that will exist."""
         if not isinstance(project_slug, str) or _SLUG.fullmatch(project_slug) is None:
             raise SupervisorError("INPUT_POLICY")
-        views = os.open("views", _DIRECTORY, dir_fd=binding.fd)
-        try:
-            _private(views)
-            if self._has_unsettled_views(binding, views) or self._read_intent(binding.fd) is not None:
-                raise SupervisorError("WORKSPACE_BUSY")
-        finally:
-            os.close(views)
-        self._probe_writable(binding)
-        # The canonical tree must still be exactly the current revision, so the
-        # expected tree below is the truth rather than a hope.
-        self._unchanged(binding, deadline)
+        self._forward_gates(binding, deadline)
         bundles = os.open("bundles", _DIRECTORY, dir_fd=binding.fd)
         try:
             try:
@@ -3016,8 +3039,22 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
     def _install_finish(self, binding: _Binding, inputs: _InstallInputs, deadline: float) -> dict[str, Any]:
         """Revision, pointer, proof, DONE — all forward-only after the rename."""
         try:
-            self._install_write_revision(binding, inputs, deadline)
-            self._install_commit_current(binding, inputs)
+            self._write_revision_from_canonical(
+                binding,
+                revision_id=inputs.revision_id,
+                tree_sha256=inputs.tree_sha256,
+                entries=inputs.entries,
+                deadline=deadline,
+            )
+            self._commit_pointer(
+                binding,
+                workspace_id=inputs.workspace_id,
+                generation=inputs.generation,
+                revision_id=inputs.revision_id,
+                tree_sha256=inputs.tree_sha256,
+                base_revision=inputs.base_revision,
+                intent=inputs.intent,
+            )
             _, digest = self._snapshot(binding.source, None, deadline)
             if digest != inputs.tree_sha256:
                 raise SupervisorError("CORRUPT_STATE")
@@ -3040,8 +3077,23 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
             "projection_complete": True,
         }
 
-    def _install_write_revision(self, binding: _Binding, inputs: _InstallInputs, deadline: float) -> None:
-        """Write `revisions/<derived>` from the canonical tree the install created."""
+    def _write_revision_from_canonical(
+        self,
+        binding: _Binding,
+        *,
+        revision_id: str,
+        tree_sha256: str,
+        entries: Sequence[Mapping[str, Any]],
+        deadline: float,
+    ) -> None:
+        """Write `revisions/<derived>` from the canonical tree, proved first.
+
+        One mechanism for both forward-only kinds: install (the directory it just
+        renamed in) and plan replacement (the file it just replaced). The copy is
+        the check — a tree that differs from the expectation is refused before a
+        revision exists, and the id is the one the caller derived from that
+        expectation, never a re-derivation of the copied bytes.
+        """
         stage = self._state / "pending" / uuid4().hex
         installed = False
         try:
@@ -3049,23 +3101,23 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                 os.mkdir("revisions", 0o700, dir_fd=stage_fd)
                 staged = os.open("revisions", _DIRECTORY, dir_fd=stage_fd)
                 try:
-                    os.mkdir(inputs.revision_id, 0o700, dir_fd=staged)
-                    revision = os.open(inputs.revision_id, _DIRECTORY, dir_fd=staged)
+                    os.mkdir(revision_id, 0o700, dir_fd=staged)
+                    revision = os.open(revision_id, _DIRECTORY, dir_fd=staged)
                     try:
                         os.mkdir("data", 0o700, dir_fd=revision)
                         data = os.open("data", _DIRECTORY, dir_fd=revision)
                         try:
-                            entries, digest = self._snapshot(binding.source, data, deadline)
+                            copied, digest = self._snapshot(binding.source, data, deadline)
                         finally:
                             os.close(data)
-                        _require_manifest_match(entries, inputs.entries)
-                        if digest != inputs.tree_sha256:
+                        _require_manifest_match(copied, entries)
+                        if digest != tree_sha256:
                             raise SupervisorError("CORRUPT_STATE")
                         tree = {
                             "schema_version": 1,
-                            "revision_id": inputs.revision_id,
-                            "tree_sha256": inputs.tree_sha256,
-                            "entries": [dict(entry) for entry in inputs.entries],
+                            "revision_id": revision_id,
+                            "tree_sha256": tree_sha256,
+                            "entries": [dict(entry) for entry in entries],
                         }
                         _replace_private_bytes(revision, "tree.json", _canonical(tree))
                         os.fsync(revision)
@@ -3075,7 +3127,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                     revisions = os.open("revisions", _DIRECTORY, dir_fd=binding.fd)
                     try:
                         _budget(deadline)
-                        _rename_directory(staged, inputs.revision_id, revisions, inputs.revision_id)
+                        _rename_directory(staged, revision_id, revisions, revision_id)
                         installed = True
                         os.fsync(revisions)
                     finally:
@@ -3086,20 +3138,35 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
             if not installed and stage.exists():
                 shutil.rmtree(stage)  # Only this uninstalled, service-private staging tree.
 
-    def _install_commit_current(self, binding: _Binding, inputs: _InstallInputs) -> None:
-        """CAS the pointer from the base revision to the installed one."""
+    def _commit_pointer(
+        self,
+        binding: _Binding,
+        *,
+        workspace_id: str,
+        generation: int,
+        revision_id: str,
+        tree_sha256: str,
+        base_revision: str,
+        intent: Mapping[str, Any],
+    ) -> None:
+        """CAS the pointer forward, then mark the intent PROJECTING.
+
+        The intent phase write is durable before any canonical byte of the
+        projection, so recovery dispatches on an observation instead of
+        inferring "the projection may be partial".
+        """
         try:
             current = _read_json(binding.fd, "current.json", _CURRENT, 1024**2)
         except (OSError, SupervisorError):
             raise SupervisorError("DURABILITY_UNKNOWN") from None
-        if current["revision_id"] != inputs.base_revision:
+        if current["revision_id"] != base_revision:
             raise SupervisorError("STALE_REVISION")
         updated = {
             "schema_version": 1,
-            "workspace_id": inputs.workspace_id,
-            "generation": inputs.generation,
-            "revision_id": inputs.revision_id,
-            "tree_sha256": inputs.tree_sha256,
+            "workspace_id": workspace_id,
+            "generation": generation,
+            "revision_id": revision_id,
+            "tree_sha256": tree_sha256,
         }
         try:
             _replace_private_bytes(binding.fd, "current.json", encode_json(updated))
@@ -3108,8 +3175,292 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
         except (OSError, SupervisorError):
             raise SupervisorError("DURABILITY_UNKNOWN") from None
         binding.current = updated
-        # Durable before the proof, so recovery dispatches instead of inferring.
-        self._set_intent_phase(binding.fd, inputs.intent, "PROJECTING")
+        self._set_intent_phase(binding.fd, dict(intent), "PROJECTING")
+
+    # -- Plan replacement (STEP3 Q58 / CT107a): same-path, forward-only ---------
+
+    def publish_plan(
+        self,
+        peer: PeerIdentity,
+        namespace: NamespaceRef,
+        *,
+        capability: str,
+        plan_ref: PlanRef,
+        buffer: bytes,
+        deadline: float,
+    ) -> dict[str, Any]:
+        """Replace the canonical plan at its own path, then commit the revision.
+
+        Q58's transport and §5.1's PLAN row, in that order: validate the exact
+        bytes and the caller's source hash with **no** writes → durable intent →
+        the same-path replace (the irreversible point) → revision and pointer
+        forward → proof → `DONE`. A failure at or after the replace is
+        uncertainty, never a reason to restore the old bytes.
+
+        Semantic admission (precheck, kill directives) belongs to the controller;
+        this method owns bytes, namespace, source identity and the boundary.
+        """
+        if not isinstance(plan_ref, PlanRef) or not isinstance(buffer, (bytes, bytearray)):
+            raise ExecutionContractError
+        with self._transaction(peer, deadline):
+            binding = self._owner_only(peer, namespace, capability)
+            inputs = self._plan_prepare(binding, plan_ref, bytes(buffer), deadline)
+            parent = self._project_parent(binding.source, inputs.plan_relative)
+            scratch = -1
+            try:
+                first = self._plan_source_identity(parent, inputs)
+                scratch = self._temporary_directory(binding.source)
+                self._plan_stage(binding, inputs, scratch)
+                # Q58: the source is re-proved immediately before the replace,
+                # by bytes and by identity, so a non-cooperating host writer
+                # between prepare and here is a refusal rather than a lost edit.
+                if _fingerprint(first) != _fingerprint(self._plan_source_identity(parent, inputs)):
+                    raise SupervisorError("STALE_REVISION")
+                # Durable BEFORE the irreversible byte (spec §5.1).
+                self._write_intent(binding.fd, inputs.intent)
+                os.replace(inputs.temporary, inputs.name, src_dir_fd=scratch, dst_dir_fd=parent)
+            except SupervisorError:
+                # Only the steps above can refuse, and none of them is the
+                # replace: this attempt changed nothing, so it is discarded whole.
+                self._plan_abort(binding, inputs)
+                raise
+            except OSError:
+                self._plan_abort(binding, inputs)
+                raise SupervisorError("DURABILITY_UNKNOWN") from None
+            finally:
+                if scratch != -1:
+                    os.close(scratch)
+            # The file is replaced: from here on, only forward, and every
+            # failure is `_plan_finish`'s to classify and never to undo.
+            try:
+                return self._plan_finish(binding, inputs, parent, deadline)
+            finally:
+                os.close(parent)
+
+    def _plan_prepare(self, binding: _Binding, plan_ref: PlanRef, buffer: bytes, deadline: float) -> _PlanInputs:
+        """Prove every precondition and compute the revision before any write."""
+        path, parts = self._plan_parts(plan_ref)
+        try:
+            _decode_plan_bytes(buffer)  # strict UTF-8, non-empty, plan size limit
+        except PlanRefError:
+            raise SupervisorError("INPUT_POLICY") from None
+        if not _SHA_TEXT.fullmatch(plan_ref.sha256):
+            raise SupervisorError("INPUT_POLICY")
+        new_sha256 = hashlib.sha256(buffer).hexdigest()
+        if new_sha256 == plan_ref.sha256:
+            raise SupervisorError("INPUT_POLICY")  # a replacement must replace something
+        self._forward_gates(binding, deadline)
+        with self._revision(binding, binding.current["revision_id"], deadline) as (_, base, _child):
+            base_entries = tuple(dict(entry) for entry in base["entries"])
+        existing = {entry["path"]: entry for entry in base_entries}.get(path)
+        if existing is None or existing["type"] != "file":
+            raise SupervisorError("INPUT_POLICY")  # not a committed plan file
+        entries = tuple(
+            {**entry, "size": len(buffer), "sha256": new_sha256} if entry["path"] == path else entry
+            for entry in base_entries
+        )
+        tree_sha256 = hashlib.sha256(_canonical(list(entries))).hexdigest()
+        base_revision = binding.current["revision_id"]
+        operation_id = "op-" + hashlib.sha256(f"plan\x00{base_revision}\x00{new_sha256}".encode()).hexdigest()[:32]
+        plan_manifest = {
+            "schema_version": 1,
+            "kind": "PLAN",
+            "operation_id": operation_id,
+            "workspace_id": binding.metadata["workspace_id"],
+            "generation": binding.metadata["generation"],
+            "base_revision": base_revision,
+            "target_relative": path,
+            "new_sha256": new_sha256,
+            "tree_sha256": tree_sha256,
+            "entries": list(entries),
+        }
+        revision_id = _derive_revision_id(plan_manifest)
+        return _PlanInputs(
+            workspace_id=binding.metadata["workspace_id"],
+            generation=binding.metadata["generation"],
+            base_revision=base_revision,
+            revision_id=revision_id,
+            tree_sha256=tree_sha256,
+            operation_id=operation_id,
+            plan_relative=path,
+            plan_source_kind=plan_ref.source_kind,
+            name=parts[-1],
+            old_sha256=plan_ref.sha256,
+            new_sha256=new_sha256,
+            mode=int(existing["mode"]),
+            buffer=buffer,
+            temporary=f".plan.{uuid4().hex}{_TEMPORARY_SUFFIX}",
+            entries=entries,
+            intent={
+                "schema_version": 1,
+                "kind": "PLAN",
+                "operation_id": operation_id,
+                "workspace_id": binding.metadata["workspace_id"],
+                "generation": binding.metadata["generation"],
+                "base_revision": base_revision,
+                "next_revision": revision_id,
+                "tree_sha256": tree_sha256,
+                "phase": "PREPARED",
+                "target_relative": path,
+                "old_sha256": plan_ref.sha256,
+                "new_sha256": new_sha256,
+            },
+        )
+
+    @staticmethod
+    def _plan_parts(plan_ref: PlanRef) -> tuple[str, tuple[str, ...]]:
+        """A canonical plan is exactly `worklogs/<slug>/increments/<name>.md`.
+
+        `publish_plan` is not a general controller file-write API (spec §7.1,
+        plan_promotion §"not an arbitrary model file-map API"), so the shape is
+        refused here rather than left to each caller's discretion.
+        """
+        path = plan_ref.workspace_relative_path
+        if not isinstance(path, str) or "\x00" in path:
+            raise SupervisorError("INPUT_POLICY")
+        parts = tuple(path.split("/"))
+        if (
+            len(parts) != 4
+            or parts[0] != _PLAN_PARENT
+            or parts[2] != _PLAN_SEGMENT
+            or not parts[3].endswith(_PLAN_SUFFIX)
+            or any(part in {"", ".", ".."} for part in parts)
+        ):
+            raise SupervisorError("INPUT_POLICY")
+        if any(part in _PROTECTED_COMPONENTS for part in parts):
+            raise SupervisorError("PATH_DENIED")
+        return path, parts
+
+    def _plan_source_identity(self, parent: int, inputs: _PlanInputs) -> os.stat_result:
+        """The exact source bytes and identity this replacement is allowed to replace."""
+        try:
+            fd = os.open(inputs.name, _FILE, dir_fd=parent)
+        except FileNotFoundError:
+            raise SupervisorError("STALE_REVISION") from None  # the plan vanished
+        except OSError:
+            # O_NOFOLLOW refuses a link here rather than following it, and this
+            # window is the only place a host writer could have put one.
+            raise SupervisorError("PATH_DENIED") from None
+        try:
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                raise SupervisorError("PATH_DENIED")
+            if self._hash_fd(fd) != inputs.old_sha256:
+                raise SupervisorError("STALE_REVISION")
+            return info
+        finally:
+            os.close(fd)
+
+    def _plan_stage(self, binding: _Binding, inputs: _PlanInputs, scratch: int) -> None:
+        """Write the validated buffer to scratch; it becomes the file atomically."""
+        self._sweep_temporaries(binding.source)
+        fd = os.open(
+            inputs.temporary,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+            0o600,
+            dir_fd=scratch,
+        )
+        complete = False
+        try:
+            _write_all(fd, inputs.buffer)
+            # Write first: writing can clear set-id bits on Linux.
+            os.fchmod(fd, inputs.mode)
+            os.fsync(fd)
+            complete = True
+        finally:
+            os.close(fd)
+            if not complete:
+                try:
+                    os.unlink(inputs.temporary, dir_fd=scratch)
+                except FileNotFoundError:
+                    pass
+        os.fsync(scratch)
+
+    def _plan_abort(self, binding: _Binding, inputs: _PlanInputs) -> None:
+        """Discard this attempt's own staging and intent; the plan was never touched."""
+        try:
+            self._sweep_temporaries(binding.source)
+            if self._read_intent(binding.fd) is not None:
+                self._clear_intent(binding.fd)
+        except (OSError, SupervisorError):
+            pass  # the original refusal is the fact the caller must see
+
+    def _plan_finish(self, binding: _Binding, inputs: _PlanInputs, parent: int, deadline: float) -> dict[str, Any]:
+        """Make the replace durable, then revision, pointer, proof, DONE.
+
+        Nothing here is undone on failure: the canonical file is already the new
+        one, so the intent stays for forward recovery and the authority stops
+        serving. Q58's post-replace hash and mode proof is not repeated at the
+        replace site — `_write_revision_from_canonical` copies this exact path
+        and refuses the whole tree unless every entry's size, digest, type and
+        mode match, before a revision or a pointer exists.
+        """
+        try:
+            os.fsync(parent)  # the new name is durable before any revision names it
+            self._write_revision_from_canonical(
+                binding,
+                revision_id=inputs.revision_id,
+                tree_sha256=inputs.tree_sha256,
+                entries=inputs.entries,
+                deadline=deadline,
+            )
+            self._commit_pointer(
+                binding,
+                workspace_id=inputs.workspace_id,
+                generation=inputs.generation,
+                revision_id=inputs.revision_id,
+                tree_sha256=inputs.tree_sha256,
+                base_revision=inputs.base_revision,
+                intent=inputs.intent,
+            )
+            _, digest = self._snapshot(binding.source, None, deadline)
+            if digest != inputs.tree_sha256:
+                raise SupervisorError("CORRUPT_STATE")
+            self._set_intent_phase(binding.fd, inputs.intent, "DONE")
+        except OSError:
+            self._healthy = False
+            raise SupervisorError("DURABILITY_UNKNOWN") from None
+        except SupervisorError as error:
+            self._healthy = False
+            if error.code == "CORRUPT_STATE":
+                raise  # determinate: the bytes on disk are not what was replaced
+            raise SupervisorError("DURABILITY_UNKNOWN") from None
+        self._clear_intent(binding.fd)
+        return {
+            "workspace_id": inputs.workspace_id,
+            "revision_id": inputs.revision_id,
+            "tree_sha256": inputs.tree_sha256,
+            "operation_id": inputs.operation_id,
+            "projection_complete": True,
+            "plan_ref": PlanRef(inputs.plan_relative, inputs.plan_source_kind, inputs.new_sha256),
+        }
+
+    def _hash_fd(self, fd: int) -> str:
+        """Hash one already-open file, bounded by the plan size limit."""
+        digest = hashlib.sha256()
+        size = 0
+        while True:
+            raw = os.read(fd, 65536)
+            if not raw:
+                return digest.hexdigest()
+            size += len(raw)
+            if size > _MAX_PLAN_BYTES:
+                raise SupervisorError("INPUT_POLICY")
+            digest.update(raw)
+
+    def _forward_gates(self, binding: _Binding, deadline: float) -> None:
+        """The preconditions every forward-only commit shares, after the grant."""
+        views = os.open("views", _DIRECTORY, dir_fd=binding.fd)
+        try:
+            _private(views)
+            if self._has_unsettled_views(binding, views) or self._read_intent(binding.fd) is not None:
+                raise SupervisorError("WORKSPACE_BUSY")
+        finally:
+            os.close(views)
+        self._probe_writable(binding)
+        # Canonical bytes must still be exactly the current revision, so the
+        # expected tree is the truth rather than a hope.
+        self._unchanged(binding, deadline)
 
     # -- Publication (E269 / CT106): intent, pointer, projection ------------
 

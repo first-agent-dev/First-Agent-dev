@@ -43,6 +43,7 @@ from fa.execution.workspace import (
     _read_json,
     _SealInputs,
 )
+from fa.inner_loop.plan_admission import PlanRef
 from fa.inner_loop.workflow_artifacts import _replace_private_bytes
 
 MANIFEST_NAME = "sealed.json"
@@ -480,6 +481,18 @@ _SLICE_HEADING = re.compile(r"^## SLICE(\d+):", re.M)
 
 
 @dataclass(frozen=True)
+class PlanPublishResult:
+    """The `publish_plan` reply: one revision plus the new canonical plan ref."""
+
+    workspace_id: str
+    revision_id: str
+    tree_sha256: str
+    operation_id: str
+    projection_complete: bool
+    plan_ref: PlanRef
+
+
+@dataclass(frozen=True)
 class InstallResult:
     """The `install_project` reply (protocol `_COMMITTED`): one committed revision."""
 
@@ -686,17 +699,57 @@ def install_project(
     )
 
 
+def publish_plan(
+    authority: WorkspaceAuthority,
+    peer: PeerIdentity,
+    namespace: NamespaceRef,
+    *,
+    capability: str,
+    plan_ref: PlanRef,
+    buffer: bytes,
+    deadline: float,
+) -> PlanPublishResult:
+    """Replace the canonical plan in place through the authority (Q58).
+
+    The controller supplies a buffer it has already admitted semantically (Q58's
+    precheck/kill-directive validation); the authority owns the bytes, the
+    namespace, the source identity and the irreversible boundary. The returned
+    `plan_ref` is the one a caller must record: this method is the only writer
+    of the canonical plan, so it is also the only source of the new hash.
+    """
+    if not isinstance(authority, WorkspaceAuthority):
+        raise SupervisorError("UNAUTHORIZED")
+    receipt = authority.publish_plan(
+        peer,
+        namespace,
+        capability=capability,
+        plan_ref=plan_ref,
+        buffer=buffer,
+        deadline=deadline,
+    )
+    return PlanPublishResult(
+        workspace_id=str(receipt["workspace_id"]),
+        revision_id=str(receipt["revision_id"]),
+        tree_sha256=str(receipt["tree_sha256"]),
+        operation_id=str(receipt["operation_id"]),
+        projection_complete=bool(receipt["projection_complete"]),
+        plan_ref=receipt["plan_ref"],
+    )
+
+
 __all__ = [
     "BUNDLE_ROOT",
     "MANIFEST_NAME",
     "BundleResult",
     "InstallResult",
+    "PlanPublishResult",
     "PublishResult",
     "SealResult",
     "bundle_paths",
     "derive_revision_id",
     "install_project",
     "prepare_bundle",
+    "publish_plan",
     "publish_view",
     "render_bundle",
     "seal_view",
