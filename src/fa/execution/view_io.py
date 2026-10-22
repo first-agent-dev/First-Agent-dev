@@ -205,7 +205,7 @@ class RootedViewIO(AbstractContextManager["RootedViewIO"]):
 
     @override
     def __exit__(
-        self, typ: type[BaseException] | None, value: BaseException | None, traceback: TracebackType | None
+        self, _typ: type[BaseException] | None, _value: BaseException | None, _traceback: TracebackType | None
     ) -> None:
         self.close()
 

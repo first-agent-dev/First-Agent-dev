@@ -288,7 +288,7 @@ class WorkAdmission(AbstractContextManager["WorkAdmission"]):
 
     @override
     def __exit__(
-        self, exc_type: type[BaseException] | None, exc_value: BaseException | None, traceback: TracebackType | None
+        self, _exc_type: type[BaseException] | None, _exc_value: BaseException | None, _traceback: TracebackType | None
     ) -> None:
         self.close()
 
@@ -745,7 +745,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
 
     @override
     def __exit__(
-        self, exc_type: type[BaseException] | None, exc_value: BaseException | None, traceback: TracebackType | None
+        self, _exc_type: type[BaseException] | None, _exc_value: BaseException | None, _traceback: TracebackType | None
     ) -> None:
         with self._mutex:
             self._healthy = False
