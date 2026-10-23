@@ -2098,3 +2098,53 @@ Reasons, in order:
 `DURABILITY_UNKNOWN` (e.g. a read-only degraded mode), or if quarantine must become reversible without a
 human (a retry budget, an operator command), the per-workspace rule needs a status distinct from the
 existing "previous epoch is dead" flip. Nothing in the current plan asks for either.
+
+## Q85 — Who proves the handoff target's parent-child run relationship to the supervisor?
+
+**Status: OPEN — blocking the `handoff` route (the last unrouted operation). Promotion date 2026-10-23 (E280).**
+
+**The gap.** §2.1 specifies `handoff` as `{target_namespace}` → `{view_ref:null, capability, generation,
+revision_id}`, with three preconditions: the current actor's views are terminal/settled, the target is
+bound to an **existing parent-child run relationship**, and the handoff keeps the same root owner and
+generation with exactly one active mutator grant. Two of the three have an owner in `src/` today:
+`_settle_owner`/`_has_unsettled_views` already spells "settled" for `release`, and `_Binding` already
+holds the single owner grant, `active_actor` and `generation`. The middle one does not.
+
+`NamespaceRef` carries `parent_run_id`, and §2.1 only requires it to be "null or a valid run ID"; the
+dispatcher authenticates a *principal*, not a run. Nothing in `WorkspaceAuthority` or `ServiceConfig`
+can read the session store (`fa.session.manager`), so "existing run" cannot be checked where the
+handoff would be decided. The one existing helper, `_child_run_context`
+(`inner_loop/tools/workflow_tool.py`), allocates a child run through `SessionManager` **and** requires
+the parent `RunContext`/`SessionContext` binding to match — it is a tool-layer seam, and the increment
+schedules it under SLICE2 STEP2 ("reused `_child_run_context`/parent writer suspension and
+server-acknowledged handoff"), not under the supervisor.
+
+**Why this blocks rather than being an engineering detail.** The three candidate mechanisms differ in
+what the wire *means* and in what a test can prove:
+1. **Controller-attested** — the supervisor accepts `target.run_id`/`parent_run_id` as the
+   authenticated controller's own claim (same doctrine as "controller-attested after actual begin_run").
+   Cheapest, no new dependency, but then "existing parent-child relationship" is not a supervisor fact,
+   and a compromised or buggy caller can hand the owner grant to any namespace it names.
+2. **Session-store attester injected into the service** — `ServiceConfig` gains a session store (or an
+   `attest_child_run(parent, target)` callable) and the supervisor verifies the target run exists and
+   descends from the current actor's run before it moves the grant. Strongest, but adds a second
+   durable authority to the supervisor and a config field the operator must supply.
+3. **Defer** — leave `handoff` at the closed `BACKEND_UNAVAILABLE` refusal until SLICE2 STEP2 lands its
+   handler leg, and let that unit bring the proof with it.
+
+**Impact of choosing wrongly.** (1) is a privilege-escalation surface the plan's own doctrine warns
+about ("IDs are not secrets and are not themselves authorization"); (2) is a deployment contract change
+and it contradicts the current composition story ("no second policy engine, no second store"); (3) is
+the only option that cannot be wrong, but it leaves one route unrouted and STEP3's route totality
+incomplete — which is what the current `BACKEND_UNAVAILABLE` refusal already encodes honestly.
+
+**What I did instead of guessing.** Nothing: `handoff` stays exactly as E277 left it — routed, declared
+dormant, refusing with `BACKEND_UNAVAILABLE`. `exec`/`inspect`/`cancel` (E279) and `pty_control` (E280)
+were the unblocked rows and are delivered.
+
+**What would settle it.** A decision on (1)/(2)/(3) plus, for (2) or (3), the concrete owner of the
+parent-child fact: either a session-store attester in `ServiceConfig`, or the SLICE2 STEP2 handler leg
+with "parent writer suspension" spelled out as a supervisor operation. Also required in every branch:
+whether the source grant's proof is revoked *before* the new capability is issued (Q75's replay note
+implies yes) and whether an unsettled `SEALED`-but-unpublished view blocks a handoff exactly as it
+blocks `release`.
