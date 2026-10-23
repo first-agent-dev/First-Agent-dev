@@ -461,7 +461,7 @@ reproducible by the command beside it:
 | CT declarations (17 FUNCTIONAL + 7 CONSTRAINT) | **24** | `grep -cE '^\s+CT[0-9]+[a-z]? \[(FUNCTIONAL|CONSTRAINT|PRESERVATION)\]' increments/increment-03-*.md` |
 | Declared `kill:` directives | **17** (one per FUNCTIONAL contract; a `grep -c 'kill:'` returns more because prose lines quote the word) | `grep -cE '^\s+kill: remove-call ' increments/increment-03-*.md` |
 | Closed wire operations | **19** | `grep -cE '^\s+[A-Z_]+ = "' src/fa/execution/primitives.py` |
-| E2E live surfaces / joins | **25 / 8** (E250 recorded 18/8; E267 added `publication.py` as I03-LIVE-19; E269 the publish path as I03-LIVE-20; E271 the bundle path as I03-LIVE-21; E272 the install path as I03-LIVE-22; E273 the plan-replacement path as I03-LIVE-23; E274 the authorizer as I03-LIVE-24; E276 forward recovery as I03-LIVE-25) | `grep -o 'I03-LIVE-[0-9]\{2\}' notes/e2e-live-verification-register.md \| sort -u \| wc -l` |
+| E2E live surfaces / joins | **26 / 8** (E250 recorded 18/8; E267 added `publication.py` as I03-LIVE-19; E269 the publish path as I03-LIVE-20; E271 the bundle path as I03-LIVE-21; E272 the install path as I03-LIVE-22; E273 the plan-replacement path as I03-LIVE-23; E274 the authorizer as I03-LIVE-24; E276 forward recovery as I03-LIVE-25; E277 the composed supervisor as I03-LIVE-26 -- the count was stale at 25 until E281 re-ran the derivation) | `grep -o 'I03-LIVE-[0-9]\{2\}' notes/e2e-live-verification-register.md \| sort -u \| wc -l` |
 | Six slices, thirty-five STEPs | **6 / 35** | `grep -cE '^- \[.\] STEP[0-9]+:' increments/increment-03-*.md` |
 
 If a later edit changes a count, the edit updates the table and the ledger entry that introduced the
@@ -3128,3 +3128,93 @@ noninteractive profile is `INPUT_POLICY`. Target: the same against a real contai
 `tests/test_execution_*.py` 1168 passed; wider `-k "execution or workspace"` 1619 passed, 1 skipped (3 known
 offline-install errors); ruff/format clean, mypy 23 files, pyrefly 0, `fa authoring-check` 0; 9/9 assertion-only
 mutants killed with byte-exact restore.
+
+### E281 — remaining-I03 assessment before SLICE6: what is missing, in what order (no implementation claim)
+
+**Question this answers.** With Q85 open, the operator asked what still stands between `8106709` and the
+last acceptance slice (SLICE6), and in what dependency order the remainder should be taken.
+
+**Method.** Every claim below is a source check at `8106709` (the grep or the function named), plus the
+plan's own derived counts re-run instead of copied. **No test was executed for this entry** — the sandbox
+lost its 3.13 interpreter between sessions (see "Toolchain" below) — and the only edits are documentation,
+so no bank result changed. Counts re-derived here: 24 CTs, 17 `kill:` directives, 19 operations, 35 STEPs,
+**26** E2E surfaces / 8 joins.
+
+**What is live.** Route table + socket owner + `main` (`supervisor.py`, E277); 17 of the 19 operations
+dispatch to a real owner; registration/R0/writer generation, five view purposes, rooted IO, seal,
+publication, bundle/install, Q58 plan replacement and forward recovery (`workspace.py`,
+`publication.py`); episodes, receipts and PTY control (`backend.py`, `receipts.py`); the barrier over
+journal-owned cells plus the kernel's `populated 0` (`termination.py`, `cgroup.py`).
+
+**What is provably not live.** `grep -rn "from fa.execution" src/fa --include=*.py | grep -v ^src/fa/execution/`
+is **empty**. Nothing outside the package imports it, so every managed owner above is dormant and users
+still execute the host path: `cli._cmd_run` builds a host `PtyPool` and degrades to `subprocess`.
+
+#### A. Product work still missing (no host needed)
+
+| # | Unit (plan row) | What is absent, source-checked | Blocked by |
+| --- | --- | --- | --- |
+| A1 | Q74 per-stage/episode checkpoint policy wired to spec §6.1's transition table (SLICE3 STEP1a) | `grep -rn checkpoint src/fa/execution` is empty; the view state machine exists without a checkpoint owner | nothing |
+| A2 | `handoff` route (SLICE1 STEP3) | `service.py::_handoff` is a `BACKEND_UNAVAILABLE` stub; `WorkspaceAuthority` has no `handoff` | **Q85** |
+| A3 | CANDIDATE `publish` (Q58) + the controller leg (SLICE3 STEP3 rest) | `publication.publish_plan` has **no caller outside tests**; the wire `publish` payload is `{sealed_manifest_id, expected_base_revision}` (`protocol.py:126`) and `prepare_publish` requires a SEALED view with a closed gate and a terminal record, so a CANDIDATE view cannot travel that route at all; `workflow_controller._promote_validated_plan` (`:2279`) still writes the canonical plan through `plan_promotion.publish_plan_buffer` — the second writer R3 forbids | the controller half needs the client composition (A5) |
+| A4 | inventory completion (SLICE4 STEP1) | `notes/i03-execution-call-inventory.md` still says "State: OPEN"; no exact new source lines, caller traces or test nodeids | nothing |
+| A5 | caller cutover (SLICE2 STEP4 wiring + SLICE4 STEP2) — the largest unit | `run_stage_with_plan_write_boundary` **does not exist anywhere in `src/`** (CT97's named producer); `workspace_io=` and `workspace_provisioner=` have no `src/` call site; `cli._prepare_managed_workspace` prints a warning and continues; `_init_live_pty_pool` returns `None` on any failure and the bash tool falls back to `subprocess`; the controller read-only mounts / private-UDS-only entrypoint are not switched | A3 (supervisor half) and A4 |
+| A6 | managed verification (SLICE4 STEP3) | `slice_verification._run_one` still spawns a host subprocess; `_run_managed_command` does not exist | A5 |
+| A7 | managed acquisition (SLICE5 STEP1–3) | `tests/test_managed_acquisition.py` and the spec §7 v2 fixtures do not exist | STEP2 on **Q85**; STEP3 on A3 |
+| A8 | the SLICE6 package itself | no `e2e/` directory, no `scripts/check_execution_e2e_coverage.py`, no `tests/test_e2e_artifact_contract.py`; markers `execution_host`/`live_e2e` are **not registered** while `--strict-markers` is on (`-m` merely deselects today, but the first decorator use is an error) | A1–A7 |
+| A9 | the test files the verify fences name | `tests/integration/` does not exist at all (five fences name it: boundary, workspace_views, publication_recovery, execution_closure, nested_workflow), plus `test_managed_workspace.py`, `test_execution_project_tools.py`, `test_managed_acquisition.py`, `test_e2e_artifact_contract.py` — those fences currently exit 4, not 0 | the units above |
+
+#### B. Host/operator prerequisites (cannot be produced in this session)
+
+Approved Docker daemon + image built from `Dockerfile.fa` with a recorded digest; an installed-controller
+wheel from a CPython 3.13 that has `zlib` (and `sqlite3`/`ssl` for the controller itself); the approved
+ShellCheck binary (12 parametrised `shellcheck` cases skip without it); Go 1.24.11 plus the pinned
+Gitleaks/pre-commit dependencies for `just test` / `just check`; real provider credentials for the spec
+§9.1 direct+nested witnesses; `CAP_SYS_PTRACE` if the `strace` oracles are used; a readable cgroup v2.
+Every `FA_REQUIRE_EXECUTION_HOST=1` row (26 surfaces, 8 joins) is `PLANNED / UNEXECUTED` until then.
+
+#### C. Dependency order for the remainder
+
+1. **A1** — Q74 checkpoints. Unblocked, and the stage loop, the seal and the verifier's evidence all read
+   them, so it goes first among equals.
+2. **A4** — inventory completion. It is the checklist the cutover must close; doing the cutover first
+   leaves it without a closure test.
+3. **A3 (supervisor half)** — CANDIDATE `publish` over the wire. Must precede A5: R3 requires the host
+   plan writer to be deleted in the same change that activates the managed one.
+4. **A5** — the cutover, including A3's controller half and the deletion of `publish_plan_buffer`.
+5. **A6** — the managed verifier adapter; it needs the managed operation client A5 composes.
+6. **A7** — acquisition: STEP1 fixtures can start earlier, but STEP2's handler and handoff leg wait on
+   **Q85**, and STEP3's bundle selection needs A3's publish leg.
+7. **A8** — SLICE6 STEP1/2/3/6 (contract, indexes, coverage snapshot, skills). The coverage snapshot
+   must be taken after the last register row exists, i.e. after A3/A5/A6/A7 add theirs.
+8. **SLICE6 STEP7 → STEP8 → STEP9 → STEP10** — independent review before any fixture/helper is written,
+   index mapping after the fixtures, and the release/host gates last. Every host row is last of all.
+
+**While Q85 is open** the unblocked, non-overlapping units are A1, A4 and A3's supervisor half. Everything
+else either needs the cutover (A5) or the Q85 decision (A2, A7 STEP2).
+
+#### Two plan-text defects found and fixed here
+
+1. The increment's derived-count row read **25 surfaces** while `grep -o 'I03-LIVE-[0-9]\{2\}'` returns
+   **26**: E277 added `I03-LIVE-26` for the composed supervisor and the row was not updated. Corrected,
+   with the adding entry named in the row, as the section's own rule requires.
+2. `I03-LIVE-26`'s description still called `exec`, `inspect`, `cancel` and `pty_control` dormant
+   ("thirteen over real owners, six declared `BACKEND_UNAVAILABLE`") and said `seal` "refuses
+   `TERMINALITY_UNKNOWN` until the cgroup observer exists". E279/E280 routed those four operations and
+   E278 built `OwnedCellTermination`. The row now describes the real split (seventeen live, `handoff` and
+   `register{create:true}` dormant) and states the barrier's honest limit: unproved on a host, so a view
+   whose cell cannot be stopped stays `STOPPING`. The row's status stays `PLANNED / UNEXECUTED`.
+
+#### Toolchain (recorded so the next session does not repeat it)
+
+`notes/sandbox-venv.sh` builds a 3.11 venv; since E276 the banks use PEP 695 generics
+(`tests/test_execution_workspace.py:36 def ok[T]`), so `pytest tests/test_execution_*.py` aborts at
+collection there and `fa authoring-check` reports four test files `UNPARSABLE`. A from-source 3.13 build in
+this sandbox needs `zlib`, `sqlite3`, `ssl` and `ctypes`, and the image has **no development headers**
+(`/usr/include` has no `zlib.h`, `sqlite3.h`, `openssl/`, `ffi.h`) and no root, so each has to be built
+from source. This entry's own edits are documentation only; they were checked with what the 3.11 venv can
+parse (authoring-check went from 4 to 4 `HARD-BLOCK` lines, all of them the pre-existing PEP 695 test
+files, with no worklog diagnostic added), and no bank was run or claimed.
+
+**Not done, deliberately.** No STEP or CT box ticked, no live row promoted, no `handoff` guess, and no
+implementation started in this entry.

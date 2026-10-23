@@ -4682,3 +4682,35 @@ sha256-verified byte-exact restore, including the two hazards: forwarding the fr
 `WorkspaceAuthority.handoff` exists; `register_workspace{create:true}` stays with SLICE5. No live `docker`/`cgroup`
 or real shell has been controlled on a host, so `I03-LIVE-19/20/25/26` remain PLANNED / UNEXECUTED and no STEP/CT
 box is ticked.
+
+### E281 — pre-SLICE6 gap assessment (documentation only; no implementation, no test run)
+
+**FACT.** The managed execution plane is still dormant by construction: `grep -rn "from fa.execution" src/fa
+--include=*.py | grep -v ^src/fa/execution/` returns nothing, so users execute the host path
+(`cli._cmd_run` builds a host `PtyPool` and degrades to `subprocess`) while 17 of 19 routes dispatch to real
+owners inside the package. Re-derived counts: 24 CTs, 17 `kill:` directives, 19 operations, 35 STEPs, 26 E2E
+surfaces / 8 joins.
+
+**The gap, grouped by blocker** (full table with source citations in the increment's E281 entry): unblocked
+product work is the Q74 checkpoint policy (no `checkpoint` symbol in `src/fa/execution`), the SLICE4 STEP1
+inventory completion, and the CANDIDATE `publish` supervisor half (`publication.publish_plan` has no caller
+outside tests; the wire `publish` payload cannot carry a CANDIDATE view past `prepare_publish`). The cutover is
+the largest unit and is dominated by two absences: `run_stage_with_plan_write_boundary` does not exist anywhere
+in `src/` (CT97's named producer), and neither `workspace_io=` nor `workspace_provisioner=` has a `src/` call
+site. `slice_verification._run_one` still spawns a host subprocess and `_run_managed_command` does
+not exist (SLICE4 STEP3). Acquisition has no fixtures or handler (SLICE5 STEP2 waits on Q85). SLICE6 has no
+`e2e/` tree, no coverage checker, no artifact-contract test, and no registered `execution_host`/`live_e2e`
+markers under `--strict-markers`; five verify fences name a `tests/integration/` that does not exist and so
+exit 4 today.
+
+**Two plan-text defects corrected.** The increment's derived-count row said 25 surfaces while the derivation
+returns 26 (E277 added `I03-LIVE-26`); and that row's own description still called `exec`/`inspect`/`cancel`/
+`pty_control` dormant and the cgroup observer missing, both superseded by E278–E280. Status of the row remains
+`PLANNED / UNEXECUTED`.
+
+**Toolchain fact, recorded because it cost this entry its gates.** `notes/sandbox-venv.sh` builds a 3.11 venv and
+the banks have used PEP 695 generics since E276, so they cannot even be collected there; a from-source 3.13 in
+this sandbox needs `zlib`/`sqlite3`/`ssl`/`ctypes`, and the image ships no development headers and no root, so
+each has to be built from source. This entry therefore ran no bank: the only check available was
+`fa authoring-check` under the 3.11 venv, which reported the same four pre-existing `UNPARSABLE` test files before
+and after the edit and no worklog diagnostic. No green result is claimed for this entry.
