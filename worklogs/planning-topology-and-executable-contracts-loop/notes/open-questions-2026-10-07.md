@@ -2101,7 +2101,7 @@ existing "previous epoch is dead" flip. Nothing in the current plan asks for eit
 
 ## Q85 — Who proves the handoff target's parent-child run relationship to the supervisor?
 
-**Status: OPEN — blocking the `handoff` route (the last unrouted operation). Promotion date 2026-10-23 (E280).**
+**Status: ANSWERED (2026-10-23, E282) — option (1), controller-attested plus wire invariants. Not blocking; activation is booked as SLICE2 STEP6 / CT113.**
 
 **The gap.** §2.1 specifies `handoff` as `{target_namespace}` → `{view_ref:null, capability, generation,
 revision_id}`, with three preconditions: the current actor's views are terminal/settled, the target is
@@ -2138,13 +2138,46 @@ and it contradicts the current composition story ("no second policy engine, no s
 the only option that cannot be wrong, but it leaves one route unrouted and STEP3's route totality
 incomplete — which is what the current `BACKEND_UNAVAILABLE` refusal already encodes honestly.
 
-**What I did instead of guessing.** Nothing: `handoff` stays exactly as E277 left it — routed, declared
-dormant, refusing with `BACKEND_UNAVAILABLE`. `exec`/`inspect`/`cancel` (E279) and `pty_control` (E280)
+**What was done instead of guessing (as of E280; superseded by the decision below).** Nothing: `handoff`
+was left exactly as E277 left it — routed, declared dormant, refusing with `BACKEND_UNAVAILABLE`. `exec`/`inspect`/`cancel` (E279) and `pty_control` (E280)
 were the unblocked rows and are delivered.
 
-**What would settle it.** A decision on (1)/(2)/(3) plus, for (2) or (3), the concrete owner of the
-parent-child fact: either a session-store attester in `ServiceConfig`, or the SLICE2 STEP2 handler leg
-with "parent writer suspension" spelled out as a supervisor operation. Also required in every branch:
-whether the source grant's proof is revoked *before* the new capability is issued (Q75's replay note
-implies yes) and whether an unsettled `SEALED`-but-unpublished view blocks a handoff exactly as it
-blocks `release`.
+**Decision (2026-10-23, E282): option (1), controller-attested, enforced by wire invariants in
+`WorkspaceAuthority.handoff`.** The source of truth is `_child_run_context`, which validates the parent
+`RunContext`/`SessionContext`/workspace bindings and allocates the child run through the existing
+`begin_run` **in the same session**; `parent_run_id` is therefore controller-attested after an actual
+allocation (spec §7.1), and the supervisor proves the *link it was told*, never the run's existence.
+Concretely, in this fixed order: `_owner_only(peer, namespace, capability)`; settlement identical to
+`release` (every WRITE view `PUBLISHED`/`REJECTED`, no `intent.json` → `WORKSPACE_BUSY`); the live writer fd
+this process opened (else `STALE_GENERATION`); then the invariants `target.session_id == caller.session_id`,
+`target.parent_run_id == caller.run_id`, `target.run_id != caller.run_id` (else `INPUT_POLICY`). The commit is
+one fsynced metadata replace: `active_actor := target`, `owner_namespace`/`generation`/`status`/`revision_id`
+unchanged, a fresh `secrets.token_hex(32)` capability minted. **Generation is not advanced** — a handoff is
+not a new write epoch — so existing pins and the child's views keep their generation. The old capability dies
+with that replace (fresh work with it is `UNAUTHORIZED`, and the dispatcher's `op-<request_id>` reservation is
+not a bypass) while Q75 replay of the same request id returns its own cached original reply.
+
+**Both conditions that "would settle it" are answered.** (a) The grant moves by *replacing* it in the same
+metadata write, so the old proof is dead the moment the new one exists — it is not revoked *before* and it does
+not need to be: there is no window in which two mutator capabilities are live. (b) An unsettled
+`SEALED`-but-unpublished view blocks a handoff exactly as it blocks `release`: both use
+`_settle_owner`'s predicate, and `PUBLISHED`/`REJECTED` are the only settled states.
+
+**Why not the round-1 alternative (a narrow read-only attester injected into the service).** It inverts the
+E263 session→execution dependency, adds an `FA_STATE_ROOT` mount contract and filesystem IO on the hot path,
+and buys no privilege boundary the controller cannot already cross: a compromised controller can already
+`exec` as the owner.
+
+**What this does not prove, and why that is acceptable.** The supervisor cannot verify that the named child
+run exists. A controller that names a nonexistent run can therefore strand the workspace's own grant until
+`release` or restart — self-inflicted denial of service, not escalation, because the caller must already hold
+the single owner grant and the named target gains nothing the caller could not do itself. The crash window is
+equally bounded: after the metadata replace and before the reply the workspace is `OWNED` by a namespace whose
+capability nobody holds, and restart quarantines it exactly as for `acquire_writer`; the attempt is never
+reconstructed from the journal.
+
+**What would reopen it.** A requirement for cross-session or cross-workspace handoff (the invariants forbid
+both), for nested depth limits enforced by the supervisor rather than by the workflow layer, or for a
+supervisor-side proof of run existence — the last would mean deliberately giving the supervisor a session
+store, i.e. reopening option (2). Implementation and evidence: SLICE2 STEP6/CT113, `tests/test_execution_handoff.py`,
+register row `I03-LIVE-27`.

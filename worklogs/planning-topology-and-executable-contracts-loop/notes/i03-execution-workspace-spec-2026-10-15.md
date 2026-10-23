@@ -164,7 +164,7 @@ Complete payload additions/results (every object has exactly the named keys; IDs
 | publish | `{sealed_manifest_id,expected_base_revision}` / `{workspace_id,revision_id,tree_sha256,operation_id,projection_complete:true}`; no receipt before durable DONE |
 | prepare_bundle | `{project_slug,increment_slug,roadmap_text,increment_text,expected_base_revision}` / `{validated_bundle_id,bundle_sha256}`; OWNER grant, fixed three-file renderer/ledger header, recomputed caps/grammar/hash in supervisor; no model file map |
 | install_project | `{validated_bundle_id,project_slug}` / same committed result as publish; bundle created by trusted bounded renderer, not arbitrary model file map |
-| handoff | `{target_namespace}` / `{view_ref:null,capability,generation,revision_id}`; current actor's views must be terminal/settled; target bound to existing parent-child run relationship; same root owner/generation, exactly one active mutator grant |
+| handoff | `{target_namespace}` / `{view_ref:null,capability,generation,revision_id}`; **moves the ONE active mutator grant** from the calling namespace to a child run of it (Q85/E282). Preconditions in this fixed order: (1) the caller's OWNER grant, principal and active-actor proof (`_owner_only`); (2) settlement — every WRITE view `PUBLISHED`/`REJECTED`, no `intent.json` (`WORKSPACE_BUSY`; identical to release, so a `SEALED`-but-unpublished view blocks a handoff exactly as it blocks release); (3) the live writer fd this process opened (`STALE_GENERATION`); (4) the wire invariants `target.session_id == caller.session_id`, `target.parent_run_id == caller.run_id`, `target.run_id != caller.run_id` (`INPUT_POLICY`). The commit is ONE metadata replace, fsynced before the reply: `active_actor := target`, `owner_namespace`/`generation`/`status`/`revision_id` unchanged, a fresh `secrets.token_hex(32)` capability minted. **Generation is NOT advanced** — a handoff is not a new write epoch, so existing pins and the child's views keep their generation and `view_ref.generation` still matches; the old capability dies with that replace (fresh work with it is `UNAUTHORIZED`) while Q75 replay of the same request id still returns its original cached reply. `parent_run_id` is controller-attested after an actual `begin_run` (§7.1): the supervisor proves the link it was told, never the target run's existence, and gains no session store for it |
 | release | `{}` / `{released:true}`; revokes only its grant/pin; writer release requires no writable/live/unknown jobs or unfinished projection — concretely: every WRITE view is `PUBLISHED` or `REJECTED`, none is `OPEN`/`STOPPING`/`UNKNOWN`, and no `intent.json` exists. A `SEALED`-but-unpublished view still holds the writer, because releasing it would strand a candidate whose capability dies with the grant. READ release cannot revoke another actor |
 
 Cell-private stdio frames carry exactly `{version:1,request_id,action,payload}`; actions
@@ -1355,7 +1355,16 @@ correct. Keep fixture examples for current RM-planning-topology IDs and generate
 
 ### 7.1. Acquisition source/data handoffs and existing-code reuse
 
-Reuse `_child_run_context`; NamespaceRef parent_run_id is controller-attested after actual begin_run.
+Reuse `_child_run_context`; NamespaceRef parent_run_id is controller-attested after actual begin_run. **What that attestation does and does not prove (Q85, E282).** `_child_run_context` proves
+`ctx.parent_run_id == parent.run_id`, that the parent's session/workspace/DB bindings agree, and allocates
+the child run through `begin_run` in the SAME session; the handler then sends exactly
+`{session_id: child.session_id, run_id: child.run_id, parent_run_id: ctx.parent_run_id}`. `handoff` proves
+the link it was told (`target.parent_run_id == caller.run_id`, same session, different run) plus ownership
+and settlement; it cannot prove the child run exists, because the supervisor has no session store and must
+not gain one. The residual risk is bounded accordingly: a controller that names a nonexistent child run can
+only strand the workspace's own grant until release/restart — self-inflicted denial of service, never
+privilege escalation, since the caller must already hold the single owner grant and the named target gains
+nothing the caller could not do itself.
 Reserve invocation count/child ID once before first provider; retries keep identity and shared budget.
 Use real SessionOutcome.final_text for strict managed-choice parsing, not a new temporary plan path
 or ordinary chat tool output. A managed acquisition planner uses read/search plus its approved

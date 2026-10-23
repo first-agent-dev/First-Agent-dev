@@ -4714,3 +4714,59 @@ this sandbox needs `zlib`/`sqlite3`/`ssl`/`ctypes`, and the image ships no devel
 each has to be built from source. This entry therefore ran no bank: the only check available was
 `fa authoring-check` under the 3.11 venv, which reported the same four pre-existing `UNPARSABLE` test files before
 and after the edit and no worklog diagnostic. No green result is claimed for this entry.
+
+### E282 — Q85 answered: `handoff` is controller-attested, and it now has planned surface
+
+**DECISION (operator, after review with the E2E agent).** Q85 is resolved as option (1): the parent-child run
+link is controller-attested — `_child_run_context` proves the parent bindings and allocates the child run
+through the real `begin_run` in the same session, so `parent_run_id` is attested after an actual allocation
+(spec §7.1) — and the supervisor enforces only wire invariants it can see. The round-1 alternative (a narrow
+read-only attester injected into the service) is rejected: it inverts the E263 dependency direction, adds an
+`FA_STATE_ROOT` mount contract and filesystem IO on the hot path, and buys no boundary a compromised
+controller could not already cross, since it can `exec` as the owner anyway.
+
+**FACT (source-verified at `0619ecd`, before any doc change).** No wire or dispatch work is needed, which is
+why the implementation is one authority body plus one route: `Operation.HANDOFF` already decodes
+`{target_namespace}` into `_OWNER_REPLY` whose `capability` is 64-hex (`protocol.py:135`/`:151`);
+`HANDOFF` is already in `AUTHORITY_GATED_OPERATIONS` and non-readonly, so it reserves `op-<request_id>` and
+cannot skip the authority check; `_execute_reserved` already treats it as a `GrantReply` operation;
+`_owner_only` matches the stored grant with `hmac.compare_digest` **and** the full active-actor dict, so
+replacing grant and `active_actor` revokes the old capability exactly; Q75 replay compares against the
+*original* proof (`_authorize_replay`), so a revoked proof retrieves only its bound cached reply; and
+`_settle_owner` already spells the settlement predicate. `RunContext` has no `parent_run_id` field at all,
+which is why the controller must supply it — the attestation is structural, not decorative.
+
+**What the ruling left implicit, decided here and written into the plan, not into code.** The precondition
+order is fixed (ownership → settlement → live writer fd → wire invariants) so refusals are deterministic;
+settlement reuses `_settle_owner`'s predicate and **not** `_forward_gates` (the latter's writability probe and
+canonical tree hash are commit preconditions); the swap requires the live writer fd (`binding.writer is not
+None`, else `STALE_GENERATION`) so an unfenceable ownership is never moved; and the crash window after the
+metadata replace is stated — an `OWNED` workspace whose capability nobody holds quarantines on restart exactly
+as for `acquire_writer`, and is never reconstructed from the journal. The bound is stated too: a controller
+that names a nonexistent child run can strand its own grant until release/restart — self-inflicted denial of
+service, never escalation.
+
+**Documents changed (no code).** spec §2.1's `handoff` row now carries the whole rule set and §7.1 states the
+attestation chain and its bound; the increment gains **CT113 [FUNCTIONAL]** (`kill: remove-call
+src/fa/execution/workspace.py::WorkspaceAuthority.handoff -> _handoff_owner`) and **SLICE2 STEP6**, whose exit
+criteria include the replay pairs, the settlement refusals, the unchanged-generation byte comparison, the
+single durable record and a second-generation handoff proving the chain; `tests/test_execution_handoff.py` is
+added to SLICE2's `TESTS:` line and verify fences; SLICE1 STEP3 records 18/19 routes and names STEP6 as the
+owner of the nineteenth; SLICE5 STEP2 is split so the controller leg is all that remains there; SLICE3 STEP1's
+stale "part (b) outstanding" is corrected (E278 delivered `CellTermination`) and part (a), Q74/§6.1, is now
+spelled out with `tests/test_stage_checkpoints.py` and an explicit reason for declaring no new CT; the register
+gains `I03-LIVE-27` (PLANNED / UNEXECUTED) plus an E282 checkpoint; the E2E plan gains `L-HAND-1/2`; Q85 is
+marked ANSWERED with both "what would settle it" conditions answered and the reopen conditions named.
+
+**Counts, re-derived (not hand-typed):** CT **25** (18 FUNCTIONAL + 7 CONSTRAINT), `kill:` **18**, STEPs
+**36**, E2E surfaces **27** / joins **8**. Historical entries keep the counts current at their time; the
+DoD table is the canonical refresh and now names E282 as the entry that moved it.
+
+**One recorded deviation.** The ruling says "implement in SLICE2 STEP2"; the unit is **STEP6**. STEP2's exit
+criteria are the five view purposes (different producer, different bank) and CT113 needs its own settlement and
+replay matrix, so folding it in would reopen a step with nothing else outstanding. Slice, contract and
+sequencing are exactly as ruled; the step's first sentence says so.
+
+**Not claimed.** No code, no bank run (no usable 3.13 interpreter this session), no STEP or CT ticked, no live
+row promoted. `handoff` still refuses `BACKEND_UNAVAILABLE` on the wire until SLICE2 STEP6 lands, which is now
+the next unit in E281's order.

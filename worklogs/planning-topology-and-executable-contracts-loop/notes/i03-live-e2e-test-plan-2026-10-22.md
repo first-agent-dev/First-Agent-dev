@@ -160,6 +160,17 @@ Two of these cases (`L-RCPT-2`, `L-RCPT-6`) are the ledger-append cases the sess
 they assert that the journal gains exactly one record per operation, that a completed command's record is never
 rewritten, and that the replay is served from the record rather than from the daemon.
 
+`handoff` (Q85 ruling, E282/CT113) adds one case, and it is the only case in this suite whose arrange step
+needs two real runs. It is P6 work: it cannot be written before SLICE2 STEP6 exists and the controller cutover
+(SLICE4 STEP2) gives the handler a client, because the "child run" it names must come from an actual
+`SessionManager.begin_run`, not from a hand-made namespace.
+
+| Case | Arrange | Observe (wire **and** ledger) | Negative control |
+| :--- | :--- | :--- | :--- |
+| **L-HAND-1** the grant moves, the epoch does not | one registered workspace with a live owner grant, one child run allocated by a real `begin_run` in the same session (`parent_run_id` = the owner's run), a pinned READ view at R0 | the reply is `{view_ref:null, capability, generation, revision_id}` with **the same `generation`** and the same `revision_id` as before the call; the child immediately opens a WRITE view whose `view_ref.generation` is that same generation and writes successfully; the pinned reader still answers R0; `workspace.json` differs from the pre-call copy **only** in `active_actor` and the grant (byte compare, not a field list); exactly one `operations/op-<request_id>.json` ends `DONE` and contains no capability; the daemon log shows no new attach and `docker ps` no new container | call `handoff` again with the same `request_id` and the *old* capability → the identical cached reply (the new capability) must come back, while a **new** `request_id` with the old capability must be `UNAUTHORIZED`; then a second `handoff` from the child to its own `begin_run` child must succeed, proving the chain rather than a one-shot move |
+| **L-HAND-2** nothing unsettled may move | the same arrangement, three times: a view `SEALED` but not published; a view still `OPEN` with a live cell; a workspace with a surviving `intent.json` from an interrupted publication | each call refuses `WORKSPACE_BUSY` and leaves `workspace.json` byte-identical; after publishing the sealed view (or stopping the open one) the same call succeeds, which is what proves the refusal was the settlement predicate and not an unrelated error | swap `_settle_owner`'s predicate for `_forward_gates` (test build) → the sealed-view case changes code path *and* the open-view case starts probing the canonical tree; the case asserts the refused codes and the untouched metadata, so either substitution shows up |
+
+
 ---
 
 ## 5. Sequences worth spelling out (the ones a naive case gets wrong)
