@@ -4533,3 +4533,53 @@ backend whose results cannot become a truthful receipt would create exactly the 
 surface this repository forbids. Consequently a stage cannot yet complete through the wire
 (`stop_view` cannot prove emptiness → `seal` refuses), and `I03-LIVE-26` is PLANNED / UNEXECUTED. Also
 untouched: the controller caller cutover, install/image/unit files, and the live `S01..S08` joins.
+
+### E278 — the terminal barrier joins: journal-owned cells and kernel `populated 0`
+
+**FACT (source-verified before editing).** `ViewStopper.stop_view` sequenced close → drain → stop → observe, but
+`service.py` composed it with `cells=None`, so every view answered `terminal: false` and `seal` always refused
+`TERMINALITY_UNKNOWN`. The two facts the barrier needs did not exist: nothing implemented `CellTermination`
+(there was no per-view cell inventory and no way to stop those cells), and `docker.py` documented "Deliberately
+no terminal_barrier: Docker stopped != cgroup populated=0" with no reader for the real fact. `OperationJournal`
+already had both halves of the inventory problem solved — `owned_cells()` lists every EXEC record binding a
+durable container id (DONE included, because a shell can outlive its command) and `request_cancel` is the
+identity + intent transaction — so no second registry was needed.
+
+**DECIDED (mechanism).** `execution/cgroup.py::descendants_empty(root, parent, cid)` is a pure reader: it
+validates the parent (relative POSIX components, no `.`/`..`/empty/absolute) and the 64-hex container id, probes
+both known driver layouts (`<parent>/<cid>`, `<parent>/docker-<cid>.scope`), opens `cgroup.events` with
+`O_NOFOLLOW`, requires a *regular* file, bounds the read at 64 KiB, requires exactly one `populated <int>` line,
+and returns `True` only for `0`, `False` for `> 0`, `None` for everything else. Missing is `None`, never
+"gone, therefore empty": a missing cgroup is also what a wrong or unmounted path looks like.
+`execution/termination.py::OwnedCellTermination` is the `CellTermination`: `stop_cells` stops each record
+through `DockerCells.force_stop_operation` (the record's own operation id is the identity, cancel intent is
+persisted before daemon contact) and `cells_terminal` reads each bound container's cgroup. A view with **no**
+EXEC record binding a container id has never had a cell, so the journal alone proves it empty — that is a
+durable fact, not an inference from silence. Without a backend/profile a cell is never called empty and never
+stopped (`BACKEND_UNAVAILABLE` / `None`). `CellBackend.cells` exposes the lifecycle seam; `ServiceConfig` gained
+all-or-none Docker facts plus `cgroup_root`/`startup_timeout_ms`, so the composed service builds the backend,
+reconciles surviving owned cells *before* binding the socket, and closes it on shutdown.
+
+**Behaviour change, stated plainly.** A view that never executed a command now reaches `TERMINAL` (journal fact)
+instead of `terminal: false`; a view that *does* bind a cell stays `STOPPING` unless the cgroup answers `0`. The
+consequence is the intended one: **the publication half is now reachable through the wire** — one test drives
+register → acquire → create_view → write → stop_view(terminal) → seal → publish → prepare_bundle → install_project
+→ release over the real codec, real socket and real canonical files (`note.txt` appears in the canonical tree,
+`worklogs/demo-project/roadmap.md` after install).
+
+**Evidence.** New `tests/test_execution_termination.py` **20 passed** (C3 for the reader and the journal; C1 for
+the Docker stop seam, doubled); `tests/test_execution_service.py` **24 passed** (including the wire-level
+publication half and the refused stop when a cell cannot be observed); owning bank **387 passed**; wider
+`-k "execution or workspace"` **1585 passed, 1 skipped** (3 known `test_controller_installed` offline-install
+errors). ruff/format clean, mypy 22 files, pyrefly 0 errors, `fa authoring-check` 0. **14/14 mutants killed** with
+sha256-verified byte-exact restore: `populated` ignored, multiple population lines tolerated, symlink followed,
+unbounded read, systemd layout missing, unvalidated parent, a cell answered empty without a backend, a cell
+answered empty without a profile, a view with a cell answered empty, records not filtered to the exact view, the
+stop using a fabricated id, a missing cgroup read as empty, the no-cell binding not emptied, and `stop_view`
+skipping the owned-cell stop.
+
+**Deliberately not done, with the reason.** No `ExecutionReceipt` is issued, so `exec`/`inspect`/`cancel` and
+`pty_control` still refuse; the cgroup path, the daemon stop and the terminal fact have **not** been observed on a
+real host — `I03-LIVE-19/20/25/26` stay PLANNED / UNEXECUTED, and the `FA_REQUIRE_EXECUTION_HOST=1` integration
+rows remain the only place those facts may be claimed. Also untouched: SLICE5/6, bundle GC, Docker/cgroup
+deployment profiles and the caller cutover.

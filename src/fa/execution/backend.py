@@ -115,6 +115,11 @@ class CellBackend:
     def journal(self) -> OperationJournal:
         return self._journal
 
+    @property
+    def cells(self) -> DockerCells:
+        """The owned-cell lifecycle seam, for the terminal-barrier adapter."""
+        return self._cells
+
     @contextmanager
     def _bounded_mutex(self, deadline: float) -> Generator[None]:
         remaining = deadline - time.monotonic()

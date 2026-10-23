@@ -342,8 +342,8 @@ def test_release_without_a_view_settles_the_grant_it_was_proved_with(site: Site)
         assert metadata["status"] == "AVAILABLE"
 
 
-def test_stop_view_reports_no_terminality_without_a_descendant_observation(site: Site) -> None:
-    """producer-kill-check: treat a missing cell observer as 'probably stopped'."""
+def test_stop_view_proves_terminality_when_no_cell_was_ever_created(site: Site) -> None:
+    """producer-kill-check: report UNKNOWN for a view the journal proves empty."""
     with SupervisorService(_config(site)) as service:
         workspace_id = _registered(service)
         capability, revision_id = _writer(service, workspace_id, request_id="c" * 32)
@@ -352,15 +352,113 @@ def test_stop_view_reports_no_terminality_without_a_descendant_observation(site:
             service, Operation.STOP_VIEW, {}, request_id="e" * 32, view_ref=view, capability=view_capability
         )
         assert reply["status"] == "OK", reply
-        assert reply["result"] == {"view_id": view["view_id"], "terminal": False}
+        assert reply["result"] == {"view_id": view["view_id"], "terminal": True}
+        root = site.state / "workspaces" / workspace_id / "views" / view["view_id"]
+        assert (root / "terminal.json").is_file(), "a journal-proved empty view got no receipt"
+        assert json.loads((root / "view.json").read_text())["state"] == "STOPPING"
+
+
+def test_stop_view_refuses_a_cell_it_cannot_stop(site: Site) -> None:
+    """producer-kill-check: skip the stop because no observer is configured."""
+    with SupervisorService(_config(site)) as service:
+        workspace_id = _registered(service)
+        capability, revision_id = _writer(service, workspace_id, request_id="c" * 32)
+        view, view_capability = _view(service, workspace_id, revision_id, capability, request_id="d" * 32)
+        _plant_cell(service, view, view_capability, request_id="1" * 32)
+
+        reply = exchange(
+            service, Operation.STOP_VIEW, {}, request_id="e" * 32, view_ref=view, capability=view_capability
+        )
+        assert _error(reply) == "BACKEND_UNAVAILABLE"
         root = site.state / "workspaces" / workspace_id / "views" / view["view_id"]
         assert json.loads((root / "view.json").read_text())["state"] == "STOPPING", (
-            "admission closure did not reach the view record"
+            "a view whose cell could not be stopped left its closed state"
         )
-        assert not (root / "terminal.json").exists(), "a view without a descendant observation got a receipt"
+        assert not (root / "terminal.json").exists(), "an unobserved cell produced a terminal receipt"
 
         sealed = exchange(service, Operation.SEAL, {}, request_id="f" * 32, view_ref=view, capability=view_capability)
         assert _error(sealed) == "TERMINALITY_UNKNOWN"
+
+
+def test_the_publication_half_is_reachable_through_the_wire(site: Site) -> None:
+    """producer-kill-check: drop any one call in stop -> seal -> publish -> bundle -> install."""
+    with SupervisorService(_config(site)) as service:
+        workspace_id = _registered(service)
+        capability, revision_id = _writer(service, workspace_id, request_id="c" * 32)
+        view, view_capability = _view(service, workspace_id, revision_id, capability, request_id="d" * 32)
+        written = exchange(
+            service,
+            Operation.WRITE_FILE,
+            {"path": "note.txt", "content": "published through the codec\n", "expected_sha256": None},
+            request_id="2" * 32,
+            view_ref=view,
+            capability=view_capability,
+        )
+        assert written["status"] == "OK", written
+
+        stopped = exchange(
+            service, Operation.STOP_VIEW, {}, request_id="3" * 32, view_ref=view, capability=view_capability
+        )
+        assert stopped["result"] == {"view_id": view["view_id"], "terminal": True}
+
+        sealed = exchange(service, Operation.SEAL, {}, request_id="4" * 32, view_ref=view, capability=view_capability)
+        assert sealed["status"] == "OK", sealed
+        assert set(sealed["result"]) == {"sealed_manifest_id", "revision_id", "tree_sha256"}
+        assert sealed["result"]["revision_id"] != revision_id
+
+        published = exchange(
+            service,
+            Operation.PUBLISH,
+            {
+                "sealed_manifest_id": sealed["result"]["sealed_manifest_id"],
+                "expected_base_revision": revision_id,
+            },
+            request_id="5" * 32,
+            view_ref=view,
+            capability=view_capability,
+        )
+        assert published["status"] == "OK", published
+        assert set(published["result"]) == {
+            "workspace_id",
+            "revision_id",
+            "tree_sha256",
+            "operation_id",
+            "projection_complete",
+        }
+        assert published["result"]["revision_id"] == sealed["result"]["revision_id"]
+        assert published["result"]["operation_id"] == "op-" + "5" * 32
+        assert (site.source / "note.txt").read_text() == "published through the codec\n"
+
+        bundle = exchange(
+            service,
+            Operation.PREPARE_BUNDLE,
+            {
+                "project_slug": "demo-project",
+                "increment_slug": "first-increment",
+                "roadmap_text": _ROADMAP_PROSE,
+                "increment_text": _INCREMENT_PROSE,
+                "expected_base_revision": published["result"]["revision_id"],
+            },
+            request_id="6" * 32,
+            capability=capability,
+        )
+        assert bundle["status"] == "OK", bundle
+        assert set(bundle["result"]) == {"validated_bundle_id", "bundle_sha256"}
+
+        installed = exchange(
+            service,
+            Operation.INSTALL_PROJECT,
+            {"validated_bundle_id": bundle["result"]["validated_bundle_id"], "project_slug": "demo-project"},
+            request_id="7" * 32,
+            capability=capability,
+        )
+        assert installed["status"] == "OK", installed
+        assert installed["result"]["projection_complete"] is True
+        assert (site.source / "worklogs" / "demo-project" / "roadmap.md").is_file()
+
+        released = exchange(service, Operation.RELEASE, {}, request_id="8" * 32, capability=capability)
+        assert released["status"] == "OK", released
+        assert released["result"] == {"released": True}
 
 
 @pytest.mark.parametrize(
@@ -482,6 +580,27 @@ def test_main_refuses_an_invalid_config_without_serving(site: Site, tmp_path: Pa
     assert read_config_file(config).view_profile_id == native_profile().profile_id
 
 
+def test_docker_facts_are_all_or_none(site: Site, tmp_path: Path) -> None:
+    """producer-kill-check: build a daemon-less backend from a partial config."""
+    with pytest.raises(ExecutionContractError):
+        _config(site, docker_socket=tmp_path / "docker.sock")
+    with pytest.raises(ExecutionContractError):
+        _config(site, docker_daemon_uid=0, docker_api_version="1.43", docker_timeout_ms=1000)
+    configured = _config(
+        site,
+        docker_socket=tmp_path / "docker.sock",
+        docker_daemon_uid=0,
+        docker_api_version="1.43",
+        docker_timeout_ms=1000,
+    )
+    assert configured.docker_socket == tmp_path / "docker.sock"
+    with pytest.raises(ExecutionContractError):
+        _config(site, cgroup_root=Path("relative/cgroup"))
+    # No daemon is contacted here: construction is validation only.
+    service = build_supervisor(configured)
+    assert service.authority.approved_profile is not None
+
+
 def test_profiles_must_be_explicit_and_unique(site: Site) -> None:
     """producer-kill-check: accept an empty or duplicated approved profile set."""
     with pytest.raises(ExecutionContractError):
@@ -494,6 +613,35 @@ def test_profiles_must_be_explicit_and_unique(site: Site) -> None:
 # ---------------------------------------------------------------------------
 # helpers that use the composed service, not a fixture authority
 # ---------------------------------------------------------------------------
+
+
+_ROADMAP_PROSE = "## Intent\n\nShip the thing.\n\n## Out-of-scope\n\nEverything else.\n"
+_INCREMENT_PROSE = "## SLICE1: first\n\nSteps.\n\n## SLICE2: second\n\nSteps.\n"
+
+
+def _plant_cell(service: SupervisorService, view: dict[str, Any], capability: str, *, request_id: str) -> str:
+    """One EXEC record that binds a container id, and no daemon to stop it."""
+    request = {
+        "protocol_version": 1,
+        "request_id": request_id,
+        "op": "exec",
+        "namespace": ACTOR.to_dict(),
+        "view_ref": view,
+        "capability": capability,
+        "payload": {
+            "operation_id": "op-" + request_id,
+            "profile_id": native_profile().profile_id,
+            "command": "printf never-run",
+            "cwd": ".",
+            "timeout_ms": 500,
+            "session_id": "main",
+        },
+    }
+    assert service.authority.journal.reserve(request).fresh
+    operation_id = "op-" + request_id
+    service.authority.journal.begin(operation_id, ACTOR)
+    service.authority.journal.record_container(operation_id, ACTOR, "a" * 64)
+    return operation_id
 
 
 def _registered(service: SupervisorService) -> str:

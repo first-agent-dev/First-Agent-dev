@@ -1224,7 +1224,9 @@ E2E rows already registered (`I03-LIVE-22`, `I03-LIVE-23`) assert exactly that i
 
 **Status of this table (2026-10-23).** Item 1 is delivered by E276 — `_recover_intent`, the stale
 `pending/` classification and the `_load` hook all shipped in one change, as the "lands with" column
-required. Items 2–5 are unchanged and none is started.
+required. Item 2's route table and composition are delivered by E277, and E278 delivered the
+`CellTermination` join its `stop_view` route needs. Items 3–5 are unchanged and none is started; the four
+execution routes and `handoff` stay dormant until the receipt issuer / PTY control / handoff owners land.
 
 **Why recovery precedes the routes, in one sentence each.** (a) Routes multiply the number of ways to
 crash into an unrecoverable workspace, so the recovery owner must exist first. (b) The E2E lane cannot
@@ -3053,3 +3055,31 @@ codec + real authority); owning bank 556 passed; wider `-k "execution or workspa
 skipped (3 known offline-install errors elsewhere); ruff/format clean, mypy 21 files, pyrefly 0,
 `fa authoring-check` 0. 9/9 assertion-only mutants killed with byte-exact restore. `I03-LIVE-26` is
 PLANNED / UNEXECUTED; no STEP box, contract or live verdict is ticked.
+
+### E278 result — CT104's join: `CellTermination` over journal-owned cells + kernel `populated 0`
+
+**What shipped.** `src/fa/execution/cgroup.py` (pure cgroup-v2 reader: both driver layouts, `O_NOFOLLOW`,
+regular-file check, 64 KiB bound, exactly one `populated <int>` line; `True` only for `0`, `None` otherwise) and
+`src/fa/execution/termination.py::OwnedCellTermination`, the `CellTermination` that `ViewStopper` was written for:
+cells come from `OperationJournal.owned_cells()` filtered to the exact namespace and `ViewRef`, the stop goes
+through `DockerCells.force_stop_operation` with the record's own operation id, and emptiness comes from the
+cgroup. The composed service now always installs it: without Docker it can still prove a never-executed view
+empty (a journal fact), and with Docker (`ServiceConfig` gained all-or-none daemon facts, `cgroup_root`,
+`startup_timeout_ms`) it builds `CellBackend`, reconciles surviving owned cells before binding the socket, and
+closes the backend on shutdown.
+
+**Current vs target behaviour.** Current: `stop_view` reaches `TERMINAL` for views that never bound a cell, and
+refuses (`BACKEND_UNAVAILABLE`) for one it cannot stop; `seal`, `publish`, `prepare_bundle`, `install_project`
+and `release` are therefore reachable through the closed codec, proved end-to-end on real files. Target: the same
+flow with a *real* worker/attach cell and a real cgroup — that is `tests/integration/test_publication_recovery.py`
+under `FA_REQUIRE_EXECUTION_HOST=1`, still BLOCKED here. STEP1 stays open (Q74's per-stage checkpoint policy, the
+host rows, and the exec half's receipt issuer), so no box is ticked.
+
+**Why a view with a cell is still not sealed locally.** The stop leg is doubled at the `DockerCells` seam in the
+local bank (C1); only a host run may claim the daemon actually signalled the cell and that its cgroup emptied.
+`cells_terminal` returns `None` for any unreadable fact, so an unproved cell keeps the view `STOPPING` and owned.
+
+**Evidence.** `tests/test_execution_termination.py` 20 passed; `tests/test_execution_service.py` 24 passed
+(the publication half now driven through the wire); owning bank 387 passed; wider `-k "execution or workspace"`
+1585 passed, 1 skipped; ruff/format clean, mypy 22 files, pyrefly 0, `fa authoring-check` 0; 14/14 assertion-only
+mutants killed with byte-exact restore. `I03-LIVE-19/20/25/26` remain PLANNED / UNEXECUTED.

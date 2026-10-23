@@ -20,6 +20,11 @@ Dormant owners (declared, with the unit that activates each):
 - `register_workspace` with `create=true`: only `register_existing` exists; the
   creating/materializing provisioner is SLICE5's managed acquisition.
 
+`stop_view` is composed with the real `OwnedCellTermination`: a view that never
+bound a cell is empty by the journal alone, and a view that did is stopped
+through its own record and observed in its cgroup (E278). Without a Docker
+configuration the adapter still proves the first case and refuses the second.
+
 Socket ownership belongs here too: the authority takes its single-supervisor
 flock and completes startup recovery (`recover_uncertain` + `_load`, which is
 forward recovery) BEFORE the listening socket exists, so no request can be
@@ -33,6 +38,7 @@ import os
 import socket
 import stat
 import threading
+import time
 from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
@@ -42,6 +48,8 @@ from types import TracebackType
 from typing import Any, Self
 
 from fa.execution import publication
+from fa.execution.backend import CellBackend
+from fa.execution.docker import DockerEngine
 from fa.execution.plans import ProtectedPlanContext
 from fa.execution.profiles import ExecutionProfile, profile_set_sha256
 from fa.execution.supervisor import (
@@ -51,6 +59,7 @@ from fa.execution.supervisor import (
     SupervisorError,
     ViewStopper,
 )
+from fa.execution.termination import OwnedCellTermination
 from fa.execution.types import (
     Access,
     ExecutionContractError,
@@ -86,6 +95,12 @@ _OPTIONAL_KEYS = frozenset(
         "reply_cache_entries",
         "backlog",
         "max_workers",
+        "docker_socket",
+        "docker_daemon_uid",
+        "docker_api_version",
+        "docker_timeout_ms",
+        "cgroup_root",
+        "startup_timeout_ms",
     }
 )
 _CONFIG_KEYS = _REQUIRED_KEYS | _OPTIONAL_KEYS
@@ -115,35 +130,21 @@ class ServiceConfig:
     reply_cache_entries: int = 1024
     backlog: int = 16
     max_workers: int = 8
+    # All four Docker facts or none: a partial daemon configuration would be a
+    # default authority for cell lifecycle, so it is refused instead.
+    docker_socket: Path | None = None
+    docker_daemon_uid: int | None = None
+    docker_api_version: str | None = None
+    docker_timeout_ms: int | None = None
+    cgroup_root: Path = Path("/sys/fs/cgroup")
+    startup_timeout_ms: int = 5000
 
     def __post_init__(self) -> None:
-        if not isinstance(self.state_root, Path) or not self.state_root.is_absolute() or ".." in self.state_root.parts:
-            raise ExecutionContractError
-        if (
-            not isinstance(self.socket_path, Path)
-            or not self.socket_path.is_absolute()
-            or ".." in self.socket_path.parts
-            or self.socket_path == Path("/")
-            or len(str(self.socket_path).encode("utf-8")) > _MAX_SOCKET_PATH_BYTES
-        ):
-            raise ExecutionContractError
-        if (
-            self.socket_path.is_relative_to(self.state_root)
-            or self.state_root.is_relative_to(self.socket_path)
-            or any(
-                self.socket_path.is_relative_to(root) or root.is_relative_to(self.socket_path)
-                for root in self.approved_roots.values()
-                if isinstance(root, Path)
-            )
-        ):
-            # The supervisor's own socket is never reachable through a mounted root.
-            raise ExecutionContractError
+        _require_path(self.state_root)
+        _require_socket_path(self.socket_path, self.state_root, self.approved_roots)
         if not self.controller_uids or any(type(uid) is not int or uid < 0 for uid in self.controller_uids):
             raise ExecutionContractError
-        if not isinstance(self.approved_roots, Mapping) or not self.approved_roots:
-            raise ExecutionContractError
-        if any(not isinstance(root, Path) for root in self.approved_roots.values()):
-            raise ExecutionContractError
+        _require_roots(self.approved_roots)
         if not self.profiles or len({profile.profile_id for profile in self.profiles}) != len(self.profiles):
             raise ExecutionContractError
         for value in (self.rpc_timeout_ms, self.lock_timeout_ms, self.reply_cache_entries, self.backlog):
@@ -158,6 +159,59 @@ class ServiceConfig:
             raise ExecutionContractError
         if self.approved_cache is not None and not isinstance(self.approved_cache, Path):
             raise ExecutionContractError
+        _require_docker_facts(
+            self.docker_socket, self.docker_daemon_uid, self.docker_api_version, self.docker_timeout_ms
+        )
+        _require_path(self.cgroup_root)
+        _positive_integer(self.startup_timeout_ms)
+
+
+def _require_path(value: object) -> None:
+    if not isinstance(value, Path) or not value.is_absolute() or ".." in value.parts or value == Path("/"):
+        raise ExecutionContractError
+
+
+def _require_socket_path(path: object, state_root: Path, approved_roots: object) -> None:
+    """One private socket, bounded by `sun_path`, never inside a mounted root."""
+    _require_path(path)
+    if not isinstance(path, Path) or len(str(path).encode("utf-8")) > _MAX_SOCKET_PATH_BYTES:
+        raise ExecutionContractError
+    if path.is_relative_to(state_root) or state_root.is_relative_to(path):
+        raise ExecutionContractError
+    if isinstance(approved_roots, Mapping) and any(
+        path.is_relative_to(root) or root.is_relative_to(path)
+        for root in approved_roots.values()
+        if isinstance(root, Path)
+    ):
+        raise ExecutionContractError
+
+
+def _require_roots(approved_roots: object) -> None:
+    if not isinstance(approved_roots, Mapping) or not approved_roots:
+        raise ExecutionContractError
+    for root_id, root in approved_roots.items():
+        _require_path(root)
+        if not isinstance(root_id, str):
+            raise ExecutionContractError
+
+
+def _require_docker_facts(
+    socket_path: Path | None, daemon_uid: int | None, api_version: str | None, timeout_ms: int | None
+) -> None:
+    """All four daemon facts or none: a partial one would be a default authority."""
+    facts = (socket_path, daemon_uid, api_version, timeout_ms)
+    if all(fact is None for fact in facts):
+        return
+    if any(fact is None for fact in facts):
+        raise ExecutionContractError
+    if not isinstance(socket_path, Path):
+        raise ExecutionContractError
+    _require_path(socket_path)
+    if type(daemon_uid) is not int or daemon_uid < 0 or not isinstance(api_version, str):
+        raise ExecutionContractError
+    if type(timeout_ms) is not int:
+        raise ExecutionContractError
+    _positive_integer(timeout_ms)
 
 
 def load_config(document: object) -> ServiceConfig:
@@ -196,12 +250,26 @@ def load_config(document: object) -> ServiceConfig:
             reply_cache_entries=document.get("reply_cache_entries", 1024),
             backlog=document.get("backlog", 16),
             max_workers=document.get("max_workers", 8),
+            docker_socket=_path(document.get("docker_socket")),
+            docker_daemon_uid=document.get("docker_daemon_uid"),
+            docker_api_version=document.get("docker_api_version"),
+            docker_timeout_ms=document.get("docker_timeout_ms"),
+            cgroup_root=Path(document.get("cgroup_root", "/sys/fs/cgroup")),
+            startup_timeout_ms=document.get("startup_timeout_ms", 5000),
         )
     except TypeError:
         raise ExecutionContractError from None
 
 
 _PROFILE_KEYS = frozenset(ExecutionProfile.__dataclass_fields__)
+
+
+def _path(raw: object) -> Path | None:
+    if raw is None or isinstance(raw, Path):
+        return raw
+    if not isinstance(raw, str):
+        raise ExecutionContractError
+    return Path(raw)
 
 
 def _profile(raw: object) -> ExecutionProfile:
@@ -261,7 +329,34 @@ class SupervisorService:
             authorize=self.authorize,
             handle=self.handle,
         )
-        self._stopper = ViewStopper(self._authority)
+        self._backend: CellBackend | None = None
+        if config.docker_socket is not None:
+            daemon_uid, api_version, timeout_ms = (
+                config.docker_daemon_uid,
+                config.docker_api_version,
+                config.docker_timeout_ms,
+            )
+            if daemon_uid is None or api_version is None or timeout_ms is None:
+                raise ExecutionContractError  # refused in __post_init__; narrows the type
+            engine = DockerEngine(
+                config.docker_socket,
+                daemon_uid=daemon_uid,
+                api_version=api_version,
+                rpc_timeout_ms=timeout_ms,
+            )
+            self._backend = CellBackend(self._authority, engine, self._authority.journal)
+        # The barrier is always composed: a never-executed view is proved empty
+        # by the journal alone, and a view that has a cell is refused (None)
+        # until a real backend and cgroup fact are both available.
+        self._stopper = ViewStopper(
+            self._authority,
+            cells=OwnedCellTermination(
+                self._authority.journal,
+                cells=None if self._backend is None else self._backend.cells,
+                profile=self._view_profile,
+                cgroup_root=config.cgroup_root,
+            ),
+        )
         self._socket: socket.socket | None = None
         self._executor: ThreadPoolExecutor | None = None
         self._entered = False
@@ -294,12 +389,20 @@ class SupervisorService:
     def __enter__(self) -> Self:
         if self._entered:
             raise ExecutionContractError
-        # Recovery (journal UNKNOWN + per-workspace intent) precedes any socket.
+        # Recovery (journal UNKNOWN + per-workspace intent) precedes any socket,
+        # and any surviving owned cell is stopped before the first accept.
         self._authority.__enter__()
         self._entered = True
         try:
+            if self._backend is not None:
+                self._backend.reconcile(deadline=time.monotonic() + self._config.startup_timeout_ms / 1000)
             self._bind()
         except BaseException:
+            if self._backend is not None:
+                try:
+                    self._backend.close(deadline=time.monotonic() + self._config.startup_timeout_ms / 1000)
+                except (SupervisorError, OSError):
+                    pass
             self._entered = False
             self._authority.__exit__(None, None, None)
             raise
@@ -382,6 +485,13 @@ class SupervisorService:
             executor.shutdown(wait=True, cancel_futures=False)
         if self._entered:
             self._entered = False
+            if self._backend is not None:
+                try:
+                    self._backend.close(deadline=time.monotonic() + self._config.startup_timeout_ms / 1000)
+                except (SupervisorError, OSError):
+                    # Teardown is best effort: the authority still drains its own
+                    # gates, and a lost attach handle asserts no cell death.
+                    pass
             self._authority.__exit__(None, None, None)
         path = self._config.socket_path
         try:

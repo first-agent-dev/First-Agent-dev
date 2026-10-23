@@ -1550,6 +1550,17 @@ duplicate (the test now asserts the observable side effect instead), and the pro
 docker/cgroup fact, no installed service and no canonical publication was exercised; nothing here is a
 live PASS. The `FA_REQUIRE_EXECUTION_HOST=1` form of both rows stays BLOCKED in this session.
 
+### E278 checkpoint (2026-10-23) — the barrier's local half exists; still 26 surfaces, all UNEXECUTED
+
+The `CellTermination` that `I03-LIVE-19`/`I03-LIVE-20` describe now exists in `src/` (`cgroup.descendants_empty`
++ `OwnedCellTermination`), and the composed service installs it. What that changes locally: a view that never
+bound a cell is proved empty by the journal alone, so `stop_view → seal → publish → prepare_bundle →
+install_project → release` is driven end-to-end through the closed codec on real files
+(`tests/test_execution_service.py`). What it does **not** change: no row is promoted. The daemon stop, the real
+cgroup path and the kernel's `populated 0` have only been exercised against a real filesystem and a doubled
+`DockerCells` seam (C1), never against a live container; `I03-LIVE-19`, `-20`, `-25` and `-26` therefore stay
+`PLANNED / UNEXECUTED`. Inventory unchanged at **26 surfaces / eight joins**; no per-section count is rewritten.
+
 ### E277 checkpoint (2026-10-23) — inventory is 26 surfaces / eight joins; one new row, still UNEXECUTED
 
 `I03-LIVE-26` was added for the composed supervisor boundary that now exists in `src/` (real route table, real
