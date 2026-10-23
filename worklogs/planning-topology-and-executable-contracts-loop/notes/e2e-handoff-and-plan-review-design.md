@@ -9,6 +9,10 @@ I02+I03 evidence belong to foundation I03's final group. Reduced I02 has a retai
 may ship before that host acceptance; all unique producer obligations remain incomplete until
 actual evidence. See [migration bank](i02-to-i03-scope-migration-2026-10-15.md).
 
+**Operator scope clarification, 2026-10-23:** the final I03 live-host gate covers all project changes
+from I01–I03. The current case inventory does not yet map I01 obligations; Q87 blocks final acceptance
+until that gap is resolved. The I02+I03 lineage above is historical, not a narrowing of the final gate.
+
 This is a design record, not evidence that the schema, prompts, E2E artifacts, or controller behavior have been implemented. Confirmed choices, recommendations, and open implementation details are distinguished below so a future slice does not silently turn a proposal into policy.
 
 ## 1. Confirmed project decisions
@@ -23,15 +27,15 @@ This is a design record, not evidence that the schema, prompts, E2E artifacts, o
   - `IMPLEMENTED`: the code exists and its required unit/mutation proof passes.
   - `VERIFIED`: the harness's deterministic evidence passes and the eval role's contract judgment passes. Eval does not overrule a determinate blocking gate; the gate remains a floor. Stochastic verification retains the existing pass^k rule.
 - **Step markers:** `[ ]` todo, `[>]` in progress, `[x]` done.
-- **E2E is separate evidence, not a universal increment status and not a harness/eval verdict.** A particular increment may explicitly require live E2E in its DoD. Foundation I03 now owns the final reviewed I02+I03 host acceptance; reduced I02 ships only its actual retained local DoD, without implying that host evidence. Other increments need not all be live-tested at the moment their code work closes.
+- **E2E is separate evidence, not a universal increment status and not a harness/eval verdict.** A particular increment may explicitly require live E2E in its DoD. Foundation I03 owns final reviewed live-host acceptance for all changes from I01–I03; reduced I02 ships only its actual retained local DoD, without implying that host evidence. Other increments need not all be live-tested at the moment their code work closes.
 - **Deployment path:** no separate staging/dev host. For final I03 acceptance, prepare the integrated package in the branch, merge to `main`, run the normal update/rebuild, then test the deployed main image. Start in observe mode; review artifacts before any enforce-mode run.
 - **E2E artifact layout:**
 
   ```text
-  worklogs/<project>/e2e/
-    README.md                    # planner-owned case index
+  worklogs/<project-slug>/e2e/
+    README.md                    # planner-owned case index; IDs are scoped to this project
     I03/
-      live-verification.md       # integrated I02+I03 planner-owned operator sheet
+      live-verification.md       # integrated I01–I03 planner-owned operator sheet
       implementation-handoffs.md # coder appends seam observations/proposals
       fixtures/                  # coder implements reviewed helpers
     I02/                         # optional retained producer-origin fixtures/handoffs
@@ -85,11 +89,11 @@ The live E2E case should assert behavior at a **useful observable boundary**. In
 
 ## 3. E2E case index and result recording
 
-`e2e/README.md` is the planner-owned index of required live cases. Each entry should map stable case ID(s) to increment, slice, CTs, producer(s), fixture/run-sheet paths, local-proof references, and expected live observations. The integrated master sheet lives under `e2e/I03/`; retained `e2e/I02/` artifacts can identify producer origin without retaining I02 shipping ownership. Commands/fixtures do not live in the evidence ledger.
+`worklogs/<project-slug>/e2e/README.md` is the planner-owned index of required live cases. The project-scoped directory prevents IDs reused by another project from colliding. Each entry should map stable case ID(s) to increment, slice, CTs, producer(s), fixture/run-sheet paths, local-proof references, and expected live observations. The integrated master sheet lives under `worklogs/<project-slug>/e2e/I03/`; retained I02 artifacts can identify producer origin without retaining I02 shipping ownership. Commands/fixtures do not live in the evidence ledger.
 
 **Recommended migrated row model (Q63 exact disposition pending; final I03 owns it):** keep local proof separate from live result. The current `unit | planned | e2e` vocabulary mixes proof level, preparation, and execution. Use `NOT RUN | PASS | FAIL | BLOCKED` for live status, with append-only attempts carrying run ID, deployed SHA, command, date, and artifact references. The enum records evidence ownership only; it must never imply that the harness assigned a live result. The migrated final-group artifact-contract test checks field shape and duplicate coverage, not actual live approval or status.
 
-The roadmap should carry only a concise per-increment summary (for example, not run / partial / pass plus run/SHA reference). Full commands, fixtures, and per-case outcomes stay in `e2e/`. The append-only ledger may receive a concise provenance entry for a completed run, but it is not the fixture repository and its parser is not implemented yet (I04).
+The roadmap should carry only a concise per-increment summary (for example, not run / partial / pass plus run/SHA reference). Full commands, fixtures, and per-case outcomes stay in that project's `worklogs/<project-slug>/e2e/` package. The append-only ledger may receive a concise provenance entry for a completed run, but it is not the fixture repository and its parser is not implemented yet (I04).
 
 Do not check secrets, large host logs, or credentials into the E2E directory. Keep only the fixture/helper files needed to reproduce the test and the minimal evidence reference/summary.
 

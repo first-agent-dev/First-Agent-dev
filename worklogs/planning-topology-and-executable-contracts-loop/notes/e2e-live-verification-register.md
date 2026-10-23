@@ -1,4 +1,10 @@
-# E2E live-host verification register — I02 producers, I03 acceptance owner
+# E2E live-host verification register — I02 producer origins, I03 acceptance owner; I01 gap tracked by Q87
+
+**Operator acceptance-scope clarification (2026-10-23).** Final I03 acceptance requires live-host E2E
+coverage for all project changes in I01–I03. This historical register inventories I02-origin producer
+obligations; the current package also inventories I03 cases, but neither contains I01 live-case rows.
+The gap is confirmed, not waived. Q87 tracks the mapping needed before final acceptance; no current
+case count or local proof may be credited as I01 live coverage.
 
 **Purpose.** Operator instruction, 2026-10-08: *every producer created by this plan must be
 marked for a future end-to-end test, and all of them verified with fixtures on the live host.*
@@ -1234,7 +1240,7 @@ Formal workflow cases retain the actual admitted plan; ordinary no-active-workfl
 
 **Fixture implementation/execution owner:** accumulate local `tests/integration/` cases as actual
 composition exists; required invocation uses FA_REQUIRE_EXECUTION_HOST=1 and cannot skip missing
-Docker/cgroup/profile. Final reviewed `e2e/I03/` package/case index and independently reviewed drivers
+Docker/cgroup/profile. Final reviewed `worklogs/planning-topology-and-executable-contracts-loop/e2e/I03/` package/case index and independently reviewed drivers
 remain final SLICE6 per spec§9.1, not an early live-host prerequisite. Every source producer/path,
 including internal guards and error/cleanup branches in the hash-backed symbol inventory, must be
 accounted for when freezing that final index; this table is NOT a contract→test kill mapping or a

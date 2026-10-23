@@ -4,8 +4,14 @@
 [e2e-live-verification-register.md](e2e-live-verification-register.md) is promoted, and nothing here
 is evidence of live behaviour. Dates this plan: 2026-10-22, after E265 (SLICE2 STEP4 part B-1).
 
+**Current acceptance-scope ruling (2026-10-23):** final I03 acceptance requires live-host E2E for all
+changes in I01–I03 of this project. This plan and the existing 26-surface/8-join I03 inventory do not
+currently include I01 live cases; Q87 tracks the required I01 producer-to-case mapping. Its absence
+blocks the final gate, not the separate I03-only planning statements below. The canonical package is
+`worklogs/planning-topology-and-executable-contracts-loop/e2e/`.
+
 **Purpose.** The register already says *what* the host fixture must arrange and observe, one row per
-producer (18 surfaces, 8 joins, all `PLANNED / UNEXECUTED`). It does not say *how to build the suite*:
+producer (26 surfaces, 8 joins as of 2026-10-23, all `PLANNED / UNEXECUTED`; I01 rows remain absent under Q87). It does not say *how to build the suite*:
 what the harness must be, in what order the cases become writable, what counts as a valid oracle when
 the assertion cannot run in-process, and which cases are impossible before a later slice lands. This
 document answers that, so the suite can be written mechanically at SLICE6 instead of being designed

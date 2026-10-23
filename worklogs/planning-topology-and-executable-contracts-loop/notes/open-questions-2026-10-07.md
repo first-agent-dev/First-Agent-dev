@@ -2102,35 +2102,25 @@ existing "previous epoch is dead" flip. Nothing in the current plan asks for eit
 
 ## Q85 — Which I03 E2E package path is canonical?
 
-**Status: OPEN (2026-10-23) — blocks path reconciliation/relocation only; the current root-level package remains where SLICE6 STEP2 names it.**
+**Status: RESOLVED (2026-10-23) — canonical path is `worklogs/planning-topology-and-executable-contracts-loop/e2e/`.**
 
-**The gap.** The design note `notes/e2e-handoff-and-plan-review-design.md` specifies
-`worklogs/<project>/e2e/`, which for this project would be
-`worklogs/planning-topology-and-executable-contracts-loop/e2e/`. That directory is absent. The current
-increment plan's SLICE6 STEP2 instead explicitly names root-level `e2e/README.md` and `e2e/I03/...`,
-which is where the local package exists. The two documents therefore disagree; this is not just a
-missing directory in the checkout.
+**Operator ruling.** Use the project-scoped package path, not repository-root `/e2e/`. Different projects
+may reuse increment and case IDs; scoping under `worklogs/<project-slug>/e2e/` keeps their artifacts and
+ownership separate. Move the package once and update its code, tests, schema, plan and documentation
+references together. Do not retain a duplicate root package.
 
-**Impact.** Relocating now would make one of the two plan sources stale and require updating package
-links, the coverage checker, test paths, schema references, and the plan as one reviewed change. Keeping
-both paths would create duplicate planner-owned artifacts and ambiguous edit/result ownership. No live
-case has run, so no evidence depends on either location yet.
+**Resolution evidence.** The package has been moved to the canonical path; checker/test paths, package
+links, schema reference, active I03 plan and design note are aligned. No live result depends on the old
+location. Historical evidence remains untouched.
 
-**Options.**
-
-- **(A) Keep root-level `e2e/`** as the executable SLICE6 STEP2 path, and revise the older design note
-  to match before the next independent plan review.
-- **(B) Use `worklogs/<project>/e2e/`** as the canonical project package, and revise SLICE6 STEP2 plus
-  every code/test/schema/reference path together before relocating the package.
-
-Do not mirror both trees. Until ruled, this branch follows the explicit current STEP2 paths and makes no
-relocation or directory creation.
+**Options (historical).** A was to keep root-level `e2e/`; B was to use `worklogs/<project>/e2e/`.
+The operator selected B.
 
 ---
 
 ## Q86 — How should I03-LIVE-26 describe sealing after E278 adds the local cgroup observer?
 
-**Status: OPEN (2026-10-23) — blocks changing the LIVE-26 acceptance oracle, not package inventory or this push. Live E2E remains deferred.**
+**Status: DEFERRED (2026-10-23) — LIVE-26 is already planned; do not change its oracle pending the other agent’s work. Live E2E remains deferred.**
 
 **The gap.** The E277 LIVE-26 oracle says `seal` refuses `TERMINALITY_UNKNOWN` until the cgroup observer
 exists and concludes a full stage cannot be completed through the surface. E278 then added the cgroup-v2
@@ -2152,5 +2142,49 @@ local result.
   host barrier proof exists, and record any full-stage success as follow-up evidence rather than relaxing
   the existing requirement.
 
+**Operator disposition (2026-10-23).** Confirmed: `I03-LIVE-26` already exists in the package index and
+master sheet as `PLANNED / UNEXECUTED`. Defer this oracle question until the other agent’s work is
+complete. Do not edit the case wording or status here; no live result is implied.
+
 No option authorizes live execution before I01–I03 are merged to `main` and deployed. The case and every
 result remain unchanged until planner/user disposition.
+
+---
+
+## Q87 — How should I01 live obligations be mapped into final I03 acceptance?
+
+**Status: OPEN (2026-10-23) — blocks final I03 E2E acceptance completeness, not the Q85 package relocation. Live E2E remains deferred.**
+
+**Context.** The operator requires every change from I01, I02, and I03 in this project to be covered by
+live-host E2E before final I03 acceptance. I01’s original plan/DoD explicitly said that I01 shipped no
+live-path test, and its DoD walk observed zero `drive_session` boots across six I01 test files. The
+current package contains 89 I02-origin cases and 34 I03 cases, but no I01 case IDs or I01 producer rows.
+The deferred-verification register’s D1–D5 obligations are not a substitute: D1a/D1b and D2 are
+closed only with local workflow/provider doubles, while D3/D5 do not prove a deployed model-authored
+plan was parsed and admitted. I03-LIVE-S08 has a real-provider witness, but its oracle checks delegated
+context/retries/isolation, not I01 grammar or parser behavior; I03-LIVE-08 covers a different execution
+PlanRef surface. Q85’s project-scoped package path is resolved; this is a coverage-mapping gap, not a
+path issue.
+
+**Impact.** Until every I01 production change/producer is mapped to a useful deployed behavior oracle,
+the package cannot demonstrate the operator’s all-I01–I03 gate. Neither the 123 existing unique cases
+nor their passing local tests may be represented as I01 live coverage. No live E2E may run before I01–I03
+are merged to `main` and deployed.
+
+**Options.**
+
+- **(A) Add explicit I01-origin live case IDs** (recommended): inventory I01 production producers and
+  deferred obligations, then define the smallest observable host scenarios that covers them. A candidate
+  is a real planner skill/prompt → model-authored increment → parser/precheck/verify-gate witness, with a
+  positive persisted-slice outcome and a malformed-plan repair/refusal-before-coder negative control.
+  Map every producer/obligation explicitly; keep I01-origin cases distinct while allowing a scenario to
+  join to I02/I03 behavior when it genuinely proves both. Extend the checker/tests to enforce the new ID
+  and producer mappings.
+- **(B) Reuse existing I02/I03 case IDs:** map every I01 producer to current cases only where the
+  existing oracle demonstrably exercises that I01 behavior; add cases for any uncovered I01 paths, and
+  extend the checker to preserve explicit multi-increment producer lineage. This avoids a separate ID
+  namespace but makes the I01 evidence less visible in the index.
+
+The I01 inclusion requirement itself is settled and is not an option to waive. Decide only the case-ID /
+producer-mapping model before assigning new IDs or claiming coverage. Keep Q86/LIVE-26 oracle wording
+deferred independently.

@@ -1,10 +1,12 @@
 # E2E live verification index
 
 **Status: PLANNED. No case in this index has been executed on a live host.** Every
-row reads `NOT RUN`. This directory is the I03 E2E package described by
+row reads `NOT RUN`. The canonical project-scoped package is
+`worklogs/planning-topology-and-executable-contracts-loop/e2e/`; scoping by project keeps reused
+increment/case IDs from colliding across projects. This is the I03 E2E package described by
 `worklogs/planning-topology-and-executable-contracts-loop/notes/e2e-handoff-and-plan-review-design.md`
 and owned by I03 SLICE6 (`increments/increment-03-execution-workspace-foundation.md`,
-section *SLICE6: Reviewed I02+I03 package and actual deployed acceptance*).
+section *SLICE6: Reviewed I01–I03 package and actual deployed acceptance*).
 
 ## What this directory is
 
@@ -23,6 +25,11 @@ The README and master sheet are **derived** from that register. `producer-baseli
 the selected original producer rows and lineage; `producer-coverage.json` separately maps every
 baseline ID to its current producer and case. A rename/replacement must be explicit in that map;
 none is inferred here. No artifact authorizes or assigns a live result.
+
+**I01 acceptance gap (Q87):** the current inventory represents 89 I02-origin cases and 34 I03
+cases, but contains no I01 live case rows. The operator requires final I03 acceptance to cover
+all I01–I03 changes on a live host. That gate remains open until I01 obligations are explicitly
+mapped to live cases; the existing counts do not imply I01 coverage.
 
 ## Ownership (CT88 / CT89, and section 2 of the handoff design)
 
@@ -112,7 +119,7 @@ not parse or evaluate host evidence and never assigns a live result.
 
 ## I02 origins
 
-No `e2e/I02/` directory exists in this repository; the I02 producer origins are the
+No `I02/` subdirectory exists in this project package; the I02 producer origins are the
 early sections of the register itself (`## SLICE1 - the command runner`,
 `## SLICE2 - kill directives`, `## SLICE4 - the mutation sandbox`,
 `## SLICE6 - workflow composition and post-eval gate reconciliation`). Those are I02
@@ -131,7 +138,7 @@ I02 shipping claim is inherited and no unique producer case is lost.
 ## Retained legacy I02 producer coverage (CT88 / CT112)
 
 The table below gives each normalized legacy producer its frozen `I02-LIVE-NNN` case ID in
-first-occurrence order. `e2e/I03/producer-baseline.json` preserves the complete source row,
+first-occurrence order. `I03/producer-baseline.json` preserves the complete source row,
 occurrences, CT/SLICE/STEP lineage, local proof, host fixture/oracle, and mapping kind;
 `producer-coverage.json` maps each baseline ID. A shared scenario still has a distinct row per
 producer; no legacy row is silently represented by a total count. `I03-LIVE-*` surfaces and joins

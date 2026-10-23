@@ -1,9 +1,13 @@
 """Check the frozen I02/I03 producer-to-case coverage mapping.
 
 This is a local artifact-integrity check. It never reads host evidence, executes
-fixtures, or assigns a live result. The frozen source inventory is in
-``e2e/I03/producer-baseline.json``; successor/case mappings are separate in
-``e2e/I03/producer-coverage.json``.
+fixtures, or assigns a live result. The current frozen inventory covers I02-origin
+and I03 rows only; I01 live coverage is an explicit open gap tracked by Q87, so an
+OK result from this checker is not final I01-I03 acceptance. The frozen source inventory
+is in
+``worklogs/planning-topology-and-executable-contracts-loop/e2e/I03/producer-baseline.json``;
+successor/case mappings are separate in
+``worklogs/planning-topology-and-executable-contracts-loop/e2e/I03/producer-coverage.json``.
 """
 
 from __future__ import annotations
@@ -18,10 +22,11 @@ from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 REGISTER_REL = Path("worklogs/planning-topology-and-executable-contracts-loop/notes/e2e-live-verification-register.md")
-BASELINE_REL = Path("e2e/I03/producer-baseline.json")
-COVERAGE_REL = Path("e2e/I03/producer-coverage.json")
-INDEX_REL = Path("e2e/README.md")
-MASTER_REL = Path("e2e/I03/live-verification.md")
+PROJECT_E2E_REL = Path("worklogs/planning-topology-and-executable-contracts-loop/e2e")
+BASELINE_REL = PROJECT_E2E_REL / "I03" / "producer-baseline.json"
+COVERAGE_REL = PROJECT_E2E_REL / "I03" / "producer-coverage.json"
+INDEX_REL = PROJECT_E2E_REL / "README.md"
+MASTER_REL = PROJECT_E2E_REL / "I03" / "live-verification.md"
 
 # Scope is deliberately limited to the explicit legacy producer inventories,
 # I03 production-surface tables, and the I03 cross-module join table. Mutation
@@ -486,9 +491,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"E2E coverage check FAILED: {exc}", file=sys.stderr)
         return 1
     print(
-        "E2E coverage OK: "
+        "E2E artifact coverage OK (current I02-origin/I03 subset only; Q87 I01 gap remains): "
         f"{counts['unique_producers']} unique producers across "
-        f"{counts['legacy_cases']} legacy and {counts['i03_cases']} I03 cases; "
+        f"{counts['legacy_cases']} I02-origin and {counts['i03_cases']} I03 cases; "
         f"{counts['exact_duplicate_keys']} exact duplicate keys collapsed; "
         "all live results remain artifact-owned (no PASS inferred)."
     )

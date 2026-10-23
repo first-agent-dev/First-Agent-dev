@@ -21,10 +21,11 @@ import pytest
 from scripts import check_execution_e2e_coverage as coverage_checker
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-E2E_INDEX = REPO_ROOT / "e2e" / "README.md"
-MASTER_SHEET = REPO_ROOT / "e2e" / "I03" / "live-verification.md"
-IMPLEMENTATION_HANDOFFS = REPO_ROOT / "e2e" / "I03" / "implementation-handoffs.md"
-LIVE_RESULT_SCHEMA = REPO_ROOT / "e2e" / "I03" / "live-result.schema.json"
+PROJECT_E2E = REPO_ROOT / "worklogs" / "planning-topology-and-executable-contracts-loop" / "e2e"
+E2E_INDEX = PROJECT_E2E / "README.md"
+MASTER_SHEET = PROJECT_E2E / "I03" / "live-verification.md"
+IMPLEMENTATION_HANDOFFS = PROJECT_E2E / "I03" / "implementation-handoffs.md"
+LIVE_RESULT_SCHEMA = PROJECT_E2E / "I03" / "live-result.schema.json"
 REGISTER = (
     REPO_ROOT
     / "worklogs"
@@ -108,6 +109,17 @@ def _validate_live_attempt(record: dict[str, Any]) -> None:
         raise ValueError("commentary must be at most 512 UTF-8 bytes")
 
 
+def test_e2e_artifacts_are_project_scoped_without_a_root_duplicate() -> None:
+    expected_package = Path("worklogs/planning-topology-and-executable-contracts-loop/e2e")
+    assert coverage_checker.PROJECT_E2E_REL == expected_package
+    assert PROJECT_E2E.is_dir()
+    assert not (REPO_ROOT / "e2e").exists()
+    coverage = json.loads((PROJECT_E2E / "I03" / "producer-coverage.json").read_text(encoding="utf-8"))
+    assert coverage["baseline_path"] == (
+        "worklogs/planning-topology-and-executable-contracts-loop/e2e/I03/producer-baseline.json"
+    )
+
+
 def test_live_case_ids_match_register_index_and_master_sheet_exactly() -> None:
     index = E2E_INDEX.read_text(encoding="utf-8")
     master = MASTER_SHEET.read_text(encoding="utf-8")
@@ -128,7 +140,10 @@ def test_live_case_ids_match_register_index_and_master_sheet_exactly() -> None:
         / "notes"
         / "artifact-schema-and-grammar.md"
     )
-    assert "e2e/I03/live-result.schema.json" in artifact_schema_doc.read_text(encoding="utf-8")
+    assert (
+        "worklogs/planning-topology-and-executable-contracts-loop/e2e/I03/live-result.schema.json"
+        in artifact_schema_doc.read_text(encoding="utf-8")
+    )
 
 
 def test_index_table_has_a_complete_mapping_row_for_every_case() -> None:
@@ -184,11 +199,11 @@ def test_register_only_reuses_s06_for_its_explicit_extension() -> None:
 
 
 def _producer_baseline_document() -> dict[str, Any]:
-    return json.loads((REPO_ROOT / "e2e" / "I03" / "producer-baseline.json").read_text(encoding="utf-8"))
+    return json.loads((PROJECT_E2E / "I03" / "producer-baseline.json").read_text(encoding="utf-8"))
 
 
 def _producer_coverage_document() -> dict[str, Any]:
-    return json.loads((REPO_ROOT / "e2e" / "I03" / "producer-coverage.json").read_text(encoding="utf-8"))
+    return json.loads((PROJECT_E2E / "I03" / "producer-coverage.json").read_text(encoding="utf-8"))
 
 
 def test_frozen_producer_snapshot_preserves_each_key_lineage_and_host_oracle() -> None:
@@ -410,6 +425,7 @@ def test_coverage_checker_cli_executes_and_reports_frozen_counts() -> None:
     )
     assert completed.returncode == 0, completed.stderr
     assert "124 unique producers" in completed.stdout
+    assert "Q87 I01 gap remains" in completed.stdout
     assert "no PASS inferred" in completed.stdout
 
 

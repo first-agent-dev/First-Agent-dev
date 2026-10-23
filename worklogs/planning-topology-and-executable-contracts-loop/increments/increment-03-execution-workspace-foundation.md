@@ -23,9 +23,13 @@ I02 deployed-host, broad independent-review or inherited-baseline acceptance pre
 deployed functional/source-to-behaviour verification; environment/readiness and inherited baseline
 acceptance review; broad independent implementation/evidence review; integrated E2E/deployment signoff.
 The E231 decisions finalize the plan, not runtime delivery or either increment’s final acceptance.
+**Operator acceptance-scope clarification (2026-10-23):** final I03 live-host E2E acceptance covers
+all changes in I01, I02, and I03 for this project. E223’s original I02+I03 transfer is a minimum
+lineage, not a limit on the final gate. The current package has no I01 live rows; Q87 tracks the
+required case/producer mapping, and final acceptance stays open until that gap is closed.
 **Shippable when:** all project execution uses mandatory Linux/Docker cells, one protected workspace
 writer owns coherent private views/pinned readers, terminal sealing/fenced publication/recovery
-are proved, real nested selection/bootstrap/context works, and every unique required I02+I03
+are proved, real nested selection/bootstrap/context works, and every unique required I01–I03
 producer has reviewed deployed-main acceptance. PTY remains. Backend unavailable fails closed in
 both observe/enforce and for every role. Partial backend success is not whole-product isolation.
 
@@ -124,7 +128,7 @@ not permission to exercise the production main host before final SLICE6 STEP7 re
 If there is no approved disposable Docker host earlier, record those checks NOT RUN/BLOCKED, never
 PASS or a narrowed unit-only kill. Coding may progress in dependency order; no slice/product safety
 acceptance or production enablement follows until all accumulated required checks pass at SLICE6.
-Final e2e/I03 fixtures/helpers are different from local tests/integration; STEP7 review precedes their
+Final project-scoped E2E fixtures/helpers are different from local tests/integration; STEP7 review precedes their
 implementation, followed by review of actual helper code before first main-host execution.
 
 **Deterministic scheduling:** all wire/state/type validation precedes launch. Acquire one owner,
@@ -417,13 +421,14 @@ FA_REQUIRE_EXECUTION_HOST=1 uv run pytest tests/integration/test_nested_workflow
 - [ ] STEP5: actual outer drive_session→invoke→child run_workflow→_cmd_run→drive_session with real supervisor/cells and only ProviderChain.request mocked proves existing selection and new project, clarification/no-coder blocks, child evidence and parent refresh at turn boundary (exit: execution_host nested C1 passes with advisory/manual and existing experimental suggestion paths, in observe/enforce gate modes)
 - [ ] STEP6: record CT96/CT108/CT109 full-path mutation outcomes with original CT96 handler producer lineage, no helper-only substitutes (exit: each declared producer killed; no unknown/stale report credited)
 
-## SLICE6: Reviewed I02+I03 package and actual deployed acceptance
+## SLICE6: Reviewed I01–I03 package and actual deployed acceptance
 STEPS: prescriptive
 DEPS: SLICE5
 INTENT: execute transferred SLICE7 and E223 acceptance with independent review, exact producer
-  preservation and real main-host evidence; local/I02 diff review never assigns a live verdict.
+  preservation and real main-host evidence for all I01–I03 changes; local diff review never assigns a live verdict.
 CONTRACTS:
-  CT88 [CONSTRAINT]: preserve all original unique I02 producer keys/cases and add I03 producers;
+  CT88 [CONSTRAINT]: preserve all required unique producer keys/cases across I01–I03, keeping
+    increment origin explicit;
     separate local proof/live result, stable IDs/owners/fixture/oracle/evidence. Shared scenario only
     with explicit per-producer evidence mapping. Q63 exactly NOT RUN/PASS/FAIL/BLOCKED, optional short
     commentary on ALL states, no mandatory/hardcoded reason variant.
@@ -441,15 +446,15 @@ uv run pytest tests/test_e2e_artifact_contract.py tests/test_skill_conformance.p
 uv run python scripts/check_execution_e2e_coverage.py
 ```
 - [ ] STEP1: implement recorded Q63 four-state live-result schema, optional short commentary on every state, no reason-code enum/mandatory BLOCKED field; test all states with and without commentary. Keep roadmap/increment/CT vocabularies, generic READY and active I01 distinct (exit: actual artifact conformance tests pass; no live outcome inferred)
-- [ ] STEP2: implement planner case index e2e/README.md and master e2e/I03/live-verification.md with append-only attempts/local-vs-live fields; retain old e2e/I02 origins (exit: index/status tests pass)
-- [ ] STEP3: mechanically snapshot original normalized unique producer keys from notes/e2e-live-verification-register.md, preserve all unique keys/CT/STEP lineage, add new producers and successor mappings; correct CT52 bounded repair and shell-exit-127 vs genuine launch-error oracles (exit: actual coverage checker/test detects removal of any unique case, not only total counts)
-- [ ] STEP4: coder writes e2e/I03/implementation-handoffs.md after real seams/proofs exist, labeling facts vs proposals and limitations (exit: handoff-shape tests pass; coder has changed no oracle/result)
+- [ ] STEP2: implement planner case index `worklogs/planning-topology-and-executable-contracts-loop/e2e/README.md` and master `worklogs/planning-topology-and-executable-contracts-loop/e2e/I03/live-verification.md` with append-only attempts/local-vs-live fields; retain I02-origin rows and add mapped I01 obligations (exit: index/status tests pass)
+- [ ] STEP3: mechanically snapshot original normalized unique producer keys from the I01 deferred-verification register and the I02/I03 live register, preserve all unique keys/CT/STEP lineage, add new producers and successor mappings; correct CT52 bounded repair and shell-exit-127 vs genuine launch-error oracles (exit: actual coverage checker/test detects removal of any unique case, not only total counts)
+- [ ] STEP4: coder writes `worklogs/planning-topology-and-executable-contracts-loop/e2e/I03/implementation-handoffs.md` after real seams/proofs exist, labeling facts vs proposals and limitations (exit: handoff-shape tests pass; coder has changed no oracle/result)
 - [ ] STEP5: planner finalizes copy/paste host sheet from actual deployment/workspace facts per spec §9, complete tasks/variables/commands/run IDs/artifacts, safe update stop conditions and observe→review→enforce order (exit: run-sheet checks plus human command review, not pytest claiming deployment happened)
 - [ ] STEP6: update plan-authoring/feature-planning/tests-writing skill obligations exactly as transferred STEP6; preserve unrelated READY behavior (exit: artifact+skill conformance tests pass)
-- [ ] STEP7: independent reviewer completes manual checklist before the FINAL e2e/I03 fixture/helper package (not earlier local tests/integration kernel tests), including all source/import/readiness/descendant/fencing/recovery and nested cases, maintenance prerequisites/no secrets/stop path; include E223's I02+I03 implementation/evidence scope and record open findings for final review (exit: named reviewer/date/notes recorded; no machine-approved marker; final broad review still required after material changes)
-- [ ] STEP8: only after STEP7 implement reviewed bounded fixtures under e2e/I03/fixtures/ in unique disposable workspaces; preserve evidence/owned cleanup and keep live host commands outside default pytest discovery (exit: fixture conformance passes; review-before-implementation provenance exists)
-- [ ] STEP9: index every distinct local/live producer, including separate CLI/direct guards, candidate/promotion/schema/T0, CT96 selection/bootstrap/clarification/context, CT97 file/edit/shell/subagent-absence/alias paths, early readiness/imports, no-replay, contention/read pins, terminal seal/publication/recovery; map retained I02 source/functional claims to actual deployed behaviour oracles (exit: all original+new required producer keys mapped with useful evidence oracle; no local-only or missing deployed claim credited)
-- [ ] STEP10: run local package conformance, every accumulated non-skipped execution_host suite and all17 full-declared-path kills, and full release gates; review environment/readiness and inherited baseline acceptance using retained I02 manifests, exact test identities/replacements and Mypy contexts, including the unreproduced historical ninth context and relevant hook observations. Resolve/explicitly disposition each item for the intended Ubuntu/Docker/Python deployment without falsifying red results. Before claiming the release gates complete, build the installed-controller wheel with supported CPython 3.13 including `zlib` and the frozen build dependencies (the current 11 setup errors are a blocker, not a skip); provide the approved ShellCheck binary so all 12 shellcheck-gated tests run rather than skip; and provide a trusted Go 1.24.11 SDK plus the pinned Gitleaks/pre-commit dependencies or an approved cached build environment so the actual readiness→hook→commit→publication path and `just test`/`just check` complete without bypass. Go is an indirect test-hook build requirement, not an FA runtime requirement. If any prerequisite remains unavailable, record the row BLOCKED and keep the release gate open. Only with maintenance/deploy authorization perform normal main update and reviewed host runs; inspect nonzero update before retry, verify actual deployed SHA/image/profile/config, execute spec §9.1 unmocked direct+nested workflow witnesses (not only deterministic provider-stub cases), record source-to-behaviour results and broad independent implementation/evidence review plus integrated signoff. No automated/harness PASS (exit: all four E223 acceptance obligations complete with recorded review; all required cases independently reviewed PASS; BLOCKED/NOT RUN/skip never counts)
+- [ ] STEP7: independent reviewer completes manual checklist before the FINAL project-scoped E2E fixture/helper package (not earlier local tests/integration kernel tests), including all source/import/readiness/descendant/fencing/recovery, nested cases, and I01 plan-authoring/parser/admission obligations; include E223's transferred scope plus all I01–I03 implementation/evidence obligations and record open findings for final review (exit: named reviewer/date/notes recorded; no machine-approved marker; final broad review still required after material changes)
+- [ ] STEP8: only after STEP7 implement reviewed bounded fixtures under `worklogs/planning-topology-and-executable-contracts-loop/e2e/I03/fixtures/` in unique disposable workspaces; preserve evidence/owned cleanup and keep live host commands outside default pytest discovery (exit: fixture conformance passes; review-before-implementation provenance exists)
+- [ ] STEP9: index every distinct local/live producer, including separate CLI/direct guards, candidate/promotion/schema/T0, CT96 selection/bootstrap/clarification/context, CT97 file/edit/shell/subagent-absence/alias paths, early readiness/imports, no-replay, contention/read pins, terminal seal/publication/recovery; map I01 deferred obligations, retained I02 source/functional claims, and I03 producers to actual deployed behaviour oracles (exit: all original+new required I01–I03 producer keys mapped with useful evidence oracle; no local-only or missing deployed claim credited)
+- [ ] STEP10: run local package conformance, every accumulated non-skipped execution_host suite and all17 full-declared-path kills, and full release gates; review environment/readiness and inherited baseline acceptance using retained I02 manifests, exact test identities/replacements and Mypy contexts, including the unreproduced historical ninth context and relevant hook observations. Resolve/explicitly disposition each item for the intended Ubuntu/Docker/Python deployment without falsifying red results. Before claiming the release gates complete, build the installed-controller wheel with supported CPython 3.13 including `zlib` and the frozen build dependencies (the current 11 setup errors are a blocker, not a skip); provide the approved ShellCheck binary so all 12 shellcheck-gated tests run rather than skip; and provide a trusted Go 1.24.11 SDK plus the pinned Gitleaks/pre-commit dependencies or an approved cached build environment so the actual readiness→hook→commit→publication path and `just test`/`just check` complete without bypass. Go is an indirect test-hook build requirement, not an FA runtime requirement. If any prerequisite remains unavailable, record the row BLOCKED and keep the release gate open. Only with maintenance/deploy authorization perform normal main update and reviewed host runs; inspect nonzero update before retry, verify actual deployed SHA/image/profile/config, execute spec §9.1 unmocked direct+nested workflow witnesses (not only deterministic provider-stub cases), record source-to-behaviour results and broad independent implementation/evidence review plus integrated signoff. No automated/harness PASS (exit: all four E223 acceptance obligations complete with recorded review; all required I01–I03 cases independently reviewed PASS; BLOCKED/NOT RUN/skip never counts)
 
 ## Increment definition of done — binary, no partial isolation claim
 
@@ -461,7 +466,7 @@ reproducible by the command beside it:
 | CT declarations (17 FUNCTIONAL + 7 CONSTRAINT) | **24** | `grep -cE '^\s+CT[0-9]+[a-z]? \[(FUNCTIONAL|CONSTRAINT|PRESERVATION)\]' increments/increment-03-*.md` |
 | Declared `kill:` directives | **17** (one per FUNCTIONAL contract; a `grep -c 'kill:'` returns more because prose lines quote the word) | `grep -cE '^\s+kill: remove-call ' increments/increment-03-*.md` |
 | Closed wire operations | **19** | `grep -cE '^\s+[A-Z_]+ = "' src/fa/execution/primitives.py` |
-| E2E live surfaces / joins | **25 / 8** (E250 recorded 18/8; E267 added `publication.py` as I03-LIVE-19; E269 the publish path as I03-LIVE-20; E271 the bundle path as I03-LIVE-21; E272 the install path as I03-LIVE-22; E273 the plan-replacement path as I03-LIVE-23; E274 the authorizer as I03-LIVE-24; E276 forward recovery as I03-LIVE-25) | `grep -o 'I03-LIVE-[0-9]\{2\}' notes/e2e-live-verification-register.md \| sort -u \| wc -l` |
+| Current I03 E2E live surfaces / joins | **26 / 8; I01 coverage TBD under Q87** (E250 recorded 18/8; E267 added `publication.py` as I03-LIVE-19; E269 the publish path as I03-LIVE-20; E271 the bundle path as I03-LIVE-21; E272 the install path as I03-LIVE-22; E273 the plan-replacement path as I03-LIVE-23; E274 the authorizer as I03-LIVE-24; E276 forward recovery as I03-LIVE-25) | `grep -o 'I03-LIVE-[0-9]\{2\}' notes/e2e-live-verification-register.md \| sort -u \| wc -l` |
 | Six slices, thirty-five STEPs | **6 / 35** | `grep -cE '^- \[.\] STEP[0-9]+:' increments/increment-03-*.md` |
 
 If a later edit changes a count, the edit updates the table and the ledger entry that introduced the
@@ -490,7 +495,7 @@ change; a plan sentence with a stale number is a defect, not a rounding error.
 - [ ] Actual direct and nested C1 use real supervisor/cells with only provider mocked. Child artifacts
       never overwrite parent; acquired explicit canonical PlanRef/T0/verification/eval share identity;
       Q66 current initial context/distilled retry and Q55/Q56/Q73/both-mode integrity floor are proved.
-- [ ] E223 deployed functional/source-to-behaviour verification covers retained I02 and new I03
+- [ ] E223 deployed functional/source-to-behaviour verification covers all I01–I03
       claims, including admission/repair/promotion/T0/eval/failure paths, with actual deployed
       code/image/config identities and useful effect/artifact oracles; local green is not host proof.
 - [ ] E223 environment/readiness and inherited baseline acceptance review is complete for the
@@ -502,9 +507,9 @@ change; a plan sentence with a stale number is a defect, not a rounding error.
       skipped security check or invented FA Go runtime requirement; actual red remains red.
 - [ ] E223 integrated E2E/deployment acceptance: full CT88/CT89 producer-preserving package/
       manual review/handoff/skills/fixtures complete;
-      spec §9.1 real-provider direct+nested witnesses and every unique required I02+I03 deployed-main case have reviewed PASS with code/image/config/run/
+      spec §9.1 real-provider direct+nested witnesses and every unique required I01–I03 deployed-main case have reviewed PASS with code/image/config/run/
       oracle/artifact evidence. No local proof sets live status, no unresolved blocked deployment row.
-- [ ] E223 broad independent I02+I03 implementation/security/recovery/evidence review and final
+- [ ] E223 broad independent I01–I03 implementation/security/recovery/evidence review and final
       operator deployment signoff recorded in
       notes/i03-local-and-deployed-acceptance.md with commands/rc/environment/source references;
       registers updated only from actual proof. Until then status remains unshipped.

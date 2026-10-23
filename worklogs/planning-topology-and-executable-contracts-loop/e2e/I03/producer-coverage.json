@@ -2,7 +2,7 @@
   "format_version": 1,
   "title": "Successor/case mapping from the frozen producer baseline",
   "status": "PLANNED — case mapping only; no live result is inferred",
-  "baseline_path": "e2e/I03/producer-baseline.json",
+  "baseline_path": "worklogs/planning-topology-and-executable-contracts-loop/e2e/I03/producer-baseline.json",
   "mapping_policy": [
     "Every frozen baseline ID has one explicit coverage mapping.",
     "Unchanged producer names map to their retained stable I02 ID or native I03 case ID.",

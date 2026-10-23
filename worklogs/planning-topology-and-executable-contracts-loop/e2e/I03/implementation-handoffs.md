@@ -90,6 +90,6 @@ are authored here; candidate exercise details are proposals for planner/reviewer
   operation handler remains responsible for its state checks and re-proofs. The candidate exercise
   is unreviewed, no fixture exists, and this handoff assigns no live result.
 - **Evidence references:** `worklogs/planning-topology-and-executable-contracts-loop/notes/e2e-live-verification-register.md`
-  (E274 / `I03-LIVE-24`); `e2e/README.md` (`I03-LIVE-24`); `tests/test_workspace_authorize.py`.
+  (E274 / `I03-LIVE-24`); `../README.md` (`I03-LIVE-24`); `tests/test_workspace_authorize.py`.
 - **Planner disposition:** pending. This coder handoff does not amend the oracle, case ownership,
   fixture authorization, or live result.
