@@ -1,13 +1,9 @@
-"""Check the frozen I02/I03 producer-to-case coverage mapping.
+"""Check project-scoped I01/I02-origin/I03 E2E artifact coverage mappings.
 
 This is a local artifact-integrity check. It never reads host evidence, executes
-fixtures, or assigns a live result. The current frozen inventory covers I02-origin
-and I03 rows only; I01 live coverage is an explicit open gap tracked by Q87, so an
-OK result from this checker is not final I01-I03 acceptance. The frozen source inventory
-is in
-``worklogs/planning-topology-and-executable-contracts-loop/e2e/I03/producer-baseline.json``;
-successor/case mappings are separate in
-``worklogs/planning-topology-and-executable-contracts-loop/e2e/I03/producer-coverage.json``.
+fixtures, or assigns a live result. It verifies source-to-case completeness for the
+I01 contracts plus the frozen I02-origin/I03 producer inventory. An OK result means
+planned artifacts are internally consistent, not that any live-host case passed.
 """
 
 from __future__ import annotations
@@ -27,6 +23,58 @@ BASELINE_REL = PROJECT_E2E_REL / "I03" / "producer-baseline.json"
 COVERAGE_REL = PROJECT_E2E_REL / "I03" / "producer-coverage.json"
 INDEX_REL = PROJECT_E2E_REL / "README.md"
 MASTER_REL = PROJECT_E2E_REL / "I03" / "live-verification.md"
+I01_PLAN_REL = Path(
+    "worklogs/planning-topology-and-executable-contracts-loop/increments/increment-01-plan-grammar-and-extractor.md"
+)
+I01_DEFERRED_REL = Path(
+    "worklogs/planning-topology-and-executable-contracts-loop/notes/deferred-verification-register.md"
+)
+I01_BASELINE_REL = PROJECT_E2E_REL / "I01" / "producer-baseline.json"
+I01_COVERAGE_REL = PROJECT_E2E_REL / "I01" / "producer-coverage.json"
+I01_MASTER_REL = PROJECT_E2E_REL / "I01" / "live-verification.md"
+I01_EXPECTED_CONTRACT_GROUPS = {
+    "I01-LIVE-01": {"CT14", "CT21", "CT21b", "CT22", "CT23", "CT24", "CT31", "CT32", "CT40", "CT41", "CT42", "CT43"},
+    "I01-LIVE-02": {
+        "CT1",
+        "CT2",
+        "CT3",
+        "CT4",
+        "CT4b",
+        "CT4c",
+        "CT5",
+        "CT6",
+        "CT7",
+        "CT11",
+        "CT12",
+        "CT13",
+        "CT16",
+        "CT17",
+        "CT18",
+        "CT19",
+        "CT20",
+        "CT33",
+    },
+    "I01-LIVE-03": {"CT8", "CT9", "CT10", "CT25", "CT26", "CT27", "CT34", "CT35", "CT36", "CT37", "CT38", "CT39"},
+}
+I01_EXPECTED_CASE_IDS = set(I01_EXPECTED_CONTRACT_GROUPS)
+I01_EXPECTED_CONTRACT_CASES = {
+    contract_id: case_id
+    for case_id, contract_ids in I01_EXPECTED_CONTRACT_GROUPS.items()
+    for contract_id in contract_ids
+}
+I01_EXPECTED_DEFERRED_CASES = {
+    "D1a": "I01-LIVE-02",
+    "D1b": "I01-LIVE-01",
+    "D2": "I01-LIVE-03",
+    "D3": "I01-LIVE-01",
+    "D4": "I01-LIVE-02",
+    "D5": "I01-LIVE-01",
+    "D8": "I01-LIVE-02",
+}
+I01_EXPECTED_DEFERRED = set(I01_EXPECTED_DEFERRED_CASES)
+I01_EXCLUDED_DEFERRED = {"D6", "D7"}
+I01_CONTRACT_LINE_RE = re.compile(r"^\s+CT(\d+[a-z]?)\s+\[(?:FUNCTIONAL|CONSTRAINT|PRESERVATION)\]:")
+I01_CASE_RE = re.compile(r"^I01-LIVE-\d{2}$")
 
 # Scope is deliberately limited to the explicit legacy producer inventories,
 # I03 production-surface tables, and the I03 cross-module join table. Mutation
@@ -412,6 +460,173 @@ def _check_legacy_index_rows(index_text: str, expected_ids: set[str]) -> None:
         )
 
 
+def _i01_source_contracts(plan_text: str) -> list[tuple[str, int, str]]:
+    source_contracts: list[tuple[str, int, str]] = []
+    current_slice = ""
+    for line_number, line in enumerate(plan_text.splitlines(), 1):
+        heading = re.match(r"^## (SLICE\S+):", line)
+        if heading:
+            current_slice = heading.group(1)
+        match = I01_CONTRACT_LINE_RE.match(line)
+        if match:
+            source_contracts.append((f"CT{match.group(1)}", line_number, current_slice))
+    source_ids = [contract_id for contract_id, _, _ in source_contracts]
+    if not source_ids or len(source_ids) != len(set(source_ids)):
+        raise CoverageError("I01 source plan has no contracts or duplicate CT declarations")
+    return source_contracts
+
+
+def _i01_baseline_records(
+    baseline_doc: dict[str, Any], source_contracts: list[tuple[str, int, str]]
+) -> list[dict[str, Any]]:
+    records = baseline_doc.get("records")
+    if not isinstance(records, list) or not all(isinstance(row, dict) for row in records):
+        raise CoverageError("I01 producer baseline records must be a list of objects")
+    source_ids = {contract_id for contract_id, _, _ in source_contracts}
+    if source_ids != set(I01_EXPECTED_CONTRACT_CASES):
+        raise CoverageError("I01 source contract set changed; update the explicit I01 case grouping")
+    expected_ids = [f"I01-{contract_id}" for contract_id, _, _ in source_contracts]
+    actual_ids = [row.get("baseline_id") for row in records]
+    if actual_ids != expected_ids:
+        raise CoverageError(
+            f"I01 baseline must preserve every source CT in order: expected={expected_ids}, actual={actual_ids}"
+        )
+    for row, (contract_id, line_number, slice_id) in zip(records, source_contracts, strict=True):
+        if (
+            row.get("contract_id") != contract_id
+            or row.get("source_line") != line_number
+            or row.get("source_slice") != slice_id
+            or not isinstance(row.get("producer_key"), str)
+            or not row["producer_key"].strip()
+        ):
+            raise CoverageError(f"I01 baseline row {row.get('baseline_id')!r} has stale source lineage")
+    return records
+
+
+def _i01_mapping_cases(mapping_doc: dict[str, Any], baseline_records: list[dict[str, Any]]) -> set[str]:
+    records = mapping_doc.get("records")
+    if not isinstance(records, list) or not all(isinstance(row, dict) for row in records):
+        raise CoverageError("I01 coverage records must be a list of objects")
+    expected_ids = [row["baseline_id"] for row in baseline_records]
+    if [row.get("baseline_id") for row in records] != expected_ids:
+        raise CoverageError("I01 coverage mapping is missing, duplicating, or reordering a CT baseline row")
+    mapped_cases: set[str] = set()
+    for baseline, mapping in zip(baseline_records, records, strict=True):
+        baseline_id = baseline["baseline_id"]
+        case_id = mapping.get("case_id")
+        if (
+            mapping.get("contract_id") != baseline["contract_id"]
+            or mapping.get("producer_key") != baseline["producer_key"]
+        ):
+            raise CoverageError(f"I01 coverage mapping {baseline_id!r} changed its source producer")
+        if not isinstance(case_id, str) or not I01_CASE_RE.fullmatch(case_id):
+            raise CoverageError(f"I01 coverage mapping {baseline_id!r} has an invalid case_id")
+        expected_case = I01_EXPECTED_CONTRACT_CASES.get(baseline["contract_id"])
+        if case_id != expected_case:
+            raise CoverageError(f"I01 coverage mapping {baseline_id!r} uses {case_id!r}, expected {expected_case!r}")
+        if mapping.get("coverage_case_ids") != [case_id]:
+            raise CoverageError(f"I01 coverage mapping {baseline_id!r} must explicitly map its case_id")
+        mapped_cases.add(case_id)
+    if mapped_cases != I01_EXPECTED_CASE_IDS or mapping_doc.get("case_ids") != sorted(I01_EXPECTED_CASE_IDS):
+        raise CoverageError("I01 coverage must use exactly I01-LIVE-01, -02, and -03")
+    return mapped_cases
+
+
+def _check_i01_deferred(baseline_doc: dict[str, Any], mapping_doc: dict[str, Any], deferred_text: str) -> None:
+    baseline_rows = baseline_doc.get("deferred_obligations")
+    mapping_rows = mapping_doc.get("deferred_obligations")
+    if not isinstance(baseline_rows, list) or not all(isinstance(row, dict) for row in baseline_rows):
+        raise CoverageError("I01 deferred obligations must be a list of objects")
+    if not isinstance(mapping_rows, list) or not all(isinstance(row, dict) for row in mapping_rows):
+        raise CoverageError("I01 deferred-obligation mappings must be a list of objects")
+    baseline_ids = [row.get("obligation_id") for row in baseline_rows]
+    mapping_ids = [row.get("obligation_id") for row in mapping_rows]
+    if set(baseline_ids) != I01_EXPECTED_DEFERRED or len(baseline_ids) != len(I01_EXPECTED_DEFERRED):
+        raise CoverageError("I01 baseline must include exactly D1a/D1b/D2/D3/D4/D5/D8")
+    if set(mapping_ids) != I01_EXPECTED_DEFERRED or len(mapping_ids) != len(I01_EXPECTED_DEFERRED):
+        raise CoverageError("I01 deferred obligations are missing or duplicated in coverage mappings")
+    baseline_by_id = {row["obligation_id"]: row for row in baseline_rows}
+    for obligation in baseline_rows:
+        obligation_id = obligation["obligation_id"]
+        if obligation.get("case_id") != I01_EXPECTED_DEFERRED_CASES[obligation_id]:
+            raise CoverageError(f"I01 deferred obligation {obligation_id} has the wrong I01 case")
+        if obligation.get("source_heading", "") not in deferred_text:
+            raise CoverageError(f"I01 deferred obligation {obligation_id} source heading is stale")
+    for mapping in mapping_rows:
+        expected_case = baseline_by_id[mapping["obligation_id"]]["case_id"]
+        if mapping.get("coverage_case_ids") != [expected_case]:
+            raise CoverageError(f"I01 deferred mapping {mapping.get('obligation_id')!r} differs from baseline")
+    excluded = baseline_doc.get("excluded_deferred_obligations")
+    excluded_ids = (
+        {row.get("obligation_id") for row in excluded if isinstance(row, dict)} if isinstance(excluded, list) else set()
+    )
+    if excluded_ids != I01_EXCLUDED_DEFERRED:
+        raise CoverageError("I01 baseline must explicitly disposition D6 (I04) and D7 (historical E19)")
+
+
+def _check_i01_case_artifacts(root: Path, index_text: str) -> None:
+    index_ids = set(re.findall(r"\[`(I01-LIVE-\d{2})`\]", index_text))
+    master_text = (root / I01_MASTER_REL).read_text(encoding="utf-8")
+    master_ids = set(re.findall(r"^## (I01-LIVE-\d{2}) —", master_text, re.MULTILINE))
+    if index_ids != I01_EXPECTED_CASE_IDS or master_ids != I01_EXPECTED_CASE_IDS:
+        raise CoverageError(
+            "I01 README/master case IDs differ from the producer mapping: "
+            f"index={sorted(index_ids)}, master={sorted(master_ids)}"
+        )
+    index_rows = [line for line in index_text.splitlines() if line.startswith("| [`I01-LIVE-")]
+    if len(index_rows) != len(I01_EXPECTED_CASE_IDS):
+        raise CoverageError("I01 planner index must have exactly one row per planned case")
+    for line in index_rows:
+        cells = _split_table_row(line)
+        case_id = re.search(r"(I01-LIVE-\d{2})", cells[0] if cells else "")
+        if (
+            len(cells) != 11
+            or case_id is None
+            or cells[9] != "NOT RUN"
+            or cells[10] != "0"
+            or not cells[5]
+            or not cells[7]
+        ):
+            raise CoverageError("I01 planner-index row is incomplete or has a non-NOT-RUN result")
+    for case_id in I01_EXPECTED_CASE_IDS:
+        section = re.search(rf"(?ms)^## {re.escape(case_id)} —.*?(?=^## |\Z)", master_text)
+        if section is None or "| Live result | NOT RUN |" not in section.group(0):
+            raise CoverageError(f"I01 master case {case_id} is missing or not NOT RUN")
+        if f"#### Attempts — {case_id}" not in section.group(0):
+            raise CoverageError(f"I01 master case {case_id} is missing its attempts ledger")
+
+
+def _check_i01_coverage(root: Path, index_text: str) -> dict[str, int]:
+    baseline_doc = _load_json(root / I01_BASELINE_REL)
+    mapping_doc = _load_json(root / I01_COVERAGE_REL)
+    plan_text = (root / I01_PLAN_REL).read_text(encoding="utf-8")
+    deferred_text = (root / I01_DEFERRED_REL).read_text(encoding="utf-8")
+    source_contracts = _i01_source_contracts(plan_text)
+    baseline_records = _i01_baseline_records(baseline_doc, source_contracts)
+    mapped_cases = _i01_mapping_cases(mapping_doc, baseline_records)
+    _check_i01_deferred(baseline_doc, mapping_doc, deferred_text)
+    _check_i01_case_artifacts(root, index_text)
+    if baseline_doc.get("counts") != {
+        "contracts": len(source_contracts),
+        "deferred_obligations": len(I01_EXPECTED_DEFERRED),
+        "excluded_deferred_obligations": len(I01_EXCLUDED_DEFERRED),
+    }:
+        raise CoverageError("I01 baseline count metadata is stale")
+    if mapping_doc.get("counts") != {
+        "mapped_contracts": len(source_contracts),
+        "mapped_deferred_obligations": len(I01_EXPECTED_DEFERRED),
+        "i01_cases": len(I01_EXPECTED_CASE_IDS),
+    }:
+        raise CoverageError("I01 coverage count metadata is stale")
+    if mapped_cases != I01_EXPECTED_CASE_IDS:
+        raise CoverageError("I01 mapped cases differ from the expected case set")
+    return {
+        "i01_contracts": len(source_contracts),
+        "i01_deferred": len(I01_EXPECTED_DEFERRED),
+        "i01_cases": len(I01_EXPECTED_CASE_IDS),
+    }
+
+
 def _check_coverage(root: Path) -> dict[str, int]:
     current_entries = _parse_register(root / REGISTER_REL)
     current_grouped = _group_entries(current_entries)
@@ -440,6 +655,7 @@ def _check_coverage(root: Path) -> dict[str, int]:
     master_path = root / MASTER_REL
     index_text = index_path.read_text(encoding="utf-8")
     master_text = master_path.read_text(encoding="utf-8")
+    i01_counts = _check_i01_coverage(root, index_text)
     index_i03_ids = set(re.findall(r"\[`(I03-LIVE-(?:\d{2}|S\d{2}))`\]", index_text))
     master_i03_ids = set(re.findall(r"^### (I03-LIVE-(?:\d{2}|S\d{2}))\s*$", master_text, re.MULTILINE))
     register_i03_ids = {
@@ -463,6 +679,7 @@ def _check_coverage(root: Path) -> dict[str, int]:
         "legacy_cases": len(legacy_ids),
         "i03_cases": len(mapped_i03_ids),
         "exact_duplicate_keys": len(duplicates),
+        **i01_counts,
     }
 
 
@@ -491,11 +708,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"E2E coverage check FAILED: {exc}", file=sys.stderr)
         return 1
     print(
-        "E2E artifact coverage OK (current I02-origin/I03 subset only; Q87 I01 gap remains): "
-        f"{counts['unique_producers']} unique producers across "
+        "E2E artifact coverage OK (planned mappings only; no live PASS inferred): "
+        f"I01 {counts['i01_contracts']} CTs/{counts['i01_deferred']} deferred obligations "
+        f"across {counts['i01_cases']} cases; "
+        f"{counts['unique_producers']} I02-origin/I03 producers across "
         f"{counts['legacy_cases']} I02-origin and {counts['i03_cases']} I03 cases; "
-        f"{counts['exact_duplicate_keys']} exact duplicate keys collapsed; "
-        "all live results remain artifact-owned (no PASS inferred)."
+        f"{counts['exact_duplicate_keys']} exact duplicate keys collapsed."
     )
     return 0
 

@@ -2153,38 +2153,21 @@ result remain unchanged until planner/user disposition.
 
 ## Q87 — How should I01 live obligations be mapped into final I03 acceptance?
 
-**Status: OPEN (2026-10-23) — blocks final I03 E2E acceptance completeness, not the Q85 package relocation. Live E2E remains deferred.**
+**Status: RESOLVED (2026-10-23; operator selected A).** Final I03 acceptance still requires live-host
+E2E for all project changes in I01–I03; resolution of the mapping does not assign a live verdict.
 
-**Context.** The operator requires every change from I01, I02, and I03 in this project to be covered by
-live-host E2E before final I03 acceptance. I01’s original plan/DoD explicitly said that I01 shipped no
-live-path test, and its DoD walk observed zero `drive_session` boots across six I01 test files. The
-current package contains 89 I02-origin cases and 34 I03 cases, but no I01 case IDs or I01 producer rows.
-The deferred-verification register’s D1–D5 obligations are not a substitute: D1a/D1b and D2 are
-closed only with local workflow/provider doubles, while D3/D5 do not prove a deployed model-authored
-plan was parsed and admitted. I03-LIVE-S08 has a real-provider witness, but its oracle checks delegated
-context/retries/isolation, not I01 grammar or parser behavior; I03-LIVE-08 covers a different execution
-PlanRef surface. Q85’s project-scoped package path is resolved; this is a coverage-mapping gap, not a
-path issue.
+**Selected model: explicit I01-origin case IDs.** The project package now contains `I01-LIVE-01`,
+`I01-LIVE-02`, and `I01-LIVE-03` in `worklogs/planning-topology-and-executable-contracts-loop/e2e/I01/`.
+Their planned oracles cover (1) real skill/prompt → model-authored plan → parser/admission → verify,
+(2) parser records/accessors and persisted workflow behavior, and (3) the precheck diagnostic matrix
+and fail-closed coder-admission control. The separate I01 baseline maps all 42 declared I01 CTs and
+D1a/D1b/D2/D3/D4/D5/D8 to these cases. D6 is excluded as I04-owned; D7 is excluded as historical E19
+baseline disposition. Existing I02-origin/I03 baseline IDs and frozen snapshot are unchanged.
 
-**Impact.** Until every I01 production change/producer is mapped to a useful deployed behavior oracle,
-the package cannot demonstrate the operator’s all-I01–I03 gate. Neither the 123 existing unique cases
-nor their passing local tests may be represented as I01 live coverage. No live E2E may run before I01–I03
-are merged to `main` and deployed.
+**Evidence boundary.** All three I01 cases are `PLANNED / NOT RUN`; no fixture/helper exists yet. STEP7
+independent review must precede STEP8 fixture/helper implementation. No live E2E may run before I01–I03
+are merged to `main` and deployed. The operator will supply host evidence for joint evaluation before
+any result is marked.
 
-**Options.**
-
-- **(A) Add explicit I01-origin live case IDs** (recommended): inventory I01 production producers and
-  deferred obligations, then define the smallest observable host scenarios that covers them. A candidate
-  is a real planner skill/prompt → model-authored increment → parser/precheck/verify-gate witness, with a
-  positive persisted-slice outcome and a malformed-plan repair/refusal-before-coder negative control.
-  Map every producer/obligation explicitly; keep I01-origin cases distinct while allowing a scenario to
-  join to I02/I03 behavior when it genuinely proves both. Extend the checker/tests to enforce the new ID
-  and producer mappings.
-- **(B) Reuse existing I02/I03 case IDs:** map every I01 producer to current cases only where the
-  existing oracle demonstrably exercises that I01 behavior; add cases for any uncovered I01 paths, and
-  extend the checker to preserve explicit multi-increment producer lineage. This avoids a separate ID
-  namespace but makes the I01 evidence less visible in the index.
-
-The I01 inclusion requirement itself is settled and is not an option to waive. Decide only the case-ID /
-producer-mapping model before assigning new IDs or claiming coverage. Keep Q86/LIVE-26 oracle wording
-deferred independently.
+**Historical options.** A was to add explicit I01-origin IDs; B was to reuse I02/I03 IDs only where the
+oracle actually proves I01 behavior. The operator selected A. Q86/LIVE-26 remains separately deferred.

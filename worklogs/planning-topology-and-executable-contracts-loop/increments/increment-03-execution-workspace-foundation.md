@@ -25,8 +25,9 @@ acceptance review; broad independent implementation/evidence review; integrated 
 The E231 decisions finalize the plan, not runtime delivery or either increment’s final acceptance.
 **Operator acceptance-scope clarification (2026-10-23):** final I03 live-host E2E acceptance covers
 all changes in I01, I02, and I03 for this project. E223’s original I02+I03 transfer is a minimum
-lineage, not a limit on the final gate. The current package has no I01 live rows; Q87 tracks the
-required case/producer mapping, and final acceptance stays open until that gap is closed.
+lineage, not a limit on the final gate. The package now has three planned I01-origin case IDs mapping
+all 42 I01 CTs and seven in-scope deferred obligations; every I01 row remains NOT RUN. Final acceptance
+stays open until the approved host evidence is collected and reviewed.
 **Shippable when:** all project execution uses mandatory Linux/Docker cells, one protected workspace
 writer owns coherent private views/pinned readers, terminal sealing/fenced publication/recovery
 are proved, real nested selection/bootstrap/context works, and every unique required I01–I03
@@ -466,7 +467,7 @@ reproducible by the command beside it:
 | CT declarations (17 FUNCTIONAL + 7 CONSTRAINT) | **24** | `grep -cE '^\s+CT[0-9]+[a-z]? \[(FUNCTIONAL|CONSTRAINT|PRESERVATION)\]' increments/increment-03-*.md` |
 | Declared `kill:` directives | **17** (one per FUNCTIONAL contract; a `grep -c 'kill:'` returns more because prose lines quote the word) | `grep -cE '^\s+kill: remove-call ' increments/increment-03-*.md` |
 | Closed wire operations | **19** | `grep -cE '^\s+[A-Z_]+ = "' src/fa/execution/primitives.py` |
-| Current I03 E2E live surfaces / joins | **26 / 8; I01 coverage TBD under Q87** (E250 recorded 18/8; E267 added `publication.py` as I03-LIVE-19; E269 the publish path as I03-LIVE-20; E271 the bundle path as I03-LIVE-21; E272 the install path as I03-LIVE-22; E273 the plan-replacement path as I03-LIVE-23; E274 the authorizer as I03-LIVE-24; E276 forward recovery as I03-LIVE-25) | `grep -o 'I03-LIVE-[0-9]\{2\}' notes/e2e-live-verification-register.md \| sort -u \| wc -l` |
+| Current planned suite | **I03: 26 surfaces / 8 joins; I01: 42 CTs mapped to 3 planned cases (all NOT RUN)** (E250 recorded 18/8; E267 added `publication.py` as I03-LIVE-19; E269 the publish path as I03-LIVE-20; E271 the bundle path as I03-LIVE-21; E272 the install path as I03-LIVE-22; E273 the plan-replacement path as I03-LIVE-23; E274 the authorizer as I03-LIVE-24; E276 forward recovery as I03-LIVE-25) | `grep -o 'I03-LIVE-[0-9]\{2\}' notes/e2e-live-verification-register.md \| sort -u \| wc -l` |
 | Six slices, thirty-five STEPs | **6 / 35** | `grep -cE '^- \[.\] STEP[0-9]+:' increments/increment-03-*.md` |
 
 If a later edit changes a count, the edit updates the table and the ledger entry that introduced the

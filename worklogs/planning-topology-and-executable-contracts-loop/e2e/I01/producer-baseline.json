@@ -1,0 +1,365 @@
+{
+  "format_version": 1,
+  "title": "I01 contract and deferred-obligation baseline for final I03 live acceptance",
+  "status": "PLANNED — local mapping only; no live result is inferred",
+  "source_plan_path": "worklogs/planning-topology-and-executable-contracts-loop/increments/increment-01-plan-grammar-and-extractor.md",
+  "source_plan_sha256": "f162d7e97b45dd7edae35aae712810de7776fa48fe245b9896481f3b7cd37174",
+  "deferred_register_path": "worklogs/planning-topology-and-executable-contracts-loop/notes/deferred-verification-register.md",
+  "deferred_register_sha256": "6b3330f3e9d482ecc06c189c2313050d55ed7ab008e3b995c74c8757b0369a42",
+  "counts": {
+    "contracts": 42,
+    "deferred_obligations": 7,
+    "excluded_deferred_obligations": 2
+  },
+  "scope": "Every declared I01 CT# is mapped. D1a/D1b/D2/D3/D4/D5/D8 are included because they concern I01 parsing, authoring, admission, readers, or exported-surface obligations. D6 is I04-owned; D7 is historical E19 baseline disposition.",
+  "records": [
+    {
+      "baseline_id": "I01-CT1",
+      "contract_id": "CT1",
+      "source_slice": "SLICE1",
+      "source_line": 52,
+      "producer_key": "src/fa/inner_loop/plan_ids.py::extract_plan_ids"
+    },
+    {
+      "baseline_id": "I01-CT2",
+      "contract_id": "CT2",
+      "source_slice": "SLICE1",
+      "source_line": 53,
+      "producer_key": "src/fa/inner_loop/plan_ids.py::_section_contracts"
+    },
+    {
+      "baseline_id": "I01-CT5",
+      "contract_id": "CT5",
+      "source_slice": "SLICE1",
+      "source_line": 55,
+      "producer_key": "src/fa/inner_loop/plan_ids.py::PlanIds.tests_for"
+    },
+    {
+      "baseline_id": "I01-CT6",
+      "contract_id": "CT6",
+      "source_slice": "SLICE1",
+      "source_line": 56,
+      "producer_key": "src/fa/inner_loop/plan_ids.py::_build_record"
+    },
+    {
+      "baseline_id": "I01-CT7",
+      "contract_id": "CT7",
+      "source_slice": "SLICE1",
+      "source_line": 58,
+      "producer_key": "src/fa/inner_loop/plan_ids.py::SliceRecord"
+    },
+    {
+      "baseline_id": "I01-CT11",
+      "contract_id": "CT11",
+      "source_slice": "SLICE1",
+      "source_line": 62,
+      "producer_key": "src/fa/inner_loop/workflow_controller.py:332,461 (.slices consumers)"
+    },
+    {
+      "baseline_id": "I01-CT12",
+      "contract_id": "CT12",
+      "source_slice": "SLICE1",
+      "source_line": 64,
+      "producer_key": "tests/test_plan_ids.py (live-artifact preservation contract)"
+    },
+    {
+      "baseline_id": "I01-CT13",
+      "contract_id": "CT13",
+      "source_slice": "SLICE1",
+      "source_line": 66,
+      "producer_key": "src/fa/inner_loop/plan_ids.py::_extract_commands"
+    },
+    {
+      "baseline_id": "I01-CT21",
+      "contract_id": "CT21",
+      "source_slice": "SLICE1b",
+      "source_line": 110,
+      "producer_key": "worklogs/planning-topology-and-executable-contracts-loop/notes/artifact-schema-and-grammar.md §4"
+    },
+    {
+      "baseline_id": "I01-CT21b",
+      "contract_id": "CT21b",
+      "source_slice": "SLICE1b",
+      "source_line": 115,
+      "producer_key": "src/fa/inner_loop/plan_ids.py::precheck (schema document excluded from lint corpus)"
+    },
+    {
+      "baseline_id": "I01-CT22",
+      "contract_id": "CT22",
+      "source_slice": "SLICE1b",
+      "source_line": 122,
+      "producer_key": "knowledge/skills/plan-authoring/SKILL.md + feature-planning/SKILL.md skeletons"
+    },
+    {
+      "baseline_id": "I01-CT23",
+      "contract_id": "CT23",
+      "source_slice": "SLICE1b",
+      "source_line": 125,
+      "producer_key": "artifact-schema-and-grammar.md §4 + both planning skills"
+    },
+    {
+      "baseline_id": "I01-CT24",
+      "contract_id": "CT24",
+      "source_slice": "SLICE1b",
+      "source_line": 128,
+      "producer_key": "knowledge/skills/plan-authoring/SKILL.md + feature-planning/SKILL.md ID grammar"
+    },
+    {
+      "baseline_id": "I01-CT31",
+      "contract_id": "CT31",
+      "source_slice": "SLICE1c",
+      "source_line": 178,
+      "producer_key": "src/fa/inner_loop/prompt.py planner plan section"
+    },
+    {
+      "baseline_id": "I01-CT32",
+      "contract_id": "CT32",
+      "source_slice": "SLICE1c",
+      "source_line": 180,
+      "producer_key": "src/fa/inner_loop/prompt.py Grounding/Evidence/Assumptions/Risks sections"
+    },
+    {
+      "baseline_id": "I01-CT3",
+      "contract_id": "CT3",
+      "source_slice": "SLICE2",
+      "source_line": 201,
+      "producer_key": "src/fa/inner_loop/plan_ids.py::PlanIds.commands_for"
+    },
+    {
+      "baseline_id": "I01-CT4",
+      "contract_id": "CT4",
+      "source_slice": "SLICE2",
+      "source_line": 203,
+      "producer_key": "src/fa/inner_loop/plan_ids.py::PlanIds.section"
+    },
+    {
+      "baseline_id": "I01-CT4b",
+      "contract_id": "CT4b",
+      "source_slice": "SLICE2",
+      "source_line": 205,
+      "producer_key": "src/fa/inner_loop/plan_ids.py::_unowned_commands"
+    },
+    {
+      "baseline_id": "I01-CT4c",
+      "contract_id": "CT4c",
+      "source_slice": "SLICE2",
+      "source_line": 215,
+      "producer_key": "src/fa/inner_loop/plan_ids.py::PlanIds.commands"
+    },
+    {
+      "baseline_id": "I01-CT16",
+      "contract_id": "CT16",
+      "source_slice": "SLICE2",
+      "source_line": 225,
+      "producer_key": "src/fa/inner_loop/plan_ids.py::_slice_spans"
+    },
+    {
+      "baseline_id": "I01-CT17",
+      "contract_id": "CT17",
+      "source_slice": "SLICE2",
+      "source_line": 231,
+      "producer_key": "src/fa/inner_loop/plan_ids.py::_contracts_block"
+    },
+    {
+      "baseline_id": "I01-CT18",
+      "contract_id": "CT18",
+      "source_slice": "SLICE2",
+      "source_line": 236,
+      "producer_key": "src/fa/inner_loop/plan_ids.py::_contract_entries"
+    },
+    {
+      "baseline_id": "I01-CT19",
+      "contract_id": "CT19",
+      "source_slice": "SLICE2",
+      "source_line": 243,
+      "producer_key": "src/fa/inner_loop/plan_ids.py::PlanIds.contract_class"
+    },
+    {
+      "baseline_id": "I01-CT20",
+      "contract_id": "CT20",
+      "source_slice": "SLICE2",
+      "source_line": 247,
+      "producer_key": "src/fa/inner_loop/plan_ids.py::PlanIds.tests_for"
+    },
+    {
+      "baseline_id": "I01-CT33",
+      "contract_id": "CT33",
+      "source_slice": "SLICE2",
+      "source_line": 248,
+      "producer_key": "src/fa/inner_loop/plan_ids.py::_test_paths"
+    },
+    {
+      "baseline_id": "I01-CT8",
+      "contract_id": "CT8",
+      "source_slice": "SLICE3",
+      "source_line": 286,
+      "producer_key": "src/fa/inner_loop/plan_ids.py::precheck::_rule_slice_without_tests"
+    },
+    {
+      "baseline_id": "I01-CT9",
+      "contract_id": "CT9",
+      "source_slice": "SLICE3",
+      "source_line": 288,
+      "producer_key": "src/fa/inner_loop/plan_ids.py::precheck::_rule_step_without_exit"
+    },
+    {
+      "baseline_id": "I01-CT10",
+      "contract_id": "CT10",
+      "source_slice": "SLICE3",
+      "source_line": 291,
+      "producer_key": "src/fa/inner_loop/plan_ids.py::precheck::_rule_deps"
+    },
+    {
+      "baseline_id": "I01-CT25",
+      "contract_id": "CT25",
+      "source_slice": "SLICE3",
+      "source_line": 297,
+      "producer_key": "src/fa/inner_loop/plan_ids.py::precheck diagnostic aggregation"
+    },
+    {
+      "baseline_id": "I01-CT26",
+      "contract_id": "CT26",
+      "source_slice": "SLICE3",
+      "source_line": 299,
+      "producer_key": "src/fa/inner_loop/plan_ids.py::_rule_heading_near_miss"
+    },
+    {
+      "baseline_id": "I01-CT27",
+      "contract_id": "CT27",
+      "source_slice": "SLICE3",
+      "source_line": 306,
+      "producer_key": "src/fa/inner_loop/plan_ids.py::_rule_contract_reference_undeclared"
+    },
+    {
+      "baseline_id": "I01-CT34",
+      "contract_id": "CT34",
+      "source_slice": "SLICE3",
+      "source_line": 313,
+      "producer_key": "src/fa/inner_loop/plan_ids.py::_rule_contract_declared_twice"
+    },
+    {
+      "baseline_id": "I01-CT35",
+      "contract_id": "CT35",
+      "source_slice": "SLICE3",
+      "source_line": 318,
+      "producer_key": "src/fa/inner_loop/plan_ids.py::_rule_contract_declaration_lost"
+    },
+    {
+      "baseline_id": "I01-CT36",
+      "contract_id": "CT36",
+      "source_slice": "SLICE3b",
+      "source_line": 360,
+      "producer_key": "src/fa/inner_loop/plan_ids.py::_step_state"
+    },
+    {
+      "baseline_id": "I01-CT37",
+      "contract_id": "CT37",
+      "source_slice": "SLICE3b",
+      "source_line": 367,
+      "producer_key": "src/fa/inner_loop/plan_ids.py::parse_slice_id + _declared_deps"
+    },
+    {
+      "baseline_id": "I01-CT38",
+      "contract_id": "CT38",
+      "source_slice": "SLICE3b",
+      "source_line": 376,
+      "producer_key": "src/fa/inner_loop/plan_ids.py::_rule_slice_count"
+    },
+    {
+      "baseline_id": "I01-CT39",
+      "contract_id": "CT39",
+      "source_slice": "SLICE3b",
+      "source_line": 382,
+      "producer_key": "src/fa/inner_loop/plan_ids.py::_rule_orphaned_grammar"
+    },
+    {
+      "baseline_id": "I01-CT14",
+      "contract_id": "CT14",
+      "source_slice": "SLICE4",
+      "source_line": 428,
+      "producer_key": "knowledge/skills/plan-authoring/SKILL.md + feature-planning/SKILL.md"
+    },
+    {
+      "baseline_id": "I01-CT40",
+      "contract_id": "CT40",
+      "source_slice": "SLICE4",
+      "source_line": 430,
+      "producer_key": "knowledge/skills/plan-authoring/SKILL.md + feature-planning/SKILL.md PLAN-SKELETON blocks"
+    },
+    {
+      "baseline_id": "I01-CT41",
+      "contract_id": "CT41",
+      "source_slice": "SLICE4",
+      "source_line": 434,
+      "producer_key": "knowledge/skills/*/SKILL.md + knowledge/skills/feature-planning/INJECT.md"
+    },
+    {
+      "baseline_id": "I01-CT42",
+      "contract_id": "CT42",
+      "source_slice": "SLICE4",
+      "source_line": 440,
+      "producer_key": "knowledge/skills/*/SKILL.md skeleton-derived sample plan"
+    },
+    {
+      "baseline_id": "I01-CT43",
+      "contract_id": "CT43",
+      "source_slice": "SLICE4",
+      "source_line": 444,
+      "producer_key": "knowledge/skills/*/SKILL.md + artifact-schema-and-grammar.md §4 executable oracle"
+    }
+  ],
+  "deferred_obligations": [
+    {
+      "obligation_id": "D1a",
+      "source_heading": "D1a — the gate runs, and observes slices, in a real workflow",
+      "historical_owner": "I02",
+      "case_id": "I01-LIVE-02"
+    },
+    {
+      "obligation_id": "D1b",
+      "source_heading": "D1b — a plan the **model actually wrote** parses",
+      "historical_owner": "I02",
+      "case_id": "I01-LIVE-01"
+    },
+    {
+      "obligation_id": "D2",
+      "source_heading": "D2 — production `precheck` admission caller",
+      "historical_owner": "I02",
+      "case_id": "I01-LIVE-03"
+    },
+    {
+      "obligation_id": "D3",
+      "source_heading": "D3 — The skill → prompt → plan → parser chain",
+      "historical_owner": "I02",
+      "case_id": "I01-LIVE-01"
+    },
+    {
+      "obligation_id": "D4",
+      "source_heading": "D4 — Read-API consumers",
+      "historical_owner": "I02 / deferred slice-loop successor",
+      "case_id": "I01-LIVE-02"
+    },
+    {
+      "obligation_id": "D5",
+      "source_heading": "D5 — The two prompt blocks (SLICE1c)",
+      "historical_owner": "I02",
+      "case_id": "I01-LIVE-01"
+    },
+    {
+      "obligation_id": "D8",
+      "source_heading": "D8 — The exported surface can drift away from schema §7",
+      "historical_owner": "I02",
+      "case_id": "I01-LIVE-02"
+    }
+  ],
+  "excluded_deferred_obligations": [
+    {
+      "obligation_id": "D6",
+      "reason": "Owned by I04 eval consumer; not an I01 change."
+    },
+    {
+      "obligation_id": "D7",
+      "reason": "Historical E19 baseline-guard disposition; not an I01 production change."
+    }
+  ]
+}

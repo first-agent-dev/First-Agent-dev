@@ -1,10 +1,10 @@
-# E2E live-host verification register — I02 producer origins, I03 acceptance owner; I01 gap tracked by Q87
+# E2E live-host verification register — I02 producer origins, I03 acceptance owner; I01 cases in project package
 
 **Operator acceptance-scope clarification (2026-10-23).** Final I03 acceptance requires live-host E2E
 coverage for all project changes in I01–I03. This historical register inventories I02-origin producer
-obligations; the current package also inventories I03 cases, but neither contains I01 live-case rows.
-The gap is confirmed, not waived. Q87 tracks the mapping needed before final acceptance; no current
-case count or local proof may be credited as I01 live coverage.
+obligations; I03 cases remain in the integrated register/package. Q87 resolved the I01 gap by mapping
+all 42 I01 CTs and seven in-scope deferred obligations to `I01-LIVE-01..03` in the project package.
+Those rows remain `PLANNED / NOT RUN`; no current case count or local proof is live coverage.
 
 **Purpose.** Operator instruction, 2026-10-08: *every producer created by this plan must be
 marked for a future end-to-end test, and all of them verified with fixtures on the live host.*

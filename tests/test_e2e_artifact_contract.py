@@ -1,8 +1,8 @@
-"""I03/SLICE6 STEP1-4: live-result schema and planner/coder E2E artifacts.
+"""I01 Q87 / I03 SLICE6: live-result schema and E2E artifact contracts.
 
-This checks artifact shape and producer coverage only. It cannot assign, infer,
+This checks artifact shape and source-to-case coverage only. It cannot assign, infer,
 or approve a deployed-host result; all live statuses remain operator/reviewer-owned.
-Contracts: CT88, CT89, CT112 and Q63 (E231).
+Contracts: CT88, CT89, CT112 and Q63 (E231), plus the resolved Q87 I01 mapping.
 """
 
 from __future__ import annotations
@@ -34,17 +34,46 @@ REGISTER = (
     / "e2e-live-verification-register.md"
 )
 
+I01_MASTER_SHEET = PROJECT_E2E / "I01" / "live-verification.md"
+I01_BASELINE = PROJECT_E2E / "I01" / "producer-baseline.json"
+I01_COVERAGE = PROJECT_E2E / "I01" / "producer-coverage.json"
+I01_PLAN = (
+    REPO_ROOT
+    / "worklogs"
+    / "planning-topology-and-executable-contracts-loop"
+    / "increments"
+    / "increment-01-plan-grammar-and-extractor.md"
+)
+DEFERRED_REGISTER = (
+    REPO_ROOT
+    / "worklogs"
+    / "planning-topology-and-executable-contracts-loop"
+    / "notes"
+    / "deferred-verification-register.md"
+)
+COVERAGE_SOURCE_PATHS = (
+    coverage_checker.REGISTER_REL,
+    coverage_checker.BASELINE_REL,
+    coverage_checker.COVERAGE_REL,
+    coverage_checker.INDEX_REL,
+    coverage_checker.MASTER_REL,
+    coverage_checker.I01_PLAN_REL,
+    coverage_checker.I01_DEFERRED_REL,
+    coverage_checker.I01_BASELINE_REL,
+    coverage_checker.I01_COVERAGE_REL,
+    coverage_checker.I01_MASTER_REL,
+)
+
 LIVE_RESULTS = ("NOT RUN", "PASS", "FAIL", "BLOCKED")
-CASE_ID = re.compile(r"I03-LIVE-(?:[0-9]{2}|S[0-9]{2})")
 
 with LIVE_RESULT_SCHEMA.open(encoding="utf-8") as schema_file:
     _VALIDATE_ATTEMPT = fastjsonschema.compile(json.load(schema_file))
 
 
-def _attempt(result: str, *, commentary: str | None = None) -> dict[str, Any]:
+def _attempt(result: str, *, case_id: str = "I03-LIVE-01", commentary: str | None = None) -> dict[str, Any]:
     """Return a complete CT88-shaped attempt, optionally with commentary."""
     record: dict[str, Any] = {
-        "case_id": "I03-LIVE-01",
+        "case_id": case_id,
         "attempt": 1,
         "date": "2026-10-23",
         "result": result,
@@ -79,6 +108,8 @@ def _heading_case_ids(text: str) -> list[str]:
 def test_live_result_schema_accepts_every_state_with_and_without_commentary() -> None:
     for result in LIVE_RESULTS:
         _VALIDATE_ATTEMPT(_attempt(result))
+        _VALIDATE_ATTEMPT(_attempt(result, case_id="I01-LIVE-01"))
+        _VALIDATE_ATTEMPT(_attempt(result, case_id="I01-LIVE-01", commentary="short, redacted operator note"))
         _VALIDATE_ATTEMPT(_attempt(result, commentary="short, redacted operator note"))
 
 
@@ -118,6 +149,100 @@ def test_e2e_artifacts_are_project_scoped_without_a_root_duplicate() -> None:
     assert coverage["baseline_path"] == (
         "worklogs/planning-topology-and-executable-contracts-loop/e2e/I03/producer-baseline.json"
     )
+
+
+def test_i01_contracts_deferred_obligations_and_case_ids_are_mapped_exactly() -> None:
+    baseline = json.loads(I01_BASELINE.read_text(encoding="utf-8"))
+    mapping = json.loads(I01_COVERAGE.read_text(encoding="utf-8"))
+    plan = I01_PLAN.read_text(encoding="utf-8")
+    declared = re.findall(
+        r"^\s+CT(\d+[a-z]?)\s+\[(?:FUNCTIONAL|CONSTRAINT|PRESERVATION)\]:",
+        plan,
+        re.MULTILINE,
+    )
+    expected_baseline_ids = [f"I01-CT{contract_id}" for contract_id in declared]
+    assert len(declared) == 42
+    assert [row["baseline_id"] for row in baseline["records"]] == expected_baseline_ids
+    assert [row["baseline_id"] for row in mapping["records"]] == expected_baseline_ids
+    expected_contract_cases = {
+        "I01-LIVE-01": {
+            "CT14",
+            "CT21",
+            "CT21b",
+            "CT22",
+            "CT23",
+            "CT24",
+            "CT31",
+            "CT32",
+            "CT40",
+            "CT41",
+            "CT42",
+            "CT43",
+        },
+        "I01-LIVE-02": {
+            "CT1",
+            "CT2",
+            "CT3",
+            "CT4",
+            "CT4b",
+            "CT4c",
+            "CT5",
+            "CT6",
+            "CT7",
+            "CT11",
+            "CT12",
+            "CT13",
+            "CT16",
+            "CT17",
+            "CT18",
+            "CT19",
+            "CT20",
+            "CT33",
+        },
+        "I01-LIVE-03": {"CT8", "CT9", "CT10", "CT25", "CT26", "CT27", "CT34", "CT35", "CT36", "CT37", "CT38", "CT39"},
+    }
+    actual_contract_cases = {
+        case_id: {row["contract_id"] for row in mapping["records"] if row["case_id"] == case_id}
+        for case_id in mapping["case_ids"]
+    }
+    assert actual_contract_cases == expected_contract_cases
+
+    expected_deferred_cases = {
+        "D1a": "I01-LIVE-02",
+        "D1b": "I01-LIVE-01",
+        "D2": "I01-LIVE-03",
+        "D3": "I01-LIVE-01",
+        "D4": "I01-LIVE-02",
+        "D5": "I01-LIVE-01",
+        "D8": "I01-LIVE-02",
+    }
+    expected_deferred = set(expected_deferred_cases)
+    assert {row["obligation_id"] for row in baseline["deferred_obligations"]} == expected_deferred
+    assert {row["obligation_id"] for row in mapping["deferred_obligations"]} == expected_deferred
+    assert {
+        row["obligation_id"]: row["coverage_case_ids"][0] for row in mapping["deferred_obligations"]
+    } == expected_deferred_cases
+    assert {row["obligation_id"] for row in baseline["excluded_deferred_obligations"]} == {"D6", "D7"}
+    assert mapping["case_ids"] == ["I01-LIVE-01", "I01-LIVE-02", "I01-LIVE-03"]
+
+    index = E2E_INDEX.read_text(encoding="utf-8")
+    master = I01_MASTER_SHEET.read_text(encoding="utf-8")
+    index_ids = re.findall(r"\[`(I01-LIVE-[0-9]{2})`\]", index)
+    master_ids = re.findall(r"^## (I01-LIVE-[0-9]{2}) —", master, re.MULTILINE)
+    assert index_ids == master_ids == mapping["case_ids"]
+    case_rows = [line for line in index.splitlines() if line.startswith("| [`I01-LIVE-")]
+    assert len(case_rows) == 3
+    assert all(_split_index_row_status(line) == ("NOT RUN", "0") for line in case_rows)
+    for case_id in mapping["case_ids"]:
+        section = re.search(rf"(?ms)^## {re.escape(case_id)} —.*?(?=^## |\Z)", master)
+        assert section is not None, case_id
+        assert "| Live result | NOT RUN |" in section.group(0), case_id
+        assert f"#### Attempts — {case_id}" in section.group(0), case_id
+
+
+def _split_index_row_status(line: str) -> tuple[str, str]:
+    cells = line.strip("|").split("|")
+    return cells[9].strip(), cells[10].strip()
 
 
 def test_live_case_ids_match_register_index_and_master_sheet_exactly() -> None:
@@ -271,6 +396,69 @@ def test_legacy_host_oracles_match_the_merged_register_and_snapshot() -> None:
     assert "blocked before the coder stage starts" in register
 
 
+def test_checker_rejects_i01_contract_or_deferred_case_reassignment(tmp_path: Path) -> None:
+    for relative in COVERAGE_SOURCE_PATHS:
+        target = tmp_path / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(REPO_ROOT / relative, target)
+    mapping_path = tmp_path / coverage_checker.I01_COVERAGE_REL
+    baseline_path = tmp_path / coverage_checker.I01_BASELINE_REL
+    original_mapping = json.loads(mapping_path.read_text(encoding="utf-8"))
+    contract_mutation = json.loads(json.dumps(original_mapping))
+    contract_row = next(row for row in contract_mutation["records"] if row["contract_id"] == "CT1")
+    contract_row["case_id"] = "I01-LIVE-01"
+    contract_row["coverage_case_ids"] = ["I01-LIVE-01"]
+    mapping_path.write_text(json.dumps(contract_mutation), encoding="utf-8")
+    with pytest.raises(coverage_checker.CoverageError, match="expected 'I01-LIVE-02'"):
+        coverage_checker.check_producer_coverage(tmp_path)
+
+    mapping_path.write_text(json.dumps(original_mapping), encoding="utf-8")
+    baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
+    deferred_mapping = next(row for row in original_mapping["deferred_obligations"] if row["obligation_id"] == "D2")
+    deferred_mapping["coverage_case_ids"] = ["I01-LIVE-02"]
+    baseline_row = next(row for row in baseline["deferred_obligations"] if row["obligation_id"] == "D2")
+    baseline_row["case_id"] = "I01-LIVE-02"
+    mapping_path.write_text(json.dumps(original_mapping), encoding="utf-8")
+    baseline_path.write_text(json.dumps(baseline), encoding="utf-8")
+    with pytest.raises(coverage_checker.CoverageError, match="D2 has the wrong I01 case"):
+        coverage_checker.check_producer_coverage(tmp_path)
+
+
+def test_checker_rejects_missing_i01_contract_mapping(tmp_path: Path) -> None:
+    for relative in COVERAGE_SOURCE_PATHS:
+        target = tmp_path / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(REPO_ROOT / relative, target)
+    mapping_path = tmp_path / coverage_checker.I01_COVERAGE_REL
+    mapping = json.loads(mapping_path.read_text(encoding="utf-8"))
+    mapping["records"].pop()
+    mapping_path.write_text(json.dumps(mapping), encoding="utf-8")
+    with pytest.raises(coverage_checker.CoverageError, match="I01 coverage mapping is missing"):
+        coverage_checker.check_producer_coverage(tmp_path)
+
+
+def test_checker_rejects_missing_i01_case_row_from_index_or_master(tmp_path: Path) -> None:
+    for relative in COVERAGE_SOURCE_PATHS:
+        target = tmp_path / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(REPO_ROOT / relative, target)
+    index_path = tmp_path / coverage_checker.INDEX_REL
+    master_path = tmp_path / coverage_checker.I01_MASTER_REL
+    original_index = index_path.read_text(encoding="utf-8")
+    original_master = master_path.read_text(encoding="utf-8")
+    removed_index_row = next(line for line in original_index.splitlines() if line.startswith("| [`I01-LIVE-02`]"))
+    index_path.write_text(original_index.replace(removed_index_row + "\n", "", 1), encoding="utf-8")
+    with pytest.raises(coverage_checker.CoverageError, match="I01 README/master case IDs differ"):
+        coverage_checker.check_producer_coverage(tmp_path)
+    index_path.write_text(original_index, encoding="utf-8")
+
+    shortened_master, count = re.subn(r"(?ms)^## I01-LIVE-02 —.*?(?=^## |\Z)", "", original_master)
+    assert count == 1
+    master_path.write_text(shortened_master, encoding="utf-8")
+    with pytest.raises(coverage_checker.CoverageError, match="I01 README/master case IDs differ"):
+        coverage_checker.check_producer_coverage(tmp_path)
+
+
 def test_coverage_mapping_covers_every_frozen_baseline_id() -> None:
     baseline = _producer_baseline_document()
     mapping = _producer_coverage_document()
@@ -288,13 +476,7 @@ def test_coverage_mapping_covers_every_frozen_baseline_id() -> None:
 
 def test_coverage_checker_compares_every_unique_producer_case(tmp_path: Path) -> None:
     document = _producer_coverage_document()
-    source_paths = (
-        coverage_checker.REGISTER_REL,
-        coverage_checker.BASELINE_REL,
-        coverage_checker.COVERAGE_REL,
-        coverage_checker.INDEX_REL,
-        coverage_checker.MASTER_REL,
-    )
+    source_paths = COVERAGE_SOURCE_PATHS
     # Build one isolated checkout view; only the mapping is mutated per case.
     root = tmp_path
     for relative in source_paths:
@@ -314,13 +496,7 @@ def test_coverage_checker_compares_every_unique_producer_case(tmp_path: Path) ->
 
 def test_checker_detects_removal_of_every_case_from_index_and_i03_master(tmp_path: Path) -> None:
     mapping = _producer_coverage_document()
-    source_paths = (
-        coverage_checker.REGISTER_REL,
-        coverage_checker.BASELINE_REL,
-        coverage_checker.COVERAGE_REL,
-        coverage_checker.INDEX_REL,
-        coverage_checker.MASTER_REL,
-    )
+    source_paths = COVERAGE_SOURCE_PATHS
     for relative in source_paths:
         target = tmp_path / relative
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -360,13 +536,7 @@ def test_checker_detects_removal_of_every_case_from_index_and_i03_master(tmp_pat
 
 
 def test_checker_requires_explicit_successor_for_a_renamed_producer(tmp_path: Path) -> None:
-    source_paths = (
-        coverage_checker.REGISTER_REL,
-        coverage_checker.BASELINE_REL,
-        coverage_checker.COVERAGE_REL,
-        coverage_checker.INDEX_REL,
-        coverage_checker.MASTER_REL,
-    )
+    source_paths = COVERAGE_SOURCE_PATHS
     for relative in source_paths:
         target = tmp_path / relative
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -406,13 +576,19 @@ def test_checker_entrypoint_calls_producer_coverage_and_reports_counts(
                 "legacy_cases": 89,
                 "i03_cases": 34,
                 "exact_duplicate_keys": 2,
+                "i01_contracts": 42,
+                "i01_deferred": 7,
+                "i01_cases": 3,
             }
         ),
     )
     root = REPO_ROOT
     assert coverage_checker.main(["--root", str(root)]) == 0
     assert calls == [root]
-    assert "124 unique producers" in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert "124 I02-origin/I03 producers" in output
+    assert "I01 42 CTs/7 deferred obligations across 3 cases" in output
+    assert "no live PASS inferred" in output
 
 
 def test_coverage_checker_cli_executes_and_reports_frozen_counts() -> None:
@@ -424,9 +600,9 @@ def test_coverage_checker_cli_executes_and_reports_frozen_counts() -> None:
         text=True,
     )
     assert completed.returncode == 0, completed.stderr
-    assert "124 unique producers" in completed.stdout
-    assert "Q87 I01 gap remains" in completed.stdout
-    assert "no PASS inferred" in completed.stdout
+    assert "I01 42 CTs/7 deferred obligations across 3 cases" in completed.stdout
+    assert "124 I02-origin/I03 producers" in completed.stdout
+    assert "no live PASS inferred" in completed.stdout
 
 
 @pytest.mark.parametrize(

@@ -3,33 +3,37 @@
 **Status: PLANNED. No case in this index has been executed on a live host.** Every
 row reads `NOT RUN`. The canonical project-scoped package is
 `worklogs/planning-topology-and-executable-contracts-loop/e2e/`; scoping by project keeps reused
-increment/case IDs from colliding across projects. This is the I03 E2E package described by
+increment/case IDs from colliding across projects. This is the integrated final-I03 E2E package described by
 `worklogs/planning-topology-and-executable-contracts-loop/notes/e2e-handoff-and-plan-review-design.md`
 and owned by I03 SLICE6 (`increments/increment-03-execution-workspace-foundation.md`,
-section *SLICE6: Reviewed I01–I03 package and actual deployed acceptance*).
+section *SLICE6: Reviewed I01–I03 package and actual deployed acceptance*). It now includes three
+I01-origin case IDs mapped to all 42 I01 contract declarations; their results remain `NOT RUN`.
 
 ## What this directory is
 
 | Path | Purpose |
 | --- | --- |
 | `README.md` | this index: the planner-owned map of required live cases |
+| `I01/live-verification.md` | I01-origin planned cases and append-only attempts; all results currently NOT RUN |
+| `I01/producer-baseline.json` | frozen I01 contract/deferred-obligation source inventory; separate from the I02/I03 baseline |
+| `I01/producer-coverage.json` | explicit I01 contract/deferred-obligation to I01-LIVE case mapping; checked locally, never a live result |
 | `I03/live-verification.md` | the integrated I03 master sheet: one record per I03 case, append-only attempts/local-vs-live fields |
 | `I03/producer-baseline.json` | frozen normalized producer keys, original-order IDs, complete source rows, CT/SLICE/STEP lineage, and host fixture/oracles |
 | `I03/producer-coverage.json` | explicit baseline-ID to current producer/case/successor mapping; checked with the frozen baseline by `scripts/check_execution_e2e_coverage.py` |
 | `I03/fixtures/` | **not created** - SLICE6 STEP8, and only after the STEP7 independent review |
 | [`I03/implementation-handoffs.md`](I03/implementation-handoffs.md) | coder source observations and explicitly labeled proposals; no oracle/result ownership |
 
-The authoritative producer obligations live in
+The I01 contract/deferred-obligation sources are the I01 increment plan and deferred-verification
+register, frozen under `I01/producer-baseline.json`; the I02-origin/I03 live obligations remain in
 `worklogs/planning-topology-and-executable-contracts-loop/notes/e2e-live-verification-register.md`.
-The README and master sheet are **derived** from that register. `producer-baseline.json` freezes
-the selected original producer rows and lineage; `producer-coverage.json` separately maps every
-baseline ID to its current producer and case. A rename/replacement must be explicit in that map;
+The indexes and master sheets are **derived** from those sources. Each increment-origin baseline is
+separate, and its coverage file explicitly maps every source ID to its current producer and case. A rename/replacement must be explicit in that map;
 none is inferred here. No artifact authorizes or assigns a live result.
 
-**I01 acceptance gap (Q87):** the current inventory represents 89 I02-origin cases and 34 I03
-cases, but contains no I01 live case rows. The operator requires final I03 acceptance to cover
-all I01–I03 changes on a live host. That gate remains open until I01 obligations are explicitly
-mapped to live cases; the existing counts do not imply I01 coverage.
+**I01 status (Q87 resolved):** 42 I01 contract declarations and seven I01-relevant deferred
+obligations map to `I01-LIVE-01..03`. These three cases are `PLANNED / NOT RUN`; they add explicit
+I01 coverage ownership, not live evidence. The final I01–I03 gate remains open until the approved
+host runs are evaluated by the operator/reviewer.
 
 ## Ownership (CT88 / CT89, and section 2 of the handoff design)
 
@@ -52,6 +56,19 @@ Exactly `NOT RUN | PASS | FAIL | BLOCKED`. `commentary` is optional in every sta
 <=512 UTF-8 bytes, single line, credential-redacted, never control flow.
 `NOT RUN` and `BLOCKED` never count as `PASS`. Local proof and live result are
 recorded separately: a green in-repo suite is not a deployed-host verdict.
+
+## I01 origin cases — owned by final I03 acceptance
+
+These rows make the I01 origin explicit while keeping the frozen I02/I03 producer snapshot intact.
+The mapping file ties each of the 42 I01 CT declarations and D1a/D1b/D2/D3/D4/D5/D8 to these
+case IDs. All remain `NOT RUN`; they are not a substitute for the deployed-host evidence required
+by final acceptance.
+
+| Case | Kind | Slice | CTs | Phase | Producer | Local proof | Expected live observation | Fixture / run sheet | Result | Attempts |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| [`I01-LIVE-01`](I01/live-verification.md#i01-live-01) | surface / authoring join | I01/SLICE1b, 1c, 4 | CT14, CT21, CT21b, CT22, CT23, CT24, CT31, CT32, CT40, CT41, CT42, CT43 | P6 | schema §4, both planning skills, planner prompt, real provider-to-parser path | `test_plan_grammar_live_chain.py`, `test_planner_emits_schema4.py`, `test_skill_grammar_emit.py`, `test_skill_conformance.py` | Both selectable skills and planner grammar reach the real provider; a model-authored plan survives extraction/admission, and the declared verify command is actually persisted/executed. | not assigned (STEP8 after STEP7); `I01/live-verification.md#i01-live-01` | NOT RUN | 0 |
+| [`I01-LIVE-02`](I01/live-verification.md#i01-live-02) | surface | I01/SLICE1, 2, 4 | CT1, CT2, CT3, CT4, CT4b, CT4c, CT5, CT6, CT7, CT11, CT12, CT13, CT16, CT17, CT18, CT19, CT20, CT33 | P6 | `plan_ids.py` extractor, records/accessors, command ownership and workflow consumers | `test_plan_ids.py`, `test_slice_id_validation.py`, `test_skill_grammar_emit.py` | A canonical multi-slice plan drives the deployed workflow; persisted slice/report/command outcomes match the grammar, with no cross-slice or unowned command credited. | not assigned (STEP8 after STEP7); `I01/live-verification.md#i01-live-02` | NOT RUN | 0 |
+| [`I01-LIVE-03`](I01/live-verification.md#i01-live-03) | surface / admission join | I01/SLICE3, 3b | CT8, CT9, CT10, CT25, CT26, CT27, CT34, CT35, CT36, CT37, CT38, CT39 | P6 | `plan_ids.py::precheck` and the production admission/repair path | `test_plan_precheck.py`, `test_verify_gate_live.py` | Each named diagnostic is observable through deployed admission; no coder dispatch occurs with remaining FAIL/indeterminate diagnostics, while the seven-slice ceiling remains WARN-only. | not assigned (STEP8 after STEP7); `I01/live-verification.md#i01-live-03` | NOT RUN | 0 |
 
 ## Case index
 

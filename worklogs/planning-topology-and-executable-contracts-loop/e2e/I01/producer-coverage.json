@@ -1,0 +1,446 @@
+{
+  "format_version": 1,
+  "title": "I01 contract/deferred-obligation to explicit I01 live-case mapping",
+  "status": "PLANNED — all three I01 cases remain NOT RUN",
+  "baseline_path": "worklogs/planning-topology-and-executable-contracts-loop/e2e/I01/producer-baseline.json",
+  "mapping_policy": [
+    "Preserve the frozen I01 source contract inventory; any changed producer requires explicit lineage.",
+    "Every I01 CT declaration maps to at least one explicit I01-LIVE case ID.",
+    "All selected I01-related deferred obligations map to an I01-LIVE case; I04/E19-only obligations are separately dispositioned.",
+    "Case mappings are planning evidence only and never assign a live result."
+  ],
+  "counts": {
+    "mapped_contracts": 42,
+    "mapped_deferred_obligations": 7,
+    "i01_cases": 3
+  },
+  "records": [
+    {
+      "baseline_id": "I01-CT1",
+      "contract_id": "CT1",
+      "producer_key": "src/fa/inner_loop/plan_ids.py::extract_plan_ids",
+      "case_id": "I01-LIVE-02",
+      "coverage_case_ids": [
+        "I01-LIVE-02"
+      ]
+    },
+    {
+      "baseline_id": "I01-CT2",
+      "contract_id": "CT2",
+      "producer_key": "src/fa/inner_loop/plan_ids.py::_section_contracts",
+      "case_id": "I01-LIVE-02",
+      "coverage_case_ids": [
+        "I01-LIVE-02"
+      ]
+    },
+    {
+      "baseline_id": "I01-CT5",
+      "contract_id": "CT5",
+      "producer_key": "src/fa/inner_loop/plan_ids.py::PlanIds.tests_for",
+      "case_id": "I01-LIVE-02",
+      "coverage_case_ids": [
+        "I01-LIVE-02"
+      ]
+    },
+    {
+      "baseline_id": "I01-CT6",
+      "contract_id": "CT6",
+      "producer_key": "src/fa/inner_loop/plan_ids.py::_build_record",
+      "case_id": "I01-LIVE-02",
+      "coverage_case_ids": [
+        "I01-LIVE-02"
+      ]
+    },
+    {
+      "baseline_id": "I01-CT7",
+      "contract_id": "CT7",
+      "producer_key": "src/fa/inner_loop/plan_ids.py::SliceRecord",
+      "case_id": "I01-LIVE-02",
+      "coverage_case_ids": [
+        "I01-LIVE-02"
+      ]
+    },
+    {
+      "baseline_id": "I01-CT11",
+      "contract_id": "CT11",
+      "producer_key": "src/fa/inner_loop/workflow_controller.py:332,461 (.slices consumers)",
+      "case_id": "I01-LIVE-02",
+      "coverage_case_ids": [
+        "I01-LIVE-02"
+      ]
+    },
+    {
+      "baseline_id": "I01-CT12",
+      "contract_id": "CT12",
+      "producer_key": "tests/test_plan_ids.py (live-artifact preservation contract)",
+      "case_id": "I01-LIVE-02",
+      "coverage_case_ids": [
+        "I01-LIVE-02"
+      ]
+    },
+    {
+      "baseline_id": "I01-CT13",
+      "contract_id": "CT13",
+      "producer_key": "src/fa/inner_loop/plan_ids.py::_extract_commands",
+      "case_id": "I01-LIVE-02",
+      "coverage_case_ids": [
+        "I01-LIVE-02"
+      ]
+    },
+    {
+      "baseline_id": "I01-CT21",
+      "contract_id": "CT21",
+      "producer_key": "worklogs/planning-topology-and-executable-contracts-loop/notes/artifact-schema-and-grammar.md §4",
+      "case_id": "I01-LIVE-01",
+      "coverage_case_ids": [
+        "I01-LIVE-01"
+      ]
+    },
+    {
+      "baseline_id": "I01-CT21b",
+      "contract_id": "CT21b",
+      "producer_key": "src/fa/inner_loop/plan_ids.py::precheck (schema document excluded from lint corpus)",
+      "case_id": "I01-LIVE-01",
+      "coverage_case_ids": [
+        "I01-LIVE-01"
+      ]
+    },
+    {
+      "baseline_id": "I01-CT22",
+      "contract_id": "CT22",
+      "producer_key": "knowledge/skills/plan-authoring/SKILL.md + feature-planning/SKILL.md skeletons",
+      "case_id": "I01-LIVE-01",
+      "coverage_case_ids": [
+        "I01-LIVE-01"
+      ]
+    },
+    {
+      "baseline_id": "I01-CT23",
+      "contract_id": "CT23",
+      "producer_key": "artifact-schema-and-grammar.md §4 + both planning skills",
+      "case_id": "I01-LIVE-01",
+      "coverage_case_ids": [
+        "I01-LIVE-01"
+      ]
+    },
+    {
+      "baseline_id": "I01-CT24",
+      "contract_id": "CT24",
+      "producer_key": "knowledge/skills/plan-authoring/SKILL.md + feature-planning/SKILL.md ID grammar",
+      "case_id": "I01-LIVE-01",
+      "coverage_case_ids": [
+        "I01-LIVE-01"
+      ]
+    },
+    {
+      "baseline_id": "I01-CT31",
+      "contract_id": "CT31",
+      "producer_key": "src/fa/inner_loop/prompt.py planner plan section",
+      "case_id": "I01-LIVE-01",
+      "coverage_case_ids": [
+        "I01-LIVE-01"
+      ]
+    },
+    {
+      "baseline_id": "I01-CT32",
+      "contract_id": "CT32",
+      "producer_key": "src/fa/inner_loop/prompt.py Grounding/Evidence/Assumptions/Risks sections",
+      "case_id": "I01-LIVE-01",
+      "coverage_case_ids": [
+        "I01-LIVE-01"
+      ]
+    },
+    {
+      "baseline_id": "I01-CT3",
+      "contract_id": "CT3",
+      "producer_key": "src/fa/inner_loop/plan_ids.py::PlanIds.commands_for",
+      "case_id": "I01-LIVE-02",
+      "coverage_case_ids": [
+        "I01-LIVE-02"
+      ]
+    },
+    {
+      "baseline_id": "I01-CT4",
+      "contract_id": "CT4",
+      "producer_key": "src/fa/inner_loop/plan_ids.py::PlanIds.section",
+      "case_id": "I01-LIVE-02",
+      "coverage_case_ids": [
+        "I01-LIVE-02"
+      ]
+    },
+    {
+      "baseline_id": "I01-CT4b",
+      "contract_id": "CT4b",
+      "producer_key": "src/fa/inner_loop/plan_ids.py::_unowned_commands",
+      "case_id": "I01-LIVE-02",
+      "coverage_case_ids": [
+        "I01-LIVE-02"
+      ]
+    },
+    {
+      "baseline_id": "I01-CT4c",
+      "contract_id": "CT4c",
+      "producer_key": "src/fa/inner_loop/plan_ids.py::PlanIds.commands",
+      "case_id": "I01-LIVE-02",
+      "coverage_case_ids": [
+        "I01-LIVE-02"
+      ]
+    },
+    {
+      "baseline_id": "I01-CT16",
+      "contract_id": "CT16",
+      "producer_key": "src/fa/inner_loop/plan_ids.py::_slice_spans",
+      "case_id": "I01-LIVE-02",
+      "coverage_case_ids": [
+        "I01-LIVE-02"
+      ]
+    },
+    {
+      "baseline_id": "I01-CT17",
+      "contract_id": "CT17",
+      "producer_key": "src/fa/inner_loop/plan_ids.py::_contracts_block",
+      "case_id": "I01-LIVE-02",
+      "coverage_case_ids": [
+        "I01-LIVE-02"
+      ]
+    },
+    {
+      "baseline_id": "I01-CT18",
+      "contract_id": "CT18",
+      "producer_key": "src/fa/inner_loop/plan_ids.py::_contract_entries",
+      "case_id": "I01-LIVE-02",
+      "coverage_case_ids": [
+        "I01-LIVE-02"
+      ]
+    },
+    {
+      "baseline_id": "I01-CT19",
+      "contract_id": "CT19",
+      "producer_key": "src/fa/inner_loop/plan_ids.py::PlanIds.contract_class",
+      "case_id": "I01-LIVE-02",
+      "coverage_case_ids": [
+        "I01-LIVE-02"
+      ]
+    },
+    {
+      "baseline_id": "I01-CT20",
+      "contract_id": "CT20",
+      "producer_key": "src/fa/inner_loop/plan_ids.py::PlanIds.tests_for",
+      "case_id": "I01-LIVE-02",
+      "coverage_case_ids": [
+        "I01-LIVE-02"
+      ]
+    },
+    {
+      "baseline_id": "I01-CT33",
+      "contract_id": "CT33",
+      "producer_key": "src/fa/inner_loop/plan_ids.py::_test_paths",
+      "case_id": "I01-LIVE-02",
+      "coverage_case_ids": [
+        "I01-LIVE-02"
+      ]
+    },
+    {
+      "baseline_id": "I01-CT8",
+      "contract_id": "CT8",
+      "producer_key": "src/fa/inner_loop/plan_ids.py::precheck::_rule_slice_without_tests",
+      "case_id": "I01-LIVE-03",
+      "coverage_case_ids": [
+        "I01-LIVE-03"
+      ]
+    },
+    {
+      "baseline_id": "I01-CT9",
+      "contract_id": "CT9",
+      "producer_key": "src/fa/inner_loop/plan_ids.py::precheck::_rule_step_without_exit",
+      "case_id": "I01-LIVE-03",
+      "coverage_case_ids": [
+        "I01-LIVE-03"
+      ]
+    },
+    {
+      "baseline_id": "I01-CT10",
+      "contract_id": "CT10",
+      "producer_key": "src/fa/inner_loop/plan_ids.py::precheck::_rule_deps",
+      "case_id": "I01-LIVE-03",
+      "coverage_case_ids": [
+        "I01-LIVE-03"
+      ]
+    },
+    {
+      "baseline_id": "I01-CT25",
+      "contract_id": "CT25",
+      "producer_key": "src/fa/inner_loop/plan_ids.py::precheck diagnostic aggregation",
+      "case_id": "I01-LIVE-03",
+      "coverage_case_ids": [
+        "I01-LIVE-03"
+      ]
+    },
+    {
+      "baseline_id": "I01-CT26",
+      "contract_id": "CT26",
+      "producer_key": "src/fa/inner_loop/plan_ids.py::_rule_heading_near_miss",
+      "case_id": "I01-LIVE-03",
+      "coverage_case_ids": [
+        "I01-LIVE-03"
+      ]
+    },
+    {
+      "baseline_id": "I01-CT27",
+      "contract_id": "CT27",
+      "producer_key": "src/fa/inner_loop/plan_ids.py::_rule_contract_reference_undeclared",
+      "case_id": "I01-LIVE-03",
+      "coverage_case_ids": [
+        "I01-LIVE-03"
+      ]
+    },
+    {
+      "baseline_id": "I01-CT34",
+      "contract_id": "CT34",
+      "producer_key": "src/fa/inner_loop/plan_ids.py::_rule_contract_declared_twice",
+      "case_id": "I01-LIVE-03",
+      "coverage_case_ids": [
+        "I01-LIVE-03"
+      ]
+    },
+    {
+      "baseline_id": "I01-CT35",
+      "contract_id": "CT35",
+      "producer_key": "src/fa/inner_loop/plan_ids.py::_rule_contract_declaration_lost",
+      "case_id": "I01-LIVE-03",
+      "coverage_case_ids": [
+        "I01-LIVE-03"
+      ]
+    },
+    {
+      "baseline_id": "I01-CT36",
+      "contract_id": "CT36",
+      "producer_key": "src/fa/inner_loop/plan_ids.py::_step_state",
+      "case_id": "I01-LIVE-03",
+      "coverage_case_ids": [
+        "I01-LIVE-03"
+      ]
+    },
+    {
+      "baseline_id": "I01-CT37",
+      "contract_id": "CT37",
+      "producer_key": "src/fa/inner_loop/plan_ids.py::parse_slice_id + _declared_deps",
+      "case_id": "I01-LIVE-03",
+      "coverage_case_ids": [
+        "I01-LIVE-03"
+      ]
+    },
+    {
+      "baseline_id": "I01-CT38",
+      "contract_id": "CT38",
+      "producer_key": "src/fa/inner_loop/plan_ids.py::_rule_slice_count",
+      "case_id": "I01-LIVE-03",
+      "coverage_case_ids": [
+        "I01-LIVE-03"
+      ]
+    },
+    {
+      "baseline_id": "I01-CT39",
+      "contract_id": "CT39",
+      "producer_key": "src/fa/inner_loop/plan_ids.py::_rule_orphaned_grammar",
+      "case_id": "I01-LIVE-03",
+      "coverage_case_ids": [
+        "I01-LIVE-03"
+      ]
+    },
+    {
+      "baseline_id": "I01-CT14",
+      "contract_id": "CT14",
+      "producer_key": "knowledge/skills/plan-authoring/SKILL.md + feature-planning/SKILL.md",
+      "case_id": "I01-LIVE-01",
+      "coverage_case_ids": [
+        "I01-LIVE-01"
+      ]
+    },
+    {
+      "baseline_id": "I01-CT40",
+      "contract_id": "CT40",
+      "producer_key": "knowledge/skills/plan-authoring/SKILL.md + feature-planning/SKILL.md PLAN-SKELETON blocks",
+      "case_id": "I01-LIVE-01",
+      "coverage_case_ids": [
+        "I01-LIVE-01"
+      ]
+    },
+    {
+      "baseline_id": "I01-CT41",
+      "contract_id": "CT41",
+      "producer_key": "knowledge/skills/*/SKILL.md + knowledge/skills/feature-planning/INJECT.md",
+      "case_id": "I01-LIVE-01",
+      "coverage_case_ids": [
+        "I01-LIVE-01"
+      ]
+    },
+    {
+      "baseline_id": "I01-CT42",
+      "contract_id": "CT42",
+      "producer_key": "knowledge/skills/*/SKILL.md skeleton-derived sample plan",
+      "case_id": "I01-LIVE-01",
+      "coverage_case_ids": [
+        "I01-LIVE-01"
+      ]
+    },
+    {
+      "baseline_id": "I01-CT43",
+      "contract_id": "CT43",
+      "producer_key": "knowledge/skills/*/SKILL.md + artifact-schema-and-grammar.md §4 executable oracle",
+      "case_id": "I01-LIVE-01",
+      "coverage_case_ids": [
+        "I01-LIVE-01"
+      ]
+    }
+  ],
+  "deferred_obligations": [
+    {
+      "obligation_id": "D1a",
+      "coverage_case_ids": [
+        "I01-LIVE-02"
+      ]
+    },
+    {
+      "obligation_id": "D1b",
+      "coverage_case_ids": [
+        "I01-LIVE-01"
+      ]
+    },
+    {
+      "obligation_id": "D2",
+      "coverage_case_ids": [
+        "I01-LIVE-03"
+      ]
+    },
+    {
+      "obligation_id": "D3",
+      "coverage_case_ids": [
+        "I01-LIVE-01"
+      ]
+    },
+    {
+      "obligation_id": "D4",
+      "coverage_case_ids": [
+        "I01-LIVE-02"
+      ]
+    },
+    {
+      "obligation_id": "D5",
+      "coverage_case_ids": [
+        "I01-LIVE-01"
+      ]
+    },
+    {
+      "obligation_id": "D8",
+      "coverage_case_ids": [
+        "I01-LIVE-02"
+      ]
+    }
+  ],
+  "case_ids": [
+    "I01-LIVE-01",
+    "I01-LIVE-02",
+    "I01-LIVE-03"
+  ]
+}
