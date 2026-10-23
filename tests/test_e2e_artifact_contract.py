@@ -1,8 +1,8 @@
-"""I01 Q87 / I03 SLICE6: live-result schema and E2E artifact contracts.
+"""I01 Q88 / I03 SLICE6: live-result schema and E2E artifact contracts.
 
 This checks artifact shape and source-to-case coverage only. It cannot assign, infer,
 or approve a deployed-host result; all live statuses remain operator/reviewer-owned.
-Contracts: CT88, CT89, CT112 and Q63 (E231), plus the resolved Q87 I01 mapping.
+Contracts: CT88, CT89, CT112 and Q63 (E231), plus the resolved Q88 I01 mapping.
 """
 
 from __future__ import annotations
@@ -336,18 +336,18 @@ def test_frozen_producer_snapshot_preserves_each_key_lineage_and_host_oracle() -
     records = document["records"]
 
     assert document["counts"] == {
-        "source_rows": 126,
-        "unique_producers": 124,
+        "source_rows": 127,
+        "unique_producers": 125,
         "legacy_cases": 89,
-        "native_i03_cases": 34,
+        "native_i03_cases": 35,
         "shared_i03_s06_extension_rows": 1,
     }
     assert document["duplicate_policy"]["only_exact_duplicates_collapsed"] == [
         "_classify",
         "_producer_absent",
     ]
-    assert len(records) == 124
-    assert len({record["producer_key"] for record in records}) == 124
+    assert len(records) == 125
+    assert len({record["producer_key"] for record in records}) == 125
     assert all(record["case_id"] for record in records)
     assert all(record["fixture_oracle"]["oracle"] for record in records)
     assert all(record["source_occurrences"] for record in records)
@@ -369,6 +369,14 @@ def test_frozen_producer_snapshot_preserves_each_key_lineage_and_host_oracle() -
     assert live_26["ct_lineage"] == ["CT99"]
     assert live_26["slice_lineage"] == ["SLICE1"]
     assert live_26["step_lineage"] == ["STEP3"]
+    assert "all nineteen over real owners" in live_26["source_values"][1]
+    assert "register{create:true}" in live_26["fixture_oracle"]["oracle"]
+    live_27 = next(record for record in records if record["case_id"] == "I03-LIVE-27")
+    assert live_27["baseline_id"] == "I03-LIVE-27"
+    assert "workspace.py::handoff" in live_27["producer_key"]
+    assert live_27["ct_lineage"] == ["CT113"]
+    assert live_27["slice_lineage"] == ["SLICE2"]
+    assert live_27["step_lineage"] == ["STEP6"]
     for record in records:
         assert len(record["source_headers"]) == len(record["source_values"])
         assert isinstance(record["ct_lineage"], list)
@@ -466,10 +474,10 @@ def test_coverage_mapping_covers_every_frozen_baseline_id() -> None:
     mapping_ids = {record["baseline_id"] for record in mapping["records"]}
 
     assert baseline_ids == mapping_ids
-    assert len(mapping_ids) == len(mapping["records"]) == 124
+    assert len(mapping_ids) == len(mapping["records"]) == 125
     assert all(record["coverage_case_ids"] for record in mapping["records"])
     assert all(record["current_producer_keys"] for record in mapping["records"])
-    assert mapping["counts"]["frozen_producer_keys"] == 124
+    assert mapping["counts"]["frozen_producer_keys"] == 125
     assert all(record["successor_case_ids"] == [] for record in mapping["records"])
     assert any("successor_case_ids" in rule for rule in mapping["mapping_policy"])
 
@@ -559,7 +567,7 @@ def test_checker_requires_explicit_successor_for_a_renamed_producer(tmp_path: Pa
     item["coverage_case_ids"] = ["I02-LIVE-001", "I03-LIVE-S08"]
     mapping["shared_case_ids"] = ["I03-LIVE-S06", "I03-LIVE-S08"]
     coverage_path.write_text(json.dumps(mapping), encoding="utf-8")
-    assert coverage_checker.check_producer_coverage(tmp_path)["unique_producers"] == 124
+    assert coverage_checker.check_producer_coverage(tmp_path)["unique_producers"] == 125
 
 
 def test_checker_entrypoint_calls_producer_coverage_and_reports_counts(
@@ -572,9 +580,9 @@ def test_checker_entrypoint_calls_producer_coverage_and_reports_counts(
         lambda root: (
             calls.append(root)
             or {
-                "unique_producers": 124,
+                "unique_producers": 125,
                 "legacy_cases": 89,
-                "i03_cases": 34,
+                "i03_cases": 35,
                 "exact_duplicate_keys": 2,
                 "i01_contracts": 42,
                 "i01_deferred": 7,
@@ -586,7 +594,7 @@ def test_checker_entrypoint_calls_producer_coverage_and_reports_counts(
     assert coverage_checker.main(["--root", str(root)]) == 0
     assert calls == [root]
     output = capsys.readouterr().out
-    assert "124 I02-origin/I03 producers" in output
+    assert "125 I02-origin/I03 producers" in output
     assert "I01 42 CTs/7 deferred obligations across 3 cases" in output
     assert "no live PASS inferred" in output
 
@@ -601,7 +609,7 @@ def test_coverage_checker_cli_executes_and_reports_frozen_counts() -> None:
     )
     assert completed.returncode == 0, completed.stderr
     assert "I01 42 CTs/7 deferred obligations across 3 cases" in completed.stdout
-    assert "124 I02-origin/I03 producers" in completed.stdout
+    assert "125 I02-origin/I03 producers" in completed.stdout
     assert "no live PASS inferred" in completed.stdout
 
 

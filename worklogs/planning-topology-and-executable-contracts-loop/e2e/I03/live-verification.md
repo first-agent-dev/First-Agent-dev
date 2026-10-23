@@ -10,10 +10,10 @@ that maps these cases to slices, contracts and run sheets is `../README.md`.
 | Field | Value |
 | --- | --- |
 | Source register | `worklogs/planning-topology-and-executable-contracts-loop/notes/e2e-live-verification-register.md` |
-| Rows imported | 34 unique cases (26 surfaces + 8 joins; both S06 observations retained) |
+| Rows imported | 35 unique cases (27 surfaces + 8 joins; both S06 observations retained) |
 | Oracle text | copied from the register; the historical and extended S06 observations are both retained; no new acceptance oracle is authored here |
 | Live result | `NOT RUN` for every case; only an operator or an independent evidence reviewer assigns PASS/FAIL/BLOCKED |
-| Generated | 2026-10-23, reconciled against the merged register through E278 (adjacent tip `899cc16`) |
+| Generated | 2026-10-23, reconciled against the merged register through E283 (other branch tip `765535d`) |
 
 ## Vocabulary and rules (normative)
 
@@ -653,7 +653,7 @@ that maps these cases to slices, contracts and run sheets is `../README.md`.
 | Register origin | E277 — composed supervisor, SLICE1 STEP3 — PLANNED / UNEXECUTED |
 | Register status | PLANNED / UNEXECUTED |
 | Local proof | test_execution_service.py (local only) |
-| Expected live observation | On the approved host with the operator config and the controller's UID: start `fa-execution-supervisor` (via `build_supervisor`/`main`) and observe that the socket appears only after recovery and is `srw-------` owned by the service user; send one request per operation and observe the exact closed reply per owner (register/acquire/pin/create_view/read/write/edit/release/seal/publish/bundle/install) while `exec`, `inspect`, `cancel`, `pty_control`, `handoff` and `register{create:true}` each refuse `BACKEND_UNAVAILABLE` with a durable `UNKNOWN` reservation where the operation reserves; verify a wrong UID is rejected before any frame is read, an unknown config key refuses startup, and SIGTERM stops acceptance and unlinks the socket without stranding an admitted handler. Negative controls: bind before recovery, `chmod 0600` removed, a dormant route returning `{}`, and `create_view` dropping the wire `base_revision`. Note that `seal` refuses `TERMINALITY_UNKNOWN` until the cgroup observer exists, so a full stage cannot be completed through this surface yet. |
+| Expected live observation | On the approved host with the operator config and the controller's UID: start `fa-execution-supervisor` (via `build_supervisor`/`main`) and observe that the socket appears only after recovery and is `srw-------` owned by the service user; send one request per operation and observe the exact closed reply per owner (register/acquire/pin/create_view/read/write/edit/exec/inspect/cancel/pty_control/release/seal/publish/bundle/install) while `register{create:true}` refuses `BACKEND_UNAVAILABLE` with a durable `UNKNOWN` reservation where the operation reserves, and an `exec` refusal without a Docker configuration keeps `BACKEND_UNAVAILABLE`; verify a wrong UID is rejected before any frame is read, an unknown config key refuses startup, and SIGTERM stops acceptance and unlinks the socket without stranding an admitted handler. Negative controls: bind before recovery, `chmod 0600` removed, a dormant route returning `{}`, and `create_view` dropping the wire `base_revision`. Note that `seal` is composed over `OwnedCellTermination` (journal-owned cells plus the kernel's `populated 0`, E278), but this row claims nothing until the host proves a real cgroup emptied: a view whose cell cannot be stopped stays `STOPPING` (`TERMINALITY_UNKNOWN`) and keeps ownership. |
 | Fixture / run sheet | fixture not assigned (SLICE6 STEP8, after STEP7 review); run sheet `#i03-live-26` |
 | Live result | NOT RUN |
 | Commentary | |
@@ -663,6 +663,30 @@ that maps these cases to slices, contracts and run sheets is `../README.md`.
 | # | Date | Result | Run ID | Deployed SHA | Image digest | Profile | Config | Command | rc / effect | Evidence | Reviewer | Commentary |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 
+### I03-LIVE-27
+
+| Field | Value |
+| --- | --- |
+| Case ID | `I03-LIVE-27` |
+| Kind | surface |
+| Producer | `src/fa/execution/workspace.py::handoff` |
+| Subject | Controller-attested parent-to-child workspace handoff (CT113) |
+| Increment | I03 |
+| Slice (provisional mapping) | SLICE2 |
+| CTs (provisional mapping) | CT113 (provisional mapping) |
+| Phase | P6 |
+| Register origin | E282 — handoff surface, SLICE2 STEP6 / CT113 — PLANNED / UNEXECUTED |
+| Register status | PLANNED / UNEXECUTED |
+| Local proof | `tests/test_execution_handoff.py` (17 passed; 15/15 assertion-only mutants killed; local only) |
+| Expected live observation | On the approved filesystem with the installed service and the controller's UID: as the owner, send `handoff` naming the child run an actual `begin_run` allocated in the same session and observe the `{view_ref:null, capability, generation, revision_id}` reply with the generation **unchanged**; confirm the child immediately opens a WRITE view and writes, that the parent's old capability is `UNAUTHORIZED` for fresh work with the canonical tree unchanged, that a same-request-id replay still returns its cached original reply (the new capability) while a new request id with the old proof is `UNAUTHORIZED`; then the refusals, each with `workspace.json` byte-identical: a `SEALED`-but-unpublished view, an `OPEN` view and a present `intent.json` are `WORKSPACE_BUSY`; wrong session, wrong parent, self-target and null parent are `INPUT_POLICY`; a foreign principal or capability is `UNAUTHORIZED`; and exactly one `operations/op-<request_id>.json` ends `DONE` with the capability absent from it. Negative controls: reuse `_claim_generation` (the generation advances and every pinned `view_ref.generation` stops matching), skip the settlement predicate (a handoff while a view is still writable), and check the parent link after the swap (metadata moved, then refused). |
+| Fixture / run sheet | fixture not assigned (SLICE6 STEP8, after STEP7 review); run sheet `#i03-live-27` |
+| Live result | NOT RUN |
+| Commentary | |
+
+#### Attempts - I03-LIVE-27
+
+| # | Date | Result | Run ID | Deployed SHA | Image digest | Profile | Config | Command | rc / effect | Evidence | Reviewer | Commentary |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 
 ### I03-LIVE-S01
 

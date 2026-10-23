@@ -70,7 +70,11 @@ class _Episode:
 
 @dataclass(frozen=True)
 class CommandOutcome:
-    """Observed command result. NOT a receipt and NOT a terminality claim."""
+    """Observed command result. NOT a receipt and NOT a terminality claim.
+
+    `duration_ms` is the RUN send-to-reply window measured here; the receipt
+    issuer adds the container/cgroup facts that make a receipt possible.
+    """
 
     operation_id: str
     container_id: str
@@ -80,6 +84,7 @@ class CommandOutcome:
     timed_out: bool
     truncated: bool
     session_id: str | None
+    duration_ms: int
     terminal_barrier: bool = False
 
 
@@ -328,6 +333,7 @@ class CellBackend:
             },
         )
         exchange = None
+        started = time.monotonic()
         try:
             with scope.send():
                 try:
@@ -348,6 +354,7 @@ class CellBackend:
             timed_out=result["timed_out"],
             truncated=result["truncated"],
             session_id=result["session_id"],
+            duration_ms=max(0, int((time.monotonic() - started) * 1000)),
         )
 
     def cancel(self, peer: PeerIdentity, request: dict[str, Any], *, deadline: float) -> dict[str, Any]:
@@ -433,6 +440,60 @@ class CellBackend:
             # Durable intent only: the operation provably cannot create or start now.
             return {"container_id": None, "status": "not_created"}
         return {"container_id": observed.container_id, "status": observed.status}
+
+    def pty_control(self, peer: PeerIdentity, request: dict[str, Any], *, deadline: float) -> dict[str, Any]:
+        """One control exchange on the exact live episode; never a new cell.
+
+        The session name is caller-supplied, so the supervisor proves it against
+        the worker's OWN listing before writing an INTERRUPT/CLOSE frame: the
+        cell protocol answers an unknown session by failing that exchange, which
+        would make the live shell unreachable, and a model typo must never cost
+        a running shell. Nothing is created here; an absent episode is a refusal
+        rather than an invented empty listing, because a cell that survived a
+        restart still owns sessions this process cannot enumerate.
+        """
+        req = decode_request(encode_json(request))
+        if req["op"] != Operation.PTY_CONTROL.value:
+            raise SupervisorError("INPUT_POLICY")
+        namespace = NamespaceRef(**req["namespace"])
+        raw = req["view_ref"]
+        if raw is None:
+            raise SupervisorError("INPUT_POLICY")
+        view = self._view_of(raw)
+        profile = self._authority.approved_profile
+        if profile is None:
+            raise SupervisorError("UNAPPROVED_PROFILE")
+        if not profile.interactive:
+            # A one-shot profile has no persistent PTY between commands.
+            raise SupervisorError("INPUT_POLICY")
+        self._authority.authorize(peer, request, deadline=deadline)  # proof only, no work
+        with self._bounded_mutex(deadline):
+            episode = self._episodes.get(_EpisodeKey.build(peer, namespace, view, profile.profile_id))
+        if episode is None:
+            raise SupervisorError("EXECUTION_UNKNOWN")
+        action, session_id = req["payload"]["action"], req["payload"]["session_id"]
+        # One wire request owns these frames; the control gate and the retire
+        # contract make sequential reuse of its id safe, and they are never
+        # concurrent.
+        frame_id = req["request_id"]
+        try:
+            listing = episode.worker.request(
+                encode_cell_request(request_id=frame_id, action="LIST", payload={}), deadline=deadline
+            )
+            if action == "LIST":
+                return dict(listing)
+            if session_id not in listing["sessions"]:
+                raise SupervisorError("EXECUTION_UNKNOWN")
+            return dict(
+                episode.worker.request(
+                    encode_cell_request(request_id=frame_id, action=action, payload={"session_id": session_id}),
+                    deadline=deadline,
+                )
+            )
+        except (WorkerUnavailableError, TimeoutError):
+            # A lost attach or an expired budget is explicit uncertainty: the
+            # exchange did not complete, and no control effect may be claimed.
+            raise SupervisorError("EXECUTION_UNKNOWN") from None
 
     def reconcile(self, *, deadline: float) -> list[dict[str, Any]]:
         """Stop surviving owned cells of uncertain records. Never create or re-run."""

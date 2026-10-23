@@ -15,8 +15,9 @@ What must stay true (each test names the producer it kills):
   * `release` (empty payload) settles the grant it was proved with;
   * `stop_view` never claims terminality without a descendant observation, and
     `seal` therefore refuses rather than inventing a terminal receipt;
-  * the six ownerless routes refuse with a closed error code, never a silent
-    success and never a host-side fallback;
+  * the routes with no owner in this composition refuse with a closed error
+    code, never a silent success and never a host-side fallback (`handoff` left
+    this list in E283: it is routed to the real authority);
   * the socket is 0600, appears only after startup recovery, and is unlinked on
     shutdown.
 """
@@ -46,7 +47,7 @@ from fa.execution.service import (
     read_config_file,
 )
 from fa.execution.supervisor import SupervisorError, build_supervisor, main
-from fa.execution.types import ExecutionContractError, Operation
+from fa.execution.types import ExecutionContractError, Operation, ViewRef
 from tests.test_execution_views import native_profile
 from tests.test_execution_workspace import ACTOR, PEER, Site
 from tests.test_execution_workspace import site as site
@@ -80,13 +81,14 @@ def request(
     request_id: str = RID,
     view_ref: dict[str, Any] | None = None,
     capability: str | None = None,
+    namespace: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """One exact closed envelope; the caller supplies only what the op owns."""
     return {
         "protocol_version": 1,
         "request_id": request_id,
         "op": operation.value,
-        "namespace": None if operation is Operation.HEALTH else ACTOR.to_dict(),
+        "namespace": None if operation is Operation.HEALTH else ACTOR.to_dict() if namespace is None else namespace,
         "view_ref": view_ref,
         "capability": capability,
         "payload": payload,
@@ -94,10 +96,16 @@ def request(
 
 
 def exchange(
-    service: SupervisorService, operation: Operation, payload: dict[str, Any], *, request_id: str = RID, **kwargs: Any
+    service: SupervisorService,
+    operation: Operation,
+    payload: dict[str, Any],
+    *,
+    request_id: str = RID,
+    namespace: dict[str, Any] | None = None,
+    **kwargs: Any,
 ) -> dict[str, Any]:
     """One real connection through the dispatcher: frame in, decoded reply out."""
-    raw = encode_json(request(operation, payload, request_id=request_id, **kwargs))
+    raw = encode_json(request(operation, payload, request_id=request_id, namespace=namespace, **kwargs))
     controller, accepted = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
     with ThreadPoolExecutor(max_workers=1) as workers:
         future = workers.submit(service.dispatcher.serve_connection, accepted)
@@ -479,11 +487,6 @@ def test_the_publication_half_is_reachable_through_the_wire(site: Site) -> None:
         (Operation.INSPECT, {"operation_id": "op-" + "4" * 32}, True),
         (Operation.CANCEL, {"operation_id": "op-" + "4" * 32}, True),
         (Operation.PTY_CONTROL, {"action": "LIST", "session_id": None}, True),
-        (
-            Operation.HANDOFF,
-            {"target_namespace": {"session_id": "session-a", "run_id": "child", "parent_run_id": "run-a"}},
-            False,
-        ),
     ],
 )
 def test_routes_without_an_owner_refuse_with_a_closed_code(
@@ -686,3 +689,138 @@ def _view(
     )
     assert reply["status"] == "OK", reply
     return reply["result"]["view_ref"], str(reply["result"]["capability"])
+
+
+def test_exec_and_cancel_issue_receipts_over_the_closed_socket(site: Site, tmp_path: Path) -> None:
+    """producer-kill-check: leave `exec`, `inspect` and `cancel` unrouted.
+
+    A daemon is configured but never contacted: the operation has no cell, so
+    every fact in both receipts is one the journal and the view record already
+    own. The receipt still has to survive the closed codec and the journal's own
+    completion, which is what makes the route real rather than a stub.
+    """
+    private = tmp_path / "private"
+    private.mkdir(mode=0o700)
+    config = _config(
+        site,
+        docker_socket=private / "docker.sock",
+        docker_daemon_uid=PEER.uid,
+        docker_api_version="1.45",
+        docker_timeout_ms=1000,
+        cgroup_root=tmp_path / "cgroup",
+    )
+    with SupervisorService(config) as service:
+        workspace_id = _registered(service)
+        capability, revision_id = _writer(service, workspace_id, request_id="1" * 32)
+        view_ref, proof = _view(service, workspace_id, revision_id, capability, request_id="2" * 32)
+        view_record = json.loads(
+            (site.state / "workspaces" / workspace_id / "views" / view_ref["view_id"] / "view.json").read_text()
+        )
+        # An EXEC reserved but never dispatched to a cell: nothing to observe.
+        exec_id = "3" * 32
+        envelope = request(
+            Operation.EXEC,
+            {
+                "operation_id": "op-" + exec_id,
+                "profile_id": native_profile().profile_id,
+                "command": "printf never-ran",
+                "cwd": ".",
+                "timeout_ms": 1000,
+                "session_id": "main",
+            },
+            request_id=exec_id,
+            view_ref=view_ref,
+            capability=proof,
+        )
+        assert service.authority.journal.reserve(envelope).fresh
+
+        reserved = exchange(
+            service,
+            Operation.INSPECT,
+            {"operation_id": "op-" + exec_id},
+            request_id="4" * 32,
+            view_ref=view_ref,
+            capability=proof,
+        )
+        receipt = reserved["result"]["receipt"]
+        assert receipt["state"] == "RESERVED" and receipt["exit_code"] is None
+        assert receipt["terminal_barrier"] is False and receipt["timed_out"] is False
+        assert receipt["operation_id"] == "op-" + exec_id
+        assert receipt["input_tree_sha256"] == view_record["input_tree_sha256"]
+        assert receipt["plan_sha256"] is None
+        assert receipt["profile_id"] == native_profile().profile_id
+        assert receipt["image_digest"] == native_profile().image_digest
+        assert receipt["view_id"] == view_ref["view_id"] and receipt["generation"] == view_ref["generation"]
+
+        # A durable cancel intent with no cell is answered from the journal alone.
+        service.authority.journal.request_cancel("op-" + exec_id, ACTOR, view=ViewRef.from_dict(view_ref))
+        stopped = exchange(
+            service,
+            Operation.INSPECT,
+            {"operation_id": "op-" + exec_id},
+            request_id="5" * 32,
+            view_ref=view_ref,
+            capability=proof,
+        )
+        assert stopped["status"] == "OK", stopped
+        assert stopped["result"]["receipt"]["state"] == "CANCELLED"
+        assert stopped["result"]["receipt"]["terminal_barrier"] is True
+        assert stopped["result"]["receipt"]["exit_code"] is None
+
+        # The cancel route itself is composed with the backend, not left at the
+        # "no owner" stub: an interactive view with no live episode is the
+        # backend's own refusal, which the unrouted stub never produces.
+        cancelled = exchange(
+            service,
+            Operation.CANCEL,
+            {"operation_id": "op-" + exec_id},
+            request_id="6" * 32,
+            view_ref=view_ref,
+            capability=proof,
+        )
+        assert _error(cancelled) == "EXECUTION_UNKNOWN"
+        assert service.authority.journal.lookup("op-" + "6" * 32, ACTOR) is not None
+
+
+def test_pty_control_is_composed_and_refuses_without_a_live_episode(site: Site, tmp_path: Path) -> None:
+    """producer-kill-check: leave `pty_control` at the `BACKEND_UNAVAILABLE` stub.
+
+    A daemon is configured and never contacted: the view has no live episode, so
+    the backend's own closed refusal is the answer. `LIST` is read-only and
+    leaves no record; `INTERRUPT` reserves one and finishes it unknown.
+    """
+    private = tmp_path / "private"
+    private.mkdir(mode=0o700)
+    config = _config(
+        site,
+        docker_socket=private / "docker.sock",
+        docker_daemon_uid=PEER.uid,
+        docker_api_version="1.45",
+        docker_timeout_ms=1000,
+        cgroup_root=tmp_path / "cgroup",
+    )
+    with SupervisorService(config) as service:
+        workspace_id = _registered(service)
+        capability, revision_id = _writer(service, workspace_id, request_id="1" * 32)
+        view_ref, proof = _view(service, workspace_id, revision_id, capability, request_id="2" * 32)
+        listed = exchange(
+            service,
+            Operation.PTY_CONTROL,
+            {"action": "LIST", "session_id": None},
+            request_id="3" * 32,
+            view_ref=view_ref,
+            capability=proof,
+        )
+        assert _error(listed) == "EXECUTION_UNKNOWN"
+        assert service.authority.journal.lookup("op-" + "3" * 32, ACTOR) is None
+        interrupted = exchange(
+            service,
+            Operation.PTY_CONTROL,
+            {"action": "INTERRUPT", "session_id": "main"},
+            request_id="4" * 32,
+            view_ref=view_ref,
+            capability=proof,
+        )
+        assert _error(interrupted) == "EXECUTION_UNKNOWN"
+        record = service.authority.journal.lookup("op-" + "4" * 32, ACTOR)
+        assert record is not None and record["state"] == "UNKNOWN"

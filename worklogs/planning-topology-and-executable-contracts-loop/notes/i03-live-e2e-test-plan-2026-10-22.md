@@ -5,13 +5,13 @@
 is evidence of live behaviour. Dates this plan: 2026-10-22, after E265 (SLICE2 STEP4 part B-1).
 
 **Current acceptance-scope ruling (2026-10-23):** final I03 acceptance requires live-host E2E for all
-changes in I01–I03 of this project. The I03 inventory has 26 surfaces/8 joins; Q87 selected explicit
+changes in I01–I03 of this project. The I03 inventory has 27 surfaces/8 joins; Q88 selected explicit
 I01-origin IDs and the package now maps all 42 I01 CTs plus seven in-scope deferred obligations to
 three planned I01 cases. All remain `NOT RUN`; this is not live evidence. The canonical package is
 `worklogs/planning-topology-and-executable-contracts-loop/e2e/`.
 
 **Purpose.** The register already says *what* the host fixture must arrange and observe, one row per
-producer (26 surfaces, 8 joins as of 2026-10-23, all `PLANNED / UNEXECUTED`; the three I01-origin cases are separately indexed in the project package and are not added to this historical I02/I03 register). It does not say *how to build the suite*:
+producer (27 surfaces, 8 joins as of 2026-10-23, all `PLANNED / UNEXECUTED`; the three I01-origin cases are separately indexed in the project package and are not added to this historical I02/I03 register). It does not say *how to build the suite*:
 what the harness must be, in what order the cases become writable, what counts as a valid oracle when
 the assertion cannot run in-process, and which cases are impossible before a later slice lands. This
 document answers that, so the suite can be written mechanically at SLICE6 instead of being designed
@@ -77,7 +77,7 @@ proxies the project already paid for once (E259: duplicated producers masking ea
 | **P3 authority/views** | registration, R0, pinned readers, rooted IO, same-view read-your-writes | P2 | LIVE-03, 14, 17 |
 | **P4 tools through the real port** | E264/E265 seams on an admitted view (below, §4) | P3 + the SLICE4 STEP2 composition | joins S02, S05, S07 |
 | **P5 journal/recovery/seal** | supervisor kill at each durable boundary, seal/drain, forward recovery | P3 + SLICE3 | LIVE-06, 07, 08, 09, joins S01, S03, S04, S06 |
-| **P6 composed service** | SessionManager/provisioner/CLI, strict readiness, real provider | P4, P5 + SLICE4 cutover + SLICE6 review | LIVE-04, joins S07, S08 |
+| **P6 composed service** | SessionManager/provisioner/CLI, strict readiness, real provider, controller-attested handoff | P4, P5 + SLICE4 cutover + SLICE6 review | LIVE-04, LIVE-27, joins S07, S08 |
 
 **Blocked today:** P4 requires the actual composition root (SLICE4 STEP2 wires the provisioner and the
 port); P5 requires SLICE3's seal/publication; P6 requires SLICE4's atomic cutover (including the named
@@ -129,6 +129,53 @@ because each misses a case:
    to paths outside the view and the approved roots. Catches absolute-path execution the shim cannot,
    and file opens. Requires `CAP_SYS_PTRACE` on the host — record its absence as `BLOCKED`, never as
    `PASS`.
+
+---
+
+## 4.1. Cases E277–E279 add: the composed service, the barrier and the receipt ledger
+
+E277 gave the service its nineteen routes and one socket owner, E278 the `CellTermination` join, E279 the
+receipt issuer. None of it has met a daemon. These cases are P3/P4 work and may not be attempted before the
+image, the socket and the `cgroup` mount are arranged (§1), and like every case above each one needs its
+negative control in the same file.
+
+The journal is the durable ledger of this system: one append-only record per operation id, `complete` is the
+only writer of a result, and the record — not the reply — is what survives a kill. So the receipt cases assert
+on the **on-host journal files** as well as on the wire reply, and every case names the record it expects.
+
+| Case | Arrange | Observe (wire **and** ledger) | Negative control |
+| :--- | :--- | :--- | :--- |
+| **L-RCPT-1** `exec` receipt is true of the host | admitted PROJECT view, real image, real `docker` socket, real `/sys/fs/cgroup` mount; one `printf` and one `false` | `EXITED` with the container's own exit code for both; `terminal_barrier: true` only alongside `cgroup.events` reading `populated 0` for that CID; `duration_ms > 0`; tails ≤ 64 KiB; identity fields equal the view record's tree/plan and the approved profile's digest | point `cgroup_root` at a directory whose `cgroup.events` says `populated 1` → the case must see a refusal (`EXECUTION_UNKNOWN`), never `EXITED` |
+| **L-RCPT-2** `inspect` replays, the ledger does not rewrite | a completed `exec` (L-RCPT-1), then `inspect` twice | both replies are byte-identical to the stored receipt; the **EXEC** record file's hash is unchanged; the two INSPECT operations each appended exactly one record ending `DONE`; the daemon log shows no `GET /containers/<cid>/json` between the two inspects | delete the container between the two inspects → the replay still answers, which is what proves no daemon contact |
+| **L-RCPT-3** `cancel` before create / during create / during RUN | the three S04 timings, real SIGKILL, daemon access log on | receipt is `CANCELLED` under `op-<cancel request_id>`, never `EXITED`; `exit_code` only when an `exited` was observed; the target record shows `cancel_requested: true` **in the snapshot the driver takes when the kill request arrives**; `populated 0` read after the stop returns | move the intent write after the kill (test build) → the snapshot at kill time shows `cancel_requested: false`, which the case must catch |
+| **L-RCPT-4** a spent budget is final | a command that outlives its `timeout_ms` | `TIMED_OUT`, `exit_code: null`, `terminal_barrier: false`; **zero** post-reply `GET /containers/<cid>/json` in the daemon log; the ledger record ends `DONE` with exactly that receipt | re-enable the post-command observation (test build) → one extra GET appears, which fails the case |
+| **L-RCPT-5** one-shot vs interactive | the same command under a one-shot profile and an interactive one | one-shot requires `populated 0`; interactive returns `EXITED` with `terminal_barrier: false` while the shell lives, and `stop_view` then reports `terminal: true` with the same CID's cgroup empty | create the interactive view *after* the command → the case must fail to arrange (BLOCKED), never PASS on a later cgroup read |
+| **L-RCPT-6** ledger append survives a kill | `kill -9` the supervisor after the command reply but before `complete`; restart | exactly one record per operation id after restart (no duplicates, no second RUN in the daemon log); `inspect` answers `UNKNOWN` or the stored receipt, never a fresh `EXITED` with a new exit code | kill *after* `complete` → `inspect` must replay the stored receipt; if both timings look the same, the case is not observing the boundary and must be rewritten |
+
+`pty_control` (E280) adds the control plane. Its cases are small but each one has a failure mode that only a
+live shell shows, and two of them are ledger-append cases: INTERRUPT/CLOSE are mutating operations and must
+append exactly one record, while LIST is read-only and must append none.
+
+| Case | Arrange | Observe (wire **and** ledger) | Negative control |
+| :--- | :--- | :--- | :--- |
+| **L-PTY-1** LIST sees only this view's sessions | two live views with different session names, one real command each | each view's `LIST` returns exactly its own session names; the session named `main` in one view is not visible from the other; the ledger gains **no** record for either LIST | reuse one view's session name from the other view's episode (test build) → the case must fail to arrange, never PASS on a shared answer |
+| **L-PTY-2** INTERRUPT is an ACK, not terminality | a live interactive session with exported state | a real Ctrl-C reaches the pane; the reply carries `{sessions, message}`; a following command still runs in the **same** container id with its environment intact; `cgroup.events` for that CID is still `populated > 0`; the ledger has one DONE record for the interrupt | close the session first (test build) → the interrupt must be refused (`EXECUTION_UNKNOWN`), and the shell must still answer `LIST` |
+| **L-PTY-3** an unknown session never costs the shell | one live shell, an INTERRUPT for a name that was never created | the supervisor refuses `EXECUTION_UNKNOWN`; the daemon log shows **no** attach write for that request; the very next command still succeeds in the same cell; the ledger record for that interrupt ends `UNKNOWN`, never `DONE` | let the raw frame reach the worker (test build) → the cell's attach dies and the following command must fail, which is exactly what the case forbids in production |
+
+Two of these cases (`L-RCPT-2`, `L-RCPT-6`) are the ledger-append cases the session's instruction asked for:
+they assert that the journal gains exactly one record per operation, that a completed command's record is never
+rewritten, and that the replay is served from the record rather than from the daemon.
+
+`handoff` (Q85 ruling, E282/CT113) adds one case, and it is the only case in this suite whose arrange step
+needs two real runs. It is P6 work: it cannot be written before SLICE2 STEP6 exists and the controller cutover
+(SLICE4 STEP2) gives the handler a client, because the "child run" it names must come from an actual
+`SessionManager.begin_run`, not from a hand-made namespace.
+
+| Case | Arrange | Observe (wire **and** ledger) | Negative control |
+| :--- | :--- | :--- | :--- |
+| **L-HAND-1** the grant moves, the epoch does not | one registered workspace with a live owner grant, one child run allocated by a real `begin_run` in the same session (`parent_run_id` = the owner's run), a pinned READ view at R0 | the reply is `{view_ref:null, capability, generation, revision_id}` with **the same `generation`** and the same `revision_id` as before the call; the child immediately opens a WRITE view whose `view_ref.generation` is that same generation and writes successfully; the pinned reader still answers R0; `workspace.json` differs from the pre-call copy **only** in `active_actor` and the grant (byte compare, not a field list); exactly one `operations/op-<request_id>.json` ends `DONE` and contains no capability; the daemon log shows no new attach and `docker ps` no new container | call `handoff` again with the same `request_id` and the *old* capability → the identical cached reply (the new capability) must come back, while a **new** `request_id` with the old capability must be `UNAUTHORIZED`; then a second `handoff` from the child to its own `begin_run` child must succeed, proving the chain rather than a one-shot move |
+| **L-HAND-2** nothing unsettled may move | the same arrangement, three times: a view `SEALED` but not published; a view still `OPEN` with a live cell; a workspace with a surviving `intent.json` from an interrupted publication | each call refuses `WORKSPACE_BUSY` and leaves `workspace.json` byte-identical; after publishing the sealed view (or stopping the open one) the same call succeeds, which is what proves the refusal was the settlement predicate and not an unrelated error | swap `_settle_owner`'s predicate for `_forward_gates` (test build) → the sealed-view case changes code path *and* the open-view case starts probing the canonical tree; the case asserts the refused codes and the untouched metadata, so either substitution shows up |
+
 
 ---
 

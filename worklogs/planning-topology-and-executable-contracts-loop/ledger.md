@@ -4583,3 +4583,267 @@ skipping the owned-cell stop.
 real host — `I03-LIVE-19/20/25/26` stay PLANNED / UNEXECUTED, and the `FA_REQUIRE_EXECUTION_HOST=1` integration
 rows remain the only place those facts may be claimed. Also untouched: SLICE5/6, bundle GC, Docker/cgroup
 deployment profiles and the caller cutover.
+
+### E279 — the receipt issuer: `exec`, `inspect` and `cancel` answer with observed facts
+
+**FACT (source-verified before editing).** E278 left the barrier joined but every command route still answered
+`BACKEND_UNAVAILABLE`, because nothing turned a `CommandOutcome` — explicitly "NOT a receipt and NOT a
+terminality claim" — into an `ExecutionReceipt`. The pieces existed and were unused: `DockerEngine.inspect_owned`
+returns a `ContainerObservation`, `cgroup.descendants_empty` answers the barrier, `types.ExecutionReceipt`
+carries the twelve identity fields and `require_binding`, and the journal already validates a completed EXEC
+receipt (`_validate_completed_receipt`). What was missing was the *only* place allowed to decide what a command
+may assert, plus a measured duration: `CommandOutcome` had no time field at all.
+
+**DECIDED (mechanism).** `src/fa/execution/receipts.py::CommandReceipts` composes the three routes over the
+already-admitted backend; no second execution path and no new registry. Identity comes from three trusted
+sources only: the reserved operation record (id, namespace, view, durable CID), the view record read through the
+caller's own grant — a new `WorkspaceAuthority.execution_identity` under `_transaction`/`_proof_only` returning
+the view's `input_tree_sha256` and `plan_ref.sha256`, matching the existing rule that "EXEC binds the plan the
+VIEW was admitted with, never a claim in the payload" — and the approved profile (profile id, image digest,
+cgroup parent). Facts come from exactly one `inspect_owned` plus the cgroup: `EXITED` needs the container's exit
+to *agree* with the command's and, for a one-shot cell, a proven `populated 0`; an interactive shell may stay
+alive, and then the barrier honestly stays `false` until `stop_view`. A timeout reports `TIMED_OUT` with no exit
+code and no daemon contact at all (nothing the cell could answer changes a spent budget). Anything unobservable,
+mismatched, foreign or still-running is `EXECUTION_UNKNOWN` — never exit 0 and never a receipt. `inspect` replays
+a DONE record's stored receipt without touching the daemon, never sends a RUN, and answers `RESERVED`/`CANCELLED`
+from the journal alone when no cell was ever bound; `cancel` proves the record, delegates to
+`CellBackend.cancel` (intent before stop), then reports `CANCELLED` under the *cancel operation's own id* with the
+exit code only when an `exited` was actually observed. Tails are bounded to the last 64 KiB per channel without
+splitting a codepoint, and every receipt is self-checked with `require_binding` before it is returned. `service.py`
+composes the issuer when Docker is configured and keeps `BACKEND_UNAVAILABLE` when it is not, so "no cell can ever
+run" stays a closed refusal rather than a synthetic success.
+
+**Behaviour change, stated plainly.** `exec`, `inspect` and `cancel` are no longer dormant: with a configured
+daemon they return closed, self-bound receipts, and `duration_ms` is now measured from RUN send to reply.
+
+**Evidence.** New bank `tests/test_execution_receipts.py` **21 passed** (C3: real authority/journal/literal HTTP
+peer/real PTY worker/real cgroup dir; C1: `FakeWorkerStream` for the one-shot; C0: tail rule and state mapping);
+`tests/test_execution_service.py` **25 passed**, including the new wire test that issues a `RESERVED` inspect
+receipt and a `CANCELLED` receipt over the closed socket with a daemon configured but never contacted. All
+execution banks `tests/test_execution_*.py` **1157 passed**; wider `-k "execution or workspace"` **1608 passed,
+1 skipped** (3 known `test_controller_installed` offline-install errors). ruff/format clean (342 files), mypy 23
+files, pyrefly 0 errors, `fa authoring-check` 0. **14/14 mutants killed** with sha256-verified byte-exact restore:
+barrier dropped for a one-shot, exit agreement dropped, replay replaced by a second observation, the stop skipped,
+identity fabricated instead of read from the view record, an absent cell answered `RUNNING`, a spent budget still
+asking the daemon, the tail keeping the head, the cancel naming the command instead of its own operation, the
+binding self-check removed, an unobservable cell answered `EXITED`, the refusal code weakened, a cell-less cancel
+claiming no barrier, and a live one-shot cell answered `EXITED`.
+
+**Deliberately not done, with the reason.** `pty_control` and `handoff` are still unrouted (`BACKEND_UNAVAILABLE`)
+— `WorkerClient` has no PTY verbs and the authority handoff owner does not exist, so there is nothing truthful to
+route to. No daemon, container or kernel fact has been observed on a live host: `I03-LIVE-19/20/25/26` stay
+PLANNED / UNEXECUTED and no STEP/CT box is ticked.
+
+### E280 — `pty_control`: one bounded control exchange on the exact live episode
+
+**FACT (source-verified before editing).** The wire surface existed and was dormant: `Operation.PTY_CONTROL`
+(payload `{action, session_id}`, result `{sessions, message}`) was routed to a `BACKEND_UNAVAILABLE` stub, because
+`CellBackend` had no control path at all. The cell side was already complete — `CellWorker.handle` answers
+LIST/INTERRUPT/CLOSE, `WorkerClient.request` exists, and `pty_pool` implements `list_sessions`/`send_ctrl_c`/`kill`
+— so nothing new was needed below the backend. Two facts did *not* exist: the session name is caller-supplied and
+nothing proved it before it reached the worker, and the transport's retirement gate was keyed on the frame id.
+
+**Two hazards, both closed in this change.** (1) The cell protocol answers an unknown session by failing the
+exchange (`CellWorker.handle` raises, `serve` does not catch it, the reader dies, `WorkerClient` poisons the
+channel), so a model-typed session name would have cost a live shell. `CellBackend.pty_control` therefore asks the
+worker for its OWN listing first and refuses an absent session with `EXECUTION_UNKNOWN` **without writing the
+action frame**; the listing is also the only truthful source, because `PtyPool` evicts LRU sessions. (2)
+`WorkerClient._read` waited for retirement with `request_id not in self._pending`, so a *sequential* reuse of an id
+(a pre-flight LIST and then the action under one wire request) looked like "not yet retired" and the reader waited
+for the successor's retirement — which the reader itself owed. The gate is now on the exchange *object*, which is
+strictly more precise and leaves unique-id behaviour unchanged.
+
+**DECIDED (mechanism and the closed codes).** `CellBackend.pty_control` decodes the exact closed envelope, proves
+the caller's grant through `WorkspaceAuthority.authorize` (the CT99 owner, re-proving under its own transaction),
+resolves the episode by the full identity (principal, namespace, exact view, approved profile), and exchanges at
+most two bounded frames; it creates no cell, writes no journal record and never reserves. Refusals are typed:
+`INPUT_POLICY` for a non-`pty_control` envelope and for a noninteractive profile (a one-shot cell has no persistent
+PTY between commands), `UNAPPROVED_PROFILE` with no approved profile, `UNAUTHORIZED` for a foreign view/grant/
+namespace before any frame is written, and `EXECUTION_UNKNOWN` for a view with no live episode, an absent session,
+a lost attach or an expired budget. A view with no live episode is *never* answered with an invented empty
+listing: a cell that survived a restart still owns sessions this process cannot enumerate. `service.py` composes
+the route through the same `CellBackend` and keeps `BACKEND_UNAVAILABLE` when no Docker configuration exists.
+
+**Behaviour change, stated plainly.** With a configured daemon, `LIST`/`INTERRUPT`/`CLOSE` now answer the worker's
+own listing and message for the view's live cell. Ctrl-C remains an ACK, not process terminality, and close
+remains PTY cleanup, not a descendant barrier.
+
+**Evidence.** New bank `tests/test_execution_pty_control.py` **10 passed** (C3 real authority/journal/literal HTTP
+peer/real local PTY worker; C0 request-shape; C1 `WorkerClient.request` fault seams), with the path inventory
+P1–P9 in the module docstring; `tests/test_execution_service.py` **26 passed** including the wire test that proves
+the route is composed (`EXECUTION_UNKNOWN`, not the stub's `BACKEND_UNAVAILABLE`) and that LIST reserves nothing
+while INTERRUPT reserves and finishes unknown. All execution banks **1168 passed**; wider
+`-k "execution or workspace"` **1619 passed, 1 skipped** (3 known `test_controller_installed` offline-install
+errors). ruff/format clean, mypy 23 files, pyrefly 0 errors, `fa authoring-check` 0. **9/9 mutants killed** with
+sha256-verified byte-exact restore, including the two hazards: forwarding the frame without proving the session
+(the follow-up LIST then fails), and the id-keyed retirement gate (the control test hangs to its deadline).
+
+**Deliberately not done, with the reason.** `handoff` stays unrouted (`BACKEND_UNAVAILABLE`) because no
+`WorkspaceAuthority.handoff` exists; `register_workspace{create:true}` stays with SLICE5. No live `docker`/`cgroup`
+or real shell has been controlled on a host, so `I03-LIVE-19/20/25/26` remain PLANNED / UNEXECUTED and no STEP/CT
+box is ticked.
+
+### E281 — pre-SLICE6 gap assessment (documentation only; no implementation, no test run)
+
+**FACT.** The managed execution plane is still dormant by construction: `grep -rn "from fa.execution" src/fa
+--include=*.py | grep -v ^src/fa/execution/` returns nothing, so users execute the host path
+(`cli._cmd_run` builds a host `PtyPool` and degrades to `subprocess`) while 17 of 19 routes dispatch to real
+owners inside the package. Re-derived counts: 24 CTs, 17 `kill:` directives, 19 operations, 35 STEPs, 26 E2E
+surfaces / 8 joins.
+
+**The gap, grouped by blocker** (full table with source citations in the increment's E281 entry): unblocked
+product work is the Q74 checkpoint policy (no `checkpoint` symbol in `src/fa/execution`), the SLICE4 STEP1
+inventory completion, and the CANDIDATE `publish` supervisor half (`publication.publish_plan` has no caller
+outside tests; the wire `publish` payload cannot carry a CANDIDATE view past `prepare_publish`). The cutover is
+the largest unit and is dominated by two absences: `run_stage_with_plan_write_boundary` does not exist anywhere
+in `src/` (CT97's named producer), and neither `workspace_io=` nor `workspace_provisioner=` has a `src/` call
+site. `slice_verification._run_one` still spawns a host subprocess and `_run_managed_command` does
+not exist (SLICE4 STEP3). Acquisition has no fixtures or handler (SLICE5 STEP2 waits on Q85). SLICE6 has no
+`e2e/` tree, no coverage checker, no artifact-contract test, and no registered `execution_host`/`live_e2e`
+markers under `--strict-markers`; five verify fences name a `tests/integration/` that does not exist and so
+exit 4 today.
+
+**Two plan-text defects corrected.** The increment's derived-count row said 25 surfaces while the derivation
+returns 26 (E277 added `I03-LIVE-26`); and that row's own description still called `exec`/`inspect`/`cancel`/
+`pty_control` dormant and the cgroup observer missing, both superseded by E278–E280. Status of the row remains
+`PLANNED / UNEXECUTED`.
+
+**Toolchain fact, recorded because it cost this entry its gates.** `notes/sandbox-venv.sh` builds a 3.11 venv and
+the banks have used PEP 695 generics since E276, so they cannot even be collected there; a from-source 3.13 in
+this sandbox needs `zlib`/`sqlite3`/`ssl`/`ctypes`, and the image ships no development headers and no root, so
+each has to be built from source. This entry therefore ran no bank: the only check available was
+`fa authoring-check` under the 3.11 venv, which reported the same four pre-existing `UNPARSABLE` test files before
+and after the edit and no worklog diagnostic. No green result is claimed for this entry.
+
+### E282 — Q85 answered: `handoff` is controller-attested, and it now has planned surface
+
+**DECISION (operator, after review with the E2E agent).** Q85 is resolved as option (1): the parent-child run
+link is controller-attested — `_child_run_context` proves the parent bindings and allocates the child run
+through the real `begin_run` in the same session, so `parent_run_id` is attested after an actual allocation
+(spec §7.1) — and the supervisor enforces only wire invariants it can see. The round-1 alternative (a narrow
+read-only attester injected into the service) is rejected: it inverts the E263 dependency direction, adds an
+`FA_STATE_ROOT` mount contract and filesystem IO on the hot path, and buys no boundary a compromised
+controller could not already cross, since it can `exec` as the owner anyway.
+
+**FACT (source-verified at `0619ecd`, before any doc change).** No wire or dispatch work is needed, which is
+why the implementation is one authority body plus one route: `Operation.HANDOFF` already decodes
+`{target_namespace}` into `_OWNER_REPLY` whose `capability` is 64-hex (`protocol.py:135`/`:151`);
+`HANDOFF` is already in `AUTHORITY_GATED_OPERATIONS` and non-readonly, so it reserves `op-<request_id>` and
+cannot skip the authority check; `_execute_reserved` already treats it as a `GrantReply` operation;
+`_owner_only` matches the stored grant with `hmac.compare_digest` **and** the full active-actor dict, so
+replacing grant and `active_actor` revokes the old capability exactly; Q75 replay compares against the
+*original* proof (`_authorize_replay`), so a revoked proof retrieves only its bound cached reply; and
+`_settle_owner` already spells the settlement predicate. `RunContext` has no `parent_run_id` field at all,
+which is why the controller must supply it — the attestation is structural, not decorative.
+
+**What the ruling left implicit, decided here and written into the plan, not into code.** The precondition
+order is fixed (ownership → settlement → live writer fd → wire invariants) so refusals are deterministic;
+settlement reuses `_settle_owner`'s predicate and **not** `_forward_gates` (the latter's writability probe and
+canonical tree hash are commit preconditions); the swap requires the live writer fd (`binding.writer is not
+None`, else `STALE_GENERATION`) so an unfenceable ownership is never moved; and the crash window after the
+metadata replace is stated — an `OWNED` workspace whose capability nobody holds quarantines on restart exactly
+as for `acquire_writer`, and is never reconstructed from the journal. The bound is stated too: a controller
+that names a nonexistent child run can strand its own grant until release/restart — self-inflicted denial of
+service, never escalation.
+
+**Documents changed (no code).** spec §2.1's `handoff` row now carries the whole rule set and §7.1 states the
+attestation chain and its bound; the increment gains **CT113 [FUNCTIONAL]** (`kill: remove-call
+src/fa/execution/workspace.py::WorkspaceAuthority.handoff -> _handoff_owner`) and **SLICE2 STEP6**, whose exit
+criteria include the replay pairs, the settlement refusals, the unchanged-generation byte comparison, the
+single durable record and a second-generation handoff proving the chain; `tests/test_execution_handoff.py` is
+added to SLICE2's `TESTS:` line and verify fences; SLICE1 STEP3 records 18/19 routes and names STEP6 as the
+owner of the nineteenth; SLICE5 STEP2 is split so the controller leg is all that remains there; SLICE3 STEP1's
+stale "part (b) outstanding" is corrected (E278 delivered `CellTermination`) and part (a), Q74/§6.1, is now
+spelled out with `tests/test_stage_checkpoints.py` and an explicit reason for declaring no new CT; the register
+gains `I03-LIVE-27` (PLANNED / UNEXECUTED) plus an E282 checkpoint; the E2E plan gains `L-HAND-1/2`; Q85 is
+marked ANSWERED with both "what would settle it" conditions answered and the reopen conditions named.
+
+**Counts, re-derived (not hand-typed):** CT **25** (18 FUNCTIONAL + 7 CONSTRAINT), `kill:` **18**, STEPs
+**36**, E2E surfaces **27** / joins **8**. Historical entries keep the counts current at their time; the
+DoD table is the canonical refresh and now names E282 as the entry that moved it.
+
+**One recorded deviation.** The ruling says "implement in SLICE2 STEP2"; the unit is **STEP6**. STEP2's exit
+criteria are the five view purposes (different producer, different bank) and CT113 needs its own settlement and
+replay matrix, so folding it in would reopen a step with nothing else outstanding. Slice, contract and
+sequencing are exactly as ruled; the step's first sentence says so.
+
+**Not claimed.** No code, no bank run (no usable 3.13 interpreter this session), no STEP or CT ticked, no live
+row promoted. `handoff` still refuses `BACKEND_UNAVAILABLE` on the wire until SLICE2 STEP6 lands, which is now
+the next unit in E281's order.
+
+### E283 — CT113 `handoff`: the last route moves the grant, not the epoch
+
+**FACT (source-verified before editing, `5ade50c`).** The wire, the authority gate and the reservation path already
+existed, so this change needed no wire edit and no new operation: `Operation.HANDOFF` decodes
+`{target_namespace}` into `_OWNER_REPLY` (`protocol.py:135`/`:151`), is in `AUTHORITY_GATED_OPERATIONS` and is not
+readonly (so it reserves `op-<request_id>` through the dispatcher), `_execute_reserved` already treats it as a
+`GrantReply` operation, `_owner_only` matches grant **and** active-actor dict with `hmac.compare_digest`, and
+`_authorize_replay` compares a replay's proof against the *original* proof rather than the current grant. What did
+not exist was `WorkspaceAuthority.handoff` and a route that reached it — `service.py::_handoff` raised
+`BACKEND_UNAVAILABLE`.
+
+**What shipped.** `WorkspaceAuthority.handoff` and its single-step body `_handoff_owner`, plus
+`service.py::_handoff`. The precondition order is fixed and every refusal precedes any write: `_owner_only` (grant,
+principal, active actor) → `_settled` → the live writer fd this process holds → the three wire invariants. Then ONE
+fsynced `_replace_private_bytes` sets `active_actor := target` and a fresh `secrets.token_hex(32)` capability,
+`_read_json` re-reads the record and refuses the grant unless the stored bytes equal the mutation, and the reply is
+`{view_ref:null, capability, generation, revision_id}` with the **unchanged** generation and the committed revision.
+
+**The one refactor.** The settlement predicate moved into `WorkspaceAuthority._settled`, so `release` and `handoff`
+share exactly one definition of "settled" (`_SETTLED_VIEW_STATES` = `PUBLISHED`/`REJECTED`, plus "no
+`intent.json`"). Two copies of that rule would have been two policies by another name, and the mutation run proves
+the shared body is load-bearing for release too.
+
+**Decisions taken where the ruling was silent, all recorded in the plan text first (E282) and implemented here.**
+(1) Settlement reuses the release predicate and **not** `_forward_gates`, whose writability probe and canonical
+tree-hash are commit preconditions and would refuse a legitimate handoff. (2) The move requires the live writer fd
+(`binding.writer is not None`, else `STALE_GENERATION`): the authority never moves an ownership it cannot fence.
+(3) The capability is returned only after the replace **reads back**, so a lost write is `DURABILITY_UNKNOWN` with
+`_healthy = False` and no grant — a restart quarantines that workspace, exactly the documented crash window.
+(4) OSError anywhere in the swap is `DURABILITY_UNKNOWN`, never a retry and never an old-capability fallback.
+(5) The generation is not advanced, so `view_ref.generation` on pins and on the child's views still matches; only
+ownership of the epoch moves.
+
+**Refusals as shipped.** `WORKSPACE_BUSY` for any unsettled view or a surviving `intent.json`; `INPUT_POLICY` for a
+foreign session, a wrong/absent parent, or a self-target; `UNAUTHORIZED` for a foreign principal, a foreign
+capability or a namespace that is not the active actor, and for fresh work with the retired capability;
+`STALE_GENERATION` for an unfenced ownership; `DURABILITY_UNKNOWN` for a swap that does not read back. Every refusal
+leaves `workspace.json` byte-identical (asserted, not assumed).
+
+**Behaviour delta, stated as the observable contract.** Before: the nineteenth route refused
+`BACKEND_UNAVAILABLE`. Now: a controller holding the owner grant can move it to a `begin_run` child run in the same
+session; the old capability is dead for fresh work while Q75 replay of the same request id still returns its own
+cached reply; one durable record per handoff ends `DONE` with no capability in it; a second handoff from the child to
+its own attested child succeeds, so the chain works rather than a one-shot transfer.
+
+**TEST-EDITS (intent changed, recorded).** `tests/test_execution_service.py::test_routes_without_an_owner_refuse_with_a_closed_code`
+lost its `handoff` row: it is no longer an ownerless route, and keeping the row would have asserted a refusal the
+product must not produce. The route-shape test (`_ROUTE_NAMES` totality) and the new bank's
+"authority code, not the stub" case replace it. That helper also gained an optional `namespace=` parameter so a
+composed case can act as the child.
+
+**Evidence (actual).** `tests/test_execution_handoff.py` **17 passed** (C0/C1 authority rules + C3 composed route
+over a real socket, real journal, real replay cache); `tests/test_execution_service.py` **25 passed**;
+`tests/test_execution_*.py` **1184 passed**; `test_workspace_publication`/`recovery`/`authorize`/`session_lifecycle`
+**149 passed**; wider `-k "execution or workspace"` **1638 passed, 1 failed** — the one failure
+(`test_workspace_readiness_integration::test_clean_candidate_real_readiness_commit_and_local_publication`,
+`degraded_environment: sync_failed` because the sandbox cannot run `uv sync` in its temp workspace) reproduces
+identically on a stashed clean tree, so it is environmental and unrelated. ruff clean, `ruff format` 518 files
+already formatted, mypy 23 files no issues, pyrefly 0 errors, `fa authoring-check` `diagnostics: 0 exit_code: 0`.
+**15/15 assertion-only mutants killed** with sha256-verified byte-exact restore, including the declared
+`remove-call handoff -> _handoff_owner` producer kill, the generation-advance trap, the settlement skip (killed by
+the release bank as well as the new one), each wire invariant individually, the self-target case, the unfenced
+ownership and the missing read-back. One mutant initially matched two anchors (registration and handoff share the
+same read-back line) and was rejected by the runner rather than credited; the anchor was made unique and re-run.
+
+**Toolchain, recorded because it blocked two earlier sessions.** The 3.13 build now works in this sandbox with no
+root and no dev headers: `zlib` and the interpreter from source, `_sqlite3` compiled from CPython's
+`Modules/_sqlite` against a GitHub-hosted amalgamation, `_ctypes` compiled against the generated libffi headers and
+the system `libffi.so.8`. The banks need all three (`sqlite3` via `fa.session.manager`, `ctypes` via
+`view_io.renameat2`). `notes/sandbox-venv.sh` still builds a 3.11 venv and cannot collect these banks; the
+`.venv` produced by `uv sync` against that 3.13 interpreter is the working one.
+
+**Not done, deliberately.** No STEP or CT box ticked: SLICE2 STEP6's remaining leg is the SLICE5 STEP2 controller
+half (nothing in `src/` holds an `ExecutionClient` yet) and the host proof; `register{create:true}` stays dormant
+with SLICE5. `I03-LIVE-27` remains **PLANNED / UNEXECUTED** — no real `begin_run` child run, no deployed service and
+no cgroup-backed settlement was observed on a host, so nothing here is a live PASS.

@@ -87,9 +87,13 @@ class WorkerClient:
                     pending.result = result
                     pending.event.set()
 
-                    # Do not read again until the caller retires this exchange.
-                    def retired(original_id: str = request_id) -> bool:
-                        return self._closed or original_id not in self._pending
+                    # Do not read again until the caller retires THIS exchange.
+                    # The wait is on the exchange object, not on the id: a later
+                    # exchange may legitimately reuse an id once its predecessor
+                    # is retired, and an id-presence check would then wait for
+                    # the successor's retirement, which the reader itself owes.
+                    def retired(original_id: str = request_id, original: _Pending = pending) -> bool:
+                        return self._closed or self._pending.get(original_id) is not original
 
                     self._condition.wait_for(retired)
         except (OSError, DockerUnavailableError, ExecutionContractError):

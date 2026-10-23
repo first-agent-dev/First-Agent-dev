@@ -3,8 +3,8 @@
   "title": "Frozen normalized source producer-key baseline for I03 SLICE6 STEP3",
   "status": "PLANNED — local artifact mapping only; no live result is inferred",
   "register_path": "worklogs/planning-topology-and-executable-contracts-loop/notes/e2e-live-verification-register.md",
-  "register_source_commit": "5abbc1a5daa9d169e3f8316fdea46c0b536fbebe",
-  "register_sha256_at_snapshot": "0a68dba2c7d10c0d3a1efda63deb955668c52bafa035d3e79852b175eb2133d7",
+  "register_source_commit": "765535d776c42a9b25efd8dd0e024cbbdb0a34dc",
+  "register_sha256_at_snapshot": "8aaf35cd30c3fae5fd9212724b638d36b61c2d42b37fbe0abfb3cb1b12d9170f",
   "scope": [
     "Legacy producer inventories with explicit host fixture/oracle columns, including CT66 and E229.",
     "I03 production-surface tables and the explicit I03 cross-module joins.",
@@ -20,10 +20,10 @@
   },
   "id_policy": "Legacy unique producer keys receive I02-LIVE-001.. in first source occurrence order and are frozen. Native I03 surface/join IDs are retained; the explicitly extended S06 row gets the disambiguating baseline ID I03-LIVE-S06-EXT and maps to I03-LIVE-S06.",
   "counts": {
-    "source_rows": 126,
-    "unique_producers": 124,
+    "source_rows": 127,
+    "unique_producers": 125,
     "legacy_cases": 89,
-    "native_i03_cases": 34,
+    "native_i03_cases": 35,
     "shared_i03_s06_extension_rows": 1
   },
   "baseline_policy": "This file freezes original normalized producer keys, first-occurrence IDs, complete source rows, CT/SLICE/STEP lineage and host fixture/oracles. Do not edit it to accommodate renamed/replaced producers; add an explicit mapping in producer-coverage.json.",
@@ -7880,7 +7880,7 @@
       "mapping_kind": "native-i03",
       "producer_key": "I03-LIVE-26 `src/fa/execution/service.py` (E277 composed supervisor: route table, socket owner, `main`)",
       "kind": "producer",
-      "source_order": 1542,
+      "source_order": 1548,
       "source_section": "### E267 — nineteenth production surface: `execution/publication.py` (seal), PLANNED / UNEXECUTED",
       "source_headers": [
         "ID / production surface",
@@ -7890,8 +7890,8 @@
       ],
       "source_values": [
         "I03-LIVE-26 `src/fa/execution/service.py` (E277 composed supervisor: route table, socket owner, `main`)",
-        "`SupervisorService` over the real authority/journal/dispatcher and one private UDS: 0600 socket created only after `recover_uncertain` + `_load`, one request per connection, nineteen routes (thirteen over real owners, six declared `BACKEND_UNAVAILABLE`)",
-        "On the approved host with the operator config and the controller's UID: start `fa-execution-supervisor` (via `build_supervisor`/`main`) and observe that the socket appears only after recovery and is `srw-------` owned by the service user; send one request per operation and observe the exact closed reply per owner (register/acquire/pin/create_view/read/write/edit/release/seal/publish/bundle/install) while `exec`, `inspect`, `cancel`, `pty_control`, `handoff` and `register{create:true}` each refuse `BACKEND_UNAVAILABLE` with a durable `UNKNOWN` reservation where the operation reserves; verify a wrong UID is rejected before any frame is read, an unknown config key refuses startup, and SIGTERM stops acceptance and unlinks the socket without stranding an admitted handler. Negative controls: bind before recovery, `chmod 0600` removed, a dormant route returning `{}`, and `create_view` dropping the wire `base_revision`. Note that `seal` refuses `TERMINALITY_UNKNOWN` until the cgroup observer exists, so a full stage cannot be completed through this surface yet.",
+        "`SupervisorService` over the real authority/journal/dispatcher and one private UDS: 0600 socket created only after `recover_uncertain` + `_load`, one request per connection, nineteen routes (all nineteen over real owners; the one closed refusal left is the `register_workspace{create:true}` variant, E283)",
+        "On the approved host with the operator config and the controller's UID: start `fa-execution-supervisor` (via `build_supervisor`/`main`) and observe that the socket appears only after recovery and is `srw-------` owned by the service user; send one request per operation and observe the exact closed reply per owner (register/acquire/pin/create_view/read/write/edit/exec/inspect/cancel/pty_control/release/seal/publish/bundle/install) while `register{create:true}` refuses `BACKEND_UNAVAILABLE` with a durable `UNKNOWN` reservation where the operation reserves, and an `exec` refusal without a Docker configuration keeps `BACKEND_UNAVAILABLE`; verify a wrong UID is rejected before any frame is read, an unknown config key refuses startup, and SIGTERM stops acceptance and unlinks the socket without stranding an admitted handler. Negative controls: bind before recovery, `chmod 0600` removed, a dormant route returning `{}`, and `create_view` dropping the wire `base_revision`. Note that `seal` is composed over `OwnedCellTermination` (journal-owned cells plus the kernel's `populated 0`, E278), but this row claims nothing until the host proves a real cgroup emptied: a view whose cell cannot be stopped stays `STOPPING` (`TERMINALITY_UNKNOWN`) and keeps ownership.",
         "PLANNED / UNEXECUTED"
       ],
       "ct_lineage": [
@@ -7906,7 +7906,7 @@
       "occurrence_count": 1,
       "source_occurrences": [
         {
-          "line": 1542,
+          "line": 1548,
           "section": "### E267 — nineteenth production surface: `execution/publication.py` (seal), PLANNED / UNEXECUTED",
           "normalized_headers": [
             "ID / production surface",
@@ -7916,21 +7916,21 @@
           ],
           "values": [
             "I03-LIVE-26 `src/fa/execution/service.py` (E277 composed supervisor: route table, socket owner, `main`)",
-            "`SupervisorService` over the real authority/journal/dispatcher and one private UDS: 0600 socket created only after `recover_uncertain` + `_load`, one request per connection, nineteen routes (thirteen over real owners, six declared `BACKEND_UNAVAILABLE`)",
-            "On the approved host with the operator config and the controller's UID: start `fa-execution-supervisor` (via `build_supervisor`/`main`) and observe that the socket appears only after recovery and is `srw-------` owned by the service user; send one request per operation and observe the exact closed reply per owner (register/acquire/pin/create_view/read/write/edit/release/seal/publish/bundle/install) while `exec`, `inspect`, `cancel`, `pty_control`, `handoff` and `register{create:true}` each refuse `BACKEND_UNAVAILABLE` with a durable `UNKNOWN` reservation where the operation reserves; verify a wrong UID is rejected before any frame is read, an unknown config key refuses startup, and SIGTERM stops acceptance and unlinks the socket without stranding an admitted handler. Negative controls: bind before recovery, `chmod 0600` removed, a dormant route returning `{}`, and `create_view` dropping the wire `base_revision`. Note that `seal` refuses `TERMINALITY_UNKNOWN` until the cgroup observer exists, so a full stage cannot be completed through this surface yet.",
+            "`SupervisorService` over the real authority/journal/dispatcher and one private UDS: 0600 socket created only after `recover_uncertain` + `_load`, one request per connection, nineteen routes (all nineteen over real owners; the one closed refusal left is the `register_workspace{create:true}` variant, E283)",
+            "On the approved host with the operator config and the controller's UID: start `fa-execution-supervisor` (via `build_supervisor`/`main`) and observe that the socket appears only after recovery and is `srw-------` owned by the service user; send one request per operation and observe the exact closed reply per owner (register/acquire/pin/create_view/read/write/edit/exec/inspect/cancel/pty_control/release/seal/publish/bundle/install) while `register{create:true}` refuses `BACKEND_UNAVAILABLE` with a durable `UNKNOWN` reservation where the operation reserves, and an `exec` refusal without a Docker configuration keeps `BACKEND_UNAVAILABLE`; verify a wrong UID is rejected before any frame is read, an unknown config key refuses startup, and SIGTERM stops acceptance and unlinks the socket without stranding an admitted handler. Negative controls: bind before recovery, `chmod 0600` removed, a dormant route returning `{}`, and `create_view` dropping the wire `base_revision`. Note that `seal` is composed over `OwnedCellTermination` (journal-owned cells plus the kernel's `populated 0`, E278), but this row claims nothing until the host proves a real cgroup emptied: a view whose cell cannot be stopped stays `STOPPING` (`TERMINALITY_UNKNOWN`) and keeps ownership.",
             "PLANNED / UNEXECUTED"
           ],
           "normalized_values": [
             "I03-LIVE-26 `src/fa/execution/service.py` (E277 composed supervisor: route table, socket owner, `main`)",
-            "`SupervisorService` over the real authority/journal/dispatcher and one private UDS: 0600 socket created only after `recover_uncertain` + `_load`, one request per connection, nineteen routes (thirteen over real owners, six declared `BACKEND_UNAVAILABLE`)",
-            "On the approved host with the operator config and the controller's UID: start `fa-execution-supervisor` (via `build_supervisor`/`main`) and observe that the socket appears only after recovery and is `srw-------` owned by the service user; send one request per operation and observe the exact closed reply per owner (register/acquire/pin/create_view/read/write/edit/release/seal/publish/bundle/install) while `exec`, `inspect`, `cancel`, `pty_control`, `handoff` and `register{create:true}` each refuse `BACKEND_UNAVAILABLE` with a durable `UNKNOWN` reservation where the operation reserves; verify a wrong UID is rejected before any frame is read, an unknown config key refuses startup, and SIGTERM stops acceptance and unlinks the socket without stranding an admitted handler. Negative controls: bind before recovery, `chmod 0600` removed, a dormant route returning `{}`, and `create_view` dropping the wire `base_revision`. Note that `seal` refuses `TERMINALITY_UNKNOWN` until the cgroup observer exists, so a full stage cannot be completed through this surface yet.",
+            "`SupervisorService` over the real authority/journal/dispatcher and one private UDS: 0600 socket created only after `recover_uncertain` + `_load`, one request per connection, nineteen routes (all nineteen over real owners; the one closed refusal left is the `register_workspace{create:true}` variant, E283)",
+            "On the approved host with the operator config and the controller's UID: start `fa-execution-supervisor` (via `build_supervisor`/`main`) and observe that the socket appears only after recovery and is `srw-------` owned by the service user; send one request per operation and observe the exact closed reply per owner (register/acquire/pin/create_view/read/write/edit/exec/inspect/cancel/pty_control/release/seal/publish/bundle/install) while `register{create:true}` refuses `BACKEND_UNAVAILABLE` with a durable `UNKNOWN` reservation where the operation reserves, and an `exec` refusal without a Docker configuration keeps `BACKEND_UNAVAILABLE`; verify a wrong UID is rejected before any frame is read, an unknown config key refuses startup, and SIGTERM stops acceptance and unlinks the socket without stranding an admitted handler. Negative controls: bind before recovery, `chmod 0600` removed, a dormant route returning `{}`, and `create_view` dropping the wire `base_revision`. Note that `seal` is composed over `OwnedCellTermination` (journal-owned cells plus the kernel's `populated 0`, E278), but this row claims nothing until the host proves a real cgroup emptied: a view whose cell cannot be stopped stays `STOPPING` (`TERMINALITY_UNKNOWN`) and keeps ownership.",
             "PLANNED / UNEXECUTED"
           ]
         }
       ],
       "fixture_oracle": {
         "fixture": null,
-        "oracle": "On the approved host with the operator config and the controller's UID: start `fa-execution-supervisor` (via `build_supervisor`/`main`) and observe that the socket appears only after recovery and is `srw-------` owned by the service user; send one request per operation and observe the exact closed reply per owner (register/acquire/pin/create_view/read/write/edit/release/seal/publish/bundle/install) while `exec`, `inspect`, `cancel`, `pty_control`, `handoff` and `register{create:true}` each refuse `BACKEND_UNAVAILABLE` with a durable `UNKNOWN` reservation where the operation reserves; verify a wrong UID is rejected before any frame is read, an unknown config key refuses startup, and SIGTERM stops acceptance and unlinks the socket without stranding an admitted handler. Negative controls: bind before recovery, `chmod 0600` removed, a dormant route returning `{}`, and `create_view` dropping the wire `base_revision`. Note that `seal` refuses `TERMINALITY_UNKNOWN` until the cgroup observer exists, so a full stage cannot be completed through this surface yet.",
+        "oracle": "On the approved host with the operator config and the controller's UID: start `fa-execution-supervisor` (via `build_supervisor`/`main`) and observe that the socket appears only after recovery and is `srw-------` owned by the service user; send one request per operation and observe the exact closed reply per owner (register/acquire/pin/create_view/read/write/edit/exec/inspect/cancel/pty_control/release/seal/publish/bundle/install) while `register{create:true}` refuses `BACKEND_UNAVAILABLE` with a durable `UNKNOWN` reservation where the operation reserves, and an `exec` refusal without a Docker configuration keeps `BACKEND_UNAVAILABLE`; verify a wrong UID is rejected before any frame is read, an unknown config key refuses startup, and SIGTERM stops acceptance and unlinks the socket without stranding an admitted handler. Negative controls: bind before recovery, `chmod 0600` removed, a dormant route returning `{}`, and `create_view` dropping the wire `base_revision`. Note that `seal` is composed over `OwnedCellTermination` (journal-owned cells plus the kernel's `populated 0`, E278), but this row claims nothing until the host proves a real cgroup emptied: a view whose cell cannot be stopped stays `STOPPING` (`TERMINALITY_UNKNOWN`) and keeps ownership.",
         "combined": true
       },
       "live_result": "NOT RUN",
@@ -8011,6 +8011,82 @@
         }
       ],
       "occurrence_count": 1,
+      "live_result": "NOT RUN",
+      "attempt_count": 0,
+      "lineage_sources": {
+        "ct": [
+          "register source row",
+          "I03 master/index provisional CT mapping"
+        ],
+        "slice": [
+          "register source section when present",
+          "I03 README index provisional slice mapping"
+        ],
+        "step": [
+          "register source row/section",
+          "I03 master register-origin text when explicit"
+        ]
+      }
+    },
+    {
+      "baseline_id": "I03-LIVE-27",
+      "case_id": "I03-LIVE-27",
+      "mapping_kind": "native-i03",
+      "producer_key": "I03-LIVE-27 `src/fa/execution/workspace.py::handoff` (E282 planned surface, CT113; Q85 ruling)",
+      "kind": "producer",
+      "source_order": 1549,
+      "source_section": "### E267 — nineteenth production surface: `execution/publication.py` (seal), PLANNED / UNEXECUTED",
+      "source_headers": [
+        "ID / production surface",
+        "Producers / seam",
+        "Required live fixture and useful oracle",
+        "Live status"
+      ],
+      "source_values": [
+        "I03-LIVE-27 `src/fa/execution/workspace.py::handoff` (E282 planned surface, CT113; Q85 ruling)",
+        "`handoff` moves the **single** mutator grant from the calling namespace to a controller-attested child run as ONE fsynced metadata replace: ownership proof (`_owner_only`), settlement identical to `release` (every WRITE view `PUBLISHED`/`REJECTED`, no `intent.json`), the live writer fd this process opened, then the invariants same session / `target.parent_run_id == caller.run_id` / distinct run. `active_actor` becomes the target while `owner_namespace`, `generation`, `status` and `revision_id` stay byte-identical and a fresh 64-hex capability is minted. **Generation is never advanced** (a handoff is not a new write epoch), so pins and the child's views keep their generation; `parent_run_id` is controller-attested after an actual `begin_run` and the supervisor proves only the link it was told",
+        "On the approved filesystem with the installed service and the controller's UID: as the owner, send `handoff` naming the child run an actual `begin_run` allocated in the same session and observe the `{view_ref:null, capability, generation, revision_id}` reply with the generation **unchanged**; confirm the child immediately opens a WRITE view and writes, that the parent's old capability is `UNAUTHORIZED` for fresh work with the canonical tree unchanged, that a same-request-id replay still returns its cached original reply (the new capability) while a new request id with the old proof is `UNAUTHORIZED`; then the refusals, each with `workspace.json` byte-identical: a `SEALED`-but-unpublished view, an `OPEN` view and a present `intent.json` are `WORKSPACE_BUSY`; wrong session, wrong parent, self-target and null parent are `INPUT_POLICY`; a foreign principal or capability is `UNAUTHORIZED`; and exactly one `operations/op-<request_id>.json` ends `DONE` with the capability absent from it. Negative controls: reuse `_claim_generation` (the generation advances and every pinned `view_ref.generation` stops matching), skip the settlement predicate (a handoff while a view is still writable), and check the parent link after the swap (metadata moved, then refused).",
+        "PLANNED / UNEXECUTED"
+      ],
+      "source_occurrences": [
+        {
+          "line": 1549,
+          "section": "### E267 — nineteenth production surface: `execution/publication.py` (seal), PLANNED / UNEXECUTED",
+          "normalized_headers": [
+            "ID / production surface",
+            "Producers / seam",
+            "Required live fixture and useful oracle",
+            "Live status"
+          ],
+          "values": [
+            "I03-LIVE-27 `src/fa/execution/workspace.py::handoff` (E282 planned surface, CT113; Q85 ruling)",
+            "`handoff` moves the **single** mutator grant from the calling namespace to a controller-attested child run as ONE fsynced metadata replace: ownership proof (`_owner_only`), settlement identical to `release` (every WRITE view `PUBLISHED`/`REJECTED`, no `intent.json`), the live writer fd this process opened, then the invariants same session / `target.parent_run_id == caller.run_id` / distinct run. `active_actor` becomes the target while `owner_namespace`, `generation`, `status` and `revision_id` stay byte-identical and a fresh 64-hex capability is minted. **Generation is never advanced** (a handoff is not a new write epoch), so pins and the child's views keep their generation; `parent_run_id` is controller-attested after an actual `begin_run` and the supervisor proves only the link it was told",
+            "On the approved filesystem with the installed service and the controller's UID: as the owner, send `handoff` naming the child run an actual `begin_run` allocated in the same session and observe the `{view_ref:null, capability, generation, revision_id}` reply with the generation **unchanged**; confirm the child immediately opens a WRITE view and writes, that the parent's old capability is `UNAUTHORIZED` for fresh work with the canonical tree unchanged, that a same-request-id replay still returns its cached original reply (the new capability) while a new request id with the old proof is `UNAUTHORIZED`; then the refusals, each with `workspace.json` byte-identical: a `SEALED`-but-unpublished view, an `OPEN` view and a present `intent.json` are `WORKSPACE_BUSY`; wrong session, wrong parent, self-target and null parent are `INPUT_POLICY`; a foreign principal or capability is `UNAUTHORIZED`; and exactly one `operations/op-<request_id>.json` ends `DONE` with the capability absent from it. Negative controls: reuse `_claim_generation` (the generation advances and every pinned `view_ref.generation` stops matching), skip the settlement predicate (a handoff while a view is still writable), and check the parent link after the swap (metadata moved, then refused).",
+            "PLANNED / UNEXECUTED"
+          ],
+          "normalized_values": [
+            "I03-LIVE-27 `src/fa/execution/workspace.py::handoff` (E282 planned surface, CT113; Q85 ruling)",
+            "`handoff` moves the **single** mutator grant from the calling namespace to a controller-attested child run as ONE fsynced metadata replace: ownership proof (`_owner_only`), settlement identical to `release` (every WRITE view `PUBLISHED`/`REJECTED`, no `intent.json`), the live writer fd this process opened, then the invariants same session / `target.parent_run_id == caller.run_id` / distinct run. `active_actor` becomes the target while `owner_namespace`, `generation`, `status` and `revision_id` stay byte-identical and a fresh 64-hex capability is minted. **Generation is never advanced** (a handoff is not a new write epoch), so pins and the child's views keep their generation; `parent_run_id` is controller-attested after an actual `begin_run` and the supervisor proves only the link it was told",
+            "On the approved filesystem with the installed service and the controller's UID: as the owner, send `handoff` naming the child run an actual `begin_run` allocated in the same session and observe the `{view_ref:null, capability, generation, revision_id}` reply with the generation **unchanged**; confirm the child immediately opens a WRITE view and writes, that the parent's old capability is `UNAUTHORIZED` for fresh work with the canonical tree unchanged, that a same-request-id replay still returns its cached original reply (the new capability) while a new request id with the old proof is `UNAUTHORIZED`; then the refusals, each with `workspace.json` byte-identical: a `SEALED`-but-unpublished view, an `OPEN` view and a present `intent.json` are `WORKSPACE_BUSY`; wrong session, wrong parent, self-target and null parent are `INPUT_POLICY`; a foreign principal or capability is `UNAUTHORIZED`; and exactly one `operations/op-<request_id>.json` ends `DONE` with the capability absent from it. Negative controls: reuse `_claim_generation` (the generation advances and every pinned `view_ref.generation` stops matching), skip the settlement predicate (a handoff while a view is still writable), and check the parent link after the swap (metadata moved, then refused).",
+            "PLANNED / UNEXECUTED"
+          ]
+        }
+      ],
+      "ct_lineage": [
+        "CT113"
+      ],
+      "slice_lineage": [
+        "SLICE2"
+      ],
+      "step_lineage": [
+        "STEP6"
+      ],
+      "occurrence_count": 1,
+      "fixture_oracle": {
+        "fixture": null,
+        "oracle": "On the approved filesystem with the installed service and the controller's UID: as the owner, send `handoff` naming the child run an actual `begin_run` allocated in the same session and observe the `{view_ref:null, capability, generation, revision_id}` reply with the generation **unchanged**; confirm the child immediately opens a WRITE view and writes, that the parent's old capability is `UNAUTHORIZED` for fresh work with the canonical tree unchanged, that a same-request-id replay still returns its cached original reply (the new capability) while a new request id with the old proof is `UNAUTHORIZED`; then the refusals, each with `workspace.json` byte-identical: a `SEALED`-but-unpublished view, an `OPEN` view and a present `intent.json` are `WORKSPACE_BUSY`; wrong session, wrong parent, self-target and null parent are `INPUT_POLICY`; a foreign principal or capability is `UNAUTHORIZED`; and exactly one `operations/op-<request_id>.json` ends `DONE` with the capability absent from it. Negative controls: reuse `_claim_generation` (the generation advances and every pinned `view_ref.generation` stops matching), skip the settlement predicate (a handoff while a view is still writable), and check the parent link after the swap (metadata moved, then refused).",
+        "combined": true
+      },
       "live_result": "NOT RUN",
       "attempt_count": 0,
       "lineage_sources": {

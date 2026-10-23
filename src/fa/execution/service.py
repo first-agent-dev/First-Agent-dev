@@ -8,12 +8,17 @@ yet. There is no default authority, no permissive fallback, no host-side runner
 and no fabricated result: an unrouted or ownerless operation is `BACKEND_UNAVAILABLE`,
 which the caller sees as a typed refusal rather than a silent success (E277).
 
+`exec`, `inspect` and `cancel` are composed with `CommandReceipts` when the four
+Docker facts are configured: the receipt's identity is the reserved record, the
+view record and the approved profile, and its facts are one owned observation
+plus the kernel's `populated 0` (E279). `pty_control` is composed with the
+backend's live episode and exchanges one bounded control frame, after the worker
+itself proves the named session exists (E280). Without a Docker configuration
+all four routes keep the closed `BACKEND_UNAVAILABLE`, because no cell can ever
+run.
+
 Dormant owners (declared, with the unit that activates each):
 
-- `exec`, `inspect`, `cancel`, `pty_control`: `CellBackend` observes commands but
-  returns a `CommandOutcome`, not an `ExecutionReceipt`, and there is no
-  independent terminal-barrier (cgroup) observation or worker-control wrapper.
-  Activating unit: the receipt issuer + terminal barrier + PTY control unit.
 - `handoff`: no `WorkspaceAuthority.handoff` exists at all.
   Activating unit: the owner-handoff unit (terminal/settled source views,
   parent-child namespace proof).
@@ -52,6 +57,7 @@ from fa.execution.backend import CellBackend
 from fa.execution.docker import DockerEngine
 from fa.execution.plans import ProtectedPlanContext
 from fa.execution.profiles import ExecutionProfile, profile_set_sha256
+from fa.execution.receipts import CommandReceipts
 from fa.execution.supervisor import (
     CompletedReplyCache,
     PeerIdentity,
@@ -330,6 +336,7 @@ class SupervisorService:
             handle=self.handle,
         )
         self._backend: CellBackend | None = None
+        self._receipts: CommandReceipts | None = None
         if config.docker_socket is not None:
             daemon_uid, api_version, timeout_ms = (
                 config.docker_daemon_uid,
@@ -345,6 +352,12 @@ class SupervisorService:
                 rpc_timeout_ms=timeout_ms,
             )
             self._backend = CellBackend(self._authority, engine, self._authority.journal)
+            self._receipts = CommandReceipts(
+                self._authority,
+                self._backend,
+                engine,
+                cgroup_root=config.cgroup_root,
+            )
         # The barrier is always composed: a never-executed view is proved empty
         # by the journal alone, and a view that has a cell is refused (None)
         # until a real backend and cgroup fact are both available.
@@ -653,17 +666,29 @@ class SupervisorService:
         # Edit is a write with a mandatory precondition (the codec refuses null).
         return self._write_file(peer, request, deadline)
 
-    def _exec(self, _peer: PeerIdentity, _request: dict[str, Any], _deadline: float) -> dict[str, Any]:
-        raise SupervisorError("BACKEND_UNAVAILABLE")
+    def _exec(self, peer: PeerIdentity, request: dict[str, Any], deadline: float) -> dict[str, Any]:
+        return self._commands().execute(peer, request, deadline=deadline)
 
-    def _inspect(self, _peer: PeerIdentity, _request: dict[str, Any], _deadline: float) -> dict[str, Any]:
-        raise SupervisorError("BACKEND_UNAVAILABLE")
+    def _inspect(self, peer: PeerIdentity, request: dict[str, Any], deadline: float) -> dict[str, Any]:
+        return self._commands().inspect(peer, request, deadline=deadline)
 
-    def _cancel(self, _peer: PeerIdentity, _request: dict[str, Any], _deadline: float) -> dict[str, Any]:
-        raise SupervisorError("BACKEND_UNAVAILABLE")
+    def _cancel(self, peer: PeerIdentity, request: dict[str, Any], deadline: float) -> dict[str, Any]:
+        return self._commands().cancel(peer, request, deadline=deadline)
 
-    def _pty_control(self, _peer: PeerIdentity, _request: dict[str, Any], _deadline: float) -> dict[str, Any]:
-        raise SupervisorError("BACKEND_UNAVAILABLE")
+    def _commands(self) -> CommandReceipts:
+        """The receipt issuer, or a closed refusal when no cell can ever run."""
+        if self._receipts is None:
+            raise SupervisorError("BACKEND_UNAVAILABLE")
+        return self._receipts
+
+    def _channel(self) -> CellBackend:
+        """The admitted backend, or a closed refusal when no cell can ever run."""
+        if self._backend is None:
+            raise SupervisorError("BACKEND_UNAVAILABLE")
+        return self._backend
+
+    def _pty_control(self, peer: PeerIdentity, request: dict[str, Any], deadline: float) -> dict[str, Any]:
+        return self._channel().pty_control(peer, request, deadline=deadline)
 
     def _stop_view(self, peer: PeerIdentity, request: dict[str, Any], deadline: float) -> dict[str, Any]:
         result = self._stopper.stop_view(
@@ -733,8 +758,19 @@ class SupervisorService:
         )
         return asdict(result)
 
-    def _handoff(self, _peer: PeerIdentity, _request: dict[str, Any], _deadline: float) -> dict[str, Any]:
-        raise SupervisorError("BACKEND_UNAVAILABLE")
+    def _handoff(self, peer: PeerIdentity, request: dict[str, Any], deadline: float) -> GrantReply:
+        """Move the owner grant to the caller's own child run (CT113)."""
+        try:
+            target = NamespaceRef(**request["payload"]["target_namespace"])
+        except (TypeError, ExecutionContractError):
+            raise SupervisorError("INPUT_POLICY") from None
+        return self._authority.handoff(
+            peer,
+            self._namespace(request),
+            target=target,
+            capability=self._capability(request),
+            deadline=deadline,
+        )
 
     def _release(self, peer: PeerIdentity, request: dict[str, Any], deadline: float) -> dict[str, Any]:
         namespace, capability = self._namespace(request), self._capability(request)

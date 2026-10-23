@@ -10,7 +10,7 @@ may ship before that host acceptance; all unique producer obligations remain inc
 actual evidence. See [migration bank](i02-to-i03-scope-migration-2026-10-15.md).
 
 **Operator scope clarification, 2026-10-23:** the final I03 live-host gate covers all project changes
-from I01–I03. Q87 selected explicit I01-origin IDs; the package now maps all 42 I01 CTs and seven
+from I01–I03. Q88 selected explicit I01-origin IDs; the package now maps all 42 I01 CTs and seven
 in-scope deferred obligations to three planned cases, all `NOT RUN`. The I02+I03 lineage above is
 historical, not a narrowing of the final gate or evidence of deployment.
 

@@ -277,7 +277,7 @@ uv run ruff check src/fa/controller_entry.py src/fa/execution tests/test_control
 ```
 - [ ] STEP1: retain E251 explicit peer/deadline seam and finish remaining actual spec §§2.1–2.2 composition; retain implemented types/codec/client/installed-entry closure, do not rebuild them; retain E247 typed ERROR reply classification per spec§2.2; remaining backend/authority composition is still required; distinguish control/command deadlines and exec versus non-exec uncertain replay (exit: complete owning bank passes, isolated installed module executes real CLI help under CWD/PYTHONPATH/editable-pth poison, locally invalid input sends no frame and command-over-control-budget reply is observed exactly once)
 - [ ] STEP2: retain E249 native owned force-stop/observation (NOT a cgroup/terminal barrier); NEXT implement NEW CellBackend in execution/backend.py over existing DockerCells/WorkerClient/OperationJournal, with per-view live episode ownership, per-command begin/record_container and actual inspect/cancel/drain/restart facts per §2.2; join the actual SLICE2 admission gate before service composition, without a temporary authority (exit: interactive commands preserve shell state in one cell with two durable records; two distinct noninteractive operations with null sessions use two fresh one-shot cells/attaches and one RUN each; same-op duplicate/lost RUN never creates or resends; cancel-before-send, live one-shot cancel by exact journal-bound CID, and completed-creation/DONE-live-cell restart tests pass; lock expiry consumes the original deadline without a late Docker/RUN effect; no success/terminal receipt derives only from worker output)
-- [ ] STEP3: prepare service/config/install/image and volume-map changes without activation; compose supervisor.py build_supervisor/main only with real WorkspaceAuthority and CellBackend, then SLICE3 publication handlers; apply controller read-only canonical mounts/private-UDS-only and entrypoint changes atomically with SLICE4 caller cutover, never before provisioner/file tools can operate. The dispatcher must route ALL nineteen closed operations and no others: `health|register_workspace|acquire_writer|pin_reader|create_view|read_file|write_file|edit_file|exec|inspect|cancel|pty_control|stop_view|seal|publish|install_project|prepare_bundle|handoff|release` (that list is `Operation` in `execution/primitives.py`; derive it from the enum, never retype it). `stop_view`, `seal`, `publish`, `install_project`, `prepare_bundle`, `handoff` and `release` are NOT readonly and MUST pass the authority check; a missing route is an explicit closed-code refusal (`INVALID_REQUEST`/`BACKEND_UNAVAILABLE`), never a silent success or a host-side fallback. A view-less route that needs an owner grant must reject a null capability. `create_view` MUST forward the wire's `base_revision` into `WorkspaceAuthority.create_view(base_revision=…)` so the CAS is enforced by the authority, not by the handler (exit: no permissive/failing-main stub or alternate host runner; a route-coverage test enumerates the nineteen `Operation` members and fails on any unrouted one; approved disposable-host test later boots that real factory and proves absent control mounts/secrets, denied profile/raw-path escalation and zero unavailable-backend project commands)
+- [ ] STEP3: prepare service/config/install/image and volume-map changes without activation; compose supervisor.py build_supervisor/main only with real WorkspaceAuthority and CellBackend, then SLICE3 publication handlers; apply controller read-only canonical mounts/private-UDS-only and entrypoint changes atomically with SLICE4 caller cutover, never before provisioner/file tools can operate. The dispatcher must route ALL nineteen closed operations and no others: `health|register_workspace|acquire_writer|pin_reader|create_view|read_file|write_file|edit_file|exec|inspect|cancel|pty_control|stop_view|seal|publish|install_project|prepare_bundle|handoff|release` (that list is `Operation` in `execution/primitives.py`; derive it from the enum, never retype it). `stop_view`, `seal`, `publish`, `install_project`, `prepare_bundle`, `handoff` and `release` are NOT readonly and MUST pass the authority check; a missing route is an explicit closed-code refusal (`INVALID_REQUEST`/`BACKEND_UNAVAILABLE`), never a silent success or a host-side fallback. A view-less route that needs an owner grant must reject a null capability. `create_view` MUST forward the wire's `base_revision` into `WorkspaceAuthority.create_view(base_revision=…)` so the CAS is enforced by the authority, not by the handler (exit: no permissive/failing-main stub or alternate host runner; a route-coverage test enumerates the nineteen `Operation` members and fails on any unrouted one; approved disposable-host test later boots that real factory and proves absent control mounts/secrets, denied profile/raw-path escalation and zero unavailable-backend project commands) **Progress and what is left (E282).** 18 of the 19 routes now dispatch to real owners (E277/E279/E280). The two closures left are `register_workspace{create:true}` (no creating owner exists until SLICE5's acquisition lands) and `handoff`, which is owned by SLICE2 STEP6/CT113; this step therefore closes only when that route stops refusing, and it does so without reopening the route table, because the wire shape, the authority gate and the `GrantReply` reservation path already exist. **Update (E283):** that route is now routed too, so all nineteen `Operation` members reach a real owner, and the only closed refusal left in the table is `register_workspace{create:true}` (a payload variant, SLICE5). STEP3 itself stays open on its remaining exit criteria — the install/image/entrypoint set and the disposable-host boot proof.
 - [ ] STEP4: accumulate required real profile/image/kernel/daemon/cgroup facts and source-restored full-path CT98–CT100 mutation outcomes/cost at final SLICE6, with actual SLICE2 authority and SLICE4 callers, not injected callbacks (exit: every declared path runs non-skipped; each named producer deletion causes assertion failure in the whole owning bank; terminality uncertainty leaves ownership quarantined, source restored and no live owned cell)
 
 ## SLICE2: Workspace identity, exclusive writer and coherent private IO
@@ -303,9 +303,18 @@ CONTRACTS:
     registered workspace without transferring session DB/history ownership; one writer remains.
     Validate legacy manifests/run bindings; no blanket guard removal or second session manager.
     Future children inherit parent ownership/view/cancel scope; workflow subagents stay absent.
-TESTS: tests/test_execution_view_io.py, tests/test_execution_workspace.py, tests/test_execution_readers.py, tests/test_execution_views.py, tests/test_managed_workspace.py, tests/test_session_lifecycle.py, tests/test_execution_project_tools.py, tests/integration/test_workspace_views.py   (NEW interfaces; existing session lifecycle tests retained)
+  CT113 [FUNCTIONAL]: handoff moves the SINGLE active mutator grant from the calling namespace to a
+    controller-attested child run, as ONE durable metadata replace: owner proof, settlement (identical
+    to release: every WRITE view PUBLISHED/REJECTED, no intent.json), same session, target.parent_run_id
+    == caller.run_id, target.run_id != caller.run_id; then active_actor := target with owner_namespace,
+    generation, status and revision_id UNCHANGED and a fresh 64-hex capability minted. Generation is
+    never advanced (a handoff is not a new write epoch), the old capability dies with the replace, and
+    exactly one durable operation record ends DONE. No session store, attester, ServiceConfig field,
+    wire shape or second grant is introduced. Spec §2.1 handoff row, §7.1.
+    kill: remove-call src/fa/execution/workspace.py::WorkspaceAuthority.handoff -> _handoff_owner
+TESTS: tests/test_execution_view_io.py, tests/test_execution_workspace.py, tests/test_execution_readers.py, tests/test_execution_views.py, tests/test_execution_handoff.py, tests/test_managed_workspace.py, tests/test_session_lifecycle.py, tests/test_execution_project_tools.py, tests/integration/test_workspace_views.py   (NEW interfaces; existing session lifecycle tests retained)
 ```verify
-uv run pytest tests/test_execution_view_io.py tests/test_execution_workspace.py tests/test_execution_readers.py tests/test_execution_views.py tests/test_managed_workspace.py tests/test_session_lifecycle.py tests/test_execution_project_tools.py -q
+uv run pytest tests/test_execution_view_io.py tests/test_execution_workspace.py tests/test_execution_readers.py tests/test_execution_views.py tests/test_execution_handoff.py tests/test_managed_workspace.py tests/test_session_lifecycle.py tests/test_execution_project_tools.py -q
 FA_REQUIRE_EXECUTION_HOST=1 uv run pytest tests/integration/test_workspace_views.py -q -m execution_host
 ```
 - [ ] STEP1: retain E245 internal execution/view_io.py and its real-descriptor C0/C3 bank per §4.2 E244 (no admission/CT completion claim); retain E253 actual WorkspaceAuthority protected existing-root registration/current/R0/writer generation/startup fencing; retain E255 actual immutable reader pins/rooted reads/release; retain E256 actual WRITE/PROJECT views/rooted IO; NEXT construct execution admit/close-admission/drain semantics per §§2.2/4.2, not a second lock service; reject root aliases/overlaps/rebind and quiesce before R0; `create_view` keeps enforcing the wire's `base_revision` as a CAS precondition (retained from E268 review) rather than silently binding `current` (exit: two OS processes race for one workspace and exactly one obtains a durably advanced writer; denied/stale admissions produce no launch/write; when close wins before the scoped effect there are zero Docker create/start/attach/RUN and file-write effects; when the scoped effect wins, close/drain waits for that bounded effect/handler; independent pins retain original bytes across generation changes)
@@ -313,6 +322,7 @@ FA_REQUIRE_EXECUTION_HOST=1 uv run pytest tests/integration/test_workspace_views
 - [ ] STEP3: inject the managed provisioner into the existing SessionManager BEFORE `_new_session` calls `_provision_workspace` (this is the SLICE2 component injection; SLICE4 STEP2's repetition means routing the remaining inventory callers through the SAME provisioner at activation, never a second implementation); reserve its real provisioning RunContext via early existing DB/begin_run per §4.2; update both reverse-owner call sites (manager.py `_new_session` and `resolve_workflow_workspace`) for explicit registered references per CT103a and fail non-READY; preserve session DB/run reservations and validate legacy records under authority. The provisioner result contract is exact: a frozen result carrying `{registered: bool, workspace_id, revision_id, tree_sha256}`; manager cleanup may rmtree only `registered is False` scratch the provisioner itself created, and a registered/committed workspace is NEVER an rmtree target. `workspace_preparer` returns ReadyState and the manager treats not-READY as SessionManagerError("workspace_not_ready") in BOTH `_new_session` and `_attach_session` — no log+continue. The host-Git `_provision_workspace`/`provision_git_workspace` path is removed at injection, not retained as a fallback: new-workspace provisioning until SLICE3's publication join is an explicit typed BLOCKED disposition (provisioning_unavailable), while explicit registered reuse bypasses clone/readiness/remotes. The publication-dependent provisioning leg completes with SLICE3, not host Git fallback. SLICE2 half (exit): injection ordering test proves the provisioner runs before any `_provision_workspace` effect; new-session explicit reference to an existing registered workspace succeeds without transferring DB/history and one writer remains; corrupt manifests and legacy run-ID tests pass; provision failure and not-READY leave no active session; post-commit-failure cleanup never deletes registered bytes (covered with a registered=True provisioner result). SLICE3 half (exit, moves to SLICE3's evidence): DB/manifest failure AFTER a real workspace commit via publication keeps registered bytes intact and reports SessionManagerError.
 - [ ] STEP4: wire actual tool builders and SessionState internal binding per §4.2: controller fuzzy matching/telemetry, supervisor rooted writes, same-view bounded reads and cell-local existing search/reach/PDF implementations; no new public tools/search service or private state mount; join real authority/backend factory before disposable integration (exit: actual registry tools and PTY observe each other's edits with blackboard on/off and zero host Git/version-stamp reads, active search sees a new symbol, reader search stays pinned, artifacts retain their controller path, PDF/binary/large/truncated/helper-unavailable results are explicit and no canonical fallback occurs; seal/import alias tests complete with SLICE3)
 - [ ] STEP5: record CT101–CT103 whole-bank full-path producer kills plus same-inode/different-label contention, queued revoke/stop races at create/start/attach/RUN (not merely after `admit()`), restart and cleanup; accumulate actual Docker/kernel runs for final SLICE6 without substituting unit fixtures (exit: every named producer removal breaks an executed assertion, including no late launch/write after closed admission; all required host cases non-skipped, exact source restored, no leftover live cell or lost pin)
+- [ ] STEP6: implement CT113 `handoff` — the single mutator grant moves to the controller-attested child run (Q85 ruling, E282). Placement note: Q85's recommendation names this unit "SLICE2 STEP2"; it is recorded as its own STEP because STEP2's exit criteria are the five view purposes (a different producer and bank) and CT113 needs its own settlement/replay matrix, so folding it in would reopen a step that has nothing else outstanding. **Progress (E283).** The authority body and the route are implemented and locally proved: `handoff`/`_handoff_owner` over the real authority, the shared `_settled` predicate, the writer-fd guard and the read-back-before-grant, with `tests/test_execution_handoff.py` **17 passed** and 15/15 assertion-only mutants killed (including the declared producer kill). What this step still owes is the host case `I03-LIVE-27` and the controller leg, which is SLICE5 STEP2's and cannot exist before a `src/` composition holds an `ExecutionClient`. This step activates the LAST of the nineteen routes (`service.py::_handoff` stops refusing `BACKEND_UNAVAILABLE`); the controller leg — parent suspension, `_child_run_context`, the RPC — stays with SLICE5 STEP2, because no `src/` composition holds an `ExecutionClient` yet. No wire change is required or permitted: `Operation.HANDOFF` already decodes `{target_namespace}` into `_OWNER_REPLY`, is already in `AUTHORITY_GATED_OPERATIONS`, is already non-readonly (so it reserves `op-<request_id>` through the existing dispatcher), and is already a `GrantReply` operation in `_execute_reserved`; Q75 replay already compares the request's proof to the cached original proof, not to the current grant. The authority body reuses `_transaction`, `_owner_only`, `_has_unsettled_views` and `_replace_private_bytes` — never `_claim_generation` (the trap: it would advance the generation and stage a new write epoch), never a second flock, never a second `begin_run`. Requires the live writer fd (`binding.writer is not None`, else `STALE_GENERATION`) so the authority never moves an ownership it cannot fence. A crash after the metadata replace but before the reply leaves an OWNED workspace whose grant nobody holds: restart quarantines it exactly as for `acquire_writer`, and the attempt is never reconstructed from the journal. (exit: `tests/test_execution_handoff.py` proves — over the real authority, real files and the composed route — a handoff that keeps generation, `owner_namespace`, `status` and `revision_id` byte-identical while `active_actor` becomes the target; fresh work with the old capability `UNAUTHORIZED` with zero effect while Q75 replay of the same request id returns the original cached reply including the new capability; a new request id with the old proof `UNAUTHORIZED`; a `SEALED`-but-unpublished view, an `OPEN` view and a present `intent.json` each `WORKSPACE_BUSY` with the metadata unchanged; a mismatched session, a mismatched parent, a self-target and a null parent `INPUT_POLICY` before any write; a foreign principal, a foreign capability and a namespace that is not the active actor `UNAUTHORIZED`; exactly one durable record per successful handoff ending `DONE` with the capability absent from the journal; and a second handoff from the child to its own attested child succeeds, proving the chain rather than a one-shot transfer)
 
 ## SLICE3: Terminal seal, fenced publication and forward recovery
 STEPS: prescriptive
@@ -340,14 +350,14 @@ CONTRACTS:
     multi-file revision commit keep distinct intent phases/irreversible points. Bootstrap uses real
     Linux RENAME_NOREPLACE, no existence-check+rename. Post-commit artifact failure preserves bytes
     and blocks; fsync errors are uncertainty, not permission to replay/rollback. Spec §5.
-TESTS: tests/test_workspace_publication.py, tests/integration/test_publication_recovery.py   (NEW)
+TESTS: tests/test_workspace_publication.py, tests/test_stage_checkpoints.py, tests/integration/test_publication_recovery.py   (NEW)
 ```verify
 uv run pytest tests/test_workspace_publication.py -q
 FA_REQUIRE_EXECUTION_HOST=1 uv run pytest tests/integration/test_publication_recovery.py -q -m execution_host
 ```
-- [ ] STEP1: implement selected Q74 per-stage/episode checkpoint policy and spec §6.1 stage transition table; implement terminal barrier/view state machine and immutable export validation in execution/publication.py plus supervisor.py::stop_view -> _wait_descendants_terminal (CT104's named producers). **Progress and the remaining parts of THIS step:** the terminal barrier shipped in E266 and the immutable export/seal in E267 (both local C0/C3); what STEP1 still owes is (a) the Q74 per-stage/episode checkpoint policy wired to §6.1's transition table, (b) the real Docker/cgroup `CellTermination` implementation behind the existing seam, and (c) `tests/integration/test_publication_recovery.py` running the kernel-observed barrier under `FA_REQUIRE_EXECUTION_HOST=1`. STEP1 is one step with three parts, not one checkbox per part; it closes only when all three exist, and (b)/(c) are host-blocked in any session without an approved Docker daemon. Test split is fixed, no guessing: the view-state machine and immutable export validation run in tests/test_workspace_publication.py over the real local worker/attach cells (E258's fixture pattern) and prove seal/publish is refused while any handler or cell is unsettled; the actual cgroup-populated-empty descendant barrier runs only in tests/integration/test_publication_recovery.py under FA_REQUIRE_EXECUTION_HOST=1 (kernel fact, never mocked). Tests launch fork/double-fork/setsid/background writers in real cells and hold active file operations (exit: none can seal/publish while still writable)
+- [ ] STEP1: implement selected Q74 per-stage/episode checkpoint policy and spec §6.1 stage transition table; implement terminal barrier/view state machine and immutable export validation in execution/publication.py plus supervisor.py::stop_view -> _wait_descendants_terminal (CT104's named producers). **Progress and the remaining parts of THIS step:** the terminal barrier shipped in E266 and the immutable export/seal in E267 (both local C0/C3); what STEP1 still owes is (a) the Q74 per-stage/episode checkpoint policy wired to §6.1's transition table and (c) `tests/integration/test_publication_recovery.py` running the kernel-observed barrier under `FA_REQUIRE_EXECUTION_HOST=1`; (b) the real Docker/cgroup `CellTermination` behind the existing seam is delivered by E278 (`termination.py`/`cgroup.py`, local C1) and is *proved* on a host only by (c). **(a) in full, so it is not mistaken for prose.** It owns the whole §6.1 transition table, not only the happy path: at every mutating episode/stage boundary after proven terminality and path/security validation, the permitted ordinary edits are checkpointed through the existing `seal`→`publish` producers into `Rn`/`current`/projection before the next episode starts; a stage that exits nonzero or is interrupted makes the same bounded stop/seal attempt and may still checkpoint allowed terminal edits while the stage stays failed; a functional/provider failure never blocks a checkpoint and a checkpoint never turns a failed stage into `DONE`; `verify`/`eval` read a separate READ source at `Rn`; the repair or repeated-coder episode allocates a NEW open view from the authoritative `Rn`; and each checkpoint writes exactly one `execution.json` record (`{kind,artifact_sha256,plan_sha256,revision_id,original_revision_id,tree_sha256,operation_ids}`, immutable order, no capabilities). Owned test file `tests/test_stage_checkpoints.py` (C1: real authority + real views, no host): the transition table's rows, the "failed stage still checkpoints" and "checkpoint is not success" pairs, the sidecar schema/ordering, and the refusal that an unknown/live/quarantined view cannot publish or release. No new CT is declared here on purpose — the durable effects are CT106's publish and CT107a's PLAN phases, the barrier is CT104, and the sidecar is CT110/CT111's receipt/report artifact; this step's job is the *policy and ordering* that composes them, which is why its evidence is those banks plus the §6.1 matrix rather than a new producer kill. STEP1 is one step with three parts, not one checkbox per part; it closes only when all three exist, and part (c) — together with the host half of (b)'s proof — is blocked in any session without an approved Docker daemon, while (a) is not host-blocked and can be taken now. Test split is fixed, no guessing: the view-state machine and immutable export validation run in tests/test_workspace_publication.py over the real local worker/attach cells (E258's fixture pattern) and prove seal/publish is refused while any handler or cell is unsettled; the actual cgroup-populated-empty descendant barrier runs only in tests/integration/test_publication_recovery.py under FA_REQUIRE_EXECUTION_HOST=1 (kernel fact, never mocked). Tests launch fork/double-fork/setsid/background writers in real cells and hold active file operations (exit: none can seal/publish while still writable)
 - [ ] STEP2: implement exact intent/current/projection schemas/order/dir fsync and generation/base CAS per spec §5, including canonical Git-index preservation and spec §5.1 exact Q58/bootstrap forward-recovery phases. Materialize Rnext **from the sealed manifest**, re-verifying every digest against the view's frozen source, and materialize it under the id `seal_view` derived (`derive_revision_id`), never a caller-supplied id; the irreversible point for an ordinary revision is the `current.json` replace, and the recovery discriminator is `current.json`, not the phase value. Publish flips the view record to `PUBLISHED` and thereby **settles the owner**: `release_unused_writer` accepts only PUBLISHED/REJECTED WRITE views and refuses OPEN/STOPPING/UNKNOWN/SEALED (retained predicate from the E268 review) (exit: complete old/new pinned-reader and stale/fault unit matrix passes; publishing a SEALED view makes a subsequent `release` succeed and a later re-claim advance generation; publishing a view whose manifest hash or source bytes moved is `CORRUPT_STATE` with no `current.json` change)
-- [ ] STEP3: integrate the existing inner_loop/plan_promotion.py Q58 buffer/hash/promotion primitives and this authority's no-clobber bundle primitives (execution/publication.py::prepare_bundle / install_project, per §5's bundle handoff; §1 already assigns no-clobber project install to publication.py) with the same authority; no managed-acquisition UI/protocol before SLICE5 integration (exit: direct controller-authorized tests prove collisions preserve old bytes and post-commit failure never rolls back). **Progress and what this step still owes:** the bundle renderer/store (E271), the `RENAME_NOREPLACE` install under the Q82 (B) ruling (E271 unit B) and the same-path plan replacement with its forward-only commit (E273) are implemented and locally proved. The dispatcher's pre-reservation `authorize` seam is now real (E274); what remains is the nineteen route handlers plus `build_supervisor/main`, and then the controller leg — `_promote_validated_plan` still calls `inner_loop/plan_promotion.publish_plan_buffer` directly and must be moved onto the authority's `publish` of a CANDIDATE view, deleting that transport in the same change so exactly one writer owns the canonical plan. The step closes only when that leg is proved end to end; the components above are not a substitute for it.
+- [ ] STEP3: integrate the existing inner_loop/plan_promotion.py Q58 buffer/hash/promotion primitives and this authority's no-clobber bundle primitives (execution/publication.py::prepare_bundle / install_project, per §5's bundle handoff; §1 already assigns no-clobber project install to publication.py) with the same authority; no managed-acquisition UI/protocol before SLICE5 integration (exit: direct controller-authorized tests prove collisions preserve old bytes and post-commit failure never rolls back). **Progress and what this step still owes:** the bundle renderer/store (E271), the `RENAME_NOREPLACE` install under the Q82 (B) ruling (E271 unit B) and the same-path plan replacement with its forward-only commit (E273) are implemented and locally proved. The dispatcher's pre-reservation `authorize` seam is now real (E274); what remains is the nineteen route handlers plus `build_supervisor/main`, and then the controller leg — `_promote_validated_plan` still calls `inner_loop/plan_promotion.publish_plan_buffer` directly and must be moved onto the authority's `publish` of a CANDIDATE view, deleting that transport in the same change so exactly one writer owns the canonical plan. The step closes only when that leg is proved end to end; the components above are not a substitute for it. **That leg's planned surface, so it is not left as prose (E282).** Owning bank: `tests/test_verify_gate_live.py` (the only bank that reaches `_promote_validated_plan` today) plus `tests/test_workspace_publication.py` for the authority half; the wire route is the existing `publish` with a CANDIDATE-view ledger, not a new operation. Exit for the leg specifically: the controller's plan write reaches the authority through `ExecutionClient.publish` and `plan_promotion.publish_plan_buffer` is **deleted** in the same change (R3 — a retained fallback is a second writer by another name), the returned `plan_ref` is the only ref recorded downstream, a CANDIDATE view that is not the caller's own scoped candidate is refused, and a stale source hash is `STALE_REVISION` with the canonical plan byte-identical.
 - [ ] STEP4: recover from supervisor/process death at each durable boundary, before/after pointer replace and during projection; require approved filesystem and separately label process-crash versus power-loss evidence. The hook points are fixed by existing code: `WorkspaceAuthority.__enter__` calls `journal.recover_uncertain()` then `_load()`, and `_load` currently QUARANTINES every `OWNED` workspace with no forward path — `recover_workspace` must run there, before the quarantine decision, for every workspace with `intent.json`; and `_initialize_genesis` already refuses a non-empty `views/` or a present `intent.json`, so nothing else may assume a pristine workspace. Stale `pending/` staging from a hard kill is NEVER swept today (`__enter__` creates the directory and moves on), so recovery must also classify those directories as owned scratch (discard) versus unknown (quarantine), and must not delete a directory referencing a committed revision (exit: real recovery tests expose only complete current revisions or quarantine, no success from uncertain state; a killed supervisor mid-projection leaves no orphan `pending/` entry that a later authority silently ignores) **Progress (E276):** the local recovery unit is implemented and hooked into `_load` in the same change — CT107's three kinds complete forward or discard only provably-uncommitted owned scratch, stale `pending/` staging is classified, and 17/17 producer mutants are killed over the real authority. STEP4 still owes the kernel-observed matrix on the approved filesystem (`FA_REQUIRE_EXECUTION_HOST=1`), kills *inside* recovery, the fsync-unsupported/EIO cases, and explicit process-crash versus power-loss labelling.
 - [ ] STEP5: record full declared-path CT104–CT107 kills and cleanup/ownership evidence (exit: all four producers killed by useful executed oracles; no cells/pins/intent abandoned without disposition)
 
@@ -416,7 +426,7 @@ uv run pytest tests/test_managed_acquisition.py tests/test_verify_gate_live.py t
 FA_REQUIRE_EXECUTION_HOST=1 uv run pytest tests/integration/test_nested_workflow.py -q -m execution_host
 ```
 - [ ] STEP1: author exact spec §7 managed-v2 keys/rules/rendering fixtures and v1 compatibility/selection-vs-bootstrap hash tests; apply E231 decisions, no re-approval ceremony or new routing mode. Include existing expansion/injection preservation and source-backed registry/pr_prepare seams (exit: source-matched fixture/schema tests pass; no inferred runtime acceptance)
-- [ ] STEP2: implement actual handler/reused _child_run_context/parent writer suspension and server-acknowledged handoff and acquisition capability; preserve existing task/roles/mode/budget tool fields, no path/context; reserve invocation/child identity before dispatch (exit: actual handler tests prove parent artifacts byte-identical and unique child namespace)
+- [ ] STEP2: implement actual handler/reused _child_run_context/parent writer suspension and server-acknowledged handoff and acquisition capability; preserve existing task/roles/mode/budget tool fields, no path/context; reserve invocation/child identity before dispatch (exit: actual handler tests prove parent artifacts byte-identical and unique child namespace). **The handoff is split after Q85/E282 and only this step's half remains.** The authority and the wire route are SLICE2 STEP6/CT113 and land before this step, so the RPC exists; this step owns the controller half: suspend the parent's mutators, allocate the child run through the existing `_child_run_context` (same session, `parent_run_id` proven against the parent `RunContext`), build `target_namespace` as exactly `{child.session_id, child.run_id, ctx.parent_run_id}`, send `handoff`, and only then dispatch the child. Do not add a second allocator, a second `begin_run`, an attester or a session read in the supervisor: the attestation is the controller's own `begin_run` plus the two wire invariants the authority checks (§7.1).
 - [ ] STEP3: implement approved stable-ID selection/clarification and controller-rendered no-clobber bundle via SLICE3 authority, shared I02 repair and before-T0 ordering (exit: exact caps/unknown+duplicate fields/status-smuggling/ambiguous/collision/post-install-fsync+append matrix passes)
 - [ ] STEP4: implement live current-message provider, bounded initial task/redaction and distilled retry/replan separation; keep Q66 ordinary log policy (exit: parent-only sentinel occurs in first real planner request, not retries; configured credential sentinel absent)
 - [ ] STEP5: actual outer drive_session→invoke→child run_workflow→_cmd_run→drive_session with real supervisor/cells and only ProviderChain.request mocked proves existing selection and new project, clarification/no-coder blocks, child evidence and parent refresh at turn boundary (exit: execution_host nested C1 passes with advisory/manual and existing experimental suggestion paths, in observe/enforce gate modes)
@@ -452,10 +462,10 @@ uv run python scripts/check_execution_e2e_coverage.py
 - [ ] STEP4: coder writes `worklogs/planning-topology-and-executable-contracts-loop/e2e/I03/implementation-handoffs.md` after real seams/proofs exist, labeling facts vs proposals and limitations (exit: handoff-shape tests pass; coder has changed no oracle/result)
 - [ ] STEP5: planner finalizes copy/paste host sheet from actual deployment/workspace facts per spec §9, complete tasks/variables/commands/run IDs/artifacts, safe update stop conditions and observe→review→enforce order (exit: run-sheet checks plus human command review, not pytest claiming deployment happened)
 - [ ] STEP6: update plan-authoring/feature-planning/tests-writing skill obligations exactly as transferred STEP6; preserve unrelated READY behavior (exit: artifact+skill conformance tests pass)
-- [ ] STEP7: independent reviewer completes manual checklist before the FINAL project-scoped E2E fixture/helper package (not earlier local tests/integration kernel tests), including all source/import/readiness/descendant/fencing/recovery, nested cases, and I01 plan-authoring/parser/admission obligations; include E223's transferred scope plus all I01–I03 implementation/evidence obligations and record open findings for final review (exit: named reviewer/date/notes recorded; no machine-approved marker; final broad review still required after material changes)
-- [ ] STEP8: only after STEP7 implement reviewed bounded fixtures under `worklogs/planning-topology-and-executable-contracts-loop/e2e/I03/fixtures/` in unique disposable workspaces; preserve evidence/owned cleanup and keep live host commands outside default pytest discovery (exit: fixture conformance passes; review-before-implementation provenance exists)
-- [ ] STEP9: index every distinct local/live producer, including separate CLI/direct guards, candidate/promotion/schema/T0, CT96 selection/bootstrap/clarification/context, CT97 file/edit/shell/subagent-absence/alias paths, early readiness/imports, no-replay, contention/read pins, terminal seal/publication/recovery; map I01 deferred obligations, retained I02 source/functional claims, and I03 producers to actual deployed behaviour oracles (exit: all original+new required I01–I03 producer keys mapped with useful evidence oracle; no local-only or missing deployed claim credited)
-- [ ] STEP10: run local package conformance, every accumulated non-skipped execution_host suite and all17 full-declared-path kills, and full release gates; review environment/readiness and inherited baseline acceptance using retained I02 manifests, exact test identities/replacements and Mypy contexts, including the unreproduced historical ninth context and relevant hook observations. Resolve/explicitly disposition each item for the intended Ubuntu/Docker/Python deployment without falsifying red results. Before claiming the release gates complete, build the installed-controller wheel with supported CPython 3.13 including `zlib` and the frozen build dependencies (the current 11 setup errors are a blocker, not a skip); provide the approved ShellCheck binary so all 12 shellcheck-gated tests run rather than skip; and provide a trusted Go 1.24.11 SDK plus the pinned Gitleaks/pre-commit dependencies or an approved cached build environment so the actual readiness→hook→commit→publication path and `just test`/`just check` complete without bypass. Go is an indirect test-hook build requirement, not an FA runtime requirement. If any prerequisite remains unavailable, record the row BLOCKED and keep the release gate open. Only with maintenance/deploy authorization perform normal main update and reviewed host runs; inspect nonzero update before retry, verify actual deployed SHA/image/profile/config, execute spec §9.1 unmocked direct+nested workflow witnesses (not only deterministic provider-stub cases), record source-to-behaviour results and broad independent implementation/evidence review plus integrated signoff. No automated/harness PASS (exit: all four E223 acceptance obligations complete with recorded review; all required I01–I03 cases independently reviewed PASS; BLOCKED/NOT RUN/skip never counts)
+- [ ] STEP7: independent reviewer completes the manual checklist before the FINAL project-scoped E2E fixture/helper package (not earlier local tests/integration-kernel tests). Review all source/import/readiness/descendant/fencing/recovery and nested cases, I01 plan-authoring/parser/admission obligations, maintenance prerequisites, secret handling, and the stop path. Include E223's transferred scope plus all I01–I03 implementation/evidence obligations; record open findings for final review (exit: named reviewer/date/notes recorded; no machine-approved marker; final broad review still required after material changes)
+- [ ] STEP8: only after STEP7, implement reviewed bounded fixtures under `worklogs/planning-topology-and-executable-contracts-loop/e2e/I03/fixtures/` in unique disposable workspaces; preserve evidence/owned cleanup and keep live-host commands outside default pytest discovery (exit: fixture conformance passes; review-before-implementation provenance exists)
+- [ ] STEP9: index every distinct local/live producer, including separate CLI/direct guards, candidate/promotion/schema/T0, CT96 selection/bootstrap/clarification/context, CT97 file/edit/shell/subagent-absence/alias paths, early readiness/imports, no-replay, contention/read pins, terminal seal/publication/recovery; map I01 deferred obligations, retained I02 source/functional claims, and I03 producers to actual deployed-behaviour oracles (exit: all original+new required I01–I03 producer keys mapped with useful evidence oracles; no local-only or missing deployed claim credited)
+- [ ] STEP10: run local package conformance, every accumulated non-skipped execution_host suite and all 18 full-declared-path kills, and full release gates; review environment/readiness and inherited baseline acceptance using retained I02 manifests, exact test identities/replacements and Mypy contexts, including the unreproduced historical ninth context and relevant hook observations. Resolve or explicitly disposition each item for the intended Ubuntu/Docker/Python deployment without falsifying red results. Before claiming release gates complete, build the installed-controller wheel with supported CPython 3.13 including `zlib` and frozen build dependencies (the current 11 setup errors are a blocker, not a skip); provide the approved ShellCheck binary so all 12 shellcheck-gated tests run rather than skip; and provide a trusted Go 1.24.11 SDK plus pinned Gitleaks/pre-commit dependencies or an approved cached build environment so the actual readiness→hook→commit→publication path and `just test`/`just check` complete without bypass. Go is an indirect test-hook build requirement, not an FA runtime requirement. If any prerequisite remains unavailable, record the row BLOCKED and keep the release gate open. Only with maintenance/deploy authorization perform normal main update and reviewed host runs; inspect nonzero update before retry, verify actual deployed SHA/image/profile/config, execute spec §9.1 unmocked direct+nested workflow witnesses (not only deterministic provider-stub cases), record source-to-behaviour results and broad independent implementation/evidence review plus integrated signoff. No automated/harness PASS (exit: all four E223 acceptance obligations complete with recorded review; all required I01–I03 cases independently reviewed PASS; BLOCKED/NOT RUN/skip never counts)
 
 ## Increment definition of done — binary, no partial isolation claim
 
@@ -464,11 +474,12 @@ reproducible by the command beside it:
 
 | Quantity | Value | Derive it with |
 | --- | --- | --- |
-| CT declarations (17 FUNCTIONAL + 7 CONSTRAINT) | **24** | `grep -cE '^\s+CT[0-9]+[a-z]? \[(FUNCTIONAL|CONSTRAINT|PRESERVATION)\]' increments/increment-03-*.md` |
-| Declared `kill:` directives | **17** (one per FUNCTIONAL contract; a `grep -c 'kill:'` returns more because prose lines quote the word) | `grep -cE '^\s+kill: remove-call ' increments/increment-03-*.md` |
+| CT declarations (18 FUNCTIONAL + 7 CONSTRAINT) | **25** (E282 added CT113/`handoff`; every earlier count in this log is that entry's snapshot) | `grep -cE '^\s+CT[0-9]+[a-z]? \[(FUNCTIONAL|CONSTRAINT|PRESERVATION)\]' increments/increment-03-*.md` |
+| Declared `kill:` directives | **18** (one per FUNCTIONAL contract; a `grep -c 'kill:'` returns more because prose lines quote the word) | `grep -cE '^\s+kill: remove-call ' increments/increment-03-*.md` |
 | Closed wire operations | **19** | `grep -cE '^\s+[A-Z_]+ = "' src/fa/execution/primitives.py` |
-| Current planned suite | **I03: 26 surfaces / 8 joins; I01: 42 CTs mapped to 3 planned cases (all NOT RUN)** (E250 recorded 18/8; E267 added `publication.py` as I03-LIVE-19; E269 the publish path as I03-LIVE-20; E271 the bundle path as I03-LIVE-21; E272 the install path as I03-LIVE-22; E273 the plan-replacement path as I03-LIVE-23; E274 the authorizer as I03-LIVE-24; E276 forward recovery as I03-LIVE-25) | `grep -o 'I03-LIVE-[0-9]\{2\}' notes/e2e-live-verification-register.md \| sort -u \| wc -l` |
-| Six slices, thirty-five STEPs | **6 / 35** | `grep -cE '^- \[.\] STEP[0-9]+:' increments/increment-03-*.md` |
+| E2E live surfaces / joins | **27 / 8** (E282 added `handoff` as I03-LIVE-27; E250 recorded 18/8; E267 added `publication.py` as I03-LIVE-19; E269 the publish path as I03-LIVE-20; E271 the bundle path as I03-LIVE-21; E272 the install path as I03-LIVE-22; E273 the plan-replacement path as I03-LIVE-23; E274 the authorizer as I03-LIVE-24; E276 forward recovery as I03-LIVE-25; E277 the composed supervisor as I03-LIVE-26 -- E281 re-ran the derivation) | `grep -o 'I03-LIVE-[0-9]\{2\}' notes/e2e-live-verification-register.md \| sort -u \| wc -l` |
+| I01 source mapping | **42 CTs / 7 deferred obligations / 3 planned cases (all NOT RUN)**; explicit I01-LIVE-01..03 mapping; no live verdict inferred | `scripts/check_execution_e2e_coverage.py` |
+| Six slices, thirty-six STEPs | **6 / 36** (E282 added SLICE2 STEP6) | `grep -cE '^- \[.\] STEP[0-9]+:' increments/increment-03-*.md` |
 
 If a later edit changes a count, the edit updates the table and the ledger entry that introduced the
 change; a plan sentence with a stale number is a defect, not a rounding error.
@@ -477,7 +488,7 @@ change; a plan sentence with a stale number is a defect, not a rounding error.
       collection is proved by `--collect-only -q` naming each file, because a verify block whose single
       path does not exist yet reports "no tests ran" and exits 4, not 0. Required execution_host runs use
       `FA_REQUIRE_EXECUTION_HOST=1` and cannot succeed by skipping unavailable Docker/profile.
-      All **17** declared `kill:` directives have useful executed failing oracles, provenance,
+      All **18** declared `kill:` directives have useful executed failing oracles, provenance,
       elapsed cost and byte-exact restored source; errors, collection failures, skips and
       `PRODUCER_ABSENT` do not count as kills.
 - [ ] Implemented artifacts conform to recorded Q59/Q60/Q63/Q74 and spec §7 managed-v2/schema/rendering
@@ -549,7 +560,7 @@ pinned to a commit sha (`workspace.py:2054 @ a299c12`). Line-only citations are 
 
 ### C. Verified fine (checked, no action)
 
-- **`17` kills is correct.** 17 FUNCTIONAL contracts, 17 distinct `kill: remove-call` directives; a raw
+- **`17` kills is correct at E268.** 17 FUNCTIONAL contracts, 17 distinct `kill: remove-call` directives (E282 later added CT113, so the current derivation is 18); a raw
   `grep -c 'kill:'` returns 19 because two prose lines quote the word. My first reading flagged a
   mismatch; the count is right and is now derived in the DoD table instead of asserted.
 - **Spec §5 steps 1–3 vs the §5.1 table do not contradict each other for REVISION.** Intent may only be
@@ -1228,11 +1239,14 @@ E2E rows already registered (`I03-LIVE-22`, `I03-LIVE-23`) assert exactly that i
 | 4 | provisioner + file-tool port injection, caller cutover | SLICE2 STEP3 injection / SLICE4 | 2 | `SessionManager(workspace_provisioner=…)`, `workspace_io=…`, host `_provision_workspace` removed together |
 | 5 | managed acquisition (SLICE5), then accepted package (SLICE6) | SLICE5/6 | 3, 4 | — |
 
+**Addendum (E282, 2026-10-23).** Q85 is answered, so the `handoff` row now has an owner: SLICE2 STEP6/CT113. Items 3–5 remain unchanged and unstarted.
+
 **Status of this table (2026-10-23).** Item 1 is delivered by E276 — `_recover_intent`, the stale
 `pending/` classification and the `_load` hook all shipped in one change, as the "lands with" column
-required. Item 2's route table and composition are delivered by E277, and E278 delivered the
-`CellTermination` join its `stop_view` route needs. Items 3–5 are unchanged and none is started; the four
-execution routes and `handoff` stay dormant until the receipt issuer / PTY control / handoff owners land.
+required. Item 2's route table and composition are delivered by E277, E278 delivered the
+`CellTermination` join its `stop_view` route needs, E279 the receipt issuer (`exec`, `inspect`, `cancel`)
+and E280 `pty_control`. Items 3–5 are unchanged and none is started; `handoff` and
+`register_workspace{create:true}` stay dormant until their owners land.
 
 **Why recovery precedes the routes, in one sentence each.** (a) Routes multiply the number of ways to
 crash into an unrecoverable workspace, so the recovery owner must exist first. (b) The E2E lane cannot
@@ -3031,7 +3045,9 @@ schema: `ready` (the `health` fact, true only after flock + `recover_uncertain` 
 binding; it and `release_unused_writer` now share one `_settle_owner`). `profiles.profile_set_sha256`
 is the canonical digest of the enforced profile set.
 
-**Route table (nineteen rows, derived names, checked for totality at construction).** Live against a
+**Route table (nineteen rows, derived names, checked for totality at construction).** *(E282 note: this is
+E277's snapshot. E279/E280 then routed `exec`, `inspect`, `cancel` and `pty_control`, so only the last two
+rows below are still dormant, and `handoff` now has an owner — SLICE2 STEP6/CT113.)* Live against a
 real owner: `health`, `register_workspace{create:false}`, `acquire_writer`, `pin_reader`, `create_view`,
 `read_file`, `write_file`, `edit_file`, `release` (pin or owner), `stop_view` (close + drain only),
 `seal`, `publish`, `prepare_bundle`, `install_project`. Declared dormant with an explicit
@@ -3089,3 +3105,209 @@ local bank (C1); only a host run may claim the daemon actually signalled the cel
 (the publication half now driven through the wire); owning bank 387 passed; wider `-k "execution or workspace"`
 1585 passed, 1 skipped; ruff/format clean, mypy 22 files, pyrefly 0, `fa authoring-check` 0; 14/14 assertion-only
 mutants killed with byte-exact restore. `I03-LIVE-19/20/25/26` remain PLANNED / UNEXECUTED.
+
+### E279 result — `ExecutionReceipt` v1: `exec`, `inspect` and `cancel` over observed facts
+
+**What shipped.** `src/fa/execution/receipts.py::CommandReceipts` (plus `bounded_tail`) and
+`WorkspaceAuthority.execution_identity`; `CommandOutcome.duration_ms` (RUN send → reply, measured in the backend);
+`service.py` composes the issuer when the four Docker facts are configured and keeps a closed
+`BACKEND_UNAVAILABLE` otherwise. A receipt's identity is the reserved record, the view record (input tree and
+plan digest) and the approved profile; its facts are one owned `inspect_owned` plus the kernel's `populated 0`.
+
+**Current vs target behaviour.** Current: a one-shot command is `EXITED` only when the daemon's exit agrees with
+the command's *and* the cgroup is proved empty; an interactive shell may report `EXITED` with
+`terminal_barrier: false` (the barrier is `stop_view`'s question); a timeout is `TIMED_OUT` with no exit code and
+no daemon contact; `inspect` replays a DONE record verbatim and never sends a RUN; `cancel` is intent → stop →
+`CANCELLED` under its own operation id. Target: the same facts against a real container and a real cgroup — the
+host rows (`I03-LIVE-19/20/25/26`), still BLOCKED here. STEP1 stays open, so no box is ticked.
+
+**Why the local bank cannot promote a row.** Every daemon answer in the bank is a literal HTTP reply queued on a
+real AF_UNIX peer, and the cgroup is a real directory holding a hand-written `cgroup.events`; the container's
+exit, the SIGKILL and the kernel's emptiness are *not* observed. The receipt is proven to be closed, bound and
+internally consistent — not proven to be true of a live host.
+
+**Evidence.** `tests/test_execution_receipts.py` 21 passed; `tests/test_execution_service.py` 25 passed; all
+`tests/test_execution_*.py` 1157 passed; wider `-k "execution or workspace"` 1608 passed, 1 skipped (3 known
+offline-install errors); ruff/format clean, mypy 23 files, pyrefly 0, `fa authoring-check` 0; 14/14
+assertion-only mutants killed with byte-exact restore.
+
+### E280 result — `pty_control` P1–P9: the last execution route
+
+**What shipped.** `CellBackend.pty_control` (grant proof through `WorkspaceAuthority.authorize`, episode identity,
+at most two bounded control frames, no cell creation and no journal write) and the `service.py` route through the
+composed backend. One transport fix was required by the two-frame exchange: `WorkerClient._read`'s retirement gate
+was id-keyed, so a sequential id reuse deadlocked until the deadline; it is now keyed on the exchange object.
+
+**Current vs target behaviour.** Current: `LIST` answers the worker's own listing, `INTERRUPT` answers the listing
+plus the ACK message while the shell and cell survive, `CLOSE` drops that session and a later command recreates it
+on the same cell; an absent session is refused (`EXECUTION_UNKNOWN`) **without writing the frame**, so a caller
+typo cannot poison the live shell; a view with no live episode is `EXECUTION_UNKNOWN`, never an empty listing; a
+noninteractive profile is `INPUT_POLICY`. Target: the same against a real container and a real kernel barrier —
+`I03-LIVE-19/20/25/26`, still BLOCKED here.
+
+**Evidence.** `tests/test_execution_pty_control.py` 10 passed; `tests/test_execution_service.py` 26 passed; all
+`tests/test_execution_*.py` 1168 passed; wider `-k "execution or workspace"` 1619 passed, 1 skipped (3 known
+offline-install errors); ruff/format clean, mypy 23 files, pyrefly 0, `fa authoring-check` 0; 9/9 assertion-only
+mutants killed with byte-exact restore.
+
+### E281 — remaining-I03 assessment before SLICE6: what is missing, in what order (no implementation claim)
+
+**Question this answers.** With Q85 open, the operator asked what still stands between `8106709` and the
+last acceptance slice (SLICE6), and in what dependency order the remainder should be taken.
+
+**Method.** Every claim below is a source check at `8106709` (the grep or the function named), plus the
+plan's own derived counts re-run instead of copied. **No test was executed for this entry** — the sandbox
+lost its 3.13 interpreter between sessions (see "Toolchain" below) — and the only edits are documentation,
+so no bank result changed. Counts re-derived here: 24 CTs, 17 `kill:` directives, 19 operations, 35 STEPs,
+**26** E2E surfaces / 8 joins.
+
+**What is live.** Route table + socket owner + `main` (`supervisor.py`, E277); 17 of the 19 operations
+dispatch to a real owner; registration/R0/writer generation, five view purposes, rooted IO, seal,
+publication, bundle/install, Q58 plan replacement and forward recovery (`workspace.py`,
+`publication.py`); episodes, receipts and PTY control (`backend.py`, `receipts.py`); the barrier over
+journal-owned cells plus the kernel's `populated 0` (`termination.py`, `cgroup.py`).
+
+**What is provably not live.** `grep -rn "from fa.execution" src/fa --include=*.py | grep -v ^src/fa/execution/`
+is **empty**. Nothing outside the package imports it, so every managed owner above is dormant and users
+still execute the host path: `cli._cmd_run` builds a host `PtyPool` and degrades to `subprocess`.
+
+#### A. Product work still missing (no host needed)
+
+*(Row A2 is superseded by E282: Q85 is answered and `handoff` is now planned surface — CT113 / SLICE2 STEP6. Rows A1 and A3–A9 remain as written, each already owning a contract, step and bank; see E282 for the two surfaces that were missing one.)*
+
+| # | Unit (plan row) | What is absent, source-checked | Blocked by |
+| --- | --- | --- | --- |
+| A1 | Q74 per-stage/episode checkpoint policy wired to spec §6.1's transition table (SLICE3 STEP1a) | `grep -rn checkpoint src/fa/execution` is empty; the view state machine exists without a checkpoint owner | nothing |
+| A2 | `handoff` route (SLICE1 STEP3) | `service.py::_handoff` is a `BACKEND_UNAVAILABLE` stub; `WorkspaceAuthority` has no `handoff` | **Q85** |
+| A3 | CANDIDATE `publish` (Q58) + the controller leg (SLICE3 STEP3 rest) | `publication.publish_plan` has **no caller outside tests**; the wire `publish` payload is `{sealed_manifest_id, expected_base_revision}` (`protocol.py:126`) and `prepare_publish` requires a SEALED view with a closed gate and a terminal record, so a CANDIDATE view cannot travel that route at all; `workflow_controller._promote_validated_plan` (`:2279`) still writes the canonical plan through `plan_promotion.publish_plan_buffer` — the second writer R3 forbids | the controller half needs the client composition (A5) |
+| A4 | inventory completion (SLICE4 STEP1) | `notes/i03-execution-call-inventory.md` still says "State: OPEN"; no exact new source lines, caller traces or test nodeids | nothing |
+| A5 | caller cutover (SLICE2 STEP4 wiring + SLICE4 STEP2) — the largest unit | `run_stage_with_plan_write_boundary` **does not exist anywhere in `src/`** (CT97's named producer); `workspace_io=` and `workspace_provisioner=` have no `src/` call site; `cli._prepare_managed_workspace` prints a warning and continues; `_init_live_pty_pool` returns `None` on any failure and the bash tool falls back to `subprocess`; the controller read-only mounts / private-UDS-only entrypoint are not switched | A3 (supervisor half) and A4 |
+| A6 | managed verification (SLICE4 STEP3) | `slice_verification._run_one` still spawns a host subprocess; `_run_managed_command` does not exist | A5 |
+| A7 | managed acquisition (SLICE5 STEP1–3) | `tests/test_managed_acquisition.py` and the spec §7 v2 fixtures do not exist | STEP2 on **Q85**; STEP3 on A3 |
+| A8 | the SLICE6 package itself | no `e2e/` directory, no `scripts/check_execution_e2e_coverage.py`, no `tests/test_e2e_artifact_contract.py`; markers `execution_host`/`live_e2e` are **not registered** while `--strict-markers` is on (`-m` merely deselects today, but the first decorator use is an error) | A1–A7 |
+| A9 | the test files the verify fences name | `tests/integration/` does not exist at all (five fences name it: boundary, workspace_views, publication_recovery, execution_closure, nested_workflow), plus `test_managed_workspace.py`, `test_execution_project_tools.py`, `test_managed_acquisition.py`, `test_e2e_artifact_contract.py` — those fences currently exit 4, not 0 | the units above |
+
+#### B. Host/operator prerequisites (cannot be produced in this session)
+
+Approved Docker daemon + image built from `Dockerfile.fa` with a recorded digest; an installed-controller
+wheel from a CPython 3.13 that has `zlib` (and `sqlite3`/`ssl` for the controller itself); the approved
+ShellCheck binary (12 parametrised `shellcheck` cases skip without it); Go 1.24.11 plus the pinned
+Gitleaks/pre-commit dependencies for `just test` / `just check`; real provider credentials for the spec
+§9.1 direct+nested witnesses; `CAP_SYS_PTRACE` if the `strace` oracles are used; a readable cgroup v2.
+Every `FA_REQUIRE_EXECUTION_HOST=1` row (26 surfaces, 8 joins) is `PLANNED / UNEXECUTED` until then.
+
+#### C. Dependency order for the remainder
+
+1. **A1** — Q74 checkpoints. Unblocked, and the stage loop, the seal and the verifier's evidence all read
+   them, so it goes first among equals.
+2. **A4** — inventory completion. It is the checklist the cutover must close; doing the cutover first
+   leaves it without a closure test.
+3. **A3 (supervisor half)** — CANDIDATE `publish` over the wire. Must precede A5: R3 requires the host
+   plan writer to be deleted in the same change that activates the managed one.
+4. **A5** — the cutover, including A3's controller half and the deletion of `publish_plan_buffer`.
+5. **A6** — the managed verifier adapter; it needs the managed operation client A5 composes.
+6. **A7** — acquisition: STEP1 fixtures can start earlier, but STEP2's handler and handoff leg wait on
+   **Q85**, and STEP3's bundle selection needs A3's publish leg.
+7. **A8** — SLICE6 STEP1/2/3/6 (contract, indexes, coverage snapshot, skills). The coverage snapshot
+   must be taken after the last register row exists, i.e. after A3/A5/A6/A7 add theirs.
+8. **SLICE6 STEP7 → STEP8 → STEP9 → STEP10** — independent review before any fixture/helper is written,
+   index mapping after the fixtures, and the release/host gates last. Every host row is last of all.
+
+**While Q85 is open** the unblocked, non-overlapping units are A1, A4 and A3's supervisor half. Everything
+else either needs the cutover (A5) or the Q85 decision (A2, A7 STEP2).
+
+#### Two plan-text defects found and fixed here
+
+1. The increment's derived-count row read **25 surfaces** while `grep -o 'I03-LIVE-[0-9]\{2\}'` returns
+   **26**: E277 added `I03-LIVE-26` for the composed supervisor and the row was not updated. Corrected,
+   with the adding entry named in the row, as the section's own rule requires.
+2. `I03-LIVE-26`'s description still called `exec`, `inspect`, `cancel` and `pty_control` dormant
+   ("thirteen over real owners, six declared `BACKEND_UNAVAILABLE`") and said `seal` "refuses
+   `TERMINALITY_UNKNOWN` until the cgroup observer exists". E279/E280 routed those four operations and
+   E278 built `OwnedCellTermination`. The row now describes the real split (seventeen live, `handoff` and
+   `register{create:true}` dormant) and states the barrier's honest limit: unproved on a host, so a view
+   whose cell cannot be stopped stays `STOPPING`. The row's status stays `PLANNED / UNEXECUTED`.
+
+#### Toolchain (recorded so the next session does not repeat it)
+
+`notes/sandbox-venv.sh` builds a 3.11 venv; since E276 the banks use PEP 695 generics
+(`tests/test_execution_workspace.py:36 def ok[T]`), so `pytest tests/test_execution_*.py` aborts at
+collection there and `fa authoring-check` reports four test files `UNPARSABLE`. A from-source 3.13 build in
+this sandbox needs `zlib`, `sqlite3`, `ssl` and `ctypes`, and the image has **no development headers**
+(`/usr/include` has no `zlib.h`, `sqlite3.h`, `openssl/`, `ffi.h`) and no root, so each has to be built
+from source. This entry's own edits are documentation only; they were checked with what the 3.11 venv can
+parse (authoring-check went from 4 to 4 `HARD-BLOCK` lines, all of them the pre-existing PEP 695 test
+files, with no worklog diagnostic added), and no bank was run or claimed.
+
+**Not done, deliberately.** No STEP or CT box ticked, no live row promoted, no `handoff` guess, and no
+implementation started in this entry.
+
+### E282 — Q85 ruled; the remaining audit promoted into planned surface (documentation only)
+
+**What this entry is.** The operator resolved Q85 after review with the agent working the E2E slice, and
+asked that the E281 remaining-surface audit stop being prose and become planned surface with a contract,
+exit criteria, owning bank and register row like every other unit. No code changed; two plan facts were
+promoted and one stale progress note repaired.
+
+**The ruling, recorded so it is not re-litigated.** The source of truth for the parent-child link is
+`_child_run_context`: it proves the parent `RunContext`/`SessionContext`/workspace bindings agree and
+allocates the child run through the existing `begin_run` **in the same session**, so `parent_run_id` is
+controller-attested after an actual allocation (spec §7.1). The supervisor therefore gains **no** session
+store, **no** attester module, **no** `ServiceConfig` field and **no** new operation or payload:
+`WorkspaceAuthority.handoff` proves ownership, settlement and the two wire invariants, then performs one
+**generation-preserving** metadata replace. The round-1 alternative — a narrow read-only attester injected
+into the service — is rejected: it inverts the E263 session→execution dependency, adds an `FA_STATE_ROOT`
+mount contract plus filesystem IO on the hot path, and buys no boundary the controller cannot already cross,
+because a compromised controller can already `exec` as the owner.
+
+**Why it is sound, checked against source at `0619ecd`.** The wire already carries the shape and the
+dispatch already carries the semantics, so this is one authority body and one route: `Operation.HANDOFF`
+decodes `{target_namespace}` into `_OWNER_REPLY` (`protocol.py:135`/`:151`), whose `capability` is a 64-hex
+`SHA`, exactly what `secrets.token_hex(32)` produces; `HANDOFF` is in `AUTHORITY_GATED_OPERATIONS` and is not
+readonly, so it cannot skip the authority check and it reserves `op-<request_id>`; `_execute_reserved` already
+treats it as a `GrantReply` operation; `_owner_only` matches the stored grant with `hmac.compare_digest`
+**and** the full active-actor dict, so replacing grant and `active_actor` revokes the old capability exactly;
+Q75 replay compares the presented proof to the *original* proof recorded with the cached reply
+(`_authorize_replay`), so a revoked proof still retrieves only its own bound reply and cannot admit fresh work;
+`_settle_owner` already spells the settlement predicate (`_has_unsettled_views` + `intent.json`); and
+`owner_namespace` is only nullity-checked, so keeping it while `active_actor` moves is coherent. The
+attestation is also visibly real rather than decorative: `RunContext` has **no** `parent_run_id` field, so the
+controller must supply it — the supervisor could not invent it even if it wanted to.
+
+**Four details the ruling left implicit, settled in the plan text rather than guessed in code.** (1) The
+preconditions have a fixed **order** — ownership, then settlement, then the writer fd, then the wire
+invariants — so a refusal is deterministic and testable. (2) Settlement must reuse `_settle_owner`'s predicate,
+**not** `_forward_gates`: the latter also probes writability and recomputes the canonical tree hash, which are
+commit preconditions and would refuse a legitimate handoff. (3) The swap requires the live writer fd this
+process opened (`binding.writer is not None`, else `STALE_GENERATION`) so the authority never moves an ownership
+it cannot fence. (4) The crash window is stated: after the metadata replace and before the reply, the workspace
+is `OWNED` by a namespace whose capability nobody holds — restart quarantines it exactly as for `acquire_writer`,
+and the attempt is never reconstructed from the journal. The plan text also names what the attestation does
+**not** prove and bounds it: a controller that names a nonexistent child run can only strand its own grant until
+release/restart — self-inflicted denial of service, never escalation.
+
+**Plan changes made here.** (a) spec §2.1's `handoff` row now carries the full rule set (order, settlement,
+generation-preserving swap, capability rotation, replay), and §7.1 states the attestation chain and its bound.
+(b) The increment gains **CT113 [FUNCTIONAL]** with `kill: remove-call src/fa/execution/workspace.py::WorkspaceAuthority.handoff -> _handoff_owner`,
+a new **SLICE2 STEP6** carrying the exit criteria and its owning bank `tests/test_execution_handoff.py`, and
+that file is added to SLICE2's `TESTS:` line and both verify fences. (c) SLICE1 STEP3 records 18/19 routes and
+names STEP6 as the owner of the nineteenth. (d) SLICE5 STEP2 is split explicitly: the authority and route land
+in STEP6, this step keeps only the controller half (suspend the parent, `_child_run_context`, build
+`target_namespace`, send the RPC, then dispatch the child). (e) **A stale progress note is repaired**: SLICE3
+STEP1 still listed `CellTermination` ("part (b)") as outstanding although E278 delivered it, and part (a) —
+Q74/§6.1 — is now spelled out as a full obligation with `tests/test_stage_checkpoints.py` and an explicit
+statement of why it declares no new CT (its durable effects are CT106/CT107a, its barrier is CT104, and its
+sidecar is CT110/CT111's artifact). (f) Counts re-derived, never hand-typed: CT **25** (18 FUNCTIONAL + 7
+CONSTRAINT), `kill:` **18**, STEPs **36**, surfaces **27** / joins **8**.
+
+**One deviation from the ruling's wording, recorded deliberately.** The recommendation says "implement in
+SLICE2 STEP2"; the unit is recorded as **STEP6** instead. STEP2's exit criteria are the five view purposes — a
+different producer and bank — and CT113 needs its own settlement/replay matrix, so folding it in would reopen a
+step with nothing else outstanding. The slice, the contract and the sequencing (before SLICE4, before SLICE5
+STEP2) are exactly as ruled; only the step number differs, and the step says so in its first sentence.
+
+**Not done, and not claimed.** No code, no bank run (the sandbox has no usable 3.13 interpreter this session —
+see E281's toolchain note), no STEP or CT ticked, no register row promoted. `handoff` still refuses
+`BACKEND_UNAVAILABLE` on the wire until SLICE2 STEP6 lands. Of the nine units in E281's table,
+`handoff` was the only one without a planned surface; the rest already had contract, step, exit criteria and
+owning bank, which is what this entry checked before adding anything.

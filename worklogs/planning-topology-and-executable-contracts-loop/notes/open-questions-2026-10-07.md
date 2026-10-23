@@ -2099,8 +2099,92 @@ Reasons, in order:
 human (a retry budget, an operator command), the per-workspace rule needs a status distinct from the
 existing "previous epoch is dead" flip. Nothing in the current plan asks for either.
 
+## Q85 — Who proves the handoff target's parent-child run relationship to the supervisor?
 
-## Q85 — Which I03 E2E package path is canonical?
+**Status: ANSWERED (2026-10-23, E282) — option (1), controller-attested plus wire invariants. Not blocking; activation is booked as SLICE2 STEP6 / CT113.**
+
+**The gap.** §2.1 specifies `handoff` as `{target_namespace}` → `{view_ref:null, capability, generation,
+revision_id}`, with three preconditions: the current actor's views are terminal/settled, the target is
+bound to an **existing parent-child run relationship**, and the handoff keeps the same root owner and
+generation with exactly one active mutator grant. Two of the three have an owner in `src/` today:
+`_settle_owner`/`_has_unsettled_views` already spells "settled" for `release`, and `_Binding` already
+holds the single owner grant, `active_actor` and `generation`. The middle one does not.
+
+`NamespaceRef` carries `parent_run_id`, and §2.1 only requires it to be "null or a valid run ID"; the
+dispatcher authenticates a *principal*, not a run. Nothing in `WorkspaceAuthority` or `ServiceConfig`
+can read the session store (`fa.session.manager`), so "existing run" cannot be checked where the
+handoff would be decided. The one existing helper, `_child_run_context`
+(`inner_loop/tools/workflow_tool.py`), allocates a child run through `SessionManager` **and** requires
+the parent `RunContext`/`SessionContext` binding to match — it is a tool-layer seam, and the increment
+schedules it under SLICE2 STEP2 ("reused `_child_run_context`/parent writer suspension and
+server-acknowledged handoff"), not under the supervisor.
+
+**Why this blocks rather than being an engineering detail.** The three candidate mechanisms differ in
+what the wire *means* and in what a test can prove:
+1. **Controller-attested** — the supervisor accepts `target.run_id`/`parent_run_id` as the
+   authenticated controller's own claim (same doctrine as "controller-attested after actual begin_run").
+   Cheapest, no new dependency, but then "existing parent-child relationship" is not a supervisor fact,
+   and a compromised or buggy caller can hand the owner grant to any namespace it names.
+2. **Session-store attester injected into the service** — `ServiceConfig` gains a session store (or an
+   `attest_child_run(parent, target)` callable) and the supervisor verifies the target run exists and
+   descends from the current actor's run before it moves the grant. Strongest, but adds a second
+   durable authority to the supervisor and a config field the operator must supply.
+3. **Defer** — leave `handoff` at the closed `BACKEND_UNAVAILABLE` refusal until SLICE2 STEP2 lands its
+   handler leg, and let that unit bring the proof with it.
+
+**Impact of choosing wrongly.** (1) is a privilege-escalation surface the plan's own doctrine warns
+about ("IDs are not secrets and are not themselves authorization"); (2) is a deployment contract change
+and it contradicts the current composition story ("no second policy engine, no second store"); (3) is
+the only option that cannot be wrong, but it leaves one route unrouted and STEP3's route totality
+incomplete — which is what the current `BACKEND_UNAVAILABLE` refusal already encodes honestly.
+
+**What was done instead of guessing (as of E280; superseded by the decision below).** Nothing: `handoff`
+was left exactly as E277 left it — routed, declared dormant, refusing with `BACKEND_UNAVAILABLE`. `exec`/`inspect`/`cancel` (E279) and `pty_control` (E280)
+were the unblocked rows and are delivered.
+
+**Decision (2026-10-23, E282): option (1), controller-attested, enforced by wire invariants in
+`WorkspaceAuthority.handoff`.** The source of truth is `_child_run_context`, which validates the parent
+`RunContext`/`SessionContext`/workspace bindings and allocates the child run through the existing
+`begin_run` **in the same session**; `parent_run_id` is therefore controller-attested after an actual
+allocation (spec §7.1), and the supervisor proves the *link it was told*, never the run's existence.
+Concretely, in this fixed order: `_owner_only(peer, namespace, capability)`; settlement identical to
+`release` (every WRITE view `PUBLISHED`/`REJECTED`, no `intent.json` → `WORKSPACE_BUSY`); the live writer fd
+this process opened (else `STALE_GENERATION`); then the invariants `target.session_id == caller.session_id`,
+`target.parent_run_id == caller.run_id`, `target.run_id != caller.run_id` (else `INPUT_POLICY`). The commit is
+one fsynced metadata replace: `active_actor := target`, `owner_namespace`/`generation`/`status`/`revision_id`
+unchanged, a fresh `secrets.token_hex(32)` capability minted. **Generation is not advanced** — a handoff is
+not a new write epoch — so existing pins and the child's views keep their generation. The old capability dies
+with that replace (fresh work with it is `UNAUTHORIZED`, and the dispatcher's `op-<request_id>` reservation is
+not a bypass) while Q75 replay of the same request id returns its own cached original reply.
+
+**Both conditions that "would settle it" are answered.** (a) The grant moves by *replacing* it in the same
+metadata write, so the old proof is dead the moment the new one exists — it is not revoked *before* and it does
+not need to be: there is no window in which two mutator capabilities are live. (b) An unsettled
+`SEALED`-but-unpublished view blocks a handoff exactly as it blocks `release`: both use
+`_settle_owner`'s predicate, and `PUBLISHED`/`REJECTED` are the only settled states.
+
+**Why not the round-1 alternative (a narrow read-only attester injected into the service).** It inverts the
+E263 session→execution dependency, adds an `FA_STATE_ROOT` mount contract and filesystem IO on the hot path,
+and buys no privilege boundary the controller cannot already cross: a compromised controller can already
+`exec` as the owner.
+
+**What this does not prove, and why that is acceptable.** The supervisor cannot verify that the named child
+run exists. A controller that names a nonexistent run can therefore strand the workspace's own grant until
+`release` or restart — self-inflicted denial of service, not escalation, because the caller must already hold
+the single owner grant and the named target gains nothing the caller could not do itself. The crash window is
+equally bounded: after the metadata replace and before the reply the workspace is `OWNED` by a namespace whose
+capability nobody holds, and restart quarantines it exactly as for `acquire_writer`; the attempt is never
+reconstructed from the journal.
+
+**What would reopen it.** A requirement for cross-session or cross-workspace handoff (the invariants forbid
+both), for nested depth limits enforced by the supervisor rather than by the workflow layer, or for a
+supervisor-side proof of run existence — the last would mean deliberately giving the supervisor a session
+store, i.e. reopening option (2). Implementation and evidence: SLICE2 STEP6/CT113, `tests/test_execution_handoff.py`,
+register row `I03-LIVE-27`.
+
+---
+
+## Q86 — Which I03 E2E package path is canonical?
 
 **Status: RESOLVED (2026-10-23) — canonical path is `worklogs/planning-topology-and-executable-contracts-loop/e2e/`.**
 
@@ -2118,21 +2202,13 @@ The operator selected B.
 
 ---
 
-## Q86 — How should I03-LIVE-26 describe sealing after E278 adds the local cgroup observer?
+## Q87 — How should I03-LIVE-26 describe sealing after E278 adds the local cgroup observer?
 
-**Status: DEFERRED (2026-10-23) — LIVE-26 is already planned; do not change its oracle pending the other agent’s work. Live E2E remains deferred.**
+**Status: DEFERRED pending operator disposition (2026-10-23).** The other agent's I03 work is now merged and the E283 cgroup/handoff facts are available for review. The incoming branch refreshed the `I03-LIVE-26` oracle to describe the composed `OwnedCellTermination` path while keeping the case `PLANNED / UNEXECUTED` and requiring host proof of a real empty cgroup. No operator selection between the recorded options is present; live E2E remains deferred.
 
-**The gap.** The E277 LIVE-26 oracle says `seal` refuses `TERMINALITY_UNKNOWN` until the cgroup observer
-exists and concludes a full stage cannot be completed through the surface. E278 then added the cgroup-v2
-reader and `OwnedCellTermination`, and the composed service installs that adapter. E278's evidence is
-explicitly local: the cgroup path and kernel `populated 0` were exercised with a doubled Docker seam,
-not a live container or approved-host run. The register row remains `PLANNED / UNEXECUTED` and its
-existing oracle has not been amended.
+**The gap.** The E277 LIVE-26 oracle said `seal` refuses `TERMINALITY_UNKNOWN` until a cgroup observer exists and concluded a full stage could not be completed through the surface. E278 then added the cgroup-v2 reader and `OwnedCellTermination`; the composed service now installs that adapter. E278's evidence is explicitly local: the cgroup path and kernel `populated 0` were exercised with a doubled Docker seam, not a live container or approved-host run. The reconciled register row now says the composed path uses that observer, but still requires host proof that a real cgroup emptied; the live status remains `PLANNED / UNEXECUTED`.
 
-**Impact.** Copying the old sentence unchanged may understate the current composed path; revising it
-without a planner ruling could overstate what local/doubled tests prove or turn an unobserved terminal
-state into a live pass. The host must still prove the cgroup fact, and no row may be promoted from E278's
-local result.
+**Impact.** The incoming wording corresponds to option A's clarification, but the recorded options have no operator disposition. Treating the merge itself as authorization would decide a planner question by implication; reverting it would also discard the other agent's work. The host must still prove the cgroup fact, and no row may be promoted from E278's local result.
 
 **Options.**
 
@@ -2143,15 +2219,17 @@ local result.
   the existing requirement.
 
 **Operator disposition (2026-10-23).** Confirmed: `I03-LIVE-26` already exists in the package index and
-master sheet as `PLANNED / UNEXECUTED`. Defer this oracle question until the other agent’s work is
-complete. Do not edit the case wording or status here; no live result is implied.
+master sheet as `PLANNED / UNEXECUTED`. At the time, defer the oracle question until the other agent's
+work is complete. That work is now merged and its register refresh is recorded above; no follow-up
+operator selection between A and B has been recorded, so this question remains pending. Keep the row
+`PLANNED / UNEXECUTED`; the refresh is not a live result and does not authorize live execution.
 
-No option authorizes live execution before I01–I03 are merged to `main` and deployed. The case and every
-result remain unchanged until planner/user disposition.
+No option authorizes live execution before I01–I03 are merged to `main` and deployed. Do not change the
+case again until planner/user disposition.
 
 ---
 
-## Q87 — How should I01 live obligations be mapped into final I03 acceptance?
+## Q88 — How should I01 live obligations be mapped into final I03 acceptance?
 
 **Status: RESOLVED (2026-10-23; operator selected A).** Final I03 acceptance still requires live-host
 E2E for all project changes in I01–I03; resolution of the mapping does not assign a live verdict.
@@ -2170,4 +2248,4 @@ are merged to `main` and deployed. The operator will supply host evidence for jo
 any result is marked.
 
 **Historical options.** A was to add explicit I01-origin IDs; B was to reuse I02/I03 IDs only where the
-oracle actually proves I01 behavior. The operator selected A. Q86/LIVE-26 remains separately deferred.
+oracle actually proves I01 behavior. The operator selected A. Q87/LIVE-26 remains separately deferred.

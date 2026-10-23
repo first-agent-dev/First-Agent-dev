@@ -2,7 +2,7 @@
 
 **Operator acceptance-scope clarification (2026-10-23).** Final I03 acceptance requires live-host E2E
 coverage for all project changes in I01–I03. This historical register inventories I02-origin producer
-obligations; I03 cases remain in the integrated register/package. Q87 resolved the I01 gap by mapping
+obligations; I03 cases remain in the integrated register/package. Q88 resolved the I01 gap by mapping
 all 42 I01 CTs and seven in-scope deferred obligations to `I01-LIVE-01..03` in the project package.
 Those rows remain `PLANNED / NOT RUN`; no current case count or local proof is live coverage.
 
@@ -1545,7 +1545,8 @@ inventory extension under the register's growth rule, not a re-statement of hist
 | I03-LIVE-23 `src/fa/execution/publication.py::publish_plan` (E273 local replacement component) | Q58 canonical plan replacement **through the authority**: the same-path `os.replace` is the irreversible point, and the revision + `current.json` complete forward afterwards — the inverse order of publish and install. Rules imported from `plan_admission` (≤ 1 MiB, strict UTF-8, non-empty), shape fixed to `worklogs/<slug>/increments/<name>.md`, durable `intent.json` (`kind=PLAN`, `old_sha256`, `new_sha256`, `next_revision`, `phase=PREPARED`) before the replace, no rollback after it | On the approved filesystem with a real owner grant: replace a canonical plan whose ref names the committed bytes. Observe: the file at the **same path** becomes exactly the new bytes with its mode preserved, `current.json` advances to the derived revision, the revision tree names the new digest and size, the superseded revision still serves the old bytes to a pinned reader, the intent is gone, and no temporary survives in `worklogs/…` or `.fa/publish-tmp`. Then the refusals, each leaving the plan byte-identical and the pointer old: a stale ref hash (`STALE_REVISION`), a path that is not the canonical plan, bytes that are not a plan, a capability that is not this workspace's grant (`UNAUTHORIZED`), an unsettled view (`WORKSPACE_BUSY`), a link swapped in after staging (`PATH_DENIED`). Then the fault rows: kill *after* the replace and before the revision must keep the new bytes and the `PREPARED` intent and must never restore the old ones; kill between the revision and the pointer must complete forward on restart. Negative controls: remove the pre-replace re-proof, remove the durable intent, remove the revision commit, restore the old bytes after a failure. | PLANNED / UNEXECUTED |
 | I03-LIVE-24 `src/fa/execution/workspace.py::authorize` (E274 pre-reservation authority check, CT99) | The dispatcher's `authorize` seam over the real authority and a real peer credential: closed envelope shape enforced by the wire decoder, grant proof by the authority (`_owner_only` for view-less, `_proof_only` for view-scoped, `RELEASE` in both shapes), and the stored `ProtectedPlanContext` for `pin_reader`/`create_view`/`exec` rechecked against the pinned revision bytes | On the approved filesystem with the installed service and the controller's UID: send one request per operation and observe that an authorized one proceeds while a wrong/absent capability, a foreign namespace, a swapped `view_id` and a request with the wrong shape are each refused with the exact closed code **before** any reservation exists (`operations/` unchanged, no `docker ps` delta, no canonical byte or grant changed). Then damage the pinned plan in the revision data and observe `pin_reader`/`create_view`/`exec` refuse `INPUT_POLICY` while the owner grant still works. Negative controls: remove the owner proof, replace the view proof with "any live view", remove the plan recheck. | PLANNED / UNEXECUTED |
 | I03-LIVE-25 `src/fa/execution/workspace.py::_load -> _recover_intent` (E276 forward recovery, CT107) | A supervisor killed at each durable boundary of `install_project`, `publish_plan` and an ordinary publish, then restarted on the real host: the inspected target (`current.json`, the canonical plan hash, the installed directory) decides the outcome — the attempt is completed forward, discarded before its irreversible point, or quarantined with its intent intact | On the approved filesystem with the installed service: SIGKILL the supervisor (a) before the intent, (b) after the intent before the irreversible syscall, (c) after the syscall before its fsync, (d) after the pointer replace before the first projection byte, (e) midway through a multi-file projection, (f) after `DONE` before the reply; observe after restart that every committed revision is complete, that no canonical byte of an uncommitted attempt survives, that `pending/` holds no entry the authority ignores, and that a workspace the authority cannot settle is `QUARANTINED` with its `intent.json` still present while other workspaces keep loading. Separately label process-crash from power-loss evidence and include an fsync-unsupported/EIO case. Negative controls: trust `phase` instead of `current.json`, delete a successfully installed bootstrap directory, overwrite a third plan version, settle a view the intent does not name. | PLANNED / UNEXECUTED |
-| I03-LIVE-26 `src/fa/execution/service.py` (E277 composed supervisor: route table, socket owner, `main`) | `SupervisorService` over the real authority/journal/dispatcher and one private UDS: 0600 socket created only after `recover_uncertain` + `_load`, one request per connection, nineteen routes (thirteen over real owners, six declared `BACKEND_UNAVAILABLE`) | On the approved host with the operator config and the controller's UID: start `fa-execution-supervisor` (via `build_supervisor`/`main`) and observe that the socket appears only after recovery and is `srw-------` owned by the service user; send one request per operation and observe the exact closed reply per owner (register/acquire/pin/create_view/read/write/edit/release/seal/publish/bundle/install) while `exec`, `inspect`, `cancel`, `pty_control`, `handoff` and `register{create:true}` each refuse `BACKEND_UNAVAILABLE` with a durable `UNKNOWN` reservation where the operation reserves; verify a wrong UID is rejected before any frame is read, an unknown config key refuses startup, and SIGTERM stops acceptance and unlinks the socket without stranding an admitted handler. Negative controls: bind before recovery, `chmod 0600` removed, a dormant route returning `{}`, and `create_view` dropping the wire `base_revision`. Note that `seal` refuses `TERMINALITY_UNKNOWN` until the cgroup observer exists, so a full stage cannot be completed through this surface yet. | PLANNED / UNEXECUTED |
+| I03-LIVE-26 `src/fa/execution/service.py` (E277 composed supervisor: route table, socket owner, `main`) | `SupervisorService` over the real authority/journal/dispatcher and one private UDS: 0600 socket created only after `recover_uncertain` + `_load`, one request per connection, nineteen routes (all nineteen over real owners; the one closed refusal left is the `register_workspace{create:true}` variant, E283) | On the approved host with the operator config and the controller's UID: start `fa-execution-supervisor` (via `build_supervisor`/`main`) and observe that the socket appears only after recovery and is `srw-------` owned by the service user; send one request per operation and observe the exact closed reply per owner (register/acquire/pin/create_view/read/write/edit/exec/inspect/cancel/pty_control/release/seal/publish/bundle/install) while `register{create:true}` refuses `BACKEND_UNAVAILABLE` with a durable `UNKNOWN` reservation where the operation reserves, and an `exec` refusal without a Docker configuration keeps `BACKEND_UNAVAILABLE`; verify a wrong UID is rejected before any frame is read, an unknown config key refuses startup, and SIGTERM stops acceptance and unlinks the socket without stranding an admitted handler. Negative controls: bind before recovery, `chmod 0600` removed, a dormant route returning `{}`, and `create_view` dropping the wire `base_revision`. Note that `seal` is composed over `OwnedCellTermination` (journal-owned cells plus the kernel's `populated 0`, E278), but this row claims nothing until the host proves a real cgroup emptied: a view whose cell cannot be stopped stays `STOPPING` (`TERMINALITY_UNKNOWN`) and keeps ownership. | PLANNED / UNEXECUTED |
+| I03-LIVE-27 `src/fa/execution/workspace.py::handoff` (E282 planned surface, CT113; Q85 ruling) | `handoff` moves the **single** mutator grant from the calling namespace to a controller-attested child run as ONE fsynced metadata replace: ownership proof (`_owner_only`), settlement identical to `release` (every WRITE view `PUBLISHED`/`REJECTED`, no `intent.json`), the live writer fd this process opened, then the invariants same session / `target.parent_run_id == caller.run_id` / distinct run. `active_actor` becomes the target while `owner_namespace`, `generation`, `status` and `revision_id` stay byte-identical and a fresh 64-hex capability is minted. **Generation is never advanced** (a handoff is not a new write epoch), so pins and the child's views keep their generation; `parent_run_id` is controller-attested after an actual `begin_run` and the supervisor proves only the link it was told | On the approved filesystem with the installed service and the controller's UID: as the owner, send `handoff` naming the child run an actual `begin_run` allocated in the same session and observe the `{view_ref:null, capability, generation, revision_id}` reply with the generation **unchanged**; confirm the child immediately opens a WRITE view and writes, that the parent's old capability is `UNAUTHORIZED` for fresh work with the canonical tree unchanged, that a same-request-id replay still returns its cached original reply (the new capability) while a new request id with the old proof is `UNAUTHORIZED`; then the refusals, each with `workspace.json` byte-identical: a `SEALED`-but-unpublished view, an `OPEN` view and a present `intent.json` are `WORKSPACE_BUSY`; wrong session, wrong parent, self-target and null parent are `INPUT_POLICY`; a foreign principal or capability is `UNAUTHORIZED`; and exactly one `operations/op-<request_id>.json` ends `DONE` with the capability absent from it. Negative controls: reuse `_claim_generation` (the generation advances and every pinned `view_ref.generation` stops matching), skip the settlement predicate (a handoff while a view is still writable), and check the parent link after the swap (metadata moved, then refused). | PLANNED / UNEXECUTED |
 | I03-LIVE-S06 (join, extended) | view → seal → current/intent → projection/recovery | E267 covered only the seal half locally; E269 now also covers the publish half (CT106) locally, so the join has both components in-process. The live case must additionally prove that seal **cannot** run while any handler or cell is unsettled (E266's barrier plus this module's preconditions), that a `SEALED` manifest is the exact byte identity the fenced publication commits, and that a supervisor kill at each durable boundary recovers forward. None of that is observable without an approved Docker/cgroup host, so the row stays `PLANNED / UNEXECUTED`. | PLANNED / UNEXECUTED |
 
 **What is local, and cannot be promoted here.** `tests/test_workspace_publication.py` proves the seal
@@ -1555,6 +1556,70 @@ duplicate (the test now asserts the observable side effect instead), and the pro
 `prepare_seal`'s `ProtectedPlanContext.recheck` (oracle-tested directly, no end-to-end kill credit). No
 docker/cgroup fact, no installed service and no canonical publication was exercised; nothing here is a
 live PASS. The `FA_REQUIRE_EXECUTION_HOST=1` form of both rows stays BLOCKED in this session.
+
+### E283 checkpoint (2026-10-23) — `I03-LIVE-27` has a local body; still 27 surfaces, all UNEXECUTED
+
+`WorkspaceAuthority.handoff` and the `service.py` route now exist, so the row is no longer describing planned code:
+a grant moves from the caller to a `begin_run` child run in one fsynced metadata replace that keeps the generation,
+the root owner, the status and the committed revision, and rotates the capability. What the row still needs is
+exactly what a sandbox cannot supply, and none of it is a formality:
+
+- a **real child run** from `SessionManager.begin_run` (the bank builds the `NamespaceRef` it was told, which is the
+  attestation rule but not the allocation);
+- a **deployed service** over the operator's socket and UID, so the `open`/`sealed`/`intent` settlement cases run
+  against real views produced by real cells (the local bank stops and seals through the real authority, but no cell
+  ever existed);
+- a **kernel-observed settlement**, i.e. that the views blocking a handoff are blocked because their cgroups were not
+  empty, which is the `stop_view`/`populated 0` fact of `I03-LIVE-19`.
+
+Local evidence only, and not promotable: `tests/test_execution_handoff.py` **17 passed**, 15/15 assertion-only mutants
+killed, including the declared `handoff -> _handoff_owner` producer kill and the generation-advance trap. The ledger
+append half of `L-HAND-1` is now provable in-process (one `operations/op-<request_id>.json` ending `DONE`, with no
+capability in it), which is why the host case can assert the same thing without inventing the field.
+
+Totals unchanged: `grep -o 'I03-LIVE-[0-9]\{2\}' | sort -u | wc -l` = **27**; joins = **8**. No row promoted.
+
+### E282 checkpoint (2026-10-23) — the nineteenth route has a planned surface; inventory is 27 surfaces, all UNEXECUTED
+
+`I03-LIVE-27` was added for `WorkspaceAuthority.handoff`, the last operation without a planned surface
+(Q85's ruling and the CT113/SLICE2 STEP6 declaration). It is **PLANNED / UNEXECUTED**: the route still
+refuses `BACKEND_UNAVAILABLE` and no authority body exists yet, so there is nothing to observe on a host.
+The row is written now so the live case cannot be designed after the fact, and it binds the two facts a
+local bank cannot supply — a real `begin_run`-allocated child run, and a settlement only a host's
+stop/seal path (with its cgroup fact) can produce —
+to the same repository paths as its negative controls (generation advance, skipped settlement, and a
+parent link checked after the swap).
+
+Per-section counts above stay snapshots. Verified totals now: `grep -o 'I03-LIVE-[0-9]\{2\}' | sort -u | wc -l`
+= **27**; `I03-LIVE-S[0-9]\{2\}` = **8**. The earlier E277 checkpoint's sentence "six routes are declared
+dormant" is superseded twice over (E279/E280 routed four of them) and its live reading is that only
+`handoff` and `register{create:true}` refuse, with `handoff` now merely *not yet implemented* rather than
+declared dormant by decision.
+
+### E280 checkpoint (2026-10-23) — `pty_control` is routed; still 26 surfaces, all UNEXECUTED
+
+The last execution route is no longer dormant: `CellBackend.pty_control` proves the grant, resolves the exact
+episode and exchanges at most two bounded control frames, and `service.py` composes it. What that changes
+locally: `LIST` answers the worker's own listing; `INTERRUPT` answers the listing plus its ACK message while the
+shell survives; `CLOSE` drops the session and a later command recreates it on the same cell; an absent session is
+refused without writing a frame; a view with no live episode is `EXECUTION_UNKNOWN` rather than an invented empty
+listing. What it does **not** change: no row is promoted. Every exchange in the local bank runs against the real
+local PTY worker behind a literal HTTP Docker peer — no container, no SIGKILL, no kernel cgroup fact — so
+`I03-LIVE-19`, `-20`, `-25` and `-26` stay `PLANNED / UNEXECUTED`. Only `handoff` and
+`register_workspace{create:true}` remain unrouted. Inventory unchanged at **26 surfaces / eight joins**.
+
+### E279 checkpoint (2026-10-23) — the receipt issuer exists; still 26 surfaces, all UNEXECUTED
+
+`exec`, `inspect` and `cancel` are no longer dormant: `CommandReceipts` issues a self-bound `ExecutionReceipt`
+from three trusted sources (reserved record, view record, approved profile) plus one owned observation and the
+kernel's `populated 0`. What that changes locally: a one-shot command is `EXITED` only with an agreeing exit code
+*and* a proven empty cgroup; an interactive shell may report `EXITED` with `terminal_barrier: false`; a timeout is
+`TIMED_OUT` with no exit code; a DONE operation replays its stored receipt. What it does **not** change: no row is
+promoted. Every daemon answer in the local bank is a queued literal HTTP reply on a real socket, and the cgroup is
+a hand-written `cgroup.events` in a real directory — the container's exit, the SIGKILL and the kernel fact have
+never been observed on a host. `I03-LIVE-19`, `-20`, `-25` and `-26` therefore stay `PLANNED / UNEXECUTED`, and
+`pty_control`/`handoff` remain unrouted. Inventory unchanged at **26 surfaces / eight joins**; no per-section count
+is rewritten.
 
 ### E278 checkpoint (2026-10-23) — the barrier's local half exists; still 26 surfaces, all UNEXECUTED
 

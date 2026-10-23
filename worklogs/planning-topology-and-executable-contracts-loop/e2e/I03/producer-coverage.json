@@ -11,9 +11,9 @@
     "successor_case_ids is empty in this baseline because no source producer was renamed/replaced; coverage_case_ids records the direct retained/native case mapping."
   ],
   "counts": {
-    "frozen_producer_keys": 124,
+    "frozen_producer_keys": 125,
     "legacy_case_mappings": 89,
-    "native_i03_case_mappings": 34
+    "native_i03_case_mappings": 35
   },
   "records": [
     {
@@ -1627,6 +1627,19 @@
       ],
       "successor_case_ids": [],
       "mapping_kind": "explicit-shared-extension"
+    },
+    {
+      "baseline_id": "I03-LIVE-27",
+      "producer_key": "I03-LIVE-27 `src/fa/execution/workspace.py::handoff` (E282 planned surface, CT113; Q85 ruling)",
+      "current_producer_keys": [
+        "I03-LIVE-27 `src/fa/execution/workspace.py::handoff` (E282 planned surface, CT113; Q85 ruling)"
+      ],
+      "case_id": "I03-LIVE-27",
+      "coverage_case_ids": [
+        "I03-LIVE-27"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "native-i03"
     }
   ],
   "shared_case_ids": [

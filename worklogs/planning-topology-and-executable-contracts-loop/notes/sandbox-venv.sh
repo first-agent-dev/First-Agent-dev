@@ -8,10 +8,19 @@
 # sometimes mid-turn. Anything kept outside the repository disappears too --
 # which is why this lives here and not in /tmp or $HOME.
 #
-# Two things are load-bearing and easy to forget:
+# Three things are load-bearing and easy to forget:
 #  * only python3.11 exists but pyproject requires >=3.13, so fa.inner_loop
 #    fails at import without a typing.override shim;
-#  * PATH must carry .venv/bin or uv-dependent tests fail spuriously.
+#  * PATH must carry .venv/bin or uv-dependent tests fail spuriously;
+#  * since E276 the execution banks use PEP 695 generics (e.g.
+#    tests/test_execution_workspace.py:36 `def ok[T](...)`), which CPython 3.11
+#    cannot even parse -- so `pytest tests/test_execution_*.py` and
+#    `pytest -k "execution or workspace"` abort at collection here, and
+#    `fa authoring-check` reports those four files as UNPARSABLE. This venv is
+#    for python-only checks (ruff, docs, non-execution tests); the execution
+#    banks need a real 3.13 interpreter whose build has zlib, sqlite3, ssl and
+#    ctypes (system headers are absent in the sandbox, so that means building
+#    them from source, not `apt-get`).
 set -euo pipefail
 
 REPO=$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)
