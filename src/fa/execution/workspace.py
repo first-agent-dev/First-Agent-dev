@@ -1403,16 +1403,79 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
         with self._transaction(peer, deadline):
             return self._settle_owner(self._owner_only(peer, namespace, capability))
 
+    def handoff(
+        self,
+        peer: PeerIdentity,
+        namespace: NamespaceRef,
+        *,
+        target: NamespaceRef,
+        capability: str,
+        deadline: float,
+    ) -> GrantReply:
+        """Move the ONE active mutator grant to this actor's own child run (CT113).
+
+        Q85/§7.1: the parent link is controller-attested after an actual
+        `begin_run`, so this proves the link it is told — same session, the
+        caller's run as the target's parent, a different run — and never the
+        target run's existence. The move is ONE fsynced metadata replace that
+        keeps `owner_namespace`, `generation`, `status` and `revision_id`: a
+        handoff is not a new write epoch, so pins and the child's views keep the
+        generation they were opened at. Every refusal happens before any write,
+        and the reply's capability is only returned after the replace reads back.
+        """
+        if not isinstance(target, NamespaceRef):
+            raise ExecutionContractError
+        validate_capability(capability)
+        with self._transaction(peer, deadline):
+            binding = self._owner_only(peer, namespace, capability)
+            self._settled(binding)
+            if binding.writer is None:
+                # Only this process's live writer fd can fence what it moves.
+                raise SupervisorError("STALE_GENERATION")
+            return self._handoff_owner(binding, namespace, target)
+
+    def _handoff_owner(self, binding: _Binding, namespace: NamespaceRef, target: NamespaceRef) -> GrantReply:
+        """The wire invariants, then the swap; the old capability dies with it."""
+        if (
+            target.session_id != namespace.session_id
+            or target.run_id == namespace.run_id
+            or target.parent_run_id != namespace.run_id
+        ):
+            raise SupervisorError("INPUT_POLICY")
+        try:
+            grant = secrets.token_hex(32)
+            binding.metadata["active_actor"] = target.to_dict()
+            _replace_private_bytes(binding.fd, "workspace.json", encode_json(binding.metadata))
+            if _read_json(binding.fd, "workspace.json", _WORKSPACE, 1024**2) != binding.metadata:
+                # Never hand out an unproven grant: recovery owns this workspace now.
+                self._healthy = False
+                raise SupervisorError("DURABILITY_UNKNOWN")
+            binding.grant = grant
+            return GrantReply(
+                Operation.HANDOFF,
+                grant,
+                None,
+                binding.metadata["generation"],
+                binding.current["revision_id"],
+            )
+        except OSError:
+            self._healthy = False
+            raise SupervisorError("DURABILITY_UNKNOWN") from None
+
+    def _settled(self, binding: _Binding) -> None:
+        """The ONE settlement predicate; `release` and `handoff` share it (CT113)."""
+        views = os.open("views", _DIRECTORY, dir_fd=binding.fd)
+        try:
+            if self._has_unsettled_views(binding, views) or "intent.json" in os.listdir(binding.fd):
+                raise SupervisorError("WORKSPACE_BUSY")
+        finally:
+            os.close(views)
+
     def _settle_owner(self, binding: _Binding) -> dict[str, bool]:
         """The one settlement body; both release entry points share it."""
         try:
             self._recheck(binding)
-            views = os.open("views", _DIRECTORY, dir_fd=binding.fd)
-            try:
-                if self._has_unsettled_views(binding, views) or "intent.json" in os.listdir(binding.fd):
-                    raise SupervisorError("WORKSPACE_BUSY")
-            finally:
-                os.close(views)
+            self._settled(binding)
             binding.metadata.update(owner_namespace=None, active_actor=None, status="AVAILABLE")
             _replace_private_bytes(binding.fd, "workspace.json", encode_json(binding.metadata))
             if binding.writer is not None:

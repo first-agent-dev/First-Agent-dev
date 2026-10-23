@@ -4770,3 +4770,80 @@ sequencing are exactly as ruled; the step's first sentence says so.
 **Not claimed.** No code, no bank run (no usable 3.13 interpreter this session), no STEP or CT ticked, no live
 row promoted. `handoff` still refuses `BACKEND_UNAVAILABLE` on the wire until SLICE2 STEP6 lands, which is now
 the next unit in E281's order.
+
+### E283 — CT113 `handoff`: the last route moves the grant, not the epoch
+
+**FACT (source-verified before editing, `5ade50c`).** The wire, the authority gate and the reservation path already
+existed, so this change needed no wire edit and no new operation: `Operation.HANDOFF` decodes
+`{target_namespace}` into `_OWNER_REPLY` (`protocol.py:135`/`:151`), is in `AUTHORITY_GATED_OPERATIONS` and is not
+readonly (so it reserves `op-<request_id>` through the dispatcher), `_execute_reserved` already treats it as a
+`GrantReply` operation, `_owner_only` matches grant **and** active-actor dict with `hmac.compare_digest`, and
+`_authorize_replay` compares a replay's proof against the *original* proof rather than the current grant. What did
+not exist was `WorkspaceAuthority.handoff` and a route that reached it — `service.py::_handoff` raised
+`BACKEND_UNAVAILABLE`.
+
+**What shipped.** `WorkspaceAuthority.handoff` and its single-step body `_handoff_owner`, plus
+`service.py::_handoff`. The precondition order is fixed and every refusal precedes any write: `_owner_only` (grant,
+principal, active actor) → `_settled` → the live writer fd this process holds → the three wire invariants. Then ONE
+fsynced `_replace_private_bytes` sets `active_actor := target` and a fresh `secrets.token_hex(32)` capability,
+`_read_json` re-reads the record and refuses the grant unless the stored bytes equal the mutation, and the reply is
+`{view_ref:null, capability, generation, revision_id}` with the **unchanged** generation and the committed revision.
+
+**The one refactor.** The settlement predicate moved into `WorkspaceAuthority._settled`, so `release` and `handoff`
+share exactly one definition of "settled" (`_SETTLED_VIEW_STATES` = `PUBLISHED`/`REJECTED`, plus "no
+`intent.json`"). Two copies of that rule would have been two policies by another name, and the mutation run proves
+the shared body is load-bearing for release too.
+
+**Decisions taken where the ruling was silent, all recorded in the plan text first (E282) and implemented here.**
+(1) Settlement reuses the release predicate and **not** `_forward_gates`, whose writability probe and canonical
+tree-hash are commit preconditions and would refuse a legitimate handoff. (2) The move requires the live writer fd
+(`binding.writer is not None`, else `STALE_GENERATION`): the authority never moves an ownership it cannot fence.
+(3) The capability is returned only after the replace **reads back**, so a lost write is `DURABILITY_UNKNOWN` with
+`_healthy = False` and no grant — a restart quarantines that workspace, exactly the documented crash window.
+(4) OSError anywhere in the swap is `DURABILITY_UNKNOWN`, never a retry and never an old-capability fallback.
+(5) The generation is not advanced, so `view_ref.generation` on pins and on the child's views still matches; only
+ownership of the epoch moves.
+
+**Refusals as shipped.** `WORKSPACE_BUSY` for any unsettled view or a surviving `intent.json`; `INPUT_POLICY` for a
+foreign session, a wrong/absent parent, or a self-target; `UNAUTHORIZED` for a foreign principal, a foreign
+capability or a namespace that is not the active actor, and for fresh work with the retired capability;
+`STALE_GENERATION` for an unfenced ownership; `DURABILITY_UNKNOWN` for a swap that does not read back. Every refusal
+leaves `workspace.json` byte-identical (asserted, not assumed).
+
+**Behaviour delta, stated as the observable contract.** Before: the nineteenth route refused
+`BACKEND_UNAVAILABLE`. Now: a controller holding the owner grant can move it to a `begin_run` child run in the same
+session; the old capability is dead for fresh work while Q75 replay of the same request id still returns its own
+cached reply; one durable record per handoff ends `DONE` with no capability in it; a second handoff from the child to
+its own attested child succeeds, so the chain works rather than a one-shot transfer.
+
+**TEST-EDITS (intent changed, recorded).** `tests/test_execution_service.py::test_routes_without_an_owner_refuse_with_a_closed_code`
+lost its `handoff` row: it is no longer an ownerless route, and keeping the row would have asserted a refusal the
+product must not produce. The route-shape test (`_ROUTE_NAMES` totality) and the new bank's
+"authority code, not the stub" case replace it. That helper also gained an optional `namespace=` parameter so a
+composed case can act as the child.
+
+**Evidence (actual).** `tests/test_execution_handoff.py` **17 passed** (C0/C1 authority rules + C3 composed route
+over a real socket, real journal, real replay cache); `tests/test_execution_service.py` **25 passed**;
+`tests/test_execution_*.py` **1184 passed**; `test_workspace_publication`/`recovery`/`authorize`/`session_lifecycle`
+**149 passed**; wider `-k "execution or workspace"` **1638 passed, 1 failed** — the one failure
+(`test_workspace_readiness_integration::test_clean_candidate_real_readiness_commit_and_local_publication`,
+`degraded_environment: sync_failed` because the sandbox cannot run `uv sync` in its temp workspace) reproduces
+identically on a stashed clean tree, so it is environmental and unrelated. ruff clean, `ruff format` 518 files
+already formatted, mypy 23 files no issues, pyrefly 0 errors, `fa authoring-check` `diagnostics: 0 exit_code: 0`.
+**15/15 assertion-only mutants killed** with sha256-verified byte-exact restore, including the declared
+`remove-call handoff -> _handoff_owner` producer kill, the generation-advance trap, the settlement skip (killed by
+the release bank as well as the new one), each wire invariant individually, the self-target case, the unfenced
+ownership and the missing read-back. One mutant initially matched two anchors (registration and handoff share the
+same read-back line) and was rejected by the runner rather than credited; the anchor was made unique and re-run.
+
+**Toolchain, recorded because it blocked two earlier sessions.** The 3.13 build now works in this sandbox with no
+root and no dev headers: `zlib` and the interpreter from source, `_sqlite3` compiled from CPython's
+`Modules/_sqlite` against a GitHub-hosted amalgamation, `_ctypes` compiled against the generated libffi headers and
+the system `libffi.so.8`. The banks need all three (`sqlite3` via `fa.session.manager`, `ctypes` via
+`view_io.renameat2`). `notes/sandbox-venv.sh` still builds a 3.11 venv and cannot collect these banks; the
+`.venv` produced by `uv sync` against that 3.13 interpreter is the working one.
+
+**Not done, deliberately.** No STEP or CT box ticked: SLICE2 STEP6's remaining leg is the SLICE5 STEP2 controller
+half (nothing in `src/` holds an `ExecutionClient` yet) and the host proof; `register{create:true}` stays dormant
+with SLICE5. `I03-LIVE-27` remains **PLANNED / UNEXECUTED** — no real `begin_run` child run, no deployed service and
+no cgroup-backed settlement was observed on a host, so nothing here is a live PASS.

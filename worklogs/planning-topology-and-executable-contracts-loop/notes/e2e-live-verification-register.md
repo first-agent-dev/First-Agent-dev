@@ -1551,6 +1551,28 @@ duplicate (the test now asserts the observable side effect instead), and the pro
 docker/cgroup fact, no installed service and no canonical publication was exercised; nothing here is a
 live PASS. The `FA_REQUIRE_EXECUTION_HOST=1` form of both rows stays BLOCKED in this session.
 
+### E283 checkpoint (2026-10-23) — `I03-LIVE-27` has a local body; still 27 surfaces, all UNEXECUTED
+
+`WorkspaceAuthority.handoff` and the `service.py` route now exist, so the row is no longer describing planned code:
+a grant moves from the caller to a `begin_run` child run in one fsynced metadata replace that keeps the generation,
+the root owner, the status and the committed revision, and rotates the capability. What the row still needs is
+exactly what a sandbox cannot supply, and none of it is a formality:
+
+- a **real child run** from `SessionManager.begin_run` (the bank builds the `NamespaceRef` it was told, which is the
+  attestation rule but not the allocation);
+- a **deployed service** over the operator's socket and UID, so the `open`/`sealed`/`intent` settlement cases run
+  against real views produced by real cells (the local bank stops and seals through the real authority, but no cell
+  ever existed);
+- a **kernel-observed settlement**, i.e. that the views blocking a handoff are blocked because their cgroups were not
+  empty, which is the `stop_view`/`populated 0` fact of `I03-LIVE-19`.
+
+Local evidence only, and not promotable: `tests/test_execution_handoff.py` **17 passed**, 15/15 assertion-only mutants
+killed, including the declared `handoff -> _handoff_owner` producer kill and the generation-advance trap. The ledger
+append half of `L-HAND-1` is now provable in-process (one `operations/op-<request_id>.json` ending `DONE`, with no
+capability in it), which is why the host case can assert the same thing without inventing the field.
+
+Totals unchanged: `grep -o 'I03-LIVE-[0-9]\{2\}' | sort -u | wc -l` = **27**; joins = **8**. No row promoted.
+
 ### E282 checkpoint (2026-10-23) — the nineteenth route has a planned surface; inventory is 27 surfaces, all UNEXECUTED
 
 `I03-LIVE-27` was added for `WorkspaceAuthority.handoff`, the last operation without a planned surface

@@ -758,8 +758,19 @@ class SupervisorService:
         )
         return asdict(result)
 
-    def _handoff(self, _peer: PeerIdentity, _request: dict[str, Any], _deadline: float) -> dict[str, Any]:
-        raise SupervisorError("BACKEND_UNAVAILABLE")
+    def _handoff(self, peer: PeerIdentity, request: dict[str, Any], deadline: float) -> GrantReply:
+        """Move the owner grant to the caller's own child run (CT113)."""
+        try:
+            target = NamespaceRef(**request["payload"]["target_namespace"])
+        except (TypeError, ExecutionContractError):
+            raise SupervisorError("INPUT_POLICY") from None
+        return self._authority.handoff(
+            peer,
+            self._namespace(request),
+            target=target,
+            capability=self._capability(request),
+            deadline=deadline,
+        )
 
     def _release(self, peer: PeerIdentity, request: dict[str, Any], deadline: float) -> dict[str, Any]:
         namespace, capability = self._namespace(request), self._capability(request)

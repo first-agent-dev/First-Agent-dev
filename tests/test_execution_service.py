@@ -15,8 +15,9 @@ What must stay true (each test names the producer it kills):
   * `release` (empty payload) settles the grant it was proved with;
   * `stop_view` never claims terminality without a descendant observation, and
     `seal` therefore refuses rather than inventing a terminal receipt;
-  * the six ownerless routes refuse with a closed error code, never a silent
-    success and never a host-side fallback;
+  * the routes with no owner in this composition refuse with a closed error
+    code, never a silent success and never a host-side fallback (`handoff` left
+    this list in E283: it is routed to the real authority);
   * the socket is 0600, appears only after startup recovery, and is unlinked on
     shutdown.
 """
@@ -80,13 +81,14 @@ def request(
     request_id: str = RID,
     view_ref: dict[str, Any] | None = None,
     capability: str | None = None,
+    namespace: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """One exact closed envelope; the caller supplies only what the op owns."""
     return {
         "protocol_version": 1,
         "request_id": request_id,
         "op": operation.value,
-        "namespace": None if operation is Operation.HEALTH else ACTOR.to_dict(),
+        "namespace": None if operation is Operation.HEALTH else ACTOR.to_dict() if namespace is None else namespace,
         "view_ref": view_ref,
         "capability": capability,
         "payload": payload,
@@ -94,10 +96,16 @@ def request(
 
 
 def exchange(
-    service: SupervisorService, operation: Operation, payload: dict[str, Any], *, request_id: str = RID, **kwargs: Any
+    service: SupervisorService,
+    operation: Operation,
+    payload: dict[str, Any],
+    *,
+    request_id: str = RID,
+    namespace: dict[str, Any] | None = None,
+    **kwargs: Any,
 ) -> dict[str, Any]:
     """One real connection through the dispatcher: frame in, decoded reply out."""
-    raw = encode_json(request(operation, payload, request_id=request_id, **kwargs))
+    raw = encode_json(request(operation, payload, request_id=request_id, namespace=namespace, **kwargs))
     controller, accepted = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
     with ThreadPoolExecutor(max_workers=1) as workers:
         future = workers.submit(service.dispatcher.serve_connection, accepted)
@@ -479,11 +487,6 @@ def test_the_publication_half_is_reachable_through_the_wire(site: Site) -> None:
         (Operation.INSPECT, {"operation_id": "op-" + "4" * 32}, True),
         (Operation.CANCEL, {"operation_id": "op-" + "4" * 32}, True),
         (Operation.PTY_CONTROL, {"action": "LIST", "session_id": None}, True),
-        (
-            Operation.HANDOFF,
-            {"target_namespace": {"session_id": "session-a", "run_id": "child", "parent_run_id": "run-a"}},
-            False,
-        ),
     ],
 )
 def test_routes_without_an_owner_refuse_with_a_closed_code(
