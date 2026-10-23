@@ -396,6 +396,16 @@ uv run pytest tests/test_verify_gate_live.py tests/test_verify_slice.py tests/te
 FA_REQUIRE_EXECUTION_HOST=1 uv run pytest tests/integration/test_execution_closure.py -q -m execution_host
 ```
 - [ ] STEP1: complete the inspected notes/i03-execution-call-inventory.md with exact source/caller/profile/view/negative oracle per spec §6; classify newly found subprocess/import/Git entrypoints rather than excluding them by name (exit: inventory covers every production route used by explicit/chat/nested workflows)
+  **Progress (E285).** The inventory was re-scanned and rewritten at `969fa06`: 52 call sites in 22 files found by a
+  widened AST scan (module-qualified *and* from-imported `subprocess`/`pty`/`pexpect`/`libtmux`/`multiprocessing`/
+  `asyncio.subprocess`/`importlib`/`runpy`, `os.system|popen|fork|forkpty|exec*|spawn*|posix_spawn*`, and
+  `shutil.which` gates), of which 28 launcher/import sites in 16 files are mapped one-to-one to rows R01–R28 with
+  exact anchors, real caller traces, the boundary that exists today (host/cell/TCB, and the explicit statement that a
+  host route has neither profile nor view) and a named negative oracle; the remaining 24 findings are classified out
+  by class with a reason (in-process `shutil` cleanup, capability gates, approved-library data imports). Coverage of
+  the three workflow entrypoints (explicit/chat/nested) is stated row by row. **The box is not ticked:** the
+  checklist defines a row as closed only with the negative oracle's *results*, and every oracle here is a planned
+  nodeid that needs the managed backend (STEP2/A5). What is left for this step is those results, not more inventory.
 - [ ] STEP2: retain _cmd_run signature as pure validation→run_stage_with_plan_write_boundary→_cmd_run_inner; wrap whole _cmd_run prologue and route manager/entrypoint/bootstrap readiness through provisioning cells; remove fail-open readiness and host fallback paths. The managed provisioner was ALREADY injected into SessionManager in SLICE2 STEP3 — this step routes the remaining inventory callers through that same provisioner and activates the route closure; never implement a second injection or second provisioner. No rollback deleting supervisor-owned registered roots. Wire project Git/pair/subagent paths too (exit: backend-down run across each inventory route executes zero project commands; no unsupervised legacy bind/process)
 - [ ] STEP3: integrate pinned verification scratch/receipts/report parsing and explicit artifact schema versions; retain old I02 evidence readers, no duplicate verification engine (exit: actual supervised tests prove candidate import provenance, stale-operation/timeout/report negatives and immutable T0 compatibility)
 - [ ] STEP4: real direct C1 with actual supervisor/cells and only provider mocked proves each write/edit/shell route, dirty sentinels, denied protected paths and successful ordinary source edit/Q58; real eval sees same attempt and hard-blocks integrity failure in both modes (exit: execution_host closure matrix passes, no all-skips)

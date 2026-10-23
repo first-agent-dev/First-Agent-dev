@@ -1551,6 +1551,21 @@ duplicate (the test now asserts the observable side effect instead), and the pro
 docker/cgroup fact, no installed service and no canonical publication was exercised; nothing here is a
 live PASS. The `FA_REQUIRE_EXECUTION_HOST=1` form of both rows stays BLOCKED in this session.
 
+### E285 checkpoint (2026-10-23) — inventory is now the checklist A5 must close; still 27 / 8
+
+A4 (SLICE4 STEP1's inventory) is source-grounded at `969fa06`: `notes/i03-execution-call-inventory.md` now carries rows
+R01–R28 with exact anchors, real caller traces, today's boundary (host/cell/TCB — with the explicit statement that a
+host route has no profile and no view), the existing bank, and a **named** negative oracle per row, plus a
+classified-out list for the 24 non-launcher findings. No surface or join is added: an inventory does not produce
+evidence, it lists what must be observed.
+
+Two of those planned oracles matter to this register because they are already real today and narrow the host work:
+`tests/test_execution_tool_index.py::test_a_managed_registry_ships_no_host_git_tools` and
+`::test_a_managed_search_runs_no_host_git_subprocess`. The rest stay **planned** until the cutover, which is why no row
+moved.
+
+Totals unchanged: `grep -o 'I03-LIVE-[0-9]\{2\}' | sort -u | wc -l` = **27**; joins = **8**. No row promoted.
+
 ### E284 checkpoint (2026-10-23) — no new surface: the checkpoint sidecar is CT110/CT111 evidence, still 27 / 8
 
 E284 shipped A1 (`src/fa/execution/checkpoints.py` + `tests/test_stage_checkpoints.py`), and it adds **no register row

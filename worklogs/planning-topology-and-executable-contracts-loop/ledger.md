@@ -4923,3 +4923,49 @@ does not exist, and §6.1's `StageResult links the completed checkpoint` sentenc
 actions (A5/A6); the restart case here proves a new view opens from the committed `Rn` against the real authority but
 does not wire the loop. No live row promoted: `I03-LIVE` totals stay **27 surfaces / 8 joins**, all
 `PLANNED / UNEXECUTED`, and A1's plan row is marked superseded by this entry rather than promoted to a live verdict.
+
+### E285 — A4: the call inventory becomes a source-grounded, coverage-complete checklist
+
+**FACT (source-verified before editing, `969fa06`).** `notes/i03-execution-call-inventory.md` was still `State: OPEN`
+in the sense that mattered: its anchors were E230-era, three of them had drifted (`session/manager.begin_run`
+`441–478` → `537–574`; the `_cmd_run` PTY construction is `cli._build_pty_pool:1923–1951` called from
+`_cmd_run:2166–2515`, not the `1931–1959` the table implied; the increment's own host summary still said
+"26 surfaces"), and the scan behind "no newly found route is silently exempted" had never been re-run. A4's absent
+criterion was exactly that: "no exact new source lines, caller traces or test nodeids".
+
+**What shipped (docs only — no `src/` change, no test change).** A re-run bounded AST scan and a per-row ledger,
+`R01`–`R28`: exact current anchor (`file::function:start–end` plus the `call` line), the real caller trace, the
+boundary that exists **today** (host / cell / TCB — and, stated explicitly, that a host route has neither execution
+profile nor view, which is the gap rather than an omitted column), the existing bank that covers it, and a *named*
+negative oracle. Everything the scan found that is not a launcher is classified with a reason: 21 in-process
+`shutil` cleanup/install calls, 3 `shutil.which` capability gates (R07/R09/R20 depend on them, which is itself the
+finding), and `read_file`'s approved-library `pymupdf` import. The three workflow entrypoints are traced row by row:
+explicit `cli._cmd_run` → R08/R10/R11/R16/R24/R25/R27; chat `build_chat_registry` → R10/R14/R15/R17/R22; nested
+`build_invoke_workflow_tool` → R26 → R04/R05/R23/R25. The file's state line is now "**OPEN — coverage complete at
+`969fa06`, no row closed**", and the historical E230 tables stay in place with a note that they are historical.
+
+**The scan was widened on evidence, not by taste.** The E230 note warned that "static call-name matching alone is
+incomplete" and named `libtmux`/`pexpect` aliases and injected runners. Re-running the old detector reproduced exactly
+that failure: `runtime/pty_pool.py` (the host PTY route R09) has no `subprocess` call at all, only `pexpect.spawn` and
+`libtmux.Server`; `cli.py` has no launcher and reaches the route through `_PtyPool(...)`@1948. A from-import and
+tmux/pexpect-aware detector catches both. Totals at this commit: 52 call sites in 22 files — 28 launcher/import sites
+in 16 files, 21 filesystem-only, 3 `which` gates.
+
+**Two real negative oracles already exist and are now cited, not invented.**
+`tests/test_execution_tool_index.py::test_a_managed_registry_ships_no_host_git_tools` and
+`::test_a_managed_search_runs_no_host_git_subprocess` cover R14 and R20/R21 today. Everything else is a planned nodeid
+and is labelled `planned` in the table.
+
+**Not done, deliberately.** SLICE4 STEP1's box is **not** ticked. Its exit is coverage, which is now demonstrated, but
+the same file's own checklist closes a row only with the negative oracle's *results* ("Negative test exercises real
+composition/cell or explicitly labels unit-only/fake transport"), and every oracle here needs the managed backend that
+SLICE4 STEP2 (A5) builds. What remains for the step is those results, not more inventory; the ledger says so in place
+so a later session does not re-derive the scan.
+
+**Evidence (actual).** `scripts/check_doc_links.py` OK (313 files, no broken internal links); `fa authoring-check`
+`diagnostics: 0 exit_code: 0`; the four contract scripts pass; working tree clean after the commit. No test count is
+claimed for this entry because no test changed.
+
+**Next per the plan's order.** A3 (supervisor half: CANDIDATE `publish` over the wire) then A5 (the cutover, which
+also deletes `plan_promotion.publish_plan_buffer` in the same change — R3), with A1's `checkpoint_view` as the
+boundary owner the stage loop will call.
