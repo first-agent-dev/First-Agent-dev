@@ -1222,6 +1222,10 @@ E2E rows already registered (`I03-LIVE-22`, `I03-LIVE-23`) assert exactly that i
 | 4 | provisioner + file-tool port injection, caller cutover | SLICE2 STEP3 injection / SLICE4 | 2 | `SessionManager(workspace_provisioner=…)`, `workspace_io=…`, host `_provision_workspace` removed together |
 | 5 | managed acquisition (SLICE5), then accepted package (SLICE6) | SLICE5/6 | 3, 4 | — |
 
+**Status of this table (2026-10-23).** Item 1 is delivered by E276 — `_recover_intent`, the stale
+`pending/` classification and the `_load` hook all shipped in one change, as the "lands with" column
+required. Items 2–5 are unchanged and none is started.
+
 **Why recovery precedes the routes, in one sentence each.** (a) Routes multiply the number of ways to
 crash into an unrecoverable workspace, so the recovery owner must exist first. (b) The E2E lane cannot
 pass its registered fault rows without it. (c) Routes add no durable semantics, so nothing in them is

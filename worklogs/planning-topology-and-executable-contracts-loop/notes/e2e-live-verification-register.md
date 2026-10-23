@@ -1548,3 +1548,27 @@ duplicate (the test now asserts the observable side effect instead), and the pro
 `prepare_seal`'s `ProtectedPlanContext.recheck` (oracle-tested directly, no end-to-end kill credit). No
 docker/cgroup fact, no installed service and no canonical publication was exercised; nothing here is a
 live PASS. The `FA_REQUIRE_EXECUTION_HOST=1` form of both rows stays BLOCKED in this session.
+
+### E276 checkpoint (2026-10-23) — inventory is 25 surfaces / eight joins; all rows still UNEXECUTED
+
+Bookkeeping only; no live verdict, no execution, no promotion. The table above is E267's, extended in
+place by E269/E271/E272/E273/E274/E276 under the register's growth rule — the counts in each section's
+prose are that section's snapshot and are not rewritten. What is current now:
+
+- **Rows `I03-LIVE-01..25`** exist and every one is `PLANNED / UNEXECUTED`; the eight cross-module joins
+  `I03-LIVE-S01..S08` are unchanged and also unexecuted. `grep -o 'I03-LIVE-[0-9]\{2\}' | sort -u | wc -l`
+  returns **25**; `grep -o 'I03-LIVE-S[0-9]\{2\}' | sort -u | wc -l` returns **8**.
+- **Local component banks have grown well past the sizes quoted above**, which describe the E267 snapshot
+  only: `tests/test_workspace_publication.py` **99 passed** (seal + publish + bundle + install + plan
+  replacement), `tests/test_workspace_recovery.py` **22 passed** (CT107 forward recovery over the real
+  authority), `tests/test_workspace_authorize.py` **10 passed** (CT99 pre-reservation check). Taken
+  together with the execution banks these are **466 passed**. All three are local filesystem/authority
+  proofs: no installed service, no UDS, no Docker/cgroup fact, no restart.
+- **What each new row still needs from the host** is unchanged in kind, not just in size: a real
+  `build_supervisor/main` under the installed image, one real actor request per operation, a real
+  SIGKILL/restart at each durable boundary, and a kernel-observed cgroup emptiness. Until the
+  composition exists (the nineteen routes + `build_supervisor/main`, E275's item 2), rows 19–25 cannot
+  even be attempted: there is no process to start, no socket to connect to and no request to kill.
+- **No row may be marked executed from a local bank.** The mutation totals quoted per section (E267 9/9,
+  E272 7/7, E273 10/10, E274 7/7, E276 17/17) are producer-kill evidence for the *local* component; they
+  are not host evidence and are not a live PASS.
