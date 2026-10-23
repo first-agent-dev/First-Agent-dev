@@ -11,13 +11,14 @@ which the caller sees as a typed refusal rather than a silent success (E277).
 `exec`, `inspect` and `cancel` are composed with `CommandReceipts` when the four
 Docker facts are configured: the receipt's identity is the reserved record, the
 view record and the approved profile, and its facts are one owned observation
-plus the kernel's `populated 0` (E279). Without them the three routes keep the
-closed `BACKEND_UNAVAILABLE`, because no cell can ever run.
+plus the kernel's `populated 0` (E279). `pty_control` is composed with the
+backend's live episode and exchanges one bounded control frame, after the worker
+itself proves the named session exists (E280). Without a Docker configuration
+all four routes keep the closed `BACKEND_UNAVAILABLE`, because no cell can ever
+run.
 
 Dormant owners (declared, with the unit that activates each):
 
-- `pty_control`: `WorkerClient` has no PTY verbs and there is no independent
-  worker-control wrapper. Activating unit: the PTY control unit.
 - `handoff`: no `WorkspaceAuthority.handoff` exists at all.
   Activating unit: the owner-handoff unit (terminal/settled source views,
   parent-child namespace proof).
@@ -680,8 +681,14 @@ class SupervisorService:
             raise SupervisorError("BACKEND_UNAVAILABLE")
         return self._receipts
 
-    def _pty_control(self, _peer: PeerIdentity, _request: dict[str, Any], _deadline: float) -> dict[str, Any]:
-        raise SupervisorError("BACKEND_UNAVAILABLE")
+    def _channel(self) -> CellBackend:
+        """The admitted backend, or a closed refusal when no cell can ever run."""
+        if self._backend is None:
+            raise SupervisorError("BACKEND_UNAVAILABLE")
+        return self._backend
+
+    def _pty_control(self, peer: PeerIdentity, request: dict[str, Any], deadline: float) -> dict[str, Any]:
+        return self._channel().pty_control(peer, request, deadline=deadline)
 
     def _stop_view(self, peer: PeerIdentity, request: dict[str, Any], deadline: float) -> dict[str, Any]:
         result = self._stopper.stop_view(

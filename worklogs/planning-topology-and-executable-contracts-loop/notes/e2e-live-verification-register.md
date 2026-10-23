@@ -1550,6 +1550,18 @@ duplicate (the test now asserts the observable side effect instead), and the pro
 docker/cgroup fact, no installed service and no canonical publication was exercised; nothing here is a
 live PASS. The `FA_REQUIRE_EXECUTION_HOST=1` form of both rows stays BLOCKED in this session.
 
+### E280 checkpoint (2026-10-23) — `pty_control` is routed; still 26 surfaces, all UNEXECUTED
+
+The last execution route is no longer dormant: `CellBackend.pty_control` proves the grant, resolves the exact
+episode and exchanges at most two bounded control frames, and `service.py` composes it. What that changes
+locally: `LIST` answers the worker's own listing; `INTERRUPT` answers the listing plus its ACK message while the
+shell survives; `CLOSE` drops the session and a later command recreates it on the same cell; an absent session is
+refused without writing a frame; a view with no live episode is `EXECUTION_UNKNOWN` rather than an invented empty
+listing. What it does **not** change: no row is promoted. Every exchange in the local bank runs against the real
+local PTY worker behind a literal HTTP Docker peer — no container, no SIGKILL, no kernel cgroup fact — so
+`I03-LIVE-19`, `-20`, `-25` and `-26` stay `PLANNED / UNEXECUTED`. Only `handoff` and
+`register_workspace{create:true}` remain unrouted. Inventory unchanged at **26 surfaces / eight joins**.
+
 ### E279 checkpoint (2026-10-23) — the receipt issuer exists; still 26 surfaces, all UNEXECUTED
 
 `exec`, `inspect` and `cancel` are no longer dormant: `CommandReceipts` issues a self-bound `ExecutionReceipt`

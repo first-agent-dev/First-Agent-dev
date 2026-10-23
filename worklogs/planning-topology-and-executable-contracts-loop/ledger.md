@@ -4633,3 +4633,52 @@ claiming no barrier, and a live one-shot cell answered `EXITED`.
 — `WorkerClient` has no PTY verbs and the authority handoff owner does not exist, so there is nothing truthful to
 route to. No daemon, container or kernel fact has been observed on a live host: `I03-LIVE-19/20/25/26` stay
 PLANNED / UNEXECUTED and no STEP/CT box is ticked.
+
+### E280 — `pty_control`: one bounded control exchange on the exact live episode
+
+**FACT (source-verified before editing).** The wire surface existed and was dormant: `Operation.PTY_CONTROL`
+(payload `{action, session_id}`, result `{sessions, message}`) was routed to a `BACKEND_UNAVAILABLE` stub, because
+`CellBackend` had no control path at all. The cell side was already complete — `CellWorker.handle` answers
+LIST/INTERRUPT/CLOSE, `WorkerClient.request` exists, and `pty_pool` implements `list_sessions`/`send_ctrl_c`/`kill`
+— so nothing new was needed below the backend. Two facts did *not* exist: the session name is caller-supplied and
+nothing proved it before it reached the worker, and the transport's retirement gate was keyed on the frame id.
+
+**Two hazards, both closed in this change.** (1) The cell protocol answers an unknown session by failing the
+exchange (`CellWorker.handle` raises, `serve` does not catch it, the reader dies, `WorkerClient` poisons the
+channel), so a model-typed session name would have cost a live shell. `CellBackend.pty_control` therefore asks the
+worker for its OWN listing first and refuses an absent session with `EXECUTION_UNKNOWN` **without writing the
+action frame**; the listing is also the only truthful source, because `PtyPool` evicts LRU sessions. (2)
+`WorkerClient._read` waited for retirement with `request_id not in self._pending`, so a *sequential* reuse of an id
+(a pre-flight LIST and then the action under one wire request) looked like "not yet retired" and the reader waited
+for the successor's retirement — which the reader itself owed. The gate is now on the exchange *object*, which is
+strictly more precise and leaves unique-id behaviour unchanged.
+
+**DECIDED (mechanism and the closed codes).** `CellBackend.pty_control` decodes the exact closed envelope, proves
+the caller's grant through `WorkspaceAuthority.authorize` (the CT99 owner, re-proving under its own transaction),
+resolves the episode by the full identity (principal, namespace, exact view, approved profile), and exchanges at
+most two bounded frames; it creates no cell, writes no journal record and never reserves. Refusals are typed:
+`INPUT_POLICY` for a non-`pty_control` envelope and for a noninteractive profile (a one-shot cell has no persistent
+PTY between commands), `UNAPPROVED_PROFILE` with no approved profile, `UNAUTHORIZED` for a foreign view/grant/
+namespace before any frame is written, and `EXECUTION_UNKNOWN` for a view with no live episode, an absent session,
+a lost attach or an expired budget. A view with no live episode is *never* answered with an invented empty
+listing: a cell that survived a restart still owns sessions this process cannot enumerate. `service.py` composes
+the route through the same `CellBackend` and keeps `BACKEND_UNAVAILABLE` when no Docker configuration exists.
+
+**Behaviour change, stated plainly.** With a configured daemon, `LIST`/`INTERRUPT`/`CLOSE` now answer the worker's
+own listing and message for the view's live cell. Ctrl-C remains an ACK, not process terminality, and close
+remains PTY cleanup, not a descendant barrier.
+
+**Evidence.** New bank `tests/test_execution_pty_control.py` **10 passed** (C3 real authority/journal/literal HTTP
+peer/real local PTY worker; C0 request-shape; C1 `WorkerClient.request` fault seams), with the path inventory
+P1–P9 in the module docstring; `tests/test_execution_service.py` **26 passed** including the wire test that proves
+the route is composed (`EXECUTION_UNKNOWN`, not the stub's `BACKEND_UNAVAILABLE`) and that LIST reserves nothing
+while INTERRUPT reserves and finishes unknown. All execution banks **1167 passed**; wider
+`-k "execution or workspace"` **1618 passed, 1 skipped** (3 known `test_controller_installed` offline-install
+errors). ruff/format clean, mypy 23 files, pyrefly 0 errors, `fa authoring-check` 0. **9/9 mutants killed** with
+sha256-verified byte-exact restore, including the two hazards: forwarding the frame without proving the session
+(the follow-up LIST then fails), and the id-keyed retirement gate (the control test hangs to its deadline).
+
+**Deliberately not done, with the reason.** `handoff` stays unrouted (`BACKEND_UNAVAILABLE`) because no
+`WorkspaceAuthority.handoff` exists; `register_workspace{create:true}` stays with SLICE5. No live `docker`/`cgroup`
+or real shell has been controlled on a host, so `I03-LIVE-19/20/25/26` remain PLANNED / UNEXECUTED and no STEP/CT
+box is ticked.

@@ -1225,9 +1225,9 @@ E2E rows already registered (`I03-LIVE-22`, `I03-LIVE-23`) assert exactly that i
 **Status of this table (2026-10-23).** Item 1 is delivered by E276 — `_recover_intent`, the stale
 `pending/` classification and the `_load` hook all shipped in one change, as the "lands with" column
 required. Item 2's route table and composition are delivered by E277, E278 delivered the
-`CellTermination` join its `stop_view` route needs, and E279 delivered the receipt issuer, so `exec`,
-`inspect` and `cancel` now answer with self-bound receipts instead of `BACKEND_UNAVAILABLE`. Items 3–5 are
-unchanged and none is started; `pty_control` and `handoff` stay dormant until their owners land.
+`CellTermination` join its `stop_view` route needs, E279 the receipt issuer (`exec`, `inspect`, `cancel`)
+and E280 `pty_control`. Items 3–5 are unchanged and none is started; `handoff` and
+`register_workspace{create:true}` stay dormant until their owners land.
 
 **Why recovery precedes the routes, in one sentence each.** (a) Routes multiply the number of ways to
 crash into an unrecoverable workspace, so the recovery owner must exist first. (b) The E2E lane cannot
@@ -3109,3 +3109,22 @@ internally consistent — not proven to be true of a live host.
 `tests/test_execution_*.py` 1157 passed; wider `-k "execution or workspace"` 1608 passed, 1 skipped (3 known
 offline-install errors); ruff/format clean, mypy 23 files, pyrefly 0, `fa authoring-check` 0; 14/14
 assertion-only mutants killed with byte-exact restore.
+
+### E280 result — `pty_control` P1–P9: the last execution route
+
+**What shipped.** `CellBackend.pty_control` (grant proof through `WorkspaceAuthority.authorize`, episode identity,
+at most two bounded control frames, no cell creation and no journal write) and the `service.py` route through the
+composed backend. One transport fix was required by the two-frame exchange: `WorkerClient._read`'s retirement gate
+was id-keyed, so a sequential id reuse deadlocked until the deadline; it is now keyed on the exchange object.
+
+**Current vs target behaviour.** Current: `LIST` answers the worker's own listing, `INTERRUPT` answers the listing
+plus the ACK message while the shell and cell survive, `CLOSE` drops that session and a later command recreates it
+on the same cell; an absent session is refused (`EXECUTION_UNKNOWN`) **without writing the frame**, so a caller
+typo cannot poison the live shell; a view with no live episode is `EXECUTION_UNKNOWN`, never an empty listing; a
+noninteractive profile is `INPUT_POLICY`. Target: the same against a real container and a real kernel barrier —
+`I03-LIVE-19/20/25/26`, still BLOCKED here.
+
+**Evidence.** `tests/test_execution_pty_control.py` 10 passed; `tests/test_execution_service.py` 26 passed; all
+`tests/test_execution_*.py` 1167 passed; wider `-k "execution or workspace"` 1618 passed, 1 skipped (3 known
+offline-install errors); ruff/format clean, mypy 23 files, pyrefly 0, `fa authoring-check` 0; 9/9 assertion-only
+mutants killed with byte-exact restore.

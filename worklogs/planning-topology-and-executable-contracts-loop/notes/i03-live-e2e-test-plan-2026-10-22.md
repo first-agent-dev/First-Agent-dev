@@ -146,6 +146,16 @@ on the **on-host journal files** as well as on the wire reply, and every case na
 | **L-RCPT-5** one-shot vs interactive | the same command under a one-shot profile and an interactive one | one-shot requires `populated 0`; interactive returns `EXITED` with `terminal_barrier: false` while the shell lives, and `stop_view` then reports `terminal: true` with the same CID's cgroup empty | create the interactive view *after* the command → the case must fail to arrange (BLOCKED), never PASS on a later cgroup read |
 | **L-RCPT-6** ledger append survives a kill | `kill -9` the supervisor after the command reply but before `complete`; restart | exactly one record per operation id after restart (no duplicates, no second RUN in the daemon log); `inspect` answers `UNKNOWN` or the stored receipt, never a fresh `EXITED` with a new exit code | kill *after* `complete` → `inspect` must replay the stored receipt; if both timings look the same, the case is not observing the boundary and must be rewritten |
 
+`pty_control` (E280) adds the control plane. Its cases are small but each one has a failure mode that only a
+live shell shows, and two of them are ledger-append cases: INTERRUPT/CLOSE are mutating operations and must
+append exactly one record, while LIST is read-only and must append none.
+
+| Case | Arrange | Observe (wire **and** ledger) | Negative control |
+| :--- | :--- | :--- | :--- |
+| **L-PTY-1** LIST sees only this view's sessions | two live views with different session names, one real command each | each view's `LIST` returns exactly its own session names; the session named `main` in one view is not visible from the other; the ledger gains **no** record for either LIST | reuse one view's session name from the other view's episode (test build) → the case must fail to arrange, never PASS on a shared answer |
+| **L-PTY-2** INTERRUPT is an ACK, not terminality | a live interactive session with exported state | a real Ctrl-C reaches the pane; the reply carries `{sessions, message}`; a following command still runs in the **same** container id with its environment intact; `cgroup.events` for that CID is still `populated > 0`; the ledger has one DONE record for the interrupt | close the session first (test build) → the interrupt must be refused (`EXECUTION_UNKNOWN`), and the shell must still answer `LIST` |
+| **L-PTY-3** an unknown session never costs the shell | one live shell, an INTERRUPT for a name that was never created | the supervisor refuses `EXECUTION_UNKNOWN`; the daemon log shows **no** attach write for that request; the very next command still succeeds in the same cell; the ledger record for that interrupt ends `UNKNOWN`, never `DONE` | let the raw frame reach the worker (test build) → the cell's attach dies and the following command must fail, which is exactly what the case forbids in production |
+
 Two of these cases (`L-RCPT-2`, `L-RCPT-6`) are the ledger-append cases the session's instruction asked for:
 they assert that the journal gains exactly one record per operation, that a completed command's record is never
 rewritten, and that the replay is served from the record rather than from the daemon.

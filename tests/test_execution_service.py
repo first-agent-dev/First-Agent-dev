@@ -777,3 +777,47 @@ def test_exec_and_cancel_issue_receipts_over_the_closed_socket(site: Site, tmp_p
         )
         assert _error(cancelled) == "EXECUTION_UNKNOWN"
         assert service.authority.journal.lookup("op-" + "6" * 32, ACTOR) is not None
+
+
+def test_pty_control_is_composed_and_refuses_without_a_live_episode(site: Site, tmp_path: Path) -> None:
+    """producer-kill-check: leave `pty_control` at the `BACKEND_UNAVAILABLE` stub.
+
+    A daemon is configured and never contacted: the view has no live episode, so
+    the backend's own closed refusal is the answer. `LIST` is read-only and
+    leaves no record; `INTERRUPT` reserves one and finishes it unknown.
+    """
+    private = tmp_path / "private"
+    private.mkdir(mode=0o700)
+    config = _config(
+        site,
+        docker_socket=private / "docker.sock",
+        docker_daemon_uid=PEER.uid,
+        docker_api_version="1.45",
+        docker_timeout_ms=1000,
+        cgroup_root=tmp_path / "cgroup",
+    )
+    with SupervisorService(config) as service:
+        workspace_id = _registered(service)
+        capability, revision_id = _writer(service, workspace_id, request_id="1" * 32)
+        view_ref, proof = _view(service, workspace_id, revision_id, capability, request_id="2" * 32)
+        listed = exchange(
+            service,
+            Operation.PTY_CONTROL,
+            {"action": "LIST", "session_id": None},
+            request_id="3" * 32,
+            view_ref=view_ref,
+            capability=proof,
+        )
+        assert _error(listed) == "EXECUTION_UNKNOWN"
+        assert service.authority.journal.lookup("op-" + "3" * 32, ACTOR) is None
+        interrupted = exchange(
+            service,
+            Operation.PTY_CONTROL,
+            {"action": "INTERRUPT", "session_id": "main"},
+            request_id="4" * 32,
+            view_ref=view_ref,
+            capability=proof,
+        )
+        assert _error(interrupted) == "EXECUTION_UNKNOWN"
+        record = service.authority.journal.lookup("op-" + "4" * 32, ACTOR)
+        assert record is not None and record["state"] == "UNKNOWN"
