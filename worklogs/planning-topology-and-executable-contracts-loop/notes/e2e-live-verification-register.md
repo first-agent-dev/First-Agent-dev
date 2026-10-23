@@ -1550,6 +1550,19 @@ duplicate (the test now asserts the observable side effect instead), and the pro
 docker/cgroup fact, no installed service and no canonical publication was exercised; nothing here is a
 live PASS. The `FA_REQUIRE_EXECUTION_HOST=1` form of both rows stays BLOCKED in this session.
 
+### E279 checkpoint (2026-10-23) — the receipt issuer exists; still 26 surfaces, all UNEXECUTED
+
+`exec`, `inspect` and `cancel` are no longer dormant: `CommandReceipts` issues a self-bound `ExecutionReceipt`
+from three trusted sources (reserved record, view record, approved profile) plus one owned observation and the
+kernel's `populated 0`. What that changes locally: a one-shot command is `EXITED` only with an agreeing exit code
+*and* a proven empty cgroup; an interactive shell may report `EXITED` with `terminal_barrier: false`; a timeout is
+`TIMED_OUT` with no exit code; a DONE operation replays its stored receipt. What it does **not** change: no row is
+promoted. Every daemon answer in the local bank is a queued literal HTTP reply on a real socket, and the cgroup is
+a hand-written `cgroup.events` in a real directory — the container's exit, the SIGKILL and the kernel fact have
+never been observed on a host. `I03-LIVE-19`, `-20`, `-25` and `-26` therefore stay `PLANNED / UNEXECUTED`, and
+`pty_control`/`handoff` remain unrouted. Inventory unchanged at **26 surfaces / eight joins**; no per-section count
+is rewritten.
+
 ### E278 checkpoint (2026-10-23) — the barrier's local half exists; still 26 surfaces, all UNEXECUTED
 
 The `CellTermination` that `I03-LIVE-19`/`I03-LIVE-20` describe now exists in `src/` (`cgroup.descendants_empty`

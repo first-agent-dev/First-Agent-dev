@@ -4583,3 +4583,53 @@ skipping the owned-cell stop.
 real host — `I03-LIVE-19/20/25/26` stay PLANNED / UNEXECUTED, and the `FA_REQUIRE_EXECUTION_HOST=1` integration
 rows remain the only place those facts may be claimed. Also untouched: SLICE5/6, bundle GC, Docker/cgroup
 deployment profiles and the caller cutover.
+
+### E279 — the receipt issuer: `exec`, `inspect` and `cancel` answer with observed facts
+
+**FACT (source-verified before editing).** E278 left the barrier joined but every command route still answered
+`BACKEND_UNAVAILABLE`, because nothing turned a `CommandOutcome` — explicitly "NOT a receipt and NOT a
+terminality claim" — into an `ExecutionReceipt`. The pieces existed and were unused: `DockerEngine.inspect_owned`
+returns a `ContainerObservation`, `cgroup.descendants_empty` answers the barrier, `types.ExecutionReceipt`
+carries the twelve identity fields and `require_binding`, and the journal already validates a completed EXEC
+receipt (`_validate_completed_receipt`). What was missing was the *only* place allowed to decide what a command
+may assert, plus a measured duration: `CommandOutcome` had no time field at all.
+
+**DECIDED (mechanism).** `src/fa/execution/receipts.py::CommandReceipts` composes the three routes over the
+already-admitted backend; no second execution path and no new registry. Identity comes from three trusted
+sources only: the reserved operation record (id, namespace, view, durable CID), the view record read through the
+caller's own grant — a new `WorkspaceAuthority.execution_identity` under `_transaction`/`_proof_only` returning
+the view's `input_tree_sha256` and `plan_ref.sha256`, matching the existing rule that "EXEC binds the plan the
+VIEW was admitted with, never a claim in the payload" — and the approved profile (profile id, image digest,
+cgroup parent). Facts come from exactly one `inspect_owned` plus the cgroup: `EXITED` needs the container's exit
+to *agree* with the command's and, for a one-shot cell, a proven `populated 0`; an interactive shell may stay
+alive, and then the barrier honestly stays `false` until `stop_view`. A timeout reports `TIMED_OUT` with no exit
+code and no daemon contact at all (nothing the cell could answer changes a spent budget). Anything unobservable,
+mismatched, foreign or still-running is `EXECUTION_UNKNOWN` — never exit 0 and never a receipt. `inspect` replays
+a DONE record's stored receipt without touching the daemon, never sends a RUN, and answers `RESERVED`/`CANCELLED`
+from the journal alone when no cell was ever bound; `cancel` proves the record, delegates to
+`CellBackend.cancel` (intent before stop), then reports `CANCELLED` under the *cancel operation's own id* with the
+exit code only when an `exited` was actually observed. Tails are bounded to the last 64 KiB per channel without
+splitting a codepoint, and every receipt is self-checked with `require_binding` before it is returned. `service.py`
+composes the issuer when Docker is configured and keeps `BACKEND_UNAVAILABLE` when it is not, so "no cell can ever
+run" stays a closed refusal rather than a synthetic success.
+
+**Behaviour change, stated plainly.** `exec`, `inspect` and `cancel` are no longer dormant: with a configured
+daemon they return closed, self-bound receipts, and `duration_ms` is now measured from RUN send to reply.
+
+**Evidence.** New bank `tests/test_execution_receipts.py` **21 passed** (C3: real authority/journal/literal HTTP
+peer/real PTY worker/real cgroup dir; C1: `FakeWorkerStream` for the one-shot; C0: tail rule and state mapping);
+`tests/test_execution_service.py` **25 passed**, including the new wire test that issues a `RESERVED` inspect
+receipt and a `CANCELLED` receipt over the closed socket with a daemon configured but never contacted. All
+execution banks `tests/test_execution_*.py` **1157 passed**; wider `-k "execution or workspace"` **1608 passed,
+1 skipped** (3 known `test_controller_installed` offline-install errors). ruff/format clean (342 files), mypy 23
+files, pyrefly 0 errors, `fa authoring-check` 0. **14/14 mutants killed** with sha256-verified byte-exact restore:
+barrier dropped for a one-shot, exit agreement dropped, replay replaced by a second observation, the stop skipped,
+identity fabricated instead of read from the view record, an absent cell answered `RUNNING`, a spent budget still
+asking the daemon, the tail keeping the head, the cancel naming the command instead of its own operation, the
+binding self-check removed, an unobservable cell answered `EXITED`, the refusal code weakened, a cell-less cancel
+claiming no barrier, and a live one-shot cell answered `EXITED`.
+
+**Deliberately not done, with the reason.** `pty_control` and `handoff` are still unrouted (`BACKEND_UNAVAILABLE`)
+— `WorkerClient` has no PTY verbs and the authority handoff owner does not exist, so there is nothing truthful to
+route to. No daemon, container or kernel fact has been observed on a live host: `I03-LIVE-19/20/25/26` stay
+PLANNED / UNEXECUTED and no STEP/CT box is ticked.

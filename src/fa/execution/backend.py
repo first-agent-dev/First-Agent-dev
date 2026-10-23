@@ -70,7 +70,11 @@ class _Episode:
 
 @dataclass(frozen=True)
 class CommandOutcome:
-    """Observed command result. NOT a receipt and NOT a terminality claim."""
+    """Observed command result. NOT a receipt and NOT a terminality claim.
+
+    `duration_ms` is the RUN send-to-reply window measured here; the receipt
+    issuer adds the container/cgroup facts that make a receipt possible.
+    """
 
     operation_id: str
     container_id: str
@@ -80,6 +84,7 @@ class CommandOutcome:
     timed_out: bool
     truncated: bool
     session_id: str | None
+    duration_ms: int
     terminal_barrier: bool = False
 
 
@@ -328,6 +333,7 @@ class CellBackend:
             },
         )
         exchange = None
+        started = time.monotonic()
         try:
             with scope.send():
                 try:
@@ -348,6 +354,7 @@ class CellBackend:
             timed_out=result["timed_out"],
             truncated=result["truncated"],
             session_id=result["session_id"],
+            duration_ms=max(0, int((time.monotonic() - started) * 1000)),
         )
 
     def cancel(self, peer: PeerIdentity, request: dict[str, Any], *, deadline: float) -> dict[str, Any]:

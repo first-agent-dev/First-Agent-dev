@@ -126,6 +126,32 @@ because each misses a case:
 
 ---
 
+## 4.1. Cases E277–E279 add: the composed service, the barrier and the receipt ledger
+
+E277 gave the service its nineteen routes and one socket owner, E278 the `CellTermination` join, E279 the
+receipt issuer. None of it has met a daemon. These cases are P3/P4 work and may not be attempted before the
+image, the socket and the `cgroup` mount are arranged (§1), and like every case above each one needs its
+negative control in the same file.
+
+The journal is the durable ledger of this system: one append-only record per operation id, `complete` is the
+only writer of a result, and the record — not the reply — is what survives a kill. So the receipt cases assert
+on the **on-host journal files** as well as on the wire reply, and every case names the record it expects.
+
+| Case | Arrange | Observe (wire **and** ledger) | Negative control |
+| :--- | :--- | :--- | :--- |
+| **L-RCPT-1** `exec` receipt is true of the host | admitted PROJECT view, real image, real `docker` socket, real `/sys/fs/cgroup` mount; one `printf` and one `false` | `EXITED` with the container's own exit code for both; `terminal_barrier: true` only alongside `cgroup.events` reading `populated 0` for that CID; `duration_ms > 0`; tails ≤ 64 KiB; identity fields equal the view record's tree/plan and the approved profile's digest | point `cgroup_root` at a directory whose `cgroup.events` says `populated 1` → the case must see a refusal (`EXECUTION_UNKNOWN`), never `EXITED` |
+| **L-RCPT-2** `inspect` replays, the ledger does not rewrite | a completed `exec` (L-RCPT-1), then `inspect` twice | both replies are byte-identical to the stored receipt; the **EXEC** record file's hash is unchanged; the two INSPECT operations each appended exactly one record ending `DONE`; the daemon log shows no `GET /containers/<cid>/json` between the two inspects | delete the container between the two inspects → the replay still answers, which is what proves no daemon contact |
+| **L-RCPT-3** `cancel` before create / during create / during RUN | the three S04 timings, real SIGKILL, daemon access log on | receipt is `CANCELLED` under `op-<cancel request_id>`, never `EXITED`; `exit_code` only when an `exited` was observed; the target record shows `cancel_requested: true` **in the snapshot the driver takes when the kill request arrives**; `populated 0` read after the stop returns | move the intent write after the kill (test build) → the snapshot at kill time shows `cancel_requested: false`, which the case must catch |
+| **L-RCPT-4** a spent budget is final | a command that outlives its `timeout_ms` | `TIMED_OUT`, `exit_code: null`, `terminal_barrier: false`; **zero** post-reply `GET /containers/<cid>/json` in the daemon log; the ledger record ends `DONE` with exactly that receipt | re-enable the post-command observation (test build) → one extra GET appears, which fails the case |
+| **L-RCPT-5** one-shot vs interactive | the same command under a one-shot profile and an interactive one | one-shot requires `populated 0`; interactive returns `EXITED` with `terminal_barrier: false` while the shell lives, and `stop_view` then reports `terminal: true` with the same CID's cgroup empty | create the interactive view *after* the command → the case must fail to arrange (BLOCKED), never PASS on a later cgroup read |
+| **L-RCPT-6** ledger append survives a kill | `kill -9` the supervisor after the command reply but before `complete`; restart | exactly one record per operation id after restart (no duplicates, no second RUN in the daemon log); `inspect` answers `UNKNOWN` or the stored receipt, never a fresh `EXITED` with a new exit code | kill *after* `complete` → `inspect` must replay the stored receipt; if both timings look the same, the case is not observing the boundary and must be rewritten |
+
+Two of these cases (`L-RCPT-2`, `L-RCPT-6`) are the ledger-append cases the session's instruction asked for:
+they assert that the journal gains exactly one record per operation, that a completed command's record is never
+rewritten, and that the replay is served from the record rather than from the daemon.
+
+---
+
 ## 5. Sequences worth spelling out (the ones a naive case gets wrong)
 
 1. **Pinned reader vs active writer (S05/L-TOOL-5).** Order matters: create the reader view *while*

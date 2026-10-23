@@ -1224,9 +1224,10 @@ E2E rows already registered (`I03-LIVE-22`, `I03-LIVE-23`) assert exactly that i
 
 **Status of this table (2026-10-23).** Item 1 is delivered by E276 — `_recover_intent`, the stale
 `pending/` classification and the `_load` hook all shipped in one change, as the "lands with" column
-required. Item 2's route table and composition are delivered by E277, and E278 delivered the
-`CellTermination` join its `stop_view` route needs. Items 3–5 are unchanged and none is started; the four
-execution routes and `handoff` stay dormant until the receipt issuer / PTY control / handoff owners land.
+required. Item 2's route table and composition are delivered by E277, E278 delivered the
+`CellTermination` join its `stop_view` route needs, and E279 delivered the receipt issuer, so `exec`,
+`inspect` and `cancel` now answer with self-bound receipts instead of `BACKEND_UNAVAILABLE`. Items 3–5 are
+unchanged and none is started; `pty_control` and `handoff` stay dormant until their owners land.
 
 **Why recovery precedes the routes, in one sentence each.** (a) Routes multiply the number of ways to
 crash into an unrecoverable workspace, so the recovery owner must exist first. (b) The E2E lane cannot
@@ -3083,3 +3084,28 @@ local bank (C1); only a host run may claim the daemon actually signalled the cel
 (the publication half now driven through the wire); owning bank 387 passed; wider `-k "execution or workspace"`
 1585 passed, 1 skipped; ruff/format clean, mypy 22 files, pyrefly 0, `fa authoring-check` 0; 14/14 assertion-only
 mutants killed with byte-exact restore. `I03-LIVE-19/20/25/26` remain PLANNED / UNEXECUTED.
+
+### E279 result — `ExecutionReceipt` v1: `exec`, `inspect` and `cancel` over observed facts
+
+**What shipped.** `src/fa/execution/receipts.py::CommandReceipts` (plus `bounded_tail`) and
+`WorkspaceAuthority.execution_identity`; `CommandOutcome.duration_ms` (RUN send → reply, measured in the backend);
+`service.py` composes the issuer when the four Docker facts are configured and keeps a closed
+`BACKEND_UNAVAILABLE` otherwise. A receipt's identity is the reserved record, the view record (input tree and
+plan digest) and the approved profile; its facts are one owned `inspect_owned` plus the kernel's `populated 0`.
+
+**Current vs target behaviour.** Current: a one-shot command is `EXITED` only when the daemon's exit agrees with
+the command's *and* the cgroup is proved empty; an interactive shell may report `EXITED` with
+`terminal_barrier: false` (the barrier is `stop_view`'s question); a timeout is `TIMED_OUT` with no exit code and
+no daemon contact; `inspect` replays a DONE record verbatim and never sends a RUN; `cancel` is intent → stop →
+`CANCELLED` under its own operation id. Target: the same facts against a real container and a real cgroup — the
+host rows (`I03-LIVE-19/20/25/26`), still BLOCKED here. STEP1 stays open, so no box is ticked.
+
+**Why the local bank cannot promote a row.** Every daemon answer in the bank is a literal HTTP reply queued on a
+real AF_UNIX peer, and the cgroup is a real directory holding a hand-written `cgroup.events`; the container's
+exit, the SIGKILL and the kernel's emptiness are *not* observed. The receipt is proven to be closed, bound and
+internally consistent — not proven to be true of a live host.
+
+**Evidence.** `tests/test_execution_receipts.py` 21 passed; `tests/test_execution_service.py` 25 passed; all
+`tests/test_execution_*.py` 1157 passed; wider `-k "execution or workspace"` 1608 passed, 1 skipped (3 known
+offline-install errors); ruff/format clean, mypy 23 files, pyrefly 0, `fa authoring-check` 0; 14/14
+assertion-only mutants killed with byte-exact restore.

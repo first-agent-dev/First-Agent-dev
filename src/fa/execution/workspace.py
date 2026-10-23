@@ -2301,6 +2301,28 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
     def _gate(self, ref: ViewRef) -> _WorkGate:
         return self._gates.setdefault(ref.view_id, _WorkGate())
 
+    def execution_identity(
+        self,
+        peer: PeerIdentity,
+        namespace: NamespaceRef,
+        *,
+        view_ref: ViewRef,
+        capability: str,
+        deadline: float,
+    ) -> tuple[str, str | None]:
+        """The receipt identity of this exact view grant: input tree and plan digest.
+
+        Read from the durable view record under the grant the caller already
+        holds — never from the request, the worker or the client. `_proof_only`
+        is deliberate: a view that was closed or sealed after the command still
+        yields the identity of work that already happened, while a revoked,
+        foreign or wrong-namespace grant is refused.
+        """
+        with self._transaction(peer, deadline):
+            record = self._proof_only(peer, namespace, view_ref, capability).record
+            plan_ref = record["plan_ref"]
+            return record["input_tree_sha256"], None if plan_ref is None else plan_ref["sha256"]
+
     @property
     def ready(self) -> bool:
         """Entered and undegraded; startup recovery has already run (E277).
