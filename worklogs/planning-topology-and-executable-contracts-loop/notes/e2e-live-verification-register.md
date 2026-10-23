@@ -1551,6 +1551,29 @@ duplicate (the test now asserts the observable side effect instead), and the pro
 docker/cgroup fact, no installed service and no canonical publication was exercised; nothing here is a
 live PASS. The `FA_REQUIRE_EXECUTION_HOST=1` form of both rows stays BLOCKED in this session.
 
+### E284 checkpoint (2026-10-23) — no new surface: the checkpoint sidecar is CT110/CT111 evidence, still 27 / 8
+
+E284 shipped A1 (`src/fa/execution/checkpoints.py` + `tests/test_stage_checkpoints.py`), and it adds **no register row
+on purpose**: STEP1 declares no new CT, because a checkpoint's durable effects are CT106's publish, its barrier is
+CT104's `stop_view` and its artifact is the CT110/CT111 receipt/report the managed consumers will read. The sidecar is
+the *link* between those, not a twentieth producer, so promoting a surface here would double-count evidence that
+already has a row.
+
+What the host fixtures will still have to arrange, now that a local body exists:
+
+- a **real cell** whose descendants are kernel-observed empty, so `terminal is True` comes from a cgroup rather than
+  from the doubled `CellTermination` seam this bank uses (`I03-LIVE-19`'s fact);
+- the **artifact itself**: the record binds the digest of an evidence artifact the *stage loop* persists (A5/A6), so
+  the host case must show persist-then-link, not a bare hash;
+- a **deployed service** for the C3 leg, so `stop_view`/`seal`/`publish` are one supervisor each and the recorded
+  `op-<request_id>` values are the operator's journal records.
+
+Local evidence only, not promotable: 36 cases, 100% statements / 98% branch on the module, 1319 execution+publication
+tests passing, **35/35** assertion-only mutants killed. Two survivors were closed by adding assertions (the
+publish-revision disagreement and truthy-but-not-`True` terminality) rather than by dropping the line.
+
+Totals unchanged: `grep -o 'I03-LIVE-[0-9]\{2\}' | sort -u | wc -l` = **27**; joins = **8**. No row promoted.
+
 ### E283 checkpoint (2026-10-23) — `I03-LIVE-27` has a local body; still 27 surfaces, all UNEXECUTED
 
 `WorkspaceAuthority.handoff` and the `service.py` route now exist, so the row is no longer describing planned code:
