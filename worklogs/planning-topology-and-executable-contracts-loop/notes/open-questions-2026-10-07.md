@@ -924,6 +924,16 @@ A failed validator remains eligible for another bounded planner attempt. Empty/u
 
 **Alternatives considered, not selected.** (2) Letting the planner write the active file would expose canonical plans to partial or invalid writes and require a broader allowlist. (3) Returning the full plan as structured provider output would require a new response schema and controller transport path that do not exist.
 
+**Implementation status (E273, 2026-10-23).** The authority side of the promotion exists and is locally proved:
+`publication.publish_plan` → `WorkspaceAuthority.publish_plan` (same-path replace is the irreversible point,
+then revision/pointer forward, no rollback; see increment-03's E273 result). What the required proof above still
+needs is the **controller leg**: `_promote_validated_plan` continues to call `publish_plan_buffer` until the
+dispatcher route exists (SLICE1 STEP3), and that call is to be *moved*, not duplicated — the transport is
+deleted in the same change that routes it, so exactly one writer ever owns the canonical plan. Until then the
+two paths fail closed against each other: the authority refuses a seal whose plan bytes moved outside it
+(`_validate_plan_boundary`), and a later authority forward step refuses a canonical tree that is not the
+committed revision.
+
 **Required proof before runtime completion.** Real `run_workflow` → `_cmd_run` → `drive_session` C1 path with only `ProviderChain.request` mocked; prove both validators pass before the exact canonical file's bytes change, subsequent coder reads that same path, and no alternate active path is used. Invalid/stale candidates and promotion errors leave the source byte-identical and reach `blocked` with no coder/eval. C3 denies exact-target escape, `..`, absolute path, and symlink writes. Deleting the scoped-writer or `_promote_validated_plan` producer call makes its named test fail. Tests stay outside Q54 mutation roots; a live-host E2E case covers the producer.
 
 ---
@@ -2055,3 +2065,36 @@ the bundle's own 32 hex characters under the `op-` prefix. Reasons, in order:
 multi-project bootstrap) or to retry a *failed* install under a new identity, the derivation stops being
 sufficient and the payload must carry the id. Nothing in the current plan asks for either.
 
+
+## Q84 — When forward recovery cannot settle a workspace, what fails: the workspace or the authority?
+
+**Status: ANSWERED by implementation (2026-10-23, E276), reviewable — not blocking.**
+
+**The gap.** CT107 says an unrecoverable attempt is "quarantined", but §5.1's recovery rows describe
+`CORRUPT_STATE` as the outcome without saying who pays for it. `_load` already writes
+`OWNED -> QUARANTINED` for every owned workspace on every start (CT104: a restart cannot release a live
+old writer), so a per-workspace quarantine exists and is cheap; a whole-start refusal also exists (any
+unprovable workspace record already fails `__enter__`). E275 recorded the question with the default
+"today's behaviour" and left it non-blocking.
+
+**Decision taken: quarantine the workspace, refuse the start only for uncertainty about the authority's
+own writes.** Concretely, `_recover_at_load` swallows every `SupervisorError` except `DURABILITY_UNKNOWN`:
+an indeterminate attempt keeps its `intent.json` (evidence), the existing `OWNED -> QUARANTINED` write
+holds that workspace, and every other workspace keeps loading. `DURABILITY_UNKNOWN` — a write that no
+longer reads back, `_write_intent`/`_clear_intent` having poisoned `_healthy` — refuses the whole start.
+Reasons, in order:
+
+1. **It is what the code already does.** A leftover intent used to leave the workspace `QUARANTINED` and
+   the authority serving; making one corrupt attempt fail the process would be a new blast radius, not a
+   conservative default.
+2. **Blast radius is the whole point of a quarantine.** Recovery failures are per-workspace facts (these
+   bytes, this intent). Turning one into "no supervisor at all" disables unrelated projects that share
+   the catalog but not the fault.
+3. **The two failures are not the same kind of statement.** "I cannot prove this attempt's outcome" is a
+   local claim; "my own durable writes do not read back" is a global one. Only the second justifies
+   refusing to serve, and `_healthy` already encodes exactly that rule.
+
+**What would reopen it.** If an operator ever needs the authority to *keep* serving after
+`DURABILITY_UNKNOWN` (e.g. a read-only degraded mode), or if quarantine must become reversible without a
+human (a retry budget, an operator command), the per-workspace rule needs a status distinct from the
+existing "previous epoch is dead" flip. Nothing in the current plan asks for either.

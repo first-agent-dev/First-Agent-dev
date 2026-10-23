@@ -35,7 +35,7 @@ from fa.execution.publication import MANIFEST_NAME, SealResult, derive_revision_
 from fa.execution.supervisor import SupervisorError, TerminalVerdict, ViewStopper
 from fa.execution.types import Access, GrantReply, NamespaceRef, ViewPurpose, ViewRef
 from fa.execution.workspace import WorkspaceAuthority
-from fa.inner_loop.plan_admission import read_plan_snapshot
+from fa.inner_loop.plan_admission import PlanRefError, read_plan_snapshot
 from tests.test_execution_admission import claim as claim_operation
 from tests.test_execution_admission import request as exec_request
 from tests.test_execution_readers import record_path, ref
@@ -1318,6 +1318,8 @@ def test_publish_refuses_to_start_on_top_of_a_foreign_intent(site: Site) -> None
             "target_relative": None,
             "old_sha256": None,
             "new_sha256": None,
+            "created_directories": [],
+            "view_ref": ref(grant).to_dict(),
         }
         planted_path = _workspace(site, ids) / "intent.json"
         planted_path.write_text(json.dumps(planted))
@@ -1627,7 +1629,6 @@ def test_publish_refuses_a_writer_generation_that_moved_after_the_view(site: Sit
 
 def test_the_projection_verifier_refuses_a_tree_that_differs_from_the_manifest(site: Site) -> None:
     """producer-kill-check: make `_verify_projection` a no-op (R8's completion proof)."""
-    from dataclasses import replace
 
     with site.owner(view_profile=native_profile()) as owner:
         ids = ok(lambda: site.register(owner))
@@ -1658,7 +1659,10 @@ def test_the_projection_verifier_refuses_a_tree_that_differs_from_the_manifest(s
 
         with pytest.raises(SupervisorError) as refused:
             owner._verify_projection(
-                owner._binding(ids["workspace_id"]), replace(inputs, entries=(*inputs.entries, ghost)), until()
+                owner._binding(ids["workspace_id"]),
+                (*inputs.entries, ghost),
+                inputs.tree_sha256,
+                until(),
             )
 
         assert refused.value.code == "CORRUPT_STATE"
@@ -2368,7 +2372,7 @@ def test_a_failure_after_the_rename_keeps_the_project_and_its_intent(
         def exploding(*_args: Any, **_kwargs: Any) -> None:
             raise OSError(5, "injected post-rename failure")
 
-        monkeypatch.setattr(WorkspaceAuthority, "_install_write_revision", exploding)
+        monkeypatch.setattr(WorkspaceAuthority, "_write_revision_from_canonical", exploding)
         with pytest.raises(SupervisorError) as failed:
             _install(owner, ids, lease, bundle)
         monkeypatch.undo()
@@ -2426,3 +2430,362 @@ def test_install_preserves_an_existing_worklogs_directory_and_its_mode(site: Sit
         modes = {entry["path"]: entry["mode"] for entry in tree["entries"]}
         assert modes["worklogs"] == 0o700
         assert modes["worklogs/demo-project"] == 0o755
+
+
+# ---------------------------------------------------------------------------
+# STEP3 Q58 / CT107a — `publish_plan`: same-path canonical replacement
+#
+# The inverse of publish's order: the plan file *is* the irreversible point, and
+# the revision/pointer are completed forward afterwards. Every case therefore
+# also asserts that the canonical plan is either untouched or completely new.
+# ---------------------------------------------------------------------------
+
+PLAN_RELATIVE = "worklogs/demo/increments/increment-01-demo.md"
+PLAN_OLD = "# plan\n\n## SLICE1: first\n\nDo it.\n"
+PLAN_NEW = "# plan\n\n## SLICE1: first\n\nDo it.\n\n## SLICE2: repaired\n\nNow correctly.\n"
+
+
+def _with_plan(site: Site, *, mode: int = 0o644) -> Any:
+    path = site.source / PLAN_RELATIVE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(PLAN_OLD)
+    path.chmod(mode)
+    return read_plan_snapshot(site.source, Path(PLAN_RELATIVE)).ref
+
+
+def _publish_plan(owner: WorkspaceAuthority, plan_ref: Any, buffer: bytes = PLAN_NEW.encode(), **kwargs: Any) -> Any:
+    from fa.execution.publication import publish_plan
+
+    return publish_plan(
+        owner,
+        PEER,
+        ACTOR,
+        capability=kwargs.pop("capability", None) or kwargs.pop("grant").capability,
+        plan_ref=plan_ref,
+        buffer=buffer,
+        deadline=until(),
+    )
+
+
+def test_publish_plan_replaces_the_canonical_file_and_commits_a_revision(site: Site) -> None:
+    """producer-kill-check: replace the plan but never commit the revision/pointer."""
+    plan_ref = _with_plan(site, mode=0o640)
+    old_bytes = (site.source / PLAN_RELATIVE).read_bytes()
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        base_revision = _current(site, ids)["revision_id"]
+
+        result = _publish_plan(owner, plan_ref, grant=lease)
+
+        canonical = site.source / PLAN_RELATIVE
+        assert canonical.read_bytes() == PLAN_NEW.encode()  # complete new bytes, same path
+        assert canonical.stat().st_mode & 0o777 == 0o640  # mode preserved
+        assert result.plan_ref.workspace_relative_path == PLAN_RELATIVE
+        assert result.plan_ref.sha256 == hashlib.sha256(PLAN_NEW.encode()).hexdigest()
+        assert result.plan_ref.source_kind == plan_ref.source_kind
+        assert result.projection_complete is True
+
+        current = _current(site, ids)
+        assert current["revision_id"] == result.revision_id
+        assert current["tree_sha256"] == result.tree_sha256
+        tree = json.loads((_workspace(site, ids) / "revisions" / result.revision_id / "tree.json").read_text())
+        entries = {entry["path"]: entry for entry in tree["entries"]}
+        assert entries[PLAN_RELATIVE]["sha256"] == result.plan_ref.sha256
+        assert entries[PLAN_RELATIVE]["size"] == len(PLAN_NEW.encode())
+        assert result.tree_sha256 == hashlib.sha256(workspace_module._canonical(tree["entries"])).hexdigest()
+
+        # The superseded revision is retained byte-exact for its readers.
+        base_data = _workspace(site, ids) / "revisions" / base_revision / "data" / PLAN_RELATIVE
+        assert base_data.read_bytes() == old_bytes
+        # No temporary survived beside the plan or in the scratch.
+        assert not [path for path in canonical.parent.iterdir() if path.name.startswith(".")]
+        assert not [path for path in (site.source / ".fa" / "publish-tmp").iterdir() if path.name.endswith(".publish")]
+        assert _intent(site, ids) is None
+
+    # A fresh authority accepts the committed revision as its baseline.
+    with site.owner(view_profile=native_profile()) as reopened:
+        assert site.register(reopened)["revision_id"] == result.revision_id
+
+
+def test_publish_plan_refuses_a_stale_source_hash_and_changes_nothing(site: Site) -> None:
+    """producer-kill-check: drop the source-hash CAS (replace whatever is there)."""
+    plan_ref = _with_plan(site)
+    stale = type(plan_ref)(plan_ref.workspace_relative_path, plan_ref.source_kind, "0" * 64)
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        base_revision = _current(site, ids)["revision_id"]
+
+        with pytest.raises(SupervisorError) as refused:
+            _publish_plan(owner, stale, grant=lease)
+
+        assert refused.value.code == "STALE_REVISION"
+        assert (site.source / PLAN_RELATIVE).read_text() == PLAN_OLD
+        assert _current(site, ids)["revision_id"] == base_revision
+        assert _intent(site, ids) is None
+
+
+def test_publish_plan_refuses_a_plan_that_is_not_the_canonical_file(site: Site) -> None:
+    """producer-kill-check: replace any caller-named path (a general write API)."""
+    plan_ref = _with_plan(site)
+    # A committed, replaceable-looking file that is *not* a plan: without the
+    # shape rule this one would be replaced, so it is the real kill target.
+    roadmap = site.source / "worklogs/demo/roadmap.md"
+    roadmap.write_text("# roadmap\n")
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        absent = type(plan_ref)("worklogs/demo/increments/increment-02-other.md", plan_ref.source_kind, plan_ref.sha256)
+        outside = type(plan_ref)("src/fa/execution/workspace.py", plan_ref.source_kind, plan_ref.sha256)
+        roadmap_ref = read_plan_snapshot(site.source, Path("worklogs/demo/roadmap.md")).ref
+        not_a_plan = type(plan_ref)("worklogs/demo/notes/increment-01-demo.md", plan_ref.source_kind, plan_ref.sha256)
+        wrong_suffix = type(plan_ref)(
+            "worklogs/demo/increments/increment-01-demo.txt", plan_ref.source_kind, plan_ref.sha256
+        )
+        protected = type(plan_ref)("worklogs/.fa/increments/x.md", plan_ref.source_kind, plan_ref.sha256)
+        traversal = type(plan_ref)("worklogs/demo/increments/../../escape.md", plan_ref.source_kind, plan_ref.sha256)
+
+        for ref in (absent, outside, roadmap_ref, not_a_plan, wrong_suffix, traversal):
+            with pytest.raises(SupervisorError) as refused:
+                _publish_plan(owner, ref, grant=lease)
+            assert refused.value.code == "INPUT_POLICY", ref.workspace_relative_path
+        with pytest.raises(SupervisorError) as denied:
+            _publish_plan(owner, protected, grant=lease)
+        assert denied.value.code == "PATH_DENIED"
+
+        assert (site.source / PLAN_RELATIVE).read_text() == PLAN_OLD
+        assert roadmap.read_text() == "# roadmap\n"
+        assert _intent(site, ids) is None
+
+
+def test_publish_plan_refuses_bytes_that_are_not_a_plan(site: Site) -> None:
+    """producer-kill-check: write a caller buffer without the strict plan rules."""
+    from fa.inner_loop.plan_admission import MAX_PLAN_BYTES
+
+    plan_ref = _with_plan(site)
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+
+        for buffer in (b"\xff\xfe\x00", b"", b"   \n\t\n", b"# plan\n" + b"x" * MAX_PLAN_BYTES):
+            with pytest.raises(SupervisorError) as refused:
+                _publish_plan(owner, plan_ref, buffer, grant=lease)
+            assert refused.value.code == "INPUT_POLICY", buffer[:8]
+
+        # Identical bytes are not a replacement.
+        with pytest.raises(SupervisorError) as noop:
+            _publish_plan(owner, plan_ref, PLAN_OLD.encode(), grant=lease)
+        assert noop.value.code == "INPUT_POLICY"
+        assert (site.source / PLAN_RELATIVE).read_text() == PLAN_OLD
+
+
+def test_publish_plan_requires_the_owner_grant_and_no_live_view(site: Site) -> None:
+    """producer-kill-check: replace a plan under a live writer or a bad capability."""
+    plan_ref = _with_plan(site)
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        _view(owner, ids, lease)
+
+        with pytest.raises(SupervisorError) as busy:
+            _publish_plan(owner, plan_ref, grant=lease)
+        assert busy.value.code == "WORKSPACE_BUSY"
+
+        assert (site.source / PLAN_RELATIVE).read_text() == PLAN_OLD
+
+
+def test_publish_plan_refuses_a_wrong_capability(site: Site) -> None:
+    """producer-kill-check: accept any OWNER-capable caller (skip the grant proof)."""
+    plan_ref = _with_plan(site)
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+
+        with pytest.raises(SupervisorError) as unauthorized:
+            _publish_plan(owner, plan_ref, grant=lease, capability="0" * 64)
+
+        assert unauthorized.value.code == "UNAUTHORIZED"
+        assert (site.source / PLAN_RELATIVE).read_text() == PLAN_OLD
+
+
+def test_publish_plan_refuses_a_plan_swapped_for_a_link_before_the_replace(
+    site: Site, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """producer-kill-check: follow whatever sits at the plan path at replace time."""
+    outside = site.source.parent / "outside.md"
+    outside.write_text("# outside\n")
+    plan_ref = _with_plan(site)
+    real_stage = WorkspaceAuthority._plan_stage
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+
+        def stage_then_link(self: WorkspaceAuthority, binding: Any, inputs: Any, scratch: int) -> None:
+            real_stage(self, binding, inputs, scratch)
+            path = site.source / PLAN_RELATIVE
+            path.unlink()
+            path.symlink_to(outside)
+
+        monkeypatch.setattr(WorkspaceAuthority, "_plan_stage", stage_then_link)
+        with pytest.raises(SupervisorError) as refused:
+            _publish_plan(owner, plan_ref, grant=lease)
+        monkeypatch.undo()
+
+        assert refused.value.code == "PATH_DENIED"
+        assert (site.source / PLAN_RELATIVE).is_symlink()
+        assert outside.read_text() == "# outside\n"
+        assert _intent(site, ids) is None
+
+
+def test_a_symlinked_plan_can_never_reach_a_revision_to_be_replaced(site: Site) -> None:
+    """producer-kill-check: let a link stand in for the plan the authority replaces.
+
+    Both sides refuse before `publish_plan` can run: admission will not mint a
+    ref for a link, and registration will not admit a tree containing one. A
+    symlink is therefore not a "replaceable plan" in either direction.
+    """
+    outside = site.source.parent / "outside.md"
+    outside.write_text("# outside\n")
+    path = site.source / PLAN_RELATIVE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.symlink_to(outside)
+
+    with pytest.raises(PlanRefError) as admitted:
+        read_plan_snapshot(site.source, Path(PLAN_RELATIVE))
+    assert admitted.value.rule == "symlink"
+
+    with site.owner(view_profile=native_profile()) as owner:
+        with pytest.raises(SupervisorError) as refused:
+            site.register(owner)
+        assert refused.value.code in {"PATH_DENIED", "INPUT_POLICY"}
+
+    assert path.is_symlink()
+    assert outside.read_text() == "# outside\n"
+
+
+def test_publish_plan_refuses_after_a_concurrent_write_between_staging_and_replace(
+    site: Site, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """producer-kill-check: check the source hash once, then replace blindly (Q58 CAS)."""
+    plan_ref = _with_plan(site)
+    real_stage = WorkspaceAuthority._plan_stage
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+
+        def stage_then_lose_the_race(self: WorkspaceAuthority, binding: Any, inputs: Any, scratch: int) -> None:
+            real_stage(self, binding, inputs, scratch)
+            (site.source / PLAN_RELATIVE).write_text("# someone else wrote this\n")
+
+        monkeypatch.setattr(WorkspaceAuthority, "_plan_stage", stage_then_lose_the_race)
+        with pytest.raises(SupervisorError) as refused:
+            _publish_plan(owner, plan_ref, grant=lease)
+        monkeypatch.undo()
+
+        assert refused.value.code == "STALE_REVISION"
+        # The foreign write is preserved: this attempt replaced nothing.
+        assert (site.source / PLAN_RELATIVE).read_text() == "# someone else wrote this\n"
+        assert _intent(site, ids) is None
+
+
+def test_publish_plan_refuses_bytes_that_are_not_the_ones_it_staged(
+    site: Site, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """producer-kill-check: install a revision from the expectation, never the copy.
+
+    Q58's post-replace byte proof is the revision copy itself, so this is where
+    bytes that differ from the staged buffer must be refused — after the
+    replace, with the intent kept and no revision installed.
+    """
+    plan_ref = _with_plan(site, mode=0o600)
+    wrong = PLAN_NEW.replace("repaired", "REPAIRED")  # same length, different bytes
+    real_stage = WorkspaceAuthority._plan_stage
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        base_revision = _current(site, ids)["revision_id"]
+
+        def stage_then_swap(self: WorkspaceAuthority, binding: Any, inputs: Any, scratch: int) -> None:
+            real_stage(self, binding, inputs, scratch)
+            fd = os.open(inputs.temporary, os.O_WRONLY, dir_fd=scratch)
+            try:
+                os.pwrite(fd, wrong.encode(), 0)
+            finally:
+                os.close(fd)
+
+        monkeypatch.setattr(WorkspaceAuthority, "_plan_stage", stage_then_swap)
+        with pytest.raises(SupervisorError) as refused:
+            _publish_plan(owner, plan_ref, grant=lease)
+        monkeypatch.undo()
+
+        assert refused.value.code == "CORRUPT_STATE"
+        # Same length, so only the copy's digest proof can see it.
+        assert len(wrong.encode()) == len(PLAN_NEW.encode())
+        assert (site.source / PLAN_RELATIVE).read_bytes() == wrong.encode()
+        assert _current(site, ids)["revision_id"] == base_revision
+        intent = _intent(site, ids)
+        assert intent is not None and intent["phase"] == "PREPARED"
+        # The workspace refuses further work: the canonical tree is no longer
+        # the committed revision, so every forward step would begin from a lie.
+        with pytest.raises(SupervisorError) as unusable:
+            site.register(owner)
+        assert unusable.value.code == "CORRUPT_STATE"
+
+
+def test_publish_plan_refuses_a_replaced_plan_with_the_wrong_mode(site: Site, monkeypatch: pytest.MonkeyPatch) -> None:
+    """producer-kill-check: compare bytes only and never the mode (Q58)."""
+    plan_ref = _with_plan(site, mode=0o640)
+    real_stage = WorkspaceAuthority._plan_stage
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+
+        def stage_then_lose_the_mode(self: WorkspaceAuthority, binding: Any, inputs: Any, scratch: int) -> None:
+            real_stage(self, binding, inputs, scratch)
+            os.chmod(inputs.temporary, 0o600, dir_fd=scratch)  # mode lost in staging
+
+        monkeypatch.setattr(WorkspaceAuthority, "_plan_stage", stage_then_lose_the_mode)
+        with pytest.raises(SupervisorError) as refused:
+            _publish_plan(owner, plan_ref, grant=lease)
+        monkeypatch.undo()
+
+        assert refused.value.code == "CORRUPT_STATE"
+        assert (site.source / PLAN_RELATIVE).read_bytes() == PLAN_NEW.encode()
+        intent = _intent(site, ids)
+        assert intent is not None and intent["phase"] == "PREPARED"
+
+
+def test_a_failure_after_the_plan_replace_keeps_the_new_bytes_and_the_intent(
+    site: Site, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """producer-kill-check: roll a replaced plan back, or replace without an intent."""
+    plan_ref = _with_plan(site)
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        base_revision = _current(site, ids)["revision_id"]
+
+        def exploding(*_args: Any, **_kwargs: Any) -> None:
+            raise OSError(5, "injected post-replace failure")
+
+        monkeypatch.setattr(WorkspaceAuthority, "_write_revision_from_canonical", exploding)
+        with pytest.raises(SupervisorError) as failed:
+            _publish_plan(owner, plan_ref, grant=lease)
+        monkeypatch.undo()
+
+        assert failed.value.code == "DURABILITY_UNKNOWN"
+        # Q58: the replacement is never rolled back.
+        assert (site.source / PLAN_RELATIVE).read_bytes() == PLAN_NEW.encode()
+        intent = _intent(site, ids)
+        assert intent is not None
+        assert intent["kind"] == "PLAN"
+        assert intent["target_relative"] == PLAN_RELATIVE
+        assert intent["old_sha256"] == plan_ref.sha256
+        assert intent["new_sha256"] == hashlib.sha256(PLAN_NEW.encode()).hexdigest()
+        assert intent["phase"] == "PREPARED"
+        assert _current(site, ids)["revision_id"] == base_revision
+        # Unknown side of the boundary: the authority stops serving.
+        with pytest.raises(SupervisorError) as unusable:
+            site.register(owner)
+        assert unusable.value.code == "CORRUPT_STATE"
