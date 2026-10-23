@@ -1318,6 +1318,8 @@ def test_publish_refuses_to_start_on_top_of_a_foreign_intent(site: Site) -> None
             "target_relative": None,
             "old_sha256": None,
             "new_sha256": None,
+            "created_directories": [],
+            "view_ref": ref(grant).to_dict(),
         }
         planted_path = _workspace(site, ids) / "intent.json"
         planted_path.write_text(json.dumps(planted))
@@ -1627,7 +1629,6 @@ def test_publish_refuses_a_writer_generation_that_moved_after_the_view(site: Sit
 
 def test_the_projection_verifier_refuses_a_tree_that_differs_from_the_manifest(site: Site) -> None:
     """producer-kill-check: make `_verify_projection` a no-op (R8's completion proof)."""
-    from dataclasses import replace
 
     with site.owner(view_profile=native_profile()) as owner:
         ids = ok(lambda: site.register(owner))
@@ -1658,7 +1659,10 @@ def test_the_projection_verifier_refuses_a_tree_that_differs_from_the_manifest(s
 
         with pytest.raises(SupervisorError) as refused:
             owner._verify_projection(
-                owner._binding(ids["workspace_id"]), replace(inputs, entries=(*inputs.entries, ghost)), until()
+                owner._binding(ids["workspace_id"]),
+                (*inputs.entries, ghost),
+                inputs.tree_sha256,
+                until(),
             )
 
         assert refused.value.code == "CORRUPT_STATE"

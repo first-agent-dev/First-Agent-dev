@@ -2065,3 +2065,36 @@ the bundle's own 32 hex characters under the `op-` prefix. Reasons, in order:
 multi-project bootstrap) or to retry a *failed* install under a new identity, the derivation stops being
 sufficient and the payload must carry the id. Nothing in the current plan asks for either.
 
+
+## Q84 — When forward recovery cannot settle a workspace, what fails: the workspace or the authority?
+
+**Status: ANSWERED by implementation (2026-10-23, E276), reviewable — not blocking.**
+
+**The gap.** CT107 says an unrecoverable attempt is "quarantined", but §5.1's recovery rows describe
+`CORRUPT_STATE` as the outcome without saying who pays for it. `_load` already writes
+`OWNED -> QUARANTINED` for every owned workspace on every start (CT104: a restart cannot release a live
+old writer), so a per-workspace quarantine exists and is cheap; a whole-start refusal also exists (any
+unprovable workspace record already fails `__enter__`). E275 recorded the question with the default
+"today's behaviour" and left it non-blocking.
+
+**Decision taken: quarantine the workspace, refuse the start only for uncertainty about the authority's
+own writes.** Concretely, `_recover_at_load` swallows every `SupervisorError` except `DURABILITY_UNKNOWN`:
+an indeterminate attempt keeps its `intent.json` (evidence), the existing `OWNED -> QUARANTINED` write
+holds that workspace, and every other workspace keeps loading. `DURABILITY_UNKNOWN` — a write that no
+longer reads back, `_write_intent`/`_clear_intent` having poisoned `_healthy` — refuses the whole start.
+Reasons, in order:
+
+1. **It is what the code already does.** A leftover intent used to leave the workspace `QUARANTINED` and
+   the authority serving; making one corrupt attempt fail the process would be a new blast radius, not a
+   conservative default.
+2. **Blast radius is the whole point of a quarantine.** Recovery failures are per-workspace facts (these
+   bytes, this intent). Turning one into "no supervisor at all" disables unrelated projects that share
+   the catalog but not the fault.
+3. **The two failures are not the same kind of statement.** "I cannot prove this attempt's outcome" is a
+   local claim; "my own durable writes do not read back" is a global one. Only the second justifies
+   refusing to serve, and `_healthy` already encodes exactly that rule.
+
+**What would reopen it.** If an operator ever needs the authority to *keep* serving after
+`DURABILITY_UNKNOWN` (e.g. a read-only degraded mode), or if quarantine must become reversible without a
+human (a retry budget, an operator command), the per-workspace rule needs a status distinct from the
+existing "previous epoch is dead" flip. Nothing in the current plan asks for either.

@@ -23,7 +23,7 @@ import threading
 import time
 from collections.abc import Callable, Generator, Mapping, Sequence
 from contextlib import AbstractContextManager, ExitStack, contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path, PurePosixPath
 from types import TracebackType
 from typing import Any, Self, override
@@ -158,6 +158,14 @@ _INTENT = fastjsonschema.compile(
         target_relative=_nullable({"type": "string", "maxLength": 4096}),
         old_sha256=_nullable(SHA),
         new_sha256=_nullable(SHA),
+        # Q82: the directories an install attempt created, so recovery removes
+        # exactly those (and never a pre-existing one) when the rename did not
+        # happen. Empty for every other kind.
+        created_directories={"type": "array", "items": {"type": "string", "maxLength": 4096}, "maxItems": 16},
+        # E276: the view a REVISION attempt publishes, so recovery settles its
+        # record (`PUBLISHED`) instead of leaving a SEALED view holding committed
+        # bytes that no retry may touch. Null for PLAN and BOOTSTRAP.
+        view_ref=_nullable(VIEW),
     )
 )
 _ENTRY = _object(
@@ -228,6 +236,9 @@ _PLAN_PARENT = "worklogs"
 _PLAN_SEGMENT = "increments"
 _PLAN_SUFFIX = ".md"
 _SHA_TEXT = re.compile(str(SHA["pattern"]))
+# E276: `pending/` stage names are exactly `uuid4().hex`; anything else there is
+# not this authority's scratch and is refused rather than deleted.
+_STAGE_NAME = re.compile(r"[0-9a-f]{32}")
 
 
 def _derive_revision_id(manifest: Mapping[str, Any]) -> str:
@@ -1029,6 +1040,10 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
         return capture.finish()
 
     def _load(self) -> None:
+        # E276: a hard kill leaves staging in this authority's own scratch. It is
+        # classified before any workspace is bound, so a later load can never
+        # mistake abandoned scratch for work in progress.
+        self._discard_pending()
         for workspace_id in sorted(os.listdir(self._catalog)):
             _hex_id(workspace_id, "ws-")
             fd = os.open(workspace_id, _DIRECTORY, dir_fd=self._catalog)
@@ -1048,17 +1063,43 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
             self._disjoint(binding)
             self._verify_revision(binding, time.monotonic() + 120)
             self._initialize_genesis(binding)
+            # E276/CT107: forward recovery runs before the quarantine decision, so
+            # a killed attempt is finished or discarded instead of being frozen by
+            # the `OWNED -> QUARANTINED` write below. It may advance the pointer,
+            # which is why the Q80 check reads `binding.current`, not `current`.
+            self._recover_at_load(binding)
             # Q80: after genesis normalizes a legacy 0 to 1, the pointer must
             # name this workspace and no later epoch than its owner metadata.
             # Equality is NOT required: release + re-claim legally advances
             # workspace.json past the epoch that committed the pointer.
-            if current["workspace_id"] != workspace_id or current["generation"] > binding.metadata["generation"]:
+            if (
+                binding.current["workspace_id"] != workspace_id
+                or binding.current["generation"] > binding.metadata["generation"]
+            ):
                 raise SupervisorError("CORRUPT_STATE")
             if metadata["status"] == "OWNED":
                 metadata["status"] = "QUARANTINED"
                 _replace_private_bytes(fd, "workspace.json", encode_json(metadata))
             self._stack.callback(binding.close_writer)
             self._bindings[workspace_id] = binding
+
+    def _recover_at_load(self, binding: _Binding) -> None:
+        """Recover one workspace's in-flight attempt, quarantining only that one.
+
+        A workspace this authority cannot settle is left exactly as the kill left
+        it — intent, revision and canonical bytes untouched — and the `OWNED ->
+        QUARANTINED` write in `_load` holds it while every other workspace keeps
+        loading. Only `DURABILITY_UNKNOWN` escapes: when the disk no longer says
+        what it said for this authority's own writes, nothing else it would report
+        can be trusted either (Q84).
+        """
+        if binding.metadata["status"] != "OWNED" or self._read_intent(binding.fd) is None:
+            return
+        try:
+            self._recover_intent(binding, time.monotonic() + 120)
+        except SupervisorError as error:
+            if error.code == "DURABILITY_UNKNOWN":
+                raise
 
     @staticmethod
     def _initialize_genesis(binding: _Binding) -> None:
@@ -2688,6 +2729,9 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
             binding = self._owner_only(peer, namespace, capability)
             inputs = self._install_prepare(binding, validated_bundle_id, project_slug, deadline)
             parent, created = self._install_destination(binding.source, inputs.target_relative)
+            # Q82: the intent names the directories THIS attempt created, so a
+            # crash before the rename can remove exactly those and no other.
+            inputs = replace(inputs, intent={**inputs.intent, "created_directories": created})
             scratch = -1
             renamed = False
             try:
@@ -2806,6 +2850,8 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                 "target_relative": target,
                 "old_sha256": None,
                 "new_sha256": str(manifest["bundle_sha256"]),
+                "created_directories": [],  # filled in once the destination exists
+                "view_ref": None,
             },
         )
 
@@ -2992,22 +3038,30 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
         try:
             if scratch != -1:
                 self._discard_stage(scratch, inputs.operation_id)
-            for path in reversed(created):  # deepest first
-                try:
-                    parts = path.split("/")
-                    parent = os.open(
-                        "." if len(parts) == 1 else "/".join(parts[:-1]), _DIRECTORY, dir_fd=binding.source
-                    )
-                    try:
-                        os.rmdir(parts[-1], dir_fd=parent)
-                    finally:
-                        os.close(parent)
-                except OSError:
-                    pass  # not ours to empty: someone else's bytes already live here
+            self._remove_created(binding, created)
             if self._read_intent(binding.fd) is not None:
                 self._clear_intent(binding.fd)
         except (OSError, SupervisorError):
             pass  # the original refusal is the fact the caller must see
+
+    @staticmethod
+    def _remove_created(binding: _Binding, created: Sequence[str]) -> None:
+        """Remove exactly the directories one attempt recorded creating, deepest first.
+
+        `rmdir` only ever removes an empty directory, so this can never delete a
+        file, a link or a directory that has since gained content: the worst case
+        is a leftover empty directory, which the next attempt tolerates.
+        """
+        for path in reversed(created):
+            try:
+                parts = path.split("/")
+                parent = os.open("." if len(parts) == 1 else "/".join(parts[:-1]), _DIRECTORY, dir_fd=binding.source)
+                try:
+                    os.rmdir(parts[-1], dir_fd=parent)
+                finally:
+                    os.close(parent)
+            except OSError:
+                pass  # not ours to empty: someone else's bytes already live here
 
     def _discard_stage(self, scratch: int, name: str) -> None:
         """Remove this operation's own staging directory, if a prior attempt left one."""
@@ -3047,26 +3101,17 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
     def _install_finish(self, binding: _Binding, inputs: _InstallInputs, deadline: float) -> dict[str, Any]:
         """Revision, pointer, proof, DONE — all forward-only after the rename."""
         try:
-            self._write_revision_from_canonical(
-                binding,
-                revision_id=inputs.revision_id,
-                tree_sha256=inputs.tree_sha256,
-                entries=inputs.entries,
-                deadline=deadline,
-            )
-            self._commit_pointer(
+            self._finish_forward(
                 binding,
                 workspace_id=inputs.workspace_id,
                 generation=inputs.generation,
+                base_revision=inputs.base_revision,
                 revision_id=inputs.revision_id,
                 tree_sha256=inputs.tree_sha256,
-                base_revision=inputs.base_revision,
+                entries=inputs.entries,
                 intent=inputs.intent,
+                deadline=deadline,
             )
-            _, digest = self._snapshot(binding.source, None, deadline)
-            if digest != inputs.tree_sha256:
-                raise SupervisorError("CORRUPT_STATE")
-            self._set_intent_phase(binding.fd, inputs.intent, "DONE")
         except OSError:
             # The directory exists; only forward recovery may finish this.
             self._healthy = False
@@ -3084,6 +3129,51 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
             "operation_id": inputs.operation_id,
             "projection_complete": True,
         }
+
+    def _finish_forward(
+        self,
+        binding: _Binding,
+        *,
+        workspace_id: str,
+        generation: int,
+        base_revision: str,
+        revision_id: str,
+        tree_sha256: str,
+        entries: Sequence[Mapping[str, Any]],
+        intent: Mapping[str, Any],
+        deadline: float,
+    ) -> None:
+        """Revision, pointer, proof, DONE: the one forward-only tail of every kind.
+
+        Before the pointer the revision is written from canonical and refused
+        unless the copy is exactly the expected tree. After it the same call is
+        the idempotent completion recovery needs: the pointer already names
+        `revision_id`, so only the proof and the durable `DONE` marker are
+        restated. Nothing here ever rolls committed bytes back.
+        """
+        if binding.current["revision_id"] == base_revision:
+            self._write_revision_from_canonical(
+                binding,
+                revision_id=revision_id,
+                tree_sha256=tree_sha256,
+                entries=entries,
+                deadline=deadline,
+            )
+            self._commit_pointer(
+                binding,
+                workspace_id=workspace_id,
+                generation=generation,
+                revision_id=revision_id,
+                tree_sha256=tree_sha256,
+                base_revision=base_revision,
+                intent=dict(intent),
+            )
+        elif binding.current["revision_id"] != revision_id:
+            raise SupervisorError("CORRUPT_STATE")  # neither side of this attempt
+        _, digest = self._snapshot(binding.source, None, deadline)
+        if digest != tree_sha256:
+            raise SupervisorError("CORRUPT_STATE")
+        self._set_intent_phase(binding.fd, dict(intent), "DONE")
 
     def _write_revision_from_canonical(
         self,
@@ -3263,10 +3353,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
         existing = {entry["path"]: entry for entry in base_entries}.get(path)
         if existing is None or existing["type"] != "file":
             raise SupervisorError("INPUT_POLICY")  # not a committed plan file
-        entries = tuple(
-            {**entry, "size": len(buffer), "sha256": new_sha256} if entry["path"] == path else entry
-            for entry in base_entries
-        )
+        entries = self._plan_entries(base_entries, path, len(buffer), new_sha256)
         tree_sha256 = hashlib.sha256(_canonical(list(entries))).hexdigest()
         base_revision = binding.current["revision_id"]
         operation_id = "op-" + hashlib.sha256(f"plan\x00{base_revision}\x00{new_sha256}".encode()).hexdigest()[:32]
@@ -3312,7 +3399,24 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                 "target_relative": path,
                 "old_sha256": plan_ref.sha256,
                 "new_sha256": new_sha256,
+                "created_directories": [],
+                "view_ref": None,
             },
+        )
+
+    @staticmethod
+    def _plan_entries(
+        base_entries: Sequence[Mapping[str, Any]], path: str, size: int, sha256: str
+    ) -> tuple[dict[str, Any], ...]:
+        """The whole post-replacement tree: this one file's facts change, no other.
+
+        Shared with recovery, which observes the replaced file's size and hash
+        and must rebuild byte-identical entries to the ones the live attempt
+        intended; one formula means the two can never disagree.
+        """
+        return tuple(
+            {**entry, "size": size, "sha256": sha256} if entry["path"] == path else dict(entry)
+            for entry in base_entries
         )
 
     @staticmethod
@@ -3405,26 +3509,17 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
         """
         try:
             os.fsync(parent)  # the new name is durable before any revision names it
-            self._write_revision_from_canonical(
-                binding,
-                revision_id=inputs.revision_id,
-                tree_sha256=inputs.tree_sha256,
-                entries=inputs.entries,
-                deadline=deadline,
-            )
-            self._commit_pointer(
+            self._finish_forward(
                 binding,
                 workspace_id=inputs.workspace_id,
                 generation=inputs.generation,
+                base_revision=inputs.base_revision,
                 revision_id=inputs.revision_id,
                 tree_sha256=inputs.tree_sha256,
-                base_revision=inputs.base_revision,
+                entries=inputs.entries,
                 intent=inputs.intent,
+                deadline=deadline,
             )
-            _, digest = self._snapshot(binding.source, None, deadline)
-            if digest != inputs.tree_sha256:
-                raise SupervisorError("CORRUPT_STATE")
-            self._set_intent_phase(binding.fd, inputs.intent, "DONE")
         except OSError:
             self._healthy = False
             raise SupervisorError("DURABILITY_UNKNOWN") from None
@@ -3607,6 +3702,8 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                     "target_relative": None,
                     "old_sha256": None,
                     "new_sha256": None,
+                    "created_directories": [],
+                    "view_ref": inputs.view_ref.to_dict(),
                 },
             )
 
@@ -3676,20 +3773,35 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                 raise SupervisorError("WORKSPACE_BUSY")
             if binding.current["revision_id"] != inputs.revision_id:
                 raise SupervisorError("CORRUPT_STATE")
-            published = {**view.record, "state": "PUBLISHED"}
             try:
-                self._project_entries(binding, view, inputs, deadline)
-                self._verify_projection(binding, inputs, deadline)
+                self._project_entries(binding, view.source, inputs.entries, deadline)
+                self._verify_projection(binding, inputs.entries, inputs.tree_sha256, deadline)
+                # Settle the owner BEFORE clearing the intent: a kill in between
+                # must still leave enough evidence for recovery to finish the
+                # same operation, never a SEALED view holding committed bytes.
+                view.record = self._settle_view(view.directory, view.record)
                 self._set_intent_phase(binding.fd, intent, "DONE")
                 self._clear_intent(binding.fd)
-                _replace_private_bytes(view.directory, "view.json", encode_json(published))
-                if _read_json(view.directory, "view.json", _VIEW_RECORD, 1024**2) != published:
-                    raise SupervisorError("DURABILITY_UNKNOWN")
             except (OSError, SupervisorError):
                 self._healthy = False
                 raise SupervisorError("DURABILITY_UNKNOWN") from None
-            view.record = published
             return self._published_receipt(inputs)
+
+    @staticmethod
+    def _settle_view(directory: int, record: dict[str, Any]) -> dict[str, Any]:
+        """Flip a completed publish's view record to `PUBLISHED`; idempotent.
+
+        This write is what settles the owner (only PUBLISHED/REJECTED views are
+        releasable), so it is the last durable state a publish owes. It is safe to
+        replay: the same record rewritten is the same bytes on disk.
+        """
+        published = {**record, "state": "PUBLISHED"}
+        if published == record:
+            return record
+        _replace_private_bytes(directory, "view.json", encode_json(published))
+        if _read_json(directory, "view.json", _VIEW_RECORD, 1024**2) != published:
+            raise SupervisorError("DURABILITY_UNKNOWN")
+        return published
 
     def verify_publication(
         self, peer: PeerIdentity, namespace: NamespaceRef, *, capability: str, inputs: _PublishInputs, deadline: float
@@ -3700,7 +3812,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
             if view.record["state"] != "PUBLISHED" or binding.current["revision_id"] != inputs.revision_id:
                 raise SupervisorError("CORRUPT_STATE")
             self._unchanged(binding, deadline)
-            self._verify_projection(binding, inputs, deadline)
+            self._verify_projection(binding, inputs.entries, inputs.tree_sha256, deadline)
             return self._published_receipt(inputs)
 
     def abandon_publication(
@@ -3865,33 +3977,45 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
             if not installed and stage.exists():
                 shutil.rmtree(stage)  # Only this uninstalled, service-private staging tree.
 
-    def _project_entries(self, binding: _Binding, view: _ProjectView, inputs: _PublishInputs, deadline: float) -> None:
-        """Apply live entries (directories, files, links) then tombstones."""
+    def _project_entries(
+        self,
+        binding: _Binding,
+        source: int,
+        entries: Sequence[Mapping[str, Any]],
+        deadline: float,
+    ) -> None:
+        """Apply live entries (directories, files, links) then tombstones.
+
+        `source` is the trusted byte origin: a live publish passes the sealed
+        view's frozen copy, recovery passes the committed revision's own data.
+        Both are proved equal to `entries` before this runs; the projection never
+        reads the canonical tree it is rewriting.
+        """
         self._sweep_temporaries(binding.source)
         directories = sorted(
-            (entry for entry in inputs.entries if entry["type"] == "directory" and not entry["deleted"]),
+            (entry for entry in entries if entry["type"] == "directory" and not entry["deleted"]),
             key=lambda entry: (entry["path"].count("/"), entry["path"]),
         )
         for entry in directories:
             _budget(deadline)
             self._project_directory(binding, entry)
-        for entry in inputs.entries:
+        for entry in entries:
             if entry["deleted"] or entry["type"] == "directory":
                 continue
             _budget(deadline)
             if entry["type"] == "symlink":
                 self._project_link(binding, entry)
             else:
-                self._project_file(binding, view, entry, deadline)
+                self._project_file(binding, source, entry, deadline)
         for entry in sorted(
-            (entry for entry in inputs.entries if entry["deleted"]),
+            (entry for entry in entries if entry["deleted"]),
             key=lambda entry: entry["path"].count("/"),
             reverse=True,
         ):
             _budget(deadline)
             self._project_tombstone(binding, entry)
 
-    def _project_directory(self, binding: _Binding, entry: dict[str, Any]) -> None:
+    def _project_directory(self, binding: _Binding, entry: Mapping[str, Any]) -> None:
         parent = self._project_parent(binding.source, entry["path"])
         try:
             name = entry["path"].rsplit("/", 1)[-1]
@@ -3913,7 +4037,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
         finally:
             os.close(parent)
 
-    def _project_link(self, binding: _Binding, entry: dict[str, Any]) -> None:
+    def _project_link(self, binding: _Binding, entry: Mapping[str, Any]) -> None:
         parent = self._project_parent(binding.source, entry["path"])
         try:
             name = entry["path"].rsplit("/", 1)[-1]
@@ -3983,14 +4107,14 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
         finally:
             os.close(directory)
 
-    def _project_file(self, binding: _Binding, view: _ProjectView, entry: dict[str, Any], deadline: float) -> None:
+    def _project_file(self, binding: _Binding, source_root: int, entry: Mapping[str, Any], deadline: float) -> None:
         parent = self._project_parent(binding.source, entry["path"])
         scratch = -1
         try:
             name = entry["path"].rsplit("/", 1)[-1]
             if self._project_matches(parent, name, entry):
                 return
-            source = self._open_relative(view.source, entry["path"])
+            source = self._open_relative(source_root, entry["path"])
             scratch = self._temporary_directory(binding.source)
             temporary = f".{name}.{uuid4().hex}{_TEMPORARY_SUFFIX}"
             created = False
@@ -4041,7 +4165,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
             os.close(parent)
 
     @staticmethod
-    def _project_matches(parent: int, name: str, entry: dict[str, Any]) -> bool:
+    def _project_matches(parent: int, name: str, entry: Mapping[str, Any]) -> bool:
         """Idempotence oracle: exact bytes, mode and type, or the entry is rewritten."""
         try:
             info = os.stat(name, dir_fd=parent, follow_symlinks=False)
@@ -4067,7 +4191,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
         finally:
             os.close(fd)
 
-    def _project_tombstone(self, binding: _Binding, entry: dict[str, Any]) -> None:
+    def _project_tombstone(self, binding: _Binding, entry: Mapping[str, Any]) -> None:
         try:
             parent = self._project_parent(binding.source, entry["path"])
         except FileNotFoundError:
@@ -4119,16 +4243,22 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
         finally:
             os.close(parent)
 
-    def _verify_projection(self, binding: _Binding, inputs: _PublishInputs, deadline: float) -> None:
+    def _verify_projection(
+        self,
+        binding: _Binding,
+        entries: Sequence[Mapping[str, Any]],
+        tree_sha256: str,
+        deadline: float,
+    ) -> None:
         """The complete canonical tree must equal the manifest's live entries."""
         actual, digest = self._snapshot(binding.source, None, deadline)
-        live = [dict(entry) for entry in inputs.entries if not entry["deleted"]]
+        live = [dict(entry) for entry in entries if not entry["deleted"]]
         if len(actual) != len(live):
             raise SupervisorError("CORRUPT_STATE")
         for got, wanted in zip(actual, live, strict=True):
             if got != wanted:
                 raise SupervisorError("CORRUPT_STATE")
-        if digest != inputs.tree_sha256:
+        if digest != tree_sha256:
             raise SupervisorError("CORRUPT_STATE")
 
     def _read_intent(self, fd: int) -> dict[str, Any] | None:
@@ -4172,6 +4302,251 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
         except OSError:
             self._healthy = False
             raise SupervisorError("DURABILITY_UNKNOWN") from None
+
+    # -- Forward recovery (E276 / CT107): inspect the target, never roll back ---
+
+    def _discard_pending(self) -> None:
+        """Discard exactly the staging a hard kill left in this authority's scratch.
+
+        `pending/<uuid4().hex>` has two producers and no others: `store_bundle`'s
+        bundle copy and `_write_revision_from_canonical`'s revision copy. Both are
+        re-derivable from what they copy and neither is ever the committed
+        artifact — a committed revision lives under `workspaces/<id>/revisions/`
+        and is never touched here, so a staged copy can neither be promoted nor
+        mistaken for one. A name this authority cannot prove it created is refused
+        instead of deleted: unattributable bytes in private state are a fact for
+        an operator, not garbage to guess about.
+        """
+        with _private_artifact_directory(self._state) as state_fd:
+            pending = os.open("pending", _DIRECTORY, dir_fd=state_fd)
+            try:
+                _private(pending)
+                for name in os.listdir(pending):
+                    if _STAGE_NAME.fullmatch(name) is None:
+                        raise SupervisorError("CORRUPT_STATE")
+                    info = os.stat(name, dir_fd=pending, follow_symlinks=False)
+                    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+                        raise SupervisorError("CORRUPT_STATE")
+                    self._discard_stage(pending, name)
+            finally:
+                os.close(pending)
+
+    def _recover_intent(self, binding: _Binding, deadline: float) -> None:
+        """Finish, discard or refuse the one forward-only attempt a kill left.
+
+        `_load` calls this before the workspace is bound, so recovery never serves
+        a caller and needs no grant: it is the authority inspecting its own state.
+        The discriminator is the inspected target — the revision `current.json`
+        names, the canonical plan's hash, the installed project directory — never
+        `phase` (E272 note): `PREPARED` legitimately exists on both sides of every
+        irreversible point, so a phase value may corroborate an observation but
+        may never stand in for one.
+        """
+        intent = self._read_intent(binding.fd)
+        if intent is None:
+            return
+        if (
+            intent["workspace_id"] != binding.metadata["workspace_id"]
+            or intent["generation"] != binding.metadata["generation"]
+        ):
+            raise SupervisorError("CORRUPT_STATE")  # another workspace's or another epoch's attempt
+        if intent["kind"] == "REVISION":
+            self._recover_revision(binding, intent, deadline)
+        elif intent["kind"] == "PLAN":
+            self._recover_plan(binding, intent, deadline)
+        else:
+            self._recover_bootstrap(binding, intent, deadline)
+        # One place settles the attempt: every branch above ends with the durable
+        # state its kind owes (`DONE`, or nothing to finish), so clearing here is
+        # the single commit point of recovery and can never be skipped per-branch.
+        self._clear_intent(binding.fd)
+
+    def _recover_revision(self, binding: _Binding, intent: dict[str, Any], deadline: float) -> None:
+        """`current.json` alone says whether the pointer replace happened (§5.1).
+
+        Before the replace no canonical byte was written (the intent is durable
+        first), so the attempt is discardable — and `_load` has already proved the
+        current revision's own bytes exist. After it, projection is a pure
+        function of that revision, so replaying it converges; the view is settled
+        only once the canonical tree matches, which is what makes the recovered
+        publish indistinguishable from one that never died.
+        """
+        base, revision_id = intent["base_revision"], intent["next_revision"]
+        current = binding.current["revision_id"]
+        if current == base:
+            if intent["phase"] != "PREPARED":
+                raise SupervisorError("CORRUPT_STATE")  # a projected phase without a commit
+            self._discard_revision(binding, revision_id)  # uncommitted, owned, re-derivable
+            return
+        if current != revision_id or not self._revision_exists(binding, revision_id, deadline):
+            raise SupervisorError("CORRUPT_STATE")  # not this attempt's revision, or not there
+        directory, record = self._recover_view(binding, intent)
+        try:
+            with self._revision(binding, revision_id, deadline) as (data, tree, _child):
+                entries = tuple(tree["entries"])
+                if tree["tree_sha256"] != intent["tree_sha256"]:
+                    raise SupervisorError("CORRUPT_STATE")
+                self._project_entries(binding, data, entries, deadline)
+                self._verify_projection(binding, entries, intent["tree_sha256"], deadline)
+            self._settle_view(directory, record)
+            self._set_intent_phase(binding.fd, intent, "DONE")
+        finally:
+            os.close(directory)
+
+    def _recover_plan(self, binding: _Binding, intent: dict[str, Any], deadline: float) -> None:
+        """The plan file's own hash decides; replaced bytes are never rolled back.
+
+        The intent names the base revision, so the completed tree is recomputable
+        from it plus the observed size and hash of the file on disk — and it must
+        equal the tree the intent promised. That single rule is what refuses a
+        third version: bytes that are neither side of this replacement rebuild a
+        tree the attempt never promised, so nothing here overwrites them.
+        """
+        target = intent["target_relative"]
+        if not isinstance(target, str) or intent["old_sha256"] is None or intent["new_sha256"] is None:
+            raise SupervisorError("CORRUPT_STATE")
+        self._sweep_temporaries(binding.source)  # the killed attempt's staged buffer
+        observed = self._plan_target_hash(binding, target)
+        if observed is None:
+            raise SupervisorError("CORRUPT_STATE")  # the plan is gone: neither side is provable
+        sha256, size = observed
+        base = intent["base_revision"]
+        if sha256 == intent["old_sha256"]:
+            if binding.current["revision_id"] != base:
+                raise SupervisorError("CORRUPT_STATE")  # a pointer to bytes never produced
+            self._discard_revision(binding, intent["next_revision"])
+            return
+        if binding.current["revision_id"] not in {base, intent["next_revision"]}:
+            raise SupervisorError("CORRUPT_STATE")
+        with self._revision(binding, base, deadline) as (_data, tree, _child):
+            base_entries = tuple(dict(entry) for entry in tree["entries"])
+        entries = self._plan_entries(base_entries, target, size, sha256)
+        tree_sha256 = hashlib.sha256(_canonical(list(entries))).hexdigest()
+        if tree_sha256 != intent["tree_sha256"]:
+            raise SupervisorError("CORRUPT_STATE")  # the intent does not describe these bytes
+        self._finish_forward(
+            binding,
+            workspace_id=intent["workspace_id"],
+            generation=intent["generation"],
+            base_revision=base,
+            revision_id=intent["next_revision"],
+            tree_sha256=tree_sha256,
+            entries=entries,
+            intent=intent,
+            deadline=deadline,
+        )
+
+    def _recover_bootstrap(self, binding: _Binding, intent: dict[str, Any], deadline: float) -> None:
+        """The installed directory decides; a valid install is never deleted (Q82).
+
+        Absent means `RENAME_NOREPLACE` never happened: the attempt is undone by
+        discarding its own scratch and removing exactly the directories it
+        recorded creating. Present means the rename succeeded, so the whole
+        canonical tree must hash to the intent's approved tree and the
+        revision/pointer/proof are completed forward. A directory that is there
+        but does not match is never repaired and never removed.
+        """
+        target = intent["target_relative"]
+        if not isinstance(target, str):
+            raise SupervisorError("CORRUPT_STATE")
+        if not self._install_present(binding, target):
+            if binding.current["revision_id"] != intent["base_revision"]:
+                raise SupervisorError("CORRUPT_STATE")  # the pointer names an absent install
+            self._discard_revision(binding, intent["next_revision"])  # never became canonical
+            scratch = self._temporary_directory(binding.source)
+            try:
+                self._discard_stage(scratch, intent["operation_id"])
+            finally:
+                os.close(scratch)
+            # `rmdir` cannot remove bytes, so undoing only empty directories this
+            # attempt recorded creating is safe before the proof that follows.
+            self._remove_created(binding, intent["created_directories"])
+            _, digest = self._snapshot(binding.source, None, deadline)
+            if digest != binding.current["tree_sha256"]:
+                raise SupervisorError("CORRUPT_STATE")  # canonical moved: not ours to undo
+            return
+        entries, digest = self._snapshot(binding.source, None, deadline)
+        if digest != intent["tree_sha256"]:
+            raise SupervisorError("CORRUPT_STATE")  # installed bytes are not the approved bundle
+        self._finish_forward(
+            binding,
+            workspace_id=intent["workspace_id"],
+            generation=intent["generation"],
+            base_revision=intent["base_revision"],
+            revision_id=intent["next_revision"],
+            tree_sha256=digest,
+            entries=entries,
+            intent=intent,
+            deadline=deadline,
+        )
+
+    def _install_present(self, binding: _Binding, target: str) -> bool:
+        """Whether the install destination exists as the ordinary directory it must be."""
+        try:
+            parent = self._project_parent(binding.source, target)
+        except FileNotFoundError:
+            return False
+        except OSError:
+            raise SupervisorError("CORRUPT_STATE") from None
+        try:
+            try:
+                info = os.stat(target.rsplit("/", 1)[-1], dir_fd=parent, follow_symlinks=False)
+            except FileNotFoundError:
+                return False
+            if not stat.S_ISDIR(info.st_mode):
+                raise SupervisorError("CORRUPT_STATE")  # not the directory the install renamed in
+            return True
+        finally:
+            os.close(parent)
+
+    def _plan_target_hash(self, binding: _Binding, target: str) -> tuple[str, int] | None:
+        """The canonical plan's current `(sha256, size)`, or None when it is not a file."""
+        try:
+            fd = self._open_relative(binding.source, target)
+        except FileNotFoundError:
+            return None
+        except OSError:
+            raise SupervisorError("CORRUPT_STATE") from None
+        try:
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                raise SupervisorError("CORRUPT_STATE")  # a link or a shared inode is not a plan
+            return self._hash_fd(fd), info.st_size
+        finally:
+            os.close(fd)
+
+    def _recover_view(self, binding: _Binding, intent: Mapping[str, Any]) -> tuple[int, dict[str, Any]]:
+        """Open the exact view a committed publish names, proved against its record.
+
+        Returns the open view directory (the caller closes it) and its record. A
+        view that is not the one the intent names, or that never left the sealing
+        flow, is corruption: recovery may complete a publish, never invent one.
+        """
+        if intent["view_ref"] is None:
+            raise SupervisorError("CORRUPT_STATE")
+        try:
+            ref = ViewRef.from_dict(intent["view_ref"])
+        except ExecutionContractError:
+            raise SupervisorError("CORRUPT_STATE") from None
+        if ref.workspace_id != binding.metadata["workspace_id"] or ref.access is not Access.WRITE:
+            raise SupervisorError("CORRUPT_STATE")
+        views = os.open("views", _DIRECTORY, dir_fd=binding.fd)
+        try:
+            try:
+                directory = os.open(ref.view_id, _DIRECTORY, dir_fd=views)
+            except FileNotFoundError:
+                raise SupervisorError("CORRUPT_STATE") from None
+        finally:
+            os.close(views)
+        try:
+            _private(directory)
+            record = _read_json(directory, "view.json", _VIEW_RECORD, 1024**2)
+            if record["view_ref"] != intent["view_ref"] or record["state"] not in {"SEALED", "PUBLISHED"}:
+                raise SupervisorError("CORRUPT_STATE")
+        except BaseException:
+            os.close(directory)
+            raise
+        return directory, record
 
     def _execution_claim(
         self,
