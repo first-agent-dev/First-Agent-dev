@@ -1,0 +1,1635 @@
+{
+  "format_version": 1,
+  "title": "Successor/case mapping from the frozen producer baseline",
+  "status": "PLANNED — case mapping only; no live result is inferred",
+  "baseline_path": "e2e/I03/producer-baseline.json",
+  "mapping_policy": [
+    "Every frozen baseline ID has one explicit coverage mapping.",
+    "Unchanged producer names map to their retained stable I02 ID or native I03 case ID.",
+    "A rename/replacement must keep the original baseline untouched, list current_producer_keys, and name successor_case_ids that are also present in coverage_case_ids.",
+    "A new register producer requires a NEW: mapping; orphan, missing, duplicate, and unmapped cases are rejected.",
+    "successor_case_ids is empty in this baseline because no source producer was renamed/replaced; coverage_case_ids records the direct retained/native case mapping."
+  ],
+  "counts": {
+    "frozen_producer_keys": 124,
+    "legacy_case_mappings": 89,
+    "native_i03_case_mappings": 34
+  },
+  "records": [
+    {
+      "baseline_id": "I02-LIVE-001",
+      "producer_key": "run_commands",
+      "current_producer_keys": [
+        "run_commands"
+      ],
+      "case_id": "I02-LIVE-001",
+      "coverage_case_ids": [
+        "I02-LIVE-001"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-002",
+      "producer_key": "_run_one",
+      "current_producer_keys": [
+        "_run_one"
+      ],
+      "case_id": "I02-LIVE-002",
+      "coverage_case_ids": [
+        "I02-LIVE-002"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-003",
+      "producer_key": "_timeout_result",
+      "current_producer_keys": [
+        "_timeout_result"
+      ],
+      "case_id": "I02-LIVE-003",
+      "coverage_case_ids": [
+        "I02-LIVE-003"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-004",
+      "producer_key": "_deadline_result",
+      "current_producer_keys": [
+        "_deadline_result"
+      ],
+      "case_id": "I02-LIVE-004",
+      "coverage_case_ids": [
+        "I02-LIVE-004"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-005",
+      "producer_key": "_spawn_failure_result",
+      "current_producer_keys": [
+        "_spawn_failure_result"
+      ],
+      "case_id": "I02-LIVE-005",
+      "coverage_case_ids": [
+        "I02-LIVE-005"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-006",
+      "producer_key": "_build_env",
+      "current_producer_keys": [
+        "_build_env"
+      ],
+      "case_id": "I02-LIVE-006",
+      "coverage_case_ids": [
+        "I02-LIVE-006"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-007",
+      "producer_key": "_pin_uv_environment",
+      "current_producer_keys": [
+        "_pin_uv_environment"
+      ],
+      "case_id": "I02-LIVE-007",
+      "coverage_case_ids": [
+        "I02-LIVE-007"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-008",
+      "producer_key": "_workspace_cwd",
+      "current_producer_keys": [
+        "_workspace_cwd"
+      ],
+      "case_id": "I02-LIVE-008",
+      "coverage_case_ids": [
+        "I02-LIVE-008"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-009",
+      "producer_key": "`PYTHONPATH` survival",
+      "current_producer_keys": [
+        "`PYTHONPATH` survival"
+      ],
+      "case_id": "I02-LIVE-009",
+      "coverage_case_ids": [
+        "I02-LIVE-009"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-010",
+      "producer_key": "parse_kill_directives",
+      "current_producer_keys": [
+        "parse_kill_directives"
+      ],
+      "case_id": "I02-LIVE-010",
+      "coverage_case_ids": [
+        "I02-LIVE-010"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-011",
+      "producer_key": "validate_kill_directives",
+      "current_producer_keys": [
+        "validate_kill_directives"
+      ],
+      "case_id": "I02-LIVE-011",
+      "coverage_case_ids": [
+        "I02-LIVE-011"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-012",
+      "producer_key": "_near_miss",
+      "current_producer_keys": [
+        "_near_miss"
+      ],
+      "case_id": "I02-LIVE-012",
+      "coverage_case_ids": [
+        "I02-LIVE-012"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-013",
+      "producer_key": "_split_dotted",
+      "current_producer_keys": [
+        "_split_dotted"
+      ],
+      "case_id": "I02-LIVE-013",
+      "coverage_case_ids": [
+        "I02-LIVE-013"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-014",
+      "producer_key": "mutation_overlay",
+      "current_producer_keys": [
+        "mutation_overlay"
+      ],
+      "case_id": "I02-LIVE-014",
+      "coverage_case_ids": [
+        "I02-LIVE-014"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-015",
+      "producer_key": "_copy_src",
+      "current_producer_keys": [
+        "_copy_src"
+      ],
+      "case_id": "I02-LIVE-015",
+      "coverage_case_ids": [
+        "I02-LIVE-015"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-016",
+      "producer_key": "_overlay_target` / `_mutation_root",
+      "current_producer_keys": [
+        "_overlay_target` / `_mutation_root"
+      ],
+      "case_id": "I02-LIVE-016",
+      "coverage_case_ids": [
+        "I02-LIVE-016"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-017",
+      "producer_key": "_prepend_pythonpath",
+      "current_producer_keys": [
+        "_prepend_pythonpath"
+      ],
+      "case_id": "I02-LIVE-017",
+      "coverage_case_ids": [
+        "I02-LIVE-017"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-018",
+      "producer_key": "_overlay_env",
+      "current_producer_keys": [
+        "_overlay_env"
+      ],
+      "case_id": "I02-LIVE-018",
+      "coverage_case_ids": [
+        "I02-LIVE-018"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-019",
+      "producer_key": "overlay_pytest_plugin.py::pytest_configure` / `pytest_collection_finish",
+      "current_producer_keys": [
+        "overlay_pytest_plugin.py::pytest_configure` / `pytest_collection_finish"
+      ],
+      "case_id": "I02-LIVE-019",
+      "coverage_case_ids": [
+        "I02-LIVE-019"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-020",
+      "producer_key": "check_kill_directive_ownership.py",
+      "current_producer_keys": [
+        "check_kill_directive_ownership.py"
+      ],
+      "case_id": "I02-LIVE-020",
+      "coverage_case_ids": [
+        "I02-LIVE-020"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-021",
+      "producer_key": "apply_kill",
+      "current_producer_keys": [
+        "apply_kill"
+      ],
+      "case_id": "I02-LIVE-021",
+      "coverage_case_ids": [
+        "I02-LIVE-021"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-022",
+      "producer_key": "_resolve_targets",
+      "current_producer_keys": [
+        "_resolve_targets"
+      ],
+      "case_id": "I02-LIVE-022",
+      "coverage_case_ids": [
+        "I02-LIVE-022"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-023",
+      "producer_key": "_Silence",
+      "current_producer_keys": [
+        "_Silence"
+      ],
+      "case_id": "I02-LIVE-023",
+      "coverage_case_ids": [
+        "I02-LIVE-023"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-024",
+      "producer_key": "KillApplication.__post_init__",
+      "current_producer_keys": [
+        "KillApplication.__post_init__"
+      ],
+      "case_id": "I02-LIVE-024",
+      "coverage_case_ids": [
+        "I02-LIVE-024"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-025",
+      "producer_key": "DEFAULT_PROBE_TIMEOUT_SECONDS",
+      "current_producer_keys": [
+        "DEFAULT_PROBE_TIMEOUT_SECONDS"
+      ],
+      "case_id": "I02-LIVE-025",
+      "coverage_case_ids": [
+        "I02-LIVE-025"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-026",
+      "producer_key": "_assert_overlay_wins",
+      "current_producer_keys": [
+        "_assert_overlay_wins"
+      ],
+      "case_id": "I02-LIVE-026",
+      "coverage_case_ids": [
+        "I02-LIVE-026"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-027",
+      "producer_key": "_run_kill_check",
+      "current_producer_keys": [
+        "_run_kill_check"
+      ],
+      "case_id": "I02-LIVE-027",
+      "coverage_case_ids": [
+        "I02-LIVE-027"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-028",
+      "producer_key": "verify_slice",
+      "current_producer_keys": [
+        "verify_slice"
+      ],
+      "case_id": "I02-LIVE-028",
+      "coverage_case_ids": [
+        "I02-LIVE-028"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-029",
+      "producer_key": "_compare_baseline",
+      "current_producer_keys": [
+        "_compare_baseline"
+      ],
+      "case_id": "I02-LIVE-029",
+      "coverage_case_ids": [
+        "I02-LIVE-029"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-030",
+      "producer_key": "pytest_itemcollected` / `fa_pytest_nodeid",
+      "current_producer_keys": [
+        "pytest_itemcollected` / `fa_pytest_nodeid"
+      ],
+      "case_id": "I02-LIVE-030",
+      "coverage_case_ids": [
+        "I02-LIVE-030"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-031",
+      "producer_key": "_producer_absent",
+      "current_producer_keys": [
+        "_producer_absent"
+      ],
+      "case_id": "I02-LIVE-031",
+      "coverage_case_ids": [
+        "I02-LIVE-031"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-032",
+      "producer_key": "_classify",
+      "current_producer_keys": [
+        "_classify"
+      ],
+      "case_id": "I02-LIVE-032",
+      "coverage_case_ids": [
+        "I02-LIVE-032"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-033",
+      "producer_key": "SliceVerdict",
+      "current_producer_keys": [
+        "SliceVerdict"
+      ],
+      "case_id": "I02-LIVE-033",
+      "coverage_case_ids": [
+        "I02-LIVE-033"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-034",
+      "producer_key": "KILL_CHECK_VERDICTS",
+      "current_producer_keys": [
+        "KILL_CHECK_VERDICTS"
+      ],
+      "case_id": "I02-LIVE-034",
+      "coverage_case_ids": [
+        "I02-LIVE-034"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-035",
+      "producer_key": "KillCheck.__post_init__",
+      "current_producer_keys": [
+        "KillCheck.__post_init__"
+      ],
+      "case_id": "I02-LIVE-035",
+      "coverage_case_ids": [
+        "I02-LIVE-035"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-036",
+      "producer_key": "_module_name",
+      "current_producer_keys": [
+        "_module_name"
+      ],
+      "case_id": "I02-LIVE-036",
+      "coverage_case_ids": [
+        "I02-LIVE-036"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-037",
+      "producer_key": "KILL_CHECK_COMMAND",
+      "current_producer_keys": [
+        "KILL_CHECK_COMMAND"
+      ],
+      "case_id": "I02-LIVE-037",
+      "coverage_case_ids": [
+        "I02-LIVE-037"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-038",
+      "producer_key": "run_commands(env=...)",
+      "current_producer_keys": [
+        "run_commands(env=...)"
+      ],
+      "case_id": "I02-LIVE-038",
+      "coverage_case_ids": [
+        "I02-LIVE-038"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-039",
+      "producer_key": "run_workflow` → `_ensure_eval_after_coder",
+      "current_producer_keys": [
+        "run_workflow` → `_ensure_eval_after_coder"
+      ],
+      "case_id": "I02-LIVE-039",
+      "coverage_case_ids": [
+        "I02-LIVE-039"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-040",
+      "producer_key": "_run_stage` → `run_stage_fn` → `drive_session",
+      "current_producer_keys": [
+        "_run_stage` → `run_stage_fn` → `drive_session"
+      ],
+      "case_id": "I02-LIVE-040",
+      "coverage_case_ids": [
+        "I02-LIVE-040"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-041",
+      "producer_key": "_run_stage` → `verify_plan` / `verify_slice",
+      "current_producer_keys": [
+        "_run_stage` → `verify_plan` / `verify_slice"
+      ],
+      "case_id": "I02-LIVE-041",
+      "coverage_case_ids": [
+        "I02-LIVE-041"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-042",
+      "producer_key": "capture_baseline` / `load_verify_baseline",
+      "current_producer_keys": [
+        "capture_baseline` / `load_verify_baseline"
+      ],
+      "case_id": "I02-LIVE-042",
+      "coverage_case_ids": [
+        "I02-LIVE-042"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-043",
+      "producer_key": "workflow_artifact_paths` / `write_verification` / `_verification_lines",
+      "current_producer_keys": [
+        "workflow_artifact_paths` / `write_verification` / `_verification_lines"
+      ],
+      "case_id": "I02-LIVE-043",
+      "coverage_case_ids": [
+        "I02-LIVE-043"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-044",
+      "producer_key": "_verification_evidence_lines` → `_eval_evidence_block",
+      "current_producer_keys": [
+        "_verification_evidence_lines` → `_eval_evidence_block"
+      ],
+      "case_id": "I02-LIVE-044",
+      "coverage_case_ids": [
+        "I02-LIVE-044"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-045",
+      "producer_key": "_effective_controller_route` / `_write_terminal_state` / `workflow_exit_code",
+      "current_producer_keys": [
+        "_effective_controller_route` / `_write_terminal_state` / `workflow_exit_code"
+      ],
+      "case_id": "I02-LIVE-045",
+      "coverage_case_ids": [
+        "I02-LIVE-045"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-046",
+      "producer_key": "load_feature_flags_from_path` / `_gate_mode",
+      "current_producer_keys": [
+        "load_feature_flags_from_path` / `_gate_mode"
+      ],
+      "case_id": "I02-LIVE-046",
+      "coverage_case_ids": [
+        "I02-LIVE-046"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-047",
+      "producer_key": "adaptive repair/replan dispatch helpers (`_finish_adaptive`, `_dispatch_adaptive_round`, `_run_adaptive_repair`, `_run_adaptive_replan`)",
+      "current_producer_keys": [
+        "adaptive repair/replan dispatch helpers (`_finish_adaptive`, `_dispatch_adaptive_round`, `_run_adaptive_repair`, `_run_adaptive_replan`)"
+      ],
+      "case_id": "I02-LIVE-047",
+      "coverage_case_ids": [
+        "I02-LIVE-047"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-048",
+      "producer_key": "_JUnitReport.executed_count",
+      "current_producer_keys": [
+        "_JUnitReport.executed_count"
+      ],
+      "case_id": "I02-LIVE-048",
+      "coverage_case_ids": [
+        "I02-LIVE-048"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-049",
+      "producer_key": "_JUnitReport.failure_count",
+      "current_producer_keys": [
+        "_JUnitReport.failure_count"
+      ],
+      "case_id": "I02-LIVE-049",
+      "coverage_case_ids": [
+        "I02-LIVE-049"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-050",
+      "producer_key": "_junit_property",
+      "current_producer_keys": [
+        "_junit_property"
+      ],
+      "case_id": "I02-LIVE-050",
+      "coverage_case_ids": [
+        "I02-LIVE-050"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-051",
+      "producer_key": "_junit_testcase",
+      "current_producer_keys": [
+        "_junit_testcase"
+      ],
+      "case_id": "I02-LIVE-051",
+      "coverage_case_ids": [
+        "I02-LIVE-051"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-052",
+      "producer_key": "_junit_counter_error",
+      "current_producer_keys": [
+        "_junit_counter_error"
+      ],
+      "case_id": "I02-LIVE-052",
+      "coverage_case_ids": [
+        "I02-LIVE-052"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-053",
+      "producer_key": "_parse_junit_report",
+      "current_producer_keys": [
+        "_parse_junit_report"
+      ],
+      "case_id": "I02-LIVE-053",
+      "coverage_case_ids": [
+        "I02-LIVE-053"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-054",
+      "producer_key": "_kill_check_result",
+      "current_producer_keys": [
+        "_kill_check_result"
+      ],
+      "case_id": "I02-LIVE-054",
+      "coverage_case_ids": [
+        "I02-LIVE-054"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-055",
+      "producer_key": "`pytest_itemcollected` run-ID extension",
+      "current_producer_keys": [
+        "`pytest_itemcollected` run-ID extension"
+      ],
+      "case_id": "I02-LIVE-055",
+      "coverage_case_ids": [
+        "I02-LIVE-055"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-056",
+      "producer_key": "_workflow_roles",
+      "current_producer_keys": [
+        "_workflow_roles"
+      ],
+      "case_id": "I02-LIVE-056",
+      "coverage_case_ids": [
+        "I02-LIVE-056"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-057",
+      "producer_key": "_workflow_budget",
+      "current_producer_keys": [
+        "_workflow_budget"
+      ],
+      "case_id": "I02-LIVE-057",
+      "coverage_case_ids": [
+        "I02-LIVE-057"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-058",
+      "producer_key": "_validate_workflow_run_id",
+      "current_producer_keys": [
+        "_validate_workflow_run_id"
+      ],
+      "case_id": "I02-LIVE-058",
+      "coverage_case_ids": [
+        "I02-LIVE-058"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-059",
+      "producer_key": "_workflow_tasks",
+      "current_producer_keys": [
+        "_workflow_tasks"
+      ],
+      "case_id": "I02-LIVE-059",
+      "coverage_case_ids": [
+        "I02-LIVE-059"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-060",
+      "producer_key": "_workflow_injections",
+      "current_producer_keys": [
+        "_workflow_injections"
+      ],
+      "case_id": "I02-LIVE-060",
+      "coverage_case_ids": [
+        "I02-LIVE-060"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-061",
+      "producer_key": "_validate_workflow_request` / `_WorkflowRequest",
+      "current_producer_keys": [
+        "_validate_workflow_request` / `_WorkflowRequest"
+      ],
+      "case_id": "I02-LIVE-061",
+      "coverage_case_ids": [
+        "I02-LIVE-061"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-062",
+      "producer_key": "WorkflowRequestError",
+      "current_producer_keys": [
+        "WorkflowRequestError"
+      ],
+      "case_id": "I02-LIVE-062",
+      "coverage_case_ids": [
+        "I02-LIVE-062"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-063",
+      "producer_key": "SessionManager.resolve_workflow_workspace",
+      "current_producer_keys": [
+        "SessionManager.resolve_workflow_workspace"
+      ],
+      "case_id": "I02-LIVE-063",
+      "coverage_case_ids": [
+        "I02-LIVE-063"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-064",
+      "producer_key": "_require_plan_for_coder",
+      "current_producer_keys": [
+        "_require_plan_for_coder"
+      ],
+      "case_id": "I02-LIVE-064",
+      "coverage_case_ids": [
+        "I02-LIVE-064"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-065",
+      "producer_key": "_relative_plan_path",
+      "current_producer_keys": [
+        "_relative_plan_path"
+      ],
+      "case_id": "I02-LIVE-065",
+      "coverage_case_ids": [
+        "I02-LIVE-065"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-066",
+      "producer_key": "_open_plan_component",
+      "current_producer_keys": [
+        "_open_plan_component"
+      ],
+      "case_id": "I02-LIVE-066",
+      "coverage_case_ids": [
+        "I02-LIVE-066"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-067",
+      "producer_key": "_read_plan_bytes",
+      "current_producer_keys": [
+        "_read_plan_bytes"
+      ],
+      "case_id": "I02-LIVE-067",
+      "coverage_case_ids": [
+        "I02-LIVE-067"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-068",
+      "producer_key": "read_plan_snapshot`, `PlanRef`, `PlanSnapshot",
+      "current_producer_keys": [
+        "read_plan_snapshot`, `PlanRef`, `PlanSnapshot"
+      ],
+      "case_id": "I02-LIVE-068",
+      "coverage_case_ids": [
+        "I02-LIVE-068"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-069",
+      "producer_key": "`PlanRefError` / CLI rejection renderer",
+      "current_producer_keys": [
+        "`PlanRefError` / CLI rejection renderer"
+      ],
+      "case_id": "I02-LIVE-069",
+      "coverage_case_ids": [
+        "I02-LIVE-069"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-070",
+      "producer_key": "`COMMANDS.workflow`, `_WORKFLOW_PLAN_EXAMPLE` / parser help",
+      "current_producer_keys": [
+        "`COMMANDS.workflow`, `_WORKFLOW_PLAN_EXAMPLE` / parser help"
+      ],
+      "case_id": "I02-LIVE-070",
+      "coverage_case_ids": [
+        "I02-LIVE-070"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-071",
+      "producer_key": "manager constructor / `_new_session`; allocated-workspace check",
+      "current_producer_keys": [
+        "manager constructor / `_new_session`; allocated-workspace check"
+      ],
+      "case_id": "I02-LIVE-071",
+      "coverage_case_ids": [
+        "I02-LIVE-071"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-072",
+      "producer_key": "AdmissionRecordError`, `_record_object`, `_record_enum`, `_record_hash`, `_record_plan_ref`, `_record_diagnostics`, `_record_attempt_hashes`, `_record_attempt`, `validate_admission_record`, closed `ADMISSION_RULES",
+      "current_producer_keys": [
+        "AdmissionRecordError`, `_record_object`, `_record_enum`, `_record_hash`, `_record_plan_ref`, `_record_diagnostics`, `_record_attempt_hashes`, `_record_attempt`, `validate_admission_record`, closed `ADMISSION_RULES"
+      ],
+      "case_id": "I02-LIVE-072",
+      "coverage_case_ids": [
+        "I02-LIVE-072"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-073",
+      "producer_key": "_private_artifact_directory`, `_read_admission_at`, `_admission_object`, `AdmissionIOError",
+      "current_producer_keys": [
+        "_private_artifact_directory`, `_read_admission_at`, `_admission_object`, `AdmissionIOError"
+      ],
+      "case_id": "I02-LIVE-073",
+      "coverage_case_ids": [
+        "I02-LIVE-073"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-074",
+      "producer_key": "_admission_lock",
+      "current_producer_keys": [
+        "_admission_lock"
+      ],
+      "case_id": "I02-LIVE-074",
+      "coverage_case_ids": [
+        "I02-LIVE-074"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-075",
+      "producer_key": "write_admission_record",
+      "current_producer_keys": [
+        "write_admission_record"
+      ],
+      "case_id": "I02-LIVE-075",
+      "coverage_case_ids": [
+        "I02-LIVE-075"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-076",
+      "producer_key": "_replace_private_json",
+      "current_producer_keys": [
+        "_replace_private_json"
+      ],
+      "case_id": "I02-LIVE-076",
+      "coverage_case_ids": [
+        "I02-LIVE-076"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-077",
+      "producer_key": "WorkflowArtifactPaths.admission`, `_record_admission_attempt",
+      "current_producer_keys": [
+        "WorkflowArtifactPaths.admission`, `_record_admission_attempt"
+      ],
+      "case_id": "I02-LIVE-077",
+      "coverage_case_ids": [
+        "I02-LIVE-077"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-078",
+      "producer_key": "run_workflow -> _require_plan_for_coder`, supplied-reference snapshot, `_blocked_plan_request",
+      "current_producer_keys": [
+        "run_workflow -> _require_plan_for_coder`, supplied-reference snapshot, `_blocked_plan_request"
+      ],
+      "case_id": "I02-LIVE-078",
+      "coverage_case_ids": [
+        "I02-LIVE-078"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-079",
+      "producer_key": "shared `_write_json_atomic`, `write_flow_state`, `write_eval_report`; rejection storage renderer",
+      "current_producer_keys": [
+        "shared `_write_json_atomic`, `write_flow_state`, `write_eval_report`; rejection storage renderer"
+      ],
+      "case_id": "I02-LIVE-079",
+      "coverage_case_ids": [
+        "I02-LIVE-079"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-080",
+      "producer_key": "read_plan_snapshot`, `_read_open_plan_bytes`, `_decode_plan_bytes`, `snapshot_from_bytes",
+      "current_producer_keys": [
+        "read_plan_snapshot`, `_read_open_plan_bytes`, `_decode_plan_bytes`, `snapshot_from_bytes"
+      ],
+      "case_id": "I02-LIVE-080",
+      "coverage_case_ids": [
+        "I02-LIVE-080"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-081",
+      "producer_key": "`_canonical_parts`, `seed_plan_candidate`, `_create_candidate`, `_write_all`; existing `PlannerDispatch` consumer",
+      "current_producer_keys": [
+        "`_canonical_parts`, `seed_plan_candidate`, `_create_candidate`, `_write_all`; existing `PlannerDispatch` consumer"
+      ],
+      "case_id": "I02-LIVE-081",
+      "coverage_case_ids": [
+        "I02-LIVE-081"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-082",
+      "producer_key": "`AdmissionDiagnostic`, `PlanAdmissionValidation`, `_admission_diagnostics`, `_validate_plan_admission`; both real validator consumers",
+      "current_producer_keys": [
+        "`AdmissionDiagnostic`, `PlanAdmissionValidation`, `_admission_diagnostics`, `_validate_plan_admission`; both real validator consumers"
+      ],
+      "case_id": "I02-LIVE-082",
+      "coverage_case_ids": [
+        "I02-LIVE-082"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-083",
+      "producer_key": "_canonical_parent`, `_checked_source`, `_source_identity`, `_stage_replacement`, `_install_buffer`, `publish_plan_buffer",
+      "current_producer_keys": [
+        "_canonical_parent`, `_checked_source`, `_source_identity`, `_stage_replacement`, `_install_buffer`, `publish_plan_buffer"
+      ],
+      "case_id": "I02-LIVE-083",
+      "coverage_case_ids": [
+        "I02-LIVE-083"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-084",
+      "producer_key": "`publish_plan_buffer` shared target-lock acquisition and post-replace parent-fsync/hash/mode checks",
+      "current_producer_keys": [
+        "`publish_plan_buffer` shared target-lock acquisition and post-replace parent-fsync/hash/mode checks"
+      ],
+      "case_id": "I02-LIVE-084",
+      "coverage_case_ids": [
+        "I02-LIVE-084"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-085",
+      "producer_key": "`_promote_validated_plan` and its future public `_run_admission_repair`/admission-writer/T0 consumers",
+      "current_producer_keys": [
+        "`_promote_validated_plan` and its future public `_run_admission_repair`/admission-writer/T0 consumers"
+      ],
+      "case_id": "I02-LIVE-085",
+      "coverage_case_ids": [
+        "I02-LIVE-085"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-086",
+      "producer_key": "workflow_controller._persist_flow_state",
+      "current_producer_keys": [
+        "workflow_controller._persist_flow_state"
+      ],
+      "case_id": "I02-LIVE-086",
+      "coverage_case_ids": [
+        "I02-LIVE-086"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-087",
+      "producer_key": "workflow_controller._announce_stage",
+      "current_producer_keys": [
+        "workflow_controller._announce_stage"
+      ],
+      "case_id": "I02-LIVE-087",
+      "coverage_case_ids": [
+        "I02-LIVE-087"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-088",
+      "producer_key": "workflow_controller._stage_task",
+      "current_producer_keys": [
+        "workflow_controller._stage_task"
+      ],
+      "case_id": "I02-LIVE-088",
+      "coverage_case_ids": [
+        "I02-LIVE-088"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I02-LIVE-089",
+      "producer_key": "slice_verification._pytest_report_status_error",
+      "current_producer_keys": [
+        "slice_verification._pytest_report_status_error"
+      ],
+      "case_id": "I02-LIVE-089",
+      "coverage_case_ids": [
+        "I02-LIVE-089"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "legacy-retained"
+    },
+    {
+      "baseline_id": "I03-LIVE-01",
+      "producer_key": "I03-LIVE-01 `src/fa/controller_entry.py`",
+      "current_producer_keys": [
+        "I03-LIVE-01 `src/fa/controller_entry.py`"
+      ],
+      "case_id": "I03-LIVE-01",
+      "coverage_case_ids": [
+        "I03-LIVE-01"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "native-i03"
+    },
+    {
+      "baseline_id": "I03-LIVE-02",
+      "producer_key": "I03-LIVE-02 `src/fa/execution/__init__.py`",
+      "current_producer_keys": [
+        "I03-LIVE-02 `src/fa/execution/__init__.py`"
+      ],
+      "case_id": "I03-LIVE-02",
+      "coverage_case_ids": [
+        "I03-LIVE-02"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "native-i03"
+    },
+    {
+      "baseline_id": "I03-LIVE-03",
+      "producer_key": "I03-LIVE-03 `src/fa/execution/types.py`",
+      "current_producer_keys": [
+        "I03-LIVE-03 `src/fa/execution/types.py`"
+      ],
+      "case_id": "I03-LIVE-03",
+      "coverage_case_ids": [
+        "I03-LIVE-03"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "native-i03"
+    },
+    {
+      "baseline_id": "I03-LIVE-04",
+      "producer_key": "I03-LIVE-04 `src/fa/execution/protocol.py`",
+      "current_producer_keys": [
+        "I03-LIVE-04 `src/fa/execution/protocol.py`"
+      ],
+      "case_id": "I03-LIVE-04",
+      "coverage_case_ids": [
+        "I03-LIVE-04"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "native-i03"
+    },
+    {
+      "baseline_id": "I03-LIVE-05",
+      "producer_key": "I03-LIVE-05 `src/fa/execution/profiles.py`",
+      "current_producer_keys": [
+        "I03-LIVE-05 `src/fa/execution/profiles.py`"
+      ],
+      "case_id": "I03-LIVE-05",
+      "coverage_case_ids": [
+        "I03-LIVE-05"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "native-i03"
+    },
+    {
+      "baseline_id": "I03-LIVE-06",
+      "producer_key": "I03-LIVE-06 `src/fa/execution/supervisor.py`",
+      "current_producer_keys": [
+        "I03-LIVE-06 `src/fa/execution/supervisor.py`"
+      ],
+      "case_id": "I03-LIVE-06",
+      "coverage_case_ids": [
+        "I03-LIVE-06"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "native-i03"
+    },
+    {
+      "baseline_id": "I03-LIVE-07",
+      "producer_key": "I03-LIVE-07 `src/fa/execution/journal.py`",
+      "current_producer_keys": [
+        "I03-LIVE-07 `src/fa/execution/journal.py`"
+      ],
+      "case_id": "I03-LIVE-07",
+      "coverage_case_ids": [
+        "I03-LIVE-07"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "native-i03"
+    },
+    {
+      "baseline_id": "I03-LIVE-08",
+      "producer_key": "I03-LIVE-08 `src/fa/execution/plans.py`",
+      "current_producer_keys": [
+        "I03-LIVE-08 `src/fa/execution/plans.py`"
+      ],
+      "case_id": "I03-LIVE-08",
+      "coverage_case_ids": [
+        "I03-LIVE-08"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "native-i03"
+    },
+    {
+      "baseline_id": "I03-LIVE-09",
+      "producer_key": "I03-LIVE-09 `src/fa/execution/client.py`",
+      "current_producer_keys": [
+        "I03-LIVE-09 `src/fa/execution/client.py`"
+      ],
+      "case_id": "I03-LIVE-09",
+      "coverage_case_ids": [
+        "I03-LIVE-09"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "native-i03"
+    },
+    {
+      "baseline_id": "I03-LIVE-10",
+      "producer_key": "I03-LIVE-10 `src/fa/execution/cell_protocol.py`",
+      "current_producer_keys": [
+        "I03-LIVE-10 `src/fa/execution/cell_protocol.py`"
+      ],
+      "case_id": "I03-LIVE-10",
+      "coverage_case_ids": [
+        "I03-LIVE-10"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "native-i03"
+    },
+    {
+      "baseline_id": "I03-LIVE-11",
+      "producer_key": "I03-LIVE-11 `src/fa/execution/cell_worker.py`",
+      "current_producer_keys": [
+        "I03-LIVE-11 `src/fa/execution/cell_worker.py`"
+      ],
+      "case_id": "I03-LIVE-11",
+      "coverage_case_ids": [
+        "I03-LIVE-11"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "native-i03"
+    },
+    {
+      "baseline_id": "I03-LIVE-12",
+      "producer_key": "I03-LIVE-12 `src/fa/execution/worker_client.py`",
+      "current_producer_keys": [
+        "I03-LIVE-12 `src/fa/execution/worker_client.py`"
+      ],
+      "case_id": "I03-LIVE-12",
+      "coverage_case_ids": [
+        "I03-LIVE-12"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "native-i03"
+    },
+    {
+      "baseline_id": "I03-LIVE-13",
+      "producer_key": "I03-LIVE-13 `src/fa/execution/docker.py`",
+      "current_producer_keys": [
+        "I03-LIVE-13 `src/fa/execution/docker.py`"
+      ],
+      "case_id": "I03-LIVE-13",
+      "coverage_case_ids": [
+        "I03-LIVE-13"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "native-i03"
+    },
+    {
+      "baseline_id": "I03-LIVE-14",
+      "producer_key": "I03-LIVE-14 `src/fa/execution/view_io.py`",
+      "current_producer_keys": [
+        "I03-LIVE-14 `src/fa/execution/view_io.py`"
+      ],
+      "case_id": "I03-LIVE-14",
+      "coverage_case_ids": [
+        "I03-LIVE-14"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "native-i03"
+    },
+    {
+      "baseline_id": "I03-LIVE-15",
+      "producer_key": "I03-LIVE-15 `src/fa/runtime/pty_pool.py`",
+      "current_producer_keys": [
+        "I03-LIVE-15 `src/fa/runtime/pty_pool.py`"
+      ],
+      "case_id": "I03-LIVE-15",
+      "coverage_case_ids": [
+        "I03-LIVE-15"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "native-i03"
+    },
+    {
+      "baseline_id": "I03-LIVE-16",
+      "producer_key": "I03-LIVE-16 `Dockerfile.fa`",
+      "current_producer_keys": [
+        "I03-LIVE-16 `Dockerfile.fa`"
+      ],
+      "case_id": "I03-LIVE-16",
+      "coverage_case_ids": [
+        "I03-LIVE-16"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "native-i03"
+    },
+    {
+      "baseline_id": "I03-LIVE-17",
+      "producer_key": "I03-LIVE-17 `src/fa/execution/workspace.py` (E253–E256 local ownership foundation)",
+      "current_producer_keys": [
+        "I03-LIVE-17 `src/fa/execution/workspace.py` (E253–E256 local ownership foundation)"
+      ],
+      "case_id": "I03-LIVE-17",
+      "coverage_case_ids": [
+        "I03-LIVE-17"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "native-i03"
+    },
+    {
+      "baseline_id": "I03-LIVE-18",
+      "producer_key": "I03-LIVE-18 `src/fa/execution/backend.py` (E258 local CellBackend episode owner; E260 R1–R5 refinements; E261 one-shot CANCEL gap)",
+      "current_producer_keys": [
+        "I03-LIVE-18 `src/fa/execution/backend.py` (E258 local CellBackend episode owner; E260 R1–R5 refinements; E261 one-shot CANCEL gap)"
+      ],
+      "case_id": "I03-LIVE-18",
+      "coverage_case_ids": [
+        "I03-LIVE-18"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "native-i03"
+    },
+    {
+      "baseline_id": "I03-LIVE-S01",
+      "producer_key": "I03-LIVE-S01",
+      "current_producer_keys": [
+        "I03-LIVE-S01"
+      ],
+      "case_id": "I03-LIVE-S01",
+      "coverage_case_ids": [
+        "I03-LIVE-S01"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "native-i03"
+    },
+    {
+      "baseline_id": "I03-LIVE-S02",
+      "producer_key": "I03-LIVE-S02",
+      "current_producer_keys": [
+        "I03-LIVE-S02"
+      ],
+      "case_id": "I03-LIVE-S02",
+      "coverage_case_ids": [
+        "I03-LIVE-S02"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "native-i03"
+    },
+    {
+      "baseline_id": "I03-LIVE-S03",
+      "producer_key": "I03-LIVE-S03",
+      "current_producer_keys": [
+        "I03-LIVE-S03"
+      ],
+      "case_id": "I03-LIVE-S03",
+      "coverage_case_ids": [
+        "I03-LIVE-S03"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "native-i03"
+    },
+    {
+      "baseline_id": "I03-LIVE-S04",
+      "producer_key": "I03-LIVE-S04",
+      "current_producer_keys": [
+        "I03-LIVE-S04"
+      ],
+      "case_id": "I03-LIVE-S04",
+      "coverage_case_ids": [
+        "I03-LIVE-S04"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "native-i03"
+    },
+    {
+      "baseline_id": "I03-LIVE-S05",
+      "producer_key": "I03-LIVE-S05",
+      "current_producer_keys": [
+        "I03-LIVE-S05"
+      ],
+      "case_id": "I03-LIVE-S05",
+      "coverage_case_ids": [
+        "I03-LIVE-S05"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "native-i03"
+    },
+    {
+      "baseline_id": "I03-LIVE-S06",
+      "producer_key": "I03-LIVE-S06",
+      "current_producer_keys": [
+        "I03-LIVE-S06"
+      ],
+      "case_id": "I03-LIVE-S06",
+      "coverage_case_ids": [
+        "I03-LIVE-S06"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "native-i03"
+    },
+    {
+      "baseline_id": "I03-LIVE-S07",
+      "producer_key": "I03-LIVE-S07",
+      "current_producer_keys": [
+        "I03-LIVE-S07"
+      ],
+      "case_id": "I03-LIVE-S07",
+      "coverage_case_ids": [
+        "I03-LIVE-S07"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "native-i03"
+    },
+    {
+      "baseline_id": "I03-LIVE-S08",
+      "producer_key": "I03-LIVE-S08",
+      "current_producer_keys": [
+        "I03-LIVE-S08"
+      ],
+      "case_id": "I03-LIVE-S08",
+      "coverage_case_ids": [
+        "I03-LIVE-S08"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "native-i03"
+    },
+    {
+      "baseline_id": "I03-LIVE-19",
+      "producer_key": "I03-LIVE-19 `src/fa/execution/publication.py` (E267 local seal component)",
+      "current_producer_keys": [
+        "I03-LIVE-19 `src/fa/execution/publication.py` (E267 local seal component)"
+      ],
+      "case_id": "I03-LIVE-19",
+      "coverage_case_ids": [
+        "I03-LIVE-19"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "native-i03"
+    },
+    {
+      "baseline_id": "I03-LIVE-20",
+      "producer_key": "I03-LIVE-20 `src/fa/execution/publication.py::publish_view` (E269 local publish component)",
+      "current_producer_keys": [
+        "I03-LIVE-20 `src/fa/execution/publication.py::publish_view` (E269 local publish component)"
+      ],
+      "case_id": "I03-LIVE-20",
+      "coverage_case_ids": [
+        "I03-LIVE-20"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "native-i03"
+    },
+    {
+      "baseline_id": "I03-LIVE-21",
+      "producer_key": "I03-LIVE-21 `src/fa/execution/publication.py::render_bundle` / `prepare_bundle` (E271 local bundle component)",
+      "current_producer_keys": [
+        "I03-LIVE-21 `src/fa/execution/publication.py::render_bundle` / `prepare_bundle` (E271 local bundle component)"
+      ],
+      "case_id": "I03-LIVE-21",
+      "coverage_case_ids": [
+        "I03-LIVE-21"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "native-i03"
+    },
+    {
+      "baseline_id": "I03-LIVE-22",
+      "producer_key": "I03-LIVE-22 `src/fa/execution/publication.py::install_project` (E271 unit B local install component)",
+      "current_producer_keys": [
+        "I03-LIVE-22 `src/fa/execution/publication.py::install_project` (E271 unit B local install component)"
+      ],
+      "case_id": "I03-LIVE-22",
+      "coverage_case_ids": [
+        "I03-LIVE-22"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "native-i03"
+    },
+    {
+      "baseline_id": "I03-LIVE-23",
+      "producer_key": "I03-LIVE-23 `src/fa/execution/publication.py::publish_plan` (E273 local replacement component)",
+      "current_producer_keys": [
+        "I03-LIVE-23 `src/fa/execution/publication.py::publish_plan` (E273 local replacement component)"
+      ],
+      "case_id": "I03-LIVE-23",
+      "coverage_case_ids": [
+        "I03-LIVE-23"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "native-i03"
+    },
+    {
+      "baseline_id": "I03-LIVE-24",
+      "producer_key": "I03-LIVE-24 `src/fa/execution/workspace.py::authorize` (E274 pre-reservation authority check, CT99)",
+      "current_producer_keys": [
+        "I03-LIVE-24 `src/fa/execution/workspace.py::authorize` (E274 pre-reservation authority check, CT99)"
+      ],
+      "case_id": "I03-LIVE-24",
+      "coverage_case_ids": [
+        "I03-LIVE-24"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "native-i03"
+    },
+    {
+      "baseline_id": "I03-LIVE-25",
+      "producer_key": "I03-LIVE-25 `src/fa/execution/workspace.py::_load -> _recover_intent` (E276 forward recovery, CT107)",
+      "current_producer_keys": [
+        "I03-LIVE-25 `src/fa/execution/workspace.py::_load -> _recover_intent` (E276 forward recovery, CT107)"
+      ],
+      "case_id": "I03-LIVE-25",
+      "coverage_case_ids": [
+        "I03-LIVE-25"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "native-i03"
+    },
+    {
+      "baseline_id": "I03-LIVE-26",
+      "producer_key": "I03-LIVE-26 `src/fa/execution/service.py` (E277 composed supervisor: route table, socket owner, `main`)",
+      "current_producer_keys": [
+        "I03-LIVE-26 `src/fa/execution/service.py` (E277 composed supervisor: route table, socket owner, `main`)"
+      ],
+      "case_id": "I03-LIVE-26",
+      "coverage_case_ids": [
+        "I03-LIVE-26"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "native-i03"
+    },
+    {
+      "baseline_id": "I03-LIVE-S06-EXT",
+      "producer_key": "I03-LIVE-S06 (join, extended)",
+      "current_producer_keys": [
+        "I03-LIVE-S06 (join, extended)"
+      ],
+      "case_id": "I03-LIVE-S06",
+      "coverage_case_ids": [
+        "I03-LIVE-S06"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "explicit-shared-extension"
+    }
+  ],
+  "shared_case_ids": [
+    "I03-LIVE-S06"
+  ]
+}

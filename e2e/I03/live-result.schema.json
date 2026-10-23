@@ -1,0 +1,83 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://first-agent.dev/schemas/i03-live-result-attempt-v1.json",
+  "title": "I03 live E2E attempt",
+  "description": "One append-only deployed-host verification attempt. This schema validates evidence shape only; it never assigns or approves a live result.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "case_id",
+    "attempt",
+    "date",
+    "result",
+    "run_id",
+    "deployed_sha",
+    "image_digest",
+    "profile",
+    "config",
+    "command",
+    "rc_effect",
+    "evidence",
+    "reviewer"
+  ],
+  "properties": {
+    "case_id": {
+      "type": "string",
+      "pattern": "^I03-LIVE-(?:[0-9]{2}|S[0-9]{2})$"
+    },
+    "attempt": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "date": {
+      "type": "string",
+      "minLength": 1
+    },
+    "result": {
+      "type": "string",
+      "enum": ["NOT RUN", "PASS", "FAIL", "BLOCKED"]
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "deployed_sha": {
+      "type": "string",
+      "minLength": 1
+    },
+    "image_digest": {
+      "type": "string",
+      "minLength": 1
+    },
+    "profile": {
+      "type": "string",
+      "minLength": 1
+    },
+    "config": {
+      "type": "string",
+      "minLength": 1
+    },
+    "command": {
+      "type": "string",
+      "minLength": 1
+    },
+    "rc_effect": {
+      "type": "string",
+      "minLength": 1
+    },
+    "evidence": {
+      "type": "string",
+      "minLength": 1
+    },
+    "reviewer": {
+      "type": "string",
+      "minLength": 1
+    },
+    "commentary": {
+      "type": "string",
+      "maxLength": 512,
+      "pattern": "^[^\\r\\n]*$",
+      "description": "Optional, single-line commentary. Runtime conformance also limits UTF-8 encoding to 512 bytes. Never control flow; redact credentials before recording."
+    }
+  }
+}

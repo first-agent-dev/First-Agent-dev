@@ -2098,3 +2098,59 @@ Reasons, in order:
 `DURABILITY_UNKNOWN` (e.g. a read-only degraded mode), or if quarantine must become reversible without a
 human (a retry budget, an operator command), the per-workspace rule needs a status distinct from the
 existing "previous epoch is dead" flip. Nothing in the current plan asks for either.
+
+
+## Q85 — Which I03 E2E package path is canonical?
+
+**Status: OPEN (2026-10-23) — blocks path reconciliation/relocation only; the current root-level package remains where SLICE6 STEP2 names it.**
+
+**The gap.** The design note `notes/e2e-handoff-and-plan-review-design.md` specifies
+`worklogs/<project>/e2e/`, which for this project would be
+`worklogs/planning-topology-and-executable-contracts-loop/e2e/`. That directory is absent. The current
+increment plan's SLICE6 STEP2 instead explicitly names root-level `e2e/README.md` and `e2e/I03/...`,
+which is where the local package exists. The two documents therefore disagree; this is not just a
+missing directory in the checkout.
+
+**Impact.** Relocating now would make one of the two plan sources stale and require updating package
+links, the coverage checker, test paths, schema references, and the plan as one reviewed change. Keeping
+both paths would create duplicate planner-owned artifacts and ambiguous edit/result ownership. No live
+case has run, so no evidence depends on either location yet.
+
+**Options.**
+
+- **(A) Keep root-level `e2e/`** as the executable SLICE6 STEP2 path, and revise the older design note
+  to match before the next independent plan review.
+- **(B) Use `worklogs/<project>/e2e/`** as the canonical project package, and revise SLICE6 STEP2 plus
+  every code/test/schema/reference path together before relocating the package.
+
+Do not mirror both trees. Until ruled, this branch follows the explicit current STEP2 paths and makes no
+relocation or directory creation.
+
+---
+
+## Q86 — How should I03-LIVE-26 describe sealing after E278 adds the local cgroup observer?
+
+**Status: OPEN (2026-10-23) — blocks changing the LIVE-26 acceptance oracle, not package inventory or this push. Live E2E remains deferred.**
+
+**The gap.** The E277 LIVE-26 oracle says `seal` refuses `TERMINALITY_UNKNOWN` until the cgroup observer
+exists and concludes a full stage cannot be completed through the surface. E278 then added the cgroup-v2
+reader and `OwnedCellTermination`, and the composed service installs that adapter. E278's evidence is
+explicitly local: the cgroup path and kernel `populated 0` were exercised with a doubled Docker seam,
+not a live container or approved-host run. The register row remains `PLANNED / UNEXECUTED` and its
+existing oracle has not been amended.
+
+**Impact.** Copying the old sentence unchanged may understate the current composed path; revising it
+without a planner ruling could overstate what local/doubled tests prove or turn an unobserved terminal
+state into a live pass. The host must still prove the cgroup fact, and no row may be promoted from E278's
+local result.
+
+**Options.**
+
+- **(A) Clarify the oracle** to require `seal` success only after the approved host's real observer proves
+  `populated 0`, with the exact fail-closed refusal retained for nonempty/unreadable/unknown state.
+- **(B) Preserve the conservative current oracle** as a live-host blocker until the independent approved-
+  host barrier proof exists, and record any full-stage success as follow-up evidence rather than relaxing
+  the existing requirement.
+
+No option authorizes live execution before I01–I03 are merged to `main` and deployed. The case and every
+result remain unchanged until planner/user disposition.

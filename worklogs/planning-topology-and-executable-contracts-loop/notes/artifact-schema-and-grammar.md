@@ -374,8 +374,7 @@ BLOCKED. No mandatory reason, reason enum, hardcoded reason variants or control 
 from commentary. Append-only attempts retain separate local proof/live result and immutable
 source/image/profile/config/run/command/effect/artifact/reviewer identity. Operator or independent
 evidence reviewer assigns live results, never coder/harness/unit tests. NOT RUN/BLOCKED do not
-count as PASS. This is the finalized schema obligation, not a claim its runtime artifacts exist.
-Does not alter increment/CT/STEP vocabularies, admission/wire diagnostics, generic READY or I01.
+count as PASS. The I03 SLICE6 Q63 schema is materialized at `e2e/I03/live-result.schema.json`; `tests/test_e2e_artifact_contract.py` checks all four states with and without commentary, including the UTF-8 byte limit. This validates artifact shape only, not any live result or runtime approval. It does not alter increment/CT/STEP vocabularies, admission/wire diagnostics, generic READY or I01.
 
 ## 7. What the extractor must expose (I01 surface)
 
