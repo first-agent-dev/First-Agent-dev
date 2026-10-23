@@ -4672,8 +4672,8 @@ remains PTY cleanup, not a descendant barrier.
 peer/real local PTY worker; C0 request-shape; C1 `WorkerClient.request` fault seams), with the path inventory
 P1–P9 in the module docstring; `tests/test_execution_service.py` **26 passed** including the wire test that proves
 the route is composed (`EXECUTION_UNKNOWN`, not the stub's `BACKEND_UNAVAILABLE`) and that LIST reserves nothing
-while INTERRUPT reserves and finishes unknown. All execution banks **1167 passed**; wider
-`-k "execution or workspace"` **1618 passed, 1 skipped** (3 known `test_controller_installed` offline-install
+while INTERRUPT reserves and finishes unknown. All execution banks **1168 passed**; wider
+`-k "execution or workspace"` **1619 passed, 1 skipped** (3 known `test_controller_installed` offline-install
 errors). ruff/format clean, mypy 23 files, pyrefly 0 errors, `fa authoring-check` 0. **9/9 mutants killed** with
 sha256-verified byte-exact restore, including the two hazards: forwarding the frame without proving the session
 (the follow-up LIST then fails), and the id-keyed retirement gate (the control test hangs to its deadline).

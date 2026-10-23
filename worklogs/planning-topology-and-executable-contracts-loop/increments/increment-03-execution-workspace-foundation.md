@@ -3125,6 +3125,6 @@ noninteractive profile is `INPUT_POLICY`. Target: the same against a real contai
 `I03-LIVE-19/20/25/26`, still BLOCKED here.
 
 **Evidence.** `tests/test_execution_pty_control.py` 10 passed; `tests/test_execution_service.py` 26 passed; all
-`tests/test_execution_*.py` 1167 passed; wider `-k "execution or workspace"` 1618 passed, 1 skipped (3 known
+`tests/test_execution_*.py` 1168 passed; wider `-k "execution or workspace"` 1619 passed, 1 skipped (3 known
 offline-install errors); ruff/format clean, mypy 23 files, pyrefly 0, `fa authoring-check` 0; 9/9 assertion-only
 mutants killed with byte-exact restore.
