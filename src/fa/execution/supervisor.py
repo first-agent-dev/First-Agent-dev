@@ -1,11 +1,13 @@
-"""Private-UDS dispatcher and memory-only completed-reply cache.
+"""Private-UDS dispatcher, memory-only completed-reply cache, stop barrier.
 
-Requires real resource authority, operation journal and backend; no defaults or
-service main. These components do not implement workspace authority or Docker.
+Requires real resource authority and operation journal; nothing here defaults or
+invents one. `build_supervisor`/`main` are the §2.2 composition entry points and
+construct the object in `service.py`; this module stays transport and ordering.
 """
 
 from __future__ import annotations
 
+import argparse
 import copy
 import hashlib
 import hmac
@@ -15,9 +17,10 @@ import math
 import socket
 import struct
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
+from pathlib import Path
 from threading import Lock
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -47,6 +50,7 @@ from fa.execution.types import (
 
 if TYPE_CHECKING:
     from fa.execution.journal import OperationJournal
+    from fa.execution.service import ServiceConfig, SupervisorService
     from fa.execution.workspace import WorkspaceAuthority
 
 logger = logging.getLogger(__name__)
@@ -498,6 +502,63 @@ class SupervisorDispatcher:
             except (OSError, ExecutionContractError):
                 # Lost replies never roll back durable state or replay a handler.
                 return
+
+
+def build_supervisor(config: ServiceConfig | None = None, **kwargs: Any) -> SupervisorService:
+    """The one production composition: authority + journal + cache + dispatcher.
+
+    `supervisor.build_supervisor` is the name §2.2 fixes; the object itself lives
+    in `service.py` so this module stays the transport/ordering owner. Lazy
+    import keeps the dependency direction one-way (service imports supervisor).
+    """
+    from fa.execution.service import ServiceConfig as _ServiceConfig
+    from fa.execution.service import SupervisorService
+
+    if config is None:
+        config = _ServiceConfig(**kwargs)
+    if not isinstance(config, _ServiceConfig):
+        raise ExecutionContractError
+    return SupervisorService(config)
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Operator entry point: one JSON config, one private socket, bounded life.
+
+    Refuses to start on any configuration, ownership, recovery or binding error
+    (exit 2) rather than serving from a default or partial composition. SIGINT
+    and SIGTERM stop acceptance and wait for in-flight handlers to finish.
+    """
+    import signal
+    import sys
+    import threading
+
+    from fa.execution.service import read_config_file
+
+    parser = argparse.ArgumentParser(prog="fa-execution-supervisor", add_help=True)
+    parser.add_argument("--config", required=True, type=Path, help="absolute path to the service JSON config")
+    arguments = parser.parse_args(argv)
+    try:
+        service = build_supervisor(read_config_file(arguments.config))
+    except (ExecutionContractError, OSError, ValueError):
+        print("execution_supervisor: invalid configuration", file=sys.stderr)
+        return 2
+    stop = threading.Event()
+
+    def _stop(_signum: int, _frame: object) -> None:
+        stop.set()
+
+    previous = {signal.SIGINT: signal.signal(signal.SIGINT, _stop)}
+    previous[signal.SIGTERM] = signal.signal(signal.SIGTERM, _stop)
+    try:
+        with service:
+            service.serve_forever(stop)
+    except (ExecutionContractError, OSError):
+        print("execution_supervisor: startup refused", file=sys.stderr)
+        return 2
+    finally:
+        for signum, handler in previous.items():
+            signal.signal(signum, handler)
+    return 0
 
 
 class TerminalVerdict(StrEnum):

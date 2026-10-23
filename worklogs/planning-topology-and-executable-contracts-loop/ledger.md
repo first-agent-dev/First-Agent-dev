@@ -4458,3 +4458,78 @@ the single intent clear.
 recovery, fsync-unsupported/EIO cases, and explicit process-crash vs power-loss labelling — none of which
 a process-only `SystemExit` can produce. `bundles/` retention is GC's unit, not recovery's. `I03-LIVE-25`
 PLANNED / UNEXECUTED. DoD row now **25 / 8** (grep-verified).
+
+### E277 — the composed supervisor: nineteen routes, one socket owner, real owners only
+
+**FACT (source-verified before editing).** `Operation` has exactly nineteen members and no route table
+existed: `SupervisorDispatcher` took an injected `request_authorizer`/`handle` callable, and nothing in
+`src/` constructed it. `serve_connection` authenticated one connection via `SO_PEERCRED` and served one
+request, but nobody owned `bind`/`listen`/`accept`, the socket mode, the startup order or shutdown.
+`WorkspaceAuthority` already owned register/acquire/pin/create_view/read/write/release/stop/seal/publish/
+bundle/install, `publication` already owned the four publication entry points, and `ViewStopper` already
+owned the close → drain → stop → observe sequence. Six operations had **no owner at all**: `exec`,
+`inspect`, `cancel`, `pty_control` (no `ExecutionReceipt` issuer, no worker control wrappers, no
+independent terminal barrier — `backend.py` returns a `CommandOutcome` and says so), `handoff` (no
+`WorkspaceAuthority.handoff` exists anywhere), and `register_workspace` with `create=true` (only
+`register_existing` exists; creating a root is SLICE5 acquisition). `health` had no
+`profile_set_sha256` formula and the authority had no public readiness fact; the wire's empty `release`
+payload carries no `workspace_id`, so the only releasable identity is the proved grant itself.
+
+**DERIVED (why this shape).** STEP3 requires all nineteen routes and forbids both a silent success and a
+failing-main stub. The plan's own rule for an absent route is "an explicit closed-code refusal
+(`INVALID_REQUEST`/`BACKEND_UNAVAILABLE`), never a silent success or a host-side fallback", and E275's R1
+allows a unit to be dormant only when it is *declared* with the unit that activates it. So the table is
+total, thirteen rows call a real owner, and six rows refuse `BACKEND_UNAVAILABLE` with the activating
+unit recorded in the module docstring and in the ordering table below — no fabricated receipt, no
+synthetic result, no second authority.
+
+**DECIDED (mechanism, one per gap).**
+- `profiles.profile_set_sha256(profiles)` — canonical digest of the already-validated profiles, ordered
+  by `profile_id`, over `to_dict()`; it names the policy that is enforced, not the file that was read.
+- `WorkspaceAuthority.ready` — `entered and healthy`, i.e. after `single_supervisor`, `recover_uncertain`
+  and `_load` (forward recovery) have all succeeded; it is `health`, never execution readiness.
+- `WorkspaceAuthority.release_writer(capability)` — the empty wire `release` names no workspace, so the
+  binding is proved by `_owner_only` exactly as everywhere else. `release_unused_writer` and the new entry
+  point now share one `_settle_owner` body, so the settle rule (state-aware `_has_unsettled_views`, no
+  intent) has one implementation.
+- `service.py::SupervisorService` — owns authority + journal + reply cache + dispatcher + the UDS. It
+  enters the authority (flock, `recover_uncertain`, `_load`) **before** `bind`, unlinks a stale socket
+  only because the flock already proves no live instance owns it, binds under `umask 0o077`, `chmod 0600`,
+  `listen(backlog)`, accepts with `max_workers` and a bounded accept timeout that only serves the stop
+  flag, and on `close` stops accepting, joins in-flight handlers, then leaves the authority. The route
+  table is a module-level `dict[Operation, str]` checked at construction for totality and uniqueness.
+- `supervisor.build_supervisor(config)` / `supervisor.main(argv)` — the §2.2 names, thin over the service
+  (lazy import keeps the dependency one-way); `main` reads one strict JSON config (`_REQUIRED_KEYS` +
+  `_OPTIONAL_KEYS`, unknown keys refused), and returns 2 without serving on any configuration, recovery
+  or binding error.
+- `create_view` forwards the wire `base_revision` (E268), `pin_reader`/`create_view` pass
+  `formal_evidence=False` because "the wire carries no formal-evidence claim" (the authorizer's own rule),
+  and `prepare_bundle` supplies the one piece of controller metadata the wire does not carry: the UTC
+  creation date.
+- `stop_view` is composed with `cells=None`: closure and drain really happen, terminality does not. That
+  is why `seal` now refuses `TERMINALITY_UNKNOWN` through the service — the honest consequence until the
+  cgroup observer exists, and the reason the publication half of the composition is still unreachable.
+
+**Evidence.** `tests/test_execution_service.py` **21 passed** (C0 for the table/config/digest; C3 for the
+real socket, closed codec and real authority state). Owning bank (service + dispatch + supervisor +
+backend + publication + recovery + authorize + workspace + views + readers + view_io) **556 passed**;
+wider `-k "execution or workspace"` **1563 passed, 1 skipped**, 3 errors that are the known
+`test_controller_installed` offline-install environment (no `uv` build cache). ruff/format clean; mypy 21
+files; pyrefly 0 errors; `fa authoring-check` `diagnostics 0`, `exit_code 0`. **9/9 mutants killed** with
+sha256-verified byte-exact restore: missing route row, handler dropping `base_revision`, view-less release
+routed through the pin path, `terminal: true` in the stop projection, a synthetic `exec` result, a constant
+profile-set digest, the missing `chmod 0600`, binding before recovery, and `create=true` reaching
+`register_existing`.
+
+**Ordering table, now that item 2 has landed.** Item 2 (routes + `build_supervisor/main`) is delivered by
+E277 as the composition, with these declared dormancies and their activators: `exec`/`inspect`/`cancel`/
+`pty_control` → the receipt issuer + independent terminal barrier + PTY control unit; `handoff` → the
+owner-handoff unit; `register_workspace{create:true}` → SLICE5 managed acquisition. Items 3 (CANDIDATE
+publish leg) and 4 (provisioner/tool cutover) are unblocked by the route table but still unstarted.
+
+**Deliberately not done, with the reason.** No receipt is issued, no `CellTermination` adapter is
+manufactured from `episode_container`, and `CellBackend` is not constructed by the service: wiring a
+backend whose results cannot become a truthful receipt would create exactly the synthetic-completion
+surface this repository forbids. Consequently a stage cannot yet complete through the wire
+(`stop_view` cannot prove emptiness → `seal` refuses), and `I03-LIVE-26` is PLANNED / UNEXECUTED. Also
+untouched: the controller caller cutover, install/image/unit files, and the live `S01..S08` joins.

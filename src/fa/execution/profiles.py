@@ -7,8 +7,10 @@ paths immediately before use. None of these host inputs is a wire/model field.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -139,3 +141,22 @@ class ExecutionProfile:
                 },
             },
         }
+
+
+def profile_set_sha256(profiles: Sequence[ExecutionProfile]) -> str:
+    """The digest `health` publishes: one canonical value for the approved set.
+
+    Derived from the already-validated profiles rather than from the input file,
+    so the digest names the policy that is actually enforced (image digests,
+    UID/GID, cgroup parent, syscall policy and budgets included) and a host that
+    edited its config without reloading cannot appear to have applied it.
+    Ordering is by `profile_id`, so config order is not part of the identity.
+    """
+    ordered = sorted(profiles, key=lambda profile: profile.profile_id)
+    if not ordered or len({profile.profile_id for profile in ordered}) != len(ordered):
+        raise ExecutionContractError
+    return hashlib.sha256(
+        json.dumps(
+            [profile.to_dict() for profile in ordered], sort_keys=True, separators=(",", ":"), allow_nan=False
+        ).encode("utf-8")
+    ).hexdigest()

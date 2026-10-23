@@ -1387,25 +1387,43 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                 or not hmac.compare_digest(binding.grant, capability)
             ):
                 raise SupervisorError("UNAUTHORIZED")
+            return self._settle_owner(binding)
+
+    def release_writer(
+        self, peer: PeerIdentity, namespace: NamespaceRef, *, capability: str, deadline: float
+    ) -> dict[str, bool]:
+        """Release the writer THIS exact OWNER grant holds; the wire names no id.
+
+        §2.1's `release` payload is empty, so the binding is resolved from the
+        authenticated principal, the active actor and the grant itself — the same
+        proof `_owner_only` uses everywhere else. Naming a `workspace_id` here
+        would let a caller retarget its own grant at another workspace.
+        """
+        validate_capability(capability)
+        with self._transaction(peer, deadline):
+            return self._settle_owner(self._owner_only(peer, namespace, capability))
+
+    def _settle_owner(self, binding: _Binding) -> dict[str, bool]:
+        """The one settlement body; both release entry points share it."""
+        try:
+            self._recheck(binding)
+            views = os.open("views", _DIRECTORY, dir_fd=binding.fd)
             try:
-                self._recheck(binding)
-                views = os.open("views", _DIRECTORY, dir_fd=binding.fd)
-                try:
-                    if self._has_unsettled_views(binding, views) or "intent.json" in os.listdir(binding.fd):
-                        raise SupervisorError("WORKSPACE_BUSY")
-                finally:
-                    os.close(views)
-                binding.metadata.update(owner_namespace=None, active_actor=None, status="AVAILABLE")
-                _replace_private_bytes(binding.fd, "workspace.json", encode_json(binding.metadata))
-                if binding.writer is not None:
-                    os.close(binding.writer)
-                    binding.writer = None
-                binding.grant = None
-                binding.principal = None
-                return {"released": True}
-            except OSError:
-                self._healthy = False
-                raise SupervisorError("DURABILITY_UNKNOWN") from None
+                if self._has_unsettled_views(binding, views) or "intent.json" in os.listdir(binding.fd):
+                    raise SupervisorError("WORKSPACE_BUSY")
+            finally:
+                os.close(views)
+            binding.metadata.update(owner_namespace=None, active_actor=None, status="AVAILABLE")
+            _replace_private_bytes(binding.fd, "workspace.json", encode_json(binding.metadata))
+            if binding.writer is not None:
+                os.close(binding.writer)
+                binding.writer = None
+            binding.grant = None
+            binding.principal = None
+            return {"released": True}
+        except OSError:
+            self._healthy = False
+            raise SupervisorError("DURABILITY_UNKNOWN") from None
 
     # Settled = no further writer-owned work can arrive: publish finished the
     # view (PUBLISHED) or publication rejected it (REJECTED). Everything else on
@@ -2282,6 +2300,16 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
 
     def _gate(self, ref: ViewRef) -> _WorkGate:
         return self._gates.setdefault(ref.view_id, _WorkGate())
+
+    @property
+    def ready(self) -> bool:
+        """Entered and undegraded; startup recovery has already run (E277).
+
+        This is the `health` fact, not execution readiness, not a view grant and
+        not a claim that any cell, image or cgroup fact was proved. A durability
+        failure inside any handler clears it, exactly like every other refusal.
+        """
+        return self._entered and self._healthy
 
     @property
     def approved_profile(self) -> ExecutionProfile | None:

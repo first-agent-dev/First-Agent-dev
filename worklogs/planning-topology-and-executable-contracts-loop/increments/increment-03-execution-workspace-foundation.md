@@ -3010,3 +3010,46 @@ with the stored one, which is what catches a rewritten manifest. (4) The expecte
 remain. `STOP_VIEW`/`SEAL` still have no dispatcher route. No STEP box, FUNCTIONAL contract, live row
 or E223 acceptance duty is closed by this work; the SLICE2 STEP3 provisioning leg stays open until
 publish lands.
+
+### E277 result — SLICE1 STEP3 part 2: the composed supervisor (route table, socket owner, `main`)
+
+**What shipped.** A new `src/fa/execution/service.py` owns the composition and the private UDS:
+`ServiceConfig` (strict, no defaults for trust inputs), `load_config`/`read_config_file`, and
+`SupervisorService` — the real `WorkspaceAuthority`, its journal, the completed-reply cache, the
+`SupervisorDispatcher` and the one socket. `supervisor.build_supervisor(config)` and `supervisor.main(argv)`
+are the §2.2 names and are thin over that object. Two authority additions were required by the wire
+schema: `ready` (the `health` fact, true only after flock + `recover_uncertain` + `_load`) and
+`release_writer(capability)` (the `release` payload is empty, so only the proved grant can name the
+binding; it and `release_unused_writer` now share one `_settle_owner`). `profiles.profile_set_sha256`
+is the canonical digest of the enforced profile set.
+
+**Route table (nineteen rows, derived names, checked for totality at construction).** Live against a
+real owner: `health`, `register_workspace{create:false}`, `acquire_writer`, `pin_reader`, `create_view`,
+`read_file`, `write_file`, `edit_file`, `release` (pin or owner), `stop_view` (close + drain only),
+`seal`, `publish`, `prepare_bundle`, `install_project`. Declared dormant with an explicit
+`BACKEND_UNAVAILABLE` refusal and the activating unit:
+
+| route | why it cannot be honest yet | activated by |
+| --- | --- | --- |
+| `exec`, `inspect`, `cancel` | `CellBackend` returns a `CommandOutcome`; there is no `ExecutionReceipt` issuer and no independent (cgroup) terminal barrier, so `EXITED` could not be asserted truthfully | receipt issuer + terminal barrier unit |
+| `pty_control` | `WorkerClient` has `begin`/`await_reply`/`request`/`close` only — no list/interrupt/close verbs scoped to an episode | PTY control unit |
+| `handoff` | no `WorkspaceAuthority.handoff` exists at all | owner-handoff unit (terminal/settled source, parent-child proof) |
+| `register_workspace{create:true}` | only `register_existing` exists; creating a root is managed acquisition | SLICE5 |
+
+**Current vs target behaviour.** Current: the service starts only with an explicit config, completes
+recovery before binding, serves one request per connection over a 0600 socket, and answers every
+operation with either its real owner's exact closed reply or a closed-code refusal. Target (unchanged):
+STEP3's exit also needs the install/image/entrypoint set, the real `CellBackend` composition behind the
+execution routes and the disposable-host boot proof — so the box stays unticked.
+
+**Why the publication half cannot complete yet.** `stop_view` has no `CellTermination` adapter, so it
+returns `terminal: false` after really closing and draining; `seal` then refuses `TERMINALITY_UNKNOWN`.
+That is the truthful consequence of the missing kernel observation, not a gap in the composition, and it
+is why a `CellTermination` manufactured out of `CellBackend.episode_container` was deliberately **not**
+written: "the container is gone" is not "its cgroup is empty".
+
+**Evidence.** `tests/test_execution_service.py` 21 passed (C0 table/config/digest; C3 real socket + real
+codec + real authority); owning bank 556 passed; wider `-k "execution or workspace"` 1563 passed, 1
+skipped (3 known offline-install errors elsewhere); ruff/format clean, mypy 21 files, pyrefly 0,
+`fa authoring-check` 0. 9/9 assertion-only mutants killed with byte-exact restore. `I03-LIVE-26` is
+PLANNED / UNEXECUTED; no STEP box, contract or live verdict is ticked.
