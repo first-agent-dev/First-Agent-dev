@@ -1,6 +1,6 @@
 # Open questions — raised 2026-10-07 during I01/SLICE4
 
-Canonical record. Next free id after this file: **Q69**.
+Canonical record. Next free id after this file: **Q87** after Q86 below.
 
 **Current owner/disposition alignment, 2026-10-15 (E200–E203):** retained I02 owns explicit-plan
 Q57/Q58, CT92 rules and local admission/gate proof. Q59/Q60 exact nested choices, Q61/CT97
@@ -2181,3 +2181,60 @@ both), for nested depth limits enforced by the supervisor rather than by the wor
 supervisor-side proof of run existence — the last would mean deliberately giving the supervisor a session
 store, i.e. reopening option (2). Implementation and evidence: SLICE2 STEP6/CT113, `tests/test_execution_handoff.py`,
 register row `I03-LIVE-27`.
+
+## Q86 — How does the wire `publish` express a plan (CANDIDATE) publish?
+
+**Status: OPEN (raised 2026-10-23, E286) — blocks A3's supervisor half (SLICE3 STEP3's CANDIDATE `publish`) and
+therefore A5. No code was written against either option.**
+
+**The gap.** Two records settle the *semantics* of a candidate publish and neither settles its *encoding*.
+Spec §5 (`i03-execution-workspace-spec-2026-10-15.md`, CANDIDATE grants) says: "On seal, validate bounded buffer with
+existing pure I02 validators; **publish of CANDIDATE uses PLAN intent at the scoped canonical PlanRef path**, never
+imports a candidate directory. Parent/model cannot choose a promotion destination." Increment SLICE3 STEP3 says the
+wire route is "the existing `publish` with a CANDIDATE-view ledger, **not a new operation**". What exists today is a
+route that cannot carry that shape:
+
+1. `protocol._PUBLISH` payload is `{sealed_manifest_id: ^seal-[0-9a-f]{32}$, expected_base_revision: ^rev-…$}`, both
+   **required** (`protocol.py:126`). A CANDIDATE view is never sealed — `seal_view` requires a stopped WRITE view with
+   a terminal receipt — so the first key is inapplicable by construction, not merely unused.
+2. The reply shape `_COMMITTED` is `{workspace_id, revision_id, tree_sha256, operation_id, projection_complete}`
+   (`protocol.py:138`). `publication.PlanPublishResult` returns those **plus `plan_ref`**, and §5 makes that ref "the
+   one a caller must record" — so the reply is missing the only field the controller needs.
+3. `publication.publish_plan(authority, …, plan_ref, buffer, deadline)` takes both from its caller. On the wire neither
+   is caller-supplied: the buffer is the candidate's ONE supervisor-owned staged file (E259,
+   `candidate_scope.candidate_path`) and the ref is the one pinned in `candidate_scope.plan_ref` at `create_view`. The
+   supervisor must therefore read both from the view it was handed, which is also what forbids a caller-chosen
+   destination.
+
+**Options.**
+1. **(recommended) One operation, purpose-validated.** `sealed_manifest_id` becomes nullable and must be `null`
+   exactly when the request's `view_ref.purpose` is `CANDIDATE` (a seal id there, or a null elsewhere, is
+   `INPUT_POLICY`); the reply gains `plan_ref` (nullable; non-null only for a plan publish). `service._publish`
+   branches on the purpose, proves the view through the authority, reads the staged buffer, and calls
+   `publication.publish_plan` with the view's pinned ref. No bytes and no destination travel on the wire.
+2. **Purpose-scoped payload members.** Add optional `expected_plan_sha256`/`plan_ref` payload keys and leave the reply
+   alone. Closed-schema growth, and the controller would have to learn the new canonical hash from the journal record
+   or a later `read` instead of from the reply that performed the change.
+3. **A separate `publish_plan` operation.** Cleanest schema, but it contradicts STEP3's "not a new operation", takes
+   `Operation` from 19 to 20 (route totality, register, and every derived count change), and re-creates the second
+   plan writer the whole Q58/R3 line exists to delete.
+
+**Impact of choosing wrongly.** Option 1 edits two closed v1 shapes for every client (one member's nullability, one
+member's addition) but keeps one route, one reply and one writer. Option 2 splits the truth about which plan is
+current across two places. Option 3 undoes the single-writer property by making the plan path a second operation with
+its own reservation/replay semantics.
+
+**What is not in question.** The destination comes from the view's pinned `candidate_scope.plan_ref`; the bytes arrive
+through `write_candidate` under the same scope; the commit is the existing PLAN intent and same-path replace
+(`I03-LIVE-23`); `plan_promotion.publish_plan_buffer` must be deleted in the same change that activates the managed
+route (R3 — a retained fallback is a second writer by another name); and the controller must not be able to name a
+different plan path.
+
+**Why it is raised instead of decided.** Q85's precedent and the operating rule are explicit: a new *contract* choice
+is promoted, not guessed. The three options differ in the wire contract every deployed controller/supervisor pair must
+agree on, and the manager-plane codec is versioned and closed. A local test can prove any of them; only the operator
+can choose which contract ships.
+
+**What would settle it.** The operator picks 1, 2 or 3. Option 1 then lands as a `protocol.py` schema delta plus a
+purpose branch in `service._publish` and the authority-side buffer read, with the owning banks
+`tests/test_execution_service.py` (wire) and `tests/test_workspace_publication.py` (`publish_plan` half) extended.
