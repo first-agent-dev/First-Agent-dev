@@ -45,6 +45,15 @@ For any observable signal, name and test BOTH producer and consumer. A
 producer with no consumer (or the reverse) is an incomplete contract: complete
 it, or defer the missing side explicitly.
 
+## E2E LIVE-RESULT AUTHORITY
+
+The planner records cases, local/live oracles, host prerequisites, evidence paths,
+and the run sheet before coding. The coder supplies only source-backed handoff
+facts/proposals; the planner finalizes host instructions from actual deployment
+facts; an independent reviewer completes the manual checklist before
+fixture/helper work. No test, harness, evaluator, or coder assigns live `PASS`;
+local evidence is not deployed evidence.
+
 ## ORACLE RANKING (prefer the top)
 
 event kind+fields > outcome/exit code > tool trajectory > provider

@@ -93,3 +93,66 @@ are authored here; candidate exercise details are proposals for planner/reviewer
   (E274 / `I03-LIVE-24`); `../README.md` (`I03-LIVE-24`); `tests/test_workspace_authorize.py`.
 - **Planner disposition:** pending. This coder handoff does not amend the oracle, case ownership,
   fixture authorization, or live result.
+
+## I03-LIVE-27 — Q85 / CT113 / E283 controller-attested workspace handoff
+
+- **Contracts / producers:** Q85 (answered by E282); CT113; SLICE2 STEP6; `I03-LIVE-27`;
+  L-HAND-1 and L-HAND-2. The local authority+route leg is implemented (E283). The distinct
+  controller leg is still pending under CT108 / SLICE5 STEP2; the integrated outer-chat join is
+  I03-LIVE-S08. These are linked obligations, not one claimed implementation.
+- **Verified source references:** `src/fa/execution/primitives.py::Operation.HANDOFF`;
+  `src/fa/execution/service.py::SupervisorService._handoff`;
+  `src/fa/execution/workspace.py::WorkspaceAuthority.handoff`, `_handoff_owner`, `_settled`;
+  `src/fa/execution/client.py::ExecutionClient.request`;
+  `src/fa/inner_loop/tools/workflow_tool.py::build_invoke_workflow_tool`'s `handler` and
+  `_child_run_context`; `src/fa/session/manager.py::SessionManager.begin_run`;
+  `tests/test_execution_handoff.py`.
+- **Production path:** The existing `handoff` wire operation carries the caller namespace and
+  `target_namespace`; `_handoff` constructs the target `NamespaceRef` and calls the authority.
+  `WorkspaceAuthority.handoff` proves the owner, requires every WRITE view settled and no
+  `intent.json`, requires this process's live writer fd, then checks same session, target parent
+  equals caller run, and target run differs. `_handoff_owner` performs one private metadata replace
+  and read-back before returning a fresh capability; generation, owner namespace, status and current
+  revision do not change. Q85 deliberately makes the parent link controller-attested: the controller
+  must allocate the child via `_child_run_context` / the existing `SessionManager.begin_run`; the
+  authority does not look up or attest target-run existence.
+- **Pending controller seam (source-verified, not implemented):** `ExecutionClient.request` is a
+  generic one-shot RPC and does not resend after an uncertain send, but there is no controller call
+  to `Operation.HANDOFF` and no `ExecutionClient.handoff` convenience method. The current workflow
+  handler refuses acquisition-dependent nested roles before child dispatch; it has no parent
+  mutator drain/suspension or server-acknowledged grant-transfer path. SLICE5 STEP2 must later drain
+  and settle parent writes, allocate once, call the existing wire operation once, validate the returned
+  grant, and dispatch only after acknowledgement. A refusal or uncertain reply means no child dispatch
+  and no retry with a new request id. The parent/child controller proof is not supplied by this local
+  authority handoff or by I03-LIVE-27 alone.
+- **Observable effect / artifact:** Local CT113 tests observe the same-generation grant transfer,
+  changed active actor, unchanged owner/status/revision, old-capability denial, cached same-request
+  replay, and byte-identical refusal state for unsettled views/intent and invalid namespaces. The
+  planner-owned I03-LIVE-27 row remains the surface oracle; L-HAND-1 covers the grant/epoch/replay
+  chain and L-HAND-2 covers unsettled refusal. The separate I03-LIVE-S08 join owns the actual nested
+  controller/outer-chat witness.
+- **Host prerequisites:** An approved filesystem and deployed service/dispatcher under the controller
+  UID; an actual same-session child allocated by `SessionManager.begin_run`; a live writer fd; and
+  real view/cell settlement observations for the open/sealed cases. The approved deployed SHA, image,
+  profile, configuration and commands must be supplied from the actual host, not inferred here.
+- **Candidate fixture / command: [PROPOSAL]** After SLICE6 STEP7 review and planner/operator
+  disposition, map the existing L-HAND-1/2 host scenarios to I03-LIVE-27 on an approved disposable
+  workspace. Keep the existing expected observations and negative controls; no new fixture, host
+  command, acceptance oracle or case ownership is proposed in this handoff.
+- **Local proof:** `tests/test_execution_handoff.py` is the real-authority/composed-route bank
+  (17 passed; 15/15 assertion-only mutants killed in the existing E283 evidence). It proves local
+  component behavior only: it does not allocate the target through a real `begin_run`, run a deployed
+  service as the controller UID, or supply a kernel-observed live-cell settlement.
+- **Host-only assumptions / limitations:** I03-LIVE-27 is **PLANNED / UNEXECUTED** and its live result
+  remains **NOT RUN**. L-HAND-1/2 are planned host evidence, not local status promotions. This entry
+  does not prove the pending SLICE5 controller path, the I03-LIVE-S08 nested workflow, installed
+  origins, Docker/cgroup behavior, or deployment readiness. No fixture exists and STEP7 review must
+  precede any fixture/helper implementation.
+- **Evidence references:** `../README.md` and `live-verification.md` (`I03-LIVE-27`);
+  `../../notes/i03-live-e2e-test-plan-2026-10-22.md` (L-HAND-1/2);
+  `../../notes/e2e-live-verification-register.md` (E282/E283);
+  `../../increments/increment-03-execution-workspace-foundation.md` (CT113, SLICE2 STEP6,
+  CT108/SLICE5 STEP2, E287); `tests/test_execution_handoff.py`.
+- **Planner disposition:** pending. This coder handoff records source facts and evidence limits only;
+  it does not amend the planner-owned oracle, case ownership, fixture authorization, host result, or
+  live status.

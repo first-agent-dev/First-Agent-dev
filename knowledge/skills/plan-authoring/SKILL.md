@@ -620,6 +620,21 @@ OPEN QUESTIONS
   stated reason), non-goals were respected, and RN# items are all
   dispositioned.
 
+11.3a E2E EVIDENCE OWNERSHIP (when a plan includes live acceptance)
+
+  The PLANNER records stable case IDs, ownership, local-vs-live oracles, host
+  prerequisites, evidence artifacts, and the planned run-sheet obligations before
+  coding begins. The CODER may append only source-verified implementation seams,
+  local proof, host prerequisites, limitations, and clearly labelled proposals;
+  the coder does not change the acceptance oracle, case ownership, or live result.
+  The PLANNER finalizes copy/paste host instructions from actual deployment facts,
+  not assumed paths. An independent reviewer completes the documented manual
+  checklist before fixture/helper implementation, with a fresh review after
+  material oracle/command/fixture changes. No harness, evaluator, or coder assigns
+  a live PASS; local tests and source review never substitute for host evidence.
+  Keep generic plan statuses DRAFT | READY | BLOCKED distinct from roadmap,
+  increment, CT, local-proof, and live-result vocabularies.
+
 11.4 READY GATE (self-check before marking plan status = READY)
 
   [ ] Preflight log present and non-trivial (not "skipped")

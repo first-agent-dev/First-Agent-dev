@@ -623,6 +623,12 @@ def test_coverage_checker_cli_executes_and_reports_frozen_counts() -> None:
             "tests/test_workspace_publication.py",
         ),
         ("I03-LIVE-24", ("CT99", "E274"), "WorkspaceAuthority.authorize", "tests/test_workspace_authorize.py"),
+        (
+            "I03-LIVE-27",
+            ("Q85", "CT113", "SLICE2 STEP6", "CT108", "SLICE5 STEP2", "E283"),
+            "WorkspaceAuthority.handoff",
+            "tests/test_execution_handoff.py",
+        ),
     ),
 )
 def test_i03_implementation_handoffs_are_source_grounded_and_proposals_labeled(
@@ -653,6 +659,13 @@ def test_i03_implementation_handoffs_are_source_grounded_and_proposals_labeled(
     assert producer in section
     assert proof_file in section
     normalized_section = " ".join(section.split())
-    assert "No fixture or copy/paste host command is created" in normalized_section
+    assert "No fixture or copy/paste host command is created" in normalized_section or (
+        case_id == "I03-LIVE-27" and "no new fixture, host command" in normalized_section.lower()
+    )
     assert "live result" in normalized_section.lower()
     assert "I03/implementation-handoffs.md" in E2E_INDEX.read_text(encoding="utf-8")
+    if case_id == "I03-LIVE-27":
+        for link in ("I03-LIVE-27", "L-HAND-1", "L-HAND-2", "I03-LIVE-S08"):
+            assert link in section, link
+        assert "PLANNED / UNEXECUTED" in section
+        assert "NOT RUN" in section

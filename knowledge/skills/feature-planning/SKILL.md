@@ -633,6 +633,20 @@ proof, mutation result, and remaining `GAP#`/`Q#`/`RK#`.
 
 ---
 
+## 19a. E2E evidence ownership
+
+When a plan has live acceptance, the planner records stable case IDs, owners,
+separate local and deployed oracles, host prerequisites, evidence artifacts, and
+run-sheet requirements before coding begins. The coder appends only
+source-verified production seams, local proof, limitations, and explicitly labelled
+proposals; the coder does not edit the acceptance oracle, case ownership, or live
+result. The planner finalizes the host run sheet from actual deployment/workspace
+facts. An independent reviewer completes the manual checklist before fixtures or
+helpers are implemented; material oracle, command, or fixture changes need a fresh
+checklist entry. No harness, evaluator, or coder assigns live PASS. Preserve
+unrelated `DRAFT | READY | BLOCKED` plan semantics and keep them distinct from
+live-result states.
+
 ## 20. Worked example — Generic P1 REST + DB + UI
 
 Illustrative only. Mark file names `NEW` unless preflight verifies them.

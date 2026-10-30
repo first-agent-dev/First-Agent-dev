@@ -386,6 +386,18 @@ Manual mutation minimum when no mutation tool exists:
 
 ---
 
+### 13a. E2E live-result authority
+
+For plans with deployed acceptance, the planner records case ownership, distinct
+local/live oracles, host prerequisites, expected evidence paths, and run-sheet
+requirements before coding. A coder's handoff is limited to source-verified
+production seams, local proof, host prerequisites, limitations, and labelled
+proposals; it cannot change the oracle, ownership, or result. The planner finalizes
+the host run sheet from actual deployment facts, and an independent reviewer
+completes the manual checklist before fixtures/helpers are implemented. Tests,
+harnesses, evaluators, and coders never assign a live `PASS`: a local green is not
+host evidence and an unexecuted case remains `NOT RUN`.
+
 ### 14. Gold files
 
 | File | Proves |

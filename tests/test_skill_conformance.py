@@ -269,3 +269,37 @@ def test_the_schema_oracle_markers_are_unchanged() -> None:
         "<!-- SCHEMA4-EXPECTED:END -->",
     ):
         assert marker in schema, f"schema §4 oracle marker missing: {marker}"
+
+
+def test_transferred_e2e_roles_and_ready_semantics_are_preserved() -> None:
+    """CT88/CT89: prove the E223 role split reaches every injected skill surface."""
+    plan_authoring = _skill_path("plan-authoring").read_text(encoding="utf-8")
+    feature = _skill_path("feature-planning").read_text(encoding="utf-8")
+    feature_inject = _skill_path("feature-planning", "INJECT.md").read_text(encoding="utf-8")
+    tests_writing = _skill_path("tests-writing").read_text(encoding="utf-8")
+    tests_inject = _skill_path("tests-writing", "INJECT.md").read_text(encoding="utf-8")
+
+    plan_text = " ".join(plan_authoring.lower().split())
+    feature_text = " ".join(feature.lower().split())
+    feature_inject_text = " ".join(feature_inject.lower().split())
+    tests_text = " ".join(tests_writing.lower().split())
+    tests_inject_text = " ".join(tests_inject.lower().split())
+    assert "DRAFT | READY | BLOCKED" in plan_authoring
+    assert "DRAFT | READY | BLOCKED" in feature
+    assert "planner records" in plan_text
+    assert "before coding" in feature_text
+    assert "source-verified" in feature_text
+    assert "run sheet" in feature_text
+    assert "independent reviewer" in feature_text
+    assert "before coding" in feature_inject_text
+    assert "source-verified" in feature_inject_text
+    assert "run sheet" in feature_inject_text
+    assert "independent reviewer" in feature_inject_text
+    assert "no harness, evaluator, or coder assigns live" in feature_inject_text
+    assert "no harness, evaluator, or coder assigns a live pass" in plan_text
+    assert "no harness, evaluator, or coder assigns live pass" in feature_text
+    assert "coders never assign a live" in tests_text
+    assert "before coding" in tests_inject_text
+    assert "source-backed handoff" in tests_inject_text
+    assert "independent reviewer" in tests_inject_text
+    assert "no test, harness, evaluator, or coder assigns live" in tests_inject_text

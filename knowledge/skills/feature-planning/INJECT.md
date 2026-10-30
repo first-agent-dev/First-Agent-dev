@@ -53,6 +53,16 @@ After a big chunk, or before declaring shipped: remove the producer call or
 invert the key branch, rerun the named tests, confirm they fail, restore.
 A surviving mutation means a weak oracle — strengthen before ship.
 
+## E2E EVIDENCE ROLES
+
+Before coding, the planner records case IDs/owners, local-vs-live oracles, host
+prerequisites, evidence paths, and run-sheet obligations. The coder appends only
+source-verified seams/proofs/limitations and labelled proposals; it does not alter
+the oracle, ownership, or live result. The planner finalizes the host run sheet
+from actual host facts. An independent reviewer completes the manual checklist before
+fixture/helper implementation. No harness, evaluator, or coder assigns live
+`PASS`; preserve generic `READY` semantics.
+
 ## STOP RULE
 
 If implementation reveals a new policy choice, STOP and promote it to a `Q#`
