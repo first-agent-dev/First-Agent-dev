@@ -1557,6 +1557,44 @@ duplicate (the test now asserts the observable side effect instead), and the pro
 docker/cgroup fact, no installed service and no canonical publication was exercised; nothing here is a
 live PASS. The `FA_REQUIRE_EXECUTION_HOST=1` form of both rows stays BLOCKED in this session.
 
+### E285 checkpoint (2026-10-23) — inventory is now the checklist A5 must close; still 27 / 8
+
+A4 (SLICE4 STEP1's inventory) is source-grounded at `969fa06`: `notes/i03-execution-call-inventory.md` now carries rows
+R01–R28 with exact anchors, real caller traces, today's boundary (host/cell/TCB — with the explicit statement that a
+host route has no profile and no view), the existing bank, and a **named** negative oracle per row, plus a
+classified-out list for the 24 non-launcher findings. No surface or join is added: an inventory does not produce
+evidence, it lists what must be observed.
+
+Two of those planned oracles matter to this register because they are already real today and narrow the host work:
+`tests/test_execution_tool_index.py::test_a_managed_registry_ships_no_host_git_tools` and
+`::test_a_managed_search_runs_no_host_git_subprocess`. The rest stay **planned** until the cutover, which is why no row
+moved.
+
+Totals unchanged: `grep -o 'I03-LIVE-[0-9]\{2\}' | sort -u | wc -l` = **27**; joins = **8**. No row promoted.
+
+### E284 checkpoint (2026-10-23) — no new surface: the checkpoint sidecar is CT110/CT111 evidence, still 27 / 8
+
+E284 shipped A1 (`src/fa/execution/checkpoints.py` + `tests/test_stage_checkpoints.py`), and it adds **no register row
+on purpose**: STEP1 declares no new CT, because a checkpoint's durable effects are CT106's publish, its barrier is
+CT104's `stop_view` and its artifact is the CT110/CT111 receipt/report the managed consumers will read. The sidecar is
+the *link* between those, not a twentieth producer, so promoting a surface here would double-count evidence that
+already has a row.
+
+What the host fixtures will still have to arrange, now that a local body exists:
+
+- a **real cell** whose descendants are kernel-observed empty, so `terminal is True` comes from a cgroup rather than
+  from the doubled `CellTermination` seam this bank uses (`I03-LIVE-19`'s fact);
+- the **artifact itself**: the record binds the digest of an evidence artifact the *stage loop* persists (A5/A6), so
+  the host case must show persist-then-link, not a bare hash;
+- a **deployed service** for the C3 leg, so `stop_view`/`seal`/`publish` are one supervisor each and the recorded
+  `op-<request_id>` values are the operator's journal records.
+
+Local evidence only, not promotable: 36 cases, 100% statements / 98% branch on the module, 1319 execution+publication
+tests passing, **35/35** assertion-only mutants killed. Two survivors were closed by adding assertions (the
+publish-revision disagreement and truthy-but-not-`True` terminality) rather than by dropping the line.
+
+Totals unchanged: `grep -o 'I03-LIVE-[0-9]\{2\}' | sort -u | wc -l` = **27**; joins = **8**. No row promoted.
+
 ### E283 checkpoint (2026-10-23) — `I03-LIVE-27` has a local body; still 27 surfaces, all UNEXECUTED
 
 `WorkspaceAuthority.handoff` and the `service.py` route now exist, so the row is no longer describing planned code:

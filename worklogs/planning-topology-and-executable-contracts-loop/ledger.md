@@ -4847,3 +4847,125 @@ the system `libffi.so.8`. The banks need all three (`sqlite3` via `fa.session.ma
 half (nothing in `src/` holds an `ExecutionClient` yet) and the host proof; `register{create:true}` stays dormant
 with SLICE5. `I03-LIVE-27` remains **PLANNED / UNEXECUTED** — no real `begin_run` child run, no deployed service and
 no cgroup-backed settlement was observed on a host, so nothing here is a live PASS.
+
+### E284 — Q74/§6.1 checkpoints: one boundary order, one run sidecar, no verdict
+
+**FACT (source-verified before editing, `765535d`).** The four producers already existed — `ViewStopper.stop_view`
+(CT104), `publication.seal_view` (E267), `publication.publish_view` (E268) and the operation journal — but nothing
+owned *when* they may run together, and `grep -rn "execution.json\|checkpoint" src/` returned nothing outside the new
+file: no run sidecar had ever been written, and `src/fa/execution/checkpoints.py` did not exist. That is exactly A1's
+absence criterion ("the view state machine exists without a checkpoint owner"), so this entry closes A1 and nothing
+more.
+
+**What shipped.** `src/fa/execution/checkpoints.py` is the policy owner: `CheckpointKind` (the four kinds §6.1
+freezes), `CheckpointRecord` (frozen; the seven spec keys only, validated by the same `fastjsonschema` machinery the
+rest of the runtime uses, `additionalProperties: False`), `ExecutionSidecar` (`execution.json` v1, append-only,
+bound to one `run_id`+`workspace_id`), the `StageConnector` Protocol (stop/seal/publish with the caller's own
+`request_id`), `CheckpointRequests` (three distinct 32-hex ids, each becoming one `op-<request_id>`) and
+`checkpoint_view`.
+
+**The order is the contract.** stop → `terminal is True` → seal → publish with `expected_base_revision=view.base_revision`
+→ agree with what was sealed and committed (`revision_id`, `tree_sha256`, the caller's own operation id,
+`projection_complete`) → exactly one appended record whose base is the view's own base. Nothing runs before
+terminality is *proved*: `False` (still populated) and `None` (unobservable) both raise `TERMINALITY_UNKNOWN` with no
+seal, no publish, no record, and a truthy-but-not-`True` answer is refused too, because the wire fact is a bool and
+"probably" is not terminality.
+
+**Decisions taken where the plan leaves room, and why.**
+(1) **No verdict, structurally.** The record has no status field and `checkpoint_view` accepts no stage outcome, so a
+failed or interrupted stage that still checkpointed its allowed terminal edits cannot be read as `DONE` (§6.1: a
+functional failure never blocks a checkpoint and a checkpoint never turns a failed stage into success). The stage
+result stays the stage loop's fact.
+(2) **The artifact's producer is not this module.** §6.1 says "persist the artifact then link/hash durably before
+accepting it": the caller persists it, this module validates the digest it is given (64-hex) and links it. No
+artifact writer existed before E284 and none is invented here — a writer with no consumer would be a second contract,
+and the loop that produces the evidence is A5/A6. This is a recorded boundary, not a new policy: nothing in the plan
+asks the *checkpoint owner* to author the artifact.
+(3) **The bound is enforced on write.** An over-long document is refused (`INPUT_POLICY`) *before* the replace,
+because a 1 MiB document that is written and can no longer be read would be permanent corruption. An earlier
+4096-record cap was dropped: under the byte bound it was unreachable dead policy.
+(4) **Failures are classified by what they can prove.** Unusable/foreign run directory or lock contention before any
+byte (`BACKEND_UNAVAILABLE`, nothing written); a replace that does not read back, or an OS error after the directory
+is open (`DURABILITY_UNKNOWN`, and the committed publication is *not* rolled back); unreadable bytes, a wrong
+owner pair or a loose file mode (`CORRUPT_STATE`, never "no records"). A missing file is the only "empty" answer.
+(5) **A replayed link is refused on the operations, not the timestamps.** The same three supervisor operations cannot
+describe two boundaries (`INPUT_POLICY`, bytes unchanged). An end-to-end replay of an already-`PUBLISHED` view
+refuses earlier, at the stop leg (`VIEW_CLOSED`), which is the honest place for it.
+(6) **Quarantine holds.** A workspace quarantined by the restart that followed an unreleased grant cannot checkpoint
+(`UNAUTHORIZED`), and the sidecar stays empty — the §6.1 row "unknown/live/quarantined view cannot publish or
+release" now has a checkpoint-side proof as well as CT104's.
+
+**TEST-EDITS (new bank, intent recorded).** `tests/test_stage_checkpoints.py` (NEW, 36 cases): C0 = record/sidecar
+shape and every closed refusal; C1 = the boundary over the real authority, real views, real files and the real
+seal/publish producers (only the kernel descendant fact is doubled at its seam, exactly as CT104's bank does); C3 =
+the same policy over a real AF_UNIX socket, real dispatcher and real journal, so the recorded ids are the ones the
+dispatcher reserved. No existing test changed.
+
+**Evidence (actual).** `tests/test_stage_checkpoints.py` **36 passed**, 100% statements / 98% branch on the module;
+`tests/test_workspace_publication.py + test_execution_service.py + test_execution_workspace.py` **218 passed**;
+`tests/test_execution_*.py + test_workspace_publication.py + test_stage_checkpoints.py` **1319 passed** in 69s. ruff
+clean, `ruff format` unchanged, mypy **25 files no issues**, pyrefly **0 errors**, `fa authoring-check`
+`diagnostics: 0 exit_code: 0`, and the four contract scripts (dependency, producer/consumer, log-kind,
+no-mocked-dataclasses) pass. **35/35 assertion-only mutants killed** with sha256-verified byte-exact restore —
+terminality (`False`-only, no gate, truthy, foreign view id), each publish cross-check individually, the CAS base,
+each record field, both schemas' closedness, both schema patterns, the run/workspace binding, the missing-file rule,
+the duplicate-link rule, the write-side size bound, the read-back equality, both failure-classification branches, and
+every constructor/request-id refusal. Two mutants first survived and were *not* credited: the publish-revision
+cross-check (the bank had no "revision disagrees" adapter) and the terminality gate (no case supplied a truthy
+non-bool). Both were closed by adding the missing assertion, then re-run — a survivor means a weak assertion, not a
+redundant line.
+
+**Not done, deliberately.** No STEP or CT box ticked. SLICE3 STEP1 is one step with three parts and closes only when
+(b)'s cgroup `CellTermination` and (c)'s `tests/integration/test_publication_recovery.py` are host-proved; part (a)
+now has its policy owner and bank, but its **call site is A5**: `run_stage_with_plan_write_boundary` (CT97) still
+does not exist, and §6.1's `StageResult links the completed checkpoint` sentence is that cutover's job. The remaining
+§6.1 rows — verify/eval reading a separate READ source at `Rn`, the repair/repeated-coder allocation — are controller
+actions (A5/A6); the restart case here proves a new view opens from the committed `Rn` against the real authority but
+does not wire the loop. No live row promoted: `I03-LIVE` totals stay **27 surfaces / 8 joins**, all
+`PLANNED / UNEXECUTED`, and A1's plan row is marked superseded by this entry rather than promoted to a live verdict.
+
+### E285 — A4: the call inventory becomes a source-grounded, coverage-complete checklist
+
+**FACT (source-verified before editing, `969fa06`).** `notes/i03-execution-call-inventory.md` was still `State: OPEN`
+in the sense that mattered: its anchors were E230-era, three of them had drifted (`session/manager.begin_run`
+`441–478` → `537–574`; the `_cmd_run` PTY construction is `cli._build_pty_pool:1923–1951` called from
+`_cmd_run:2166–2515`, not the `1931–1959` the table implied; the increment's own host summary still said
+"26 surfaces"), and the scan behind "no newly found route is silently exempted" had never been re-run. A4's absent
+criterion was exactly that: "no exact new source lines, caller traces or test nodeids".
+
+**What shipped (docs only — no `src/` change, no test change).** A re-run bounded AST scan and a per-row ledger,
+`R01`–`R28`: exact current anchor (`file::function:start–end` plus the `call` line), the real caller trace, the
+boundary that exists **today** (host / cell / TCB — and, stated explicitly, that a host route has neither execution
+profile nor view, which is the gap rather than an omitted column), the existing bank that covers it, and a *named*
+negative oracle. Everything the scan found that is not a launcher is classified with a reason: 21 in-process
+`shutil` cleanup/install calls, 3 `shutil.which` capability gates (R07/R09/R20 depend on them, which is itself the
+finding), and `read_file`'s approved-library `pymupdf` import. The three workflow entrypoints are traced row by row:
+explicit `cli._cmd_run` → R08/R10/R11/R16/R24/R25/R27; chat `build_chat_registry` → R10/R14/R15/R17/R22; nested
+`build_invoke_workflow_tool` → R26 → R04/R05/R23/R25. The file's state line is now "**OPEN — coverage complete at
+`969fa06`, no row closed**", and the historical E230 tables stay in place with a note that they are historical.
+
+**The scan was widened on evidence, not by taste.** The E230 note warned that "static call-name matching alone is
+incomplete" and named `libtmux`/`pexpect` aliases and injected runners. Re-running the old detector reproduced exactly
+that failure: `runtime/pty_pool.py` (the host PTY route R09) has no `subprocess` call at all, only `pexpect.spawn` and
+`libtmux.Server`; `cli.py` has no launcher and reaches the route through `_PtyPool(...)`@1948. A from-import and
+tmux/pexpect-aware detector catches both. Totals at this commit: 52 call sites in 22 files — 28 launcher/import sites
+in 16 files, 21 filesystem-only, 3 `which` gates.
+
+**Two real negative oracles already exist and are now cited, not invented.**
+`tests/test_execution_tool_index.py::test_a_managed_registry_ships_no_host_git_tools` and
+`::test_a_managed_search_runs_no_host_git_subprocess` cover R14 and R20/R21 today. Everything else is a planned nodeid
+and is labelled `planned` in the table.
+
+**Not done, deliberately.** SLICE4 STEP1's box is **not** ticked. Its exit is coverage, which is now demonstrated, but
+the same file's own checklist closes a row only with the negative oracle's *results* ("Negative test exercises real
+composition/cell or explicitly labels unit-only/fake transport"), and every oracle here needs the managed backend that
+SLICE4 STEP2 (A5) builds. What remains for the step is those results, not more inventory; the ledger says so in place
+so a later session does not re-derive the scan.
+
+**Evidence (actual).** `scripts/check_doc_links.py` OK (313 files, no broken internal links); `fa authoring-check`
+`diagnostics: 0 exit_code: 0`; the four contract scripts pass; working tree clean after the commit. No test count is
+claimed for this entry because no test changed.
+
+**Next per the plan's order.** A3 (supervisor half: CANDIDATE `publish` over the wire) then A5 (the cutover, which
+also deletes `plan_promotion.publish_plan_buffer` in the same change — R3), with A1's `checkpoint_view` as the
+boundary owner the stage loop will call.

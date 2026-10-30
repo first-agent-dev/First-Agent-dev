@@ -1,10 +1,13 @@
 # I03 execution call inventory — source-grounded initial version
 
-Date: 2026-10-15; E230 refresh 2026-10-16. Current source `1132eee`/runtime `a32a72f`.
-The initial d910 line table below is historical; refreshed exact symbol ranges follow it.
-**State: OPEN.** This is an inspected starting inventory, not proof of complete runtime closure.
-Rows name actual producers; proposed replacement APIs are in the I03 spec. Implementer must add
-exact new source lines, actual caller traces and test nodeids/results before setting a row closed.
+Date: 2026-10-15; E230 refresh 2026-10-16; **E285 refresh 2026-10-23 at `969fa06`** (coverage re-scanned, every
+`src/fa` process/import route classified; see [§E285](#e285-refresh-2026-10-23--every-srcfa-processimport-route-classified-at-969fa06)
+below the historical tables). The initial d910 line table below is historical; refreshed exact symbol ranges follow it.
+**State: OPEN — coverage complete at `969fa06`, no row closed.** The E285 scan accounts for every launcher and
+dynamic-import call site in `src/fa` (28 call sites in 16 files, each mapped to exactly one row) and every row now
+carries its exact current anchor, a real caller trace and a named negative oracle. What is still missing is the thing
+a document cannot supply: the negative oracle *running* against a managed backend, which is SLICE4 STEP2's work (A5).
+No runtime source is changed by this inventory review.
 No runtime source is changed by this inventory review. Static search is evidence of candidates, not a
 proof that a route is reachable or safe. 'Read-only' and fixed Git argv do not exempt project Git.
 
@@ -38,6 +41,79 @@ proof that a route is reachable or safe. 'Read-only' and fixed Git argv do not e
 | `src/fa/inner_loop/tools/workflow_tool.py:463–484`; `cli.py:1687–1706` | nested controller receives parent's context and no PlanRef | Proper child begin_run/namespace and approved acquisition; parent file/PTY writers suspended/terminal before handing over same workspace owner |
 | `scripts/bootstrap/host_bootstrap.py:23–40`; operator update/deploy scripts | developer/administrator host preparation, not model tool execution | Explicit TCB maintenance only, quiescent workspace; no model-accessible backdoor. Inspect transitive command list before declaring outside product target |
 
+## E285 refresh (2026-10-23) — every `src/fa` process/import route classified at `969fa06`
+
+**Why the refresh.** E284 (A1) closed the checkpoint gap and left A4 next in the plan's dependency order, so this is
+the inventory the cutover must close. Its E230-era anchors were 7 weeks stale, several had drifted
+(`session/manager.begin_run` moved `441–478` → `537–574`; `cli._cmd_run` is `2166–2515`, not the `1931–1959`
+carried in the older note), and the scan behind it was not re-run, so "no newly found route is silently exempted"
+could not be checked.
+
+**Method (bounded, repeatable, not a repo gate).** An AST scan over `src/fa/**/*.py` for: module-qualified **and**
+from-imported `subprocess` / `pty` / `pexpect` / `libtmux` / `multiprocessing` / `asyncio.subprocess` / `importlib` /
+`runpy` calls; `os.system|popen|fork|forkpty|exec*|spawn*|posix_spawn*`; and `shutil.which` capability gates. The
+E230 note's warning was tested rather than trusted: the from-import and pexpect/libtmux aliases *do* exist and a
+name-only scan misses them. Result at `969fa06`: **22 files with findings, 52 call sites — 28 launcher/import sites in
+16 files, 21 in-process `shutil` cleanup calls, 3 `which` gates.** Every one is classified below or in the
+"classified out" list; there are no unclassified findings.
+
+**Boundaries.** "host" = the controller PID running an unsandboxed project command today; "cell" = the managed
+execution cell; "TCB" = operator/developer host preparation that is not model tool execution. No row is managed yet:
+every project-facing route below still runs on the host or degrades to it, which is A5's subject. **Profile and view
+are therefore "none" by construction on every project-facing row** — a host subprocess has no execution profile and no
+view — and that absence is the gap the column records, not an unrecorded field. The two rows that already run inside
+a cell (R09's cell half, R12) name the profile they use (`interactive` / one-shot) and the view they hold (none: a
+cell runs against its own sandbox, not a workspace view).
+
+### Process / import routes
+
+| # | Route (producer @ `969fa06`) | Reachable from | Boundary today | Existing evidence (verified present) | Named negative oracle (planned unless marked EXISTING) |
+| --- | --- | --- | --- | --- | --- |
+| R01 | `scripts/fa:36–45,58–74` compose wrapper; `.active` supplies project CWD | operator shell | TCB host | `tests/test_deploy_scripts.py::test_fa_wrapper_uses_arrays_for_compose_and_flags` | `tests/test_e2e_artifact_contract.py::test_installed_controller_help_ignores_poisoned_workspace` |
+| R02 | `scripts/fa-entrypoint.sh:153–171,231–248,266–273` configure/provision/readiness, then auto-run | operator/container entry | TCB host | `tests/test_fa_update_script.py::test_fa_update_script_tracks_actual_build_inputs` | `…::test_entrypoint_runs_no_project_command_without_backend` |
+| R03 | `scripts/bootstrap/workspace.py:13–17` prepends the checked-out `src` before readiness import | bootstrap wrapper | TCB host | `tests/test_workspace_bootstrap_aliases.py::test_just_bootstrap_aliases_converge_and_doctor_is_read_only` | same as R01 (poisoned checkout/PYTHONPATH) |
+| R04 | `session/manager.py::_new_session:335–426` → `_provision_workspace:230–262` (callers `:377`); `begin_run:537–574` reserves a run, spawns nothing | explicit, chat, nested | host | `tests/test_session_workspace_provisioning.py` | `tests/test_managed_workspace.py::test_a_new_run_provisions_through_the_supervisor_and_never_clones_on_the_host` |
+| R05 | `session/workspace.py::provision_git_workspace:290–360`, `configure_existing_workspace:394–524`, `_run_git:170–204` (`subprocess.run`@182) | R04 | host (project Git) | `tests/test_session_workspace_provisioning.py` | same as R04 + `…::test_missing_backend_creates_no_clone_and_no_hook` |
+| R06 | `cli.py::_prepare_managed_workspace:150–159` (warns, then continues) | explicit `_cmd_run` prologue | host, fail-open | `tests/test_cli.py::test_prepare_managed_workspace_warns_only_for_degraded_state` | `tests/test_managed_workspace.py::test_degraded_readiness_blocks_instead_of_warning` |
+| R07 | `workspace_bootstrap.py::_run_process:263–290` (`subprocess.run`@274), `_uv_executable:293–306` (`which`@294); callers `:297,332,424,587,595` | readiness | host (project sync/hooks/import probes) | `tests/test_workspace_bootstrap.py::test_process_runner_uses_bounded_captured_noninteractive_environment` | `…::test_readiness_probes_run_in_the_provisioning_cell` |
+| R08 | `cli.py::_build_pty_pool:1923–1951` → `_PtyPool(...)`@1948; caller `_cmd_run:2166–2515` | explicit | host | `tests/test_cli.py` | `tests/test_managed_workspace.py::test_backend_down_run_builds_no_pty_pool` |
+| R09 | `runtime/pty_pool.py::__init__:116–233` (`pexpect.spawn`@156) and `:562–622` (`shutil.which("tmux")`@582, `libtmux.Server`@589/599) | R08, `inner_loop/state.py:557`, `execution/cell_worker.py:243` (cell), `runtime/server.py:53` | host PTY today; already correct inside the cell | `tests/test_execution_cell_worker.py::test_noninteractive_one_shot_accepts_null_session_and_returns_no_reusable_session` (cell half) | `…::test_no_host_tmux_or_pexpect_when_the_backend_is_down` |
+| R10 | `inner_loop/tools/run_bash.py::build_run_bash_tool:321–390` (`fs_run_bash`@350) → `_run_pty_executor:152–216`; write-set Git `_get_write_set_from_git_status:56–83` (`subprocess.run`@59) | explicit, chat, coder, nested | host shell/PTY | `tests/test_chat_escalation_gate.py`, `tests/test_coder_loop.py` | `tests/test_execution_project_tools.py::test_bash_runs_only_in_a_cell_and_reserves_one_operation` |
+| R11 | `…::_run_subprocess_fallback:219–318` (`subprocess.run`@238) — the stateless fallback | R10 when no PTY | host, silent fail-open | `tests/test_venv_path_wiring.py::test_subprocess_fallback_resolves_venv_tools_live` | `…::test_no_executor_yields_unavailable_not_a_host_shell` |
+| R12 | `runtime/server.py:29–30` optional `importlib` (FastAPI), `runtime/bash_executor.py:98–118` HTTP projection | optional runtime server | cell-internal / optional | `tests/test_runtime_server_open_stand.py::test_server_imports_without_fastapi` | `…::test_http_health_never_certifies_terminality` |
+| R13 | `inner_loop/subagent_runner.py::run_stateless:293–410` (`subprocess.run`@343), caller `tools/spawn_subagent.py:222` | explicit, chat | host (adds `X_FA_PROXY_TOKEN`) | `tests/test_s6_subagent_fidelity.py` | `…::test_subagent_commands_carry_no_proxy_credential` |
+| R14 | `inner_loop/tools/__init__.py::build_baseline_registry:169`, `build_planner_registry:213`, `build_eval_registry:251`, `build_chat_registry:287` — exception fallback still registers bash | all three | host registry | `tests/test_execution_tool_index.py::test_a_managed_registry_ships_no_host_git_tools` **EXISTING** | `…::test_profile_construction_failure_registers_no_project_command` |
+| R15 | `inner_loop/tools/write_file.py:70–110,113–150`; `edit_file.py:99–193` | all three | host filesystem | `tests/test_execution_tool_port.py::test_tools_built_with_the_port_read_write_and_edit_through_it` (port half) | `tests/test_managed_workspace.py::test_file_handlers_write_through_the_view_only` |
+| R16 | `workflow_controller.py::_git_output:835–864` (aliases `subprocess.run` to a local callable) | stage loop | host project Git | `tests/test_slice_verification_runner.py` | `…::test_stage_diff_never_runs_controller_git` |
+| R17 | `inner_loop/tools/pair_tools.py::_run_git:28–36` (`subprocess.run`@30), callers `:100,116,172,180` | chat/coder | host project Git | `tests/test_subagent_termination_wiring.py` (wiring only) | `…::test_pair_tools_use_the_writer_view_and_never_the_canonical_index` |
+| R18 | `inner_loop/tools/mutation_guard.py::_base_commit:51–69` (`subprocess.run`@58), caller `:115` | coder | host project Git | `tests/test_s5_blackboard_contract.py::test_same_base_commit_conflict_denied` | `…::test_denied_base_commit_lookup_blocks_admission` |
+| R19 | `inner_loop/hooks/intent_guard.py::_default_git_runner:272–281` (`subprocess.run`@273) | every gated tool call | host project Git | `tests/test_intent_guard.py` | `…::test_intent_git_failure_never_bypasses_view_admission` |
+| R20 | `memory/_safe_walk.py::_git_ls_files:130–175` (`which`@146, `subprocess.run`@151) | memory/search indexing | host project Git | `tests/test_safe_walk.py` | `tests/test_execution_tool_index.py::test_a_managed_search_runs_no_host_git_subprocess` **EXISTING** |
+| R21 | `inner_loop/tools/_common.py::git_ls_files:22–53` (`subprocess.run`@40) | memory/search | host project Git | `tests/test_tools_common.py` | same as R20 (EXISTING) |
+| R22 | `hygiene/pr_intent.py::_run_git:817–829` (`subprocess.run`@822); `hygiene/hooks/_util.py::resolve_hooks_dir:91–120` (`subprocess.run`@102) | chat `pr_prepare`, readiness hook lookup | host project Git | `tests/test_pr_intent_snapshot.py` | `…::test_pr_prepare_reads_only_a_managed_revision` |
+| R23 | `workspace/worktree_manager.py::create_subagent_workspace:196–248` (`subprocess.run`@211/218/231), `cleanup:251–270` (@253/264), `_resolve_base_branch:181–193`, `_is_branch_checked_out_elsewhere:165–179` | subagent spawn | host project Git | `tests/test_s5_isolation_boundary.py` | `…::test_subagent_isolation_never_touches_the_canonical_root` |
+| R24 | `inner_loop/slice_verification.py::_run_one:330–357` (`subprocess.run`@334), `mutation_overlay:980–1004`, `_run_kill_check:1439–1537`, `capture_test_nodeids:539–581` | verify, kill-check, eval | host pytest | `tests/test_mutation_overlay.py`, `tests/test_verify_slice.py` | `tests/test_e2e_artifact_contract.py::test_kill_proof_requires_a_fresh_operation_and_source_binding` |
+| R25 | `workflow_controller.py::_run_stage:1181–1383`, `_effective_controller_route:613–645`, `_validate_plan_admission:2231–2270`, `_promote_validated_plan:2273–2280` (still calls `plan_promotion.publish_plan_buffer`) | explicit, nested | host loop + the second plan writer R3 forbids | `tests/test_verify_gate_live.py` | `…::test_the_plan_write_goes_through_the_authority_and_the_legacy_writer_is_gone` |
+| R26 | `inner_loop/tools/workflow_tool.py::_child_run_context:387–403`, `build_invoke_workflow_tool:406–587` | nested workflow | host child controller with no `PlanRef` | `tests/test_invoke_workflow_tool.py`, `tests/test_handoff_payload.py` | `…::test_nested_child_gets_an_attested_namespace_and_no_parent_writer` |
+| R27 | `coder_loop.py::_drive_session_inner:535–2111` (live-session callback, no route of its own) | explicit, chat | controller process | `tests/test_coder_loop.py` | `…::test_a_live_chat_session_cannot_mutate_the_canonical_tree` |
+| R28 | `scripts/bootstrap/host_bootstrap.py:23–40` | operator | TCB host | `tests/test_workspace_bootstrap_aliases.py::test_host_bootstrap_missing_uv_is_stable_and_does_not_call_wrapper` | `…::test_no_model_tool_can_reach_the_host_bootstrap` |
+
+### Classified out (and why), so nothing is exempt by name
+
+| Finding | Class | Reason |
+| --- | --- | --- |
+| `execution/workspace.py` ×9, `session/manager.py` ×3, `session/workspace.py::_remove_created_target`, `slice_verification.py::_copy_src/mutation_overlay` ×3, `hygiene/hooks/install.py::_install_one` ×2, `providers/live_runner.py::cleanup`, `inner_loop/state.py::cleanup_subagent_workspace`, `worktree_manager.py::cleanup` ×1 | in-process filesystem (`shutil.rmtree/copytree/copy2/ignore_patterns`) | no process, no dynamic import: owned scratch/cleanup and hook installation, covered by their own banks (recovery, isolation) |
+| `workspace_bootstrap.py::_uv_executable:294`, `memory/_safe_walk.py::_git_ls_files:146`, `runtime/pty_pool.py::__init__:582` | capability gate (`shutil.which`) | they *change which route runs* when a binary is missing (R07, R20, R09), which is exactly why the managed route must not depend on them |
+| `inner_loop/tools/read_file.py::_read_pdf_text:37,58,71` | approved-library data import (`pymupdf`) | parses a bounded file; no project execution. Plugins stay unsupported (spec §6) |
+| `runtime/server.py:29–30` | optional installed import | R12; absent FastAPI must degrade to "no server", never to a host runner |
+
+**Coverage statement (the STEP1 exit).** All three workflow entrypoints are accounted for:
+**explicit** = `cli._cmd_run` → R08/R10/R11/R16/R24/R25/R27; **chat** = `build_chat_registry` → R10/R14/R15/R17/R22;
+**nested** = `build_invoke_workflow_tool` → R26 → R04/R05/R23/R25. Every launcher or import a project instruction can
+reach is one of R01–R28; the four findings outside that set are process-free (classified out above). This is a
+*coverage* claim, not a closure claim: no row closes until its named negative oracle runs against a managed backend
+(SLICE4 STEP2), and the oracle names above are therefore **planned nodeids** unless marked `EXISTING`.
+
 ## Closure checklist for each implementation row
 
 1. Actual production caller(s), profile, namespace/lease/view and new source file:line recorded.
@@ -53,6 +129,10 @@ launchers and dynamically selected project integrations need traced coverage dur
 
 
 ## E230 current-source anchors — OPEN, no closure assigned
+
+*(Historical ranges as of E230. The R01–R28 anchors in the E285 ledger above are authoritative at `969fa06`;
+two of these drifted: `session/manager.begin_run` is now `537–574` (was `441–478`) and the `_cmd_run` PTY
+construction is now `cli._build_pty_pool:1923–1951`, called from `_cmd_run:2166–2515`.)*
 
 | File | Current actual producer ranges | I03 handoff |
 | --- | --- | --- |
