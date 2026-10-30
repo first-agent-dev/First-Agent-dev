@@ -364,6 +364,7 @@ class PublishResult:
     tree_sha256: str
     operation_id: str
     projection_complete: bool = True
+    plan_ref: PlanRef | None = None
 
     def to_wire(self) -> dict[str, Any]:
         return {
@@ -372,6 +373,13 @@ class PublishResult:
             "tree_sha256": self.tree_sha256,
             "operation_id": self.operation_id,
             "projection_complete": self.projection_complete,
+            "plan_ref": None
+            if self.plan_ref is None
+            else {
+                "workspace_relative_path": self.plan_ref.workspace_relative_path,
+                "source_kind": self.plan_ref.source_kind,
+                "sha256": self.plan_ref.sha256,
+            },
         }
 
 
@@ -704,27 +712,26 @@ def publish_plan(
     peer: PeerIdentity,
     namespace: NamespaceRef,
     *,
+    view_ref: ViewRef,
     capability: str,
-    plan_ref: PlanRef,
-    buffer: bytes,
+    operation_id: str,
     deadline: float,
 ) -> PlanPublishResult:
-    """Replace the canonical plan in place through the authority (Q58).
+    """Publish the supervisor-staged candidate under its pinned PlanRef (Q89).
 
-    The controller supplies a buffer it has already admitted semantically (Q58's
-    precheck/kill-directive validation); the authority owns the bytes, the
-    namespace, the source identity and the irreversible boundary. The returned
-    `plan_ref` is the one a caller must record: this method is the only writer
-    of the canonical plan, so it is also the only source of the new hash.
+    No plan destination or byte buffer is accepted from this caller. The
+    authority authenticates this CANDIDATE view grant, proves its barrier and
+    source binding, and reads the one private buffer before entering Q58's
+    forward-only replacement transaction.
     """
     if not isinstance(authority, WorkspaceAuthority):
         raise SupervisorError("UNAUTHORIZED")
-    receipt = authority.publish_plan(
+    receipt = authority.publish_candidate_plan(
         peer,
         namespace,
+        view_ref=view_ref,
         capability=capability,
-        plan_ref=plan_ref,
-        buffer=buffer,
+        operation_id=operation_id,
         deadline=deadline,
     )
     return PlanPublishResult(

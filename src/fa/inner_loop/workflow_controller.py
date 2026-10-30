@@ -41,7 +41,7 @@ from fa.inner_loop.plan_ids import (
     extract_plan_ids,
     precheck,
 )
-from fa.inner_loop.plan_promotion import PlanPromotionError, publish_plan_buffer, seed_plan_candidate
+from fa.inner_loop.plan_promotion import CandidatePlanPublisher, PlanPromotionError, seed_plan_candidate
 from fa.inner_loop.planner_dispatch import PlannerDispatch, PlannerDispatchError, PlannerDispatchKind
 from fa.inner_loop.prompt import ADVERSARIAL_EVAL_STANCE_PREAMBLE
 from fa.inner_loop.slice_verification import (
@@ -214,6 +214,9 @@ class WorkflowContext:
     # observe/enforce if the operator edits config while a stage is in flight.
     verify_gate_mode: str = "observe"
     admission: _WorkflowAdmission | None = None
+    # Managed candidate promotion is supplied only by the execution composition.
+    # None is a fail-closed boundary; the controller has no host-path writer fallback.
+    plan_publisher: CandidatePlanPublisher | None = None
 
     def plan_text(self) -> str | None:
         """Use the immutable admitted snapshot, or read legacy optional input.
@@ -2271,12 +2274,40 @@ def _validate_plan_admission(snapshot: PlanSnapshot) -> _PlanAdmissionValidation
 
 
 def _promote_validated_plan(
-    workspace: Path, source: PlanSnapshot, validated: _PlanAdmissionValidation, *, deadline: float | None = None
+    workspace: Path,
+    source: PlanSnapshot,
+    validated: _PlanAdmissionValidation,
+    *,
+    publisher: CandidatePlanPublisher | None = None,
+    deadline: float | None = None,
 ) -> PlanSnapshot:
-    """Only the validated immutable buffer is published; no draft path is recopied."""
+    """Publish only validated bytes through the injected supervisor candidate port.
+
+    ``workspace`` is retained for the stable workflow call signature, but is not
+    opened here. A missing managed publisher is a closed refusal, never a
+    fallback to host-path replacement.
+    """
+    del workspace
     if validated.outcome != "PASS":
         raise PlanPromotionError("prepare-failed")
-    ref = publish_plan_buffer(workspace, source, validated.snapshot.utf8_bytes, deadline=deadline)
+    if publisher is None:
+        raise PlanPromotionError("prepare-failed")
+    try:
+        ref = publisher.publish_candidate(source, validated.snapshot, deadline=deadline)
+    except PlanPromotionError:
+        raise
+    except Exception as error:  # sanitize transport/backend details into the admission schema's closed vocabulary
+        code = getattr(error, "code", None)
+        uncertain = code in {"DURABILITY_UNKNOWN", "CORRUPT_STATE", "EXECUTION_UNKNOWN", "TERMINALITY_UNKNOWN"}
+        rule = "durability-unknown" if uncertain else "prepare-failed"
+        raise PlanPromotionError(rule, replaced=uncertain) from error
+    expected = PlanRef(
+        source.ref.workspace_relative_path,
+        source.ref.source_kind,
+        validated.snapshot.ref.sha256,
+    )
+    if ref != expected:
+        raise PlanPromotionError("hash-mismatch", replaced=True)
     return replace(validated.snapshot, ref=ref)
 
 
@@ -2421,7 +2452,9 @@ def _run_admission_repair(
             os.fsync(parent)
     validation = _validate_plan_admission(candidate)
     promoted = (
-        _promote_validated_plan(ctx.workspace, source, validation, deadline=ctx.deadline_mono)
+        _promote_validated_plan(
+            ctx.workspace, source, validation, publisher=ctx.plan_publisher, deadline=ctx.deadline_mono
+        )
         if validation.outcome == "PASS"
         else None
     )
@@ -2621,6 +2654,7 @@ def run_workflow(
     deadline_mono: float | None = None,
     inject_overrides: Mapping[str, str] | None = None,
     plan_path: Path | None = None,
+    plan_publisher: CandidatePlanPublisher | None = None,
 ) -> tuple[int, FlowState | None]:
     """Run the workflow pipeline. Callable from CLI and from tools.
 
@@ -2711,6 +2745,7 @@ def run_workflow(
         deadline_mono=deadline_mono,
         inject_overrides=dict(inject_overrides or {}),
         plan_path=plan_path,
+        plan_publisher=plan_publisher,
         verify_gate_mode=_gate_mode(),
         admission=(
             _WorkflowAdmission(snapshot, "planner" in roles, max_replans)

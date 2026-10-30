@@ -416,7 +416,7 @@ def test_recovery_completes_a_replaced_plan_forward(site: Site, monkeypatch: pyt
 
         monkeypatch.setattr(WorkspaceAuthority, "_write_revision_from_canonical", _killed)
         with pytest.raises(SystemExit):
-            _publish_plan(owner, plan_ref, PLAN_NEW.encode(), grant=lease)
+            _publish_plan(owner, plan_ref, PLAN_NEW.encode(), grant=lease, ids=ids)
         monkeypatch.undo()
 
         assert _plan_path(site).read_bytes() == PLAN_NEW.encode()
@@ -458,7 +458,7 @@ def test_recovery_clears_a_plan_intent_when_the_old_bytes_are_still_there(
 
         monkeypatch.setattr(workspace_module.os, "replace", killed_replace)
         with pytest.raises(SystemExit):
-            _publish_plan(owner, plan_ref, PLAN_NEW.encode(), grant=lease)
+            _publish_plan(owner, plan_ref, PLAN_NEW.encode(), grant=lease, ids=ids)
         monkeypatch.undo()
 
         assert _plan_path(site).read_text() == PLAN_OLD
@@ -479,7 +479,7 @@ def test_recovery_refuses_a_plan_that_matches_neither_hash(site: Site, monkeypat
         lease = ok(lambda: site.claim(owner, ids))
         monkeypatch.setattr(WorkspaceAuthority, "_write_revision_from_canonical", _killed)
         with pytest.raises(SystemExit):
-            _publish_plan(owner, plan_ref, PLAN_NEW.encode(), grant=lease)
+            _publish_plan(owner, plan_ref, PLAN_NEW.encode(), grant=lease, ids=ids)
         monkeypatch.undo()
 
         third = PLAN_NEW + "\n## SLICE3: written by someone else\n"
@@ -503,7 +503,7 @@ def test_recovery_refuses_a_plan_intent_that_does_not_describe_the_bytes(
         base_revision = _current(site, ids)["revision_id"]
         monkeypatch.setattr(WorkspaceAuthority, "_write_revision_from_canonical", _killed)
         with pytest.raises(SystemExit):
-            _publish_plan(owner, plan_ref, PLAN_NEW.encode(), grant=lease)
+            _publish_plan(owner, plan_ref, PLAN_NEW.encode(), grant=lease, ids=ids)
         monkeypatch.undo()
 
         intent = _intent(site, ids)

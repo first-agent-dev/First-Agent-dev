@@ -2258,7 +2258,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
         return pin
 
     @staticmethod
-    def _buffer_bytes(pin: _ReaderPin) -> bytes | None:
+    def _buffer_bytes(pin: _ReaderPin, *, max_bytes: int | None = None) -> bytes | None:
         try:
             fd = os.open("candidate", os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK, dir_fd=pin.directory)
         except FileNotFoundError:
@@ -2267,11 +2267,17 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
             info = os.fstat(fd)
             if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
                 raise SupervisorError("DURABILITY_UNKNOWN")
+            if max_bytes is not None and info.st_size > max_bytes:
+                raise SupervisorError("INPUT_POLICY")
             chunks: list[bytes] = []
+            total = 0
             while True:
                 chunk = os.read(fd, 65536)
                 if not chunk:
                     break
+                total += len(chunk)
+                if max_bytes is not None and total > max_bytes:
+                    raise SupervisorError("INPUT_POLICY")
                 chunks.append(chunk)
             return b"".join(chunks)
         finally:
@@ -2310,7 +2316,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                 raise SupervisorError("INVALID_REQUEST")
             if len(raw) > self._limits.max_file_bytes:
                 raise SupervisorError("INPUT_POLICY")
-            existing = self._buffer_bytes(pin)
+            existing = self._buffer_bytes(pin, max_bytes=self._limits.max_file_bytes)
             if expected_sha256 is None:
                 if existing is not None:
                     raise SupervisorError("STALE_REVISION")
@@ -2345,7 +2351,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                 or not 1 <= max_bytes <= MAX_TEXT_BYTES
             ):
                 raise SupervisorError("INVALID_REQUEST")
-            data = self._buffer_bytes(pin)
+            data = self._buffer_bytes(pin, max_bytes=self._limits.max_file_bytes)
             if data is None:
                 raise SupervisorError("STALE_REVISION")
             try:
@@ -3390,49 +3396,57 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
 
     # -- Plan replacement (STEP3 Q58 / CT107a): same-path, forward-only ---------
 
-    def publish_plan(
+    def publish_candidate_plan(
         self,
         peer: PeerIdentity,
         namespace: NamespaceRef,
         *,
+        view_ref: ViewRef,
         capability: str,
-        plan_ref: PlanRef,
-        buffer: bytes,
+        operation_id: str,
         deadline: float,
     ) -> dict[str, Any]:
-        """Replace the canonical plan at its own path, then commit the revision.
+        """Promote the one scoped candidate buffer through the candidate view grant.
 
-        Q58's transport and §5.1's PLAN row, in that order: validate the exact
-        bytes and the caller's source hash with **no** writes → durable intent →
-        the same-path replace (the irreversible point) → revision and pointer
-        forward → proof → `DONE`. A failure at or after the replace is
-        uncertainty, never a reason to restore the old bytes.
-
-        Semantic admission (precheck, kill directives) belongs to the controller;
-        this method owns bytes, namespace, source identity and the boundary.
+        The view proof remains authoritative after closure. This transaction
+        re-proves workspace ownership/binding, the terminal barrier and pinned
+        PlanRef, then reads the private staged bytes and enters the same forward-
+        only PLAN commit core. The operation id is the dispatcher's
+        ``op-<request_id>``; exact replay belongs to its journal.
         """
-        if not isinstance(plan_ref, PlanRef) or not isinstance(buffer, (bytes, bytearray)):
+        if not isinstance(view_ref, ViewRef):
             raise ExecutionContractError
+        _hex_id(operation_id, "op-")
         with self._transaction(peer, deadline):
-            binding = self._owner_only(peer, namespace, capability)
-            inputs = self._plan_prepare(binding, plan_ref, bytes(buffer), deadline)
+            pin, binding = self._closed_candidate_reader(peer, namespace, view_ref, capability)
+            gate = self._gate(view_ref)
+            if not gate.closed or pin.record["state"] != "STOPPING":
+                raise SupervisorError("VIEW_CLOSED")
+            self._wait_drained(view_ref, deadline)
+            expected_terminal = {"schema_version": 1, "view_ref": view_ref.to_dict()}
+            if _terminal_record(pin.directory) != expected_terminal:
+                raise SupervisorError("TERMINALITY_UNKNOWN")
+            scope = pin.record.get("candidate_scope")
+            plan_ref = pin.context.plan_ref
+            if scope is None or plan_ref is None or scope["plan_ref"] != _plan_ref_dict(plan_ref):
+                raise SupervisorError("INPUT_POLICY")
+            buffer = self._buffer_bytes(pin, max_bytes=min(self._limits.max_file_bytes, _MAX_PLAN_BYTES))
+            if buffer is None:
+                raise SupervisorError("STALE_REVISION")
+            inputs = self._plan_prepare(binding, plan_ref, buffer, operation_id, deadline)
             parent = self._project_parent(binding.source, inputs.plan_relative)
             scratch = -1
             try:
                 first = self._plan_source_identity(parent, inputs)
                 scratch = self._temporary_directory(binding.source)
                 self._plan_stage(binding, inputs, scratch)
-                # Q58: the source is re-proved immediately before the replace,
-                # by bytes and by identity, so a non-cooperating host writer
-                # between prepare and here is a refusal rather than a lost edit.
+                # Re-prove bytes and inode identity immediately before replace.
                 if _fingerprint(first) != _fingerprint(self._plan_source_identity(parent, inputs)):
                     raise SupervisorError("STALE_REVISION")
                 # Durable BEFORE the irreversible byte (spec §5.1).
                 self._write_intent(binding.fd, inputs.intent)
                 os.replace(inputs.temporary, inputs.name, src_dir_fd=scratch, dst_dir_fd=parent)
             except SupervisorError:
-                # Only the steps above can refuse, and none of them is the
-                # replace: this attempt changed nothing, so it is discarded whole.
                 self._plan_abort(binding, inputs)
                 raise
             except OSError:
@@ -3441,14 +3455,72 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
             finally:
                 if scratch != -1:
                     os.close(scratch)
-            # The file is replaced: from here on, only forward, and every
-            # failure is `_plan_finish`'s to classify and never to undo.
+            # After replace, recovery is forward-only; never restore old bytes.
             try:
                 return self._plan_finish(binding, inputs, parent, deadline)
             finally:
                 os.close(parent)
 
-    def _plan_prepare(self, binding: _Binding, plan_ref: PlanRef, buffer: bytes, deadline: float) -> _PlanInputs:
+    def _closed_candidate_reader(
+        self,
+        peer: PeerIdentity,
+        namespace: NamespaceRef,
+        view_ref: ViewRef,
+        capability: str,
+    ) -> tuple[_ReaderPin, _Binding]:
+        """Authenticate a closed CANDIDATE pin and re-prove its durable identity.
+
+        Unlike ``_reader_proof`` this deliberately tolerates STOPPING, but it
+        does not relax capability, namespace, principal, view, revision-pin or
+        workspace binding checks.
+        """
+        view = self._proof_only(peer, namespace, view_ref, capability)
+        if not isinstance(view, _ReaderPin) or view_ref.purpose is not ViewPurpose.CANDIDATE:
+            raise SupervisorError("UNAUTHORIZED")
+        if view.record["state"] != "STOPPING":
+            raise SupervisorError("VIEW_CLOSED")
+        binding = self._binding(view_ref.workspace_id)
+        self._recheck(binding)
+        if (
+            binding.metadata["status"] != "OWNED"
+            or binding.metadata["active_actor"] != namespace.to_dict()
+            or binding.metadata["generation"] != view_ref.generation
+            or binding.principal != peer.principal
+            or binding.writer is None
+        ):
+            raise SupervisorError("STALE_GENERATION")
+        if binding.current["revision_id"] != view_ref.base_revision:
+            raise SupervisorError("STALE_REVISION")
+        with ExitStack() as stack:
+            views = os.open("views", _DIRECTORY, dir_fd=binding.fd)
+            stack.callback(os.close, views)
+            directory = os.open(view_ref.view_id, _DIRECTORY, dir_fd=views)
+            stack.callback(os.close, directory)
+            _private(directory)
+            if _identity(os.fstat(directory)) != _identity(os.fstat(view.directory)):
+                raise SupervisorError("CORRUPT_STATE")
+            if _read_json(directory, "view.json", _VIEW_RECORD, 1024**2) != view.record:
+                raise SupervisorError("CORRUPT_STATE")
+            revisions = os.open("revisions", _DIRECTORY, dir_fd=binding.fd)
+            stack.callback(os.close, revisions)
+            revision = os.open(view_ref.base_revision, _DIRECTORY, dir_fd=revisions)
+            stack.callback(os.close, revision)
+            data = os.open("data", _DIRECTORY, dir_fd=revision)
+            stack.callback(os.close, data)
+            if (
+                _identity(os.fstat(data)) != _identity(os.fstat(view.source))
+                or _fingerprint(os.stat("tree.json", dir_fd=revision, follow_symlinks=False)) != view.manifest
+            ):
+                raise SupervisorError("CORRUPT_STATE")
+        try:
+            view.context.recheck()
+        except ExecutionContractError:
+            raise SupervisorError("INPUT_POLICY") from None
+        return view, binding
+
+    def _plan_prepare(
+        self, binding: _Binding, plan_ref: PlanRef, buffer: bytes, operation_id: str, deadline: float
+    ) -> _PlanInputs:
         """Prove every precondition and compute the revision before any write."""
         path, parts = self._plan_parts(plan_ref)
         try:
@@ -3469,7 +3541,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
         entries = self._plan_entries(base_entries, path, len(buffer), new_sha256)
         tree_sha256 = hashlib.sha256(_canonical(list(entries))).hexdigest()
         base_revision = binding.current["revision_id"]
-        operation_id = "op-" + hashlib.sha256(f"plan\x00{base_revision}\x00{new_sha256}".encode()).hexdigest()[:32]
+        _hex_id(operation_id, "op-")
         plan_manifest = {
             "schema_version": 1,
             "kind": "PLAN",

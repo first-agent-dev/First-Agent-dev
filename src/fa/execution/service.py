@@ -634,12 +634,34 @@ class SupervisorService:
 
     def _read_file(self, peer: PeerIdentity, request: dict[str, Any], deadline: float) -> dict[str, Any]:
         payload = request["payload"]
+        view_ref = self._view(request)
+        namespace, capability = self._namespace(request), self._capability(request)
+        if view_ref.purpose is ViewPurpose.CANDIDATE:
+            try:
+                return dict(
+                    self._authority.read_candidate(
+                        peer,
+                        namespace,
+                        view_ref=view_ref,
+                        capability=capability,
+                        path=payload["path"],
+                        offset_bytes=payload["offset_bytes"],
+                        max_bytes=payload["max_bytes"],
+                        deadline=deadline,
+                    )
+                )
+            except SupervisorError as error:
+                # A CANDIDATE view also pins ordinary source reads. Only the exact
+                # candidate path is intercepted; a scope mismatch falls through
+                # to the normal rooted reader, which still enforces its own path policy.
+                if error.code != "PATH_DENIED":
+                    raise
         return dict(
             self._authority.read_file(
                 peer,
-                self._namespace(request),
-                view_ref=self._view(request),
-                capability=self._capability(request),
+                namespace,
+                view_ref=view_ref,
+                capability=capability,
                 path=payload["path"],
                 offset_bytes=payload["offset_bytes"],
                 max_bytes=payload["max_bytes"],
@@ -649,12 +671,17 @@ class SupervisorService:
 
     def _write_file(self, peer: PeerIdentity, request: dict[str, Any], deadline: float) -> dict[str, Any]:
         payload = request["payload"]
+        view_ref = self._view(request)
+        namespace, capability = self._namespace(request), self._capability(request)
+        writer = (
+            self._authority.write_candidate if view_ref.purpose is ViewPurpose.CANDIDATE else self._authority.write_file
+        )
         return dict(
-            self._authority.write_file(
+            writer(
                 peer,
-                self._namespace(request),
-                view_ref=self._view(request),
-                capability=self._capability(request),
+                namespace,
+                view_ref=view_ref,
+                capability=capability,
                 path=payload["path"],
                 content=payload["content"],
                 expected_sha256=payload["expected_sha256"],
@@ -713,17 +740,31 @@ class SupervisorService:
 
     def _publish(self, peer: PeerIdentity, request: dict[str, Any], deadline: float) -> dict[str, Any]:
         payload = request["payload"]
-        result = publication.publish_view(
-            self._authority,
-            peer,
-            self._namespace(request),
-            view_ref=self._view(request),
-            capability=self._capability(request),
-            sealed_manifest_id=payload["sealed_manifest_id"],
-            expected_base_revision=payload["expected_base_revision"],
-            operation_id=self._operation_id(request),
-            deadline=deadline,
-        )
+        view_ref = self._view(request)
+        namespace, capability = self._namespace(request), self._capability(request)
+        result: publication.PlanPublishResult | publication.PublishResult
+        if view_ref.purpose is ViewPurpose.CANDIDATE:
+            result = publication.publish_plan(
+                self._authority,
+                peer,
+                namespace,
+                view_ref=view_ref,
+                capability=capability,
+                operation_id=self._operation_id(request),
+                deadline=deadline,
+            )
+        else:
+            result = publication.publish_view(
+                self._authority,
+                peer,
+                namespace,
+                view_ref=view_ref,
+                capability=capability,
+                sealed_manifest_id=payload["sealed_manifest_id"],
+                expected_base_revision=payload["expected_base_revision"],
+                operation_id=self._operation_id(request),
+                deadline=deadline,
+            )
         return asdict(result)
 
     def _prepare_bundle(self, peer: PeerIdentity, request: dict[str, Any], deadline: float) -> dict[str, Any]:

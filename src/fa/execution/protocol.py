@@ -123,7 +123,7 @@ PAYLOADS: dict[Operation, dict[str, Any]] = {
     Operation.PTY_CONTROL: _object(action=_enum("INTERRUPT", "CLOSE", "LIST"), session_id=_nullable(SESSION_ID)),
     Operation.STOP_VIEW: _object(),
     Operation.SEAL: _object(),
-    Operation.PUBLISH: _object(sealed_manifest_id=_id("seal-"), expected_base_revision=_id("rev-")),
+    Operation.PUBLISH: _object(sealed_manifest_id=_nullable(_id("seal-")), expected_base_revision=_id("rev-")),
     Operation.PREPARE_BUNDLE: _object(
         project_slug=CONFIG_ID,
         increment_slug=CONFIG_ID,
@@ -141,6 +141,14 @@ _COMMITTED = _object(
     tree_sha256=SHA,
     operation_id=_id("op-"),
     projection_complete={"type": "boolean", "const": True},
+)
+_PUBLISH_REPLY = _object(
+    workspace_id=_id("ws-"),
+    revision_id=_id("rev-"),
+    tree_sha256=SHA,
+    operation_id=_id("op-"),
+    projection_complete={"type": "boolean", "const": True},
+    plan_ref=_nullable(PLAN_REF),
 )
 _OWNER_REPLY = _object(view_ref={"type": "null"}, capability=SHA, generation=POSITIVE, revision_id=_id("rev-"))
 _VIEW_REPLY = _object(view_ref=VIEW, capability=SHA)
@@ -160,7 +168,7 @@ RESULTS: dict[Operation, dict[str, Any]] = {
     Operation.PTY_CONTROL: _object(sessions={"type": "array", "items": SESSION_ID, "uniqueItems": True}, message=TEXT),
     Operation.STOP_VIEW: _object(view_id=_id("view-"), terminal=BOOL),
     Operation.SEAL: _object(sealed_manifest_id=_id("seal-"), revision_id=_id("rev-"), tree_sha256=SHA),
-    Operation.PUBLISH: _COMMITTED,
+    Operation.PUBLISH: _PUBLISH_REPLY,
     Operation.INSTALL_PROJECT: _COMMITTED,
     Operation.PREPARE_BUNDLE: _object(validated_bundle_id=_id("bundle-"), bundle_sha256=SHA),
     Operation.RELEASE: _object(released={"type": "boolean", "const": True}),
@@ -317,6 +325,13 @@ def _request_bindings(record: dict[str, Any], op: Operation) -> None:
         if payload["purpose"] in {"VERIFICATION", "MUTATION", "CANDIDATE"} and payload["plan_ref"] is None:
             raise ExecutionContractError
         if payload["candidate_scope"] is not None and payload["candidate_scope"]["plan_ref"] != payload["plan_ref"]:
+            raise ExecutionContractError
+    if op is Operation.PUBLISH:
+        view = record["view_ref"]
+        candidate = view["purpose"] == "CANDIDATE"
+        if (payload["sealed_manifest_id"] is None) != candidate:
+            raise ExecutionContractError
+        if candidate and (view["access"] != "READ" or payload["expected_base_revision"] != view["base_revision"]):
             raise ExecutionContractError
     if op is Operation.PTY_CONTROL and ((payload["session_id"] is None) != (payload["action"] == "LIST")):
         raise ExecutionContractError

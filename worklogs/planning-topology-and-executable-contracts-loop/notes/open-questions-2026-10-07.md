@@ -1,6 +1,6 @@
 # Open questions — raised 2026-10-07 during I01/SLICE4
 
-Canonical record. Next free id after this file: **Q90** after Q89 below.
+Canonical record. Next free id after this file: **Q91** after Q90 below.
 
 **Current owner/disposition alignment, 2026-10-15 (E200–E203):** retained I02 owns explicit-plan
 Q57/Q58, CT92 rules and local admission/gate proof. Q59/Q60 exact nested choices, Q61/CT97
@@ -2254,8 +2254,7 @@ oracle actually proves I01 behavior. The operator selected A. Q87/LIVE-26 remain
 
 ## Q89 — How does the wire `publish` express a plan (CANDIDATE) publish?
 
-**Status: OPEN (raised 2026-10-23, E286) — blocks A3's supervisor half (SLICE3 STEP3's CANDIDATE `publish`) and
-therefore A5. No code was written against either option.**
+**Status: RESOLVED — operator selected option 1 with refinements R1–R6 (2026-10-30).** The contract decision is implemented at the component/test level in E288; production `run_workflow` composition remains fail-closed until the managed session supplies the trusted execution publisher. The original alternatives and rationale below are retained as history; E287 is the pre-implementation plan.
 
 **The gap.** Two records settle the *semantics* of a candidate publish and neither settles its *encoding*.
 Spec §5 (`i03-execution-workspace-spec-2026-10-15.md`, CANDIDATE grants) says: "On seal, validate bounded buffer with
@@ -2294,17 +2293,60 @@ member's addition) but keeps one route, one reply and one writer. Option 2 split
 current across two places. Option 3 undoes the single-writer property by making the plan path a second operation with
 its own reservation/replay semantics.
 
-**What is not in question.** The destination comes from the view's pinned `candidate_scope.plan_ref`; the bytes arrive
-through `write_candidate` under the same scope; the commit is the existing PLAN intent and same-path replace
-(`I03-LIVE-23`); `plan_promotion.publish_plan_buffer` must be deleted in the same change that activates the managed
-route (R3 — a retained fallback is a second writer by another name); and the controller must not be able to name a
-different plan path.
+**Operator decision — option 1, with binding refinements (R1–R6).** The wire remains the single existing
+`Operation.PUBLISH`. `sealed_manifest_id` is nullable only for a CANDIDATE `view_ref`: it must be null for
+CANDIDATE and non-null for an ordinary sealed WRITE publication. PUBLISH receives its own closed reply schema
+with nullable `plan_ref`; ordinary publication returns null, candidate PLAN publication returns the exact new
+ref, and `INSTALL_PROJECT` keeps the original `_COMMITTED` shape.
 
-**Why it is raised instead of decided.** Q85's precedent and the operating rule are explicit: a new *contract* choice
-is promoted, not guessed. The three options differ in the wire contract every deployed controller/supervisor pair must
-agree on, and the manager-plane codec is versioned and closed. A local test can prove any of them; only the operator
-can choose which contract ships.
+- **R1 — closed-view proof and private buffer.** Candidate publication must use a view-capability proof that
+  tolerates the already-closed view and read the private candidate buffer inside the authority transaction.
+  `read_candidate`'s normal open-work path is not callable after closure.
+- **R2 — view capability, not OWNER substitution.** Authenticate the candidate view grant and retain binding
+  checks for `status == OWNED`, `active_actor == namespace`, and generation. Do not require or replace the view
+  proof with the independent OWNER grant.
+- **R3 — reply isolation.** Define a PUBLISH-only result containing nullable `plan_ref`; do not widen the
+  `_COMMITTED` schema used by `install_project`.
+- **R4 — dispatcher identity.** Thread the dispatcher's `op-<request_id>` through the PLAN intent and reply.
+  Because `operation_id` is in the plan manifest hashed by `_derive_revision_id`, regenerate affected revision
+  IDs and pinned expectations. Do not add a content-hash idempotency scheme; exact replay remains the supervisor
+  journal's responsibility.
+- **R5 — seal-equivalent barrier.** Candidate publishing requires a closed gate, no active work, and a matching
+  `terminal.json`, followed by the existing I02 plan validators. `record_terminal` by itself does not drain work.
+- **R6 — base pin.** Require `binding.current["revision_id"] == view_ref.base_revision` before committing the plan.
 
-**What would settle it.** The operator picks 1, 2 or 3. Option 1 then lands as a `protocol.py` schema delta plus a
-purpose branch in `service._publish` and the authority-side buffer read, with the owning banks
-`tests/test_execution_service.py` (wire) and `tests/test_workspace_publication.py` (`publish_plan` half) extended.
+The existing candidate-buffer methods also need to be reachable through the existing `WRITE_FILE` route for a
+CANDIDATE view, with exact `candidate_path` scope enforcement; this is transport for the already-authorized
+buffer, not a new wire operation. Keep ordinary sealed WRITE publication unchanged. Delete the live
+`plan_promotion.publish_plan_buffer` writer in the same cutover. Do not reopen options 2/3.
+
+**Historical deferrals.** The question was raised after E273. E276 later delivered CT107 forward recovery; E277–E280 delivered the service composition and dependencies. E287 recorded the source-verified implementation plan. These entries preserve their state at the time and are superseded by E288 below.
+
+**Implementation result (E288, component-level; no production activation).** The implementation now:
+
+- applies the PUBLISH-only nullable `plan_ref` result and the strict seal-null/CANDIDATE cross-field rule, leaving install's `_COMMITTED` untouched;
+- routes CANDIDATE buffer reads/writes through the exact scoped private-buffer methods, then publishes with the view capability through the closed-view-tolerant authority transaction, seal-equivalent barrier, I02 validators, base equality and dispatcher `op-<request_id>`;
+- stages through `ExecutionClientPlanPublisher` and has `run_workflow`/`WorkflowContext` accept the publisher port; missing injection is a closed `prepare-failed`, not a local fallback;
+- deletes `plan_promotion.publish_plan_buffer` and tests ordinary sealed publication separately.
+
+The transport/service path has an end-to-end AF_UNIX test. Targeted checks: protocol/service 112 passed; workspace publication/recovery/purposes 135 passed; the full `test_verify_gate_live.py` bank 572 passed (with the workspace venv on `PATH`); Ruff check/format, Mypy (7 source files), compileall and `git diff --check` passed. Two targeted mutants were caught: removing the candidate base-revision comparison let the stale-base test publish, and replacing the PLAN manifest's dispatched operation ID broke the revision-ID assertion. No live-host run, frozen I03-LIVE-23 edit, CT/STEP tick, or claim of deployed readiness is made.
+
+**Remaining composition boundary.** The ordinary CLI/session composition does not yet create or inject an `ExecutionClientPlanPublisher` with the managed namespace, workspace ID, owner capability and current revision. Until that SLICE4/managed-session integration exists, candidate repair/replan attempts fail closed; this option-1 contract is available only to a caller that supplies the trusted port. Do not treat the fake publisher used by controller tests as a production writer, and do not reconcile or rewrite I03-LIVE-23 without planner approval and later host evidence. This is recorded as the separate integration blocker Q90; it does not reopen Q89's wire decision.
+
+---
+
+## Q90 — Which managed composition supplies the trusted candidate publisher to `run_workflow`?
+
+**Status: OPEN — implementation dependency; Q89's protocol contract is already resolved.**
+
+**Context.** E288 gives `WorkflowContext`/`run_workflow` an explicit `CandidatePlanPublisher` port and provides `ExecutionClientPlanPublisher`. The ordinary CLI/session composition currently has no `ExecutionClient` owner and does not expose the trusted `NamespaceRef`, workspace ID, OWNER capability, or latest `base_revision` at the workflow boundary. Inventing those values in the CLI, borrowing a caller/model value, or reconstructing an OWNER grant would violate the existing authority model. The controller therefore fails closed when the port is absent; the host-path writer is deleted and must not be restored.
+
+**Impact.** Managed candidate repair/replan cannot yet publish through the new route from the ordinary CLI. The component, protocol and service paths are locally tested, but Q89 is not production-enabled and SLICE3 STEP3/SLICE4 remain open. Live host evidence remains deferred; I03-LIVE-23's frozen OWNER-grant oracle is not evidence for this route.
+
+**Options for the planner/managed-session owner.**
+
+1. **Preferred: inject from the managed SessionManager/RunContext composition.** Pass the real client and bindings acquired by the existing managed workspace lifecycle; refresh the publisher's base only from confirmed PUBLISH results. This keeps authority and lifecycle ownership at the existing manager boundary.
+2. **Compose at the CLI boundary only if the manager provides a typed binding.** The CLI may assemble the adapter, but it must receive trusted client + namespace/workspace/capability/base as one validated managed binding; it must not discover, mint, or infer them itself.
+3. **Keep promotion disabled until that composition lands.** The current fail-closed port remains; no host writer or alternate protocol is reintroduced. This is the safe current state, not production completion.
+
+**Requested resolution.** Planner assigns the implementation owner/step and chooses 1 or 2 for the eventual composition; option 3 remains active meanwhile. Do not change E2E baselines or run a host test as a substitute for this ownership decision.

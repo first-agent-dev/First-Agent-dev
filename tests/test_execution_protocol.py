@@ -144,7 +144,7 @@ RESULTS: dict[Operation, dict[str, Any]] = {
     Operation.PTY_CONTROL: {"sessions": ["main"], "message": "ok"},
     Operation.STOP_VIEW: {"view_id": VID, "terminal": False},
     Operation.SEAL: {"sealed_manifest_id": "seal-" + RID, "revision_id": REV, "tree_sha256": SHA},
-    Operation.PUBLISH: COMMITTED,
+    Operation.PUBLISH: {**COMMITTED, "plan_ref": None},
     Operation.INSTALL_PROJECT: COMMITTED,
     Operation.PREPARE_BUNDLE: {"validated_bundle_id": "bundle-" + RID, "bundle_sha256": SHA},
     Operation.RELEASE: {"released": True},
@@ -192,6 +192,37 @@ def test_view_ref_from_dict_has_one_closed_validating_constructor() -> None:
     ):
         with pytest.raises(ExecutionContractError):
             ViewRef.from_dict(invalid)
+
+
+def test_publish_schema_binds_nullable_seal_id_to_candidate_view_only() -> None:
+    ordinary = request(Operation.PUBLISH)
+    candidate_view = {**VIEW, "access": "READ", "purpose": "CANDIDATE"}
+    candidate = request(Operation.PUBLISH)
+    candidate["view_ref"] = candidate_view
+    candidate["payload"] = {"sealed_manifest_id": None, "expected_base_revision": REV}
+    assert decode_request(encode_json(candidate)) == candidate
+
+    invalid = [
+        {**ordinary, "payload": {"sealed_manifest_id": None, "expected_base_revision": REV}},
+        {**candidate, "payload": {"sealed_manifest_id": "seal-" + RID, "expected_base_revision": REV}},
+        {**candidate, "view_ref": {**candidate_view, "access": "WRITE"}},
+        {**candidate, "payload": {"sealed_manifest_id": None, "expected_base_revision": "rev-" + "7" * 32}},
+    ]
+    for record in invalid:
+        with pytest.raises(InvalidRequestError):
+            decode_request(encode_json(record))
+
+
+def test_publish_reply_requires_nullable_plan_ref_but_install_keeps_committed_shape() -> None:
+    publish = response(Operation.PUBLISH)
+    assert publish["result"]["plan_ref"] is None
+    decode_reply(encode_json(publish), operation=Operation.PUBLISH, request_id=RID)
+    malformed = copy.deepcopy(publish)
+    del malformed["result"]["plan_ref"]
+    with pytest.raises(ExecutionContractError):
+        decode_reply(encode_json(malformed), operation=Operation.PUBLISH, request_id=RID)
+    install = response(Operation.INSTALL_PROJECT)
+    assert set(install["result"]) == set(COMMITTED)
 
 
 @pytest.mark.parametrize("op", list(Operation))

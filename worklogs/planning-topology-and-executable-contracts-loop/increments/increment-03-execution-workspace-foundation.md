@@ -3375,3 +3375,77 @@ see E281's toolchain note), no STEP or CT ticked, no register row promoted. `han
 `BACKEND_UNAVAILABLE` on the wire until SLICE2 STEP6 lands. Of the nine units in E281's table,
 `handoff` was the only one without a planned surface; the rest already had contract, step, exit criteria and
 owning bank, which is what this entry checked before adding anything.
+
+
+### E287 — Q89 resolved: CANDIDATE `publish` wire and controller cutover plan (2026-10-30)
+
+**Decision.** The operator selected Q89 option 1 with R1–R6. This is a plan/contract update before
+implementation; no STEP/CT checkbox or live verdict is inferred. It activates the already-planned
+SLICE3 STEP3 CANDIDATE `publish` on the existing `Operation.PUBLISH`, after E276 recovery and E277–E280
+service/route dependencies. It does not add an operation, route table, journal, idempotency scheme, or
+caller-controlled plan destination.
+
+**Source-verified seams and gap.** E273's authority PLAN commit is already implemented, including the
+existing I02 `_decode_plan_bytes` validation and forward-only same-path replace/revision/pointer core.
+`protocol.py` currently requires a seal ID for every PUBLISH and reuses `_COMMITTED` for install;
+`service.py::_publish` dispatches only `publish_view`; `WorkspaceAuthority._reader_proof` rejects a
+closed reader pin; the private candidate buffer is exposed only by direct `write_candidate`/
+`read_candidate` methods and is not reached by the existing file routes; `_plan_prepare` currently
+hashes a synthesized plan operation ID into the PLAN manifest; and `_promote_validated_plan` still calls
+the host-path `publish_plan_buffer`. The latter path is a second writer and must disappear in the same
+cutover.
+
+**Implementation dependency order and contracts.**
+
+1. Make `PUBLISH.sealed_manifest_id` nullable exactly for CANDIDATE `view_ref`; keep the ordinary
+   sealed WRITE path and its checks unchanged. Add a PUBLISH-only reply schema with nullable `plan_ref`;
+   install continues to use the exact existing `_COMMITTED` shape (R3).
+2. Route existing `WRITE_FILE` (and the scoped `READ_FILE` buffer path) for CANDIDATE views through
+   the supervisor's exact-scope candidate methods. The authority remains the only private-buffer owner;
+   no path/buffer is added to the payload (Q89 gap closure, E259).
+3. Add the candidate PLAN authority transaction: authenticate the view grant with closed-view-tolerant
+   proof (R1/R2), verify workspace `OWNED`, `active_actor == namespace`, generation and current-base
+   equality (R2/R6), require closed gate + drained active work + exact matching `terminal.json` (R5),
+   then read bytes directly from the private candidate file. Reuse the E273 PLAN validators and
+   irreversible commit/recovery core; require `op-<request_id>` in its intent and reply (R4). Do not
+   replace the view proof with OWNER grant. Keep ordinary sealed WRITE publication behavior unchanged.
+4. Cut `_promote_validated_plan` over to the existing client/service PUBLISH request and delete
+   `plan_promotion.publish_plan_buffer`; no fallback or parallel writer survives (R3/R5 cutover).
+
+**Acceptance / negative proof.** Add schema cross-field tests; ordinary-vs-candidate service routing and
+exact reply-shape tests; authority tests for wrong capability/namespace/status/actor/generation/base,
+open gate, active work, missing or mismatched terminal receipt, absent/wrong-scope buffer, invalid plan,
+stale canonical plan, and forward-only durability faults. Prove `record_terminal` without drain cannot
+publish. Prove request ID reaches PLAN intent/reply and changes `_derive_revision_id` output; exact replay
+is checked at the supervisor journal, not by a content hash. Assert ordinary sealed publication remains
+unchanged and install still validates against `_COMMITTED` without `plan_ref`. Controller tests must
+fail if `publish_plan_buffer` is reintroduced or called. Run owning protocol/service/workspace and
+plan-promotion tests, relevant static checks, and targeted mutation checks; inspect the complete diff.
+
+**Ordering/ownership caveats.** CT107 recovery remains the owner for interrupted PLAN intents; do not
+claim a new recovery mechanism here. I03-LIVE-23 remains `PLANNED / NOT RUN` and its current host row
+still names a direct OWNER-grant path. This coding slice does not edit the frozen E2E baseline or
+planner-owned host oracle; the planner must reconcile that invocation contract before STEP8 fixtures or
+any live run. All live E2E remains deferred until I01–I03 are merged to `main` and deployed, with operator
+host evidence required before joint evaluation.
+
+**Plan-only status at E287.** E287 was a planning snapshot; the implementation and executed evidence below supersede its “not done” statement. The host-run, fixture/helper, STEP tick and CT closure prohibitions remain in force.
+
+
+### E288 — Q89 option 1 implementation and bounded proof (2026-10-30)
+
+**Implemented contract.** The existing PUBLISH wire now permits a null seal only for a CANDIDATE view; PUBLISH has its own closed result schema with nullable `plan_ref`, and install retains `_COMMITTED`. The service routes exact CANDIDATE `READ_FILE`/`WRITE_FILE` scope to the private candidate buffer. `WorkspaceAuthority.publish_candidate_plan` authenticates the closed view capability, checks OWNED/active actor/generation/current-base equality, requires closed gate + drained work + exact terminal record, reads the private buffer inside the transaction, applies the I02 PLAN validator, and enters the existing forward-only PLAN commit. The dispatcher `op-<request_id>` enters the PLAN intent/reply and revision derivation. Ordinary sealed WRITE publication remains separate. `plan_promotion.publish_plan_buffer` is deleted.
+
+**Controller/client boundary.** `ExecutionClientPlanPublisher` stages through CREATE_VIEW → WRITE_FILE → STOP_VIEW → PUBLISH, retains the view on uncertain outcomes, and advances its base CAS after a confirmed publish for later repair/replan attempts. `run_workflow` and `WorkflowContext` expose the injected publisher port. No production managed-session composition supplies the trusted client, namespace, workspace, OWNER capability and current revision yet; absence of injection fails closed with an existing admission rule and never falls back to a host writer. Controller integration tests use a test-only port; it is not a production authority. This separate composition blocker is Q90. Thus Q89's contract/component cutover is implemented, but this does not close SLICE3 STEP3 or activate SLICE4.
+
+**Executed evidence.**
+
+- `.venv/bin/pytest tests/test_execution_protocol.py tests/test_execution_service.py -q` — **112 passed**.
+- `.venv/bin/pytest tests/test_workspace_publication.py tests/test_workspace_recovery.py tests/test_execution_purposes.py -q` — **135 passed**.
+- `PATH="$PWD/.venv/bin:$PATH" .venv/bin/pytest tests/test_verify_gate_live.py -q` — **572 passed**. The PATH addition is required because nested verification children invoke `python -m pytest`.
+- Ruff check passed; Ruff format check reported **12 files already formatted**; Mypy reported **Success: no issues found in 7 source files**; compileall and `git diff --check` passed.
+- Two temporary, restored source mutants were caught by their named oracles: removing the R6 current-base comparison made a candidate publish after an unrelated revision commit; replacing the dispatched operation ID in the PLAN manifest broke the revision-ID derivation assertion. No mutation was left in the worktree.
+
+An initial full verify-bank run without the venv on `PATH` had nested child failures (`/usr/bin/python: No module named pytest`); rerunning with the venv on `PATH` exposed one test-double mismatch at the post-replace fsync boundary, which was corrected. The final full bank is the 572-pass result above.
+
+**Not claimed.** No live host run, E2E fixture/helper, I03-LIVE-23 baseline/oracle edit, STEP tick, CT closure, merge/deploy, or production readiness is claimed. The planner must reconcile I03-LIVE-23's old OWNER-grant oracle with the candidate-view route before any later host run.

@@ -154,14 +154,14 @@ Complete payload additions/results (every object has exactly the named keys; IDs
 | acquire_writer | `{workspace_id}` / `{view_ref:null,capability,generation,revision_id}`; grant bound to authenticated controller's namespace and root owner |
 | pin_reader | `{workspace_id,revision_id,plan_ref}` / `{view_ref,capability}`; READ pin independent of subsequent writer generations |
 | create_view | `{workspace_id,base_revision,access,purpose,candidate_scope,plan_ref}` / `{view_ref,capability}`; purpose PROJECT/PROVISIONING/VERIFICATION/MUTATION/CANDIDATE; candidate_scope null except exact `{candidate_path,plan_ref}` for CANDIDATE, with identical top-level plan_ref; grant checks permitted combinations before copy |
-| read_file | `{path,offset_bytes,max_bytes}` / `{content,sha256,eof}`; max_bytes1MiB, exact bounded UTF-8 file snapshot; reject unsupported binary/split-codepoint rather than silently corrupt; SHA covers whole input-policy-bounded file, not the returned window; larger files use the bounded read-only window policy in §4.2, never partial SHA for edits |
-| write_file / edit_file | `{path,content,expected_sha256}` / `{sha256,bytes}`; expected_sha256 nullable only for write(create-if-absent); edit requires hash; conflict is STALE_REVISION with no silent retry |
+| read_file | `{path,offset_bytes,max_bytes}` / `{content,sha256,eof}`; max_bytes1MiB, exact bounded UTF-8 file snapshot; reject unsupported binary/split-codepoint rather than silently corrupt; SHA covers whole input-policy-bounded file, not the returned window; larger files use the bounded read-only window policy in §4.2, never partial SHA for edits. On CANDIDATE, the exact scoped `candidate_path` reads the private staged buffer; other paths retain the immutable pinned-source read policy |
+| write_file / edit_file | `{path,content,expected_sha256}` / `{sha256,bytes}`; expected_sha256 nullable only for write(create-if-absent); edit requires hash; conflict is STALE_REVISION with no silent retry. On CANDIDATE, `write_file` routes only the exact scoped `candidate_path` to the private buffer; every other candidate write is PATH_DENIED |
 | exec | `{operation_id,profile_id,command,cwd,timeout_ms,session_id}` / `{receipt}`; `session_id` is nonnull for interactive profiles and null only for an approved noninteractive one-shot profile; fixed simple identifier≤64chars, scoped to namespace+view |
 | inspect / cancel | `{operation_id}` / `{receipt}`; cancel requests stop, not success or terminality until independently confirmed |
 | pty_control | `{action:INTERRUPT|CLOSE|LIST,session_id}` / `{sessions,message}`; LIST uses null ID; other actions require ID; namespace/view scoped, never process-global main |
 | stop_view | `{}` / `{view_id,terminal:bool}`; false/unknown cannot seal/release |
 | seal | `{}` / `{sealed_manifest_id,revision_id,tree_sha256}`; immutable revision may be unpublished/MUTATION-only; cannot be made writable or used for canonical publication without owner grant |
-| publish | `{sealed_manifest_id,expected_base_revision}` / `{workspace_id,revision_id,tree_sha256,operation_id,projection_complete:true}`; no receipt before durable DONE |
+| publish | `{sealed_manifest_id:null-or-seal-id,expected_base_revision}` / `{workspace_id,revision_id,tree_sha256,operation_id,projection_complete:true,plan_ref:null-or-PlanRef}`; `sealed_manifest_id` is null iff `view_ref.purpose == CANDIDATE`, otherwise non-null for ordinary sealed WRITE publication; ordinary result has null `plan_ref`, candidate PLAN result has the exact new `PlanRef`; no receipt before durable DONE; PUBLISH has its own result schema and does not widen install's `_COMMITTED` |
 | prepare_bundle | `{project_slug,increment_slug,roadmap_text,increment_text,expected_base_revision}` / `{validated_bundle_id,bundle_sha256}`; OWNER grant, fixed three-file renderer/ledger header, recomputed caps/grammar/hash in supervisor; no model file map |
 | install_project | `{validated_bundle_id,project_slug}` / same committed result as publish; bundle created by trusted bounded renderer, not arbitrary model file map |
 | handoff | `{target_namespace}` / `{view_ref:null,capability,generation,revision_id}`; **moves the ONE active mutator grant** from the calling namespace to a child run of it (Q85/E282). Preconditions in this fixed order: (1) the caller's OWNER grant, principal and active-actor proof (`_owner_only`); (2) settlement — every WRITE view `PUBLISHED`/`REJECTED`, no `intent.json` (`WORKSPACE_BUSY`; identical to release, so a `SEALED`-but-unpublished view blocks a handoff exactly as it blocks release); (3) the live writer fd this process opened (`STALE_GENERATION`); (4) the wire invariants `target.session_id == caller.session_id`, `target.parent_run_id == caller.run_id`, `target.run_id != caller.run_id` (`INPUT_POLICY`). The commit is ONE metadata replace, fsynced before the reply: `active_actor := target`, `owner_namespace`/`generation`/`status`/`revision_id` unchanged, a fresh `secrets.token_hex(32)` capability minted. **Generation is NOT advanced** — a handoff is not a new write epoch, so existing pins and the child's views keep their generation and `view_ref.generation` still matches; the old capability dies with that replace (fresh work with it is `UNAUTHORIZED`) while Q75 replay of the same request id still returns its original cached reply. `parent_run_id` is controller-attested after an actual `begin_run` (§7.1): the supervisor proves the link it was told, never the target run's existence, and gains no session store for it |
@@ -1001,10 +1001,21 @@ Candidate grants are not ordinary project writes: existing PlannerDispatch logic
 may remain `.fa/admission/...` for v1 compatibility, but bytes live in supervisor-owned staging,
 NOT canonical .fa/admission or a cell/control mount. Internal binding carries source READ grant plus
 one CANDIDATE grant; generic tools deny control paths, scoped candidate tools route only exact
-candidate_path to its buffer. `candidate_scope.plan_ref` is the pinned v1 PlanRef with source hash.
-On seal, validate bounded buffer with existing pure I02 validators; publish of CANDIDATE uses PLAN
-intent at the scoped canonical PlanRef path, never imports a candidate directory. Parent/model cannot
-choose a promotion destination. Q68 tool failures remain authoritative for the attempt.
+candidate_path to its buffer through existing READ_FILE/WRITE_FILE operations. `candidate_scope.plan_ref`
+is the protected pinned v1 PlanRef with source hash. On CANDIDATE `publish`, `sealed_manifest_id` is null;
+all other PUBLISH requests require a seal id. The authority authenticates the CANDIDATE view grant (not an
+independent OWNER grant), proves binding status OWNED, active_actor equals namespace, generation matches,
+and current revision equals `view_ref.base_revision`; the view must have a closed gate, no active work,
+and a matching `terminal.json`. `record_terminal` alone is insufficient because it does not drain work.
+The authority reads the scoped private buffer after closure, applies the existing I02 plan validators, and
+commits a PLAN intent at the pinned canonical PlanRef path. The PLAN manifest/intent/reply carry the
+request's `op-<request_id>`; because that value participates in `_derive_revision_id`, revision IDs and
+pinned expectations follow the request identity. Exact replay is the supervisor journal's responsibility;
+there is no second content-hash idempotency scheme. PUBLISH returns a PUBLISH-only result whose `plan_ref`
+is null for ordinary sealed publication and the new exact ref for candidate PLAN publication. Install's
+shared `_COMMITTED` schema remains unchanged. Parent/model cannot choose a destination or buffer.
+Q68 tool failures remain authoritative for the attempt. The live `plan_promotion.publish_plan_buffer`
+writer is removed in the same controller cutover; ordinary sealed WRITE publication remains unchanged.
 
 `prepare_bundle` is the missing upload/validation handoff: controller supplies its rendered bounded
 roadmap/increment bytes; supervisor renders fixed ledger header, independently validates metadata/
@@ -1317,7 +1328,7 @@ Prove a unique parent-only fact reaches initial planner and does not recur in re
 | plan_admission.read_plan_snapshot/snapshot_from_bytes:133–168 | Reuse exact bytes/hash/UTF-8/size/IDs for selected and rendered plans, supplying EXISTING_SELECTION/BOOTSTRAP source_kind rather than trusting model hashes. |
 | workflow_controller._validate_plan_admission:2231ff / _run_admission_repair:2370ff | Reuse both pure validators and bounded existing repair AFTER valid acquisition; no duplicated admission engine or free initial planner retry. |
 | admission_schema._record_plan_ref:93–104 / _record_attempt:154–182 | EXISTING_SELECTION, BOOTSTRAP and attempt ACQUISITION labels already exist, not working acquisition producers. Keep v1 reader EXACT; add explicit v2 branch for bindings/rules, never mutate old records or invent a fresh schema system. |
-| plan_promotion.publish_plan_buffer:183–221; scoped write_file:113–150 | Keep validated buffer/source-hash/mode and Q68 failed-tool logic; transfer FS effects into SAME supervisor candidate/publication authority. Not an arbitrary model file-map API. |
+| historical `plan_promotion.publish_plan_buffer` (deleted by Q89/E288); `ExecutionClientPlanPublisher` + scoped `WRITE_FILE` | Validated bytes travel only through the supervisor-owned CANDIDATE buffer; the authority owns source/base proof, PLAN intent, same-path replacement and forward recovery. No host fallback and no model-selected target or buffer. |
 | tools/prepare_pr.build_prepare_pr_tool:186–283; pr_draft.PrDraftStore:45–118; cli.py:1788,2285–2290 | Actual pr_prepare producer and current-session digest already exist. Reuse draft validation/store/IntentGuard seam; bounded controller-only run artifact IO, not source publication or another draft engine. |
 | plan_ids.extract_plan_ids/precheck and existing PyYAML dependency | Reuse grammar/IDs and YAML parsing machinery. No general new planning/YAML framework, no I04 ledger parser. Skill frontmatter loaders are permissive/fallback-based and not safe admission validators. |
 
@@ -1907,3 +1918,8 @@ injection. Readiness is a closed `workspace_not_ready` **in the managed composit
 code path that receives the provisioner result decides, so the rule activates exactly at SLICE4 STEP2's
 cutover and the pre-cutover host composition keeps its visible-but-non-blocking report until then.
 
+### E288 — Q89 option 1 component implementation and boundary (2026-10-30)
+
+The current §2/§5 CANDIDATE contract is implemented in the targeted code: PUBLISH has a purpose-specific result with nullable `plan_ref`, while `INSTALL_PROJECT` retains `_COMMITTED`; the PUBLISH request requires a null seal exactly for CANDIDATE and a non-null seal for ordinary sealed WRITE publication. Candidate `WRITE_FILE`/`READ_FILE` use the exact candidate scope and supervisor-private buffer. The PLAN authority path proves the closed view grant (not an OWNER substitute), OWNED/actor/generation/current-base binding, closed gate, drain, exact terminal receipt and I02 validators before reading the private buffer. The dispatcher's `op-<request_id>` reaches the PLAN intent/reply and therefore `_derive_revision_id`; no content-hash replay scheme was added. The ordinary sealed WRITE path remains distinct and unchanged. `plan_promotion.publish_plan_buffer` is deleted.
+
+`ExecutionClientPlanPublisher` exercises CREATE_VIEW → WRITE_FILE → STOP_VIEW → PUBLISH and uses the returned revision as its next base. `run_workflow`/`WorkflowContext` expose an injection port, but no managed production composition currently supplies its trusted client/namespace/workspace/OWNER capability. Missing injection therefore fails closed and there is no host-path fallback. The test-only publisher used by the controller bank is not a production writer. This component proof does not close SLICE3 STEP3, activate SLICE4, tick a CT, edit the frozen I03-LIVE-23 baseline, or authorize a live host run. Q90 records the remaining composition owner/step decision. See Q89/E288 and increment E288 for executed test/static/mutation outcomes.

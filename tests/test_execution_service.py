@@ -24,6 +24,7 @@ What must stay true (each test names the producer it kills):
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import socket
@@ -37,6 +38,7 @@ from typing import Any
 
 import pytest
 
+from fa.execution.client import ExecutionClient, ExecutionClientPlanPublisher
 from fa.execution.profiles import profile_set_sha256
 from fa.execution.protocol import decode_reply, encode_json, read_frame, write_frame
 from fa.execution.service import (
@@ -48,6 +50,7 @@ from fa.execution.service import (
 )
 from fa.execution.supervisor import SupervisorError, build_supervisor, main
 from fa.execution.types import ExecutionContractError, Operation, ViewRef
+from fa.inner_loop.plan_admission import read_plan_snapshot, snapshot_from_bytes
 from tests.test_execution_views import native_profile
 from tests.test_execution_workspace import ACTOR, PEER, Site
 from tests.test_execution_workspace import site as site
@@ -388,6 +391,171 @@ def test_stop_view_refuses_a_cell_it_cannot_stop(site: Site) -> None:
         assert _error(sealed) == "TERMINALITY_UNKNOWN"
 
 
+def test_candidate_plan_publication_uses_view_grant_private_buffer_and_dispatch_id(
+    site: Site, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """producer-kill-check: bypass the candidate route or substitute an OWNER grant."""
+    plan_relative = "worklogs/demo/increments/increment-01-demo.md"
+    plan_path = site.source / plan_relative
+    plan_path.parent.mkdir(parents=True, exist_ok=True)
+    old_plan = b"# Existing plan\n"
+    new_plan = b"# Candidate plan\n"
+    plan_path.write_bytes(old_plan)
+    plan_ref = {
+        "workspace_relative_path": plan_relative,
+        "source_kind": "EXPLICIT",
+        "sha256": hashlib.sha256(old_plan).hexdigest(),
+    }
+    candidate_path = ".fa/admission/run-1/candidate-01.md"
+
+    with SupervisorService(_config(site)) as service:
+        workspace_id = _registered(service)
+        owner_capability, base_revision = _writer(service, workspace_id, request_id="a" * 32)
+        candidate = exchange(
+            service,
+            Operation.CREATE_VIEW,
+            {
+                "workspace_id": workspace_id,
+                "base_revision": base_revision,
+                "access": "READ",
+                "purpose": "CANDIDATE",
+                "candidate_scope": {"candidate_path": candidate_path, "plan_ref": plan_ref},
+                "plan_ref": plan_ref,
+            },
+            request_id="b" * 32,
+            capability=owner_capability,
+        )
+        assert candidate["status"] == "OK", candidate
+        view = candidate["result"]["view_ref"]
+        view_capability = candidate["result"]["capability"]
+
+        write = exchange(
+            service,
+            Operation.WRITE_FILE,
+            {"path": candidate_path, "content": new_plan.decode(), "expected_sha256": None},
+            request_id="c" * 32,
+            view_ref=view,
+            capability=view_capability,
+        )
+        assert write["status"] == "OK", write
+        read = exchange(
+            service,
+            Operation.READ_FILE,
+            {"path": candidate_path, "offset_bytes": 0, "max_bytes": 1024},
+            request_id="d" * 32,
+            view_ref=view,
+            capability=view_capability,
+        )
+        assert read["status"] == "OK", read
+        assert read["result"]["content"] == new_plan.decode()
+        assert not (site.source / ".fa").exists(), "candidate bytes escaped supervisor staging"
+
+        view_ref = ViewRef.from_dict(view)
+        service.authority.close_admission(PEER, ACTOR, view_ref=view_ref, capability=view_capability, deadline=until())
+        service.authority.drain(PEER, ACTOR, view_ref=view_ref, capability=view_capability, deadline=until())
+        service.authority.record_terminal(PEER, ACTOR, view_ref=view_ref, capability=view_capability, deadline=until())
+
+        def owner_proof_forbidden(*_args: Any, **_kwargs: Any) -> Any:
+            raise AssertionError("candidate PUBLISH must not require the OWNER grant")
+
+        monkeypatch.setattr(service.authority, "_owner_only", owner_proof_forbidden)
+        published = exchange(
+            service,
+            Operation.PUBLISH,
+            {"sealed_manifest_id": None, "expected_base_revision": base_revision},
+            request_id="e" * 32,
+            view_ref=view,
+            capability=view_capability,
+        )
+        assert published["status"] == "OK", published
+        assert published["result"]["operation_id"] == "op-" + "e" * 32
+        assert published["result"]["plan_ref"] == {
+            **plan_ref,
+            "sha256": hashlib.sha256(new_plan).hexdigest(),
+        }
+        assert plan_path.read_bytes() == new_plan
+        intent_path = site.state / "workspaces" / workspace_id / "intent.json"
+        assert not intent_path.exists()
+        assert not (site.source / ".fa/admission").exists()
+        assert not [path for path in (site.source / ".fa/publish-tmp").iterdir() if path.exists()]
+
+        # Exact request replay is journal-owned; a fresh request is not a second
+        # content-hash idempotency path and cannot commit against the stale base.
+        replay = exchange(
+            service,
+            Operation.PUBLISH,
+            {"sealed_manifest_id": None, "expected_base_revision": base_revision},
+            request_id="e" * 32,
+            view_ref=view,
+            capability=view_capability,
+        )
+        assert replay == published
+        fresh = exchange(
+            service,
+            Operation.PUBLISH,
+            {"sealed_manifest_id": None, "expected_base_revision": base_revision},
+            request_id="f" * 32,
+            view_ref=view,
+            capability=view_capability,
+        )
+        assert _error(fresh) == "STALE_REVISION"
+        assert plan_path.read_bytes() == new_plan
+
+
+def test_publisher_uses_candidate_route_end_to_end(site: Site) -> None:
+    """producer-kill-check: bypass Operation.PUBLISH or reintroduce a host writer."""
+    plan_relative = "worklogs/demo/increments/increment-01-demo.md"
+    plan_path = site.source / plan_relative
+    plan_path.parent.mkdir(parents=True, exist_ok=True)
+    plan_path.write_bytes(b"# Existing plan\n")
+    source = read_plan_snapshot(site.source, Path(plan_relative))
+    candidate = snapshot_from_bytes("draft.md", b"# Repaired plan\n")
+
+    with SupervisorService(_config(site)) as service:
+        workspace_id = _registered(service)
+        owner_capability, base_revision = _writer(service, workspace_id, request_id="1" * 32)
+        client = ExecutionClient(
+            service.socket_path,
+            server_uid=os.getuid(),
+            rpc_timeout_ms=2000,
+        )
+        publisher = ExecutionClientPlanPublisher(
+            client,
+            namespace=ACTOR,
+            workspace_id=workspace_id,
+            owner_capability=owner_capability,
+            base_revision=base_revision,
+        )
+        stop = threading.Event()
+        runner = threading.Thread(target=service.serve_forever, args=(stop,), daemon=True)
+        runner.start()
+        try:
+            promoted = publisher.publish_candidate(source, candidate, deadline=until())
+            assert promoted.workspace_relative_path == plan_relative
+            assert promoted.source_kind == source.ref.source_kind
+            assert promoted.sha256 == hashlib.sha256(candidate.utf8_bytes).hexdigest()
+            assert plan_path.read_bytes() == candidate.utf8_bytes
+            assert not (site.source / ".fa/admission").exists()
+            workspaces = site.state / "workspaces" / workspace_id
+            assert not (workspaces / "intent.json").exists()
+            first_revision = json.loads((workspaces / "current.json").read_text())["revision_id"]
+            assert first_revision != base_revision
+
+            # A controller can reuse the managed port for the next validated repair;
+            # it must advance its base CAS from the committed result, not retain R0.
+            next_source = read_plan_snapshot(site.source, Path(plan_relative))
+            next_candidate = snapshot_from_bytes("draft.md", b"# Repaired plan, pass two\n")
+            next_promoted = publisher.publish_candidate(next_source, next_candidate, deadline=until())
+            assert next_promoted.sha256 == hashlib.sha256(next_candidate.utf8_bytes).hexdigest()
+            assert plan_path.read_bytes() == next_candidate.utf8_bytes
+            assert json.loads((workspaces / "current.json").read_text())["revision_id"] != first_revision
+            assert not (workspaces / "intent.json").exists()
+        finally:
+            stop.set()
+            runner.join(timeout=5)
+            assert not runner.is_alive(), "serve_forever ignored its stop event"
+
+
 def test_the_publication_half_is_reachable_through_the_wire(site: Site) -> None:
     """producer-kill-check: drop any one call in stop -> seal -> publish -> bundle -> install."""
     with SupervisorService(_config(site)) as service:
@@ -432,7 +600,9 @@ def test_the_publication_half_is_reachable_through_the_wire(site: Site) -> None:
             "tree_sha256",
             "operation_id",
             "projection_complete",
+            "plan_ref",
         }
+        assert published["result"]["plan_ref"] is None
         assert published["result"]["revision_id"] == sealed["result"]["revision_id"]
         assert published["result"]["operation_id"] == "op-" + "5" * 32
         assert (site.source / "note.txt").read_text() == "published through the codec\n"
