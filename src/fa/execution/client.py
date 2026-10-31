@@ -175,7 +175,11 @@ class ExecutionClient:
                 write_frame(framed, raw)
                 if operation is Operation.EXEC:
                     framed.add_execution_budget(payload["timeout_ms"])
-                response = decode_reply(read_frame(framed), operation=operation, request_id=request_id)
+                # The reader tolerates a reply written before an additive key existed;
+                # the server's own self-check does not.
+                response = decode_reply(
+                    read_frame(framed), operation=operation, request_id=request_id, tolerate_legacy=True
+                )
         except (OSError, ExecutionContractError):
             if attempted_send:
                 raise ExecutionUncertainError("op-" + request_id) from None

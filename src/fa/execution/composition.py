@@ -17,6 +17,7 @@ import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 from fa.config import DEFAULT_CONFIG_PATH, ExecutionConfigError, load_execution_config
@@ -91,12 +92,16 @@ class ManagedExecution:
                 payload={},
                 deadline=deadline,
             )
-        except (ExecutionRejectedError, ExecutionUnavailableError):
-            return False
-        except ExecutionUncertainError:
-            # A lost release leaves the workspace OWNED with no owner: say so and
-            # let recovery decide, rather than pretending the writer is settled.
-            _logger.warning("managed execution could not confirm its writer release")
+        except (ExecutionRejectedError, ExecutionUnavailableError, ExecutionUncertainError) as error:
+            # Every unconfirmed release means the same operational fact - this run's
+            # writer may still be held - and the operator can only act on it if it is
+            # said out loud. Retrying is still wrong: a refused or lost RELEASE is
+            # the authority's answer, not a transport hiccup to paper over.
+            _logger.warning(
+                "managed execution: writer release not confirmed for %s (%s)",
+                self.binding.workspace_id,
+                getattr(error, "code", None) or type(error).__name__,
+            )
             return False
         return True
 
@@ -121,6 +126,45 @@ class BoundPlanPublisher:
     ) -> PlanRef:
         publication = self._managed.publish_plan(source, candidate, deadline=deadline)
         return publication.plan_ref
+
+
+def _control(
+    client: ExecutionClient,
+    operation: Operation,
+    *,
+    namespace: NamespaceRef,
+    payload: dict[str, object],
+    deadline: float | None,
+) -> dict[str, object]:
+    """One control call whose lost reply is replayed once under the SAME request id.
+
+    The authority journals an operation by request id and answers a repeat from its
+    completed-reply cache, so a replay is a *reconciliation*, not a second effect:
+    a writer grant that was issued against a lost frame comes back as the same
+    grant. A fresh id would instead meet ``WORKSPACE_BUSY`` - the run would be
+    refused with a reason that is not true (nobody else holds it; this run does and
+    cannot prove it). What a replay must never do is invent a grant: if the
+    authority cannot answer, that surfaces as the second attempt's own error.
+    """
+    request_id = uuid4().hex
+    call: dict[str, Any] = {
+        "request_id": request_id,
+        "namespace": namespace,
+        "view": None,
+        "grant": None,
+        "payload": payload,
+        "deadline": deadline,
+    }
+    try:
+        return client.request(operation, **call)
+    except ExecutionUncertainError:
+        _logger.warning(
+            "managed execution: %s reply lost for %s; replaying request %s",
+            operation.value,
+            namespace.run_id,
+            request_id,
+        )
+        return client.request(operation, **call)
 
 
 def managed_execution_for_run(
@@ -158,26 +202,31 @@ def managed_execution_for_run(
     root_id, relative_root = rooted
     namespace = NamespaceRef(run_context.session_id, run_context.run_id)
     try:
-        registered = client.request(
+        registered = _control(
+            client,
             Operation.REGISTER_WORKSPACE,
-            request_id=uuid4().hex,
             namespace=namespace,
-            view=None,
-            grant=None,
             payload={"root_id": root_id, "relative_root": relative_root, "create": False, "input_id": None},
             deadline=deadline,
         )
-        acquired = client.request(
+    except (ExecutionRejectedError, ExecutionUnavailableError, ExecutionUncertainError):
+        # Registering mints nothing and changes nothing (`create: false`), so an
+        # answer we cannot read is still the honest "this run has no managed
+        # execution" - there is no grant to strand.
+        return None
+    try:
+        acquired = _control(
+            client,
             Operation.ACQUIRE_WRITER,
-            request_id=uuid4().hex,
             namespace=namespace,
-            view=None,
-            grant=None,
             payload={"workspace_id": registered["workspace_id"]},
             deadline=deadline,
         )
     except (ExecutionRejectedError, ExecutionUnavailableError):
         return None
+    # `ExecutionUncertainError` deliberately escapes from here: the authority may
+    # have issued the writer and lost our frame, and the only safe statement is
+    # that this run cannot prove it holds the workspace (see `_control`).
     grant = GrantReply(
         Operation.ACQUIRE_WRITER,
         acquired["capability"],

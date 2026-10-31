@@ -5548,3 +5548,64 @@ deployed behaviour. The live join for the chat path (I03-LIVE-S08) is unproven b
 **State after this entry.** SLICE7: 11 of 11 `LOCAL-CLOSED`, none `PLANNED`. Increment: 11 closed of 47, 14 `OPEN`,
 11 `PARTIAL`, 2 `HOST` — i.e. the remaining work is the other slices (components whose exits are local) plus the host
 facts and the cutover, not this slice.
+
+### E304 — external review of SLICE7, checked against the tree
+
+Five findings came in. Three reproduced exactly as written, one reproduced with a different cause than the one stated, and
+one reproduced but needed a narrower fix than "change the protocol". Everything below was measured here, not accepted on
+the reviewer's word.
+
+| # | finding | verdict | evidence in this tree | action |
+| --- | --- | --- | --- | --- |
+| 1 | an uncertain writer acquisition strands the workspace | **true** | `managed_execution_for_run` caught only rejected/unavailable, so `ExecutionUncertainError` escaped `_cmd_workflow` as a traceback; the authority had already written `status: OWNED` (`workspace.py:1355-1375`) and holds the grant in memory, and a restart turns OWNED into QUARANTINED (`:1097-1100`), a status nothing in `src` ever moves back | fixed: same-id replay + named refusal + operator line |
+| 2 | the CLI ignores an unconfirmed release | **true** | `close()` returned `False` **and logged nothing** for a rejected or unavailable release (probe: 0 log records); `_cmd_workflow`'s `finally` discarded the result | fixed: one warning per unconfirmed release, operator line on stderr, exit code unchanged (Q98) |
+| 3 | grant custody exceeds Q90 | **true, and the test was weaker than claimed** | `vars(publisher)["_managed"].grant.capability` returns the token; `test_the_client_takes_a_typed_grant_and_unwraps_it_once` walks `vars()` of the client and the bash executor only, and compares `repr()` of a `GrantReply`, whose repr is suppressed - it could not have failed | pinned honestly: a reachability test with one documented holder path, and Q99 for the contract question |
+| 4 | retained drafts have no aggregate bound | **true**, but the ledger's *reason* was wrong | every failed publication writes `.fa/admission/<run_id>/plan-<sha256>.md`; nothing in `src` deletes them, and no slice step owns a GC. E300 said "reaping is SLICE6's artifact-retention work" - there is no such step. The repo's own review table already tracks this class: "sealed/published views persist their full source copy plus manifest forever; nothing garbage-collects them ... Retention is a policy question" (`increment-03:896`) | corrected in this entry; Q100 for the policy |
+| 5 | PUBLISH reply skew under a frozen protocol version | **true** | `_PUBLISH_REPLY` is closed and `already_published` is required; `protocol_version` stays `1`; a decode failure *after* send becomes `ExecutionUncertainError` (`client.py:178-182`), so an upgraded client meeting a not-yet-restarted supervisor would strand a commit it cannot read | fixed for the repairable direction: the newer reader tolerates the pre-existing shape (absence means `False`, which is what an old server always did); the atomic-upgrade constraint is recorded in the plan |
+
+**Finding 1, why a replay is the right mechanism and not a new contract.** The authority journals every non-readonly
+operation by request id and answers a repeat from `CompletedReplyCache` (`supervisor.py:159-205`, used at `:430-460`), so
+replaying `ACQUIRE_WRITER` under the *same* id returns the grant that was already issued - a reconciliation, not a second
+effect. A fresh id would instead meet `WORKSPACE_BUSY`, and reporting that as "no managed execution" would repeat the
+defect CT115 closed: a true fault under a false name. Registration stays non-committal (`create:false` mints nothing), so
+an unreadable answer there is still `None`. The plan's "never resend" rule is about `EXEC`/`RUN`, whose effects are not
+idempotent; it was never a rule about journaled control operations.
+
+**What the new tests would catch, measured.** 11 mutants killed, sources byte-identical: replay under a fresh id, no
+replay at all, uncertain-writer-becomes-`None`, uncertain-registration-escapes, silent release, CLI swallowing the
+refusal, CLI returning 0, a second copy of the capability on the publisher, `already_published` defaulting to `True`,
+the client reading strictly, and the server's self-check going lax. The new tests also fail on the pre-review tree
+(9 of them), which is the same statement from the other side.
+
+**Correction to E293.** That entry said "no holder exposes it through `repr`/`vars()`". True for the two holders it
+inspected and misleading as a custody claim: `ManagedExecution` was never in the loop. `test_the_writer_capability_lives_in_exactly_one_place`
+now states the invariant this design can actually hold - the token has exactly one reachable path from each CLI-owned
+object - and fails if a second copy appears. Writing it also found a bug in my own helper: a `id()`-based cycle guard
+silently deduplicated the *same string* at a second path, hiding exactly the copy the test hunts.
+
+**Correction to E300.** "No eviction policy on purpose, reaping is SLICE6's" was a deferral to an owner that does not
+exist. The honest statement: retention adds one plan-sized file per *failed* publication, bounded per run by the planner
+budget (`max_repairs` + `max_replans`), unbounded across runs, and it belongs to the same retention-policy gap already
+recorded for sealed views and published copies (`increment-03:896`) - not to an invented slice step.
+
+**Verification.** `tests/test_execution_composition.py` **18 passed, 1 xfailed**; protocol **92**; client **198**;
+execution+workspace+session+config banks **1535 passed / 1 skipped / 1 xfailed**; ten workflow banks plus the three
+touched execution banks **101 failed / 974 passed** with the FAILED set identical to the pre-review tree (the baseline
+run, with these edits stashed, had the same 101 environment failures plus the 9 new tests failing on old code).
+`precheck` 0 FAIL / 7 WARN; `ruff check` clean.
+
+**Open, waiting on the operator.**
+
+- **Q98 - does an unconfirmed writer release change `fa workflow`'s exit code?** Today: the workflow's own outcome is
+  reported (0 when it succeeded), and the leak is one stderr line plus a warning. The counter-argument is that the next
+  run on that workspace will be refused, so a "successful" command leaves a landmine. Changing it edits the CLI exit
+  contract that `test_s10c_workflow_exit_contract.py` pins, so it is a product decision, not a cleanup.
+- **Q99 - amend Q90's custody sentence, or move grants into the client?** Q90 says "`ExecutionClient` alone caches and
+  selects raw grants"; SLICE7 deliberately built a stateless client with per-call grants held by `ManagedExecution`
+  (STEP6-STEP8). Option A: amend the sentence to "inside the trusted composition; never in `RunContext`, session state,
+  events or model-visible text" (cheap, and the new reachability test pins it). Option B: give the client a private
+  run-scoped grant store (re-architecture of `publish_plan`/`release`, contradicts STEP6/STEP7's written contract, and
+  does not actually hide the token from in-process introspection - only from accidental reach).
+- **Q100 - who owns retention for refused drafts, and what is the cap?** Options: reuse the sealed-view retention policy
+  when it lands (one owner, one answer), a per-workspace byte cap with oldest-first eviction, or keep everything and
+  document the cost. Nothing is implemented meanwhile; the file count per run is bounded.

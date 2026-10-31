@@ -7,13 +7,15 @@ controller then fails closed (CT115) instead of publishing over a host path.
 
 from __future__ import annotations
 
+import io
 import json
+import logging
 import os
 import socket
 import threading
 import time
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, redirect_stderr
 from dataclasses import asdict
 from pathlib import Path
 from types import SimpleNamespace
@@ -377,6 +379,172 @@ def test_the_workflow_root_reaches_promotion(monkeypatch: pytest.MonkeyPatch, tm
     assert client.calls == [Operation.RELEASE]  # the writer is released when the run returns
 
 
+class _ScriptedAuthority:
+    """A client double that models the authority's documented replay contract.
+
+    ``lost`` names the operations whose first reply is lost; the repeat of that
+    request id answers from the completed-reply cache, exactly as the supervisor
+    does (``_completed`` -> ``_replies.replay``).
+    """
+
+    def __init__(self, *, lost: set[Operation], answer_the_replay: bool) -> None:
+        self.lost = set(lost)
+        self.answer_the_replay = answer_the_replay
+        self.seen: list[tuple[Operation, str]] = []
+
+    def request(self, operation: Operation, *, request_id: str, **_: Any) -> dict[str, Any]:
+        repeat = any(sent_id == request_id for _, sent_id in self.seen)
+        self.seen.append((operation, request_id))
+        if operation in self.lost and (not repeat or not self.answer_the_replay):
+            raise ExecutionUncertainError("op-" + request_id)
+        if operation is Operation.REGISTER_WORKSPACE:
+            return {"workspace_id": "ws-" + "1" * 32, "revision_id": "rev-" + "2" * 32}
+        return {"capability": "9" * 64, "generation": 1, "revision_id": "rev-" + "2" * 32}
+
+
+def _compose(monkeypatch: pytest.MonkeyPatch, client: Any, tmp_path: Path) -> Any:
+    monkeypatch.setattr(composition, "_service_config", lambda path=None: SimpleNamespace())
+    monkeypatch.setattr(composition, "_client_for", lambda config: client)
+    monkeypatch.setattr(composition, "_root_binding", lambda config, path: ("projects", "."))
+    return managed_execution_for_run(_run(tmp_path))
+
+
+def _paths_to(value: str, holder: Any) -> set[tuple[str, ...]]:
+    """Every attribute path reachable from ``holder`` whose value is exactly ``value``."""
+    found: set[tuple[str, ...]] = set()
+    seen: set[int] = set()
+
+    def walk(item: Any, path: tuple[str, ...]) -> None:
+        # Strings are shared objects, so the cycle guard must not swallow a second
+        # *path* to the same token - that is exactly the copy this test hunts.
+        if isinstance(item, str):
+            if item == value:
+                found.add(path)
+            return
+        if id(item) in seen:
+            return
+        seen.add(id(item))
+        if isinstance(item, dict):
+            for key, child in item.items():
+                walk(child, (*path, str(key)))
+            return
+        if isinstance(item, (list, tuple, set, frozenset)):
+            for index, child in enumerate(item):
+                walk(child, (*path, f"[{index}]"))
+            return
+        fields = getattr(item, "__dict__", None)
+        if isinstance(fields, dict):
+            for name, child in fields.items():
+                walk(child, (*path, name))
+
+    walk(holder, ())
+    return found
+
+
+def test_the_writer_capability_lives_in_exactly_one_place() -> None:
+    """Q90, stated as what this design actually claims, and made checkable.
+
+    Q90's letter - "``ExecutionClient`` alone caches and selects raw grants" - is not
+    what SLICE7 built: the client is stateless and each operation is handed its grant
+    explicitly, which is why the run's one writer grant lives on `ManagedExecution`.
+    That is a deliberate contract (STEP6-STEP8), not an oversight, so the invariant
+    worth pinning is the one that can actually break: the token has **one** holder
+    path, and a second copy anywhere on the CLI's object graph fails here.
+    """
+    capability = "7" * 64
+    binding = ExecutionBinding(NamespaceRef("session-1", "run-1"), "ws-" + "1" * 32)
+    managed = ManagedExecution(
+        _ScriptedAuthority(lost=set(), answer_the_replay=True),
+        binding,
+        GrantReply(Operation.ACQUIRE_WRITER, capability, None, 1, "rev-" + "2" * 32),
+    )
+    publisher = BoundPlanPublisher(managed, binding)
+
+    assert _paths_to(capability, managed) == {("grant", "capability")}
+    assert _paths_to(capability, publisher) == {("_managed", "grant", "capability")}
+    for holder in (managed, publisher):
+        assert capability not in repr(holder)  # what a log line or a traceback would show
+
+
+def test_a_lost_writer_reply_is_replayed_under_the_same_request_id(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """producer-kill-check: replay under a fresh id (or not at all) and the grant is lost.
+
+    A fresh id would meet ``WORKSPACE_BUSY``, because the run itself already holds the
+    writer the authority issued against the frame nobody read.
+    """
+    client = _ScriptedAuthority(lost={Operation.ACQUIRE_WRITER}, answer_the_replay=True)
+    managed = _compose(monkeypatch, client, tmp_path)
+
+    assert managed is not None and managed.grant.capability == "9" * 64  # the original grant came back
+    writers = [request_id for operation, request_id in client.seen if operation is Operation.ACQUIRE_WRITER]
+    assert len(writers) == 2 and writers[0] == writers[1]
+    registrations = [rid for operation, rid in client.seen if operation is Operation.REGISTER_WORKSPACE]
+    assert registrations != writers  # a replay, never one id reused for a different operation
+
+
+def test_a_writer_grant_that_cannot_be_confirmed_refuses_the_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The run must not continue as if it had no authority: it may hold the writer."""
+    client = _ScriptedAuthority(lost={Operation.ACQUIRE_WRITER}, answer_the_replay=False)
+
+    with pytest.raises(ExecutionUncertainError):
+        _compose(monkeypatch, client, tmp_path)
+
+    assert [operation for operation, _ in client.seen].count(Operation.ACQUIRE_WRITER) == 2
+
+
+def test_an_unreadable_registration_is_not_a_strand(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Registering grants nothing, so an unknown answer is still "no managed run"."""
+    lost = _ScriptedAuthority(lost={Operation.REGISTER_WORKSPACE}, answer_the_replay=False)
+
+    assert _compose(monkeypatch, lost, tmp_path) is None
+    assert {operation for operation, _ in lost.seen} == {Operation.REGISTER_WORKSPACE}
+    assert len({request_id for _, request_id in lost.seen}) == 1  # a replay, not a second registration
+
+    # The same lost frame, but the authority can answer the repeat: the run proceeds
+    # with the identity it already registered instead of failing for no reason.
+    replayed = _ScriptedAuthority(lost={Operation.REGISTER_WORKSPACE}, answer_the_replay=True)
+    assert _compose(monkeypatch, replayed, tmp_path) is not None
+
+
+def test_an_unconfirmed_writer_is_reported_to_the_operator(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """C1: the refusal reaches the operator as one line and a non-zero exit, not a traceback."""
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    run = _run(workspace)
+    monkeypatch.setattr(cli, "_resolve_workflow_lifecycle", lambda args, run_id: (run_id, None, run, None))
+    monkeypatch.setattr(
+        cli, "managed_execution_for_run", lambda *a, **k: (_ for _ in ()).throw(ExecutionUncertainError("op-1"))
+    )
+    args = SimpleNamespace(
+        task="ship it",
+        task_planner=None,
+        task_coder=None,
+        task_eval=None,
+        run_id="run-1",
+        mode="linear",
+        roles="planner",
+        inject=None,
+        max_repairs=None,
+        max_replans=None,
+        plan=None,
+        session_id="session-1",
+        workspace=str(workspace),
+        config=tmp_path / "models.yaml",
+        max_turns=1,
+        output_mode="console",
+    )
+    stderr = io.StringIO()
+    with redirect_stderr(stderr):
+        assert cli._cmd_workflow(args) == 2
+    message = stderr.getvalue()
+    assert "writer grant not confirmed" in message and "EXECUTION_UNKNOWN" in message
+    assert "needs recovery" in message and "Traceback" not in message
+
+
 @pytest.mark.parametrize(
     "failure",
     [
@@ -386,7 +554,9 @@ def test_the_workflow_root_reaches_promotion(monkeypatch: pytest.MonkeyPatch, tm
     ],
     ids=["uncertain", "rejected", "unavailable"],
 )
-def test_a_release_that_is_not_confirmed_is_reported_and_never_retried(failure: Exception) -> None:
+def test_a_release_that_is_not_confirmed_is_reported_and_never_retried(
+    failure: Exception, caplog: pytest.LogCaptureFixture
+) -> None:
     """producer-kill-check: treat any failed RELEASE as a settled writer."""
 
     class _Failing:
@@ -401,8 +571,10 @@ def test_a_release_that_is_not_confirmed_is_reported_and_never_retried(failure: 
     binding = ExecutionBinding(NamespaceRef("session-1", "run-1"), "ws-" + "4" * 32)
     grant = GrantReply(Operation.ACQUIRE_WRITER, "5" * 64, None, 1, "rev-" + "6" * 32)
     managed = ManagedExecution(client, binding, grant)  # type: ignore[arg-type]
-    assert managed.close() is False
-    assert client.calls == [Operation.RELEASE]
+    with caplog.at_level(logging.WARNING, logger="fa.execution.composition"):
+        assert managed.close() is False
+    assert client.calls == [Operation.RELEASE]  # one attempt: a fixed id, no retry
+    assert len([record for record in caplog.records if "writer release not confirmed" in record.getMessage()]) == 1
 
 
 def test_the_client_provisioner_answers_with_the_registered_identity(site: Site, tmp_path: Path) -> None:

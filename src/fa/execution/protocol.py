@@ -369,7 +369,22 @@ def validate_receipt(record: dict[str, Any]) -> None:
         raise ExecutionContractError
 
 
-def decode_reply(raw: bytes, *, operation: Operation, request_id: str) -> dict[str, Any]:
+def _publish_reply_compat(result: dict[str, Any]) -> dict[str, Any]:
+    """A PUBLISH reply written before ``already_published`` existed is still a reply.
+
+    The key was added without a protocol bump, so a supervisor started before the
+    upgrade answers without it. Its absence is not ambiguity: a server that has no
+    repeat path always committed, which is exactly ``already_published: False``.
+    Tolerance is one-directional and belongs to the newer reader only - the
+    server's self-check stays strict, and the opposite window (a newer server
+    answering an older client) is why client and supervisor upgrade together.
+    """
+    if "already_published" not in result:
+        return {**result, "already_published": False}
+    return result
+
+
+def decode_reply(raw: bytes, *, operation: Operation, request_id: str, tolerate_legacy: bool = False) -> dict[str, Any]:
     record = _loads(raw)
     _check(_REPLY_CHECK, record)
     if record["request_id"] != request_id:
@@ -380,6 +395,8 @@ def decode_reply(raw: bytes, *, operation: Operation, request_id: str) -> dict[s
     else:
         if record["error"] is not None:
             raise ExecutionContractError
+        if tolerate_legacy and operation is Operation.PUBLISH and isinstance(record["result"], dict):
+            record = {**record, "result": _publish_reply_compat(record["result"])}
         _check(_RESULT_CHECKS[operation], record["result"])
         if operation in {Operation.EXEC, Operation.INSPECT, Operation.CANCEL}:
             validate_receipt(record["result"]["receipt"])

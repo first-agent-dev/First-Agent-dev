@@ -647,6 +647,30 @@ def test_publish_plan_runs_the_saga_and_cases_the_base_the_view_returned(tmp_pat
         assert publication.revision_id == PUBLISHED and publication.already_published is False
         assert publication.plan_ref == replace(SOURCE.ref, sha256=hashlib.sha256(CANDIDATE.utf8_bytes).hexdigest())
 
+        assert publication.plan_ref == replace(SOURCE.ref, sha256=hashlib.sha256(CANDIDATE.utf8_bytes).hexdigest())
+
+
+def test_a_publish_reply_from_before_the_repeat_key_still_commits(tmp_path: Path) -> None:
+    """C1: an upgraded client talking to a not-yet-restarted supervisor must not strand.
+
+    The key was added without a protocol bump, and a server that never had the
+    repeat path always committed - so a missing ``already_published`` means False,
+    not "unknown". Reading it as uncertainty would refuse a commit that happened
+    and leave the workspace unsettled on every run during an upgrade.
+    """
+    handler, _ = candidate_saga()
+
+    def legacy(request: dict[str, Any]) -> dict[str, Any]:
+        reply = handler(request)
+        reply.pop("already_published", None) if request["op"] == "publish" else None
+        return reply
+
+    with endpoint(tmp_path, legacy) as (client, seen):
+        publication = publish(client)
+        assert publication.already_published is False
+        assert publication.revision_id == PUBLISHED
+        assert [req["op"] for req in seen][-1] == "release"  # determinate: the view is settled
+
 
 def test_publish_plan_reports_a_repeat_and_still_releases(tmp_path: Path) -> None:
     """producer-kill-check: swallow already_published, or skip RELEASE on the repeat path."""

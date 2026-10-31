@@ -30,6 +30,7 @@ from fa.authoring_rules import RULE_ALLOWLIST
 from fa.authoring_tcb import render_json, render_text, run_all
 from fa.chunker import CHUNKER_VERSION, Chunk, default_chunker
 from fa.cli_help import COMMANDS, help_as_json, render_command_help_ru, render_top_level_ru
+from fa.execution.client import ExecutionUncertainError
 from fa.execution.composition import BoundPlanPublisher, client_workspace_provisioner, managed_execution_for_run
 from fa.inner_loop import (
     EventLog,
@@ -1434,7 +1435,19 @@ def _cmd_workflow(
     # config file `fa` already reads, the same validator the supervisor uses, and
     # the workspace the lifecycle just resolved. Absent authority yields None, and
     # the controller then fails closed rather than publishing over the host path.
-    managed = managed_execution_for_run(run_context)
+    try:
+        managed = managed_execution_for_run(run_context)
+    except ExecutionUncertainError as error:
+        # The authority may have issued this run's writer and lost the reply. Saying
+        # "no managed execution" would be a guess and continuing would be worse, so
+        # the run stops here with the one fact the operator can act on.
+        print(
+            f"fa workflow: managed execution: writer grant not confirmed [{error.code}]; "
+            f"workspace {run_context.workspace_path} may be left owned and needs recovery "
+            "before the next run",
+            file=sys.stderr,
+        )
+        return 2
     plan_publisher = None if managed is None else BoundPlanPublisher(managed, managed.binding)
     try:
         exit_code, _terminal_state = run_workflow(
@@ -1460,8 +1473,15 @@ def _cmd_workflow(
             plan_publisher=plan_publisher,
         )
     finally:
-        if managed is not None:
-            managed.close()
+        if managed is not None and not managed.close():
+            # The workflow's own outcome stands (its terminal state is already
+            # recorded), but a writer this run could not release outlives it: the
+            # next run on this workspace will be refused until recovery settles it.
+            print(
+                f"fa workflow: writer release for workspace {managed.binding.workspace_id} was not "
+                "confirmed; the workspace may stay owned until recovery",
+                file=sys.stderr,
+            )
     return exit_code
 
 

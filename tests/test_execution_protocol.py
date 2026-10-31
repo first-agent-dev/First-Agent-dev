@@ -244,6 +244,23 @@ def test_already_published_reply_is_bound_to_a_named_plan_and_never_to_a_seal() 
         decode_reply(encode_json(missing), operation=Operation.PUBLISH, request_id=RID)
 
 
+def test_only_the_newer_reader_tolerates_a_publish_reply_without_the_repeat_key() -> None:
+    """CT120/E304: one direction of skew is readable, and the server stays strict.
+
+    A server answering from before the key existed always committed, so its absence
+    means ``already_published: False`` - but the supervisor's own self-check must
+    still refuse a reply that omits a key it is required to emit.
+    """
+    legacy = response(Operation.PUBLISH)
+    del legacy["result"]["already_published"]
+    with pytest.raises(ExecutionContractError):
+        decode_reply(encode_json(legacy), operation=Operation.PUBLISH, request_id=RID)
+    tolerant = decode_reply(encode_json(legacy), operation=Operation.PUBLISH, request_id=RID, tolerate_legacy=True)
+    assert tolerant["result"]["already_published"] is False
+    # Tolerance is narrow: it never invents a repeat, so the plan-bound rule is untouched.
+    assert tolerant["result"]["plan_ref"] is legacy["result"]["plan_ref"]
+
+
 @pytest.mark.parametrize("purpose", ["CANDIDATE", "VERIFICATION"])
 def test_a_reader_view_may_start_from_the_bytes_current_at_copy_time(purpose: str) -> None:
     """CT117: the base is optional exactly where the publish re-reads it."""
