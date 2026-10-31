@@ -27,6 +27,7 @@ from fa.execution.client import (
     ExecutionUnavailableError,
     ExecutionUncertainError,
     PlanPublication,
+    StagePublication,
 )
 from fa.execution.provisioning import ERROR_CODES
 from fa.execution.service import ServiceConfig, read_config_file
@@ -108,6 +109,18 @@ class ManagedExecution:
             grant=self.grant,
             deadline=deadline,
         )
+
+    def publish_stage(self, grant: GrantReply, *, deadline: float | None = None) -> StagePublication:
+        """Commit the stage view ``grant`` opened; raise when the commit is unproved.
+
+        A stage whose bytes are not committed may not be followed by verification or
+        repair, so this reports by raising rather than by a boolean: there is no
+        degraded continuation that would be honest. The run keeps its writer — the
+        next stage opens its own view over the revision this call produced.
+        """
+        if not isinstance(grant, GrantReply) or grant.view_ref is None:
+            raise ExecutionContractError
+        return self.client.publish_stage(self.binding.namespace, view=grant.view_ref, grant=grant, deadline=deadline)
 
     def stop_view(self, grant: GrantReply, *, deadline: float | None = None) -> bool:
         """End the view ``grant`` opened; ``False`` when its end was not proved.

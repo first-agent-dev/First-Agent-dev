@@ -5813,3 +5813,48 @@ terminality check, the strict-release distinction).
 
 **Not done here, deliberately.** Production still passes `workspace_io=None`; `_cmd_run` is untouched; readiness is still
 fail-open where no provisioner is configured. That is STEP2b — the cutover — and it consumes the seam this entry lands.
+
+### E309 — STEP2b/1: the commit half of the supplier (`publish_stage`)
+
+STEP2a gave the tools a write path into a view. A view is **a copy**: without a commit, every managed file write is
+discarded when the view ends — and, worse than the host fallback it replaces, it *looks* successful. So the first unit of
+STEP2b is the commit, not the wiring: `workspace_io=` in production without it would be a data-loss path dressed as a fix.
+
+**The verb, and why the ordering is not a preference.** `ExecutionClient.publish_stage(namespace, view, grant)` —
+`STOP_VIEW` → `SEAL` → `PUBLISH`, one attempt each, returning a typed `StagePublication`
+(`seal-` id, revision, tree hash, `op-` id). The order is the authority's: `prepare_seal` refuses a view whose admission
+was never closed, whose gate is open, or whose terminal record is missing (`workspace.py:2573-2578`), and `PUBLISH`
+re-reads the sealed manifest instead of trusting a caller `publication.py:465`. So a stage's bytes become canonical only
+through a view that really stopped — the same property that keeps a provider process from writing while the tree is
+projected. The CAS the verb carries is `view.base_revision`, never a cached or caller-supplied one (the same rule
+`publish_plan` follows): a concurrent commit therefore surfaces as a determinate refusal at seal time, before a byte is
+projected. `ManagedExecution.publish_stage(grant)` binds it to the run's own grant (`composition.py:112`).
+
+**Three facts found by writing the bank, each of which shapes the cutover.**
+
+1. **The plan path is refused at the write, not only at the seal.** A PROJECT view (the only write purpose outside
+   `src/`+`scripts/`) writing its own `plan_ref` path gets `PATH_DENIED` from E259's gate — measured, not assumed. CT97's
+   seal-time boundary (`publication.py:308`, `INPUT_POLICY`) is therefore a second line that a live write view cannot
+   reach today; the bank proves the first line live and the second line at the wire, and neither is claimed as the other.
+2. **A plan write cannot overlap an open stage view.** `publish_plan` while a stage view is open is `WORKSPACE_BUSY`, and
+   the stage still commits cleanly afterwards. One write epoch at a time is the authority's rule, so
+   `run_stage_with_plan_write_boundary` must **commit before** the controller publishes — the boundary may not hold a
+   view across a plan write. That ordering is now a test, not a paragraph.
+3. **Two views over one base: the loser projects nothing.** The first commit advances the revision; the second is refused
+   (`STALE_REVISION`, or `VIEW_CLOSED` if the authority closed it) and its files never appear on the host.
+
+**Evidence.** `tests/test_execution_client_stage.py` — **11 tests** over the live service, socket and client: the commit
+advancing one revision with the host tree gaining the bytes and the plan byte-identical; the run keeping its writer and
+the next stage opening on the committed base; a post-commit write refused; the plan path refused at write with the stage's
+ordinary bytes still committing; a seal refusal stopping the commit before any publish; the stale-base loss; the
+`WORKSPACE_BUSY` ordering fact; unproven end, unproven publish, mismatched revision and a malformed `seal-` id all
+reported as unproved or as a contract breach, with the exact operations sent asserted. Mutation: **8/8** killed (terminality
+check, access check, grant check, seal-id typing, revision equality, caller-supplied base, dropped seal id, skipped
+publish). Neighbour banks unchanged: `test_execution_client` **198**, `test_execution_client_port` **22**,
+`test_execution_composition` **18 + 1 xfailed**, `test_execution_tool_port` **21**, `test_workspace_publication` **103**,
+`test_execution_views` **46**. ruff clean.
+
+**What STEP2b still owes (unchanged by this entry).** b2: `run_stage_with_plan_write_boundary` + `_cmd_run` split
+(validation → boundary → `_cmd_run_inner`) and `workspace_io=` reaching `_build_role_registry`; b3: fail-closed readiness
+in both modes and bash through `ManagedBashExecutor`; b4: the live E2E (two publications in one run, dead-supervisor run
+executing zero project commands) and CT97's restored kill.

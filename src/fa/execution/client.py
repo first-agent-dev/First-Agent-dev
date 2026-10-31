@@ -98,6 +98,28 @@ class PlanPublication:
     already_published: bool
 
 
+@dataclass(frozen=True)
+class StagePublication:
+    """One execution view committed to the canonical tree.
+
+    The receipt the stage loop records: which sealed manifest was published, the
+    revision it became, the tree the authority projected, and the supervisor
+    operation that carries the evidence. Construction validates all four, so a
+    caller cannot keep a half-formed link.
+    """
+
+    sealed_manifest_id: str
+    revision_id: str
+    tree_sha256: str
+    operation_id: str
+
+    def __post_init__(self) -> None:
+        _hex_id(self.sealed_manifest_id, "seal-")
+        _hex_id(self.revision_id, "rev-")
+        _hex_id(self.tree_sha256, "", 64)
+        _hex_id(self.operation_id, "op-")
+
+
 def _binding_identity(binding: object) -> tuple[NamespaceRef, str]:
     """Read the two identity fields a managed binding owns, and never infer others."""
     namespace = getattr(binding, "namespace", None)
@@ -313,6 +335,76 @@ class ExecutionClient:
         finally:
             if view is not None and view_grant is not None and not uncertain:
                 self._release_view(namespace, view, view_grant, deadline)
+
+    def publish_stage(
+        self, namespace: NamespaceRef, *, view: ViewRef, grant: GrantReply, deadline: float | None = None
+    ) -> StagePublication:
+        """Commit one execution view: prove it terminal, seal it, publish it.
+
+        The order is the authority's, not a preference: `SEAL` refuses a view whose
+        admission was never closed and whose terminality was never recorded
+        (``workspace.py:2573-2578``), and `PUBLISH` refuses a manifest that does not
+        match the frozen bytes. So a stage's writes become canonical bytes only
+        through a view that really stopped — which is also what makes a provider
+        process unable to keep writing while the tree is being projected.
+
+        The CAS this verb carries is the view's **own** base revision, never a
+        cached or caller-supplied one: a concurrent commit therefore surfaces as
+        ``STALE_REVISION`` at seal time, before a single byte is projected.
+
+        Every step is one attempt. A lost PUBLISH reply is reported, not retried:
+        the authority may already have committed the revision, and only recovery
+        can prove which of the two happened.
+        """
+        if not isinstance(namespace, NamespaceRef) or not isinstance(view, ViewRef):
+            raise ExecutionContractError
+        if not isinstance(grant, GrantReply) or grant.view_ref != view:
+            raise ExecutionContractError  # A grant for another view authorizes nothing here.
+        if view.access is not Access.WRITE:
+            raise ExecutionContractError  # A read view holds no bytes this run may commit.
+        stop_request_id = uuid4().hex
+        stopped = self.request(
+            Operation.STOP_VIEW,
+            request_id=stop_request_id,
+            namespace=namespace,
+            view=view,
+            grant=grant,
+            payload={},
+            deadline=deadline,
+        )
+        if stopped["terminal"] is not True:
+            # Not proved terminal: the tree is not frozen, so nothing may be sealed.
+            raise ExecutionUncertainError("op-" + stop_request_id, code="TERMINALITY_UNKNOWN")
+        sealed = self.request(
+            Operation.SEAL,
+            request_id=uuid4().hex,
+            namespace=namespace,
+            view=view,
+            grant=grant,
+            payload={},
+            deadline=deadline,
+        )
+        sealed_manifest_id = sealed["sealed_manifest_id"]
+        _hex_id(sealed_manifest_id, "seal-")
+        publish_request_id = uuid4().hex
+        published = self.request(
+            Operation.PUBLISH,
+            request_id=publish_request_id,
+            namespace=namespace,
+            view=view,
+            grant=grant,
+            payload={"sealed_manifest_id": sealed_manifest_id, "expected_base_revision": view.base_revision},
+            deadline=deadline,
+        )
+        if published["revision_id"] != sealed["revision_id"]:
+            # The committed revision is not the one seal derived from these bytes.
+            raise ExecutionUncertainError("op-" + publish_request_id, code="DURABILITY_UNKNOWN")
+        return StagePublication(
+            sealed_manifest_id,
+            str(published["revision_id"]),
+            str(published["tree_sha256"]),
+            str(published["operation_id"]),
+        )
 
     def open_view(
         self,
