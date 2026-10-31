@@ -117,7 +117,7 @@ are therefore **components, not delivery**, and SLICE4 STEP2 is the hinge the wh
 | S2P1 | LOCAL | existing-root registration/R0/writer generation (E253) | two-OS-process race reproduced; denied/stale admissions produce no effect | run |
 | S2P2 | LOCAL | immutable reader pins, rooted reads, release (E255) | pinned-reader matrix reproduced | run |
 | S2P3 | LOCAL | five view purposes, rooted IO (E256), admission/drain semantics (E257) | view matrix + quiesce-before-R0 reproduced | run |
-| S2P4 | PARTIAL | `workspace_io=` port exists and is plumbed through `profiles.py:204,343,357,364` and `tools/__init__.py` | production must pass the managed port (today it passes `None`) and the host fallbacks must go | S4P2 |
+| S2P4 | PARTIAL | `workspace_io=` port plumbed through `profiles.py:204,343,357,364` and `tools/__init__.py`; the managed implementation now exists — `ClientWorkspacePort` over the wire (E308) | production must pass it (today it passes `None`) and the host fallbacks must go | S4P2 |
 | S2P5 | LOCAL | contention/read-pin/no-replay semantics | matrix reproduced | run |
 | S2P6 | PARTIAL | `HANDOFF` authority body + service route (E283), `_handoff_owner` | controller leg: drain/suspend, one allocation, send, dispatch only after ack | S4P2 |
 | S3P1 | PARTIAL | terminal barrier (E266), immutable export/seal (E267), checkpoint policy + bank (E284) | `tests/integration/test_publication_recovery.py` (directory absent, so the fence exits 4); the stage-loop call site | S4P2, host |
@@ -126,7 +126,7 @@ are therefore **components, not delivery**, and SLICE4 STEP2 is the hinge the wh
 | S3P4 | PARTIAL | forward recovery hooked into `_load` (`:1099`, `_recover_intent:4519`) (E276) | kernel-observed matrix, kills inside recovery, fsync-unsupported/EIO, crash vs power-loss labels | host |
 | S3P5 | PARTIAL | 17/17 producer mutants over the real authority (E276) | full declared-path kills on the approved filesystem | host |
 | S4P1 | PARTIAL | inventory coverage complete at `969fa06`; the note itself says `State: OPEN`, no row closed | close each row with source line, caller and nodeid | nothing |
-| S4P2 | OPEN | — (`run_stage_with_plan_write_boundary` absent; no `fa.execution` import outside the package; host `PtyPool`; no provisioner injected) | the cutover: one client + provisioner into `_session_manager_for_args`, `workspace_io` in production, fail-open readiness removed | SLICE7, S4P1 |
+| S4P2 | PARTIAL | **STEP2a done (E308):** `ClientWorkspacePort` + `client.open_view`/`stop_view` + `ManagedExecution` verbs, bank `test_execution_client_port.py` (22 tests, 15/15 mutants); provisioner injected (`cli.py:280`); plan publisher supplied | **STEP2b, the cutover:** `_cmd_run` → `run_stage_with_plan_write_boundary` → `_cmd_run_inner`, `workspace_io` in production, fail-open readiness removed, bash through `ManagedBashExecutor` | S4P1 (oracles) |
 | S4P3 | OPEN | `_run_one` still `subprocess.run` (`slice_verification.py:334`); no `_run_managed_command` | pinned verification scratch/receipts/report parsing through managed `exec` | S4P2 |
 | S4P4 | OPEN | — | the `execution_host` C1 closure matrix | S4P2, host |
 | S4P5 | OPEN | — | CT97/CT110/CT111 full-path kills | S4P2, host |

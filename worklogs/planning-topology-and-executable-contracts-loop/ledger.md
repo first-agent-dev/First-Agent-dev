@@ -5753,3 +5753,63 @@ a file write fails closed and leaves no host bytes. **STEP2b — the cutover**: 
 `run_stage_with_plan_write_boundary` → `_cmd_run_inner`, readiness fail-closed in both modes, bash through
 `ManagedBashExecutor`, host fallbacks removed, CT97's kill restored. Q101 asks whether building that port belongs inside
 STEP2 (the only reading consistent with "no component without a consumer") and whether the split is accepted.
+
+### E308 — STEP2a: the missing supplier exists, and the review of what it reuses
+
+Q101 split STEP2 in two and the operator accepted it ("разбиваем на 2 части для лучшей проверяемости"), with one
+instruction attached: check again what the existing architecture already offers, and whether reusing it is right. This
+entry records the review, then the seam, then the evidence.
+
+**The reuse review, item by item.** Reused: the `WorkspacePort` protocol itself (`workspace_port.py:41`) — the tools
+already accept it through `workspace_io=`, so the port needs no second interface; the closed code vocabulary of
+`AuthorityWorkspacePort` (`stale`/`denied`/`input_policy`/`unavailable` plus `invalid_request`), so a model sees the same
+codes over either transport; `port_relative`-style rooted paths as the wire's own `path` field; the byte bounds
+(`PORT_READ_MAX_BYTES`, `MAX_TEXT_BYTES`) with the same refuse-not-truncate rule; `ManagedBashExecutor`'s shape — a fixed
+binding in the constructor, so no call site can retarget it; `_grant`/`_binding_identity`/`_plan_ref_dict` on the client,
+which are the only places a wire spelling is decided; and `ExecutionClient` as the transport, which is
+`SessionDatabase`-independent and therefore constructible in the controller. Not reused, with reasons: `AuthorityWorkspacePort`
+itself (it needs an in-process `WorkspaceAuthority`, which E277 moved into the service — the same gap E297 closed one port
+over with `ClientWorkspaceProvisioner`); a local CAS in the port (only the authority compares `expected_sha256` against the
+bytes it holds, and a local check would be a second, weaker truth); an `EDIT_FILE` path (no consumer — the tools are
+read+write, and `EDIT_FILE` would be an abstraction without a caller); and a `deadline_factory` on the port, which an
+earlier draft had: the client's own `rpc_timeout_ms` already bounds every call, and a stage budget belongs to the caller
+that has one (`deadline=None` today, verified at `client.py:172-179`).
+
+**What was written (STEP2a only — the supplier, no cutover).**
+
+- `ExecutionClient.open_view(binding, access, purpose, base_revision, plan_ref, grant, deadline)` — one CREATE_VIEW
+  attempt, the run's writer grant required (`grant.operation is ACQUIRE_WRITER`, else `ExecutionContractError` before any
+  RPC), and `base_revision` carried, never inferred: a caller that names bytes the authority no longer holds is refused
+  with `STALE_REVISION` instead of being handed a newer view. `plan_ref` goes through `_plan_ref_dict`, the single wire
+  spelling that `publish_plan` now shares.
+- `ExecutionClient.stop_view(namespace, view, grant)` — `True` only on a proved terminal verdict, and the second half
+  follows the view's own access, because the authority has two different endings: an EXECUTION (WRITE) view ends with
+  `STOP_VIEW` alone (its `RELEASE` is the *reader pin* revocation, `workspace.py:1863`, and answers `UNAUTHORIZED` for a
+  view that never held a pin — verified live before this was written), while a READ view additionally holds that pin, so
+  the proved view is then released. A lost release is an unproved end; a refused one only says no pin is left to revoke
+  (`_release_view(..., strict=True)` makes exactly that distinction). A view that did not become terminal keeps its copy:
+  that is `False`, and the caller goes to recovery, not to a retry.
+- `ManagedExecution.open_view/stop_view` — the same two verbs under the run's own writer grant, so the controller never
+  spells a wire payload and a second view-opening path cannot appear (`composition.py:86`, `:112`).
+- `ClientWorkspacePort` (`tool_port.py:171`) — `cache_dir`/`read_file`/`write_file` over the wire, bound grant and
+  `ViewRef`, a write refused locally on a non-WRITE view (E259's gate), `expected_sha256` passed through, and
+  `_client_code` mapping refusals into the shared vocabulary. Uncertainty maps to `unavailable`, never `denied`: a lost
+  reply means the bytes may have landed, and "refused" would invite the retry a landed write must not get.
+
+**Evidence.** `tests/test_execution_client_port.py` — 22 tests over a live `SupervisorService`, a live Unix socket and a
+real `ExecutionClient` (only the transport is subclassed, to record what the port sent): P1 round trip with the canonical
+tree untouched, P2 stale-base conflict with the concurrent bytes surviving, P3 `denied` outside `src/`+`scripts/`, P4 no
+write path on a READ view *and* no RPC spent on the refusal, P5 the seven refusal→code rows plus four local checks that
+cost nothing, P6 both file tools through the port, P7 a view grant cannot open or close anything, P8 an EXECUTION end is
+proved and idempotent and closes its writes, P9 the READ end, the unterminated end and the undetermined release. Two
+asymmetries were found *by writing the bank* and are recorded as properties, not papered over: a WRITE view's end answers
+the same `True` twice (terminal receipt), a READ view's does not (its ending is the pin revocation, so the second call has
+no pin to prove and the authority answers `UNAUTHORIZED`). Neighbour banks unchanged: `test_execution_client` **198**,
+`test_execution_composition` **18 + 1 xfailed**, `test_execution_tool_port` **21**, `test_execution_views` **46**,
+`test_execution_service` **27**, `test_workspace_publication` **103**, `test_stage_checkpoints` **36**,
+`test_execution_termination` **20**. Mutation: **15/15** targeted mutants killed (gate removal, code remap,
+`expected_sha256` dropping, both read bounds, content-type check, grant checks on both verbs, the READ/WRITE split, the
+terminality check, the strict-release distinction).
+
+**Not done here, deliberately.** Production still passes `workspace_io=None`; `_cmd_run` is untouched; readiness is still
+fail-open where no provisioner is configured. That is STEP2b — the cutover — and it consumes the seam this entry lands.

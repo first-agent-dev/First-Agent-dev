@@ -22,6 +22,7 @@ from uuid import uuid4
 from fa.execution.profiles import ExecutionProfile
 from fa.execution.protocol import DeadlineConnection, decode_reply, decode_request, encode_json, read_frame, write_frame
 from fa.execution.types import (
+    Access,
     ExecutionContractError,
     ExecutionReceipt,
     GrantReply,
@@ -29,6 +30,7 @@ from fa.execution.types import (
     NamespaceRef,
     Operation,
     OperationRef,
+    ViewPurpose,
     ViewRef,
     _hex_id,
     _positive_integer,
@@ -104,6 +106,17 @@ def _binding_identity(binding: object) -> tuple[NamespaceRef, str]:
         raise ExecutionContractError
     _hex_id(workspace_id, "ws-")
     return namespace, workspace_id
+
+
+def _plan_ref_dict(ref: PlanRef) -> dict[str, str]:
+    """The wire shape of a plan identity; the only place it is spelled out."""
+    if not isinstance(ref, PlanRef):
+        raise ExecutionContractError
+    return {
+        "workspace_relative_path": ref.workspace_relative_path,
+        "source_kind": ref.source_kind,
+        "sha256": ref.sha256,
+    }
 
 
 def _grant(operation: Operation, result: dict[str, Any]) -> GrantReply:
@@ -220,11 +233,7 @@ class ExecutionClient:
         raw = candidate.utf8_bytes
         if not isinstance(raw, bytes) or hashlib.sha256(raw).hexdigest() != candidate.ref.sha256:
             raise ExecutionContractError
-        plan_ref = {
-            "workspace_relative_path": source.ref.workspace_relative_path,
-            "source_kind": source.ref.source_kind,
-            "sha256": source.ref.sha256,
-        }
+        plan_ref = _plan_ref_dict(source.ref)
         # CT120: the buffer's address is the plan's own canonical path, which the
         # authority already holds in `plan_ref`; it is a label, not a host path.
         buffer_label = source.ref.workspace_relative_path
@@ -305,8 +314,111 @@ class ExecutionClient:
             if view is not None and view_grant is not None and not uncertain:
                 self._release_view(namespace, view, view_grant, deadline)
 
-    def _release_view(self, namespace: NamespaceRef, view: ViewRef, grant: GrantReply, deadline: float | None) -> None:
-        """Best-effort RELEASE for a determinate outcome; uncertainty keeps the view."""
+    def open_view(
+        self,
+        binding: object,
+        *,
+        access: Access,
+        purpose: ViewPurpose,
+        base_revision: str | None,
+        plan_ref: PlanRef | None = None,
+        grant: GrantReply | None = None,
+        deadline: float | None = None,
+    ) -> GrantReply:
+        """Open one purpose-bound view for this run and return the grant that owns it.
+
+        ``base_revision`` is the caller's CAS precondition and is never inferred
+        here: a caller that names bytes the authority no longer holds is refused
+        with ``STALE_REVISION`` instead of being handed a newer view. The
+        authority's closed purpose matrix decides what is legal
+        (``workspace.py:1930``); this verb only carries it.
+
+        One attempt, like every other request on this client: an uncertain
+        CREATE_VIEW is reported, not retried, because a second attempt could
+        open a second view against the same writer.
+        """
+        namespace, workspace_id = _binding_identity(binding)
+        if not isinstance(access, Access) or not isinstance(purpose, ViewPurpose):
+            raise ExecutionContractError
+        if not isinstance(grant, GrantReply) or grant.operation is not Operation.ACQUIRE_WRITER:
+            raise ExecutionContractError
+        created = self.request(
+            Operation.CREATE_VIEW,
+            request_id=uuid4().hex,
+            namespace=namespace,
+            view=None,
+            grant=grant,
+            payload={
+                "workspace_id": workspace_id,
+                "base_revision": base_revision,
+                "access": access.value,
+                "purpose": purpose.value,
+                "candidate_scope": None,
+                "plan_ref": None if plan_ref is None else _plan_ref_dict(plan_ref),
+            },
+            deadline=deadline,
+        )
+        return _grant(Operation.CREATE_VIEW, created)
+
+    def stop_view(
+        self, namespace: NamespaceRef, *, view: ViewRef, grant: GrantReply, deadline: float | None = None
+    ) -> bool:
+        """End a view. ``True`` only when the authority proved it terminal.
+
+        The two endings in the authority are different operations, so this verb
+        follows the view's own access rather than guessing:
+
+        * an EXECUTION view (WRITE) ends with ``STOP_VIEW``: irreversible closure,
+          then one terminality verdict. ``RELEASE`` is not sent for it — the
+          authority's release is the *reader pin* revocation
+          (``workspace.py:1863``) and refuses a view that never held a pin.
+        * a READ view additionally holds that pin, so the proved view is then
+          released; a release whose answer was lost is an unproved end, while a
+          refused one only says there is no pin left to revoke.
+
+        A view that did not become terminal keeps its copy and stays owned: that
+        is ``False``, which sends the caller to recovery instead of to a retry.
+        """
+        if not isinstance(namespace, NamespaceRef) or not isinstance(view, ViewRef):
+            raise ExecutionContractError
+        if not isinstance(grant, GrantReply) or grant.view_ref != view:
+            raise ExecutionContractError  # A grant for another view authorizes nothing here.
+        try:
+            stopped = self.request(
+                Operation.STOP_VIEW,
+                request_id=uuid4().hex,
+                namespace=namespace,
+                view=view,
+                grant=grant,
+                payload={},
+                deadline=deadline,
+            )
+            if stopped["terminal"] is not True:
+                return False
+            if view.access is Access.READ:
+                self._release_view(namespace, view, grant, deadline, strict=True)
+        except (ExecutionUncertainError, ExecutionUnavailableError, ExecutionRejectedError):
+            return False
+        return True
+
+    def _release_view(
+        self,
+        namespace: NamespaceRef,
+        view: ViewRef,
+        grant: GrantReply,
+        deadline: float | None,
+        *,
+        strict: bool = False,
+    ) -> None:
+        """Revoke a READ view's pin.
+
+        ``strict`` is for the caller that must be told the truth, and the truth is
+        the same distinction the rest of this client makes: an *indeterminate*
+        release may have left the pin held, so it is raised; a *rejected* release is
+        the authority saying it holds no such pin (``workspace.py:1875`` refuses a
+        view that never held one), which leaves nothing to revoke. The best-effort
+        caller keeps the difference visible in the log instead.
+        """
         try:
             self.request(
                 Operation.RELEASE,
@@ -317,8 +429,12 @@ class ExecutionClient:
                 payload={},
                 deadline=deadline,
             )
-        except (ExecutionUncertainError, ExecutionUnavailableError, ExecutionRejectedError):
+        except (ExecutionUncertainError, ExecutionUnavailableError):
+            if strict:
+                raise
             logging.getLogger(__name__).warning("candidate view cleanup was not confirmed")
+        except ExecutionRejectedError:
+            logging.getLogger(__name__).warning("candidate view cleanup was refused")
 
 
 class ManagedBashExecutor:

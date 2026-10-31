@@ -30,7 +30,15 @@ from fa.execution.client import (
 )
 from fa.execution.provisioning import ERROR_CODES
 from fa.execution.service import ServiceConfig, read_config_file
-from fa.execution.types import ExecutionContractError, GrantReply, NamespaceRef, Operation, _hex_id
+from fa.execution.types import (
+    Access,
+    ExecutionContractError,
+    GrantReply,
+    NamespaceRef,
+    Operation,
+    ViewPurpose,
+    _hex_id,
+)
 from fa.inner_loop.plan_admission import PlanRef, PlanSnapshot
 from fa.session.manager import RunContext, SessionManagerError
 from fa.session.provisioning import ProvisionedWorkspace, ProvisionMode, ProvisionRequest
@@ -74,6 +82,51 @@ class ManagedExecution:
         self, source: PlanSnapshot, candidate: PlanSnapshot, *, deadline: float | None = None
     ) -> PlanPublication:
         return self.client.publish_plan(self.binding, source, candidate, grant=self.grant, deadline=deadline)
+
+    def open_view(
+        self,
+        *,
+        access: Access,
+        purpose: ViewPurpose,
+        base_revision: str | None,
+        plan_ref: PlanRef | None = None,
+        deadline: float | None = None,
+    ) -> GrantReply:
+        """Open a purpose-bound view for this run, under the run's own writer grant.
+
+        This is the binding point the SLICE4 STEP2 cutover consumes: a stage view
+        whose writes the file tools reach through ``ClientWorkspacePort``. Kept on
+        the composition, not at the call site, so the controller never spells a
+        wire payload itself and a second view-opening path cannot appear.
+        """
+        return self.client.open_view(
+            self.binding,
+            access=access,
+            purpose=purpose,
+            base_revision=base_revision,
+            plan_ref=plan_ref,
+            grant=self.grant,
+            deadline=deadline,
+        )
+
+    def stop_view(self, grant: GrantReply, *, deadline: float | None = None) -> bool:
+        """End the view ``grant`` opened; ``False`` when its end was not proved.
+
+        Same contract as :meth:`close`: an unproved end is reported once and never
+        turned into a local assumption, because the authority still owns whatever
+        the view holds.
+        """
+        if not isinstance(grant, GrantReply) or grant.view_ref is None:
+            raise ExecutionContractError
+        view = grant.view_ref
+        if self.client.stop_view(self.binding.namespace, view=view, grant=grant, deadline=deadline):
+            return True
+        _logger.warning(
+            "managed execution: view %s was not confirmed closed for %s",
+            view.view_id,
+            self.binding.workspace_id,
+        )
+        return False
 
     def close(self, *, deadline: float | None = None) -> bool:
         """Release the writer this run holds; ``False`` when the release was not confirmed.
