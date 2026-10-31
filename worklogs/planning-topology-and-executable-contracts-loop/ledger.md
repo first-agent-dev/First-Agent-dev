@@ -5513,3 +5513,38 @@ CT **33**, `kill:` **23**, STEP **47**, slices **7 of 7** (`plan_ids._SLICE_CEIL
 **What is left in SLICE7.** Only STEP1 (CT114's per-surface conformance bank, `tests/test_delivery_law_conformance.py`),
 which is a documentation-drift bank rather than a runtime producer. Everything else in the slice is `LOCAL-CLOSED`;
 the slice-level gaps that remain are the host facts (`S1P*`, `S2P6`, `S4P4-5`, `S5P4-6`) and SLICE4's cutover.
+
+### E303 — CT114 closes SLICE7, and the invariant sweep against the tree
+
+**STEP1.** The six surfaces already stated the law; the missing half was proof that the text is load-bearing.
+`tests/test_delivery_law_conformance.py` holds one token list per file (seven files, six surfaces), asserts each list is
+present, and damages every surface twice — rename the lead token to `PRODUCER`, and delete every line carrying a
+required token — asserting the checker flags both. Kill-checks: emptying `_TOKENS` fails the count assertion
+(1 failed, 1 skipped); forcing an absent token fails the table test (1 failed, 7 passed); the file was restored
+byte-identically. `test_skill_conformance.py` untouched, 24 passed together with the new bank; `PLAN-SKELETON`, the
+schema §4 example and the skill assertions were not modified. Counts: 11 `LOCAL-CLOSED`, 0 `PLANNED` — **SLICE7 has no
+open row left**.
+
+**Invariant sweep: what the slice promised, measured against the tree.**
+
+| promise (where) | evidence in the tree |
+| --- | --- |
+| one composition builds the only client (CT116/STEP8) | `grep -rn "ExecutionClient(" src` = **1** (composition) |
+| the controller gets its ports from that composition, not from a second path | `cli.py:1460` `plan_publisher=plan_publisher`, `:1464` `managed.close()` |
+| the chat path consumes the same authority (CT116, E297) | `client_workspace_provisioner` in `cli.py` (2 sites) |
+| a repair without authority is a named refusal before the call (CT115) | `_require_managed_publisher(ctx)` at `workflow_controller.py:2586`, `planner_calls += 1` at `:2587` |
+| no host-path fallback survives promotion (CT115) | `publisher is None -> prepare-failed` branch gone; `publisher` is required |
+| refused bytes never live only in RAM (CT119) | `_retain_rejected_draft` called from exactly the `except PlanPromotionError` branch |
+| the candidate buffer has one address (CT120) | `candidate_path` = **0** occurrences in `src`; label is `plan_ref.workspace_relative_path` |
+| the sequencing limitation is pinned, not narrated (CT121) | strict `xfail` naming `SLICE4 STEP2` in `tests/test_execution_composition.py` (2 mentions), refusal test plain |
+| the delivery law is verified text (CT114) | the new bank, 8 passed; `test_skill_conformance.py` unchanged |
+| counts still reproduce (DoD) | CT **33** / `kill:` **23** / STEP **47** / slices **7 of 7** / ops **19** / cases **27** |
+
+**What the sweep cannot claim.** Nothing in this slice has been observed on a host: `S1P*`, `S2P6`, `S4P4-5`, `S5P4-6`
+stay `HOST`, and SLICE4's cutover (`S4P2`) still owns the production wiring that would make these local proofs into
+deployed behaviour. The live join for the chat path (I03-LIVE-S08) is unproven by construction; the handoff sections for
+`I03-LIVE-25/26/S08` remain SLICE6 STEP4's work, with the producers mapped in E302.
+
+**State after this entry.** SLICE7: 11 of 11 `LOCAL-CLOSED`, none `PLANNED`. Increment: 11 closed of 47, 14 `OPEN`,
+11 `PARTIAL`, 2 `HOST` — i.e. the remaining work is the other slices (components whose exits are local) plus the host
+facts and the cutover, not this slice.
