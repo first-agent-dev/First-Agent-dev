@@ -3953,3 +3953,79 @@ Findings, all closed in this pass:
 6. **Dependency graph re-checked** — `SLICE4: SLICE3, SLICE7`, `SLICE5: SLICE4, SLICE7`,
    `SLICE6: SLICE5, SLICE7`, `SLICE7: SLICE3`: acyclic, and the run order stays 3 → 7 → 4 → 5 → 6.
 
+## E296 — SLICE7 plan review, third pass: STEP9–STEP11 read against the tree at `a6dcd58` (2026-11-01)
+
+**Why this pass exists.** E295 closed STEP8, so the slice's own code now exists and can be used as an oracle for
+the steps that have not been written yet. Every claim below was checked against the tree or measured with a run,
+not inferred from the text. Four findings: two blocked exits, one instruction that would fail its own bank, one
+name collision. Nothing here changes a contract without a Q.
+
+### R1 (STEP9) — the step replaces a caller that does not exist
+
+`grep -rn "ManagedProvisioner(" src` is **0** and `grep -n "workspace_provisioner" src/fa/cli.py` is **0**:
+production builds `SessionManager` with `workspace_provisioner=None` (`session/manager.py:92,99`), and the only
+constructor of `ManagedProvisioner` is `tests/test_execution_provisioning.py`, whose own docstring calls itself
+"component evidence only … no deployed-service claim". So the step's exit ("`SessionManager` can be constructed
+with the provisioner in place of the in-process-only `ManagedProvisioner`") describes a substitution that happens
+nowhere: the real substitution is `None → ClientWorkspaceProvisioner`, and that one changes `fa run chat` from
+"resolve the workspace on the host path" to "fail closed unless a supervisor answers". The closure table already
+gives the production injection to **S4P2** ("one client + provisioner into `_session_manager_for_args`").
+→ **Q94** below.
+
+### R2 (STEP10) — one half is implementable, the other half needs a rule nobody wrote
+
+Measured in the tree: `candidate_scope` is **persisted** in the view record (`workspace.py:1702`) and validated by
+the strict record schema (`_VIEW_RECORD` at `:189-201`, `candidate_scope=_nullable(CANDIDATE_SCOPE)`, and
+`_object` means *all keys required, no extras*, `protocol.py:25-26,69`); it is read back at `:2255`, where
+`path != scope["candidate_path"]` is `PATH_DENIED`. The physical buffer is already authority-owned
+(`os.open("candidate", dir_fd=pin.directory)`, `:2263`), and `candidate_path` is only the workspace-relative
+**alias** the controller writes through (`client.py:224` names it, `:255` writes it). Consequences:
+
+1. *Feasible now:* drop the key from the payload and authorise the CANDIDATE view's one writable target as the
+   buffer, keeping `plan_ref` equality (`:3431`). The authorisation stops trusting a caller-named path, which is
+   exactly the intent.
+2. *Not feasible without a decision:* old view records on disk carry `candidate_path`, and the record schema
+   rejects extras — so removal is a journal-visible schema change unless the record schema keeps the key
+   **optional and ignored** (the same "relax, do not extend" shape STEP9 uses for `tree_sha256`).
+3. *The step's own alternative is unbuilt:* "the buffer is located by the authority" via a deterministic name is
+   CT119 (`retain_plan_draft`, `.fa/admission/<run_id>/plan-<sha256>.md`), and `grep -rn retain_plan_draft src
+   tests` is **0** while `tests/test_plan_candidate_retention.py` does not exist — the same two names STEP11
+   already depends on.
+→ **Q95** below.
+
+### R3 (STEP11) — the sequencing pin is already true, so `xfail(strict=True)` would XPASS
+
+Measured over the real in-process supervisor with the `Site` fixture and the STEP8 composition (probe script,
+three scenarios in one process):
+
+| scenario | outcome |
+| --- | --- |
+| two publications in one run, source re-read before the second | second **succeeds**, `already_published=False` |
+| second publication with the source snapshot taken *before* the first | `INPUT_POLICY` at `workspace.py:4883` → `_pinned_plan_context` → `_recheck_context:274` |
+| one host-side write after a successful publication | next `CREATE_VIEW` refused `CORRUPT_STATE` (surfaced as `ExecutionUncertainError`) from `_unchanged:1303-1309`; `close()` returns `False` because the `RELEASE` is refused too |
+
+So the step's proposed test ("writes one project file … and asserts the next candidate publish is refused") **passes
+today**; marking it `xfail(strict=True)` fails the bank on XPASS. What SLICE4 STEP2 actually buys is a *successful*
+second publication after a host-side write — that is the assertion that fails today and that belongs under the
+mark. The middle row is a production rule the plan never states and STEP11 should also pin: **after any successful
+publication in a run, the next publication must re-read its source snapshot**, or it is refused `INPUT_POLICY` for
+pinning bytes the authority no longer holds.
+→ **Q96** below.
+
+### R4 (STEP11) — the EDGE test name is taken by what STEP8 shipped
+
+`tests/test_execution_composition.py::test_the_workflow_root_supplies_a_managed_publisher` exists (E295) and proves
+that `_cmd_workflow` passes `plan_publisher=` into `run_workflow`, with `run_workflow` monkeypatched. STEP11 asks
+for the same name to prove the publisher reaches `_promote_validated_plan`
+(`workflow_controller.py:2455-2456`, which already takes `publisher=ctx.plan_publisher`). No behaviour is at stake:
+STEP11 extends the existing test to drive the real controller with a recording port and renames it
+`…_reaches_promotion`, instead of adding a second test with a name that already means something narrower.
+
+### Verified and unchanged
+
+`WorkspaceProvisioner` is a `Callable[[ProvisionRequest], ProvisionedWorkspace]` alias (`session/provisioning.py:66`),
+so a `__call__` class satisfies it; `service.py:591` really answers `register_workspace` with exactly
+`{workspace_id, revision_id}`; `ProvisionedWorkspace.tree_sha256` is read by nothing outside
+`tests/test_execution_provisioning.py:81`; `_root_binding` is already the shared helper STEP9 expects;
+`SessionManager._resolve` allocates the provisioning run through `begin_run` before calling the provisioner
+(`:299-307`), so a run id exists at that seam; `_promote_validated_plan` accepts a `publisher=` port.

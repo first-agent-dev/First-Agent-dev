@@ -5240,3 +5240,51 @@ removal (STEP10), no class proof or sequencing `xfail` (STEP11). Nothing outside
 except `cli.py`, and the chat path still reaches no authority — that is STEP9's join, and the increment table now
 says so instead of claiming both commands are wired. Toolchain as in E291–E294: `/tmp/vt` copy with PEP 695 helper
 generics rewritten, committed tests untouched, so this is local evidence and not a CI claim.
+
+### E296 — SLICE7 plan review before STEP9 (2026-11-01, tree `a6dcd58`): three forks and one stale instruction
+
+**What this is.** A review of the three unbuilt steps in SLICE7 against the tree that now contains STEP8, instead
+of against the prose that preceded it. Full text and line evidence: `increment-03` §E296. Three findings are
+decisions rather than defects, so they are raised as Q94–Q96 and nothing was implemented behind them.
+
+**Q94 — who is the `ClientWorkspaceProvisioner`'s production caller?** `grep -rn "ManagedProvisioner(" src` is 0
+and `cli.py` never passes `workspace_provisioner`, so production runs `SessionManager` with `None`; the in-process
+adapter exists only for `tests/test_execution_provisioning.py` (self-described component evidence). STEP9's exit is
+written as "the provisioner in place of `ManagedProvisioner`", which replaces nothing — the real substitution is
+`None → ClientWorkspaceProvisioner`, and that one decides whether `fa run chat` keeps working without a supervisor.
+Options: (A) ship the port, keep the in-process adapter, prove the manager boundary in tests, and leave injection to
+S4P2, which the closure table already owns; (B) inject in `cli` now, conditional on the `execution:` block, so only
+configured operators fail closed; (C) delete `ManagedProvisioner` in the same change and migrate its five cases onto
+the client port, which makes those five tests need a live socket. Recommendation: **A**, with the deleted-adapter
+question revisited at S4P2 where the production caller appears.
+
+**Q95 — how far does CT120 go?** Half of STEP10 is implementable today: the physical buffer is already
+authority-owned (`workspace.py:2263`) and `candidate_path` is only the alias the controller writes through, so the
+scope key can go and the CANDIDATE view's single writable target can be authorised without it. The other half is
+not: `candidate_scope` is persisted in the view record (`:1702`) under a strict schema (`_VIEW_RECORD:189-201`,
+`_object` = all keys required, no extras), so removing the key rejects existing records unless the record schema
+keeps it optional and ignored; and the step's alternative ("the buffer is located by the authority" through a
+deterministic name) is CT119, which is unbuilt (`grep -rn retain_plan_draft src tests` = 0, no
+`tests/test_plan_candidate_retention.py`). Options: (A) narrow CT120 to the scope key plus a tolerant reader for
+legacy records; (B) land CT119 first and then remove the alias entirely; (C) cancel CT120 and record why.
+Recommendation: **A**.
+
+**Q96 — the sequencing pin is already satisfied.** Measured over the real supervisor: a host-side write after a
+successful publication already makes the next `CREATE_VIEW` fail `CORRUPT_STATE` (`_unchanged:1303-1309`) and makes
+`close()` return `False`, so STEP11's proposed assertion passes today and `xfail(strict=True)` would fail the bank
+on XPASS. What SLICE4 STEP2 actually buys is a *successful* second publication after a host-side write. A second
+measured rule the plan never states: a second publication must re-read its source snapshot, or it is refused
+`INPUT_POLICY` (`:4883` → `_recheck_context:274`) for pinning bytes the authority no longer holds. Options:
+(A) `xfail(strict=True)` on the success-after-write case, today's refusal as a plain test, plus the stale-source
+rule as a third test; (B) keep the text as written (bank fails); (C) drop the mark and pin only today's refusal,
+losing the hand-off. Recommendation: **A**.
+
+**Mechanical, no decision needed.** `test_the_workflow_root_supplies_a_managed_publisher` already exists (E295) and
+proves only that `plan_publisher=` reaches `run_workflow`; STEP11 should extend it to drive the real controller with a
+recording port (`_promote_validated_plan` already takes `publisher=`, `workflow_controller.py:2455-2456`) and rename
+it `…_reaches_promotion`.
+
+**Verification of this entry.** `grep -rn "ManagedProvisioner(" src` = 0; `grep -n workspace_provisioner
+src/fa/cli.py` = 0; `grep -rn retain_plan_draft src tests` = 0; `ls tests | grep retention` = empty; probe over the
+in-process supervisor (three scenarios, one process) as tabulated in §E296; `_VIEW_RECORD`/`CANDIDATE_SCOPE`
+inspection at `protocol.py:25-26,69`. No code, no plan step and no contract was changed by this entry.
