@@ -86,6 +86,16 @@ for typos, formatting, or docs-only changes unless the user requests it.
    stdlib/native/platform, then installed dependencies, then minimum new code.
    Never simplify away validation, security, accessibility, data-loss protection,
    rollback, or live-path tests.
+10. **Delivery is part of the contract.** A unit ships only when a command a
+    user can run reaches it and two mutants hold: removing the unit's producer,
+    and removing the caller's call into it (or the composition line that binds
+    its port). A unit whose only caller is its own test is L1, not shipped. If
+    no root can be named yet, mark it SUPPORT with `rooted-by: CT#/STEP#` and do
+    not count it as progress toward a shippable increment.
+11. **Cutover order: expand, prove, contract.** Never delete a working producer
+    in the change that introduces its replacement. The replacement ships with a
+    production supplier first; the old path is deleted only after both are
+    proven by their own oracles.
 
 ---
 
@@ -251,10 +261,13 @@ Every behavior-changing goal needs at least one `CT#`.
 ```text
 CT#: <name> TYPE:function/module
 PRODUCER: <file:symbol or NEW>  ROOTS/CALLERS: <who invokes it>
+SUPPLIER: <production construction site that binds/injects it | NEW STEP#>
 INPUTS/OUTPUTS/ERRORS: <types, schema, ranges, exceptions/results>
 SIDE EFFECTS: FS/DB/network/cache/log/event/none
 INVARIANTS:
 KILL-CHECK: changing/removing <producer logic> makes <T#> fail
+EDGE KILL-CHECK: removing <caller file:line / supplier binding> makes <T#> fail
+ROOT: <command a user runs that reaches it> | support (rooted-by: CT#/STEP#)
 ```
 
 ### Observable signal
@@ -419,12 +432,22 @@ Failure behavior:
 Definition of Done and negative proof:
 - DoD: <observable state/artifact/contract>
 - Negative proof: removing/changing <producer> makes <T#> fail
+- Edge negative proof: removing <caller call | supplier binding> makes <T#> fail
+
+Delivery:
+- Root: <command a user runs> | support (rooted-by: CT#/STEP#)
+- What the user observes: <run completes / exit code / file / console line>
+- Cutover: <none | replaces <old producer>; supplier bound at <file:symbol>;
+  delete step is STEP<n>, after the binding step>
 
 Tests-writing class:
 - C0 | C0p | C1 | C2 | C3 | C4
 
 Producer kill-check target:
 - <exact production call site/branch/write/render source/gate>
+
+Edge kill-check target:
+- <exact caller's call or composition binding>
 ```
 
 Do not combine unrelated contracts unless inseparable.
@@ -454,8 +477,23 @@ Contract status:
 - CT#: PASS/FAIL because <evidence>
 - T#: PASS/FAIL because <oracle>
 
+Reachability (delivery gate):
+$ grep -rn "<new symbol>" src/ | grep -v "<its own package>"
+<actual output>   # empty => this unit is L1: name the SLICE#/STEP# that roots
+                  # it, or state plainly that it is SUPPORT, not shipped
+
+Supplier (if a port was added):
+$ grep -rn "<PortName>(" src/ | grep -v "<the protocol's own module>"
+<actual output>   # empty => nothing constructs it in production; do NOT delete
+                  # the code it was meant to replace
+
+Cutover (if anything was deleted):
+- old path still proven: <T#> (<evidence>) / removal step: <STEP#>
+- supplier bound before removal: <file:symbol>
+
 Not complete from “no exception”:
-- <state the positive oracle and the negative proof target>
+- <state the positive oracle, the producer negative target, the edge negative
+  target, and what the user observes>
 ```
 
 If tests fail, classify: implementation bug, test/oracle bug, plan mismatch,
@@ -544,7 +582,10 @@ A plan is `READY` only if all are true:
 
 Definition of Done: all goals reach target `L3`, artifacts exist, tests/static
 checks/mutation evidence is reported, non-goals respected, and removing the
-producer/write/render/gate fails the named proof.
+producer/write/render/gate fails the named proof — **and** removing the caller's
+call into it (or the composition line that binds its port) also fails a named
+proof. A DoD that holds with the unit's only caller deleted is a component,
+not a shipped feature; mark it `SUPPORT` with `rooted-by: CT#/STEP#`.
 
 ---
 
@@ -566,6 +607,10 @@ observable behavior.
 | Mocked-root theater | Test mocks the root it claims to verify | Boot real root; mock external I/O only |
 | Snapshot-only theater | Snapshot changes but no contract field asserted | Assert schema/status/DOM/state fields |
 | Dependency theater | New dependency added for trivial code | Apply minimalism ladder |
+| Orphan producer | Unit is green, its only caller is its own test | Edge kill-check + reachability grep; mark SUPPORT if no root yet |
+| Unsupplied port | Protocol exists, nothing constructs it in production | Name the composition site; a port only tests build is not integrated |
+| Delete-and-hope cutover | Working producer removed in the same change that adds its replacement, before the replacement is bound | Expand → prove both → contract; delete step after the binding step |
+| Re-implemented double | Test fake rewrites the writer/lock/CAS/validator | Test the real path, or record the missing consumer as a finding |
 
 If any anti-pattern remains, the slice is not complete.
 

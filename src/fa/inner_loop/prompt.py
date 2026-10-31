@@ -86,6 +86,15 @@ and observable acceptance conditions. Describe existing patterns for them to fol
   Output only task-specific items.
 - No acceptance criterion that requires judgment. Every `(exit: …)` and
   every `CT#` must be a literal predicate (see Acceptance Taxonomy).
+- No unit without a root. If the change adds a module, port, protocol or
+  helper, name the command a user runs that reaches it, and the production
+  call site that invokes it. If nothing reaches it yet, say so in `## Delivery`
+  as `support (rooted-by: CT#/STEP#)` and do not present it as shipped.
+- No unsupplied port. A new interface is only integrated when a production
+  construction site binds it; a port that only tests construct is not wired.
+- No deletion before its replacement is supplied. If the plan removes working
+  behavior, the step that binds the replacement comes first, both paths are
+  proven, and only then does the old one go.
 - No prose that does not reduce coder ambiguity or reviewer effort.
 
 ## Step 1 — Classify the task
@@ -213,6 +222,18 @@ TESTS: tests/test_<area>.py  (NEW - author it)
 <Repeat the whole SLICE block above for SLICE2, SLICE3, ... Every slice
 carries STEPS:, DEPS:, INTENT:, CONTRACTS:, TESTS: and a verify fence —
 a slice missing any of them is rejected before the coder runs.>
+
+## Delivery
+One row per unit the plan creates or changes. No blank cells.
+
+| Unit (SLICE#/STEP#) | Root: the command a user runs | What the user observes | Support? |
+|---|---|---|---|
+| STEP2 | `fa workflow --plan <file>` | run reaches the coder stage | no |
+| STEP7 | — | — | rooted by STEP5 |
+
+A row whose root is `—` is a support unit: legal only when the last column
+names the step that will root it. "Tests pass" is never what the user
+observes; name the run, the file, the exit code or the console line.
 
 ## Verification
 - focused: <exact command/check targeting the changed area> →
@@ -371,9 +392,13 @@ Before emitting, silently verify all of:
    1-3 likeliest causes?" and the plan addresses real ones.
 10. Plan is the shortest version that still meets the goal.
 11. Any `UNKNOWN` verify command is preceded by a discovery step.
+12. `## Delivery` exists and every row has a root or a named `rooted-by`
+    step; no row is presented as shipped while its only caller is a test.
+13. Every new port names its production supplier, and no step that deletes
+    working behavior precedes the step that binds its replacement.
 
-If any of items 3, 4, 6, 7 fail: revise before emit. Other failures:
-revise once.
+If any of items 3, 4, 6, 7, 12, 13 fail: revise before emit. Other
+failures: revise once.
 
 ## Step 6 — Failure recovery (Delta Plan)
 
@@ -629,6 +654,11 @@ Key commands:
 5. **Emit a final message** summarizing what was done, what passed, and
    any remaining issues. The harness ends the session on that turn.
 
+   Include the three delivery facts, even when unflattering:
+   `reachable: <caller file:line | none>`,
+   `supplier: <composition file:symbol for every new port | n/a>`,
+   `cutovers: <none | <old symbol> removed only after <new symbol> was bound at <file:line>>`.
+
 ## Execution evidence protocol
 
 For every completed or attempted step, leave enough evidence that the
@@ -659,6 +689,29 @@ require disciplined, explicit reporting.
   target, or cannot satisfy its own acceptance as written, record exact
   evidence. That is a planner/evaluator concern, not a silent coder
   improvisation.
+
+## Delivery discipline
+
+A green test proves your code works **when called**. It does not prove
+that anything calls it. Both are your responsibility to report honestly.
+
+- Before claiming a task done, grep for a production caller outside the
+  module you touched: `grep -rn "<symbol>" src/ | grep -v "<own package>"`.
+  An empty result means the unit is import-reachable only — say so in your
+  final message (`reachable: none — support unit`) instead of implying it
+  ships.
+- If the plan introduces a port, protocol or injectable interface, name the
+  production line that constructs and injects it. If no such line exists,
+  the port is not integrated: report `blocked: port-has-no-supplier` rather
+  than adding a test double and calling it done.
+- Never delete working behavior to make the new shape fit. If the plan asks
+  you to remove a producer whose replacement is not yet constructed in
+  production, stop and report: `blocked: cutover-without-supplier`, with
+  both file:symbol references. Deleting it converts a working feature into
+  a hole with a green suite.
+- A test double must not re-implement the logic it replaces. If you find
+  yourself writing the writer, lock, CAS or validator inside a fake, the
+  real path has no consumer — report it.
 
 ## Writing code
 

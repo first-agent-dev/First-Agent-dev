@@ -47,6 +47,17 @@ alwaysApply: false
 > multiple code paths. Testing one path does not prove the others work.
 > Enumerate all paths; test each.*
 >
+> **Central law (delivery):** *A unit is shipped when a command a user can run
+> reaches it AND two mutants hold: removing the unit's own producer fails the
+> test, and removing the CALLER's call into it fails the test.* The producer
+> mutant proves "works if called"; only the edge mutant proves "is called". A
+> unit whose only caller is the test that verifies it is L1, however green.
+>
+> **Central law (no re-implemented doubles):** *A test double must not
+> re-implement the production algorithm it stands in for.* If a double has to
+> rewrite the writer/lock/CAS/validation to make the test pass, the production
+> path has no real consumer — record that gap; do not hide it behind a mock.
+>
 > **Central law (deterministic enforcement):** *For spec-bearing behavior,
 > tests prove the deterministic mechanism, not model intent: schema,
 > validator, closed enum, DB constraint, exit code, state machine, deny
@@ -144,12 +155,28 @@ hooks, budget, and prompt assembly under test.
 | Level | Meaning | Product DoD? |
 | :--- | :--- | :--- |
 | L1 Import-reachable | Something imports the symbol | Incomplete |
-| L2 Call-reachable | Root invokes / registers it | Incomplete |
-| L3 Behavior + kill-check on PRODUCER | Boots root; side effect; fails when EMIT CALL is removed | **Yes** |
+| L2 Call-reachable | A root invokes / registers it — **tests do not count as roots** | Incomplete |
+| L3 Behavior + kill-check on PRODUCER **and EDGE** | Boots root; side effect; fails when the emit call OR the caller's call is removed | **Yes** |
 
 **L3 refinement:** Kill-check targets the PRODUCER call site (the
 `output.emit()` or `log.append()` call), NOT the consumer handler.
 If the producer call doesn't exist, the feature is at L0 (not wired).
+
+**Edge refinement:** the producer mutant is necessary and not sufficient.
+For any unit behind a module, package, or protocol boundary, the second
+mutant removes the CALLER's call into it — the line in the production caller,
+or the composition line that binds the port to an implementation. If that
+mutant survives, the unit has no real consumer regardless of how many tests
+exercise it directly.
+
+```text
+BODY mutant   delete src/fa/<pkg>/<unit>.py: <the call/branch itself>   -> test fails
+EDGE mutant   delete the caller's call, or the supplier's binding       -> test fails
+DOUBLE mutant delete the test's own direct call, nothing changes        -> the unit is L1
+
+Which of the three you have is a fact about the source, not an opinion about
+the test. Grep for callers outside the unit's own package before claiming L3.
+```
 
 ---
 
@@ -164,6 +191,15 @@ If the producer call doesn't exist, the feature is at L0 (not wired).
    `call_count`, or FS effect — not just "no exception."
 4. **Live-path proof** — exercise the real composition root; class construction
    alone is incomplete.
+4a. **Edge pre-check** — grep that a production caller (outside the unit's own
+   package, excluding tests) reaches it. Empty result = the unit is L1; write
+   the test against the caller, or state the gap instead of claiming shipping.
+4b. **Supplier pre-check** — every port/Protocol the change introduces is bound
+   at a production construction site. A port only tests construct is not
+   integrated, and deleting the code it replaced is a regression.
+4c. **No re-implemented double** — the double must not rewrite the logic it
+   replaces. If it does, delete the double and test the real thing, or record
+   the missing consumer as a finding.
 5. **Flag honesty** — explicit `FeatureFlags(...)`; name matrix A/B/C.
 6. **Mock boundary** — mock `ProviderChain.request`; keep `drive_session` real.
 7. **Real registry types** — `hooks=HookRegistry()` (empty OK) for wiring.
@@ -645,6 +681,9 @@ Path inventory:
 - **I-TW-19** Contract check script MUST pass in CI for every PR touching EventTypes.
 - **I-TW-20** Never mock dataclass config objects (ChainConfig, ChainEntry, CooldownRow, etc.). Use real instances via make_test_chain_config(). Only mock objects with behavior (ProviderChain, Provider, Transport). Guard: scripts/check_no_mocked_dataclasses.py
 - **I-TW-21** Deleting a `Callable`-typed adapter/wrapper requires a C1 test at the real slot's calling convention, not a direct unit call to the wrapped function — mypy/pyrefly cannot catch positional parameter-semantics mismatches (AP-006, §16.7).
+- **I-TW-22** L3 needs BOTH mutants: producer removal AND caller/supplier removal. A surviving edge mutant means the unit is L1 no matter how many tests call it directly.
+- **I-TW-23** A test double never re-implements the production algorithm (writer, lock, CAS, validator, renderer). If it must, the production path has no consumer; report the gap.
+- **I-TW-24** A cutover test asserts both paths before the old one is deleted: the old oracle still passes until the delete step, the new oracle passes from its binding step. Deleting first and testing after is not a cutover, it is data loss with a green suite.
 
 ---
 

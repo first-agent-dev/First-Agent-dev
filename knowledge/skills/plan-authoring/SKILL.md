@@ -69,6 +69,23 @@ write) BOTH producer (who creates the signal) and consumer (who acts on
 it) must be specified and verified. One-sided plans describe a class
 nobody instantiates, or a call to a function that doesn't exist.
 
+Central law (delivery): A unit is done only when an OPERATIONAL ROOT — a
+command a user can type — reaches it, and a mutant proves the reach:
+remove the production call INTO the unit and the named verification must
+fail. Two mutants, not one: the BODY mutant shows the unit works when
+called; the EDGE mutant shows that something calls it. A test is not a
+root — a unit whose only caller is the test that verifies it is not
+shipped, however green. Where a plan cannot name a root yet, the unit is
+a SUPPORT unit: it must name the CT#/STEP# that will root it, and it
+cannot close an increment on its own.
+
+Central law (cutover order): Never delete a working producer in the same
+change that introduces its replacement port. Expand, prove, contract:
+the replacement and its production SUPPLIER ship first, both paths are
+proven on their own oracles, and only then does the old path disappear.
+A port with no production construction site is not a replacement — it is
+a hole where working behavior used to be.
+
 Central law (path sensitivity): One feature may land on multiple paths —
 flags, happy/error, CLI vs library, provider families, multiple call
 sites. Enumerate every path; plan and verify each. Covering one path does
@@ -267,9 +284,35 @@ Liveness scale (used for BOTH current-state assessment and target DoD bar):
 
   L1  Import-reachable only                          NOT shippable
 
-  L2  Call-reachable from a real root, unverified     NOT shippable
+  L2  Call-reachable, but only from tests/fixtures    NOT shippable
+      A test that calls the unit is a CONSUMER of it, never the root that
+      ships it. Uncalled code in src/ is L1 even when a test imports and
+      exercises it.
 
-  L3  Behavior + kill-check on PRODUCER holds         Shippable
+  L3  Behaviour + kill-check on PRODUCER and EDGE     Shippable
+      reached from an operational root
+
+Definitions used by the scale:
+
+  ROOT   a command a user can type (`fa run chat`, `fa workflow --plan …`,
+         a scheduled job, a served endpoint) or a function reached only by
+         such a command. Tests and fixtures are never roots.
+
+  EDGE   the production call site AT the unit's boundary: the caller's line
+         that invokes the unit, or the composition line that binds a port to
+         an implementation. Distinct from the unit's internal call sites.
+
+  BODY MUTANT    remove the unit's own producer call/branch -> named test fails
+  EDGE MUTANT    remove the caller's call (or the supplier's binding)
+                 -> named test fails
+  BOTH survive only when the unit is rooted AND correct. The body mutant alone
+  proves "works if called"; it says nothing about whether anything calls it.
+
+  SUPPORT UNIT   a unit the current plan cannot root yet. Legal, but it must
+                 carry `rooted-by: CT#/STEP#` and cannot be counted toward a
+                 shippable increment. A plan whose SUPPORT units outnumber its
+                 rooted ones is a component plan, not a delivery plan — say so
+                 in the executive intent instead of implying delivery.
 
 AS-IS (verified via preflight, not assumed):
 
@@ -383,6 +426,19 @@ TO-BE (machine-checkable facts, not adjectives):
 
   CT#: boundary (sandbox / secrets / permissions / path containment /
        egress) — REQUIRES ≥1 adversarial example in DoD (C3)
+
+6.6 Cutover contract (REQUIRED whenever the plan deletes or replaces a
+    path that already works)
+
+  CT#: replaces <working producer, file:symbol> — supplier: <the production
+       construction site that binds the replacement> — both paths proven
+       before deletion: <old oracle> / <new oracle> — deletion step: STEP<n>
+
+  Rule: the delete step may not appear in a slice earlier than the step that
+  binds the replacement at a production composition site. "The new port
+  exists" is not "the new port is supplied": name the function that
+  constructs and injects it, or the cutover is not ready. A plan that removes
+  a caller and names no supplier is a plan to ship a hole.
 
 Rule: a signal contract with a PRODUCER and no CONSUMER (or vice versa)
 is incomplete. Either complete it or explicitly defer the missing side
@@ -512,6 +568,13 @@ the tests themselves:
 
   Kill-check target: exact PRODUCER call site whose removal must fail it
 
+  Edge kill-check: exact CALLER/SUPPLIER site whose removal must fail it
+              (<file:line> at the unit's boundary — the caller's call, or the
+              composition line that binds the port). Required for every
+              contract whose unit lives behind a module or protocol boundary.
+
+  Root:      <the user command that reaches it> | support (rooted-by: CT#/STEP#)
+
   C4 / mutation handoff: for non-trivial logic after C1/C2 green, name
   the mutation target (producer removal, branch inversion, validator
   removal, security gate removal, consumer removal) and the test that
@@ -528,6 +591,12 @@ LIVE-PATH PROOF block (required once per product claim):
   test: tests/<file>.py::test_<name>  oracle: <ranked oracle used>
 
   kill-check: removing <file:line> fails the named test
+
+  edge kill-check: removing the call at <file:line> fails the named test
+
+  supplier: <composition-root file:symbol that binds this port> (REQUIRED
+            for every port/protocol/boundary the plan introduces; tests and
+            fixtures are not suppliers)
 
   producer: <file:line/symbol>        consumer: <file:line/symbol>
 
@@ -585,6 +654,14 @@ OPEN QUESTIONS
 
   [ ] Every kill-check targets the PRODUCER, never the consumer alone
 
+  [ ] Every boundary unit has an EDGE kill-check naming the caller/supplier
+
+  [ ] No unit's only caller is its own test (that is L1, not L3)
+
+  [ ] Every port the plan introduces names its production construction site
+
+  [ ] No delete step precedes the step that binds its replacement
+
   [ ] Path inventory (§7.1) has no uncovered path without explicit non-goal
 
   [ ] Matrix (§7.2) has ≥1 covering step per row or explicit "N/A — why"
@@ -614,10 +691,23 @@ OPEN QUESTIONS
 
   CONTRACTS:  every CT# with status PLANNED / IMPLEMENTED / VERIFIED
 
+  DELIVERY:   one row per unit, and no row may be left blank:
+
+    | Unit (CT#/STEP#) | Root: command a user runs | Observes | Support? |
+    | CT1 / STEP2      | `fa workflow --plan …`    | run reaches coder | no |
+    | CT9 / STEP7      | —                         | —                 | CT3/STEP5 |
+
+    A row with `root: —` is a SUPPORT unit and is only legal when the fourth
+    cell names the CT#/STEP# that will root it. "Green tests" is not an entry
+    in the "Observes" cell; the cell names what changes for the user — a run
+    completes, a file appears, an exit code differs.
+
   Plan is DONE only when: all G# reach target liveness L3, all artifacts
   exist and are referenced, LIVE-PATH PROOF blocks are green under the
-  project's CI authority, matrix/path coverage holds (or is waived with
-  stated reason), non-goals were respected, and RN# items are all
+  project's CI authority, the DELIVERY table has no unsupported row, the
+  EDGE mutant is recorded for every contract behind a module boundary,
+  every cutover names a supplier, matrix/path coverage holds (or is waived
+  with stated reason), non-goals were respected, and RN# items are all
   dispositioned.
 
 11.3a E2E EVIDENCE OWNERSHIP (when a plan includes live acceptance)
@@ -650,6 +740,11 @@ OPEN QUESTIONS
   [ ] Every step is file:symbol specific with exit criteria (§8)
 
   [ ] Verification plan + LIVE-PATH PROOF present for every product claim
+
+  [ ] DELIVERY table present; every row has a root or a named rooted-by unit
+
+  [ ] Every port the plan introduces names its production supplier, and no
+      delete step precedes its binding step (cutover order, §6.6)
 
   [ ] Anti-theater checklist (§11.2) fully holds
 
@@ -901,7 +996,8 @@ PREFLIGHT LOG:
 16. INVARIANTS
 ═══════════════════════════════════════════════════════════════════════
 
-I-IP-1  Every product claim ends at liveness L3 with a PRODUCER kill-check.
+I-IP-1  Every product claim ends at liveness L3 with a PRODUCER kill-check
+        AND an EDGE kill-check rooted in a command a user runs.
 
 I-IP-2  Every goal item (G#) maps to ≥1 contract (CT#), ≥1 step (STEP#), and
         ≥1 verification — no orphans in either direction.
@@ -917,6 +1013,19 @@ I-IP-5  No symbol, file, or type appears in a plan without preflight
 
 I-IP-6  Research notes are dispositioned (Accept/Reject/Rewrite/Defer)
         against the codebase — never copied in as ground truth.
+
+I-IP-7  Every unit is rooted: it names the command a user runs that reaches
+        it, or it is marked a SUPPORT unit with `rooted-by: CT#/STEP#` and does
+        not count as progress toward a shippable increment.
+
+I-IP-8  Every cutover names a production SUPPLIER and orders the delete step
+        after the binding step. A replacement that only tests construct is not
+        a replacement; deleting the old path before its supplier exists is a
+        regression, not a refactor.
+
+I-IP-9  A test double never re-implements production logic. If a double has to
+        rewrite the algorithm it stands in for, the production path has lost
+        its only real consumer — say so instead of hiding it behind a mock.
 
 I-IP-7  Pyramid A (wiring/security/efficiency) and Pyramid B (quality/
         eval) verification are planned separately; B never gates A.

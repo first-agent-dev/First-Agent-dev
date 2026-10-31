@@ -197,8 +197,8 @@ def _merge_memory_summary_context(initial_summary: str, rebuilt_summary: str) ->
 
 
 #: Condensates injected by the coder-stage slice ceremony, in prompt order.
-#: Purpose-built ``INJECT.md`` files (~50-60 lines each) rather than the full
-#: ``SKILL.md`` bodies (643 + 828 lines), which would dominate the context
+#: Purpose-built ``INJECT.md`` files (~70 lines each) rather than the full
+#: ``SKILL.md`` bodies (734 + 867 lines), which would dominate the context
 #: window. PLAN S5 / CT1.
 CEREMONY_SKILLS: Final[tuple[str, ...]] = ("feature-planning", "tests-writing")
 
