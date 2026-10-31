@@ -27,10 +27,12 @@ from fa.execution.client import (
     ExecutionUncertainError,
     PlanPublication,
 )
+from fa.execution.provisioning import ERROR_CODES
 from fa.execution.service import ServiceConfig, read_config_file
 from fa.execution.types import ExecutionContractError, GrantReply, NamespaceRef, Operation, _hex_id
 from fa.inner_loop.plan_admission import PlanRef, PlanSnapshot
-from fa.session.manager import RunContext
+from fa.session.manager import RunContext, SessionManagerError
+from fa.session.provisioning import ProvisionedWorkspace, ProvisionMode, ProvisionRequest
 
 _logger = logging.getLogger(__name__)
 
@@ -147,15 +149,14 @@ def managed_execution_for_run(
     config = _service_config(config_path)
     if config is None:
         return None
-    uid = os.getuid()
-    if uid not in config.controller_uids:
+    client = _client_for(config)
+    if client is None:
         return None
     rooted = _root_binding(config, run_context.workspace_path)
     if rooted is None:
         return None
     root_id, relative_root = rooted
     namespace = NamespaceRef(run_context.session_id, run_context.run_id)
-    client = ExecutionClient(config.socket_path, server_uid=uid, rpc_timeout_ms=config.rpc_timeout_ms)
     try:
         registered = client.request(
             Operation.REGISTER_WORKSPACE,
@@ -186,6 +187,107 @@ def managed_execution_for_run(
     )
     binding = ExecutionBinding(namespace, str(registered["workspace_id"]))
     return ManagedExecution(client, binding, grant)
+
+
+@dataclass(frozen=True)
+class ClientWorkspaceProvisioner:
+    """CT116's second port: the manager's provisioning ask, answered over the wire.
+
+    ``SessionManager`` calls this once per newly created session, so the ask is one
+    ``register_workspace{create:false}`` and the answer is the identity the authority
+    already holds — the same one publication uses, because both resolve the
+    workspace against the same ``approved_roots`` with ``_root_binding``.
+
+    ``tree_sha256`` is ``None``: the wire answer carries two fields (``service.py:591``)
+    and ``ProvisionedWorkspace`` now accepts a registered result without the hash.
+
+    A new root is a typed blocked disposition, exactly as in the in-process adapter:
+    the only registration shape this port sends is ``create:false``, and minting
+    canonical bytes is the SLICE3 publication join's work.
+    """
+
+    config: ServiceConfig
+    client: ExecutionClient
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.config, ServiceConfig) or not isinstance(self.client, ExecutionClient):
+            raise ExecutionContractError
+
+    def __call__(self, request: ProvisionRequest) -> ProvisionedWorkspace:
+        if not isinstance(request, ProvisionRequest):
+            raise SessionManagerError("workspace_invalid", "provisioning requires a ProvisionRequest")
+        if request.mode is ProvisionMode.PROVISION:
+            raise SessionManagerError(
+                "provisioning_unavailable",
+                "managed new-root provisioning requires the publication join (SLICE3)",
+            )
+        if request.mode is not ProvisionMode.REUSE:
+            raise SessionManagerError("workspace_invalid", f"unknown provisioning mode: {request.mode}")
+        workspace = Path(request.workspace_path)
+        if not workspace.is_dir():
+            raise SessionManagerError("workspace_missing", f"workspace does not exist: {workspace}")
+        rooted = _root_binding(self.config, workspace)
+        if rooted is None:
+            raise SessionManagerError("workspace_escape", f"workspace escapes every approved root: {workspace}")
+        root_id, relative_root = rooted
+        try:
+            namespace = NamespaceRef(request.session_id, request.run_id)
+        except ExecutionContractError:
+            message = "provisioning requires a valid session/run identity"
+            raise SessionManagerError("workspace_invalid", message) from None
+        try:
+            registered = self.client.request(
+                Operation.REGISTER_WORKSPACE,
+                request_id=uuid4().hex,
+                namespace=namespace,
+                view=None,
+                grant=None,
+                payload={"root_id": root_id, "relative_root": relative_root, "create": False, "input_id": None},
+                deadline=request.deadline,
+            )
+        except (ExecutionRejectedError, ExecutionUncertainError, ExecutionUnavailableError) as error:
+            code = ERROR_CODES.get(str(getattr(error, "code", "")), "workspace_provision_failed")
+            raise SessionManagerError(code, f"managed provisioning refused: {error.code}") from None
+        except OSError as error:
+            raise SessionManagerError("workspace_provision_failed", f"{workspace}: {error}") from None
+        workspace_id = registered.get("workspace_id")
+        revision_id = registered.get("revision_id")
+        if not isinstance(workspace_id, str) or not isinstance(revision_id, str):
+            raise SessionManagerError("workspace_corrupt", "registration returned an incomplete identity")
+        try:
+            return ProvisionedWorkspace(
+                registered=True,
+                workspace_id=workspace_id,
+                revision_id=revision_id,
+                tree_sha256=None,
+            )
+        except ValueError:
+            raise SessionManagerError("workspace_corrupt", "registration returned an invalid identity") from None
+
+
+def client_workspace_provisioner(*, config_path: Path | None = None) -> ClientWorkspaceProvisioner | None:
+    """The provisioner ``fa`` injects into the session manager, or ``None``.
+
+    ``None`` means the operator configured no execution service: the session layer
+    then keeps its pre-cutover host path, which is the behaviour every command has
+    today. One config read, one uid rule, one client builder — the same ones the
+    run's publication uses.
+    """
+    config = _service_config(config_path)
+    if config is None:
+        return None
+    client = _client_for(config)
+    if client is None:
+        return None
+    return ClientWorkspaceProvisioner(config=config, client=client)
+
+
+def _client_for(config: ServiceConfig) -> ExecutionClient | None:
+    """The one client builder: a controller the authority does not list gets none."""
+    uid = os.getuid()
+    if uid not in config.controller_uids:
+        return None
+    return ExecutionClient(config.socket_path, server_uid=uid, rpc_timeout_ms=config.rpc_timeout_ms)
 
 
 def _service_config(config_path: Path | None) -> ServiceConfig | None:

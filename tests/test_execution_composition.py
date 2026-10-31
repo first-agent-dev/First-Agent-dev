@@ -11,6 +11,7 @@ import json
 import os
 import socket
 import threading
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import asdict
@@ -21,17 +22,21 @@ from typing import Any
 import pytest
 
 from fa import cli
+from fa.execution import composition
 from fa.execution.client import ExecutionRejectedError, ExecutionUnavailableError, ExecutionUncertainError
 from fa.execution.composition import (
     BoundPlanPublisher,
+    ClientWorkspaceProvisioner,
     ExecutionBinding,
     ManagedExecution,
+    client_workspace_provisioner,
     managed_execution_for_run,
 )
 from fa.execution.service import SupervisorService, read_config_file
 from fa.execution.types import ExecutionContractError, GrantReply, NamespaceRef, Operation
 from fa.inner_loop.plan_admission import read_plan_snapshot, snapshot_from_bytes
-from fa.session.manager import RunContext
+from fa.session.manager import RunContext, SessionManagerError
+from fa.session.provisioning import ProvisionMode, ProvisionRequest
 from tests.test_execution_service import _registered, exchange
 from tests.test_execution_views import native_profile
 from tests.test_execution_workspace import Site
@@ -41,14 +46,19 @@ PLAN_RELATIVE = "worklogs/demo/increments/increment-01-demo.md"
 
 
 def _document(
-    site: Site, *, uid: int | None = None, roots: Path | None = None, socket_path: Path | None = None
+    site: Site,
+    *,
+    uid: int | None = None,
+    roots: Path | None = None,
+    socket_path: Path | None = None,
+    root_id: str = "projects",
 ) -> dict[str, Any]:
     """One operator config document, exactly the keys ``service.load_config`` demands."""
     return {
         "state_root": str(site.state),
         "socket_path": str(socket_path if socket_path is not None else site.state.parent / "supervisor.sock"),
         "controller_uids": [os.getuid() if uid is None else uid],
-        "approved_roots": {"projects": str(site.roots if roots is None else roots)},
+        "approved_roots": {root_id: str(site.roots if roots is None else roots)},
         "profiles": [asdict(native_profile())],
         "rpc_timeout_ms": 2000,
         "lock_timeout_ms": 25,
@@ -291,3 +301,91 @@ def test_a_release_that_is_not_confirmed_is_reported_and_never_retried(failure: 
     managed = ManagedExecution(client, binding, grant)  # type: ignore[arg-type]
     assert managed.close() is False
     assert client.calls == [Operation.RELEASE]
+
+
+def test_the_client_provisioner_answers_with_the_registered_identity(site: Site, tmp_path: Path) -> None:
+    """producer-kill-check: report a tree hash the wire does not carry, or a fresh id."""
+    service_path, yaml_path = _configs(tmp_path, _document(site))
+    with SupervisorService(read_config_file(service_path)) as service:
+        workspace_id = _registered(service)
+        stop = threading.Event()
+        runner = threading.Thread(target=service.serve_forever, args=(stop,), daemon=True)
+        runner.start()
+        try:
+            provisioner = client_workspace_provisioner(config_path=yaml_path)
+            assert isinstance(provisioner, ClientWorkspaceProvisioner)
+            request = ProvisionRequest(ProvisionMode.REUSE, "session-1", "run-1", site.source, time.monotonic() + 5)
+            provisioned = provisioner(request)
+            assert provisioned.registered is True
+            assert provisioned.tree_sha256 is None  # the wire answer carries two fields
+            assert provisioned.workspace_id == workspace_id
+            assert provisioned.revision_id is not None and provisioned.revision_id.startswith("rev-")
+            assert provisioner(request) == provisioned  # idempotent: same bytes, same identity
+        finally:
+            stop.set()
+            runner.join(timeout=5)
+
+
+def test_the_client_provisioner_refuses_what_it_cannot_prove(site: Site, tmp_path: Path) -> None:
+    """producer-kill-check: register a root the operator never approved, or invent an id."""
+    (tmp_path / "elsewhere").mkdir()
+    service_path, yaml_path = _configs(tmp_path, _document(site))
+    with SupervisorService(read_config_file(service_path)) as service:
+        _registered(service)
+        stop = threading.Event()
+        runner = threading.Thread(target=service.serve_forever, args=(stop,), daemon=True)
+        runner.start()
+        try:
+            provisioner = client_workspace_provisioner(config_path=yaml_path)
+            assert provisioner is not None
+            deadline = time.monotonic() + 5
+            with pytest.raises(SessionManagerError) as refused:
+                provisioner(ProvisionRequest(ProvisionMode.PROVISION, "session-1", "run-1", site.source, deadline))
+            assert refused.value.code == "provisioning_unavailable"
+            with pytest.raises(SessionManagerError) as missing:
+                provisioner(ProvisionRequest(ProvisionMode.REUSE, "session-1", "run-1", tmp_path / "absent", deadline))
+            assert missing.value.code == "workspace_missing"
+            with pytest.raises(SessionManagerError) as escape:
+                provisioner(
+                    ProvisionRequest(ProvisionMode.REUSE, "session-1", "run-1", tmp_path / "elsewhere", deadline)
+                )
+            assert escape.value.code == "workspace_escape"
+            with pytest.raises(SessionManagerError) as root_itself:
+                provisioner(ProvisionRequest(ProvisionMode.REUSE, "session-1", "run-1", site.roots, deadline))
+            assert root_itself.value.code == "workspace_escape"
+            # A client whose root id the authority does not know: refused, not re-rooted.
+            (tmp_path / "stale").mkdir()
+            _, stale_yaml = _configs(tmp_path / "stale", _document(site, root_id="legacy"))
+            stale = client_workspace_provisioner(config_path=stale_yaml)
+            assert stale is not None
+            with pytest.raises(SessionManagerError) as denied:
+                stale(ProvisionRequest(ProvisionMode.REUSE, "session-1", "run-1", site.source, deadline))
+            assert denied.value.code == "workspace_denied"
+        finally:
+            stop.set()
+            runner.join(timeout=5)
+    # The same ask once the supervisor is gone: refused, never a host-path answer.
+    provisioner = client_workspace_provisioner(config_path=yaml_path)
+    assert provisioner is not None
+    with pytest.raises(SessionManagerError) as unavailable:
+        provisioner(ProvisionRequest(ProvisionMode.REUSE, "session-1", "run-1", site.source, time.monotonic() + 1))
+    assert unavailable.value.code == "workspace_provision_failed"
+
+
+def test_the_manager_takes_its_provisioner_from_the_operator_config(
+    monkeypatch: pytest.MonkeyPatch, site: Site, tmp_path: Path
+) -> None:
+    """producer-kill-check: leave the manager on the host path while an execution service is configured."""
+    config_path = tmp_path / "config.yaml"
+    monkeypatch.setattr(composition, "DEFAULT_CONFIG_PATH", config_path)
+    args = SimpleNamespace(workspace=site.source)
+    assert cli._session_manager_for_args(args).workspace_provisioner is None  # no operator file: host path
+    service_path = tmp_path / "execution.json"
+    service_path.write_text(json.dumps(_document(site)), encoding="utf-8")
+    config_path.write_text(f"execution:\n  service_config: {service_path}\n", encoding="utf-8")
+    wired = cli._session_manager_for_args(args).workspace_provisioner
+    assert isinstance(wired, ClientWorkspaceProvisioner)
+    assert wired.config.approved_roots == {"projects": site.roots}
+    # A uid the authority does not list composes nothing — not even a client.
+    service_path.write_text(json.dumps(_document(site, uid=os.getuid() + 1)), encoding="utf-8")
+    assert cli._session_manager_for_args(args).workspace_provisioner is None

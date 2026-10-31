@@ -26,7 +26,7 @@ from fa.session.provisioning import ProvisionedWorkspace, ProvisionMode, Provisi
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 
 #: Closed translation of supervisor refusals into session lifecycle codes.
-_ERROR_CODES = {
+ERROR_CODES = {
     "CORRUPT_STATE": "workspace_corrupt",
     "UNAUTHORIZED": "workspace_denied",
     "PATH_DENIED": "workspace_denied",
@@ -97,7 +97,7 @@ class ManagedProvisioner:
             )
         except SupervisorError as error:
             raise SessionManagerError(
-                _ERROR_CODES.get(error.code, "workspace_provision_failed"),
+                ERROR_CODES.get(error.code, "workspace_provision_failed"),
                 f"managed provisioning refused: {error.code}",
             ) from None
         except OSError as error:
@@ -126,4 +126,4 @@ class ManagedProvisioner:
             raise SessionManagerError("workspace_corrupt", "registration returned an invalid identity") from None
 
 
-__all__ = ["ManagedProvisioner"]
+__all__ = ["ERROR_CODES", "ManagedProvisioner"]

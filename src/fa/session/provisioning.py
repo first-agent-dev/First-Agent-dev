@@ -7,18 +7,26 @@ narrow value boundary between them and deliberately imports nothing from
 implementation.
 
 Ownership is expressed as data, once, in a frozen result: either the supervisor
-registered and verified those bytes (``registered=True`` with a complete
-identity) or the value describes uncommitted scratch that only the manager may
-clean up. A partial result is a contract breach and is rejected at construction
-time rather than repaired at a call site.
+registered and verified those bytes (``registered=True`` with the identity it owns)
+or the value describes uncommitted scratch that only the manager may clean up. A
+partial result is a contract breach and is rejected at construction time rather
+than repaired at a call site.
+
+``tree_sha256`` is optional on a registered result because the supervisor's
+``register_workspace`` answer carries ``workspace_id`` and ``revision_id`` only
+(``service.py:591``, spec ``:153``); a caller that already holds the tree hash may
+still pass it, and it is validated when present.
 """
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
+
+_SHA256 = re.compile(r"[0-9a-f]{64}")
 
 
 class ProvisionMode(StrEnum):
@@ -53,9 +61,9 @@ class ProvisionedWorkspace:
     def __post_init__(self) -> None:
         identity = (self.workspace_id, self.revision_id, self.tree_sha256)
         if self.registered:
-            if any(value is None or value == "" for value in identity):
+            if any(value is None or value == "" for value in identity[:2]):
                 raise ValueError("a registered provisioned workspace requires a complete identity")
-            if len(str(self.tree_sha256)) != 64:
+            if self.tree_sha256 is not None and _SHA256.fullmatch(str(self.tree_sha256)) is None:
                 raise ValueError("tree_sha256 must be a lowercase sha256 hex digest")
         elif any(value is not None for value in identity):
             raise ValueError("unregistered scratch has no supervisor identity")

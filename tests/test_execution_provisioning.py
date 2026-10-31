@@ -29,7 +29,7 @@ from fa.execution.provisioning import ManagedProvisioner
 from fa.execution.supervisor import PeerIdentity
 from fa.execution.workspace import WorkspaceAuthority, _canonical
 from fa.session.manager import SessionManagerError
-from fa.session.provisioning import ProvisionMode, ProvisionRequest
+from fa.session.provisioning import ProvisionedWorkspace, ProvisionMode, ProvisionRequest
 
 PEER = PeerIdentity(os.getpid(), os.getuid(), os.getgid())
 
@@ -165,3 +165,32 @@ def test_corrupt_registered_state_is_never_a_usable_result(site: tuple[Path, Pat
             provisioner(_request(workspace))
 
     assert corrupt.value.code == "workspace_corrupt"
+
+
+def test_a_registered_result_may_omit_the_tree_hash() -> None:
+    """The wire answer carries two fields, so the hash is not part of the identity."""
+    value = ProvisionedWorkspace(
+        registered=True,
+        workspace_id="ws-" + "1" * 32,
+        revision_id="rev-" + "2" * 32,
+        tree_sha256=None,
+    )
+    assert value.tree_sha256 is None
+    explicit = ProvisionedWorkspace(
+        registered=True,
+        workspace_id="ws-" + "1" * 32,
+        revision_id="rev-" + "2" * 32,
+        tree_sha256="a" * 64,
+    )
+    assert explicit.tree_sha256 == "a" * 64
+
+
+@pytest.mark.parametrize("tree_sha256", ["a" * 63, "A" * 64, "z" * 64, ""])
+def test_a_present_tree_hash_is_still_a_lowercase_digest(tree_sha256: str) -> None:
+    with pytest.raises(ValueError):
+        ProvisionedWorkspace(
+            registered=True,
+            workspace_id="ws-" + "1" * 32,
+            revision_id="rev-" + "2" * 32,
+            tree_sha256=tree_sha256,
+        )

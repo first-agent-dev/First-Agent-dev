@@ -5288,3 +5288,58 @@ it `…_reaches_promotion`.
 src/fa/cli.py` = 0; `grep -rn retain_plan_draft src tests` = 0; `ls tests | grep retention` = empty; probe over the
 in-process supervisor (three scenarios, one process) as tabulated in §E296; `_VIEW_RECORD`/`CANDIDATE_SCOPE`
 inspection at `protocol.py:25-26,69`. No code, no plan step and no contract was changed by this entry.
+
+### E297 — SLICE7 STEP9 (CT116, second port): the manager's provisioning ask goes over the wire, and `fa run chat` reaches the authority
+
+**What changed.** `execution/composition.py` gained `ClientWorkspaceProvisioner(config, client)` implementing
+`session.provisioning.WorkspaceProvisioner` (a `Callable` alias, so `__call__` is the whole contract) and
+`client_workspace_provisioner(*, config_path=None)` as its factory; a private `_client_for(config)` is now the only
+place a client is built, so the uid-against-`controller_uids` rule has one home shared by publication and
+provisioning. Both paths resolve the workspace through the same `_root_binding`, which is what makes the provisioned
+`workspace_id` the same identity a publication uses. `ProvisionedWorkspace` now accepts a registered result without
+`tree_sha256` and still validates the digest when it is present (`session/provisioning.py`), because the wire answer
+carries `workspace_id` and `revision_id` only (`service.py:591`, spec `:153`). The error vocabulary is shared rather
+than duplicated: `execution/provisioning.py::ERROR_CODES` (formerly `_ERROR_CODES`) is imported as-is, so a client
+refusal maps to `workspace_denied` / `workspace_corrupt` / `workspace_provision_failed` in the manager's own terms.
+`cli._session_manager_for_args` passes `workspace_provisioner=client_workspace_provisioner()`.
+
+**Q94 (operator, 2026-11-01) — wire it, the goal is the whole factory.** The answer was that the target is the fabric
+working on `fa run chat` / `invoke_workflow`, not just on `fa workflow`. So the injection is production code, not a
+test-only seam: a session-creating command now registers its workspace with the authority whenever the operator
+configured `execution:`, and keeps the pre-cutover host path when there is no operator file at all. Two consequences,
+both intended and both recorded: (1) `fa run chat` with a configured service is fail-closed if the supervisor cannot
+answer (`workspace_provision_failed`), which is the same rule publication already follows; (2) the in-process
+`ManagedProvisioner` stays as a component adapter until S4P2 owns the rest of the cutover (`workspace_io`, `PtyPool`) —
+deleting it now would move five authority-semantics tests onto a live socket for no product gain, and the closure
+table already names S4P2 as the cutover step.
+
+**Q95 (operator: B) and Q96 (operator: A) are recorded in the plan**, not implemented here: STEP10 now says CT119
+lands first (the deterministic `plan-<sha256>.md` draft name is what lets the authority locate the buffer without a
+payload path), and STEP11's sequencing pin is re-specified so the strict `xfail` sits on the assertion that actually
+fails today — a *successful* second publication after a host-side write — while today's refusal and the
+stale-source `INPUT_POLICY` rule become plain tests.
+
+**Q97 (new, low urgency, not blocking).** A `~/.fa/config.yaml` that *has* an `execution:` block which cannot be
+resolved (relative path, `..`, unknown key, missing service JSON, foreign uid) yields `None`, i.e. `fa run chat` runs
+on the host path with only a log line. Publication is unaffected in the dangerous direction — `_promote_validated_plan`
+refuses a missing publisher outright (`workflow_controller.py:2294-2296`, "a closed refusal, never a fallback to
+host-path replacement") — so nothing fabricates authority; the asymmetry is that chat degrades silently where
+workflow blocks. Recommended shape if the operator wants symmetry: make `client_workspace_provisioner` raise a typed
+`SessionManagerError` for a present-but-unusable block, which needs `load_execution_config` to distinguish "absent"
+from "broken" (today both are `None`).
+
+**Verification (executed).** `tests/test_execution_composition.py` **12 passed** — registered identity with
+`tree_sha256 is None` and an idempotent re-ask; PROVISION refused as `provisioning_unavailable` with no effect; missing
+directory `workspace_missing`; a workspace outside every approved root and the approved root itself both
+`workspace_escape`; a client whose root id the authority does not know `workspace_denied`; a dead supervisor
+`workspace_provision_failed`; and the manager taking its provisioner from the operator file, with a foreign uid
+yielding `None`. `tests/test_execution_provisioning.py` **10 passed** with the relaxed and still-validated tree hash.
+Eight mutants, all killed, sources byte-identical afterwards: hash check removed, provisioner inventing a hash,
+containment skipped, PROVISION allowed, CLI not injecting, uid rule dropped, mapping flattened, missing-dir check
+removed. Execution+workspace+session+config+cli banks: **1599 passed, 1 skipped** with 14 `test_cli*.py` failures that
+are identical on the pre-STEP9 tree (they need a real git workspace and the repository cwd). `ruff check`,
+`ruff format --check`, `git diff --check` clean; `check_doc_links.py` 318 OK; plan `precheck` 0 FAIL / 7 WARN.
+
+**What this does not do.** No `workspace_io`/`PtyPool` cutover (S4P2), no `candidate_path` removal (STEP10, blocked on
+CT119 per Q95), no class proof or `reaches_promotion` EDGE test (STEP11). Toolchain as in E291–E296: `/tmp/vt` copy
+with PEP 695 helper generics rewritten, committed tests untouched, so this is local evidence and not a CI claim.

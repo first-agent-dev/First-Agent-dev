@@ -30,7 +30,7 @@ from fa.authoring_rules import RULE_ALLOWLIST
 from fa.authoring_tcb import render_json, render_text, run_all
 from fa.chunker import CHUNKER_VERSION, Chunk, default_chunker
 from fa.cli_help import COMMANDS, help_as_json, render_command_help_ru, render_top_level_ru
-from fa.execution.composition import BoundPlanPublisher, managed_execution_for_run
+from fa.execution.composition import BoundPlanPublisher, client_workspace_provisioner, managed_execution_for_run
 from fa.inner_loop import (
     EventLog,
     SessionState,
@@ -271,6 +271,7 @@ def _session_manager_for_args(args: argparse.Namespace) -> SessionManager:
         source_workspace=source_workspace,
         repo_push_url=repo_push_url,
         workspace_preparer=_prepare_managed_workspace,
+        workspace_provisioner=client_workspace_provisioner(),
     )
 
 
