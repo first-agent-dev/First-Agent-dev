@@ -41,7 +41,12 @@ from fa.inner_loop.plan_ids import (
     extract_plan_ids,
     precheck,
 )
-from fa.inner_loop.plan_promotion import CandidatePlanPublisher, PlanPromotionError, seed_plan_candidate
+from fa.inner_loop.plan_promotion import (
+    CandidatePlanPublisher,
+    PlanPromotionError,
+    retain_plan_draft,
+    seed_plan_candidate,
+)
 from fa.inner_loop.planner_dispatch import PlannerDispatch, PlannerDispatchError, PlannerDispatchKind
 from fa.inner_loop.prompt import ADVERSARIAL_EVAL_STANCE_PREAMBLE
 from fa.inner_loop.slice_verification import (
@@ -2464,12 +2469,24 @@ def _run_admission_repair(
             os.unlink(target.name, dir_fd=parent)
             os.fsync(parent)
     validation = _validate_plan_admission(candidate)
-    promoted = (
-        _promote_validated_plan(source, validation, publisher=publisher, deadline=ctx.deadline_mono)
-        if validation.outcome == "PASS"
-        else None
-    )
+    promoted: PlanSnapshot | None = None
+    if validation.outcome == "PASS":
+        try:
+            promoted = _promote_validated_plan(source, validation, publisher=publisher, deadline=ctx.deadline_mono)
+        except PlanPromotionError:
+            # CT119: the candidate was already unlinked above, so the only copy of
+            # the bytes the authority refused is the snapshot in memory.
+            _retain_rejected_draft(ctx, validation.snapshot)
+            raise
     return validation, promoted
+
+
+def _retain_rejected_draft(ctx: WorkflowContext, snapshot: PlanSnapshot) -> None:
+    """Keep refused bytes under their hash; never turn retention into the failure."""
+    try:
+        retain_plan_draft(ctx.workspace, ctx.run_id, snapshot.utf8_bytes, deadline=ctx.deadline_mono)
+    except Exception as error:  # noqa: BLE001 - the promotion rule must survive any retention fault
+        logger.warning("plan.draft.retained=false run_id=%s workspace=%s error=%s", ctx.run_id, ctx.workspace, error)
 
 
 def _admission_error(

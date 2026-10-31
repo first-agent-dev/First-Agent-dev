@@ -5391,3 +5391,37 @@ not just unused.
 657 passed with a FAILED set *identical* to the base tree's 101 failed / 650 passed (empty difference in both
 directions) — one vocabulary pin was updated on purpose, `ADMISSION_RULES["promotion"]`'s closed set in
 `tests/test_verify_gate_live.py:2078`. `ruff check`/`ruff format --check` (one pre-existing `journal.py:127` drift, untouched) and `git diff --check` clean; `check_doc_links` 318 OK; plan `precheck` 0 FAIL / 7 WARN.
+
+### E300 — CT119: a refused candidate now has somewhere to live
+
+**What changed.** `retain_plan_draft(workspace, run_id, raw, *, deadline=None)` writes
+`.fa/admission/<run_id>/plan-<sha256>.md`, and `_run_admission_repair` calls it from the `except PlanPromotionError`
+branch around the promotion, keeping the publisher's rule and the original exception. The candidate leaf is unlinked
+in the `finally` that precedes publication, so the retained bytes come from `validation.snapshot.utf8_bytes` — the
+in-memory buffer — not from a path that no longer exists. That is the whole reason this step exists: after a failed
+promotion the only copy of the operator's repaired plan was RAM.
+
+**Why the name is the digest.** CT120 removes `candidate_scope.candidate_path`, and then the authority has to *find*
+the buffer rather than be told where it is. Content addressing is the cheap version: `plan-<sha256>.md` is
+self-describing, re-retaining the same refusal is one file and not an error, and a *different* file under that name is
+`prepare-failed` rather than an overwrite. The writer is the candidate writer (`_create_candidate`): `O_EXCL|O_NOFOLLOW`,
+`0600`, file+parent `fsync`, inside `_private_artifact_directory`'s `0700` chain. Two cheap guards sit in front of the
+IO: a `run_id` that is a path (`/`, `.`, `..`, NUL) is `scope-denied`, and a spent run deadline writes nothing at all.
+
+**What the tests actually prove.** 8 tests, and the important one is the control: a *successful* promotion retains
+nothing, so retention is a property of the failure and not a side effect of publishing — an unconditional call would
+leave `plan-<sha>.md` next to every healthy repair and the bank would still be green without it. The failure case runs
+the real `_run_admission_repair` with a refusing port (stage dispatch and candidate seeding replaced, everything else
+real): the retained bytes equal the candidate's, the mode is `0600`, the candidate leaf is gone, the canonical plan is
+byte-identical and the raised rule is `hash-mismatch`, not `prepare-failed`. Then: dedup, two-different-bytes, foreign
+file (bytes intact), symlink (target intact), path-like run id (no `.fa` created at all), spent deadline. 7/7 mutants
+killed, sources byte-identical.
+
+**Numbers.** `tests/test_plan_candidate_retention.py` **8 passed**; nine workflow banks plus it **101 failed / 665
+passed** with a FAILED set identical to `5ef6d56`'s (no regression, +8 passes). `precheck` 0 FAIL / 7 WARN.
+
+**Left for later, named rather than implied.** CT120 (STEP10) consumes this name and removes `candidate_path`; STEP11
+will point its "a publish failure never loses the candidate" case at
+`test_a_refused_promotion_retains_the_exact_bytes_under_their_hash`; STEP1's CT114 bank is untouched. Retention has no
+eviction policy on purpose — `.fa/admission/<run_id>` is per-run, and reaping is the artifact-retention work of SLICE6,
+not something to invent here.

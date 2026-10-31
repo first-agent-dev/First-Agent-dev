@@ -8,7 +8,10 @@ supervisor-owned CANDIDATE buffer and commits them through Operation.PUBLISH.
 
 from __future__ import annotations
 
+import hashlib
 import os
+import stat
+import time
 from pathlib import Path
 from typing import Protocol
 from uuid import uuid4
@@ -97,4 +100,46 @@ def _create_candidate(parent: int, name: str, raw: bytes) -> None:
             os.unlink(name, dir_fd=parent)
 
 
-__all__ = ["CandidatePlanPublisher", "PlanPromotionError", "seed_plan_candidate"]
+def retain_plan_draft(workspace: Path, run_id: str, raw: bytes, *, deadline: float | None = None) -> Path:
+    """CT119: park rejected bytes beside the candidate under their own hash.
+
+    The authority locates a retained draft by content, so the name is the digest
+    and nothing about the payload path travels with it. Re-retaining identical
+    bytes is one file and not an error — the same refusal can be replayed — while a
+    *different* file already sitting under that name is corruption, never something
+    to overwrite or evict (the bytes it holds are, by name, a draft we cannot
+    reproduce). Retention writes only after the run's own deadline check, because a
+    draft kept past the budget delays the operator's answer without helping it.
+    """
+    if deadline is not None and time.monotonic() > deadline:
+        raise PlanPromotionError("prepare-failed")
+    if not run_id or "/" in run_id or run_id in {".", ".."} or "\x00" in run_id:
+        raise PlanPromotionError("scope-denied")
+    target = f".fa/admission/{run_id}/plan-{hashlib.sha256(raw).hexdigest()}.md"
+    path = workspace / target
+    try:
+        with _private_artifact_directory(path.parent) as parent:
+            try:
+                _create_candidate(parent, path.name, raw)
+            except FileExistsError:
+                if _read_private(parent, path.name) != raw:
+                    raise
+    except (OSError, ValueError) as error:
+        raise PlanPromotionError("prepare-failed") from error
+    return path
+
+
+def _read_private(parent: int, name: str) -> bytes:
+    fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=parent)
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError(f"{name} is not a regular file")
+        chunks: list[bytes] = []
+        while chunk := os.read(fd, 1 << 16):
+            chunks.append(chunk)
+    finally:
+        os.close(fd)
+    return b"".join(chunks)
+
+
+__all__ = ["CandidatePlanPublisher", "PlanPromotionError", "retain_plan_draft", "seed_plan_candidate"]
