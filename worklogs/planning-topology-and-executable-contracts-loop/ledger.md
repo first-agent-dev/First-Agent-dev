@@ -5343,3 +5343,19 @@ are identical on the pre-STEP9 tree (they need a real git workspace and the repo
 **What this does not do.** No `workspace_io`/`PtyPool` cutover (S4P2), no `candidate_path` removal (STEP10, blocked on
 CT119 per Q95), no class proof or `reaches_promotion` EDGE test (STEP11). Toolchain as in E291–E296: `/tmp/vt` copy
 with PEP 695 helper generics rewritten, committed tests untouched, so this is local evidence and not a CI claim.
+
+### E298 — a stale box: SLICE7 STEP4 was closed by STEP5, and the closure table said otherwise
+
+**What this is.** A one-line audit after E297, on the operator's standing rule that status is visible in the plan.
+STEP4 (wire half of CT117) carried its own progress note saying "STEP4 stays open on its authority half (STEP5)" — and
+STEP5 was closed in E291. The wire half is in the tree: nullable `CREATE_VIEW.base_revision` (`protocol.py:106`),
+`already_published` in `_PUBLISH_REPLY` (`:159`), the plan-bound cross-field rule (`:385`). So the box is ticked with
+that evidence instead of being left `[ ]` for a blocker that no longer exists.
+
+**Also corrected.** The closure table lumped `S7P1–P4` into one `PLANNED` row claiming `composition.py`,
+`load_execution_config`, `_root_binding` and `test_execution_composition.py` were "all absent" — three of those have
+existed since E295 and the fourth (`test_delivery_law_conformance.py`) is STEP1's, not theirs. The row is split into
+S7P1/S7P2/S7P3 (each with what is actually missing) and S7P4 (`LOCAL-CLOSED`). Counts: 9 `LOCAL`, 11 `PARTIAL`,
+2 `HOST`, 16 `OPEN`, 3 `PLANNED`, 6 `LOCAL-CLOSED` = 47; six steps closed.
+
+**No code changed.** `precheck` 0 FAIL / 7 WARN, `check_doc_links` 318 OK.
