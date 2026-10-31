@@ -146,6 +146,26 @@ def _minimal_session_events() -> list[dict[str, object]]:
     ]
 
 
+def test_a_recorded_verdict_outranks_the_clean_stop_inference(tmp_path: Path) -> None:
+    """Q98: a stage that recorded ``exit_code != 0`` is not reported as ``ok``.
+
+    Before the summary carried the decision, ``parse_session`` inferred "clean" from
+    "wrote a summary and no ``run_stopped``", so a failed stage read as ok=True in
+    ``fa stats`` while its console line said ERROR.
+    """
+    events = _minimal_session_events()
+    summary = next(event for event in events if event["kind"] == "session_summary")
+    summary["content"] = {**summary["content"], "role": "coder", "exit_code": 2, "stop_reason": "stopped_by_llm"}
+    events_path = tmp_path / "test-run" / "events.jsonl"
+    _write_events(events_path, events)
+
+    result = parse_session(events_path)
+
+    assert result is not None
+    assert result.ok is False
+    assert result.stop_reason == "stopped_by_llm"  # the stage's own reason, not "unknown"
+
+
 # ── parse_session ─────────────────────────────────────────────────────────
 
 

@@ -31,7 +31,12 @@ from fa.authoring_tcb import render_json, render_text, run_all
 from fa.chunker import CHUNKER_VERSION, Chunk, default_chunker
 from fa.cli_help import COMMANDS, help_as_json, render_command_help_ru, render_top_level_ru
 from fa.execution.client import ExecutionUncertainError
-from fa.execution.composition import BoundPlanPublisher, client_workspace_provisioner, managed_execution_for_run
+from fa.execution.composition import (
+    BoundPlanPublisher,
+    ManagedExecution,
+    client_workspace_provisioner,
+    managed_execution_for_run,
+)
 from fa.inner_loop import (
     EventLog,
     SessionState,
@@ -1336,6 +1341,61 @@ def _cmd_inject(args: argparse.Namespace) -> int:
     return 0
 
 
+#: Exit code for "the workflow's own verdict stands, but this invocation could not
+#: put the workspace back": the run's writer release was never confirmed.
+#:
+#: Q98 (operator, 2026-11-01): "codes for every stage, so the work can be traced by
+#: status". The workflow's verdict keeps its own codes (0 accepted, 1 not accepted,
+#: 2 could not be run, 124 deadline), because a verdict is what a caller gates on.
+#: A leaked writer is a different fact — the work may be accepted, but the next run
+#: on this workspace will be refused until recovery settles it — so it gets its own
+#: code instead of being folded into a pass. It never overrides 1/2/124: the more
+#: specific answer about the work wins, and the leak is recorded either way.
+WORKFLOW_RELEASE_EXIT_CODE = 3
+
+
+def _settle_writer_release(
+    managed: ManagedExecution | None, *, run_id: str, session_db: SessionDatabase | None
+) -> bool:
+    """Release this run's writer; report and record an unconfirmed release.
+
+    One place owns the whole "the run is over but its writer is not" story, so the
+    caller only decides what the fact costs in the exit code. Two audiences, two
+    channels: whoever is watching the terminal gets a line; whoever asks later gets
+    a row in the run's own session metadata ("which run leaked the workspace"), and
+    the workspace state answers why the next run was refused.
+    """
+    if managed is None:
+        return True
+    if managed.close():
+        return True
+    binding = getattr(managed, "binding", None)
+    workspace_id = getattr(binding, "workspace_id", "")
+    print(
+        f"fa workflow: writer release for workspace {workspace_id} was not "
+        "confirmed; the workspace may stay owned until recovery",
+        file=sys.stderr,
+    )
+    set_meta = getattr(session_db, "set_meta", None)
+    if set_meta is not None:
+        try:
+            from datetime import UTC, datetime
+
+            set_meta(
+                "managed_execution_release",
+                {
+                    "confirmed": False,
+                    "run_id": run_id,
+                    "workspace_id": workspace_id,
+                    "exit_code": WORKFLOW_RELEASE_EXIT_CODE,
+                },
+                datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            )
+        except Exception as exc:  # noqa: BLE001 - a breadcrumb must never fail the command
+            logger.warning("managed execution: could not record the unconfirmed release: %s", exc)
+    return False
+
+
 def _cmd_workflow(
     args: argparse.Namespace,
     *,
@@ -1449,6 +1509,7 @@ def _cmd_workflow(
         )
         return 2
     plan_publisher = None if managed is None else BoundPlanPublisher(managed, managed.binding)
+    release_confirmed = True
     try:
         exit_code, _terminal_state = run_workflow(
             roles=roles,
@@ -1473,15 +1534,12 @@ def _cmd_workflow(
             plan_publisher=plan_publisher,
         )
     finally:
-        if managed is not None and not managed.close():
-            # The workflow's own outcome stands (its terminal state is already
-            # recorded), but a writer this run could not release outlives it: the
-            # next run on this workspace will be refused until recovery settles it.
-            print(
-                f"fa workflow: writer release for workspace {managed.binding.workspace_id} was not "
-                "confirmed; the workspace may stay owned until recovery",
-                file=sys.stderr,
-            )
+        # The workflow's own outcome stands (its terminal state is already
+        # recorded), but a writer this run could not release outlives it and the
+        # next run on this workspace will be refused until recovery settles it.
+        release_confirmed = _settle_writer_release(managed, run_id=run_id, session_db=session_db)
+    if not release_confirmed and exit_code == 0:
+        return WORKFLOW_RELEASE_EXIT_CODE
     return exit_code
 
 

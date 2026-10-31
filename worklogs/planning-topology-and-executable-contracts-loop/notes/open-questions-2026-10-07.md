@@ -2356,3 +2356,21 @@ There is also a contract gap in the existing adapter: `ExecutionClientPlanPublis
 **Evidence to plan (not executed).** Add deterministic lifecycle/service integration coverage for registration → run-scoped grant → binding → candidate PUBLISH, including a durable ledger append and the resulting authoritative revision. Negative cases should cover absent/stale/cross-run bindings, stale base, uncertain PUBLISH, and proof that raw grants do not enter `RunContext`, `SessionState`, events, or model-visible output. Plan any live E2E under the canonical `worklogs/planning-topology-and-executable-contracts-loop/e2e/` package; keep it deferred until I01–I03 are merged to `main` and deployed, then evaluate only with host evidence. Do not change frozen E2E baselines or substitute a host test for the ownership decision.
 
 **Requested resolution.** Planner assigns the implementation owner/step and chooses the recommended option-1 architecture (or an option-2 adapter-placement variant that satisfies the same binding and token-custody contracts); option 3 remains active meanwhile.
+
+**Resolution (2026-11-01, Q99, operator: "делай, как правильно по логике на будущее использование системы").** The custody
+contract is **option A with the invariant written down**, not a re-architecture. The sentence above ("`ExecutionClient`
+alone caches and selects raw grants") described a design SLICE7 deliberately did not build, and the reasoning that settled
+it is about lifetime, not about hiding: a bearer capability should live with the component whose lifetime *is* the
+authority's grant — `ManagedExecution` acquires the writer when the run opens and releases it when the run closes, and a
+capability that outlives its release path is the defect, not a feature. Two consequences are now contract:
+
+1. **One run, one grant, one holder.** `ManagedExecution` holds it; `BoundPlanPublisher` reaches it only through
+   `managed`; the client stays stateless and is handed the grant explicitly for each operation. That makes every use
+   auditable at the call site, and the release has exactly one caller.
+2. **The boundary is what must never leak, not what must never be reachable in-process.** No grant in `RunContext`,
+   session state, events, logs or model-visible text; anything inside the trusted composition may hold it.
+
+Option B (a private run-scoped grant store inside the client) was rejected on purpose: it would make the client stateful,
+move `publish_plan`/`release` off their written STEP6-STEP7 contract, and still not hide the token from in-process
+introspection — only from accidental reach, which is exactly what the reachability test now checks
+(`test_the_writer_capability_lives_in_exactly_one_place`, one path per CLI-owned object, a second copy fails).

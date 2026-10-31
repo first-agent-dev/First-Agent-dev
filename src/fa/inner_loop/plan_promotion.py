@@ -8,9 +8,7 @@ supervisor-owned CANDIDATE buffer and commits them through Operation.PUBLISH.
 
 from __future__ import annotations
 
-import hashlib
 import os
-import stat
 import time
 from pathlib import Path
 from typing import Protocol
@@ -100,46 +98,47 @@ def _create_candidate(parent: int, name: str, raw: bytes) -> None:
             os.unlink(name, dir_fd=parent)
 
 
-def retain_plan_draft(workspace: Path, run_id: str, raw: bytes, *, deadline: float | None = None) -> Path:
-    """CT119: park rejected bytes beside the candidate under their own hash.
+#: The one refused-draft slot per run. A fixed name, not a digest: the operator
+#: reads the draft the run last refused, and the attempts themselves are already
+#: hashed in ``admission.json`` (``candidate_sha256`` per attempt), so the file
+#: name does not have to carry evidence.
+_DRAFT_NAME = "draft.md"
 
-    The authority locates a retained draft by content, so the name is the digest
-    and nothing about the payload path travels with it. Re-retaining identical
-    bytes is one file and not an error — the same refusal can be replayed — while a
-    *different* file already sitting under that name is corruption, never something
-    to overwrite or evict (the bytes it holds are, by name, a draft we cannot
-    reproduce). Retention writes only after the run's own deadline check, because a
-    draft kept past the budget delays the operator's answer without helping it.
+
+def retain_plan_draft(workspace: Path, run_id: str, raw: bytes, *, deadline: float | None = None) -> Path:
+    """CT119 / Q100: one refused draft per run, replaced atomically.
+
+    A newer refusal supersedes the older bytes — the run keeps what it refused
+    last, not an archaeology of attempts. Replacement never loses the current
+    draft: the bytes are written to a private temporary file in the same
+    directory, fsynced, and renamed over the slot, so a reader sees either the
+    old draft or the new one and a crash (or a failed write) leaves the old one
+    untouched. Retention writes only after the run's own deadline check, because
+    a draft kept past the budget delays the operator's answer without helping it.
     """
     if deadline is not None and time.monotonic() > deadline:
         raise PlanPromotionError("prepare-failed")
     if not run_id or "/" in run_id or run_id in {".", ".."} or "\x00" in run_id:
         raise PlanPromotionError("scope-denied")
-    target = f".fa/admission/{run_id}/plan-{hashlib.sha256(raw).hexdigest()}.md"
-    path = workspace / target
+    path = workspace / f".fa/admission/{run_id}" / _DRAFT_NAME
+    temporary = f".{_DRAFT_NAME}.{uuid4().hex}.tmp"
     try:
         with _private_artifact_directory(path.parent) as parent:
             try:
-                _create_candidate(parent, path.name, raw)
-            except FileExistsError:
-                if _read_private(parent, path.name) != raw:
-                    raise
+                _create_candidate(parent, temporary, raw)
+                os.replace(temporary, _DRAFT_NAME, src_dir_fd=parent, dst_dir_fd=parent)
+                os.fsync(parent)
+            except BaseException:
+                # Nothing was replaced unless the rename completed: drop the
+                # temporary file and leave whatever draft the run already had.
+                try:
+                    os.unlink(temporary, dir_fd=parent)
+                except OSError:
+                    pass
+                raise
     except (OSError, ValueError) as error:
         raise PlanPromotionError("prepare-failed") from error
     return path
-
-
-def _read_private(parent: int, name: str) -> bytes:
-    fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=parent)
-    try:
-        if not stat.S_ISREG(os.fstat(fd).st_mode):
-            raise OSError(f"{name} is not a regular file")
-        chunks: list[bytes] = []
-        while chunk := os.read(fd, 1 << 16):
-            chunks.append(chunk)
-    finally:
-        os.close(fd)
-    return b"".join(chunks)
 
 
 __all__ = ["CandidatePlanPublisher", "PlanPromotionError", "retain_plan_draft", "seed_plan_candidate"]

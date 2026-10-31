@@ -17,6 +17,11 @@ Exit codes after S10c.2:
 * **2** — usage or configuration error, unchanged and deliberately distinct:
   a caller must be able to tell "I invoked this wrongly" from "the code was
   rejected"
+* **3** — the code was accepted, but this invocation could not put the workspace
+  back: the managed writer release was never confirmed (Q98, 2026-11-01). The
+  verdict codes win over this one — a rejected run stays 1 — because the answer
+  about the work is the more specific fact; the leak is always reported and
+  recorded either way. **124** remains the deadline code from the controller.
 
 **The authority is the persisted artifact, not a local flag.** The exit code is
 derived from the same ``_read_back_terminal_state`` result that S8.7 uses for
@@ -28,12 +33,16 @@ code plus the durable artifacts).
 
 from __future__ import annotations
 
+import io
+from contextlib import redirect_stderr
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+import fa.cli as fa_cli
 from fa.cli import _cmd_workflow
+from fa.execution.client import ExecutionRejectedError
 from fa.inner_loop.workflow_artifacts import load_flow_state
 from tests.test_cli import _TEST_SECRETS
 from tests.test_cli_ergonomics import _RoleAwareTransport, _workflow_args
@@ -181,3 +190,103 @@ def test_s10c_workflow_exit_code_survives_export_failure(tmp_path: Path, monkeyp
 
     assert code == 1, "the verdict-derived exit code must not depend on telemetry succeeding"
     assert _status(home, "wf-export-fail") == "FAILED"
+
+
+# ---------------------------------------------------------------------------
+# Q98 — the managed-execution lifecycle is part of the invocation's outcome
+# ---------------------------------------------------------------------------
+
+
+class _RefusingRelease:
+    """A client whose only job is to answer RELEASE with a refusal."""
+
+    def __init__(self) -> None:
+        self.operations: list[object] = []
+
+    def request(self, operation: Any, **_: Any) -> dict[str, Any]:
+        self.operations.append(operation)
+        raise ExecutionRejectedError("workspace-not-owned", None)
+
+
+def _managed_with_a_refusing_release() -> tuple[Any, _RefusingRelease]:
+    from fa.execution.composition import ExecutionBinding, ManagedExecution
+    from fa.execution.types import GrantReply, NamespaceRef, Operation
+
+    client = _RefusingRelease()
+    binding = ExecutionBinding(NamespaceRef("session-1", "run-1"), "ws-" + "1" * 32)
+    grant = GrantReply(Operation.ACQUIRE_WRITER, "2" * 64, None, 1, "rev-" + "3" * 32)
+    return ManagedExecution(client, binding, grant), client  # type: ignore[arg-type]
+
+
+def _workflow_with_a_managed_execution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, run_id: str
+) -> tuple[Any, Any, Path]:
+    """A workflow the CLI can actually run, with a managed execution it cannot release."""
+    from fa.session.manager import RunContext
+
+    config, home = _wf_env(tmp_path, monkeypatch)
+    args = _workflow_args(tmp_path, config, run_id=run_id, session_id=None)
+    workspace = Path(args.workspace)
+    managed, client = _managed_with_a_refusing_release()
+    # The real lifecycle puts the run's artifacts under ``$HOME/.fa/session-log``; a
+    # stubbed RunContext has to do the same or the test would grade a path the CLI
+    # never uses.
+    run_log_dir = home / ".fa" / "session-log" / run_id
+    run = RunContext(run_id, "session-1", workspace, run_log_dir / "session.db", run_log_dir)
+    monkeypatch.setattr(fa_cli, "_resolve_workflow_lifecycle", lambda a, rid: (rid, None, run, None))
+    monkeypatch.setattr(fa_cli, "managed_execution_for_run", lambda *a, **k: managed)
+    return args, client, home
+
+
+def test_an_unconfirmed_writer_release_exits_three(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Q98: an accepted run that leaked its writer is not reported as a clean success.
+
+    The verdict keeps its own code (0 = accepted) because that is what callers gate
+    on, so the leak gets its own: 0 becomes 3, and 1/2/124 stay what they were.
+    Oracle: the exit code, the console line, and the terminal state — the run's own
+    artifact must still say DONE, because the work really was accepted.
+    """
+    args, client, home = _workflow_with_a_managed_execution(tmp_path, monkeypatch, run_id="wf-leak")
+
+    stderr = io.StringIO()
+    with redirect_stderr(stderr):
+        code = fa_cli._cmd_workflow(args, transport=_RoleAwareTransport([("PASS", "complete")]), secrets=_TEST_SECRETS)
+
+    assert code == fa_cli.WORKFLOW_RELEASE_EXIT_CODE == 3
+    assert _status(home, "wf-leak") == "DONE"
+    assert "writer release for workspace ws-" in stderr.getvalue()
+    assert client.operations  # the release was actually attempted before being believed
+
+
+def test_the_verdict_outranks_a_leaked_writer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A rejected run stays 1: the more specific answer about the work must not be masked."""
+    args, _, home = _workflow_with_a_managed_execution(tmp_path, monkeypatch, run_id="wf-leak-blocked")
+
+    stderr = io.StringIO()
+    with redirect_stderr(stderr):
+        code = fa_cli._cmd_workflow(
+            args, transport=_RoleAwareTransport([("BLOCKED", "blocked")]), secrets=_TEST_SECRETS
+        )
+
+    assert code == 1
+    assert _status(home, "wf-leak-blocked") == "FAILED"
+    assert "writer release for workspace" in stderr.getvalue()  # still reported
+
+
+def test_an_unconfirmed_release_leaves_a_durable_row(tmp_path: Path) -> None:
+    """The stderr line is for whoever is watching; the row is for whoever asks later."""
+    from fa.inner_loop.session_db import SessionDatabase
+
+    managed, _ = _managed_with_a_refusing_release()
+    db = SessionDatabase(tmp_path / "session.db")
+
+    stderr = io.StringIO()
+    with redirect_stderr(stderr):
+        assert fa_cli._settle_writer_release(managed, run_id="wf-row", session_db=db) is False
+
+    row = db.get_meta("managed_execution_release")
+    assert row is not None
+    assert row["confirmed"] is False
+    assert row["run_id"] == "wf-row"
+    assert row["workspace_id"] == "ws-" + "1" * 32
+    assert row["exit_code"] == fa_cli.WORKFLOW_RELEASE_EXIT_CODE

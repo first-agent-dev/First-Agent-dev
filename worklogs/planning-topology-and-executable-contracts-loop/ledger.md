@@ -5609,3 +5609,68 @@ run, with these edits stashed, had the same 101 environment failures plus the 9 
 - **Q100 - who owns retention for refused drafts, and what is the cap?** Options: reuse the sealed-view retention policy
   when it lands (one owner, one answer), a per-workspace byte cap with oldest-first eviction, or keep everything and
   document the cost. Nothing is implemented meanwhile; the file count per run is bounded.
+
+### E305 — Q98 / Q99 / Q100 answered by the operator: codes per stage, custody by lifetime, one draft
+
+The operator read E304 and answered all three questions at once, with one instruction that reframed Q98: *"we must see
+success/error codes for every workflow stage in sequence, so the work can be traced back by statuses; some of it is
+fail-closed by design, some open — look carefully whether all of it is sensible."* That is a request to audit the
+status/code vocabulary, not only to pick a number for the leaked writer.
+
+**The audit, measured against the tree (not read off the docs).** A real three-stage run, instrumented:
+
+| fact | where it was recorded before this entry |
+| --- | --- |
+| which stage ran | `run_started` (role) in `events.jsonl` / `session.db` — durable |
+| the stage's decision (`exit_code`, `stop_reason`) | **nowhere durable**: one console line (`OK:`/`ERROR:`) and a workflow-level `global_history` row that collapses three stages into one |
+| the workflow's verdict | `flow_state.json` (`status`, `judged`) — durable |
+| an unconfirmed writer release | a stderr line and a `logging.warning` — **nowhere durable** |
+
+So the operator's requirement failed on the second and fourth rows: retrospective traceability was a transcript, not an
+artifact. Fixed at the smallest place the architecture already has:
+
+- **`session_summary` now carries `role`, `exit_code`, `stop_reason`** (`coder_loop.py`). It was already written once per
+  stage (`finish()`), so the sequential trace costs three keys and no new kind, file or schema. `fa stats` now reads the
+  recorded verdict instead of inferring "clean" from "wrote a summary and no `run_stopped`" — that inference reported a
+  stage that exited non-zero as `ok`, which is the same class of lie as E303's silent release. Logs written before the
+  keys keep the old inference exactly.
+- **An unconfirmed writer release is now exit 3** (`WORKFLOW_RELEASE_EXIT_CODE`), and it is recorded in the run's
+  `session_meta` (`managed_execution_release`) as well as on stderr. Rule: the verdict codes win (0 accepted, 1 not
+  accepted, 2 could not be run, 124 deadline); 3 replaces **only** 0, because "the work was accepted, but this
+  invocation could not put the workspace back, and the next run will be refused" is not a clean success. It is also
+  not a new vocabulary: `124` already exists as a distinct operational class next to the verdict codes.
+
+**What stays fail-open, and why that is deliberate rather than forgotten.** The operator asked whether the choices are
+sensible; they are, and each is now stated in one place instead of being discovered per-reader:
+
+| mechanism | posture | reason |
+| --- | --- | --- |
+| `global_history` export, blackboard mirror | open | derived projections; the authority is the session DB and the run artifacts |
+| rejected-draft retention | open | evidence for the operator, never the reason a run fails (CT119) |
+| `judged=False` runs (`--roles coder`) returning 0 | open **by decision** | Q32 scratch pipelines; `judged` is recorded so the artifact never reads as verified |
+| legacy PUBLISH reply without `already_published` | open, one direction only | a server without the repeat path always committed; the newer reader may say so, the server's own self-check stays strict (E304) |
+| admission refusals | closed | no admit, no coder dispatch; `1` for planner-unavailable/budget (the run started and could not get a plan), `2` for the request/environment; both terminal states are written |
+
+**Q100 — one draft per run (operator: "черновик хранится один, новый заменяет старый; важно не потерять текущий во
+время замены").** `retain_plan_draft` now writes `.fa/admission/<run_id>/draft.md` through a private temporary file and
+`os.replace`, so the old draft survives every failure before the rename and the rename itself is atomic. Two claims from
+E300 did not survive the check: nothing in `src` locates a draft by its `plan-<sha256>.md` name, and the authority's
+CANDIDATE buffer is located from the pinned `plan_ref` (`_candidate_buffer`, `workspace.py:2249`) — the draft name was
+never the coupling E300 said it was. Attempt evidence was already durable without it (`candidate_sha256` per attempt in
+`admission.json`).
+
+**Verification.** `tests/test_plan_candidate_retention.py` **8 passed**; `tests/test_coder_loop.py` **27 passed**;
+`tests/test_stats.py` + `test_s19_stats_parsers.py` **29 passed**; `tests/test_s10c_workflow_exit_contract.py` **10
+passed**; fourteen banks (cli, cli-ergonomics, s8, s10c, retention, coder_loop, stats, s19, quality-coverage,
+observability ×2, composition, client, protocol) **521 passed / 6 failed**, and the same six fail on an untouched
+`HEAD` worktree — they are the sandbox's environment, not this change. Execution banks **1230 passed / 1 xfailed**. Seven
+mutants killed, sources byte-identical: non-atomic replacement, content-addressed name, summary without `exit_code`,
+stats ignoring the verdict, CLI always returning the verdict code, release reported as confirmed, durable row never
+written.
+
+**Correction to my own baseline method — the earlier "101 failed" numbers were not a baseline at all.** The sandbox's
+`write_explicit_plan` fixture symlinks the repo's `.venv`, and my `/tmp/vt` copy made that link dangle; the child
+`python -m pytest` in baseline capture then failed with `No module named pytest`, which the controller correctly called
+`baseline-unavailable`. With the link repaired and an absolute `PYTHONPATH`, `test_s10c` passes 7/7 unchanged. Comparison
+baselines from now on come from a `git worktree` at `HEAD` (`/tmp/base`), never from `git stash`, and never from a number
+produced before checking that the fixture's own child process can import `pytest`.

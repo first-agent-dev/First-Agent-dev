@@ -1,15 +1,21 @@
-"""CT119 (SLICE7 STEP3): refused bytes survive as ``plan-<sha256>.md``.
+"""CT119 (SLICE7 STEP3) + Q100: refused bytes survive in one atomic draft slot.
 
 The controller deletes the planner's candidate before publication, so after a
 refused promotion the only copy of the rejected bytes is the snapshot in memory.
-These tests pin the two halves of that: the file writer (deterministic name,
-no-clobber semantics, private modes) and the wiring in ``_run_admission_repair``
-that keeps the promotion's own rule while retaining the draft.
+These tests pin the two halves of that: the file writer (one fixed slot per run,
+atomic replacement that never loses the current draft, private modes) and the
+wiring in ``_run_admission_repair`` that keeps the promotion's own rule while
+retaining the draft.
+
+**Q100 (operator, 2026-11-01).** One draft per run; a newer refusal replaces the
+older bytes. The replacement must not lose the draft the run already had:
+temporary file in the same directory, fsync, rename. Attempt evidence lives in
+``admission.json`` (``candidate_sha256`` per attempt), not in the file name.
 """
 
 from __future__ import annotations
 
-import hashlib
+import os
 import stat
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -33,8 +39,7 @@ BAD = b"## SLICE 1: not a slice heading\n"
 RUN = "run-retain"
 
 
-def _digest_name(raw: bytes) -> str:
-    return f"plan-{hashlib.sha256(raw).hexdigest()}.md"
+DRAFT = "draft.md"
 
 
 def _workspace(tmp_path: Path) -> Path:
@@ -96,7 +101,7 @@ def test_a_refused_promotion_retains_the_exact_bytes_under_their_hash(
         )
 
     assert error.value.rule == "hash-mismatch"  # retention never renames the fault
-    kept = workspace / f".fa/admission/{RUN}/{_digest_name(GOOD)}"
+    kept = workspace / ".fa" / "admission" / RUN / DRAFT
     assert kept.read_bytes() == GOOD
     assert stat.S_IMODE(kept.stat().st_mode) == 0o600
     assert not (workspace / target).exists()  # the candidate itself is still cleaned up
@@ -141,48 +146,61 @@ def test_a_successful_promotion_retains_nothing(tmp_path: Path, monkeypatch: pyt
 
     assert promoted is not None and published == [promoted.ref]
     admission_dir = workspace / ".fa" / "admission" / RUN
-    assert not [item for item in admission_dir.iterdir() if item.name.startswith("plan-")]
+    assert not [item for item in admission_dir.iterdir() if item.name in {DRAFT} or item.name.startswith("plan-")]
+
+
+def _draft_dir(tmp_path: Path) -> Path:
+    return tmp_path / ".fa" / "admission" / RUN
 
 
 def test_the_same_rejection_twice_is_one_file(tmp_path: Path) -> None:
     first = retain_plan_draft(tmp_path, RUN, GOOD)
     second = retain_plan_draft(tmp_path, RUN, GOOD)
-    assert first == second
-    assert len(list((tmp_path / ".fa" / "admission" / RUN).iterdir())) == 1
+    assert first == second == _draft_dir(tmp_path) / DRAFT
+    assert len(list(_draft_dir(tmp_path).iterdir())) == 1
 
 
-def test_different_bytes_keep_two_files_without_evicting_the_first(tmp_path: Path) -> None:
+def test_a_newer_refusal_replaces_the_older_draft_in_the_same_slot(tmp_path: Path) -> None:
+    """Q100: one draft per run — the newest refusal, not an archaeology of attempts."""
     first = retain_plan_draft(tmp_path, RUN, GOOD)
     second = retain_plan_draft(tmp_path, RUN, GOOD + b"\n")
-    assert first != second
-    assert first.read_bytes() == GOOD
+    assert first == second
     assert second.read_bytes() == GOOD + b"\n"
+    assert len(list(_draft_dir(tmp_path).iterdir())) == 1
 
 
-def test_a_foreign_file_under_the_digest_is_never_overwritten(tmp_path: Path) -> None:
-    """The name promises content, so a mismatch there is corruption, not a retry."""
-    path = tmp_path / ".fa" / "admission" / RUN / _digest_name(GOOD)
-    path.parent.mkdir(parents=True)
-    path.write_bytes(b"someone else wrote this\n")
+def test_a_failed_replacement_keeps_the_draft_the_run_already_had(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The half Q100 asked for explicitly: replacement must not lose the current draft."""
+
+    def _boom(*args: object, **kwargs: object) -> None:
+        raise OSError("rename refused")
+
+    retain_plan_draft(tmp_path, RUN, GOOD)
+    monkeypatch.setattr(os, "replace", _boom)
 
     with pytest.raises(PlanPromotionError) as error:
-        retain_plan_draft(tmp_path, RUN, GOOD)
+        retain_plan_draft(tmp_path, RUN, GOOD + b"\n")
 
     assert error.value.rule == "prepare-failed"
-    assert path.read_bytes() == b"someone else wrote this\n"
+    assert (_draft_dir(tmp_path) / DRAFT).read_bytes() == GOOD
+    assert sorted(item.name for item in _draft_dir(tmp_path).iterdir()) == [DRAFT]
 
 
-def test_a_symlink_under_the_digest_is_refused(tmp_path: Path) -> None:
+def test_a_symlink_in_the_draft_slot_is_replaced_not_followed(tmp_path: Path) -> None:
+    """The slot belongs to the run, so the entry is replaced; the link target is never written."""
     outside = tmp_path / "outside.md"
     outside.write_bytes(GOOD)
-    path = tmp_path / ".fa" / "admission" / RUN / _digest_name(GOOD)
-    path.parent.mkdir(parents=True)
-    path.symlink_to(outside)
+    slot = _draft_dir(tmp_path) / DRAFT
+    slot.parent.mkdir(parents=True)
+    slot.symlink_to(outside)
 
-    with pytest.raises(PlanPromotionError):
-        retain_plan_draft(tmp_path, RUN, GOOD)
+    retained = retain_plan_draft(tmp_path, RUN, GOOD + b"\n")
 
-    assert path.is_symlink() and outside.read_bytes() == GOOD
+    assert not slot.is_symlink()
+    assert retained.read_bytes() == GOOD + b"\n"
+    assert outside.read_bytes() == GOOD
 
 
 def test_a_run_id_that_is_a_path_is_refused(tmp_path: Path) -> None:

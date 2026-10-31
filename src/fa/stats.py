@@ -596,6 +596,17 @@ def _parse_events(events: tuple[TraceEvent, ...], fallback_run_id: str) -> Sessi
             cache_hit_ratio = float(content.get("cache_hit_ratio", 0.0))
             n_turns = int(content.get("n_turns", 0))
             has_session_summary = True
+            # Q98: the summary records the stage's own verdict. Prefer it over the
+            # inference below, which reported a stage that exited non-zero as
+            # ``ok`` purely because it wrote a summary and no ``run_stopped``.
+            # Logs written before the keys existed keep the old inference exactly.
+            if stop_reason == "unknown":
+                recorded_reason = content.get("stop_reason")
+                if isinstance(recorded_reason, str) and recorded_reason:
+                    stop_reason = recorded_reason
+                recorded_code = content.get("exit_code")
+                if isinstance(recorded_code, int):
+                    ok = recorded_code == 0
 
         # ── S3.5: scope estimation events ─────────────────────────────
         elif kind == "scope_estimate":
@@ -622,8 +633,9 @@ def _parse_events(events: tuple[TraceEvent, ...], fallback_run_id: str) -> Sessi
                 if not reason.startswith("iteration_cap"):
                     ok = False  # guard denial / abnormal stop
 
-    # Infer clean stop: session_summary present + no run_stopped event
-    # means drive_session exited via finish() with stop_reason="stopped_by_llm".
+    # Infer clean stop: session_summary present + no run_stopped event and no
+    # recorded verdict (a pre-Q98 log) means drive_session exited via finish()
+    # with stop_reason="stopped_by_llm".
     if has_session_summary and stop_reason == "unknown":
         stop_reason = "stopped_by_llm"
         ok = True

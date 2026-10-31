@@ -170,7 +170,25 @@ def _usage_event_content(response: ResponseInfo) -> dict[str, int]:
     }
 
 
-def _session_summary_content(totals: Mapping[str, int], n_turns: int) -> dict[str, object]:
+def _session_summary_content(
+    totals: Mapping[str, int],
+    n_turns: int,
+    *,
+    role: str,
+    exit_code: int,
+    stop_reason: str,
+) -> dict[str, object]:
+    """The durable end-of-run row: usage totals **and** the run's own decision.
+
+    Q98 (operator, 2026-11-01) asked for one thing above all: "we must see
+    success/error codes for every workflow stage in sequence, so the work can be
+    traced back by status". Before this, the stage's decision existed only as a
+    console line (``OK: stopped_by_llm``) and a ``global_history`` row that the
+    workflow collapses into a single aggregate — a finished run left no per-stage
+    code anywhere in its own artifacts. ``run_started`` already records the role,
+    so one summary row per stage now carries the whole stage verdict, and
+    ``fa stats`` reads it instead of inferring a clean stop.
+    """
     cache_read = totals["cache_read_input_tokens"]
     cache_creation = totals["cache_creation_input_tokens"]
     input_tokens = totals["input_tokens"]
@@ -185,6 +203,9 @@ def _session_summary_content(totals: Mapping[str, int], n_turns: int) -> dict[st
         "uncached_input_tokens": uncached,
         "output_tokens": totals["output_tokens"],
         "cache_hit_ratio": cache_hit_ratio,
+        "role": role,
+        "exit_code": exit_code,
+        "stop_reason": stop_reason,
     }
 
 
@@ -725,7 +746,13 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
         # Waiver: internal invariant (log attached before loop starts).
         assert log is not None  # noqa: S101
         if not summary_written:
-            summary = _session_summary_content(usage_totals, usage_turns)
+            summary = _session_summary_content(
+                usage_totals,
+                usage_turns,
+                role=role,
+                exit_code=outcome.exit_code,
+                stop_reason=outcome.stop_reason,
+            )
             log.append(
                 actor="runtime",
                 kind="session_summary",
