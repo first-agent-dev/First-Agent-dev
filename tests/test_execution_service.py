@@ -49,7 +49,7 @@ from fa.execution.service import (
     read_config_file,
 )
 from fa.execution.supervisor import SupervisorError, build_supervisor, main
-from fa.execution.types import ExecutionContractError, Operation, ViewRef
+from fa.execution.types import ExecutionContractError, GrantReply, Operation, ViewRef
 from fa.inner_loop.plan_admission import read_plan_snapshot, snapshot_from_bytes
 from tests.test_execution_views import native_profile
 from tests.test_execution_workspace import ACTOR, PEER, Site
@@ -515,7 +515,8 @@ def test_publisher_uses_candidate_route_end_to_end(site: Site) -> None:
 
     with SupervisorService(_config(site)) as service:
         workspace_id = _registered(service)
-        owner_capability, base_revision = _writer(service, workspace_id, request_id="1" * 32)
+        writer = _writer_grant(service, workspace_id, request_id="1" * 32)
+        base_revision = str(writer.revision_id)
         client = ExecutionClient(
             service.socket_path,
             server_uid=os.getuid(),
@@ -525,7 +526,7 @@ def test_publisher_uses_candidate_route_end_to_end(site: Site) -> None:
             client,
             namespace=ACTOR,
             workspace_id=workspace_id,
-            owner_capability=owner_capability,
+            grant=writer,
             base_revision=base_revision,
         )
         stop = threading.Event()
@@ -838,6 +839,19 @@ def _writer(service: SupervisorService, workspace_id: str, *, request_id: str) -
     assert reply["status"] == "OK", reply
     assert reply["result"]["view_ref"] is None
     return str(reply["result"]["capability"]), str(reply["result"]["revision_id"])
+
+
+def _writer_grant(service: SupervisorService, workspace_id: str, *, request_id: str) -> GrantReply:
+    reply = exchange(service, Operation.ACQUIRE_WRITER, {"workspace_id": workspace_id}, request_id=request_id)
+    assert reply["status"] == "OK", reply
+    result = reply["result"]
+    return GrantReply(
+        Operation.ACQUIRE_WRITER,
+        result["capability"],
+        None,
+        result["generation"],
+        result["revision_id"],
+    )
 
 
 def _view(

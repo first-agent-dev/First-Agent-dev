@@ -23,13 +23,13 @@ from fa.execution.protocol import DeadlineConnection, decode_reply, decode_reque
 from fa.execution.types import (
     ExecutionContractError,
     ExecutionReceipt,
+    GrantReply,
     JobState,
     NamespaceRef,
     Operation,
     OperationRef,
     ViewRef,
     _positive_integer,
-    validate_capability,
 )
 from fa.inner_loop.plan_admission import PlanRef, PlanSnapshot
 from fa.runtime.pty_pool import PtyResult
@@ -81,6 +81,18 @@ def _connect_authenticated(connection: socket.socket, path: Path, server_uid: in
         raise ExecutionUnavailableError
 
 
+def _grant(operation: Operation, result: dict[str, Any]) -> GrantReply:
+    """The one place a grant reply becomes the typed grant a caller keeps (CT118)."""
+    view_ref = result["view_ref"]
+    return GrantReply(
+        operation,
+        result["capability"],
+        None if view_ref is None else ViewRef.from_dict(view_ref),
+        result.get("generation"),
+        result.get("revision_id"),
+    )
+
+
 class ExecutionClient:
     def __init__(self, socket_path: Path, *, server_uid: int, rpc_timeout_ms: int) -> None:
         if type(server_uid) is not int or server_uid < 0:
@@ -102,10 +114,12 @@ class ExecutionClient:
         request_id: str,
         namespace: NamespaceRef | None,
         view: ViewRef | None,
-        capability: str | None,
+        grant: GrantReply | None,
         payload: dict[str, Any],
         deadline: float | None = None,
     ) -> dict[str, Any]:
+        if grant is not None and not isinstance(grant, GrantReply):
+            raise ExecutionContractError  # A raw string is not a grant a caller may pass on.
         raw = encode_json(
             {
                 "protocol_version": 1,
@@ -113,7 +127,7 @@ class ExecutionClient:
                 "op": operation.value,
                 "namespace": None if namespace is None else namespace.to_dict(),
                 "view_ref": None if view is None else view.to_dict(),
-                "capability": capability,
+                "capability": None if grant is None else grant.to_wire_capability(),
                 "payload": payload,
             }
         )
@@ -166,16 +180,17 @@ class ExecutionClientPlanPublisher:
         *,
         namespace: NamespaceRef,
         workspace_id: str,
-        owner_capability: str,
+        grant: GrantReply,
         base_revision: str,
     ) -> None:
         if not isinstance(client, ExecutionClient) or not isinstance(namespace, NamespaceRef):
             raise ExecutionContractError
-        validate_capability(owner_capability)
+        if not isinstance(grant, GrantReply) or grant.operation is not Operation.ACQUIRE_WRITER:
+            raise ExecutionContractError  # A CANDIDATE view is created under the writer grant, nothing else.
         self._client = client
         self._namespace = namespace
         self._workspace_id = workspace_id
-        self._owner_capability = owner_capability
+        self._grant = grant
         self._base_revision = base_revision
 
     def publish_candidate(
@@ -193,7 +208,7 @@ class ExecutionClientPlanPublisher:
         }
         candidate_path = f".fa/admission/{self._namespace.run_id}/candidate-{uuid4().hex}.md"
         view: ViewRef | None = None
-        view_capability: str | None = None
+        view_grant: GrantReply | None = None
         uncertain = False
         publish_request_id: str | None = None
         try:
@@ -202,7 +217,7 @@ class ExecutionClientPlanPublisher:
                 request_id=uuid4().hex,
                 namespace=self._namespace,
                 view=None,
-                capability=self._owner_capability,
+                grant=self._grant,
                 payload={
                     "workspace_id": self._workspace_id,
                     "base_revision": self._base_revision,
@@ -214,13 +229,13 @@ class ExecutionClientPlanPublisher:
                 deadline=deadline,
             )
             view = ViewRef.from_dict(created["view_ref"])
-            view_capability = created["capability"]
+            view_grant = _grant(Operation.CREATE_VIEW, created)
             self._client.request(
                 Operation.WRITE_FILE,
                 request_id=uuid4().hex,
                 namespace=self._namespace,
                 view=view,
-                capability=view_capability,
+                grant=view_grant,
                 payload={
                     "path": candidate_path,
                     "content": raw.decode("utf-8"),
@@ -234,7 +249,7 @@ class ExecutionClientPlanPublisher:
                 request_id=stop_request_id,
                 namespace=self._namespace,
                 view=view,
-                capability=view_capability,
+                grant=view_grant,
                 payload={},
                 deadline=deadline,
             )
@@ -247,7 +262,7 @@ class ExecutionClientPlanPublisher:
                     request_id=publish_request_id,
                     namespace=self._namespace,
                     view=view,
-                    capability=view_capability,
+                    grant=view_grant,
                     payload={"sealed_manifest_id": None, "expected_base_revision": self._base_revision},
                     deadline=deadline,
                 )
@@ -275,17 +290,17 @@ class ExecutionClientPlanPublisher:
                 uncertain = True
             raise
         finally:
-            if view is not None and view_capability is not None and not uncertain:
-                self._release_candidate_best_effort(view, view_capability, deadline)
+            if view is not None and view_grant is not None and not uncertain:
+                self._release_candidate_best_effort(view, view_grant, deadline)
 
-    def _release_candidate_best_effort(self, view: ViewRef, capability: str, deadline: float | None) -> None:
+    def _release_candidate_best_effort(self, view: ViewRef, grant: GrantReply, deadline: float | None) -> None:
         try:
             self._client.request(
                 Operation.RELEASE,
                 request_id=uuid4().hex,
                 namespace=self._namespace,
                 view=view,
-                capability=capability,
+                grant=grant,
                 payload={},
                 deadline=deadline,
             )
@@ -307,20 +322,21 @@ class ManagedBashExecutor:
         *,
         namespace: NamespaceRef,
         view: ViewRef,
-        capability: str,
+        grant: GrantReply,
         profile: ExecutionProfile,
         input_tree_sha256: str,
         plan_sha256: str | None,
         original_revision_id: str | None,
         controller_root: Path,
     ) -> None:
-        validate_capability(capability)
+        if not isinstance(grant, GrantReply):
+            raise ExecutionContractError
         if not profile.interactive or not controller_root.is_absolute() or ".." in controller_root.parts:
             raise ExecutionContractError
         self._client = client
         self._namespace = namespace
         self._view = view
-        self._capability = capability
+        self._grant = grant
         self._profile = profile
         self._tree = input_tree_sha256
         self._plan = plan_sha256
@@ -333,7 +349,7 @@ class ManagedBashExecutor:
             request_id=request_id,
             namespace=self._namespace,
             view=self._view,
-            capability=self._capability,
+            grant=self._grant,
             payload=payload,
         )
 

@@ -26,7 +26,7 @@ from fa.execution.client import (
 )
 from fa.execution.profiles import ExecutionProfile
 from fa.execution.protocol import ERROR_CODES, DeadlineConnection, decode_request, encode_json, read_frame, write_frame
-from fa.execution.types import Access, ExecutionContractError, NamespaceRef, ViewPurpose, ViewRef
+from fa.execution.types import Access, ExecutionContractError, GrantReply, NamespaceRef, Operation, ViewPurpose, ViewRef
 from fa.runtime.bash_executor import BashExecutor
 
 NS = NamespaceRef("session-1", "run-1")
@@ -156,12 +156,16 @@ def endpoint(
         assert not errors
 
 
+def view_grant() -> GrantReply:
+    return GrantReply(Operation.CREATE_VIEW, CAP, VIEW, None, None)
+
+
 def executor(client: ExecutionClient) -> ManagedBashExecutor:
     return ManagedBashExecutor(
         client,
         namespace=NS,
         view=VIEW,
-        capability=CAP,
+        grant=view_grant(),
         profile=profile(),
         input_tree_sha256=SHA,
         plan_sha256=SHA,
@@ -196,6 +200,28 @@ def test_all_four_methods_use_only_one_udspath_and_keep_pty_contract(tmp_path: P
         assert [r["payload"]["action"] for r in seen[1:]] == ["INTERRUPT", "CLOSE", "LIST"]
         assert len({r["request_id"] for r in seen}) == 4
         assert CAP not in repr(bash)
+
+
+def test_the_client_takes_a_typed_grant_and_unwraps_it_once(tmp_path: Path) -> None:
+    """producer-kill-check: keep the token as a string field, or drop the type guard."""
+    with endpoint(tmp_path) as (client, seen):
+        bash = executor(client)
+        bash.run("printf anything", timeout=100, session_id="main")
+        assert seen[0]["capability"] == CAP  # unwrapped at the transport, never stored beside it
+        for holder in (client, bash):
+            assert CAP not in repr(holder)
+            assert all(CAP not in repr(value) for value in vars(holder).values())
+        frames = len(seen)
+        with pytest.raises(ExecutionContractError):
+            client.request(
+                Operation.CREATE_VIEW,
+                request_id="a" * 32,
+                namespace=NS,
+                view=None,
+                grant=CAP,  # type: ignore[arg-type]
+                payload={},
+            )
+        assert len(seen) == frames  # refused before connecting: no frame exists, so nothing can be replayed
 
 
 @pytest.mark.parametrize(

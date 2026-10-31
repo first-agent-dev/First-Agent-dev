@@ -5093,3 +5093,40 @@ row).
 
 **Not done, and not claimed.** No source or test file changed, no STEP or CT ticked, no wire/protocol change,
 no new surface. STEP6 (CT118) is next and still untouched.
+
+### E293 — SLICE7 STEP6 (CT118): the client takes a grant, not a token string
+
+**What changed.** `GrantReply.to_wire_capability()` (`types.py`) is now the only place a stored grant becomes a
+wire string; `ExecutionClient.request` takes `grant: GrantReply | None` instead of `capability: str | None`,
+refuses anything that is not a `GrantReply` *before* the socket is touched, and writes the frame from
+`grant.to_wire_capability()`. `ManagedBashExecutor` and `ExecutionClientPlanPublisher` hold a `GrantReply`;
+the CANDIDATE adapter also refuses a grant whose `operation` is not `ACQUIRE_WRITER`, because a CANDIDATE view is
+created under the writer grant and a mismatched one would fail with `UNAUTHORIZED` deeper in the authority,
+where the reason is harder to see. One module-private `_grant(operation, result)` in `client.py` is the single
+reply→grant conversion; no public wrapper was added (Q91: minimum surfaces — STEP8 can decide whether its
+composition needs one once it exists and has a caller).
+
+**Why this is not cosmetic.** The wire already carried `capability` as an opaque string, so the protocol does not
+move; what moves is *who may hold it*. Before, three classes kept a `str` field and nothing prevented a journal
+projection, an event or a tool result from carrying it. Now a raw token exists only inside a `GrantReply` (whose
+`repr` is the default object repr, `@dataclass(frozen=True, repr=False)`), and only the transport unwraps it.
+
+**Verification (executed).** `tests/test_execution_client.py` — **191 passed**, including the new
+`test_the_client_takes_a_typed_grant_and_unwraps_it_once`: the frame still carries the capability, `repr` and
+every `vars()` value of the client and the executor are free of it, and a string grant is refused with no frame
+sent (`len(seen)` unchanged). Service client/plans/dispatch set — **288 passed**. Wide set
+(`test_execution_*.py` + `test_workspace_*.py`, 29 banks) — **1334 passed, 1 skipped**; two bootstrap banks are
+excluded because they are artifacts of the `/tmp/vt` copy, not of this change: `test_workspace_bootstrap.py`
+patches `pathlib.Path` and then trips pytest's own report formatter (`WindowsPath`), and
+`test_workspace_bootstrap_aliases.py` reads repo-root files (`scripts/bootstrap/*`, `justfile`, `.gitignore`)
+that the copy does not contain. Three mutants, all killed, source byte-identical afterwards: `to_wire_capability`
+returning `repr(self)` (168 failures), the type guard deleted (the new test fails), and a `self._capability =
+grant.capability` leak in the executor (the new test fails). `ruff check` and `ruff format --check` clean on the
+four touched files. `git grep -c "test_execution_grants" tests` is 0.
+
+**What this does not do.** No `publish_plan` (STEP7), no composition or config key (STEP8), no change to
+`tool_port.py` — it talks to `WorkspaceAuthority`, not to the client. The adapter still stores a grant until
+STEP7 deletes it; that is why STEP7's saga tests own the release semantics. `scripts/*` untouched.
+
+**Toolchain.** As in E291: `/tmp/vt` copy with only PEP 695 helper generics rewritten; committed tests untouched.
+Local evidence, not a CI claim.

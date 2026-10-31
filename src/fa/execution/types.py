@@ -197,6 +197,14 @@ class GrantReply:
     def to_wire_result(self) -> dict[str, Any]:
         return {**self._public_result(), "capability": self.capability}
 
+    def to_wire_capability(self) -> str:
+        """Unwrap the stored grant into its wire string, once, at the transport.
+
+        CT118: the grant a caller keeps is this object; only the client turns it
+        back into the opaque string, so no other layer has a token to stash.
+        """
+        return self.capability
+
 
 class JobState(StrEnum):
     RESERVED = "RESERVED"
