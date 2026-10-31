@@ -3433,6 +3433,14 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
             buffer = self._buffer_bytes(pin, max_bytes=min(self._limits.max_file_bytes, _MAX_PLAN_BYTES))
             if buffer is None:
                 raise SupervisorError("STALE_REVISION")
+            repeated = self._already_published(binding, plan_ref, buffer, operation_id, deadline)
+            if repeated is not None:
+                # Nothing is written, but the same gates still prove the workspace
+                # is settled and its bytes are the current revision: a repeat is a
+                # claim about state, so it owes the same evidence as a commit.
+                self._forward_gates(binding, deadline)
+                self._settle_view(pin.directory, pin.record)
+                return repeated
             inputs = self._plan_prepare(binding, plan_ref, buffer, operation_id, deadline)
             parent = self._project_parent(binding.source, inputs.plan_relative)
             scratch = -1
@@ -3489,8 +3497,12 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
             or binding.writer is None
         ):
             raise SupervisorError("STALE_GENERATION")
-        if binding.current["revision_id"] != view_ref.base_revision:
-            raise SupervisorError("STALE_REVISION")
+        # CT117: a candidate publication is a patch, so the view's base is the
+        # revision this copy started from, not a demand that nothing else moved.
+        # The freshness that matters is per file and lives in
+        # `_plan_source_identity`'s `old_sha256` CAS against the pinned PlanRef;
+        # every other predicate above (owner, actor, generation, principal,
+        # writer) still applies unchanged.
         with ExitStack() as stack:
             views = os.open("views", _DIRECTORY, dir_fd=binding.fd)
             stack.callback(os.close, views)
@@ -3517,6 +3529,40 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
         except ExecutionContractError:
             raise SupervisorError("INPUT_POLICY") from None
         return view, binding
+
+    def _already_published(
+        self, binding: _Binding, plan_ref: PlanRef, buffer: bytes, operation_id: str, deadline: float
+    ) -> dict[str, Any] | None:
+        """The reply for an intent the committed tree already holds, else None.
+
+        A re-attempt of the same publication is not a refusal (CT117): the bytes
+        are already where the caller wants them, so the answer is the revision
+        that exists, named against the request's own PlanRef. Nothing is written:
+        no staging, no intent, no replace, no new revision. The target shape and
+        the plan decoding are proved here for the same reason `_plan_prepare`
+        proves them — an invalid intent must never be answered with "done".
+        """
+        path, _parts = self._plan_parts(plan_ref)
+        try:
+            _decode_plan_bytes(buffer)  # strict UTF-8, non-empty, plan size limit
+        except PlanRefError:
+            raise SupervisorError("INPUT_POLICY") from None
+        new_sha256 = hashlib.sha256(buffer).hexdigest()
+        with self._revision(binding, binding.current["revision_id"], deadline) as (_fd, base, _child):
+            existing = {entry["path"]: entry for entry in base["entries"]}.get(path)
+        if existing is None or existing["type"] != "file":
+            raise SupervisorError("INPUT_POLICY")  # not a committed plan file
+        if existing["sha256"] != new_sha256:
+            return None
+        return {
+            "workspace_id": binding.metadata["workspace_id"],
+            "revision_id": binding.current["revision_id"],
+            "tree_sha256": binding.current["tree_sha256"],
+            "operation_id": operation_id,
+            "projection_complete": True,
+            "plan_ref": PlanRef(path, plan_ref.source_kind, new_sha256),
+            "already_published": True,
+        }
 
     def _plan_prepare(
         self, binding: _Binding, plan_ref: PlanRef, buffer: bytes, operation_id: str, deadline: float

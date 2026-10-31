@@ -2619,8 +2619,8 @@ def test_publish_plan_replaces_the_canonical_file_and_commits_a_revision(
         assert site.register(reopened)["revision_id"] == result.revision_id
 
 
-def test_candidate_publish_refuses_stale_base_even_when_plan_bytes_unchanged(site: Site) -> None:
-    """producer-kill-check: allow a stale candidate after an unrelated revision commit."""
+def test_candidate_publish_applies_a_patch_after_an_unrelated_revision_commit(site: Site) -> None:
+    """producer-kill-check: restore workspace-wide base equality (a snapshot, not a patch)."""
     plan_ref = _with_plan(site)
     with site.owner(view_profile=native_profile()) as owner:
         ids = ok(lambda: site.register(owner))
@@ -2635,7 +2635,7 @@ def test_candidate_publish_refuses_stale_base_even_when_plan_bytes_unchanged(sit
             view_ref=ref(ordinary),
             capability=ordinary.capability,
             path="unrelated.txt",
-            content="revision advanced without changing the plan\\n",
+            content="revision advanced without changing the plan\n",
             expected_sha256=None,
             deadline=until(),
         )
@@ -2644,14 +2644,61 @@ def test_candidate_publish_refuses_stale_base_even_when_plan_bytes_unchanged(sit
         advanced_revision = _current(site, ids)["revision_id"]
         assert advanced_revision != old_revision
 
+        result = _publish_candidate(owner, candidate, operation_id="op-" + "1" * 32)
+
+        # The patch lands on top of the newer revision instead of being refused.
+        assert result.already_published is False
+        assert result.revision_id != advanced_revision
+        assert (site.source / PLAN_RELATIVE).read_text() == PLAN_NEW
+        assert (site.source / "unrelated.txt").read_text() == "revision advanced without changing the plan\n"
+        assert _current(site, ids)["revision_id"] == result.revision_id
+        assert _intent(site, ids) is None
+
+
+def test_candidate_publish_refuses_plan_bytes_that_moved_since_the_snapshot(site: Site) -> None:
+    """producer-kill-check: drop the per-file CAS now that the view base is not compared."""
+    plan_ref = _with_plan(site)
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        first = _publish_plan(owner, plan_ref, PLAN_NEW.encode(), grant=lease, ids=ids)
+        assert first.already_published is False
+
         with pytest.raises(SupervisorError) as stale:
-            _publish_candidate(owner, candidate, operation_id="op-" + "1" * 32)
+            _publish_plan(owner, plan_ref, (PLAN_NEW + "\n## SLICE3: third\n").encode(), grant=lease, ids=ids)
 
         assert stale.value.code == "STALE_REVISION"
-        assert (site.source / PLAN_RELATIVE).read_text() == PLAN_OLD
-        assert (site.source / "unrelated.txt").read_text() == "revision advanced without changing the plan\\n"
-        assert _current(site, ids)["revision_id"] == advanced_revision
+        assert (site.source / PLAN_RELATIVE).read_text() == PLAN_NEW
+        assert _current(site, ids)["revision_id"] == first.revision_id
         assert _intent(site, ids) is None
+
+
+def test_candidate_publish_of_the_current_bytes_reports_a_repeat_and_writes_nothing(site: Site) -> None:
+    """producer-kill-check: answer a re-applied intent with INPUT_POLICY instead of the evidence."""
+    plan_ref = _with_plan(site)
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        before_current = _current(site, ids)
+        canonical = site.source / PLAN_RELATIVE
+        before_bytes = canonical.read_bytes()
+
+        result = _publish_plan(owner, plan_ref, PLAN_OLD.encode(), grant=lease, ids=ids)
+
+        assert result.already_published is True
+        assert result.revision_id == before_current["revision_id"]
+        assert result.tree_sha256 == before_current["tree_sha256"]
+        assert result.plan_ref.sha256 == hashlib.sha256(PLAN_OLD.encode()).hexdigest()
+        assert canonical.read_bytes() == before_bytes
+        assert _current(site, ids) == before_current
+        assert _intent(site, ids) is None
+        assert not [path for path in canonical.parent.iterdir() if path.name.startswith(".")]
+
+        # The same intent again is still a repeat, not a second commit.
+        again = _publish_plan(owner, plan_ref, PLAN_OLD.encode(), grant=lease, ids=ids)
+        assert again.already_published is True
+        assert again.revision_id == before_current["revision_id"]
+        assert _current(site, ids) == before_current
 
 
 def test_plan_commit_path_is_fixed_by_the_pinned_ref_not_a_publish_argument(site: Site) -> None:
@@ -2701,10 +2748,8 @@ def test_publish_plan_refuses_bytes_that_are_not_a_plan(site: Site) -> None:
                 _publish_plan(owner, plan_ref, buffer, grant=lease, ids=ids)
             assert refused.value.code == "INPUT_POLICY", buffer[:8]
 
-        # Identical bytes are not a replacement.
-        with pytest.raises(SupervisorError) as noop:
-            _publish_plan(owner, plan_ref, PLAN_OLD.encode(), grant=lease, ids=ids)
-        assert noop.value.code == "INPUT_POLICY"
+        # Identical bytes are a repeat, not a replacement — covered by
+        # `test_candidate_publish_of_the_current_bytes_reports_a_repeat_and_writes_nothing`.
         assert (site.source / PLAN_RELATIVE).read_text() == PLAN_OLD
 
 

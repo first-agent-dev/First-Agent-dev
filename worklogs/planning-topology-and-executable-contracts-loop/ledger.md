@@ -5022,3 +5022,42 @@ helpers use PEP 695 generics (`test_execution_{admission,attach,backend,handoff,
 **Not done.** The authority half of CT117 (`publish_candidate_plan` returning the current revision with
 `already_published: true`), the client saga (STEP7), the composition (STEP8), the provisioner (STEP9). No
 STEP or CT is ticked; STEP4 carries a progress note instead.
+
+### E291 — SLICE7 STEP5 (authority half of CT117) implemented: a patch, and a repeat that is evidence
+
+**What the authority now does.** `_closed_candidate_reader` no longer compares the candidate view's base to
+the current revision: a publication is a patch, so the base is where this copy started, not a demand that the
+workspace froze. The freshness that matters is per file and already existed — `_plan_source_identity`'s
+`old_sha256` CAS against the pinned `PlanRef` — and every other predicate in that method (owner, actor,
+generation, principal, writer) is untouched. `_already_published(binding, plan_ref, buffer, operation_id,
+deadline)` sits beside `_plan_prepare`, proves the target shape through `_plan_parts` and the plan through
+`_decode_plan_bytes`, and returns the reply only when the committed entry at that path already hashes to the
+buffer. `publish_candidate_plan` calls it after the buffer read and before any staging: on a repeat it runs
+the same `_forward_gates` (no intent, no unsettled view, bytes still equal to current), settles the view so
+the caller's `RELEASE` can follow, and returns the current `revision_id`/`tree_sha256` with
+`already_published: true` and the request's own `plan_ref`. No staging, no intent, no replace, no new revision.
+
+**Two legacy assertions changed because the contract changed, not because the tests were inconvenient.**
+`test_candidate_publish_refuses_stale_base_even_when_plan_bytes_unchanged` asserted the removed rule; it is
+replaced by `test_candidate_publish_applies_a_patch_after_an_unrelated_revision_commit` and
+`test_candidate_publish_refuses_plan_bytes_that_moved_since_the_snapshot`, which keep the safety that does
+matter (per-file CAS). The service bank's "a fresh request cannot commit against the stale base" now asserts a
+repeat: `already_published: true`, the same revision, bytes unchanged — no second commit, which is the original
+intent. New: `test_candidate_publish_of_the_current_bytes_reports_a_repeat_and_writes_nothing` (repeat twice,
+identical `current.json`, no intent, no temporaries) and a sealed-publish assertion that
+`already_published is False`.
+
+**Verification (executed).** Affected set — publication, recovery, purposes, service, journal, protocol,
+client, plans, dispatch — **549 passed, exit 0**. Full execution+workspace sweep —
+`tests/test_execution_*.py` + `tests/test_workspace_*.py` — **1306 passed**; that run ends in a pytest-internal
+`WindowsPath` error raised while *formatting* a report (`_repr_failure_py` → `Path(os.getcwd())` after a test
+patches `pathlib.Path`), which predates this change and is unrelated to it. Two producer mutants killed and
+the source restored byte-exact: removing the repeat branch → the repeat test fails; restoring the
+workspace-wide base equality → the patch test fails.
+
+**Toolchain.** The 17 banks that cannot be parsed by this sandbox's 3.11 (`PEP 695` helper generics) were run
+from a copy in `/tmp/vt` with only `def name[T](...)` → `def name(...)` rewritten; the committed tests are
+untouched, and `tests/` in the repo still uses the generic helpers. This is local evidence, not a CI claim.
+
+**Not done.** STEP7 (client verb + adapter deletion), STEP8 (composition + config key), STEP9 (provisioner),
+STEP10 (payload path removal), STEP11 (class proof). No STEP or CT ticked; STEP5 carries a progress note.

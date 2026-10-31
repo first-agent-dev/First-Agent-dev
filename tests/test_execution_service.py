@@ -480,7 +480,7 @@ def test_candidate_plan_publication_uses_view_grant_private_buffer_and_dispatch_
         assert not [path for path in (site.source / ".fa/publish-tmp").iterdir() if path.exists()]
 
         # Exact request replay is journal-owned; a fresh request is not a second
-        # content-hash idempotency path and cannot commit against the stale base.
+        # intent is a repeat under CT117: it names the committed revision, never a second commit.
         replay = exchange(
             service,
             Operation.PUBLISH,
@@ -498,7 +498,9 @@ def test_candidate_plan_publication_uses_view_grant_private_buffer_and_dispatch_
             view_ref=view,
             capability=view_capability,
         )
-        assert _error(fresh) == "STALE_REVISION"
+        assert fresh["status"] == "OK", fresh
+        assert fresh["result"]["already_published"] is True
+        assert fresh["result"]["revision_id"] == published["result"]["revision_id"]
         assert plan_path.read_bytes() == new_plan
 
 
@@ -601,8 +603,11 @@ def test_the_publication_half_is_reachable_through_the_wire(site: Site) -> None:
             "operation_id",
             "projection_complete",
             "plan_ref",
+            "already_published",
         }
         assert published["result"]["plan_ref"] is None
+        # A sealed publish never repeats: it replaces a view's bytes exactly once.
+        assert published["result"]["already_published"] is False
         assert published["result"]["revision_id"] == sealed["result"]["revision_id"]
         assert published["result"]["operation_id"] == "op-" + "5" * 32
         assert (site.source / "note.txt").read_text() == "published through the codec\n"
