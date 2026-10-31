@@ -1026,7 +1026,7 @@ intent/reply and **changes** `_derive_revision_id` output», R4) — это пр
   ничего не проецируя. Сейчас это правда (дерево не менялось), но станет ложью, если проекция
   когда-нибудь станет ленивой. Записано в §14.6 как долг, а не как дефект.
 
-### 14.4. Q91 (открытое решение, блокирует STEP8)
+### 14.4. Q91 — сначала как он был поставлен, и почему он снят (см. §15)
 
 **Вопрос.** Откуда контроллер берёт адрес супервизора?
 
@@ -1048,6 +1048,18 @@ intent/reply and **changes** `_derive_revision_id` output», R4) — это пр
 отсутствие ключа даёт честное `None` → `managed-execution-absent`. Цена: одна схема конфига,
 документация и тест «неизвестный ключ отвергается». Решение за оператором; до него STEP8
 остаётся BLOCKED по этой части, остальные шаги слайса независимы.
+
+**Снято как вопрос (2026-10-31).** Оператор спросил, нужен ли вообще `socket_path` и как новый
+модуль может не иметь пути взаимодействия с текущим кодом. Ответ: адрес нужен (клиент UDS не
+может его выдумать), но *решения* здесь нет — есть четыре строки работы, и я ошибочно назвал их
+открытым вопросом. Путь взаимодействия существует и уже в коде: `fa/config.py:44
+DEFAULT_CONFIG_PATH` = `~/.fa/config.yaml`, файл читается контроллером при старте, а формат
+сервисного JSON уже валидируется `service.read_config_file` (`service.py:290`). Ключ
+`execution: {service_config: <path>}` — это ссылка на существующий файл, а не новый формат;
+переменная окружения была бы вторым ответом на один вопрос. Поэтому Q91 закрыт внутри STEP8
+(`DEFAULT_CONFIG_PATH` → ключ → `read_config_file` → `socket_path` + uid), а не отдельным
+решением; EDGE-мутант шага удаляет `plan_publisher=` из `cli.py:1431`, то есть без рабочего
+источника эндпоинта композиция не может стать сиротой — тест этого не даст.
 
 ### 14.5. Передача в SLICE5: что именно нужно вложенному coder
 
@@ -1085,6 +1097,112 @@ intent/reply and **changes** `_derive_revision_id` output», R4) — это пр
 
 Долг, записанный явно: **S2** (семантика `projection_complete` при `already_published`).
 Открытое решение: **Q91** (§14.4).
+
+---
+
+## 15. Сосуществование SLICE5 и SLICE7 — и два соседних конфликта (2026-10-31)
+
+Проверка по просьбе оператора: «SLICE5 ещё не закончен; проверь, что SLICE5 и SLICE7 корректно
+сосуществуют». Проверялось: зависимости, владение производителями, ссылки на символы, общие банки,
+производные числа DoD. Ниже — только то, что подтверждено кодом или текстом плана, с file:line.
+
+### 15.1. [подтверждено] SLICE5 ждал поставщика, которого нет ни в одном слайсе
+
+`SLICE5 STEP2` содержал: *«this step is blocked until SLICE4/A5 supplies the managed client
+composition (A5 itself waits for A3/Q89 and A4)»*. Проверка: `git grep "ExecutionClient(" src` —
+пусто; «A5» не имеет ни шага, ни владельца, ни EDGE-мутанта. То есть SLICE5 был заблокирован
+неопределённо долго — тот же класс «порт без поставщика», который закрывает SLICE7, только со
+стороны потребителя.
+
+**Правка.** `SLICE5 DEPS: SLICE4, SLICE7`; STEP2 указывает на `SLICE7 STEP7` (`publish_plan`,
+удаление адаптера) и `STEP8` (`managed_execution_for_run`, `BoundPlanPublisher`), запрещает
+строить `ExecutionClient` на месте и забирает себе то, что действительно его — расширение
+авторитета: семь сравнений `workspace.py:1385,1891,2125,2572,3486,3804,4028` и `_owner_only`
+(`:2735`) → один `_acts_as_active_actor`.
+
+### 15.2. [подтверждено] порядок был циклическим, и «managed provisioner» не мог существовать
+
+Три текста противоречили друг другу:
+
+- `SLICE2 STEP3`: «inject the managed provisioner into the existing SessionManager»;
+- `SLICE4 STEP2`: «The managed provisioner was ALREADY injected into SessionManager in SLICE2 STEP3»;
+- код: `ManagedProvisioner.__init__(authority: WorkspaceAuthority, ...)` (`execution/provisioning.py:37`),
+  а `git grep ManagedProvisioner src` вне его модуля пуст, и ни один процесс не строит
+  `WorkspaceAuthority` кроме `service.py:319`.
+
+Как только авторитет живёт в сервисе (E277), контроллер **не может** держать объект
+`WorkspaceAuthority`, значит инъекция из SLICE2 STEP3 невыполнима в принципе, а SLICE4 STEP2 не
+мог получить клиент раньше, чем SLICE7 его построит. С `SLICE7 DEPS: SLICE3, SLICE4` это цикл:
+SLICE7 → SLICE4 → (клиент из SLICE7).
+
+**Правка (порядок):** `SLICE7 DEPS: SLICE3` — единственная зависимость, слайс исполняется
+**четвёртым**; `SLICE4 DEPS: SLICE3, SLICE7`; `SLICE5 DEPS: SLICE4, SLICE7`; `SLICE6 DEPS:
+SLICE5, SLICE7` (без изменений). Итог: 1 → 2 → 3 → **7** → 4 → 5 → 6, ациклично (проверено разбором
+`DEPS` всех семи слайсов).
+
+**Правка (владение):** инъекция переехала в `SLICE4 STEP2` (там же, где снимается fail-open
+readiness); `SLICE2 STEP3` амендирован — его половина это manager-side шов (injection-ordering
+test с записывающим callable `WorkspaceProvisioner`, `session/provisioning.py:66`), и в тексте
+прямо сказано, почему `ManagedProvisioner` не может быть значением.
+
+### 15.3. [подтверждено] `ProvisionedWorkspace` нельзя собрать из ответа `register_workspace`
+
+`ProvisionedWorkspace.__post_init__` требует `tree_sha256` при `registered=True`
+(`session/provisioning.py:44-60`), а маршрут отдаёт только `{workspace_id, revision_id}`
+(`service.py:591`). Любой клиентский провижнер упирается в это поле; сегодня дыру маскирует
+только in-process `ManagedProvisioner`, у которого авторитет под рукой.
+
+**Правка.** Новый `SLICE7 STEP9`: `ClientWorkspaceProvisioner` в `execution/composition.py` +
+поле `tree_sha256` в ответе `REGISTER_WORKSPACE` (схема, маршрут, банк) — единственный вызов
+`register_workspace` в `src/`. Это не второй писатель: регистрация байтов остаётся за
+`register_existing`, провижнер только переводит ответ в `ProvisionedWorkspace`.
+
+### 15.4. [подтверждено] SLICE3 STEP3 и SLICE7 владели одной и той же ногой
+
+`SLICE3 STEP3`: *«Exit for the leg specifically: the controller's plan write reaches the authority
+through `ExecutionClient.publish`»*. Это ровно `SLICE7 CT116/STEP7/STEP8`. При `SLICE7 DEPS:
+SLICE3` получался цикл «SLICE3 ждёт SLICE7, SLICE7 ждёт SLICE3».
+
+**Правка.** Authority-половина (маршрут `publish`, удаление `publish_plan_buffer`) остаётся в
+SLICE3 STEP3; контроллерная нога — SLICE7 STEP7/STEP8. В текст STEP3 добавлен амендмент и
+пометка, что `inner_loop/plan_promotion.py` переименовывается `SLICE7 STEP10` в
+`plan_candidate.py`, поэтому упоминания `publish_plan_buffer` там — история (функция удалена в
+E288), а не текущее состояние.
+
+### 15.5. [подтверждено] SLICE5 CT96/CT108 ссылаются на удалённую функцию
+
+Оба `kill:` называют `_run_planner_managed_workflow`; `git grep _run_planner_managed_workflow src`
+пуст (функция удалена с Q70). Директива, называющая удалённый символ, неисполнима, а
+«PRODUCER_ABSENT» по правилам DoD не считается убийством.
+
+**Правка.** В обоих контрактах — пометка и обязанность `STEP2` переименовать директиву в ту
+функцию, которую шаг создаёт, и перепровести kill. Имя заранее не выдумываю: придуманный символ
+дал бы ровно ту же проблему через шаг.
+
+### 15.6. [проверено — конфликтов нет]
+
+- **CT-номера:** SLICE5 (`CT96/CT108/CT109/CT109a`) и SLICE7 (`CT114–CT121`) не пересекаются;
+  `contract-declared-twice` молчит.
+- **Банки:** SLICE5 держит `tests/test_invoke_workflow_tool.py`; SLICE7 его больше не касается
+  (черновиковый CT119 снят). Общий `tests/test_verify_gate_live.py` правит только `SLICE7 STEP10`
+  (литералы пути черновика), а SLICE5 исполняется после — двойной правки одного файла нет.
+- **Висячие ссылки:** `workspace_advanced`, `_checkpoint_parent_before_child` — grep по worklogs
+  пуст; обе сущности ушли вместе со снятым CT119 черновика.
+- **Один писатель:** SLICE5 STEP2 наследует писателя родителя, SLICE7 поставщика не дублирует
+  (`BoundPlanPublisher` не держит capability). Противоречия нет.
+- **E2E:** SLICE7 не вводит новых кейсов, SLICE5 владеет `I03-LIVE-S08`; пересечения producer-ключей
+  нет, `check_execution_e2e_coverage.py` остаётся зелёным (125/89/35).
+
+### 15.7. Производные числа DoD обновлены
+
+Таблица была привязана к 25 контрактам / 18 kill / 6 слайсам / 36 шагам. После SLICE7 и этой
+правки: **33** объявления (23 FUNCTIONAL + 9 CONSTRAINT + 1 PRESERVATION), **23** kill-директивы,
+**7** слайсов, **47** шагов. `CT114` перенумерован в FUNCTIONAL, чтобы правило «один kill на
+FUNCTIONAL» осталось точным (у него есть свой kill и свой чекер).
+
+Долг, который эта проверка не закрывает: `SLICE4 STEP1` (инвентарь исполнения) по-прежнему ждёт
+результатов негативных оракулов от «managed backend» — это его собственный exit, а не зависимость
+от SLICE7.
 
 ---
 
