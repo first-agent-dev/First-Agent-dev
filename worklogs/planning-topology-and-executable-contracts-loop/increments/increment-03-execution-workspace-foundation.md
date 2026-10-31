@@ -88,6 +88,91 @@ NOT WorkspaceAuthority/admission/materialization, actual public tool/PTY joins o
 All35STEPS/four final duties stay unchecked. Next: implement the one actual authority, not more
 standalone wrappers or a permissive service. Required host/full-path acceptance remains final SLICE6.
 
+## Closure state, one row per step (audit 2026-10-31, tree `200d588`)
+
+**Why no box is ticked — and why that is not negligence.** A step is ticked only when its own `exit:` clause
+has been *reproduced*, and the plan's own rule forbids ticking on a green-looking tree (E288 is the precedent:
+572 green tests, zero production callers). This sandbox has no 3.13 interpreter, no pytest collection for
+these banks and no Docker, so no exit clause can be reproduced here — including the local ones. That is the
+first reason the boxes are empty. The second is structural, and it is the one worth acting on:
+
+**The managed subsystem still has no production consumer.** `grep -rn "from fa.execution" src/fa
+--include=*.py | grep -v "^src/fa/execution/"` is **empty**. Nothing outside the package imports it, so
+SLICE1–3 build a real authority, real views, a real supervisor — and the command the operator actually runs
+never reaches them: `cli._build_pty_pool` (`:1923`) still builds a host `PtyPool` and falls back to a
+stateless pool on failure (`:1950`), `slice_verification._run_one` still calls `subprocess.run` (`:334`), and
+`CliSessionManager` is built without a provisioner (`_session_manager_for_args`, `cli.py:247`). Slices 1–3
+are therefore **components, not delivery**, and SLICE4 STEP2 is the hinge the whole increment turns on.
+
+**Legend.** `LOCAL` — code and bank exist, exit is reproducible without a host, only the run is missing.
+`PARTIAL` — named parts of the step landed, named parts did not. `HOST` — built, but the exit is a host fact.
+`OPEN` — no code yet. `PLANNED` — SLICE7: written and reviewed, not started.
+
+| step | state | what exists (verified in the tree) | what the exit still needs | waits on |
+| --- | --- | --- | --- | --- |
+| S1P1 | HOST | codec/client/protocol, E251 peer+deadline seam, `tests/test_execution_client.py` | installed-module `fa --help` under poisoned CWD/PYTHONPATH; over-budget reply observed once | installed wheel |
+| S1P2 | HOST | `CellBackend` (E258), `tests/test_execution_backend.py`, cancel/restart seam | one cell/two records; two one-shot cells; lock expiry on a real daemon | Docker |
+| S1P3 | PARTIAL | route table + socket owner + `main` (E277), receipts (E279), `pty_control` (E280), all 19 routes incl. `handoff` (E283) | install/image/entrypoint mounts applied atomically with the cutover; `register{create:true}` owner; disposable-host boot | S4P2, host |
+| S1P4 | OPEN | — | CT98–CT100 full-path mutation outcomes and cost on the real profile/image/kernel | S4P2, host |
+| S2P1 | LOCAL | existing-root registration/R0/writer generation (E253) | two-OS-process race reproduced; denied/stale admissions produce no effect | run |
+| S2P2 | LOCAL | immutable reader pins, rooted reads, release (E255) | pinned-reader matrix reproduced | run |
+| S2P3 | LOCAL | five view purposes, rooted IO (E256), admission/drain semantics (E257) | view matrix + quiesce-before-R0 reproduced | run |
+| S2P4 | PARTIAL | `workspace_io=` port exists and is plumbed through `profiles.py:204,343,357,364` and `tools/__init__.py` | production must pass the managed port (today it passes `None`) and the host fallbacks must go | S4P2 |
+| S2P5 | LOCAL | contention/read-pin/no-replay semantics | matrix reproduced | run |
+| S2P6 | PARTIAL | `HANDOFF` authority body + service route (E283), `_handoff_owner` | controller leg: drain/suspend, one allocation, send, dispatch only after ack | S4P2 |
+| S3P1 | PARTIAL | terminal barrier (E266), immutable export/seal (E267), checkpoint policy + bank (E284) | `tests/integration/test_publication_recovery.py` (directory absent, so the fence exits 4); the stage-loop call site | S4P2, host |
+| S3P2 | LOCAL | intent/current/projection, `_closed_candidate_reader:3464`, `_plan_prepare:3521` (E269) | pinned-reader/stale/fault matrix reproduced | run |
+| S3P3 | PARTIAL | bundle renderer + `RENAME_NOREPLACE` install (E271), plan replacement core (E273) | controller leg onto `publish_candidate_plan` with the host writer deleted in the same change | SLICE7 |
+| S3P4 | PARTIAL | forward recovery hooked into `_load` (`:1099`, `_recover_intent:4519`) (E276) | kernel-observed matrix, kills inside recovery, fsync-unsupported/EIO, crash vs power-loss labels | host |
+| S3P5 | PARTIAL | 17/17 producer mutants over the real authority (E276) | full declared-path kills on the approved filesystem | host |
+| S4P1 | PARTIAL | inventory coverage complete at `969fa06`; the note itself says `State: OPEN`, no row closed | close each row with source line, caller and nodeid | nothing |
+| S4P2 | OPEN | — (`run_stage_with_plan_write_boundary` absent; no `fa.execution` import outside the package; host `PtyPool`; no provisioner injected) | the cutover: one client + provisioner into `_session_manager_for_args`, `workspace_io` in production, fail-open readiness removed | SLICE7, S4P1 |
+| S4P3 | OPEN | `_run_one` still `subprocess.run` (`slice_verification.py:334`); no `_run_managed_command` | pinned verification scratch/receipts/report parsing through managed `exec` | S4P2 |
+| S4P4 | OPEN | — | the `execution_host` C1 closure matrix | S4P2, host |
+| S4P5 | OPEN | — | CT97/CT110/CT111 full-path kills | S4P2, host |
+| S5P1 | OPEN | no `tests/test_managed_acquisition.py`, no spec §7 v2 fixtures | fixtures + v1 compatibility and selection-vs-bootstrap tests | nothing |
+| S5P2 | PARTIAL | authority/route (E283); `_child_run_context` (`workflow_tool.py:387`) | controller `HANDOFF` request, suspension/drain, dispatch after ack | S4P2, S5P1 |
+| S5P3 | OPEN | — | selection/clarification + controller-rendered no-clobber bundle | S5P2 |
+| S5P4 | OPEN | — | live current-message provider, bounded initial task, retry/replan split | S5P2 |
+| S5P5 | OPEN | — | outer `drive_session`→`invoke`→child→`_cmd_run` C1 | S5P2–P4, host |
+| S5P6 | OPEN | — | CT96/CT108/CT109 full-path mutation outcomes | S5P5 |
+| S6P1 | LOCAL | `e2e/I03/live-result.schema.json`, `tests/test_e2e_artifact_contract.py` | four-state conformance reproduced | run |
+| S6P2 | LOCAL | `e2e/README.md`, `e2e/I03/live-verification.md` (35 I03 case ids) | index/status tests reproduced | run |
+| S6P3 | LOCAL | `e2e/I03/producer-coverage.json`, `producer-baseline.json`, `scripts/check_execution_e2e_coverage.py` (green: 125 producers, 89+35 cases) | removal-of-one-unique-key test reproduced | run |
+| S6P4 | LOCAL | `e2e/I03/implementation-handoffs.md` carries the CT113/Q85 split (5 references) | reviewed handoff reproduced | run |
+| S6P5 | OPEN | no host run sheet | needs actual deployment/workspace facts | host |
+| S6P6 | PARTIAL | the delivery law lands in all six surfaces via CT114 (SLICE7 STEP1) | the four E223 transferred roles stated in the skills | SLICE7 STEP1 |
+| S6P7 | OPEN | — | independent manual review before fixtures | S4, S5 |
+| S6P8 | OPEN | `e2e/I03/fixtures/` absent | reviewed bounded fixtures | S6P7 |
+| S6P9 | PARTIAL | coverage script green, every producer key mapped | each producer mapped to a deployed-behaviour oracle | S6P8, host |
+| S6P10 | OPEN | — | local package conformance + every `execution_host` suite + 18 kills + release gates | everything, host |
+| S7P1–P11 | PLANNED | nothing yet: `execution/composition.py`, `tests/test_execution_composition.py`, `load_execution_config`, `_already_published`, `_complete_result`, `retain_plan_draft`, `_root_binding`, `tests/test_delivery_law_conformance.py` are all absent | CT114–CT121 as written | S1–S6 for its own live rows only |
+
+**Counts from the table:** 9 `LOCAL`, 11 `PARTIAL`, 2 `HOST`, 14 `OPEN`, 11 `PLANNED` = 47 steps. Nothing is
+ticked; that is the honest count, and it is the number the increment header should be read against — not the
+existence of `workspace.py`.
+
+**The dependency order, said once.** Slice numbers are *authorship* order, not execution order: SLICE7 was
+written after SLICE6 but depends only on SLICE3, and SLICE4–6 consume the composition it builds, which is why
+`DEPS` already reads `SLICE4: SLICE3, SLICE7`, `SLICE5: SLICE4, SLICE7`, `SLICE6: SLICE5, SLICE7`. The
+execution order is these five waves, monotone, and every edge above is inside a wave boundary:
+
+1. **W0 — local, unblocked now.** SLICE7 entirely (it is the missing supplier), S4P1's inventory rows, and
+   S6P6's documentation half.
+2. **W1 — the cutover, local.** S4P2 (with SLICE7's client and provisioner), S2P4's production wiring, S3P3's
+   controller leg; and the `LOCAL` exits of S2P1/S2P2/S2P3/S2P5/S3P2/S6P1–S6P4 reproduced in the same pass,
+   because they are the banks the cutover must not break.
+3. **W2 — downstream, local.** S4P3, S5P1, S5P2, S5P3.
+4. **W3 — host C1.** S1P1–S1P4, S2P6's exit, S3P1(c), S3P4, S3P5, S4P4, S4P5, S5P4–S5P6.
+5. **W4 — acceptance.** S6P5, S6P7, S6P8, S6P9, S6P10 and every `NOT RUN` live row.
+
+**Why the numbers are not rewritten.** Renumbering slices would move every `SLICEn STEPm` reference — the
+`DEPS` graph, `plan_ids._SLICE_CEILING`, the ledger entries, code comments that cite a slice, and the E2E case
+ids — for zero behavioural gain, which is the same argument E290.1 used against cosmetic renames. What was
+missing was not different numbers but this table: with it, "3 → 7 → 4 → 5 → 6" is a footnote rather than a
+puzzle. If the operator prefers renumbering anyway, it is a mechanical pass over 47 step ids and seven `DEPS`
+lines, and it should be done once, after W1, so the rewrite is not repeated.
+
 ## Grounding, sequence and scope discipline
 
 - Current `run_bash` and `_build_pty_pool` deliberately fall back to host subprocess; SubagentRunner,
@@ -704,6 +789,15 @@ reproducible by the command beside it:
 
 If a later edit changes a count, the edit updates the table and the ledger entry that introduced the
 change; a plan sentence with a stale number is a defect, not a rounding error.
+
+**Ticking rule (2026-10-31, after the closure audit).** A `- [ ] STEP` box becomes `- [x]` when, and only
+when, that step's own `exit:` clause has been *reproduced* and the evidence is named in the ledger — never
+because the code exists, never because a bank looks green, and never from a phase of a larger step. The
+per-step truth therefore lives in `## Closure state, one row per step` above, which classifies every step as
+`LOCAL` (code and bank exist, only the run is missing), `PARTIAL`, `HOST` (built, exit is a host fact),
+`OPEN` or `PLANNED`. The audit's counts: 9 `LOCAL`, 11 `PARTIAL`, 2 `HOST`, 14 `OPEN`, 11 `PLANNED` — zero
+ticked, and the three local verify blocks cannot run in a 3.11 sandbox, so a tick today would be a claim
+nobody made.
 
 - [ ] All seven local verify blocks exit 0 AND collect every path named in their slice's `TESTS:` line —
       collection is proved by `--collect-only -q` naming each file, because a verify block whose single
