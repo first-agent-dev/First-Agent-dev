@@ -12,6 +12,7 @@ from fa.config import (
     CapabilityWarning,
     load_capabilities,
     load_capabilities_from_path,
+    load_execution_config,
 )
 
 
@@ -197,3 +198,50 @@ def test_capabilities_is_frozen() -> None:
     caps = Capabilities()
     with pytest.raises(FrozenInstanceError):
         caps.ENABLE_DYNAMIC_TOOLS = True  # type: ignore[misc]
+
+
+def test_load_execution_config_reads_one_absolute_path() -> None:
+    text = "execution:\n  service_config: /var/lib/fa/execution.json\n"
+    assert load_execution_config(text) == Path("/var/lib/fa/execution.json")
+
+
+def test_load_execution_config_strips_quotes_and_inline_comment() -> None:
+    text = 'execution:\n  service_config: "/var/lib/fa/execution.json"  # supervisor\n'
+    assert load_execution_config(text) == Path("/var/lib/fa/execution.json")
+    quoted = "execution:\n  service_config: '/var/lib/fa/execution.json'\n"
+    assert load_execution_config(quoted) == Path("/var/lib/fa/execution.json")
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "",
+        "capabilities:\n  ENABLE_SERVER_OPS: true\n",
+        "execution:\n",
+        "execution:\n  service_config: relative/execution.json\n",
+        "execution:\n  service_config: /var/lib/fa/../fa/execution.json\n",
+        "execution:\n  service_config: /var/lib/fa/execution.json\n  socket_path: /tmp/fa.sock\n",
+        "execution:\n  socket_path: /tmp/fa.sock\n",
+        "execution:\n  service_config /var/lib/fa/execution.json\n",
+        "execution:\n  service_config: /a/execution.json\n  service_config: /b/execution.json\n",
+    ],
+    ids=[
+        "empty-text",
+        "no-block",
+        "empty-block",
+        "relative-path",
+        "parent-traversal",
+        "unknown-key",
+        "key-before-value",
+        "no-colon",
+        "repeated-key",
+    ],
+)
+def test_load_execution_config_declines_anything_unusable(text: str) -> None:
+    assert load_execution_config(text) is None
+
+
+def test_load_execution_config_does_not_read_the_capability_section() -> None:
+    text = "capabilities:\n  ENABLE_SERVER_OPS: true\nexecution:\n  service_config: /var/lib/fa/execution.json\n"
+    assert load_execution_config(text) == Path("/var/lib/fa/execution.json")
+    assert load_capabilities(text).capabilities.ENABLE_SERVER_OPS is True

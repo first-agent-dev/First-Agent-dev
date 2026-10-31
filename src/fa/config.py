@@ -31,6 +31,7 @@ loader lands with R-1 HookRegistry runtime (BACKLOG M-1).
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field, fields
 from pathlib import Path
 
@@ -38,6 +39,8 @@ from fa._yaml_line_parser import iter_yaml_lines
 from fa._yaml_subset import strip_inline_comment
 
 DEFAULT_CONFIG_PATH: Path = Path.home() / ".fa" / "config.yaml"
+
+_logger = logging.getLogger(__name__)
 
 # Five flag names, in the order they appear in
 # ADR-6 §Amendment 2026-05-20 + Kronos `kronos/config.py:62-69`.
@@ -214,6 +217,57 @@ def load_capabilities_from_path(
     return load_capabilities(text)
 
 
+def load_execution_config(text: str) -> Path | None:
+    """Return the supervisor service-config path from the ``execution:`` block.
+
+    The block is one key with one absolute path — the same JSON the supervisor
+    validates with ``service.read_config_file``:
+
+    .. code-block:: yaml
+
+        execution:
+          service_config: /var/lib/fa/execution.json
+
+    A missing block, an unknown key inside it, a repeated key or a relative path
+    all yield ``None``: the managed composition then declines to compose and the
+    controller fails closed (CT115). An unusable *present* block is logged,
+    because a typo that silently disables managed publication is the failure
+    mode this reader must not hide. The capability flags are parsed by
+    :func:`load_capabilities` from the same text; the two sections never read
+    each other.
+    """
+
+    found: str | None = None
+    in_execution = False
+    present = False
+    for parsed_line in iter_yaml_lines(text):
+        if parsed_line.is_top_level:
+            in_execution = parsed_line.stripped.startswith("execution:")
+            present = present or in_execution
+            continue
+        if not in_execution:
+            continue
+        if ":" not in parsed_line.stripped:
+            _logger.warning("execution config line %d has no ':' separator; ignoring the block", parsed_line.line_no)
+            return None
+        key, _, value = parsed_line.stripped.partition(":")
+        if key.strip() != "service_config" or found is not None:
+            _logger.warning("execution config line %d is not a single 'service_config:' key", parsed_line.line_no)
+            return None
+        found = strip_inline_comment(value).strip().strip('"').strip("'")
+
+    if not present:
+        return None
+    if not found:
+        _logger.warning("execution: block names no service_config; managed execution stays off")
+        return None
+    path = Path(found).expanduser()
+    if not path.is_absolute() or ".." in path.parts:
+        _logger.warning("execution.service_config must be an absolute path without '..'; got %r", found)
+        return None
+    return path
+
+
 __all__ = [
     "DEFAULT_CONFIG_PATH",
     "Capabilities",
@@ -221,4 +275,5 @@ __all__ = [
     "CapabilityWarning",
     "load_capabilities",
     "load_capabilities_from_path",
+    "load_execution_config",
 ]

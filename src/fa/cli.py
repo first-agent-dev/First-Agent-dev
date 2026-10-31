@@ -30,6 +30,7 @@ from fa.authoring_rules import RULE_ALLOWLIST
 from fa.authoring_tcb import render_json, render_text, run_all
 from fa.chunker import CHUNKER_VERSION, Chunk, default_chunker
 from fa.cli_help import COMMANDS, help_as_json, render_command_help_ru, render_top_level_ru
+from fa.execution.composition import BoundPlanPublisher, managed_execution_for_run
 from fa.inner_loop import (
     EventLog,
     SessionState,
@@ -1428,27 +1429,38 @@ def _cmd_workflow(
         print("fa workflow: workspace preflight: workspace-mismatch", file=sys.stderr)
         return 2
 
-    exit_code, _terminal_state = run_workflow(
-        roles=roles,
-        task=base_task,
-        per_role_task=per_role_task,
-        mode=mode,
-        max_repairs=max_repairs,
-        max_replans=max_replans,
-        run_id=run_id,
-        config=args.config,
-        workspace=args.workspace,
-        max_turns=args.max_turns,
-        output_mode=getattr(args, "output_mode", None) or "console",
-        run_stage_fn=_cmd_run,
-        transport=transport,
-        secrets=secrets,
-        session_context=session_context,
-        run_context=run_context,
-        session_db=session_db,
-        inject_overrides=inject_overrides,
-        plan_path=plan_path,
-    )
+    # One managed execution per run, if the operator configured one: the same
+    # config file `fa` already reads, the same validator the supervisor uses, and
+    # the workspace the lifecycle just resolved. Absent authority yields None, and
+    # the controller then fails closed rather than publishing over the host path.
+    managed = managed_execution_for_run(run_context)
+    plan_publisher = None if managed is None else BoundPlanPublisher(managed, managed.binding)
+    try:
+        exit_code, _terminal_state = run_workflow(
+            roles=roles,
+            task=base_task,
+            per_role_task=per_role_task,
+            mode=mode,
+            max_repairs=max_repairs,
+            max_replans=max_replans,
+            run_id=run_id,
+            config=args.config,
+            workspace=args.workspace,
+            max_turns=args.max_turns,
+            output_mode=getattr(args, "output_mode", None) or "console",
+            run_stage_fn=_cmd_run,
+            transport=transport,
+            secrets=secrets,
+            session_context=session_context,
+            run_context=run_context,
+            session_db=session_db,
+            inject_overrides=inject_overrides,
+            plan_path=plan_path,
+            plan_publisher=plan_publisher,
+        )
+    finally:
+        if managed is not None:
+            managed.close()
     return exit_code
 
 

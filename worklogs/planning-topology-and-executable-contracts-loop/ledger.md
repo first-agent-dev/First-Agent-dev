@@ -5177,3 +5177,66 @@ always (2), never release (3), trusting the reply's `PlanRef` (1), and removing 
 caller's `ACQUIRE_WRITER` grant and releases only the view it opened. No provisioner (STEP9), no
 `candidate_path` removal (STEP10), no class proof (STEP11). The toolchain is the `/tmp/vt` copy with PEP 695
 helper generics rewritten; committed tests are untouched, so this is local evidence, not a CI claim.
+
+### E295 — SLICE7 STEP8 (CT116/CT118): one composition supplies the run's authority, and the guards refuse before the socket
+
+**What changed.** `src/fa/execution/composition.py` (214 lines) now holds the only `ExecutionClient(...)` construction
+in `src/` (`grep -rn "ExecutionClient(" src` = 1, line 158): `ExecutionBinding(namespace, workspace_id)` (data only —
+no capability, no revision), `ManagedExecution(client, binding, grant)` with `publish_plan(...)` delegating to the
+client verb and `close() -> bool`, `BoundPlanPublisher` as the `publish_candidate` port that refuses any binding other
+than its own, and `managed_execution_for_run(run_context, *, config_path=None, deadline=None) -> ManagedExecution |
+None`. `run_context` alone carries the namespace (`session_id` + `run_id`) and the workspace, exactly as the step was
+written; no second context is threaded, so session and run bytes cannot disagree. `fa/config.py` gains
+`load_execution_config(text) -> Path | None` beside `load_capabilities`, reusing `iter_yaml_lines` and
+`strip_inline_comment`; the capability reader and its `capabilities:`-only contract are untouched. `cli.py::_cmd_workflow`
+resolves the run's execution after `_resolve_workflow_lifecycle` (`:1436`), passes `plan_publisher=` (`:1459`) and
+releases the writer in one `finally` (`:1461-1463`).
+
+**Two decisions, both narrowing the written step and both worth the operator's eye.**
+
+1. **The writer is acquired once per run, not once per publication.** The step said both things at once: its type list
+   puts "the run's one `GrantReply`" on `ManagedExecution`, while a later sentence acquired and released the writer
+   around each publication. Per-publication release is not merely noisier: the publication's *indeterminate* path
+   deliberately sends no `RELEASE` (E294), so the second publication would either wait on a release that will never
+   come or assert one. One grant per run has one owner and one release, and `create_view` still re-proves
+   `active_actor == namespace` per publication, so nothing about the authority is relaxed. The step text was amended
+   rather than left contradicting the code.
+2. **"One resolver, both commands" is narrowed to what has a consumer.** `managed_execution_for_run` is structurally
+   the only resolver (one `load_execution_config` read, one `read_config_file` validation, one `register_workspace`
+   identity per workspace, one construction site), and `fa workflow` is its only caller until another command reads
+   the authority. The chat/manage path has no plan publication and no managed I/O yet, so wiring a grant into it would
+   acquire and release a grant nothing consumes — E288's shape in mirror image. The two-command test and its EDGE
+   mutant (a literal second config file must be detectable) were moved to STEP9, which gives the chat path its consumer
+   through `ClientWorkspaceProvisioner`; they are named in that step, not dropped.
+
+**The negative space is the point, and it is proved against a listener.** An absent `execution:` block, an unreadable
+file, a relative path, a path with `..`, an unknown key inside the block, a repeated key, a uid outside
+`controller_uids`, a workspace outside every approved root and the approved root itself all return `None`. "Returns
+`None`" is weak evidence on its own — a dead endpoint returns `None` too — so the guard test runs a **listening** unix
+socket beside each rejected case and asserts it records **zero connections**, with a control run on the same document
+and the same live supervisor that *is* managed. A mutant that removes the uid guard, or the containment test, or the
+root-is-not-a-workspace rule, therefore fails instead of quietly passing for the wrong reason (the first draft of this
+bank did exactly that: the uid mutant survived until the listener was added).
+
+**Verification (executed).** `tests/test_execution_composition.py` **9 passed**: absent/broken blocks; foreign uid,
+outside workspace and the root itself refused with zero connections; happy path over an in-process supervisor built
+from the same JSON — `register_workspace{create:false}` returns the registered `workspace_id`, the binding is
+`NamespaceRef(session, run)` + that id, `BoundPlanPublisher.publish_candidate` reaches a real commit and the promoted
+bytes are read back; another run's binding is refused; `close()` returns `True` and a second composition acquires the
+writer again (so the release really happened); and a refused release returns `False` for a typed refusal, an
+unavailable endpoint and `EXECUTION_UNKNOWN`, with exactly one `RELEASE` frame and no retry. `tests/test_config.py`
+**26 passed** covering the reader's one positive shape and nine unusable ones. Fifteen mutants, all killed, sources
+restored byte-identical: uid guard, containment, root-itself, binding guard, `create:true`, namespace without the
+session id, the legacy `run_context is None` path raising instead of declining, publisher dropping the ref,
+release-refusal reported as success, the three config shapes, and both CLI EDGE mutants (`plan_publisher=` deleted;
+`close()` deleted). Execution+workspace banks: **1350 passed, 1 skipped** (29 banks, `test_workspace_bootstrap.py`
+excluded — it patches `pathlib.Path` and trips pytest's own formatter). `test_cli_ergonomics` (14 failures) and
+`test_s10a_cli_coverage` (1) fail identically on `087993e` without these changes: they need a real git workspace and
+the repository cwd, so they are environment, not product. `ruff check`, `ruff format --check` and `git diff --check`
+clean; `scripts/check_doc_links.py` 318 files OK; plan `precheck` 0 FAIL / 7 WARN (unchanged set).
+
+**What this does not do.** No provisioner (`ClientWorkspaceProvisioner` is STEP9), no `candidate_scope.candidate_path`
+removal (STEP10), no class proof or sequencing `xfail` (STEP11). Nothing outside the package imports the composition
+except `cli.py`, and the chat path still reaches no authority — that is STEP9's join, and the increment table now
+says so instead of claiming both commands are wired. Toolchain as in E291–E294: `/tmp/vt` copy with PEP 695 helper
+generics rewritten, committed tests untouched, so this is local evidence and not a CI claim.
