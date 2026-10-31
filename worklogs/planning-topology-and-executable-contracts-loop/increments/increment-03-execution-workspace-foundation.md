@@ -493,6 +493,132 @@ uv run python scripts/check_execution_e2e_coverage.py
 - [ ] STEP9: index every distinct local/live producer, including separate CLI/direct guards, candidate/promotion/schema/T0, CT96 selection/bootstrap/clarification/context, CT97 file/edit/shell/subagent-absence/alias paths, early readiness/imports, no-replay, contention/read pins, terminal seal/publication/recovery; map I01 deferred obligations, retained I02 source/functional claims, and I03 producers to actual deployed-behaviour oracles (exit: all original+new required I01–I03 producer keys mapped with useful evidence oracles; no local-only or missing deployed claim credited)
 - [ ] STEP10: run local package conformance, every accumulated non-skipped execution_host suite and all 18 full-declared-path kills, and full release gates; review environment/readiness and inherited baseline acceptance using retained I02 manifests, exact test identities/replacements and Mypy contexts, including the unreproduced historical ninth context and relevant hook observations. Resolve or explicitly disposition each item for the intended Ubuntu/Docker/Python deployment without falsifying red results. Before claiming release gates complete, build the installed-controller wheel with supported CPython 3.13 including `zlib` and frozen build dependencies (the current 11 setup errors are a blocker, not a skip); provide the approved ShellCheck binary so all 12 shellcheck-gated tests run rather than skip; and provide a trusted Go 1.24.11 SDK plus pinned Gitleaks/pre-commit dependencies or an approved cached build environment so the actual readiness→hook→commit→publication path and `just test`/`just check` complete without bypass. Go is an indirect test-hook build requirement, not an FA runtime requirement. If any prerequisite remains unavailable, record the row BLOCKED and keep the release gate open. Only with maintenance/deploy authorization perform normal main update and reviewed host runs; inspect nonzero update before retry, verify actual deployed SHA/image/profile/config, execute spec §9.1 unmocked direct+nested workflow witnesses (not only deterministic provider-stub cases), record source-to-behaviour results and broad independent implementation/evidence review plus integrated signoff. No automated/harness PASS (exit: all four E223 acceptance obligations complete with recorded review; all required I01–I03 cases independently reviewed PASS; BLOCKED/NOT RUN/skip never counts)
 
+## SLICE7: Delivery closure — rooted units, one supplier, and a patch that publishes
+
+STEPS: prescriptive
+DEPS: SLICE3, SLICE4, SLICE5
+INTENT: Close the class of defect that produced I03: a component with no production consumer.
+  Every unit added or touched here is rooted in a command the operator actually runs —
+  `fa workflow --plan <path>` (`cli.py:1336`, `run_workflow` at `:1431`) and `fa run chat`'s
+  `invoke_workflow` (`cli.py:1795`) — and carries an EDGE mutation (remove the caller, not the body)
+  that fails a named test. The slice also removes the two blockers it was written from: the candidate
+  plan path inherited a snapshot's base CAS, and the candidate writer was deleted in `5f1c292`
+  without a supplier (Q90 §13 of `notes/Q90-defect-group-closure-2026-10-31.md`). It adds no new wire
+  operation and no second writer: the plan stays a byte-exact single-target replacement whose only
+  writer is `WorkspaceAuthority.publish_candidate_plan` (`workspace.py:3399`).
+  **Run order.** This slice is numbered after SLICE6 because it was written after it, but it executes
+  **before** SLICE6 STEP7 (independent review) and STEP10 (release gates): accepting the system before
+  these defects are closed would certify the regression. SLICE6 therefore declares
+  `DEPS: SLICE5, SLICE7`.
+CONTRACTS:
+  CT114 [CONSTRAINT]: the delivery law is part of every planning and execution surface an agent
+    reads, and a conformance test proves the text is load-bearing rather than decorative. Six
+    surfaces: `knowledge/skills/plan-authoring/SKILL.md` (liveness ladder with ROOT/EDGE/BODY-EDGE
+    mutants and SUPPORT units, cutover contract, gates, I-IP-7..9),
+    `knowledge/skills/tests-writing/SKILL.md` (central laws, L1/L2/L3 table, I-TW-22..24),
+    `knowledge/skills/tests-writing/INJECT.md`, `knowledge/skills/feature-planning/{SKILL.md,INJECT.md}`
+    (laws 10–11, contract-card SUPPLIER/ROOT/EDGE, edit-packet Delivery, after-edit gates,
+    anti-patterns), `src/fa/inner_loop/prompt.py` (PLANNER hard rules + `## Delivery` template +
+    self-check; CODER delivery discipline and the three final-message facts),
+    `knowledge/prompts/architect-fa.md`.
+    Catches: a skill that teaches producer-only kill-checks (the E260–E288 shape: 572 green tests,
+    zero production callers) and a prompt that lets a planner present an uncalled module as done.
+  CT115 [FUNCTIONAL]: a workflow that cannot publish a repaired plan refuses BEFORE spending a
+    planner call, with a closed reason distinct from a bad plan, and leaves the candidate's exact
+    bytes retrievable. Today an absent publisher is reported as `prepare-failed`
+    (`workflow_controller.py:2293-2294`), the same code a failed validation produces (`:2291`), after
+    the planner ran (`:2401`) and after the candidate was unlinked (`:2451`). After: the supplier is
+    proved before `state.planner_calls += 1` (`:2558`); the refusal is
+    `promotion/managed-execution-absent` in `admission.json`; `planner_calls` stays 0; no candidate
+    directory is created. `_promote_validated_plan`'s `publisher` parameter stops being optional, so
+    no call site can pass nothing.
+    kill: remove-call src/fa/inner_loop/workflow_controller.py::_admit_plan -> _require_managed_publisher
+  CT116 [FUNCTIONAL]: exactly one composition supplies the managed publisher to `run_workflow`, and
+    both operational roots reach it. `ExecutionBinding` (frozen: `namespace`, `workspace_id`, `run_id`;
+    no capability, no revision) is data; `managed_execution_for_run(...)` is the only constructor of
+    `ExecutionClient` in `src/` (there is none today: `git grep "ExecutionClient(" src` is empty) and
+    returns `None` when no supervisor endpoint is configured, never minting a grant implicitly;
+    `BoundPlanPublisher(client, binding)` is the adapter the controller port
+    (`plan_promotion.py:32 CandidatePlanPublisher`) sees and cannot hold a token because it has no
+    such field. `ExecutionClientPlanPublisher` (`client.py:154-283`, holding
+    `_owner_capability: str`) is deleted. Roots: `cli.py::_cmd_workflow` (`:1336`) and the chat
+    registry that builds `invoke_workflow` (`:1795`).
+    kill: remove-call src/fa/cli.py::_cmd_workflow -> managed_execution_for_run
+  CT117 [FUNCTIONAL]: a plan publication is a patch, not a snapshot. The base-equality precondition is
+    removed from the candidate path only (`workspace.py:3492-3493`, inside
+    `_closed_candidate_reader` `:3464`); the per-file CAS (`_plan_source_identity`, `old_sha256`) and
+    every provenance check stay. `CREATE_VIEW.base_revision` becomes nullable for
+    `CANDIDATE`/`VERIFICATION` (`protocol.py:102`), and `PUBLISH.expected_base_revision` becomes
+    nullable only for a candidate publish with a non-null `plan_ref` (`:126`, cross-field `:326-334`);
+    the authority half already accepts `base_revision=None` (`create_view`, `:1909`, `:1928-1930`), so
+    null means "the bytes current when the copy starts". A publish whose intent equals the current
+    tree returns the current revision with `already_published: true` instead of
+    `INPUT_POLICY` from `_plan_prepare`'s "a replacement must replace something" (`:3534`). The PLAN
+    revision id stops hashing `operation_id` (`_plan_prepare` manifest `:3544`,
+    `_derive_revision_id` `:244`); the dispatcher's `op-<request_id>` stays in the intent and the reply.
+    kill: remove-call src/fa/execution/workspace.py::publish_candidate_plan -> _already_published
+  CT118 [FUNCTIONAL]: no bearer grant is a `str` field outside `fa/execution/types.py`.
+    `ExecutionClient.request` (`client.py:104`) takes `grant: GrantReply | None` and unwraps it once,
+    inside `encode_json`; grant replies are wrapped at the client boundary; `ManagedBashExecutor`
+    holds a `GrantReply`. `repr()`, `vars()`, events and tool results on any object the composition
+    builds contain no 64-hex grant.
+    kill: remove-call src/fa/execution/client.py::ExecutionClient.request -> GrantReply.to_wire_capability
+  CT119 [FUNCTIONAL]: `invoke_workflow` with coder works in a managed session. The blanket refusal
+    (`workflow_tool.py:382`, `:469-474`, profile text at `:576-580`) is replaced by: a stable parent
+    checkpoint when the parent holds a managed write episode, a child binding derived from the child's
+    own run context, a bounded run on the invocation deadline (`:508`), and a `workspace_advanced`
+    marker carrying the child's final revision so chat re-pins instead of editing stale bytes.
+    Unmanaged parent: refuse `managed-mode-required`, never fall back to host-path nested writes.
+    kill: remove-call src/fa/inner_loop/tools/workflow_tool.py::handler -> _checkpoint_parent_before_child
+  CT120 [CONSTRAINT]: a validated candidate that cannot be published is retained, not discarded.
+    Operator ruling (2026-10-31, option B): the exact bytes go to
+    `.fa/runs/<run_id>/drafts/plan-<sha256>.md`, written with `O_EXCL` + fsync + 0600, at most eight
+    per run, each ≤ `MAX_PLAN_BYTES`; no canonical byte, no second writer. A successful publication
+    leaves nothing behind.
+    Catches: retaining into the canonical plan path, into the planner's draft namespace, or at a
+    location the admission record does not name.
+  CT121 [CONSTRAINT]: each `candidate` name means one thing. Host planner drafts move to
+    `.fa/drafts/<run>/plan-<hex>.md`; `seed_plan_candidate` becomes `open_planner_draft`;
+    `inner_loop/plan_promotion.py` becomes `inner_loop/plan_candidate.py`; the nominal wire field
+    `candidate_scope.candidate_path` is removed (schema, `_candidate_scope` `:285`,
+    `_candidate_buffer` `:2248`, service routes, banks), because it labelled a buffer that is always
+    the single file `candidate` inside the view directory (`_buffer_bytes` `:2261`).
+    `profiles._planner_target_allowed` (`:257-258`) keeps refusing the draft namespace; no protocol
+    operation is added or retired.
+    Catches: a rename that leaves two spellings live, and a cosmetic schema change that drops a
+    validated field without a cross-field rule.
+  CT122 [PRESERVATION]: sealed publication and recovery are untouched: `publish_view` keeps its
+    `expected_base_revision` CAS and its `SEALED`-only path, `verify_publication` stays the replay
+    owner, `_recover_intent`/`_recover_plan` keep forward-only semantics, one writer per run remains,
+    and every existing bank (`test_workspace_publication.py`, `test_workspace_recovery.py`,
+    `test_execution_purposes.py`, `test_execution_service.py`, `test_execution_protocol.py`,
+    `test_execution_client.py`) stays green.
+TESTS: tests/test_delivery_law_conformance.py (NEW), tests/test_plan_candidate_retention.py (NEW),
+  tests/test_execution_composition.py (NEW), tests/test_execution_grants.py (NEW),
+  tests/test_nested_workflow_acquisition.py (NEW), tests/test_workspace_publication.py,
+  tests/test_execution_protocol.py, tests/test_execution_service.py, tests/test_execution_client.py,
+  tests/test_verify_gate_live.py, tests/test_invoke_workflow_tool.py, tests/test_workspace_recovery.py,
+  tests/test_execution_purposes.py
+```verify
+uv run pytest tests/test_delivery_law_conformance.py tests/test_plan_candidate_retention.py tests/test_execution_composition.py tests/test_execution_grants.py tests/test_nested_workflow_acquisition.py -q
+uv run pytest tests/test_workspace_publication.py tests/test_workspace_recovery.py tests/test_execution_purposes.py tests/test_execution_protocol.py tests/test_execution_service.py tests/test_execution_client.py -q
+uv run pytest tests/test_verify_gate_live.py tests/test_invoke_workflow_tool.py -q
+uv run python scripts/check_execution_e2e_coverage.py
+```
+- [ ] STEP1: land CT114 on all six surfaces and add `tests/test_delivery_law_conformance.py`: per surface a token list that must be present (`EDGE mutant`, `SUPPORT`, `rooted-by`, `supplier`, `## Delivery` where the surface owns a plan shape) plus a damage test that mutates a copy of the surface (delete the section, or replace `EDGE` with `PRODUCER`) and asserts the checker flags it; keep `tests/test_skill_conformance.py` green and do not touch the `PLAN-SKELETON` markers or the schema §4 example (exit: new suite green, damage mutants caught for all six surfaces, no skeleton marker changed)
+- [ ] STEP2: implement CT115. Add `_require_managed_publisher(ctx) -> CandidatePlanPublisher` in `workflow_controller.py` raising `PlanPromotionError("managed-execution-absent")`, called in `_admit_plan` before `state.planner_calls += 1` (`:2558`) and only on the repair/replan path; pass its result down as an explicit `publisher` argument of `_run_admission_repair` and make that parameter of `_promote_validated_plan` required (delete the `publisher is None` branch at `:2293-2294`); extend `ADMISSION_RULES["promotion"]` (`admission_schema.py:46-55`) with `managed-execution-absent`. Negative test: diagnostic plan, no publisher → last attempt `{validator: promotion, rule: managed-execution-absent}`, status `BLOCKED`, `planner_calls == 0`, no candidate directory, canonical sha unchanged; control: a valid plan on an unmanaged run still admits (exit: suite green, EDGE mutant caught, `prepare-failed` unreachable from the unmanaged path)
+- [ ] STEP3: implement CT120. In `_run_admission_repair` capture the candidate bytes before the cleanup `finally` (`:2451`) and, when `_promote_validated_plan` raises, persist them through a new `retain_plan_draft(workspace, run_id, raw, deadline)` in `workflow_artifacts.py` using `_private_artifact_directory` (`:566`) under `.fa/runs/<run_id>/drafts/`, `O_EXCL`+`O_NOFOLLOW`, 0600, fsync file and directory, idempotent by name, capped at eight files per run (refuse, never delete); a retention failure must not mask the original `PlanPromotionError`. Tests: injected publisher failure → file with the candidate sha exists, canonical unchanged, admission BLOCKED; success → no draft; ninth retention refused with a structured warning (exit: suite green, retention is not a side effect of success)
+- [ ] STEP4: implement the wire half of CT117 in `execution/protocol.py`: `CREATE_VIEW.base_revision` becomes `_nullable(_id("rev-"))` (`:102`), `PUBLISH.expected_base_revision` becomes nullable (`:126`), `_PUBLISH_REPLY` (`:145`) gains `already_published={"type": "boolean"}`, and the decoder gains three cross-field rules — a null `base_revision` only for `CANDIDATE`/`VERIFICATION`, a null `expected_base_revision` only for a candidate publish with non-null `plan_ref`, and `already_published: true` only with a non-null `plan_ref`. Update `test_execution_protocol.py` with the refusal and acceptance matrices (exit: protocol suite green, three new refusals proved, `_COMMITTED` unchanged for `install_project`)
+- [ ] STEP5: implement the authority half of CT117. Delete the base-equality comparison in `_closed_candidate_reader` (`:3492-3493`) and leave every other predicate; add `_already_published(binding, plan_ref, buffer)` and call it in `publish_candidate_plan` (`:3399`) before `_plan_prepare` (`:3536`), returning the current revision facts with `already_published: true` and no intent, no stage, no replace; drop `"operation_id"` from the PLAN manifest in `_plan_prepare` (`:3544`) keeping it in the intent, and invert the derivation assertion in `test_workspace_publication.py` (exit: publication/recovery banks green, both inverted mutants caught, no regenerated `rev-` literal anywhere)
+- [ ] STEP6: implement CT118. `ExecutionClient.request` takes `grant: GrantReply | None`, validates the type and unwraps once at `"capability": ...`; the four grant replies are wrapped into `GrantReply` at the client boundary; `ManagedBashExecutor` stores a `GrantReply`; add `GrantReply.to_wire_capability()` in `types.py`. New `tests/test_execution_grants.py`: against the in-process supervisor, `repr()` and every `vars()` value of client, executor and adapter contain no `[0-9a-f]{64}`, no receipt/event/tool result carries the grant, `to_journal_result` still refuses a projection containing it (exit: suite green, the guard fails if a hex grant reaches any attribute)
+- [ ] STEP7: implement the client verb and delete the adapter (CT116/CT118). Add `ExecutionClient.publish_plan(binding, source, candidate, *, deadline)` carrying the whole saga now in `ExecutionClientPlanPublisher.publish_candidate` (`client.py:180-266`): CREATE_VIEW with null base and the pinned `plan_ref`, WRITE_FILE into the scoped buffer, STOP_VIEW requiring `terminal is True`, PUBLISH with `sealed_manifest_id: null`, the `plan_ref` identity check, `already_published` passthrough, and RELEASE only on a determinate outcome; delete `ExecutionClientPlanPublisher` and `_release_candidate_best_effort` (`:268-283`) and move their tests to the client's bank as one saga test plus one uncertainty test that asserts the view is *not* released (exit: `git grep -c ExecutionClientPlanPublisher src tests` is 0, saga bank green, uncertainty test proves no second commit and no release)
+- [ ] STEP8: add `src/fa/execution/composition.py` with `ExecutionBinding` (frozen), `ManagedExecution` (client + binding) and `managed_execution_for_run(...) -> ManagedExecution | None` — the only `ExecutionClient(...)` in `src/`, returning `None` when no endpoint is configured; add `BoundPlanPublisher(client, binding)` implementing `CandidatePlanPublisher`. Wire `cli.py::_cmd_workflow` to construct it and pass `plan_publisher=` into `run_workflow` (`:1431`). Tests `tests/test_execution_composition.py`: absent config → `None` and CT115's reason code; present config → binding fields match the provisioned workspace (`session/provisioning.py:44 ProvisionedWorkspace`) and `publish_plan` reaches a real commit; EDGE mutant deletes `plan_publisher=` at `:1431` and the "workflow publishes a repaired plan" test must fail (exit: suite green, EDGE mutant caught, one `ExecutionClient(` site in `src/`)
+- [ ] STEP9: implement CT119's ordering without removing the refusal: before `_child_run_context`, `_checkpoint_parent_before_child(ctx, deadline)` — when the parent has an open managed write episode, stop → seal → publish and re-pin the parent; when unmanaged, `ToolResult.fail("managed-mode-required")`; derive the child binding from `child_context` so the child's `run_workflow` gets `plan_publisher`; on return attach `workspace_advanced` and the child's final revision. Exit: with the refusal in place, an unmanaged parent gets `managed-mode-required`, the recording connector proves checkpoint → child → marker, and a checkpoint refusal (`TERMINALITY_UNKNOWN`) blocks the child (exit: ordering proved, no child dispatch after a failed checkpoint)
+- [ ] STEP10: complete CT119 — remove the refusal (`workflow_tool.py:382`, `:469-474`, `:576-580`) and open the authority to a direct descendant: replace the seven `binding.metadata["active_actor"] != namespace.to_dict()` equalities (`workspace.py:1385`, `:1891`, `:2125`, `:2570`-adjacent, `:3486`, `:3804`, `:4028`) and the `_owner_only` predicate (`:2729`) with `_acts_as_active_actor(metadata, namespace)` accepting the recorded actor or a namespace whose `parent_run_id` equals it in the same session. Tests: a child namespace publishes with the parent's grant and the metadata is byte-identical; grandchild, sibling, foreign session and parent-link swap are refused; two consecutive invocations both succeed (exit: new suite green, both EDGE mutants caught)
+- [ ] STEP11: implement CT121. Rename the host draft path to `.fa/drafts/<run>/plan-<hex>.md` (`plan_promotion.py:71`, `client.py:194`), `seed_plan_candidate` → `open_planner_draft`, module → `plan_candidate.py` with importers updated, and remove `candidate_scope.candidate_path` from `protocol.py`, `_candidate_scope` (`:285`), `_candidate_buffer` (`:2248`), the service routes and the banks, replacing the scope check with the exact `plan_ref` equality that already exists. `git grep -n "candidate_path" src` is empty (exit: no dual spelling, protocol bank green, `check_doc_links.py` clean)
+- [ ] STEP12: prove the class, not the instances, and record it. Add the two EDGE tests that would have caught E288: (a) `tests/test_execution_composition.py::test_both_roots_supply_a_managed_publisher` — for `fa workflow --plan` and for `fa run chat` → `invoke_workflow` → child workflow, assert a publisher reached `_promote_validated_plan`, recorded by the port rather than inferred from a green run; (b) `test_a_publish_failure_never_loses_the_candidate`. Register four new live surfaces in `notes/e2e-live-verification-register.md` — `I03-LIVE-28` managed composition supplier, `I03-LIVE-29` nested coder invocation, `I03-LIVE-30` patch-not-snapshot publication, `I03-LIVE-31` grant custody — plus `I03-LIVE-S09` for the joined parent↔child path, all `PLANNED / UNEXECUTED`, with their negative controls; extend `e2e/I03/implementation-handoffs.md` and the producer coverage; update this increment's derived DoD table and the ledger entry for this slice (exit: coverage script OK with the new keys mapped, DoD counts match their commands, the two EDGE mutants are the only way to make the new tests fail)
+
+
 ## Increment definition of done — binary, no partial isolation claim
 
 **Counts in this section are derived, never hand-typed.** Canonical numbers at the E268 review, each
