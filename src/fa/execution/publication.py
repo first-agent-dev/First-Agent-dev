@@ -365,6 +365,7 @@ class PublishResult:
     operation_id: str
     projection_complete: bool = True
     plan_ref: PlanRef | None = None
+    already_published: bool = False
 
     def to_wire(self) -> dict[str, Any]:
         return {
@@ -373,6 +374,7 @@ class PublishResult:
             "tree_sha256": self.tree_sha256,
             "operation_id": self.operation_id,
             "projection_complete": self.projection_complete,
+            "already_published": self.already_published,
             "plan_ref": None
             if self.plan_ref is None
             else {
@@ -498,6 +500,7 @@ class PlanPublishResult:
     operation_id: str
     projection_complete: bool
     plan_ref: PlanRef
+    already_published: bool = False
 
 
 @dataclass(frozen=True)
@@ -741,6 +744,8 @@ def publish_plan(
         operation_id=str(receipt["operation_id"]),
         projection_complete=bool(receipt["projection_complete"]),
         plan_ref=receipt["plan_ref"],
+        # Absent only in a receipt produced before the field existed (Q93-B).
+        already_published=bool(receipt.get("already_published", False)),
     )
 
 

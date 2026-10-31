@@ -329,6 +329,94 @@ def test_cross_field_or_extra_corrupt_record_never_looks_like_durable_done(tmp_p
     assert caught.value.code == "CORRUPT_STATE" and path.read_bytes() == before
 
 
+def _publish_done_record(*, with_field: bool, extra_key: bool) -> dict[str, Any]:
+    """The exact bytes a pre-change writer produced for a candidate publish DONE."""
+    view = {
+        "workspace_id": "ws-" + "5" * 32,
+        "generation": 1,
+        "base_revision": "rev-" + "7" * 32,
+        "view_id": "view-" + "6" * 32,
+        "owner_run_id": "run-1",
+        "access": "READ",
+        "purpose": "CANDIDATE",
+    }
+    result: dict[str, Any] = {
+        "workspace_id": view["workspace_id"],
+        "revision_id": "rev-" + "8" * 32,
+        "tree_sha256": SHA,
+        "operation_id": OID,
+        "projection_complete": True,
+        "plan_ref": {"workspace_relative_path": "docs/plan.md", "source_kind": "EXPLICIT", "sha256": SHA},
+    }
+    if with_field:
+        result["already_published"] = False
+    if extra_key:
+        result["sealed_manifest_id"] = None
+    return {
+        "schema_version": 1,
+        "operation_id": OID,
+        "request_id": RID,
+        "op": Operation.PUBLISH.value,
+        "namespace": NS.to_dict(),
+        "view_ref": view,
+        "input_sha256": SHA,
+        "state": "DONE",
+        "container_id": None,
+        "cancel_requested": False,
+        "result": result,
+    }
+
+
+def test_a_stored_publish_from_before_the_added_field_still_reads_and_keeps_its_bytes(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Q93-B: one added reply field, filled in the served copy, never rewritten."""
+    owner = journal(tmp_path)
+    path = tmp_path / "operations" / (OID + ".json")
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(_publish_done_record(with_field=False, extra_key=False)))
+    path.chmod(0o600)
+    before = path.read_bytes()
+
+    with caplog.at_level("WARNING", logger="fa.execution.journal"):
+        record = owner.lookup(OID, NS)
+
+    assert record is not None and record["state"] == "DONE"
+    assert record["result"]["already_published"] is False
+    assert path.read_bytes() == before
+    fills = [line for line in caplog.messages if line.startswith("journal.compat.filled")]
+    assert len(fills) == 1 and OID in fills[0] and "already_published" in fills[0]
+
+    with caplog.at_level("WARNING", logger="fa.execution.journal"):
+        caplog.clear()
+        again = owner.lookup(OID, NS)
+    assert again == record
+    assert [line for line in caplog.messages if line.startswith("journal.compat.filled")] == []
+
+
+def test_a_stored_publish_that_already_carries_the_field_is_served_unaltered(tmp_path: Path) -> None:
+    owner = journal(tmp_path)
+    path = tmp_path / "operations" / (OID + ".json")
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(_publish_done_record(with_field=True, extra_key=False)))
+    path.chmod(0o600)
+    record = owner.lookup(OID, NS)
+    assert record is not None and record["result"]["already_published"] is False
+
+
+def test_an_unknown_extra_reply_key_is_still_corruption_not_a_fill(tmp_path: Path) -> None:
+    owner = journal(tmp_path)
+    path = tmp_path / "operations" / (OID + ".json")
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(_publish_done_record(with_field=False, extra_key=True)))
+    path.chmod(0o600)
+    before = path.read_bytes()
+    with pytest.raises(JournalError) as caught:
+        owner.lookup(OID, NS)
+    assert caught.value.code == "CORRUPT_STATE"
+    assert path.read_bytes() == before
+
+
 def test_only_one_supervisor_holds_startup_recovery_scope(tmp_path: Path) -> None:
     owner = OperationJournal(tmp_path / "operations", lock_timeout_ms=10)
     second = OperationJournal(tmp_path / "operations", lock_timeout_ms=10)

@@ -99,7 +99,11 @@ PAYLOADS: dict[Operation, dict[str, Any]] = {
     Operation.PIN_READER: _object(workspace_id=_id("ws-"), revision_id=_id("rev-"), plan_ref=_nullable(PLAN_REF)),
     Operation.CREATE_VIEW: _object(
         workspace_id=_id("ws-"),
-        base_revision=_id("rev-"),
+        # Null binds the view to whatever is current when the copy starts
+        # (CT117): a patch publish must not demand that nothing else moved.
+        # Only CANDIDATE/VERIFICATION accept it; a PROJECT/MUTATION writer
+        # still names the bytes it intends to mutate.
+        base_revision=_nullable(_id("rev-")),
         access=VIEW["properties"]["access"],
         purpose=VIEW["properties"]["purpose"],
         candidate_scope=_nullable(CANDIDATE_SCOPE),
@@ -149,6 +153,10 @@ _PUBLISH_REPLY = _object(
     operation_id=_id("op-"),
     projection_complete={"type": "boolean", "const": True},
     plan_ref=_nullable(PLAN_REF),
+    # True only for a candidate publish whose intent is already the current
+    # bytes (CT117): the reply then names the revision that already exists
+    # instead of committing a second one. Sealed publishes always send False.
+    already_published=BOOL,
 )
 _OWNER_REPLY = _object(view_ref={"type": "null"}, capability=SHA, generation=POSITIVE, revision_id=_id("rev-"))
 _VIEW_REPLY = _object(view_ref=VIEW, capability=SHA)
@@ -320,6 +328,8 @@ def _request_bindings(record: dict[str, Any], op: Operation) -> None:
     if op is Operation.EXEC and payload["operation_id"] != "op-" + record["request_id"]:
         raise ExecutionContractError
     if op is Operation.CREATE_VIEW:
+        if payload["base_revision"] is None and payload["purpose"] not in {"CANDIDATE", "VERIFICATION"}:
+            raise ExecutionContractError
         if (payload["candidate_scope"] is not None) != (payload["purpose"] == "CANDIDATE"):
             raise ExecutionContractError
         if payload["purpose"] in {"VERIFICATION", "MUTATION", "CANDIDATE"} and payload["plan_ref"] is None:
@@ -372,6 +382,10 @@ def decode_reply(raw: bytes, *, operation: Operation, request_id: str) -> dict[s
             validate_receipt(record["result"]["receipt"])
         if operation is Operation.PIN_READER and record["result"]["view_ref"]["access"] != "READ":
             raise ExecutionContractError
+        if operation is Operation.PUBLISH and record["result"]["already_published"]:
+            # Nothing was applied without a plan identity to apply.
+            if record["result"]["plan_ref"] is None:
+                raise ExecutionContractError
     return record
 
 

@@ -144,7 +144,7 @@ RESULTS: dict[Operation, dict[str, Any]] = {
     Operation.PTY_CONTROL: {"sessions": ["main"], "message": "ok"},
     Operation.STOP_VIEW: {"view_id": VID, "terminal": False},
     Operation.SEAL: {"sealed_manifest_id": "seal-" + RID, "revision_id": REV, "tree_sha256": SHA},
-    Operation.PUBLISH: {**COMMITTED, "plan_ref": None},
+    Operation.PUBLISH: {**COMMITTED, "plan_ref": None, "already_published": False},
     Operation.INSTALL_PROJECT: COMMITTED,
     Operation.PREPARE_BUNDLE: {"validated_bundle_id": "bundle-" + RID, "bundle_sha256": SHA},
     Operation.RELEASE: {"released": True},
@@ -216,6 +216,7 @@ def test_publish_schema_binds_nullable_seal_id_to_candidate_view_only() -> None:
 def test_publish_reply_requires_nullable_plan_ref_but_install_keeps_committed_shape() -> None:
     publish = response(Operation.PUBLISH)
     assert publish["result"]["plan_ref"] is None
+    assert publish["result"]["already_published"] is False
     decode_reply(encode_json(publish), operation=Operation.PUBLISH, request_id=RID)
     malformed = copy.deepcopy(publish)
     del malformed["result"]["plan_ref"]
@@ -223,6 +224,55 @@ def test_publish_reply_requires_nullable_plan_ref_but_install_keeps_committed_sh
         decode_reply(encode_json(malformed), operation=Operation.PUBLISH, request_id=RID)
     install = response(Operation.INSTALL_PROJECT)
     assert set(install["result"]) == set(COMMITTED)
+
+
+def test_already_published_reply_is_bound_to_a_named_plan_and_never_to_a_seal() -> None:
+    """CT117: true means "this intent is already the current bytes", so it needs a plan."""
+    plan_ref = {"workspace_relative_path": "docs/plan.md", "source_kind": "EXPLICIT", "sha256": SHA}
+    repeated = response(Operation.PUBLISH)
+    repeated["result"].update(plan_ref=plan_ref, already_published=True)
+    decode_reply(encode_json(repeated), operation=Operation.PUBLISH, request_id=RID)
+
+    unbound = copy.deepcopy(repeated)
+    unbound["result"]["plan_ref"] = None
+    with pytest.raises(ExecutionContractError):
+        decode_reply(encode_json(unbound), operation=Operation.PUBLISH, request_id=RID)
+
+    missing = response(Operation.PUBLISH)
+    del missing["result"]["already_published"]
+    with pytest.raises(ExecutionContractError):
+        decode_reply(encode_json(missing), operation=Operation.PUBLISH, request_id=RID)
+
+
+@pytest.mark.parametrize("purpose", ["CANDIDATE", "VERIFICATION"])
+def test_a_reader_view_may_start_from_the_bytes_current_at_copy_time(purpose: str) -> None:
+    """CT117: the base is optional exactly where the publish re-reads it."""
+    record = request(Operation.CREATE_VIEW)
+    record["payload"].update(
+        access="READ",
+        purpose=purpose,
+        base_revision=None,
+        plan_ref={"workspace_relative_path": "docs/plan.md", "source_kind": "EXPLICIT", "sha256": SHA},
+        candidate_scope=None
+        if purpose == "VERIFICATION"
+        else {
+            "candidate_path": ".fa/admission/run-1/candidate.md",
+            "plan_ref": {
+                "workspace_relative_path": "docs/plan.md",
+                "source_kind": "EXPLICIT",
+                "sha256": SHA,
+            },
+        },
+    )
+    assert decode_request(encode_json(record)) == record
+
+
+@pytest.mark.parametrize("purpose", ["PROJECT", "MUTATION", "PROVISIONING"])
+def test_a_writer_view_still_names_the_bytes_it_mutates(purpose: str) -> None:
+    record = request(Operation.CREATE_VIEW)
+    record["payload"].update(access="WRITE", purpose=purpose, base_revision=None, plan_ref=None, candidate_scope=None)
+    with pytest.raises(InvalidRequestError):
+        decode_request(encode_json(record))
 
 
 @pytest.mark.parametrize("op", list(Operation))

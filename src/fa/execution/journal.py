@@ -8,6 +8,7 @@ Reuse the existing private IO primitives, not a second database/history.
 from __future__ import annotations
 
 import copy
+import logging
 import math
 import os
 import stat
@@ -91,6 +92,42 @@ def _projection_schema(op: Operation) -> dict[str, Any]:
 
 _RESULTS = {op: fastjsonschema.compile(_projection_schema(op)) for op in Operation}
 
+#: Reply fields added to a *closed* result schema after records were already on
+#: disk (Q93-B, 2026-10-31). Only additions, only constants: nothing here may be
+#: derived from workspace state, and a removed/renamed field is never listed —
+#: that is a schema version, not a compatibility row. The stored bytes are never
+#: rewritten; a reader fills the projection it serves and says so once.
+_ADDED_REPLY_FIELDS: dict[Operation, dict[str, Any]] = {
+    Operation.PUBLISH: {"already_published": False},
+}
+
+logger = logging.getLogger(__name__)
+_FILLED_LOGGED: set[tuple[str, str]] = set()
+_MAX_LOGGED_FILLS = 4096
+
+
+def _complete_result(op: Operation, result: dict[str, Any]) -> tuple[dict[str, Any], tuple[str, ...]]:
+    """Fill missing *added* reply fields into a served copy, never into the file."""
+    added = _ADDED_REPLY_FIELDS.get(op)
+    if added is None:
+        return result, ()
+    missing = tuple(name for name in added if name not in result)
+    if not missing:
+        return result, ()
+    return {**result, **{name: added[name] for name in missing}}, missing
+
+
+def _report_filled(op: Operation, operation_id: str, fields: tuple[str, ...]) -> None:
+    """One line per (record, field) per process; the cap keeps a long-lived process bounded."""
+    for name in fields:
+        key = (operation_id, name)
+        if key in _FILLED_LOGGED or len(_FILLED_LOGGED) >= _MAX_LOGGED_FILLS:
+            continue
+        _FILLED_LOGGED.add(key)
+        logger.warning(
+            "journal.compat.filled op=%s operation_id=%s field=%s", op.value, operation_id, name
+        )
+
 
 def _validate_completed_receipt(record: dict[str, Any], receipt: dict[str, Any]) -> None:
     validate_receipt(receipt)
@@ -128,10 +165,13 @@ def _validate_record(record: dict[str, Any]) -> None:
     if op is not Operation.RELEASE and (record["view_ref"] is None) != no_view:
         raise ExecutionContractError
     if record["state"] == "DONE":
-        _check(_RESULTS[Operation(record["op"])], record["result"])
+        # A record written before an added field is still a valid DONE: validate
+        # the completed projection, never the byte layout of the file.
+        result, _filled = _complete_result(op, record["result"])
+        _check(_RESULTS[op], result)
         if record["op"] == "exec":
-            _validate_completed_receipt(record, record["result"]["receipt"])
-        if op is Operation.PIN_READER and record["result"]["view_ref"]["access"] != "READ":
+            _validate_completed_receipt(record, result["receipt"])
+        if op is Operation.PIN_READER and result["view_ref"]["access"] != "READ":
             raise ExecutionContractError
     elif record["result"] is not None:
         raise ExecutionContractError
@@ -281,8 +321,21 @@ class OperationJournal:
     def lookup(
         self, operation_id: str, namespace: NamespaceRef, *, deadline: float | None = None
     ) -> dict[str, Any] | None:
+        """Serve one record, completing an added reply field a pre-change write lacked.
+
+        Write paths keep reading the raw record (`_bound`), so nothing here can
+        leak a filled value back into the file.
+        """
         with self._transaction(deadline=deadline) as fd:
-            return self._bound(fd, operation_id, namespace, missing_ok=True)
+            record = self._bound(fd, operation_id, namespace, missing_ok=True)
+            if record is None or record["state"] != "DONE":
+                return record
+            op = Operation(record["op"])
+            result, filled = _complete_result(op, record["result"])
+            if not filled:
+                return record
+            _report_filled(op, record["operation_id"], filled)
+            return {**record, "result": result}
 
     def _bound(
         self, fd: int, operation_id: str, namespace: NamespaceRef, *, missing_ok: bool = False

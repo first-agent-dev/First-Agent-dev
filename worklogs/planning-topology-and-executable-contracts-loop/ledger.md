@@ -4981,3 +4981,44 @@ Added the source-backed I03-LIVE-27 entry to `e2e/I03/implementation-handoffs.md
 **Actual verification.** `tests/test_e2e_artifact_contract.py tests/test_skill_conformance.py -q`: **44 passed**. `tests/test_execution_handoff.py -q`: **17 passed**. `scripts/check_execution_e2e_coverage.py`: **OK**, 125 producer mappings (89 I02-origin, 35 I03, 2 exact duplicate keys collapsed), planned mappings only, no live PASS inferred. `fa authoring-check`: **0 diagnostics, exit 0**. `scripts/check_doc_links.py`: **316 Markdown files, no broken internal links**. Ruff check passed; format check reported both changed test files already formatted; `git diff --check` passed. Two producer-text mutations were killed by their focused tests: removing the I03-LIVE-27 handoff caused the artifact test to fail with “missing implementation handoff”; removing the plan-authoring live-result rule caused skill conformance to fail. Both files were restored byte-exact (handoff SHA256 `c97c50e44ee621ad0b3edbd3ff7510a71a5c47323ed7b9964bddf20d9533aade`; plan-authoring SHA256 `4fbacd81b009f3a5eb8bc3a719d7c3dc447144dd4ec008d62b3eb6448d122e20`).
 
 **Not done.** Documentation only; no production implementation, STEP/CT checkmark, fixture/helper, host run-sheet guess, or live result. I03-LIVE-27 stays PLANNED / UNEXECUTED and live E2E stays NOT RUN. Q89 remains OPEN; stop before A3/A5 and wait for the operator's wire-choice decision.
+
+### E289 — SLICE7 STEP4 (wire half of CT117) and the Q93-B compat row, implemented
+
+**Why this first.** STEP7's client saga cannot be written against a wire that still demands a pinned base
+and cannot name a repeat, so the wire half goes before the client. It is also the only part of SLICE7 that is
+pure data, which makes it the cheapest place to lay the seam the later steps attach to.
+
+**What changed.** `CREATE_VIEW.base_revision` is nullable, accepted only for `CANDIDATE`/`VERIFICATION`
+(`protocol.py`, `_request_bindings`): a patch publish binds to whatever is current when the copy starts,
+while a PROJECT/MUTATION writer still names the bytes it intends to mutate. `_PUBLISH_REPLY` gains
+`already_published`, and `decode_reply` refuses `true` without a `plan_ref` — a repeat is a statement about a
+plan, never about a seal. Both producers emit it: `workspace._published_receipt` (always `False`, plus the
+`plan_ref: None` the schema already required) and `publication.PublishResult`/`PlanPublishResult` (a dataclass
+field, so `asdict` and `to_wire` both carry it).
+
+**Q93 = B, as one row and one function.** `journal._ADDED_REPLY_FIELDS` holds exactly
+`PUBLISH: {"already_published": False}`; `_complete_result` copies a stored result and fills only the fields
+that table names. Two call sites, both reads: `_validate_record` validates the completed projection instead of
+the byte layout, and `lookup` serves the completed copy so the *client's* current decoder accepts a replayed
+reply. Write paths keep reading the raw record, so the file's bytes never change — asserted, not assumed.
+Missing field → default; unknown extra key → still `CORRUPT_STATE`; no version bump, no frozen schema copies,
+and no new instruction for the agent: the knowledge lives in the table, and the fill is reported once per
+(record, field) as `journal.compat.filled`.
+
+**Verification (executed).** `tests/test_execution_protocol.py` **91 passed**; `tests/test_execution_journal.py`
+**34 passed**; `tests/test_execution_client.py` **190**, `test_execution_dispatch.py` **22**,
+`test_execution_plans.py` **48**, `test_execution_context.py` **48**, `test_execution_provisioning.py` **5** —
+**438 passed, 0 failed**. Four producer mutants were killed and the sources restored byte-exact:
+removing the null-base rule → 2 failures; removing the `already_published`/`plan_ref` rule → 1; making
+`_validate_record` skip `_complete_result` → 1; making `lookup` skip it → 1.
+
+**Toolchain, recorded so the next session does not repeat it.** A python-build-standalone 3.13 cannot be
+fetched here (the GitHub release redirects to `release-assets.githubusercontent.com`, which this sandbox does
+not reach) and system pip is blocked by PEP 668. What works: a 3.11 venv, the six runtime dependencies from
+PyPI, and a `typing.override` shim on `PYTHONPATH`; `fa.execution.{protocol,journal,client,workspace}` then
+import and run. **17 execution/workspace banks still cannot be collected** under 3.11 because their shared
+helpers use PEP 695 generics (`test_execution_{admission,attach,backend,handoff,pty_control,purposes,readers,receipts,service,supervisor,termination,tool_port,views,workspace}`, `test_workspace_{authorize,publication,recovery}`); their evidence stays CI/host until a 3.13 interpreter exists.
+
+**Not done.** The authority half of CT117 (`publish_candidate_plan` returning the current revision with
+`already_published: true`), the client saga (STEP7), the composition (STEP8), the provisioner (STEP9). No
+STEP or CT is ticked; STEP4 carries a progress note instead.

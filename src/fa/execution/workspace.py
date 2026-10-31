@@ -4034,12 +4034,15 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
 
     @staticmethod
     def _published_receipt(inputs: _PublishInputs) -> dict[str, Any]:
+        """The sealed publish reply: never a repeat, so `already_published` is always False."""
         return {
             "workspace_id": inputs.view_ref.workspace_id,
             "revision_id": inputs.revision_id,
             "tree_sha256": inputs.tree_sha256,
             "operation_id": inputs.operation_id,
             "projection_complete": True,
+            "plan_ref": None,
+            "already_published": False,
         }
 
     def _probe_writable(self, binding: _Binding) -> None:
