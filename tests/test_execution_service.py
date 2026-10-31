@@ -407,7 +407,7 @@ def test_candidate_plan_publication_uses_view_grant_private_buffer_and_dispatch_
         "source_kind": "EXPLICIT",
         "sha256": hashlib.sha256(old_plan).hexdigest(),
     }
-    candidate_path = ".fa/admission/run-1/candidate-01.md"
+    buffer_label = plan_relative
 
     with SupervisorService(_config(site)) as service:
         workspace_id = _registered(service)
@@ -420,7 +420,7 @@ def test_candidate_plan_publication_uses_view_grant_private_buffer_and_dispatch_
                 "base_revision": base_revision,
                 "access": "READ",
                 "purpose": "CANDIDATE",
-                "candidate_scope": {"candidate_path": candidate_path, "plan_ref": plan_ref},
+                "candidate_scope": {"plan_ref": plan_ref},
                 "plan_ref": plan_ref,
             },
             request_id="b" * 32,
@@ -433,7 +433,7 @@ def test_candidate_plan_publication_uses_view_grant_private_buffer_and_dispatch_
         write = exchange(
             service,
             Operation.WRITE_FILE,
-            {"path": candidate_path, "content": new_plan.decode(), "expected_sha256": None},
+            {"path": buffer_label, "content": new_plan.decode(), "expected_sha256": None},
             request_id="c" * 32,
             view_ref=view,
             capability=view_capability,
@@ -442,7 +442,7 @@ def test_candidate_plan_publication_uses_view_grant_private_buffer_and_dispatch_
         read = exchange(
             service,
             Operation.READ_FILE,
-            {"path": candidate_path, "offset_bytes": 0, "max_bytes": 1024},
+            {"path": buffer_label, "offset_bytes": 0, "max_bytes": 1024},
             request_id="d" * 32,
             view_ref=view,
             capability=view_capability,

@@ -256,7 +256,6 @@ def test_a_reader_view_may_start_from_the_bytes_current_at_copy_time(purpose: st
         candidate_scope=None
         if purpose == "VERIFICATION"
         else {
-            "candidate_path": ".fa/admission/run-1/candidate.md",
             "plan_ref": {
                 "workspace_relative_path": "docs/plan.md",
                 "source_kind": "EXPLICIT",
@@ -380,7 +379,6 @@ def test_candidate_and_pty_dependent_shapes() -> None:
     with pytest.raises(InvalidRequestError):
         decode_request(encode_json(req))
     req["payload"]["candidate_scope"] = {
-        "candidate_path": "draft.md",
         "plan_ref": {"workspace_relative_path": "plan.md", "source_kind": "EXPLICIT", "sha256": SHA},
     }
     req["payload"]["plan_ref"] = req["payload"]["candidate_scope"]["plan_ref"]
@@ -532,7 +530,7 @@ def test_formal_admission_needs_plan_and_candidate_must_match(purpose: str) -> N
     req["payload"]["purpose"] = purpose
     plan = {"workspace_relative_path": "plan.md", "source_kind": "EXPLICIT", "sha256": SHA}
     if purpose == "CANDIDATE":
-        req["payload"]["candidate_scope"] = {"candidate_path": "draft.md", "plan_ref": plan.copy()}
+        req["payload"]["candidate_scope"] = {"plan_ref": plan.copy()}
     with pytest.raises(ExecutionContractError):
         decode_request(encode_json(req))
     req["payload"]["plan_ref"] = plan.copy()

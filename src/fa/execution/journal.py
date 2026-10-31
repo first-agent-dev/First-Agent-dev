@@ -124,9 +124,7 @@ def _report_filled(op: Operation, operation_id: str, fields: tuple[str, ...]) ->
         if key in _FILLED_LOGGED or len(_FILLED_LOGGED) >= _MAX_LOGGED_FILLS:
             continue
         _FILLED_LOGGED.add(key)
-        logger.warning(
-            "journal.compat.filled op=%s operation_id=%s field=%s", op.value, operation_id, name
-        )
+        logger.warning("journal.compat.filled op=%s operation_id=%s field=%s", op.value, operation_id, name)
 
 
 def _validate_completed_receipt(record: dict[str, Any], receipt: dict[str, Any]) -> None:

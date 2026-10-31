@@ -66,7 +66,10 @@ VIEW = _object(
 PLAN_REF = _object(
     workspace_relative_path=PATH, source_kind=_enum("EXPLICIT", "EXISTING_SELECTION", "BOOTSTRAP"), sha256=SHA
 )
-CANDIDATE_SCOPE = _object(candidate_path=PATH, plan_ref=PLAN_REF)
+# CT120 (E302): the CANDIDATE view has one writable target, and the plan it
+# publishes is identified by `plan_ref` alone. The controller used to name a
+# second path beside it; the authority never used that name for IO.
+CANDIDATE_SCOPE = _object(plan_ref=PLAN_REF)
 RECEIPT = _object(
     schema_version={"type": "integer", "const": 1},
     operation_id=_id("op-"),
@@ -236,7 +239,7 @@ def _byte_limits(value: Any, key: str = "") -> None:
         limit = MAX_TAIL_BYTES if key in {"stdout_tail", "stderr_tail"} else MAX_TEXT_BYTES
         if len(value.encode("utf-8")) > limit:
             raise ExecutionContractError
-        if key in {"path", "workspace_relative_path", "relative_root", "candidate_path", "cwd"}:
+        if key in {"path", "workspace_relative_path", "relative_root", "cwd"}:
             if value != "." or key != "cwd":
                 if any(part in {"", ".", ".."} for part in value.split("/")) or "\0" in value:
                     raise ExecutionContractError

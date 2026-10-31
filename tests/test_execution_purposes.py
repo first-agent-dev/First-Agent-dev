@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
@@ -24,7 +25,8 @@ from tests.test_execution_views import native_profile
 from tests.test_execution_workspace import ACTOR, PEER, Site, ok, until
 from tests.test_execution_workspace import site as site
 
-SCOPE_PATH = ".fa/admission/plans/candidate.plan.md"
+# CT120: a CANDIDATE view's one writable target is the plan's canonical path.
+SCOPE_PATH = "plan.md"
 
 
 # The closed error surface. A leak outside it escapes the oracle and fails the
@@ -44,9 +46,8 @@ def denied(code: str, call: Any) -> None:
     raise AssertionError(f"expected {code}; observed success")
 
 
-def scope_for(plan_ref: PlanRef, path: str = SCOPE_PATH) -> dict[str, Any]:
+def scope_for(plan_ref: PlanRef) -> dict[str, Any]:
     return {
-        "candidate_path": path,
         "plan_ref": {
             "workspace_relative_path": plan_ref.workspace_relative_path,
             "source_kind": plan_ref.source_kind,
@@ -148,7 +149,6 @@ def test_every_forbidden_combination_denies_before_any_filesystem_effect(site: S
     with setup(site) as (owner, ids, lease, plan_ref):
         scope = scope_for(plan_ref)
         mismatched = {
-            "candidate_path": SCOPE_PATH,
             "plan_ref": {
                 "workspace_relative_path": plan_ref.workspace_relative_path,
                 "source_kind": plan_ref.source_kind,
@@ -223,17 +223,19 @@ def create_candidate(
 
 def test_malformed_scope_shapes_are_contract_errors_not_grants(site: Site) -> None:
     with setup(site) as (owner, ids, lease, plan_ref):
+        wire = scope_for(plan_ref)["plan_ref"]
         for scope in [
-            {"candidate_path": SCOPE_PATH},
-            {"candidate_path": SCOPE_PATH, "plan_ref": scope_for(plan_ref)["plan_ref"], "extra": 1},
-            {"candidate_path": SCOPE_PATH, "plan_ref": "not-a-plan"},
+            {},  # the plan identity is not optional
+            {"plan_ref": wire, "extra": 1},  # closed shape
+            {"plan_ref": "not-a-plan"},
+            {"plan_ref": wire, "candidate_path": SCOPE_PATH},  # the alias CT120 removed
         ]:
             broken(lambda scope=scope: create_candidate(owner, ids, lease, scope, plan_ref))
         for scope in [
-            {"candidate_path": "/absolute", "plan_ref": scope_for(plan_ref)["plan_ref"]},
-            {"candidate_path": "a/../b", "plan_ref": scope_for(plan_ref)["plan_ref"]},
-            {"candidate_path": "a//b", "plan_ref": scope_for(plan_ref)["plan_ref"]},
-            {"candidate_path": "", "plan_ref": scope_for(plan_ref)["plan_ref"]},
+            {"plan_ref": {**wire, "sha256": "0" * 64}},
+            {"plan_ref": {**wire, "source_kind": "BOOTSTRAP"}},
+            {"plan_ref": {**wire, "workspace_relative_path": "other.md"}},
+            {"plan_ref": {**wire, "extra": 1}},  # not the identity the request named
         ]:
             denied("INPUT_POLICY", lambda scope=scope: create_candidate(owner, ids, lease, scope, plan_ref))
         assert list((site.state / "pending").iterdir()) == []
@@ -299,6 +301,46 @@ def test_candidate_buffer_writes_land_only_in_the_supervisor_staging_buffer(site
         assert (root / "candidate").read_bytes() == b"# candidate\n"
 
 
+def test_a_view_record_written_before_ct120_still_loads(site: Site, tmp_path: Path) -> None:
+    """C1 (CT120 read side): dropping the alias must not make old state unreadable.
+
+    A supervisor that restarts over its own older ``view.json`` has to keep reading
+    it: the record layer is closed (``additionalProperties: false``), so the alias is
+    dropped before validation rather than refused — and nothing is added, because the
+    publish path still proves the same ``plan_ref`` equality.
+    """
+    from fa.execution.workspace import _VIEW_RECORD, _read_json
+
+    with setup(site) as (owner, ids, lease, plan_ref):
+        grant = create(
+            owner,
+            ids,
+            lease,
+            purpose=ViewPurpose.CANDIDATE,
+            access=Access.READ,
+            plan_ref=plan_ref,
+            candidate_scope=scope_for(plan_ref),
+        )
+        record = json.loads(record_path(site, grant).read_text())
+    legacy = dict(
+        record,
+        candidate_scope={"plan_ref": record["candidate_scope"]["plan_ref"], "candidate_path": "plan.md"},
+    )
+    directory = tmp_path / "legacy"
+    directory.mkdir(mode=0o700)
+    handle = os.open(directory / "view.json", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        os.write(handle, json.dumps(legacy).encode("utf-8"))
+        os.fsync(handle)
+    finally:
+        os.close(handle)
+    dir_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        assert _read_json(dir_fd, "view.json", _VIEW_RECORD, 1024**2) == record
+    finally:
+        os.close(dir_fd)
+
+
 def test_candidate_scope_equality_denies_every_other_path(site: Site) -> None:
     with setup(site) as (owner, ids, lease, plan_ref):
         grant = create(
@@ -310,7 +352,8 @@ def test_candidate_scope_equality_denies_every_other_path(site: Site) -> None:
             plan_ref=plan_ref,
             candidate_scope=scope_for(plan_ref),
         )
-        for path in [".fa/admission/plans/other.plan.md", ".fa/admission/plans", SCOPE_PATH + "/child", "plan.md"]:
+        # The old alias path is refused like any other name: the buffer has one address.
+        for path in [".fa/admission/plans/other.plan.md", ".fa/admission/plans", SCOPE_PATH + "/child", "plan2.md"]:
             denied(
                 "PATH_DENIED",
                 lambda path=path: owner.write_candidate(

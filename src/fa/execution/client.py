@@ -221,7 +221,9 @@ class ExecutionClient:
             "source_kind": source.ref.source_kind,
             "sha256": source.ref.sha256,
         }
-        candidate_path = f".fa/admission/{namespace.run_id}/candidate-{uuid4().hex}.md"
+        # CT120: the buffer's address is the plan's own canonical path, which the
+        # authority already holds in `plan_ref`; it is a label, not a host path.
+        buffer_label = source.ref.workspace_relative_path
         view: ViewRef | None = None
         view_grant: GrantReply | None = None
         uncertain = False
@@ -239,7 +241,7 @@ class ExecutionClient:
                     "base_revision": None,
                     "access": "READ",
                     "purpose": "CANDIDATE",
-                    "candidate_scope": {"candidate_path": candidate_path, "plan_ref": plan_ref},
+                    "candidate_scope": {"plan_ref": plan_ref},
                     "plan_ref": plan_ref,
                 },
                 deadline=deadline,
@@ -252,7 +254,7 @@ class ExecutionClient:
                 namespace=namespace,
                 view=view,
                 grant=view_grant,
-                payload={"path": candidate_path, "content": raw.decode("utf-8"), "expected_sha256": None},
+                payload={"path": buffer_label, "content": raw.decode("utf-8"), "expected_sha256": None},
                 deadline=deadline,
             )
             stop_request_id = uuid4().hex

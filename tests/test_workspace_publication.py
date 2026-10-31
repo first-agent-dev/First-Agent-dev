@@ -2464,7 +2464,6 @@ def _candidate_plan_view(
     stop: bool = True,
 ) -> GrantReply:
     """Stage candidate bytes only in the view's private supervisor buffer."""
-    candidate_path = f".fa/admission/{ACTOR.run_id}/candidate-{uuid4().hex}.md"
     plan_wire = {
         "workspace_relative_path": plan_ref.workspace_relative_path,
         "source_kind": plan_ref.source_kind,
@@ -2477,7 +2476,7 @@ def _candidate_plan_view(
         capability=lease.capability,
         purpose=ViewPurpose.CANDIDATE,
         access=Access.READ,
-        candidate_scope={"candidate_path": candidate_path, "plan_ref": plan_wire},
+        candidate_scope={"plan_ref": plan_wire},
         plan_ref=plan_ref,
         formal_evidence=False,
         deadline=until(),
@@ -2492,7 +2491,7 @@ def _candidate_plan_view(
         ACTOR,
         view_ref=ref(grant),
         capability=grant.capability,
-        path=candidate_path,
+        path=plan_ref.workspace_relative_path,
         content=text,
         expected_sha256=None,
         deadline=until(),

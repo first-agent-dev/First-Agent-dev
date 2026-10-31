@@ -638,7 +638,11 @@ def test_publish_plan_runs_the_saga_and_cases_the_base_the_view_returned(tmp_pat
         # The CAS carries the view's base, never the writer grant's revision.
         assert seen[3]["payload"]["expected_base_revision"] == VIEW_BASE
         assert writer_grant().revision_id != VIEW_BASE
-        assert seen[0]["payload"]["candidate_scope"]["candidate_path"].startswith(".fa/admission/run-1/candidate-")
+        # CT120: the scope is the plan identity alone, and the buffer's address is
+        # the plan's canonical path — never a controller-invented alias.
+        assert set(seen[0]["payload"]["candidate_scope"]) == {"plan_ref"}
+        assert seen[0]["payload"]["candidate_scope"]["plan_ref"] == seen[0]["payload"]["plan_ref"]
+        assert seen[1]["payload"]["path"] == SOURCE.ref.workspace_relative_path
         assert written == [CANDIDATE.text]
         assert publication.revision_id == PUBLISHED and publication.already_published is False
         assert publication.plan_ref == replace(SOURCE.ref, sha256=hashlib.sha256(CANDIDATE.utf8_bytes).hexdigest())

@@ -5425,3 +5425,49 @@ will point its "a publish failure never loses the candidate" case at
 `test_a_refused_promotion_retains_the_exact_bytes_under_their_hash`; STEP1's CT114 bank is untouched. Retention has no
 eviction policy on purpose — `.fa/admission/<run_id>` is per-run, and reaping is the artifact-retention work of SLICE6,
 not something to invent here.
+
+### E301 — CT120: the candidate buffer's address stops being a caller's opinion
+
+**What was true before.** A CANDIDATE `create_view` carried `candidate_scope = {candidate_path, plan_ref}`, the client
+minted `.fa/admission/<run_id>/candidate-<uuid4>.md`, and every `write_file`/`read_file` on that view was accepted only
+if the path it sent equalled the recorded one (`workspace.py:2255`). The path was *never* used for IO — the buffer is the
+supervisor's own private file named `candidate`, opened by `dir_fd` inside the view's pin directory (`:2263`). So the
+payload carried an address that only had to agree with itself, and the authority's one writable target on a CANDIDATE
+view was authorised by a name the caller chose.
+
+**What it is now.** `candidate_scope = {plan_ref}` and the buffer's label is
+`plan_ref.workspace_relative_path` — the identity the view already pinned. Reading it back: `_candidate_scope` demands
+exactly `{"plan_ref"}`; `_candidate_buffer` compares the request's path against the pinned plan, so any other name
+(including the old alias family) is `PATH_DENIED`; `ExecutionClient.publish_plan` writes the buffer under the plan path
+and sends no second path. `plan_ref` equality between scope and payload is unchanged, as is every CAS, intent and
+revision rule — this step deletes a redundant name, not a check.
+
+**The part the step got wrong, and what replaced it.** STEP10 justified its ordering with "CT119's deterministic
+`plan-<sha256>.md` is what lets the authority locate the buffer". That is not true: `plan-<sha256>.md` is the
+*controller's* host-side retention copy (E300), while the supervisor's buffer lives inside the view and was already
+authority-owned. The ordering (Q95 = B) was still the right order to *work* in — retention first is cheap and useful —
+but CT120 never depended on it, and nothing here reads a host file. Worth stating because the wrong rationale would have
+invited a wrong implementation: pointing the authority at `.fa/admission/<run>/plan-<sha>.md` would have replaced
+staging with a canonical-path read.
+
+**Persisted state.** `candidate_scope` is written into `view.json` and that schema is closed
+(`additionalProperties: false`, validated on load at `workspace.py:1506`), so deleting a key is a compatibility event for
+a supervisor restarting over its own older state. `_view_record_compat` (`:538`) handles it structurally: if a scope
+carries keys this version does not declare, it keeps the declared ones and drops the rest. Nothing is *added* (the
+record still has to prove `plan_ref` equality to publish), and the removed name appears nowhere in `src`.
+
+**Verification.** purposes bank **12 passed** — the wrong-label denial now includes the old alias family, the removed key
+is refused as an unknown key on the wire, a mismatched plan identity is `INPUT_POLICY`, and a `view.json` written in the
+old shape loads to exactly the new record. protocol/client/service/workspace-authorize/workspace-publication banks
+updated to the new shape and green. **6/6 mutants killed** with byte-exact restoration: label ignored, scope accepting
+extra keys, legacy record refused, client minting its own path again, alias back on the wire, plan identity not
+compared. Execution+workspace banks **1359 passed / 1 skipped**; `ruff check`/`format --check` clean (one pre-existing
+`journal.py:127` formatter drift fixed here because it was the only thing keeping that check red).
+
+**Exit clause amended, not satisfied by deletion.** The step asked for `git grep -n "candidate_path" src tests` to be
+empty. It is empty in `src`, but two test fixtures name the removed alias deliberately: one asserts it is now an unknown
+key, the other asserts an old record still loads. Deleting them to satisfy the grep would remove the proof; the clause
+is amended in the plan instead.
+
+**Not done here.** STEP11's class-proof banks (`_promote_validated_plan` reachability, the sequencing pin) and STEP1's
+CT114 bank are untouched.

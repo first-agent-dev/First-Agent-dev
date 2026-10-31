@@ -394,10 +394,8 @@ def test_a_candidate_view_may_open_on_a_null_base_and_the_current_plan(site: Sit
             "base_revision": None,  # CANDIDATE may open without naming a revision
             "access": "READ",
             "purpose": "CANDIDATE",
-            "candidate_scope": {
-                "candidate_path": f".fa/admission/{ACTOR.run_id}/candidate-{uuid4().hex}.md",
-                "plan_ref": plan,
-            },
+            # CT120: the scope names the plan, and that is also the buffer's address.
+            "candidate_scope": {"plan_ref": plan},
             "plan_ref": plan,
         }
         context = _authorize(owner, _request(Operation.CREATE_VIEW, capability=lease.capability, payload=payload))

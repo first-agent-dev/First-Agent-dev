@@ -300,17 +300,14 @@ def _candidate_scope(
         raise SupervisorError("INPUT_POLICY")
     if not scope_required:
         return None
-    if not isinstance(candidate_scope, Mapping) or set(candidate_scope) != {"candidate_path", "plan_ref"}:
+    if not isinstance(candidate_scope, Mapping) or set(candidate_scope) != {"plan_ref"}:
         raise ExecutionContractError
     if not isinstance(plan_ref, PlanRef) or not isinstance(candidate_scope["plan_ref"], Mapping):
         raise ExecutionContractError
-    # Path semantics (relative, no traversal/NUL) are enforced once at the
-    # record layer (protocol._byte_limits inside _check(_VIEW_RECORD)); this
-    # matrix owns only the combination rules, never a second path parser.
-    scope = {
-        "candidate_path": candidate_scope["candidate_path"],
-        "plan_ref": dict(candidate_scope["plan_ref"]),
-    }
+    # CT120: the scope carries no address of its own. The candidate buffer is the
+    # plan's canonical path inside the private view, so `plan_ref` names both the
+    # bytes to write and the file they will commit to — one identity, not two.
+    scope = {"plan_ref": dict(candidate_scope["plan_ref"])}
     if scope["plan_ref"] != _plan_ref_dict(plan_ref):
         raise SupervisorError("INPUT_POLICY")
     return scope
@@ -538,6 +535,24 @@ def _terminal_record(directory: int) -> dict[str, Any] | None:
         return None
 
 
+def _view_record_compat(value: dict[str, Any]) -> dict[str, Any]:
+    """CT120 (E302): read a view record written before the buffer alias was dropped.
+
+    ``candidate_scope`` used to carry a caller-named second key beside ``plan_ref``.
+    The authority never used it for IO — the buffer is its own private file — so an
+    older record is read by keeping the keys this version declares and ignoring the
+    rest, instead of refusing a supervisor's own state. Nothing is *added*: an old
+    record still has to prove the same ``plan_ref`` equality when it publishes.
+    """
+    scope = value.get("candidate_scope")
+    if isinstance(scope, dict):
+        declared = set(CANDIDATE_SCOPE["properties"])
+        undeclared = set(scope) - declared
+        if undeclared:
+            value = dict(value, candidate_scope={key: item for key, item in scope.items() if key in declared})
+    return value
+
+
 def _read_json(fd: int, name: str, validator: Callable[..., Any], limit: int) -> dict[str, Any]:
     source = os.open(name, _FILE, dir_fd=fd)
     try:
@@ -556,6 +571,8 @@ def _read_json(fd: int, name: str, validator: Callable[..., Any], limit: int) ->
         value = json.loads(bytes(data).decode("utf-8"), object_pairs_hook=_pairs, parse_constant=_nonfinite)
         if not isinstance(value, dict):
             raise ExecutionContractError
+        if validator is _VIEW_RECORD:
+            value = _view_record_compat(value)
         _check(validator, value)
         return value
     except (ExecutionContractError, ValueError, UnicodeError, RecursionError):
@@ -2253,7 +2270,8 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
         if not isinstance(pin, _ReaderPin) or pin.ref.purpose is not ViewPurpose.CANDIDATE:
             raise SupervisorError("UNAUTHORIZED")
         scope = pin.record.get("candidate_scope")
-        if scope is None or path != scope["candidate_path"]:
+        plan = pin.record.get("plan_ref")
+        if scope is None or not isinstance(plan, Mapping) or path != plan.get("workspace_relative_path"):
             raise SupervisorError("PATH_DENIED")
         return pin
 
