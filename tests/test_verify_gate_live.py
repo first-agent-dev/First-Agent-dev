@@ -2083,6 +2083,7 @@ def test_admission_artifact_valid_diagnostic_vocabulary_and_reserved_values() ->
             "replace-failed",
             "durability-unknown",
             "hash-mismatch",
+            "managed-execution-absent",  # CT115: the run has no managed authority at all
         },
         "artifact-io": {"corrupt-record", "lock-failed", "append-failed", "durability-unknown"},
         "bootstrap": {"unavailable"},
@@ -3195,7 +3196,7 @@ def test_ct94_nonpassing_validation_never_publishes(tmp_path: Path, monkeypatch:
             raise AssertionError("non-passing validation reached the publisher")
 
     with pytest.raises(PlanPromotionError) as error:
-        workflow._promote_validated_plan(tmp_path, source, validated, publisher=ForbiddenPublisher())
+        workflow._promote_validated_plan(source, validated, publisher=ForbiddenPublisher())
     assert error.value.rule == "prepare-failed" and error.value.replaced is False
     assert (tmp_path / _CT94_PATH).read_bytes() == source.utf8_bytes
     assert not (tmp_path / ".fa").exists()
@@ -3278,7 +3279,7 @@ def test_ct94_real_session_edits_fresh_candidate_before_validated_publication(
             return PlanRef(pinned.ref.workspace_relative_path, pinned.ref.source_kind, admitted.ref.sha256)
 
     publisher = RecordingPublisher()
-    promoted = workflow._promote_validated_plan(tmp_path, source, validated, publisher=publisher)
+    promoted = workflow._promote_validated_plan(source, validated, publisher=publisher)
     assert publisher.candidate is candidate
     assert (tmp_path / _CT94_PATH).read_bytes() == source.utf8_bytes
     assert promoted.ref.workspace_relative_path == _CT94_PATH
@@ -3328,15 +3329,21 @@ def test_ct94_ordinary_dispatch_cannot_seed_a_candidate(tmp_path: Path) -> None:
 
 
 def test_ct94_missing_publisher_fails_closed_without_canonical_write(tmp_path: Path) -> None:
-    from fa.inner_loop.plan_admission import snapshot_from_bytes
+    """CT115 (E299): the refusal is named, and it happens before any repair."""
+    from types import SimpleNamespace
+
     from fa.inner_loop.plan_promotion import PlanPromotionError
 
     source = _ct94_source(tmp_path)
-    validated = workflow._validate_plan_admission(snapshot_from_bytes("draft.md", _ct94_plan("valid")))
     with pytest.raises(PlanPromotionError) as error:
-        workflow._promote_validated_plan(tmp_path, source, validated)
-    assert error.value.rule == "prepare-failed" and error.value.replaced is False
+        workflow._require_managed_publisher(SimpleNamespace(plan_publisher=None))
+    assert error.value.rule == "managed-execution-absent" and error.value.replaced is False
     assert (tmp_path / _CT94_PATH).read_bytes() == source.utf8_bytes
+    assert not (tmp_path / ".fa").exists()
+    # Control: a run that has the authority passes through unchanged, so the
+    # refusal above cannot be "refuse everything".
+    publisher = object()
+    assert workflow._require_managed_publisher(SimpleNamespace(plan_publisher=publisher)) is publisher
 
 
 def test_ct94_promotion_port_receives_only_the_pinned_destination(tmp_path: Path) -> None:
@@ -3356,7 +3363,7 @@ def test_ct94_promotion_port_receives_only_the_pinned_destination(tmp_path: Path
             return PlanRef(pinned.ref.workspace_relative_path, pinned.ref.source_kind, buffer.ref.sha256)
 
     publisher = RecordingPublisher()
-    promoted = workflow._promote_validated_plan(tmp_path, source, validated, publisher=publisher)
+    promoted = workflow._promote_validated_plan(source, validated, publisher=publisher)
     assert publisher.source is source and publisher.candidate is candidate
     assert promoted.ref.workspace_relative_path == source.ref.workspace_relative_path
     assert promoted.ref.sha256 == candidate.ref.sha256

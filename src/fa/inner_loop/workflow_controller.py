@@ -2273,24 +2273,36 @@ def _validate_plan_admission(snapshot: PlanSnapshot) -> _PlanAdmissionValidation
     return _PlanAdmissionValidation(snapshot, "PASS", diagnostics)
 
 
+def _require_managed_publisher(ctx: WorkflowContext) -> CandidatePlanPublisher:
+    """CT115: a repair needs the authority, and its absence is a named refusal.
+
+    A plan that admits needs no publication — its bytes are already canonical — so
+    an unmanaged run keeps working for explicit plans. A repair invalidates that:
+    the revised bytes must be committed somewhere, and ``prepare-failed`` would
+    name the wrong fault when the real one is "this run has no managed execution".
+    The check therefore sits next to the reserved planner attempt, not at the top
+    of the gate, and it is the only place that decides the run cannot publish.
+    """
+    publisher = ctx.plan_publisher
+    if publisher is None:
+        raise PlanPromotionError("managed-execution-absent")
+    return publisher
+
+
 def _promote_validated_plan(
-    workspace: Path,
     source: PlanSnapshot,
     validated: _PlanAdmissionValidation,
     *,
-    publisher: CandidatePlanPublisher | None = None,
+    publisher: CandidatePlanPublisher,
     deadline: float | None = None,
 ) -> PlanSnapshot:
-    """Publish only validated bytes through the injected supervisor candidate port.
+    """Publish only validated bytes through the injected managed candidate port.
 
-    ``workspace`` is retained for the stable workflow call signature, but is not
-    opened here. A missing managed publisher is a closed refusal, never a
-    fallback to host-path replacement.
+    The host path is not opened here and there is no fallback: the caller supplies
+    the port it proved it has (``_require_managed_publisher``), so a missing
+    authority is refused before any repair is dispatched.
     """
-    del workspace
     if validated.outcome != "PASS":
-        raise PlanPromotionError("prepare-failed")
-    if publisher is None:
         raise PlanPromotionError("prepare-failed")
     try:
         ref = publisher.publish_candidate(source, validated.snapshot, deadline=deadline)
@@ -2405,6 +2417,7 @@ def _run_admission_repair(
     *,
     kind: PlannerDispatchKind,
     draft: PlanSnapshot,
+    publisher: CandidatePlanPublisher,
     diagnostics: tuple[_AdmissionDiagnostic, ...] = (),
     reason: str = "",
 ) -> tuple[_PlanAdmissionValidation, PlanSnapshot | None]:
@@ -2452,9 +2465,7 @@ def _run_admission_repair(
             os.fsync(parent)
     validation = _validate_plan_admission(candidate)
     promoted = (
-        _promote_validated_plan(
-            ctx.workspace, source, validation, publisher=ctx.plan_publisher, deadline=ctx.deadline_mono
-        )
+        _promote_validated_plan(source, validation, publisher=publisher, deadline=ctx.deadline_mono)
         if validation.outcome == "PASS"
         else None
     )
@@ -2555,6 +2566,7 @@ def _admit_plan(
                 _admission_failed(ctx, "planner-budget" if state.planner_allowed else "planner-unavailable")
                 return False
             attempt_kind = kind.value
+            publisher = _require_managed_publisher(ctx)  # CT115: before the attempt is reserved.
             state.planner_calls += 1  # Reserve even when seeding/provider/writer/publication fails.
             validated, promoted = _run_admission_repair(
                 ctx,
@@ -2562,6 +2574,7 @@ def _admit_plan(
                 run_stage_fn,
                 kind=kind,
                 draft=validated.snapshot,
+                publisher=publisher,
                 diagnostics=validated.diagnostics,
                 reason=reason,
             )

@@ -5359,3 +5359,35 @@ S7P1/S7P2/S7P3 (each with what is actually missing) and S7P4 (`LOCAL-CLOSED`). C
 2 `HOST`, 16 `OPEN`, 3 `PLANNED`, 6 `LOCAL-CLOSED` = 47; six steps closed.
 
 **No code changed.** `precheck` 0 FAIL / 7 WARN, `check_doc_links` 318 OK.
+
+### E299 — Q97 parity and SLICE7 STEP2 (2026-11-01): one fault, both commands
+
+**Q97 — the operator asked for parity, cheaply and robustly; this is it.** The asymmetry was that
+`load_execution_config` answered `None` both for "no `execution:` block" and for "a block that names nothing usable",
+so a typo left `fa run chat` on host bytes with a log line while `fa workflow` refused to promote. The reader now says
+which fact it found: `None` means *no block*, and a present-but-unusable block raises `ExecutionConfigError`
+(`config.py`, exported). Each consumer answers in its own vocabulary, which is where the cost belongs:
+
+* publication (`composition._service_config`) catches it, warns and returns `None` — its failure is already a closed
+  refusal one layer up, because `_promote_validated_plan` has no host fallback;
+* chat (`composition.client_workspace_provisioner`) raises `SessionManagerError("workspace_config_invalid")` for a
+  broken block and `workspace_denied` for a uid the authority does not list — `fa run chat` then exits 2 with the code
+  printed by the existing handler (`cli.py:2235`), and no operator file still means the pre-cutover host path.
+
+Cost: one exception type, ~20 lines in the two consumers, and no new surface in `SessionManager`. Tests split the old
+nine-case table into two absence cases and seven malformed ones (`tests/test_config.py`), and the composition bank
+pins the chat side end-to-end through `cli._session_manager_for_args`. Three mutants killed (relative path tolerated,
+broken block swallowed, foreign uid swallowed), sources byte-identical.
+
+**STEP2 / CT115 — the refusal is named and it happens before the attempt.** See the step's progress note: the seam is
+`_require_managed_publisher`, deliberately placed next to the reserved planner attempt rather than at the top of the
+gate, because an explicit plan needs no publication and must keep working without a supervisor. `_promote_validated_plan`
+losing its `workspace` parameter and its `publisher is None` branch is what makes the old path unreachable by omission,
+not just unused.
+
+**Verification.** `tests/test_s8_workflow_controller.py -k named_refusal` 1 passed;
+`tests/test_verify_gate_live.py -k missing_publisher` 1 passed; `tests/test_config.py` + `tests/test_execution_composition.py`
+**38 passed**; execution+workspace+session+config banks **1526 passed / 1 skipped**; the nine workflow banks 101 failed /
+657 passed with a FAILED set *identical* to the base tree's 101 failed / 650 passed (empty difference in both
+directions) — one vocabulary pin was updated on purpose, `ADMISSION_RULES["promotion"]`'s closed set in
+`tests/test_verify_gate_live.py:2078`. `ruff check`/`ruff format --check` (one pre-existing `journal.py:127` drift, untouched) and `git diff --check` clean; `check_doc_links` 318 OK; plan `precheck` 0 FAIL / 7 WARN.

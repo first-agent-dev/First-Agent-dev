@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
 
-from fa.config import DEFAULT_CONFIG_PATH, load_execution_config
+from fa.config import DEFAULT_CONFIG_PATH, ExecutionConfigError, load_execution_config
 from fa.execution.client import (
     ExecutionClient,
     ExecutionRejectedError,
@@ -268,17 +268,34 @@ class ClientWorkspaceProvisioner:
 def client_workspace_provisioner(*, config_path: Path | None = None) -> ClientWorkspaceProvisioner | None:
     """The provisioner ``fa`` injects into the session manager, or ``None``.
 
-    ``None`` means the operator configured no execution service: the session layer
-    then keeps its pre-cutover host path, which is the behaviour every command has
-    today. One config read, one uid rule, one client builder — the same ones the
-    run's publication uses.
+    ``None`` means one thing only: the operator has no config file, so the session
+    layer keeps its pre-cutover host path. Every *present but unusable*
+    configuration raises instead of degrading, because chat and publication must
+    fail for the same reason: a managed deployment that cannot reach its authority
+    is a deployment fault, not a reason to work on host bytes. The publication
+    path answers the same fault by refusing to promote (``_promote_validated_plan``
+    has no host fallback), so the two commands now agree.
     """
-    config = _service_config(config_path)
-    if config is None:
+    path = DEFAULT_CONFIG_PATH if config_path is None else Path(config_path)
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
         return None
+    except OSError as error:
+        raise SessionManagerError("workspace_config_invalid", f"{path}: {error}") from None
+    try:
+        service_config = load_execution_config(text)
+    except ExecutionConfigError as error:
+        raise SessionManagerError("workspace_config_invalid", f"{path}: {error}") from None
+    if service_config is None:
+        return None
+    try:
+        config = read_config_file(service_config)
+    except (ExecutionContractError, OSError) as error:
+        raise SessionManagerError("workspace_config_invalid", f"{service_config}: {error}") from None
     client = _client_for(config)
     if client is None:
-        return None
+        raise SessionManagerError("workspace_denied", "controller uid is not in controller_uids")
     return ClientWorkspaceProvisioner(config=config, client=client)
 
 
@@ -297,7 +314,11 @@ def _service_config(config_path: Path | None) -> ServiceConfig | None:
         text = path.read_text(encoding="utf-8")
     except OSError:
         return None
-    service_config = load_execution_config(text)
+    try:
+        service_config = load_execution_config(text)
+    except ExecutionConfigError as error:
+        _logger.warning("operator config %s is unusable, so no managed execution: %s", path, error)
+        return None
     if service_config is None:
         return None
     try:

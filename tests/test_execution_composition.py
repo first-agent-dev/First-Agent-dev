@@ -386,6 +386,15 @@ def test_the_manager_takes_its_provisioner_from_the_operator_config(
     wired = cli._session_manager_for_args(args).workspace_provisioner
     assert isinstance(wired, ClientWorkspaceProvisioner)
     assert wired.config.approved_roots == {"projects": site.roots}
-    # A uid the authority does not list composes nothing — not even a client.
+    # A uid the authority does not list composes nothing — and says so.
     service_path.write_text(json.dumps(_document(site, uid=os.getuid() + 1)), encoding="utf-8")
+    with pytest.raises(SessionManagerError) as foreign_uid:
+        cli._session_manager_for_args(args)
+    assert foreign_uid.value.code == "workspace_denied"
+    # A broken present block is a deployment fault, not a reason to work on host bytes.
+    config_path.write_text("execution:\n  service_config: ./relative.json\n", encoding="utf-8")
+    with pytest.raises(SessionManagerError) as broken:
+        cli._session_manager_for_args(args)
+    assert broken.value.code == "workspace_config_invalid"
+    config_path.unlink()
     assert cli._session_manager_for_args(args).workspace_provisioner is None

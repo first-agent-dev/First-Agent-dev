@@ -740,3 +740,35 @@ def test_s8_failure_path_still_exports_row(tmp_path: Path, monkeypatch: pytest.M
     row = _global_history_row(home)
     assert row["exit_code"] == 2
     assert row["stop_reason"] == "workflow_failed"
+
+
+def test_s8_a_repair_without_a_managed_publisher_is_a_named_refusal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CT115 (E299): no publisher is `managed-execution-absent`, before any dispatch.
+
+    The producer kill-check is the deleted call: remove
+    ``_require_managed_publisher`` from ``_admit_plan`` and this plan is repaired
+    on the host path, so the record stops naming the missing authority and the
+    candidate directory appears.
+    """
+    config, home = _wf_env(tmp_path, monkeypatch)
+    args = _workflow_args(tmp_path, config, run_id="wf-ct115", session_id=None)
+    args.plan.write_bytes(b"## SLICE 1: bad heading\n")
+    before = args.plan.read_bytes()
+
+    assert _cmd_workflow(args, transport=_RoleAwareTransport([("PASS", "complete")]), secrets=_TEST_SECRETS) == 2
+
+    record = json.loads((home / ".fa" / "session-log" / "wf-ct115" / "admission.json").read_text(encoding="utf-8"))
+    assert record["status"] == "BLOCKED"
+    # Attempt 1 is the structural refusal that asks for a repair; attempt 2 is that
+    # repair, refused before any planner call was dispatched or reserved.
+    assert [row["dispatch_kind"] for row in record["attempts"]] == ["EXPLICIT_INPUT", "ADMISSION_REPAIR"]
+    assert record["attempts"][0]["diagnostics"][0]["rule"] == "heading-near-miss"
+    attempt = record["attempts"][-1]
+    assert attempt["route"] == "BLOCKED" and attempt["candidate_sha256"] is None
+    assert attempt["diagnostics"] == [
+        {"validator": "promotion", "rule": "managed-execution-absent", "severity": "ERROR", "line": None}
+    ]
+    assert not (tmp_path / ".fa" / "admission" / "wf-ct115").exists()  # no planner attempt was dispatched
+    assert args.plan.read_bytes() == before

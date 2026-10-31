@@ -51,6 +51,7 @@ ADMISSION_RULES: dict[str, frozenset[str]] = {
     ),
     "promotion": frozenset(
         {
+            "managed-execution-absent",
             "scope-denied",
             "symlink",
             "not-regular",

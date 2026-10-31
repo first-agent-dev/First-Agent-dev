@@ -10,6 +10,7 @@ from fa.config import (
     Capabilities,
     CapabilityLoadResult,
     CapabilityWarning,
+    ExecutionConfigError,
     load_capabilities,
     load_capabilities_from_path,
     load_execution_config,
@@ -212,11 +213,15 @@ def test_load_execution_config_strips_quotes_and_inline_comment() -> None:
     assert load_execution_config(quoted) == Path("/var/lib/fa/execution.json")
 
 
+@pytest.mark.parametrize("text", ["", "capabilities:\n  ENABLE_SERVER_OPS: true\n"], ids=["empty-text", "no-block"])
+def test_load_execution_config_returns_none_only_when_there_is_no_block(text: str) -> None:
+    """Absence is a legitimate configuration, so it is silence and not an error."""
+    assert load_execution_config(text) is None
+
+
 @pytest.mark.parametrize(
     "text",
     [
-        "",
-        "capabilities:\n  ENABLE_SERVER_OPS: true\n",
         "execution:\n",
         "execution:\n  service_config: relative/execution.json\n",
         "execution:\n  service_config: /var/lib/fa/../fa/execution.json\n",
@@ -226,8 +231,6 @@ def test_load_execution_config_strips_quotes_and_inline_comment() -> None:
         "execution:\n  service_config: /a/execution.json\n  service_config: /b/execution.json\n",
     ],
     ids=[
-        "empty-text",
-        "no-block",
         "empty-block",
         "relative-path",
         "parent-traversal",
@@ -237,8 +240,10 @@ def test_load_execution_config_strips_quotes_and_inline_comment() -> None:
         "repeated-key",
     ],
 )
-def test_load_execution_config_declines_anything_unusable(text: str) -> None:
-    assert load_execution_config(text) is None
+def test_load_execution_config_refuses_a_present_but_unusable_block(text: str) -> None:
+    """A typo must not quietly turn the managed path off (Q97)."""
+    with pytest.raises(ExecutionConfigError):
+        load_execution_config(text)
 
 
 def test_load_execution_config_does_not_read_the_capability_section() -> None:
