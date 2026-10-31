@@ -5130,3 +5130,50 @@ STEP7 deletes it; that is why STEP7's saga tests own the release semantics. `scr
 
 **Toolchain.** As in E291: `/tmp/vt` copy with only PEP 695 helper generics rewritten; committed tests untouched.
 Local evidence, not a CI claim.
+
+### E294 — SLICE7 STEP7 (CT116/CT118): one client verb replaces the adapter, and the null base reaches the authority
+
+**What changed.** `ExecutionClient.publish_plan(binding, source, candidate, *, grant, deadline)` now carries the
+publication saga (CREATE_VIEW with a null base and the pinned `plan_ref` → scoped WRITE_FILE → STOP_VIEW with
+`terminal is True` → PUBLISH with a null seal id → `plan_ref` identity check → RELEASE), and returns a frozen
+`PlanPublication(plan_ref, revision_id, already_published)` so the repeat answer is visible to the composition
+instead of being swallowed. `ExecutionClientPlanPublisher` and `_release_candidate_best_effort` are deleted;
+`git grep -c ExecutionClientPlanPublisher src tests` is 0. The binding is read structurally — `namespace` and
+`workspace_id` only — because `ExecutionBinding` is STEP8's type and a client-side import from the composition
+would invert the dependency; the seam is the two field names, and `_binding_identity` refuses anything else
+before a frame is built.
+
+**Two defects the move exposed.** (1) The adapter CASed PUBLISH against its own `_base_revision`, set at
+construction and re-set only after a successful publication, so any other commit in the same workspace made
+CREATE_VIEW and PUBLISH disagree; the verb takes the base from the CREATE_VIEW reply (`view.base_revision`),
+which is the revision the authority actually pinned. (2) `CREATE_VIEW` with a null base is legal on the wire for
+CANDIDATE/VERIFICATION, and `create_view` itself accepts it, but `WorkspaceAuthority._authorize_operation` called
+`_pinned_plan_context(binding, payload["base_revision"], ...)` → `_hex_id(None, "rev-")` → `ExecutionContractError`,
+which the dispatcher sanitised into `BACKEND_UNAVAILABLE`. The pre-reservation proof now resolves a null base to
+`binding.current["revision_id"]` (the same meaning the handler gives it) and keeps `STALE_REVISION` for a named
+base that is not current. Without this, CT117's "a publication is a patch" would have been true of the handler
+and false of the path every client uses.
+
+**Release policy, stated because `finally` is where certainty gets fabricated.** One `finally`, gated on
+determinacy: success, the `already_published` repeat and typed refusals release the view; `EXECUTION_UNKNOWN`,
+`TERMINALITY_UNKNOWN`, `DURABILITY_UNKNOWN`, `CORRUPT_STATE` and a PUBLISH reply whose `plan_ref` is not the
+pinned one leave the view open, because releasing asserts a settled writer that this client cannot prove.
+`request()` already maps the four uncertainty codes, so any `ExecutionRejectedError` is determinate by
+construction and no code list is duplicated in the verb.
+
+**Verification (executed).** `tests/test_execution_client.py` **197 passed**, including the saga test (order,
+null base at CREATE_VIEW, `expected_base_revision == view.base_revision` and *not* the grant's revision),
+the repeat passthrough, the indeterminate case (one publish, no release frame), the determinate refusal
+(release frame sent) and the foreign-`plan_ref` case. `tests/test_execution_service.py` +
+client bank **223 passed**, with the end-to-end test rewritten onto the verb and still publishing twice in one
+workspace. `tests/test_workspace_authorize.py` **11 passed** with the new null-base case. Whole local set
+(`test_execution_*.py` + `test_workspace_*.py`, 29 banks, `test_workspace_bootstrap.py` excluded because it
+patches `pathlib.Path` and trips pytest's own formatter): **1341 passed, 1 skipped**. Six mutants, all killed,
+sources byte-identical afterwards: CAS from the grant (5 failures), a named base at CREATE_VIEW (1), release
+always (2), never release (3), trusting the reply's `PlanRef` (1), and removing the authority's null-base rule
+(1). `ruff check`/`format --check` clean on the four touched files.
+
+**What this does not do.** No composition, no config key, no writer acquisition (STEP8): the verb borrows the
+caller's `ACQUIRE_WRITER` grant and releases only the view it opened. No provisioner (STEP9), no
+`candidate_path` removal (STEP10), no class proof (STEP11). The toolchain is the `/tmp/vt` copy with PEP 695
+helper generics rewritten; committed tests are untouched, so this is local evidence, not a CI claim.

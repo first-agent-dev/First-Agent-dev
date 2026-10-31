@@ -34,11 +34,12 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
-from fa.execution.client import ExecutionClient, ExecutionClientPlanPublisher
+from fa.execution.client import ExecutionClient
 from fa.execution.profiles import profile_set_sha256
 from fa.execution.protocol import decode_reply, encode_json, read_frame, write_frame
 from fa.execution.service import (
@@ -504,7 +505,7 @@ def test_candidate_plan_publication_uses_view_grant_private_buffer_and_dispatch_
         assert plan_path.read_bytes() == new_plan
 
 
-def test_publisher_uses_candidate_route_end_to_end(site: Site) -> None:
+def test_the_client_verb_uses_the_candidate_route_end_to_end(site: Site) -> None:
     """producer-kill-check: bypass Operation.PUBLISH or reintroduce a host writer."""
     plan_relative = "worklogs/demo/increments/increment-01-demo.md"
     plan_path = site.source / plan_relative
@@ -522,21 +523,17 @@ def test_publisher_uses_candidate_route_end_to_end(site: Site) -> None:
             server_uid=os.getuid(),
             rpc_timeout_ms=2000,
         )
-        publisher = ExecutionClientPlanPublisher(
-            client,
-            namespace=ACTOR,
-            workspace_id=workspace_id,
-            grant=writer,
-            base_revision=base_revision,
-        )
+        binding = SimpleNamespace(namespace=ACTOR, workspace_id=workspace_id)
         stop = threading.Event()
         runner = threading.Thread(target=service.serve_forever, args=(stop,), daemon=True)
         runner.start()
         try:
-            promoted = publisher.publish_candidate(source, candidate, deadline=until())
+            publication = client.publish_plan(binding, source, candidate, grant=writer, deadline=until())
+            promoted = publication.plan_ref
             assert promoted.workspace_relative_path == plan_relative
             assert promoted.source_kind == source.ref.source_kind
             assert promoted.sha256 == hashlib.sha256(candidate.utf8_bytes).hexdigest()
+            assert publication.already_published is False
             assert plan_path.read_bytes() == candidate.utf8_bytes
             assert not (site.source / ".fa/admission").exists()
             workspaces = site.state / "workspaces" / workspace_id
@@ -548,8 +545,9 @@ def test_publisher_uses_candidate_route_end_to_end(site: Site) -> None:
             # it must advance its base CAS from the committed result, not retain R0.
             next_source = read_plan_snapshot(site.source, Path(plan_relative))
             next_candidate = snapshot_from_bytes("draft.md", b"# Repaired plan, pass two\n")
-            next_promoted = publisher.publish_candidate(next_source, next_candidate, deadline=until())
-            assert next_promoted.sha256 == hashlib.sha256(next_candidate.utf8_bytes).hexdigest()
+            next_publication = client.publish_plan(binding, next_source, next_candidate, grant=writer, deadline=until())
+            assert next_publication.plan_ref.sha256 == hashlib.sha256(next_candidate.utf8_bytes).hexdigest()
+            assert next_publication.already_published is False
             assert plan_path.read_bytes() == next_candidate.utf8_bytes
             assert json.loads((workspaces / "current.json").read_text())["revision_id"] != first_revision
             assert not (workspaces / "intent.json").exists()

@@ -14,6 +14,7 @@ import socket
 import stat
 import struct
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 from uuid import uuid4
@@ -29,6 +30,7 @@ from fa.execution.types import (
     Operation,
     OperationRef,
     ViewRef,
+    _hex_id,
     _positive_integer,
 )
 from fa.inner_loop.plan_admission import PlanRef, PlanSnapshot
@@ -79,6 +81,29 @@ def _connect_authenticated(connection: socket.socket, path: Path, server_uid: in
     _, uid, _ = struct.unpack("3i", connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i")))
     if uid != server_uid:
         raise ExecutionUnavailableError
+
+
+@dataclass(frozen=True)
+class PlanPublication:
+    """One candidate publication: the promoted ref, the revision, and whether it was a repeat.
+
+    `already_published` is the authority's answer (CT117): true means the pinned
+    plan was already the current bytes and no second revision was committed.
+    """
+
+    plan_ref: PlanRef
+    revision_id: str
+    already_published: bool
+
+
+def _binding_identity(binding: object) -> tuple[NamespaceRef, str]:
+    """Read the two identity fields a managed binding owns, and never infer others."""
+    namespace = getattr(binding, "namespace", None)
+    workspace_id = getattr(binding, "workspace_id", None)
+    if not isinstance(namespace, NamespaceRef):
+        raise ExecutionContractError
+    _hex_id(workspace_id, "ws-")
+    return namespace, workspace_id
 
 
 def _grant(operation: Operation, result: dict[str, Any]) -> GrantReply:
@@ -164,38 +189,28 @@ class ExecutionClient:
             raise ExecutionRejectedError(error["code"], error["operation_id"])
         return cast(dict[str, Any], response["result"])
 
-
-class ExecutionClientPlanPublisher:
-    """Publish one validated plan through the supervisor's CANDIDATE view.
-
-    The source ref is pinned from ``source``; the model never supplies a target.
-    Candidate bytes travel only through scoped WRITE_FILE into private staging,
-    and PUBLISH carries a null seal id plus the base CAS. Every RPC is one-shot;
-    a lost PUBLISH reply is not retried or converted into a local write.
-    """
-
-    def __init__(
+    def publish_plan(
         self,
-        client: ExecutionClient,
+        binding: object,
+        source: PlanSnapshot,
+        candidate: PlanSnapshot,
         *,
-        namespace: NamespaceRef,
-        workspace_id: str,
         grant: GrantReply,
-        base_revision: str,
-    ) -> None:
-        if not isinstance(client, ExecutionClient) or not isinstance(namespace, NamespaceRef):
-            raise ExecutionContractError
-        if not isinstance(grant, GrantReply) or grant.operation is not Operation.ACQUIRE_WRITER:
-            raise ExecutionContractError  # A CANDIDATE view is created under the writer grant, nothing else.
-        self._client = client
-        self._namespace = namespace
-        self._workspace_id = workspace_id
-        self._grant = grant
-        self._base_revision = base_revision
+        deadline: float | None = None,
+    ) -> PlanPublication:
+        """Publish one validated candidate through a CANDIDATE view (CT116/CT118).
 
-    def publish_candidate(
-        self, source: PlanSnapshot, candidate: PlanSnapshot, *, deadline: float | None = None
-    ) -> PlanRef:
+        `binding` is the run's execution identity — `namespace` and `workspace_id` —
+        supplied by the managed composition (STEP8); this client infers neither.
+        The source ref is pinned from `source`, so the model never supplies a target
+        and candidate bytes travel only through the scoped WRITE_FILE. The CAS the
+        PUBLISH carries is the base of the view the authority just minted, never a
+        cached field: a concurrent commit cannot leave the pair stale. Every RPC is
+        one-shot; a lost PUBLISH reply is not retried and never becomes a local write.
+        """
+        namespace, workspace_id = _binding_identity(binding)
+        if not isinstance(grant, GrantReply) or grant.operation is not Operation.ACQUIRE_WRITER:
+            raise ExecutionContractError
         if not isinstance(source, PlanSnapshot) or not isinstance(candidate, PlanSnapshot):
             raise ExecutionContractError
         raw = candidate.utf8_bytes
@@ -206,21 +221,22 @@ class ExecutionClientPlanPublisher:
             "source_kind": source.ref.source_kind,
             "sha256": source.ref.sha256,
         }
-        candidate_path = f".fa/admission/{self._namespace.run_id}/candidate-{uuid4().hex}.md"
+        candidate_path = f".fa/admission/{namespace.run_id}/candidate-{uuid4().hex}.md"
         view: ViewRef | None = None
         view_grant: GrantReply | None = None
         uncertain = False
-        publish_request_id: str | None = None
         try:
-            created = self._client.request(
+            created = self.request(
                 Operation.CREATE_VIEW,
                 request_id=uuid4().hex,
-                namespace=self._namespace,
+                namespace=namespace,
                 view=None,
-                grant=self._grant,
+                grant=grant,
                 payload={
-                    "workspace_id": self._workspace_id,
-                    "base_revision": self._base_revision,
+                    "workspace_id": workspace_id,
+                    # CANDIDATE may open on a null base (protocol.py:330): the
+                    # authority names the base it mints, and PUBLISH CASes that one.
+                    "base_revision": None,
                     "access": "READ",
                     "purpose": "CANDIDATE",
                     "candidate_scope": {"candidate_path": candidate_path, "plan_ref": plan_ref},
@@ -230,24 +246,20 @@ class ExecutionClientPlanPublisher:
             )
             view = ViewRef.from_dict(created["view_ref"])
             view_grant = _grant(Operation.CREATE_VIEW, created)
-            self._client.request(
+            self.request(
                 Operation.WRITE_FILE,
                 request_id=uuid4().hex,
-                namespace=self._namespace,
+                namespace=namespace,
                 view=view,
                 grant=view_grant,
-                payload={
-                    "path": candidate_path,
-                    "content": raw.decode("utf-8"),
-                    "expected_sha256": None,
-                },
+                payload={"path": candidate_path, "content": raw.decode("utf-8"), "expected_sha256": None},
                 deadline=deadline,
             )
             stop_request_id = uuid4().hex
-            stopped = self._client.request(
+            stopped = self.request(
                 Operation.STOP_VIEW,
                 request_id=stop_request_id,
-                namespace=self._namespace,
+                namespace=namespace,
                 view=view,
                 grant=view_grant,
                 payload={},
@@ -257,48 +269,43 @@ class ExecutionClientPlanPublisher:
                 raise ExecutionUncertainError("op-" + stop_request_id, code="TERMINALITY_UNKNOWN")
             publish_request_id = uuid4().hex
             try:
-                result = self._client.request(
+                result = self.request(
                     Operation.PUBLISH,
                     request_id=publish_request_id,
-                    namespace=self._namespace,
+                    namespace=namespace,
                     view=view,
                     grant=view_grant,
-                    payload={"sealed_manifest_id": None, "expected_base_revision": self._base_revision},
+                    payload={"sealed_manifest_id": None, "expected_base_revision": view.base_revision},
                     deadline=deadline,
                 )
             except ExecutionUncertainError:
                 uncertain = True
                 raise
-            published_ref = result["plan_ref"]
-            expected_sha = hashlib.sha256(raw).hexdigest()
-            if published_ref != {
-                **plan_ref,
-                "sha256": expected_sha,
-            }:
+            expected_ref = {**plan_ref, "sha256": hashlib.sha256(raw).hexdigest()}
+            if result["plan_ref"] != expected_ref:
                 uncertain = True
                 raise ExecutionUncertainError("op-" + publish_request_id, code="DURABILITY_UNKNOWN")
-            promoted = PlanRef(**published_ref)
-            self._base_revision = result["revision_id"]
-            return promoted
+            return PlanPublication(
+                PlanRef(**expected_ref),
+                str(result["revision_id"]),
+                bool(result["already_published"]),
+            )
         except ExecutionUncertainError:
-            # The candidate view is retained on uncertainty; in particular, no
-            # fresh request id can accidentally turn a lost PUBLISH into a second commit.
+            # The candidate view stays open: releasing it would assert that the
+            # writer is settled, which is the one thing this client cannot prove.
             uncertain = True
-            raise
-        except ExecutionRejectedError as error:
-            if error.code in {"DURABILITY_UNKNOWN", "CORRUPT_STATE", "EXECUTION_UNKNOWN", "TERMINALITY_UNKNOWN"}:
-                uncertain = True
             raise
         finally:
             if view is not None and view_grant is not None and not uncertain:
-                self._release_candidate_best_effort(view, view_grant, deadline)
+                self._release_view(namespace, view, view_grant, deadline)
 
-    def _release_candidate_best_effort(self, view: ViewRef, grant: GrantReply, deadline: float | None) -> None:
+    def _release_view(self, namespace: NamespaceRef, view: ViewRef, grant: GrantReply, deadline: float | None) -> None:
+        """Best-effort RELEASE for a determinate outcome; uncertainty keeps the view."""
         try:
-            self._client.request(
+            self.request(
                 Operation.RELEASE,
                 request_id=uuid4().hex,
-                namespace=self._namespace,
+                namespace=namespace,
                 view=view,
                 grant=grant,
                 payload={},

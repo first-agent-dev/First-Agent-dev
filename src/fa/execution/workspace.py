@@ -4873,7 +4873,14 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
             if operation is Operation.CREATE_VIEW:
                 if binding is None:  # capability-free create is impossible by §2.1
                     raise SupervisorError("UNAUTHORIZED")
-                return self._pinned_plan_context(binding, payload["base_revision"], payload["plan_ref"], deadline)
+                # The wire allows a null base only for CANDIDATE/VERIFICATION
+                # (`protocol._request_bindings`), and on that path the base is the
+                # CURRENT revision: the plan context must be the one the view will
+                # be minted on, not "anything goes". A named base keeps its CAS.
+                base_revision = payload["base_revision"]
+                if base_revision is None:
+                    base_revision = binding.current["revision_id"]
+                return self._pinned_plan_context(binding, base_revision, payload["plan_ref"], deadline)
             return None
 
         # View-scoped: the exact actor/view/access binding, nothing weaker.

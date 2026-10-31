@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import os
 import socket
@@ -12,6 +13,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -27,12 +29,20 @@ from fa.execution.client import (
 from fa.execution.profiles import ExecutionProfile
 from fa.execution.protocol import ERROR_CODES, DeadlineConnection, decode_request, encode_json, read_frame, write_frame
 from fa.execution.types import Access, ExecutionContractError, GrantReply, NamespaceRef, Operation, ViewPurpose, ViewRef
+from fa.inner_loop.plan_admission import snapshot_from_bytes
 from fa.runtime.bash_executor import BashExecutor
 
 NS = NamespaceRef("session-1", "run-1")
 VIEW = ViewRef("ws-" + "1" * 32, "view-" + "2" * 32, "rev-" + "3" * 32, "run-1", 1, Access.WRITE, ViewPurpose.PROJECT)
 SHA = "4" * 64
 CAP = "5" * 64
+SOURCE = snapshot_from_bytes("worklogs/demo/increments/increment-01-demo.md", b"# Existing plan\n")
+CANDIDATE = snapshot_from_bytes("draft.md", b"# Repaired plan\n")
+VIEW_BASE = "rev-" + "6" * 32
+PUBLISHED = "rev-" + "7" * 32
+CANDIDATE_VIEW = ViewRef(
+    "ws-" + "1" * 32, "view-" + "8" * 32, VIEW_BASE, "run-1", 1, Access.READ, ViewPurpose.CANDIDATE
+)
 
 
 def profile() -> ExecutionProfile:
@@ -88,6 +98,7 @@ def endpoint(
     handler: Callable[[dict[str, Any]], dict[str, Any] | None] = result,
     *,
     error_code: str | None = None,
+    error_by_op: dict[str, str] | None = None,
     error_operation_id: str | None = None,
     retryable: bool = True,
 ) -> Iterator[tuple[ExecutionClient, list[dict[str, Any]]]]:
@@ -123,10 +134,11 @@ def endpoint(
                     seen.append(req)
                     body = handler(req)
                     if body is not None:
+                        code = (error_by_op or {}).get(req["op"], error_code)
                         error = (
                             None
-                            if error_code is None
-                            else {"code": error_code, "retryable": retryable, "operation_id": error_operation_id}
+                            if code is None
+                            else {"code": code, "retryable": retryable, "operation_id": error_operation_id}
                         )
                         write_frame(
                             connection,
@@ -562,3 +574,142 @@ def test_failure_constructor_compatibility_keeps_old_transport_call_sites() -> N
     assert unavailable.code == "BACKEND_UNAVAILABLE" and unavailable.operation_id is None
     assert unknown.code == "EXECUTION_UNKNOWN" and unknown.operation_id == "op-" + "b" * 32
     assert str(unavailable) == "execution_unavailable" and str(unknown) == "execution_unknown"
+
+
+def writer_grant(revision_id: str = "rev-" + "5" * 32) -> GrantReply:
+    return GrantReply(Operation.ACQUIRE_WRITER, "7" * 64, None, 2, revision_id)
+
+
+def candidate_saga(*, already_published: bool = False) -> tuple[Callable[[dict[str, Any]], dict[str, Any]], list[str]]:
+    """Literal replies for one publication; the view mints a base the grant does not carry."""
+    written: list[str] = []
+
+    def handler(req: dict[str, Any]) -> dict[str, Any]:
+        if req["op"] == "create_view":
+            return {"view_ref": CANDIDATE_VIEW.to_dict(), "capability": "6" * 64}
+        if req["op"] == "write_file":
+            written.append(req["payload"]["content"])
+            raw = written[-1].encode()
+            return {"sha256": hashlib.sha256(raw).hexdigest(), "bytes": len(raw)}
+        if req["op"] == "stop_view":
+            return {"view_id": req["view_ref"]["view_id"], "terminal": True}
+        if req["op"] == "publish":
+            sha = hashlib.sha256(written[-1].encode()).hexdigest()
+            return {
+                "workspace_id": req["view_ref"]["workspace_id"],
+                "revision_id": PUBLISHED,
+                "tree_sha256": SHA,
+                "operation_id": "op-" + req["request_id"],
+                "projection_complete": True,
+                "plan_ref": {
+                    "workspace_relative_path": SOURCE.ref.workspace_relative_path,
+                    "source_kind": SOURCE.ref.source_kind,
+                    "sha256": sha,
+                },
+                "already_published": already_published,
+            }
+        return {}
+
+    return handler, written
+
+
+def publish(client: ExecutionClient, *, deadline: float | None = None):
+    return client.publish_plan(
+        SimpleNamespace(namespace=NS, workspace_id=VIEW.workspace_id),
+        SOURCE,
+        CANDIDATE,
+        grant=writer_grant(),
+        deadline=deadline,
+    )
+
+
+def test_publish_plan_runs_the_saga_and_cases_the_base_the_view_returned(tmp_path: Path) -> None:
+    """producer-kill-check: cache a base revision on the client, or publish without a view's base."""
+    handler, written = candidate_saga()
+    with endpoint(tmp_path, handler) as (client, seen):
+        publication = publish(client)
+        assert [req["op"] for req in seen] == ["create_view", "write_file", "stop_view", "publish", "release"]
+        assert seen[0]["payload"]["base_revision"] is None  # CANDIDATE opens on a null base
+        assert seen[0]["payload"]["candidate_scope"]["plan_ref"] == {
+            "workspace_relative_path": SOURCE.ref.workspace_relative_path,
+            "source_kind": SOURCE.ref.source_kind,
+            "sha256": SOURCE.ref.sha256,
+        }
+        # The CAS carries the view's base, never the writer grant's revision.
+        assert seen[3]["payload"]["expected_base_revision"] == VIEW_BASE
+        assert writer_grant().revision_id != VIEW_BASE
+        assert seen[0]["payload"]["candidate_scope"]["candidate_path"].startswith(".fa/admission/run-1/candidate-")
+        assert written == [CANDIDATE.text]
+        assert publication.revision_id == PUBLISHED and publication.already_published is False
+        assert publication.plan_ref == replace(SOURCE.ref, sha256=hashlib.sha256(CANDIDATE.utf8_bytes).hexdigest())
+
+
+def test_publish_plan_reports_a_repeat_and_still_releases(tmp_path: Path) -> None:
+    """producer-kill-check: swallow already_published, or skip RELEASE on the repeat path."""
+    handler, _ = candidate_saga(already_published=True)
+    with endpoint(tmp_path, handler) as (client, seen):
+        publication = publish(client)
+        assert publication.already_published is True and publication.revision_id == PUBLISHED
+        assert [req["op"] for req in seen].count("publish") == 1
+        assert seen[-1]["op"] == "release"
+
+
+def test_publish_plan_keeps_the_view_when_the_publish_is_indeterminate(tmp_path: Path) -> None:
+    """producer-kill-check: release from a finally that cannot prove the writer is settled."""
+    handler, _ = candidate_saga()
+    with endpoint(tmp_path, handler, error_by_op={"publish": "EXECUTION_UNKNOWN"}) as (client, seen):
+        with pytest.raises(ExecutionUncertainError) as caught:
+            publish(client)
+        assert caught.value.code == "EXECUTION_UNKNOWN"
+        operations = [req["op"] for req in seen]
+        assert operations.count("publish") == 1  # no retry and no second commit
+        assert "release" not in operations  # the view stays open for recovery
+
+
+def test_publish_plan_releases_after_a_determinate_refusal(tmp_path: Path) -> None:
+    """producer-kill-check: keep the view on a refusal that provably committed nothing."""
+    handler, _ = candidate_saga()
+    with endpoint(tmp_path, handler, error_by_op={"publish": "INPUT_POLICY"}) as (client, seen):
+        with pytest.raises(ExecutionRejectedError) as caught:
+            publish(client)
+        assert caught.value.code == "INPUT_POLICY"
+        assert [req["op"] for req in seen][-1] == "release"
+
+
+def test_publish_plan_refuses_a_binding_or_grant_it_cannot_prove(tmp_path: Path) -> None:
+    """producer-kill-check: accept any object as a binding, or any grant as the writer grant."""
+    with endpoint(tmp_path) as (client, seen):
+        with pytest.raises(ExecutionContractError):
+            client.publish_plan(
+                SimpleNamespace(namespace=NS, workspace_id="ws-not-hex"), SOURCE, CANDIDATE, grant=writer_grant()
+            )
+        with pytest.raises(ExecutionContractError):
+            client.publish_plan(
+                SimpleNamespace(namespace="session-1/run-1", workspace_id=VIEW.workspace_id),
+                SOURCE,
+                CANDIDATE,
+                grant=writer_grant(),
+            )
+        with pytest.raises(ExecutionContractError):
+            client.publish_plan(
+                SimpleNamespace(namespace=NS, workspace_id=VIEW.workspace_id), SOURCE, CANDIDATE, grant=view_grant()
+            )
+        assert seen == []
+
+
+def test_publish_plan_treats_a_foreign_plan_ref_as_indeterminate(tmp_path: Path) -> None:
+    """producer-kill-check: trust the reply's PlanRef without comparing it to the pinned one."""
+    handler, written = candidate_saga()
+
+    def lying(req: dict[str, Any]) -> dict[str, Any]:
+        body = handler(req)
+        if req["op"] == "publish":
+            body["plan_ref"] = {**body["plan_ref"], "sha256": "0" * 64}
+        return body
+
+    with endpoint(tmp_path, lying) as (client, seen):
+        with pytest.raises(ExecutionUncertainError) as caught:
+            publish(client)
+        assert caught.value.code == "DURABILITY_UNKNOWN"
+        assert "release" not in [req["op"] for req in seen]
+        assert written == [CANDIDATE.text]

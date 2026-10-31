@@ -380,3 +380,39 @@ def test_the_readonly_classification_covers_the_closed_enum() -> None:
     for name in ("stop_view", "seal", "publish", "install_project", "prepare_bundle", "handoff", "release"):
         assert Operation(name) in AUTHORITY_GATED_OPERATIONS
     assert READONLY_OPERATIONS == frozenset({Operation.HEALTH, Operation.READ_FILE, Operation.INSPECT})
+
+
+def test_a_candidate_view_may_open_on_a_null_base_and_the_current_plan(site: Site) -> None:
+    """producer-kill-check: insist on a revision for every CREATE_VIEW, CANDIDATE included."""
+    plan_ref = _with_plan(site)
+    plan = _plan_ref_dict(plan_ref)
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        payload = {
+            "workspace_id": ids["workspace_id"],
+            "base_revision": None,  # CANDIDATE may open without naming a revision
+            "access": "READ",
+            "purpose": "CANDIDATE",
+            "candidate_scope": {
+                "candidate_path": f".fa/admission/{ACTOR.run_id}/candidate-{uuid4().hex}.md",
+                "plan_ref": plan,
+            },
+            "plan_ref": plan,
+        }
+        context = _authorize(owner, _request(Operation.CREATE_VIEW, capability=lease.capability, payload=payload))
+        assert isinstance(context, ProtectedPlanContext)
+        # The null base means "the current revision", so the context is its plan —
+        # not an empty one and not an unchecked one.
+        assert context.plan_ref == plan_ref
+        _refused(
+            lambda: _authorize(
+                owner,
+                _request(
+                    Operation.CREATE_VIEW,
+                    capability=lease.capability,
+                    payload={**payload, "base_revision": "rev-" + "9" * 32},
+                ),
+            ),
+            "STALE_REVISION",
+        )
