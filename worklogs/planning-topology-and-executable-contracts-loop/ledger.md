@@ -5061,3 +5061,35 @@ untouched, and `tests/` in the repo still uses the generic helpers. This is loca
 
 **Not done.** STEP7 (client verb + adapter deletion), STEP8 (composition + config key), STEP9 (provisioner),
 STEP10 (payload path removal), STEP11 (class proof). No STEP or CT ticked; STEP5 carries a progress note.
+
+### E292 — the reduction reaches the plan, and a host-side write now costs the whole run
+
+**Three plan edits, no code.** (1) R3 of the SLICE7 review said the retention helper would move down into
+`workflow_artifacts.py` to dodge an import cycle; with `retain_plan_draft` staying in `plan_promotion.py`
+beside `_create_candidate` (`:81`) there is no cycle to dodge, so the row now says the move is superseded
+rather than pending. (2) STEP7's handler and STEP8's `BoundPlanPublisher` now agree on who holds the grant:
+the publisher acquires the writer for one publication and releases it in the same `finally` that releases
+the view, and the `GrantReply` it hands to `publish_plan` is that acquisition's — the sentence that stopped
+at "that acquisition's instead of storing a token (CT118)" now reads "that acquisition's, never a stored
+token", which is what the composition actually does. (3) `## E290.2` grew the part it had only implied.
+
+**What (3) adds, verified in the tree at `d9b4cb4`.** `_unchanged` refuses on a host-tree digest mismatch by
+setting `self._healthy = False` (`workspace.py:1308`), and `_check` (`:985-988`) turns that false into
+`CORRUPT_STATE` for *every* later operation; the flag is set true only in `__enter__` (`:967`). The sequencing
+limit is therefore not "the second publication is refused" but "the authority is retired for the run", which
+makes SLICE4 STEP2's position a correctness constraint rather than an ordering preference. The call sites are
+six, not two: `register_workspace` reuse (`:1211`), `acquire_writer` (`:1329`), the reader branch (`:1674`),
+`create_view` (`:1953`, `:1994`), and `_forward_gates` (`:3797`, defined `:3785`) — reached from
+`publish_candidate_plan` (`:3441`) and `_plan_prepare` (`:3581`, defined `:3567`). E291 inserted code, so the
+older `:3535`/`:3739` in that section name the same calls at their old offsets; the section now records both.
+The slice's INTENT paragraph carries the run-ending consequence in three lines so a reader of STEP7/STEP8
+cannot plan for a second publication.
+
+**Verification (executed).** `precheck` on increment-03: ok, 0 FAIL, 7 WARN (pre-existing). Derived counts
+re-read from the file: `CT 33 / kill 23 / STEP 47 / SLICE 7`, zero `[x]`. `python3 scripts/check_doc_links.py`
+→ 318 files, no broken internal links. `git diff --check` → clean. Diff is documentation only: one ledger
+entry, and increments/increment-03 (three hunks: INTENT limit, E290.2 extension, STEP8 wording plus the R3
+row).
+
+**Not done, and not claimed.** No source or test file changed, no STEP or CT ticked, no wire/protocol change,
+no new surface. STEP6 (CT118) is next and still untouched.
