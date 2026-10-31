@@ -162,6 +162,15 @@ are therefore **components, not delivery**, and SLICE4 STEP2 is the hinge the wh
 which **11 are closed** (`S7P2` E299, `S7P3` E300, `S7P4` E298, `S7P5` E291, `S7P6` E293, `S7P7` E294, `S7P8` E295, `S7P9` E297, `S7P10` E301, `S7P11` E302). **SLICE7 is now fully `LOCAL-CLOSED`**: no `PLANNED` row remains in it. The audit's count as written on 2026-10-31 was 11 `PLANNED` and zero
 ticks; both changed because exit clauses were reproduced, not because `workspace.py` exists.
 
+**Slice verification pass (2026-11-01, E306), after Q98/Q100 changed three of its contracts.** Every invariant
+CT114–CT121 re-checked against the tree rather than the record: CT114 eight banks green on all six surfaces; CT115's
+`_require_managed_publisher` sits before the attempt is reserved (`workflow_controller.py:2586`) and refuses with
+`managed-execution-absent` (`:2293`); CT116 still has exactly one `ExecutionClient(` construction site
+(`composition.py`) with the deleted adapter absent; CT117's wire half carries `already_published` with the nullable
+`base_revision` and the plan-bound cross-field rule; CT118/CT119 hold under Q100's one-slot rewrite; CT120's
+`candidate_path` is absent from `src`; CT121's preservation banks are **455 passed**. Two records were corrected, not
+the code: `session_summary` now carries the stage verdict (Q98) and `_retain_rejected_draft` keeps one slot (Q100).
+
 **The dependency order, said once.** Slice numbers are *authorship* order, not execution order: SLICE7 was
 written after SLICE6 but depends only on SLICE3, and SLICE4–6 consume the composition it builds, which is why
 `DEPS` already reads `SLICE4: SLICE3, SLICE7`, `SLICE5: SLICE4, SLICE7`, `SLICE6: SLICE5, SLICE7`. The

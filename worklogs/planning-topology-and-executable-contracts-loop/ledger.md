@@ -5674,3 +5674,82 @@ written.
 `baseline-unavailable`. With the link repaired and an absolute `PYTHONPATH`, `test_s10c` passes 7/7 unchanged. Comparison
 baselines from now on come from a `git worktree` at `HEAD` (`/tmp/base`), never from `git stash`, and never from a number
 produced before checking that the fixture's own child process can import `pytest`.
+
+### E306 — SLICE7 verification pass against the tree, after its contracts moved
+
+The operator asked for the invariant pass before anything else. It was run on the tree at `e2591b9`, i.e. with E304's
+two fixes and E305's three decisions already in, because two of those decisions edit contracts this slice owns.
+
+| invariant | evidence (source, not prose) | verdict |
+| --- | --- | --- |
+| CT114 — the delivery law is verified text on six surfaces | `test_delivery_law_conformance.py` **8 passed**; `len(_TOKENS) == 7` asserted by the bank itself | **holds** |
+| CT115 — no supplier, no planner call | `_require_managed_publisher` (`workflow_controller.py:2281`) called at `:2586` *before* the attempt is reserved; refusal code `managed-execution-absent` (`:2293`); E304 added the refusal for an unresolvable grant without weakening this ordering | **holds** |
+| CT116 — exactly one composition supplies both controller ports | `grep -rn "ExecutionClient(" src` → one hit, `composition.py`; `ExecutionClientPlanPublisher` absent; `client_workspace_provisioner` built and injected at `cli.py:280`; `ExecutionBinding` still data-only (`namespace`, `workspace_id`) | **holds**; Q99 pins the custody half as a test |
+| CT117 — publication is a patch, not a snapshot | `_PUBLISH_REPLY.already_published` closed and required; `CREATE_VIEW.base_revision` nullable only for CANDIDATE/VERIFICATION; `PUBLISH.expected_base_revision` stays required; journal compat table is one row; E304 added `tolerate_legacy` **only** on the client's reader | **holds**, one-directional |
+| CT118 — no bearer grant stored as a `str` field outside `types.py` | `request(grant: GrantReply \| None)`; the reachability test now walks the whole CLI object graph (E304 found that the old test could not fail) | **holds and is now actually enforced** |
+| CT119 — a refused candidate is retained, never discarded | one slot `.fa/admission/<run_id>/draft.md`, atomic replace, `O_EXCL|O_NOFOLLOW`, `0600`, fsync, deadline, `run_id` scope; bank **8 passed**; 2 mutants killed on the replacement itself | **holds** under Q100; the digest-name clause is superseded |
+| CT120 — the buffer's location is not a payload field | `grep -n candidate_path src` empty; `_candidate_buffer` authorises from the pinned `plan_ref` | **holds** |
+| CT121 — sealed publication and recovery untouched | preservation banks `workspace_publication`, `workspace_recovery`, `execution_purposes`, `execution_protocol`, `execution_service`, `execution_client` → **455 passed** | **holds** |
+| Q98 (added to this slice's area) | one `session_summary` per stage carries `role`/`exit_code`/`stop_reason`; `fa stats` reads it; unconfirmed release → exit 3 + `session_meta` row; banks 10 + 29 + 27 | **holds** |
+| Q99 (custody) | `_paths_to(capability, managed) == {("grant","capability")}`, `{("_managed","grant","capability")}` for the publisher, and a second copy fails | **holds** |
+
+**Slice verify block, as written in the plan.** Block 1 (slice-owned banks) **8 + 8 + 18 passed / 1 xfailed**. Block 2
+(authority and wire) **455 passed**. Block 3: `test_skill_conformance` **16 passed**; `test_verify_gate_live` **79
+failed / 493 passed**, and the FAILED set is **byte-identical** to an untouched `HEAD` worktree run in the same
+toolchain — the fixture drives a child `pytest` inside a synthetic workspace, which this sandbox cannot provide (the
+same environment class as the `baseline-unavailable` noise). Block 4: `check_execution_e2e_coverage.py` → *"E2E artifact
+coverage OK (planned mappings only; no live PASS inferred)"*.
+
+**Two toolchain corrections, because they produced false failures twice.** (1) The PEP 695 shim copies `tests/` to
+`/tmp/vt`, and a test that resolves a surface as `Path(__file__).parents[1] / "knowledge/..."` finds nothing there —
+that is what turned CT114's eight cases red on this run; the harness now symlinks `knowledge`, `src`, `scripts`,
+`workflows`, `pyproject.toml`, `uv.lock` into `/tmp/vt`, and the same bank is green. (2) A missing `uv.lock` in that
+harness caused a separate `FileNotFoundError` batch. Neither was a repo defect, and neither was the earlier
+"101 failed": a baseline is only a baseline once the fixture's own child process can import `pytest`.
+
+### E307 — is SLICE4 STEP2 ready? Supplier leg yes, one production port is unowned
+
+The operator asked whether we can return to SLICE4 STEP2 now that SLICE7 has closed. Measured, not assumed:
+
+**What STEP2 needs, and what is already there.**
+
+| STEP2 needs | state in the tree |
+| --- | --- |
+| the provisioner injected in production | **done** — `workspace_provisioner=client_workspace_provisioner()` (`cli.py:280`), E297/Q94. Half of STEP2's own text is already satisfied |
+| the plan publisher supplied to `run_workflow` | **done** — `managed_execution_for_run` + `BoundPlanPublisher` (SLICE7 STEP8) |
+| a wire that can carry file IO | **done** — `READ_FILE`/`WRITE_FILE`/`EDIT_FILE` request+reply schemas (`protocol.py:115`, `:173`) and service routes (`service.py:842`); a client-backed file port needs no schema change |
+| bash over the wire | **component exists, no consumer** — `ManagedBashExecutor` (`client.py:324`), bank `test_execution_client.py`, `grep -rn ManagedBashExecutor src` outside `client.py` is empty |
+| a workspace port the tool layer can be handed | `WorkspacePort` protocol + `workspace_io=` plumbing through `profiles.py`/`tools/` exist; production passes **nothing** (`_build_role_registry` never supplies it) |
+| **a client-backed implementation of that port** | **absent.** `AuthorityWorkspacePort` (`tool_port.py:42`) requires an in-process `WorkspaceAuthority`; after E277 the authority is a supervisor service, and the class has **zero** importers in `src/`. This is the same gap STEP9 closed one port over with `ClientWorkspaceProvisioner` |
+
+**The cutover itself is untouched, as expected.** `run_stage_with_plan_write_boundary` and `_cmd_run_inner`: zero hits in
+`src/`. Fail-open readiness survives exactly where no provisioner is configured (`manager.py:276-285` returns early),
+`_build_pty_pool` still degrades to stateless, and the bash tool still falls back to `subprocess`. `_run_managed_command`
+(A6 / SLICE4 STEP3) is downstream of this step, so STEP2's exit cannot be read as "the verifier is managed".
+
+**Why this is a blocker and not a detail.** The plan's S4P2 row says the cutover includes "`workspace_io` in production",
+but no step or contract names who builds the client-backed port. Starting STEP2 without it would reproduce the exact
+defect this slice family exists to prevent — a consumer with no supplier. It cannot be closed by "pass the port we have":
+`AuthorityWorkspacePort` cannot be constructed in a controller process at all.
+
+**Why it still matters now.** `_unchanged` (`workspace.py:1320-1327`) sets `_healthy = False` when the host tree disagrees
+with the authority's revision, and `_check` (`:1004-1005`) then refuses **every** operation of that supervisor for the
+remaining life of the process. So today an `EVAL_REPLAN` publication after a coder stage does not merely fail: it ends the
+authority for the run. That is the limitation STEP2 removes, and it is the last thing between the factory and
+`fa workflow` being able to publish more than once per run.
+
+**Plan-ordering note, found while checking readiness.** The plan lists A5 (this step) as blocked by A4 (SLICE4 STEP1
+inventory), whose remaining work is "the negative oracle *results*" — and those oracles need the managed backend A5
+supplies. SLICE4 STEP1's own status line still reads `State: OPEN — no row closed`. On paper the two steps wait for each
+other; in practice STEP2 produces the backend that step 1's results need, so the order is STEP2 first and STEP1's oracles
+filled afterwards. Nothing is changed here — recorded so the next planner does not re-derive it.
+
+**Recommendation (sequencing and scope, for the operator: Q101).** Land STEP2 in two commits:
+**STEP2a — the missing supplier**: `ClientWorkspacePort` over `client.request(READ_FILE/WRITE_FILE/EDIT_FILE)`, reusing
+`AuthorityWorkspacePort`'s closed error vocabulary and `ManagedBashExecutor`'s fixed binding pattern; production passes
+`workspace_io=` to the file tools when the operator configured `execution:` and keeps today's host path otherwise — the
+same conditional shape Q94 approved for the provisioner. Kill-check: with `execution:` configured and a dead supervisor,
+a file write fails closed and leaves no host bytes. **STEP2b — the cutover**: `_cmd_run` →
+`run_stage_with_plan_write_boundary` → `_cmd_run_inner`, readiness fail-closed in both modes, bash through
+`ManagedBashExecutor`, host fallbacks removed, CT97's kill restored. Q101 asks whether building that port belongs inside
+STEP2 (the only reading consistent with "no component without a consumer") and whether the split is accepted.
