@@ -29,12 +29,14 @@ from fa.execution.composition import (
     ClientWorkspaceProvisioner,
     ExecutionBinding,
     ManagedExecution,
+    PlanPublication,
     client_workspace_provisioner,
     managed_execution_for_run,
 )
 from fa.execution.service import SupervisorService, read_config_file
 from fa.execution.types import ExecutionContractError, GrantReply, NamespaceRef, Operation
-from fa.inner_loop.plan_admission import read_plan_snapshot, snapshot_from_bytes
+from fa.inner_loop import workflow_controller
+from fa.inner_loop.plan_admission import PlanRef, read_plan_snapshot, snapshot_from_bytes
 from fa.session.manager import RunContext, SessionManagerError
 from fa.session.provisioning import ProvisionMode, ProvisionRequest
 from tests.test_execution_service import _registered, exchange
@@ -169,6 +171,82 @@ def test_the_managed_execution_publishes_through_the_operator_config(site: Site,
             assert not runner.is_alive()
 
 
+@contextmanager
+def _managed_publisher(site: Site, tmp_path: Path) -> Iterator[tuple[ManagedExecution, Path]]:
+    """A live supervisor plus one run's writer, over a workspace whose plan exists."""
+    plan_path = site.source / PLAN_RELATIVE
+    plan_path.parent.mkdir(parents=True, exist_ok=True)
+    plan_path.write_bytes(b"# Existing plan\n")
+    service_path, yaml_path = _configs(tmp_path, _document(site))
+    with SupervisorService(read_config_file(service_path)) as service:
+        _registered(service)
+        stop = threading.Event()
+        runner = threading.Thread(target=service.serve_forever, args=(stop,), daemon=True)
+        runner.start()
+        try:
+            managed = managed_execution_for_run(_run(site.source), config_path=yaml_path)
+            assert managed is not None
+            yield managed, plan_path
+        finally:
+            stop.set()
+            runner.join(timeout=5)
+            assert not runner.is_alive()
+
+
+def test_a_host_side_write_before_the_second_publish_is_refused(site: Site, tmp_path: Path) -> None:
+    """C1 (CT121): the authority refuses to commit onto bytes it does not hold.
+
+    Today a host-side stage can still write the project tree under the run's own
+    writer. The authority notices at the next commit — `_unchanged` sees a tree that
+    is not the current revision — and refuses. This is the behaviour the strict
+    `xfail` below is aimed at: the refusal is honest, but the write should never be
+    possible in the first place (SLICE4 STEP2).
+    """
+    with _managed_publisher(site, tmp_path) as (managed, plan_path):
+        publisher = BoundPlanPublisher(managed, managed.binding)
+        first = publisher.publish_candidate(
+            read_plan_snapshot(site.source, Path(PLAN_RELATIVE)),
+            snapshot_from_bytes("draft.md", b"# Repaired plan\n"),
+        )
+        assert first.sha256 != ""
+        assert plan_path.read_bytes() == b"# Repaired plan\n"
+
+        (site.source / "src").mkdir(exist_ok=True)
+        (site.source / "src" / "host_side.py").write_text("x = 1\n", encoding="utf-8")
+
+        with pytest.raises((ExecutionUncertainError, ExecutionRejectedError)) as error:
+            publisher.publish_candidate(
+                read_plan_snapshot(site.source, Path(PLAN_RELATIVE)),
+                snapshot_from_bytes("draft.md", b"# Repaired again\n"),
+            )
+        assert error.value.code == "CORRUPT_STATE"
+        assert plan_path.read_bytes() == b"# Repaired plan\n"  # the first commit stands
+
+
+@pytest.mark.xfail(strict=True, reason="SLICE4 STEP2 cutover: host-side stages must stop writing bytes")
+def test_the_runs_own_second_publication_survives_a_host_side_write(site: Site, tmp_path: Path) -> None:
+    """The limitation, pinned instead of hidden (Q96 = A).
+
+    This asserts what the run's held writer *should* buy it — the authority keeps
+    serving this run while host-side stages stop touching the tree. It fails today,
+    which is why it is a strict `xfail`: the step that makes host stages respect the
+    writer must delete this mark, and the mark cannot rot silently.
+    """
+    with _managed_publisher(site, tmp_path) as (managed, _plan_path):
+        publisher = BoundPlanPublisher(managed, managed.binding)
+        publisher.publish_candidate(
+            read_plan_snapshot(site.source, Path(PLAN_RELATIVE)),
+            snapshot_from_bytes("draft.md", b"# Repaired plan\n"),
+        )
+        (site.source / "src").mkdir(exist_ok=True)
+        (site.source / "src" / "host_side.py").write_text("x = 1\n", encoding="utf-8")
+        promoted = publisher.publish_candidate(
+            read_plan_snapshot(site.source, Path(PLAN_RELATIVE)),
+            snapshot_from_bytes("draft.md", b"# Repaired again\n"),
+        )
+        assert promoted.sha256 == snapshot_from_bytes("draft.md", b"# Repaired again\n").ref.sha256
+
+
 def test_the_guards_not_a_dead_socket_decide_which_runs_are_managed(site: Site, tmp_path: Path) -> None:
     """producer-kill-check: accept any uid, or any workspace the caller names."""
     service_path, yaml_path = _configs(tmp_path, _document(site))
@@ -233,8 +311,13 @@ def test_a_refused_writer_grant_yields_none(site: Site, tmp_path: Path) -> None:
             runner.join(timeout=5)
 
 
-def test_the_workflow_root_supplies_the_managed_publisher(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """producer-kill-check: drop `plan_publisher=` from the `run_workflow` call site."""
+def test_the_workflow_root_reaches_promotion(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """producer-kill-check: drop `plan_publisher=` from the `run_workflow` call site.
+
+    STEP11's EDGE case, the one that would have caught E288: it is not enough that
+    the CLI hands over an object, so the handed port is driven through the
+    controller's own ``_promote_validated_plan`` and must actually publish.
+    """
     client = _RecordingClient()
     binding = ExecutionBinding(NamespaceRef("session-1", "run-1"), "ws-" + "1" * 32)
     grant = GrantReply(Operation.ACQUIRE_WRITER, "2" * 64, None, 1, "rev-" + "3" * 32)
@@ -244,10 +327,28 @@ def test_the_workflow_root_supplies_the_managed_publisher(monkeypatch: pytest.Mo
     run = _run(workspace)
     monkeypatch.setattr(cli, "_resolve_workflow_lifecycle", lambda args, run_id: (run_id, None, run, None))
     monkeypatch.setattr(cli, "managed_execution_for_run", lambda *a, **k: managed)
+    plan_path = workspace / PLAN_RELATIVE
+    plan_path.parent.mkdir(parents=True, exist_ok=True)
+    plan_path.write_bytes(b"# Existing plan\n")
+    published: list[str] = []
+
+    def fake_publish(self: Any, source: Any, candidate: Any, *, deadline: float | None = None) -> Any:
+        published.append(candidate.ref.sha256)
+        return PlanPublication(
+            PlanRef(source.ref.workspace_relative_path, source.ref.source_kind, candidate.ref.sha256),
+            "rev-" + "7" * 32,
+            False,
+        )
+
+    monkeypatch.setattr(ManagedExecution, "publish_plan", fake_publish)
     seen: dict[str, Any] = {}
 
     def fake_run_workflow(**kwargs: Any) -> tuple[int, None]:
         seen.update(kwargs)
+        source = read_plan_snapshot(workspace, Path(PLAN_RELATIVE))
+        candidate = snapshot_from_bytes("draft.md", b"# Repaired plan\n")
+        validation = workflow_controller._PlanAdmissionValidation(candidate, "PASS", ())
+        workflow_controller._promote_validated_plan(source, validation, publisher=kwargs["plan_publisher"])
         return 0, None
 
     monkeypatch.setattr(cli, "run_workflow", fake_run_workflow)
@@ -272,6 +373,7 @@ def test_the_workflow_root_supplies_the_managed_publisher(monkeypatch: pytest.Mo
     assert cli._cmd_workflow(args) == 0
     publisher = seen["plan_publisher"]
     assert isinstance(publisher, BoundPlanPublisher)
+    assert published == [snapshot_from_bytes("draft.md", b"# Repaired plan\n").ref.sha256]
     assert client.calls == [Operation.RELEASE]  # the writer is released when the run returns
 
 

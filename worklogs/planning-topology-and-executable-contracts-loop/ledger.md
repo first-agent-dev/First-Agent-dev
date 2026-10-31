@@ -5471,3 +5471,45 @@ is amended in the plan instead.
 
 **Not done here.** STEP11's class-proof banks (`_promote_validated_plan` reachability, the sequencing pin) and STEP1's
 CT114 bank are untouched.
+
+### E302 — CT121: the class is proved, and the limitation is a test rather than a sentence
+
+**Three things STEP11 asked for, and what each became.**
+
+1. *The EDGE test that would have caught E288.* `test_the_workflow_root_reaches_promotion` (renamed from STEP8's
+   `test_the_workflow_root_supplies_a_managed_publisher`) no longer asserts that the CLI passes an object. Inside the
+   patched `run_workflow` it calls the controller's own `_promote_validated_plan` with the port the CLI handed over, and
+   the managed `publish_plan` boundary records the commit. Deleting `plan_publisher=` at the call site now fails an
+   assertion about a published candidate, not about a keyword argument — which is the difference between "wired" and
+   "reached".
+2. *The sequencing pin, measured.* The step said to mark the *refusal* `xfail(strict=True)`, which would have been
+   `XPASS(strict)`: `_plan_prepare` → `_forward_gates` → `_unchanged` (`workspace.py:3581`, `:1303`) already refuses a
+   commit when the tree is not the current revision, and the refusal test passes. So the plain test is
+   `test_a_host_side_write_before_the_second_publish_is_refused` (asserts `CORRUPT_STATE`, and that the first commit's
+   bytes stand), and the strict `xfail` naming SLICE4 STEP2 sits on the opposite claim —
+   `test_the_runs_own_second_publication_survives_a_host_side_write` — which genuinely fails today. The mark cannot rot:
+   the step that makes host stages respect the writer must delete it.
+3. *Retention conformance.* E300's `test_a_refused_promotion_retains_the_exact_bytes_under_their_hash` is the step's
+   `…_never_loses_the_candidate`, under a name that says what it proves; its success-path control is what stops the
+   bank from being satisfied by retaining unconditionally.
+
+**Producers mapped to the live register.** No register change (the file set and its counts are pinned); the new local
+producers belong to these existing cases. `I03-LIVE-26` (composed supervisor): `execution/composition.py`'s
+`managed_execution_for_run`, `BoundPlanPublisher`, `ManagedExecution.close`, proved by
+`tests/test_execution_composition.py` against an in-process supervisor. `I03-LIVE-25` (forward recovery): CT119's
+`retain_plan_draft` and the candidate-buffer publication's determinate/uncertain split (E294/E300), proved by
+`tests/test_plan_candidate_retention.py` and the client bank's uncertainty test. `I03-LIVE-S08` (outer chat join):
+`client_workspace_provisioner` injected into `SessionManager`, proved by `tests/test_execution_composition.py`'s
+provisioner tests — the *live* join is still unproven, which is exactly what the handoff sheet must say on the host.
+`implementation-handoffs.md` currently carries sections for `I03-LIVE-23/24/27` only; adding three sections with its ten
+required fields is SLICE6 STEP4's work (`scripts/check_execution_e2e_coverage.py` green; no register or index change).
+
+**Verification.** `tests/test_execution_composition.py` **13 passed, 1 xfailed** (the xfail is the pinned limitation);
+`tests/test_e2e_artifact_contract.py` **28 passed** from the repository root;
+`scripts/check_execution_e2e_coverage.py` green (125 producers, 89/35 cases, unchanged); DoD counts reproduce —
+CT **33**, `kill:` **23**, STEP **47**, slices **7 of 7** (`plan_ids._SLICE_CEILING`), operations **19**, register cases
+**27**; `precheck` 0 FAIL / 7 WARN; `ruff check` clean.
+
+**What is left in SLICE7.** Only STEP1 (CT114's per-surface conformance bank, `tests/test_delivery_law_conformance.py`),
+which is a documentation-drift bank rather than a runtime producer. Everything else in the slice is `LOCAL-CLOSED`;
+the slice-level gaps that remain are the host facts (`S1P*`, `S2P6`, `S4P4-5`, `S5P4-6`) and SLICE4's cutover.
