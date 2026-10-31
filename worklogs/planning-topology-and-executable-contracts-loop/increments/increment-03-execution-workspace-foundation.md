@@ -2,7 +2,7 @@
 Increment-ID: RM-planning-topology-I03
 Roadmap-ID: RM-planning-topology
 status: OUTLINED
-slices: 6
+slices: 7
 shipped: —
 ---
 
@@ -15,7 +15,7 @@ per-stage/episode ordinary-edit checkpoints. E233 found F17/Q75; the operator ex
 Q75(a) in E234: narrowly bound memory-only original completed-reply replay, secret-free journal,
 no fresh authority/re-execution/reconstruction. The stop is lifted; SLICE1 implementation resumes. OUTLINED
 is deliberately unchanged: plan finalization assigns no implementation tick, READY automation,
-live result or deployment authorization. All35 construction steps and final acceptance remain open.
+live result or deployment authorization. All47 construction steps and final acceptance remain open.
 
 **Depends on:** retained I02 local implementation/checks and plan-versus-diff review; no restored
 I02 deployed-host, broad independent-review or inherited-baseline acceptance prerequisite.
@@ -579,7 +579,7 @@ CONTRACTS:
     stay. `CREATE_VIEW.base_revision` becomes nullable for `CANDIDATE`/`VERIFICATION`
     (`protocol.py:102`), and `PUBLISH.expected_base_revision` becomes nullable only for a candidate
     publish carrying a non-null `plan_ref` (`:126`, cross-fields `:326-334`); the authority already
-    accepts `base_revision=None` (`create_view` `:1909`, CAS only when non-null `:1928-1930`), so null
+    accepts `base_revision=None` (`create_view` `:1911`, CAS only when non-null `:1932`), so null
     means "the bytes current when the copy starts", never "whatever is convenient". A publish whose
     intent equals the current tree returns the current revision with `already_published: true` instead
     of `INPUT_POLICY` from `_plan_prepare`'s "a replacement must replace something" (`:3533-3534`), so
@@ -592,13 +592,20 @@ CONTRACTS:
     `GrantReply`. `repr()` and `vars()` of any object the composition builds contain no 64-hex grant.
     kill: remove-call src/fa/execution/client.py::ExecutionClient.request -> GrantReply.to_wire_capability
   CT119 [CONSTRAINT]: a validated candidate that cannot be published is retained, not discarded.
-    Operator ruling (2026-10-31, option B). The bytes are re-materialised where the planner draft
-    already lives — `<workspace>/.fa/drafts/<run_id>/plan-<sha256>.md` after CT120's rename, today
-    `.fa/admission/<run_id>/` (`plan_promotion.py:71`) — through the existing
-    `_private_artifact_directory` (`workflow_artifacts.py:566`) and the existing `_create_candidate`
-    (`plan_promotion.py:82`: `O_EXCL|O_NOFOLLOW`, 0600, fsync of file and directory, unlink of a partial
-    file). The name is the content hash, so the operation is idempotent and the count is bounded by
-    `planner_limit`: no cap, no eviction, no new module. Nothing is written when publication succeeds,
+    Operator ruling (2026-10-31, option B). The bytes are re-materialised in the directory the planner
+    draft already lives in — `.fa/admission/<run_id>/` (`plan_promotion.py:71`) today,
+    `<workspace>/.fa/drafts/<run_id>/` after CT120's rename — through the existing
+    `_private_artifact_directory` (`workflow_artifacts.py:566`) and the existing write primitive
+    `_create_candidate` (`plan_promotion.py:81`, `O_EXCL` on `:85`, 0600, fsync of file and directory,
+    unlink of a partial file). Two preconditions are this contract's own, not carried over from the
+    draft path: the retained name is the **content hash** (`plan-<sha256>.md`; the live draft name is
+    `candidate-<uuid4().hex>.md`, `plan_promotion.py:71`, `client.py:194`), and `O_EXCL` must therefore
+    be read as *create-or-confirm*, not *create-or-fail* — an existing file with the same content hash
+    is success after its bytes are compared, any other `EEXIST` is a retention failure reported as one
+    warning. Hence the count is bounded by `planner_limit`: no cap, no eviction, no new module, and the
+    primitive moves down into `workflow_artifacts.py` (re-exported by `plan_candidate.py`) because
+    `plan_promotion.py:18` already imports from that module — a retention helper there that imports
+    `_create_candidate` back would close an import cycle. Nothing is written when publication succeeds,
     and a retention failure never masks the `PlanPromotionError` it accompanies. The admission record
     already names the bytes: the blocked attempt carries `candidate_sha256`
     (`workflow_controller.py:2383`), so the file is findable without a schema change.
@@ -636,14 +643,14 @@ uv run python scripts/check_execution_e2e_coverage.py
 ```
 - [ ] STEP1: land CT114 on all six surfaces and add `tests/test_delivery_law_conformance.py`: per surface a token list that must be present (`EDGE mutant`, `SUPPORT`, `rooted-by`, `supplier`, `## Delivery` where the surface owns a plan shape) plus a damage test that mutates a copy of the surface (delete the section, or replace `EDGE` with `PRODUCER`) and asserts the checker flags it; do not touch the `PLAN-SKELETON` markers, the schema §4 example, or `tests/test_skill_conformance.py`'s assertions (exit: new suite green, the damage mutant is caught for each of the six surfaces, `tests/test_skill_conformance.py` unchanged and green)
 - [ ] STEP2: implement CT115. Add `_require_managed_publisher(ctx) -> CandidatePlanPublisher` raising `PlanPromotionError("managed-execution-absent")`; call it in `_admit_plan` immediately before `state.planner_calls += 1` (`:2558`), which is inside the `while True:` repair/replan loop and therefore never reached by a plan that admits (`:2545-2549`); pass the result as an explicit `publisher=` argument of `_run_admission_repair` and make `_promote_validated_plan` take a required `publisher`, deleting the `publisher is None` branch (`:2293-2294`) and the unused `workspace` parameter (`:2290`, call site `:2455-2458`). Extend `ADMISSION_RULES["promotion"]` (`admission_schema.py:46-55`) with `managed-execution-absent`. Tests: a diagnostic plan with no publisher → `admission.json` holds exactly one attempt `{validator: promotion, rule: managed-execution-absent}`, status `BLOCKED`, and the injected `run_stage_fn` was never called (this is the binary stand-in for `planner_calls == 0`, which the record does not store), no `.fa/admission` directory created, canonical sha unchanged; control: a valid plan on the same unmanaged run admits and runs; EDGE mutant: delete the call → the stage runs, the candidate is deleted, the test fails (exit: suite green, EDGE mutant caught, `prepare-failed` unreachable from the unmanaged path)
-- [ ] STEP3: implement CT119. In `_run_admission_repair`, wrap the `_promote_validated_plan` call (`:2455-2458`) so that a `PlanPromotionError` is caught, the bytes captured before the cleanup `finally` (`:2451`) are written by a new `retain_plan_draft(workspace, run_id, raw, *, deadline)` in `inner_loop/workflow_artifacts.py` (same directory helper and `_create_candidate` rules, target `.fa/admission/<run_id>/plan-<sha256>.md` until STEP9 renames the namespace, existing file with the same name left untouched), and the original error is re-raised; a failure inside retention is logged as one structured warning and never replaces the original rule. Tests in `tests/test_plan_candidate_retention.py`: an injected publisher failure → the file exists with exactly the candidate's sha256, canonical plan unchanged, admission `BLOCKED` with the publisher's rule; success → no file; two failures with the same bytes → one file, no error; a retention failure → the admission rule is still the publisher's (exit: suite green, retention is not a side effect of the success path, no schema field added)
-- [ ] STEP4: implement the wire half of CT117 in `execution/protocol.py`: `CREATE_VIEW.base_revision` (`:102`) becomes `_nullable(_id("rev-"))`, `PUBLISH.expected_base_revision` (`:126`) becomes nullable, `_PUBLISH_REPLY` (`:145`) gains `already_published={"type": "boolean"}`, and the decoder gains three cross-field rules — a null `base_revision` only for `CANDIDATE`/`VERIFICATION`, a null `expected_base_revision` only with a candidate view and a non-null `plan_ref`, and `already_published: true` only with a non-null `plan_ref`; the sealed publish producer emits `already_published: false`. Update `test_execution_protocol.py` with the refusal and acceptance matrices (exit: protocol suite green, three new refusals proved, `_COMMITTED` untouched for `install_project`)
+- [ ] STEP3: implement CT119. In `_run_admission_repair`, wrap the `_promote_validated_plan` call (`:2455-2458`) so that a `PlanPromotionError` is caught, the bytes captured before the cleanup `finally` (`:2451`; they are the in-memory `candidate` read at `:2444`, so cleanup cannot lose them) are written by a new `retain_plan_draft(workspace, run_id, raw, *, deadline)` in `inner_loop/workflow_artifacts.py` (same directory helper `:566`; move `_create_candidate` down from `plan_promotion.py:82` and re-export it, because `plan_promotion.py:18` already imports this module; target `.fa/admission/<run_id>/plan-<sha256>.md` until STEP10 renames the namespace; an existing file whose bytes equal the hash is left untouched and is not an error, any other `EEXIST` is), and the original error is re-raised; a failure inside retention is logged as one structured warning and never replaces the original rule. Tests in `tests/test_plan_candidate_retention.py`: an injected publisher failure → the file exists with exactly the candidate's sha256, canonical plan unchanged, admission `BLOCKED` with the publisher's rule; success → no file; two failures with the same bytes → one file, no error, two failures whose bytes differ → two files, no error and no eviction of the first; a retention failure → the admission rule is still the publisher's (exit: suite green, retention is not a side effect of the success path, no schema field added, `python -c "import fa.inner_loop.workflow_artifacts"` succeeds with no new import back into `plan_candidate`)
+- [ ] STEP4: implement the wire half of CT117 in `execution/protocol.py`: `CREATE_VIEW.base_revision` (`:102`) becomes `_nullable(_id("rev-"))`, `PUBLISH.expected_base_revision` (`:126`) becomes nullable, `_PUBLISH_REPLY` (`:145`) gains `already_published={"type": "boolean"}`, and the decoder gains three cross-field rules — a null `base_revision` only for `CANDIDATE`/`VERIFICATION`, a null `expected_base_revision` only with a candidate view and a non-null `plan_ref`, and `already_published: true` only with a non-null `plan_ref`; the sealed publish producer emits `already_published: false`. **The reply field is journal-visible, so it cannot be added as a bare required key.** `journal._validate_record` (`journal.py:130-131`) re-checks every stored `DONE` against the *current* `protocol.RESULTS`, `_PUBLISH_REPLY` is a closed `_object` (all keys required, `additionalProperties: False`, `protocol.py:25-26`), and `_read` turns one mismatch into `CORRUPT_STATE` (`journal.py:222-235`) on the start-up path `WorkspaceAuthority.__enter__` → `recover_uncertain` (`workspace.py:965`). A journal written before this change therefore bricks a running sandbox unless the change also decides compatibility (Q93): either the record carries a schema version that its `DONE` is validated against, or `_validate_record` accepts a *missing* `already_published` on a `PUBLISH` record and the reader supplies `false`. Update `test_execution_protocol.py` with the refusal and acceptance matrices, and `test_workspace_recovery.py`/`test_execution_service.py` with one seeded pre-change `PUBLISH` record read back after the change (exit: protocol suite green, three new refusals proved, `_COMMITTED` untouched for `install_project`, the seeded old record reads without `CORRUPT_STATE` and replays as `already_published: false`)
 - [ ] STEP5: implement the authority half of CT117. Delete the base-equality comparison in `_closed_candidate_reader` (`:3492-3493`) and leave every other predicate in that method; add `_already_published(binding, plan_ref, buffer)` (validating the target shape through `_plan_parts` first) and call it in `publish_candidate_plan` after the buffer read (`:3433`) and before `_plan_prepare` (`:3436`), returning the current `revision_id`/`tree_sha256` with the intent's `plan_ref` and `already_published: true` — no intent write, no stage, no replace, no new revision directory. The view is still settled by the caller's RELEASE. Update the mutants: re-adding the base comparison must fail "publish after an unrelated commit succeeds", and removing `_already_published` must fail "an applied intent is reported as applied" (exit: publication and recovery banks green, both mutants caught, no regenerated `rev-` literal left in a fixture)
 - [ ] STEP6: implement CT118. `ExecutionClient.request` takes `grant: GrantReply | None`, validates the type and unwraps once at `"capability": grant.to_wire_capability() if grant is not None else None`; the `CREATE_VIEW`/`PIN_READER`/`ACQUIRE_WRITER`/`HANDOFF` replies are wrapped into `GrantReply` at the client boundary; `ManagedBashExecutor` stores a `GrantReply`; add `GrantReply.to_wire_capability()` in `types.py`. New `tests/test_execution_grants.py` against the in-process supervisor: `repr()` and every `vars()` value of the client, the executor and the composition adapter contain no `[0-9a-f]{64}`, no receipt, event or tool result carries the grant, and `to_journal_result` still refuses a projection containing it (exit: suite green, the guard fails if a hex grant reaches any attribute reachable by `vars()`)
-- [ ] STEP7: implement the client verb and delete the adapter (CT116/CT118). Add `ExecutionClient.publish_plan(binding, source, candidate, *, deadline)` carrying the saga now in `ExecutionClientPlanPublisher.publish_candidate` (`client.py:180-266`): CREATE_VIEW with a null base and the pinned `plan_ref`, WRITE_FILE into the scoped buffer, STOP_VIEW requiring `terminal is True`, PUBLISH with `sealed_manifest_id: null`, the `plan_ref` identity check, `already_published` passthrough, and RELEASE only on a determinate outcome; delete the class and `_release_candidate_best_effort` (`:268-283`), move its tests into the client's bank as one saga test plus one uncertainty test that asserts the view is *not* released and that no second commit happens (exit: `git grep -c ExecutionClientPlanPublisher src tests` is 0, both tests green)
+- [ ] STEP7: implement the client verb and delete the adapter (CT116/CT118). Add `ExecutionClient.publish_plan(binding, source, candidate, *, deadline)` carrying the saga now in `ExecutionClientPlanPublisher.publish_candidate` (`client.py:180-266`): CREATE_VIEW with a null base and the pinned `plan_ref`, WRITE_FILE into the scoped buffer, STOP_VIEW requiring `terminal is True`, PUBLISH with `sealed_manifest_id: null`, the `plan_ref` identity check, `already_published` passthrough, and RELEASE only on a determinate outcome; **the base the PUBLISH CAS must carry is the one the CREATE_VIEW reply returned** (`view.base_revision`, `protocol.py:56-64`, enforced against the view at `:334`), never a cached client field — the adapter being replaced sends its own `_base_revision` (`client.py:265`), which is set at construction and re-set only after a successful publish, so after any other commit in the same workspace the pair mismatches and the publish is refused; delete the class and `_release_candidate_best_effort` (`:268-283`), move its tests into the client's bank as one saga test plus one uncertainty test that asserts the view is *not* released and that no second commit happens (exit: `git grep -c ExecutionClientPlanPublisher src tests` is 0, both tests green)
 - [ ] STEP8: add `src/fa/execution/composition.py` with `ExecutionBinding` (frozen: `namespace`, `workspace_id`, `run_id`), `ManagedExecution` (client + binding) and `managed_execution_for_run(session_context, run_context, provisioned, *, config_path=None, deadline) -> ManagedExecution | None` — the only `ExecutionClient(...)` in `src/`. The endpoint is read, not guessed: `config_path or config.DEFAULT_CONFIG_PATH` (`config.py:44`) gains a new `execution.service_config` key, and that JSON is passed to `service.read_config_file` (`:290`) for `socket_path`; the controller's own uid must be in `controller_uids`. Absent file, absent key or `provisioned.registered is False` (`session/provisioning.py:44-60`) → `None`, never a minted grant and never a default socket. Extend `load_capabilities`'s reader (`config.py:110`) with the one nested string key and its failure tests; do not add an environment variable, because two answers to one question is the defect this slice closes. Add `BoundPlanPublisher(client, binding)` implementing `CandidatePlanPublisher`, and wire `cli.py::_cmd_workflow` to construct it after `resolve_workflow_workspace` and pass `plan_publisher=` into `run_workflow` (`:1431`). Tests `tests/test_execution_composition.py`: absent key → `None` and CT115's rule; a temp config naming a temp service JSON over the in-process supervisor → binding fields match the provisioned workspace and `publish_plan` reaches a real commit; a config that names a socket whose uid is not the controller's → refused, not connected; EDGE mutant deletes `plan_publisher=` at `:1431` and the "workflow publishes a repaired plan" test must fail (exit: suite green, EDGE mutant caught, `git grep "ExecutionClient(" src` shows exactly one site, the config key is proved by the same test that proves the commit)
 
-- [ ] STEP9: implement CT116's second port. Add `ClientWorkspaceProvisioner` to `execution/composition.py` implementing `session.provisioning.WorkspaceProvisioner` (`session/provisioning.py:66`) over `Operation.REGISTER_WORKSPACE`: build the `ProvisionRequest`'s `{root_id, relative_root}` from the request's `workspace_path` relative to `approved_roots`, send one `register_workspace{create:false, input_id:null}` and map the reply into `ProvisionedWorkspace(registered=True, workspace_id, revision_id, tree_sha256)`. The reply lacks `tree_sha256` today (`service.py:591` emits `{workspace_id, revision_id}`) while `ProvisionedWorkspace.__post_init__` refuses a registered result without it (`session/provisioning.py:44-60`), so add `tree_sha256=SHA` to the `REGISTER_WORKSPACE` reply schema and to the route in the same change; nothing else on the wire moves, and `install_project` keeps `_COMMITTED`. A failed register maps to the existing `SessionManagerError` codes through `_ERROR_CODES` (`execution/provisioning.py:28-35`) rather than a new vocabulary. Tests in `tests/test_execution_composition.py`: over the in-process supervisor a REUSE request returns the same `workspace_id`/`revision_id`/`tree_sha256` the authority holds; an unknown root, an escaping relative path and a missing socket each raise the mapped code with no bytes written; a reply without the new field is refused by the decoder (exit: protocol and provisioning banks green, the provisioner is the only `register_workspace` caller in `src/`, and `SessionManager` can be constructed with it in place of the unimplemented in-process `ManagedProvisioner` `execution/provisioning.py:37`)
+- [ ] STEP9: implement CT116's second port. Add `ClientWorkspaceProvisioner` to `execution/composition.py` implementing `session.provisioning.WorkspaceProvisioner` (`session/provisioning.py:66`) over `Operation.REGISTER_WORKSPACE`: build the `ProvisionRequest`'s `{root_id, relative_root}` from the request's `workspace_path` relative to `approved_roots`, send one `register_workspace{create:false, input_id:null}` and map the reply into `ProvisionedWorkspace(registered=True, workspace_id, revision_id, tree_sha256)`. The reply lacks `tree_sha256` today (`service.py:591` emits `{workspace_id, revision_id}`) while `ProvisionedWorkspace.__post_init__` refuses a registered result without it (`session/provisioning.py:44-60`), so add `tree_sha256=SHA` to the `REGISTER_WORKSPACE` reply schema and to the route in the same change; nothing else on the wire moves, and `install_project` keeps `_COMMITTED`. That field is journal-visible too (`journal.py:130-131`, closed `_object`), so the same Q93 decision as STEP4 applies: a pre-change `REGISTER_WORKSPACE` `DONE` must keep reading, and the compatibility branch is proved by a seeded old record rather than assumed. A failed register maps to the existing `SessionManagerError` codes through `_ERROR_CODES` (`execution/provisioning.py:28-35`) rather than a new vocabulary. Tests in `tests/test_execution_composition.py`: over the in-process supervisor a REUSE request returns the same `workspace_id`/`revision_id`/`tree_sha256` the authority holds; an unknown root, an escaping relative path and a missing socket each raise the mapped code with no bytes written; a reply without the new field is refused by the decoder (exit: protocol and provisioning banks green, the provisioner is the only `register_workspace` caller in `src/`, and `SessionManager` can be constructed with it in place of the unimplemented in-process `ManagedProvisioner` `execution/provisioning.py:37`)
 - [ ] STEP10: implement CT120. Rename `seed_plan_candidate` → `open_planner_draft` and `plan_promotion.py` → `plan_candidate.py` with every importer updated; move the draft to `.fa/drafts/<run>/plan-<hex>.md` (`plan_promotion.py:71`, `client.py:194`) and add `.fa/drafts` to the refusal in `_planner_target_allowed` (`profiles.py:250-258`, next to the `.fa/admission` check) plus the allowlist tests; remove `candidate_scope.candidate_path` from `protocol.py`, `_candidate_scope` (`:285`), `_candidate_buffer` (`:2248`), the service routes and the banks, keeping the exact `plan_ref` equality that already exists (`publish_candidate_plan` `:3431`). Retirement rule: the old `.fa/admission/<run>/` spelling is removed in the same change, not aliased (exit: `git grep -n "candidate_path\|plan_promotion\|seed_plan_candidate" src tests` is empty, protocol and purpose banks green, `check_doc_links.py` clean)
 - [ ] STEP11: prove the class, not the instance, and record it. Add the EDGE test that would have caught E288 — `tests/test_execution_composition.py::test_the_workflow_root_supplies_a_managed_publisher`: over the real controller with a recording port, assert a publisher reached `_promote_validated_plan` (recorded by the port, never inferred from a green run) — plus `tests/test_plan_candidate_retention.py::test_a_publish_failure_never_loses_the_candidate`. Record the new producers under the **existing** live cases in `e2e/I03/implementation-handoffs.md` (I03-LIVE-26 for the composition, I03-LIVE-25 for recovery of a candidate publish, I03-LIVE-S08 for the chat join) and add one ledger entry for this slice; do not add register cases here, because the register, the `e2e/README.md` index, `e2e/I03/live-verification.md` and `producer-coverage.json` must change as one set (`scripts/check_execution_e2e_coverage.py:659-670`) and their counts are pinned by `tests/test_e2e_artifact_contract.py:340-350` — new case ids are the planner's host-sheet work in SLICE6 STEP5. Update this increment's derived DoD counts and record that I03 now sits at the slice ceiling (7 of 7, `plan_ids._SLICE_CEILING`) (exit: coverage script unchanged-green, no register set change, DoD counts reproduce from their commands, CT121's banks named in the ledger entry)
 
@@ -3604,3 +3611,77 @@ host evidence required before joint evaluation.
 An initial full verify-bank run without the venv on `PATH` had nested child failures (`/usr/bin/python: No module named pytest`); rerunning with the venv on `PATH` exposed one test-double mismatch at the post-replace fsync boundary, which was corrected. The final full bank is the 572-pass result above.
 
 **Not claimed.** No live host run, E2E fixture/helper, I03-LIVE-23 baseline/oracle edit, STEP tick, CT closure, merge/deploy, or production readiness is claimed. The planner must reconcile I03-LIVE-23's old OWNER-grant oracle with the candidate-view route before any later host run.
+
+## E290 — SLICE7 re-review against the committed text (2026-10-31, code at `2fa8d30`)
+
+The §14 review in `notes/Q90-defect-group-closure-2026-10-31.md` judged the **draft** `d31222f`. This
+entry re-reads what actually landed, contract by contract and step by step, against the code. Seven
+findings: five were plan defects and are fixed in place above; two are checks that stand.
+
+**R1 [confirmed, fixed] — a step reference survived renumbering.** STEP3 said retention writes to
+`.fa/admission/<run_id>/` "until STEP9 renames the namespace", but STEP9 is the client workspace
+provisioner and the rename is STEP10. Draft numbering leaked into the committed text; the reference is
+now STEP10.
+
+**R2 [confirmed, fixed] — CT119 presented a new rule as existing behaviour, and it collided with the
+primitive it reused.** The live draft names are `candidate-<uuid4().hex>.md`
+(`plan_promotion.py:71`, `client.py:194`), so "the name is the content hash" is introduced by this
+contract, not observed. Worse, the reused `_create_candidate` opens `O_EXCL` (`plan_promotion.py:85`),
+so a second retention of the same bytes would have raised `FileExistsError` — the contract promised
+idempotency and the step promised reuse of create-or-fail. Fixed: content-hash naming is named as this
+contract's rule, `O_EXCL` is read as *create-or-confirm* (bytes compared; only an equal file is a
+no-op), and the test matrix now includes "same bytes twice → one file, no error" and "different bytes
+twice → two files, no eviction".
+
+**R3 [confirmed, fixed] — the retention helper would have closed an import cycle.**
+`plan_promotion.py:18` already imports `_private_artifact_directory` from `workflow_artifacts.py`
+(`:566`), so putting `retain_plan_draft` there while importing `_create_candidate` back from the draft
+module is a cycle. Fixed: the write primitive moves down into `workflow_artifacts.py` and is
+re-exported by `plan_candidate.py`; STEP3's exit states the import check explicitly.
+
+**R7 [confirmed, fixed] — STEP7 never said which base revision PUBLISH carries.** The wire compares the payload's
+`expected_base_revision` with the **view's** base (`protocol.py:334`), and the view's base is whatever revision was
+current when `create_view` ran (`workspace.py:1684-1691`; the optional parameter is a precondition, not a pin).
+The adapter STEP7 replaces sends its own cached `_base_revision` (`client.py:265`), initialised at construction and
+updated only after a successful publish — so a commit by anyone else in the same workspace between two repair
+attempts makes the two disagree and the publish is refused as `INVALID_REQUEST`, which reads as a protocol bug
+rather than a stale-cache bug. STEP7 now names the CREATE_VIEW reply (`view.base_revision`) as the only source.
+
+**R4 [confirmed, fixed] — STEP4 and STEP9 added required keys to closed reply schemas without naming
+the migration decision.** `journal._validate_record` re-checks every stored `DONE` against the
+*current* `protocol.RESULTS` (`journal.py:130-131`), each reply is a closed `_object` (all keys
+required, `additionalProperties: False`, `protocol.py:25-26`), and one mismatch becomes
+`CORRUPT_STATE` in `_read` (`journal.py:222-235`), on the start-up path
+`WorkspaceAuthority.__enter__` → `recover_uncertain` (`workspace.py:965`). Both `already_published`
+(STEP4) and `tree_sha256` (STEP9) are therefore journal-visible: adding them as bare required keys
+bricks a sandbox whose journal predates the change. The steps now name Q93 (schema version on the
+record, or a named tolerance for the missing key) and require a seeded pre-change record to be read
+back.
+
+**R5 [checked, stands] — the CT115 guard is executable where it is placed.** The only path to
+`state.planner_calls += 1` (`workflow_controller.py:2558`) besides an explicit replan is the
+`RETRY`/`BLOCKED` tail of the loop, `_run_admission_repair` (`:2559`) is the only caller of
+`run_stage_fn`, and `_admit_plan`'s `except (PlanRefError, PlanPromotionError, PlannerDispatchError)`
+(`:2570`) routes the refusal through `_admission_blocked` (`:2465-2480`) as
+`promotion/managed-execution-absent` with the attempt's `candidate_sha256`. So "the stage was never
+dispatched" is a real assertion, and CT119's findability claim needs no schema field. `run_workflow`
+already accepts `plan_publisher` (`:2657`), so STEP8 wires an existing parameter rather than inventing
+one.
+
+**R6 [checked, stands] — the wire and composition anchors are accurate.** `_PUBLISH_REPLY`
+(`protocol.py:145`) currently carries exactly six keys; `read_config_file` is at `service.py:290`;
+the `REGISTER_WORKSPACE` reply at `service.py:591` emits exactly `{workspace_id, revision_id}`;
+`WorkspaceProvisioner` is `session/provisioning.py:66`; `ExecutionClientPlanPublisher` spans
+`client.py:154-283` with `_release_candidate_best_effort` at `:283`; `DEFAULT_CONFIG_PATH` is
+`config.py:44`; `_planner_target_allowed` refuses `.fa/admission` at `profiles.py:250-262`.
+
+**Stale counters, fixed in the same pass.** Front matter said `slices: 6` and the planning-state
+paragraph said "All35 construction steps"; the roadmap row for I03 still called it the "six-slice
+plan", and I02's hand-off pointed at that same "six-slice" plan. Derived counts do not move:
+33 CTs (23 FUNCTIONAL / 9 CONSTRAINT / 1 PRESERVATION), 23 `kill:` directives, 47 STEPs, 7 slices.
+
+**Open, not closed here.** Q92 (the R6 base-pin revocation) is still absent from
+`notes/open-questions-2026-10-07.md`, so CT117 remains in tension with the canonical Q89 until that
+append-only entry exists; Q93 gates STEP4 and STEP9 as described in R4; Q91 has no canonical entry —
+`load_capabilities` (`config.py:110-146`) reads only the `capabilities:` block, so STEP8's
+`execution.service_config` needs a second reader or an extension of that contract, and the step says so.
