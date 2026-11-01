@@ -7650,19 +7650,52 @@ exit 0. Механизм: разрешение/containment проверены п
 не proof reachable concurrent actor и не host data escape; но это воспроизводимое
 нарушение локального rooted-read intent при изменяемом дереве.
 
-### Q109 — обязательный выбор до дальнейшего Q97/code
+### Q109 — контрактная развилка, уточнена E379
 
-Публичный продуктовый контракт вокруг concurrent mutation/consistent view не
-фиксирует, как обязан вести себя discovery, когда cell writer меняет файлы во
-время индексации. Простая path `resolve()` повторно уязвима. Варианты:
-A) descriptor-rooted `openat` / `O_NOFOLLOW` для фактического чтения каждого
-indexable file, отказ при symlink/identity drift; сохранить динамичную view;
-B) неизменяемый generation pin/snapshot на полный обход и поиск, гарантированный
-authority/terminality механизмом, с proof, что никакой PTY/background writer не
-может изменить прочитанный generation. Предварительная инженерная рекомендация
-A — она не требует менять динамический cell contract; но потребуются настоящие
-C3 symlink-swap tests и проверка всех readers (AST, search indexing, snippets,
-listing). Не принимать незаметную external read как допустимую консистентность.
-До решения остановлены новые Q97 production edits. Любой вариант требует
-source-backed EDGE/BODY mutants, реальный session/UDS/helper producer и live host;
-локальный forced interleaving доказывает лишь класс дефекта.
+См. Q109 E379: single-user v0.1 допускает рекомендацию best-effort advisory, но
+это ослабляет буквальное same-view promise spec §4. Альтернатива — strict
+per-file rooted reads без whole-view snapshot. User decision требуется; до него
+не менять production readers или объявлять Q97 закрытым. В любом случае Q97
+остаётся открыт по output/resource ceiling, Q75/replay, transport и live proof.
+
+### E379 — оценка Q109 по реальному v0.1 threat model
+
+Source review `knowledge/project-overview.md` §1.1/§2: v0.1 = single power-user,
+single workstation; группа примерно 10 человек/per-user memory — future post-v0.2.
+Профиль `ExecutionProfile.create_spec` рендерит только source `/workspace`,
+scratch `/scratch`, operator-approved cache `/opt/toolchain-cache` (RO); non-root
+UID/GID из host config, read-only container rootfs, `NetworkMode=none`, private
+PID/IPC/cgroup/UTS, `CapDrop=ALL`, `no-new-privileges`, closed seccomp. Host сокет,
+supervisor paths и host PID не смонтированы. Это implementation/config evidence,
+не host/deployment proof.
+
+`CellWorker.serve` допускает только один RUN одновременно; однако интерактивная
+PTY-сессия и project-shell могут оставить background descendants между RUNs,
+поэтому race с mutable `/workspace` реалистичен. E378 сам был deterministic
+forced interleaving; production concurrency/attacker schedule не доказан.
+Аутентификация, view grant и EXEC intent у authority; helper внутри cell не
+получает privilege поверх Bash того же cell. Search/reach не участвуют в seal,
+publish, type gates или authorization. Поэтому не установлено host escape или
+межсессионное чтение: E378 показывает source/content outside `/workspace` внутри
+текущего cell mount namespace и ошибочное приписывание `a.py`.
+
+Сенior оценка: **не строить immutable generation/whole-view snapshot ради
+одного пользователя v0.1** — дорогая изоляция без нового security boundary;
+критичная host/container/capability boundary уже остаётся целью full I03. Но
+текущая spec §4 явно обещает rooted-reader symlink policy; молча считать E378
+PASS нельзя. Есть два допустимых контракта для явного выбора:
+A) best-effort discovery на текущем mutable cell tree; возможен устаревший или
+смешанный результат, он только подсказка, никогда evidence/authority. Низкая
+сложность, подходит single-user, однако требует ослабить «only admitted view»
+reader promise и тестировать observable refusal/limits;
+B) строгая view containment на каждом file read с no-follow descriptor-rooted
+open/identity drift check; без full immutable snapshot и без отдельной tenant
+isolation. Выше сложность, лучше буквальный spec/Q97.
+
+Recommendation: A для v0.1, если пользователь подтверждает, что live discovery
+— advisory и текущий cell sandbox, а не exact workspace root, является security
+boundary. При этом не разрешать использовать результаты как plan/type/acceptance
+evidence; Q97 output bounds, Q75, grant/replay и host доказательства всё равно
+обязательны. Если точный root scope — критичный продуктовый контракт, выбрать B.
+E378 и рассуждение пока не меняют спецификацию и не оправдывают кодовую правку.
+До ответа пользователя production edits по Q97 не начинать.

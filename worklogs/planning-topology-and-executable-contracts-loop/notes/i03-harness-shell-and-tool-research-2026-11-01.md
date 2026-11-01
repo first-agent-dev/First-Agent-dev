@@ -384,6 +384,34 @@ boundary. Это новый security/consistency question Q109: до Q97 над�
 простое `resolve()`/повторная проверка пути не закрывает гонку. Не расширять
 отказ на stable-view guarantee без user decision.
 
+E379 threat-model review v0.1: `knowledge/project-overview.md` определяет текущую
+цель как single power-user / single workstation; Telegram-группа около 10 человек
+и per-user memory — future post-v0.2, не текущая multi-tenant deployment. Fixed
+cell profile запускает от operator-configured UID/GID, монтирует только выбранные
+`/workspace`, `/scratch`, approved read-only `/opt/toolchain-cache`; rootfs
+read-only, без сети, host PID/daemon socket/supervisor paths, `CapDrop=ALL`,
+private namespaces и closed seccomp profile. Это source/config shape, не host
+acceptance evidence. В cell arbitrary Bash и будущий fixed helper имеют ту же
+OS authority; helper не повышает privilege. Экспорт/authorization/seal основаны
+на host authority и конечном tree, а `fs_search`/`fs_reach` — discovery, не
+доказательство и не gate для publish. В persistent session `CellWorker.serve`
+разрешает один активный RUN, но background descendants могут пережить shell
+command; поэтому writer/read overlap реалистичен, хотя в E378 был лишь
+детерминированно injected, не natural/concurrent C1 schedule.
+
+Оценка: E378 — дефект точности/scope-attribution, **не подтверждённое host escape
+или межсессионное чтение**. Текущий sandbox уже позволяет Bash читать те же
+cell-visible rootfs/approved mounts; поэтому дополнительная hard isolation для
+секретности не даёт нового security boundary и immutable-generation pin выглядит
+неоправданной сложностью для v0.1. При этом тихо приписать `/etc`-символ файлу
+`/workspace/a.py` — плохой discovery result и расходится с явной формулировкой
+spec §4 («rooted readers enforce same [symlink] policy»). Минимум — выбрать
+семантику: best-effort advisory live-tree search, без использования вывода как
+evidence/authority, или строгая rooted no-follow view containment. Первая
+сильнее соответствует single-user/YAGNI; вторая нужна, если «only files in the
+admitted view» является буквальной гарантийной частью Q97. Исследовательская
+запись не меняет пока этот контракт и не закрывает Q97; решение оставлено Q109.
+
 **Вывод о границах:** увеличение frame само по себе не исправляет поле, cache,
 журнал, идентичность и память. `operation_input_sha256` включает op/namespace/
 view/payload, но не `protocol_version`; нельзя менять хеш старого DONE или
