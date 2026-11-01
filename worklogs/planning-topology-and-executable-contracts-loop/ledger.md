@@ -7626,3 +7626,43 @@ negative control/kill и повтор plan/link tests. Число живых п�
 `check_doc_links` **324 OK**, все exit 0. L-TOOL-10 проверяет завершение helper
 и отделяет допустимую долгоживущую cell; process-exit освобождение не выдаётся
 за доказательство same-process cleanup. `git diff --check` exit 0.
+
+### E377 — измерение NFKC expansion, результат и Q109 blocker
+
+Проверена реальная цепочка `_safe_walk` (cap 200 000 B) → Python AST NFKC
+identifier → `StructuralIndex` qualname в 50 callers + 50 callees → полный JSON.
+Файл 195 248 B с class name `'X' + U+FDF8 * 63 333`; U+FDF8 занимает 3 raw,
+8 нормализованных UTF-8 bytes. Вход разрешён Python grammar; normalized qualname
+506 672 B. `_dispatch` реально вернул полный `fs_reach`, `truncated=False`, JSON
+**51 186 371 B**; результат точно равен legacy disk producer. Запуск сравнения
+включал обоих producers: peak RSS 291 448 KiB, 2,490 с — не оценка host/cell
+или одного production вызова. Более сильный контрпример E374 (19 203 206 B).
+Универсального output/RSS ceiling нет; Q97/Q108 transport всё ещё не выбирается.
+
+E378 — независимый локальный deterministic race probe. После real `_safe_walk`
+monkeypatch заменил resolved in-root Python file на symlink к соседнему
+out-of-root файлу непосредственно перед real `StructuralIndex._index_one_file`.
+`fs_reach` вернул `path='a.py', qualname='escaped_secret'` из внешнего файла;
+exit 0. Механизм: разрешение/containment проверены при enumeration, поздний
+`fp.read_bytes()` снова проходит по пути. У `fs_search` такой же порядок;
+инъекция показала передачу изменённого пути в реальный `_read_text_for_index`,
+хотя downstream output path filter не вернул внешний match. Это не Docker/C1/C3,
+не proof reachable concurrent actor и не host data escape; но это воспроизводимое
+нарушение локального rooted-read intent при изменяемом дереве.
+
+### Q109 — обязательный выбор до дальнейшего Q97/code
+
+Публичный продуктовый контракт вокруг concurrent mutation/consistent view не
+фиксирует, как обязан вести себя discovery, когда cell writer меняет файлы во
+время индексации. Простая path `resolve()` повторно уязвима. Варианты:
+A) descriptor-rooted `openat` / `O_NOFOLLOW` для фактического чтения каждого
+indexable file, отказ при symlink/identity drift; сохранить динамичную view;
+B) неизменяемый generation pin/snapshot на полный обход и поиск, гарантированный
+authority/terminality механизмом, с proof, что никакой PTY/background writer не
+может изменить прочитанный generation. Предварительная инженерная рекомендация
+A — она не требует менять динамический cell contract; но потребуются настоящие
+C3 symlink-swap tests и проверка всех readers (AST, search indexing, snippets,
+listing). Не принимать незаметную external read как допустимую консистентность.
+До решения остановлены новые Q97 production edits. Любой вариант требует
+source-backed EDGE/BODY mutants, реальный session/UDS/helper producer и live host;
+локальный forced interleaving доказывает лишь класс дефекта.

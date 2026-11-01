@@ -327,6 +327,7 @@ backpressure, C3 wrong grant/path/scratch/tamper/fault, producer и EDGE mutants
 | outline: markdown heading 1 999 990 `\\` | 1 999 993 | 4 000 238 | 53 700 | 0,095 |
 | outline: heading 40 000 `я` | 80 003 | 80 258 UTF-8; 240 258 ASCII-safe | 30 788 | 0,007 |
 | outline: heading 1 999 990 `U+0001` | 1 999 993 | 12 000 198 | 85 164 | 0,134 |
+| reach: class `X` + 63 333 `U+FDF8`, 50 callers + 50 callees | 195 248 | 51 186 371 | 291 448 | 2,490 |
 
 Для двунаправленного случая тот же probe также вызывал legacy
 `build_fs_reach_tool(..., scratch_db=<temporary>)`; `result` совпал с memory
@@ -353,6 +354,35 @@ view admission пока не проверен.
 JSON в UTF-8, не печатая имена. `outline` создаётся как `'# ' + char * 1999990 +
 '\n'` в `.md`, `output_mode='outline'`; все outputs должны проверяться, а не
 считаться PASS только по коду выхода процесса.
+
+Дополнительный E377 reach-контрпример использует допустимый Python-идентификатор
+`U+FDF8` (ARABIC LIGATURE ﷺ), 3 UTF-8 bytes в исходнике и 8 bytes после NFKC
+(`وسلم`). В классе ровно 63 333 символа, `needle`, 50 callers и 50 callees;
+весь `.py` — 195 248 bytes, под `_safe_walk` 200 000-byte cap. Реальный memory
+`_dispatch` выдал полные 50+50 и `truncated=False`; результат byte-for-byte
+равен legacy `build_fs_reach_tool` producer. JSON ToolResult — **51 186 371 bytes**,
+нормализованный qualname — 506 672 UTF-8 bytes. Таблица RSS/времени для этой
+строки включает оба producer и сравнение и потому не является оценкой одного
+production вызова. NFKC expansion меняет вывод E374: 19,2 MB был не сильнейшим
+измеренным случаем; универсальный bound по raw file size из этих probes вывести
+нельзя.
+
+Отдельный E378 — локальный deterministic TOCTOU control, не live attacker proof:
+monkeypatch после `_safe_walk` подменяет уже разрешённый in-root `.py` leaf на
+symlink к соседнему файлу вне root непосредственно перед реальным
+`StructuralIndex._index_one_file`. На exit 0 `fs_reach` вернул `resolved_to`
+`path='a.py', qualname='escaped_secret'`, существовавший только во внешнем файле.
+Причина: `_safe_walk` резолвит и проверяет containment при enumerating, а
+`StructuralIndex._index_one_file` позднее делает `fp.read_bytes()`, который снова
+разрешает leaf. `fs_search` аналогично передал путь, заменённый после safe-walk,
+реальному `_read_text_for_index`; её search output повторно не выдал внешний
+match (текущий path filter отказал), но само индексное чтение случилось. Ни один
+probe не доказывает production reachability concurrent writer или Docker
+boundary. Это новый security/consistency question Q109: до Q97 надо решить и
+проверить descriptor-rooted no-follow reads для всего индексного read path либо
+сильный immutable-generation pin, исключающий мутацию view на всё время обхода;
+простое `resolve()`/повторная проверка пути не закрывает гонку. Не расширять
+отказ на stable-view guarantee без user decision.
 
 **Вывод о границах:** увеличение frame само по себе не исправляет поле, cache,
 журнал, идентичность и память. `operation_input_sha256` включает op/namespace/

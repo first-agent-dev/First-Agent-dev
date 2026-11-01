@@ -197,7 +197,7 @@ W1: S4P2/STEP2b — в работе: порт, stage publication, return-handoff
 расширенный receipt/replay и host proof остаются открыты. Оператор отозвал
 ошибочный выбор B (E370) и принял уточнённый Q108=A на проработку узкого
 версионированного EXEC extension с прежним receipt и Bash (E372). Конкретный
-transport, replay/квоты и host cost не доказаны, production-решение не готово. E374: реальный локальный reach дал 19 203 206 B (> 16 MiB frame); Q97/STEP2b остаются открыты. L-TOOL-5 исправлен под Q105, L-TOOL-8/9 — только PLANNED.
+transport, replay/квоты и host cost не доказаны, production-решение не готово. E374: реальный локальный reach дал 19 203 206 B (> 16 MiB frame); E377 с NFKC Unicode дал 51 186 371 B, legacy-equal. E378 доказал локальную TOCTOU подмену leaf до чтения: нужен Q109 выбор rooted no-follow IO либо immutable generation pin. До Q109 решения Q97/STEP2b заблокированы; L-TOOL-5 исправлен под Q105, L-TOOL-8/9/10 — только PLANNED.
 Незавершённый supplier E318: symlink-контрпример Q104 закрыт в локальном memory-прототипе (E321); Q105 принят —
 одноразовый memory-index вместо scratch DB (E323); E376 добавил локальное закрытие
 индексов по вызову, включая fault path. Цена холодной перестройки и bounded RSS
