@@ -7472,3 +7472,74 @@ delivery/role **162 passed**, exit 0; `scripts/check_doc_links.py` **324 files O
 `git diff --check` exit 0. Это исследование и коррекция статуса, не изменение
 producer; production-code mutations здесь неприменимы, новые C0–C3/host в §8.5
 только запланированы. Предыдущее 13/13 E366 не переносится на будущий механизм.
+
+### E372 — уточнённый Q108=A: разрешение на проработку узкого EXEC extension
+
+Оператор принял рекомендацию E371: разрешено прорабатывать версионированный
+существующий EXEC с фиксированным allowlisted cell-helper и отдельным ограниченным
+результатом при неизменных Bash и receipt v1, без новой операции и произвольного
+process selector от модели. Это не выбор конкретной схемы/способа хранения и не
+доказательство replay, ресурсов, terminality или Q97. Старое ошибочное E368=B
+отозвано. До подключения/смены контракта — проверить действительные размеры,
+копирование и ресурсы для всех режимов и требования Q75; если для допустимого
+случая inline не хватает, сравнить защищённый store/stream, не усекать и не
+объявлять фиктивный parity. Q103 — сразу после STEP2b, production закрыт.
+
+### E373 — заявка: bounds для двух реальных producers до выбора транспорта
+
+1. Q97/Q106/Q108: измерить допустимые большие outline/reach, а не задавать
+магический inline limit. 2. Только ledger/increment и временные probes;
+production-code/wire/schema не менять. 3. Producer — реальный helper `_dispatch`,
+existing ToolResult и codec, fixture вне репозитория. 4. AS-IS: 60-KiB helper
+отказывает, v1 receipt tail 64 KiB; TO-BE этого шага — воспроизводимый
+source-backed bound/counterexample, без заявления Q97 parity. 5. Выходы файлов,
+индекс, JSON/string/base64/разные envelopes отдельно измерить для backslash,
+Unicode и длинных структурных имён на допустимых входах; нет новых LLM вызовов.
+6. Контроль 200 000-byte `_safe_walk` предела и 2 000 000-byte outline,
+wall/RSS и реальные коды ошибок; не приближаться к memory exhaustion и не
+обобщать sandbox на host. 7. Любая ошибка/skip отражается, не считается
+полным результатом; terminality и Docker не имитируются. 8. Runtime+FTS5,
+повтор targeted bank, локальные probes с явной областью и exit codes, links,
+diff; отдельный host stress/fault и producer/EDGE C0–C3 план для реализации.
+
+При принятии Q108 sandbox перезапустился: `.venv` и локальный указатель исчезли,
+но файлы сохранились. `git fetch` дал точный `5a156d9`; сравнение SHA 32 файлов,
+ранее untracked на старой базе, и diff остальных подтвердили отличие только в
+двух записях E372. `git reset --mixed 5a156d9` восстановил указатель без изменения
+рабочих файлов. Python 3.11 исходной среды недостаточен; восстановление Python
+3.13/FTS5 и frozen dependencies идёт по `knowledge/arena-env-build.md`.
+Первый smoke `.venv/bin/python` exit 127, потому что sandbox удалил виртуальное
+окружение; это не провал тестов production-кода.
+
+### E374 — замеры реальных producers и заявка на поправку live-плана
+
+E373: восстановлена среда по `knowledge/arena-env-build.md`: Python 3.13.16,
+SQLite 3.53.4 FTS5; после базового `uv sync --frozen` `pytest --version` exit 1
+(не установлен dev extra), исправлено `uv sync --frozen --extra dev`, exit 0;
+pytest 9.0.3, pyrefly 1.1.1, ruff 0.16.0. Реальные локальные producer probes
+exit 0: допустимый файл 195 248 B → `fs_reach` 19 203 206 B, 50+50 полных
+строк, равен legacy; peak 165 996 KiB включает оба producer. Outline 1 999 993 B
+с U+0001 → 12 000 198 B; остальное и методика в §9 исследования. Не host E2E.
+Targeted bank после восстановления: **195 passed, 2 xfailed**, exit 0; xfails
+Q106 остаются. Ни один production producer не изменён, новые mutations пока
+не применимы; ранее выполненный негативный mutant bank E366 не переобъявляется.
+
+Дополнительная документационная заявка (перед изменением live-плана):
+1. Q105/E321/E323 → L-TOOL-5 старый oracle предполагает disk cache и
+противоречит принятому memory-per-call. 2. Разрешены только этот ledger,
+`notes/i03-live-e2e-test-plan-2026-10-22.md`, исследование §9 и статус increment.
+3. Обновить план будущей проверки, не реализацию/результаты. 4. AS-IS disk index;
+TO-BE проверить memory-per-call, отсутствие DB/sidecar в view и scratch, pinned
+revision и no-host-fallback. 5. Добавить отдельные будущие большие ответы и
+Q75/slow-reader/replay cases. 6. Честные `PLANNED`, независимые host oracle и
+negative controls, явная оговорка что host suite зависит от реализации. 7. Нет
+live host → BLOCKED/NOT RUN, не PASS. 8. Link/plan targeted tests и diff;
+реальные C0–C3 и producer/EDGE mutations принадлежат будущему коду, host fixture
+и cleanup обязательны. Это не переоткрывает Q105 и не утверждает storage choice.
+
+E374 документарная проверка: plan IDs/grammar/reference, artifacts, delivery,
+skills, execution plans и doc-link tests **218 passed**, exit 0;
+`scripts/check_doc_links.py` **324 markdown files OK**, exit 0; `git diff --check`
+exit 0. Следующий стык — доказательство полного bound и порядка reservation /
+Q75 для transport, включая saturated cache после durable DONE. Переход к коду
+и production cutover не произведён; Q103 после STEP2b, весь host набор NOT RUN.

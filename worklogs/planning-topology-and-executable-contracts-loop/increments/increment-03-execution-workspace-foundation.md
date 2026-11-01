@@ -194,11 +194,10 @@ W1: S4P2/STEP2b — в работе: порт, stage publication, return-handoff
 В частности, search/reach пока не исполняются в production cell (§4.2): при bound
 `workspace_io` оба инструмента fail-closed до host index holder/обхода (E365–E366),
 без претензии на поиск или parity. Legacy host режим оставлен. Реальный cell supplier,
-расширенный receipt/replay и host proof остаются открыты. Q108 остаётся OPEN:
-оператор отозвал ошибочный выбор B и поручил независимую проверку вариантов (E370).
-E369 подтвердил только размерную возможность частей в отдельных v1 receipts
-(109 для 4 MB); выбор helper, scratch integrity, recovery, квоты и host cost не
-доказаны, production-решение не принято.
+расширенный receipt/replay и host proof остаются открыты. Оператор отозвал
+ошибочный выбор B (E370) и принял уточнённый Q108=A на проработку узкого
+версионированного EXEC extension с прежним receipt и Bash (E372). Конкретный
+transport, replay/квоты и host cost не доказаны, production-решение не готово. E374: реальный локальный reach дал 19 203 206 B (> 16 MiB frame); Q97/STEP2b остаются открыты. L-TOOL-5 исправлен под Q105, L-TOOL-8/9 — только PLANNED.
 Незавершённый supplier E318: symlink-контрпример Q104 закрыт в локальном memory-прототипе (E321); Q105 принят —
 одноразовый memory-index вместо scratch DB (E323), цена холодной перестройки требует host-замеров.
 Cell PTY retention исправлен локально (E324), но facade ещё не подключён: Q106=A принят,

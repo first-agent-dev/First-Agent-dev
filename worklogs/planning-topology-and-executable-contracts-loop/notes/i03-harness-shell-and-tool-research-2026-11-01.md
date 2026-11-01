@@ -309,3 +309,79 @@ C0 codec, C1 реальные registry/session/UDS + worker без shell, C2 con
 backpressure, C3 wrong grant/path/scratch/tamper/fault, producer и EDGE mutants,
 реальный host cgroup/descendant/slow-reader/ENOSPC/kill/replay proof. L-TOOL-5
 всё ещё требует planner-owned коррекции E365. Это подготовка acceptance, не PASS.
+
+### 9. Реальные большие producers: данные для выбора транспорта (E373–E374)
+
+После восстановления Python 3.13.16 / SQLite 3.53.4 FTS5 выполнены реальные
+`project_tools._dispatch`, не синтетическая сериализация словаря. Каждый запуск —
+отдельный процесс и временное дерево, без UDS, Docker, supervisor и host proof.
+Сериализация — компактный UTF-8 JSON `ToolResult` (`summary`, `result`, `error`,
+`artifacts`); `rss_peak_kib` — максимум **всего процесса**, а не размер reply.
+Для сравнения нынешний `_envelope` во всех строках вернул `project_tool_failed`.
+
+| fixture | вход bytes | полный JSON bytes | peak RSS KiB | время, с |
+| --- | ---: | ---: | ---: | ---: |
+| reach: один класс 60 000 `X`, 50 callers | 62 427 | 3 066 739 | 53 368 | 0,086 |
+| reach: один класс 190 000 `X`, 50 callers | 192 427 | 9 696 739 | 99 432 | 0,254 |
+| reach: 190 000 `X`, 50 callers и 50 callees, `both` | 195 248 | 19 203 206 | 165 996 | 1,175 |
+| outline: markdown heading 1 999 990 `\\` | 1 999 993 | 4 000 238 | 53 700 | 0,095 |
+| outline: heading 40 000 `я` | 80 003 | 80 258 UTF-8; 240 258 ASCII-safe | 30 788 | 0,007 |
+| outline: heading 1 999 990 `U+0001` | 1 999 993 | 12 000 198 | 85 164 | 0,134 |
+
+Для двунаправленного случая тот же probe также вызывал legacy
+`build_fs_reach_tool(..., scratch_db=<temporary>)`; `result` совпал с memory
+producer целиком, 50 callers + 50 callees, `truncated=False`. RSS/время в этой
+строке включают **оба** producer и сравнение, это не нагрузочная оценка одной
+production операции. Результат 19 203 206 bytes > 16 777 216-byte
+`MAX_EXTENDED_FRAME_BYTES` ещё **до** base64/nested JSON; 8-MiB и существующий
+16-MiB inline budget не дают parity. У `outline` одиночная строка не выкидывается
+в цикле, ограничивающем список до более чем одного элемента, поэтому даже
+`MAX_RESPONSE_BYTES=32768` не гарантирует такой предел результата. Отдельный
+`MAX_TEXT_BYTES=1 MiB` в codec препятствует передаче большого поля даже при
+увеличении frame. Эти фикстуры намеренно крайние, но под текущими локальными
+правилами допустимы; это не оценка частоты или формальная верхняя граница всех
+возможных inputs. `U+0001` допустим для локального legacy outline; для реального
+view admission пока не проверен.
+
+Рецепт существенного reach-контрпримера: в обычном `.py` файле класса с именем
+`'X' * 190000`, метод `needle` вызывает `self.callee_0()` … `_49()`; методы
+`caller_0` … `_49` вызывают `self.needle()`; методы `callee_0` … `_49` пустые.
+Все методы в одном классе. Вызвать `_dispatch('fs_reach',
+{'symbol':'needle','direction':'both','limit':50,'depth':1}, root=..., scratch=...)`.
+Проверить размер source <= 200 000 (`_safe_walk` default), ровно 50 элементов
+каждого направления и `truncated=False`, сравнить со старым producer и измерить
+JSON в UTF-8, не печатая имена. `outline` создаётся как `'# ' + char * 1999990 +
+'\n'` в `.md`, `output_mode='outline'`; все outputs должны проверяться, а не
+считаться PASS только по коду выхода процесса.
+
+**Вывод о границах:** увеличение frame само по себе не исправляет поле, cache,
+журнал, идентичность и память. `operation_input_sha256` включает op/namespace/
+view/payload, но не `protocol_version`; нельзя менять хеш старого DONE или
+считать v1/v2 эквивалентными без явного доказательства. Q75 разрешает только
+оригинальный защищённый **memory-cached** reply, с original proof и без новой
+авторизации/работы; после cache loss существующий `_completed` возвращает
+`EXECUTION_UNKNOWN`, `inspect` — receipt, не full tool result. Поэтому disk
+spool/stream нельзя считать автоматически совместимыми с Q75: даже защищённые
+чанки сами по себе не дают права реконструировать reply после потери памяти или
+вернуть данные другому principal. Сам producer уже создаёт крупные объекты;
+переименование последнего участка в streaming не доказывает bounded RSS, а
+`CompletedReplyCache(max_public_bytes=...)` учитывает только canonical bytes,
+не все копии и grants; production service сейчас его byte budget не задаёт.
+
+Выбор транспорта пока открыт: требуется доказать максимальный результат для
+всех реально поддержанных входов либо явно согласованный ресурсный контракт;
+привязку каждого chunk/result к Q75; admission до работы, суммарную память,
+backpressure, terminality, cancellation и старый v1 DONE. Один endpoint с новым
+большим лимитом может оказаться проще защищённого spool, но нынешних измерений
+недостаточно ни для его worst-case ceiling, ни для приемлемого host cost. Полный
+результат в модель — отдельный риск управления контекстом (Q106), не повод
+скрывать потерю ответа. Данные этого раздела не закрывают Q97/Q108/STEP2b.
+
+Следствие для реализации: `SupervisorDispatcher._execute_reserved` сейчас создаёт
+`PublicReply`, кодирует и валидирует полный ответ, пишет durable DONE и **потом**
+вызывает `remember_completed`. Насыщение cache после DONE уже сегодня означает
+недоступность оригинального ответа (следующий replay — `EXECUTION_UNKNOWN`),
+а не основание повторить процесс. Для больших результатов недостаточно просто
+выставить `max_public_bytes`: нужен доказанный порядок admission/reservation,
+учёт одновременно живых копий и сохранение этого fail-closed поведения при
+ошибке после DONE. Конкретный алгоритм и его совместимость с Q75 пока не выбраны.
