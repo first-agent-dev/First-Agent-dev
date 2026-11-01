@@ -461,7 +461,9 @@ def _root_binding(config: ServiceConfig, workspace_path: Path) -> tuple[str, str
 
 __all__ = [
     "BoundPlanPublisher",
+    "ClientWorkspaceProvisioner",
     "ExecutionBinding",
     "ManagedExecution",
+    "client_workspace_provisioner",
     "managed_execution_for_run",
 ]

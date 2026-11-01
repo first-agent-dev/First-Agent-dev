@@ -50,7 +50,7 @@ def test_authority_view_edit_requires_complete_snapshot(site: Site, size: int, c
 @pytest.mark.parametrize("invalid_eof", [False, None, "true", 1])
 def test_unconfirmed_eof_never_reaches_write(tmp_path: Path, invalid_eof: object) -> None:
     class Port:
-        cache_dir = None
+        cache_dir: Path | None = None
         writes = 0
 
         def read_file(self, path: str, *, max_bytes: int = MAX_TEXT_BYTES) -> PortRead:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, override
 
 import pytest
 
@@ -24,6 +24,7 @@ class LoseWriteReply(_CountingClient):
 
     lose = False
 
+    @override
     def request(self, operation: Operation, **kwargs: Any) -> dict[str, Any]:
         result = super().request(operation, **kwargs)
         if operation is Operation.WRITE_FILE and self.lose:

@@ -6917,3 +6917,116 @@ JUnit failure в call phase, 0 errors. Это не host gate и не Q103 full t
 привязан; это metadata canonical source, не view. Продакшен-реестр не включён;
 не заявлять соответствие этой ветви или записей blackboard без отдельного решения
 и тестов. Полный pytest после правок перезапущен; ранее прерванный прогон не PASS.
+
+### E349 — диагностика полных gates; заявка на устранение собственных аннотаций
+
+Перезапущенный pytest дошёл до `--maxfail=25`, exit 1; вывод содержит 14 failed,
+11 errors, 6118 passed, 14 skipped, 4 xfailed. **Оговорка достоверности:**
+`stop_process` остановил shell первого прогона, но его pytest оказался orphan и
+ещё работал параллельно со вторым; оба некоторое время имели один файл вывода.
+Первый PID завершён вручную. Эти цифры — диагностический результат прогона, не
+чистый full-suite gate; нужна повторная проверка без параллельных процессов.
+Дополнительная ошибка нашей подготовки среды: `uv` установлен в prefix, но при
+запуске не добавлен в PATH, как требует инструкция; 11 setup errors installed-entry
+и часть semgrep failures указывают на это. Нельзя свести к этому все ошибки:
+видны ошибки workflow `promotion/managed-execution-absent`/`baseline-unavailable`,
+лимиты размера SKILL-конденсатов, устаревший счётчик AST outline и pyrefly gate.
+Полный pyrefly отдельно exit 1, **62 errors**, из них две в новых тестах E348.
+
+Минимальная заявка до правки: 1. не добавлять новые ошибки к уже открытым Q103
+блокерам; 2. только аннотация `cache_dir` и `@override` в новых тестах; 3. без
+изменения runtime/поведения тестов; 4. штатные `typing` и `Path`; 5. повторные
+owning + полный диагностический pyrefly и PATH-aware targeted tests; 6. сравнить
+ошибки, не объявлять Q103 закрытым; 7. full host и STEP2b отдельно; 8. статика,
+diff, push. Другие type errors оставлены в порядке Q103 после STEP2b.
+
+E349 продолжение: аннотации двух собственных тестов исправлены, **10 passed**,
+Ruff/format PASS; полный pyrefly теперь **60 errors**, exit 1 (было 62), в новых
+E348 тестах ошибок нет. Среди остальных — 10 в `test_stage_checkpoints.py`, 9 в
+`test_execution_client_stage.py`, 8 в `test_execution_composition.py`, 6 в
+`test_execution_client_port.py`, и другие; Q103 не закрыт и делать оставшийся
+полный type-gate pass раньше STEP2b противоречит Q103=B.
+
+С корректным `PATH=$BUILD_ROOT/prefix/bin:$PATH` повторно: installed-entry,
+installed-controller, semgrep pin и targeted-gate bank **44 passed**, exit 0.
+Шесть workflow/admission тестов с правильным PATH отдельно повторены: **6 failed**,
+exit 1; 4 на `promotion/managed-execution-absent` (в т.ч. несовпавший blocked
+reason), 2 на `baseline-unavailable`. Это реальные открытые failures данного
+checkout/fixtures, не списывать на отсутствующий uv; их причины и ожидаемую
+интеграцию необходимо проверить в W1/W2, а не отменять fail-closed ради зелёных
+тестов. До окончания чистого полного прогона без параллельных pytest его результат
+неизвестен.
+
+### E350 — уточнение причин полного прогона
+
+Следующий запуск без параллельного pytest, с prefix uv в PATH: **6137 passed,
+25 failed, 14 skipped, 4 xfailed**, exit 1, прерван на `--maxfail=25`; не full
+suite PASS. Два CT91 `baseline-unavailable` отдельно исследованы по реальному
+`verify_baseline.json`: subprocess запустил `/usr/bin/python`, где отсутствует
+pytest (`No module named pytest`). Причина — помимо prefix uv, **саму `.venv/bin`
+нужно добавить первой в PATH**, поскольку workflow запускает `python -m pytest`.
+После исправления PATH обе CT91 повторены: **2 passed**, exit 0. Ранее в E349
+описание этих двух как реальных не-env failures ошибочно; причина установлена.
+Четыре теста promotion из E349 всё ещё дают `managed-execution-absent`, что
+отдельно требует managed setup/fixture/cutover анализа. Остальные ошибки из
+прерванного прогона не классифицированы только по PATH; pyrefly 60 точно открыт,
+SKILL-конденсаты 77/82 строк при тестовом потолке 60 и 79 vs 78 AST символов
+подтверждены. Повтор полного прогона с `.venv/bin` и prefix в PATH обязателен.
+
+### E351 — полный прогон в проектном окружении; заявка на authoring gate
+
+Без параллельных pytest, PATH `.venv/bin:$BUILD_ROOT/prefix/bin:$PATH`,
+`UV_SYSTEM_CERTS=true`, exit **1**, весь прогон завершён: **6832 passed,
+10 failed, 14 skipped, 4 xfailed**, 718.03 s. Failures: 3 adaptive workflow и
+1 S8 replan (`managed-execution-absent`); 2 SKILL-конденсата 77/82 вместо <=60;
+полный pyrefly 60 errors; authoring-check; CLI outline 79 вместо жёсткого 78;
+workspace readiness интеграция (`precommit_prewarm_failed`, код 75 — причина
+отдельно не доказана). Не путать с прерванным предыдущим запуском и не считать
+14 skips/4 xfails host acceptance.
+
+Authoring-check диагностирован самим правилом, не общим предположением: в
+`execution/composition.py` публичные `ClientWorkspaceProvisioner` и
+`client_workspace_provisioner` отсутствуют в `__all__`, хотя второй импортируется
+в `cli.py`. 1. Экспортировать существующие публичные имена, не менять поведение;
+2. только `__all__` composition и ledger; 3. остальную API не менять; 4. reuse
+штатного списка, без переноса классов; 5. проверить оба имён через import-star и
+настоящий authoring-check; 6. composition/CLI neighbor tests, Ruff/format/diff;
+7. не выдавать локальный authoring fix за STEP2b/Q97/Q103; 8. при изменении
+логики — отдельная заявка. Это механическая декларация существующей API, не новый
+продуктовый контракт.
+
+E351 выполнено: два действующих публичных имени добавлены в `composition.__all__`,
+import-star PASS; authoring root + composition + client port **41 passed, 1 xfail**,
+exit 0; Ruff/format/diff PASS. Временное удаление каждого из двух экспортов отдельно
+даёт строго ожидаемый call-phase failure настоящего authoring root, 2/2 exit 1,
+0 errors; после восстановления root test снова PASS. Это снимает одну конкретную
+ошибку полного прогона, но повтор всего suite после фикса ещё не выполнялся.
+
+### E352 — STOP / Q107: частный транспорт search/reach при сохранении Q97
+
+Q106=A разрешил исследовать расширение существующего ограниченного EXEC, но не
+утверждал новый cell-private контракт. Исследование E331–E342 показывает: PTY
+может молча изменять Unicode; ASCII-envelope устраняет этот класс, но умножает
+размер, tmux capture зависит от ширины и числа строк; `pipe-pane` в данном виде
+накапливает неограниченную внутреннюю очередь tmux. Opt-in budgets в репозитории —
+проверенные отдельные поставщики, не сквозное решение, production не активирован.
+`--one-shot` тоже проходит через PTY. Из этого не следует математической
+невозможности другого bounded PTY-решения; оно пока не продемонстрировано.
+
+**Q107:** разрешить ли в рамках существующего публичного EXEC добавить строго
+закрытый cell-private discriminator для только allowlisted search/reach helper и
+прямого bounded non-PTY stream (без shell и отдельной публичной операции)?
+
+- **A (рекомендация):** разрешить исследование и, при доказательстве, внедрение
+  этого внутреннего варианта, сохранив авторизацию view, request/reply identity,
+  resource/timeout bounds, journal/replay, cgroup и fail-closed; stdout от worker
+  остаётся недоверенным. Существующий bash остаётся PTY. Нужны threat model,
+  стыки и host-проверка, сам по себе pipe не доказывает safety. Результаты больших
+  файлов и риск контекста остаются отдельными требованиями Q97/Q106.
+- **B:** не менять private contract; продолжить исследовать только PTY, без
+  молчаливого усечения и без объявления Q97 закрытым, пока не доказаны geometry,
+  целостность, память, backpressure и поведение при недоступных ресурсах.
+
+До ответа не внедрять новую private ветвь и не активировать supplier в реестре.
+Параллельно остаётся обязательный стык metadata mutation guard (E348), затем
+STEP2b, type gates Q103=B, W2–W4 и host proof; full I03 не выполнен.

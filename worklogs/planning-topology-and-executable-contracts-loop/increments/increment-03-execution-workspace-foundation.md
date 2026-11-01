@@ -216,6 +216,9 @@ S3P3 и регрессионные LOCAL exits перечисленные выш
 host-приёмки — отдельный read-only наблюдатель из общего roadmap, не расширение I03. Статические
 полные type gates пока не закрыты: E317 фиксирует ранее существовавшие ошибки;
 штатная локальная среда Python 3.13.16 с FTS5 восстановлена (E345), но это не host gate.
+Полный локальный suite: 6832 passed / 10 failed / 14 skipped / 4 xfailed, exit 1
+(E351, после него одна ошибка authoring адресована targeted проверкой); Q107 по
+внутреннему транспорту открыт (E352), Q97/STEP2b и Q103 не закрыты.
 
 **Why the numbers are not rewritten.** Renumbering slices would move every `SLICEn STEPm` reference — the
 `DEPS` graph, `plan_ids._SLICE_CEILING`, the ledger entries, code comments that cite a slice, and the E2E case
