@@ -548,10 +548,18 @@ at its selection point.
 #### Q111: oversized result semantics is a blocker, not an implementation detail
 
 After the single-helper E382 result (51.2-MB JSON, 268-MiB local RSS before the
-60-KiB refusal), the remaining product choice is whether an over-bound discovery
-query may be a truthful explicit failure (recommended, never a partial success),
-or whether the entire result must be delivered over a larger Q75-safe channel.
-A bounded refusal still needs pre-allocation enforcement plus measured source,
-index, output and time quotas; an expanded channel still needs those ceilings and
-replay/cache accounting. Exact limits and production cgroup budget are unknown.
-Q111 is recorded in `ledger.md`; no transport or output contract changed.
+60-KiB refusal), the user chose Q111=A: over-bound discovery must be a truthful
+explicit failure, never a partial success or truncation. Exact source/index/output/
+time quotas and production cgroup budget remain unknown; Q97 is still open.
+
+E383 code trace: `fs_search` currently trims result lists and returns success with
+`truncated=true` above 32,768 bytes; outline has the same one-row escape; this is
+not acceptable in the managed helper path under the newly accepted contract.
+`fs_reach`'s 30,000-byte constant is not enforced. Cell `project_tools._dispatch`
+calls `registry.dispatch` directly, so the `ToolSpec.max_context_bytes=32,768`
+controller projection does not run there. Only the 60-KiB late `_envelope` guard
+applies, after producer allocation. The planned strict policy must be cell-only,
+keep public names/schema and legacy host behavior unchanged, and fail before
+materializing/serializing oversized output rows. It must cover matches/files/outline/
+reach and use live profile limits for index CPU/RSS. No producer, EXEC or transport
+code changed in E383.

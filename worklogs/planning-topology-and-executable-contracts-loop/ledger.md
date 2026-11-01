@@ -7861,8 +7861,37 @@ observable semantics результатов за лимитом:
 - **C — оставить Q97 остановленным и продолжить исследования, не утверждая
   parity/production.**
 
-Это не выбор конкретных чисел и не permission для изменения transport. До ответа
-не менять producer/EXEC/result contract; допустимы дальнейшие probes и host
-profile evidence. Если выбран A, bounded-refusal contract необходимо внести в
-Q97 before acceptance и добавить pre-allocation tests/mutants; если B — сначала
-закрыть Q108/Q75 и полный delivery topology.
+Пользователь выбрал **A (bounded refusal)**. Это принимает semantics, но не числа
+и не permission для изменения transport: при превышении доказанных source/index/
+output/time ceilings нужен явный non-success без усечения и без частичного
+успеха. Лимиты требуют host/profile measurements; реализация должна предварительно
+ограничивать producer, а не только envelope encoder, и включать targeted tests +
+strict producer/EDGE mutants. Q97 остаётся OPEN до полного bounded proof; Q108/Q75
+transport и live host evidence не выбраны.
+
+### E383 — последствия Q111 для producer API и текущих лимитов
+
+Проверены все producer output paths. `fs_search._enforce_response_cap` оценивает
+уже собранный dict через `json.dumps`, затем при превышении 32 768 удаляет
+элементы и возвращает success с `truncated=true` + warning; `fs_search` outline
+аналогично уменьшает rows, но один oversized row остаётся. Это legacy host behavior,
+не допустимая реализация принятого Q111 для managed helper: accepted contract
+запрещает считать усечение successful result. `fs_reach` объявляет
+`_MAX_RESPONSE_BYTES=30_000`, но код его не использует, что подтверждает E377.
+
+Cell helper `_dispatch` напрямую вызывает `registry.dispatch`; `ToolSpec` несёт
+`max_context_bytes=32_768`, но эта точка сама не делает controller-side projection
+или elision. Реально на cell result действует только поздний 60-KiB `_envelope`,
+после построения `ToolResult`. Поэтому контекстный cap не является preflight
+лимитом и не предотвращает повторённые 51-MB allocations. Нельзя «починить» это
+поднятием MAX_FRAME или полагаться на ToolSpec.
+
+Рекомендованный code boundary после закрытия всех gates: managed cell-only strict
+output policy, оставляя legacy host builder behavior и public fs tool names/schema
+нетронутыми; preflight/aggregate budgets применяются до больших result arrays,
+SQL row materialization и whole-result JSON; при превышении — typed non-success,
+no rows/summary posing as success. Это требует пройти `matches/files/outline/reach`,
+включая giant path/heading/snippet/qualname, а не только JSON encoder; memory/CPU
+index budget всё ещё должен опираться на фиксированный cell cgroup profile и live
+measurements. Сейчас это design finding; production code не менялся, Q97/Q108
+остаются открытыми.
