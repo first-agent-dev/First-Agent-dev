@@ -544,3 +544,14 @@ minimal safe source selection remains latest committed revision, bound to the
 REGISTER response, then immutable PIN; next read re-resolves/re-registers. A B
 publish after REGISTER does not retarget the existing pin; the read is consistent
 at its selection point.
+
+#### Q111: oversized result semantics is a blocker, not an implementation detail
+
+After the single-helper E382 result (51.2-MB JSON, 268-MiB local RSS before the
+60-KiB refusal), the remaining product choice is whether an over-bound discovery
+query may be a truthful explicit failure (recommended, never a partial success),
+or whether the entire result must be delivered over a larger Q75-safe channel.
+A bounded refusal still needs pre-allocation enforcement plus measured source,
+index, output and time quotas; an expanded channel still needs those ceilings and
+replay/cache accounting. Exact limits and production cgroup budget are unknown.
+Q111 is recorded in `ledger.md`; no transport or output contract changed.

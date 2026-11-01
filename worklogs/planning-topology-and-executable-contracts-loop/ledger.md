@@ -7837,3 +7837,32 @@ UTF-8/text projection producer и честный bounded refusal. Локальн
 search RSS и 268-MiB reach RSS нельзя напрямую сравнивать с неизвестным live
 profile limit; approved production memory budget и host measurements отсутствуют.
 Q97/Q108 не закрыты и транспорт/лимиты не выбраны.
+
+### Q111 — bounded refusal versus oversized discovery result delivery
+
+E382 показал, что current helper после legal 195.5-KB file собирает 51.2-MB
+`fs_reach` JSON, достигает 268,532-KiB local RSS, затем возвращает fail-closed
+178-byte envelope. Итого не partial success, но resource failure наступает уже
+после полного producer allocation. Для закрытия Q97 надо заранее закрепить
+observable semantics результатов за лимитом:
+
+- **A — bounded refusal (recommendation):** открытый лимит на source/index work и
+  output; если producer не укладывается, инструмент возвращает явную non-success
+  ошибку до сборки/сериализации oversized result. Ни усечения, ни частичного
+  ToolResult, ни возврата success с file-only omission. Exact values задаются
+  только после live profile/host measurement; отказ не свидетельствует, что
+  search/reach «ничего не нашёл».
+- **B — расширять канал для крупных результатов:** доставлять полный producer
+  result, включая multi-MB/десятки MB, через versioned bounded EXEC transfer и
+  Q75-safe replay/cache/resource accounting, с отдельным контекстным способом
+  представления. Это больше transport/host work и всё равно требует строгих
+  input/resource maxima; текущий 60-KiB envelope не может считаться успешным
+  результатом.
+- **C — оставить Q97 остановленным и продолжить исследования, не утверждая
+  parity/production.**
+
+Это не выбор конкретных чисел и не permission для изменения transport. До ответа
+не менять producer/EXEC/result contract; допустимы дальнейшие probes и host
+profile evidence. Если выбран A, bounded-refusal contract необходимо внести в
+Q97 before acceptance и добавить pre-allocation tests/mutants; если B — сначала
+закрыть Q108/Q75 и полный delivery topology.
