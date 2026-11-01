@@ -479,11 +479,11 @@ revision при создании pin, стабильная до конца эт�
 publish. E376 per-call index не переносит stale cache между вызовами. Q97 result
 transport/cache/context bounds остаются независимо открытыми.
 
-Вопрос Q110: нужен ли selector B **внутри текущего run A**, или существующего
-`--session-id` attach достаточно? Второй вариант не меняет tool schemas. Первый
-может быть только nullable `target_session_id` на существующих `fs_search`/
-`fs_reach`, с manifest resolution + REGISTER/PIN выше; это публичная tool-schema
-правка и не делается без решения. Cross-session permissions beyond single local
+Q110 закрыт ответом пользователя: нужен selector B **внутри текущего run A**.
+Целевое направление — nullable `target_session_id` только на существующих
+`fs_search`/`fs_reach`, с manifest resolution + REGISTER/PIN выше; это публичная
+tool-schema правка, но её реализация всё ещё заблокирована незакрытыми Q97/Q108 и
+открытой same-view частью Q109. Cross-session permissions beyond single local
 operator/group aren't implemented in the Aug deployment note and require later
 principal/ACL design; IDs сами по себе секретом/авторизацией не являются.
 
@@ -511,3 +511,36 @@ can therefore mean multiple full tree walks + a fresh index; no cheap current-re
 lookup by session exists. Measure actual tree size/latency and enforce deadlines before
 shipping. No caching or wire amendment selected. This and the 60 KiB helper ceiling
 leave Q97/Q108 open; the E377 51 MB producer is not accommodated by this helper.
+
+#### E382: local authority and current helper resource probes
+
+На текущем checkout (capture excludes `.git/.fa/.venv/.env`) real local
+`WorkspaceAuthority` saw 1,861 entries / 66,607,919 logical bytes: first register
+1.698 s; repeated register 0.394 s (revision snapshot 0.184 s + source snapshot
+0.177 s); exact reader pin 0.229 s (another 0.184 s revision walk); release 0.002 s.
+This confirms three full local snapshots per fresh re-register→pin, but is a single
+warm-cache development host probe, not a production latency bound.
+
+An immutable read-only local copy of the same bytes was fed to one subprocess per
+helper. `fs_search`: 7.50 s, 131,144 KiB peak RSS, 2,034-byte result envelope;
+`fs_reach`: 4.51 s, 63,344 KiB peak RSS, 1,423-byte envelope. Neither ran in the
+approved Docker cell/cgroup, and no CLI EXEC or host acceptance was involved.
+The values are concrete local implementation costs, not budgets/ceilings.
+
+E377 was reproduced against the *current cell helper*, not merely the legacy
+producer: a 195,500-byte source using `U+FDF8` yielded 50 callers + 50 callees;
+the full JSON was 51,186,343 bytes. `_envelope` returned the expected 178-byte
+`project_tool_failed`, but after serialization; single-process `ru_maxrss` rose
+240,804 → 268,532 KiB from dispatch to envelope. Therefore 60 KiB response
+refusal prevents partial success but **does not bound peak producer/serialization
+memory**. The raw 200,000-byte file cap does not bound NFKC-expanded names or the
+result JSON. Q97 must bound before full allocation, cover every output producer,
+and test adversarial text/Unicode; exact limits and current production profile
+remain unchosen/unverified.
+
+Q110 is now answered: the desired interaction is same-run cross-read from A to B.
+That does not close Q97/Q108 and is not authorization to wire a schema alone. The
+minimal safe source selection remains latest committed revision, bound to the
+REGISTER response, then immutable PIN; next read re-resolves/re-registers. A B
+publish after REGISTER does not retarget the existing pin; the read is consistent
+at its selection point.

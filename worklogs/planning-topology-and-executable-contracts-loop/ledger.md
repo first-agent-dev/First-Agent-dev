@@ -7800,3 +7800,40 @@ contract or cache revision state without separate proof/decision.
 The helper hard-refuses envelopes over 60 KiB; E377's 51 MB legacy-equivalent
 result remains outside that transport. Q97 output/cache/context bounds and Q108
 non-PTY versioning remain blockers, independent of Q110 selector semantics.
+
+### E382 — локальная стоимость register/pin/helper и fail-closed envelope
+
+В temp state через реальный `WorkspaceAuthority` зарегистрирован этот checkout
+(без `.git`, `.fa`, `.venv`, `.env`): 1 861 capture entries / 66 607 919
+logical bytes. Local initial `REGISTER_WORKSPACE` занял 1.698 s. Повторный
+REGISTER занял 0.394 s и измерил 2 `_snapshot`: retained revision 0.184 s +
+canonical source 0.177 s. Следующий `PIN_READER` занял 0.229 s и ещё раз
+проверил revision snapshot за 0.184 s. Reader pin успешно освобождён за 0.002 s.
+Это один локальный warm-cache probe, не host/cgroup/deployment latency; но
+доказывает реальные три полных обхода при повторном REGISTER+PIN, а не только
+подсчёт вызовов по source.
+
+Тот же 66.6-MB registered tree, скопированный в read-only local tree, пропущен
+через отдельные Python subprocess для cell-local `project_tools._dispatch`:
+`fs_search` 7.50 s / `ru_maxrss=131144 KiB` / 2 034-byte envelope; `fs_reach`
+4.51 s / `ru_maxrss=63 344 KiB` / 1 423-byte envelope. Subprocess не исполнялся
+в Docker/cgroup, без supervisor EXEC, PTY или host proof; эти цифры только local
+resource probe для конкретного репозитория, не deployment ceiling.
+
+Повторён E377-класс: один 195 500-byte Python file, Unicode `U+FDF8`, 50 callers
++ 50 callees. Cell helper `_dispatch` вернул полный результат; `_envelope` затем
+вернул маленький `project_tool_failed` (178 bytes), но только после построения
+51 186 343-byte JSON: `ru_maxrss` вырос с 240 804 KiB после dispatch до 268 532
+KiB после envelope serialization. То есть wire cap 60 KiB честно отказывает, но
+не ограничивает producer/serialization memory до отказа. Никакого truncation не
+было. E377/60-KiB mismatch теперь воспроизведён именно внутри current helper,
+одним subprocess, а не только legacy equality probe.
+
+Следствия для Q97: “hard refuse oversize envelope” — недостаточный resource
+bound, admission должен ограничивать producer и/или сериализацию ДО полного
+JSON allocation; действующий max 200 000 raw bytes в safe-walk не ограничивает
+NFKC expansion/количество больших qualnames. Нужны adversarial tests для каждого
+UTF-8/text projection producer и честный bounded refusal. Локальные 131-MiB
+search RSS и 268-MiB reach RSS нельзя напрямую сравнивать с неизвестным live
+profile limit; approved production memory budget и host measurements отсутствуют.
+Q97/Q108 не закрыты и транспорт/лимиты не выбраны.
