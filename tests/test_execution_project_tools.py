@@ -6,7 +6,7 @@ import base64
 import json
 import threading
 from pathlib import Path
-from typing import Any
+from typing import Any, override
 
 import pytest
 
@@ -310,3 +310,145 @@ def test_search_memory_temp_store_and_refresh_state_lifetime(tmp_path: Path) -> 
         index.close()
     assert key not in _refresh_state
     assert not (root / ":memory:").exists()
+
+
+@pytest.mark.parametrize("tool", ["fs_search", "fs_reach"])
+@pytest.mark.parametrize("fail_after_dispatch", [False, True])
+def test_per_call_indexes_close_even_when_dispatch_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tool: str, fail_after_dispatch: bool
+) -> None:
+    """C1: actual registry/builders release their real SQLite connection per call."""
+    import atexit
+    import sqlite3
+
+    from fa.inner_loop.registry import ToolRegistry
+    from fa.inner_loop.tools import fs_reach, fs_search
+
+    root, scratch = _tree(tmp_path, "per-call", "def alpha():\n    return 1\n")
+    params = {"query": "alpha"} if tool == "fs_search" else {"symbol": "alpha"}
+    refresh_before = set(_refresh_state)
+    retained: list[sqlite3.Connection] = []
+    registrations: list[object] = []
+    register = atexit.register
+
+    def track_registration(callback: Any, *args: Any, **kwargs: Any) -> Any:
+        registrations.append(callback)
+        return register(callback, *args, **kwargs)
+
+    monkeypatch.setattr(atexit, "register", track_registration)
+    if tool == "fs_search":
+        get_search = fs_search._IndexHolder.get
+
+        def search_get(holder: Any) -> SearchIndex:
+            index = get_search(holder)
+            if index._conn is not None and index._conn not in retained:
+                retained.append(index._conn)
+            return index
+
+        monkeypatch.setattr(fs_search._IndexHolder, "get", search_get)
+    else:
+        get_reach = fs_reach._ReachHolder.get
+
+        def reach_get(holder: Any) -> StructuralIndex:
+            index = get_reach(holder)
+            if index._anchor is not None and index._anchor not in retained:
+                retained.append(index._anchor)
+            return index
+
+        monkeypatch.setattr(fs_reach._ReachHolder, "get", reach_get)
+
+    if fail_after_dispatch:
+        dispatch = ToolRegistry.dispatch
+
+        def fail_after_real_dispatch(self: ToolRegistry, call: Any) -> ToolResult:
+            dispatch(self, call)
+            raise RuntimeError("fault after real producer")
+
+        monkeypatch.setattr(ToolRegistry, "dispatch", fail_after_real_dispatch)
+
+    for iteration in range(3):
+        result = project_tools._dispatch(tool, params, root=root, scratch=scratch)
+        if fail_after_dispatch:
+            assert result.error is not None and result.error.code == "project_tool_failed"
+        else:
+            assert result.error is None and result.result is not None
+        assert len(retained) == iteration + 1
+        for connection in retained:
+            with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+                connection.execute("SELECT 1")
+        assert set(_refresh_state) == refresh_before
+        assert registrations == []
+        assert list(scratch.iterdir()) == []
+        assert not (root / ".fa").exists()
+
+
+@pytest.mark.parametrize("tool", ["fs_search", "fs_reach"])
+def test_cleanup_failure_is_refused_after_real_producer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tool: str
+) -> None:
+    from fa.inner_loop.registry import ToolRegistry
+
+    root, scratch = _tree(tmp_path, "close-fault", "def alpha():\n    return 1\n")
+    params = {"query": "alpha"} if tool == "fs_search" else {"symbol": "alpha"}
+    made_result: list[ToolResult] = []
+    dispatch = ToolRegistry.dispatch
+
+    def record_dispatch(self: ToolRegistry, call: Any) -> ToolResult:
+        result = dispatch(self, call)
+        made_result.append(result)
+        return result
+
+    monkeypatch.setattr(ToolRegistry, "dispatch", record_dispatch)
+    if tool == "fs_search":
+        close_search = SearchIndex.close
+
+        def fail_search_close(self: SearchIndex, *, strict: bool = False) -> None:
+            close_search(self, strict=strict)
+            raise RuntimeError("injected close failure")
+
+        monkeypatch.setattr(SearchIndex, "close", fail_search_close)
+    else:
+        close_reach = StructuralIndex.close
+
+        def fail_reach_close(self: StructuralIndex) -> None:
+            close_reach(self)
+            raise RuntimeError("injected close failure")
+
+        monkeypatch.setattr(StructuralIndex, "close", fail_reach_close)
+
+    result = project_tools._dispatch(tool, params, root=root, scratch=scratch)
+    assert len(made_result) == 1 and made_result[0].error is None
+    assert result.error is not None and result.error.code == "project_tool_failed"
+    assert result.error.retryable is False and result.result is None
+    assert list(scratch.iterdir()) == [] and not (root / ".fa").exists()
+
+
+def test_search_memory_close_sqlite_failure_is_strict_only_when_requested(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import sqlite3
+
+    original_connect = sqlite3.connect
+
+    class FailingClose(sqlite3.Connection):
+        @override
+        def close(self) -> None:
+            super().close()
+            raise sqlite3.OperationalError("injected close failure")
+
+    def connect(*args: Any, **kwargs: Any) -> sqlite3.Connection:
+        return original_connect(*args, **kwargs, factory=FailingClose)
+
+    monkeypatch.setattr(sqlite3, "connect", connect)
+    index = SearchIndex(Path(":memory:"))
+    root, _scratch = _tree(tmp_path, "strict-close", "def alpha():\n    return 1\n")
+    index.ensure_indexed(root)
+    key = index._state_key(root.resolve())
+    assert key in _refresh_state
+    with pytest.raises(sqlite3.OperationalError, match="injected"):
+        index.close(strict=True)
+    assert index._conn is None and key not in _refresh_state
+    # Restore normal close semantics for an existing legacy caller; the test
+    # connection is already closed by FailingClose before it raises.
+    legacy = SearchIndex(Path(":memory:"))
+    legacy.close()

@@ -10,6 +10,7 @@ import base64
 import binascii
 import json
 import sys
+from contextlib import ExitStack
 from pathlib import Path
 from typing import Any
 
@@ -38,12 +39,13 @@ def _dispatch(tool: str, params: dict[str, Any], *, root: Path, scratch: Path) -
         cache = scratch.resolve(strict=True)
         if not source.is_dir() or not cache.is_dir() or cache.is_relative_to(source) or source.is_relative_to(cache):
             return _refusal()
-        registry = ToolRegistry()
-        if tool == "fs_search":
-            registry.register(build_fs_search_tool(Path(":memory:"), source))
-        else:
-            registry.register(build_fs_reach_tool(source, in_memory=True))
-        return registry.dispatch(ToolCall(tool, params))
+        with ExitStack() as cleanup:
+            registry = ToolRegistry()
+            if tool == "fs_search":
+                registry.register(build_fs_search_tool(Path(":memory:"), source, cleanup=cleanup))
+            else:
+                registry.register(build_fs_reach_tool(source, in_memory=True, cleanup=cleanup))
+            return registry.dispatch(ToolCall(tool, params))
     except Exception:  # noqa: BLE001 - untrusted tool data must not become a traceback or partial success
         return _refusal()
 

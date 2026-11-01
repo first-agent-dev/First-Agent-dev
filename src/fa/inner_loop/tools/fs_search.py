@@ -19,6 +19,7 @@ import atexit
 import json
 import logging
 from collections.abc import Mapping
+from contextlib import ExitStack
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -356,11 +357,16 @@ class _IndexHolder:
             self._index = SearchIndex(self._db)
         return self._index
 
-    def close(self) -> None:
+    def close(self, *, strict: bool = False) -> None:
         if self._index is not None:
             try:
-                self._index.close()
+                if strict:
+                    self._index.close(strict=True)
+                else:
+                    self._index.close()
             except Exception:
+                if strict:
+                    raise
                 logger.debug("error closing SearchIndex", exc_info=True)
             self._index = None
 
@@ -959,12 +965,20 @@ def _handle(
 # ---------------------------------------------------------------------------
 
 
-def build_fs_search_tool(db_path: Path, workspace_root: Path, *, workspace_io: WorkspacePort | None = None) -> ToolSpec:
+def build_fs_search_tool(
+    db_path: Path,
+    workspace_root: Path,
+    *,
+    workspace_io: WorkspacePort | None = None,
+    cleanup: ExitStack | None = None,
+) -> ToolSpec:
     """Build the fs_search ToolSpec bound to a workspace and FTS DB path.
 
-    Registers an ``atexit`` handler that closes the held
-    :class:`SearchIndex` connection deterministically at interpreter
-    shutdown. Without this, the lazy ``_IndexHolder`` singleton keeps a
+    By default, registers an ``atexit`` handler that closes the held
+    :class:`SearchIndex` connection at interpreter shutdown. When a caller
+    supplies ``cleanup``, it instead owns the tool's lifetime and closes the
+    index strictly when that stack exits; the tool must not outlive the stack.
+    Without either, the lazy ``_IndexHolder`` singleton keeps a
     ``sqlite3.Connection`` open until GC finalizes it, which emits a
     ``ResourceWarning: unclosed database`` from the CPython finalizer.
     Those warnings are treated as errors in ``tests/test_fs_search.py``
@@ -980,7 +994,10 @@ def build_fs_search_tool(db_path: Path, workspace_root: Path, *, workspace_io: W
         except WorkspacePortError:
             return None, None
         holder = _IndexHolder(db)
-        atexit.register(holder.close)
+        if cleanup is None:
+            atexit.register(holder.close)
+        else:
+            cleanup.callback(holder.close, strict=True)
         return holder, db
 
     # The controller's root is not the admitted view. A private cache path

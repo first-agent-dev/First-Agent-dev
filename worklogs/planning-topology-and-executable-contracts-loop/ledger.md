@@ -7543,3 +7543,86 @@ skills, execution plans и doc-link tests **218 passed**, exit 0;
 exit 0. Следующий стык — доказательство полного bound и порядка reservation /
 Q75 для transport, включая saturated cache после durable DONE. Переход к коду
 и production cutover не произведён; Q103 после STEP2b, весь host набор NOT RUN.
+
+### E375 — заявка: действительное завершение memory-per-call (стык Q105/Q97)
+
+До изменения: локальный `_dispatch` повторён 10 раз (по 5 search/reach) в одном
+процессе, exit 0; все ответы успешны, `atexit._ncallbacks()` +10,
+`search_index._refresh_state` +5. Оба builder регистрируют bound holder в atexit;
+он удерживает SQLite memory connection/anchor и search state до выхода процесса.
+Отдельный одноразовый helper процесс в Q107 *может* закончиться сразу, но это ещё
+не реализовано и не доказывает memory-per-call `_dispatch`, в особенности при
+ошибке и возможном будущем повторном использовании. Не путать с host cost.
+
+1. Трассировка: `_dispatch → ToolRegistry.dispatch → build_fs_{search,reach}_tool`
+→ lazy holder → SQLite memory index, holder удерживается `atexit.register`.
+2. Allowlist: `src/fa/execution/project_tools.py`, `src/fa/inner_loop/tools/
+fs_search.py`, `fs_reach.py`, `tests/test_execution_project_tools.py`, этот
+ledger и статус increment; остальное без изменения. 3. Цель: закрыть именно
+индекс при завершении каждого вызова, даже при исключении, не включая managed
+supplier и не меняя результат/контракт. 4. AS-IS — до process-exit; TO-BE —
+`ExitStack` на `_dispatch`, оба реальных builders регистрируют holder в него;
+legacy builders без stack сохраняют прежний atexit и кэширование. 5. Reuse stdlib
+`ExitStack`, без нового класса/общего registry lifecycle; валидировать путь через
+реальный ToolRegistry, не вызывать `_handle` в обход schema. 6. Не отключать
+atexit глобально, не изменять host fallback, grant, schemas, receipt, PTY или
+выбор transport; invalid params не создают индекс. 7. finally-cleanup также при
+ошибке; существующие explicit tool errors и non-retryable refusal сохраняются,
+ошибка не становится успехом. 8. C0: оба SQLite connection/anchor реально
+закрыты и refresh state удалён после многократных вызовов; C1 локальный
+`_dispatch` + registry + реальные tool builders с success/exception/schema;
+C3 отсутствие host/scratch DB; EDGE mutants: отключить stack callback на каждом
+builder и не передать stack каждому из callers; BODY mutants: отключить close /
+обход `with`; строгие падения только в теле, восстановить и повторить банк.
+Полный cell/UDS/Docker/C2 и lifecycle при kill процесса — будущий live E2E,
+не доказан этим локальным изменением.
+
+Уточнение E375 до production-правки: существующие holder.close подавляют ошибки,
+а `SearchIndex.close` дополнительно подавляет sqlite.Error. Поэтому к allowlist
+добавлен `src/fa/memory/search_index.py`: opt-in strict close только для нового
+per-call `ExitStack`, чтобы ошибка освобождения не превращалась в успешный
+ToolResult; дефолты и legacy atexit остаются прежними. C1 fault-injection должен
+доказать явный refusal при исключении close. Предварительный тест до правки:
+**4 failed**, exit 1, все в телах новых тестов: SQLite connection не закрыт.
+
+### E376 — результат E375 и заявка на дополнение host-плана
+
+`_dispatch` использует `ExitStack`; оба существующих builder опционально
+регистрируют строгое освобождение в stack, legacy без stack сохраняет atexit.
+`SearchIndex.close(strict=True)` не скрывает SQLite close error и удаляет
+memory refresh-state в `finally`; по умолчанию политика legacy не меняется.
+После real producer error cleanup не возвращает ложный успешный ToolResult.
+Это исправление локального supplier, не включение managed discovery и не Q97.
+
+До исправления 4 параметризованных C1 упали exit 1 в телах на открытых SQLite
+connections; после: **201 passed / 2 xfailed**, exit 0 (helper + оба индекса,
+legacy tools, managed refusal, tool/client ports, registry). Через реальные
+registry/builders три повтора каждого инструмента закрывают каждое соединение;
+успешный результат и ошибка после producer проверены отдельно. Инъекция ошибки
+close обоих индексов → non-retryable `project_tool_failed`; SQLite strict/default
+проверены с реальным subclass connection. В отдельном процессе те же 10 вызовов:
+**0** новых atexit callbacks, **0** новых refresh entries, exit 0. Нет host RSS
+или Docker доказательства. Первое расширение банка exit 4: опечатка в имени
+`tests/test_search_index.py`, тесты не запускались; затем указаны реальные файлы.
+Первая targeted pyrefly exit 1: отсутствовал `@override` у тестового sqlite
+subclass; исправлено, повтор 0 errors (1 suppressed), exit 0. Ruff/format и
+`git diff --check` exit 0. Строгие call-phase BODY/EDGE mutations: **10/10**,
+каждый exit 1 в теле теста, включая отдельное снятие каждого callback, каждого
+edge, каждого close, strict failures и refresh cleanup; после восстановления
+банк выполнен заново. До изменения wire нужны отдельные C0–C3/mutations.
+
+Документарная заявка на дополнение live-плана (дополнительный allowlist:
+`notes/i03-live-e2e-test-plan-2026-10-22.md`, increment и ledger):
+1. стык lifetime/cell Q105 и L-TOOL-5; 2. только указанные файлы; 3. план
+внешней проверки повторных операций/ресурсов; 4. AS-IS нет host evidence,
+TO-BE только PLANNED; 5. существующие L-TOOL-5/8, без нового harness API;
+6. наблюдать реальные процессы/cgroup и cleanup, а не заменять cell двойником;
+7. отсутствие host или неизвестная terminality = BLOCKED, не PASS; 8. отдельный
+negative control/kill и повтор plan/link tests. Число живых процессов после
+завершения само по себе не доказывает bounded peak memory при исполнении.
+
+После финального diff-review повтор: **10/10** strict mutations, затем тот же
+кодовый банк **201 passed / 2 xfailed**, плановый банк **218 passed**,
+`check_doc_links` **324 OK**, все exit 0. L-TOOL-10 проверяет завершение helper
+и отделяет допустимую долгоживущую cell; process-exit освобождение не выдаётся
+за доказательство same-process cleanup. `git diff --check` exit 0.

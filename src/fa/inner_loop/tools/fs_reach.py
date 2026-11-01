@@ -11,6 +11,7 @@ from __future__ import annotations
 import atexit
 import logging
 from collections.abc import Mapping
+from contextlib import ExitStack
 from pathlib import Path
 from typing import Any
 
@@ -51,11 +52,13 @@ class _ReachHolder:
             self._index = StructuralIndex(self._db, in_memory=True) if self._in_memory else StructuralIndex(self._db)
         return self._index
 
-    def close(self) -> None:
+    def close(self, *, strict: bool = False) -> None:
         if self._index is not None:
             try:
                 self._index.close()
             except Exception:
+                if strict:
+                    raise
                 logger.debug("error closing StructuralIndex", exc_info=True)
 
 
@@ -94,8 +97,13 @@ def build_fs_reach_tool(
     workspace_io: WorkspacePort | None = None,
     scratch_db: Path | None = None,
     in_memory: bool = False,
+    cleanup: ExitStack | None = None,
 ) -> ToolSpec:
-    """Build the ``fs_reach`` ToolSpec bound to a workspace (CT-6)."""
+    """Build the ``fs_reach`` ToolSpec bound to a workspace (CT-6).
+
+    An optional cleanup stack owns this tool's lifetime and closes its index
+    strictly on exit. Without one, legacy atexit cleanup is unchanged.
+    """
     root = Path(workspace_root).resolve()
     host_db = scratch_db if scratch_db is not None else root / ".fa" / "structural.db"
 
@@ -105,7 +113,10 @@ def build_fs_reach_tool(
         except WorkspacePortError:
             return None
         holder = _ReachHolder(db, in_memory=in_memory)
-        atexit.register(holder.close)
+        if cleanup is None:
+            atexit.register(holder.close)
+        else:
+            cleanup.callback(holder.close, strict=True)
         return holder
 
     # A host root and a private cache path do not prove a view-bound index.

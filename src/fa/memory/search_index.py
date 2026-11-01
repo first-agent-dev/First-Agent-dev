@@ -346,18 +346,21 @@ class SearchIndex:
             (str(SCHEMA_VERSION),),
         )
 
-    def close(self) -> None:
-        if self._conn is not None:
-            try:
-                self._conn.close()
-            except sqlite3.Error:
-                pass
+    def close(self, *, strict: bool = False) -> None:
+        try:
+            if self._conn is not None:
+                try:
+                    self._conn.close()
+                except sqlite3.Error:
+                    if strict:
+                        raise
+        finally:
             self._conn = None
-        if self._memory_key is not None:
-            prefix = f"memory:{self._memory_key}::"
-            for key in tuple(_refresh_state):
-                if key.startswith(prefix):
-                    _refresh_state.pop(key, None)
+            if self._memory_key is not None:
+                prefix = f"memory:{self._memory_key}::"
+                for key in tuple(_refresh_state):
+                    if key.startswith(prefix):
+                        _refresh_state.pop(key, None)
 
     def __enter__(self) -> Self:
         return self

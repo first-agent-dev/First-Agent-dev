@@ -199,7 +199,9 @@ W1: S4P2/STEP2b — в работе: порт, stage publication, return-handoff
 версионированного EXEC extension с прежним receipt и Bash (E372). Конкретный
 transport, replay/квоты и host cost не доказаны, production-решение не готово. E374: реальный локальный reach дал 19 203 206 B (> 16 MiB frame); Q97/STEP2b остаются открыты. L-TOOL-5 исправлен под Q105, L-TOOL-8/9 — только PLANNED.
 Незавершённый supplier E318: symlink-контрпример Q104 закрыт в локальном memory-прототипе (E321); Q105 принят —
-одноразовый memory-index вместо scratch DB (E323), цена холодной перестройки требует host-замеров.
+одноразовый memory-index вместо scratch DB (E323); E376 добавил локальное закрытие
+индексов по вызову, включая fault path. Цена холодной перестройки и bounded RSS
+требуют host-замеров, L-TOOL-10 только PLANNED.
 Cell PTY retention исправлен локально (E324), но facade ещё не подключён: Q106=A принят,
 созданы ограниченные frame/JSON/attach поставщики для расширенного транспорта (E325–E330),
 request-bound budget общего worker reader проверен локально (E338–E339),
