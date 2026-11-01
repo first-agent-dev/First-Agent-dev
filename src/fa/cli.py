@@ -137,8 +137,10 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     # annotations only, so they are declared here rather than promoted to a
     # runtime import that would change startup behaviour.
     from fa.inner_loop.scope_estimator import OperatingPoint
+    from fa.inner_loop.tools.workspace_port import WorkspacePort
     from fa.output import EventBus
     from fa.runtime import PtyPool
+    from fa.runtime.bash_executor import BashExecutor
     from fa.stats import SessionAnalytics
 from fa.roles import EvalFamilyConflictError
 from fa.session.manager import RunContext, SessionContext, SessionManager, SessionManagerError
@@ -1675,7 +1677,13 @@ def _build_compactor_chain(
 
 
 def _build_role_registry(
-    role: str, workspace: Path, *, bash_timeout_seconds: int, planner_dispatch: PlannerDispatch | None = None
+    role: str,
+    workspace: Path,
+    *,
+    bash_timeout_seconds: int,
+    planner_dispatch: PlannerDispatch | None = None,
+    workspace_io: WorkspacePort | None = None,
+    managed_executor: BashExecutor | None = None,
 ) -> ToolRegistry:
     """Select the role-appropriate tool registry.
 
@@ -1693,6 +1701,37 @@ def _build_role_registry(
     treating it as a product change: ``fa run --role <typo>`` currently gets
     write+bash tools, and that is what the shipped CLI does today.
     """
+    if workspace_io is None and managed_executor is not None:
+        raise ValueError("managed executor requires a managed workspace port")
+    if workspace_io is not None:
+        if role == "planner":
+            return build_planner_registry(
+                workspace,
+                bash_timeout_seconds=bash_timeout_seconds,
+                planner_dispatch=planner_dispatch,
+                workspace_io=workspace_io,
+                managed_executor=managed_executor,
+            )
+        if role == "eval":
+            return build_eval_registry(
+                workspace,
+                bash_timeout_seconds=bash_timeout_seconds,
+                workspace_io=workspace_io,
+                managed_executor=managed_executor,
+            )
+        if role == "chat":
+            return build_chat_registry(
+                workspace,
+                bash_timeout_seconds=bash_timeout_seconds,
+                workspace_io=workspace_io,
+                managed_executor=managed_executor,
+            )
+        return build_baseline_registry(
+            workspace,
+            bash_timeout_seconds=bash_timeout_seconds,
+            workspace_io=workspace_io,
+            managed_executor=managed_executor,
+        )
     if role == "planner":
         return build_planner_registry(
             workspace, bash_timeout_seconds=bash_timeout_seconds, planner_dispatch=planner_dispatch
@@ -1847,6 +1886,8 @@ def _build_run_tool_registry(
     scope_point: OperatingPoint | None = None,
     gate_enabled: bool = True,
     planner_dispatch: PlannerDispatch | None = None,
+    workspace_io: WorkspacePort | None = None,
+    managed_executor: BashExecutor | None = None,
 ) -> ToolRegistry:
     """Build the exact role tool corpus used by a live ``fa run``.
 
@@ -1872,9 +1913,21 @@ def _build_run_tool_registry(
     estimate (the conformance path, test fixtures) are unaffected.
     """
 
-    registry = _build_role_registry(
-        role, workspace, bash_timeout_seconds=bash_timeout_seconds, planner_dispatch=planner_dispatch
-    )
+    if workspace_io is None and managed_executor is not None:
+        raise ValueError("managed executor requires a managed workspace port")
+    if workspace_io is None:
+        registry = _build_role_registry(
+            role, workspace, bash_timeout_seconds=bash_timeout_seconds, planner_dispatch=planner_dispatch
+        )
+    else:
+        registry = _build_role_registry(
+            role,
+            workspace,
+            bash_timeout_seconds=bash_timeout_seconds,
+            planner_dispatch=planner_dispatch,
+            workspace_io=workspace_io,
+            managed_executor=managed_executor,
+        )
     registry = _apply_escalation_gate(registry, role=role, scope_point=scope_point, gate_enabled=gate_enabled)
     registry.register(build_prepare_pr_tool(draft_store))
     if role == "chat":

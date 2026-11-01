@@ -137,9 +137,12 @@ def _port_failure(exc: WorkspacePortError) -> ToolResult:
         "denied": ("permission_denied", False),
         "invalid_request": ("invalid_params", True),
         "input_policy": ("write_failed", False),
-        "unavailable": ("write_failed", True),
     }
-    code, retryable = codes.get(exc.code, ("write_failed", True))
+    if exc.code not in codes:
+        return ToolResult.fail(
+            "write_failed", "workspace write outcome is unknown; do not retry without recovery", retryable=False
+        )
+    code, retryable = codes[exc.code]
     return ToolResult.fail(code, f"workspace refused the write: {exc.code}", retryable=retryable)
 
 

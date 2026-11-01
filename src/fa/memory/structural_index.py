@@ -40,6 +40,7 @@ import time
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
+from uuid import uuid4
 
 from fa.memory._safe_walk import iter_searchable_files
 
@@ -148,17 +149,26 @@ def _base_name(node: ast.AST) -> str:
 class StructuralIndex:
     """Lazy, thread-safe structural call-graph index (CT-5)."""
 
-    def __init__(self, db_path: Path) -> None:
+    def __init__(self, db_path: Path, *, in_memory: bool = False) -> None:
         self.db_path = Path(db_path)
+        self._memory_uri = f"file:fa-struct-{uuid4().hex}?mode=memory&cache=shared" if in_memory else None
+        self._anchor = (
+            sqlite3.connect(self._memory_uri, uri=True, check_same_thread=False)
+            if self._memory_uri is not None
+            else None
+        )
         self._stats: StructIndexStats | None = None
 
     # -- connection / schema -------------------------------------------------
 
     def _connect(self) -> sqlite3.Connection:
-        # Ensure the parent directory exists for ANY caller (tests construct
-        # the index directly; the tool path and direct use must both work).
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(str(self.db_path), timeout=10.0)
+        if self._memory_uri is None:
+            # Ensure the parent directory exists for direct and tool callers.
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
+            conn = sqlite3.connect(str(self.db_path), timeout=10.0)
+        else:
+            conn = sqlite3.connect(self._memory_uri, timeout=10.0, uri=True)
+            conn.execute("PRAGMA temp_store=MEMORY")
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")
         return conn
@@ -322,12 +332,10 @@ class StructuralIndex:
         return next_frontier, unresolved_level
 
     def close(self) -> None:
-        """No-op for API parity with SearchIndex/atexit holders.
-
-        Connections are short-lived per operation, so there is nothing to
-        close; registered with ``atexit`` by the builder for symmetry with
-        the fs_search holder pattern (ResourceWarning parity, D-S16-18).
-        """
+        """Close the in-memory anchor; disk connections remain short-lived."""
+        if self._anchor is not None:
+            self._anchor.close()
+            self._anchor = None
 
     # -- internals -------------------------------------------------------------
 

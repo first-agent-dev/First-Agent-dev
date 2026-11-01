@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import subprocess
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from fa.runtime.bash_executor import BashExecutor
 
 from fa.inner_loop.registry import DEFAULT_TOOL_CONTEXT_BYTES, ToolResult, ToolSpec
 from fa.inner_loop.runtime_limits import DEFAULT_BASH_TIMEOUT_SECONDS
@@ -156,13 +160,15 @@ def _run_pty_executor(
     timeout_seconds: int,
     artifact_store: Any | None,
     transaction: Any | None,
+    *,
+    managed: bool = False,
 ) -> ToolResult | None:
-    """Run through the stateful executor; return None when subprocess fallback is required."""
+    """Run through the stateful executor; only legacy execution may fall back."""
     if executor is not None:
         try:
             pty_result = executor.run(command, timeout=timeout_seconds, workdir=root, session_id="main")
             try:
-                if transaction is not None:
+                if transaction is not None and not managed:
                     write_set = _get_write_set_from_git_status(root)
                     for f in write_set:
                         transaction.add_write(f)
@@ -200,6 +206,8 @@ def _run_pty_executor(
                 "session_id": pty_result.session_id,
             }
             if pty_result.timed_out:
+                if managed:
+                    return ToolResult.fail("command_timeout", "managed command timed out", retryable=False)
                 logger.warning("PtyPool executor timeout, fallback to subprocess for command %s", command[:200])
                 raise RuntimeError(f"PtyPool timeout fallback: {stdout[:200]}")
             if pty_result.exit_code != 0:
@@ -210,7 +218,9 @@ def _run_pty_executor(
                 )
             return ToolResult.ok(summary, result=result)
 
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
+            if managed:
+                raise
             logger.warning("PtyPool executor failed: %s, fallback to subprocess", exc)
 
     return None
@@ -318,11 +328,46 @@ def _run_subprocess_fallback(
     return ToolResult.ok(summary, result=result)
 
 
+def _managed_bash_failure(error: Exception) -> ToolResult:
+    """Classify a single managed attempt without leaking exception details or retrying it."""
+    # Local import avoids importing the execution transport when legacy tools load.
+    from fa.execution.client import (
+        ExecutionRejectedError,
+        ExecutionTimedOutError,
+        ExecutionUnavailableError,
+        ExecutionUncertainError,
+    )
+
+    operation_id = getattr(error, "operation_id", None)
+    link = (
+        f" [{operation_id}]" if isinstance(operation_id, str) and re.fullmatch(r"op-[0-9a-f]{32}", operation_id) else ""
+    )
+    if isinstance(error, ExecutionTimedOutError):
+        return ToolResult.fail("command_timeout", f"managed command timed out{link}", retryable=False)
+    if isinstance(error, ExecutionUncertainError):
+        return ToolResult.fail(
+            "execution_uncertain", f"managed command outcome was not confirmed{link}", retryable=False
+        )
+    if isinstance(error, ExecutionUnavailableError):
+        return ToolResult.fail("execution_unavailable", f"managed execution is unavailable{link}", retryable=False)
+    if isinstance(error, ExecutionRejectedError):
+        return ToolResult.fail("execution_rejected", f"managed execution refused the command{link}", retryable=False)
+    return ToolResult.fail("execution_failed", "managed execution failed", retryable=False)
+
+
+class _LegacyBashMode:
+    """Distinguish no managed binding from a failed-to-bind managed executor."""
+
+
+_LEGACY_BASH = _LegacyBashMode()
+
+
 def build_run_bash_tool(
     workspace_root: Path,
     *,
     timeout_seconds: int = DEFAULT_BASH_TIMEOUT_SECONDS,
     env_allowlist_extra: Iterable[str] = (),
+    managed_executor: BashExecutor | _LegacyBashMode | None = _LEGACY_BASH,
 ) -> ToolSpec:
     root, extra_allow = prepare_workspace_context(workspace_root, env_allowlist_extra)
 
@@ -335,6 +380,19 @@ def build_run_bash_tool(
         executor = context.executor
         artifact_store = context.artifact_store
         transaction = context.transaction
+
+        if not isinstance(managed_executor, _LegacyBashMode):
+            if managed_executor is None:
+                return ToolResult.fail("execution_unavailable", "managed execution is unavailable", retryable=False)
+            try:
+                result = _run_pty_executor(
+                    managed_executor, command, root, timeout_seconds, artifact_store, transaction, managed=True
+                )
+            except Exception as exc:  # noqa: BLE001 - the tool reports failure, never retries on the host
+                return _managed_bash_failure(exc)
+            if result is None:
+                return ToolResult.fail("execution_unavailable", "managed execution is unavailable", retryable=False)
+            return result
 
         if executor is not None:
             try:
@@ -368,8 +426,8 @@ command or do not pipe.
 
 Chain commands with && for atomicity: cd src && ls -la
 
-Formal transaction tracking via git status --porcelain -z (Gap 8) as source-of-truth for
-write_set, not regex.
+Legacy transaction tracking uses git status --porcelain -z (Gap 8). Managed execution
+does not inspect the host tree; its changes belong to the managed view and its checkpoint.
 
 Socket isolation via -L fa_<run_id> (Improvement 1), line-wrapping -J + wide viewport -x 300
 (Gap 12), UUID sentinel per session, signal/atexit leak prevention (Gap 14), pexpect

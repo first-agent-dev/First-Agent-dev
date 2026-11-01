@@ -248,7 +248,7 @@ class ExecutionClient:
         one-shot; a lost PUBLISH reply is not retried and never becomes a local write.
         """
         namespace, workspace_id = _binding_identity(binding)
-        if not isinstance(grant, GrantReply) or grant.operation is not Operation.ACQUIRE_WRITER:
+        if not isinstance(grant, GrantReply) or grant.operation not in {Operation.ACQUIRE_WRITER, Operation.HANDOFF}:
             raise ExecutionContractError
         if not isinstance(source, PlanSnapshot) or not isinstance(candidate, PlanSnapshot):
             raise ExecutionContractError
@@ -432,7 +432,7 @@ class ExecutionClient:
         namespace, workspace_id = _binding_identity(binding)
         if not isinstance(access, Access) or not isinstance(purpose, ViewPurpose):
             raise ExecutionContractError
-        if not isinstance(grant, GrantReply) or grant.operation is not Operation.ACQUIRE_WRITER:
+        if not isinstance(grant, GrantReply) or grant.operation not in {Operation.ACQUIRE_WRITER, Operation.HANDOFF}:
             raise ExecutionContractError
         created = self.request(
             Operation.CREATE_VIEW,

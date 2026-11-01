@@ -24,7 +24,15 @@ from typing import Any, override
 from fa.execution.client import ExecutionUnavailableError, _connect_authenticated
 from fa.execution.journal import JournalError, OperationJournal
 from fa.execution.profiles import ExecutionProfile
-from fa.execution.protocol import MAX_FRAME_BYTES, MAX_TAIL_BYTES, _loads, decode_request, encode_json, read_frame
+from fa.execution.protocol import (
+    MAX_FRAME_BYTES,
+    MAX_TAIL_BYTES,
+    _frame_limit,
+    _loads,
+    decode_request,
+    encode_json,
+    read_frame,
+)
 from fa.execution.supervisor import operation_input_sha256
 from fa.execution.types import ExecutionContractError, NamespaceRef, Operation, ViewRef, _hex_id
 
@@ -100,6 +108,8 @@ class DockerAttachStream:
         connection.setblocking(False)
         self._left = 0
         self._wire_bytes = 0
+        self._wire_limit = MAX_FRAME_BYTES + 64 * 1024
+        self._demux_limit = MAX_FRAME_BYTES + 4
         self._stderr = bytearray()
 
     def _receive(self, size: int, deadline: float) -> bytes:
@@ -119,7 +129,7 @@ class DockerAttachStream:
         while len(result) < size:
             part = self._receive(min(size - len(result), 64 * 1024), deadline)
             self._wire_bytes += len(part)
-            if self._wire_bytes > MAX_FRAME_BYTES + 64 * 1024:
+            if self._wire_bytes > self._wire_limit:
                 raise ExecutionContractError
             result.extend(part)
         return bytes(result)
@@ -167,7 +177,7 @@ class DockerAttachStream:
         while not self._left:
             head = self._exact(8, deadline)
             kind, length = head[0], struct.unpack("!I", head[4:])[0]
-            if head[1:4] != b"\0\0\0" or kind not in {0, 1, 2} or length > MAX_FRAME_BYTES + 4:
+            if head[1:4] != b"\0\0\0" or kind not in {0, 1, 2} or length > self._demux_limit:
                 raise ExecutionContractError
             if kind == 2:
                 while length:
@@ -181,7 +191,7 @@ class DockerAttachStream:
         self._left -= len(part)
         return part
 
-    def read_frame(self, *, deadline: float) -> bytes:
+    def read_frame(self, *, deadline: float, max_bytes: int = MAX_FRAME_BYTES) -> bytes:
         stream = self
 
         class Reader:
@@ -192,8 +202,11 @@ class DockerAttachStream:
                 stream._send(data, deadline)
 
         try:
+            limit = _frame_limit(max_bytes)
             self._wire_bytes = 0
-            return read_frame(Reader())
+            self._wire_limit = limit + 64 * 1024
+            self._demux_limit = limit + 4
+            return read_frame(Reader(), max_bytes=limit)
         except (OSError, ValueError, ExecutionContractError):
             raise DockerUnavailableError from None
 

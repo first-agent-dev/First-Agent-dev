@@ -39,15 +39,16 @@ _DESCRIPTION = (
 class _ReachHolder:
     """Lazily holds the process-wide StructuralIndex for one workspace."""
 
-    def __init__(self, db_path: Path) -> None:
+    def __init__(self, db_path: Path, *, in_memory: bool = False) -> None:
         self._db = db_path
+        self._in_memory = in_memory
         self._index: Any = None
 
     def get(self) -> Any:
         if self._index is None:
             from fa.memory.structural_index import StructuralIndex
 
-            self._index = StructuralIndex(self._db)
+            self._index = StructuralIndex(self._db, in_memory=True) if self._in_memory else StructuralIndex(self._db)
         return self._index
 
     def close(self) -> None:
@@ -87,17 +88,23 @@ def _parse_enum(
     return value, None
 
 
-def build_fs_reach_tool(workspace_root: Path, *, workspace_io: WorkspacePort | None = None) -> ToolSpec:
+def build_fs_reach_tool(
+    workspace_root: Path,
+    *,
+    workspace_io: WorkspacePort | None = None,
+    scratch_db: Path | None = None,
+    in_memory: bool = False,
+) -> ToolSpec:
     """Build the ``fs_reach`` ToolSpec bound to a workspace (CT-6)."""
     root = Path(workspace_root).resolve()
-    host_db = root / ".fa" / "structural.db"
+    host_db = scratch_db if scratch_db is not None else root / ".fa" / "structural.db"
 
     def _resolve_index() -> _ReachHolder | None:
         try:
             db = index_db(workspace_io, root, "structural.db", host_db)
         except WorkspacePortError:
             return None
-        holder = _ReachHolder(db)
+        holder = _ReachHolder(db, in_memory=in_memory)
         atexit.register(holder.close)
         return holder
 

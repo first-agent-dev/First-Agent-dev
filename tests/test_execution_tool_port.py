@@ -247,7 +247,7 @@ def test_authority_errors_map_to_closed_port_codes(site: Site) -> None:
     [
         ("UNAUTHORIZED", "denied"),
         ("PATH_DENIED", "denied"),
-        ("EXECUTION_UNKNOWN", "denied"),
+        ("EXECUTION_UNKNOWN", "unavailable"),
         ("STALE_REVISION", "stale"),
         ("INPUT_POLICY", "input_policy"),
         ("INVALID_REQUEST", "input_policy"),

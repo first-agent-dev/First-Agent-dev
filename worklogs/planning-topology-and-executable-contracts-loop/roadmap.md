@@ -56,6 +56,20 @@ The map below is expected to be refined as reality teaches.
 | I05 | Rolling-wave, ASK#, autonomy, chat orchestration | outlined | the roadmap closes across runs; the ceremony/scope/draft work lands here, revised |
 | I06 | Telemetry & distillation (parallel deferred) | outlined | runs are measured and distilled; slice-DAG parallelism deferred |
 
+### Будущая отдельная фича после I03: наблюдатель за workflow
+
+После завершения и тестирования I03 рассмотреть отдельную фичу: параллельный read-only
+собеседник, которому пользователь может задавать вопросы о ходе выполняющегося workflow.
+Базовый кандидат — отдельный агент или опциональный субагент с доступом к проверенным статусу,
+событиям и опубликованным ревизиям, с заметками в отдельном безопасном хранилище; он не изменяет
+проект или авторитетные записи workflow. Показывать различие между промежуточными событиями и
+опубликованным состоянием. Более широкий detached workflow с продолжающимся основным чатом —
+возможное последующее развитие, не обязательная часть первого варианта. Интерфейс, изоляция,
+доступ к данным, хранение заметок и проверки проектируются отдельно по результатам I03.
+
+**Статус: идея, не спланирована и не входит в I03.** ID и порядок определить при rolling-wave
+планировании; существующие I04–I06 не переименовываются и не переносятся.
+
 <a id="slice-loop-tracker-l2-eval-successor"></a>
 ### Deferred capability: slice-loop/tracker/L2-eval successor
 

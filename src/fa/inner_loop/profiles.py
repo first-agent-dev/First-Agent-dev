@@ -23,6 +23,7 @@ from fa.inner_loop.tools.base import resolve_workspace_path
 
 if TYPE_CHECKING:
     from fa.inner_loop.tools.workspace_port import WorkspacePort
+    from fa.runtime.bash_executor import BashExecutor
 
 logger = logging.getLogger(__name__)
 
@@ -205,17 +206,18 @@ def _add_optional_tool_builders(
     except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable, edit_file optional
         logger.warning(f"edit_file builder not available: {exc}")
 
-    # spawn_subagent is declared by profiles (chat, baseline) but had no builder
-    # here, so a profile that asked for it silently lost the tool. The tool
-    # itself is feature-flagged off by default and fails with ``disabled`` when
-    # invoked; registering it keeps the profile declaration and the built
-    # registry in agreement instead of diverging silently.
-    try:
-        from fa.inner_loop.tools.spawn_subagent import build_spawn_subagent_tool
+    if workspace_io is None:
+        # spawn_subagent is declared by profiles (chat, baseline) but had no builder
+        # here, so a profile that asked for it silently lost the tool. The tool
+        # itself is feature-flagged off by default and fails with ``disabled`` when
+        # invoked; registering it keeps the profile declaration and the built
+        # registry in agreement instead of diverging silently.
+        try:
+            from fa.inner_loop.tools.spawn_subagent import build_spawn_subagent_tool
 
-        builders["fs_spawn_subagent"] = lambda: build_spawn_subagent_tool(root)
-    except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable
-        logger.warning(f"spawn_subagent builder not available: {exc}")
+            builders["fs_spawn_subagent"] = lambda: build_spawn_subagent_tool(root)
+        except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable
+            logger.warning(f"spawn_subagent builder not available: {exc}")
 
     # Observability + pair tools (from Stage 0)
     try:
@@ -276,10 +278,12 @@ def _candidate_dispatch(dispatch: PlannerDispatch | None) -> PlannerDispatch | N
     return None if dispatch.kind == PlannerDispatchKind.ORDINARY_PLANNING else dispatch
 
 
-def _build_limited_write(root: Path, planner_dispatch: PlannerDispatch | None) -> ToolSpec:
+def _build_limited_write(
+    root: Path, planner_dispatch: PlannerDispatch | None, *, workspace_io: WorkspacePort | None = None
+) -> ToolSpec:
     from fa.inner_loop.tools.write_file import build_write_file_tool
 
-    base_spec = build_write_file_tool(root)
+    base_spec = build_write_file_tool(root, workspace_io=workspace_io)
     profile_allowlist = PROFILES_RAW.get("planner", {}).get("write_allowlist", [])
     allowed_prefixes: list[str] = [str(p) for p in profile_allowlist]
 
@@ -326,6 +330,7 @@ def _build_tool_builders(
     *,
     planner_dispatch: PlannerDispatch | None = None,
     workspace_io: WorkspacePort | None = None,
+    managed_executor: BashExecutor | None = None,
 ) -> dict[str, Callable[[], ToolSpec]]:
     """Map tool name -> builder lambda, uses existing builders, graceful degradation.
 
@@ -363,7 +368,9 @@ def _build_tool_builders(
 
         builders["fs_write_file"] = lambda: build_write_file_tool(root, workspace_io=workspace_io)
 
-        builders["fs_write_file_limited"] = lambda: _build_limited_write(root, planner_dispatch)
+        builders["fs_write_file_limited"] = lambda: _build_limited_write(
+            root, planner_dispatch, workspace_io=workspace_io
+        )
 
     except Exception as exc:  # noqa: BLE001
         logger.warning(f"Failed to setup builder fs_write_file: {exc}")
@@ -371,7 +378,12 @@ def _build_tool_builders(
     try:
         from fa.inner_loop.tools.run_bash import build_run_bash_tool
 
-        builders["fs_run_bash"] = lambda: build_run_bash_tool(root, timeout_seconds=bash_timeout)
+        if workspace_io is None:
+            builders["fs_run_bash"] = lambda: build_run_bash_tool(root, timeout_seconds=bash_timeout)
+        else:
+            builders["fs_run_bash"] = lambda: build_run_bash_tool(
+                root, timeout_seconds=bash_timeout, managed_executor=managed_executor
+            )
     except Exception as exc:  # noqa: BLE001
         logger.warning(f"Failed to setup builder fs_run_bash: {exc}")
 
@@ -425,6 +437,7 @@ def build_registry_for_role(
     bash_timeout: int = 30,
     planner_dispatch: PlannerDispatch | None = None,
     workspace_io: WorkspacePort | None = None,
+    managed_executor: BashExecutor | None = None,
 ) -> ToolRegistry:
     """Build ToolRegistry with only tools for given role, token efficient.
 
@@ -436,6 +449,8 @@ def build_registry_for_role(
 
     if planner_dispatch is not None and role != "planner":
         raise PlannerDispatchError
+    if workspace_io is None and managed_executor is not None:
+        raise ValueError("managed executor requires a managed workspace port")
     profile = PROFILES_RAW[role]
     wanted = profile.get("tools", [])
     builders = _build_tool_builders(
@@ -443,16 +458,21 @@ def build_registry_for_role(
         bash_timeout=bash_timeout,
         planner_dispatch=planner_dispatch,
         workspace_io=workspace_io,
+        **({"managed_executor": managed_executor} if workspace_io is not None else {}),
     )
 
     registry = ToolRegistry()
     for tool_name in wanted:
         # For planner, use limited write_file if requested
         if role == "planner" and tool_name == "fs_write_file":
-            builder = builders.get("fs_write_file_limited") or builders.get(tool_name)
+            builder = builders.get("fs_write_file_limited")
+            if builder is None and workspace_io is None:
+                builder = builders.get(tool_name)
         else:
             builder = builders.get(tool_name)
         if builder is None:
+            if workspace_io is not None and tool_name != "fs_spawn_subagent":
+                raise RuntimeError(f"managed tool unavailable: {tool_name}")
             logger.warning(f"Tool {tool_name} requested for role {role} but no builder found, skipping")
             continue
         try:
@@ -481,7 +501,9 @@ def build_registry_for_role(
             raise
         except ToolWireNameError:
             raise
-        except Exception as exc:  # noqa: BLE001 - failure-observable
+        except Exception as exc:
+            if workspace_io is not None:
+                raise
             logger.warning(f"Failed to build/register tool {tool_name} for role {role}: {exc}")
 
     if planner_dispatch is not None and registry.lookup("fs_write_file") is None:

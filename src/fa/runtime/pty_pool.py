@@ -21,7 +21,7 @@ import shutil
 import signal
 import threading
 import uuid
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol, cast
@@ -36,6 +36,9 @@ ANSI_RE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]|\x1b\].*?\x07")
 # equal). Replaces the former head-biased ``[:8000]`` slices at all three
 # read-out sites.
 _EXEC_RETAINED_BYTES = 30_000
+# Internal opt-in capture ceilings; these do not expand the EXEC wire contract.
+_MAX_CAPTURE_CHARS = 8 * 1024 * 1024
+_MAX_CAPTURE_HISTORY_LINES = 32_768
 
 
 def _tail_keep(text: str, max_chars: int = _EXEC_RETAINED_BYTES) -> str:
@@ -87,6 +90,13 @@ class PtyResult:
     timed_out: bool = False
 
 
+class _BoundedExpectError(RuntimeError):
+    def __init__(self, partial: str, *, timed_out: bool) -> None:
+        super().__init__("bounded_capture_interrupted")
+        self.partial = partial
+        self.timed_out = timed_out
+
+
 class _TmuxSessionLike(Protocol):
     active_window: Any
     attached_window: Any
@@ -120,7 +130,11 @@ class PtySession:
         server: _TmuxServerLike | None = None,
         env: dict[str, str] | None = None,
         run_id: str | None = None,
+        output_limit: int = _EXEC_RETAINED_BYTES,
     ):
+        if type(output_limit) is not int or output_limit <= 0:
+            raise ValueError("output_limit must be a positive integer")
+        self._output_limit = output_limit
         self.session_id = session_id
         self.cwd = Path(cwd).resolve()
         self.env = env or {}
@@ -291,7 +305,58 @@ class PtySession:
             logger.warning("Failed to write heredoc script file: %s, running inline (may hang)", exc)
             return command, None
 
-    def _run_fallback(self, command: str, timeout: float) -> PtyResult:
+    def _bounded_expect_fallback(self, timeout: float, *, marker: str | None = None) -> tuple[str, bool]:
+        """Drain bounded chunks while keeping the exact pexpect end marker intact.
+
+        An anchored chunk may not consume a possible marker prefix at the end
+        of a read. Pexpect retains that prefix until more bytes arrive. `before`
+        is still included: a search may have advanced before the chosen match.
+        """
+        import time
+
+        import pexpect
+
+        token = self._end_token if marker is None else marker
+        alternatives = [f"{re.escape(token[:i])}(?=[^{re.escape(token[i])}])" for i in range(1, len(token))]
+        safe_chunk = re.compile(r"\A(?:[^" + re.escape(token[0]) + "]|" + "|".join(alternatives) + "){1,4096}")
+        retained: deque[str] = deque()
+        retained_chars = 0
+        discarded = False
+        # Exit marker and line framing must still fit when stdout hits the cap.
+        raw_limit = self._output_limit + len(self._exit_token) + 128
+
+        def append(data: str) -> None:
+            nonlocal retained_chars, discarded
+            if not data:
+                return
+            retained.append(data)
+            retained_chars += len(data)
+            while retained_chars > raw_limit:
+                overflow = retained_chars - raw_limit
+                first = retained.popleft()
+                if len(first) > overflow:
+                    retained.appendleft(first[overflow:])
+                    retained_chars -= overflow
+                else:
+                    retained_chars -= len(first)
+                discarded = True
+
+        deadline = time.monotonic() + timeout
+        try:
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise pexpect.TIMEOUT("capture deadline exceeded")
+                index = self._fallback.expect([re.escape(token), safe_chunk], timeout=remaining)
+                append(self._fallback.before or "")
+                if index == 0:
+                    return "".join(retained), discarded
+                append(self._fallback.after or "")
+        except (pexpect.TIMEOUT, pexpect.EOF) as exc:
+            append(self._fallback.before or "")
+            raise _BoundedExpectError("".join(retained), timed_out=isinstance(exc, pexpect.TIMEOUT)) from None
+
+    def _run_fallback(self, command: str, timeout: float, *, bounded: bool = False) -> PtyResult:
         if self._is_fallback:
             if self._fallback is None:
                 return PtyResult(
@@ -311,10 +376,14 @@ class PtySession:
                 full = f"({command_to_run}); echo {self._exit_token}:$? {self._end_token}"
             try:
                 self._fallback.sendline(full)
-                self._fallback.expect(self._end_token, timeout=timeout)
-                raw = self._fallback.before or ""
+                discarded = False
+                if bounded:
+                    raw, discarded = self._bounded_expect_fallback(timeout)
+                else:
+                    self._fallback.expect(self._end_token, timeout=timeout)
+                    raw = self._fallback.before or ""
             except Exception as exc:  # noqa: BLE001
-                raw = self._fallback.before or "" if self._fallback else ""
+                raw = exc.partial if isinstance(exc, _BoundedExpectError) else (self._fallback.before or "")
                 # Distinguish a genuine timeout (pexpect.TIMEOUT) from other
                 # failures (e.g. EOF from a dead child) so callers can
                 # branch on PtyResult.timed_out instead of string-sniffing
@@ -322,7 +391,9 @@ class PtySession:
                 # EVERY failure here (timeout or not) with the same message.
                 import pexpect
 
-                is_timeout = isinstance(exc, pexpect.TIMEOUT)
+                is_timeout = isinstance(exc, pexpect.TIMEOUT) or (
+                    isinstance(exc, _BoundedExpectError) and exc.timed_out
+                )
                 label = f"Timeout {timeout}s partial" if is_timeout else f"Command failed: {exc}"
                 self._cleanup_script(script_path)
                 if is_timeout:
@@ -330,10 +401,23 @@ class PtySession:
                     # shell so the orphaned command cannot tax later calls.
                     try:
                         self._fallback.sendcontrol("c")
-                    except Exception:  # noqa: BLE001, S110 — best-effort reclaim
-                        pass
+                        if bounded:
+                            # SIGINT can abort the old shell command before its
+                            # end marker. A fresh shell probe separates old output
+                            # from the next request; if it cannot complete, close.
+                            marker = f"FA_RECOVER_{uuid.uuid4().hex}"
+                            self._fallback.sendline(f"printf %s {marker}")
+                            self._bounded_expect_fallback(2.0, marker=marker)
+                    except Exception:  # noqa: BLE001 — reclaim failure must not look like success
+                        if bounded:
+                            self.close()
+                            self._fallback = None
+                elif bounded:
+                    # An unexpected read/send failure leaves shell state unknown.
+                    self.close()
+                    self._fallback = None
                 return PtyResult(
-                    stdout=f"{label}:\n{_tail_keep(ANSI_RE.sub('', raw))}",
+                    stdout=f"{label}:\n{_tail_keep(ANSI_RE.sub('', raw), self._output_limit)}",
                     exit_code=-1,
                     truncated=True,
                     session_id=self.session_id,
@@ -348,9 +432,9 @@ class PtySession:
             exit_code = int(m.group(1)) if m else -1
             if f"{self._exit_token}:" in clean:
                 clean = clean.split(f"{self._exit_token}:")[0]
-            truncated = len(clean) > _EXEC_RETAINED_BYTES
-            if truncated:
-                clean = _tail_keep(clean)
+            truncated = discarded or len(clean) > self._output_limit
+            if len(clean) > self._output_limit:
+                clean = _tail_keep(clean, self._output_limit)
             return PtyResult(stdout=clean.strip(), exit_code=exit_code, truncated=truncated, session_id=self.session_id)
         return PtyResult(stdout="No fallback available", exit_code=-1, truncated=False, session_id=self.session_id)
 
@@ -480,9 +564,9 @@ class PtySession:
             except TimeoutError:
                 pass
             output = output.replace(self._sentinel_token, "")
-        truncated = len(output) > _EXEC_RETAINED_BYTES
+        truncated = len(output) > self._output_limit
         if truncated:
-            output = _tail_keep(output)
+            output = _tail_keep(output, self._output_limit)
         if timed_out:
             output = f"Timeout {timeout}s partial:\n{output}" if output else f"Timeout {timeout}s: no output captured"
         return PtyResult(
@@ -505,12 +589,94 @@ class PtySession:
         except OSError:
             pass  # best-effort cleanup; a leaked temp file is not a correctness issue
 
-    def run(self, command: str, timeout: float = 30) -> PtyResult:
-        """Run one command while serializing cwd/session access."""
+    def _history_option(self) -> tuple[str, str | None, int]:
+        """Read this pane's LOCAL and effective history limit, preserving inheritance."""
+        pane_id = getattr(self.pane, "pane_id", None)
+        if self._server is None or not isinstance(pane_id, str) or re.fullmatch(r"%[0-9]+", pane_id) is None:
+            raise RuntimeError("capture_history_unavailable")
+        try:
+            reply = self._server.cmd("show-options", "-w", "-t", pane_id, "history-limit")
+            if reply.returncode != 0 or reply.stderr or not isinstance(reply.stdout, list) or len(reply.stdout) > 1:
+                raise RuntimeError("capture_history_unavailable")
+            previous = None
+            if reply.stdout:
+                match = re.fullmatch(r"history-limit ([0-9]+)", reply.stdout[0])
+                if match is None:
+                    raise RuntimeError("capture_history_unavailable")
+                previous = match.group(1)
+            effective = self._server.cmd("display-message", "-p", "-t", pane_id, "#{history_limit}")
+            if (
+                effective.returncode != 0
+                or effective.stderr
+                or not isinstance(effective.stdout, list)
+                or len(effective.stdout) != 1
+                or re.fullmatch(r"[0-9]{1,8}", effective.stdout[0]) is None
+            ):
+                raise RuntimeError("capture_history_unavailable")
+            lines = int(effective.stdout[0])
+            if lines > _MAX_CAPTURE_HISTORY_LINES:
+                # Never lower an operator's existing setting to satisfy our cap.
+                raise RuntimeError("capture_history_unavailable")
+            return pane_id, previous, lines
+        except Exception:  # noqa: BLE001 - no command may run on an uncertain option read
+            raise RuntimeError("capture_history_unavailable") from None
+
+    def _set_history_option(self, pane_id: str, value: str | None) -> None:
+        if self._server is None:
+            raise RuntimeError("capture_history_unavailable")
+        args = (
+            ("set-option", "-wu", "-t", pane_id, "history-limit")
+            if value is None
+            else ("set-option", "-w", "-t", pane_id, "history-limit", value)
+        )
+        try:
+            reply = self._server.cmd(*args)
+            if reply.returncode != 0 or reply.stderr:
+                raise RuntimeError("capture_history_unavailable")
+        except Exception:  # noqa: BLE001 - a lost option reply is not success
+            raise RuntimeError("capture_history_unavailable") from None
+
+    def run(
+        self,
+        command: str,
+        timeout: float = 30,
+        *,
+        capture_chars: int | None = None,
+        history_lines: int | None = None,
+    ) -> PtyResult:
+        """Run one command, with optional bounded, temporary capture settings."""
+        if capture_chars is not None and (
+            type(capture_chars) is not int or not 0 < capture_chars <= _MAX_CAPTURE_CHARS
+        ):
+            raise ValueError("capture_chars outside bounds")
+        if history_lines is not None and (
+            capture_chars is None
+            or type(history_lines) is not int
+            or not 0 < history_lines <= _MAX_CAPTURE_HISTORY_LINES
+        ):
+            raise ValueError("history_lines outside bounds")
         with self._cwd_lock:
-            if self._is_fallback:
-                return self._run_fallback(command, timeout)
-            return self._run_tmux(command, timeout)
+            original_limit = self._output_limit
+            if capture_chars is not None:
+                self._output_limit = capture_chars
+            try:
+                if self._is_fallback:
+                    if capture_chars is None:
+                        return self._run_fallback(command, timeout)
+                    return self._run_fallback(command, timeout, bounded=True)
+                if history_lines is None:
+                    return self._run_tmux(command, timeout)
+                pane_id, previous, effective = self._history_option()
+                if effective >= history_lines:
+                    return self._run_tmux(command, timeout)
+                try:
+                    self._set_history_option(pane_id, str(history_lines))
+                    return self._run_tmux(command, timeout)
+                finally:
+                    # Also restore if setting may have landed but its reply was lost.
+                    self._set_history_option(pane_id, previous)
+            finally:
+                self._output_limit = original_limit
 
     def send_ctrl_c(self) -> str:
         if self._is_fallback:
@@ -565,7 +731,11 @@ class PtyPool:
         base_cwd: Path = Path("/workspace"),
         server: Any | None = None,
         run_id: str | None = None,
+        output_limit: int = _EXEC_RETAINED_BYTES,
     ):
+        if type(output_limit) is not int or output_limit <= 0:
+            raise ValueError("output_limit must be a positive integer")
+        self._output_limit = output_limit
         self.max_size = max_size
         self.base_cwd = Path(base_cwd).resolve()
         self.sessions: dict[str, PtySession] = {}
@@ -694,7 +864,9 @@ class PtyPool:
             if not cwd.is_dir():
                 raise RuntimeError(f"workdir {cwd} not dir")
 
-            session = PtySession(session_id, cwd, server=self._server, run_id=self.run_id)
+            session = PtySession(
+                session_id, cwd, server=self._server, run_id=self.run_id, output_limit=self._output_limit
+            )
             self.sessions[session_id] = session
             self._lru[session_id] = None
             return session

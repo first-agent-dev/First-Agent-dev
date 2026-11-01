@@ -231,6 +231,11 @@ def serve(worker: CellWorker, connection: FrameConnection) -> None:
             raise ExecutionContractError
 
 
+def _cell_pool(workspace: Path) -> PtyPool:
+    """Retain up to the cell protocol tail; the worker enforces the byte bound."""
+    return PtyPool(base_cwd=workspace, output_limit=MAX_TAIL_BYTES)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Private cell-local PTY worker")
     parser.add_argument("--max-command-ms", type=int, required=True)
@@ -240,7 +245,7 @@ def main() -> int:
         _positive_integer(args.max_command_ms)
         for directory in (Path("/scratch/home"), Path("/scratch/tmp")):
             directory.mkdir(mode=0o700, parents=True, exist_ok=True)
-        pool = PtyPool(base_cwd=Path("/workspace"))
+        pool = _cell_pool(Path("/workspace"))
         worker = CellWorker(
             pool, workspace=Path("/workspace"), max_command_ms=args.max_command_ms, one_shot=args.one_shot
         )

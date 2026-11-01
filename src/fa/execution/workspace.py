@@ -877,10 +877,14 @@ class _Binding:
     writer: int | None = None
     grant: str | None = None
     principal: str | None = None
+    # Like the writer fd and grant, this lineage is valid only for this live
+    # authority. An OWNED workspace is quarantined on restart, never resumed.
+    parents: tuple[NamespaceRef, ...] = ()
 
     def close_writer(self) -> None:
         self.grant = None
         self.principal = None
+        self.parents = ()
         if self.writer is not None:
             os.close(self.writer)
             self.writer = None
@@ -1429,16 +1433,13 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
         capability: str,
         deadline: float,
     ) -> GrantReply:
-        """Move the ONE active mutator grant to this actor's own child run (CT113).
+        """Move the active grant to a child or back to its delegating parent.
 
-        Q85/§7.1: the parent link is controller-attested after an actual
-        `begin_run`, so this proves the link it is told — same session, the
-        caller's run as the target's parent, a different run — and never the
-        target run's existence. The move is ONE fsynced metadata replace that
-        keeps `owner_namespace`, `generation`, `status` and `revision_id`: a
-        handoff is not a new write epoch, so pins and the child's views keep the
-        generation they were opened at. Every refusal happens before any write,
-        and the reply's capability is only returned after the replace reads back.
+        Downward links are controller-attested (Q85); return requires the exact
+        recorded parent namespace (Q102). The live lineage, like the grant, is
+        lost on restart, when OWNED workspaces are quarantined. The move keeps
+        the owner and generation and issues a fresh capability only after the
+        metadata replacement is read back. All refusals precede the replacement.
         """
         if not isinstance(target, NamespaceRef):
             raise ExecutionContractError
@@ -1452,12 +1453,16 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
             return self._handoff_owner(binding, namespace, target)
 
     def _handoff_owner(self, binding: _Binding, namespace: NamespaceRef, target: NamespaceRef) -> GrantReply:
-        """The wire invariants, then the swap; the old capability dies with it."""
-        if (
-            target.session_id != namespace.session_id
-            or target.run_id == namespace.run_id
-            or target.parent_run_id != namespace.run_id
+        """Validate one lineage edge, then rotate the capability and actor."""
+        if target.session_id != namespace.session_id or target.run_id == namespace.run_id:
+            raise SupervisorError("INPUT_POLICY")
+        if binding.parents and target == binding.parents[-1]:
+            parents = binding.parents[:-1]
+        elif target.parent_run_id == namespace.run_id and all(
+            target.run_id != parent.run_id for parent in binding.parents
         ):
+            parents = (*binding.parents, namespace)
+        else:
             raise SupervisorError("INPUT_POLICY")
         try:
             grant = secrets.token_hex(32)
@@ -1467,6 +1472,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                 # Never hand out an unproven grant: recovery owns this workspace now.
                 self._healthy = False
                 raise SupervisorError("DURABILITY_UNKNOWN")
+            binding.parents = parents
             binding.grant = grant
             return GrantReply(
                 Operation.HANDOFF,
@@ -1500,6 +1506,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                 binding.writer = None
             binding.grant = None
             binding.principal = None
+            binding.parents = ()
             return {"released": True}
         except OSError:
             self._healthy = False

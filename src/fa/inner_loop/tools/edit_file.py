@@ -116,6 +116,10 @@ def _load_text(
             f"workspace refused the read: {exc.code} (missing or not permitted)",
             retryable=exc.code not in ("denied",),
         )
+    if read.eof is not True:
+        return ToolResult.fail(
+            "read_failed", "Cannot safely edit an incomplete managed file read; no bytes changed", retryable=False
+        )
     return read.content, read.sha256
 
 
@@ -132,11 +136,15 @@ def _store_text(
     try:
         workspace_io.write_file(relative, text, expected_sha256=base_sha256)
     except WorkspacePortError as exc:
+        if exc.code not in {"denied", "stale", "input_policy", "invalid_request"}:
+            return ToolResult.fail(
+                "write_failed", "workspace write outcome is unknown; do not retry without recovery", retryable=False
+            )
         code = "permission_denied" if exc.code == "denied" else "write_failed"
         return ToolResult.fail(
             code,
             f"workspace refused the write: {exc.code} (no bytes changed)",
-            retryable=exc.code not in ("denied", "stale", "input_policy"),
+            retryable=exc.code == "invalid_request",
         )
     return None
 

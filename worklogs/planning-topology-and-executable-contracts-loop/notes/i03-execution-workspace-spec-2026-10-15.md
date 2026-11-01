@@ -164,7 +164,7 @@ Complete payload additions/results (every object has exactly the named keys; IDs
 | publish | `{sealed_manifest_id:null-or-seal-id,expected_base_revision}` / `{workspace_id,revision_id,tree_sha256,operation_id,projection_complete:true,plan_ref:null-or-PlanRef}`; `sealed_manifest_id` is null iff `view_ref.purpose == CANDIDATE`, otherwise non-null for ordinary sealed WRITE publication; ordinary result has null `plan_ref`, candidate PLAN result has the exact new `PlanRef`; no receipt before durable DONE; PUBLISH has its own result schema and does not widen install's `_COMMITTED` |
 | prepare_bundle | `{project_slug,increment_slug,roadmap_text,increment_text,expected_base_revision}` / `{validated_bundle_id,bundle_sha256}`; OWNER grant, fixed three-file renderer/ledger header, recomputed caps/grammar/hash in supervisor; no model file map |
 | install_project | `{validated_bundle_id,project_slug}` / same committed result as publish; bundle created by trusted bounded renderer, not arbitrary model file map |
-| handoff | `{target_namespace}` / `{view_ref:null,capability,generation,revision_id}`; **moves the ONE active mutator grant** from the calling namespace to a child run of it (Q85/E282). Preconditions in this fixed order: (1) the caller's OWNER grant, principal and active-actor proof (`_owner_only`); (2) settlement — every WRITE view `PUBLISHED`/`REJECTED`, no `intent.json` (`WORKSPACE_BUSY`; identical to release, so a `SEALED`-but-unpublished view blocks a handoff exactly as it blocks release); (3) the live writer fd this process opened (`STALE_GENERATION`); (4) the wire invariants `target.session_id == caller.session_id`, `target.parent_run_id == caller.run_id`, `target.run_id != caller.run_id` (`INPUT_POLICY`). The commit is ONE metadata replace, fsynced before the reply: `active_actor := target`, `owner_namespace`/`generation`/`status`/`revision_id` unchanged, a fresh `secrets.token_hex(32)` capability minted. **Generation is NOT advanced** — a handoff is not a new write epoch, so existing pins and the child's views keep their generation and `view_ref.generation` still matches; the old capability dies with that replace (fresh work with it is `UNAUTHORIZED`) while Q75 replay of the same request id still returns its original cached reply. `parent_run_id` is controller-attested after an actual `begin_run` (§7.1): the supervisor proves the link it was told, never the target run's existence, and gains no session store for it |
+| handoff | `{target_namespace}` / `{view_ref:null,capability,generation,revision_id}`; **moves the ONE active mutator grant** from the calling namespace to a child run of it (Q85/E282), or back to its recorded parent (Q102 amendment before §7.1). Preconditions in this fixed order: (1) the caller's OWNER grant, principal and active-actor proof (`_owner_only`); (2) settlement — every WRITE view `PUBLISHED`/`REJECTED`, no `intent.json` (`WORKSPACE_BUSY`; identical to release, so a `SEALED`-but-unpublished view blocks a handoff exactly as it blocks release); (3) the live writer fd this process opened (`STALE_GENERATION`); (4) the wire invariants `target.session_id == caller.session_id`, `target.parent_run_id == caller.run_id`, `target.run_id != caller.run_id` for downward transfer (`INPUT_POLICY`); return instead requires the exact recorded parent (Q102). The commit is ONE metadata replace, fsynced before the reply: `active_actor := target`, `owner_namespace`/`generation`/`status`/`revision_id` unchanged, a fresh `secrets.token_hex(32)` capability minted. **Generation is NOT advanced** — a handoff is not a new write epoch, so existing pins and the child's views keep their generation and `view_ref.generation` still matches; the old capability dies with that replace (fresh work with it is `UNAUTHORIZED`) while Q75 replay of the same request id still returns its original cached reply. `parent_run_id` is controller-attested after an actual `begin_run` (§7.1): the supervisor proves the link it was told, never the target run's existence, and gains no session store for it |
 | release | `{}` / `{released:true}`; revokes only its grant/pin; writer release requires no writable/live/unknown jobs or unfinished projection — concretely: every WRITE view is `PUBLISHED` or `REJECTED`, none is `OPEN`/`STOPPING`/`UNKNOWN`, and no `intent.json` exists. A `SEALED`-but-unpublished view still holds the writer, because releasing it would strand a candidate whose capability dies with the grant. READ release cannot revoke another actor |
 
 Cell-private stdio frames carry exactly `{version:1,request_id,action,payload}`; actions
@@ -839,9 +839,13 @@ filesystem authorization and alias handling remain in the supervisor or isolated
 - **NEW `execution/project_tools.py`** is a thin frozen cell-local CLI, NOT a search engine/service.
   Reuse `fs_search.build_fs_search_tool(db_path, workspace_root)` (including outline/listing),
   `fs_reach.build_fs_reach_tool` and existing PDF readers inside the cell through the existing exec
-  operation. Add an internal optional scratch-db argument to fs_reach's builder; fs_search already
-  accepts one. Source is `/workspace`, index DBs are per-view `/scratch`, never controller .fa/session
-  DBs or readonly dependency cache. No shared mutable index across pins/views. Existing search/reach
+  operation. **Q105 (operator accepted, 2026-11-01):** source is `/workspace`; each one-shot
+  helper builds its own disposable SQLite index in process memory with temp tables in memory, not a
+  pathname in writable `/scratch`. Scratch remains available to the cell but is not an index store.
+  This replaces the earlier per-view on-disk scratch-index requirement: same-uid shell processes can
+  redirect database names/sidecars. No shared mutable index across calls, pins or views; never use
+  controller .fa/session DBs or the readonly dependency cache. Measure memory/latency on target host;
+  bounded explicit refusal on resource exhaustion, no production acceptance without Q97. Existing search/reach
   algorithms/schemas remain; no privileged search RPC or supervisor state bind to controller.
   Pass only validated tool name+params as encoded/quoted data to the installed isolated interpreter;
   never capability/host path/namespace/profile from tool text. Cell result is untrusted tool data.
@@ -1363,6 +1367,14 @@ values, no permissive skill-loader fallback. Validate required canonical keys/ty
 supersedes optional); increment keys Increment-ID/Roadmap-ID/status/slices/shipped. IDs/linkage are
 not guessed from slug. Use existing plan grammar on the COMPLETE rendered text so positions stay
 correct. Keep fixture examples for current RM-planning-topology IDs and generated new-project IDs.
+
+**Q102 (оператор, E311; дополнение к строке handoff §2.1).** Помимо передачи вниз,
+существующий `handoff` должен возвращать единственный активный grant непосредственно
+делегировавшему родителю после settlement. Возврат проверяет полный исходный namespace,
+не меняет generation, выдаёт новую capability и не оживляет прежнюю. Цепочка глубже одного
+уровня возвращается по одному шагу; чужой или подменённый parent отвергается. Потеря ответа
+не означает подтверждённого возврата. Текущий код ещё не реализует этот контракт; Q85
+controller-attestation для передачи вниз и Q75 replay остаются в силе.
 
 ### 7.1. Acquisition source/data handoffs and existing-code reuse
 

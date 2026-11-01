@@ -126,12 +126,12 @@ are therefore **components, not delivery**, and SLICE4 STEP2 is the hinge the wh
 | S3P4 | PARTIAL | forward recovery hooked into `_load` (`:1099`, `_recover_intent:4519`) (E276) | kernel-observed matrix, kills inside recovery, fsync-unsupported/EIO, crash vs power-loss labels | host |
 | S3P5 | PARTIAL | 17/17 producer mutants over the real authority (E276) | full declared-path kills on the approved filesystem | host |
 | S4P1 | PARTIAL | inventory coverage complete at `969fa06`; the note itself says `State: OPEN`, no row closed | close each row with source line, caller and nodeid | nothing |
-| S4P2 | PARTIAL | **STEP2a done (E308); STEP2b/1 done (E309)** — the commit `publish_stage` (stop→seal→publish) with bank `test_execution_client_stage.py` (11 tests, 8/8 mutants);  `ClientWorkspacePort` + `client.open_view`/`stop_view` + `ManagedExecution` verbs, bank `test_execution_client_port.py` (22 tests, 15/15 mutants); provisioner injected (`cli.py:280`); plan publisher supplied | **STEP2b, the cutover:** `_cmd_run` → `run_stage_with_plan_write_boundary` → `_cmd_run_inner`, `workspace_io` in production, fail-open readiness removed, bash through `ManagedBashExecutor` | S4P1 (oracles) |
+| S4P2 | PARTIAL | **STEP2a done (E308); STEP2b/1 done (E309)** — the commit `publish_stage` (stop→seal→publish) with bank `test_execution_client_stage.py` (11 tests; 8/8 preliminary mutants require call-phase verification, E310);  `ClientWorkspacePort` + `client.open_view`/`stop_view` + `ManagedExecution` verbs, bank `test_execution_client_port.py` (22 tests, 15/15 mutants); managed bash supplier without host fallback (E315; 9 tests, 8/8 mutants); provisioner injected (`cli.py:280`); plan publisher supplied | **STEP2b, the cutover:** `_cmd_run` → `run_stage_with_plan_write_boundary` → `_cmd_run_inner`, `workspace_io` in production, fail-open readiness removed, bash through `ManagedBashExecutor`; nested return/handoff **Q102=A supplier done (E313), controller integration open** | S4P1 (oracles), Q102 controller integration |
 | S4P3 | OPEN | `_run_one` still `subprocess.run` (`slice_verification.py:334`); no `_run_managed_command` | pinned verification scratch/receipts/report parsing through managed `exec` | S4P2 |
 | S4P4 | OPEN | — | the `execution_host` C1 closure matrix | S4P2, host |
 | S4P5 | OPEN | — | CT97/CT110/CT111 full-path kills | S4P2, host |
 | S5P1 | OPEN | no `tests/test_managed_acquisition.py`, no spec §7 v2 fixtures | fixtures + v1 compatibility and selection-vs-bootstrap tests | nothing |
-| S5P2 | PARTIAL | authority/route (E283); `_child_run_context` (`workflow_tool.py:387`) | controller `HANDOFF` request, suspension/drain, dispatch after ack | S4P2, S5P1 |
+| S5P2 | PARTIAL | authority/route downward (E283) and Q102 return supplier (E313); `_child_run_context` (`workflow_tool.py:387`) | controller handoff request, suspension/drain, dispatch after ack, parent resume | S4P2, S5P1 |
 | S5P3 | OPEN | — | selection/clarification + controller-rendered no-clobber bundle | S5P2 |
 | S5P4 | OPEN | — | live current-message provider, bounded initial task, retry/replan split | S5P2 |
 | S5P5 | OPEN | — | outer `drive_session`→`invoke`→child→`_cmd_run` C1 | S5P2–P4, host |
@@ -184,6 +184,38 @@ execution order is these five waves, monotone, and every edge above is inside a 
 3. **W2 — downstream, local.** S4P3, S5P1, S5P2, S5P3.
 4. **W3 — host C1.** S1P1–S1P4, S2P6's exit, S3P1(c), S3P4, S3P5, S4P4, S4P5, S5P4–S5P6.
 5. **W4 — acceptance.** S6P5, S6P7, S6P8, S6P9, S6P10 and every `NOT RUN` live row.
+
+**Сверка волн на 2026-11-01 (E317; статусы не закрываются этой записью).** W0: SLICE7 —
+11/11 `LOCAL-CLOSED`, но S4P1 остаётся `PARTIAL` (строки inventory без закрытых source/caller/nodeid),
+а S6P6 — `PARTIAL` (четыре роли E223 ещё не внесены в skills). Поэтому не считать весь W0 закрытым.
+W1: S4P2/STEP2b — в работе: порт, stage publication, return-handoff и bash — поставщики;
+фабрики ролей получили промежуточную managed-привязку (E317), но production cutover отсутствует.
+В частности, search/reach пока не исполняются в production cell (§4.2): незавершённый supplier
+E318: symlink-контрпример Q104 закрыт в локальном memory-прототипе (E321); Q105 принят —
+одноразовый memory-index вместо scratch DB (E323), цена холодной перестройки требует host-замеров.
+Cell PTY retention исправлен локально (E324), но facade ещё не подключён: Q106=A принят,
+созданы ограниченные frame/JSON/attach поставщики для расширенного транспорта (E325–E330),
+request-bound budget общего worker reader проверен локально (E338–E339),
+опциональный счётчик сохранённых public replay bytes — локально (E340–E341),
+ASCII-safe envelope исправлен после tmux-контрпримера (E331–E332), строгий
+parser cell helper переиспользует общий codec (E343–E344), opt-in
+per-call PTY capture supplier проверен локально (E333–E334); bounded pexpect и
+fail-closed отказ reuse после неудачного восстановления проверены локально (E335–E336).
+Managed edit теперь не записывает неполный snapshot; неизвестная запись не называется
+отказом и не предлагается к retry (E346–E348). Метаданные mutation guard при наличии
+blackboard всё ещё читаются с host, этот стык не принят для production (E348).
+Legacy PTY `strip()`/ANSI/CR и маркеры не дают byte-exact произвольный stdout;
+геометрия 80 и много коротких строк приводят к timeout из-за scrollback (E337);
+`pipe-pane` сохраняет stream, но его очередь без потребителя растит RSS tmux (E342),
+общая память tmux/процессов и целевой host не доказаны. EXEC, journal и
+replay-cache ещё не подключены,
+контекстный риск отдельно открыт; host subagent временно исключён,
+и включение реестра в production запрещено до безопасного cell-local поиска и Q97-паритета. Остаются S2P4,
+S3P3 и регрессионные LOCAL exits перечисленные выше. W2–W4 не пройдены; Q102 orchestration
+и оба сценария factory должны подтверждаться там, где указано в таблице волн. После I03 и его
+host-приёмки — отдельный read-only наблюдатель из общего roadmap, не расширение I03. Статические
+полные type gates пока не закрыты: E317 фиксирует ранее существовавшие ошибки;
+штатная локальная среда Python 3.13.16 с FTS5 восстановлена (E345), но это не host gate.
 
 **Why the numbers are not rewritten.** Renumbering slices would move every `SLICEn STEPm` reference — the
 `DEPS` graph, `plan_ids._SLICE_CEILING`, the ledger entries, code comments that cite a slice, and the E2E case

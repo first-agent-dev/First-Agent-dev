@@ -163,11 +163,17 @@ class CompletedReplyCache:
     loss/restart, failure to retain a completed reply requires safe reconciliation
     via the durable operation state, not another execution. There is deliberately
     no callback that can generate a missing result or manufacture fresh authority.
+    The optional byte budget counts retained immutable public-result bytes only;
+    entry metadata, grants and transient copies are not an RSS measurement.
     """
 
-    def __init__(self, *, max_entries: int) -> None:
+    def __init__(self, *, max_entries: int, max_public_bytes: int | None = None) -> None:
         _positive_integer(max_entries)
+        if max_public_bytes is not None:
+            _positive_integer(max_public_bytes)
         self._max_entries = max_entries
+        self._max_public_bytes = max_public_bytes
+        self._public_bytes = 0
         self._entries: dict[str, _CompletedReply] = {}
         self._lock = Lock()
 
@@ -189,9 +195,13 @@ class CompletedReplyCache:
                 if existing.reply != reply:
                     raise ReplayConflictError
                 return
-            if len(self._entries) >= self._max_entries:
+            size = len(reply.canonical_result) if isinstance(reply, PublicReply) else 0
+            if len(self._entries) >= self._max_entries or (
+                self._max_public_bytes is not None and self._public_bytes + size > self._max_public_bytes
+            ):
                 raise ReplyUnavailableError
             self._entries[binding.request_id] = _CompletedReply(binding, original_proof, reply)
+            self._public_bytes += size
 
     def replay(self, binding: ReplayBinding, original_proof: str | None) -> GrantReply | PublicReply:
         _validate_original_proof(binding, original_proof)

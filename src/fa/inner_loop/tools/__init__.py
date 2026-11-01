@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from fa.inner_loop.planner_dispatch import PlannerDispatch, PlannerDispatchError
 from fa.inner_loop.registry import ToolRegistry, ToolSchemaPortabilityError, ToolSpec, ToolWireNameError
@@ -21,6 +22,10 @@ from fa.inner_loop.tools.read_file import build_read_file_tool
 from fa.inner_loop.tools.run_bash import build_run_bash_tool
 from fa.inner_loop.tools.workspace_port import WorkspacePort
 from fa.inner_loop.tools.write_file import build_write_file_tool
+
+if TYPE_CHECKING:
+    from fa.runtime.bash_executor import BashExecutor
+
 
 logger = logging.getLogger(__name__)
 
@@ -162,8 +167,9 @@ def _register_extra_tools(
         _register_optional_tool(registry, "fs_diff", diff_builder)
         _register_optional_tool(registry, "fs_send_ctrl_c", build_send_ctrl_c_tool)
 
-    spawn_builder = None if build_spawn_subagent_tool is None else lambda: build_spawn_subagent_tool(workspace_root)
-    _register_optional_tool(registry, "fs_spawn_subagent", spawn_builder)
+    if workspace_io is None:
+        spawn_builder = None if build_spawn_subagent_tool is None else lambda: build_spawn_subagent_tool(workspace_root)
+        _register_optional_tool(registry, "fs_spawn_subagent", spawn_builder)
 
 
 def build_baseline_registry(
@@ -171,20 +177,29 @@ def build_baseline_registry(
     *,
     bash_timeout_seconds: int = DEFAULT_BASH_TIMEOUT_SECONDS,
     workspace_io: WorkspacePort | None = None,
+    managed_executor: BashExecutor | None = None,
 ) -> ToolRegistry:
     """Baseline = implementer profile (read,write,edit,bash,fs_search,blackboard_query) + observability + pair.
 
     Phase 1 wiring: uses build_registry_for_role for token efficiency.
     """
+    if workspace_io is None and managed_executor is not None:
+        raise ValueError("managed executor requires a managed workspace port")
     try:
         from fa.inner_loop.profiles import build_registry_for_role
 
-        registry = build_registry_for_role(
-            "implementer",
-            workspace_root,
-            bash_timeout=bash_timeout_seconds,
-            workspace_io=workspace_io,
-        )
+        if workspace_io is None:
+            registry = build_registry_for_role(
+                "implementer", workspace_root, bash_timeout=bash_timeout_seconds, workspace_io=workspace_io
+            )
+        else:
+            registry = build_registry_for_role(
+                "implementer",
+                workspace_root,
+                bash_timeout=bash_timeout_seconds,
+                workspace_io=workspace_io,
+                managed_executor=managed_executor,
+            )
     except (ToolSchemaPortabilityError, ToolWireNameError):
         # D12: both are correctness failures, not availability failures.
         # The generic fallback below exists for a missing/broken optional
@@ -193,7 +208,9 @@ def build_baseline_registry(
         # dropping tools the role's prompt promises (measured: chat falls
         # from 9 tools to 6, losing fs_write_file and fs_edit_file).
         raise
-    except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
+    except Exception as exc:
+        if workspace_io is not None:
+            raise
         logger.warning(f"Failed to build implementer registry via profiles, fallback baseline: {exc}")
         registry = ToolRegistry()
         registry.register(build_read_file_tool(workspace_root, workspace_io=workspace_io))
@@ -214,15 +231,29 @@ def build_planner_registry(
     workspace_root: Path,
     *,
     bash_timeout_seconds: int = DEFAULT_BASH_TIMEOUT_SECONDS,
+    workspace_io: WorkspacePort | None = None,
+    managed_executor: BashExecutor | None = None,
     planner_dispatch: PlannerDispatch | None = None,
 ) -> ToolRegistry:
     """Planner = planner profile (fs_search,read,write for research docs,blackboard_query) + observability."""
+    if workspace_io is None and managed_executor is not None:
+        raise ValueError("managed executor requires a managed workspace port")
     try:
         from fa.inner_loop.profiles import build_registry_for_role
 
-        registry = build_registry_for_role(
-            "planner", workspace_root, bash_timeout=bash_timeout_seconds, planner_dispatch=planner_dispatch
-        )
+        if workspace_io is None:
+            registry = build_registry_for_role(
+                "planner", workspace_root, bash_timeout=bash_timeout_seconds, planner_dispatch=planner_dispatch
+            )
+        else:
+            registry = build_registry_for_role(
+                "planner",
+                workspace_root,
+                bash_timeout=bash_timeout_seconds,
+                planner_dispatch=planner_dispatch,
+                workspace_io=workspace_io,
+                managed_executor=managed_executor,
+            )
     except (ToolSchemaPortabilityError, ToolWireNameError):
         # D12: both are correctness failures, not availability failures.
         # The generic fallback below exists for a missing/broken optional
@@ -232,6 +263,8 @@ def build_planner_registry(
         # from 9 tools to 6, losing fs_write_file and fs_edit_file).
         raise
     except Exception as exc:  # graceful degradation per Phase 0.5, failure-observable WARNING
+        if workspace_io is not None:
+            raise
         if planner_dispatch is not None:
             raise PlannerDispatchError from exc
         logger.warning(f"Failed to build planner registry via profiles, fallback: {exc}")
@@ -244,6 +277,7 @@ def build_planner_registry(
         workspace_root,
         include_pair=False,
         include_observability=True,
+        workspace_io=workspace_io,
     )
     return registry
 
@@ -252,15 +286,28 @@ def build_eval_registry(
     workspace_root: Path,
     *,
     bash_timeout_seconds: int = DEFAULT_BASH_TIMEOUT_SECONDS,
+    workspace_io: WorkspacePort | None = None,
+    managed_executor: BashExecutor | None = None,
 ) -> ToolRegistry:
     """Eval = verifier profile (bash only) + usage for observability.
 
     Verifier intentionally does NOT get fs_search (single-command PASS/FAIL contract).
     """
+    if workspace_io is None and managed_executor is not None:
+        raise ValueError("managed executor requires a managed workspace port")
     try:
         from fa.inner_loop.profiles import build_registry_for_role
 
-        registry = build_registry_for_role("verifier", workspace_root, bash_timeout=bash_timeout_seconds)
+        if workspace_io is None:
+            registry = build_registry_for_role("verifier", workspace_root, bash_timeout=bash_timeout_seconds)
+        else:
+            registry = build_registry_for_role(
+                "verifier",
+                workspace_root,
+                bash_timeout=bash_timeout_seconds,
+                workspace_io=workspace_io,
+                managed_executor=managed_executor,
+            )
     except (ToolSchemaPortabilityError, ToolWireNameError):
         # D12: both are correctness failures, not availability failures.
         # The generic fallback below exists for a missing/broken optional
@@ -269,7 +316,9 @@ def build_eval_registry(
         # dropping tools the role's prompt promises (measured: chat falls
         # from 9 tools to 6, losing fs_write_file and fs_edit_file).
         raise
-    except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
+    except Exception as exc:  # graceful degradation per Phase 0.5, failure-observable WARNING
+        if workspace_io is not None:
+            raise
         logger.warning(f"Failed to build verifier registry via profiles, fallback: {exc}")
         registry = ToolRegistry()
         registry.register(build_read_file_tool(workspace_root))
@@ -280,6 +329,7 @@ def build_eval_registry(
         workspace_root,
         include_pair=False,
         include_observability=True,
+        workspace_io=workspace_io,
     )
     return registry
 
@@ -288,6 +338,8 @@ def build_chat_registry(
     workspace_root: Path,
     *,
     bash_timeout_seconds: int = DEFAULT_BASH_TIMEOUT_SECONDS,
+    workspace_io: WorkspacePort | None = None,
+    managed_executor: BashExecutor | None = None,
 ) -> ToolRegistry:
     """Chat = generalist pair-programming partner.
 
@@ -305,10 +357,21 @@ def build_chat_registry(
     The tool list is owned by ``PROFILES_RAW["chat"]``; this function
     delegates there so the declaration and the built registry cannot drift.
     """
+    if workspace_io is None and managed_executor is not None:
+        raise ValueError("managed executor requires a managed workspace port")
     try:
         from fa.inner_loop.profiles import build_registry_for_role
 
-        registry = build_registry_for_role("chat", workspace_root, bash_timeout=bash_timeout_seconds)
+        if workspace_io is None:
+            registry = build_registry_for_role("chat", workspace_root, bash_timeout=bash_timeout_seconds)
+        else:
+            registry = build_registry_for_role(
+                "chat",
+                workspace_root,
+                bash_timeout=bash_timeout_seconds,
+                workspace_io=workspace_io,
+                managed_executor=managed_executor,
+            )
     except (ToolSchemaPortabilityError, ToolWireNameError):
         # D12: both are correctness failures, not availability failures.
         # The generic fallback below exists for a missing/broken optional
@@ -317,7 +380,9 @@ def build_chat_registry(
         # dropping tools the role's prompt promises (measured: chat falls
         # from 9 tools to 6, losing fs_write_file and fs_edit_file).
         raise
-    except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
+    except Exception as exc:  # graceful degradation per Phase 0.5, failure-observable WARNING
+        if workspace_io is not None:
+            raise
         logger.warning(f"Failed to build chat registry via profiles, fallback: {exc}")
         registry = ToolRegistry()
         registry.register(build_read_file_tool(workspace_root))
@@ -328,6 +393,7 @@ def build_chat_registry(
         workspace_root,
         include_pair=False,
         include_observability=True,
+        workspace_io=workspace_io,
     )
     # NOTE: invoke_workflow tool will be registered in S4
     return registry

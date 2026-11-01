@@ -18,6 +18,9 @@ import fastjsonschema  # type: ignore[import-untyped]  # Existing dependency shi
 from fa.execution.primitives import ExecutionContractError, Operation, _positive_integer
 
 MAX_FRAME_BYTES = 4 * 1024 * 1024
+# Opt-in framing ceiling for future large EXEC replies; ordinary requests and
+# replies keep MAX_FRAME_BYTES. This is not an EXEC payload/receipt limit.
+MAX_EXTENDED_FRAME_BYTES = 16 * 1024 * 1024
 MAX_TEXT_BYTES = 1024 * 1024
 MAX_TAIL_BYTES = 64 * 1024
 
@@ -274,8 +277,9 @@ def _nonfinite(_: str) -> None:
     raise ExecutionContractError
 
 
-def _loads(raw: bytes) -> dict[str, Any]:
-    if not raw or len(raw) > MAX_FRAME_BYTES:
+def _loads(raw: bytes, *, max_bytes: int = MAX_FRAME_BYTES) -> dict[str, Any]:
+    limit = _frame_limit(max_bytes)
+    if not raw or len(raw) > limit:
         raise ExecutionContractError
     try:
         value = json.loads(raw.decode("utf-8"), object_pairs_hook=_pairs, parse_constant=_nonfinite)
@@ -286,7 +290,8 @@ def _loads(raw: bytes) -> dict[str, Any]:
     return value
 
 
-def encode_json(value: dict[str, Any]) -> bytes:
+def encode_json(value: dict[str, Any], *, max_bytes: int = MAX_FRAME_BYTES) -> bytes:
+    limit = _frame_limit(max_bytes)
     try:
         _byte_limits(value)
         raw = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode(
@@ -294,7 +299,7 @@ def encode_json(value: dict[str, Any]) -> bytes:
         )
     except (ValueError, TypeError, RecursionError, UnicodeError):
         raise ExecutionContractError from None
-    if not raw or len(raw) > MAX_FRAME_BYTES:
+    if not raw or len(raw) > limit:
         raise ExecutionContractError
     return raw
 
@@ -473,14 +478,23 @@ def _read_exact(connection: FrameConnection, size: int) -> bytes:
     return bytes(data)
 
 
-def read_frame(connection: FrameConnection) -> bytes:
+def _frame_limit(max_bytes: int) -> int:
+    """Check a caller's frame budget before reading or writing any bytes."""
+    if type(max_bytes) is not int or not 0 < max_bytes <= MAX_EXTENDED_FRAME_BYTES:
+        raise ExecutionContractError
+    return max_bytes
+
+
+def read_frame(connection: FrameConnection, *, max_bytes: int = MAX_FRAME_BYTES) -> bytes:
+    limit = _frame_limit(max_bytes)
     length = struct.unpack("!I", _read_exact(connection, 4))[0]
-    if not 0 < length <= MAX_FRAME_BYTES:
+    if not 0 < length <= limit:
         raise ExecutionContractError
     return _read_exact(connection, length)
 
 
-def write_frame(connection: FrameConnection, raw: bytes) -> None:
-    if not 0 < len(raw) <= MAX_FRAME_BYTES:
+def write_frame(connection: FrameConnection, raw: bytes, *, max_bytes: int = MAX_FRAME_BYTES) -> None:
+    limit = _frame_limit(max_bytes)
+    if not 0 < len(raw) <= limit:
         raise ExecutionContractError
     connection.sendall(struct.pack("!I", len(raw)) + raw)

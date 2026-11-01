@@ -11,6 +11,7 @@ import fastjsonschema  # type: ignore[import-untyped]  # Existing dependency lac
 
 from fa.execution.protocol import (
     BOOL,
+    MAX_FRAME_BYTES,
     MAX_TAIL_BYTES,
     PATH,
     POSITIVE,
@@ -83,8 +84,10 @@ def encode_cell_request(*, request_id: str, action: str, payload: dict[str, Any]
     return raw
 
 
-def decode_cell_reply(raw: bytes, *, request_id: str, action: str, session_id: str | None) -> dict[str, Any] | None:
-    record = _loads(raw)
+def decode_cell_reply(
+    raw: bytes, *, request_id: str, action: str, session_id: str | None, max_bytes: int = MAX_FRAME_BYTES
+) -> dict[str, Any] | None:
+    record = _loads(raw, max_bytes=max_bytes)
     _check(_REPLY, record)
     if record["request_id"] != request_id or action not in _PAYLOADS:
         raise ExecutionContractError

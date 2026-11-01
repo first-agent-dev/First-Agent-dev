@@ -800,7 +800,7 @@ class SupervisorService:
         return asdict(result)
 
     def _handoff(self, peer: PeerIdentity, request: dict[str, Any], deadline: float) -> GrantReply:
-        """Move the owner grant to the caller's own child run (CT113)."""
+        """Move the owner grant along the authority's permitted lineage (CT113/Q102)."""
         try:
             target = NamespaceRef(**request["payload"]["target_namespace"])
         except (TypeError, ExecutionContractError):

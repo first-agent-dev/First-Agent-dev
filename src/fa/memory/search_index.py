@@ -32,6 +32,7 @@ from dataclasses import dataclass, field
 from dataclasses import replace as dataclasses_replace
 from pathlib import Path
 from typing import Any, Self
+from uuid import uuid4
 
 from fa.memory._safe_walk import DEFAULT_PATTERNS, iter_searchable_files
 
@@ -273,7 +274,9 @@ class SearchIndex:
 
     def __init__(self, db_path: Path) -> None:
         self.db_path = Path(db_path)
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._memory_key = uuid4().hex if self.db_path == Path(":memory:") else None
+        if self._memory_key is None:
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn: sqlite3.Connection | None = None
         self._indexed_for_session: bool = False
         self._available: bool = True
@@ -286,6 +289,8 @@ class SearchIndex:
     def _connect(self) -> None:
         try:
             self._conn = sqlite3.connect(str(self.db_path), timeout=10.0)
+            if self._memory_key is not None:
+                self._conn.execute("PRAGMA temp_store=MEMORY")
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.execute("PRAGMA synchronous=NORMAL")
         except sqlite3.Error as exc:
@@ -348,6 +353,11 @@ class SearchIndex:
             except sqlite3.Error:
                 pass
             self._conn = None
+        if self._memory_key is not None:
+            prefix = f"memory:{self._memory_key}::"
+            for key in tuple(_refresh_state):
+                if key.startswith(prefix):
+                    _refresh_state.pop(key, None)
 
     def __enter__(self) -> Self:
         return self
@@ -361,6 +371,8 @@ class SearchIndex:
 
     def _state_key(self, root: Path) -> str:
         """Key into ``_refresh_state`` for this (db, root) pair."""
+        if self._memory_key is not None:
+            return f"memory:{self._memory_key}::{root}"
         return f"{self.db_path}::{root}"
 
     @staticmethod

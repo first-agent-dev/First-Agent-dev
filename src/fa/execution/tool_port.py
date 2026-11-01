@@ -41,7 +41,6 @@ _DENIED = frozenset(
     {
         "PATH_DENIED",
         "UNAUTHORIZED",
-        "EXECUTION_UNKNOWN",
         "ADMISSION_CLOSED",
         "GRANT_REVOKED",
         "STALE_GRANT",
