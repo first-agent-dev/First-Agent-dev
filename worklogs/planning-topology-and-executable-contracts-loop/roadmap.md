@@ -56,6 +56,17 @@ The map below is expected to be refined as reality teaches.
 | I05 | Rolling-wave, ASK#, autonomy, chat orchestration | outlined | the roadmap closes across runs; the ceremony/scope/draft work lands here, revised |
 | I06 | Telemetry & distillation (parallel deferred) | outlined | runs are measured and distilled; slice-DAG parallelism deferred |
 
+### Идея после I03: управляемая композиция инструментов
+
+После полного I03 и его host-приёмки отдельно оценить зависимые цепочки инструментов
+в одном ходе без промежуточного вызова LLM: сравнить native multi-call, предметный
+инструмент, ограниченный pipeline и Code Mode на измеренных сценариях. Это не выбор
+реализации и не новый инкремент. Любой будущий путь должен сохранять авторизацию
+view, lifecycle hooks, отдельные результаты/историю и честную неопределённость;
+не считать многодействие транзакцией. Обоснование и текущие незакрытые стыки —
+[заметка I03](notes/i03-composition-and-batch-foundation-plan-2026-11-01.md).
+Порядок I04–I06 не меняется.
+
 ### Будущая отдельная фича после I03: наблюдатель за workflow
 
 После завершения и тестирования I03 рассмотреть отдельную фичу: параллельный read-only

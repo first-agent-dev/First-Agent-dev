@@ -220,6 +220,17 @@ host-приёмки — отдельный read-only наблюдатель из
 (E351, после него одна ошибка authoring адресована targeted проверкой); Q107 по
 внутреннему транспорту открыт (E352), Q97/STEP2b и Q103 не закрыты.
 
+**Проект дополнительной сверки перед деплоем (E357–E358; не закрывает STEP).**
+План и подтверждённые local probes: [композиция и batch foundation](../notes/i03-composition-and-batch-foundation-plan-2026-11-01.md).
+Порядок Q97/STEP2b → Q103 не меняется; Q107 открыт. Предлагается в существующих
+SLICE/exit до production принять проверку повторного dispatch, честной
+неопределённости/terminality, переписанных хуками вызовов и уникальности/корреляции
+ID, а также фактического восстановления истории и ограничений результата.
+Если дефект препятствует безопасному cutover, остановить включение до безопасного
+prerequisite; при несовместимости exit или новом контрактном выборе — Q# и стоп.
+Это проект конкретизации тестирования, не новые CT/STEP и не подтверждение закрытия.
+Отдельный legacy I-65 остаётся open; managed supplier и batch fallback — разные пути.
+
 **Why the numbers are not rewritten.** Renumbering slices would move every `SLICEn STEPm` reference — the
 `DEPS` graph, `plan_ids._SLICE_CEILING`, the ledger entries, code comments that cite a slice, and the E2E case
 ids — for zero behavioural gain, which is the same argument E290.1 used against cosmetic renames. What was

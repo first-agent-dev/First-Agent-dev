@@ -7083,3 +7083,39 @@ read handlers: общий parallel fallback выполнил каждый два
 нагрузки отмечен отдельно. Targeted tests 14 passed, exit 0; code links и
 `git diff --check` PASS. Исследование не меняет Q107 и не закрывает Q97/STEP2b,
 параллельность managed пути и host proof остаются открыты. Код не менялся.
+
+### E357 — заявка: архитектурный анализ и план тяжёлых ходов для I03
+
+1. По просьбе пользователя повторно сверить FA с концепцией multi-call и Code Mode;
+2. изучить registry/hooks/scheduler, view/grant, worker, journal, history/projection,
+артефакты и план волн; 3. проверить новые классы рисков локальными ограниченными
+probes с искусственными inputs, не называть их host/production proof; 4. составить
+источниковую заметку и проект pre-deploy плана в I03, идею композиции вынести
+в roadmap после I03 без реализации; 5. не создавать новый runtime, DSL, API,
+CT, SLICE или статус DONE; 6. сохранить STEP2b/Q97 → Q103 и открытый Q107, ранее
+принятые решения не менять; 7. раздельно показать подтверждённые эффекты,
+непроверенную достижимость и продуктовые выборы; 8. проверить diff/ссылки и
+опубликовать на текущую ветку. Вмешательство в production код не поручено.
+
+### E358 — результат E357: композиция и pre-deploy batch foundation
+
+[Заметка и проект плана](notes/i03-composition-and-batch-foundation-plan-2026-11-01.md);
+[воспроизводимые local probes](notes/i03-batch-probes-2026-11-01.md).
+Перепроверены dispatch/hooks, authority/view, журнал/replay, cell, история и
+projection, волны I03 и открытый I-65. Новые synthetic probes: изменивший имя
+BEFORE hook допускает конкурентное выполнение исходно read и workspace handler;
+duplicate IDs сводят два разных параллельных результата к одному и не выявляются
+set-based pairing assertion; сокращённый injected timeout возвращает exec_timeout,
+хотя handlers закончили эффект и executor дождался их. Сам механизм повторного
+batch dispatch доказан в E356. Источники и условия отдельно сохранены; реальные
+штатные hook/provider reachability, deployed frequency, hard deadline и host proof
+не установлены. Код production не менялся, regression bank в этом раунде не гонялся.
+Предлагаемая привязка к существующим волнам — в increment, без закрытия галочек.
+STEP2b/Q97 → Q103 и Q107 не переопределены; I-65 остаётся открытым. В roadmap
+зафиксирована отдельная опция исследования композиции после полного I03, без
+выбора DSL, нового SLICE или перемещения I04–I06.
+Проверка публикации: извлечены и повторно запущены 4 сохранённых probe-блока
+из приложения — 4/4 exit 0 (F1: оба handler ×2; F2: 0.414 с при injected wait
+0.02 с и два `exec_timeout`; F3: barrier пройден двумя типами handlers; F4: два
+одинаковых результата при разных inputs). Относительные ссылки заметок существуют,
+`git diff --check` exit 0. Это воспроизводимость исследований, не новые C0–C3 тесты.
