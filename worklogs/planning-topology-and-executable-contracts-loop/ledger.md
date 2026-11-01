@@ -7234,3 +7234,109 @@ outline/reach: 60 KiB helper ещё не транспортирует их; ни
 **126 passed**, exit 0; `scripts/check_doc_links.py` — 324 файла, ссылочные ошибки
 отсутствуют. S4P1: R18 снабжён текущим source/negative local oracle, но не закрыт
 без producer/host и полноценного guard; все остальные открытые строки сохраняются.
+
+### E365 — заявка: отсечь host discovery в managed registry (STEP2b/Q97)
+
+1. S4P2/Q97/spec §4.2: при `workspace_io` search/reach сейчас используют
+`root` контроллера как искомый проект и запускают host indexer. 2. Только
+`src/fa/inner_loop/tools/{fs_search,fs_reach}.py`,
+`tests/test_execution_tool_index.py`, новый `tests/test_managed_discovery_refusal.py`,
+increment и ledger; уточнение после первой проверки: только исправление
+устаревшего комментария в `profiles.py`, без изменения wiring. 3. На существующем стыке `workspace_io` managed-ветвь до
+создания holder/вызова `_handle` возвращает существующие tool error codes с
+`retryable=False`, пока safe cell supplier не подключён. Host режим не менять;
+никакой fake successful search. 4. Текущие тесты, ошибочно называющие индекс по
+host root managed view, перенести на честный legacy host case, сохранив сами
+позитивные проверки, и заменить managed ожидания на stronger negative; отдельный
+настоящий session → CLI registry → UDS/view test с host-only sentinel, учётом
+созданий holder/_handle и проверкой парных записей event log. 5. Не создавать
+новый API/runner или поддельный executor; будущая реализация cell helper должна
+заменить отказ на том же стыке, проходить обычные hooks и проверку результата.
+6. Для любого input/cache, включая чужой view или потерянный backend, никаких
+host index/git/чтения project data, скрытого fallback, повтора и утечки sentinel.
+Управляемая functionality intentionally unavailable, cutover запрещён до parity.
+7. C0/C3 + C1 реальный registry/UDS в логическом host root, legacy controls,
+Ruff/format/targeted types/diff, strict BODY + EDGE call-phase mutations.
+8. Live план (НЕ выполнен): существующий I03-LIVE-S07 и L-TOOL-5 после реальной
+интеграции должны показать две разные revision/view, разные sentinel results,
+авторизированный EXEC и отдельные события+receipts каждого вызова, отсутствие
+host Git/source и отсутствующие на диске SQLite индексы, closed отказ при сбоях и
+non-retry после неизвестного исхода. L-TOOL-5 всё ещё описывает disk cache до
+Q105 — нужна planner-owned коррекция oracle на memory-per-call; этот ledger не
+меняет live-результат, owner или acceptance oracle и не выдаёт предложение за PASS.
+
+### E366 — локальный результат защиты managed discovery
+
+Оба builder-а при `workspace_io is not None` не создают host index holder и
+возвращают соответственно `search_failed` / `reach_failed`, `retryable=False`;
+без порта прежний host indexer остался. Ожидания старых тестов «managed view»
+оказались позитивными тестами host-каталога с fake cache — перенесены в честные
+legacy-контроли, а managed-ожидания заменены отказом. В новом банке реальный
+session → CLI registry → UDS-granted WRITE/READ view сначала подтверждается
+READ_FILE, затем host-only sentinel не возвращается; нет обращения к обоим
+holder/`_handle`, нет нового RPC или SQLite index, на вызов один `tool_call` и
+один `tool_result`. C2: оба вызова действительно проходят параллельно через
+barrier и сохраняют отдельные результат/события; проверены все четыре роли
+(у `eval` нет `fs_reach`) и отдельная optional registration пустого registry,
+falsey-but-bound port. Это negative local oracle, не положительный cell test.
+
+После восстановления исходников расширенный банк **227 passed / 2 xfailed**,
+exit 0; xfail — известные Q106 большие outline/reach. Plan/role/artifact/delivery
+банк **162 passed**, exit 0; ссылки **324 files OK**; Ruff, format, targeted
+pyrefly (0 errors), `git diff --check` — exit 0. Полный suite и Q103 не запускались.
+Строгие мутации `/tmp/mutate_managed_discovery_20261101.py`: **13/13** BODY/EDGE,
+каждый exit 1 с падением именно в теле теста, включая два holder, две ветви отказа,
+retryability, falsey binding, оба profile forwarding и optional search forwarding;
+исходники восстановлены байт-в-байт и банк повторён. Первая серия дала 11/13:
+один действительный call-phase `assert None is not None` не был распознан слишком
+узким фильтром `AssertionError`, optional-path мутант пережил. Добавлен прямой
+registry test, фильтр требует `FAILED tests/` + `in test_` и отсутствие ошибок
+collection/setup; повтор 13/13. Отдельный первый запуск планового банка exit 4:
+указан несуществующий тестовый файл, ни один тест не выполнялся; команда затем
+исправлена и дала 162 passed.
+
+Ограничение: это только fail-closed промежуточный шаг, теперь managed search/reach
+вообще недоступны до подключения non-PTY cell supplier Q107=A; крупные результаты,
+receipt/journal/replay, общий deadline и resource/host proof открыты. Нет live
+execution или независимого review. W0, W1/STEP2b/Q97, Q103 и I03 остаются открыты;
+production cutover запрещён. План live evidence и устаревший диск-cache oracle — E365.
+
+### E367 — STOP / Q108: согласование Q107 с точным публичным wire v1
+
+Source check после E366: spec §2 объявляет команды **opaque text**, payload
+`exec` содержит ровно шесть ключей и `ExecutionReceipt v1` — ровно названные поля
+с `stdout_tail`/`stderr_tail` ≤64 KiB; `_object` в `execution/protocol.py` запрещает
+дополнительные поля, а `encode_json._byte_limits` отказывает сверх tail limit.
+`backend._run` получает только эти поля и передаёт тот же `command` в private RUN;
+`CommandReceipts.bounded_tail` отсекает всё сверх 64 KiB. Persisted journal валидирует
+v1 receipt через `validate_receipt`; обычный `EXEC/INSPECT/CANCEL` и replay полагаются
+на него. Следовательно одного нового **cell-private** discriminator Q107 пока не
+хватает: supervisor не знает, какой EXEC пришёл от search/reach, а текущий публичный
+ответ не несёт полный многомегабайтный результат. Q106 и Q107 разрешают исследовать
+и строить bounded transport, но не определяют отмену точного wire v1. Специальная
+строка в `command` незаметно изменила бы opaque shell semantics; повторный запуск
+помощника ради очередного куска не сохраняет exactly-once/snapshot; хранение
+результата внутри project view добавляет пользовательски видимую мутацию и новую
+гонку. Эти обходы не внедрять и не считать доказанной невозможность иных решений.
+
+**Q108 (новый контрактный выбор):** разрешить ли версионированное расширение
+существующего EXEC/его результата для закрытого cell-local search/reach, без новой
+публичной операции и без параметра выбора процесса для модели?
+
+- **A (рекомендация):** разрешить спроектировать и, после доказательств, внедрить
+  явную доверенную классификацию в контроллер→supervisor и bounded полное тело
+  результата в версионированном ответе/хранилище journal, сохранив неизменное
+  поведение и чтение старого wire/receipt v1, включая старые DONE/replay и PTY Bash.
+  Конкретные версии, границы и миграция требуют отдельной заявки, угроз-модели,
+  C0–C3 и host evidence; arbitrary program/profile и самостоятельную модельную
+  настройку этой ветви не разрешать. Это дополнение к публичному машинному
+  контракту, а не только private worker discriminator; работоспособность ещё
+  не доказана.
+- **B:** не менять публичный v1; продолжить только исследование механизма,
+  который честно передаёт полный результат без пересмотра opaque command,
+  тайного усечения, повторного исполнения, host fallback и мутации project view.
+  Его реализуемость сейчас не доказана; STEP2b/Q97 и production остаются открыты.
+
+До решения Q108 не менять wire/receipt и не включать managed discovery. Уже
+проверенный negative guard E366 сохраняется. Type gates Q103 непосредственно после
+STEP2b, W2–W4 и live приёмка остаются по прежнему порядку.

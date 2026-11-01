@@ -403,8 +403,8 @@ def _build_tool_builders(
             fts_path = ".fa/fts.db"
 
         def _build_fs_search(bp: str = fts_path) -> Any:
-            # With a port the builder derives the index home from the view's
-            # cache, so ``root / bp`` is only the host-mode location.
+            # ``root / bp`` is the legacy host-mode location. A bound port
+            # refuses until the view-local discovery supplier is connected.
             return build_fs_search_tool(root / bp, root, workspace_io=workspace_io)
 
         builders["fs_search"] = _build_fs_search

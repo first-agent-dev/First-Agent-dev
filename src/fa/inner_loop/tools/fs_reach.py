@@ -108,9 +108,12 @@ def build_fs_reach_tool(
         atexit.register(holder.close)
         return holder
 
-    holder = _resolve_index()
+    # A host root and a private cache path do not prove a view-bound index.
+    holder = _resolve_index() if workspace_io is None else None
 
     def handler(params: Mapping[str, object]) -> ToolResult:
+        if workspace_io is not None:
+            return ToolResult.fail("reach_failed", "managed cell-local reach index is unavailable", retryable=False)
         if holder is None:
             return ToolResult.fail(
                 "reach_failed",

@@ -1,19 +1,8 @@
-"""SLICE2 STEP4 part B-1: cell-local indexes, explicit read outcomes, no host Git.
+"""Legacy host discovery, managed refusal, explicit read outcomes, no host Git.
 
-Class map (knowledge/skills/tests-writing):
-  C1 — handler-level behaviour of the real tools over a real directory tree,
-       with the port doubled only at the seam the tool depends on;
-  C3 — end-to-end over real SearchIndex/StructuralIndex bytes (active vs pinned
-       view), real ArtifactStore, and the real composition root.
-
-What must stay true (each test names the producer it kills):
-  * a managed tool never writes an index into the tree it searches;
-  * no index home -> typed refusal, not an in-place index;
-  * an active view finds a fresh symbol, a pinned view answers from its own
-    revision (separate cache homes);
-  * PDF/binary/oversized reads are named results, with no host read;
-  * artifacts keep resolving through the controller's store;
-  * the managed composition ships no host-Git tool.
+C1/C3 local positive discovery uses real host trees and indexes, not granted
+views. Managed cell-local parity is not established by these tests; until its
+supplier is connected the port-bound registry must refuse host indexing.
 """
 
 from __future__ import annotations
@@ -111,11 +100,11 @@ def _tree(tmp_path: Path, name: str, files: dict[str, str]) -> Path:
 # ---------------------------------------------------------------------------
 
 
-def test_a_managed_search_indexes_outside_the_view(tmp_path: Path) -> None:
-    """producer-kill-check: drop index_db's port branch -> index lands in the view."""
+def test_legacy_search_indexes_at_the_configured_location(tmp_path: Path) -> None:
+    """Legacy positive control uses the host root and explicitly configured database."""
     root = _tree(tmp_path, "view", {"pkg/alpha.py": "def alpha():\n    return 1\n"})
     cache = tmp_path / "cell-cache"
-    tool = build_fs_search_tool(root / ".fa" / "fts.db", root, workspace_io=_CachePort(cache))
+    tool = build_fs_search_tool(cache / "search.db", root)
 
     result = tool.handler({"query": "alpha", "output_mode": "files"})
 
@@ -140,7 +129,7 @@ def test_a_managed_search_without_a_cache_home_refuses_instead_of_indexing_the_v
 
 
 def test_a_cache_home_inside_the_view_is_refused(tmp_path: Path) -> None:
-    """producer-kill-check: remove index_db's containment check."""
+    """Managed discovery refuses even when a purported cache sits inside the root."""
     root = _tree(tmp_path, "view", {"pkg/alpha.py": "def alpha():\n    return 1\n"})
     tool = build_fs_search_tool(root / ".fa" / "fts.db", root, workspace_io=_CachePort(root / ".fa"))
 
@@ -156,8 +145,8 @@ def test_a_cache_home_inside_the_view_is_refused(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_a_managed_reach_indexes_outside_the_view_and_resolves_from_it(tmp_path: Path) -> None:
-    """producer-kill-check: ignore the port in build_fs_reach_tool -> root/.fa is created."""
+def test_legacy_reach_indexes_at_the_configured_location(tmp_path: Path) -> None:
+    """Legacy positive control retains the real structural-index behavior."""
     root = _tree(
         tmp_path,
         "view",
@@ -167,7 +156,7 @@ def test_a_managed_reach_indexes_outside_the_view_and_resolves_from_it(tmp_path:
         },
     )
     cache = tmp_path / "cell-cache"
-    tool = build_fs_reach_tool(root, workspace_io=_CachePort(cache))
+    tool = build_fs_reach_tool(root, scratch_db=cache / "structural.db")
 
     result = tool.handler({"symbol": "alpha", "direction": "up"})
 
@@ -194,12 +183,12 @@ def test_a_managed_reach_without_a_cache_home_refuses(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# C3 — active view sees a new symbol, pinned view stays at its own bytes
+# C3 — independent legacy host roots and indexes
 # ---------------------------------------------------------------------------
 
 
-def test_an_active_view_sees_a_new_symbol_while_a_pinned_view_stays_pinned(tmp_path: Path) -> None:
-    """Kills a shared index: with distinct cache homes each view answers for itself."""
+def test_separate_legacy_roots_use_separate_indexes(tmp_path: Path) -> None:
+    """Local host roots are not authority-granted active/pinned views."""
     pinned = _tree(tmp_path, "pinned", {"pkg/alpha.py": "def alpha():\n    return 1\n"})
     active = _tree(
         tmp_path,
@@ -210,8 +199,8 @@ def test_an_active_view_sees_a_new_symbol_while_a_pinned_view_stays_pinned(tmp_p
         },
     )
 
-    pinned_tool = build_fs_search_tool(pinned / ".fa" / "fts.db", pinned, workspace_io=_CachePort(tmp_path / "c1"))
-    active_tool = build_fs_search_tool(active / ".fa" / "fts.db", active, workspace_io=_CachePort(tmp_path / "c2"))
+    pinned_tool = build_fs_search_tool(tmp_path / "c1" / "search.db", pinned)
+    active_tool = build_fs_search_tool(tmp_path / "c2" / "search.db", active)
 
     active_hit = active_tool.handler({"query": "beta", "output_mode": "files"})
     pinned_hit = pinned_tool.handler({"query": "beta", "output_mode": "files"})
@@ -329,14 +318,10 @@ def test_a_managed_registry_still_registers_search_and_reach(tmp_path: Path) -> 
         ("fs_reach", {"symbol": "alpha"}, "structural.db"),
     ],
 )
-def test_a_managed_registry_tool_indexes_outside_the_view(
+def test_a_managed_registry_refuses_host_indexing(
     tmp_path: Path, name: str, params: dict[str, object], filename: str
 ) -> None:
-    """producer-kill-check: profiles drops workspace_io when building search/reach.
-
-    The direct-builder tests above would still pass if the composition root
-    forgot to forward the port; this one goes through the real registry.
-    """
+    """Dropping the port at the composition root would expose host content."""
     root = _tree(tmp_path, "view", {"pkg/alpha.py": "def alpha():\n    return 1\n"})
     cache = tmp_path / "cell-cache"
     registry = build_baseline_registry(root, workspace_io=_CachePort(cache))
@@ -344,9 +329,12 @@ def test_a_managed_registry_tool_indexes_outside_the_view(
 
     result = tool.handler(params)
 
-    assert result.error is None, result.error
-    assert not (root / ".fa").exists(), f"{name} indexed the view through the registry"
-    assert (cache / filename).exists()
+    assert result.error is not None and result.error.code == (
+        "search_failed" if name == "fs_search" else "reach_failed"
+    )
+    assert result.error.retryable is False
+    assert not (root / ".fa").exists()
+    assert not (cache / filename).exists()
 
 
 @pytest.mark.parametrize("name", ["fs_search", "fs_reach"])
@@ -359,8 +347,9 @@ def test_managed_search_tools_never_mention_host_paths(tmp_path: Path, name: str
 
     result = tool.handler({"query": "alpha"} if name == "fs_search" else {"symbol": "alpha"})
 
-    assert result.error is None, result.error
-    assert str(root) not in json.dumps(result.result)
+    assert result.error is not None
+    assert str(root) not in result.error.message
+    assert result.result is None
 
 
 # ---------------------------------------------------------------------------
@@ -398,13 +387,7 @@ def test_index_db_refuses_an_unusable_cache_home(tmp_path: Path, cache: str | No
 
 
 def test_a_managed_search_runs_no_host_git_subprocess(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """producer-kill-check: drop the ``.git`` guard in _safe_walk._git_ls_files.
-
-    The oracle is the *call count*, not an exception: ``_git_ls_files`` is
-    fail-degraded (any subprocess error -> os.walk), so raising inside it would
-    be swallowed and the producer could be deleted without a trace. Recording
-    the invocation is the only assertion that actually holds the guarantee.
-    """
+    """Managed refusal prevents host Git even when subprocess failures degrade."""
     invocations: list[list[str]] = []
 
     def _record(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
@@ -418,6 +401,6 @@ def test_a_managed_search_runs_no_host_git_subprocess(tmp_path: Path, monkeypatc
 
     result = tool.handler({"query": "alpha", "output_mode": "files"})
 
-    assert result.error is None, result.error
-    assert "pkg/alpha.py" in json.dumps(result.result)
+    assert result.error is not None and result.error.code == "search_failed"
+    assert result.error.retryable is False
     assert invocations == [], f"a managed search shelled out: {invocations}"

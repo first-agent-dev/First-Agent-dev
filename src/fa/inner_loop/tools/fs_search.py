@@ -983,10 +983,14 @@ def build_fs_search_tool(db_path: Path, workspace_root: Path, *, workspace_io: W
         atexit.register(holder.close)
         return holder, db
 
-    holder, db = _resolve_index()
+    # The controller's root is not the admitted view. A private cache path
+    # alone cannot turn the legacy host indexer into a managed search.
+    holder, db = _resolve_index() if workspace_io is None else (None, None)
 
     def handler(params: Mapping[str, object]) -> ToolResult:
         nonlocal holder, db
+        if workspace_io is not None:
+            return ToolResult.fail("search_failed", "managed cell-local search index is unavailable", retryable=False)
         if holder is None or db is None:
             # A managed view without a private cache home: refuse, never index
             # into the tree being searched (it is the artefact under validation).
