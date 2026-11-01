@@ -7719,10 +7719,16 @@ ownership transfer или DB/history transfer. `REGISTER_WORKSPACE(create=false)
 `WorkspaceAuthority.pin_reader` по уже существующему `PIN_READER` строит
 immutable READ view, а `ClientWorkspacePort` связывает IO с точными ViewRef+grant.
 `ExecutionProfile` монтирует `/workspace` как read-only для READ и только
-operator-approved scratch/cache отдельно. Один target-view helper переиспользует
-Q107/Q108 EXEC; не нужен новый supervisor operation, host path tool, второй
-indexer или произвольный process selector. Session B history/DB при этом не
-передаётся и не смешивается с A.
+operator-approved scratch/cache отдельно. Это пригодный target-view design, но
+не уже связанный путь: `execution/project_tools.py` реализует cell-local helper,
+однако production caller через `EXEC` не найден; managed `fs_search`/`fs_reach`
+с `workspace_io` сейчас намеренно fail-closed, а `ClientWorkspacePort` выполняет
+только file READ/WRITE. Поэтому нельзя говорить, что end-to-end external search
+уже готов. Если этот helper будет интегрирован, target view может использовать
+существующую Operation.EXEC и отдельный cell episode, без новой public
+supervisor operation, host path tool, второго indexer или произвольного process
+selector; но фиксированный non-PTY transport из Q107/Q108 ещё не подключён.
+Session B history/DB при этом не передаётся и не смешивается с A.
 
 Для внешней цели fresh binding должен происходить в controller: validated
 session_id → проверенный manifest/workspace → trusted `root_id/relative_root` →
@@ -7747,16 +7753,50 @@ immutable pin.
 
 ### Q110 — область внешнего session selector
 
-Код подтверждает существующий режим **attach/switch**: `fa run chat` lifecycle
-принимает `--session-id`, `SessionManager` разрешает manifest/workspace, и тогда
-обычные tools scoped на эту выбранную сессию. Но отдельный same-run selector
-«остаться в A и поискать workspace B» сейчас отсутствует. Не добавлять его
-молчаливо: это отдельный публичный tool contract. Senior recommendation — если
-пользователь просит лишь открыть другую сессию, переиспользовать `--session-id`
-без изменения fs tools; если требуется кросс-session поиск внутри текущего run,
-добавить только nullable `target_session_id` к существующим `fs_search`/`fs_reach`
-(не новую operation/tool), разрешая только SessionManager manifest и
-REGISTER_WORKSPACE→PIN_READER путь выше; никакого пути, workspace_id, session DB,
-history или live mutable view от модели. Результат свеж на момент target pin,
-только latest committed. Требует решения, допускается ли selector из текущего
-run. Пока production contract/code не менялись.
+`--session-id` выбирает session manifest/workspace для lifecycle, но это пока
+legacy host-path scope, не доказанный managed selected-view E2E: в `src/fa/cli.py`
+`managed_execution_for_run` зовётся для `fa workflow`, а CLI не создаёт
+`ClientWorkspacePort`/managed EXEC для `fa run chat`. Отдельный same-run selector
+«остаться в A и поискать workspace B» отсутствует. Пользователь выбрал такой
+сценарий (cross-read) в Q110: целевое направление — nullable `target_session_id`
+только в существующих `fs_search`/`fs_reach`, без новой public operation/tool,
+только trusted SessionManager lookup + latest committed `PIN_READER`; не принимать
+model path/workspace_id/session DB/history/live mutable view. Это выбор поведения,
+не разрешение на production edits: STEP2b/Q97, Q108 transport и reader contract
+ещё не приняты.
+
+### E381 — tool/EXEC wiring, pin scope and registration cost
+
+Source trace after the user's Q110 choice corrected the feasibility estimate:
+`project_tools.py` is only a cell-local parser/dispatcher; no production invocation
+site was found. The live CLI does not inject `ClientWorkspacePort`; managed
+`fs_search`/`fs_reach` explicitly refuse while a workspace port is bound.
+`ClientWorkspacePort` supports direct bounded `READ_FILE`/`WRITE_FILE` only.
+`ExecutionClient.open_view` is a writer-grant `CREATE_VIEW` helper, not `PIN_READER`;
+`ExecutionClient.request` can carry the existing `PIN_READER`, and
+`ExecutionClient.stop_view` terminal-checks/releases a READ pin. `CellBackend` episode
+key includes namespace, full `ViewRef` and profile, so a target READ view would get
+an independent cell. Yet no fixed non-PTY helper invocation is wired; this remains
+part of Q107/Q108, not a mere schema-only patch.
+
+Target pin improves Q109 scope only for the external immutable-read case: the READ
+mount is read-only and points into the supervisor-retained revision, so the
+injected leaf replacement from E378 cannot occur during that query. Existing
+`_safe_walk.iter_searchable_files` resolves paths and skips resolved paths outside
+root; with immutable `/workspace`, it has no concurrent in-view writer. This does
+not close Q109 for the current mutable WRITE view, nor does a pin authorize DB or
+history access.
+
+Cost is currently unmeasured and may be material: repeated `REGISTER_WORKSPACE`
+on an existing binding runs `_verify_revision` (a full protected revision walk)
+and `_snapshot` of canonical source; then `PIN_READER` validates the chosen
+revision again. The helper also rebuilds its per-call search/reach index. Thus
+“fresh latest per tool call” is several full-tree walks plus indexing, not a cheap
+metadata lookup. No current-revision-by-session shortcut exists in the protocol.
+Measure real host bytes/files/latency and enforce the existing deadline/resource
+refusals before production acceptance; do not introduce a new latest-pin wire
+contract or cache revision state without separate proof/decision.
+
+The helper hard-refuses envelopes over 60 KiB; E377's 51 MB legacy-equivalent
+result remains outside that transport. Q97 output/cache/context bounds and Q108
+non-PTY versioning remain blockers, independent of Q110 selector semantics.

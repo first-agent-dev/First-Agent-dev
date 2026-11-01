@@ -454,13 +454,18 @@ proxy injects их upstream. Это историческая схема, не ho
 внутрь cell и не смешивать чужую историю.
 
 Текущий код уже позволяет **переключить/attach весь run** на известную сессию:
-`fa run chat --session-id <id>` → `SessionManager` валидирует manifest и workspace,
-а tool builders получают выбранный run's binding. Если же требуется искать B,
-оставаясь в диалоге A, такого tool selector нет. Authority primitives уже есть:
+`fa run chat --session-id <id>` → `SessionManager` валидирует manifest и выбирает
+workspace path. Но это пока legacy host-path scope, не доказанный managed E2E:
+`managed_execution_for_run` встречается в CLI для `fa workflow`, а `fa run chat` не
+создаёт `ClientWorkspacePort`/managed EXEC. Если требуется искать B, оставаясь в
+диалоге A, такого tool selector нет. Authority primitives уже есть:
 `REGISTER_WORKSPACE(create=false)` возвращает актуальные workspace/current revision;
-`PIN_READER` материализует immutable READ view и capability; существующий
-`ClientWorkspacePort` bound на конкретную ViewRef/grant, fixed helper может
-выполнить тот же EXEC на этой view. Весь безопасный route: validated session ID
+`PIN_READER` материализует immutable READ view и capability; `ClientWorkspacePort`
+привязан к конкретной ViewRef/grant, но поддерживает только direct READ_FILE/WRITE_FILE.
+`execution/project_tools.py` реализует cell-local fixed search/reach helper, однако
+production caller через EXEC отсутствует; managed fs_search/fs_reach с port сейчас
+fail-closed. Поэтому route ниже — reuse design, а не готовый E2E: нужен Q107/Q108
+non-PTY integration. Весь proposed safe route: validated session ID
 → manifest/path внутри configured root → REGISTER current revision → PIN_READER
 → allowlisted helper on READ-only `/workspace` → stop/release. Модель не получает
 host path, raw workspace_id, чужие DB/history, capabilities или выбор процесса;
@@ -481,3 +486,28 @@ transport/cache/context bounds остаются независимо откры�
 правка и не делается без решения. Cross-session permissions beyond single local
 operator/group aren't implemented in the Aug deployment note and require later
 principal/ACL design; IDs сами по себе секретом/авторизацией не являются.
+
+#### E381 wiring/cost audit after Q110 selection
+
+Проверено выполнение до реальной ToolSpec: `build_fs_search_tool` и
+`build_fs_reach_tool` при непустом `workspace_io` возвращают explicit failure
+(никакого path fallback); профиль injects workspace port only from its caller, но
+`src/fa/cli.py` сейчас не строит этот port. Cell-side `execution.project_tools`
+обрабатывает только `fs_search`/`fs_reach`, запускает helper in-memory per call и
+hard-refuses JSON envelope >60 KiB. Его production caller не найден; Q107/Q108
+non-PTY EXEC расширение/adapter всё ещё отсутствует. Поэтому nullable
+`target_session_id` не является небольшой standalone schema-only правкой.
+
+For external pin only, immutable supervisor revision is mounted READ-only;
+`_safe_walk` rejects resolved symlink targets outside root. With no concurrent cell
+writer, E378's post-check leaf swap is not available during that read. This narrows
+Q109's race to mutable WRITE-view discovery; it does not resolve its literal
+same-view spec contract.
+
+`REGISTER_WORKSPACE` existing-binding path calls `_verify_revision` (full snapshot of
+retained revision) then `_snapshot` canonical source. `PIN_READER` validates the exact
+revision again, and project_tools then indexes/searches it. Fresh latest per search
+can therefore mean multiple full tree walks + a fresh index; no cheap current-revision
+lookup by session exists. Measure actual tree size/latency and enforce deadlines before
+shipping. No caching or wire amendment selected. This and the 60 KiB helper ceiling
+leave Q97/Q108 open; the E377 51 MB producer is not accommodated by this helper.
