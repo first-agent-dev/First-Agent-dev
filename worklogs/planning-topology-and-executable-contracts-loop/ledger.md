@@ -7699,3 +7699,64 @@ evidence; Q97 output bounds, Q75, grant/replay и host доказательст�
 обязательны. Если точный root scope — критичный продуктовый контракт, выбрать B.
 E378 и рассуждение пока не меняют спецификацию и не оправдывают кодовую правку.
 До ответа пользователя production edits по Q97 не начинать.
+
+### E380 — deployment-anatomy, external-session freshness and minimal mechanism
+
+Прочитан `worklogs/DEPLOYMENT-ANATOMY.md` (пометка документа: факты стенда
+`fa@fa-HP` на 2026-08-09, не актуальная host-приёмка). Там отдельные clone под
+`/sessions/<id>`, session DB/run-state под `/home/fa/.fa`, код FA в image;
+controller container не получает LLM API keys, их подставляет отдельный
+`fa-egress-proxy`, самому агенту доступен только proxy token. Следовательно,
+«читать другую сессию» следует понимать как чтение её workspace-данных, не как
+монтирование `/sessions` целиком, чтение чужого session DB/history или доступ к
+proxy secrets. Текущую схему mounts нельзя принимать за доказательство будущей
+I03 установки: design требует selected authorized view и full host proof.
+
+Source reuse: `SessionManager.resolve_workflow_workspace(session_id=...)`
+проверяет манифест и возвращает workspace path без выделения нового run,
+ownership transfer или DB/history transfer. `REGISTER_WORKSPACE(create=false)`
+уже возвращает supervisor `workspace_id` + актуальный committed `revision_id`;
+`WorkspaceAuthority.pin_reader` по уже существующему `PIN_READER` строит
+immutable READ view, а `ClientWorkspacePort` связывает IO с точными ViewRef+grant.
+`ExecutionProfile` монтирует `/workspace` как read-only для READ и только
+operator-approved scratch/cache отдельно. Один target-view helper переиспользует
+Q107/Q108 EXEC; не нужен новый supervisor operation, host path tool, второй
+indexer или произвольный process selector. Session B history/DB при этом не
+передаётся и не смешивается с A.
+
+Для внешней цели fresh binding должен происходить в controller: validated
+session_id → проверенный manifest/workspace → trusted `root_id/relative_root` →
+REGISTER_WORKSPACE current revision → PIN_READER exact revision → существующий
+fixed EXEC/helper → STOP/RELEASE. Index строится per-call (E376), поэтому не
+переносит старые ответы между target/revision. Immutable pin фиксирует свежесть
+в точке начала операции/turn; если B публикует позже, существующий pin остаётся
+старым, а следующий external read должен заново выбрать latest committed
+revision. Изменения B внутри ещё открытого WRITE view намеренно невидимы:
+показывается последняя опубликованная revision; чтобы увидеть незакоммиченное,
+нужен commit/publication, а не прямой mount другого mutable cell. Это совпадает
+с single-writer, replay и retention invariants и проще, чем синхронизация чужой
+PTY/background processes.
+
+E378 гонка относится к активному mutable view и остаётся точностью/scope риском;
+для внешнего READ target иммутабельная PIN закрывает сам источник гонки без новых
+no-follow readers. Ни E378, ни source review не доказывают host escape. Для v0.1
+не строить whole-view snapshot и не давать discovery evidence-статус. Вопрос Q109
+сужен: строгий same-view guarantee на своём изменяемом WRITE view остаётся
+отдельной буквальной spec §4 развилкой; внешнее чтение решается уже имеющимся
+immutable pin.
+
+### Q110 — область внешнего session selector
+
+Код подтверждает существующий режим **attach/switch**: `fa run chat` lifecycle
+принимает `--session-id`, `SessionManager` разрешает manifest/workspace, и тогда
+обычные tools scoped на эту выбранную сессию. Но отдельный same-run selector
+«остаться в A и поискать workspace B» сейчас отсутствует. Не добавлять его
+молчаливо: это отдельный публичный tool contract. Senior recommendation — если
+пользователь просит лишь открыть другую сессию, переиспользовать `--session-id`
+без изменения fs tools; если требуется кросс-session поиск внутри текущего run,
+добавить только nullable `target_session_id` к существующим `fs_search`/`fs_reach`
+(не новую operation/tool), разрешая только SessionManager manifest и
+REGISTER_WORKSPACE→PIN_READER путь выше; никакого пути, workspace_id, session DB,
+history или live mutable view от модели. Результат свеж на момент target pin,
+только latest committed. Требует решения, допускается ли selector из текущего
+run. Пока production contract/code не менялись.

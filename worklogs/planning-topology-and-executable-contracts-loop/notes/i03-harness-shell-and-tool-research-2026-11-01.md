@@ -443,3 +443,41 @@ backpressure, terminality, cancellation и старый v1 DONE. Один endpoi
 выставить `max_public_bytes`: нужен доказанный порядок admission/reservation,
 учёт одновременно живых копий и сохранение этого fail-closed поведения при
 ошибке после DONE. Конкретный алгоритм и его совместимость с Q75 пока не выбраны.
+
+### 10. External session: свежий и авторизованный выбор цели (E380)
+
+Проверен [`worklogs/DEPLOYMENT-ANATOMY.md`](../../DEPLOYMENT-ANATOMY.md),
+с явно указанной датой стенда 2026-08-09: `/sessions/<id>` — session workspaces,
+`~/.fa` — state/DB/logs, контейнер агента не получает LLM keys, отдельный egress
+proxy injects их upstream. Это историческая схема, не host proof для I03; она
+подсказывает сохранять lookup по session ID, но не прямой общий mount `/sessions`
+внутрь cell и не смешивать чужую историю.
+
+Текущий код уже позволяет **переключить/attach весь run** на известную сессию:
+`fa run chat --session-id <id>` → `SessionManager` валидирует manifest и workspace,
+а tool builders получают выбранный run's binding. Если же требуется искать B,
+оставаясь в диалоге A, такого tool selector нет. Authority primitives уже есть:
+`REGISTER_WORKSPACE(create=false)` возвращает актуальные workspace/current revision;
+`PIN_READER` материализует immutable READ view и capability; существующий
+`ClientWorkspacePort` bound на конкретную ViewRef/grant, fixed helper может
+выполнить тот же EXEC на этой view. Весь безопасный route: validated session ID
+→ manifest/path внутри configured root → REGISTER current revision → PIN_READER
+→ allowlisted helper on READ-only `/workspace` → stop/release. Модель не получает
+host path, raw workspace_id, чужие DB/history, capabilities или выбор процесса;
+Supervisor wire operations и EXEC не расширяются.
+
+«Свежие» cross-session bytes имеют точный snapshot смысл: latest **published**
+revision при создании pin, стабильная до конца этого read/turn; следующий запрос
+перепривязывает latest. Незакоммиченный WRITE другого session не виден — читается
+последняя опубликованная revision. Это проще и безопаснее, чем монтировать живой
+чужой PTY view; если нужен его незакоммиченный результат, сначала target должен
+publish. E376 per-call index не переносит stale cache между вызовами. Q97 result
+transport/cache/context bounds остаются независимо открытыми.
+
+Вопрос Q110: нужен ли selector B **внутри текущего run A**, или существующего
+`--session-id` attach достаточно? Второй вариант не меняет tool schemas. Первый
+может быть только nullable `target_session_id` на существующих `fs_search`/
+`fs_reach`, с manifest resolution + REGISTER/PIN выше; это публичная tool-schema
+правка и не делается без решения. Cross-session permissions beyond single local
+operator/group aren't implemented in the Aug deployment note and require later
+principal/ACL design; IDs сами по себе секретом/авторизацией не являются.
