@@ -27,6 +27,11 @@ The last row is the behaviour change this slice lands: those paths previously
 logged ``"Blackboard check failed: ..., allowing write"`` and permitted the
 mutation. Denials name *which* precondition failed (S5-P25) so an operator can
 tell "the substrate is broken" from "you have a real conflict".
+
+For a managed workspace the logical host root is not the admitted view. When a
+board is active or configured but unavailable, writes fail closed until a
+view-bound metadata supplier exists; the legacy host lookup must not run.
+An explicitly disabled board or direct use with no session remains supported.
 """
 
 from __future__ import annotations
@@ -133,15 +138,37 @@ def check_mutation_allowed(
     read_set: list[str],
     write_set: list[str],
     root: Path,
+    managed: bool = False,
+    session: Any = None,
 ) -> ToolResult | None:
     """Return a denial ``ToolResult``, or ``None`` when the mutation may proceed.
 
     Called by both mutating tools *before* the file is touched.
     """
-    # Substrate deliberately absent (no session bound, or blackboard_enabled=
-    # False). Supported configuration — cli.py:972 ships it. Permit.
+    # A logical host root is not the managed view. Until view-bound version
+    # stamps are supplied, neither host Git nor host file hashes can prove this
+    # conflict check. A configured board that failed initialization is not the
+    # same as a deliberately disabled board.
+    if managed and session is not None:
+        flags = getattr(session, "feature_flags", None)
+        board_disabled = flags is not None and getattr(flags, "blackboard_enabled", None) is False
+        if blackboard is not None or not board_disabled:
+            return ToolResult.fail(
+                BLACKBOARD_UNAVAILABLE,
+                "managed workspace conflict metadata is unavailable; refusing mutation",
+                retryable=False,
+            )
+
+    # Direct/library use and deliberately disabled boards keep their supported
+    # behavior; a foreign/active board without a session is still not trusted.
     if blackboard is None:
         return None
+    if managed:
+        return ToolResult.fail(
+            BLACKBOARD_UNAVAILABLE,
+            "managed workspace conflict metadata is unavailable; refusing mutation",
+            retryable=False,
+        )
 
     # Leaked contextvar from another workspace: not our authority. Permit.
     if not belongs_to_workspace(blackboard, root):
@@ -186,6 +213,7 @@ def record_mutation(
     write_set: list[str],
     root: Path,
     payload_extra: dict[str, Any] | None = None,
+    managed: bool = False,
 ) -> None:
     """Append the post-write ``file_version`` entry.
 
@@ -193,7 +221,7 @@ def record_mutation(
     not turn a successful write into an error. The write is still visible in
     the event log, and S5.4.1 means this entry never blocks its own author.
     """
-    if blackboard is None or not belongs_to_workspace(blackboard, root):
+    if managed or blackboard is None or not belongs_to_workspace(blackboard, root):
         return
     try:
         entry = _entry_for(

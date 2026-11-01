@@ -7119,3 +7119,118 @@ STEP2b/Q97 → Q103 и Q107 не переопределены; I-65 остаёт
 0.02 с и два `exec_timeout`; F3: barrier пройден двумя типами handlers; F4: два
 одинаковых результата при разных inputs). Относительные ссылки заметок существуют,
 `git diff --check` exit 0. Это воспроизводимость исследований, не новые C0–C3 тесты.
+
+### E359 — Q107=A принят оператором при сохранении целей и проверок
+
+Оператор поручил принять рекомендацию, если она не мешает желаемому поведению
+`fa workflow` / `fa run chat`. Проверено по E352–E358 и spec §4.2: отдельный
+закрытый non-PTY транспорт **только** для allowlisted cell-local search/reach
+совместим с общим авторизованным view и не требует отказываться от истории,
+индивидуальных результатов или stateful PTY для Bash. Он не реализует Code Mode и
+не обещает parallel RUN. Наличие независимого транспортного механизма не меняет
+authority: same view/grant, existing EXEC/journal/replay, no host subprocess,
+bounded resources/stream, проверка untrusted worker и честная неизвестность.
+Q107=A **разрешён в работу**, Q97/STEP2b и host-проверка **не закрыты**;
+несовместимость этих инвариантов при реализации — новый STOP/Q#, не повод тихо
+ослаблять контракт. После STEP2b непосредственно Q103 по ранее принятому порядку.
+
+### E360 — заявка: managed READ_FILE, адресуемые byte windows
+
+1. Q97/spec §4.2: открытый дефект read свыше 1 MiB нельзя решить, если port
+всегда принудительно передаёт offset=0; использовать уже существующий READ_FILE.
+2. Только `workspace_port.py`, два адаптера в `execution/tool_port.py`, реальные
+wire/authority tests и ledger; без нового публичного tool API или host access.
+3. Опциональный неотрицательный `offset_bytes` по умолчанию 0, проверять точный
+int до первого RPC, сохранять max_bytes/digest/eof и привязку к тому же grant/view.
+4. C0/C3: negative/bool/float отказы до dispatch, UTF-8 split и bound от authority;
+C1: actual Unix socket service, личный view, окна и общий whole-file SHA, отсутствие
+host writes; прежний default и edit completeness сохраняются. 5. Existing helper
+`ViewIO.read_file` уже делает bounded snapshot/hash и отвергает split codepoint:
+не дублировать его проверку и не ослаблять 1 MiB на ответ. 6. Размер всего файла,
+согласование hash между окнами, сборка line windows, request budgets и возобновление
+после гонки пока остаются открытым следующим стыком; один port не закрывает Q97.
+7. Без бесконечного чтения, re-execution write, ослабления resource limit или
+активации production. 8. Targeted+neighbor tests, Ruff/format/targeted pyrefly,
+минимальный diff и строгие producer/edge call-phase mutations; host C1 отдельно.
+
+### E361 — Q97 read-window port supplier (E360)
+
+Оба port adapter принимают offset и передают его в существующий READ_FILE; schema
+model tool и max response 1 MiB не изменены. Настоящий UDS + authority показали
+раздельные окна >1 MiB файла в private view, целый SHA, eof, явный UTF-8 split
+refusal и неизменный canonical source. Невалидные offsets не достигают ни client,
+ни authority; изменение между окнами обнаруживается по разным SHA. Первые 7
+ошибок тестов вызваны setup: запись существующего файла без expected hash и
+повторное владение тем же workspace до освобождения lease; тесты исправлены без
+ослабления authority. Owning + соседний банк **64 passed**, повтор owning
+**14 passed**, exit 0. После расширения протокола обновлены структурные тестовые
+порты, чтобы не привнести новые type errors. Ruff/format/targeted pyrefly PASS;
+6/6 strict call-phase mutants (каждый exit 1, 0 errors): сброшенный offset,
+отрицательный offset, bool offset на обоих адаптерах; оригинал восстановлен,
+повтор owning PASS. Файловый tool ещё не собирает окна: каждый existing ViewIO
+READ захватывает и хеширует весь файл, поэтому naive loop может повторно читать
+до 64 MiB для каждого окна и требует отдельной проверки времени/ресурсов,
+общего deadline, согласования SHA и UTF-8. Никакой host/C1/Q97/STEP2b tick.
+
+### E362 — заявка: fail-closed mutation guard без managed metadata
+
+1. Q97/spec §4.2: сейчас managed write/edit с активным blackboard вызывают
+host `git` и host `llms.txt`, а вместо них нужны доверенные view metadata.
+2. Изменить только общий guard, его два вызывающих инструмента и owning tests;
+не изобретать значение base_commit из `rev-*` и не принимать host SHA за view.
+3. При managed port + ненулевом blackboard до любого host/blackboard metadata IO
+вернуть `blackboard_unavailable`, non-retryable, без записи; post-record также
+не может использовать host. При отсутствующем blackboard и legacy host поведении
+сохранить существующий контракт. 4. C1: реальный UDS managed view и оба tools,
+контекст session/blackboard, контроль что ни host Git, ни hash, ни целевая запись
+не выполнялись; C3 при повреждённом/foreign board и direct guard; соседние банки.
+5. Это намеренный безопасный отказ при отсутствующем поставщике, прямо требуемый
+spec, не полноценный конфликтный guard; до cutover нужно подключить настоящие
+version stamps, продемонстрировать allow/conflict/ошибки и выполнить host proof.
+6. Не отключать blackboard, не заменять failed check разрешением и не маскировать
+unknown-write. 7. Ни production activation, ни Q97/STEP2b не закрываются. 8. Ruff,
+format, targeted pyrefly, minimal diff, строгие call-phase producer/edge mutants.
+
+### E363 — результат E362: managed guard без host fallback
+
+Оба файловых инструмента передают режим managed в общий pre/post guard. При
+включённом или неинициализированном board, либо сбое context lookup — явный
+`blackboard_unavailable`, retryable=false, до WRITE; преднамеренно отключённый
+board и direct/library режим сохраняют существующее поведение. Не выводится
+host Git или host hash; пост-запись также не обращается к host metadata. Реальный
+session→role registry→UDS/view с обоими инструментами и active/missing/disabled
+board, context faults и прежние host conflicts/uncertain write: **297 passed**
+(расширенный соседний банк), exit 0. Ruff/format/targeted pyrefly/diff PASS;
+**10/10 strict call-phase mutants**, каждый exit 1 / 0 errors, включая оба caller
+edge, потерю session, context failure, non-host post record, разрешение без board;
+producer восстановлен, банк повторно green. Host C1, managed metadata supplier,
+фактическое разрешение и conflict при enabled board, search/reach, Q97 и STEP2b
+остаются открыты. Этот fail-closed guard запрещает обычные изменения при default
+board и **не готов для включения в production**, пока supplier не реализован.
+
+### E364 — W0 / S6P6: проверка существующих E223 ролей
+
+Сверка исходников обнаружила, что текст таблицы E317 устарел: E287 уже внес роли
+в пять заданных поверхностей (`plan-authoring`, `feature-planning` и
+`tests-writing`, включая оба INJECT). Проверены реальный текст и READY-семантика.
+Без новой редакции skills воспроизводим заданный exit: role/READY conformance +
+artifact bank + delivery-law **37 passed**, exit 0. Ни live PASS, ни выполнение
+реальной независимой host-приёмки из этого не следует. Производимые контрольные
+удаления разделов каждой из пяти поверхностей проверяются отдельно ниже.
+Удаление каждого E223-раздела пяти соответствующих файлов отдельно убито
+`test_transferred_e2e_roles_and_ready_semantics_are_preserved`: **5/5**, каждый
+exit 1, ровно call-phase assertion failure / 0 errors. Все исходные тексты
+восстановлены, 37-test bank повторно exit 0. Текущий локальный exit S6P6 выполнен;
+остальные STEP S6, четыре реальные приёмочные обязанности E223 и общий W0 открыты.
+Это не повтор полного `tests/test_skill_conformance.py` и не исправление ранее
+зафиксированных двух size-gate failures E351.
+
+Дополнительная проверка Q97 после E363: project helper, codecs, budgets, worker,
+ports и guard — **184 passed, 2 xfailed**, exit 0. XFAIL — те же Q106 большие
+outline/reach: 60 KiB helper ещё не транспортирует их; ни выбор Q107=A, ни эта
+проверка не устраняют limitation. Штатное окружение: Python 3.13.16, SQLite
+3.53.4 FTS5. Новая проверка не является полным suite или Q103 type gate.
+Плановая проверка после отметки S6P6: plan IDs + artifact + E223 role + delivery
+**126 passed**, exit 0; `scripts/check_doc_links.py` — 324 файла, ссылочные ошибки
+отсутствуют. S4P1: R18 снабжён текущим source/negative local oracle, но не закрыт
+без producer/host и полноценного guard; все остальные открытые строки сохраняются.

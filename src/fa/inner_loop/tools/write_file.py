@@ -8,7 +8,7 @@ from typing import Any
 from fa.inner_loop.planner_dispatch import PlannerDispatch, PlannerDispatchError, PlannerDispatchKind
 from fa.inner_loop.registry import ToolResult, ToolSpec
 from fa.inner_loop.tools.base import require_string, resolve_workspace_path
-from fa.inner_loop.tools.mutation_guard import check_mutation_allowed, record_mutation
+from fa.inner_loop.tools.mutation_guard import BLACKBOARD_UNAVAILABLE, check_mutation_allowed, record_mutation
 from fa.inner_loop.tools.workspace_port import WorkspacePort, WorkspacePortError, port_relative
 from fa.inner_loop.workflow_artifacts import _private_artifact_directory, _replace_private_bytes
 
@@ -16,7 +16,14 @@ logger = logging.getLogger(__name__)
 
 
 def _write_with_guard(
-    root: Path, path: Path, rel_path: str, content: str, writer: Callable[[], None], *, retryable: bool = True
+    root: Path,
+    path: Path,
+    rel_path: str,
+    content: str,
+    writer: Callable[[], None],
+    *,
+    retryable: bool = True,
+    managed: bool = False,
 ) -> ToolResult:
     session: Any = None
     blackboard: Any = None
@@ -28,8 +35,10 @@ def _write_with_guard(
         if session is not None:
             blackboard = session.blackboard if session is not None else None
             transaction = session.transaction if session is not None else None
-    except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
+    except Exception as exc:  # noqa: BLE001 # legacy host mode remains graceful; managed fails closed
         logger.warning("get_current_session failed in write_file: %s", exc)
+        if managed:
+            return ToolResult.fail(BLACKBOARD_UNAVAILABLE, "managed session context unavailable", retryable=False)
 
     read_set: list[str] = []
     write_set: list[str] = [rel_path]
@@ -39,7 +48,9 @@ def _write_with_guard(
     except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
         logger.warning("transaction.read_set failed: %s", exc)
 
-    denial = check_mutation_allowed(blackboard, read_set=read_set, write_set=write_set, root=root)
+    denial = check_mutation_allowed(
+        blackboard, read_set=read_set, write_set=write_set, root=root, managed=managed, session=session
+    )
     if denial is not None:
         return denial
 
@@ -60,6 +71,7 @@ def _write_with_guard(
         write_set=write_set,
         root=root,
         payload_extra={"bytes": len(content.encode())},
+        managed=managed,
     )
 
     return ToolResult.ok(
@@ -105,7 +117,7 @@ def build_write_file_tool(workspace_root: Path, *, workspace_io: WorkspacePort |
                 workspace_io.write_file(rel_path, content)
 
         try:
-            return _write_with_guard(root, path, rel_path, content, writer)
+            return _write_with_guard(root, path, rel_path, content, writer, managed=workspace_io is not None)
         except WorkspacePortError as exc:
             return _port_failure(exc)
 

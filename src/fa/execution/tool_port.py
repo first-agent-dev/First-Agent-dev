@@ -91,8 +91,8 @@ class AuthorityWorkspacePort:
         """The view's private cache home (``ViewInputs.cache``), supplied by the composition."""
         return self._cache_dir
 
-    def read_file(self, path: str, *, max_bytes: int = PORT_READ_MAX_BYTES) -> PortRead:
-        if type(max_bytes) is not int or max_bytes < 1:
+    def read_file(self, path: str, *, offset_bytes: int = 0, max_bytes: int = PORT_READ_MAX_BYTES) -> PortRead:
+        if type(offset_bytes) is not int or offset_bytes < 0 or type(max_bytes) is not int or max_bytes < 1:
             raise WorkspacePortError("invalid_request")
         if max_bytes > min(PORT_READ_MAX_BYTES, MAX_TEXT_BYTES):
             # One read is capped by the substrate; refuse rather than truncate.
@@ -104,7 +104,7 @@ class AuthorityWorkspacePort:
                 view_ref=self._view_ref,
                 capability=self._capability,
                 path=path,
-                offset_bytes=0,
+                offset_bytes=offset_bytes,
                 max_bytes=max_bytes,
                 deadline=self._deadline_factory(),
             )
@@ -207,8 +207,8 @@ class ClientWorkspacePort:
         """The view's private cache home, supplied by the composition (``None`` = no home)."""
         return self._cache_dir
 
-    def read_file(self, path: str, *, max_bytes: int = PORT_READ_MAX_BYTES) -> PortRead:
-        if type(max_bytes) is not int or max_bytes < 1:
+    def read_file(self, path: str, *, offset_bytes: int = 0, max_bytes: int = PORT_READ_MAX_BYTES) -> PortRead:
+        if type(offset_bytes) is not int or offset_bytes < 0 or type(max_bytes) is not int or max_bytes < 1:
             raise WorkspacePortError("invalid_request")
         if max_bytes > min(PORT_READ_MAX_BYTES, MAX_TEXT_BYTES):
             # One read is capped by the substrate; refuse rather than truncate.
@@ -220,7 +220,7 @@ class ClientWorkspacePort:
                 namespace=self._namespace,
                 view=self._view,
                 grant=self._grant,
-                payload={"path": path, "offset_bytes": 0, "max_bytes": max_bytes},
+                payload={"path": path, "offset_bytes": offset_bytes, "max_bytes": max_bytes},
                 deadline=None,
             )
         except (

@@ -20,9 +20,9 @@ from typing import Protocol
 
 #: Upper bound for one full-file model read. It mirrors the substrate's own
 #: single-read text bound (``fa.execution.protocol.MAX_TEXT_BYTES``); the adapter
-#: refuses anything above it rather than truncating, and a larger file must be
-#: read as a line window. ``tests/test_execution_tool_port.py`` asserts the two
-#: values agree so the constant cannot drift away from the substrate.
+#: refuses anything above it rather than truncating. An offset is available at
+#: the port, but the file tool does not yet reconstruct large line windows.
+#: ``tests/test_execution_tool_port.py`` asserts the two limits cannot drift.
 PORT_READ_MAX_BYTES = 1024 * 1024
 
 
@@ -74,7 +74,7 @@ class WorkspacePort(Protocol):
     @property
     def cache_dir(self) -> Path | None: ...
 
-    def read_file(self, path: str, *, max_bytes: int = PORT_READ_MAX_BYTES) -> PortRead: ...
+    def read_file(self, path: str, *, offset_bytes: int = 0, max_bytes: int = PORT_READ_MAX_BYTES) -> PortRead: ...
 
     def write_file(self, path: str, content: str, *, expected_sha256: str | None = None) -> PortWrite: ...
 

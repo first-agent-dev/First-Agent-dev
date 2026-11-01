@@ -18,7 +18,7 @@ from typing import Any
 
 from fa.inner_loop.registry import ToolResult, ToolSpec
 from fa.inner_loop.tools.base import require_string, resolve_workspace_path
-from fa.inner_loop.tools.mutation_guard import check_mutation_allowed, record_mutation
+from fa.inner_loop.tools.mutation_guard import BLACKBOARD_UNAVAILABLE, check_mutation_allowed, record_mutation
 from fa.inner_loop.tools.workspace_port import WorkspacePort, WorkspacePortError, port_relative
 
 logger = logging.getLogger(__name__)
@@ -80,7 +80,7 @@ def _find_fuzzy(text: str, old: str) -> tuple[int, int] | None:
     return None
 
 
-def _get_session_and_blackboard() -> tuple[Any | None, Any | None, Any | None]:
+def _get_session_and_blackboard(*, managed: bool = False) -> tuple[Any | None, Any | None, Any | None]:
     try:
         from fa.inner_loop.context import get_current_session
 
@@ -92,8 +92,10 @@ def _get_session_and_blackboard() -> tuple[Any | None, Any | None, Any | None]:
         blackboard = session.blackboard if session is not None else None
         transaction = session.transaction if session is not None else None
         return session, blackboard, transaction
-    except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
+    except Exception as exc:  # graceful degradation per Phase 0.5, failure-observable WARNING
         logger.warning(f"get_current_session failed in edit_file: {exc}")
+        if managed:
+            raise
         return None, None, None
 
 
@@ -199,13 +201,23 @@ def build_edit_file_tool(workspace_root: Path, *, workspace_io: WorkspacePort | 
         # Replace the matched segment with new_string (first occurrence only)
         new_text = text[:start] + new_string + text[end:]
 
-        _session, blackboard, transaction = _get_session_and_blackboard()
+        try:
+            session, blackboard, transaction = _get_session_and_blackboard(managed=workspace_io is not None)
+        except Exception:  # noqa: BLE001 - context failure is not permission to mutate the managed view
+            return ToolResult.fail(BLACKBOARD_UNAVAILABLE, "managed session context unavailable", retryable=False)
         rel_path = str(path.relative_to(root))
 
         # S5.4: same pre-write contract write_file enforces. Runs AFTER the
         # anchor match (a bad edit is a bad edit regardless of the substrate)
         # but BEFORE any mutation, so a denial leaves the file untouched.
-        denial = check_mutation_allowed(blackboard, read_set=[rel_path], write_set=[rel_path], root=root)
+        denial = check_mutation_allowed(
+            blackboard,
+            read_set=[rel_path],
+            write_set=[rel_path],
+            root=root,
+            managed=workspace_io is not None,
+            session=session,
+        )
         if denial is not None:
             return denial
 
@@ -225,6 +237,7 @@ def build_edit_file_tool(workspace_root: Path, *, workspace_io: WorkspacePort | 
             write_set=[rel_path],
             root=root,
             payload_extra={"edit": True},
+            managed=workspace_io is not None,
         )
 
         return ToolResult.ok(

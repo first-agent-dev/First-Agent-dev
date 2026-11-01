@@ -141,7 +141,7 @@ are therefore **components, not delivery**, and SLICE4 STEP2 is the hinge the wh
 | S6P3 | LOCAL | `e2e/I03/producer-coverage.json`, `producer-baseline.json`, `scripts/check_execution_e2e_coverage.py` (green: 125 producers, 89+35 cases) | removal-of-one-unique-key test reproduced | run |
 | S6P4 | LOCAL | `e2e/I03/implementation-handoffs.md` carries the CT113/Q85 split (5 references) | reviewed handoff reproduced | run |
 | S6P5 | OPEN | no host run sheet | needs actual deployment/workspace facts | host |
-| S6P6 | PARTIAL | the delivery law lands in all six surfaces via CT114 (SLICE7 STEP1) | the four E223 transferred roles stated in the skills | SLICE7 STEP1 |
+| S6P6 | **LOCAL-CLOSED** | E287 placed E223 roles in all five required skill surfaces; E364 reproduces role/READY + artifact + delivery bank **37 passed** and 5/5 strict section-deletion mutants | actual E223 host duties and independent review remain open in S6P5/S6P7–10 | SLICE7 STEP1 |
 | S6P7 | OPEN | — | independent manual review before fixtures | S4, S5 |
 | S6P8 | OPEN | `e2e/I03/fixtures/` absent | reviewed bounded fixtures | S6P7 |
 | S6P9 | PARTIAL | coverage script green, every producer key mapped | each producer mapped to a deployed-behaviour oracle | S6P8, host |
@@ -187,7 +187,8 @@ execution order is these five waves, monotone, and every edge above is inside a 
 
 **Сверка волн на 2026-11-01 (E317; статусы не закрываются этой записью).** W0: SLICE7 —
 11/11 `LOCAL-CLOSED`, но S4P1 остаётся `PARTIAL` (строки inventory без закрытых source/caller/nodeid),
-а S6P6 — `PARTIAL` (четыре роли E223 ещё не внесены в skills). Поэтому не считать весь W0 закрытым.
+S6P6 — `LOCAL-CLOSED` по источникам E287 и воспроизведённому exit E364; реальные
+приёмочные обязанности E223 открыты. Поэтому весь W0 всё ещё не закрыт из-за S4P1.
 W1: S4P2/STEP2b — в работе: порт, stage publication, return-handoff и bash — поставщики;
 фабрики ролей получили промежуточную managed-привязку (E317), но production cutover отсутствует.
 В частности, search/reach пока не исполняются в production cell (§4.2): незавершённый supplier
@@ -202,8 +203,13 @@ parser cell helper переиспользует общий codec (E343–E344), 
 per-call PTY capture supplier проверен локально (E333–E334); bounded pexpect и
 fail-closed отказ reuse после неудачного восстановления проверены локально (E335–E336).
 Managed edit теперь не записывает неполный snapshot; неизвестная запись не называется
-отказом и не предлагается к retry (E346–E348). Метаданные mutation guard при наличии
-blackboard всё ещё читаются с host, этот стык не принят для production (E348).
+отказом и не предлагается к retry (E346–E348). Оба port adapter поддерживают
+byte offset READ_FILE и проверены на отдельные окна через UDS (E360–E361), но
+line-window consumer, SHA reconciliation и resource/deadline доказательства открыты.
+Managed mutation guard при активном или ошибочно недоступном blackboard теперь
+отказывает до host metadata и WRITE (E362–E363); при этом настоящего поставщика
+view-bound version stamps ещё нет, поэтому полноценные write/edit при включённом
+blackboard и production cutover не готовы.
 Legacy PTY `strip()`/ANSI/CR и маркеры не дают byte-exact произвольный stdout;
 геометрия 80 и много коротких строк приводят к timeout из-за scrollback (E337);
 `pipe-pane` сохраняет stream, но его очередь без потребителя растит RSS tmux (E342),
@@ -217,12 +223,13 @@ host-приёмки — отдельный read-only наблюдатель из
 полные type gates пока не закрыты: E317 фиксирует ранее существовавшие ошибки;
 штатная локальная среда Python 3.13.16 с FTS5 восстановлена (E345), но это не host gate.
 Полный локальный suite: 6832 passed / 10 failed / 14 skipped / 4 xfailed, exit 1
-(E351, после него одна ошибка authoring адресована targeted проверкой); Q107 по
-внутреннему транспорту открыт (E352), Q97/STEP2b и Q103 не закрыты.
+(E351, после него одна ошибка authoring адресована targeted проверкой); Q107=A по
+внутреннему транспорту принят оператором (E359), но механизм ещё не доказан/не
+включён; Q97/STEP2b и Q103 не закрыты.
 
 **Проект дополнительной сверки перед деплоем (E357–E358; не закрывает STEP).**
 План и подтверждённые local probes: [композиция и batch foundation](../notes/i03-composition-and-batch-foundation-plan-2026-11-01.md).
-Порядок Q97/STEP2b → Q103 не меняется; Q107 открыт. Предлагается в существующих
+Порядок Q97/STEP2b → Q103 не меняется; Q107=A принят в работу (E359). Предлагается в существующих
 SLICE/exit до production принять проверку повторного dispatch, честной
 неопределённости/terminality, переписанных хуками вызовов и уникальности/корреляции
 ID, а также фактического восстановления истории и ограничений результата.
@@ -642,7 +649,7 @@ uv run python scripts/check_execution_e2e_coverage.py
 - [ ] STEP3: mechanically snapshot original normalized unique producer keys from the I01 deferred-verification register and the I02/I03 live register, preserve all unique keys/CT/STEP lineage, add new producers and successor mappings; correct CT52 bounded repair and shell-exit-127 vs genuine launch-error oracles (exit: actual coverage checker/test detects removal of any unique case, not only total counts)
 - [ ] STEP4: coder writes `worklogs/planning-topology-and-executable-contracts-loop/e2e/I03/implementation-handoffs.md` after real seams/proofs exist, labeling facts vs proposals and limitations. For Q85, link CT113/SLICE2 STEP6 and its local proof to I03-LIVE-27 and the planned L-HAND-1/2 evidence; state separately that the SLICE5 STEP2/CT108 controller request/dispatch leg is absent and the I03-LIVE-S08 join remains future proof. Do not modify the case oracle, add a fixture/host command, or assign a live result (exit: handoff-shape tests enforce the links and evidence labels; coder has changed no oracle/result)
 - [ ] STEP5: planner finalizes copy/paste host sheet from actual deployment/workspace facts per spec §9, complete tasks/variables/commands/run IDs/artifacts, safe update stop conditions and observe→review→enforce order (exit: run-sheet checks plus human command review, not pytest claiming deployment happened)
-- [ ] STEP6: update `plan-authoring/SKILL.md`, `feature-planning/{SKILL.md,INJECT.md}`, and `tests-writing/{SKILL.md,INJECT.md}` with the transferred E223 roles: planner records E2E obligations before coding; coder supplies only a source/evidence-backed implementation handoff; planner finalizes the host run sheet from actual facts; an independent reviewer completes the manual checklist before fixture/helper work; no harness/eval/coder assigns live `PASS`. Keep unrelated generic `DRAFT | READY | BLOCKED` semantics intact (exit: artifact+skill conformance tests enforce the role split and READY preservation)
+- [x] STEP6: update `plan-authoring/SKILL.md`, `feature-planning/{SKILL.md,INJECT.md}`, and `tests-writing/{SKILL.md,INJECT.md}` with the transferred E223 roles: planner records E2E obligations before coding; coder supplies only a source/evidence-backed implementation handoff; planner finalizes the host run sheet from actual facts; an independent reviewer completes the manual checklist before fixture/helper work; no harness/eval/coder assigns live `PASS`. Keep unrelated generic `DRAFT | READY | BLOCKED` semantics intact **Progress (E364):** E287 already supplied all five texts; role/READY + artifact + delivery-law bank 37 passed, five section-deletion mutants killed in call phase. This closes only the local skill-text exit; E223 host duties and review remain open. (exit: artifact+skill conformance tests enforce the role split and READY preservation)
 - [ ] STEP7: independent reviewer completes the manual checklist before the FINAL project-scoped E2E fixture/helper package (not earlier local tests/integration-kernel tests). Review all source/import/readiness/descendant/fencing/recovery and nested cases, I01 plan-authoring/parser/admission obligations, maintenance prerequisites, secret handling, and the stop path. Include E223's transferred scope plus all I01–I03 implementation/evidence obligations; record open findings for final review (exit: named reviewer/date/notes recorded; no machine-approved marker; final broad review still required after material changes)
 - [ ] STEP8: only after STEP7, implement reviewed bounded fixtures under `worklogs/planning-topology-and-executable-contracts-loop/e2e/I03/fixtures/` in unique disposable workspaces; preserve evidence/owned cleanup and keep live-host commands outside default pytest discovery (exit: fixture conformance passes; review-before-implementation provenance exists)
 - [ ] STEP9: index every distinct local/live producer, including separate CLI/direct guards, candidate/promotion/schema/T0, CT96 selection/bootstrap/clarification/context, CT97 file/edit/shell/subagent-absence/alias paths, early readiness/imports, no-replay, contention/read pins, terminal seal/publication/recovery; map I01 deferred obligations, retained I02 source/functional claims, and I03 producers to actual deployed-behaviour oracles (exit: all original+new required I01–I03 producer keys mapped with useful evidence oracles; no local-only or missing deployed claim credited)

@@ -857,6 +857,17 @@ filesystem authorization and alias handling remain in the supervisor or isolated
   PDF/full-file output as an unbounded shell tail. Record read-set/file-read observations back in
   controller session context, not in a fictitious cell session DB. This helper does not run providers.
 
+**Q107=A (E359; accepted for work, not acceptance):** the 64 KiB PTY-tail
+requirement above is the current conservative helper, not a parity solution. A
+closed cell-private non-PTY discriminator for allowlisted search/reach within
+existing EXEC may be implemented only with the same bound view/grant, identity,
+non-reexecuting journal/replay and fail-closed semantics. Bash stays PTY. Bound
+and account for the full stream, frame, JSON, receipt, replay and model projection;
+prove timeout/descendant terminality and host resource limits before production.
+No unrestricted process, extra public operation or host fallback is authorized.
+Until that end-to-end path is proven, retain explicit refusal on excess, never
+claim Q97 parity from this choice. Q103 remains immediately after STEP2b.
+
 **SessionManager ordering/recovery:** implement materialization/rooted authority before its managed
 provisioner. Inject that provisioner BEFORE `_new_session` calls `_provision_workspace`, not only via
 workspace_preparer. Its result is a frozen value carrying exactly

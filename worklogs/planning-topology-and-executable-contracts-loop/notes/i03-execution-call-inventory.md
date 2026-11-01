@@ -98,6 +98,18 @@ cell runs against its own sandbox, not a workspace view).
 | R27 | `coder_loop.py::_drive_session_inner:535–2111` (live-session callback, no route of its own) | explicit, chat | controller process | `tests/test_coder_loop.py` | `…::test_a_live_chat_session_cannot_mutate_the_canonical_tree` |
 | R28 | `scripts/bootstrap/host_bootstrap.py:23–40` | operator | TCB host | `tests/test_workspace_bootstrap_aliases.py::test_host_bootstrap_missing_uv_is_stable_and_does_not_call_wrapper` | `…::test_no_model_tool_can_reach_the_host_bootstrap` |
 
+### R18: локальная коррекция guard (E362–E363; строка остаётся OPEN)
+
+`mutation_guard.py:130–172` при managed session с активным/недоступным board
+отказывает до host metadata; `write_file.py:120` и `edit_file.py:205–240`
+передают этот режим, post-record не вызывает host metadata. Наблюдаемый путь
+`tests/test_managed_mutation_guard.py::test_managed_guard_does_not_read_host_metadata_or_silently_drop_enabled_board`
+использует реальный session → role registry → UDS/view и проверяет оба инструмента;
+контекстные сбои отдельно. Это отрицательный local oracle, не закрытие R18:
+управляемые version stamps и allow/conflict при enabled board ещё отсутствуют,
+production caller и host evidence не подтверждены. Legacy host mode намеренно
+пока имеет прежний `_base_commit` до действующего cutover.
+
 ### Classified out (and why), so nothing is exempt by name
 
 | Finding | Class | Reason |

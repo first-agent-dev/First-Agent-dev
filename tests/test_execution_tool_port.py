@@ -191,8 +191,8 @@ class RacingPort:
     def cache_dir(self) -> Path | None:
         return self.inner.cache_dir
 
-    def read_file(self, path: str, *, max_bytes: int = 1024 * 1024) -> PortRead:
-        result = self.inner.read_file(path, max_bytes=max_bytes)
+    def read_file(self, path: str, *, offset_bytes: int = 0, max_bytes: int = 1024 * 1024) -> PortRead:
+        result = self.inner.read_file(path, offset_bytes=offset_bytes, max_bytes=max_bytes)
         self.reads += 1
         self.tamper()
         return result

@@ -53,7 +53,7 @@ def test_unconfirmed_eof_never_reaches_write(tmp_path: Path, invalid_eof: object
         cache_dir: Path | None = None
         writes = 0
 
-        def read_file(self, path: str, *, max_bytes: int = MAX_TEXT_BYTES) -> PortRead:
+        def read_file(self, path: str, *, offset_bytes: int = 0, max_bytes: int = MAX_TEXT_BYTES) -> PortRead:
             return PortRead("anchor", "0" * 64, cast(bool, invalid_eof))
 
         def write_file(self, path: str, content: str, *, expected_sha256: str | None = None) -> PortWrite:

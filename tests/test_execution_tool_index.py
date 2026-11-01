@@ -51,7 +51,7 @@ class _CachePort:
         self.cache_dir = cache_dir
         self.reads: list[str] = []
 
-    def read_file(self, path: str, *, max_bytes: int = PORT_READ_MAX_BYTES) -> PortRead:
+    def read_file(self, path: str, *, offset_bytes: int = 0, max_bytes: int = PORT_READ_MAX_BYTES) -> PortRead:
         self.reads.append(path)
         raise AssertionError(f"unexpected read of {path!r}")
 
@@ -67,7 +67,7 @@ class _RefusingPort(_CachePort):
         self.code = code
 
     @override
-    def read_file(self, path: str, *, max_bytes: int = PORT_READ_MAX_BYTES) -> PortRead:
+    def read_file(self, path: str, *, offset_bytes: int = 0, max_bytes: int = PORT_READ_MAX_BYTES) -> PortRead:
         self.reads.append(path)
         raise WorkspacePortError(self.code)
 
@@ -77,7 +77,7 @@ class _EofShortPort(_CachePort):
         super().__init__(cache_dir)
 
     @override
-    def read_file(self, path: str, *, max_bytes: int = PORT_READ_MAX_BYTES) -> PortRead:
+    def read_file(self, path: str, *, offset_bytes: int = 0, max_bytes: int = PORT_READ_MAX_BYTES) -> PortRead:
         self.reads.append(path)
         return PortRead(content="x" * 10, sha256="0" * 64, eof=False)
 
@@ -89,7 +89,7 @@ class _ExplodingPort(_CachePort):
         super().__init__(None)
 
     @override
-    def read_file(self, path: str, *, max_bytes: int = PORT_READ_MAX_BYTES) -> PortRead:
+    def read_file(self, path: str, *, offset_bytes: int = 0, max_bytes: int = PORT_READ_MAX_BYTES) -> PortRead:
         raise AssertionError("the port must not be consulted on this path")
 
     @override
