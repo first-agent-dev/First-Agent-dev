@@ -2373,7 +2373,7 @@ capability that outlives its release path is the defect, not a feature. Two cons
 
 1. **One run, one grant, one holder.** `ManagedExecution` holds it; `BoundPlanPublisher` reaches it only through
    `managed`; the client stays stateless and is handed the grant explicitly for each operation. That makes every use
-   auditable at the call site, and the release has exactly one caller.
+auditable at the call site, and the release has exactly one caller.
 2. **The boundary is what must never leak, not what must never be reachable in-process.** No grant in `RunContext`,
    session state, events, logs or model-visible text; anything inside the trusted composition may hold it.
 
@@ -2381,6 +2381,41 @@ Option B (a private run-scoped grant store inside the client) was rejected on pu
 move `publish_plan`/`release` off their written STEP6-STEP7 contract, and still not hide the token from in-process
 introspection — only from accidental reach, which is exactly what the reachability test now checks
 (`test_the_writer_capability_lives_in_exactly_one_place`, one path per CLI-owned object, a second copy fails).
+
+**Current-source audit (2026-11-02; E408; implementation remains open).** The older Q90 option text and the SLICE5
+STEP2 draft predate the landed SLICE7 composition and need to be read with these corrections:
+
+- `_drive_stage_with_managed_workspace` (`src/fa/cli.py`) creates the parent `PROJECT` WRITE view, calls `drive()`
+  while that view remains live, and publishes/stops it only after `drive()` returns. A synchronous `invoke_workflow`
+  therefore cannot hand off the writer from inside its handler until it has an explicit parent-view suspend/settle
+  seam. After child return, the already-built registry still holds fixed-view `ClientWorkspacePort` and
+  `ManagedBashExecutor` instances; there is no current parent-view reopen/rebind or resume marker.
+- `_make_workflow_ctx_provider` does not receive the active `ManagedExecution`; its context has no managed binding.
+  `run_workflow` called by `workflow_tool.handler` receives neither `managed_execution` nor `plan_publisher`.
+  `_child_run_context` calls `SessionManager.begin_run` only. `managed_execution_for_run(child_context)` is not the
+  nested-child acquisition path: it registers/acquires a writer, which would compete with the parent instead of
+  consuming the HANDOFF grant.
+- The existing authority route already supports the lineage needed for a child: a target namespace must carry the
+  caller's `run_id` as `parent_run_id`; return is restricted to the exact recorded parent. `tests/test_execution_handoff_return.py::test_return_and_child_client_verbs_over_real_socket`
+  proves a child grant opens a WRITE view, publishes a PLAN and returns the grant. `RunContext` has no parent field,
+  so the nested composition must construct and retain the exact child `NamespaceRef` separately; do not broaden the
+  seven exact `active_actor` comparisons unless a new source-backed test proves that necessary.
+- The actual adapter is `BoundPlanPublisher(managed, binding)` (`src/fa/execution/composition.py`), not the older
+  `BoundPlanPublisher(client, binding)` wording. A child publisher must reach the child-scoped `ManagedExecution`,
+  whose grant was received by HANDOFF; it must not call the ordinary child writer-acquisition factory.
+- `tests/test_execution_handoff.py::test_the_route_rotates_the_capability_and_reserves_exactly_one_record` proves exact same-request-id replay
+  of HANDOFF with its original proof returns the recorded grant; a fresh request id with that old proof is rejected.
+  A client-side reconciliation may therefore use only the same request id, payload, namespace and proof. If that
+  remains indeterminate, do not dispatch the child, release the writer, invent a grant, or resume the parent on its
+  stale view. Return to the parent only after a confirmed reverse HANDOFF and a fresh parent view. Preserve Q114's
+  no-auto-PUBLISH-retry rule; do not change Q108 or legacy direct `fa workflow`.
+
+The resolved contract is sequential single-writer ownership: settle the parent WRITE view before HANDOFF; dispatch
+only after the child grant is confirmed; settle child views before reverse HANDOFF; then reopen the parent at the
+returned revision and make the chat explicitly refresh its workspace understanding. The trusted stage/tool boundary
+must provide suspend/resume and view rebinding without exposing grants through `RunContext`, session state, logs or the
+model. Failure to prove either transfer is fail-closed and must not RELEASE an owner whose location is unknown. This
+is a source-backed implementation contract, not a claim that Q90/CT108 or the live nested path is complete.
 
 ---
 
@@ -2432,7 +2467,7 @@ Therefore, if W0 requires every S4P1 *row* to be closed, its stated evidence gat
 
 ## Q114 — How is an indeterminate candidate PLAN PUBLISH settled and reclaimed?
 
-**Status: OPEN — implementation/recovery contract; do not add an uncertainty-composition DoD or close R25 until resolved.** This is separate from Q108's still-open EXEC/receipt/discovery wire decision. It does not authorize a new operation or wire change.
+**Status: RESOLVED — operator selected option 1/A (2026-11-02); implementation and acceptance remain OPEN.** This architecture direction is for the managed-run path and does not authorize changing legacy direct `fa workflow` behavior in the current scope. R25 remains OPEN until its uncertainty/lifecycle acceptance is implemented and reviewed. This is separate from Q108's still-open EXEC/receipt/discovery wire decision; no new operation or wire change is authorized.
 
 **Source-grounded behavior (E407, 2026-11-02).** `ExecutionClient.publish_plan` makes one PUBLISH request. If its result is indeterminate, it sets `uncertain=True`; its `finally` deliberately skips `_release_view`, and the exception leaves the method without returning the locally held `ViewRef` or view grant. `ManagedExecution` has no pending-candidate/recovery field. The CLI's `_cmd_workflow` `finally` still calls `_settle_writer_release`/`ManagedExecution.close` after `run_workflow` returns.
 
@@ -2450,4 +2485,6 @@ A real local UDS composition probe injected `DURABILITY_UNKNOWN` at the start of
 
 **Engineering recommendation (not resolved).** Prefer option 1 for the in-process trusted-controller boundary already selected under Q61: the same `ManagedExecution` that owns the writer should own the unresolved candidate proof, keep the owner fenced, and reconcile without a second writer or new worker/IPC architecture. Confirm exact replay inputs and process-death/quarantine behavior against the operation-journal contract before implementation.
 
-**Requested resolution.** Planner/operator selects the settlement/reclaim contract (or explicitly ratifies the recommendation) and names the owner of same-process and process-death recovery. Until then, do not assert that uncertainty means unchanged PLAN, do not treat `DURABILITY_UNKNOWN` as determinate refusal, and do not claim R25/S4P1 uncertainty coverage.
+**Resolution (2026-11-02; operator selected option 1/A).** For managed runs, the run-scoped `ManagedExecution` is the holder of pending candidate proof and owner authority. An indeterminate publication must not trigger a host write or release the writer before reconciliation. Do not automatically retry PUBLISH; use only the exact-request replay/reconciliation semantics already permitted by the operation journal, and preserve fail-closed state if the result remains unknown. If the process dies before reconciliation, the workspace remains unavailable/quarantined for recovery; this selection does not promise autonomous restart recovery. No second writer, worker/IPC architecture, new wire operation, or Q108 change is authorized.
+
+**Scope and remaining work.** Legacy direct `fa workflow` behavior is unchanged in the current scope. Its observed orphan-view behavior remains an R25 acceptance gap, not an approved policy. The managed-run implementation must separately prove each uncertain candidate-saga phase (including lost CREATE_VIEW response), pending-handle ownership, no premature RELEASE, exact replay safety, and restart/quarantine behavior before claiming Q114 implementation complete. Do not assert that uncertainty means unchanged PLAN, do not treat `DURABILITY_UNKNOWN` as determinate refusal, and do not claim R25/S4P1 uncertainty coverage from the decision alone.
