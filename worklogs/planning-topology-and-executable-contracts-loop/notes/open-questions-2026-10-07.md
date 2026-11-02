@@ -1065,8 +1065,15 @@ in-process hooks/read-only mounts as the complete boundary. Earlier alternatives
 historical rationale, not permission to bypass this direction. Exact deployment contracts and
 negative proof remain pending; this note does not mark Q61 runtime/security evidence complete.
 
-**Status: OPEN. CT97 remains recommended, not operator-ratified.** This decision gates coder
-write-boundary implementation and any claim that the active plan is protected.
+**Status: RESOLVED — operator selected option (a), 2026-11-02.** The trust boundary is the trusted
+controller in the parent plus one shared, disposable, per-stage OS-sandboxed copy-on-write workspace for
+all provider write surfaces, followed by trusted validated import. This resolves the architecture choice;
+it does not close CT97 implementation, runtime security evidence, or any S4P1/W0/W1 acceptance row.
+
+**Scope clarification (2026-11-02).** `invoke_workflow` is registered for the `chat` role only. The
+`acquisition_unavailable` check applies to the child pipeline's requested roles (default
+`planner,coder,eval`); it does not mean coder should receive or invoke `invoke_workflow`. Direct
+`fa workflow` remains a separate manual CLI path and is not changed by this decision.
 
 **Source-confirmed topology and exposure.** `invoke_workflow` synchronously calls
 `run_workflow` (`src/fa/inner_loop/tools/workflow_tool.py:463-484`); its stage callback is

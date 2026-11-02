@@ -328,6 +328,11 @@ def _resolve_cli_run_context(
         # remain outside the production CLI lifecycle claim until migrated.
         return None
     manager = _session_manager_for_args(args)
+    if manager.workspace_provisioner is None:
+        raise SessionManagerError(
+            "managed_execution_unavailable",
+            "session-backed CLI runs require the configured managed workspace provisioner",
+        )
     session = manager.create_or_attach_session(
         session_id=getattr(args, "session_id", None),
         workspace_override=getattr(args, "workspace", None),
@@ -1521,6 +1526,9 @@ def _run_cli_stage(
         managed, owns_writer = _execution_for_cli_stage(args, run_context)
     except ExecutionUncertainError as error:
         print(f"fa run: managed writer grant not confirmed [{error.code}]", file=sys.stderr)
+        return None, True
+    if run_context is not None and managed is None:
+        print("fa run: managed execution unavailable; refusing host-path stage", file=sys.stderr)
         return None, True
     try:
         return _drive_stage_with_managed_workspace(

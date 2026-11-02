@@ -3,12 +3,11 @@
 Date: 2026-10-15; E230 refresh 2026-10-16; **E285 refresh 2026-10-23 at `969fa06`** (coverage re-scanned, every
 `src/fa` process/import route classified; see [§E285](#e285-refresh-2026-10-23--every-srcfa-processimport-route-classified-at-969fa06)
 below the historical tables). The initial d910 line table below is historical; refreshed exact symbol ranges follow it.
-**State: OPEN — E285 coverage baseline at `969fa06`; R02 and R20–R28 have targeted working-tree refreshes through 2026-11-02; no row closed. Managed-backend negative oracle remains the blocker before W1.** The E285 scan accounts for every launcher and
+**State: OPEN — E285 coverage baseline at `969fa06`; R02 and R20–R28 have targeted working-tree refreshes through 2026-11-02; no row closed. E402–E403 add unit and parsed-CLI no-side-effect oracles for provisioner and stage-writer absence; E404 repairs the four local adaptive workflow tests through the existing publisher seam; E406 adds a local UDS negative composition oracle for determinate R25 PLAN refusal. These are not the per-row S4P1 source/caller/nodeid proofs and do not establish deployed-host behavior.** The E285 scan accounts for every launcher and
 dynamic-import call site in `src/fa` (28 call sites in 16 files, each mapped to exactly one row) and every row now
 carries its exact current anchor, a real caller trace and a named negative oracle. What is still missing is the thing
 a document cannot supply: the negative oracle *running* against a managed backend, which is SLICE4 STEP2's work (A5).
-No runtime source is changed by this inventory review.
-No runtime source is changed by this inventory review. Static search is evidence of candidates, not a
+The inventory review itself does not change runtime source. E402 separately records a narrow runtime fail-closed guard change and its tests; this note remains a static route inventory and no row is thereby closed. Static search is evidence of candidates, not a
 proof that a route is reachable or safe. 'Read-only' and fixed Git argv do not exempt project Git.
 
 | Actual producer / source lines | Inspected caller/dependency | Required route / concrete negative oracle (future) |
@@ -205,6 +204,17 @@ cell runs against its own sandbox, not a workspace view).
   expected xfail** on CPython 3.13.16. The xfail
   `test_the_runs_own_second_publication_survives_a_host_side_write` explicitly retains the SLICE4 STEP2
   host-write gap. R25 stays OPEN; no row closure or live evidence.
+- **E406 local negative composition oracle (2026-11-02).** `tests/test_execution_composition.py::test_workflow_root_keeps_plan_unchanged_when_local_authority_refuses_publication`
+  enters the real `_cmd_workflow` CLI caller and local UDS `SupervisorService`, binds the real
+  `BoundPlanPublisher`, runs the real `_promote_validated_plan`, and reaches the real candidate PUBLISH
+  route. The test injects a deterministic `INPUT_POLICY` refusal at `WorkspaceAuthority.publish_candidate_plan`
+  before the commit boundary; the valid candidate differs from the canonical PLAN. It asserts one refusal
+  operation, controller `prepare-failed` (`replaced=False`), byte-identical canonical PLAN, and released
+  workspace state. The `run_workflow` orchestration itself is a narrow test callback here, so this is not
+  a full admission-loop or deployed-host result. It complements—not replaces—the client saga tests for
+  determinate refusal/release and uncertain reply/view retention. Uncertain commit outcomes are deliberately
+  not asserted to leave the old PLAN in place. R25 remains OPEN pending the full S4P1 nodeid/mutation proof,
+  reviewed live-host acceptance and independent review.
 
 ### R26 working-tree refresh (2026-11-01; remains OPEN; trace-only)
 

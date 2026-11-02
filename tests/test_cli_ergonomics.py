@@ -19,6 +19,7 @@ from fa.cli_help import COMMANDS, help_as_json
 from fa.inner_loop.session_db import SessionDatabase
 from fa.providers import SecretStore
 from fa.providers.base import TransportResponse
+from tests.test_cli import _install_test_managed_cli_dependencies
 
 _TEST_SECRETS = SecretStore({"TEST_FA_RUN_KEY": "sk-test-x"})
 
@@ -254,6 +255,11 @@ def _workflow_args(tmp_path: Path, config: Path, **over: Any) -> argparse.Namesp
         "task_eval": None,
     }
     base.update(over)
+    # A missing selector models the supported legacy/library Namespace. Tests
+    # that exercise production session admission opt in by assigning
+    # ``args.session_id = None`` after construction.
+    if base.get("session_id", object()) is None:
+        base.pop("session_id")
     return argparse.Namespace(**base)
 
 
@@ -278,18 +284,22 @@ def test_workflow_session_manager_uses_one_invocation_run_context(
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("USERPROFILE", str(home))
     args = _workflow_args(tmp_path, config, run_id=None, session_id=None)
+    args.session_id = None
+
+    # This test is specifically about the one manager-admitted run identity.
+    _install_test_managed_cli_dependencies(monkeypatch, home=home, workspace_root=tmp_path.parent)
 
     # Q35b (S10c.2): the eval verdict here is BLOCKED, so the exit code is 1.
-    # The assertion below is about session/run identity, which is unaffected.
     assert _cmd_workflow(args, transport=_ScriptedTransport(), secrets=_TEST_SECRETS) == 1
 
     manifests = sorted((home / ".fa" / "sessions").glob("*/manifest.json"))
     assert len(manifests) == 1
     session_id = json.loads(manifests[0].read_text(encoding="utf-8"))["session_id"]
-    run_dirs = sorted(d for d in (home / ".fa" / "session-log").iterdir() if d.is_dir())
-    assert len(run_dirs) == 1
+    run_dirs = sorted(
+        d for d in (home / ".fa" / "session-log").iterdir() if d.is_dir() and (d / "flow_state.json").is_file()
+    )
+    assert len(run_dirs) == 1, "one workflow state must be committed for the invocation"
     run_id = run_dirs[0].name
-    assert (run_dirs[0] / "flow_state.json").is_file()
     assert (run_dirs[0] / "eval_report.json").is_file()
 
     db = SessionDatabase.open_existing(home / ".fa" / "sessions" / session_id / "session.db", session_id=session_id)
@@ -625,9 +635,17 @@ def test_adaptive_mode_replans_until_pass(tmp_path: Path, monkeypatch: pytest.Mo
     config, session_dir = _repair_env(tmp_path, monkeypatch)
     transport = _RoleAwareTransport([("REPLAN_REQUIRED", "return_to_planner"), ("PASS", "complete")])
     args = _workflow_args(tmp_path, config, mode="adaptive", max_repairs=2, max_replans=1)
+    published = _install_test_managed_cli_dependencies(
+        monkeypatch,
+        home=tmp_path / "home",
+        workspace_root=tmp_path.parent,
+        local_run_id=args.run_id,
+        allow_noop_publication=True,
+    )
 
     code = _cmd_workflow(args, transport=transport, secrets=_TEST_SECRETS)
     assert code == 0
+    assert len(published) == 1  # the CLI-bound publisher confirms the unchanged plan once
     assert transport.planner_calls == 2
     assert transport.coder_calls == 2
     assert transport.eval_calls == 2
@@ -648,8 +666,16 @@ def test_adaptive_mode_enforces_replan_budget(tmp_path: Path, monkeypatch: pytes
     config, session_dir = _repair_env(tmp_path, monkeypatch)
     transport = _RoleAwareTransport([("REPLAN_REQUIRED", "return_to_planner")] * 6)
     args = _workflow_args(tmp_path, config, mode="adaptive", max_repairs=2, max_replans=1)
+    published = _install_test_managed_cli_dependencies(
+        monkeypatch,
+        home=tmp_path / "home",
+        workspace_root=tmp_path.parent,
+        local_run_id=args.run_id,
+        allow_noop_publication=True,
+    )
 
     code = _cmd_workflow(args, transport=transport, secrets=_TEST_SECRETS)
+    assert len(published) == 1  # one admitted replan; the next is stopped by the budget
     # Q57: inability to replan now hard-blocks; runtime rejection still exits 1.
     # Original loop/budget/counter/version assertions remain unchanged.
     assert code == 1
@@ -677,9 +703,17 @@ def test_adaptive_mode_can_mix_repair_then_replan(tmp_path: Path, monkeypatch: p
         ]
     )
     args = _workflow_args(tmp_path, config, mode="adaptive", max_repairs=2, max_replans=1)
+    published = _install_test_managed_cli_dependencies(
+        monkeypatch,
+        home=tmp_path / "home",
+        workspace_root=tmp_path.parent,
+        local_run_id=args.run_id,
+        allow_noop_publication=True,
+    )
 
     code = _cmd_workflow(args, transport=transport, secrets=_TEST_SECRETS)
     assert code == 0
+    assert len(published) == 1
     assert transport.planner_calls == 2
     assert transport.coder_calls == 3
     assert transport.eval_calls == 3
@@ -784,12 +818,13 @@ chat:
         ["run", "-r", "chat", "--config", str(config), "--workspace", str(tmp_path), "fix typo in README"]
     )
 
+    _install_test_managed_cli_dependencies(monkeypatch, home=home, workspace_root=tmp_path.parent)
     code = _cmd_run(args, transport=transport, secrets=_TEST_SECRETS)
     assert code == 0
 
-    # Find the session log directory
+    # Ignore the empty provisioning run directory; this oracle is the run that emitted events.
     session_log_dir = home / ".fa" / "session-log"
-    run_dirs = list(session_log_dir.iterdir())
+    run_dirs = [d for d in session_log_dir.iterdir() if d.is_dir() and (d / "events.jsonl").is_file()]
     assert len(run_dirs) == 1
     events_jsonl = run_dirs[0] / "events.jsonl"
     assert events_jsonl.exists()
@@ -825,11 +860,12 @@ def test_coder_role_does_not_log_scope_estimate(
         ["run", "-r", "coder", "--config", str(config), "--workspace", str(tmp_path), "fix typo in README"]
     )
 
+    _install_test_managed_cli_dependencies(monkeypatch, home=home, workspace_root=tmp_path.parent)
     code = _cmd_run(args, transport=transport, secrets=_TEST_SECRETS)
     assert code == 0
 
     session_log_dir = home / ".fa" / "session-log"
-    run_dirs = list(session_log_dir.iterdir())
+    run_dirs = [d for d in session_log_dir.iterdir() if d.is_dir() and (d / "events.jsonl").is_file()]
     assert len(run_dirs) == 1
     events_jsonl = run_dirs[0] / "events.jsonl"
 
@@ -875,6 +911,7 @@ chat:
         ["run", "-r", "chat", "--config", str(config), "--workspace", str(tmp_path), "refactor auth module"]
     )
 
+    _install_test_managed_cli_dependencies(monkeypatch, home=home, workspace_root=tmp_path.parent)
     code = _cmd_run(args, transport=transport, secrets=_TEST_SECRETS)
     assert code == 0
 
@@ -973,6 +1010,7 @@ chat:
         ["run", "-r", "chat", "--config", str(config), "--workspace", str(tmp_path), "fix typo in README"]
     )
 
+    _install_test_managed_cli_dependencies(monkeypatch, home=home, workspace_root=tmp_path.parent)
     code = _cmd_run(args, transport=transport, secrets=_TEST_SECRETS)
     assert code == 0
 
@@ -1034,6 +1072,7 @@ chat:
         ["run", "-r", "chat", "--config", str(config), "--workspace", str(tmp_path), "refactor auth module"]
     )
 
+    _install_test_managed_cli_dependencies(monkeypatch, home=home, workspace_root=tmp_path.parent)
     code = _cmd_run(args, transport=transport, secrets=_TEST_SECRETS)
     assert code == 0
 

@@ -15,7 +15,7 @@ per-stage/episode ordinary-edit checkpoints. E233 found F17/Q75; the operator ex
 Q75(a) in E234: narrowly bound memory-only original completed-reply replay, secret-free journal,
 no fresh authority/re-execution/reconstruction. The stop is lifted; SLICE1 implementation resumes. OUTLINED
 is deliberately unchanged: plan finalization assigns no implementation tick, READY automation,
-live result or deployment authorization. All47 construction steps and final acceptance remain open.
+live result or deployment authorization. The closure summary/table below is a dated snapshot, not current completion evidence; see the dated status reconciliation below and ledger E399–E402. No checkbox or wave is closed by this plan refresh.
 
 **Depends on:** retained I02 local implementation/checks and plan-versus-diff review; no restored
 I02 deployed-host, broad independent-review or inherited-baseline acceptance prerequisite.
@@ -117,7 +117,7 @@ are therefore **components, not delivery**, and SLICE4 STEP2 is the hinge the wh
 | S2P1 | LOCAL | existing-root registration/R0/writer generation (E253) | two-OS-process race reproduced; denied/stale admissions produce no effect | run |
 | S2P2 | LOCAL | immutable reader pins, rooted reads, release (E255) | pinned-reader matrix reproduced | run |
 | S2P3 | LOCAL | five view purposes, rooted IO (E256), admission/drain semantics (E257) | view matrix + quiesce-before-R0 reproduced | run |
-| S2P4 | PARTIAL | `workspace_io=` port plumbed through `profiles.py:204,343,357,364` and `tools/__init__.py`; the managed implementation now exists — `ClientWorkspacePort` over the wire (E308) | production must pass it (today it passes `None`) and the host fallbacks must go | S4P2 |
+| S2P4 | PARTIAL | `workspace_io=` port and `ClientWorkspacePort` exist; direct managed chat now binds the port and `ManagedBashExecutor` (E400–E401), and absent managed execution refuses rather than falling back on a session stage (E402) | complete every inventory caller; cell-local `fs_search`/`fs_reach`, bounded EXEC/result path and Q97/Q108/Q111 resource/transport contracts; no host fallback for session-backed execution | S4P2, S4P1, Q97 |
 | S2P5 | LOCAL | contention/read-pin/no-replay semantics | matrix reproduced | run |
 | S2P6 | PARTIAL | `HANDOFF` authority body + service route (E283), `_handoff_owner` | controller leg: drain/suspend, one allocation, send, dispatch only after ack | S4P2 |
 | S3P1 | PARTIAL | terminal barrier (E266), immutable export/seal (E267), checkpoint policy + bank (E284) | `tests/integration/test_publication_recovery.py` (directory absent, so the fence exits 4); the stage-loop call site | S4P2, host |
@@ -126,7 +126,7 @@ are therefore **components, not delivery**, and SLICE4 STEP2 is the hinge the wh
 | S3P4 | PARTIAL | forward recovery hooked into `_load` (`:1099`, `_recover_intent:4519`) (E276) | kernel-observed matrix, kills inside recovery, fsync-unsupported/EIO, crash vs power-loss labels | host |
 | S3P5 | PARTIAL | 17/17 producer mutants over the real authority (E276) | full declared-path kills on the approved filesystem | host |
 | S4P1 | PARTIAL | inventory coverage complete at `969fa06`; the note itself says `State: OPEN`, no row closed | close each row with source line, caller and nodeid | nothing |
-| S4P2 | PARTIAL | **STEP2a done (E308); STEP2b/1 done (E309)** — the commit `publish_stage` (stop→seal→publish) with bank `test_execution_client_stage.py` (11 tests; 8/8 preliminary mutants require call-phase verification, E310);  `ClientWorkspacePort` + `client.open_view`/`stop_view` + `ManagedExecution` verbs, bank `test_execution_client_port.py` (22 tests, 15/15 mutants); managed bash supplier without host fallback (E315; 9 tests, 8/8 mutants); provisioner injected (`cli.py:280`); plan publisher supplied | **STEP2b, the cutover:** `_cmd_run` → `run_stage_with_plan_write_boundary` → `_cmd_run_inner`, `workspace_io` in production, fail-open readiness removed, bash through `ManagedBashExecutor`; nested return/handoff **Q102=A supplier done (E313), controller integration open** | S4P1 (oracles), Q102 controller integration |
+| S4P2 | PARTIAL | E399–E401: workflow-owned `ManagedExecution` is reused; direct `fa run` opens a managed project view, binds `ClientWorkspacePort`/`ManagedBashExecutor`, then publishes/stops and releases only its own writer; E402 adds fail-closed preflight when session provisioner or stage writer is absent | finish every S4P1 row with source/caller/nodeid evidence; managed `fs_search`/`fs_reach` supplier and Q97 bounds/transport; nested return/handoff controller integration (Q102); full relevant local banks; host acceptance remains separate | S4P1, Q97, Q102 |
 | S4P3 | OPEN | `_run_one` still `subprocess.run` (`slice_verification.py:334`); no `_run_managed_command` | pinned verification scratch/receipts/report parsing through managed `exec` | S4P2 |
 | S4P4 | OPEN | — | the `execution_host` C1 closure matrix | S4P2, host |
 | S4P5 | OPEN | — | CT97/CT110/CT111 full-path kills | S4P2, host |
@@ -158,8 +158,8 @@ are therefore **components, not delivery**, and SLICE4 STEP2 is the hinge the wh
 | S7P10 | **LOCAL-CLOSED** | `CANDIDATE_SCOPE` = plan identity only (`protocol.py:69`), `_candidate_scope`/ `_candidate_buffer` bound to the pinned plan (`workspace.py:285`, `:2249`), `_view_record_compat` tolerant reader (`:538`), client writes under the plan path (`client.py:224`)
 | S7P11 | **LOCAL-CLOSED** | `test_the_workflow_root_reaches_promotion`, the refusal test plus its strict `xfail` twin, E300's retention bank | exit reproduced: EDGE drives a real publication through `_promote_validated_plan`, xfail measured (refusal passes, success fails), coverage script green, counts reproduce (E302) | handoff sections for I03-LIVE-25/26/S08 stay SLICE6 STEP4's |
 
-**Counts from the table:** 9 `LOCAL`, 11 `PARTIAL`, 2 `HOST`, 14 `OPEN`, 0 `PLANNED`, 11 `LOCAL-CLOSED` = 47 steps, of
-which **11 are closed** (`S7P2` E299, `S7P3` E300, `S7P4` E298, `S7P5` E291, `S7P6` E293, `S7P7` E294, `S7P8` E295, `S7P9` E297, `S7P10` E301, `S7P11` E302). **SLICE7 is now fully `LOCAL-CLOSED`**: no `PLANNED` row remains in it. The audit's count as written on 2026-10-31 was 11 `PLANNED` and zero
+**Historical counts in the 2026-10-31 table snapshot (not a 2026-11-02 refresh):** 9 `LOCAL`, 11 `PARTIAL`, 2 `HOST`, 14 `OPEN`, 0 `PLANNED`, 11 `LOCAL-CLOSED` = 47 steps, of
+which **11 were marked closed at that snapshot** (`S7P2` E299, `S7P3` E300, `S7P4` E298, `S7P5` E291, `S7P6` E293, `S7P7` E294, `S7P8` E295, `S7P9` E297, `S7P10` E301, `S7P11` E302). **SLICE7 is now fully `LOCAL-CLOSED`**: no `PLANNED` row remains in it. The audit's count as written on 2026-10-31 was 11 `PLANNED` and zero
 ticks; both changed because exit clauses were reproduced, not because `workspace.py` exists.
 
 **Slice verification pass (2026-11-01, E306), after Q98/Q100 changed three of its contracts.** Every invariant
@@ -184,6 +184,28 @@ execution order is these five waves, monotone, and every edge above is inside a 
 3. **W2 — downstream, local.** S4P3, S5P1, S5P2, S5P3.
 4. **W3 — host C1.** S1P1–S1P4, S2P6's exit, S3P1(c), S3P4, S3P5, S4P4, S4P5, S5P4–S5P6.
 5. **W4 — acceptance.** S6P5, S6P7, S6P8, S6P9, S6P10 and every `NOT RUN` live row.
+
+### Current reconciliation (2026-11-02; E402–E405; source/tests checked, no wave closed)
+
+**W0 — OPEN.** SLICE7 and S6P6 historical LOCAL-CLOSED rows are not by themselves W0 completion: S4P1 still has no row-by-row strict closure evidence (current source, reachable caller, named test nodeid and reproduced oracle). The inventory remains a review artifact, not a substitute for those proofs.
+
+**W1 — IN PROGRESS / not locally closed.** E399–E401 are current local implementation evidence for workflow-owned writer reuse and direct managed chat, including positive publish and canonical-tree assertions. E402 added unit tripwires for absent provisioner/writer. E403 adds parsed-CLI caller oracles: absent provisioner stops before session/DB/provider side effects; provisioner present but writer absent stops before tool registry/provider. E404 supplies the existing `CandidatePlanPublisher` through the `_cmd_workflow` caller edge to all four adaptive tests, with a strict unchanged-bytes no-op receipt; the test double has no workspace writer/CAS/validation behavior. These tests do not prove all S4P1 rows, every caller, real authority publication for changed bytes, or host behavior. The previously failing unfiltered selected five-file bank now returns **150 passed, 1 expected xfail, exit 0**; the xfail is the existing host-side-write cutover case. The three-file CLI/S8 bank returned **115 passed**; the four adaptive targets returned **4 passed**. Ruff, format, mypy on the changed Python boundary, and `git diff --check` passed. The caller-edge mutation removing `plan_publisher=plan_publisher` was killed by all four tests (pytest exit 1), then restored; the four-test rerun passed.
+
+**Q61 resolution (2026-11-02).** The operator selected option (a): preserve the trusted parent controller and use one shared disposable per-stage OS-sandboxed COW workspace across provider write surfaces, with trusted validated import. `invoke_workflow` remains chat-only; its child may include coder, but coder does not receive that tool. This is a design decision only: CT97 implementation/security proof, S4P1 rows, W0/W1, managed search/reach/Q97, and the S5P2/CT108 child handoff remain open. Direct `fa workflow` is not changed. See Q61 and ledger E405.
+
+**W2 — NOT STARTED / OPEN.** S4P3 and S5P1–S5P3 retain the dependencies and exits in the table. No assertion that W1's local seam closes the downstream supplier/selection/bundle work.
+
+**W3 — OPEN.** Host C1 and filesystem/kernel facts remain host-only and unrun. Local supervisor/unit tests cannot satisfy them.
+
+**W4 — OPEN.** The live E2E index remains `NOT RUN`; independent review must precede fixtures, then deployment, live-host run, artifact review and sign-off remain separate gates. Local W0/W1 checks cannot replace acceptance.
+
+**Binary W1 local DoD (prerequisite only, not live acceptance):** (1) every S4P1 inventory row has exact source + reachable caller + nodeid + observed oracle; (2) the local CLI/composition bank passes with test-only managed dependencies for session-backed fixtures and preserves legacy no-selector fixtures; (3) no session-backed stage reaches provider/registry/drive when provisioner or managed writer is absent; (4) no workflow stage acquires a second writer; (5) managed direct-chat canonical-tree and publication positive/negative oracles pass; (6) all W1 regressions relevant to changed callers pass. Any one missing → W1 remains OPEN. Docker, host C1, and live acceptance are explicitly not part of this intermediate DoD and remain W3/W4.
+
+**E403 fixture follow-up (2026-11-02).** A shared test-only SessionManager/provisioner/managed-writer seam now lets lifecycle/readiness/scope CLI tests reach their named oracles without changing production guards. Caller-level parsed-CLI tests assert zero provider calls for missing provisioner and missing writer. This resolves the seven stale-fixture failures from E402, not S4P1 row closure or W1 DoD.
+
+**E404 adaptive fixture follow-up (2026-11-02).** The four adaptive tests now reach their intended loop/budget/stage-failure branches through `_cmd_workflow → BoundPlanPublisher → ManagedExecution.publish_plan → CandidatePlanPublisher`. The test-only client returns an idempotent receipt only for source/candidate snapshots with matching source kind and SHA-256, verifies workspace and grant revision identity, and returns the canonical source path with the candidate hash; it performs no file IO or authority algorithm. Three success/budget cases assert exactly one publication; the planner-stage failure asserts none. The full selected five-file bank is **150 passed, 1 expected xfail**; all four adaptive tests pass, and deleting the production publisher argument makes them fail closed. This repairs local test coverage only; changed-byte publication, per-row S4P1 managed negatives, and host behavior remain unproven.
+
+**High-ROI next sequence:** finish S4P1 row oracles; then close the remaining managed search/reach/Q97 supplier contract before declaring W1. Only after W1 binary DoD move into W2 prerequisites. Do not run/claim W4 until its independent review prerequisite and approved host environment exist.
 
 **Сверка волн на 2026-11-01 (E317; статусы не закрываются этой записью).** W0: SLICE7 —
 11/11 `LOCAL-CLOSED`, но S4P1 остаётся `PARTIAL` (строки inventory без закрытых source/caller/nodeid),

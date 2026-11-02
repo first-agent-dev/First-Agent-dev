@@ -4,7 +4,7 @@ import argparse
 import json
 import shutil
 import sys
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, override
 
@@ -22,6 +22,114 @@ from tests._capabilities import requires_posix_shell, requires_pty_backend
 # Injected via the _cmd_run(secrets=...) seam (ADR-12): tests supply keys through
 # the private store instead of os.environ, matching production's file-only model.
 _TEST_SECRETS = SecretStore({"TEST_FA_RUN_KEY": "sk-test-x"})
+
+
+def _install_test_managed_cli_dependencies(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    home: Path,
+    workspace_root: Path,
+    workspace_preparer: Callable[[Path], ReadyState] | None = None,
+    with_provisioner: bool = True,
+    with_managed_execution: bool = True,
+    local_run_id: str | None = None,
+    allow_noop_publication: bool = False,
+) -> list[str]:
+    """Use real SessionManager/SQLite behind a narrow test-only authority seam.
+
+    The stage adapter below is for tests whose oracle is lifecycle, event, prompt,
+    or projection behavior and whose provider never requests filesystem tools. It
+    does not claim to verify managed view IO; that remains the real-service C1
+    responsibility of ``test_execution_composition``. The optional no-op publisher
+    only confirms an unchanged plan at the existing managed-client boundary; it
+    never implements workspace publication or accepts changed bytes.
+    """
+    from fa.execution.client import PlanPublication
+    from fa.execution.composition import ExecutionBinding, ManagedExecution
+    from fa.execution.types import GrantReply, NamespaceRef, Operation
+    from fa.inner_loop.plan_admission import PlanRef, PlanSnapshot
+    from fa.session.manager import SessionManager
+    from fa.session.provisioning import ProvisionedWorkspace
+
+    workspace_id = "ws-" + "1" * 32
+    revision_id = "rev-" + "2" * 32
+
+    published_candidate_hashes: list[str] = []
+
+    class _Client:
+        def request(self, operation: Operation, **_kwargs: Any) -> dict[str, Any]:
+            if operation is not Operation.RELEASE:
+                raise AssertionError(f"unexpected operation in test client: {operation}")
+            return {}
+
+        def publish_plan(
+            self,
+            binding: ExecutionBinding,
+            source: PlanSnapshot,
+            candidate: PlanSnapshot,
+            *,
+            grant: GrantReply,
+            deadline: float | None = None,
+        ) -> PlanPublication:
+            del deadline
+            if not allow_noop_publication:
+                raise AssertionError("plan publication was not enabled for this test")
+            if (
+                binding.workspace_id != workspace_id
+                or grant.revision_id != revision_id
+                or source.ref.source_kind != candidate.ref.source_kind
+                or source.ref.sha256 != candidate.ref.sha256
+            ):
+                raise AssertionError("no-op publisher only accepts this run's unchanged canonical plan")
+            published_candidate_hashes.append(candidate.ref.sha256)
+            canonical_ref = PlanRef(
+                source.ref.workspace_relative_path,
+                source.ref.source_kind,
+                candidate.ref.sha256,
+            )
+            return PlanPublication(canonical_ref, revision_id, True)
+
+    def ready(path: Path) -> ReadyState:
+        return ReadyState(ReadyStatus.READY, None, "ready_fast_path", path / ".fa" / "ready.log", False, 0)
+
+    def provision(_request: Any) -> ProvisionedWorkspace:
+        return ProvisionedWorkspace(True, workspace_id, revision_id, None)
+
+    manager = SessionManager(
+        state_root=home / ".fa",
+        workspace_root=workspace_root,
+        workspace_preparer=workspace_preparer if workspace_preparer is not None else ready,
+        workspace_provisioner=provision if with_provisioner else None,
+    )
+    monkeypatch.setattr(cli_module, "_session_manager_for_args", lambda _args: manager)
+
+    executions: dict[tuple[str, str], ManagedExecution] = {}
+
+    def managed_for_run(run: Any) -> ManagedExecution | None:
+        if not with_managed_execution:
+            return None
+        if run is None:
+            if local_run_id is None:
+                return None
+            session_id, run_id = "session-test", local_run_id
+        else:
+            session_id, run_id = run.session_id, run.run_id
+        key = (session_id, run_id)
+        if key not in executions:
+            binding = ExecutionBinding(NamespaceRef(session_id, run_id), workspace_id)
+            grant = GrantReply(Operation.ACQUIRE_WRITER, "3" * 64, None, 1, revision_id)
+            executions[key] = ManagedExecution(_Client(), binding, grant)  # type: ignore[arg-type]
+        return executions[key]
+
+    monkeypatch.setattr(cli_module, "managed_execution_for_run", managed_for_run)
+
+    def drive_fixture_stage(**kwargs: Any) -> tuple[Any, bool]:
+        registry = kwargs["build_registry"](None, None)
+        return kwargs["drive"](registry), True
+
+    monkeypatch.setattr(cli_module, "_drive_stage_with_managed_workspace", drive_fixture_stage)
+    return published_candidate_hashes
+
 
 # Use the interpreter running pytest when spawning bash commands, so tests work
 # on minimal environments that only expose ``python3`` (e.g. stock Ubuntu) as
@@ -1091,6 +1199,58 @@ def test_fa_run_system_prompt_mentions_pr_prepare_before_mutation(
     assert "Before your first mutation" in system_message
 
 
+def test_parsed_run_refuses_missing_provisioner_before_lifecycle_or_provider(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: CaptureFixture[str]
+) -> None:
+    """C2/C3 root + EDGE KILL-CHECK: removing resolver call leaks into host execution."""
+    config = tmp_path / "models.yaml"
+    config.write_text(_FAKE_MODELS_YAML, encoding="utf-8")
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    _install_test_managed_cli_dependencies(
+        monkeypatch, home=home, workspace_root=tmp_path.parent, with_provisioner=False
+    )
+    args = _make_run_args(workspace=tmp_path, config=config, run_id="no-provisioner")
+    args.session_id = None
+    transport = _ScriptedTransport([_stop_body("must-not-run")])
+
+    assert _cmd_run(args, transport=transport, secrets=_TEST_SECRETS) == 2
+    assert transport.calls == []
+    assert not (home / ".fa" / "sessions").exists()
+    assert "managed_execution_unavailable" in capsys.readouterr().err
+
+
+def test_parsed_run_refuses_missing_writer_before_registry_or_provider(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: CaptureFixture[str]
+) -> None:
+    """C2/C3 root + EDGE KILL-CHECK: bypassing the stage guard builds host registry and calls provider."""
+    config = tmp_path / "models.yaml"
+    config.write_text(_FAKE_MODELS_YAML, encoding="utf-8")
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    _install_test_managed_cli_dependencies(
+        monkeypatch, home=home, workspace_root=tmp_path.parent, with_managed_execution=False
+    )
+    registry_builds: list[bool] = []
+    original_build = cli_module._build_run_tool_registry
+
+    def record_registry_build(*args: Any, **kwargs: Any) -> Any:
+        registry_builds.append(True)
+        return original_build(*args, **kwargs)
+
+    monkeypatch.setattr(cli_module, "_build_run_tool_registry", record_registry_build)
+    args = _make_run_args(workspace=tmp_path, config=config, run_id="no-writer")
+    args.session_id = None
+    transport = _ScriptedTransport([_stop_body("must-not-run")])
+
+    assert _cmd_run(args, transport=transport, secrets=_TEST_SECRETS) == 2
+    assert registry_builds == []
+    assert transport.calls == []
+    assert "managed execution unavailable; refusing host-path stage" in capsys.readouterr().err
+
+
 def test_fa_run_session_manager_creates_and_attaches_with_fresh_run_ids(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1108,6 +1268,7 @@ def test_fa_run_session_manager_creates_and_attaches_with_fresh_run_ids(
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("USERPROFILE", str(home))
 
+    _install_test_managed_cli_dependencies(monkeypatch, home=home, workspace_root=tmp_path.parent)
     first_args = _make_run_args(workspace=tmp_path, config=config, run_id="")
     first_args.session_id = None
     first_args.resume = False
@@ -1116,7 +1277,9 @@ def test_fa_run_session_manager_creates_and_attaches_with_fresh_run_ids(
     manifests = sorted((home / ".fa" / "sessions").glob("*/manifest.json"))
     assert len(manifests) == 1
     session_id = json.loads(manifests[0].read_text(encoding="utf-8"))["session_id"]
-    run_dirs = sorted(d for d in (home / ".fa" / "session-log").iterdir() if d.is_dir())
+    run_dirs = sorted(
+        d for d in (home / ".fa" / "session-log").iterdir() if d.is_dir() and (d / "events.jsonl").is_file()
+    )
     assert len(run_dirs) == 1
     first_run_id = run_dirs[0].name
 
@@ -1125,7 +1288,9 @@ def test_fa_run_session_manager_creates_and_attaches_with_fresh_run_ids(
     second_args.resume = False
     assert _cmd_run(second_args, transport=_ScriptedTransport([_stop_body("second")]), secrets=_TEST_SECRETS) == 0
 
-    run_dirs = sorted(d for d in (home / ".fa" / "session-log").iterdir() if d.is_dir())
+    run_dirs = sorted(
+        d for d in (home / ".fa" / "session-log").iterdir() if d.is_dir() and (d / "events.jsonl").is_file()
+    )
     assert len(run_dirs) == 2
     second_run_id = next(d.name for d in run_dirs if d.name != first_run_id)
     assert second_run_id != first_run_id
@@ -1196,6 +1361,12 @@ def test_readiness_completes_before_provider_build_or_call(
 
     monkeypatch.setattr(cli_module, "ensure_workspace_ready", ready)
     monkeypatch.setattr(cli_module, "_build_provider_chain", recording_build)
+    _install_test_managed_cli_dependencies(
+        monkeypatch,
+        home=home,
+        workspace_root=tmp_path.parent,
+        workspace_preparer=cli_module._prepare_managed_workspace,
+    )
     args = _make_run_args(workspace=tmp_path, config=config, run_id="readiness-order")
     args.session_id = None
     args.resume = False

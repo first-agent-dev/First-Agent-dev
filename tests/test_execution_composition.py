@@ -42,6 +42,7 @@ from fa.execution.composition import (
     managed_execution_for_run,
 )
 from fa.execution.service import SupervisorService, read_config_file
+from fa.execution.supervisor import SupervisorError
 from fa.execution.types import (
     Access,
     ExecutionContractError,
@@ -53,6 +54,7 @@ from fa.execution.types import (
 )
 from fa.inner_loop import workflow_controller
 from fa.inner_loop.plan_admission import PlanRef, read_plan_snapshot, snapshot_from_bytes
+from fa.inner_loop.plan_promotion import PlanPromotionError
 from fa.session.manager import RunContext, SessionManagerError
 from fa.session.provisioning import ProvisionMode, ProvisionRequest
 from tests.test_execution_service import _registered, exchange
@@ -204,6 +206,61 @@ def test_without_an_execution_block_there_is_no_managed_execution(tmp_path: Path
     assert managed_execution_for_run(run, config_path=tmp_path / "missing.yaml") is None
     # A legacy `--run-id`-only invocation resolves no contexts at all.
     assert managed_execution_for_run(None) is None
+
+
+def test_session_cli_refuses_missing_provisioner_before_workspace_lifecycle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A missing managed backend cannot trigger host clone, attach, or readiness."""
+    lifecycle_calls: list[str] = []
+
+    class _HostOnlyManager:
+        workspace_provisioner = None
+
+        def create_or_attach_session(self, **_kwargs: Any) -> Any:
+            lifecycle_calls.append("create_or_attach")
+            raise AssertionError("host lifecycle ran without a managed provisioner")
+
+    monkeypatch.setattr(cli, "_session_manager_for_args", lambda _args: _HostOnlyManager())
+
+    with pytest.raises(SessionManagerError) as refused:
+        cli._resolve_cli_run_context(argparse.Namespace(session_id="session-test", workspace=None, run_id=None))
+
+    assert refused.value.code == "managed_execution_unavailable"
+    assert lifecycle_calls == []
+
+
+def test_session_stage_refuses_missing_managed_execution_before_registry_or_provider(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A provisioned session still cannot fall back if its run writer is unavailable."""
+    run = _run(tmp_path)
+    built: list[str] = []
+
+    monkeypatch.setattr(cli, "_execution_for_cli_stage", lambda *_args: (None, False))
+
+    def forbidden_registry(*_args: Any, **_kwargs: Any) -> Any:
+        built.append("registry")
+        raise AssertionError("host registry was built without managed execution")
+
+    outcome, release_confirmed = cli._run_cli_stage(
+        args=argparse.Namespace(),
+        run_context=run,
+        run_id=run.run_id,
+        run_log_dir=run.run_log_dir,
+        session_db=None,
+        log=SimpleNamespace(path=run.run_log_dir / "events.jsonl"),
+        workspace=run.workspace_path,
+        role="chat",
+        plan_ref=None,
+        build_registry=forbidden_registry,
+        drive=forbidden_registry,
+    )
+
+    assert outcome is None
+    assert release_confirmed
+    assert built == []
+    assert "managed execution unavailable; refusing host-path stage" in capsys.readouterr().err
 
 
 def test_the_managed_execution_publishes_through_the_operator_config(site: Site, tmp_path: Path) -> None:
@@ -450,6 +507,109 @@ def test_the_workflow_root_reaches_promotion(monkeypatch: pytest.MonkeyPatch, tm
     assert seen["managed_execution"] is managed
     assert published == [snapshot_from_bytes("draft.md", b"# Repaired plan\n").ref.sha256]
     assert client.calls == [Operation.RELEASE]  # the writer is released when the run returns
+
+
+def test_workflow_root_keeps_plan_unchanged_when_local_authority_refuses_publication(
+    site: Site, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R25: a real managed PUBLISH refusal has no host-path write fallback."""
+    plan_path = site.source / PLAN_RELATIVE
+    plan_path.parent.mkdir(parents=True, exist_ok=True)
+    plan_path.write_text(
+        "Plan-ID: PLAN-cli-fixture\n\n## SLICE1: CLI routing fixture\n"
+        "CONTRACTS:\n  CT9001 [CONSTRAINT]: fixture input remains present.\n"
+        "TESTS: tests/test_fixture_contract.py\n",
+        encoding="utf-8",
+    )
+    test_path = site.source / "tests/test_fixture_contract.py"
+    test_path.parent.mkdir(parents=True, exist_ok=True)
+    test_path.write_text("def test_fixture_input():\n    assert True\n", encoding="utf-8")
+    source = read_plan_snapshot(site.source, Path(PLAN_RELATIVE))
+    original_bytes = plan_path.read_bytes()
+    candidate_text = source.text.replace("fixture input remains present.", "candidate revision remains valid.")
+    assert candidate_text != source.text
+    candidate = snapshot_from_bytes("draft.md", candidate_text.encode("utf-8"))
+    validated = workflow_controller._validate_plan_admission(candidate)
+    assert validated.outcome == "PASS"
+
+    service_path, yaml_path = _configs(tmp_path, _document(site))
+    refusal_operations: list[str] = []
+    run = _run(site.source)
+
+    class _WorkflowManager:
+        @staticmethod
+        def resolve_workflow_workspace(**_kwargs: Any) -> Path:
+            return site.source
+
+    monkeypatch.setattr(cli, "_session_manager_for_args", lambda _args: _WorkflowManager())
+    monkeypatch.setattr(cli, "_resolve_workflow_lifecycle", lambda _args, run_id: (run_id, None, run, None))
+    managed_instances: list[ManagedExecution] = []
+
+    def real_local_execution(run_context: RunContext) -> ManagedExecution | None:
+        managed = managed_execution_for_run(run_context, config_path=yaml_path)
+        if managed is not None:
+            managed_instances.append(managed)
+        return managed
+
+    monkeypatch.setattr(cli, "managed_execution_for_run", real_local_execution)
+    promotion_failures: list[tuple[str, bool]] = []
+
+    def fake_run_workflow(**kwargs: Any) -> tuple[int, None]:
+        assert isinstance(kwargs["plan_publisher"], BoundPlanPublisher)
+        assert kwargs["managed_execution"] is managed_instances[0]
+        with pytest.raises(PlanPromotionError) as refused:
+            workflow_controller._promote_validated_plan(
+                source,
+                validated,
+                publisher=kwargs["plan_publisher"],
+            )
+        promotion_failures.append((refused.value.rule, refused.value.replaced))
+        return 2, None
+
+    monkeypatch.setattr(cli, "run_workflow", fake_run_workflow)
+    args = argparse.Namespace(
+        task="ship it",
+        task_planner=None,
+        task_coder=None,
+        task_eval=None,
+        run_id="run-1",
+        mode="linear",
+        roles="planner",
+        inject=None,
+        max_repairs=None,
+        max_replans=None,
+        plan=Path(PLAN_RELATIVE),
+        session_id="session-1",
+        workspace=str(site.source),
+        config=tmp_path / "models.yaml",
+        max_turns=1,
+        output_mode="console",
+    )
+
+    with SupervisorService(read_config_file(service_path)) as service:
+        workspace_id = _registered(service)
+
+        def refuse_before_commit(*_args: Any, **kwargs: Any) -> Any:
+            refusal_operations.append(str(kwargs["operation_id"]))
+            raise SupervisorError("INPUT_POLICY")
+
+        monkeypatch.setattr(service.authority, "publish_candidate_plan", refuse_before_commit)
+        stop = threading.Event()
+        runner = threading.Thread(target=service.serve_forever, args=(stop,), daemon=True)
+        runner.start()
+        try:
+            assert cli._cmd_workflow(args) == 2
+        finally:
+            stop.set()
+            runner.join(timeout=5)
+            assert not runner.is_alive()
+
+        assert site.metadata({"workspace_id": workspace_id})["status"] == "AVAILABLE"
+
+    assert len(managed_instances) == 1
+    assert promotion_failures == [("prepare-failed", False)]
+    assert len(refusal_operations) == 1  # the PUBLISH is not replayed after a refusal
+    assert plan_path.read_bytes() == original_bytes
 
 
 @pytest.mark.parametrize("reuse_workflow_owner", [False, True])

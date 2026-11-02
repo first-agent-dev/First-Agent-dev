@@ -48,6 +48,7 @@ from fa.inner_loop.workflow_artifacts import (
 )
 from fa.inner_loop.workflow_controller import read_back_terminal_state as _read_back_terminal_state
 from fa.providers.base import TransportResponse
+from tests.test_cli import _install_test_managed_cli_dependencies
 from tests.test_cli_ergonomics import (
     _FAKE_MODELS_YAML,
     _TEST_SECRETS,
@@ -540,10 +541,18 @@ def test_s8_adaptive_round_stage_failure_is_recorded(tmp_path: Path, monkeypatch
         max_replans=1,
     )
     transport = _FailAfterNTransport([("REPLAN_REQUIRED", "return_to_planner")], fail_from=4)
+    published = _install_test_managed_cli_dependencies(
+        monkeypatch,
+        home=tmp_path / "home",
+        workspace_root=tmp_path.parent,
+        local_run_id=args.run_id,
+        allow_noop_publication=True,
+    )
 
     code = _cmd_workflow(args, transport=transport, secrets=_TEST_SECRETS)
 
     assert code == 2
+    assert published == []  # the scoped planner fails before candidate publication
     state = load_flow_state(home / ".fa" / "session-log" / "wf-adpfail" / "flow_state.json")
     assert state.status == "FAILED"
     assert state.blocked_reason == "admission/promotion/prepare-failed"
