@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import subprocess
 import threading
 from pathlib import Path
 from typing import Any, override
@@ -14,6 +15,7 @@ from fa.execution import project_tools
 from fa.inner_loop.registry import ToolResult
 from fa.inner_loop.tools.fs_reach import build_fs_reach_tool
 from fa.inner_loop.tools.fs_search import build_fs_search_tool
+from fa.memory import structural_index
 from fa.memory.search_index import SearchIndex, _refresh_state
 from fa.memory.structural_index import StructuralIndex
 
@@ -50,11 +52,65 @@ def test_real_search_and_reach_stay_on_each_distinct_view(tmp_path: Path) -> Non
         assert not (root / ".fa").exists()
 
 
+def test_cell_local_search_without_git_metadata_does_not_spawn_git(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """C3 helper-route check; not a production EXEC or managed-backend proof."""
+    root, scratch = _tree(tmp_path, "cell-search", "def alpha():\n    return 1\n")
+    invocations: list[list[str]] = []
+
+    def record_git(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        del kwargs
+        invocations.append(list(argv))
+        return subprocess.CompletedProcess(list(argv), 0, stdout="", stderr="")
+
+    monkeypatch.setattr("fa.memory._safe_walk.subprocess.run", record_git)
+    result = project_tools._dispatch(
+        "fs_search", {"query": "alpha", "output_mode": "files"}, root=root, scratch=scratch
+    )
+
+    assert result.error is None, result.error
+    assert result.result is not None
+    assert "chain.py" in json.dumps(result.result)
+    assert invocations == []
+    assert list(scratch.iterdir()) == []
+    assert not (root / ".fa").exists()
+
+
 def test_existing_reach_default_still_uses_legacy_db(tmp_path: Path) -> None:
     root, _scratch = _tree(tmp_path, "legacy", "def alpha():\n    return 1\n")
     result = build_fs_reach_tool(root).handler({"symbol": "alpha"})
     assert result.error is None
     assert (root / ".fa" / "structural.db").is_file()
+
+
+def test_cell_reach_refuses_symlink_replacement_after_enumeration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, scratch = _tree(tmp_path, "mutable-view", "def safe_symbol():\n    pass\n")
+    target = root / "chain.py"
+    outside = tmp_path / "outside.py"
+    outside.write_text("def escaped_secret():\n    pass\n", encoding="utf-8")
+    original_walk = structural_index.iter_searchable_files
+    swapped = False
+
+    def replace_after_enumeration(*args: Any, **kwargs: Any) -> Any:
+        nonlocal swapped
+        for row in original_walk(*args, **kwargs):
+            yield row
+            if row[1] == "chain.py" and not swapped:
+                swapped = True
+                target.unlink()
+                target.symlink_to(outside)
+
+    monkeypatch.setattr(structural_index, "iter_searchable_files", replace_after_enumeration)
+    result = project_tools._dispatch("fs_reach", {"symbol": "escaped_secret"}, root=root, scratch=scratch)
+
+    assert swapped is True
+    assert result.error is not None and result.error.code == "reach_failed"
+    assert result.error.retryable is False
+    assert "escaped_secret" not in json.dumps(result.result)
+    assert not (root / "structural.db").exists()
 
 
 @pytest.mark.parametrize("kind", ["same", "inside", "ancestor", "alias", "missing"])
@@ -452,3 +508,100 @@ def test_search_memory_close_sqlite_failure_is_strict_only_when_requested(
     # connection is already closed by FailingClose before it raises.
     legacy = SearchIndex(Path(":memory:"))
     legacy.close()
+
+
+def test_cell_search_builder_binds_strict_rooted_reads_and_host_default_stays_legacy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, scratch = _tree(tmp_path, "strict-binding", "def alpha():\n    return 1\n")
+    original_builder = project_tools.build_fs_search_tool
+    strict_flags: list[object] = []
+
+    def observe_builder(*args: Any, **kwargs: Any) -> Any:
+        strict_flags.append(kwargs.get("strict_rooted_reads", False))
+        return original_builder(*args, **kwargs)
+
+    monkeypatch.setattr(project_tools, "build_fs_search_tool", observe_builder)
+    result = project_tools._dispatch("fs_search", {"path": "."}, root=root, scratch=scratch)
+    assert result.error is None, result.error
+    assert strict_flags == [True]
+
+    from fa.inner_loop.tools import fs_search
+
+    def strict_reader_must_not_be_constructed(*args: Any, **kwargs: Any) -> Any:
+        del args, kwargs
+        raise AssertionError("legacy host builder unexpectedly enabled strict rooted reads")
+
+    monkeypatch.setattr(fs_search, "RootedFileReader", strict_reader_must_not_be_constructed)
+    legacy = build_fs_search_tool(tmp_path / "legacy-search.db", root)
+    legacy_result = legacy.handler({"query": "alpha", "output_mode": "files"})
+    assert legacy_result.error is None, legacy_result.error
+    assert legacy_result.result is not None and legacy_result.result["files"]
+
+
+@pytest.mark.parametrize(
+    ("surface", "params"),
+    [
+        ("outline", {"path": "chain.py", "output_mode": "outline"}),
+        ("listing", {"path": "."}),
+        ("indexed", {"query": "escaped_secret", "output_mode": "files"}),
+        ("fallback", {"query": "escaped_secret", "output_mode": "files", "regex": True}),
+    ],
+)
+def test_cell_search_rooted_refusal_has_no_fallback_partial_result_or_external_bytes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    surface: str,
+    params: dict[str, Any],
+) -> None:
+    from fa.inner_loop.tools import fs_search
+    from fa.memory import _safe_walk, search_index
+
+    root, scratch = _tree(tmp_path, f"strict-{surface}", "def safe_symbol():\n    pass\n")
+    target = root / "chain.py"
+    outside = tmp_path / f"{surface}-outside.py"
+    outside.write_text("def escaped_secret():\n    return 'external bytes'\n", encoding="utf-8")
+    swapped = False
+
+    def replace_target() -> None:
+        nonlocal swapped
+        if not swapped:
+            target.unlink()
+            target.symlink_to(outside)
+            swapped = True
+
+    if surface == "outline":
+        original_read = _safe_walk.RootedFileReader.read_bytes_with_path
+
+        def swap_before_rooted_read(self: Any, rel: str, **kwargs: Any) -> tuple[str, bytes]:
+            replace_target()
+            return original_read(self, rel, **kwargs)
+
+        monkeypatch.setattr(_safe_walk.RootedFileReader, "read_bytes_with_path", swap_before_rooted_read)
+    else:
+        original_walk = search_index.iter_searchable_files
+
+        def swap_after_enumeration(*args: Any, **kwargs: Any) -> Any:
+            for row in original_walk(*args, **kwargs):
+                yield row
+                if row[1] == "chain.py":
+                    replace_target()
+
+        monkeypatch.setattr(search_index, "iter_searchable_files", swap_after_enumeration)
+        if surface == "fallback":
+            def force_fallback(holder: Any, root_arg: Path, max_file_size: int, warnings: list[str]) -> None:
+                del root_arg, max_file_size, warnings
+                holder._indexed = False
+                return None
+
+            monkeypatch.setattr(fs_search, "_ensure_index", force_fallback)
+
+    result = project_tools._dispatch("fs_search", params, root=root, scratch=scratch)
+
+    assert swapped is True
+    assert result.error is not None and result.error.code == "search_failed"
+    assert result.result is None
+    assert "escaped_secret" not in json.dumps(result.result)
+    assert "external bytes" not in json.dumps(result.result)
+    assert list(scratch.iterdir()) == []
+    assert not (root / ".fa").exists()

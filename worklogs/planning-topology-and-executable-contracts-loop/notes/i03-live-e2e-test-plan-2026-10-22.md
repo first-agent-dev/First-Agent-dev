@@ -183,6 +183,28 @@ needs two real runs. It is P6 work: it cannot be written before SLICE2 STEP6 exi
 
 ---
 
+## 4.2. Q112/R02 entrypoint readiness and session-ledger append (PROPOSAL; not an I03-LIVE result)
+
+This proposal covers the selected `auto_run_only` contract for `scripts/fa-entrypoint.sh`. It does not create or
+renumber a frozen `I03-LIVE-*` row and must not run until the approved implementation is merged to `main` and
+deployed through the user's `fa update` workflow. The tests require an approved host, image, state root, and a
+controlled readiness degradation; Docker and live-host evidence remain absent here.
+
+**Ledger authority.** Observe the on-host `<FA_STATE_ROOT>/sessions/<session_id>/session.db` directly, read-only.
+`SessionManager.begin_run` claims `run_binding:<run_id>` in `session_meta`; `SessionDatabase.event_log` is the
+authoritative event ledger. `events.jsonl` is a compatibility mirror and is not the append-count oracle. Record
+pre-run DB row/key snapshots, post-run snapshots, returned process status, `run_id`, and hashes in the evidence
+directory; reopen the DB before comparing so the test proves durable state rather than a process-local view.
+
+| Case | Arrange / act | Observe (host status, files, and ledger) | Negative control |
+| :--- | :--- | :--- | :--- |
+| **L-ENTRY-1** readiness failure refuses managed auto-run | Fresh session ID, `FA_AUTO_RUN=1`, no command override; force `workspace_bootstrap ensure` to fail through a real broken readiness prerequisite; invoke the installed entrypoint | Structured status is `FAILED`; independent process trace shows neither `fa.session.manager provision` nor `fa run`; no `/sessions/.active`, manifest/`session.db`, run binding, run directory, or `event_log` append; only the fresh unpublished clone is removed | Rebuilt test image with the refusal branch disabled must expose the provision/`fa run` `execve` (or a durable provision/run side effect); if the test cannot see the mutant, it is not a valid oracle |
+| **L-ENTRY-2** resumed workspace survives refusal | Pre-existing session workspace with a user sentinel, its existing session DB and one prior run binding; readiness failure and managed auto-run | Refusal is recorded; workspace and sentinel are unchanged; process trace shows neither manager provision nor `fa run`; DB run bindings and `event_log` rows are byte-/row-equivalent to the pre-run snapshot | A test build that removes the refusal gate must expose the manager/`fa run` `execve`, even if a resumed provision leaves no DB delta; the oracle must detect the invocation |
+| **L-ENTRY-3** explicit override remains diagnostic-only | Fresh managed clone, readiness failure, `FA_AUTO_RUN=1`, explicit harmless command override | Override `execve`, exit, and output are observed; trace has no `SessionManager provision` or `fa run`; no new manifest/session DB, run binding, or event append. The existing shell behavior may publish `.active`; do not use its presence as proof of a logical run | Rebuilt test image that removes the no-override provision guard must expose `SessionManager provision` in the process trace or leave a durable provision side effect; the test must fail even if the explicit command itself exits zero |
+| **L-ENTRY-4** successful managed auto-run appends once | Valid readiness; one fresh ID; a deterministic approved provider/profile that completes a minimal task; invoke managed auto-run once | Trace shows exactly one `SessionManager provision` and one `fa run`; exactly one session manifest/DB and one new `run_binding:<run_id>`; `event_log` has a nonempty set of rows for that run, unique `event_id`s, all bound to the expected session/run; rows survive process exit/reopen; a second read/replay observation adds no rows and does not start another run | Disable/replace the production append/binding edge in a test build; the independent SQL snapshot must miss the expected binding/event rows and fail. Do not mutate the approved deployment |
+
+**Execution/evidence rules.** Run the refusal and override cases with both fresh and resumed state as applicable; preserve the existing state root for forensic inspection until after snapshots are captured. Record image digest, deployed SHA, Python version, `FA_STATE_ROOT`, environment with secrets redacted, readiness cause, command/exit, `session_id`, `run_id` (when allocated), pre/post SQL snapshots, workspace hashes, and cleanup observations. Capture independent `execve` evidence with `strace -f -e trace=execve` or an equivalent approved host observer; shell log text alone is not proof that a command was or was not launched. If the host denies the required observation privilege, mark the affected case `BLOCKED`, never `PASS`. The runner must fail if it cannot query the authoritative DB; a missing DB on the refusal path is an expected no-provision outcome, but a missing DB on L-ENTRY-4 is a failed arrange, not a pass. Do not retry a case to manufacture a verdict. Append only actual attempts to the appropriate live register after planner approval of row ownership; this proposal alone assigns no row and proves nothing about host behavior.
+
 ## 5. Sequences worth spelling out (the ones a naive case gets wrong)
 
 1. **Pinned reader vs active writer (S05/L-TOOL-5).** Order matters: create the reader view *while*

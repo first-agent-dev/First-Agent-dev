@@ -42,9 +42,15 @@ def _dispatch(tool: str, params: dict[str, Any], *, root: Path, scratch: Path) -
         with ExitStack() as cleanup:
             registry = ToolRegistry()
             if tool == "fs_search":
-                registry.register(build_fs_search_tool(Path(":memory:"), source, cleanup=cleanup))
+                registry.register(
+                    build_fs_search_tool(
+                        Path(":memory:"), source, cleanup=cleanup, strict_rooted_reads=True
+                    )
+                )
             else:
-                registry.register(build_fs_reach_tool(source, in_memory=True, cleanup=cleanup))
+                registry.register(
+                    build_fs_reach_tool(source, in_memory=True, strict_rooted_reads=True, cleanup=cleanup)
+                )
             return registry.dispatch(ToolCall(tool, params))
     except Exception:  # noqa: BLE001 - untrusted tool data must not become a traceback or partial success
         return _refusal()

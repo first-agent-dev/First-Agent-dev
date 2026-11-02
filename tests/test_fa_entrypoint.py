@@ -155,12 +155,22 @@ def _write_python_readiness_stub(
     active_file: Path,
     called_file: Path,
     readiness_rc: int,
+    provision_file: Path | None = None,
 ) -> Path:
     wrapper = bin_dir / "python-readiness-stub"
+    provision_branch = ""
+    if provision_file is not None:
+        provision_branch = (
+            'if [[ "${1:-}" == "-m" && "${2:-}" == "fa.session.manager" && "${3:-}" == "provision" ]]; then\n'
+            f"  printf 'called\\n' > {str(provision_file)!r}\n"
+            "  exit 0\n"
+            "fi\n"
+        )
     wrapper.write_text(
         "#!/usr/bin/env bash\n"
         "set -euo pipefail\n"
-        'if [[ "${1:-}" == "-m" && "${2:-}" == "fa.workspace_bootstrap" && "${3:-}" == "ensure" ]]; then\n'
+        + provision_branch
+        + 'if [[ "${1:-}" == "-m" && "${2:-}" == "fa.workspace_bootstrap" && "${3:-}" == "ensure" ]]; then\n'
         f"  [[ ! -e {str(active_file)!r} ]] || exit 93\n"
         f"  printf 'called\\n' > {str(called_file)!r}\n"
         f"  printf '[WORKSPACE_BOOTSTRAP] forced test degradation\\n' >&2\n"
@@ -771,7 +781,7 @@ def test_entrypoint_real_readiness_creates_artifacts_before_standby(tmp_path: Pa
 
 
 def test_entrypoint_readiness_degradation_warns_and_continues(tmp_path: Path) -> None:
-    """C2/C3 P1: bootstrap rc 75 is warn/fail-open, not command suppression."""
+    """C2/C3 P1: a readiness failure does not suppress the explicit command override."""
 
     env, _status, bin_dir = _base_env(tmp_path)
     env.pop("FA_WORKSPACE", None)
@@ -809,8 +819,162 @@ def test_entrypoint_readiness_degradation_warns_and_continues(tmp_path: Path) ->
     assert completed.returncode == 0
     assert completed.stdout.endswith("continued")
     assert "forced test degradation" in completed.stderr
-    assert "readiness degraded (rc=75); continuing" in completed.stdout
+    assert "readiness degraded (rc=75); continuing explicit command override" in completed.stdout
     assert active.is_file()
+
+
+def test_entrypoint_auto_run_refuses_after_readiness_degradation_before_provision_or_publication(
+    tmp_path: Path,
+) -> None:
+    """C1/C3: failed managed readiness blocks auto-run before state publication or effects."""
+    env, status, bin_dir = _base_env(tmp_path)
+    calls = _write_fa_stub(bin_dir, env)
+    env.pop("FA_WORKSPACE", None)
+    repo = tmp_path / "repo"
+    _make_source_repository(repo)
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    entrypoint = tmp_path / "entrypoint-readiness-refused.sh"
+    _render_entrypoint(repo, sessions, entrypoint)
+    active = sessions / ".active"
+    readiness_called = tmp_path / "readiness-called"
+    provision_called = tmp_path / "provision-called"
+    python_stub = _write_python_readiness_stub(
+        bin_dir,
+        active_file=active,
+        called_file=readiness_called,
+        readiness_rc=75,
+        provision_file=provision_called,
+    )
+    env.update(
+        {
+            "FA_SESSION_ID": "readiness-refused",
+            "FA_AUTO_RUN": "1",
+            "FA_TASK": "must not run",
+            "FA_STUB_CALLS": str(calls),
+            "PYTHON": str(python_stub),
+            "FA_TEST_REAL_PYTHON": sys.executable,
+        }
+    )
+
+    proc = subprocess.Popen(["bash", str(entrypoint)], env=env, text=True)
+    try:
+        text = _wait_for_status(status, "status=FAILED", proc)
+    finally:
+        _terminate(proc)
+
+    assert "managed auto-run refused" in text
+    assert "status=FAILED" in text
+    assert "exit_code=2" in text
+    assert readiness_called.read_text(encoding="utf-8") == "called\n"
+    assert not active.exists()
+    assert not provision_called.exists()
+    assert not calls.exists()
+    assert not (sessions / "readiness-refused").exists()
+
+
+def test_entrypoint_readiness_refusal_preserves_resumed_workspace(tmp_path: Path) -> None:
+    """C1/C3: readiness refusal never deletes a pre-existing operator workspace."""
+    env, status, bin_dir = _base_env(tmp_path)
+    calls = _write_fa_stub(bin_dir, env)
+    env.pop("FA_WORKSPACE", None)
+    repo = tmp_path / "repo"
+    _make_source_repository(repo)
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    session_id = "readiness-resumed"
+    workspace = sessions / session_id
+    subprocess.run(
+        ["git", "clone", repo.resolve().as_uri(), str(workspace)],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    _git(workspace, "switch", "-c", f"agent/{session_id}")
+    user_file = workspace / "operator-work.txt"
+    user_file.write_text("keep this\n", encoding="utf-8")
+    entrypoint = tmp_path / "entrypoint-resumed-readiness-refused.sh"
+    _render_entrypoint(repo, sessions, entrypoint)
+    active = sessions / ".active"
+    readiness_called = tmp_path / "resumed-readiness-called"
+    provision_called = tmp_path / "resumed-provision-called"
+    python_stub = _write_python_readiness_stub(
+        bin_dir,
+        active_file=active,
+        called_file=readiness_called,
+        readiness_rc=75,
+        provision_file=provision_called,
+    )
+    env.update(
+        {
+            "FA_SESSION_ID": session_id,
+            "FA_AUTO_RUN": "1",
+            "FA_TASK": "must not run",
+            "FA_STUB_CALLS": str(calls),
+            "PYTHON": str(python_stub),
+            "FA_TEST_REAL_PYTHON": sys.executable,
+        }
+    )
+
+    proc = subprocess.Popen(["bash", str(entrypoint)], env=env, text=True)
+    try:
+        text = _wait_for_status(status, "status=FAILED", proc)
+    finally:
+        _terminate(proc)
+
+    assert "managed auto-run refused" in text
+    assert workspace.is_dir()
+    assert user_file.read_text(encoding="utf-8") == "keep this\n"
+    assert not active.exists()
+    assert not provision_called.exists()
+    assert not calls.exists()
+
+
+def test_entrypoint_explicit_override_wins_over_autorun_after_readiness_failure(tmp_path: Path) -> None:
+    """C1/C3: an explicit command remains available and is never auto-run-provisioned."""
+    env, _status, bin_dir = _base_env(tmp_path)
+    env.pop("FA_WORKSPACE", None)
+    repo = tmp_path / "repo"
+    _make_source_repository(repo)
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    entrypoint = tmp_path / "entrypoint-command-override.sh"
+    _render_entrypoint(repo, sessions, entrypoint)
+    active = sessions / ".active"
+    readiness_called = tmp_path / "override-readiness-called"
+    provision_called = tmp_path / "override-provision-called"
+    python_stub = _write_python_readiness_stub(
+        bin_dir,
+        active_file=active,
+        called_file=readiness_called,
+        readiness_rc=75,
+        provision_file=provision_called,
+    )
+    env.update(
+        {
+            "FA_SESSION_ID": "override-after-readiness-failure",
+            "FA_AUTO_RUN": "1",
+            "PYTHON": str(python_stub),
+            "FA_TEST_REAL_PYTHON": sys.executable,
+        }
+    )
+
+    completed = subprocess.run(
+        ["bash", str(entrypoint), "bash", "-c", "printf explicit-override"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=30,
+    )
+
+    assert completed.returncode == 0
+    assert completed.stdout.endswith("explicit-override")
+    assert "continuing explicit command override" in completed.stdout
+    assert readiness_called.read_text(encoding="utf-8") == "called\n"
+    assert active.is_file()
+    assert not provision_called.exists()
 
 
 @requires_posix_paths

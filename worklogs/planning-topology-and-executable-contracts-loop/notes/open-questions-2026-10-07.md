@@ -2374,3 +2374,49 @@ Option B (a private run-scoped grant store inside the client) was rejected on pu
 move `publish_plan`/`release` off their written STEP6-STEP7 contract, and still not hide the token from in-process
 introspection — only from accidental reach, which is exactly what the reachability test now checks
 (`test_the_writer_capability_lives_in_exactly_one_place`, one path per CLI-owned object, a second copy fails).
+
+---
+
+## Q112 — readiness-failure scope for managed `fa-entrypoint` auto-run
+
+**Status: RESOLVED — operator selected `auto_run_only`.** A failed readiness check blocks the managed
+`FA_AUTO_RUN` path before active-workspace publication, session provisioning, or `fa run`. An explicit
+command override remains available as a diagnostic path, including when `FA_AUTO_RUN=1`; it must not run
+the auto-run provisioner. When auto-run is disabled, the existing standby behavior remains.
+
+**Source conflict.** `scripts/fa-entrypoint.sh::_prepare_entrypoint_workspace` returned success after every
+`workspace_bootstrap ensure` failure. The managed auto-run path then published `.active`, provisioned a
+session, and launched `fa run`. At the same time, existing
+`tests/test_fa_entrypoint.py::test_entrypoint_readiness_degradation_warns_and_continues` deliberately
+requires a failed readiness check not to suppress an explicit command override. The planned R02 oracle's
+phrase "no project command without backend" was broader than this existing distinction, while SLICE4 STEP2b's
+fail-open removal names the managed CLI cutover rather than this shell entrypoint.
+
+**Options considered.** (1) block managed auto-run only, preserving explicit command override; (2) block all
+commands, including diagnostic overrides; (3) keep fail-open and narrow R02's contract. The operator selected
+(1). Only a freshly created, unpublished clone may be removed after the refusal; a resumed workspace is
+preserved.
+
+**Implementation boundary.** This decision covers behavior after `workspace_bootstrap ensure` reports failure.
+It does **not** establish that the bootstrap readiness check proves managed-backend availability or that a
+successful check guarantees an EXEC backend. The separate managed-backend negative oracle remains planned;
+R02 and S4P1 stay open until their named production/host evidence exists. No Docker or live-host run is implied.
+
+---
+
+## Q113 — W0/S4P1 exit versus managed-negative dependency on W1
+
+**Status: RESOLVED — operator selected strict row closure (option 2, 2026-11-02); no product contract is being reopened.** W0 remains open until every S4P1 row passes its named managed-backend negative oracle. The operator authorizes the necessary managed-composition prerequisite to be implemented before W0 exits; this is a recorded re-sequencing exception, not permission to mark rows closed early.
+
+**Source conflict.** The increment's execution order is W0 → W1 → W2; W0 includes S4P1's inventory rows, and the S4P1 table says to close each row with a current source line, caller, and nodeid. The inventory note separately says no S4P1 row closes until its named negative oracle runs against a managed backend, identified as SLICE4 STEP2/W1. Current source makes the dependency concrete: R27's `_cmd_run` builds the tool registry without `workspace_io`, and the planned live-chat canonical-tree negative is absent; R28's host-bootstrap isolation negative also depends on managed Bash; Q112/R02's separate backend-availability oracle is likewise not supplied by `workspace_bootstrap ensure`.
+
+Therefore, if W0 requires every S4P1 *row* to be closed, its stated evidence gate requires W1's managed composition first. If W0 requires only inventory completion (source/caller/current or planned nodeid and explicit dependencies), the negative-oracle executions can remain open and run during W1 without changing the wave order. The current plan text uses both formulations; this record does not decide between them.
+
+**Options for the operator/planner.**
+
+1. **W0 means inventory readiness.** Complete the source/caller/oracle map for every S4P1 row; leave rows explicitly OPEN until the managed negative oracles run in W1. W0 may exit on that inventory criterion, then W1 begins in the written order. This clarifies the wave exit without marking any S4P1 row closed or weakening its acceptance test.
+2. **W0 requires row closure.** Keep every managed-negative result as a W0 exit criterion; authorize a managed-composition prerequisite before W0 exit or explicitly re-sequence the required W1 work. The dependency order changes and must be recorded before implementation.
+
+**Resolution (2026-11-02; operator selected option 2, strict row closure).** W0 cannot exit until each S4P1 row's named negative oracle passes. The operator authorizes the managed-composition prerequisite needed to run those oracles before W0 exits; remaining W1 regression/cutover work stays after W0. This permits only the required prerequisite, not early row closure or live-host claims.
+
+**Guardrails.** No row is PASS/CLOSED without its named negative oracle; no live-host evidence is inferred from local source checks; no Docker is started before the planned post-merge host phase. Keep W0 open while prerequisite work and row oracles are incomplete.

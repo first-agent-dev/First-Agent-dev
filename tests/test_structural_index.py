@@ -180,6 +180,26 @@ def test_module_attribute_and_unknown_stay_unresolved(indexed: StructuralIndex) 
 # ── incremental + ghost sweep ───────────────────────────────────────────────
 
 
+def test_strict_rooted_index_deduplicates_in_root_symlink_alias(tmp_path: Path) -> None:
+    _write(tmp_path / "real.py", "def alpha():\n    return 1\n")
+    alias = tmp_path / "alias.py"
+    try:
+        alias.symlink_to("real.py")
+    except OSError as exc:
+        pytest.skip(f"symlinks unavailable: {exc}")
+
+    index = StructuralIndex(tmp_path / "unused.db", in_memory=True, strict_rooted_reads=True)
+    try:
+        stats = index.ensure_indexed(tmp_path)
+        assert stats.available is True
+        assert stats.files_indexed == 1
+        rows = _find(index, "alpha")
+        assert len(rows) == 1
+        assert rows[0].path == "real.py"
+    finally:
+        index.close()
+
+
 def test_incremental_reindex_zero_changes(tmp_path: Path) -> None:
     _write(tmp_path / "mod.py", "def x():\n    return 1\n")
     index = StructuralIndex(tmp_path / ".fa" / "structural.db")

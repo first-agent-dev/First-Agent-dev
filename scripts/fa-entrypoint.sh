@@ -19,6 +19,10 @@ TASK_TEXT=""
 TASK_SOURCE=""
 CHILD_PID=""
 ENTRYPOINT_MANAGED_SESSION=0
+ENTRYPOINT_HAS_COMMAND_OVERRIDE=0
+if [[ $# -gt 0 ]]; then
+  ENTRYPOINT_HAS_COMMAND_OVERRIDE=1
+fi
 
 log() {
   local ts
@@ -167,7 +171,15 @@ _prepare_entrypoint_workspace() {
   else
     readiness_rc=$?
   fi
-  log "WARN: workspace readiness degraded (rc=$readiness_rc); continuing under fail-open policy"
+  if [[ "$ENTRYPOINT_HAS_COMMAND_OVERRIDE" == "1" ]]; then
+    log "WARN: workspace readiness degraded (rc=$readiness_rc); continuing explicit command override"
+    return 0
+  fi
+  if _truthy "${FA_AUTO_RUN:-0}"; then
+    log "ERROR: workspace readiness degraded (rc=$readiness_rc); refusing auto-run"
+    return "$readiness_rc"
+  fi
+  log "WARN: workspace readiness degraded (rc=$readiness_rc); continuing to standby"
   return 0
 }
 
@@ -216,9 +228,17 @@ if [[ -d "/repo/.git" ]] && [[ -z "${FA_WORKSPACE:-}" ]]; then
         _fail_to_standby "managed Git configuration failed for $SESSION_DIR"
     fi
 
-    _prepare_entrypoint_workspace
+    if ! _prepare_entrypoint_workspace; then
+        if [[ "$SESSION_CREATED" == "1" ]]; then
+            rm -rf "$SESSION_DIR" 2>/dev/null || true
+        fi
+        detail="workspace readiness failed; managed auto-run refused"
+        log "Auto-run refused: $detail"
+        _write_status 2 "FAILED" "$detail"
+        _standby
+    fi
 
-    # Publish only after branch/remotes/identity and readiness admission are complete.
+    # Publish after setup/readiness; readiness failure blocks managed auto-run but not an explicit override.
     echo "$SESSION_DIR" > "/sessions/.active.tmp.$$"
     mv "/sessions/.active.tmp.$$" "/sessions/.active"
 
@@ -263,7 +283,9 @@ _provision_entrypoint_session() {
 # Provision its manifest/DB through the canonical Python owner before launch;
 # command override remains a filesystem/debug adapter and does not invent a
 # second logical session authority.
-if [[ "$ENTRYPOINT_MANAGED_SESSION" == "1" ]] && _truthy "${FA_AUTO_RUN:-0}"; then
+if [[ "$ENTRYPOINT_MANAGED_SESSION" == "1" ]] \
+    && [[ "$ENTRYPOINT_HAS_COMMAND_OVERRIDE" == "0" ]] \
+    && _truthy "${FA_AUTO_RUN:-0}"; then
   _provision_entrypoint_session
 fi
 

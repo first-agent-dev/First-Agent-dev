@@ -7895,3 +7895,171 @@ no rows/summary posing as success. Это требует пройти `matches/f
 index budget всё ещё должен опираться на фиксированный cell cgroup profile и live
 measurements. Сейчас это design finding; production code не менялся, Q97/Q108
 остаются открытыми.
+
+### E384 — S4P1/R20 targeted working-tree refresh (helper-level only)
+
+Traceability: I03 W0 → S4P1 → R20 (`memory/_safe_walk.py` project-Git discovery). The current no-`.git`
+short-circuit at `_git_ls_files:461–467` precedes `which`/`subprocess.run`; `iter_searchable_files:596–655`
+uses this producer, while `SearchIndex._walk_and_index` and `_search_python_walk` remain separate reader paths.
+The current project helper binds `fs_search` in `execution/project_tools.py::_dispatch:44–45`, but the
+`workspace_io` builder path in `fs_search.py:1003–1018` refuses. No production EXEC/supervisor caller was
+established, and this work does not close Q109: cell-local `fs_search` still lacks strict rooted reads.
+
+Added `tests/test_execution_project_tools.py::test_cell_local_search_without_git_metadata_does_not_spawn_git`.
+It uses the real helper/registry against a temporary view without `.git`, requires a positive `chain.py` hit,
+records `subprocess.run`, and requires zero Git invocations plus an untouched scratch directory and no in-view
+index. This is helper-level C3 evidence, not a C1 production path, managed-backend negative oracle, or live-host
+result. The R20 inventory note now records this distinction; S4P1/R20 remains OPEN.
+
+Verification on CPython 3.13.16: target bank `tests/test_execution_project_tools.py`,
+`tests/test_execution_tool_index.py::test_a_managed_search_runs_no_host_git_subprocess`, and
+`tests/test_safe_walk.py` — **56 passed, 2 xfailed, exit 0**; both xfails are the existing Q106 60-KiB envelope
+cases. Ruff passed; `scripts/check_doc_links.py` checked 324 Markdown files with no broken internal links;
+`git diff --check` passed. Producer mutation disabling the no-`.git` guard was killed by the positive-hit
+assertion (pytest exit 1). EDGE mutation removing `build_fs_search_tool` registration was killed by the
+structured `project_tool_failed` result (pytest exit 1). Both mutations were restored, and the target bank was
+rerun successfully afterwards.
+
+No runtime code changed. No production composition, managed negative oracle, host command, or live E2E ran;
+`I03-LIVE-S07` remains a proposal. Continue W0/S4P1 in dependency order. Before Q109 `fs_search` changes,
+finish the per-file source → caller → reader/guard traceability and confirm the exact contract scope; do not
+infer whole-view snapshot behavior or numeric ceilings.
+
+### E385 — Q109 `fs_search` source-to-reader trace completed (pre-code)
+
+The dated inventory note now records the complete local source flow from `project_tools.main` →
+`_dispatch` → `ToolRegistry` → `build_fs_search_tool` → `_handle`, and separates it from the absent
+production EXEC/supervisor caller. It maps outline, no-query files listing, indexed query, Python-walk fallback,
+FTS hit formatting, and index lifecycle path metadata checks to their concrete readers/guards. In particular,
+`strict_paths=True` already yields lexical candidates and `RootedFileReader.read_bytes_with_path` is the
+available rooted seam, but `SearchIndex`/`fs_search` do not use it. Existing fail-degraded catches can turn a
+rooted read refusal into a warning/partial result unless strict mode propagates it to non-success.
+
+Future code boundary (not implemented here): opt-in strict reads for the cell-local helper only; reuse the
+existing rooted reader and strict candidate mode; cover every source read in outline/list/index/fallback/formatting;
+make a rooted refusal fail closed without a partial ToolResult; leave the legacy host builder default, schemas,
+existing per-file filtering, whole-view snapshot policy, and numeric ceilings unchanged. Proposed files and
+producer/EDGE tests are enumerated in the inventory note. Q111 output-cap behavior is separate and remains open;
+this finding does not make the helper a production EXEC route or claim managed/live evidence.
+
+**Dependency stop.** No production code was changed for Q109. W0 remains open because S4P1 still lacks its
+managed-backend negative oracle and remaining row closures. The next permissible implementation point is only
+after the authoritative W0 gate; this source review supplies traceability, not a waiver of dependency order.
+
+### E386 — W0 managed-backend availability check
+
+Checked runtime availability before attempting the required managed negative oracle using a shell loop around
+`command -v docker`, `command -v podman`, and `command -v nerdctl`. Output: each was absent (shell exit 0).
+No managed-backend test or live-host run was attempted, and no S4P1 row was closed. The dependency blocker
+therefore remains; the local CPython 3.13 helper bank is not substituted for the managed oracle.
+
+### E387 — S4P1/R21 current caller refresh
+
+`inner_loop/tools/_common.py::git_ls_files:22–53` still runs bare `git`, but the current source search finds
+no production caller: only the helper definition/doc/example/export remain. Current `fs_search` calls the
+separate R20 `_safe_walk` enumerator. `tests/test_tools_common.py::TestGitLsFiles` exercises R21 directly
+and initializes temporary Git repositories; the R20 managed-refusal test does not cover it. The exact bank
+`tests/test_tools_common.py` passed **31 tests, exit 0** on CPython 3.13.16. The inventory now records R21 as
+dormant/no product edge established; no helper was removed, no managed route was inferred, and no row was closed.
+
+### E388 — S4P1/R22 current caller and oracle refresh
+
+Corrected the current trace: `_run_git` belongs to the module CLI used by installed prepare/commit-msg hooks;
+`resolve_hooks_dir` belongs to hook installation/status and workspace-readiness callers. The chat `pr_prepare`
+tool does **not** call `_run_git`: it invokes `validate_commit_msg` with `staged=[]`, deferring staged citation
+resolution to the Git hook. The historical/planned nodeid `test_pr_prepare_reads_only_a_managed_revision` is
+absent. Current local tests `tests/test_prepare_pr.py`, `tests/test_pr_intent_snapshot.py`, two exact
+`resolve_hooks_dir` tests and two workspace-bootstrap tests passed **91 tests, exit 0** on CPython 3.13.16.
+This is not a managed backend or host oracle; R22 remains OPEN and the current distinction is recorded in the
+inventory note.
+
+### E389 — S4P1/R23 current caller refresh
+
+The source Git operations remain in `IsolatedWorktreeManager`, but the production subagent path currently calls
+`SessionState.create_subagent_workspace` → `ensure_subagent_artifact_root` and cleans via `shutil`; its
+`worktree_manager` is not the active creator/cleanup edge, and isolated config mode is rejected. Direct manager
+coverage is test-only (`tests/test_worktree_defensive.py`); the actual helper/artifact route is covered separately
+by `test_spawn_tool_uses_the_artifact_root_end_to_end`. The planned old nodeid
+`test_subagent_isolation_never_touches_the_canonical_root` is absent. Target bank passed **22 passed, 1 Q19
+xfail, exit 0**. Q19's OS-level writable-mount gap remains open. No code changed; no production caller was
+inferred and R23 remains OPEN.
+
+### E390 — S4P1/R24 current workflow caller and bank refresh
+
+The inventory now records the live controller edge: `_capture_nodeids_by_slice` launches the T0/T1 JUnit
+capture from the workflow controller; successful coder completion then calls `verify_plan`, whose plan/slice
+commands and functional kill checks still use host `subprocess.run`. The planned artifact-test nodeid named in
+the old table does not exist (pytest exit 4 on that nodeid). The actual focused bank
+`tests/test_verify_slice.py tests/test_mutation_overlay.py tests/test_e2e_artifact_contract.py` passed
+**203 tests, exit 0** after prepending `.venv/bin` to `PATH`, ensuring subprocesses use the supported CPython
+3.13 runtime. An initial run without that PATH used system Python 3.11 in child commands and failed two tests;
+that was an environment mismatch, not accepted as proof. The correct rerun is recorded. R24 remains OPEN; no
+managed backend or host acceptance was exercised.
+
+### E391 — S4P1/R25 current plan-publication route and oracle refresh
+
+Corrected the stale table claim: `_promote_validated_plan:2297–2328` delegates to the injected
+`CandidatePlanPublisher.publish_candidate`; `publish_plan_buffer` is absent from the searched production source.
+The current CLI composition is `cli._cmd_workflow:1487–1537` → `managed_execution_for_run` →
+`BoundPlanPublisher` → `run_workflow(plan_publisher=...)`; the admission loop at `:2586` requires that port
+before reserving/dispatching the planner attempt, then passes it to `_run_admission_repair`. This does not
+establish managed-backend acceptance. The
+historical planned nodeid `test_the_plan_write_goes_through_the_authority_and_the_legacy_writer_is_gone` is
+absent. Current local bank command
+`PATH="$PWD/.venv/bin:$PATH" .venv/bin/python -m pytest -q tests/test_verify_gate_live.py::test_ct94_missing_publisher_fails_closed_without_canonical_write tests/test_verify_gate_live.py::test_ct94_promotion_port_receives_only_the_pinned_destination tests/test_execution_composition.py`
+returned **20 passed, 1 expected xfail, exit 0**. The xfail
+`test_the_runs_own_second_publication_survives_a_host_side_write` explicitly retains the SLICE4 STEP2 host-write
+gap. Docker/podman/nerdctl remain unavailable; no managed-backend negative oracle or live-host run was attempted.
+R25 remains OPEN; no row closed and no W1 progression.
+
+### E392 — S4P1/R26 current nested-workflow caller and oracle refresh
+
+The inventory's historical row named a child-namespace/no-parent-writer test that does not exist. Current live
+composition is `cli._cmd_run:2448–2471` → `_make_workflow_ctx_provider` → chat-only
+`_build_run_tool_registry` → `build_invoke_workflow_tool`. `_child_run_context` validates the parent/session pair
+and calls `SessionManager.begin_run`, which creates a distinct run-log namespace but sets the same
+`session.workspace_path`; the nested handler calls `run_workflow` with that child `RunContext`, the same
+workspace/session/database, `_cmd_run` stage callback, and no child `PlanRef`, `plan_path`, or `plan_publisher`.
+Coder-containing nested requests currently fail closed as `acquisition_unavailable` before child allocation, and
+context mismatch refuses before creating a child. Existing context-handoff tests do not establish an attested child
+workspace or suspension/pinning of the parent writer. `tests/test_invoke_workflow_tool.py tests/test_handoff_payload.py`
+passed **112 tests, exit 0** on CPython 3.13.16. No runtime code changed, no mutation test was applicable, no
+managed-backend oracle/live acceptance ran, and R26 remains OPEN; no W1 progression.
+
+### E393 — Q112/R02 entrypoint readiness-failure cut (2026-11-02)
+
+Applied the operator-selected `auto_run_only` contract in `scripts/fa-entrypoint.sh`: failed workspace readiness blocks managed session provisioning, `.active` publication, and `fa run`; an explicit command override remains usable for diagnostics and does not run the managed auto-run provisioner. Only a freshly created unpublished clone is removed on refusal; a resumed workspace is preserved. Added corresponding refusal, override, and resumed-workspace tests.
+
+Verification: `tests/test_fa_entrypoint.py` **20 passed** on CPython 3.13.16; Ruff, shell syntax (`bash -n`), Python `compileall`, and `git diff --check` all exited 0. The producer mutation (bypass readiness refusal) was killed because auto-run completed and status became `SUCCESS`; the edge mutation (provision despite explicit override) was killed by the provisioning sentinel. Both mutants were restored.
+
+W0, R02, S4P1, W1 and W2 remain open. This local result does not prove managed EXEC backend availability or live behavior. Q112 and the deferred live-host ledger-append comparison are documented in the I03 inventory, Q112 note, increment E393, and live E2E plan; no host verdict is claimed.
+
+### E394 — S4P1/R27–R28 current caller refresh (2026-11-02)
+
+Source refresh only. R27's production route is `_cmd_run` → `_build_run_tool_registry` (without `workspace_io`) → `drive_session` → `_drive_session_inner`; the planned live-chat canonical-tree negative is absent. R28's direct production caller is the operator `justfile:agent-bootstrap` alias into `host_bootstrap.py`; bootstrap tests cover the operator path, not model-tool isolation. Current host Bash is not shown to exclude an arbitrary call to that script, so the R28 negative depends on W1 managed Bash cutover. Both rows remain OPEN; W0/S4P1 remains open. No runtime/test files changed and no pytest or host evidence is claimed.
+
+### E395 — W0/S4P1 → W1 dependency conflict promoted to Q113 (2026-11-02)
+
+The written wave order puts W0 before W1, but the inventory's row-closure rule requires managed-backend negative oracles assigned to W1. R27 (CLI registry still lacks `workspace_io`), R28 (host-bootstrap reachability), and Q112/R02 make the dependency concrete. Added Q113 to ask whether W0 exits on completed source/caller/oracle inventory while S4P1 rows remain OPEN for W1, or whether strict row closure requires an authorized re-sequencing/prerequisite. No production/test code changed; W0 remains open and W1/Docker were not started.
+
+### E396 — Q113 resolved: strict S4P1 closure, prerequisite authorized (2026-11-02)
+
+The operator selected strict row closure: W0 stays open until every S4P1 negative oracle passes. The necessary managed-composition prerequisite may be re-sequenced ahead of W0 exit; the rest of W1 remains behind W0. First source-identified prerequisite is the existing-session `SessionManager._attach_session` path: it currently runs `_prepare_workspace` without asking the configured `ClientWorkspaceProvisioner` to register/reuse the workspace, unlike new-session creation. The implementation must establish managed ownership before readiness, refuse unavailable/unregistered reuse without deleting or rewriting an existing workspace/manifest, and preserve the no-provisioner legacy path pending broader cutover. This is a source finding and plan authorization only; no code/test change or S4P1 closure is claimed yet.
+
+### E397 — Managed `REUSE` prerequisite implemented and locally verified (2026-11-02; limited runtime)
+
+Implemented the authorized composition prerequisite in `SessionManager`: existing-session attach reserves a run and requests managed `REUSE` registration before readiness; unavailable or unregistered reuse refuses without changing the existing manifest, workspace bytes, or event count. Fresh-session reuse of a caller-supplied existing root also refuses an unregistered result, while preserving the existing `workspace_already_owned` conflict code. Cleanup now removes only an unregistered workspace root created by the current attempt, never a pre-existing caller-owned path. The provisioner-free legacy attach path is unchanged. Added refusal, readiness-order, preservation, and successful-registration tests.
+
+**Local verification.** `tests/test_session_lifecycle.py tests/test_session_manifest_guards.py`: **39 passed, exit 0**. Ruff passed; Pyrefly reported **0 errors (2 suppressed)**; `compileall`, `git diff --check`, and `scripts/check_doc_links.py` passed (324 Markdown files checked). Producer-bypass mutation was killed because the provisioner-call oracle failed; attach-edge removal was killed because refusal was not raised; unsafe-cleanup mutation was killed because the sentinel bytes disappeared. All mutations were restored. A conflict-code regression surfaced during the first run and was corrected before the final passing bank.
+
+**Runtime/evidence boundary.** The repository expects CPython 3.13, but the 3.13.16 standalone download failed at TLS handshake, so the final local bank ran on CPython 3.11.2 with a local `typing.override` compatibility shim. Treat it as limited local evidence, not supported-runtime verification. No Docker or live-host test ran. R27/R28 and every S4P1 row remain OPEN; W0, W1, and W2 remain open. This prerequisite alone does not close the authorized Q113 row-closure condition and does not authorize the rest of W1.
+
+### E398 — Arena sandbox CPython 3.13 recovery and supported-runtime rerun (2026-11-02)
+
+Used the repository's `knowledge/arena-env-build.md` recovery procedure after confirming `.venv` was Python 3.11 and the project requires `>=3.13`. Research/grounding: official `api.github.com` refs resolved CPython `v3.13.16` to commit `cbc944f4bc59639a444dd971c737788ba2283a91`; `python/cpython-source-deps` refs were pinned to commits `f2ca6496947165bc40da8422fc59b7b22926d84a` (openssl-3.0), `4dc98e1909830e2bdc2a9cc2236e3c5d5037335b` (zlib), `e7a5ad74ebde4c7fc7ba679875dc46bda35e2a15` (libffi), `05301997b2f9590f49c672cf3dfd3d3dfa7ad521` (bzip2), and `f048e6a40879da9828ca2cf3b260f3e0a26117fb` (sqlite). Sources/build outputs are under `$HOME/.cache/arena-python313`, outside Git; system Python was not changed. A temporary isolated uv bootstrap was used rather than the guide's global pip install. `uv sync --frozen --extra dev --python .../python3.13` completed with exit 0 and rebuilt `.venv` on CPython 3.13.16.
+
+**Runtime check.** CPython reports **3.13.16**; `ssl` is OpenSSL 3.0.22, SQLite 3.53.4 with an FTS5 create/insert/query smoke passing, and `ctypes`, `bz2`, and `zlib` imports pass.
+
+**Supported-runtime regression bank.** `tests/test_session_lifecycle.py tests/test_session_manifest_guards.py tests/test_execution_composition.py`: **57 passed, 1 expected xfail, exit 0**. The xfail `test_the_runs_own_second_publication_survives_a_host_side_write` remains the documented SLICE4 STEP2 host-write cutover gap. Producer-bypass, attach-edge-removal, and unsafe-cleanup mutations were each killed by their intended oracle (each mutant test exited 1); all were restored. Ruff passed; Pyrefly reported **0 errors (2 suppressed)**; `compileall`, `git diff --check`, and `scripts/check_doc_links.py` passed (324 Markdown files checked).
+
+This supersedes E397's Python-3.11-only limitation for this local bank, but it is still local component/composition evidence: Docker and live-host E2E were not run. No S4P1 row closed; R27/R28, W0, W1, and W2 remain open under Q113's strict row rule.

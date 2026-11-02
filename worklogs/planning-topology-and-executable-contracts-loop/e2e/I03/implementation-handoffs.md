@@ -156,3 +156,47 @@ are authored here; candidate exercise details are proposals for planner/reviewer
 - **Planner disposition:** pending. This coder handoff records source facts and evidence limits only;
   it does not amend the planner-owned oracle, case ownership, fixture authorization, host result, or
   live status.
+
+## I03-LIVE-S07 — Q109-B rooted managed discovery (candidate ledger-append exercise)
+
+- **Contracts / producers:** Q109-B; I03 spec §4; S4P2/STEP2b/Q97; existing
+  `I03-LIVE-S07` cell-local tool-route oracle. This proposal does not create a new live ID or change
+  the current `NOT RUN` result.
+- **Verified local seam:** `project_tools._dispatch("fs_reach", ...)` builds the real registry; the
+  managed reach builder opts into strict rooted reads; `StructuralIndex._build` enumerates candidates
+  and the rooted reader opens the relative file under one pinned root descriptor. The implemented
+  `tests/test_execution_project_tools.py::test_cell_reach_refuses_symlink_replacement_after_enumeration`
+  replaces an enumerated source with an outside-view symlink and checks for a non-retryable refusal.
+- **Local verification (2026-11-01):** The rooted-read target bank completed with 87 passed and two
+  existing Q106 xfails. Positive controls resolve in-root file/directory symlinks to one canonical
+  target; reader-level escape, link-replacement, identity-drift and over-limit tests refuse. The
+  integrated C3 race returns non-retryable `reach_failed` with no partial result. Ruff, mypy
+  (`--python-version 3.13`), compileall and `git diff --check` passed.
+  Targeted mutation checks both killed (a) bypassing `RootedFileReader` in the producer and (b)
+  removing the managed strict-read binding. Pytest ran under Python 3.11 with a temporary
+  `typing.override` compatibility shim; Python 3.13 was unavailable, so this is not supported-runtime
+  evidence or live-host acceptance.
+- **Candidate live exercise: [PROPOSAL]** After STEP7 review, Q108 transport and STEP2b production
+  wiring, arrange one approved mutable PROJECT view with a safe Python file and a controlled outside
+  sentinel. Invoke the installed fixed project-helper EXEC through the real controller/supervisor.
+  Inject replacement only after enumeration and before content open. Positive control: an ordinary
+  in-view symbol resolves. Adversarial outcome: the race returns an explicit non-retryable refusal,
+  never the sentinel name/content, and performs no host-path read. Re-submit the exact completed
+  request identity to exercise Q75 replay: assert the same stored refusal and exactly one original
+  journal operation/RUN, with no helper re-execution. Append the dated attempt/evidence directory to
+  the existing `I03-LIVE-S07` attempt table only after observing the deployed SHA, image, profile,
+  config, run ID, command, return code/effect and independent reviewer.
+- **Negative controls / host limits:** Removing the rooted-reader producer or its binding in a test
+  build must make the adversarial case observe the sentinel and fail. This is a host-owned test mutant,
+  not permission to edit an approved deployment. Local fault injection proves neither Docker/cgroup
+  containment nor deployed journal behavior; actual fixture and command remain unassigned until the
+  live-plan owner approves them.
+- **Planner disposition:** pending. This proposal does not amend the I03-LIVE-S07 oracle, authorize a
+  fixture/host command, or assign a live result.
+
+## Q112/R02 — entrypoint readiness refusal and session-ledger handoff (PROPOSAL ONLY)
+
+- **Source and contract:** `scripts/fa-entrypoint.sh::_prepare_entrypoint_workspace` and its managed-session caller refuse auto-run after failed `workspace_bootstrap ensure`, before session provisioning, `.active` publication, and `fa run`; an explicit command override remains available and skips auto-run provisioning. Only a fresh unpublished clone may be removed; a resumed workspace is retained.
+- **Local evidence:** `tests/test_fa_entrypoint.py` passed 20 tests on CPython 3.13.16. Ruff, `bash -n`, `compileall`, and `git diff --check` passed. Producer mutation bypassing the refusal and edge mutation provisioning an explicit override were both killed and restored. This is shell/test-double evidence only; successful bootstrap is not proof of a managed EXEC backend.
+- **Deferred live exercise:** `../../notes/i03-live-e2e-test-plan-2026-10-22.md`, §4.2 proposes fresh/resumed readiness refusal, explicit override, and successful managed auto-run cases. The host oracle reads the authoritative SQLite `session.db`: `session_meta` run bindings plus `event_log` rows, with before/after snapshots reopened from disk. It verifies no provision/run append on refusal or override and one run binding plus durable run events on the successful control.
+- **Host-only assumptions / limitations:** proposal only; no fixture, deployed command, live ID assignment, or host evidence is authorized or present. Execute after merge to `main` and the planned user-host `fa update`, with an approved image/state root and controlled readiness cause. Record actual evidence only in the planner-approved register; Docker/cgroup and backend acceptance are not inferred from local tests.

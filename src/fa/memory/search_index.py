@@ -34,7 +34,7 @@ from pathlib import Path
 from typing import Any, Self
 from uuid import uuid4
 
-from fa.memory._safe_walk import DEFAULT_PATTERNS, iter_searchable_files
+from fa.memory._safe_walk import DEFAULT_PATTERNS, RootedFileReader, RootedReadError, iter_searchable_files
 
 logger = logging.getLogger(__name__)
 
@@ -199,7 +199,13 @@ class SearchResult:
 # ---------------------------------------------------------------------------
 
 
-def files_stat_rows(root: Path, rels: list[str], limit: int) -> list[dict[str, Any]]:
+def files_stat_rows(
+    root: Path,
+    rels: list[str],
+    limit: int,
+    *,
+    rooted_reader: RootedFileReader | None = None,
+) -> list[dict[str, Any]]:
     """§A6 v7 files rows: ``{path, lines, bytes}`` ordered by path.
 
     ``lines`` counts lines of the first MAX_SEARCH_FILE_BYTES bytes (None
@@ -211,13 +217,19 @@ def files_stat_rows(root: Path, rels: list[str], limit: int) -> list[dict[str, A
     for rel in sorted(rels)[:limit]:
         fp: Path = root / rel
         stat_ok = True
-        try:
-            size = fp.stat().st_size
-        except OSError:
-            size = 0
-            stat_ok = False
+        if rooted_reader is None:
+            try:
+                size = fp.stat().st_size
+            except OSError:
+                size = 0
+                stat_ok = False
+            text = SearchIndex._read_text_for_match(fp, MAX_SEARCH_FILE_BYTES)
+        else:
+            canonical_rel, raw = rooted_reader.read_bytes_with_path(rel, max_bytes=MAX_SEARCH_FILE_BYTES)
+            rel = canonical_rel
+            size = len(raw)
+            text = SearchIndex._decode_text_for_match(raw)
         lines: int | None = None  # None = unreadable; 0 = genuinely empty
-        text = SearchIndex._read_text_for_match(fp, MAX_SEARCH_FILE_BYTES)
         if text:
             lines = len(text.splitlines())
         elif stat_ok and size == 0:
@@ -232,6 +244,7 @@ def walk_scope_listing(
     subdir_rel: str,
     glob_pat: str | None,
     exclude_set: frozenset[str],
+    rooted_reader: RootedFileReader | None = None,
 ) -> tuple[list[str], int]:
     """§A6 v7: enumerate the search scope fresh from disk.
 
@@ -251,6 +264,7 @@ def walk_scope_listing(
             extra_exclude_dirs=exclude_set,
             max_file_size=0,
             use_git_ls_files=False,
+            strict_paths=rooted_reader is not None,
         ):
             if not SearchIndex._passes_filters(
                 rel,
@@ -259,10 +273,17 @@ def walk_scope_listing(
                 exclude_set=exclude_set,
             ):
                 continue
-            if sz > MAX_SEARCH_FILE_BYTES:
-                skipped += 1
+            if rooted_reader is None:
+                if sz > MAX_SEARCH_FILE_BYTES:
+                    skipped += 1
+                    continue
+                rels.append(rel)
                 continue
-            rels.append(rel)
+            canonical_rel, _raw = rooted_reader.read_bytes_with_path(rel, max_bytes=MAX_SEARCH_FILE_BYTES)
+            if canonical_rel not in rels:
+                rels.append(canonical_rel)
+    except RootedReadError:
+        raise
     except Exception as exc:  # noqa: BLE001 - fail-open, failure-observable
         logger.warning("scope listing walk failed: %s", exc)
         return [], 0
@@ -272,8 +293,9 @@ def walk_scope_listing(
 class SearchIndex:
     """Unified BM25+trigram FTS5 index over a workspace."""
 
-    def __init__(self, db_path: Path) -> None:
+    def __init__(self, db_path: Path, *, rooted_reader: RootedFileReader | None = None) -> None:
         self.db_path = Path(db_path)
+        self._rooted_reader = rooted_reader
         self._memory_key = uuid4().hex if self.db_path == Path(":memory:") else None
         if self._memory_key is None:
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -425,6 +447,8 @@ class SearchIndex:
         mtime: float,
         size: int,
         stats: SearchStats,
+        *,
+        source_bytes: bytes | None = None,
     ) -> None:
         """Index a single file. Updates stats.indexed/updated/errors
         in place. Safe to call on any file: binary, unreadable, or
@@ -435,10 +459,14 @@ class SearchIndex:
         conn: sqlite3.Connection = self._conn  # type: ignore[assignment]
         try:
             cur = conn.execute("SELECT mtime, size FROM fts_meta WHERE path=?", (rel,)).fetchone()
-            if cur and abs(cur[0] - mtime) < 1e-6 and cur[1] == size:
+            if self._rooted_reader is None and cur and abs(cur[0] - mtime) < 1e-6 and cur[1] == size:
                 stats.skipped += 1
                 return
-            text: str | None = self._read_text_for_index(fp)
+            text: str | None = (
+                self._read_text_from_index_bytes(source_bytes)
+                if source_bytes is not None
+                else self._read_text_for_index(fp)
+            )
             if text is None:
                 # Binary or unreadable — skip without flagging error
                 # (binary detection is intentional, not failure).
@@ -500,14 +528,32 @@ class SearchIndex:
         cleanup).
         """
         seen: set[str] = set()
+        if self._rooted_reader is not None and max_file_size <= 0:
+            raise ValueError("strict rooted indexing requires a positive file-size bound")
         for fp, rel, mtime, size in iter_searchable_files(
             root,
             patterns,
             extra_exclude_dirs=extra_exclude_dirs,
             include_tests=include_tests,
             max_file_size=max_file_size,
+            strict_paths=self._rooted_reader is not None,
         ):
             stats.total_candidates += 1
+            if self._rooted_reader is not None:
+                canonical_rel, raw = self._rooted_reader.read_bytes_with_path(rel, max_bytes=max_file_size)
+                if canonical_rel in seen:
+                    stats.skipped += 1
+                    continue
+                seen.add(canonical_rel)
+                self._index_one_file(
+                    root / canonical_rel,
+                    canonical_rel,
+                    0.0,
+                    len(raw),
+                    stats,
+                    source_bytes=raw,
+                )
+                continue
             # Defense-in-depth: ensure the rel is still inside root
             # (iter_searchable_files already does this, but re-check
             # after resolve to guard against TOCTOU symlink swaps).
@@ -566,8 +612,8 @@ class SearchIndex:
         )
 
         # Check fast path first (canary + throttle).
-        canary: tuple[float, ...] = self._stat_canaries(root)
-        need_walk: bool = force or self._should_refresh(key, canary)
+        canary: tuple[float, ...] = () if self._rooted_reader is not None else self._stat_canaries(root)
+        need_walk: bool = self._rooted_reader is not None or force or self._should_refresh(key, canary)
 
         if not need_walk:
             # Fast path: nothing changed.
@@ -575,15 +621,28 @@ class SearchIndex:
             return stats
 
         try:
+            if self._rooted_reader is not None:
+                # A strict helper index is in-memory and per-call. Rebuild from
+                # rooted bytes; path canaries and stale-path probes are not authority.
+                self._conn.execute("DELETE FROM files_fts")
+                self._conn.execute("DELETE FROM files_fts_bm25")
+                self._conn.execute("DELETE FROM fts_meta")
             seen: set[str] = self._walk_and_index(
                 root, patterns, extra_exclude_dirs, include_tests, max_file_size, stats
             )
-            self._cleanup_stale_files(root, seen)
+            if self._rooted_reader is None:
+                self._cleanup_stale_files(root, seen)
             self._conn.commit()
             self._indexed_for_session = True
             state["full_done"] = True
             state["last_mono"] = time.monotonic()
             state["last_canary"] = canary
+        except RootedReadError:
+            try:
+                self._conn.rollback()
+            except sqlite3.Error:
+                pass
+            raise
         except Exception as exc:  # noqa: BLE001
             logger.warning("ensure_indexed failed (%s); falling back for queries", exc)
             self._available = False
@@ -709,14 +768,14 @@ class SearchIndex:
 
     @classmethod
     def _read_text_for_index(cls, fp: Path) -> str | None:
-        """Read up to ``MAX_CONTENT_BYTES_INDEXED`` bytes from ``fp`` and
-        decode to text for FTS indexing. Returns None if the file is
-        binary (NUL in the first ``BINARY_SNIFF_BYTES`` bytes) or cannot
-        be read. Decoding uses UTF-8 strict with Latin-1 fallback so any
-        byte sequence is representable (no silent replacement)."""
+        """Read up to ``MAX_CONTENT_BYTES_INDEXED`` bytes from ``fp`` and decode."""
         raw: bytes | None = cls._read_bytes(fp, MAX_CONTENT_BYTES_INDEXED)
-        if raw is None:
-            return None
+        return None if raw is None else cls._read_text_from_index_bytes(raw)
+
+    @classmethod
+    def _read_text_from_index_bytes(cls, raw: bytes) -> str | None:
+        """Decode rooted/host bytes with the legacy binary and UTF-8 rules."""
+        raw = raw[:MAX_CONTENT_BYTES_INDEXED]
         sniff: bytes = raw[:BINARY_SNIFF_BYTES] if BINARY_SNIFF_BYTES < len(raw) else raw
         if cls._is_binary(sniff):
             return None
@@ -729,13 +788,8 @@ class SearchIndex:
                 return None
 
     @classmethod
-    def _read_text_for_match(cls, fp: Path, max_bytes: int) -> str:
-        """Read up to ``max_bytes`` for snippet/context display. Does NOT
-        apply binary detection (if we are here the file already passed
-        indexing filters). Returns "" on IO error."""
-        raw: bytes | None = cls._read_bytes(fp, max_bytes)
-        if raw is None:
-            return ""
+    def _decode_text_for_match(cls, raw: bytes) -> str:
+        """Decode bounded source bytes using the legacy UTF-8/Latin-1 rule."""
         try:
             return raw.decode("utf-8")
         except UnicodeDecodeError:
@@ -744,10 +798,21 @@ class SearchIndex:
             except Exception:  # noqa: BLE001
                 return ""
 
-    @staticmethod
-    def _compute_total_bytes(root: Path, rels: list[str]) -> int:
+    @classmethod
+    def _read_text_for_match(cls, fp: Path, max_bytes: int) -> str:
+        """Read up to ``max_bytes`` for snippet/context display. Does NOT
+        apply binary detection (if we are here the file already passed
+        indexing filters). Returns "" on IO error."""
+        raw: bytes | None = cls._read_bytes(fp, max_bytes)
+        return "" if raw is None else cls._decode_text_for_match(raw)
+
+    def _compute_total_bytes(self, root: Path, rels: list[str]) -> int:
         total: int = 0
         for rel in rels:
+            if self._rooted_reader is not None:
+                _canonical_rel, raw = self._rooted_reader.read_bytes_with_path(rel, max_bytes=MAX_SEARCH_FILE_BYTES)
+                total += len(raw)
+                continue
             try:
                 total += (root / rel).stat().st_size
             except OSError:
@@ -976,6 +1041,7 @@ class SearchIndex:
                     root=root,
                     method=method,
                     result=result,
+                    rooted_reader=self._rooted_reader,
                 )
 
         return self._search_python_walk(
@@ -1045,6 +1111,28 @@ class SearchIndex:
             return []
         return [(rel, 0.0) for (rel,) in rows][:limit]
 
+    def _read_walk_candidate(
+        self,
+        fp: Path,
+        rel: str,
+        root: Path,
+        max_bytes: int,
+    ) -> tuple[str, str] | None:
+        """Read one fallback candidate; rooted refusals never degrade to skips."""
+        if self._rooted_reader is not None:
+            canonical_rel, raw = self._rooted_reader.read_bytes_with_path(rel, max_bytes=max_bytes)
+            return canonical_rel, self._decode_text_for_match(raw)
+        try:
+            resolved = fp.resolve()
+            if not resolved.is_relative_to(root):
+                logger.warning("skipping path outside root during walk: %s", rel)
+                return None
+            canonical_rel = str(resolved.relative_to(root)).replace("\\", "/")
+            return canonical_rel, self._read_text_for_match(fp, max_bytes)
+        except (OSError, ValueError) as exc:
+            logger.debug("skipping %s during walk: %s", fp, exc)
+            return None
+
     def _search_python_walk(
         self,
         *,
@@ -1099,20 +1187,12 @@ class SearchIndex:
                 extra_exclude_dirs=exclude_set,
                 max_file_size=MAX_SEARCH_FILE_BYTES,
                 use_git_ls_files=self._available,
+                strict_paths=self._rooted_reader is not None,
             ):
-                # Defense-in-depth: resolve the path we are about to read and
-                # confirm it stayed inside root and passes all filters. The
-                # iterator already enforces containment, but re-checking here
-                # protects against TOCTOU symlink swaps mid-iteration.
-                try:
-                    resolved: Path = fp.resolve()
-                    if not resolved.is_relative_to(root):
-                        logger.warning("skipping path outside root during walk: %s", rel)
-                        continue
-                    rel = str(resolved.relative_to(root)).replace("\\", "/")
-                except (OSError, ValueError) as exc:
-                    logger.debug("skipping %s during walk: %s", fp, exc)
+                candidate = self._read_walk_candidate(fp, rel, root, read_cap)
+                if candidate is None:
                     continue
+                rel, text = candidate
                 if not self._passes_filters(
                     rel,
                     subdir_rel=subdir_rel,
@@ -1120,7 +1200,6 @@ class SearchIndex:
                     exclude_set=exclude_set,
                 ):
                     continue
-                text = self._read_text_for_match(fp, read_cap)
                 if as_regex:
                     if pat is None:
                         continue  # defensive; pat is always compiled above.
@@ -1147,6 +1226,8 @@ class SearchIndex:
                 if output_mode == "files" and len(matched_paths) >= limit:
                     result.truncated = True
                     break
+        except RootedReadError:
+            raise
         except Exception as exc:  # noqa: BLE001
             logger.warning("python walk fallback failed: %s", exc)
             result.warnings.append(f"walk fallback error: {exc}")
@@ -1162,6 +1243,7 @@ class SearchIndex:
             # re-scan with a possibly-incompatible matcher (literal vs regex).
             match_counts_override=match_counts,
             per_file_matches_override=per_file_matches if as_regex else None,
+            rooted_reader=self._rooted_reader,
         )
 
     # ------------------------------------------------------------------
@@ -1218,7 +1300,12 @@ class SearchIndex:
                 truncated = True
                 continue  # count remaining regions from in-memory hits; no extra read
             fp: Path = root / rel
-            full_lines: list[str] = self._read_text_for_match(fp, MAX_SEARCH_FILE_BYTES).splitlines()
+            if self._rooted_reader is None:
+                text = self._read_text_for_match(fp, MAX_SEARCH_FILE_BYTES)
+            else:
+                rel, raw = self._rooted_reader.read_bytes_with_path(rel, max_bytes=MAX_SEARCH_FILE_BYTES)
+                text = self._decode_text_for_match(raw)
+            full_lines: list[str] = text.splitlines()
             for grp in groups:
                 if len(matches_out) >= limit:
                     truncated = True
@@ -1302,19 +1389,24 @@ class SearchIndex:
             ):
                 continue
             fp: Path = root / rel
-            try:
-                resolved: Path = fp.resolve()
-                if not resolved.is_relative_to(root):
-                    logger.warning("skipping indexed path outside root: %s", rel)
+            if self._rooted_reader is None:
+                try:
+                    resolved: Path = fp.resolve()
+                    if not resolved.is_relative_to(root):
+                        logger.warning("skipping indexed path outside root: %s", rel)
+                        continue
+                    if not resolved.is_file():
+                        continue
+                except OSError as exc:
+                    logger.warning("stat failed for %s: %s", rel, exc)
                     continue
-                if not resolved.is_file():
-                    continue
-            except OSError as exc:
-                logger.warning("stat failed for %s: %s", rel, exc)
-                continue
-            # Re-normalize rel against the resolved path (defense against
-            # symlink swap during iteration).
-            rel = str(resolved.relative_to(root)).replace("\\", "/")
+                # Re-normalize rel against the resolved path (defense against
+                # symlink swap during iteration).
+                rel = str(resolved.relative_to(root)).replace("\\", "/")
+                rooted_text = None
+            else:
+                rel, raw = self._rooted_reader.read_bytes_with_path(rel, max_bytes=read_cap)
+                rooted_text = self._decode_text_for_match(raw)
             matched_files.append(rel)
             if rel in precomputed:
                 fm_list = precomputed[rel]
@@ -1323,7 +1415,7 @@ class SearchIndex:
                     match_counts[rel] = len(fm_list)
                 continue
             if need_content:
-                text = self._read_text_for_match(fp, read_cap)
+                text = rooted_text if rooted_text is not None else self._read_text_for_match(fp, read_cap)
                 fms, cnt = self._scan_file_matches(
                     text,
                     needle,
@@ -1348,6 +1440,7 @@ class SearchIndex:
         result: SearchResult,
         match_counts_override: dict[str, int] | None = None,
         per_file_matches_override: dict[str, list[tuple[int, str]]] | None = None,
+        rooted_reader: RootedFileReader | None = None,
     ) -> SearchResult:
         result.method = method
         needle = params.query.lower()  # R21: case-insensitive always
@@ -1368,6 +1461,8 @@ class SearchIndex:
                 if rel not in matched_files:
                     matched_files.append(rel)
 
+        if rooted_reader is not self._rooted_reader:
+            raise RuntimeError("rooted search reader binding changed")
         result.total_bytes = self._compute_total_bytes(root, matched_files)
 
         if params.output_mode == "files":
@@ -1376,9 +1471,10 @@ class SearchIndex:
                 subdir_rel=params.subdir_rel,
                 glob_pat=params.glob_pat,
                 exclude_set=params.exclude_set,
+                rooted_reader=rooted_reader,
             )
             result.skipped_large_files = skipped_large
-            result.files = files_stat_rows(root, matched_files, params.limit)
+            result.files = files_stat_rows(root, matched_files, params.limit, rooted_reader=rooted_reader)
             result.returned = len(result.files)
             result.total = len(matched_files)
         elif params.output_mode == "matches":

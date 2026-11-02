@@ -32,6 +32,7 @@ from fa.inner_loop.tools.outline import (
     fold_python_source,
 )
 from fa.inner_loop.tools.workspace_port import WorkspacePort, WorkspacePortError, index_db
+from fa.memory._safe_walk import RootedFileReader, RootedReadError
 
 if TYPE_CHECKING:
     from fa.memory.search_index import SearchIndex, SearchParams
@@ -345,8 +346,9 @@ def _resolve_subdir(root: Path, subpath: str | None) -> Path:
 class _IndexHolder:
     """Holds a lazily-created SearchIndex singleton for the process."""
 
-    def __init__(self, db_path: Path) -> None:
+    def __init__(self, db_path: Path, *, rooted_reader: RootedFileReader | None = None) -> None:
         self._db = db_path
+        self._rooted_reader = rooted_reader
         self._index: SearchIndex | None = None
         self._indexed: bool = False
 
@@ -354,7 +356,7 @@ class _IndexHolder:
         if self._index is None:
             from fa.memory.search_index import SearchIndex
 
-            self._index = SearchIndex(self._db)
+            self._index = SearchIndex(self._db, rooted_reader=self._rooted_reader)
         return self._index
 
     def close(self, *, strict: bool = False) -> None:
@@ -393,6 +395,8 @@ def _ensure_index(
     """
     try:
         index = holder.get()
+    except RootedReadError:
+        raise
     except Exception as exc:  # noqa: BLE001 - INV-HARDEN-5 fail-degraded
         logger.warning("fs_search index unavailable: %s", exc)
         warnings.append(f"FTS index unavailable ({exc}); using streaming fallback")
@@ -416,6 +420,8 @@ def _ensure_index(
             "errors": stats.errors,
             "total_candidates": stats.total_candidates,
         }
+    except RootedReadError:
+        raise
     except Exception as exc:  # noqa: BLE001 - INV-HARDEN-5 fail-degraded
         logger.warning("fs_search indexing failed: %s", exc)
         warnings.append(f"index build/refresh failed ({exc}); using streaming fallback")
@@ -453,13 +459,15 @@ def _do_fallback_search(
     root: Path,
     subdir: Path,
     warnings: list[str],
+    *,
+    rooted_reader: RootedFileReader | None = None,
 ) -> Any:
     """Streaming walk fallback when index is unavailable."""
     from fa.memory.search_index import SearchIndex, SearchResult
 
     sr: Any = SearchResult(query=params.query, method="literal_fallback")
     try:
-        tmp_index = SearchIndex(db)
+        tmp_index = SearchIndex(db, rooted_reader=rooted_reader)
         try:
             sr = tmp_index._search_python_walk(
                 params=params,
@@ -470,6 +478,8 @@ def _do_fallback_search(
             )
         finally:
             tmp_index.close()
+    except RootedReadError:
+        raise
     except Exception as exc:  # noqa: BLE001 - INV-HARDEN-5 fail-degraded
         logger.warning("fs_search streaming fallback failed: %s", exc)
         warnings.append(f"streaming fallback error: {exc}")
@@ -592,7 +602,12 @@ def _register_search_result_paths(result: dict[str, Any]) -> None:
         logger.warning(f"fs_search telemetry failed: {exc}")
 
 
-def _load_outline_rows(subdir: Path, rel: Path) -> ToolResult | list[OutlineRow]:
+def _load_outline_rows(
+    subdir: Path,
+    rel: Path,
+    *,
+    rooted_reader: RootedFileReader | None = None,
+) -> ToolResult | list[OutlineRow]:
     """Validate + read + fold ONE file for outline mode; every failure steers."""
     if subdir.is_dir():
         return ToolResult.fail(
@@ -607,21 +622,38 @@ def _load_outline_rows(subdir: Path, rel: Path) -> ToolResult | list[OutlineRow]
             f"outline supports .py and .md (got {suffix!r}); use output_mode='matches' to grep other files",
             retryable=True,
         )
-    try:
-        size = subdir.stat().st_size
-    except OSError as exc:
-        return ToolResult.fail("read_failed", str(exc), retryable=True)
-    if size > OUTLINE_MAX_READ_BYTES:
-        return ToolResult.fail(
-            "invalid_params",
-            f"file too large to outline ({size} > {OUTLINE_MAX_READ_BYTES} bytes); "
-            "use output_mode='matches' with a query",
-            retryable=True,
-        )
-    try:
-        text = subdir.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError, ValueError) as exc:
-        return ToolResult.fail("read_failed", str(exc), retryable=True)
+    if rooted_reader is None:
+        try:
+            size = subdir.stat().st_size
+        except OSError as exc:
+            return ToolResult.fail("read_failed", str(exc), retryable=True)
+        if size > OUTLINE_MAX_READ_BYTES:
+            return ToolResult.fail(
+                "invalid_params",
+                f"file too large to outline ({size} > {OUTLINE_MAX_READ_BYTES} bytes); "
+                "use output_mode='matches' with a query",
+                retryable=True,
+            )
+        try:
+            text = subdir.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError, ValueError) as exc:
+            return ToolResult.fail("read_failed", str(exc), retryable=True)
+    else:
+        try:
+            _canonical_rel, raw = rooted_reader.read_bytes_with_path(rel.as_posix(), max_bytes=OUTLINE_MAX_READ_BYTES)
+        except RootedReadError as exc:
+            if exc.reason == "file_too_large":
+                return ToolResult.fail(
+                    "invalid_params",
+                    f"file too large to outline (exceeds {OUTLINE_MAX_READ_BYTES} bytes); "
+                    "use output_mode='matches' with a query",
+                    retryable=True,
+                )
+            raise
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            return ToolResult.fail("read_failed", str(exc), retryable=True)
 
     if suffix == ".py":
         try:
@@ -642,6 +674,8 @@ def _do_outline(
     query: str | None,
     data: Mapping[str, object],
     warnings_list: list[str],
+    *,
+    rooted_reader: RootedFileReader | None = None,
 ) -> ToolResult:
     """S12.7 (CT9): structural outline of ONE py/md file (plan §A6).
 
@@ -651,7 +685,7 @@ def _do_outline(
     into fs_read_file windows (the discovery chain).
     """
     rel = subdir.relative_to(root)
-    loaded = _load_outline_rows(subdir, rel)
+    loaded = _load_outline_rows(subdir, rel, rooted_reader=rooted_reader)
     if isinstance(loaded, ToolResult):
         return loaded
     rows = loaded
@@ -746,6 +780,8 @@ def _do_files_listing(
     limit: int,
     warnings_list: list[str],
     data: Mapping[str, object] | None = None,
+    *,
+    rooted_reader: RootedFileReader | None = None,
 ) -> ToolResult:
     """S12.7 (§A6 v7 / CT11): absent query + files mode = pure listing.
 
@@ -769,9 +805,10 @@ def _do_files_listing(
         subdir_rel=subdir_rel,
         glob_pat=glob_pat,
         exclude_set=exclude_set,
+        rooted_reader=rooted_reader,
     )
     total = len(rels)
-    rows = files_stat_rows(root, rels, limit)
+    rows = files_stat_rows(root, rels, limit, rooted_reader=rooted_reader)
     truncated = len(rows) < total
     if truncated:
         warnings_list.append(f"showing {len(rows)} of {total} files — raise limit or narrow path")
@@ -824,6 +861,8 @@ def _handle(
     holder: _IndexHolder,
     root: Path,
     db: Path,
+    *,
+    rooted_reader: RootedFileReader | None = None,
 ) -> ToolResult:
     warnings_list: list[str] = []
 
@@ -896,11 +935,13 @@ def _handle(
     # touches the search index. Leniency warnings survive; generic limit
     # clamp noise does not (outline has its own limit semantics).
     if output_mode == "outline":
-        return _do_outline(root, subdir, query, data, leniency)
+        return _do_outline(root, subdir, query, data, leniency, rooted_reader=rooted_reader)
 
     # S12.7 (§A6 v7 / CT11): absent query + files = pure scope listing.
     if query is None and output_mode == "files":
-        return _do_files_listing(root, subdir, glob_pat, exclude_set, limit, warnings_list, data)
+        return _do_files_listing(
+            root, subdir, glob_pat, exclude_set, limit, warnings_list, data, rooted_reader=rooted_reader
+        )
 
     if query is None:  # unreachable: files+None listed and matches+None failed above
         return ToolResult.fail("invalid_params", "query must be a non-empty string", retryable=True)
@@ -924,7 +965,9 @@ def _handle(
         if holder._indexed:
             sr = _do_indexed_search(holder, search_params, root, subdir)
         else:
-            sr = _do_fallback_search(db, search_params, root, subdir, warnings_list)
+            sr = _do_fallback_search(
+                db, search_params, root, subdir, warnings_list, rooted_reader=rooted_reader
+            )
     except Exception as exc:
         logger.warning("fs_search unexpected error: %s", exc, exc_info=True)
         return ToolResult.fail(
@@ -971,6 +1014,7 @@ def build_fs_search_tool(
     *,
     workspace_io: WorkspacePort | None = None,
     cleanup: ExitStack | None = None,
+    strict_rooted_reads: bool = False,
 ) -> ToolSpec:
     """Build the fs_search ToolSpec bound to a workspace and FTS DB path.
 
@@ -986,6 +1030,14 @@ def build_fs_search_tool(
     """
     root = Path(workspace_root).resolve()
     host_db = Path(db_path)
+    if not isinstance(strict_rooted_reads, bool):
+        raise TypeError("strict_rooted_reads must be bool")
+    rooted_reader = RootedFileReader(root) if strict_rooted_reads else None
+    if rooted_reader is not None:
+        if cleanup is None:
+            atexit.register(rooted_reader.close)
+        else:
+            cleanup.callback(rooted_reader.close)
 
     def _resolve_index() -> tuple[_IndexHolder | None, Path | None]:
         """Bind the index home per call: the view may not be known at build time."""
@@ -993,7 +1045,7 @@ def build_fs_search_tool(
             db = index_db(workspace_io, root, "search.db", host_db)
         except WorkspacePortError:
             return None, None
-        holder = _IndexHolder(db)
+        holder = _IndexHolder(db, rooted_reader=rooted_reader)
         if cleanup is None:
             atexit.register(holder.close)
         else:
@@ -1017,7 +1069,7 @@ def build_fs_search_tool(
                 retryable=False,
             )
         try:
-            return _handle(params, holder, root, db)
+            return _handle(params, holder, root, db, rooted_reader=rooted_reader)
         except Exception as exc:
             logger.warning("fs_search top-level error: %s", exc, exc_info=True)
             return ToolResult.fail(

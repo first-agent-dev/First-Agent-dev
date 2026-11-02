@@ -441,6 +441,114 @@ def test_not_ready_readiness_blocks_new_session_and_attach(tmp_path: Path) -> No
     assert len(list((tmp_path / "state" / "sessions").iterdir())) == 1
 
 
+@pytest.mark.parametrize("provision_outcome", ["unavailable", "unregistered"])
+def test_managed_attach_refusal_precedes_readiness_and_preserves_existing_state(
+    tmp_path: Path, provision_outcome: str
+) -> None:
+    """C1/C3 G6: failed managed REUSE never falls through to host readiness."""
+
+    creator = _manager(tmp_path)
+    created = creator.create_or_attach_session(session_id=None, workspace_override=None)
+    workspace_sentinel = created.workspace_path / "operator-data.txt"
+    workspace_sentinel.write_text("preserve this", encoding="utf-8")
+    manifest_before = created.manifest_path.read_bytes()
+    session_db = SessionDatabase.open_existing(created.session_db_path, session_id=created.session_id)
+    event_count_before = session_db.event_count()
+    readiness_calls: list[Path] = []
+    provision_requests: list[ProvisionRequest] = []
+
+    def prepare(workspace: Path) -> ReadyState:
+        readiness_calls.append(workspace)
+        return _ready_state(workspace)
+
+    def provision(request: ProvisionRequest) -> ProvisionedWorkspace:
+        provision_requests.append(request)
+        if provision_outcome == "unavailable":
+            raise SessionManagerError("workspace_provision_failed", "managed backend unavailable")
+        return _scratch()
+
+    attach_manager = _manager(tmp_path, workspace_preparer=prepare, workspace_provisioner=provision)
+    with pytest.raises(SessionManagerError) as refused:
+        attach_manager.create_or_attach_session(
+            session_id=created.session_id,
+            workspace_override=created.workspace_path,
+        )
+
+    assert refused.value.code == "workspace_provision_failed"
+    assert len(provision_requests) == 1
+    request = provision_requests[0]
+    assert request.mode is ProvisionMode.REUSE
+    assert request.session_id == created.session_id
+    assert request.workspace_path == created.workspace_path
+    assert request.run_id
+    assert not readiness_calls
+    assert created.manifest_path.read_bytes() == manifest_before
+    assert workspace_sentinel.read_text(encoding="utf-8") == "preserve this"
+    assert session_db.event_count() == event_count_before
+    assert session_db.get_run_binding(request.run_id) is not None
+    assert (attach_manager.run_root / request.run_id).is_dir()
+
+
+def test_managed_attach_registers_before_running_readiness(tmp_path: Path) -> None:
+    """C1: successful REUSE registration precedes the readiness callback."""
+
+    creator = _manager(tmp_path)
+    created = creator.create_or_attach_session(session_id=None, workspace_override=None)
+    calls: list[str] = []
+
+    def prepare(workspace: Path) -> ReadyState:
+        calls.append("readiness")
+        return _ready_state(workspace)
+
+    def provision(request: ProvisionRequest) -> ProvisionedWorkspace:
+        calls.append("reuse")
+        assert request.mode is ProvisionMode.REUSE
+        assert request.session_id == created.session_id
+        assert request.workspace_path == created.workspace_path
+        return _registered("ws-attach", "rev-attach", "b" * 64)
+
+    attach_manager = _manager(tmp_path, workspace_preparer=prepare, workspace_provisioner=provision)
+    attached = attach_manager.create_or_attach_session(
+        session_id=created.session_id,
+        workspace_override=created.workspace_path,
+    )
+
+    assert calls == ["reuse", "readiness"]
+    assert attached.session_id == created.session_id
+    assert attached.workspace_path == created.workspace_path
+
+
+def test_managed_unregistered_existing_workspace_is_preserved_on_new_session_refusal(tmp_path: Path) -> None:
+    """C1/C3 G6: refused REUSE cannot delete a caller-owned workspace."""
+
+    workspace = tmp_path / "workspaces" / "explicit"
+    workspace.mkdir(parents=True)
+    sentinel = workspace / "operator-data.txt"
+    sentinel.write_text("preserve this", encoding="utf-8")
+    readiness_calls: list[Path] = []
+    provision_requests: list[ProvisionRequest] = []
+
+    def prepare(path: Path) -> ReadyState:
+        readiness_calls.append(path)
+        return _ready_state(path)
+
+    def provision(request: ProvisionRequest) -> ProvisionedWorkspace:
+        provision_requests.append(request)
+        return _scratch()
+
+    manager = _manager(tmp_path, workspace_preparer=prepare, workspace_provisioner=provision)
+    with pytest.raises(SessionManagerError) as refused:
+        manager.create_or_attach_session(session_id=None, workspace_override=workspace)
+
+    assert refused.value.code == "workspace_provision_failed"
+    assert len(provision_requests) == 1
+    assert provision_requests[0].mode is ProvisionMode.REUSE
+    assert not readiness_calls
+    assert sentinel.read_text(encoding="utf-8") == "preserve this"
+    assert sorted(path.name for path in workspace.iterdir()) == ["operator-data.txt"]
+    assert list(manager.sessions_root.iterdir()) == []
+
+
 def test_registered_workspace_bytes_survive_a_later_session_failure(tmp_path: Path) -> None:
     """C1 G4: only uncommitted scratch is cleanup-eligible, never registered bytes."""
 
