@@ -1714,7 +1714,14 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                     Access.READ,
                     purpose,
                 )
-                grant = GrantReply(Operation.CREATE_VIEW, secrets.token_hex(32), ref, None, None)
+                grant = GrantReply(
+                    Operation.CREATE_VIEW,
+                    secrets.token_hex(32),
+                    ref,
+                    None,
+                    None,
+                    input_tree_sha256=tree["tree_sha256"],
+                )
                 record = {
                     "schema_version": 1,
                     "view_ref": ref.to_dict(),
@@ -1994,7 +2001,14 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                         access,
                         purpose,
                     )
-                    grant = GrantReply(Operation.CREATE_VIEW, secrets.token_hex(32), ref, None, None)
+                    grant = GrantReply(
+                        Operation.CREATE_VIEW,
+                        secrets.token_hex(32),
+                        ref,
+                        None,
+                        None,
+                        input_tree_sha256=tree["tree_sha256"],
+                    )
                     record = {
                         "schema_version": 1,
                         "view_ref": ref.to_dict(),

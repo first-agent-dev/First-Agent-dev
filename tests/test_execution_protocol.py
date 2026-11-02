@@ -134,7 +134,7 @@ RESULTS: dict[Operation, dict[str, Any]] = {
     Operation.ACQUIRE_WRITER: {"view_ref": None, "capability": CAP, "generation": 1, "revision_id": REV},
     Operation.HANDOFF: {"view_ref": None, "capability": CAP, "generation": 1, "revision_id": REV},
     Operation.PIN_READER: {"view_ref": {**VIEW, "access": "READ"}, "capability": CAP},
-    Operation.CREATE_VIEW: {"view_ref": VIEW, "capability": CAP},
+    Operation.CREATE_VIEW: {"view_ref": VIEW, "capability": CAP, "input_tree_sha256": SHA},
     Operation.READ_FILE: {"content": "ü", "sha256": SHA, "eof": True},
     Operation.WRITE_FILE: {"sha256": SHA, "bytes": 2},
     Operation.EDIT_FILE: {"sha256": SHA, "bytes": 2},
@@ -259,6 +259,14 @@ def test_only_the_newer_reader_tolerates_a_publish_reply_without_the_repeat_key(
     assert tolerant["result"]["already_published"] is False
     # Tolerance is narrow: it never invents a repeat, so the plan-bound rule is untouched.
     assert tolerant["result"]["plan_ref"] is legacy["result"]["plan_ref"]
+
+
+def test_create_view_reply_requires_the_exact_view_tree_identity() -> None:
+    """A caller may not construct a managed executor from an unbound view reply."""
+    legacy = response(Operation.CREATE_VIEW)
+    del legacy["result"]["input_tree_sha256"]
+    with pytest.raises(ExecutionContractError):
+        decode_reply(encode_json(legacy), operation=Operation.CREATE_VIEW, request_id=RID)
 
 
 @pytest.mark.parametrize("purpose", ["CANDIDATE", "VERIFICATION"])

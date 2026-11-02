@@ -124,7 +124,7 @@ def _binding_identity(binding: object) -> tuple[NamespaceRef, str]:
     """Read the two identity fields a managed binding owns, and never infer others."""
     namespace = getattr(binding, "namespace", None)
     workspace_id = getattr(binding, "workspace_id", None)
-    if not isinstance(namespace, NamespaceRef):
+    if not isinstance(namespace, NamespaceRef) or not isinstance(workspace_id, str):
         raise ExecutionContractError
     _hex_id(workspace_id, "ws-")
     return namespace, workspace_id
@@ -150,6 +150,7 @@ def _grant(operation: Operation, result: dict[str, Any]) -> GrantReply:
         None if view_ref is None else ViewRef.from_dict(view_ref),
         result.get("generation"),
         result.get("revision_id"),
+        result.get("input_tree_sha256"),
     )
 
 

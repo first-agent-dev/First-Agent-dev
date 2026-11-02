@@ -166,13 +166,14 @@ _PUBLISH_REPLY = _object(
 )
 _OWNER_REPLY = _object(view_ref={"type": "null"}, capability=SHA, generation=POSITIVE, revision_id=_id("rev-"))
 _VIEW_REPLY = _object(view_ref=VIEW, capability=SHA)
+_CREATED_VIEW_REPLY = _object(view_ref=VIEW, capability=SHA, input_tree_sha256=SHA)
 RESULTS: dict[Operation, dict[str, Any]] = {
     Operation.HEALTH: _object(ready=BOOL, protocol_version={"type": "integer", "const": 1}, profile_set_sha256=SHA),
     Operation.REGISTER_WORKSPACE: _object(workspace_id=_id("ws-"), revision_id=_id("rev-")),
     Operation.ACQUIRE_WRITER: _OWNER_REPLY,
     Operation.HANDOFF: _OWNER_REPLY,
     Operation.PIN_READER: _VIEW_REPLY,
-    Operation.CREATE_VIEW: _VIEW_REPLY,
+    Operation.CREATE_VIEW: _CREATED_VIEW_REPLY,
     Operation.READ_FILE: _object(content=TEXT, sha256=SHA, eof=BOOL),
     Operation.WRITE_FILE: _object(sha256=SHA, bytes=UINT),
     Operation.EDIT_FILE: _object(sha256=SHA, bytes=UINT),

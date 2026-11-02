@@ -878,6 +878,40 @@ def _view(
     return reply["result"]["view_ref"], str(reply["result"]["capability"])
 
 
+def test_create_view_reply_contains_the_authority_bound_input_tree(site: Site) -> None:
+    """C1/C3: the reply carries the exact digest held in this view, not a host recomputation."""
+    with SupervisorService(_config(site)) as service:
+        workspace_id = _registered(service)
+        capability, revision_id = _writer(service, workspace_id, request_id="1" * 32)
+        reply = exchange(
+            service,
+            Operation.CREATE_VIEW,
+            {
+                "workspace_id": workspace_id,
+                "base_revision": revision_id,
+                "access": "WRITE",
+                "purpose": "PROJECT",
+                "candidate_scope": None,
+                "plan_ref": None,
+            },
+            request_id="2" * 32,
+            capability=capability,
+        )
+        assert reply["status"] == "OK", reply
+        result = reply["result"]
+        view_ref = ViewRef.from_dict(result["view_ref"])
+        expected_tree, expected_plan = service.authority.execution_identity(
+            PEER, ACTOR, view_ref=view_ref, capability=result["capability"], deadline=until()
+        )
+        assert result["input_tree_sha256"] == expected_tree
+        assert expected_plan is None
+        view_record = json.loads(
+            (site.state / "workspaces" / workspace_id / "views" / view_ref.view_id / "view.json").read_text()
+        )
+        assert result["input_tree_sha256"] == view_record["input_tree_sha256"]
+        assert result["capability"] not in json.dumps(view_record)
+
+
 def test_exec_and_cancel_issue_receipts_over_the_closed_socket(site: Site, tmp_path: Path) -> None:
     """producer-kill-check: leave `exec`, `inspect` and `cancel` unrouted.
 

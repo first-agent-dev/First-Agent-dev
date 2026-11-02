@@ -181,6 +181,23 @@ def _canonical(site: Site, name: str) -> bytes | None:
 # ---------------------------------------------------------------------------
 
 
+def test_created_view_grant_retains_the_authority_tree_identity(site: Site, tmp_path: Path) -> None:
+    """The real client keeps the CREATE_VIEW hash for receipt-bound managed Bash."""
+    plan = _plan_ref(site)
+    with _served(site, tmp_path) as managed:
+        grant = managed.open_view(
+            access=Access.WRITE,
+            purpose=ViewPurpose.PROJECT,
+            base_revision=managed.grant.revision_id,
+            plan_ref=plan,
+        )
+        digest = grant.input_tree_sha256
+        assert isinstance(digest, str) and len(digest) == 64
+        assert all(character in "0123456789abcdef" for character in digest)
+        assert grant.view_ref is not None
+        assert grant.view_ref.base_revision == managed.grant.revision_id
+
+
 def test_the_port_reads_and_writes_the_admitted_view(site: Site, tmp_path: Path) -> None:
     """C1: bytes and digests come from the view; the host tree is not a write path."""
     plan = _plan_ref(site)

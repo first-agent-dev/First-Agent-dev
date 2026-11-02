@@ -145,12 +145,17 @@ class GrantReply:
     view_ref: ViewRef | None
     generation: int | None
     revision_id: str | None
+    input_tree_sha256: str | None = None
 
     def __post_init__(self) -> None:
         validate_capability(self.capability)
+        if self.input_tree_sha256 is not None:
+            _hex_id(self.input_tree_sha256, "", 64)
         if not isinstance(self.operation, Operation) or self.operation not in GRANT_OPERATIONS:
             raise ExecutionContractError
         if self.operation in _OWNER_GRANT_OPERATIONS:
+            if self.input_tree_sha256 is not None:
+                raise ExecutionContractError
             if self.view_ref is not None:
                 raise ExecutionContractError
             _positive_integer(self.generation)
@@ -178,6 +183,8 @@ class GrantReply:
             if self.view_ref is None:
                 raise ExecutionContractError
             result = {"view_ref": self.view_ref.to_dict()}
+            if self.operation is Operation.CREATE_VIEW and self.input_tree_sha256 is not None:
+                result["input_tree_sha256"] = self.input_tree_sha256
         return result
 
     # §execution-grant-journal-projection: persist identities, never either known grant.

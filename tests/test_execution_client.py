@@ -586,7 +586,7 @@ def candidate_saga(*, already_published: bool = False) -> tuple[Callable[[dict[s
 
     def handler(req: dict[str, Any]) -> dict[str, Any]:
         if req["op"] == "create_view":
-            return {"view_ref": CANDIDATE_VIEW.to_dict(), "capability": "6" * 64}
+            return {"view_ref": CANDIDATE_VIEW.to_dict(), "capability": "6" * 64, "input_tree_sha256": SHA}
         if req["op"] == "write_file":
             written.append(req["payload"]["content"])
             raw = written[-1].encode()
