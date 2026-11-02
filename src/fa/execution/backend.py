@@ -161,13 +161,20 @@ class CellBackend:
         source: Any,
         scratch: Any,
         cache: Any,
+        environment: Any,
     ) -> None:
-        """Only the authority's own trusted triple may reach Docker."""
+        """Only the authority's own trusted input paths may reach Docker."""
         trusted = self._authority.execution_trusted(view)
         if trusted is None:
             raise ExecutionContractError
-        owner, trusted_source, trusted_scratch, trusted_cache = trusted
-        if owner != namespace or source != trusted_source or scratch != trusted_scratch or cache != trusted_cache:
+        owner, trusted_source, trusted_scratch, trusted_cache, trusted_environment = trusted
+        if (
+            owner != namespace
+            or source != trusted_source
+            or scratch != trusted_scratch
+            or cache != trusted_cache
+            or environment != trusted_environment
+        ):
             raise ExecutionContractError
 
     @staticmethod
@@ -238,6 +245,7 @@ class CellBackend:
                         source=inputs.source,
                         scratch=inputs.scratch,
                         cache=inputs.cache,
+                        environment=inputs.environment,
                         deadline=deadline,
                     )
                     stream = self._cells.attach_created(req, profile=scope.profile, deadline=deadline)
@@ -275,6 +283,7 @@ class CellBackend:
                         source=inputs.source,
                         scratch=inputs.scratch,
                         cache=inputs.cache,
+                        environment=inputs.environment,
                         deadline=deadline,
                     )
                     stream = self._cells.attach_created(req, profile=scope.profile, deadline=deadline)

@@ -2,11 +2,15 @@
 
 Date: 2026-10-15; E230 refresh 2026-10-16; **E285 refresh 2026-10-23 at `969fa06`** (coverage re-scanned, every
 `src/fa` process/import route classified; see [§E285](#e285-refresh-2026-10-23--every-srcfa-processimport-route-classified-at-969fa06)
-below the historical tables). The initial d910 line table below is historical; refreshed exact symbol ranges follow it.
-**State: OPEN — E285 coverage baseline at `969fa06`; R02 and R20–R28 have targeted working-tree refreshes through 2026-11-02; no row closed. E402–E403 add unit and parsed-CLI no-side-effect oracles for provisioner and stage-writer absence; E404 repairs the four local adaptive workflow tests through the existing publisher seam; E406 adds a local UDS negative composition oracle for determinate R25 PLAN refusal; E407 records the observed candidate-view settlement gap under indeterminate PUBLISH; the operator selected Q114-A, with managed-path implementation still open. These are not the per-row S4P1 source/caller/nodeid proofs and do not establish deployed-host behavior.** The E285 scan accounts for every launcher and
-dynamic-import call site in `src/fa` (28 call sites in 16 files, each mapped to exactly one row) and every row now
-carries its exact current anchor, a real caller trace and a named negative oracle. What is still missing is the thing
-a document cannot supply: the negative oracle *running* against a managed backend, which is SLICE4 STEP2's work (A5).
+below the historical tables); **E414 R26 refresh 2026-11-02** (see addendum below). The initial d910 line table below is
+historical; refreshed exact symbol ranges follow it. **State: OPEN — E285 coverage baseline at `969fa06`; R02 and
+R20–R28 have targeted working-tree refreshes through 2026-11-02; no S4P1 row closed.** E402–E404 record local
+readiness/writer and publisher-caller evidence; E406/E407 record R25 determinate/uncertain PUBLISH findings under
+Q114-A; E414 corrects the R26 caller trace. None supplies every row's passing managed-backend negative oracle or
+deployed-host evidence. The E285 scan accounts for every launcher and dynamic-import call site in `src/fa` (28
+call sites in 16 files, each mapped to exactly one row) and the refreshed R26 trace now records the actual
+HANDOFF caller. What remains is the negative oracle *running* against the managed backend, authorized as the
+pre-W0 prerequisite by Q113; no row is closed by this inventory note.
 The inventory review itself does not change runtime source. E402 separately records a narrow runtime fail-closed guard change and its tests; this note remains a static route inventory and no row is thereby closed. Static search is evidence of candidates, not a
 proof that a route is reachable or safe. 'Read-only' and fixed Git argv do not exempt project Git.
 
@@ -69,7 +73,7 @@ cell runs against its own sandbox, not a workspace view).
 | # | Route (producer @ `969fa06`) | Reachable from | Boundary today | Existing evidence (verified present) | Named negative oracle (planned unless marked EXISTING) |
 | --- | --- | --- | --- | --- | --- |
 | R01 | `scripts/fa:36–45,58–74` compose wrapper; `.active` supplies project CWD | operator shell | TCB host | `tests/test_deploy_scripts.py::test_fa_wrapper_uses_arrays_for_compose_and_flags` | `tests/test_e2e_artifact_contract.py::test_installed_controller_help_ignores_poisoned_workspace` |
-| R02 | `scripts/fa-entrypoint.sh:166–184` readiness result; managed setup/publication `:193–249`; provision gate `:270–290`; auto-run `:292–` | operator/container entry | TCB host | `tests/test_fa_entrypoint.py::test_entrypoint_readiness_runs_before_active_and_command_override`; `…::test_entrypoint_readiness_degradation_warns_and_continues` | local negative: `…::test_entrypoint_auto_run_refuses_after_readiness_degradation_before_provision_or_publication`; managed-backend oracle remains `…::test_entrypoint_runs_no_project_command_without_backend` (planned, absent) |
+| R02 | `scripts/fa-entrypoint.sh:166–184` readiness result; managed setup/publication `:193–249`; provision gate `:270–290`; auto-run `:292–`; `src/fa/session/manager.py::_main:601–638` now resolves the shared provisioner before constructing the manager | operator/container entry | TCB host before managed provision | `tests/test_fa_entrypoint.py::test_entrypoint_readiness_runs_before_active_and_command_override`; `tests/test_session_lifecycle.py::test_entrypoint_manager_uses_injected_provisioner_for_success` | local negative: `…::test_entrypoint_auto_run_refuses_after_readiness_degradation_before_provision_or_publication`; manager-seam negative: `tests/test_session_lifecycle.py::test_entrypoint_manager_refuses_missing_managed_provisioner_before_state_changes`; full managed-backend entrypoint oracle remains `…::test_entrypoint_runs_no_project_command_without_backend` (planned, absent) |
 | R03 | `scripts/bootstrap/workspace.py:13–17` prepends the checked-out `src` before readiness import | bootstrap wrapper | TCB host | `tests/test_workspace_bootstrap_aliases.py::test_just_bootstrap_aliases_converge_and_doctor_is_read_only` | same as R01 (poisoned checkout/PYTHONPATH) |
 | R04 | `session/manager.py::_new_session:335–426` → `_provision_workspace:230–262` (callers `:377`); `begin_run:537–574` reserves a run, spawns nothing | explicit, chat, nested | host | `tests/test_session_workspace_provisioning.py` | `tests/test_managed_workspace.py::test_a_new_run_provisions_through_the_supervisor_and_never_clones_on_the_host` |
 | R05 | `session/workspace.py::provision_git_workspace:290–360`, `configure_existing_workspace:394–524`, `_run_git:170–204` (`subprocess.run`@182) | R04 | host (project Git) | `tests/test_session_workspace_provisioning.py` | same as R04 + `…::test_missing_backend_creates_no_clone_and_no_hook` |
@@ -246,6 +250,34 @@ cell runs against its own sandbox, not a workspace view).
   `tests/test_invoke_workflow_tool.py tests/test_handoff_payload.py` passed **112 tests, exit 0** on CPython
   3.13.16. R26 remains OPEN: no attested child namespace, no parent-writer suspension proof, no managed-backend
   negative oracle, and no live-host acceptance were established. Do not interpret this local bank as W1 readiness.
+
+### E414 R26 caller refresh (2026-11-02; source-only review, remains OPEN)
+
+This addendum supersedes only the stale R26 caller statements above; the earlier source trace remains useful as a
+snapshot but is no longer current about HANDOFF. No runtime source or tests changed in this review.
+
+- **Production caller now exists for the non-coder route.** `workflow_tool.handler` invokes
+  `_execute_child_with_managed_lifecycle` at `src/fa/inner_loop/tools/workflow_tool.py:737–745`. The helper at
+  `:534–577` orders parent-stage suspension, HANDOFF, child `run_workflow`, reverse HANDOFF, and parent resume.
+  `_begin_managed_child` (`:452–486`) calls `ParentStageLease.suspend`, then `ManagedExecution.handoff_to`, and
+  validates the exact child namespace before dispatch. `_return_managed_child_to_parent` (`:489–507`) performs the
+  reverse transfer and resumes only after the parent binding is restored. `_ManagedStageLease.suspend/resume`
+  (`src/fa/cli.py:1479–1530`) settles/disarms the current parent view and opens/rebinds a fresh WRITE view at the
+  returned revision. These source paths correct the prior statement that no controller caller sends HANDOFF.
+- **The caller is not yet the coder-acquisition route.** `_prepare_invocation` still rejects every
+  coder-containing request at `workflow_tool.py:611–616`, before child allocation/HANDOFF; the existing guard is
+  covered by `tests/test_invoke_workflow_tool.py::test_acquisition_unavailable_before_child_or_handoff`. The
+  active lifecycle therefore proves only accepted non-coder invocations. The current workflow kwargs have no
+  acquired `PlanSnapshot`; `run_workflow` still requires `plan_path` for coder and reads via the host workspace at
+  `src/fa/inner_loop/workflow_controller.py:2731–2736`. No production call from this handler to
+  `inventory_project_artifacts` (`src/fa/inner_loop/managed_inventory.py:78`) or `LIST_PROJECT_ARTIFACTS` was found.
+- **Proof level and remaining oracle.** `tests/test_invoke_workflow_tool.py::test_managed_noncoder_handoff_returns_fresh_parent_view_before_success`
+  and adjacent refusal/uncertainty tests (`:803–913`) assert event ordering with recording test doubles. They do not
+  drive the same handler through the real supervisor/UDS, pinned READ/PROJECT inventory, acquisition decision,
+  PlanSnapshot admission, and `drive_session`. `tests/test_execution_handoff_return.py` proves authority/client
+  behavior over a real local socket, but not this handler-to-workflow composition. Therefore R26 and S5P2 remain
+  OPEN; no live-host or W0/W1/W2 closure is implied. Keep Q114's no-retry/pending-proof/quarantine rules and the
+  mandatory plan-before-coder admission. Do not change legacy direct `fa workflow`.
 
 ### Q109 `fs_search` source → caller → reader/guard trace (2026-11-01; pre-code)
 
@@ -428,3 +460,11 @@ Scope stays narrow: the test seam forces the existing bootstrap command to fail;
 **R28.** `scripts/bootstrap/host_bootstrap.py::_run:24–39` owns direct subprocess execution; `main:95–115` finds `uv`, conditionally installs `just`, runs the workspace readiness wrapper and emits `FA_AGENT_READY=1` only on success. `git grep` finds its only direct production caller at `justfile:113` (`agent-bootstrap`); the VS Code convenience command delegates to that alias. Existing `tests/test_workspace_bootstrap_aliases.py` covers the operator bootstrap, current/wrong `just`, missing `uv`, wrapper degradation, and alias consistency. The direct `_cmd_run` route now binds managed Bash when a managed execution is configured, and `tests/test_managed_registry_binding.py` verifies managed Bash does not become a host subprocess. The dedicated `test_no_model_tool_can_reach_the_host_bootstrap` oracle is still absent, so R28 remains OPEN pending that path-specific negative and broader acceptance.
 
 No runtime/test file changed and no pytest result is claimed in this refresh. `.venv` is absent in this turn; only source, callers, `git grep`, test names, and the inventory were inspected. The absence of the planned negative oracles is recorded explicitly rather than treated as evidence of exclusion.
+
+### E422 — managed new-root/readiness caller map (2026-11-02; local, no inventory rows closed)
+
+**Current production path.** `cli._session_manager_for_args:265–290` chooses the default `/repo` seed, an explicitly configured source, or clean empty seed when `FA_SESSION_SOURCE` is set to empty. `SessionManager._new_session:312–390` admits a provisioning `RunContext`; `_provision_managed:246–278` passes that exact identity and source choice to the managed provisioner; `_prepare_workspace:232–244` passes it to the readiness producer. `ClientWorkspaceProvisioner:544+` sends `REGISTER_WORKSPACE{create:true}` for a new root; `ExecutionService._register_workspace:612+` routes that operation to `WorkspaceAuthority.register_new:1434+`. The authority's `_environment_identity:514+` resolves exact root locks or a unique approved First-Agent baseline for a lockless clean root. `managed_environment_readiness:484–541` uses the same run's PROVISIONING view for both required tool probes and only releases after confirmed terminality.
+
+**Named local proof.** Materializer and baseline: `tests/test_execution_workspace.py::test_register_new_materializes_approved_source_and_keeps_partial_bytes_on_failure`, `::test_authority_baseline_discovery_requires_one_approved_first_agent_root`, `::test_lockless_clean_seed_uses_only_operator_approved_baseline_artifact`; caller/service: `tests/test_execution_service.py::test_register_create_true_materializes_approved_or_empty_seed`, `tests/test_execution_composition.py::test_the_client_provisioner_materializes_a_root_from_an_approved_source`; same-run/Q118/readiness: `tests/test_session_lifecycle.py::test_managed_provisioner_owns_workspace_bytes_and_readiness_receives_same_run_context`, `::test_new_root_provisioning_refusal_retains_q118_tombstone_and_run_binding`, `tests/test_execution_composition.py::test_managed_readiness_probes_both_required_tools_and_settles_same_run`, `::test_unconfirmed_readiness_view_end_withholds_writer_release`, and `tests/test_cli.py::test_managed_readiness_failure_leaves_tombstone_before_provider_or_workflow_events`; empty-source selection: `tests/test_cli.py::test_empty_session_source_selects_clean_seed_before_managed_provisioning`.
+
+This is local test/source evidence only. Live `fa-entrypoint` `.active` behavior, actual Docker prewarm/artifact mounting, profile UID/GID compatibility, process trace, authoritative host DB/event ledger and L-ENTRY-6 remain NOT RUN. No R02/S4P1 row, W0/W1/W2, or I03 closure is claimed.

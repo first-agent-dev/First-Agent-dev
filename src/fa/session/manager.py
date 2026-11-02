@@ -30,7 +30,6 @@ from fa.session.provisioning import (
     ProvisionRequest,
     WorkspaceProvisioner,
 )
-from fa.session.workspace import WorkspaceProvisionError, provision_git_workspace
 from fa.workspace_bootstrap import ReadyState, ReadyStatus
 
 _SESSION_SCHEMA_VERSION = "v1"
@@ -87,14 +86,12 @@ class SessionManager:
         state_root: Path,
         workspace_root: Path,
         source_workspace: Path | None = None,
-        repo_push_url: str | None = None,
-        workspace_preparer: Callable[[Path], ReadyState] | None = None,
+        workspace_preparer: Callable[[Path, RunContext | None], ReadyState] | None = None,
         workspace_provisioner: WorkspaceProvisioner | None = None,
     ) -> None:
         self.state_root = Path(state_root).expanduser().resolve()
         self.workspace_root = Path(workspace_root).expanduser().resolve()
         self.source_workspace = Path(source_workspace).expanduser().resolve() if source_workspace is not None else None
-        self.repo_push_url = repo_push_url
         self.workspace_preparer = workspace_preparer
         self.workspace_provisioner = workspace_provisioner
         self.sessions_root = self.state_root / "sessions"
@@ -153,7 +150,9 @@ class SessionManager:
             temp_path.unlink(missing_ok=True)
             raise
 
-    def _read_manifest(self, path: Path, *, expected_session_id: str) -> dict[str, Any]:
+    def _read_manifest(
+        self, path: Path, *, expected_session_id: str, allow_provisioning: bool = False
+    ) -> dict[str, Any]:
         try:
             with path.open(encoding="utf-8") as handle:
                 data = json.load(handle)
@@ -165,8 +164,9 @@ class SessionManager:
             raise SessionManagerError("manifest_unsupported", f"unsupported schema at {path}")
         if data.get("session_id") != expected_session_id:
             raise SessionManagerError("manifest_identity_mismatch", f"session ID mismatch at {path}")
-        if data.get("status") != "active":
-            raise SessionManagerError("session_not_active", f"session status is {data.get('status')!r}: {path}")
+        status = data.get("status")
+        if status != "active" and not (allow_provisioning and status == "provisioning"):
+            raise SessionManagerError("session_not_active", f"session status is {status!r}: {path}")
         workspace_path = self._resolve_checked_path(data.get("workspace_path"), self.workspace_root, "workspace")
         db_path = self._resolve_checked_path(data.get("session_db_path"), self.state_root, "session DB")
         expected_db = (self._session_dir(expected_session_id) / "session.db").resolve()
@@ -210,7 +210,9 @@ class SessionManager:
             owner_id = manifest_path.parent.name
             if except_session_id is not None and owner_id == except_session_id:
                 continue
-            data = self._read_manifest(manifest_path, expected_session_id=owner_id)
+            data = self._read_manifest(manifest_path, expected_session_id=owner_id, allow_provisioning=True)
+            if data["status"] != "active":
+                continue
             if Path(str(data["workspace_path"])).resolve() == workspace_path:
                 owners.append(owner_id)
         return owners
@@ -227,82 +229,48 @@ class SessionManager:
         if owners:
             raise self._already_owned(workspace_path, owners)
 
-    def _provision_workspace(self, workspace_path: Path, *, session_id: str) -> bool:
-        """Create a new workspace; return whether this method created it."""
-        if workspace_path.exists():
-            if not workspace_path.is_dir():
-                raise SessionManagerError("workspace_invalid", f"workspace is not a directory: {workspace_path}")
-            return False
-        workspace_path.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            if self.source_workspace is not None:
-                if not self.source_workspace.is_dir():
-                    raise SessionManagerError("source_workspace_invalid", str(self.source_workspace))
-                if (self.source_workspace / ".git").is_dir():
-                    try:
-                        provision_git_workspace(
-                            self.source_workspace,
-                            workspace_path,
-                            session_id,
-                            self.repo_push_url,
-                        )
-                    except WorkspaceProvisionError as exc:
-                        raise SessionManagerError(
-                            "workspace_provision_failed",
-                            f"{exc.code}: {exc.detail}",
-                        ) from exc
-                else:
-                    shutil.copytree(self.source_workspace, workspace_path, symlinks=True)
-            else:
-                workspace_path.mkdir(parents=False)
-        except SessionManagerError:
-            raise
-        except OSError as exc:
-            raise SessionManagerError("workspace_provision_failed", f"{workspace_path}: {exc}") from exc
-        return True
-
-    def _prepare_workspace(self, workspace_path: Path) -> None:
-        """Run readiness; a not-READY result is fatal in the managed composition.
-
-        In the managed composition the supervisor owns the bytes and readiness
-        runs before the session becomes active, so degradation is a closed
-        lifecycle outcome (Q78/E263): callers cannot distinguish a repaired
-        workspace from a broken one later. The composition without an injected
-        provisioner is the pre-cutover host path that SLICE4 STEP2 removes; it
-        keeps reporting readiness without blocking until that cutover, so the
-        change lands together with the provisioning route instead of silently
-        disabling every session in a degraded environment.
-        """
-        if self.workspace_preparer is None:
-            return
-        state = self.workspace_preparer(workspace_path)
+    def _prepare_workspace(self, workspace_path: Path, run_context: RunContext | None = None) -> None:
+        """Require readiness through the managed cell before activation/attach."""
+        if self.workspace_preparer is None or self.workspace_provisioner is None or run_context is None:
+            raise SessionManagerError(
+                "managed_execution_unavailable",
+                "session readiness requires an admitted managed provisioning run",
+            )
+        state = self.workspace_preparer(workspace_path, run_context)
         if isinstance(state, ReadyState) and state.status is ReadyStatus.READY:
-            return
-        if self.workspace_provisioner is None:
             return
         status = getattr(state, "status", "unavailable")
         reason = getattr(state, "reason_code", "unknown")
         raise SessionManagerError("workspace_not_ready", f"{status}: {reason}")
 
     def _provision_managed(
-        self, session: SessionContext, *, creates_workspace: bool, deadline: float
+        self,
+        session: SessionContext,
+        run_context: RunContext,
+        *,
+        creates_workspace: bool,
+        deadline: float,
     ) -> ProvisionedWorkspace:
-        """Reserve the real provisioning run, then let the supervisor own the bytes.
+        """Use the caller's admitted run for supervisor ownership of the bytes.
 
-        `creates_workspace` distinguishes a named existing directory (REUSE, the
-        supervisor registers it) from a root that does not exist yet (PROVISION,
-        which is the typed BLOCKED disposition until the SLICE3 publication join).
+        The caller reserves before this method so the same RunContext survives
+        backend failure and can be retained as a Q118 tombstone. `creates_workspace`
+        distinguishes a named existing directory (REUSE, the supervisor registers
+        it) from a new root (PROVISION, which materializes the selected source or
+        approved empty seed through the managed authority before same-run readiness).
         """
         provisioner = self.workspace_provisioner
         if provisioner is None:
             raise SessionManagerError("workspace_provision_failed", "no managed provisioner is injected")
-        provisioning = self.begin_run(session, None)
+        if run_context.session_id != session.session_id or run_context.session_db_path != session.session_db_path:
+            raise SessionManagerError("session_context_mismatch", "provisioning run does not belong to this session")
         request = ProvisionRequest(
             mode=ProvisionMode.PROVISION if creates_workspace else ProvisionMode.REUSE,
-            session_id=session.session_id,
-            run_id=provisioning.run_id,
-            workspace_path=session.workspace_path,
+            session_id=run_context.session_id,
+            run_id=run_context.run_id,
+            workspace_path=run_context.workspace_path,
             deadline=deadline,
+            source_workspace=self.source_workspace if creates_workspace else None,
         )
         provisioned = provisioner(request)
         if not isinstance(provisioned, ProvisionedWorkspace):
@@ -311,6 +279,15 @@ class SessionManager:
                 "provisioner returned no frozen ownership result",
             )
         return provisioned
+
+    def _cleanup_unregistered_new_workspace(
+        self, workspace_path: Path, *, workspace_created: bool, provisioned: ProvisionedWorkspace | None
+    ) -> None:
+        """Remove only bytes the failed create attempt is proven to own."""
+        if not workspace_created or not workspace_path.exists():
+            return
+        if provisioned is not None and not provisioned.registered:
+            shutil.rmtree(workspace_path, ignore_errors=True)
 
     def _manifest_payload(
         self,
@@ -333,6 +310,11 @@ class SessionManager:
         }
 
     def _new_session(self, session_id: str, workspace_override: Path | None) -> SessionContext:
+        if self.workspace_provisioner is None or self.workspace_preparer is None:
+            raise SessionManagerError(
+                "managed_execution_unavailable",
+                "new sessions require managed materialization and cell-local readiness",
+            )
         session_dir = self._session_dir(session_id)
         if session_dir.exists():
             raise SessionManagerError("session_exists", f"session namespace already exists: {session_id}")
@@ -357,6 +339,7 @@ class SessionManager:
         # caller-owned and is never removed by this manager.
         workspace_created = not workspace_path.exists()
         provisioned: ProvisionedWorkspace | None = None
+        run_context: RunContext | None = None
         try:
             self._atomic_write_json(
                 session_dir / "manifest.json",
@@ -371,24 +354,21 @@ class SessionManager:
             )
             SessionDatabase(db_path, session_id=session_id)
             context = SessionContext(session_id, workspace_path, db_path, session_dir / "manifest.json")
-            if self.workspace_provisioner is None:
-                # Pre-cutover composition keeps host provisioning until SLICE4
-                # routes every caller through the injected provisioner.
-                self._provision_workspace(workspace_path, session_id=session_id)
-            else:
-                provisioned = self._provision_managed(
-                    context,
-                    creates_workspace=workspace_created,
-                    deadline=time.monotonic() + _PROVISIONING_TIMEOUT_S,
+            run_context = self.begin_run(context, None)
+            provisioned = self._provision_managed(
+                context,
+                run_context,
+                creates_workspace=workspace_created,
+                deadline=time.monotonic() + _PROVISIONING_TIMEOUT_S,
+            )
+            if conflicts and not provisioned.registered:
+                raise self._already_owned(workspace_path, conflicts)
+            if not provisioned.registered:
+                raise SessionManagerError(
+                    "workspace_provision_failed",
+                    "workspace was not registered by the managed provisioner",
                 )
-                if conflicts and not provisioned.registered:
-                    raise self._already_owned(workspace_path, conflicts)
-                if not workspace_created and not provisioned.registered:
-                    raise SessionManagerError(
-                        "workspace_provision_failed",
-                        "existing workspace was not registered by the managed provisioner",
-                    )
-            self._prepare_workspace(workspace_path)
+            self._prepare_workspace(workspace_path, run_context)
             self._atomic_write_json(
                 session_dir / "manifest.json",
                 self._manifest_payload(
@@ -419,20 +399,25 @@ class SessionManager:
             except (OSError, json.JSONDecodeError):
                 active = False
             if not active and session_dir.exists():
-                shutil.rmtree(session_dir, ignore_errors=True)
-                # Ownership, not existence, decides cleanup: a registered or
-                # never-provisioned workspace is never an rmtree target.
-                if self.workspace_provisioner is None:
-                    disposable = workspace_created
-                else:
-                    # An unregistered result makes only a root created by this
-                    # attempt disposable; an explicit pre-existing path is caller-owned.
-                    disposable = workspace_created and provisioned is not None and not provisioned.registered
-                if disposable and workspace_path.exists():
-                    shutil.rmtree(workspace_path, ignore_errors=True)
+                # Once a managed provisioning run is admitted, retain its
+                # provisional manifest + DB binding as Q118's durable tombstone.
+                if run_context is None:
+                    shutil.rmtree(session_dir, ignore_errors=True)
+                # Ownership, not existence, decides cleanup; the helper never
+                # deletes caller-owned, registered or ambiguously owned bytes.
+                self._cleanup_unregistered_new_workspace(
+                    workspace_path,
+                    workspace_created=workspace_created,
+                    provisioned=provisioned,
+                )
         return SessionContext(session_id, workspace_path, db_path, session_dir / "manifest.json")
 
     def _attach_session(self, session_id: str, workspace_override: Path | None) -> SessionContext:
+        if self.workspace_provisioner is None or self.workspace_preparer is None:
+            raise SessionManagerError(
+                "managed_execution_unavailable",
+                "session attach requires managed registration and cell-local readiness",
+            )
         session_dir = self._session_dir(session_id)
         manifest_path = session_dir / "manifest.json"
         if not manifest_path.is_file():
@@ -452,20 +437,21 @@ class SessionManager:
         except SessionDatabaseError as exc:
             raise SessionManagerError(exc.code, str(exc)) from exc
         session = SessionContext(session_id, manifest_workspace, db_path, manifest_path)
-        if self.workspace_provisioner is not None:
-            # A resumed managed workspace must be registered before host readiness
-            # can run; backend refusal is not permission to use the canonical path.
-            provisioned = self._provision_managed(
-                session,
-                creates_workspace=False,
-                deadline=time.monotonic() + _PROVISIONING_TIMEOUT_S,
+        # Resume registers/reuses the existing root; it never reapplies the
+        # source seed or clean-mode choice.
+        run_context = self.begin_run(session, None)
+        provisioned = self._provision_managed(
+            session,
+            run_context,
+            creates_workspace=False,
+            deadline=time.monotonic() + _PROVISIONING_TIMEOUT_S,
+        )
+        if not provisioned.registered:
+            raise SessionManagerError(
+                "workspace_provision_failed",
+                "existing workspace was not registered by the managed provisioner",
             )
-            if not provisioned.registered:
-                raise SessionManagerError(
-                    "workspace_provision_failed",
-                    "existing workspace was not registered by the managed provisioner",
-                )
-        self._prepare_workspace(manifest_workspace)
+        self._prepare_workspace(manifest_workspace, run_context)
         now = self._now()
         data["last_used_at"] = now
         self._atomic_write_json(manifest_path, data)
@@ -545,7 +531,7 @@ class SessionManager:
             owner_id = manifest_path.parent.name
             if owner_id == current_session_id:
                 continue
-            data = self._read_manifest(manifest_path, expected_session_id=owner_id)
+            data = self._read_manifest(manifest_path, expected_session_id=owner_id, allow_provisioning=True)
             db_path = Path(str(data["session_db_path"]))
             try:
                 db = SessionDatabase.open_existing(db_path, session_id=owner_id)
@@ -598,6 +584,12 @@ class SessionManager:
 __all__ = ["RunContext", "SessionContext", "SessionManager", "SessionManagerError"]
 
 
+def _managed_workspace_preparer(workspace: Path, run_context: RunContext | None) -> ReadyState:
+    from fa.execution.composition import managed_environment_readiness
+
+    return managed_environment_readiness(workspace, run_context)
+
+
 def _main() -> int:
     parser = argparse.ArgumentParser(prog="python -m fa.session.manager")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -609,8 +601,24 @@ def _main() -> int:
     args = parser.parse_args()
     if args.command != "provision":
         return 2
-    manager = SessionManager(state_root=args.state_root, workspace_root=args.workspace_root)
     try:
+        # Keep the container entrypoint on the same configured managed port as
+        # the production CLI. A missing execution config is not permission to
+        # use SessionManager's pre-cutover host provisioning path.
+        from fa.execution.composition import client_workspace_provisioner
+
+        workspace_provisioner = client_workspace_provisioner()
+        if workspace_provisioner is None:
+            raise SessionManagerError(
+                "managed_execution_unavailable",
+                "entrypoint session provisioning requires configured managed execution",
+            )
+        manager = SessionManager(
+            state_root=args.state_root,
+            workspace_root=args.workspace_root,
+            workspace_preparer=_managed_workspace_preparer,
+            workspace_provisioner=workspace_provisioner,
+        )
         context = manager.provision_entrypoint_session(
             session_id=args.session_id,
             workspace_override=args.workspace,

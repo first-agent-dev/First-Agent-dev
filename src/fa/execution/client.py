@@ -20,7 +20,17 @@ from typing import Any, cast
 from uuid import uuid4
 
 from fa.execution.profiles import ExecutionProfile
-from fa.execution.protocol import DeadlineConnection, decode_reply, decode_request, encode_json, read_frame, write_frame
+from fa.execution.protocol import (
+    MAX_PROJECT_ARTIFACTS_REPLY_BYTES,
+    PROTOCOL_V1,
+    PROTOCOL_V2,
+    DeadlineConnection,
+    decode_reply,
+    decode_request,
+    encode_json,
+    read_frame,
+    write_frame,
+)
 from fa.execution.types import (
     Access,
     ExecutionContractError,
@@ -178,12 +188,14 @@ class ExecutionClient:
         grant: GrantReply | None,
         payload: dict[str, Any],
         deadline: float | None = None,
+        protocol_version: int = PROTOCOL_V1,
+        allow_legacy_v1_rejection: bool = False,
     ) -> dict[str, Any]:
         if grant is not None and not isinstance(grant, GrantReply):
             raise ExecutionContractError  # A raw string is not a grant a caller may pass on.
         raw = encode_json(
             {
-                "protocol_version": 1,
+                "protocol_version": protocol_version,
                 "request_id": request_id,
                 "op": operation.value,
                 "namespace": None if namespace is None else namespace.to_dict(),
@@ -213,8 +225,19 @@ class ExecutionClient:
                     framed.add_execution_budget(payload["timeout_ms"])
                 # The reader tolerates a reply written before an additive key existed;
                 # the server's own self-check does not.
+                reply_limit = (
+                    MAX_PROJECT_ARTIFACTS_REPLY_BYTES
+                    if protocol_version == PROTOCOL_V2 and operation is Operation.LIST_PROJECT_ARTIFACTS
+                    else None
+                )
+                raw_response = read_frame(framed) if reply_limit is None else read_frame(framed, max_bytes=reply_limit)
                 response = decode_reply(
-                    read_frame(framed), operation=operation, request_id=request_id, tolerate_legacy=True
+                    raw_response,
+                    operation=operation,
+                    request_id=request_id,
+                    tolerate_legacy=True,
+                    protocol_version=protocol_version,
+                    allow_legacy_v1_rejection=allow_legacy_v1_rejection,
                 )
         except (OSError, ExecutionContractError):
             if attempted_send:
@@ -228,6 +251,104 @@ class ExecutionClient:
                 raise ExecutionUnavailableError(operation_id=error["operation_id"])
             raise ExecutionRejectedError(error["code"], error["operation_id"])
         return cast(dict[str, Any], response["result"])
+
+    def pin_reader(
+        self,
+        binding: object,
+        revision_id: str,
+        *,
+        plan_ref: PlanRef | None = None,
+        deadline: float | None = None,
+    ) -> GrantReply:
+        """Pin one immutable READ/PROJECT view using the existing v1 operation."""
+        namespace, workspace_id = _binding_identity(binding)
+        _hex_id(revision_id, "rev-")
+        result = self.request(
+            Operation.PIN_READER,
+            request_id=uuid4().hex,
+            namespace=namespace,
+            view=None,
+            grant=None,
+            payload={
+                "workspace_id": workspace_id,
+                "revision_id": revision_id,
+                "plan_ref": None if plan_ref is None else _plan_ref_dict(plan_ref),
+            },
+            deadline=deadline,
+        )
+        return _grant(Operation.PIN_READER, result)
+
+    def list_project_artifacts(
+        self,
+        namespace: NamespaceRef,
+        *,
+        view: ViewRef,
+        grant: GrantReply,
+        project_slug: str,
+        deadline: float | None = None,
+    ) -> dict[str, Any]:
+        """Negotiate v2 and list bounded Q60 metadata from one READ/PROJECT view.
+
+        HEALTH has no side effect; a v1-only supervisor's explicit rejection (or
+        an indeterminate probe) is therefore an unavailable feature, not an
+        uncertain workspace mutation. LIST is attempted once and never falls
+        back to a host path or v1 operation.
+        """
+        if (
+            not isinstance(namespace, NamespaceRef)
+            or not isinstance(view, ViewRef)
+            or view.access is not Access.READ
+            or view.purpose is not ViewPurpose.PROJECT
+            or view.owner_run_id != namespace.run_id
+            or not isinstance(grant, GrantReply)
+            or grant.view_ref != view
+            or not isinstance(project_slug, str)
+        ):
+            raise ExecutionContractError
+        try:
+            health = self.request(
+                Operation.HEALTH,
+                request_id=uuid4().hex,
+                namespace=None,
+                view=None,
+                grant=None,
+                payload={},
+                deadline=deadline,
+                protocol_version=PROTOCOL_V2,
+                allow_legacy_v1_rejection=True,
+            )
+        except ExecutionRejectedError as error:
+            if error.code == "INVALID_REQUEST":
+                raise ExecutionUnavailableError from None
+            raise
+        except ExecutionUncertainError:
+            raise ExecutionUnavailableError from None
+        if (
+            health.get("ready") is not True
+            or health.get("protocol_version") != PROTOCOL_V2
+            or health.get("features") != ["list_project_artifacts"]
+        ):
+            raise ExecutionUnavailableError
+        try:
+            return self.request(
+                Operation.LIST_PROJECT_ARTIFACTS,
+                request_id=uuid4().hex,
+                namespace=namespace,
+                view=view,
+                grant=grant,
+                payload={"project_slug": project_slug},
+                deadline=deadline,
+                protocol_version=PROTOCOL_V2,
+                allow_legacy_v1_rejection=True,
+            )
+        except ExecutionRejectedError as error:
+            if error.code == "INVALID_REQUEST":
+                raise ExecutionUnavailableError from None
+            raise
+        except ExecutionUncertainError:
+            # This operation is read-only; a lost result cannot imply workspace
+            # mutation, but it cannot be treated as a complete inventory either.
+            raise ExecutionUnavailableError from None
 
     def handoff(
         self,

@@ -2421,10 +2421,12 @@ is a source-backed implementation contract, not a claim that Q90/CT108 or the li
 
 ## Q112 — readiness-failure scope for managed `fa-entrypoint` auto-run
 
-**Status: RESOLVED — operator selected `auto_run_only`.** A failed readiness check blocks the managed
-`FA_AUTO_RUN` path before active-workspace publication, session provisioning, or `fa run`. An explicit
-command override remains available as a diagnostic path, including when `FA_AUTO_RUN=1`; it must not run
-the auto-run provisioner. When auto-run is disabled, the existing standby behavior remains.
+**Status: RESOLVED — operator selected `auto_run_only`; narrowly amended by Q118 (2026-11-02).** A failed
+managed cell-local readiness check blocks active-workspace publication and `fa run`. The path may first create a
+provisional, non-active manifest/DB and reserve exactly one provisioning run, as specified by Q118; that run ID
+is never reusable. No workflow `event_log` events are appended on refusal. An explicit command override remains
+available as a diagnostic path, including when `FA_AUTO_RUN=1`; it must not run the auto-run provisioner. When
+auto-run is disabled, the existing standby behavior remains.
 
 **Source conflict.** `scripts/fa-entrypoint.sh::_prepare_entrypoint_workspace` returned success after every
 `workspace_bootstrap ensure` failure. The managed auto-run path then published `.active`, provisioned a
@@ -2439,10 +2441,12 @@ commands, including diagnostic overrides; (3) keep fail-open and narrow R02's co
 (1). Only a freshly created, unpublished clone may be removed after the refusal; a resumed workspace is
 preserved.
 
-**Implementation boundary.** This decision covers behavior after `workspace_bootstrap ensure` reports failure.
-It does **not** establish that the bootstrap readiness check proves managed-backend availability or that a
-successful check guarantees an EXEC backend. The separate managed-backend negative oracle remains planned;
-R02 and S4P1 stay open until their named production/host evidence exists. No Docker or live-host run is implied.
+**Implementation boundary.** Readiness must run inside the admitted managed EXEC cell; host-side
+`workspace_bootstrap ensure`, a config-presence check, or HEALTH is not EXEC-readiness proof. On refusal, retain
+the non-reusable run reservation/tombstone; do not publish `.active`, launch `fa run`, or append workflow events.
+Cleanup may remove only unregistered session-owned workspace state and must never delete supervisor-registered
+bytes. This contract does not claim the managed route is implemented or proven: R02 and S4P1 remain open until
+their named production/host evidence exists. No Docker or live-host run is implied.
 
 ---
 
@@ -2467,7 +2471,7 @@ Therefore, if W0 requires every S4P1 *row* to be closed, its stated evidence gat
 
 ## Q114 — How is an indeterminate candidate PLAN PUBLISH settled and reclaimed?
 
-**Status: RESOLVED — operator selected option 1/A (2026-11-02); implementation and acceptance remain OPEN.** This architecture direction is for the managed-run path and does not authorize changing legacy direct `fa workflow` behavior in the current scope. R25 remains OPEN until its uncertainty/lifecycle acceptance is implemented and reviewed. This is separate from Q108's still-open EXEC/receipt/discovery wire decision; no new operation or wire change is authorized.
+**Status: RESOLVED — operator selected option 1/A (2026-11-02); implementation and acceptance remain OPEN.** This architecture direction is for the managed-run path and does not authorize changing legacy direct `fa workflow` behavior in the current scope. R25 remains OPEN until its uncertainty/lifecycle acceptance is implemented and reviewed. At the time of this Q114 decision, no wire change for candidate-PUBLISH settlement/reclaim was authorized; the later Q108 scope clarification below is limited to Q60 inventory metadata and does not alter this decision.
 
 **Source-grounded behavior (E407, 2026-11-02).** `ExecutionClient.publish_plan` makes one PUBLISH request. If its result is indeterminate, it sets `uncertain=True`; its `finally` deliberately skips `_release_view`, and the exception leaves the method without returning the locally held `ViewRef` or view grant. `ManagedExecution` has no pending-candidate/recovery field. The CLI's `_cmd_workflow` `finally` still calls `_settle_writer_release`/`ManagedExecution.close` after `run_workflow` returns.
 
@@ -2485,9 +2489,11 @@ A real local UDS composition probe injected `DURABILITY_UNKNOWN` at the start of
 
 **Engineering recommendation (not resolved).** Prefer option 1 for the in-process trusted-controller boundary already selected under Q61: the same `ManagedExecution` that owns the writer should own the unresolved candidate proof, keep the owner fenced, and reconcile without a second writer or new worker/IPC architecture. Confirm exact replay inputs and process-death/quarantine behavior against the operation-journal contract before implementation.
 
-**Resolution (2026-11-02; operator selected option 1/A).** For managed runs, the run-scoped `ManagedExecution` is the holder of pending candidate proof and owner authority. An indeterminate publication must not trigger a host write or release the writer before reconciliation. Do not automatically retry PUBLISH; use only the exact-request replay/reconciliation semantics already permitted by the operation journal, and preserve fail-closed state if the result remains unknown. If the process dies before reconciliation, the workspace remains unavailable/quarantined for recovery; this selection does not promise autonomous restart recovery. No second writer, worker/IPC architecture, new wire operation, or Q108 change is authorized.
+**Resolution (2026-11-02; operator selected option 1/A).** For managed runs, the run-scoped `ManagedExecution` is the holder of pending candidate proof and owner authority. An indeterminate publication must not trigger a host write or release the writer before reconciliation. Do not automatically retry PUBLISH; use only the exact-request replay/reconciliation semantics already permitted by the operation journal, and preserve fail-closed state if the result remains unknown. If the process dies before reconciliation, the workspace remains unavailable/quarantined for recovery; this selection does not promise autonomous restart recovery. No second writer, worker/IPC architecture, or new wire operation for candidate-PUBLISH settlement/reclaim is authorized by this Q114 resolution; the separate Q108 scope clarification below governs the Q60 inventory metadata operation only.
 
 **Scope and remaining work.** Legacy direct `fa workflow` behavior is unchanged in the current scope. Its observed orphan-view behavior remains an R25 acceptance gap, not an approved policy. The managed-run implementation must separately prove each uncertain candidate-saga phase (including lost CREATE_VIEW response), pending-handle ownership, no premature RELEASE, exact replay safety, and restart/quarantine behavior before claiming Q114 implementation complete. Do not assert that uncertainty means unchanged PLAN, do not treat `DURABILITY_UNKNOWN` as determinate refusal, and do not claim R25/S4P1 uncertainty coverage from the decision alone.
+
+**Q108 scope clarification (2026-11-02).** After the operator separately selected Q108 route B, the no-new-wire-operation constraint above is clarified as applying to Q114 candidate-PUBLISH settlement/reclaim. The only separately authorized wire addition is Q60's bounded `LIST_PROJECT_ARTIFACTS` metadata operation under protocol v2, on a pinned READ/PROJECT view. It does not query or settle PUBLISH, alter writer retention, introduce automatic retry, change process-death quarantine, or otherwise reopen Q114. This scoped exception is not implementation or acceptance evidence.
 
 ---
 
@@ -2516,3 +2522,46 @@ A real local UDS composition probe injected `DURABILITY_UNKNOWN` at the start of
 **Resolution.** The operator selected B. Increment metadata uses only the five listed fields; project/increment slugs remain encoded in the canonical relative paths and are not duplicated in increment frontmatter. Roadmap `slug` remains part of the roadmap schema. The renderer and literal fixtures change in lockstep.
 
 **Scope.** This resolves only the increment metadata key set. It does not authorize path guessing, weaken YAML parsing, or close managed selection/bootstrap runtime, admission, ledger append, supervisor integration, or live-host evidence.
+
+
+## Q117 — What managed prerequisite can prove EXEC availability before entrypoint project effects?
+
+**Status: RESOLVED — operator directed implementation now, using existing seams and avoiding HEALTH-only proof (2026-11-02).** The narrow injection seam alone is insufficient; pursue the actual managed provisioning/cell-readiness path under Q113 rather than adding a second HEALTH or wire-operation surface. `REGISTER_WORKSPACE{create:true}` and the existing PROVISIONING view/provisioner are the intended seams. Q118 resolves the temporal conflict by permitting one provisional, non-active run reservation before cell-local readiness. No S4P1 row or W0 is closed by this direction.
+
+**Source evidence (2026-11-02).** R02's named oracle is `test_entrypoint_runs_no_project_command_without_backend`, which requires no host project effects when managed execution is unavailable. `scripts/fa-entrypoint.sh:193–239` currently clones/configures/runs workspace readiness before invoking the manager provision command at `:270–290`. E415 fixed the module CLI's missing provisioner injection, but it is necessarily reached after those shell effects. A proposed early `Operation.HEALTH` check is insufficient: `src/fa/execution/service.py::_health:570–582` returns `self._authority.ready` and does not attest EXEC worker/cell readiness. The existing remote provisioner also rejects `ProvisionMode.PROVISION` at `src/fa/execution/composition.py:470–474` until the SLICE3 publication join. Moving the current session-provision command ahead of readiness would conflict with Q112's accepted readiness-before-session-provisioning order.
+
+**Impact.** A config-presence or HEALTH-only gate can block an initially absent supervisor, but it cannot prove that the managed EXEC path can own/run the workspace, nor eliminate the host-side project effects and race window. Strict R02/W0 closure therefore requires a managed new-root/session composition and a cell-local readiness route, or a change in the already ratified wave ordering. No runtime implementation or oracle weakening is authorized by this question itself.
+
+**Resolution options.**
+
+A. **Keep the strict target (recommended):** expand Q113's pre-W0 managed-composition prerequisite to include the production new-root provisioning join and the minimum cell-local entrypoint readiness route needed for the R02 negative oracle. Preserve Q112's explicit-command and readiness refusal behavior; do not count HEALTH alone as proof. This is a broader dependency than the earlier narrow injection seam and must be source-mapped before implementation.
+
+B. **Reopen the schedule, not the safety contract:** leave R02 and W0 OPEN until the planned W1 SLICE4 STEP2 provisioning/readiness cutover, then run every named oracle. This revises Q113's strict pre-W0 closure timing but does not weaken the no-project-command contract.
+
+The operator selected option A: preserve the strict R02 target and expand the pre-W0 managed-composition prerequisite to include the production new-root join and minimum cell-local readiness route. No option permits marking R02 complete from a health-only check. Implementation and all named oracles remain OPEN.
+
+
+## Q118 — May managed readiness create provisional run state before the session becomes active?
+
+**Status: RESOLVED — operator selected option A (2026-11-02).** Permit only the existing lifecycle's provisional,
+non-active session manifest/DB and one provisioning-run reservation before managed cell-local readiness. The
+reservation is durable and its run ID is a non-reusable tombstone if provisioning/readiness fails. Failure must
+not publish `.active`, launch `fa run`, or append workflow `event_log` events. Explicit-command override and
+standby behavior under Q112 are unchanged.
+
+**Source conflict.** Q112 requires a readiness failure to stop managed auto-run before session provisioning, `.active` publication, or `fa run`; the live proposal L-ENTRY-1 expects no manifest, `session.db`, run binding, run directory, or `event_log` append on readiness refusal. But the existing managed lifecycle seam needs an admitted `RunContext` for provisioning and cell execution: `SessionManager._new_session` creates a `provisioning` manifest and `SessionDatabase`, calls `begin_run`, then invokes `workspace_provisioner` and readiness (`src/fa/session/manager.py:350–391`). A cell-local bootstrap/readiness operation therefore needs namespace/run authority before the session can be promoted. No current API supplies an EXEC-capable cell for an unprovisioned session without this run context; HEALTH is insufficient (Q117).
+
+**Historical impact before resolution.** The existing manager/provisioner ordering creates provisional state
+before readiness. Preserving Q112's former zero-state wording would have required a separate preflight identity and
+lifecycle, adding a second orchestration surface and risking unbound run IDs. Q118 resolves this by authorizing the
+narrow provisional state; it does not weaken the no-host-project-command target.
+
+**Resolution options.**
+
+A. **Amend Q112 narrowly (recommended for lowest surface).** Permit a provisional, non-active session manifest/DB and one reserved provisioning run while managed cell-local readiness executes. On readiness failure, never publish `.active`, never launch `fa run`, never append workflow `event_log` events, retain the provisioning run ID as a non-reusable tombstone under existing reservation rules, remove only the unregistered session-owned workspace/session namespace, and never delete supervisor-registered bytes. Update L-ENTRY-1/L-ENTRY-5 to assert these exact state transitions. Explicit command override and standby behavior remain unchanged.
+
+B. **Preserve Q112's zero-session-state rule.** Design and authorize a distinct preflight namespace with a durable source of identity/run reservations, a managed root/view, and a no-session cleanup/quarantine contract; only after readiness succeeds may the ordinary SessionManager create the user session. This avoids the provisional user session but creates a second lifecycle seam and should be scoped explicitly before coding.
+
+The options above are retained as decision history; option A is selected. This resolves only the temporal contract,
+not the implementation or evidence. R02/S4P1/W0 remain OPEN until the managed EXEC readiness route and named
+negative oracles are demonstrated.

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Literal, Protocol
 
 #: Upper bound for one full-file model read. It mirrors the substrate's own
 #: single-read text bound (``fa.execution.protocol.MAX_TEXT_BYTES``); the adapter
@@ -60,6 +60,67 @@ class PortWrite:
     bytes: int
 
 
+PROJECT_ARTIFACT_KINDS = frozenset({"missing", "file", "directory", "symlink"})
+PROJECT_ENTRY_KINDS = frozenset({"file", "directory", "symlink"})
+PORT_PROJECT_LIST_MAX_ENTRIES = 64
+
+
+@dataclass(frozen=True, slots=True)
+class PortDirectoryEntry:
+    """One immediate child name/type; never carries contents or link targets."""
+
+    name: str
+    kind: Literal["file", "directory", "symlink"]
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.name, str)
+            or self.name in {"", ".", ".."}
+            or "/" in self.name
+            or "\\" in self.name
+            or "\x00" in self.name
+            or not isinstance(self.kind, str)
+            or self.kind not in PROJECT_ENTRY_KINDS
+        ):
+            raise WorkspacePortError("invalid_request")
+        try:
+            name_bytes = self.name.encode("utf-8")
+        except UnicodeError:
+            raise WorkspacePortError("invalid_request") from None
+        if len(name_bytes) > 255:
+            raise WorkspacePortError("invalid_request")
+
+
+@dataclass(frozen=True, slots=True)
+class PortProjectArtifactListing:
+    """Closed Q60 project metadata returned by one pinned-view operation."""
+
+    project_kind: Literal["missing", "file", "directory", "symlink"]
+    roadmap_kind: Literal["missing", "file", "directory", "symlink"]
+    increments_kind: Literal["missing", "file", "directory", "symlink"]
+    entries: tuple[PortDirectoryEntry, ...]
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.project_kind, str)
+            or self.project_kind not in PROJECT_ARTIFACT_KINDS
+            or not isinstance(self.roadmap_kind, str)
+            or self.roadmap_kind not in PROJECT_ARTIFACT_KINDS
+            or not isinstance(self.increments_kind, str)
+            or self.increments_kind not in PROJECT_ARTIFACT_KINDS
+            or type(self.entries) is not tuple
+            or len(self.entries) > PORT_PROJECT_LIST_MAX_ENTRIES
+            or any(not isinstance(entry, PortDirectoryEntry) for entry in self.entries)
+            or tuple(entry.name for entry in self.entries) != tuple(sorted({entry.name for entry in self.entries}))
+            or (
+                self.project_kind != "directory"
+                and (self.roadmap_kind != "missing" or self.increments_kind != "missing" or bool(self.entries))
+            )
+            or (self.increments_kind != "directory" and self.entries)
+        ):
+            raise WorkspacePortError("invalid_request")
+
+
 class WorkspacePort(Protocol):
     """The workspace view operations the tools need; nothing else is exposed.
 
@@ -75,6 +136,8 @@ class WorkspacePort(Protocol):
     def cache_dir(self) -> Path | None: ...
 
     def read_file(self, path: str, *, offset_bytes: int = 0, max_bytes: int = PORT_READ_MAX_BYTES) -> PortRead: ...
+
+    def list_project_artifacts(self, project_slug: str) -> PortProjectArtifactListing: ...
 
     def write_file(self, path: str, content: str, *, expected_sha256: str | None = None) -> PortWrite: ...
 
@@ -124,7 +187,10 @@ def index_db(port: WorkspacePort | None, root: Path, filename: str, fallback: Pa
 
 
 __all__ = [
+    "PORT_PROJECT_LIST_MAX_ENTRIES",
     "PORT_READ_MAX_BYTES",
+    "PortDirectoryEntry",
+    "PortProjectArtifactListing",
     "PortRead",
     "PortWrite",
     "WorkspacePort",

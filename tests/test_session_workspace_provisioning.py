@@ -773,45 +773,8 @@ def test_readback_mismatch_is_structured_and_cleans_target(tmp_path: Path, monke
     assert not target.exists()
 
 
-def test_manager_git_source_provisions_clean_b2_workspace(tmp_path: Path) -> None:
-    """class=C1 root=SessionManager path=C claim=G1/G2 producer-kill-check=remove Git dispatch."""
-
-    source = _make_git_source(tmp_path)
-    source_revision = _git(source, "rev-parse", "HEAD").stdout.strip()
-    manager = SessionManager(
-        state_root=tmp_path / "state",
-        workspace_root=tmp_path / "workspaces",
-        source_workspace=source,
-        repo_push_url="https://github.com/fork-owner/fork-repo",
-    )
-
-    session = manager.create_or_attach_session(session_id=None, workspace_override=None)
-    expected_branch = f"agent/{session.session_id}"
-
-    assert session.workspace_path.is_dir()
-    assert session.manifest_path.is_file()
-    assert session.session_db_path.is_file()
-    assert _target_state(session.workspace_path) == (
-        source_revision,
-        expected_branch,
-        source.resolve().as_uri(),
-        "git@github.com:fork-owner/fork-repo.git",
-        "First Agent",
-        "agent@first-agent.local",
-    )
-    assert _git(session.workspace_path, "status", "--porcelain=v1", "--untracked-files=all").stdout == ""
-    assert not (session.workspace_path / ".env.fa").exists()
-    assert not (session.workspace_path / ".venv").exists()
-    assert not (session.workspace_path / "untracked.txt").exists()
-    assert not (session.workspace_path / ".git" / "hooks" / "source-only").exists()
-
-
-def test_manager_maps_private_failure_to_workspace_provision_failed(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """class=C3 root=SessionManager path=C claim=CT1 kill-check=remove public error translation."""
-
+def test_session_manager_refuses_host_git_fallback_without_managed_ports(tmp_path: Path) -> None:
+    """C1/C3: SessionManager never creates a host clone when managed ports are absent."""
     source = _make_git_source(tmp_path)
     manager = SessionManager(
         state_root=tmp_path / "state",
@@ -819,19 +782,29 @@ def test_manager_maps_private_failure_to_workspace_provision_failed(
         source_workspace=source,
     )
 
-    def fail_provision(*_args: object, **_kwargs: object) -> GitWorkspaceState:
-        raise WorkspaceProvisionError("git_timeout", "clone", "timed out")
+    with pytest.raises(SessionManagerError) as refused:
+        manager.create_or_attach_session(session_id="session-host-fallback", workspace_override=None)
 
-    monkeypatch.setattr("fa.session.manager.provision_git_workspace", fail_provision)
+    assert refused.value.code == "managed_execution_unavailable"
+    assert not manager.sessions_root.exists()
+    assert not manager.workspace_root.exists()
+
+
+def test_session_manager_does_not_translate_or_invoke_host_git_errors(tmp_path: Path) -> None:
+    """C3: managed-ports absence refuses before any host Git provisioner can run."""
+    source = _make_git_source(tmp_path)
+    manager = SessionManager(
+        state_root=tmp_path / "state",
+        workspace_root=tmp_path / "workspaces",
+        source_workspace=source,
+    )
+
     with pytest.raises(SessionManagerError) as caught:
-        manager.create_or_attach_session(session_id=None, workspace_override=None)
+        manager.create_or_attach_session(session_id="session-no-managed", workspace_override=None)
 
-    assert caught.value.code == "workspace_provision_failed"
-    assert "git_timeout: timed out" in str(caught.value)
-    assert isinstance(caught.value.__cause__, WorkspaceProvisionError)
-    assert caught.value.__cause__.code == "git_timeout"
-    assert not list(manager.sessions_root.iterdir())
-    assert not list(manager.workspace_root.iterdir())
+    assert caught.value.code == "managed_execution_unavailable"
+    assert not manager.sessions_root.exists()
+    assert not manager.workspace_root.exists()
 
 
 def _make_existing_workspace(source: Path, target: Path, session_id: str) -> Path:

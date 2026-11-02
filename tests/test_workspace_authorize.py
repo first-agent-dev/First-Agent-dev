@@ -379,7 +379,14 @@ def test_the_readonly_classification_covers_the_closed_enum() -> None:
     assert AUTHORITY_GATED_OPERATIONS <= frozenset(Operation)
     for name in ("stop_view", "seal", "publish", "install_project", "prepare_bundle", "handoff", "release"):
         assert Operation(name) in AUTHORITY_GATED_OPERATIONS
-    assert READONLY_OPERATIONS == frozenset({Operation.HEALTH, Operation.READ_FILE, Operation.INSPECT})
+    assert READONLY_OPERATIONS == frozenset(
+        {
+            Operation.HEALTH,
+            Operation.READ_FILE,
+            Operation.INSPECT,
+            Operation.LIST_PROJECT_ARTIFACTS,
+        }
+    )
 
 
 def test_a_candidate_view_may_open_on_a_null_base_and_the_current_plan(site: Site) -> None:

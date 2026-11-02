@@ -1,4 +1,4 @@
-"""Closed v1 JSON control contract; shape validation is NEVER authorization.
+"""Closed versioned JSON control contract; shape validation is NEVER authorization.
 
 Four-byte unsigned network-order length followed by bounded UTF-8 JSON. Socket
 callers must set a finite control-RPC timeout. There are no retries here.
@@ -23,6 +23,10 @@ MAX_FRAME_BYTES = 4 * 1024 * 1024
 MAX_EXTENDED_FRAME_BYTES = 16 * 1024 * 1024
 MAX_TEXT_BYTES = 1024 * 1024
 MAX_TAIL_BYTES = 64 * 1024
+PROTOCOL_V1 = 1
+PROTOCOL_V2 = 2
+MAX_PROJECT_ARTIFACTS_REPLY_BYTES = 64 * 1024
+MAX_PROJECT_INCREMENT_ENTRIES = 64
 
 
 def _object(**properties: Any) -> dict[str, Any]:
@@ -144,6 +148,7 @@ PAYLOADS: dict[Operation, dict[str, Any]] = {
     Operation.INSTALL_PROJECT: _object(validated_bundle_id=_id("bundle-"), project_slug=CONFIG_ID),
     Operation.HANDOFF: _object(target_namespace=NAMESPACE),
     Operation.RELEASE: _object(),
+    Operation.LIST_PROJECT_ARTIFACTS: _object(project_slug=CONFIG_ID),
 }
 _COMMITTED = _object(
     workspace_id=_id("ws-"),
@@ -167,6 +172,21 @@ _PUBLISH_REPLY = _object(
 _OWNER_REPLY = _object(view_ref={"type": "null"}, capability=SHA, generation=POSITIVE, revision_id=_id("rev-"))
 _VIEW_REPLY = _object(view_ref=VIEW, capability=SHA)
 _CREATED_VIEW_REPLY = _object(view_ref=VIEW, capability=SHA, input_tree_sha256=SHA)
+_PROJECT_ARTIFACT_KIND = _enum("missing", "file", "directory", "symlink")
+_PROJECT_ENTRY = _object(
+    name={"type": "string", "minLength": 1, "maxLength": 255},
+    kind=_enum("file", "directory", "symlink"),
+)
+_PROJECT_ARTIFACTS_REPLY = _object(
+    project_kind=_PROJECT_ARTIFACT_KIND,
+    roadmap_kind=_PROJECT_ARTIFACT_KIND,
+    increments_kind=_PROJECT_ARTIFACT_KIND,
+    entries={
+        "type": "array",
+        "items": _PROJECT_ENTRY,
+        "maxItems": MAX_PROJECT_INCREMENT_ENTRIES,
+    },
+)
 RESULTS: dict[Operation, dict[str, Any]] = {
     Operation.HEALTH: _object(ready=BOOL, protocol_version={"type": "integer", "const": 1}, profile_set_sha256=SHA),
     Operation.REGISTER_WORKSPACE: _object(workspace_id=_id("ws-"), revision_id=_id("rev-")),
@@ -187,6 +207,21 @@ RESULTS: dict[Operation, dict[str, Any]] = {
     Operation.INSTALL_PROJECT: _COMMITTED,
     Operation.PREPARE_BUNDLE: _object(validated_bundle_id=_id("bundle-"), bundle_sha256=SHA),
     Operation.RELEASE: _object(released={"type": "boolean", "const": True}),
+    Operation.LIST_PROJECT_ARTIFACTS: _PROJECT_ARTIFACTS_REPLY,
+}
+RESULTS_V2: dict[Operation, dict[str, Any]] = {
+    Operation.HEALTH: _object(
+        ready=BOOL,
+        protocol_version={"type": "integer", "const": PROTOCOL_V2},
+        profile_set_sha256=SHA,
+        features={
+            "type": "array",
+            "items": _enum("list_project_artifacts"),
+            "uniqueItems": True,
+            "const": ["list_project_artifacts"],
+        },
+    ),
+    Operation.LIST_PROJECT_ARTIFACTS: _PROJECT_ARTIFACTS_REPLY,
 }
 ERROR_CODES = (
     "INVALID_REQUEST",
@@ -207,16 +242,33 @@ ERROR_CODES = (
 )
 _ERROR = _object(code=_enum(*ERROR_CODES), retryable=BOOL, operation_id=_nullable(_id("op-")))
 _ENVELOPE = _object(
-    protocol_version={"type": "integer", "const": 1},
+    protocol_version={"type": "integer", "const": PROTOCOL_V1},
     request_id=_id(""),
-    op=_enum(*(op.value for op in Operation)),
+    op=_enum(*(op.value for op in Operation if op is not Operation.LIST_PROJECT_ARTIFACTS)),
     namespace=_nullable(NAMESPACE),
     view_ref=_nullable(VIEW),
     capability=_nullable(SHA),
     payload={"type": "object"},
 )
 _REPLY = _object(
-    protocol_version={"type": "integer", "const": 1},
+    protocol_version={"type": "integer", "const": PROTOCOL_V1},
+    request_id=_id(""),
+    status=_enum("OK", "ERROR"),
+    result={},
+    error=_nullable(_ERROR),
+)
+_V2_OPERATIONS = (Operation.HEALTH, Operation.LIST_PROJECT_ARTIFACTS)
+_ENVELOPE_V2 = _object(
+    protocol_version={"type": "integer", "const": PROTOCOL_V2},
+    request_id=_id(""),
+    op=_enum(*(op.value for op in _V2_OPERATIONS)),
+    namespace=_nullable(NAMESPACE),
+    view_ref=_nullable(VIEW),
+    capability=_nullable(SHA),
+    payload={"type": "object"},
+)
+_REPLY_V2 = _object(
+    protocol_version={"type": "integer", "const": PROTOCOL_V2},
     request_id=_id(""),
     status=_enum("OK", "ERROR"),
     result={},
@@ -224,10 +276,13 @@ _REPLY = _object(
 )
 _ENVELOPE_CHECK = fastjsonschema.compile(_ENVELOPE)
 _REPLY_CHECK = fastjsonschema.compile(_REPLY)
+_ENVELOPE_V2_CHECK = fastjsonschema.compile(_ENVELOPE_V2)
+_REPLY_V2_CHECK = fastjsonschema.compile(_REPLY_V2)
 _RECEIPT_CHECK = fastjsonschema.compile(RECEIPT)
 _PLAN_REF_CHECK = fastjsonschema.compile(PLAN_REF)
 _PAYLOAD_CHECKS = {op: fastjsonschema.compile(schema) for op, schema in PAYLOADS.items()}
 _RESULT_CHECKS = {op: fastjsonschema.compile(schema) for op, schema in RESULTS.items()}
+_RESULT_CHECKS_V2 = {op: fastjsonschema.compile(schema) for op, schema in RESULTS_V2.items()}
 
 
 class InvalidRequestError(ExecutionContractError):
@@ -312,11 +367,22 @@ def decode_request(raw: bytes) -> dict[str, Any]:
     if not valid_id:
         raise InvalidRequestError(None)
     try:
-        _check(_ENVELOPE_CHECK, record)
-        op = Operation(record["op"])
+        version = record.get("protocol_version")
+        if version == PROTOCOL_V1:
+            _check(_ENVELOPE_CHECK, record)
+            op = Operation(record["op"])
+            if op is Operation.LIST_PROJECT_ARTIFACTS:
+                raise ExecutionContractError
+        elif version == PROTOCOL_V2:
+            _check(_ENVELOPE_V2_CHECK, record)
+            op = Operation(record["op"])
+            if op not in _V2_OPERATIONS:
+                raise ExecutionContractError
+        else:
+            raise ExecutionContractError
         _check(_PAYLOAD_CHECKS[op], record["payload"])
         _request_bindings(record, op)
-    except ExecutionContractError:
+    except (KeyError, ExecutionContractError, ValueError, TypeError):
         raise InvalidRequestError(request_id) from None
     return record
 
@@ -390,29 +456,96 @@ def _publish_reply_compat(result: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-def decode_reply(raw: bytes, *, operation: Operation, request_id: str, tolerate_legacy: bool = False) -> dict[str, Any]:
-    record = _loads(raw)
-    _check(_REPLY_CHECK, record)
+def _reply_version(
+    record: dict[str, Any],
+    *,
+    operation: Operation,
+    request_id: str,
+    protocol_version: int,
+    allow_legacy_v1_rejection: bool,
+) -> bool:
+    actual_version = record.get("protocol_version")
+    legacy_rejection = protocol_version == PROTOCOL_V2 and allow_legacy_v1_rejection and actual_version == PROTOCOL_V1
+    checker = _REPLY_V2_CHECK if actual_version == PROTOCOL_V2 else _REPLY_CHECK
+    _check(checker, record)
     if record["request_id"] != request_id:
         raise ExecutionContractError
+    if legacy_rejection:
+        if record["status"] != "ERROR" or record["error"] is None or record["error"]["code"] != "INVALID_REQUEST":
+            raise ExecutionContractError
+    elif actual_version != protocol_version:
+        raise ExecutionContractError
+    return legacy_rejection
+
+
+def _validate_reply_body(
+    record: dict[str, Any],
+    *,
+    operation: Operation,
+    protocol_version: int,
+    tolerate_legacy: bool,
+) -> dict[str, Any]:
     if record["status"] == "ERROR":
         if record["error"] is None or record["result"] is not None:
             raise ExecutionContractError
+        return record
+    if record["error"] is not None:
+        raise ExecutionContractError
+    if protocol_version == PROTOCOL_V2:
+        if operation not in _V2_OPERATIONS:
+            raise ExecutionContractError
+        result_checks = _RESULT_CHECKS_V2
     else:
-        if record["error"] is not None:
+        if operation is Operation.LIST_PROJECT_ARTIFACTS:
             raise ExecutionContractError
-        if tolerate_legacy and operation is Operation.PUBLISH and isinstance(record["result"], dict):
-            record = {**record, "result": _publish_reply_compat(record["result"])}
-        _check(_RESULT_CHECKS[operation], record["result"])
-        if operation in {Operation.EXEC, Operation.INSPECT, Operation.CANCEL}:
-            validate_receipt(record["result"]["receipt"])
-        if operation is Operation.PIN_READER and record["result"]["view_ref"]["access"] != "READ":
+        result_checks = _RESULT_CHECKS
+    if tolerate_legacy and operation is Operation.PUBLISH and isinstance(record["result"], dict):
+        record = {**record, "result": _publish_reply_compat(record["result"])}
+    _check(result_checks[operation], record["result"])
+    if operation in {Operation.EXEC, Operation.INSPECT, Operation.CANCEL}:
+        validate_receipt(record["result"]["receipt"])
+    if operation is Operation.PIN_READER and record["result"]["view_ref"]["access"] != "READ":
+        raise ExecutionContractError
+    if operation is Operation.PUBLISH and record["result"]["already_published"]:
+        if record["result"]["plan_ref"] is None:
             raise ExecutionContractError
-        if operation is Operation.PUBLISH and record["result"]["already_published"]:
-            # Nothing was applied without a plan identity to apply.
-            if record["result"]["plan_ref"] is None:
-                raise ExecutionContractError
     return record
+
+
+def decode_reply(
+    raw: bytes,
+    *,
+    operation: Operation,
+    request_id: str,
+    tolerate_legacy: bool = False,
+    protocol_version: int = PROTOCOL_V1,
+    allow_legacy_v1_rejection: bool = False,
+) -> dict[str, Any]:
+    """Validate a reply under the request's exact wire version.
+
+    A v2 caller may opt into one compatibility case only: an older v1-only
+    server's explicit INVALID_REQUEST rejection of a v2 probe.
+    """
+    if protocol_version not in {PROTOCOL_V1, PROTOCOL_V2}:
+        raise ExecutionContractError
+    listing_reply = protocol_version == PROTOCOL_V2 and operation is Operation.LIST_PROJECT_ARTIFACTS
+    max_bytes = MAX_PROJECT_ARTIFACTS_REPLY_BYTES if listing_reply else MAX_FRAME_BYTES
+    if listing_reply and len(raw) > MAX_PROJECT_ARTIFACTS_REPLY_BYTES:
+        raise ExecutionContractError
+    record = _loads(raw, max_bytes=max_bytes)
+    _reply_version(
+        record,
+        operation=operation,
+        request_id=request_id,
+        protocol_version=protocol_version,
+        allow_legacy_v1_rejection=allow_legacy_v1_rejection,
+    )
+    return _validate_reply_body(
+        record,
+        operation=operation,
+        protocol_version=protocol_version,
+        tolerate_legacy=tolerate_legacy,
+    )
 
 
 class FrameConnection(Protocol):

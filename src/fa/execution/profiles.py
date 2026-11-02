@@ -80,6 +80,7 @@ class ExecutionProfile:
         source: Path,
         scratch: Path,
         cache: Path,
+        environment: Path | None = None,
     ) -> dict[str, Any]:
         """Render only; paths must come from actual protected authority records."""
         _hex_id(operation_id, "op-")
@@ -90,6 +91,15 @@ class ExecutionProfile:
         for index, path in enumerate(paths):
             if any(path.is_relative_to(other) or other.is_relative_to(path) for other in paths[index + 1 :]):
                 raise ExecutionContractError
+        if environment is not None and (
+            not environment.is_absolute()
+            or ".." in environment.parts
+            or environment.name != ".venv"
+            or not environment.is_relative_to(cache / "fa-environments-v1")
+            or environment.is_relative_to(source)
+            or environment.is_relative_to(scratch)
+        ):
+            raise ExecutionContractError
         mounts = [
             {
                 "Type": "bind",
@@ -104,6 +114,23 @@ class ExecutionProfile:
                 (cache, "/opt/toolchain-cache", True),
             )
         ]
+        environment_vars = ["HOME=/scratch/home", "TMPDIR=/scratch/tmp", "PYTHONDONTWRITEBYTECODE=1"]
+        if environment is not None:
+            mounts.append(
+                {
+                    "Type": "bind",
+                    "Source": str(environment),
+                    "Target": "/workspace/.venv",
+                    "ReadOnly": True,
+                    "BindOptions": {"Propagation": "rprivate"},
+                }
+            )
+            environment_vars.extend(
+                [
+                    "VIRTUAL_ENV=/workspace/.venv",
+                    "PATH=/workspace/.venv/bin:/opt/fa-venv/bin:/usr/local/bin:/usr/bin:/bin",
+                ]
+            )
         return {
             "name": "fa-job-" + operation_id.removeprefix("op-"),
             "body": {
@@ -112,7 +139,7 @@ class ExecutionProfile:
                 "WorkingDir": "/workspace",
                 "Entrypoint": ["/opt/fa-venv/bin/python", "-I", "-m", "fa.execution.cell_worker"],
                 "Cmd": ["--max-command-ms", str(self.max_command_ms)] + ([] if self.interactive else ["--one-shot"]),
-                "Env": ["HOME=/scratch/home", "TMPDIR=/scratch/tmp", "PYTHONDONTWRITEBYTECODE=1"],
+                "Env": environment_vars,
                 "OpenStdin": True,
                 "StdinOnce": False,
                 "Tty": False,

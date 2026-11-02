@@ -47,6 +47,7 @@ class ProvisionRequest:
     run_id: str
     workspace_path: Path
     deadline: float
+    source_workspace: Path | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -44,7 +44,7 @@ from tests.test_execution_admission import request as admission_request
 from tests.test_execution_dispatch import profile
 from tests.test_execution_docker import Endpoint, Reply
 from tests.test_execution_views import create as create_view
-from tests.test_execution_workspace import ACTOR, OTHER, PEER, Site, ok, until
+from tests.test_execution_workspace import ACTOR, OTHER, PEER, Site, install_environment_artifact, ok, until
 from tests.test_execution_workspace import site as site
 
 UPGRADE = (
@@ -912,6 +912,34 @@ def test_created_cell_binds_only_the_authority_trusted_paths(backend: Backend) -
         "/opt/toolchain-cache": str(backend.cache),
     }
     assert body["HostConfig"]["Mounts"][0]["ReadOnly"] is False
+
+
+def test_authority_bound_environment_artifact_is_mounted_readonly(backend: Backend) -> None:
+    view_root = backend.authority._state / "workspaces" / backend.view.workspace_id / "views" / backend.view.view_id
+    environment = install_environment_artifact(backend.cache, view_root / "source", profile=backend.profile)
+    request = prepare(backend, "a2" * 16, "pytest --version && mutmut --version")
+    backend.peer.replies.extend(backend.episode_replies("op-" + "a2" * 16))
+    ok_backend(lambda: backend.owner().execute(PEER, request, deadline=until()))
+    creates = [seen for seen in backend.peer.seen if "/containers/create" in seen["path"]]
+    assert len(creates) == 1
+    body = creates[0]["body"]
+    assert isinstance(body, dict)
+    mounts = {mount["Target"]: mount for mount in body["HostConfig"]["Mounts"]}
+    assert mounts["/workspace/.venv"]["Source"] == str(environment)
+    assert mounts["/workspace/.venv"]["ReadOnly"] is True
+    assert "VIRTUAL_ENV=/workspace/.venv" in body["Env"]
+    assert any(value.startswith("PATH=/workspace/.venv/bin:") for value in body["Env"])
+    trusted = backend.authority.execution_trusted(backend.view)
+    assert trusted is not None and trusted[-1] == environment
+    with pytest.raises(ExecutionContractError):
+        backend.owner()._validate_binding(
+            ACTOR,
+            backend.view,
+            trusted[1],
+            trusted[2],
+            trusted[3],
+            backend.cache / "unapproved.venv",
+        )
 
 
 def test_cancel_persists_the_exact_intent_before_the_cell_is_stopped(backend: Backend) -> None:

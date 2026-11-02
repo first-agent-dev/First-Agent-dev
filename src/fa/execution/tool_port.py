@@ -20,6 +20,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 from fa.execution.client import (
@@ -32,7 +33,14 @@ from fa.execution.protocol import MAX_TEXT_BYTES
 from fa.execution.supervisor import PeerIdentity, SupervisorError
 from fa.execution.types import Access, ExecutionContractError, GrantReply, NamespaceRef, Operation, ViewRef
 from fa.execution.workspace import WorkspaceAuthority
-from fa.inner_loop.tools.workspace_port import PORT_READ_MAX_BYTES, PortRead, PortWrite, WorkspacePortError
+from fa.inner_loop.tools.workspace_port import (
+    PORT_READ_MAX_BYTES,
+    PortDirectoryEntry,
+    PortProjectArtifactListing,
+    PortRead,
+    PortWrite,
+    WorkspacePortError,
+)
 
 #: Supervisor refusal codes translated into the port vocabulary. Anything not
 #: listed is a substrate failure: the tool must report it as unavailable rather
@@ -50,6 +58,22 @@ _DENIED = frozenset(
 _STALE = frozenset({"STALE_REVISION"})
 _INPUT = frozenset({"INPUT_POLICY", "INVALID_REQUEST", "TOO_LARGE", "NOT_TEXT"})
 _SHA256 = re.compile(r"[0-9a-f]{64}")
+
+
+def _project_listing(result: dict[str, Any]) -> PortProjectArtifactListing:
+    try:
+        raw_entries = result["entries"]
+        if type(raw_entries) is not list:
+            raise WorkspacePortError("invalid_request")
+        entries = tuple(PortDirectoryEntry(name=item["name"], kind=item["kind"]) for item in raw_entries)
+        return PortProjectArtifactListing(
+            project_kind=result["project_kind"],
+            roadmap_kind=result["roadmap_kind"],
+            increments_kind=result["increments_kind"],
+            entries=entries,
+        )
+    except (KeyError, TypeError, WorkspacePortError):
+        raise WorkspacePortError("invalid_request") from None
 
 
 class AuthorityWorkspacePort:
@@ -116,6 +140,22 @@ class AuthorityWorkspacePort:
         except (SupervisorError, ExecutionContractError) as error:
             raise WorkspacePortError(_code(error)) from None
         return PortRead(content=result["content"], sha256=result["sha256"], eof=result["eof"])
+
+    def list_project_artifacts(self, project_slug: str) -> PortProjectArtifactListing:
+        if self._view_ref.access is not Access.READ or self._view_ref.purpose.value != "PROJECT":
+            raise WorkspacePortError("denied")
+        try:
+            result = self._authority.list_project_artifacts(
+                self._peer,
+                self._namespace,
+                view_ref=self._view_ref,
+                capability=self._capability,
+                project_slug=project_slug,
+                deadline=self._deadline_factory(),
+            )
+        except (SupervisorError, ExecutionContractError) as error:
+            raise WorkspacePortError(_code(error)) from None
+        return _project_listing(result)
 
     def write_file(self, path: str, content: str, *, expected_sha256: str | None = None) -> PortWrite:
         if not isinstance(content, str):
@@ -285,6 +325,26 @@ class ClientWorkspacePort:
         ) as error:
             raise WorkspacePortError(_client_code(error)) from None
         return PortRead(content=str(result["content"]), sha256=str(result["sha256"]), eof=bool(result["eof"]))
+
+    def list_project_artifacts(self, project_slug: str) -> PortProjectArtifactListing:
+        view, grant = self._require_active()
+        if view.access is not Access.READ or view.purpose.value != "PROJECT":
+            raise WorkspacePortError("denied")
+        try:
+            result = self._client.list_project_artifacts(
+                self._namespace,
+                view=view,
+                grant=grant,
+                project_slug=project_slug,
+            )
+        except (
+            ExecutionRejectedError,
+            ExecutionUnavailableError,
+            ExecutionUncertainError,
+            ExecutionContractError,
+        ) as error:
+            raise WorkspacePortError(_client_code(error)) from None
+        return _project_listing(result)
 
     def write_file(self, path: str, content: str, *, expected_sha256: str | None = None) -> PortWrite:
         view, grant = self._require_active()

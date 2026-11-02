@@ -17,7 +17,7 @@ import threading
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager, redirect_stderr
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -57,6 +57,7 @@ from fa.inner_loop.plan_admission import PlanRef, read_plan_snapshot, snapshot_f
 from fa.inner_loop.plan_promotion import PlanPromotionError
 from fa.session.manager import RunContext, SessionManagerError
 from fa.session.provisioning import ProvisionMode, ProvisionRequest
+from fa.workspace_bootstrap import ReadyStatus
 from tests.test_execution_service import _registered, exchange
 from tests.test_execution_views import native_profile
 from tests.test_execution_workspace import Site
@@ -624,8 +625,6 @@ def test_direct_chat_keeps_canonical_tree_unchanged_until_stage_publication(
     from fa.providers.base import RequestInfo, ResponseInfo
     from fa.session.manager import SessionManager
 
-    service_path, service_config = _configs(tmp_path, _document(site))
-    monkeypatch.setattr(composition, "DEFAULT_CONFIG_PATH", service_config)
     state_root = tmp_path / "fa-state"
     monkeypatch.setenv("FA_STATE_ROOT", str(state_root))
     monkeypatch.setenv("FA_WORKSPACE_ROOT", str(site.roots))
@@ -635,23 +634,7 @@ def test_direct_chat_keeps_canonical_tree_unchanged_until_stage_publication(
     (source / "README.md").write_text("source note", encoding="utf-8")
     (source / "knowledge").mkdir()
     (source / "knowledge" / "llms.txt").write_text("# Workspace map\n", encoding="utf-8")
-    subprocess.run(["git", "init", "-q", str(source)], check=True)
-    subprocess.run(["git", "-C", str(source), "config", "user.email", "test@example.invalid"], check=True)
-    subprocess.run(["git", "-C", str(source), "config", "user.name", "Test"], check=True)
-    subprocess.run(
-        ["git", "-C", str(source), "remote", "add", "origin", "https://github.com/test/repo.git"],
-        check=True,
-    )
-    subprocess.run(["git", "-C", str(source), "add", "README.md", "knowledge/llms.txt"], check=True)
-    subprocess.run(["git", "-C", str(source), "commit", "-qm", "seed workspace"], check=True)
-    manager = SessionManager(state_root=state_root, workspace_root=site.roots, source_workspace=source)
-    session = manager.create_or_attach_session(session_id=None, workspace_override=None)
-    run = manager.begin_run(session, requested_run_id="managed-chat-run")
-    session_db = SessionDatabase.open_existing(session.session_db_path, session_id=session.session_id)
-    workspace = session.workspace_path
-    assert not (workspace / "managed-chat-note.txt").exists()
-    models = workspace / "models.yaml"
-    models.write_text(
+    (source / "models.yaml").write_text(
         """chat:
   name: "test-model"
   family: "openai"
@@ -663,6 +646,66 @@ def test_direct_chat_keeps_canonical_tree_unchanged_until_stage_publication(
 """,
         encoding="utf-8",
     )
+    subprocess.run(["git", "init", "-q", str(source)], check=True)
+    subprocess.run(["git", "-C", str(source), "config", "user.email", "test@example.invalid"], check=True)
+    subprocess.run(["git", "-C", str(source), "config", "user.name", "Test"], check=True)
+    subprocess.run(
+        ["git", "-C", str(source), "remote", "add", "origin", "https://github.com/test/repo.git"],
+        check=True,
+    )
+    subprocess.run(["git", "-C", str(source), "add", "README.md", "knowledge/llms.txt", "models.yaml"], check=True)
+    subprocess.run(["git", "-C", str(source), "commit", "-qm", "seed workspace"], check=True)
+    document = _document(site)
+    document["approved_roots"] = {"projects": str(site.roots), "seed": str(source)}
+    service_path, service_config = _configs(tmp_path, document)
+    monkeypatch.setattr(composition, "DEFAULT_CONFIG_PATH", service_config)
+    provisioner = client_workspace_provisioner(config_path=service_config)
+    assert isinstance(provisioner, ClientWorkspaceProvisioner)
+    provision_requests: list[ProvisionRequest] = []
+
+    def admitted_provision(request: ProvisionRequest) -> Any:
+        provision_requests.append(request)
+        return provisioner(request)
+
+    from fa.workspace_bootstrap import ReadyState, ReadyStatus
+
+    def prepared(workspace_path: Path, run_context: RunContext | None) -> ReadyState:
+        assert isinstance(run_context, RunContext)
+        assert provision_requests and provision_requests[-1].run_id == run_context.run_id
+        assert provision_requests[-1].session_id == run_context.session_id
+        return ReadyState(
+            ReadyStatus.READY,
+            None,
+            "ready_managed_artifact",
+            workspace_path / "managed-readiness.log",
+            False,
+            1,
+        )
+
+    manager = SessionManager(
+        state_root=state_root,
+        workspace_root=site.roots,
+        source_workspace=source,
+        workspace_preparer=prepared,
+        workspace_provisioner=admitted_provision,
+    )
+    with SupervisorService(read_config_file(service_path)) as provisioning_service:
+        provision_stop = threading.Event()
+        provision_runner = threading.Thread(
+            target=provisioning_service.serve_forever, args=(provision_stop,), daemon=True
+        )
+        provision_runner.start()
+        try:
+            session = manager.create_or_attach_session(session_id=None, workspace_override=None)
+            run = manager.begin_run(session, requested_run_id="managed-chat-run")
+            session_db = SessionDatabase.open_existing(session.session_db_path, session_id=session.session_id)
+            workspace = session.workspace_path
+        finally:
+            provision_stop.set()
+            provision_runner.join(timeout=5)
+            assert not provision_runner.is_alive()
+    assert not (workspace / "managed-chat-note.txt").exists()
+    models = workspace / "models.yaml"
 
     def canonical_snapshot() -> tuple[tuple[str, bytes], ...]:
         excluded = {".git", ".fa", ".venv", ".env"}
@@ -1092,6 +1135,135 @@ def test_a_release_that_is_not_confirmed_is_reported_and_never_retried(
     assert len([record for record in caplog.records if "writer release not confirmed" in record.getMessage()]) == 1
 
 
+def test_managed_readiness_probes_both_required_tools_and_settles_same_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """C1: readiness executes both probes in the admitted run's PROVISIONING view."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    run_context = _run(workspace)
+    run_context.run_log_dir.mkdir()
+    namespace = NamespaceRef(run_context.session_id, run_context.run_id)
+    view = ViewRef(
+        "ws-" + "1" * 32,
+        "view-" + "2" * 32,
+        "rev-" + "3" * 32,
+        run_context.run_id,
+        1,
+        Access.WRITE,
+        ViewPurpose.PROVISIONING,
+    )
+    view_grant = SimpleNamespace(view_ref=view, input_tree_sha256="4" * 64)
+    calls: list[tuple[str, Any]] = []
+
+    class FakeExecutor:
+        def __init__(self, _client: Any, **kwargs: Any) -> None:
+            assert kwargs["namespace"] == namespace
+            assert kwargs["view"] == view
+            calls.append(("bind", kwargs["profile"].profile_id))
+
+        def run(self, command: str, *, timeout: int, session_id: str) -> Any:
+            calls.append(("exec", (command, timeout, session_id)))
+            return SimpleNamespace(stdout="pytest 9.0\nmutmut 3.6\n", exit_code=0, timed_out=False)
+
+        def suspend(self) -> None:
+            calls.append(("suspend", None))
+
+    class FakeManaged:
+        client = object()
+        binding = ExecutionBinding(namespace, view.workspace_id)
+        grant = GrantReply(Operation.ACQUIRE_WRITER, "5" * 64, None, 1, "rev-" + "3" * 32)
+        current_revision_id = "rev-" + "3" * 32
+        view_profile = native_profile()
+
+        def open_view(self, **kwargs: Any) -> Any:
+            calls.append(("open", kwargs))
+            return view_grant
+
+        def stop_view(self, grant: Any, *, deadline: float | None = None) -> bool:
+            calls.append(("stop", (grant, deadline)))
+            return True
+
+        def close(self, *, deadline: float | None = None) -> bool:
+            calls.append(("release", deadline))
+            return True
+
+    managed = FakeManaged()
+    monkeypatch.setattr(composition, "managed_execution_for_run", lambda run: managed)
+    monkeypatch.setattr(composition, "ManagedBashExecutor", FakeExecutor)
+
+    state = composition.managed_environment_readiness(workspace, run_context)
+
+    assert state.status is ReadyStatus.READY
+    assert state.reason_code == "ready_managed_artifact"
+    assert state.log_path.read_text(encoding="utf-8") == "pytest 9.0\nmutmut 3.6\n"
+    assert calls[0][0] == "open"
+    assert calls[0][1]["access"] is Access.WRITE
+    assert calls[0][1]["purpose"] is ViewPurpose.PROVISIONING
+    assert calls[1][0] == "bind"
+    assert calls[2] == ("exec", ("pytest --version && mutmut --version", 30, "readiness"))
+    assert [name for name, _ in calls[-3:]] == ["suspend", "stop", "release"]
+
+
+def test_unconfirmed_readiness_view_end_withholds_writer_release(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """C3: an unconfirmed view stop never releases the run's writer."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    run_context = _run(workspace)
+    run_context.run_log_dir.mkdir()
+    namespace = NamespaceRef(run_context.session_id, run_context.run_id)
+    view = ViewRef(
+        "ws-" + "1" * 32,
+        "view-" + "2" * 32,
+        "rev-" + "3" * 32,
+        run_context.run_id,
+        1,
+        Access.WRITE,
+        ViewPurpose.PROVISIONING,
+    )
+    view_grant = SimpleNamespace(view_ref=view, input_tree_sha256="4" * 64)
+    calls: list[str] = []
+
+    class FakeExecutor:
+        def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+            pass
+
+        def run(self, *_args: Any, **_kwargs: Any) -> Any:
+            return SimpleNamespace(stdout="ok", exit_code=0, timed_out=False)
+
+        def suspend(self) -> None:
+            calls.append("suspend")
+
+    class FakeManaged:
+        client = object()
+        binding = ExecutionBinding(namespace, view.workspace_id)
+        grant = GrantReply(Operation.ACQUIRE_WRITER, "5" * 64, None, 1, "rev-" + "3" * 32)
+        current_revision_id = "rev-" + "3" * 32
+        view_profile = native_profile()
+
+        def open_view(self, **_kwargs: Any) -> Any:
+            return view_grant
+
+        def stop_view(self, *_args: Any, **_kwargs: Any) -> bool:
+            calls.append("stop")
+            return False
+
+        def close(self, **_kwargs: Any) -> bool:
+            calls.append("release")
+            return True
+
+    monkeypatch.setattr(composition, "managed_execution_for_run", lambda run: FakeManaged())
+    monkeypatch.setattr(composition, "ManagedBashExecutor", FakeExecutor)
+
+    state = composition.managed_environment_readiness(workspace, run_context)
+
+    assert state.status is ReadyStatus.DEGRADED_ENVIRONMENT
+    assert state.reason_code == "managed_artifact_probe_failed"
+    assert calls == ["suspend", "stop"]
+
+
 def test_the_client_provisioner_answers_with_the_registered_identity(site: Site, tmp_path: Path) -> None:
     """producer-kill-check: report a tree hash the wire does not carry, or a fresh id."""
     service_path, yaml_path = _configs(tmp_path, _document(site))
@@ -1115,6 +1287,47 @@ def test_the_client_provisioner_answers_with_the_registered_identity(site: Site,
             runner.join(timeout=5)
 
 
+def test_the_client_provisioner_materializes_a_root_from_an_approved_source(site: Site, tmp_path: Path) -> None:
+    """C1 edge proof: SessionManager's provision port emits create=true on the admitted identity."""
+    sessions = tmp_path / "sessions"
+    repo = tmp_path / "repo"
+    sessions.mkdir()
+    repo.mkdir()
+    (repo / "README.md").write_text("source", encoding="utf-8")
+    (repo / ".git").mkdir()
+    (repo / ".git" / "index").write_text("not copied", encoding="utf-8")
+    document = _document(site)
+    document["approved_roots"] = {"sessions": str(sessions), "repo": str(repo)}
+    service_path, yaml_path = _configs(tmp_path, document)
+    with SupervisorService(read_config_file(service_path)) as service:
+        stop = threading.Event()
+        runner = threading.Thread(target=service.serve_forever, args=(stop,), daemon=True)
+        runner.start()
+        try:
+            provisioner = client_workspace_provisioner(config_path=yaml_path)
+            assert isinstance(provisioner, ClientWorkspaceProvisioner)
+            target = sessions / "session-1"
+            request = ProvisionRequest(
+                ProvisionMode.PROVISION,
+                "session-1",
+                "run-1",
+                target,
+                time.monotonic() + 5,
+                source_workspace=repo,
+            )
+            provisioned = provisioner(request)
+            assert provisioned.registered and provisioned.workspace_id and provisioned.revision_id
+            assert (target / "README.md").read_text(encoding="utf-8") == "source"
+            assert not (target / ".git").exists()
+            empty_request = replace(request, workspace_path=sessions / "clean", source_workspace=None)
+            empty = provisioner(empty_request)
+            assert empty.registered and empty.workspace_id != provisioned.workspace_id
+            assert list(empty_request.workspace_path.iterdir()) == []
+        finally:
+            stop.set()
+            runner.join(timeout=5)
+
+
 def test_the_client_provisioner_refuses_what_it_cannot_prove(site: Site, tmp_path: Path) -> None:
     """producer-kill-check: register a root the operator never approved, or invent an id."""
     (tmp_path / "elsewhere").mkdir()
@@ -1130,7 +1343,7 @@ def test_the_client_provisioner_refuses_what_it_cannot_prove(site: Site, tmp_pat
             deadline = time.monotonic() + 5
             with pytest.raises(SessionManagerError) as refused:
                 provisioner(ProvisionRequest(ProvisionMode.PROVISION, "session-1", "run-1", site.source, deadline))
-            assert refused.value.code == "provisioning_unavailable"
+            assert refused.value.code == "workspace_escape"
             with pytest.raises(SessionManagerError) as missing:
                 provisioner(ProvisionRequest(ProvisionMode.REUSE, "session-1", "run-1", tmp_path / "absent", deadline))
             assert missing.value.code == "workspace_missing"

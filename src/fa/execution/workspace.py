@@ -1,9 +1,10 @@
-"""Protected existing-workspace registration, R0 retention and exclusive writer.
+"""Protected workspace materialization, R0 retention and exclusive writer.
 
 The actual owner, not a wire service or a temporary admission callback. New-root
-installation, backend drain and publication are subsequent
-construction steps. No factory is activated here. Legacy writers must already be
-quiesced by deployment; metadata/hash checks are not a kernel snapshot/CAS.
+materialization uses only approved root descriptors and empty seeds; backend
+readiness and publication remain separate transitions. No factory is activated
+here. Legacy writers must already be quiesced by deployment; metadata/hash
+checks are not a kernel snapshot/CAS.
 """
 
 from __future__ import annotations
@@ -21,12 +22,13 @@ import shutil
 import stat
 import threading
 import time
+import tomllib
 from collections.abc import Callable, Generator, Mapping, Sequence
 from contextlib import AbstractContextManager, ExitStack, contextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path, PurePosixPath
 from types import TracebackType
-from typing import Any, Self, override
+from typing import Any, Self, cast, override
 from uuid import uuid4
 
 import fastjsonschema  # type: ignore[import-untyped]  # Existing schema library has no typing metadata.
@@ -367,17 +369,19 @@ class _ExecutionInputs:
     source: Path
     scratch: Path
     cache: Path
+    environment: Path | None
     source_fd: int
     scratch_fd: int
     cache_fd: int
+    environment_fd: int | None
     context: ProtectedPlanContext
     sealed_sha256: str | None = None
     projection: Path | None = None
 
     def close(self) -> None:
-        for name in ("source_fd", "scratch_fd", "cache_fd"):
+        for name in ("source_fd", "scratch_fd", "cache_fd", "environment_fd"):
             fd = getattr(self, name)
-            if fd >= 0:
+            if fd is not None and fd >= 0:
                 setattr(self, name, -1)
                 os.close(fd)
 
@@ -479,6 +483,175 @@ def _open_absolute(path: Path) -> int:
         raise
 
 
+_ENVIRONMENT_STORE = "fa-environments-v1"
+_ENVIRONMENT_EXTRA = "dev"
+_ENVIRONMENT_INPUT_LIMIT = 8 * 1024 * 1024
+_ENVIRONMENT_MANIFEST_LIMIT = 8192
+
+
+def _read_environment_input(source_fd: int, name: str) -> bytes | None:
+    try:
+        fd = os.open(name, _FILE, dir_fd=source_fd)
+    except FileNotFoundError:
+        return None
+    except OSError:
+        raise SupervisorError("UNAPPROVED_PROFILE") from None
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_size > _ENVIRONMENT_INPUT_LIMIT:
+            raise SupervisorError("UNAPPROVED_PROFILE")
+        content = bytearray()
+        while len(content) <= _ENVIRONMENT_INPUT_LIMIT:
+            part = os.read(fd, min(64 * 1024, _ENVIRONMENT_INPUT_LIMIT + 1 - len(content)))
+            if not part:
+                return bytes(content)
+            content.extend(part)
+        raise SupervisorError("UNAPPROVED_PROFILE")
+    finally:
+        os.close(fd)
+
+
+def _environment_identity(
+    source_fd: int, profile: ExecutionProfile, *, baseline_source_fd: int | None = None
+) -> dict[str, Any]:
+    pyproject = _read_environment_input(source_fd, "pyproject.toml")
+    lock = _read_environment_input(source_fd, "uv.lock")
+    # An empty/lockless seed may use only the unique, operator-approved
+    # First-Agent baseline. Once either project input exists, exact project
+    # identity wins and a miss never falls back to this baseline.
+    if pyproject is None and lock is None and baseline_source_fd is not None:
+        pyproject = _read_environment_input(baseline_source_fd, "pyproject.toml")
+        lock = _read_environment_input(baseline_source_fd, "uv.lock")
+    return {
+        "schema_version": 1,
+        "profile_id": profile.profile_id,
+        "image": profile.image,
+        "image_digest": profile.image_digest,
+        "pyproject_sha256": None if pyproject is None else hashlib.sha256(pyproject).hexdigest(),
+        "uv_lock_sha256": None if lock is None else hashlib.sha256(lock).hexdigest(),
+        "extra": _ENVIRONMENT_EXTRA,
+    }
+
+
+def _verify_environment_manifest(artifact_fd: int, identity: dict[str, Any], fingerprint: str) -> None:
+    try:
+        manifest_fd = os.open("manifest.json", _FILE, dir_fd=artifact_fd)
+    except OSError:
+        raise SupervisorError("UNAPPROVED_PROFILE") from None
+    try:
+        info = os.fstat(manifest_fd)
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_uid != os.getuid()
+            or info.st_mode & 0o222
+            or info.st_size > _ENVIRONMENT_MANIFEST_LIMIT
+        ):
+            raise SupervisorError("UNAPPROVED_PROFILE")
+        content = bytearray()
+        while len(content) <= _ENVIRONMENT_MANIFEST_LIMIT:
+            part = os.read(manifest_fd, min(4096, _ENVIRONMENT_MANIFEST_LIMIT + 1 - len(content)))
+            if not part:
+                break
+            content.extend(part)
+        if len(content) > _ENVIRONMENT_MANIFEST_LIMIT:
+            raise SupervisorError("UNAPPROVED_PROFILE")
+        raw = bytes(content)
+    finally:
+        os.close(manifest_fd)
+    try:
+        manifest = json.loads(raw, object_pairs_hook=_pairs, parse_constant=_nonfinite)
+    except (ExecutionContractError, UnicodeDecodeError, ValueError, RecursionError):
+        raise SupervisorError("UNAPPROVED_PROFILE") from None
+    if type(manifest) is not dict or manifest != {**identity, "fingerprint": fingerprint}:
+        raise SupervisorError("UNAPPROVED_PROFILE")
+
+
+def _environment_executable(bin_fd: int, executable: str) -> bool:
+    try:
+        info = os.stat(executable, dir_fd=bin_fd, follow_symlinks=False)
+    except OSError:
+        return False
+    if stat.S_ISREG(info.st_mode):
+        return bool(info.st_mode & 0o111)
+    if executable != "python" or not stat.S_ISLNK(info.st_mode):
+        return False
+    try:
+        target = os.readlink(executable, dir_fd=bin_fd)
+    except OSError:
+        return False
+    if not target or ".." in Path(target).parts:
+        return False
+    if Path(target).is_absolute():
+        return target.startswith(("/usr/local/bin/python", "/opt/uv-python/"))
+    return "/" not in target and target.startswith("python")
+
+
+def _open_environment_venv(artifact_fd: int) -> int:
+    try:
+        environment_fd = os.open(".venv", _DIRECTORY, dir_fd=artifact_fd)
+    except OSError:
+        raise SupervisorError("UNAPPROVED_PROFILE") from None
+    try:
+        info = os.fstat(environment_fd)
+        if info.st_uid != os.getuid() or info.st_mode & 0o222:
+            raise SupervisorError("UNAPPROVED_PROFILE")
+        try:
+            bin_fd = os.open("bin", _DIRECTORY, dir_fd=environment_fd)
+        except OSError:
+            raise SupervisorError("UNAPPROVED_PROFILE") from None
+        try:
+            for executable in ("python", "pytest", "mutmut"):
+                if not _environment_executable(bin_fd, executable):
+                    raise SupervisorError("UNAPPROVED_PROFILE")
+        finally:
+            os.close(bin_fd)
+        return environment_fd
+    except BaseException:
+        os.close(environment_fd)
+        raise
+
+
+def _environment_artifact(
+    source_fd: int,
+    cache_fd: int,
+    cache: Path,
+    profile: ExecutionProfile,
+    *,
+    baseline_source_fd: int | None = None,
+) -> tuple[Path, int] | None:
+    """Resolve one immutable approved bundle; never accept a caller/model path."""
+    identity = _environment_identity(source_fd, profile, baseline_source_fd=baseline_source_fd)
+    fingerprint = hashlib.sha256(_canonical(identity)).hexdigest()
+    artifact_path = cache / _ENVIRONMENT_STORE / fingerprint
+    try:
+        store_fd = os.open(_ENVIRONMENT_STORE, _DIRECTORY, dir_fd=cache_fd)
+    except FileNotFoundError:
+        return None
+    except OSError:
+        raise SupervisorError("UNAPPROVED_PROFILE") from None
+    try:
+        store_info = os.fstat(store_fd)
+        if store_info.st_uid != os.getuid() or store_info.st_mode & 0o022:
+            raise SupervisorError("UNAPPROVED_PROFILE")
+        try:
+            artifact_fd = os.open(fingerprint, _DIRECTORY, dir_fd=store_fd)
+        except FileNotFoundError:
+            return None
+        except OSError:
+            raise SupervisorError("UNAPPROVED_PROFILE") from None
+        try:
+            artifact_info = os.fstat(artifact_fd)
+            if artifact_info.st_uid != os.getuid() or artifact_info.st_mode & 0o222:
+                raise SupervisorError("UNAPPROVED_PROFILE")
+            _verify_environment_manifest(artifact_fd, identity, fingerprint)
+            environment_fd = _open_environment_venv(artifact_fd)
+            return artifact_path / ".venv", environment_fd
+        finally:
+            os.close(artifact_fd)
+    finally:
+        os.close(store_fd)
+
+
 def _mount_path(raw: str) -> PurePosixPath:
     # proc mountinfo escapes whitespace and backslash with these octal sequences.
     for source, target in (("\\040", " "), ("\\011", "\t"), ("\\012", "\n"), ("\\134", "\\")):
@@ -574,7 +747,7 @@ def _read_json(fd: int, name: str, validator: Callable[..., Any], limit: int) ->
         if validator is _VIEW_RECORD:
             value = _view_record_compat(value)
         _check(validator, value)
-        return value
+        return cast(dict[str, Any], value)
     except (ExecutionContractError, ValueError, UnicodeError, RecursionError):
         raise SupervisorError("CORRUPT_STATE") from None
     finally:
@@ -1021,6 +1194,53 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
         finally:
             self._mutex.release()
 
+    def _baseline_environment_source(self) -> int | None:
+        """Return one approved First-Agent lock root, or None when absent/ambiguous."""
+        candidates: list[int] = []
+        for source_fd in self._root_fds.values():
+            try:
+                pyproject = _read_environment_input(source_fd, "pyproject.toml")
+                lock = _read_environment_input(source_fd, "uv.lock")
+                if pyproject is None or lock is None:
+                    continue
+                project = tomllib.loads(pyproject.decode("utf-8"))
+                project_table = project.get("project") if isinstance(project, dict) else None
+                if not isinstance(project_table, dict) or project_table.get("name") != "first-agent":
+                    continue
+                src_fd = os.open("src", _DIRECTORY, dir_fd=source_fd)
+                try:
+                    fa_fd = os.open("fa", _DIRECTORY, dir_fd=src_fd)
+                    os.close(fa_fd)
+                finally:
+                    os.close(src_fd)
+            except (OSError, UnicodeDecodeError, ValueError, SupervisorError):
+                continue
+            candidates.append(source_fd)
+        return candidates[0] if len(candidates) == 1 else None
+
+    def _select_parent(self, root_id: str, relative_root: str) -> tuple[int, str, Path]:
+        if root_id not in self._root_fds:
+            raise SupervisorError("PATH_DENIED")
+        try:
+            parts = _parts(relative_root, self._limits.max_depth)
+        except ViewIOError as error:
+            raise SupervisorError(error.code) from None
+        parent = os.dup(self._root_fds[root_id])
+        root_path = self._roots[root_id]
+        try:
+            if _identity(os.fstat(parent)) != _identity(os.fstat(self._root_fds[root_id])):
+                raise SupervisorError("CORRUPT_STATE")
+            for part in parts[:-1]:
+                previous = parent
+                parent = os.open(part, _DIRECTORY, dir_fd=previous)
+                os.close(previous)
+                if _mount_id(parent) != _mount_id(self._root_fds[root_id]):
+                    raise SupervisorError("PATH_DENIED")
+            return parent, parts[-1], root_path.joinpath(*parts)
+        except BaseException:
+            os.close(parent)
+            raise
+
     def _select(self, root_id: str, relative_root: str) -> tuple[int, Path]:
         if root_id not in self._root_fds:
             raise SupervisorError("PATH_DENIED")
@@ -1210,6 +1430,73 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
             if error.code == "STALE_REVISION":
                 raise SupervisorError("CORRUPT_STATE") from None
             raise
+
+    def register_new(
+        self,
+        peer: PeerIdentity,
+        namespace: NamespaceRef,
+        *,
+        root_id: str,
+        relative_root: str,
+        input_id: str | None,
+        deadline: float,
+    ) -> dict[str, str]:
+        """Materialize one absent root from an approved root or an empty seed.
+
+        The new canonical directory is never removed on failure: after mkdir,
+        a crash or failed registration makes its ownership ambiguous and later
+        provisioning must fail closed at the existing path.
+        """
+        if not isinstance(namespace, NamespaceRef):
+            raise ExecutionContractError
+        with self._transaction(peer, deadline):
+            if input_id is not None and input_id not in self._root_fds:
+                raise SupervisorError("PATH_DENIED")
+            target = -1
+            parent = -1
+            try:
+                parent, leaf, path = self._select_parent(root_id, relative_root)
+                try:
+                    os.mkdir(leaf, 0o700, dir_fd=parent)
+                except FileExistsError:
+                    raise SupervisorError("PATH_DENIED") from None
+                target = os.open(leaf, _DIRECTORY, dir_fd=parent)
+                if _mount_id(target) != _mount_id(self._root_fds[root_id]):
+                    raise SupervisorError("PATH_DENIED")
+                target_location = _location(target, path)
+                if input_id is not None:
+                    source = self._root_fds[input_id]
+                    source_path = self._roots[input_id]
+                    if _overlap(_location(source, source_path), target_location):
+                        raise SupervisorError("PATH_DENIED")
+                    self._snapshot(source, target, deadline)
+                os.fsync(target)
+                os.fsync(parent)
+                metadata = {
+                    "schema_version": 1,
+                    "workspace_id": "ws-" + uuid4().hex,
+                    "root_id": root_id,
+                    "relative_root": relative_root,
+                    "root_dev": os.fstat(target).st_dev,
+                    "root_ino": os.fstat(target).st_ino,
+                    "generation": 1,
+                    "owner_namespace": None,
+                    "active_actor": None,
+                    "status": "AVAILABLE",
+                }
+                provisional = _Binding(metadata, {}, -1, target, path, target_location)
+                self._disjoint(provisional)
+                result = self._register(provisional, deadline)
+                target = -1  # The installed binding owns it now.
+                return result
+            except OSError:
+                self._healthy = False
+                raise SupervisorError("DURABILITY_UNKNOWN") from None
+            finally:
+                if target != -1:
+                    os.close(target)
+                if parent != -1:
+                    os.close(parent)
 
     def register_existing(
         self, peer: PeerIdentity, namespace: NamespaceRef, *, root_id: str, relative_root: str, deadline: float
@@ -1874,6 +2161,78 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                 raise SupervisorError("CORRUPT_STATE")
             return result
 
+    def list_project_artifacts(
+        self,
+        peer: PeerIdentity,
+        namespace: NamespaceRef,
+        *,
+        view_ref: ViewRef,
+        capability: str,
+        project_slug: str,
+        deadline: float,
+    ) -> dict[str, Any]:
+        """Project bounded Q60 metadata from the immutable reader manifest only."""
+        if (
+            not isinstance(view_ref, ViewRef)
+            or view_ref.access is not Access.READ
+            or view_ref.purpose is not ViewPurpose.PROJECT
+            or not isinstance(project_slug, str)
+            or re.fullmatch(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*", project_slug) is None
+            or len(project_slug) > 48
+        ):
+            raise SupervisorError("INPUT_POLICY")
+        project_path = f"worklogs/{project_slug}"
+        roadmap_path = f"{project_path}/roadmap.md"
+        increments_path = f"{project_path}/increments"
+        with self._reader_io(
+            peer,
+            namespace,
+            view_ref=view_ref,
+            capability=capability,
+            deadline=deadline,
+        ) as (_io, pin):
+            project = pin.entries.get(project_path)
+            project_kind = "missing" if project is None else project.get("type")
+            if project_kind not in {"missing", "file", "directory", "symlink"}:
+                raise SupervisorError("CORRUPT_STATE")
+            roadmap = pin.entries.get(roadmap_path) if project_kind == "directory" else None
+            increments = pin.entries.get(increments_path) if project_kind == "directory" else None
+            roadmap_kind = "missing" if roadmap is None else roadmap.get("type")
+            increments_kind = "missing" if increments is None else increments.get("type")
+            if roadmap_kind not in {"missing", "file", "directory", "symlink"}:
+                raise SupervisorError("CORRUPT_STATE")
+            if increments_kind not in {"missing", "file", "directory", "symlink"}:
+                raise SupervisorError("CORRUPT_STATE")
+            entries: list[dict[str, str]] = []
+            if increments_kind == "directory":
+                prefix = increments_path + "/"
+                for path, entry in pin.entries.items():
+                    _budget(deadline)
+                    if not path.startswith(prefix):
+                        continue
+                    name = path[len(prefix) :]
+                    if "/" in name:
+                        continue
+                    kind = entry.get("type")
+                    if kind not in {"file", "directory", "symlink"}:
+                        raise SupervisorError("CORRUPT_STATE")
+                    try:
+                        name_bytes = name.encode("utf-8")
+                    except UnicodeError:
+                        raise SupervisorError("INPUT_POLICY") from None
+                    if not name or len(name_bytes) > 255:
+                        raise SupervisorError("INPUT_POLICY")
+                    entries.append({"name": name, "kind": kind})
+                    if len(entries) > 64:
+                        raise SupervisorError("INPUT_POLICY")
+            entries.sort(key=lambda item: item["name"])
+            return {
+                "project_kind": project_kind,
+                "roadmap_kind": roadmap_kind,
+                "increments_kind": increments_kind,
+                "entries": entries,
+            }
+
     def release_reader(
         self,
         peer: PeerIdentity,
@@ -2446,12 +2805,12 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
         """The single approved cell profile, or None when none was configured."""
         return self._view_profile
 
-    def execution_trusted(self, view: ViewRef) -> tuple[NamespaceRef, Path, Path, Path] | None:
-        """The authority's own trusted namespace and source/scratch/cache triple.
+    def execution_trusted(self, view: ViewRef) -> tuple[NamespaceRef, Path, Path, Path, Path | None] | None:
+        """The authority's own namespace and exact source/scratch/cache/env inputs.
 
         A raw path is never an authorization. This exists so the backend can
-        prove that the paths it hands to Docker are the ones the authority
-        actually admitted, not paths chosen by a caller or a model.
+        prove that every path it hands to Docker is the one the authority
+        actually admitted, not a path chosen by a caller or a model.
         """
         inputs = self._inputs.get(view.view_id)
         if inputs is None:
@@ -2459,7 +2818,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
         owner = self._readers.get(view.view_id) if view.access is Access.READ else self._projects.get(view.view_id)
         if owner is None or owner.ref != view:
             return None
-        return (owner.namespace, inputs.source, inputs.scratch, inputs.cache)
+        return (owner.namespace, inputs.source, inputs.scratch, inputs.cache, inputs.environment)
 
     def _proof_only(
         self, peer: PeerIdentity, namespace: NamespaceRef, ref: ViewRef, capability: str
@@ -4923,6 +5282,11 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
             return None
 
         # View-scoped: the exact actor/view/access binding, nothing weaker.
+        if operation is Operation.LIST_PROJECT_ARTIFACTS:
+            if view.access is not Access.READ or view.purpose is not ViewPurpose.PROJECT:
+                raise SupervisorError("INPUT_POLICY")
+            self._reader_proof(peer, namespace, view, capability)
+            return None
         proved = self._proof_only(peer, namespace, view, capability)
         if operation is Operation.EXEC:
             # EXEC binds the plan the VIEW was admitted with, never a claim in
@@ -5095,9 +5459,33 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                     fd = _open_absolute(path)
                     opened.callback(os.close, fd)
                     fds.append(fd)
+                baseline_source_fd = None
+                if (
+                    _read_environment_input(fds[0], "pyproject.toml") is None
+                    and _read_environment_input(fds[0], "uv.lock") is None
+                ):
+                    baseline_source_fd = self._baseline_environment_source()
+                resolved_environment = _environment_artifact(
+                    fds[0], cache_fd, cache, profile, baseline_source_fd=baseline_source_fd
+                )
+                environment: Path | None = None
+                environment_fd: int | None = None
+                if resolved_environment is not None:
+                    environment, environment_fd = resolved_environment
+                    opened.callback(os.close, environment_fd)
                 context = ProtectedPlanContext(root / "source", view.context.plan_ref, view.context.formal_evidence)
                 inputs = _ExecutionInputs(
-                    root / "source", root / "scratch", cache, fds[0], fds[1], cache_fd, context, sealed, installed
+                    root / "source",
+                    root / "scratch",
+                    cache,
+                    environment,
+                    fds[0],
+                    fds[1],
+                    cache_fd,
+                    environment_fd,
+                    context,
+                    sealed,
+                    installed,
                 )
                 self._validate_inputs(view.ref, inputs, deadline)
                 self._stack.callback(inputs.close)
@@ -5171,11 +5559,18 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
     def _validate_inputs(self, ref: ViewRef, inputs: _ExecutionInputs, deadline: float) -> None:
         _budget(deadline)
         try:
-            for path, fd in (
+            bound_paths = [
                 (inputs.source, inputs.source_fd),
                 (inputs.scratch, inputs.scratch_fd),
                 (inputs.cache, inputs.cache_fd),
-            ):
+            ]
+            if inputs.environment is not None:
+                if inputs.environment_fd is None or not inputs.environment.is_relative_to(inputs.cache):
+                    raise SupervisorError("CORRUPT_STATE")
+                bound_paths.append((inputs.environment, inputs.environment_fd))
+            elif inputs.environment_fd is not None:
+                raise SupervisorError("CORRUPT_STATE")
+            for path, fd in bound_paths:
                 current = _open_absolute(path)
                 try:
                     if _identity(os.fstat(current)) != _identity(os.fstat(fd)):

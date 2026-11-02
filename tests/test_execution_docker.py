@@ -112,7 +112,7 @@ def deadline() -> float:
     return time.monotonic() + 2
 
 
-def create(engine: DockerEngine, *, until: float | None = None) -> str:
+def create(engine: DockerEngine, *, environment: Path | None = None, until: float | None = None) -> str:
     return engine.create(
         profile=profile(),
         operation_id=OID,
@@ -120,6 +120,7 @@ def create(engine: DockerEngine, *, until: float | None = None) -> str:
         source=Path("/protected/source"),
         scratch=Path("/protected/scratch"),
         cache=Path("/approved/cache"),
+        environment=environment,
         deadline=deadline() if until is None else until,
     )
 
@@ -159,18 +160,27 @@ class Case:
         self.denied = False
         self.cells = DockerCells(endpoint.engine(), self.journal, validate_binding=self.validate)
 
-    def validate(self, ns: NamespaceRef, view: ViewRef, source: Path, scratch: Path, cache: Path) -> None:
-        self.validated.append((ns, view, source, scratch, cache))
+    def validate(
+        self,
+        ns: NamespaceRef,
+        view: ViewRef,
+        source: Path,
+        scratch: Path,
+        cache: Path,
+        environment: Path | None,
+    ) -> None:
+        self.validated.append((ns, view, source, scratch, cache, environment))
         if self.denied:
             raise ExecutionContractError
 
-    def launch(self, *, until: float | None = None) -> str:
+    def launch(self, *, environment: Path | None = None, until: float | None = None) -> str:
         return self.cells.launch_new(
             self.req,
             profile=profile(),
             source=Path("/protected/source"),
             scratch=Path("/protected/scratch"),
             cache=Path("/approved/cache"),
+            environment=environment,
             deadline=deadline() if until is None else until,
         )
 
@@ -313,6 +323,36 @@ def test_malformed_redirect_or_error_never_leaks_body_or_retries(endpoint: Endpo
     assert len(endpoint.seen) == 1
 
 
+def test_approved_environment_is_a_readonly_project_mount_and_precedes_tool_paths(endpoint: Endpoint) -> None:
+    fingerprint = "a" * 64
+    environment = Path("/approved/cache/fa-environments-v1") / fingerprint / ".venv"
+    endpoint.replies.append(Reply())
+    assert create(endpoint.engine(), environment=environment) == CID
+    body = endpoint.seen[0]["body"]
+    assert isinstance(body, dict)
+    mounts = body["HostConfig"]["Mounts"]
+    assert mounts[-1] == {
+        "Type": "bind",
+        "Source": str(environment),
+        "Target": "/workspace/.venv",
+        "ReadOnly": True,
+        "BindOptions": {"Propagation": "rprivate"},
+    }
+    assert body["Env"] == [
+        "HOME=/scratch/home",
+        "TMPDIR=/scratch/tmp",
+        "PYTHONDONTWRITEBYTECODE=1",
+        "VIRTUAL_ENV=/workspace/.venv",
+        "PATH=/workspace/.venv/bin:/opt/fa-venv/bin:/usr/local/bin:/usr/bin:/bin",
+    ]
+
+
+def test_environment_path_outside_the_authority_cache_is_rejected_before_daemon(endpoint: Endpoint) -> None:
+    with pytest.raises(ExecutionContractError):
+        create(endpoint.engine(), environment=Path("/tmp/fa-environments-v1") / ("b" * 64) / ".venv")
+    assert endpoint.seen == []
+
+
 def test_valid_chunked_create_response_is_supported(endpoint: Endpoint) -> None:
     body = json.dumps({"Id": CID, "Warnings": []}).encode()
     endpoint.replies.append(
@@ -450,7 +490,7 @@ def test_force_stop_persists_original_cancel_before_every_daemon_leg(
     with pytest.raises(JournalError):
         case.launch()
     assert len(endpoint.seen) == 3 and case.validated == [
-        (NS, VIEW, Path("/protected/source"), Path("/protected/scratch"), Path("/approved/cache"))
+        (NS, VIEW, Path("/protected/source"), Path("/protected/scratch"), Path("/approved/cache"), None)
     ]
 
 

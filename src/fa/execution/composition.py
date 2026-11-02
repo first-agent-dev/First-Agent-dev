@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -26,6 +27,7 @@ from fa.execution.client import (
     ExecutionRejectedError,
     ExecutionUnavailableError,
     ExecutionUncertainError,
+    ManagedBashExecutor,
     PlanPublication,
     StagePublication,
 )
@@ -44,6 +46,7 @@ from fa.execution.types import (
 from fa.inner_loop.plan_admission import PlanRef, PlanSnapshot
 from fa.session.manager import RunContext, SessionManagerError
 from fa.session.provisioning import ProvisionedWorkspace, ProvisionMode, ProvisionRequest
+from fa.workspace_bootstrap import ReadyReason, ReadyState, ReadyStatus
 
 _logger = logging.getLogger(__name__)
 
@@ -175,6 +178,7 @@ class ManagedExecution:
             not isinstance(moved, GrantReply)
             or moved.operation is not Operation.HANDOFF
             or moved.generation != self.grant.generation
+            or moved.revision_id is None
             or moved.revision_id != self.current_revision_id
         ):
             self._pending_handoff = _PendingHandoff(pending.request_id, pending.target, uncertain=True)
@@ -440,21 +444,117 @@ def managed_execution_for_run(
     return ManagedExecution(client, binding, grant, view_profile=view_profile)
 
 
+def _settle_readiness_execution(
+    managed: ManagedExecution, view_grant: GrantReply | None, executor: ManagedBashExecutor | None
+) -> bool:
+    """Stop the one provisioning view before releasing its one writer."""
+    if executor is not None:
+        executor.suspend()
+    if view_grant is not None:
+        try:
+            if not managed.stop_view(view_grant, deadline=time.monotonic() + 15):
+                return False
+        except Exception:  # noqa: BLE001 — an unproved view end forbids writer release.
+            return False
+    try:
+        return managed.close(deadline=time.monotonic() + 15)
+    except Exception:  # noqa: BLE001 — release uncertainty is a failed readiness result.
+        return False
+
+
+def _write_readiness_log(path: Path, output: str) -> bool:
+    try:
+        descriptor = os.open(
+            path,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+            0o600,
+        )
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8", closefd=False) as handle:
+                handle.write(output)
+                handle.flush()
+                os.fsync(handle.fileno())
+        finally:
+            os.close(descriptor)
+        return True
+    except OSError:
+        return False
+
+
+def managed_environment_readiness(workspace: Path, run_context: RunContext | None) -> ReadyState:
+    """Probe required tools in one managed PROVISIONING view before activation."""
+    started = time.monotonic()
+    reason: ReadyReason = "managed_artifact_probe_failed"
+    log_path = Path("/dev/null")
+    output = ""
+    managed: ManagedExecution | None = None
+    view_grant: GrantReply | None = None
+    executor: ManagedBashExecutor | None = None
+    try:
+        if not isinstance(run_context, RunContext) or not isinstance(workspace, Path):
+            raise ExecutionContractError
+        log_path = run_context.run_log_dir / "managed-readiness.log"
+        if workspace.resolve() != run_context.workspace_path.resolve():
+            raise ExecutionContractError
+        managed = managed_execution_for_run(run_context)
+        if managed is None or managed.view_profile is None or not managed.view_profile.interactive:
+            raise ExecutionContractError
+        base_revision = managed.current_revision_id
+        view_grant = managed.open_view(
+            access=Access.WRITE,
+            purpose=ViewPurpose.PROVISIONING,
+            base_revision=base_revision,
+            deadline=time.monotonic() + 45,
+        )
+        if view_grant.view_ref is None or view_grant.input_tree_sha256 is None:
+            raise ExecutionContractError
+        executor = ManagedBashExecutor(
+            managed.client,
+            namespace=managed.binding.namespace,
+            view=view_grant.view_ref,
+            grant=view_grant,
+            profile=managed.view_profile,
+            input_tree_sha256=view_grant.input_tree_sha256,
+            plan_sha256=None,
+            original_revision_id=base_revision,
+            controller_root=workspace,
+        )
+        result = executor.run("pytest --version && mutmut --version", timeout=30, session_id="readiness")
+        output = result.stdout
+        if result.exit_code == 0 and not result.timed_out:
+            reason = "ready_managed_artifact"
+    except Exception as error:  # noqa: BLE001 — readiness is a typed total result at the lifecycle boundary.
+        output += f"managed readiness refused: {type(error).__name__}\n"
+    finally:
+        if managed is not None and not _settle_readiness_execution(managed, view_grant, executor):
+            reason = "managed_artifact_probe_failed"
+    if log_path != Path("/dev/null") and not _write_readiness_log(log_path, output):
+        reason = "managed_artifact_probe_failed"
+    return ReadyState(
+        status=ReadyStatus.READY if reason == "ready_managed_artifact" else ReadyStatus.DEGRADED_ENVIRONMENT,
+        fingerprint=None,
+        reason_code=reason,
+        log_path=log_path,
+        repaired=False,
+        elapsed_ms=int((time.monotonic() - started) * 1000),
+    )
+
+
 @dataclass(frozen=True)
 class ClientWorkspaceProvisioner:
     """CT116's second port: the manager's provisioning ask, answered over the wire.
 
-    ``SessionManager`` calls this once per newly created session, so the ask is one
-    ``register_workspace{create:false}`` and the answer is the identity the authority
-    already holds — the same one publication uses, because both resolve the
-    workspace against the same ``approved_roots`` with ``_root_binding``.
+    ``SessionManager`` calls this once per admitted create/attach run. New roots
+    use ``register_workspace{create:true}`` with an absent target leaf and an
+    approved input root id (or ``None`` for the empty seed); existing roots use
+    ``create:false``. Both paths resolve exclusively against ``approved_roots``.
 
     ``tree_sha256`` is ``None``: the wire answer carries two fields (``service.py:591``)
     and ``ProvisionedWorkspace`` now accepts a registered result without the hash.
 
-    A new root is a typed blocked disposition, exactly as in the in-process adapter:
-    the only registration shape this port sends is ``create:false``, and minting
-    canonical bytes is the SLICE3 publication join's work.
+    The service creates the canonical root inside the authority, before any
+    active-session publication. A caller cannot choose a materializer path: the
+    source is either an approved root id or the empty seed.
     """
 
     config: ServiceConfig
@@ -467,19 +567,28 @@ class ClientWorkspaceProvisioner:
     def __call__(self, request: ProvisionRequest) -> ProvisionedWorkspace:
         if not isinstance(request, ProvisionRequest):
             raise SessionManagerError("workspace_invalid", "provisioning requires a ProvisionRequest")
-        if request.mode is ProvisionMode.PROVISION:
-            raise SessionManagerError(
-                "provisioning_unavailable",
-                "managed new-root provisioning requires the publication join (SLICE3)",
-            )
-        if request.mode is not ProvisionMode.REUSE:
+        if request.mode not in {ProvisionMode.PROVISION, ProvisionMode.REUSE}:
             raise SessionManagerError("workspace_invalid", f"unknown provisioning mode: {request.mode}")
         workspace = Path(request.workspace_path)
-        if not workspace.is_dir():
-            raise SessionManagerError("workspace_missing", f"workspace does not exist: {workspace}")
-        rooted = _root_binding(self.config, workspace)
-        if rooted is None:
-            raise SessionManagerError("workspace_escape", f"workspace escapes every approved root: {workspace}")
+        creating = request.mode is ProvisionMode.PROVISION
+        if creating:
+            rooted = _new_root_binding(self.config, workspace)
+            if rooted is None:
+                raise SessionManagerError(
+                    "workspace_escape", f"new workspace is not under one approved root: {workspace}"
+                )
+            input_id = (
+                None if request.source_workspace is None else _approved_source_id(self.config, request.source_workspace)
+            )
+            if request.source_workspace is not None and input_id is None:
+                raise SessionManagerError("workspace_escape", "source workspace is not an approved root")
+        else:
+            if not workspace.is_dir():
+                raise SessionManagerError("workspace_missing", f"workspace does not exist: {workspace}")
+            rooted = _root_binding(self.config, workspace)
+            if rooted is None:
+                raise SessionManagerError("workspace_escape", f"workspace escapes every approved root: {workspace}")
+            input_id = None
         root_id, relative_root = rooted
         try:
             namespace = NamespaceRef(request.session_id, request.run_id)
@@ -493,7 +602,12 @@ class ClientWorkspaceProvisioner:
                 namespace=namespace,
                 view=None,
                 grant=None,
-                payload={"root_id": root_id, "relative_root": relative_root, "create": False, "input_id": None},
+                payload={
+                    "root_id": root_id,
+                    "relative_root": relative_root,
+                    "create": creating,
+                    "input_id": input_id,
+                },
                 deadline=request.deadline,
             )
         except (ExecutionRejectedError, ExecutionUncertainError, ExecutionUnavailableError) as error:
@@ -519,13 +633,9 @@ class ClientWorkspaceProvisioner:
 def client_workspace_provisioner(*, config_path: Path | None = None) -> ClientWorkspaceProvisioner | None:
     """The provisioner ``fa`` injects into the session manager, or ``None``.
 
-    ``None`` means one thing only: the operator has no config file, so the session
-    layer keeps its pre-cutover host path. Every *present but unusable*
-    configuration raises instead of degrading, because chat and publication must
-    fail for the same reason: a managed deployment that cannot reach its authority
-    is a deployment fault, not a reason to work on host bytes. The publication
-    path answers the same fault by refusing to promote (``_promote_validated_plan``
-    has no host fallback), so the two commands now agree.
+    ``None`` means the operator has no configured execution service. Session
+    callers must refuse before lifecycle admission; there is no host provisioning
+    or readiness fallback. A present but unusable configuration also raises.
     """
     path = DEFAULT_CONFIG_PATH if config_path is None else Path(config_path)
     try:
@@ -579,20 +689,58 @@ def _service_config(config_path: Path | None) -> ServiceConfig | None:
 
 
 def _root_binding(config: ServiceConfig, workspace_path: Path) -> tuple[str, str] | None:
-    """Map a workspace onto one approved root: the ids the authority already owns."""
+    """Map an existing workspace onto one approved root."""
     try:
         workspace = workspace_path.expanduser().resolve(strict=True)
     except OSError:
         return None
+    matches: list[tuple[str, str]] = []
     for root_id, root in config.approved_roots.items():
         try:
             relative = workspace.relative_to(Path(root).expanduser().resolve(strict=True))
         except (OSError, ValueError):
             continue
-        if not relative.parts:
-            return None  # The root itself is not a workspace.
-        return root_id, relative.as_posix()
-    return None
+        if relative.parts:
+            matches.append((root_id, relative.as_posix()))
+    return matches[0] if len(matches) == 1 else None
+
+
+def _new_root_binding(config: ServiceConfig, workspace_path: Path) -> tuple[str, str] | None:
+    """Map an absent leaf whose existing parent is beneath exactly one approved root."""
+    workspace = workspace_path.expanduser()
+    if not workspace.is_absolute() or ".." in workspace.parts or not workspace.name:
+        return None
+    if os.path.lexists(workspace):
+        return None
+    try:
+        parent = workspace.parent.resolve(strict=True)
+    except OSError:
+        return None
+    matches: list[tuple[str, str]] = []
+    for root_id, root in config.approved_roots.items():
+        try:
+            relative_parent = parent.relative_to(Path(root).expanduser().resolve(strict=True))
+        except (OSError, ValueError):
+            continue
+        relative = (relative_parent / workspace.name).as_posix()
+        matches.append((root_id, relative))
+    return matches[0] if len(matches) == 1 else None
+
+
+def _approved_source_id(config: ServiceConfig, source_path: Path) -> str | None:
+    """The source contract accepts an approved root itself, never a path inside it."""
+    try:
+        source = source_path.expanduser().resolve(strict=True)
+    except OSError:
+        return None
+    matches: list[str] = []
+    for root_id, root in config.approved_roots.items():
+        try:
+            if source == Path(root).expanduser().resolve(strict=True):
+                matches.append(root_id)
+        except OSError:
+            continue
+    return matches[0] if len(matches) == 1 else None
 
 
 __all__ = [
@@ -601,5 +749,6 @@ __all__ = [
     "ExecutionBinding",
     "ManagedExecution",
     "client_workspace_provisioner",
+    "managed_environment_readiness",
     "managed_execution_for_run",
 ]

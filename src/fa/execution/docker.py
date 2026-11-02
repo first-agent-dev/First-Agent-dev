@@ -299,9 +299,17 @@ class DockerEngine:
         source: Path,
         scratch: Path,
         cache: Path,
+        environment: Path | None = None,
         deadline: float,
     ) -> str:
-        spec = profile.create_spec(operation_id=operation_id, view=view, source=source, scratch=scratch, cache=cache)
+        spec = profile.create_spec(
+            operation_id=operation_id,
+            view=view,
+            source=source,
+            scratch=scratch,
+            cache=cache,
+            environment=environment,
+        )
         raw = self._request(
             "POST", "/containers/create?name=" + spec["name"], body=spec["body"], status=201, deadline=deadline
         )
@@ -457,7 +465,7 @@ class DockerCells:
         engine: DockerEngine,
         journal: OperationJournal,
         *,
-        validate_binding: Callable[[NamespaceRef, ViewRef, Path, Path, Path], None],
+        validate_binding: Callable[[NamespaceRef, ViewRef, Path, Path, Path, Path | None], None],
     ) -> None:
         if not callable(validate_binding):
             raise ExecutionContractError
@@ -487,11 +495,12 @@ class DockerCells:
         source: Path,
         scratch: Path,
         cache: Path,
+        environment: Path | None = None,
         deadline: float,
     ) -> str:
         _remaining(deadline)
         req, namespace, view, digest = self._binding(request, profile)
-        self._validate_binding(namespace, view, source, scratch, cache)
+        self._validate_binding(namespace, view, source, scratch, cache, environment)
         operation_id = req["payload"]["operation_id"]
         container_id = self._journal.create_once(
             operation_id,
@@ -504,6 +513,7 @@ class DockerCells:
                 source=source,
                 scratch=scratch,
                 cache=cache,
+                environment=environment,
                 deadline=deadline,
             ),
             deadline=deadline,

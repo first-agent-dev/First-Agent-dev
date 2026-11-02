@@ -7,6 +7,7 @@ an imagined runtime path; the later controller tests must prove the producer.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from copy import deepcopy
 from typing import Any, Literal
@@ -36,6 +37,12 @@ from fa.inner_loop.managed_acquisition import (
 )
 from fa.inner_loop.managed_inventory import AcquisitionInventoryError, inventory_project_artifacts
 from fa.inner_loop.plan_admission import PlanRef
+from fa.inner_loop.tools.workspace_port import (
+    PortDirectoryEntry,
+    PortProjectArtifactListing,
+    PortRead,
+    WorkspacePortError,
+)
 from fa.inner_loop.workflow_artifacts import AdmissionIOError, ManagedAdmissionBinding, write_admission_record
 
 _SHA_A = "a" * 64
@@ -383,9 +390,7 @@ def _current_project_inventory() -> ProjectArtifactInventory:
 
 
 def test_resolver_maps_current_stable_pair_to_the_exact_canonical_plan_snapshot() -> None:
-    resolved = resolve_existing_choice(
-        SelectExistingChoice(_ROADMAP_SLUG, "I01"), (_current_project_inventory(),)
-    )
+    resolved = resolve_existing_choice(SelectExistingChoice(_ROADMAP_SLUG, "I01"), (_current_project_inventory(),))
     assert isinstance(resolved, ResolvedExistingIncrement)
     assert resolved.snapshot.ref.workspace_relative_path == (
         f"worklogs/{_ROADMAP_SLUG}/increments/increment-01-plan-grammar-and-extractor.md"
@@ -428,9 +433,9 @@ def test_resolver_returns_clarification_for_missing_unknown_inactive_or_duplicat
         "MISSING_CONTEXT"
     )
     current = _current_project_inventory()
-    assert resolve_existing_choice(
-        SelectExistingChoice(_ROADMAP_SLUG, "I99"), (current,)
-    ) == NeedsClarificationChoice("UNKNOWN_INCREMENT")
+    assert resolve_existing_choice(SelectExistingChoice(_ROADMAP_SLUG, "I99"), (current,)) == NeedsClarificationChoice(
+        "UNKNOWN_INCREMENT"
+    )
     assert resolve_existing_choice(
         SelectExistingChoice(_ROADMAP_SLUG, "I01"), (current, current)
     ) == NeedsClarificationChoice("AMBIGUOUS_PROJECT")
@@ -450,9 +455,9 @@ def test_resolver_returns_clarification_for_missing_unknown_inactive_or_duplicat
 
     inactive_roadmap = _ROADMAP_METADATA.replace("active-increment: I01", "active-increment: I02")
     inactive = ProjectArtifactInventory(current.roadmap_path, inactive_roadmap.encode(), current.increments)
-    assert resolve_existing_choice(
-        SelectExistingChoice(_ROADMAP_SLUG, "I01"), (inactive,)
-    ) == NeedsClarificationChoice("UNKNOWN_INCREMENT")
+    assert resolve_existing_choice(SelectExistingChoice(_ROADMAP_SLUG, "I01"), (inactive,)) == NeedsClarificationChoice(
+        "UNKNOWN_INCREMENT"
+    )
 
     outlined_roadmap = _ROADMAP_METADATA.replace("active-increment: I01", "active-increment: I03")
     outlined_increment = _INCREMENT_METADATA.replace("I01", "I03").replace("IN PROGRESS", "OUTLINED")
@@ -466,9 +471,9 @@ def test_resolver_returns_clarification_for_missing_unknown_inactive_or_duplicat
             ),
         ),
     )
-    assert resolve_existing_choice(
-        SelectExistingChoice(_ROADMAP_SLUG, "I03"), (outlined,)
-    ) == NeedsClarificationChoice("UNKNOWN_INCREMENT")
+    assert resolve_existing_choice(SelectExistingChoice(_ROADMAP_SLUG, "I03"), (outlined,)) == NeedsClarificationChoice(
+        "UNKNOWN_INCREMENT"
+    )
 
 
 def test_resolver_rejects_noncanonical_paths_and_inconsistent_linkage() -> None:
@@ -501,32 +506,84 @@ def test_resolver_rejects_noncanonical_paths_and_inconsistent_linkage() -> None:
         resolve_existing_choice(SelectExistingChoice(_ROADMAP_SLUG, "I01"), (bad_linkage,))
 
 
-def _write_rendered_inventory_project(root: Any) -> dict[str, bytes]:
+def _rendered_inventory_files() -> dict[str, bytes]:
     from fa.execution.publication import render_bundle
 
-    files = render_bundle(
+    return render_bundle(
         "demo-project",
         "foundation",
         "## Intent\n\nA project.\n\n## Out of scope\n\nOther work.\n",
         "## SLICE1: Foundation\n\nImplement the foundation.\n",
         created="2026-11-02",
     )
-    for relative_path, content in files.items():
-        destination = root / relative_path
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_bytes(content)
-    return files
 
 
-def test_inventory_reads_only_canonical_artifacts_then_resolves_the_exact_plan(tmp_path: Any) -> None:
-    _write_rendered_inventory_project(tmp_path)
-    increments_dir = tmp_path / "worklogs/demo-project/increments"
-    (increments_dir / "README.txt").write_text("not a canonical increment", encoding="utf-8")
+class _InventoryPort:
+    """Fixture transport over explicit bytes/metadata; it does not discover paths."""
 
-    inventory = inventory_project_artifacts(tmp_path, "demo-project")
+    def __init__(self, listing: PortProjectArtifactListing, files: dict[str, bytes]) -> None:
+        self.listing = listing
+        self.files = files
+        self.list_calls: list[str] = []
+        self.read_calls: list[str] = []
+
+    def list_project_artifacts(self, project_slug: str) -> PortProjectArtifactListing:
+        self.list_calls.append(project_slug)
+        return self.listing
+
+    def read_file(self, path: str, *, offset_bytes: int = 0, max_bytes: int = 1024 * 1024) -> PortRead:
+        self.read_calls.append(path)
+        if path not in self.files:
+            raise WorkspacePortError("denied")
+        raw = self.files[path]
+        eof = offset_bytes + max_bytes >= len(raw)
+        content = raw[offset_bytes : offset_bytes + max_bytes].decode("utf-8")
+        return PortRead(content, hashlib.sha256(raw).hexdigest(), eof)
+
+    def write_file(self, path: str, content: str, *, expected_sha256: str | None = None) -> Any:
+        raise AssertionError("inventory must be read-only")
+
+    @property
+    def cache_dir(self) -> Any:
+        return None
+
+
+def _inventory_port(
+    files: dict[str, bytes] | None = None,
+    entries: tuple[PortDirectoryEntry, ...] | None = None,
+    *,
+    project_kind: str = "directory",
+    roadmap_kind: str = "file",
+    increments_kind: str = "directory",
+) -> _InventoryPort:
+    rendered = _rendered_inventory_files() if files is None else files
+    rows = entries if entries is not None else (PortDirectoryEntry("increment-01-foundation.md", "file"),)
+    return _InventoryPort(
+        PortProjectArtifactListing(project_kind, roadmap_kind, increments_kind, tuple(rows)),
+        rendered,
+    )
+
+
+def test_inventory_reads_only_canonical_artifacts_then_resolves_the_exact_plan() -> None:
+    files = _rendered_inventory_files()
+    files["worklogs/demo-project/increments/README.txt"] = b"not a canonical increment"
+    port = _inventory_port(
+        files,
+        entries=(
+            PortDirectoryEntry("README.txt", "file"),
+            PortDirectoryEntry("increment-01-foundation.md", "file"),
+        ),
+    )
+
+    inventory = inventory_project_artifacts(port, "demo-project")
     assert inventory is not None
     assert [item.relative_path for item in inventory.increments] == [
         "worklogs/demo-project/increments/increment-01-foundation.md"
+    ]
+    assert port.list_calls == ["demo-project"]
+    assert port.read_calls == [
+        "worklogs/demo-project/roadmap.md",
+        "worklogs/demo-project/increments/increment-01-foundation.md",
     ]
     resolved = resolve_existing_choice(SelectExistingChoice("demo-project", "I01"), (inventory,))
     assert isinstance(resolved, ResolvedExistingIncrement)
@@ -534,72 +591,94 @@ def test_inventory_reads_only_canonical_artifacts_then_resolves_the_exact_plan(t
     assert resolved.snapshot.ref.source_kind == "EXISTING_SELECTION"
 
 
-def test_inventory_missing_project_or_roadmap_returns_no_partial_inventory(tmp_path: Any) -> None:
-    assert inventory_project_artifacts(tmp_path, "missing-project") is None
-
-    project = tmp_path / "worklogs/no-roadmap"
-    (project / "increments").mkdir(parents=True)
-    (project / "increments/increment-01-plan.md").write_text("content", encoding="utf-8")
-    assert inventory_project_artifacts(tmp_path, "no-roadmap") is None
-
-
-def test_inventory_rejects_canonical_symlink_and_nonregular_entries(tmp_path: Any) -> None:
-    _write_rendered_inventory_project(tmp_path)
-    increments = tmp_path / "worklogs/demo-project/increments"
-    target = tmp_path / "outside.md"
-    target.write_text("not a project artifact", encoding="utf-8")
-    (increments / "increment-02-link.md").symlink_to(target)
-    with pytest.raises(AcquisitionInventoryError) as symlink:
-        inventory_project_artifacts(tmp_path, "demo-project")
-    assert symlink.value.rule == "unsafe-entry"
-    (increments / "increment-02-link.md").unlink()
-
-    (increments / "increment-02-directory.md").mkdir()
-    with pytest.raises(AcquisitionInventoryError) as nonregular:
-        inventory_project_artifacts(tmp_path, "demo-project")
-    assert nonregular.value.rule == "unsafe-entry"
-    (increments / "increment-02-directory.md").rmdir()
-
-    saved_increments = increments.with_name("increments-saved")
-    increments.rename(saved_increments)
-    increments.symlink_to(saved_increments, target_is_directory=True)
-    with pytest.raises(AcquisitionInventoryError) as directory_symlink:
-        inventory_project_artifacts(tmp_path, "demo-project")
-    assert directory_symlink.value.rule == "unsafe-entry"
+def test_inventory_missing_project_or_roadmap_returns_no_partial_inventory() -> None:
+    assert (
+        inventory_project_artifacts(
+            _inventory_port({}, entries=(), project_kind="missing", roadmap_kind="missing", increments_kind="missing"),
+            "missing-project",
+        )
+        is None
+    )
+    assert (
+        inventory_project_artifacts(
+            _inventory_port({}, entries=(), roadmap_kind="missing", increments_kind="missing"),
+            "no-roadmap",
+        )
+        is None
+    )
 
 
-def test_inventory_enforces_file_count_per_file_and_total_byte_bounds(tmp_path: Any, monkeypatch: Any) -> None:
-    files = _write_rendered_inventory_project(tmp_path)
-    increments = tmp_path / "worklogs/demo-project/increments"
-    increment_path = increments / "increment-01-foundation.md"
-    (increments / "increment-02-second.md").write_bytes(b"x")
+def test_inventory_rejects_canonical_symlink_and_nonregular_entries() -> None:
+    files = _rendered_inventory_files()
+    symlink = _inventory_port(files, entries=(PortDirectoryEntry("increment-02-link.md", "symlink"),))
+    with pytest.raises(AcquisitionInventoryError) as symlink_error:
+        inventory_project_artifacts(symlink, "demo-project")
+    assert symlink_error.value.rule == "unsafe-entry"
+    assert symlink.read_calls == ["worklogs/demo-project/roadmap.md"]
+
+    directory = _inventory_port(files, entries=(PortDirectoryEntry("increment-02-directory.md", "directory"),))
+    with pytest.raises(AcquisitionInventoryError) as directory_error:
+        inventory_project_artifacts(directory, "demo-project")
+    assert directory_error.value.rule == "unsafe-entry"
+
+
+def test_inventory_enforces_count_per_file_aggregate_and_digest_bounds(monkeypatch: Any) -> None:
+    files = _rendered_inventory_files()
+    entries = (
+        PortDirectoryEntry("increment-01-foundation.md", "file"),
+        PortDirectoryEntry("increment-02-second.md", "file"),
+    )
+    files["worklogs/demo-project/increments/increment-02-second.md"] = b"x"
+    port = _inventory_port(files, entries)
     monkeypatch.setattr("fa.inner_loop.managed_inventory._MAX_INCREMENT_FILES", 1)
     with pytest.raises(AcquisitionInventoryError) as too_many:
-        inventory_project_artifacts(tmp_path, "demo-project")
+        inventory_project_artifacts(port, "demo-project")
     assert too_many.value.rule == "too-many"
 
-    (increments / "increment-02-second.md").unlink()
     monkeypatch.setattr("fa.inner_loop.managed_inventory._MAX_INCREMENT_FILES", 64)
     monkeypatch.setattr("fa.inner_loop.managed_inventory._MAX_ARTIFACT_BYTES", 32)
     with pytest.raises(AcquisitionInventoryError) as too_large:
-        inventory_project_artifacts(tmp_path, "demo-project")
+        inventory_project_artifacts(_inventory_port(files, entries[:1]), "demo-project")
     assert too_large.value.rule == "too-large"
 
     monkeypatch.setattr("fa.inner_loop.managed_inventory._MAX_ARTIFACT_BYTES", 1024 * 1024)
     roadmap_length = len(files["worklogs/demo-project/roadmap.md"])
-    moved_increment_path = increments / "foundation.txt"
-    increment_path.rename(moved_increment_path)
     monkeypatch.setattr("fa.inner_loop.managed_inventory._MAX_INVENTORY_BYTES", roadmap_length - 1)
     with pytest.raises(AcquisitionInventoryError) as roadmap_too_large:
-        inventory_project_artifacts(tmp_path, "demo-project")
+        inventory_project_artifacts(_inventory_port(files, entries[:1]), "demo-project")
     assert roadmap_too_large.value.rule == "too-large"
 
-    moved_increment_path.rename(increment_path)
     total_length = roadmap_length + len(files["worklogs/demo-project/increments/increment-01-foundation.md"])
     monkeypatch.setattr("fa.inner_loop.managed_inventory._MAX_INVENTORY_BYTES", total_length - 1)
     with pytest.raises(AcquisitionInventoryError) as total_too_large:
-        inventory_project_artifacts(tmp_path, "demo-project")
+        inventory_project_artifacts(_inventory_port(files, entries[:1]), "demo-project")
     assert total_too_large.value.rule == "too-large"
+
+    class WrongDigestPort(_InventoryPort):
+        def read_file(self, path: str, *, offset_bytes: int = 0, max_bytes: int = 1024 * 1024) -> PortRead:
+            result = super().read_file(path, offset_bytes=offset_bytes, max_bytes=max_bytes)
+            return PortRead(result.content, "0" * 64, result.eof)
+
+    monkeypatch.setattr("fa.inner_loop.managed_inventory._MAX_INVENTORY_BYTES", 8 * 1024 * 1024)
+    wrong_digest = WrongDigestPort(_inventory_port(files, entries[:1]).listing, files)
+    with pytest.raises(AcquisitionInventoryError) as bad_digest:
+        inventory_project_artifacts(wrong_digest, "demo-project")
+    assert bad_digest.value.rule == "unsafe-entry"
+
+
+def test_inventory_rejects_unfinished_reads_and_unsupported_slugs() -> None:
+    class TruncatedPort(_InventoryPort):
+        def read_file(self, path: str, *, offset_bytes: int = 0, max_bytes: int = 1024 * 1024) -> PortRead:
+            result = super().read_file(path, offset_bytes=offset_bytes, max_bytes=max_bytes)
+            return PortRead(result.content, result.sha256, False)
+
+    port = TruncatedPort(_inventory_port().listing, _rendered_inventory_files())
+    with pytest.raises(AcquisitionInventoryError) as truncated:
+        inventory_project_artifacts(port, "demo-project")
+    assert truncated.value.rule == "too-large"
+    with pytest.raises(AcquisitionInventoryError) as invalid_slug:
+        inventory_project_artifacts(port, "../demo-project")
+    assert invalid_slug.value.rule == "unsafe-entry"
 
 
 def test_artifact_metadata_parser_accepts_current_and_rendered_metadata_without_slug_guessing() -> None:

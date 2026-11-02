@@ -8225,3 +8225,123 @@ The inventory opens the selected project's directory chain relative to no-follow
 **Verification.** `tests/test_execution_handoff_return.py`: **9 passed, exit 0** on the real local supervisor socket. The existing lost-ACK replay round-trip now asserts the root owner remains the parent through uncertainty, child ownership, publication, and reverse HANDOFF; assignment through the public property raises `AttributeError`. A targeted mutant that derived the property from the active namespace was killed after child HANDOFF (pytest exit 1); the production source was restored and the clean bank passed. Ruff, `py_compile`, scoped mypy, and `git diff --check` passed.
 
 **Acceptance boundary.** This preserves the trusted owner identity for a future admission caller; it does not yet pass the value into `ManagedAdmissionBinding` or wire the acquisition helper into `invoke_workflow` / `run_workflow`. The Q70 coder gate remains. No Docker, live-host/supervisor deployment, ledger-append acceptance, or final I03 E2E is claimed; nested coder workflow remains OPEN.
+
+### E412 — Q108-B contract ratified for bounded Q60 inventory metadata (2026-11-02; design only)
+
+The operator selected Q108 route B and authorized one narrow, versioned operation for Q60 acquisition inventory. The exact compatibility contract is recorded in `notes/i03-harness-shell-and-tool-research-2026-11-01.md` §9.3 and the Q114 scope clarification in `notes/open-questions-2026-10-07.md`: preserve v1; add v2 only for HEALTH and LIST_PROJECT_ARTIFACTS; use a validated project slug rather than an arbitrary path; bind listing to an immutable READ/PROJECT grant; derive only sorted immediate entry names/kinds from `_ReaderPin.entries`; cap at 64 increment children and 64 KiB encoded reply; return no contents or symlink targets; refuse excess atomically. The client must negotiate v2 health and fail closed on an older server, while controller reads continue through the same view. This exception is for Q60 only and does not change Q114 PUBLISH uncertainty, no-retry, retention or quarantine policy.
+
+**Not yet implemented or proven.** At this entry point, only the decision record is changed: no protocol, service, client, port, inventory producer, caller, test, or E2E behavior has changed. Public tool schemas and legacy direct `fa workflow` remain out of scope. Implementation and targeted/mutation verification are pending; Q60 caller wiring, coder dispatch, live-host acceptance, and final I03 closure remain OPEN.
+
+### E413 — Q108-B bounded pinned-view inventory transport implemented (2026-11-02; local only)
+
+**Implementation.** Preserved the v1 request/reply contract and added a closed protocol-v2 envelope permitting only `HEALTH` and `LIST_PROJECT_ARTIFACTS`. V2 health negotiates the exact advertised feature; the client treats a real v1-only peer's `INVALID_REQUEST` as unavailable and sends no LIST fallback. The new listing request contains only a validated stable project slug and is authorized against the exact immutable `READ/PROJECT` grant. The supervisor derives project, roadmap, increments, and sorted immediate-child name/kind metadata only from the pinned `_ReaderPin.entries`; it emits no contents or symlink targets, does not recurse, and atomically refuses more than 64 entries or a complete encoded reply above 64 KiB. Server and client frame readers enforce the listing byte ceiling. The controller inventory helper now consumes the bound `WorkspacePort`, reads roadmap/candidate contents through that same port/view, and retains strict canonical-name, digest/EOF, per-file, aggregate-size, and stable-ID resolution checks. Added a typed client `pin_reader` wrapper over the existing operation; no new authority or public model-facing PlanRef/path field was introduced.
+
+**Local evidence.** The actual local UDS/supervisor test observes v2 HEALTH/LIST and subsequent READ_FILE requests using the identical pinned view id; it checks sorted immediate entries and excludes nested entries. Additional tests cover symlink-kind reporting without target disclosure, refusal of symlink candidates, write-view and cross-namespace denial, oversized metadata refusal, slug traversal and arbitrary `path` rejection, and v1-only peer compatibility. The combined targeted bank spanning protocol, service, supervisor, authority, client/ports, acquisition, dispatch, journal, workspace, composition, handoff, and publication returned **830 passed, 1 expected xfail, exit 0** in 32.10 seconds. The expected xfail remains `test_the_runs_own_second_publication_survives_a_host_side_write` (SLICE4 STEP2). After mutation checks, the three critical producer/edge/cap tests reran clean: **3 passed, exit 0**. Scoped mypy on five changed production modules succeeded with no issues; Ruff check, format check, `git diff --check`, and `scripts/check_doc_links.py` all exited 0 (324 Markdown files checked). The pytest-asyncio loop-scope deprecation warning is non-failing. No claim is made that `py_compile` passed under system Python 3.11, which cannot parse the repository's PEP 695 test syntax.
+
+**Focused mutation evidence.** Four temporary mutants were each killed (their targeted pytest commands exited 1 at the intended oracle), then restored: (1) replacing manifest-derived listing entries with an empty list failed the real UDS listing assertion; (2) removing the `ClientWorkspacePort` → `ExecutionClient.list_project_artifacts` caller edge failed the real UDS caller test; (3) discarding inventory read bytes failed strict metadata resolution; and (4) removing the service's encoded-reply ceiling failed the oversized-reply policy assertion. The clean three-test rerun passed. These are focused, manually applied mutation checks; no full mutmut verdict is claimed.
+
+**Acceptance boundary — OPEN.** This is transport and inventory-adapter evidence, not the complete managed-acquisition caller or I03 slice. The inventory operation is not yet wired into the chat `invoke_workflow` managed-acquisition path; strict choice/clarification or controller-rendered bootstrap, ordinary `run_workflow` admission, and coder dispatch have not been demonstrated together. Public tool availability remains chat-only and direct legacy `fa workflow` remains unchanged. No live-host/deployed-supervisor acceptance, ledger-append E2E, or independent review was performed. Do not close I03 until caller wiring and the required live-host/supervisor evidence plus its binary DoD are complete; Q114 candidate-PUBLISH safeguards remain unchanged.
+
+### E414 — adversarial review of the next I03 waves and Q60 acquisition flow (2026-11-02; plan/inventory only)
+
+**Review scope and source trail.** Re-read the current W0–W4 reconciliation and SLICE4/SLICE5 contracts, then inspected
+`src/fa/inner_loop/tools/workflow_tool.py:452–577,611–616,737–745`, `src/fa/cli.py:1427–1530`,
+`src/fa/inner_loop/workflow_controller.py:2731–2744`, `src/fa/inner_loop/managed_inventory.py:78–133`, and the
+relevant `tests/test_invoke_workflow_tool.py:776–913` cases. Confirmed the source trace in E414 of
+`notes/i03-execution-call-inventory.md`. No runtime source or test file was changed; no wave/row was closed.
+
+**Confirmed corrections/gaps.** (1) The current non-coder handler path does have a production caller that suspends the
+parent stage, sends HANDOFF, dispatches the child after acknowledgement, returns ownership, and refreshes the parent
+view; plan/inventory text claiming the controller leg is absent was stale. (2) `_prepare_invocation` still rejects all
+coder-containing requests before allocation (`workflow_tool.py:611–616`), so that caller is not the Q60 acquisition
+path. (3) Existing handler lifecycle tests use recording fakes; the real-socket handoff test covers the authority/client
+route, not handler→acquisition→ordinary workflow composition. (4) E410/E413 inventory/resolver and Q108 LIST transport
+are not production-wired into `invoke_workflow`; `run_workflow` still accepts the host `plan_path` route and reads it
+at `workflow_controller.py:2731–2736`. The plan now requires an internal validated `PlanSnapshot` admission input,
+without weakening plan-before-coder, fabricating host paths, adding model-facing paths, or changing legacy
+`fa workflow`. (5) The frozen I03 baseline/mapping has no Q108 listing acceptance; before host execution, extend the
+existing S08 integrated witness with an explicit `NEW:` producer mapping and contract-test updates while retaining 35
+case IDs and NOT RUN verdicts.
+
+**Correct invariants retained.** `invoke_workflow` remains chat-only; do not widen the coder tool set. Keep one
+workflow-owned writer and the trusted parent controller (Q61). Use the existing HANDOFF path, exact namespace
+lineage and same request identity on reconciliation. Do not RELEASE an uncertain owner, retry PUBLISH, bypass ordinary
+plan admission, or change Q114/legacy semantics. Q113 strict all-row managed-negative closure remains the W0 gate;
+R27/R28 remain implementation tasks, not blockers by label.
+
+**Plan edits.** Updated the current increment table and W0–W4 ordering/reconciliation, corrected S2P4/S2P6/S4P2 and
+S5P1–P3 states, made the 20-operation dispatcher count current, replaced the stale S5P2 “missing HANDOFF caller”
+claim with exact existing/remaining contracts, and made S5P1/S5P5 and final S08 acceptance explicit about Q108 pinning,
+same-view inventory reads, bootstrap's fresh post-install READ pin, `PlanSnapshot` admission, and lineage-preserving E2E
+coverage. The call inventory now records the R26 caller correction without erasing the historical trace.
+
+**Verification.** `uv run pytest` with the repository-selected interpreter failed (exit 2) while trying to download
+CPython 3.15.2 because the sandbox rejected the GitHub certificate (`UnknownIssuer`). The host has only CPython 3.11.2;
+the documentation-only artifact bank was therefore run with an isolated `uv --python 3.11 --no-project` environment
+and explicit pytest/pytest-asyncio/fastjsonschema dependencies: `tests/test_e2e_artifact_contract.py` **28 passed,
+exit 0**. The checker reports **125 frozen producers, 89 I02-origin + 35 I03 cases**, planned mappings only; doc-link
+check covers **324 Markdown files, exit 0**; `git diff --check` exits 0. Pytest emits the existing non-failing
+`asyncio_default_fixture_loop_scope` deprecation warning. After the bank, its artifact-mutation tests
+(`compares_every_unique_producer_case`, `detects_removal_of_every_case`, `requires_explicit_successor`,
+`rejects_missing_i01_case_row`) returned **4 passed, exit 0**. These mutate test artifacts and check the coverage
+guards; no production-code `mutmut` run is claimed because this pass changed no production/test code and the configured
+mutmut source scope does not include the documentation checker. No Docker, live host, ledger-append acceptance, or
+independent review occurred. W0/W1/W2 and Q60/Q108 production wiring remain OPEN.
+
+
+### E415 — R02 module-CLI managed provisioner binding (2026-11-02; local only)
+
+Changed `src/fa/session/manager.py::_main` to resolve the established `client_workspace_provisioner` and inject it into `SessionManager`; absence now fails with `managed_execution_unavailable` before lifecycle mutations. This removes the production module CLI's route to its no-provisioner host fallback without adding a second adapter. Added tests in `tests/test_session_lifecycle.py` for no-config/no-state refusal, managed REUSE success, and backend refusal preserving caller-owned bytes. R02 inventory updated with current source and test nodeids; live E2E proposal L-ENTRY-5 now specifies independent process-trace plus authoritative DB/event-ledger evidence for unavailable backend.
+
+**Verification:** `tests/test_session_lifecycle.py` — **24 passed, exit 0** using CPython 3.11.2 plus temporary `typing.override` shim (limited runtime; supported 3.13 unavailable because `.venv` is absent). Ruff check/format, compileall, and `git diff --check` passed. Missing-provisioner-gate mutant and manager-binding EDGE mutant each failed their designated test (pytest exit 1), were restored byte-for-byte, then the clean bank passed again (24 passed). Pyrefly/mypy not installed. No Docker/live-host evidence.
+
+**Still open:** this is not the full R02 entrypoint oracle. `fa-entrypoint.sh` still clones/configures/runs readiness before invoking `SessionManager`; the general no-provisioner `SessionManager` API still has pre-cutover behavior. Q112 ordering and explicit override were preserved. R02/S4P1/W0/W1 remain OPEN; no row closure or live-host E2E is claimed.
+
+
+### E416 — Q117: HEALTH is not proof of managed EXEC availability (2026-11-02; source-only)
+
+Confirmed from source that `ExecutionService._health` reports `WorkspaceAuthority.ready` only; it does not establish EXEC cell readiness. `ClientWorkspaceProvisioner` rejects new-root PROVISION until the SLICE3 publication join, and entrypoint clone/configuration/readiness currently precede module provisioning. Q112 requires readiness refusal before session provisioning, so moving that provisioning command earlier is not permitted. A HEALTH-only probe cannot satisfy R02's stronger no-project-command oracle. Added Q117 asking whether to expand Q113's pre-W0 prerequisite to include managed new-root provisioning plus cell-local readiness, or reopen W0 timing and defer R02 to W1. No runtime/tests changed; no tests ran. R02/S4P1/W0 remain OPEN pending resolution.
+
+
+### E417 — Q117 implementation direction and Q118 temporal conflict identified (2026-11-02; source-only)
+
+The operator directed us to pursue the R02 prerequisite now while reusing existing seams and avoiding extra surface. Q117 records the existing `ProvisionMode.PROVISION`, dormant `REGISTER_WORKSPACE{create:true}` and PROVISIONING-view route; HEALTH-only is insufficient. Source review found Q112's former no-session-provisioning-before-readiness wording conflicts with the current manager seam: `_new_session` persists a provisional manifest/DB and reserves a provisioning run before invoking managed provisioning/readiness (`manager.py:350–391`). Q118 recorded the temporal choice. Its resolution and matching E2E contract are recorded in E418. No runtime/test changes or tests occurred in E417. R02/S4P1/W0 remained OPEN.
+
+
+### E418 — Q118 resolved; provisional managed-readiness contract synchronized (2026-11-02; documentation only)
+
+The operator selected Q118 option A. Q112 now permits only a provisional, non-active manifest/DB and exactly one reserved provisioning run before managed cell-local readiness. On failure, the run ID remains a durable non-reusable tombstone; `.active` is not newly published, `fa run` is not launched, and workflow `event_log` receives no events. Explicit-command override and standby behavior are unchanged. Cleanup is ownership-bounded and must never delete supervisor-registered bytes; HEALTH and host-side readiness are not EXEC proof.
+
+Updated L-ENTRY-1/2/5 to distinguish config-missing refusal (before lifecycle state) from a configured but unavailable/failed managed attempt (where only Q118-bounded provisional state/tombstone may exist). L-ENTRY-1 now requires cell-local readiness failure and independent process/ledger/tombstone evidence; resumed-session assertions preserve prior workspace, active pointer, bindings, and events. This is a contract synchronization only: it does not claim the managed new-root/readiness route exists or passes.
+
+**Verification and boundary.** `scripts/check_doc_links.py` and `git diff --check` passed after the edits; runtime and tests were not changed, so no runtime test or mutation result is claimed. Q112/Q118 policy is resolved; implementation, R02, S4P1, every required negative oracle, and W0 remain OPEN. No supported-runtime, Docker, or live-host evidence is claimed.
+
+### E419 — Preserve prebuilt ready-environment fast path (2026-11-02; acceptance only)
+
+The operator reaffirmed a production requirement: a session may start in an already prepared environment where tools such as `pytest` and `mutmut` are usable immediately; setup must not spend time rebuilding dependencies or invoke an LLM to decide whether to build. Source inspection confirms `workspace_bootstrap._fast_ready` requires the workspace `.venv`, matching readiness marker/fingerprint, current managed hooks, and matching cache sentinel. When those proofs hold, readiness returns `ready_fast_path`; it runs `uv --version` and `uv sync --locked --extra dev --check`, not full `uv sync` or `pre-commit install-hooks`. The repair path does run full sync and prewarm. Existing `tests/test_workspace_bootstrap.py` covers the fast-path result and command vector; no bootstrap runtime/test changes were made here.
+
+Added proposed live case L-ENTRY-6 to require the fast-path reason, unchanged environment artifacts, no full install/prewarm, zero provider/LLM calls before readiness, and successful `pytest --version` plus `mutmut --version` within the one-second target. The negative control removes/bypasses the fast-path branch and must expose installation/prewarm or miss the target. This is an acceptance criterion, not live evidence. The managed new-root implementation must preserve/provide the prebuilt environment; it must not assume a Git clone contains ignored `.venv` state.
+
+**Verification and boundary.** Documentation-only: no runtime or tests changed, so no mutation result is claimed. `scripts/check_doc_links.py` and `git diff --check` are the required checks. R02/W0 remain OPEN; no supported-runtime or live-host result is claimed.
+
+
+### E420 — Preserve Q118's managed provisioning tombstone (2026-11-02; local only)
+
+**Implementation.** `SessionManager` now admits the managed provisioning `RunContext` in the lifecycle caller and passes that exact identity to the provisioner. If a managed new-session provisioner/readiness attempt fails after admission, the existing provisional manifest and `session.db` remain at status `provisioning` with the run binding; they are not promoted to active and cannot be attached. Before admission, the prior rollback remains. Internal workspace-owner scans ignore non-active tombstones, while run-ID scans may read their retained DB binding; an explicit test removes the run directory and still proves the ID cannot be reserved in another session. Cleanup was factored to remove only a workspace this attempt created and whose unregistered result is known; caller-owned, supervisor-registered, and ambiguously owned bytes are retained. The failure paths assert zero `event_log` rows. This is lifecycle-local Q118 evidence, not the complete R02 readiness route.
+
+**Environment rebuilt.** Followed `knowledge/arena-env-build.md`: built isolated CPython **3.13.16** with SQLite **FTS5** (and SSL/zlib/bzip2 smoke) under `$HOME/.cache/arena-python313`, then ran `uv sync --frozen --extra dev` against the project's `uv.lock` (76 packages, exit 0). The ignored local `.venv` reports Python 3.13.16, pytest 9.0.3, mutmut 3.6.0. FTS5 smoke passed. Measured local `pytest --version` at **0.153 s** and `mutmut --version` at **0.565 s**. These are developer-sandbox measurements, not a new managed session's prebuilt environment or L-ENTRY-6 acceptance.
+
+**Verification.** Supported-runtime bank `tests/test_session_lifecycle.py`, the readiness-before-provider CLI case, and the real manager/bootstrap create/attach case: **26 passed, exit 0**, including a clean rerun after mutation. Target Ruff check/format, mypy on `manager.py` + `test_session_lifecycle.py`, targeted Pyrefly, `git diff --check`, and `scripts/check_doc_links.py` (324 Markdown files) all exited 0. A first Ruff run exposed `_new_session` at C901 16/15; workspace disposal was extracted into an ownership-bounded helper, then Ruff passed.
+
+**Focused mutations.** Four temporary mutants were killed (each targeted pytest exit 1 at its intended oracle): remove tombstone retention; remove the fresh-session caller's `begin_run` edge; prevent run-ID scans from reading provisional DBs; prevent workspace-owner scans from safely skipping provisional manifests. The source was restored byte-for-byte and the clean 26-test bank passed. This is focused manual mutation evidence, not a full mutmut run.
+
+**Acceptance boundary.** R02/W0 remain OPEN. The local venv rebuilt here is not proof that a new managed root preserves/provides the prepared environment; Git-clone handling for ignored `.venv` remains unresolved. The configured new-root PROVISION/materializer and cell-local readiness path are still not wired end to end. No provider/LLM, live-host, Docker, workflow-ledger append, or L-ENTRY-6 pass is claimed.
+
+
+### E421 — Environment artifact consumer + prewarm utility
+
+Added authority-bound immutable environment cache resolution and read-only cell mount, plus an operator-only pinned-image prewarm utility. Fingerprint binds pyproject/lock/profile/image/dev extra; corrupt cache refuses, miss has no host `.venv` fallback. Targeted supported-runtime bank: **251 passed**; Ruff, targeted mypy, Pyrefly (0 errors), diff check pass; four focused manual mutants killed/restored byte-exact. Prewarm was tested with a fake Docker runner only. Full repository mypy separately remains red: **115 errors / 31 files**, baseline provenance not established. No actual artifact build, managed new-root/readiness, or live-host E2E; R02/W0/I03 remain OPEN. See increment E421 for exact file/safeguard/test inventory.
+
+### E422 — Managed new-root materialization and same-run readiness (2026-11-02; local only)
+
+Activated managed `create:true` registration for approved-source or empty-seed roots, with approved First-Agent baseline artifact lookup for clean roots and exact root-lock matching otherwise. One admitted provisioning `RunContext` now spans materialization and cell-local `pytest`/`mutmut` readiness. Q118 refusal retains the non-active DB/manifest tombstone, avoids provider/workflow events, and preserves registered or ambiguously owned bytes. Explicit empty `FA_SESSION_SOURCE` selects clean seed. Targeted bank: **591 passed, 1 expected SLICE4 STEP2 xfail, exit 0**, repeated clean after mutation. Ruff/format/diff, targeted mypy and Pyrefly passed. Nine focused mutants covering materializer/service edge, same-run gate, ambiguous-root retention, tool probe, view-stop release, clean baseline and empty-source precedence were killed and byte-exact restored. This is not a full `mutmut` run. No real Docker prewarm, managed-root artifact mount, UID/GID match, or live-host entrypoint/DB/exec-trace evidence; `.active` and L-ENTRY-6 remain NOT RUN. I03/R02/S4P1/W0/W1/W2 remain OPEN. See increment E422 and the corrected L-ENTRY-6 proposal for source/test details.

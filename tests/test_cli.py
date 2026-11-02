@@ -16,6 +16,7 @@ from fa.cli import _cmd_run, _cmd_stats, _prepare_managed_workspace, _session_ma
 from fa.inner_loop.session_db import SessionDatabase
 from fa.providers import SecretStore
 from fa.providers.base import TransportResponse
+from fa.session.manager import RunContext
 from fa.workspace_bootstrap import ReadyState, ReadyStatus
 from tests._capabilities import requires_posix_shell, requires_pty_backend
 
@@ -29,7 +30,7 @@ def _install_test_managed_cli_dependencies(
     *,
     home: Path,
     workspace_root: Path,
-    workspace_preparer: Callable[[Path], ReadyState] | None = None,
+    workspace_preparer: Callable[[Path, Any], ReadyState] | None = None,
     with_provisioner: bool = True,
     with_managed_execution: bool = True,
     local_run_id: str | None = None,
@@ -49,7 +50,7 @@ def _install_test_managed_cli_dependencies(
     from fa.execution.types import GrantReply, NamespaceRef, Operation
     from fa.inner_loop.plan_admission import PlanRef, PlanSnapshot
     from fa.session.manager import SessionManager
-    from fa.session.provisioning import ProvisionedWorkspace
+    from fa.session.provisioning import ProvisionedWorkspace, ProvisionMode
 
     workspace_id = "ws-" + "1" * 32
     revision_id = "rev-" + "2" * 32
@@ -89,10 +90,12 @@ def _install_test_managed_cli_dependencies(
             )
             return PlanPublication(canonical_ref, revision_id, True)
 
-    def ready(path: Path) -> ReadyState:
+    def ready(path: Path, _run_context: Any) -> ReadyState:
         return ReadyState(ReadyStatus.READY, None, "ready_fast_path", path / ".fa" / "ready.log", False, 0)
 
-    def provision(_request: Any) -> ProvisionedWorkspace:
+    def provision(request: Any) -> ProvisionedWorkspace:
+        if request.mode is ProvisionMode.PROVISION:
+            request.workspace_path.mkdir()
         return ProvisionedWorkspace(True, workspace_id, revision_id, None)
 
     manager = SessionManager(
@@ -167,34 +170,41 @@ def test_cli_has_inner_loop_smoke_command() -> None:
     assert "inner-loop-smoke" in help_text
 
 
-@pytest.mark.parametrize(
-    ("configured", "expected"),
-    [
-        (None, None),
-        ("", None),
-        ("https://github.com/fork-owner/fork-repo", "https://github.com/fork-owner/fork-repo"),
-        ("   ", "   "),
-    ],
-)
-def test_cli_passes_fa_repo_push_url_override(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    configured: str | None,
-    expected: str | None,
+def test_cli_does_not_wire_legacy_repo_push_url_into_managed_sessions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """class=C2 claim=CT2 kill-check=remove repo_push_url factory argument."""
-
+    """C2: session source selection is approved-root based, not host Git push config."""
     monkeypatch.setenv("FA_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
-    monkeypatch.delenv("FA_SESSION_SOURCE", raising=False)
-    if configured is None:
-        monkeypatch.delenv("FA_REPO_PUSH_URL", raising=False)
-    else:
-        monkeypatch.setenv("FA_REPO_PUSH_URL", configured)
+    monkeypatch.setenv("FA_SESSION_SOURCE", str(tmp_path / "seed"))
+    monkeypatch.setenv("FA_REPO_PUSH_URL", "https://example.invalid/unused.git")
+    monkeypatch.setattr("fa.execution.composition.client_workspace_provisioner", lambda: None)
 
     manager = _session_manager_for_args(argparse.Namespace(workspace=None))
 
-    assert manager.repo_push_url == expected
+    assert manager.source_workspace == (tmp_path / "seed").resolve()
+    assert manager.workspace_provisioner is None
     assert manager.workspace_preparer is _prepare_managed_workspace
+    assert not hasattr(manager, "repo_push_url")
+
+
+def test_empty_session_source_selects_clean_seed_before_managed_provisioning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("FA_WORKSPACE_ROOT", str(tmp_path / "workspaces"))
+    monkeypatch.setenv("FA_SESSION_SOURCE", "")
+    original_is_dir = Path.is_dir
+
+    def is_dir(path: Path, **kwargs: Any) -> bool:
+        if path == Path("/repo"):
+            return True
+        return original_is_dir(path, **kwargs)
+
+    monkeypatch.setattr(Path, "is_dir", is_dir)
+    monkeypatch.setattr("fa.execution.composition.client_workspace_provisioner", lambda: None)
+
+    manager = _session_manager_for_args(argparse.Namespace(workspace=None))
+
+    assert manager.source_workspace is None
 
 
 def test_prepare_managed_workspace_warns_only_for_degraded_state(
@@ -212,9 +222,12 @@ def test_prepare_managed_workspace_warns_only_for_degraded_state(
         repaired=False,
         elapsed_ms=2,
     )
-    monkeypatch.setattr(cli_module, "ensure_workspace_ready", lambda workspace: degraded)
+    monkeypatch.setattr(
+        "fa.execution.composition.managed_environment_readiness",
+        lambda workspace, run_context: degraded,
+    )
 
-    assert _prepare_managed_workspace(tmp_path) is degraded
+    assert _prepare_managed_workspace(tmp_path, None) is degraded
     assert capsys.readouterr().err == (
         f"[WORKSPACE_BOOTSTRAP] degraded_environment: tool_missing; log={degraded.log_path}\n"
     )
@@ -1302,6 +1315,63 @@ def test_fa_run_session_manager_creates_and_attaches_with_fresh_run_ids(
     assert all(row["session_id"] == session_id for row in db.read_event_rows())
 
 
+def test_managed_readiness_failure_leaves_tombstone_before_provider_or_workflow_events(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """C1/Q118: a failed managed probe admits no provider call or workflow events."""
+    config = tmp_path / "models.yaml"
+    config.write_text(_FAKE_MODELS_YAML, encoding="utf-8")
+    home = tmp_path / "home"
+    workspace = tmp_path / "workspaces" / "clean-session"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    monkeypatch.setenv("FA_WORKSPACE_ROOT", str(workspace.parent))
+    monkeypatch.setenv("FA_SESSION_SOURCE", "")
+    events: list[str] = []
+    transport = _ScriptedTransport([_stop_body("must not be reached")])
+
+    def failed_probe(path: Path, run_context: RunContext | None) -> ReadyState:
+        assert path == workspace.resolve()
+        assert isinstance(run_context, RunContext)
+        events.append("readiness")
+        return ReadyState(
+            ReadyStatus.DEGRADED_ENVIRONMENT,
+            None,
+            "managed_artifact_probe_failed",
+            run_context.run_log_dir / "managed-readiness.log",
+            False,
+            1,
+        )
+
+    builds: list[str] = []
+    monkeypatch.setattr("fa.execution.composition.managed_environment_readiness", failed_probe)
+    monkeypatch.setattr(cli_module, "_build_provider_chain", lambda *a, **k: builds.append("build"))
+    _install_test_managed_cli_dependencies(
+        monkeypatch,
+        home=home,
+        workspace_root=workspace.parent,
+        workspace_preparer=cli_module._prepare_managed_workspace,
+    )
+    args = _make_run_args(workspace=workspace, config=config, run_id="failed-readiness")
+    args.session_id = None
+    args.resume = False
+
+    assert _cmd_run(args, transport=transport, secrets=_TEST_SECRETS) == 2
+    assert events == ["readiness"]
+    assert builds == []
+    assert transport.calls == []
+    manager = cli_module._session_manager_for_args(args)
+    manifest_path = next(manager.sessions_root.glob("*/manifest.json"))
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["status"] == "provisioning"
+    session_id = str(manifest["session_id"])
+    database = SessionDatabase.open_existing(manager.sessions_root / session_id / "session.db", session_id=session_id)
+    run_dirs = list(manager.run_root.iterdir())
+    assert len(run_dirs) == 1
+    assert database.get_run_binding(run_dirs[0].name) is not None
+    assert database.event_count() == 0
+
+
 def test_readiness_completes_before_provider_build_or_call(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1339,8 +1409,9 @@ def test_readiness_completes_before_provider_build_or_call(
 
     transport = RecordingTransport([_stop_body("done")])
 
-    def ready(workspace: Path) -> ReadyState:
+    def ready(workspace: Path, run_context: RunContext | None) -> ReadyState:
         assert workspace == tmp_path.resolve()
+        assert isinstance(run_context, RunContext)
         assert events == []
         assert transport.calls == []
         events.append("ready")
@@ -1359,7 +1430,7 @@ def test_readiness_completes_before_provider_build_or_call(
         events.append("build")
         return original_build(*args, **kwargs)
 
-    monkeypatch.setattr(cli_module, "ensure_workspace_ready", ready)
+    monkeypatch.setattr("fa.execution.composition.managed_environment_readiness", ready)
     monkeypatch.setattr(cli_module, "_build_provider_chain", recording_build)
     _install_test_managed_cli_dependencies(
         monkeypatch,

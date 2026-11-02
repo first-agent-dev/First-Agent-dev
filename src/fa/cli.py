@@ -152,7 +152,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 from fa.roles import EvalFamilyConflictError
 from fa.session.manager import RunContext, SessionContext, SessionManager, SessionManagerError
 from fa.verifier import load_contracts_from_dir
-from fa.workspace_bootstrap import ReadyState, ReadyStatus, ensure_workspace_ready
+from fa.workspace_bootstrap import ReadyState, ReadyStatus
 
 logger = logging.getLogger(__name__)
 
@@ -163,10 +163,12 @@ def _valid_run_id(value: str) -> bool:
     return bool(_RUN_ID_RE.fullmatch(value))
 
 
-def _prepare_managed_workspace(workspace: Path) -> ReadyState:
-    """Run total readiness admission and surface degradation without blocking."""
+def _prepare_managed_workspace(workspace: Path, run_context: RunContext | None) -> ReadyState:
+    """Probe the prepared environment through the admitted managed execution run."""
 
-    state = ensure_workspace_ready(workspace)
+    from fa.execution.composition import managed_environment_readiness
+
+    state = managed_environment_readiness(workspace, run_context)
     if state.status is not ReadyStatus.READY:
         print(
             f"[WORKSPACE_BOOTSTRAP] {state.status.value}: {state.reason_code}; log={state.log_path}",
@@ -272,19 +274,15 @@ def _session_manager_for_args(args: argparse.Namespace) -> SessionManager:
         workspace_root = Path("/sessions")
     else:
         workspace_root = Path.cwd()
-    configured_source = os.environ.get("FA_SESSION_SOURCE")
-    if configured_source:
-        source_workspace: Path | None = Path(configured_source)
+    if "FA_SESSION_SOURCE" in os.environ:
+        configured_source = os.environ["FA_SESSION_SOURCE"].strip()
+        source_workspace: Path | None = Path(configured_source) if configured_source else None
     else:
         source_workspace = Path("/repo") if Path("/repo").is_dir() else None
-    repo_push_url = os.environ.get("FA_REPO_PUSH_URL")
-    if repo_push_url == "":
-        repo_push_url = None
     return SessionManager(
         state_root=fa_state_root(),
         workspace_root=workspace_root,
         source_workspace=source_workspace,
-        repo_push_url=repo_push_url,
         workspace_preparer=_prepare_managed_workspace,
         workspace_provisioner=client_workspace_provisioner(),
     )

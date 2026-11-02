@@ -13,6 +13,8 @@ import pytest
 
 from fa.execution.protocol import (
     MAX_FRAME_BYTES,
+    MAX_PROJECT_ARTIFACTS_REPLY_BYTES,
+    MAX_PROJECT_INCREMENT_ENTRIES,
     MAX_TAIL_BYTES,
     MAX_TEXT_BYTES,
     DeadlineConnection,
@@ -179,6 +181,28 @@ def response(op: Operation) -> dict[str, Any]:
     )
 
 
+def v2_request(op: Operation) -> dict[str, Any]:
+    if op is Operation.HEALTH:
+        return {
+            "protocol_version": 2,
+            "request_id": RID,
+            "op": op.value,
+            "namespace": None,
+            "view_ref": None,
+            "capability": None,
+            "payload": {},
+        }
+    return {
+        "protocol_version": 2,
+        "request_id": RID,
+        "op": Operation.LIST_PROJECT_ARTIFACTS.value,
+        "namespace": NS,
+        "view_ref": {**VIEW, "access": "READ", "purpose": "PROJECT"},
+        "capability": CAP,
+        "payload": {"project_slug": "demo-project"},
+    }
+
+
 def test_view_ref_from_dict_has_one_closed_validating_constructor() -> None:
     expected = ViewRef(WS, VID, REV, "run-1", 1, Access.WRITE, ViewPurpose.PROJECT)
     assert ViewRef.from_dict(VIEW) == expected
@@ -299,9 +323,9 @@ def test_a_writer_view_still_names_the_bytes_it_mutates(purpose: str) -> None:
         decode_request(encode_json(record))
 
 
-@pytest.mark.parametrize("op", list(Operation))
-def test_all_nineteen_complete_payloads_and_results(op: Operation) -> None:
-    assert set(PAYLOADS) == set(RESULTS) == set(Operation)
+@pytest.mark.parametrize("op", [op for op in Operation if op is not Operation.LIST_PROJECT_ARTIFACTS])
+def test_all_v1_operations_keep_their_complete_payloads_and_results(op: Operation) -> None:
+    assert set(PAYLOADS) == set(RESULTS) == set(Operation) - {Operation.LIST_PROJECT_ARTIFACTS}
     req, res = request(op), response(op)
     assert decode_request(encode_json(req)) == req
     assert decode_reply(encode_json(res), operation=op, request_id=RID) == res
@@ -325,6 +349,105 @@ def test_all_nineteen_complete_payloads_and_results(op: Operation) -> None:
     res["result"]["secret"] = CAP
     with pytest.raises(ExecutionContractError):
         decode_reply(encode_json(res), operation=op, request_id=RID)
+
+
+def test_v2_health_and_project_listing_have_closed_versioned_shapes() -> None:
+    health = v2_request(Operation.HEALTH)
+    assert decode_request(encode_json(health)) == health
+    health_reply = {
+        "protocol_version": 2,
+        "request_id": RID,
+        "status": "OK",
+        "result": {
+            "ready": True,
+            "protocol_version": 2,
+            "profile_set_sha256": SHA,
+            "features": ["list_project_artifacts"],
+        },
+        "error": None,
+    }
+    assert (
+        decode_reply(encode_json(health_reply), operation=Operation.HEALTH, request_id=RID, protocol_version=2)
+        == health_reply
+    )
+
+    listing = v2_request(Operation.LIST_PROJECT_ARTIFACTS)
+    assert decode_request(encode_json(listing)) == listing
+    result = {
+        "project_kind": "directory",
+        "roadmap_kind": "file",
+        "increments_kind": "directory",
+        "entries": [{"name": "increment-01-foundation.md", "kind": "file"}],
+    }
+    reply = {"protocol_version": 2, "request_id": RID, "status": "OK", "result": result, "error": None}
+    assert (
+        decode_reply(encode_json(reply), operation=Operation.LIST_PROJECT_ARTIFACTS, request_id=RID, protocol_version=2)
+        == reply
+    )
+
+    bad_listing_results = (
+        {**result, "entries": [{"name": "x", "kind": "symlink", "target": "secret"}]},
+        {**result, "entries": [{"name": "x", "kind": "file", "content": "secret"}]},
+        {
+            **result,
+            "entries": [{"name": "x", "kind": "file"}] * (MAX_PROJECT_INCREMENT_ENTRIES + 1),
+        },
+    )
+    for bad_result in bad_listing_results:
+        bad_reply = {**reply, "result": bad_result}
+        with pytest.raises(ExecutionContractError):
+            decode_reply(
+                encode_json(bad_reply),
+                operation=Operation.LIST_PROJECT_ARTIFACTS,
+                request_id=RID,
+                protocol_version=2,
+            )
+    bad_health = {
+        **health_reply,
+        "result": {**health_reply["result"], "features": ["list_project_artifacts", "other"]},
+    }
+    with pytest.raises(ExecutionContractError):
+        decode_reply(encode_json(bad_health), operation=Operation.HEALTH, request_id=RID, protocol_version=2)
+
+    encoded = encode_json(reply)
+    oversized = encoded + b" " * (MAX_PROJECT_ARTIFACTS_REPLY_BYTES - len(encoded) + 1)
+    with pytest.raises(ExecutionContractError):
+        decode_reply(oversized, operation=Operation.LIST_PROJECT_ARTIFACTS, request_id=RID, protocol_version=2)
+
+
+def test_protocol_versions_are_closed_and_legacy_rejection_is_opt_in() -> None:
+    listing = v2_request(Operation.LIST_PROJECT_ARTIFACTS)
+    with pytest.raises(InvalidRequestError):
+        decode_request(encode_json({**listing, "protocol_version": 1}))
+    v2_write = {**request(Operation.WRITE_FILE), "protocol_version": 2}
+    with pytest.raises(InvalidRequestError):
+        decode_request(encode_json(v2_write))
+    for invalid_payload in (
+        {"project_slug": "../demo-project"},
+        {"project_slug": "demo-project", "path": "worklogs/demo-project"},
+    ):
+        with pytest.raises(InvalidRequestError):
+            decode_request(encode_json({**listing, "payload": invalid_payload}))
+
+    old_server_rejection = {
+        "protocol_version": 1,
+        "request_id": RID,
+        "status": "ERROR",
+        "result": None,
+        "error": {"code": "INVALID_REQUEST", "retryable": False, "operation_id": None},
+    }
+    assert (
+        decode_reply(
+            encode_json(old_server_rejection),
+            operation=Operation.HEALTH,
+            request_id=RID,
+            protocol_version=2,
+            allow_legacy_v1_rejection=True,
+        )
+        == old_server_rejection
+    )
+    with pytest.raises(ExecutionContractError):
+        decode_reply(encode_json(old_server_rejection), operation=Operation.HEALTH, request_id=RID, protocol_version=2)
 
 
 @pytest.mark.parametrize(

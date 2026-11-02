@@ -355,6 +355,7 @@ def test_identity_and_reply_are_immutable_and_operation_vocabulary_is_closed() -
         "pty_control",
         "handoff",
         "prepare_bundle",
+        "list_project_artifacts",
     }
     assert len(GRANT_OPERATIONS) == 4
     with pytest.raises(ValueError):

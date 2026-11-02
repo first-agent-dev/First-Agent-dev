@@ -22,8 +22,9 @@ Dormant owners (declared, with the unit that activates each):
 - `handoff`: no `WorkspaceAuthority.handoff` exists at all.
   Activating unit: the owner-handoff unit (terminal/settled source views,
   parent-child namespace proof).
-- `register_workspace` with `create=true`: only `register_existing` exists; the
-  creating/materializing provisioner is SLICE5's managed acquisition.
+- `register_workspace` with `create=true`: the authority materializes one absent
+  root from an approved input root or the empty seed, then registers that same
+  canonical root before the caller performs cell-local readiness.
 
 `stop_view` is composed with the real `OwnedCellTermination`: a view that never
 bound a cell is empty by the journal alone, and a view that did is stopped
@@ -57,6 +58,7 @@ from fa.execution.backend import CellBackend
 from fa.execution.docker import DockerEngine
 from fa.execution.plans import ProtectedPlanContext
 from fa.execution.profiles import ExecutionProfile, profile_set_sha256
+from fa.execution.protocol import MAX_PROJECT_ARTIFACTS_REPLY_BYTES, PROTOCOL_V2, encode_json
 from fa.execution.receipts import CommandReceipts
 from fa.execution.supervisor import (
     CompletedReplyCache,
@@ -566,28 +568,69 @@ class SupervisorService:
         except TypeError:
             raise SupervisorError("INPUT_POLICY") from None
 
-    def _health(self, _peer: PeerIdentity, _request: dict[str, Any], _deadline: float) -> dict[str, Any]:
+    def _health(self, _peer: PeerIdentity, request: dict[str, Any], _deadline: float) -> dict[str, Any]:
+        if request["protocol_version"] == PROTOCOL_V2:
+            return {
+                "ready": self._authority.ready,
+                "protocol_version": PROTOCOL_V2,
+                "profile_set_sha256": self._profile_set_sha256,
+                "features": ["list_project_artifacts"],
+            }
         return {
             "ready": self._authority.ready,
             "protocol_version": 1,
             "profile_set_sha256": self._profile_set_sha256,
         }
 
+    def _list_project_artifacts(self, peer: PeerIdentity, request: dict[str, Any], deadline: float) -> dict[str, Any]:
+        view = self._view(request)
+        if view.access is not Access.READ or view.purpose is not ViewPurpose.PROJECT:
+            raise SupervisorError("INPUT_POLICY")
+        result = self._authority.list_project_artifacts(
+            peer,
+            self._namespace(request),
+            view_ref=view,
+            capability=self._capability(request),
+            project_slug=request["payload"]["project_slug"],
+            deadline=deadline,
+        )
+        # Bound the complete encoded reply, including its fixed envelope, rather
+        # than accepting a schema-valid but unbounded metadata projection.
+        response = {
+            "protocol_version": PROTOCOL_V2,
+            "request_id": request["request_id"],
+            "status": "OK",
+            "result": result,
+            "error": None,
+        }
+        try:
+            encode_json(response, max_bytes=MAX_PROJECT_ARTIFACTS_REPLY_BYTES)
+        except ExecutionContractError:
+            raise SupervisorError("INPUT_POLICY") from None
+        return result
+
     def _register_workspace(self, peer: PeerIdentity, request: dict[str, Any], deadline: float) -> dict[str, Any]:
         payload = request["payload"]
         if payload["create"]:
-            # No creating/materializing owner exists yet (SLICE5 acquisition).
-            raise SupervisorError("BACKEND_UNAVAILABLE")
-        if payload["input_id"] is not None:
-            # An approved materialized input is only meaningful for a new root.
-            raise SupervisorError("INPUT_POLICY")
-        result = self._authority.register_existing(
-            peer,
-            self._namespace(request),
-            root_id=payload["root_id"],
-            relative_root=payload["relative_root"],
-            deadline=deadline,
-        )
+            result = self._authority.register_new(
+                peer,
+                self._namespace(request),
+                root_id=payload["root_id"],
+                relative_root=payload["relative_root"],
+                input_id=payload["input_id"],
+                deadline=deadline,
+            )
+        else:
+            if payload["input_id"] is not None:
+                # An approved materialized input is only meaningful for a new root.
+                raise SupervisorError("INPUT_POLICY")
+            result = self._authority.register_existing(
+                peer,
+                self._namespace(request),
+                root_id=payload["root_id"],
+                relative_root=payload["relative_root"],
+                deadline=deadline,
+            )
         return {"workspace_id": result["workspace_id"], "revision_id": result["revision_id"]}
 
     def _acquire_writer(self, peer: PeerIdentity, request: dict[str, Any], deadline: float) -> GrantReply:
@@ -850,6 +893,7 @@ _ROUTE_NAMES: dict[Operation, str] = {
     Operation.SEAL: "_seal",
     Operation.PUBLISH: "_publish",
     Operation.PREPARE_BUNDLE: "_prepare_bundle",
+    Operation.LIST_PROJECT_ARTIFACTS: "_list_project_artifacts",
     Operation.INSTALL_PROJECT: "_install_project",
     Operation.HANDOFF: "_handoff",
     Operation.RELEASE: "_release",

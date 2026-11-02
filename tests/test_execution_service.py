@@ -86,10 +86,11 @@ def request(
     view_ref: dict[str, Any] | None = None,
     capability: str | None = None,
     namespace: dict[str, Any] | None = None,
+    protocol_version: int = 1,
 ) -> dict[str, Any]:
     """One exact closed envelope; the caller supplies only what the op owns."""
     return {
-        "protocol_version": 1,
+        "protocol_version": protocol_version,
         "request_id": request_id,
         "op": operation.value,
         "namespace": None if operation is Operation.HEALTH else ACTOR.to_dict() if namespace is None else namespace,
@@ -118,7 +119,8 @@ def exchange(
             write_frame(controller, raw)
             response = read_frame(controller)
         future.result(timeout=8)
-    return decode_reply(response, operation=operation, request_id=request_id)
+    protocol_version = int(json.loads(raw)["protocol_version"])
+    return decode_reply(response, operation=operation, request_id=request_id, protocol_version=protocol_version)
 
 
 def _error(reply: dict[str, Any]) -> str:
@@ -184,6 +186,54 @@ def test_health_publishes_the_digest_of_the_profiles_actually_enforced(site: Sit
         assert service.profile_set_sha256 != profile_set_sha256((replace(profile, max_command_ms=999),))
         # Health is the one operation with no journal record at all.
         assert service.authority.journal.lookup("op-" + RID, ACTOR) is None
+
+
+def test_v2_health_negotiates_only_the_project_artifact_listing_feature(site: Site) -> None:
+    with SupervisorService(_config(site)) as service:
+        reply = exchange(service, Operation.HEALTH, {}, protocol_version=2)
+        assert reply["status"] == "OK"
+        assert reply["result"] == {
+            "ready": True,
+            "protocol_version": 2,
+            "profile_set_sha256": profile_set_sha256((native_profile(),)),
+            "features": ["list_project_artifacts"],
+        }
+        assert service.authority.journal.lookup("op-" + RID, ACTOR) is None
+
+
+def test_v2_listing_uses_the_authorized_read_manifest_without_reservation(site: Site) -> None:
+    project = site.source / "worklogs/demo-project"
+    (project / "increments").mkdir(parents=True)
+    (project / "roadmap.md").write_text("roadmap", encoding="utf-8")
+    (project / "increments/increment-01-plan.md").write_text("increment", encoding="utf-8")
+    with SupervisorService(_config(site)) as service:
+        workspace_id = _registered(service)
+        _, revision = _writer(service, workspace_id, request_id="2" * 32)
+        pinned = exchange(
+            service,
+            Operation.PIN_READER,
+            {"workspace_id": workspace_id, "revision_id": revision, "plan_ref": None},
+            request_id="3" * 32,
+        )
+        assert pinned["status"] == "OK", pinned
+        list_request_id = "4" * 32
+        listed = exchange(
+            service,
+            Operation.LIST_PROJECT_ARTIFACTS,
+            {"project_slug": "demo-project"},
+            request_id=list_request_id,
+            view_ref=pinned["result"]["view_ref"],
+            capability=pinned["result"]["capability"],
+            protocol_version=2,
+        )
+        assert listed["status"] == "OK", listed
+        assert listed["result"] == {
+            "project_kind": "directory",
+            "roadmap_kind": "file",
+            "increments_kind": "directory",
+            "entries": [{"name": "increment-01-plan.md", "kind": "file"}],
+        }
+        assert service.authority.journal.lookup("op-" + list_request_id, ACTOR) is None
 
 
 def test_health_over_the_wire_is_a_readonly_reply_with_no_reservation(site: Site) -> None:
@@ -684,16 +734,45 @@ def test_routes_without_an_owner_refuse_with_a_closed_code(
             assert record is not None and record["state"] == "UNKNOWN"
 
 
-def test_register_create_true_refuses_because_no_provisioner_owner_exists(site: Site) -> None:
-    """producer-kill-check: hand a create=true registration to `register_existing`."""
-    with SupervisorService(_config(site)) as service:
-        reply = exchange(
+def test_register_create_true_materializes_approved_or_empty_seed(site: Site, tmp_path: Path) -> None:
+    """C1 producer proof: create=true reaches the authority materializer exactly once."""
+    sessions = tmp_path / "sessions"
+    repo = tmp_path / "repo"
+    state = tmp_path / "service-state"
+    sessions.mkdir()
+    repo.mkdir()
+    (repo / "README.md").write_text("managed source", encoding="utf-8")
+    config = _config(
+        site,
+        state_root=state,
+        socket_path=tmp_path / "service.sock",
+        approved_roots={"sessions": sessions, "repo": repo},
+    )
+    with SupervisorService(config) as service:
+        seeded = exchange(
             service,
             Operation.REGISTER_WORKSPACE,
-            {"root_id": "projects", "relative_root": "made-up", "create": True, "input_id": None},
+            {"root_id": "sessions", "relative_root": "seeded", "create": True, "input_id": "repo"},
+            request_id="1" * 32,
         )
-        assert _error(reply) == "BACKEND_UNAVAILABLE"
-        assert not (site.roots / "made-up").exists()
+        assert seeded["status"] == "OK", seeded
+        assert (sessions / "seeded" / "README.md").read_text(encoding="utf-8") == "managed source"
+        empty = exchange(
+            service,
+            Operation.REGISTER_WORKSPACE,
+            {"root_id": "sessions", "relative_root": "clean", "create": True, "input_id": None},
+            request_id="2" * 32,
+        )
+        assert empty["status"] == "OK", empty
+        assert list((sessions / "clean").iterdir()) == []
+        collision = exchange(
+            service,
+            Operation.REGISTER_WORKSPACE,
+            {"root_id": "sessions", "relative_root": "seeded", "create": True, "input_id": None},
+            request_id="3" * 32,
+        )
+        assert _error(collision) == "PATH_DENIED"
+        assert (sessions / "seeded" / "README.md").read_text(encoding="utf-8") == "managed source"
 
 
 # ---------------------------------------------------------------------------
@@ -792,7 +871,7 @@ def test_profiles_must_be_explicit_and_unique(site: Site) -> None:
 # ---------------------------------------------------------------------------
 
 
-_ROADMAP_PROSE = "## Intent\n\nShip the thing.\n\n## Out-of-scope\n\nEverything else.\n"
+_ROADMAP_PROSE = "## Intent\n\nShip the thing.\n\n## Out of scope\n\nEverything else.\n"
 _INCREMENT_PROSE = "## SLICE1: first\n\nSteps.\n\n## SLICE2: second\n\nSteps.\n"
 
 

@@ -26,6 +26,9 @@ Path inventory:
 
 from __future__ import annotations
 
+import json
+import os
+import socket
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -41,6 +44,13 @@ from fa.execution.client import (
     ExecutionUncertainError,
 )
 from fa.execution.composition import ManagedExecution, managed_execution_for_run
+from fa.execution.protocol import (
+    MAX_PROJECT_ARTIFACTS_REPLY_BYTES,
+    MAX_PROJECT_INCREMENT_ENTRIES,
+    encode_json,
+    read_frame,
+    write_frame,
+)
 from fa.execution.service import SupervisorService, read_config_file
 from fa.execution.tool_port import ClientWorkspacePort
 from fa.execution.types import (
@@ -52,9 +62,15 @@ from fa.execution.types import (
     ViewPurpose,
     ViewRef,
 )
+from fa.inner_loop.managed_acquisition import SelectExistingChoice, resolve_existing_choice
+from fa.inner_loop.managed_inventory import AcquisitionInventoryError, inventory_project_artifacts
 from fa.inner_loop.plan_admission import PlanRef, read_plan_snapshot
 from fa.inner_loop.tools.read_file import build_read_file_tool
-from fa.inner_loop.tools.workspace_port import PORT_READ_MAX_BYTES, WorkspacePortError
+from fa.inner_loop.tools.workspace_port import (
+    PORT_PROJECT_LIST_MAX_ENTRIES,
+    PORT_READ_MAX_BYTES,
+    WorkspacePortError,
+)
 from fa.inner_loop.tools.write_file import build_write_file_tool
 from tests.test_execution_composition import PLAN_RELATIVE, _configs, _document, _run
 from tests.test_execution_service import _registered
@@ -83,9 +99,12 @@ class _CountingClient(ExecutionClient):
     def __init__(self, path: Path, *, server_uid: int, rpc_timeout_ms: int) -> None:
         super().__init__(path, server_uid=server_uid, rpc_timeout_ms=rpc_timeout_ms)
         self.sent: list[Operation] = []
+        self.sent_view_ids: list[str | None] = []
 
     def request(self, operation: Operation, **kwargs: Any) -> dict[str, Any]:
         self.sent.append(operation)
+        view = kwargs.get("view")
+        self.sent_view_ids.append(None if view is None else view.view_id)
         return super().request(operation, **kwargs)
 
 
@@ -214,6 +233,226 @@ def test_the_port_reads_and_writes_the_admitted_view(site: Site, tmp_path: Path)
         # such file. A port that wrote host bytes would make the authority's next
         # `_unchanged` check fail (workspace.py:1320) and end the run.
         assert _canonical(site, "src/module.py") is None
+
+
+# ---------------------------------------------------------------------------
+# Q108-B — negotiated inventory metadata is tied to the same READ view
+# ---------------------------------------------------------------------------
+
+
+def test_listing_limits_match_across_wire_and_port_contracts() -> None:
+    assert MAX_PROJECT_INCREMENT_ENTRIES == PORT_PROJECT_LIST_MAX_ENTRIES == 64
+    assert MAX_PROJECT_ARTIFACTS_REPLY_BYTES == 64 * 1024
+
+
+def _create_inventory_project(root: Path, *, extra_entries: int = 0, canonical_symlink: bool = False) -> None:
+    from fa.execution.publication import render_bundle
+
+    files = render_bundle(
+        "demo-project",
+        "foundation",
+        "## Intent\n\nA project.\n\n## Out of scope\n\nOther work.\n",
+        "## SLICE1: Foundation\n\nImplement the foundation.\n",
+        created="2026-11-02",
+    )
+    for relative_path, content in files.items():
+        destination = root / relative_path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(content)
+    increments = root / "worklogs/demo-project/increments"
+    (increments / "README.txt").write_text("not canonical", encoding="utf-8")
+    (increments / "nested").mkdir()
+    (increments / "nested/increment-99-hidden.md").write_text("not immediate", encoding="utf-8")
+    if canonical_symlink:
+        (increments / "increment-02-link.md").symlink_to("increment-01-foundation.md")
+    for index in range(extra_entries):
+        (increments / f"extra-{index:02}.txt").write_text("metadata only", encoding="utf-8")
+
+
+def test_v2_inventory_and_file_reads_share_one_pinned_read_view(site: Site, tmp_path: Path) -> None:
+    """C1/producer+edge: real controller port reaches manifest and same-view READ_FILE."""
+    _create_inventory_project(site.source)
+    with _served(site, tmp_path) as managed:
+        read_grant = managed.client.pin_reader(managed.binding, managed.grant.revision_id)
+        assert read_grant.view_ref is not None
+        client = _socket_client(site, tmp_path)
+        port = _port(client, managed.binding.namespace, read_grant)
+
+        listing = port.list_project_artifacts("demo-project")
+        assert listing.project_kind == "directory"
+        assert listing.roadmap_kind == "file"
+        assert listing.increments_kind == "directory"
+        assert [(entry.name, entry.kind) for entry in listing.entries] == [
+            ("README.txt", "file"),
+            ("increment-01-foundation.md", "file"),
+            ("nested", "directory"),
+        ]
+        assert not hasattr(listing.entries[0], "target")
+        inventory = inventory_project_artifacts(port, "demo-project")
+        assert inventory is not None
+        resolved = resolve_existing_choice(SelectExistingChoice("demo-project", "I01"), (inventory,))
+        assert resolved.snapshot.ref.workspace_relative_path == inventory.increments[0].relative_path
+        assert client.sent == [
+            Operation.HEALTH,
+            Operation.LIST_PROJECT_ARTIFACTS,
+            Operation.HEALTH,
+            Operation.LIST_PROJECT_ARTIFACTS,
+            Operation.READ_FILE,
+            Operation.READ_FILE,
+        ]
+        assert client.sent_view_ids == [
+            None,
+            read_grant.view_ref.view_id,
+            None,
+            read_grant.view_ref.view_id,
+            read_grant.view_ref.view_id,
+            read_grant.view_ref.view_id,
+        ]
+
+
+def test_v2_listing_reports_symlink_kind_without_target_and_inventory_refuses_candidate(
+    site: Site,
+    tmp_path: Path,
+) -> None:
+    _create_inventory_project(site.source, canonical_symlink=True)
+    with _served(site, tmp_path) as managed:
+        read_grant = managed.client.pin_reader(managed.binding, managed.grant.revision_id)
+        port = _port(managed.client, managed.binding.namespace, read_grant)
+        listing = port.list_project_artifacts("demo-project")
+        row = next(entry for entry in listing.entries if entry.name == "increment-02-link.md")
+        assert row.kind == "symlink"
+        assert not hasattr(row, "target")
+        with pytest.raises(AcquisitionInventoryError) as unsafe:
+            inventory_project_artifacts(port, "demo-project")
+        assert unsafe.value.rule == "unsafe-entry"
+
+
+def test_v2_listing_rejects_write_views_and_cross_namespace_authority(site: Site, tmp_path: Path) -> None:
+    with _served(site, tmp_path) as managed:
+        write_grant = managed.open_view(
+            access=Access.WRITE,
+            purpose=ViewPurpose.PROJECT,
+            base_revision=managed.grant.revision_id,
+        )
+        assert write_grant.view_ref is not None
+        client = managed.client
+        with pytest.raises(ExecutionRejectedError) as write_denied:
+            client.request(
+                Operation.LIST_PROJECT_ARTIFACTS,
+                request_id="8" * 32,
+                namespace=managed.binding.namespace,
+                view=write_grant.view_ref,
+                grant=write_grant,
+                payload={"project_slug": "demo-project"},
+                protocol_version=2,
+            )
+        assert write_denied.value.code == "INPUT_POLICY"
+
+        read_grant = managed.client.pin_reader(managed.binding, managed.grant.revision_id)
+        assert read_grant.view_ref is not None
+        wrong_namespace = NamespaceRef("session-1", "other-run")
+        with pytest.raises(ExecutionRejectedError) as owner_denied:
+            client.request(
+                Operation.LIST_PROJECT_ARTIFACTS,
+                request_id="9" * 32,
+                namespace=wrong_namespace,
+                view=read_grant.view_ref,
+                grant=read_grant,
+                payload={"project_slug": "demo-project"},
+                protocol_version=2,
+            )
+        assert owner_denied.value.code == "UNAUTHORIZED"
+
+
+def test_v2_client_treats_real_v1_only_peer_rejection_as_unavailable(tmp_path: Path) -> None:
+    """Compatibility C3: explicit legacy INVALID_REQUEST stops before LIST."""
+    tmp_path.chmod(0o700)
+    socket_path = tmp_path / "legacy.sock"
+    listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    listener.bind(str(socket_path))
+    os.chmod(socket_path, 0o600)
+    listener.listen(1)
+    observed: list[dict[str, object]] = []
+
+    def serve_legacy() -> None:
+        with listener:
+            connection, _ = listener.accept()
+            with connection:
+                connection.settimeout(5)
+                request = json.loads(read_frame(connection))
+                observed.append(request)
+                response = {
+                    "protocol_version": 1,
+                    "request_id": request["request_id"],
+                    "status": "ERROR",
+                    "result": None,
+                    "error": {"code": "INVALID_REQUEST", "retryable": False, "operation_id": None},
+                }
+                write_frame(connection, encode_json(response))
+
+    runner = threading.Thread(target=serve_legacy, daemon=True)
+    runner.start()
+    namespace = _namespace()
+    view = ViewRef(
+        "ws-" + "1" * 32,
+        "view-" + "2" * 32,
+        "rev-" + "3" * 32,
+        namespace.run_id,
+        1,
+        Access.READ,
+        ViewPurpose.PROJECT,
+    )
+    grant = GrantReply(Operation.PIN_READER, "4" * 64, view, None, None)
+    client = ExecutionClient(socket_path, server_uid=os.geteuid(), rpc_timeout_ms=2000)
+    try:
+        with pytest.raises(ExecutionUnavailableError):
+            client.list_project_artifacts(namespace, view=view, grant=grant, project_slug="demo-project")
+    finally:
+        runner.join(timeout=5)
+        assert not runner.is_alive()
+    assert [(item["op"], item["protocol_version"]) for item in observed] == [("health", 2)]
+
+
+def test_v2_client_fails_closed_when_legacy_health_rejects_the_new_version() -> None:
+    namespace = _namespace()
+    view = ViewRef(
+        "ws-" + "1" * 32,
+        "view-" + "2" * 32,
+        "rev-" + "3" * 32,
+        namespace.run_id,
+        1,
+        Access.READ,
+        ViewPurpose.PROJECT,
+    )
+    grant = GrantReply(Operation.CREATE_VIEW, "4" * 64, view, None, None)
+    client = _ScriptedClient(ExecutionRejectedError("INVALID_REQUEST", None))
+    with pytest.raises(ExecutionUnavailableError):
+        client.list_project_artifacts(namespace, view=view, grant=grant, project_slug="demo-project")
+    assert client.sent == [Operation.HEALTH]
+
+
+def test_v2_listing_refuses_encoded_output_over_the_byte_ceiling(site: Site, tmp_path: Path) -> None:
+    _create_inventory_project(site.source)
+    increments = site.source / "worklogs/demo-project/increments"
+    for index in range(61):
+        name = f"{index:02d}" + "\x01" * 253
+        (increments / name).write_text("x", encoding="utf-8")
+    with _served(site, tmp_path) as managed:
+        grant = managed.client.pin_reader(managed.binding, managed.grant.revision_id)
+        port = _port(managed.client, managed.binding.namespace, grant)
+        with pytest.raises(WorkspacePortError) as refused:
+            port.list_project_artifacts("demo-project")
+        assert refused.value.code == "input_policy"
+
+
+def test_v2_listing_refuses_more_than_the_bounded_entry_count(site: Site, tmp_path: Path) -> None:
+    _create_inventory_project(site.source, extra_entries=65)
+    with _served(site, tmp_path) as managed:
+        read_grant = managed.client.pin_reader(managed.binding, managed.grant.revision_id)
+        port = _port(managed.client, managed.binding.namespace, read_grant)
+        with pytest.raises(WorkspacePortError) as refused:
+            port.list_project_artifacts("demo-project")
+        assert refused.value.code == "input_policy"
 
 
 # ---------------------------------------------------------------------------
