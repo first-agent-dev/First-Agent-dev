@@ -383,6 +383,11 @@ class SessionManager:
                 )
                 if conflicts and not provisioned.registered:
                     raise self._already_owned(workspace_path, conflicts)
+                if not workspace_created and not provisioned.registered:
+                    raise SessionManagerError(
+                        "workspace_provision_failed",
+                        "existing workspace was not registered by the managed provisioner",
+                    )
             self._prepare_workspace(workspace_path)
             self._atomic_write_json(
                 session_dir / "manifest.json",
@@ -420,7 +425,9 @@ class SessionManager:
                 if self.workspace_provisioner is None:
                     disposable = workspace_created
                 else:
-                    disposable = provisioned is not None and not provisioned.registered
+                    # An unregistered result makes only a root created by this
+                    # attempt disposable; an explicit pre-existing path is caller-owned.
+                    disposable = workspace_created and provisioned is not None and not provisioned.registered
                 if disposable and workspace_path.exists():
                     shutil.rmtree(workspace_path, ignore_errors=True)
         return SessionContext(session_id, workspace_path, db_path, session_dir / "manifest.json")
@@ -444,11 +451,25 @@ class SessionManager:
             SessionDatabase.open_existing(db_path, session_id=session_id)
         except SessionDatabaseError as exc:
             raise SessionManagerError(exc.code, str(exc)) from exc
+        session = SessionContext(session_id, manifest_workspace, db_path, manifest_path)
+        if self.workspace_provisioner is not None:
+            # A resumed managed workspace must be registered before host readiness
+            # can run; backend refusal is not permission to use the canonical path.
+            provisioned = self._provision_managed(
+                session,
+                creates_workspace=False,
+                deadline=time.monotonic() + _PROVISIONING_TIMEOUT_S,
+            )
+            if not provisioned.registered:
+                raise SessionManagerError(
+                    "workspace_provision_failed",
+                    "existing workspace was not registered by the managed provisioner",
+                )
         self._prepare_workspace(manifest_workspace)
         now = self._now()
         data["last_used_at"] = now
         self._atomic_write_json(manifest_path, data)
-        return SessionContext(session_id, manifest_workspace, db_path, manifest_path)
+        return session
 
     def provision_entrypoint_session(self, *, session_id: str, workspace_override: Path) -> SessionContext:
         """Provision or attach the session selected by the container adapter.
