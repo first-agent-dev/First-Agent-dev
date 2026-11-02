@@ -91,6 +91,11 @@ class AuthorityWorkspacePort:
         """The view's private cache home (``ViewInputs.cache``), supplied by the composition."""
         return self._cache_dir
 
+    @property
+    def base_revision_id(self) -> str:
+        """Authority-pinned revision underlying this view; never read from the host tree."""
+        return self._view_ref.base_revision
+
     def read_file(self, path: str, *, offset_bytes: int = 0, max_bytes: int = PORT_READ_MAX_BYTES) -> PortRead:
         if type(offset_bytes) is not int or offset_bytes < 0 or type(max_bytes) is not int or max_bytes < 1:
             raise WorkspacePortError("invalid_request")
@@ -206,6 +211,11 @@ class ClientWorkspacePort:
     def cache_dir(self) -> Path | None:
         """The view's private cache home, supplied by the composition (``None`` = no home)."""
         return self._cache_dir
+
+    @property
+    def base_revision_id(self) -> str:
+        """Authority-pinned revision underlying this view; never read from the host tree."""
+        return self._view.base_revision
 
     def read_file(self, path: str, *, offset_bytes: int = 0, max_bytes: int = PORT_READ_MAX_BYTES) -> PortRead:
         if type(offset_bytes) is not int or offset_bytes < 0 or type(max_bytes) is not int or max_bytes < 1:

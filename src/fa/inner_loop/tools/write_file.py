@@ -8,7 +8,13 @@ from typing import Any
 from fa.inner_loop.planner_dispatch import PlannerDispatch, PlannerDispatchError, PlannerDispatchKind
 from fa.inner_loop.registry import ToolResult, ToolSpec
 from fa.inner_loop.tools.base import require_string, resolve_workspace_path
-from fa.inner_loop.tools.mutation_guard import BLACKBOARD_UNAVAILABLE, check_mutation_allowed, record_mutation
+from fa.inner_loop.tools.mutation_guard import (
+    BLACKBOARD_UNAVAILABLE,
+    check_mutation_allowed,
+    managed_metadata_required,
+    managed_version_dependencies,
+    record_mutation,
+)
 from fa.inner_loop.tools.workspace_port import WorkspacePort, WorkspacePortError, port_relative
 from fa.inner_loop.workflow_artifacts import _private_artifact_directory, _replace_private_bytes
 
@@ -24,6 +30,7 @@ def _write_with_guard(
     *,
     retryable: bool = True,
     managed: bool = False,
+    workspace_io: WorkspacePort | None = None,
 ) -> ToolResult:
     session: Any = None
     blackboard: Any = None
@@ -40,6 +47,10 @@ def _write_with_guard(
         if managed:
             return ToolResult.fail(BLACKBOARD_UNAVAILABLE, "managed session context unavailable", retryable=False)
 
+    managed_versions = None
+    if managed and workspace_io is not None and managed_metadata_required(session):
+        managed_versions = managed_version_dependencies(workspace_io)
+
     read_set: list[str] = []
     write_set: list[str] = [rel_path]
     try:
@@ -49,7 +60,13 @@ def _write_with_guard(
         logger.warning("transaction.read_set failed: %s", exc)
 
     denial = check_mutation_allowed(
-        blackboard, read_set=read_set, write_set=write_set, root=root, managed=managed, session=session
+        blackboard,
+        read_set=read_set,
+        write_set=write_set,
+        root=root,
+        managed=managed,
+        session=session,
+        managed_versions=managed_versions,
     )
     if denial is not None:
         return denial
@@ -72,6 +89,8 @@ def _write_with_guard(
         root=root,
         payload_extra={"bytes": len(content.encode())},
         managed=managed,
+        managed_versions=managed_versions,
+        session=session,
     )
 
     return ToolResult.ok(
@@ -117,7 +136,15 @@ def build_write_file_tool(workspace_root: Path, *, workspace_io: WorkspacePort |
                 workspace_io.write_file(rel_path, content)
 
         try:
-            return _write_with_guard(root, path, rel_path, content, writer, managed=workspace_io is not None)
+            return _write_with_guard(
+                root,
+                path,
+                rel_path,
+                content,
+                writer,
+                managed=workspace_io is not None,
+                workspace_io=workspace_io,
+            )
         except WorkspacePortError as exc:
             return _port_failure(exc)
 

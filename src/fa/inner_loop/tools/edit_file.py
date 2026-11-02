@@ -18,7 +18,13 @@ from typing import Any
 
 from fa.inner_loop.registry import ToolResult, ToolSpec
 from fa.inner_loop.tools.base import require_string, resolve_workspace_path
-from fa.inner_loop.tools.mutation_guard import BLACKBOARD_UNAVAILABLE, check_mutation_allowed, record_mutation
+from fa.inner_loop.tools.mutation_guard import (
+    BLACKBOARD_UNAVAILABLE,
+    check_mutation_allowed,
+    managed_metadata_required,
+    managed_version_dependencies,
+    record_mutation,
+)
 from fa.inner_loop.tools.workspace_port import WorkspacePort, WorkspacePortError, port_relative
 
 logger = logging.getLogger(__name__)
@@ -210,6 +216,9 @@ def build_edit_file_tool(workspace_root: Path, *, workspace_io: WorkspacePort | 
         # S5.4: same pre-write contract write_file enforces. Runs AFTER the
         # anchor match (a bad edit is a bad edit regardless of the substrate)
         # but BEFORE any mutation, so a denial leaves the file untouched.
+        managed_versions = None
+        if workspace_io is not None and managed_metadata_required(session):
+            managed_versions = managed_version_dependencies(workspace_io)
         denial = check_mutation_allowed(
             blackboard,
             read_set=[rel_path],
@@ -217,6 +226,7 @@ def build_edit_file_tool(workspace_root: Path, *, workspace_io: WorkspacePort | 
             root=root,
             managed=workspace_io is not None,
             session=session,
+            managed_versions=managed_versions,
         )
         if denial is not None:
             return denial
@@ -238,6 +248,8 @@ def build_edit_file_tool(workspace_root: Path, *, workspace_io: WorkspacePort | 
             root=root,
             payload_extra={"edit": True},
             managed=workspace_io is not None,
+            managed_versions=managed_versions,
+            session=session,
         )
 
         return ToolResult.ok(

@@ -235,6 +235,10 @@ def _workflow_with_a_managed_execution(
     run = RunContext(run_id, "session-1", workspace, run_log_dir / "session.db", run_log_dir)
     monkeypatch.setattr(fa_cli, "_resolve_workflow_lifecycle", lambda a, rid: (rid, None, run, None))
     monkeypatch.setattr(fa_cli, "managed_execution_for_run", lambda *a, **k: managed)
+    # This fixture's client intentionally implements only RELEASE. Keep these
+    # assertions scoped to the workflow-level release contract; real view lifecycle
+    # and stage IO are exercised by the managed composition/CLI integration tests.
+    monkeypatch.setattr(fa_cli, "_execution_for_cli_stage", lambda *_args: (None, False))
     return args, client, home
 
 

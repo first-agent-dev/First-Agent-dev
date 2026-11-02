@@ -30,13 +30,20 @@ from fa.authoring_rules import RULE_ALLOWLIST
 from fa.authoring_tcb import render_json, render_text, run_all
 from fa.chunker import CHUNKER_VERSION, Chunk, default_chunker
 from fa.cli_help import COMMANDS, help_as_json, render_command_help_ru, render_top_level_ru
-from fa.execution.client import ExecutionUncertainError
+from fa.execution.client import (
+    ExecutionRejectedError,
+    ExecutionUnavailableError,
+    ExecutionUncertainError,
+    ManagedBashExecutor,
+)
 from fa.execution.composition import (
     BoundPlanPublisher,
     ManagedExecution,
     client_workspace_provisioner,
     managed_execution_for_run,
 )
+from fa.execution.tool_port import ClientWorkspacePort
+from fa.execution.types import Access, ExecutionContractError, ViewPurpose
 from fa.inner_loop import (
     EventLog,
     SessionState,
@@ -70,7 +77,7 @@ from fa.inner_loop.injections import (
     parse_inject_overrides,
     resolve_injection_modes,
 )
-from fa.inner_loop.plan_admission import PlanRefError, _require_plan_for_coder, read_plan_snapshot
+from fa.inner_loop.plan_admission import PlanRef, PlanRefError, _require_plan_for_coder, read_plan_snapshot
 from fa.inner_loop.planner_dispatch import PlannerDispatch
 from fa.inner_loop.pr_draft import PrDraftStore
 from fa.inner_loop.prompt import render_tool_specs
@@ -1357,7 +1364,11 @@ WORKFLOW_RELEASE_EXIT_CODE = 3
 
 
 def _settle_writer_release(
-    managed: ManagedExecution | None, *, run_id: str, session_db: SessionDatabase | None
+    managed: ManagedExecution | None,
+    *,
+    run_id: str,
+    session_db: SessionDatabase | None,
+    command_name: str = "workflow",
 ) -> bool:
     """Release this run's writer; report and record an unconfirmed release.
 
@@ -1374,7 +1385,7 @@ def _settle_writer_release(
     binding = getattr(managed, "binding", None)
     workspace_id = getattr(binding, "workspace_id", "")
     print(
-        f"fa workflow: writer release for workspace {workspace_id} was not "
+        f"fa {command_name}: writer release for workspace {workspace_id} was not "
         "confirmed; the workspace may stay owned until recovery",
         file=sys.stderr,
     )
@@ -1396,6 +1407,156 @@ def _settle_writer_release(
         except Exception as exc:  # noqa: BLE001 - a breadcrumb must never fail the command
             logger.warning("managed execution: could not record the unconfirmed release: %s", exc)
     return False
+
+
+def _execution_for_cli_stage(
+    args: argparse.Namespace, run_context: RunContext | None
+) -> tuple[ManagedExecution | None, bool]:
+    """Reuse a workflow binding or compose the direct run's single writer."""
+    if hasattr(args, "_managed_execution"):
+        return args._managed_execution, False
+    managed = managed_execution_for_run(run_context)
+    return managed, managed is not None
+
+
+def _drive_stage_with_managed_workspace(
+    *,
+    managed: ManagedExecution | None,
+    owns_writer: bool,
+    run_id: str,
+    run_log_dir: Path,
+    session_db: SessionDatabase | None,
+    workspace: Path,
+    role: str,
+    plan_ref: PlanRef | None,
+    build_registry: Callable[[WorkspacePort | None, BashExecutor | None], ToolRegistry],
+    drive: Callable[[ToolRegistry], SessionOutcome],
+) -> tuple[SessionOutcome, bool]:
+    """Run one stage inside its authority-bound view, settling it before return.
+
+    A workflow supplies its existing writer and keeps ownership after this stage;
+    a direct ``fa run`` may own a writer for this invocation. In either case the
+    stage gets a fresh view over the most recent authority-reported revision.
+    """
+    view_grant = None
+    view_settled = False
+    view_settlement_attempted = False
+    release_confirmed = True
+    try:
+        workspace_io: WorkspacePort | None = None
+        managed_executor: BashExecutor | None = None
+        if managed is not None:
+            profile = managed.view_profile
+            if profile is None or not profile.interactive:
+                raise ExecutionContractError
+            base_revision = managed.current_revision_id
+            view_grant = managed.open_view(
+                access=Access.WRITE,
+                purpose=ViewPurpose.PROJECT,
+                base_revision=base_revision,
+                plan_ref=plan_ref,
+            )
+            if view_grant.view_ref is None or view_grant.input_tree_sha256 is None:
+                raise ExecutionContractError
+            workspace_io = ClientWorkspacePort(
+                managed.client,
+                namespace=managed.binding.namespace,
+                view=view_grant.view_ref,
+                grant=view_grant,
+                cache_dir=run_log_dir / "managed-view-cache",
+            )
+            managed_executor = ManagedBashExecutor(
+                managed.client,
+                namespace=managed.binding.namespace,
+                view=view_grant.view_ref,
+                grant=view_grant,
+                profile=profile,
+                input_tree_sha256=view_grant.input_tree_sha256,
+                plan_sha256=None if plan_ref is None else plan_ref.sha256,
+                original_revision_id=base_revision,
+                controller_root=workspace,
+            )
+
+        outcome = drive(build_registry(workspace_io, managed_executor))
+        if view_grant is not None and managed is not None:
+            view_settlement_attempted = True
+            if outcome.exit_code == 0:
+                managed.publish_stage(view_grant)
+                view_settled = True
+            else:
+                view_settled = managed.stop_view(view_grant)
+                if not view_settled:
+                    raise ExecutionUnavailableError
+    except BaseException:
+        if managed is not None and view_grant is not None and not view_settled and not view_settlement_attempted:
+            try:
+                managed.stop_view(view_grant)
+            except Exception as error:  # noqa: BLE001 - preserve the stage's original failure
+                logger.warning("managed stage view cleanup failed (run=%s): %s", run_id, error)
+        raise
+    finally:
+        if owns_writer:
+            release_confirmed = _settle_writer_release(
+                managed, run_id=run_id, session_db=session_db, command_name="run"
+            )
+    return outcome, release_confirmed
+
+
+def _run_cli_stage(
+    *,
+    args: argparse.Namespace,
+    run_context: RunContext | None,
+    run_id: str,
+    run_log_dir: Path,
+    session_db: SessionDatabase | None,
+    log: EventLog,
+    workspace: Path,
+    role: str,
+    plan_ref: PlanRef | None,
+    build_registry: Callable[[WorkspacePort | None, BashExecutor | None], ToolRegistry],
+    drive: Callable[[ToolRegistry], SessionOutcome],
+) -> tuple[SessionOutcome | None, bool]:
+    """Apply the direct-run/workflow-owner boundary and report managed failures."""
+    try:
+        managed, owns_writer = _execution_for_cli_stage(args, run_context)
+    except ExecutionUncertainError as error:
+        print(f"fa run: managed writer grant not confirmed [{error.code}]", file=sys.stderr)
+        return None, True
+    try:
+        return _drive_stage_with_managed_workspace(
+            managed=managed,
+            owns_writer=owns_writer,
+            run_id=run_id,
+            run_log_dir=run_log_dir,
+            session_db=session_db,
+            workspace=workspace,
+            role=role,
+            plan_ref=plan_ref,
+            build_registry=build_registry,
+            drive=drive,
+        )
+    except (
+        ExecutionRejectedError,
+        ExecutionUnavailableError,
+        ExecutionUncertainError,
+        ExecutionContractError,
+    ) as error:
+        code = getattr(error, "code", type(error).__name__)
+        print(f"fa run: managed stage failed closed [{code}]", file=sys.stderr)
+        return None, True
+    except RuntimeError as error:
+        message = _session_db_runtime_error_message(error, log.path.parent / "session.db")
+        if message is None:
+            raise
+        print(message, file=sys.stderr)
+        return None, True
+
+
+def _run_exit_code(outcome: SessionOutcome, *, release_confirmed: bool) -> int:
+    """A refused writer release changes only an otherwise-successful direct run."""
+    if not release_confirmed and outcome.exit_code == 0:
+        return WORKFLOW_RELEASE_EXIT_CODE
+    return outcome.exit_code
 
 
 def _cmd_workflow(
@@ -1503,10 +1664,10 @@ def _cmd_workflow(
         # The authority may have issued this run's writer and lost the reply. Saying
         # "no managed execution" would be a guess and continuing would be worse, so
         # the run stops here with the one fact the operator can act on.
+        workspace_path = getattr(run_context, "workspace_path", getattr(args, "workspace", "<unresolved>"))
         print(
             f"fa workflow: managed execution: writer grant not confirmed [{error.code}]; "
-            f"workspace {run_context.workspace_path} may be left owned and needs recovery "
-            "before the next run",
+            f"workspace {workspace_path} may be left owned and needs recovery before the next run",
             file=sys.stderr,
         )
         return 2
@@ -1951,6 +2112,7 @@ def _build_run_hook_registry(
     run_log_dir: Path,
     output_bus_ref: list[EventBus],
     intent_guard_mode: str | None = None,
+    managed_workspace: bool = False,
 ) -> HookRegistry:
     """Assemble the guard/observer stack for a ``fa run`` session.
 
@@ -2052,13 +2214,20 @@ def _build_run_hook_registry(
     # `recovery_action` event kind dead code in production.
     hooks.register(FailureClassifierObserver(event_log=log))
     hooks.register(AttemptHistoryObserver(history=AttemptHistory(run_log_dir / "attempt_history.json")))
-    hooks.register(
-        LearningObserver(
-            codebase_map_path=workspace / "knowledge" / "trace" / "codebase_map.json",
-            gotchas_path=workspace / "knowledge" / "trace" / "gotchas.md",
-            redactor=redactor,
+    if managed_workspace:
+        # LearningObserver currently writes to controller-visible Path objects.
+        # A managed view has no controller-visible project root, so installing it
+        # here would bypass the view port and mutate the canonical tree mid-stage.
+        # Keep the managed run fail-closed until the observer has a view-backed sink.
+        logger.info("LearningObserver omitted for managed workspace; no host-path fallback")
+    else:
+        hooks.register(
+            LearningObserver(
+                codebase_map_path=workspace / "knowledge" / "trace" / "codebase_map.json",
+                gotchas_path=workspace / "knowledge" / "trace" / "gotchas.md",
+                redactor=redactor,
+            )
         )
-    )
     contracts = load_contracts_from_dir(workspace / "verifiers")
     if contracts:
         hooks.register(VerifierObserver(contracts=contracts, event_log=log))
@@ -2308,7 +2477,10 @@ def _valid_planner_dispatch(dispatch: PlannerDispatch | None, role: object, run_
     )
 
 
-def _cmd_run(
+# C901 waiver (16>15): this remains the CLI orchestration seam; managed view
+# ownership, settlement, and release are extracted into helpers. Keep the explicit
+# missing-outcome return instead of fabricating a model/session outcome.
+def _cmd_run(  # noqa: C901
     args: argparse.Namespace,
     *,
     transport: Transport | None = None,
@@ -2446,32 +2618,6 @@ def _cmd_run(
     # handoff). Same one-element-list seam as output_bus_ref.
     workflow_state_ref: list[SessionState | None] = [None]
 
-    registry = _build_run_tool_registry(
-        role,
-        workspace,
-        bash_timeout_seconds=limits.bash_timeout_seconds,
-        draft_store=draft_store,
-        scope_point=scope_point,
-        gate_enabled=limits.chat_escalation_gate,
-        planner_dispatch=planner_dispatch,
-        workflow_ctx=_make_workflow_ctx_provider(
-            parent_run_id=run_id,
-            config=config_path,
-            workspace=workspace,
-            max_turns=args.max_turns,
-            limits=limits,
-            session_context=session_context,
-            run_context=run_context,
-            session_db=session_db,
-            transport=effective_transport,
-            secrets=secrets,
-            state_ref=workflow_state_ref,
-            # PLAN S5c / Q9: a pipeline this chat session launches inherits
-            # the session's --inject.
-            inject_overrides=_inject_overrides(args),
-        ),
-    )
-
     # --resume preserves the on-disk draft for the next role to read;
     # only the in-memory SHA-256 digest is reset, which forces the
     # current session to re-establish trust via a fresh ``pr_prepare``
@@ -2511,15 +2657,7 @@ def _cmd_run(
     # and is invoked only during drive_session, i.e. after it exists. See
     # _build_run_hook_registry for why this is a list and not a value.
     output_bus_ref: list[EventBus] = []
-    hooks = _build_run_hook_registry(
-        workspace=workspace,
-        log=log,
-        limits=limits,
-        redactor=redactor,
-        draft_store=draft_store,
-        run_log_dir=run_log_dir,
-        output_bus_ref=output_bus_ref,
-    )
+    hooks_ref: list[HookRegistry] = []
 
     pty_pool = _build_pty_pool(workspace=workspace, run_id=run_id)
 
@@ -2548,14 +2686,56 @@ def _cmd_run(
     # re-estimate here — one estimate per run is a contract (T40).
     scope_hint = _publish_scope_estimate(scope_point, args.task or "", log, state, run_id)
 
-    _run_start_mono = time.monotonic()
-    try:
-        outcome = drive_session(
+    def build_registry(workspace_io: WorkspacePort | None, managed_executor: BashExecutor | None) -> ToolRegistry:
+        hooks_ref.append(
+            _build_run_hook_registry(
+                workspace=workspace,
+                log=log,
+                limits=limits,
+                redactor=redactor,
+                draft_store=draft_store,
+                run_log_dir=run_log_dir,
+                output_bus_ref=output_bus_ref,
+                managed_workspace=workspace_io is not None,
+            )
+        )
+        return _build_run_tool_registry(
+            role,
+            workspace,
+            bash_timeout_seconds=limits.bash_timeout_seconds,
+            draft_store=draft_store,
+            scope_point=scope_point,
+            gate_enabled=limits.chat_escalation_gate,
+            planner_dispatch=planner_dispatch,
+            workflow_ctx=_make_workflow_ctx_provider(
+                parent_run_id=run_id,
+                config=config_path,
+                workspace=workspace,
+                max_turns=args.max_turns,
+                limits=limits,
+                session_context=session_context,
+                run_context=run_context,
+                session_db=session_db,
+                transport=effective_transport,
+                secrets=secrets,
+                state_ref=workflow_state_ref,
+                # PLAN S5c / Q9: a pipeline this chat session launches inherits
+                # the session's --inject.
+                inject_overrides=_inject_overrides(args),
+            ),
+            workspace_io=workspace_io,
+            managed_executor=managed_executor,
+        )
+
+    def drive_with_registry(registry: ToolRegistry) -> SessionOutcome:
+        if not hooks_ref:
+            raise RuntimeError("run hook registry was not initialized")
+        return drive_session(
             args.task,
             provider_chain=chain,
             compactor_chain=compactor_chain,
             registry=registry,
-            hooks=hooks,
+            hooks=hooks_ref[0],
             state=state,
             role=role,
             acting_family=chain_config.family,
@@ -2585,16 +2765,22 @@ def _cmd_run(
             redactor=redactor,
             output=output_bus,
         )
-    except RuntimeError as exc:
-        # LOGIC-8 + NEW-3: EventLog authority or write failures.
-        # Both SessionDatabase.append_event_row (event_log_write_failed) and
-        # EventLog.append (event_log_authority_unavailable) can raise
-        # RuntimeError. Catch both with explicit messages so the operator
-        # sees a clear diagnostic instead of a raw Python traceback.
-        message = _session_db_runtime_error_message(exc, log.path.parent / "session.db")
-        if message is None:
-            raise  # Re-raise unexpected RuntimeErrors
-        print(message, file=sys.stderr)
+
+    _run_start_mono = time.monotonic()
+    outcome, release_confirmed = _run_cli_stage(
+        args=args,
+        run_context=run_context,
+        run_id=run_id,
+        run_log_dir=run_log_dir,
+        session_db=session_db,
+        log=log,
+        workspace=workspace,
+        role=role,
+        plan_ref=getattr(args, "_managed_plan_ref", None),
+        build_registry=build_registry,
+        drive=drive_with_registry,
+    )
+    if outcome is None:
         return 2
     _run_duration_ms = int((time.monotonic() - _run_start_mono) * 1000)
     # Slice 9: export to global_history.db as derived projection (best-effort, never crashes main)
@@ -2657,7 +2843,7 @@ def _cmd_run(
     print(f"{status}: {outcome.stop_reason} (turns={outcome.turns})", file=status_stream)
     if outcome.final_text:
         print(outcome.final_text)
-    return outcome.exit_code
+    return _run_exit_code(outcome, release_confirmed=release_confirmed)
 
 
 def _cmd_routing_check(args: argparse.Namespace) -> int:

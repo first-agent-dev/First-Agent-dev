@@ -452,6 +452,217 @@ def test_the_workflow_root_reaches_promotion(monkeypatch: pytest.MonkeyPatch, tm
     assert client.calls == [Operation.RELEASE]  # the writer is released when the run returns
 
 
+@pytest.mark.parametrize("reuse_workflow_owner", [False, True])
+def test_direct_chat_keeps_canonical_tree_unchanged_until_stage_publication(
+    site: Site, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reuse_workflow_owner: bool
+) -> None:
+    """C1: direct chat keeps a successful managed write private until settlement."""
+    import subprocess
+
+    from fa.inner_loop.session_db import SessionDatabase
+    from fa.providers import ProviderChain, SecretStore
+    from fa.providers.base import RequestInfo, ResponseInfo
+    from fa.session.manager import SessionManager
+
+    service_path, service_config = _configs(tmp_path, _document(site))
+    monkeypatch.setattr(composition, "DEFAULT_CONFIG_PATH", service_config)
+    state_root = tmp_path / "fa-state"
+    monkeypatch.setenv("FA_STATE_ROOT", str(state_root))
+    monkeypatch.setenv("FA_WORKSPACE_ROOT", str(site.roots))
+    monkeypatch.delenv("FA_SESSION_SOURCE", raising=False)
+    source = tmp_path / "source-repo"
+    source.mkdir()
+    (source / "README.md").write_text("source note", encoding="utf-8")
+    (source / "knowledge").mkdir()
+    (source / "knowledge" / "llms.txt").write_text("# Workspace map\n", encoding="utf-8")
+    subprocess.run(["git", "init", "-q", str(source)], check=True)
+    subprocess.run(["git", "-C", str(source), "config", "user.email", "test@example.invalid"], check=True)
+    subprocess.run(["git", "-C", str(source), "config", "user.name", "Test"], check=True)
+    subprocess.run(
+        ["git", "-C", str(source), "remote", "add", "origin", "https://github.com/test/repo.git"],
+        check=True,
+    )
+    subprocess.run(["git", "-C", str(source), "add", "README.md", "knowledge/llms.txt"], check=True)
+    subprocess.run(["git", "-C", str(source), "commit", "-qm", "seed workspace"], check=True)
+    manager = SessionManager(state_root=state_root, workspace_root=site.roots, source_workspace=source)
+    session = manager.create_or_attach_session(session_id=None, workspace_override=None)
+    run = manager.begin_run(session, requested_run_id="managed-chat-run")
+    session_db = SessionDatabase.open_existing(session.session_db_path, session_id=session.session_id)
+    workspace = session.workspace_path
+    assert not (workspace / "managed-chat-note.txt").exists()
+    models = workspace / "models.yaml"
+    models.write_text(
+        """chat:
+  name: "test-model"
+  family: "openai"
+  chain:
+    - provider: openrouter
+      model: "test/model"
+      base_url: "https://example.invalid/v1"
+      api_key_env: K
+""",
+        encoding="utf-8",
+    )
+
+    def canonical_snapshot() -> tuple[tuple[str, bytes], ...]:
+        excluded = {".git", ".fa", ".venv", ".env"}
+        return tuple(
+            (path.relative_to(workspace).as_posix(), path.read_bytes())
+            for path in sorted(workspace.rglob("*"))
+            if path.is_file() and not path.is_symlink() and not excluded.intersection(path.relative_to(workspace).parts)
+        )
+
+    observed: list[tuple[tuple[str, bytes], ...]] = []
+    provider_calls = 0
+
+    def provider_request(
+        _chain: ProviderChain, _request: RequestInfo, *, logical_call_id: str | None = None
+    ) -> tuple[ResponseInfo, str, list[Any]]:
+        nonlocal provider_calls
+        provider_calls += 1
+        tool_names = {
+            str(tool.get("function", {}).get("name", ""))
+            for tool in _request.tools
+            if isinstance(tool.get("function"), dict)
+        }
+        assert "fs_write_file" in tool_names
+        if provider_calls == 1:
+            observed.append(canonical_snapshot())
+            call = {
+                "id": "managed-chat-prepare",
+                "type": "function",
+                "function": {
+                    "name": "pr_prepare",
+                    "arguments": json.dumps({"intent": "CHORE", "invariant": "n/a"}),
+                },
+            }
+            return ResponseInfo("", 1, 1, "tool_calls", (call,)), logical_call_id or "managed-chat", []
+        if provider_calls == 2:
+            call = {
+                "id": "managed-chat-write",
+                "type": "function",
+                "function": {
+                    "name": "fs_write_file",
+                    "arguments": json.dumps({"path": "managed-chat-note.txt", "content": "private until publish"}),
+                },
+            }
+            return ResponseInfo("", 1, 1, "tool_calls", (call,)), logical_call_id or "managed-chat", []
+        assert provider_calls == 3
+        assert observed == [canonical_snapshot()], "canonical files changed while the chat stage was live"
+        assert not (workspace / "managed-chat-note.txt").exists()
+        return ResponseInfo("done", 1, 1, "stop"), logical_call_id or "managed-chat", []
+
+    monkeypatch.setattr(ProviderChain, "request", provider_request)
+    managed = None
+    with SupervisorService(read_config_file(service_path)) as service:
+        stop = threading.Event()
+        runner = threading.Thread(target=service.serve_forever, args=(stop,), daemon=True)
+        runner.start()
+        try:
+            args = cli.build_parser().parse_args(
+                [
+                    "run",
+                    "--role",
+                    "chat",
+                    "--config",
+                    str(models),
+                    "--workspace",
+                    str(workspace),
+                    "--run-id",
+                    "managed-chat-run",
+                    "--max-turns",
+                    "5",
+                    "fix typo in README",
+                ]
+            )
+            args._session_context, args._run_context, args._session_db = session, run, session_db
+            if reuse_workflow_owner:
+                managed = managed_execution_for_run(run)
+                assert managed is not None
+                args._managed_execution = managed
+            assert cli._cmd_run(args, secrets=SecretStore({"K": "sk-test-live"})) == 0
+            workspace_dirs = list((site.state / "workspaces").iterdir())
+            assert len(workspace_dirs) == 1
+            metadata = site.metadata({"workspace_id": workspace_dirs[0].name})
+            assert metadata["status"] == ("OWNED" if managed is not None else "AVAILABLE")
+            if managed is not None:
+                assert managed.close()
+                assert site.metadata({"workspace_id": workspace_dirs[0].name})["status"] == "AVAILABLE"
+        finally:
+            stop.set()
+            runner.join(timeout=5)
+            assert not runner.is_alive()
+
+    assert provider_calls == 3
+    assert (workspace / "managed-chat-note.txt").read_text(encoding="utf-8") == "private until publish"
+    assert canonical_snapshot() != observed[0], "successful stage mutation was not published"
+    rows = session_db.read_event_rows(run_id=run.run_id)
+    write_result = next(
+        row["content"] for row in rows if row["kind"] == "tool_result" and row["tool_call_id"] == "managed-chat-write"
+    )
+    assert write_result["ok"] is True
+    assert write_result["result"]["path"].endswith("managed-chat-note.txt")
+
+
+def test_failed_stage_stop_is_not_retried_by_cleanup(tmp_path: Path) -> None:
+    """An unproved STOP_VIEW is one attempt, not an invitation to retry in cleanup."""
+    from fa.execution.client import ExecutionClient
+    from fa.inner_loop.coder_loop import SessionOutcome
+    from fa.inner_loop.registry import ToolRegistry
+
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    workspace_id = "ws-" + "1" * 32
+    revision_id = "rev-" + "2" * 32
+    view_ref = ViewRef(
+        workspace_id,
+        "view-" + "3" * 32,
+        revision_id,
+        "stage-run",
+        1,
+        Access.WRITE,
+        ViewPurpose.PROJECT,
+    )
+    view_grant = GrantReply(
+        Operation.CREATE_VIEW,
+        "4" * 64,
+        view_ref,
+        None,
+        None,
+        "5" * 64,
+    )
+    stop_calls = 0
+
+    def stop_view(_grant: GrantReply) -> bool:
+        nonlocal stop_calls
+        stop_calls += 1
+        return False
+
+    managed = SimpleNamespace(
+        view_profile=native_profile(),
+        current_revision_id=revision_id,
+        binding=ExecutionBinding(NamespaceRef("session-1", "stage-run"), workspace_id),
+        client=ExecutionClient(tmp_path / "supervisor.sock", server_uid=os.getuid(), rpc_timeout_ms=100),
+        open_view=lambda **_kwargs: view_grant,
+        stop_view=stop_view,
+    )
+
+    with pytest.raises(ExecutionUnavailableError):
+        cli._drive_stage_with_managed_workspace(
+            managed=managed,
+            owns_writer=False,
+            run_id="stage-run",
+            run_log_dir=tmp_path / "run-log",
+            session_db=None,
+            workspace=workspace,
+            role="chat",
+            plan_ref=None,
+            build_registry=lambda _workspace_io, _managed_executor: ToolRegistry(),
+            drive=lambda _registry: SessionOutcome(1, "iteration_cap", 1, ""),
+        )
+    assert stop_calls == 1
+
+
 def test_workflow_forwards_one_managed_execution_to_every_stage(tmp_path: Path) -> None:
     """No stage reacquires authority; every dispatch sees the identical run-owned object."""
     workspace = tmp_path / "project"
