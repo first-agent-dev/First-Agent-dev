@@ -601,23 +601,75 @@ class ManagedBashExecutor:
             raise ExecutionContractError
         if not profile.interactive or not controller_root.is_absolute() or ".." in controller_root.parts:
             raise ExecutionContractError
+        if (
+            grant.operation is not Operation.CREATE_VIEW
+            or grant.view_ref != view
+            or view.access is not Access.WRITE
+            or view.owner_run_id != namespace.run_id
+        ):
+            raise ExecutionContractError
         self._client = client
         self._namespace = namespace
-        self._view = view
-        self._grant = grant
+        self._workspace_id = view.workspace_id
+        self._view: ViewRef | None = view
+        self._grant: GrantReply | None = grant
+        self._active = True
         self._profile = profile
         self._tree = input_tree_sha256
         self._plan = plan_sha256
         self._original_revision = original_revision_id
         self._root = controller_root
 
+    def suspend(self) -> None:
+        """Disarm this executor before the bound view is settled or handed off."""
+        self._active = False
+        self._grant = None
+        self._view = None
+
+    def rebind(
+        self,
+        *,
+        namespace: NamespaceRef,
+        view: ViewRef,
+        grant: GrantReply,
+        original_revision_id: str | None,
+    ) -> None:
+        """Bind the same executor to a newly opened view in its original namespace."""
+        if (
+            not isinstance(namespace, NamespaceRef)
+            or namespace != self._namespace
+            or not isinstance(view, ViewRef)
+            or not isinstance(grant, GrantReply)
+            or grant.operation is not Operation.CREATE_VIEW
+            or grant.view_ref != view
+            or view.access is not Access.WRITE
+            or view.workspace_id != self._workspace_id
+            or view.owner_run_id != self._namespace.run_id
+            or grant.input_tree_sha256 is None
+            or len(grant.input_tree_sha256) != 64
+            or any(char not in "0123456789abcdef" for char in grant.input_tree_sha256)
+            or original_revision_id != view.base_revision
+        ):
+            raise ExecutionContractError
+        self._view = view
+        self._grant = grant
+        self._tree = grant.input_tree_sha256
+        self._original_revision = original_revision_id
+        self._active = True
+
+    def _require_active(self) -> tuple[ViewRef, GrantReply]:
+        if not self._active or self._view is None or self._grant is None:
+            raise ExecutionUnavailableError
+        return self._view, self._grant
+
     def _request(self, operation: Operation, payload: dict[str, Any], request_id: str) -> dict[str, Any]:
+        view, grant = self._require_active()
         return self._client.request(
             operation,
             request_id=request_id,
             namespace=self._namespace,
-            view=self._view,
-            grant=self._grant,
+            view=view,
+            grant=grant,
             payload=payload,
         )
 
@@ -630,6 +682,7 @@ class ManagedBashExecutor:
             raise ExecutionContractError from None
 
     def run(self, command: str, timeout: int = 30, workdir: Path | None = None, session_id: str = "main") -> PtyResult:
+        self._require_active()
         _positive_integer(timeout)
         request_id = uuid4().hex
         return self._execute_once(command, timeout, workdir, session_id, request_id)
@@ -638,9 +691,8 @@ class ManagedBashExecutor:
     def _execute_once(
         self, command: str, timeout: int, workdir: Path | None, session_id: str, request_id: str
     ) -> PtyResult:
-        operation = OperationRef(
-            "op-" + request_id, self._view.view_id, self._view.owner_run_id, self._view.generation, self._tree
-        )
+        view, _grant = self._require_active()
+        operation = OperationRef("op-" + request_id, view.view_id, view.owner_run_id, view.generation, self._tree)
         result = self._request(
             Operation.EXEC,
             {
@@ -658,10 +710,10 @@ class ManagedBashExecutor:
             receipt.require_binding(
                 operation=operation,
                 namespace=self._namespace,
-                view=self._view,
+                view=view,
                 profile_id=self._profile.profile_id,
                 image_digest=self._profile.image_digest,
-                revision_id=self._view.base_revision,
+                revision_id=view.base_revision,
                 original_revision_id=self._original_revision,
                 plan_sha256=self._plan,
             )

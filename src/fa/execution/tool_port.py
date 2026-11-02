@@ -182,7 +182,16 @@ class ClientWorkspacePort:
     budget is added by the caller that has one, not assumed here.
     """
 
-    __slots__ = ("_cache_dir", "_client", "_grant", "_namespace", "_view")
+    __slots__ = (
+        "_active",
+        "_cache_dir",
+        "_client",
+        "_grant",
+        "_namespace",
+        "_purpose",
+        "_view",
+        "_workspace_id",
+    )
 
     def __init__(
         self,
@@ -197,15 +206,48 @@ class ClientWorkspacePort:
             raise ExecutionContractError
         if not isinstance(namespace, NamespaceRef) or not isinstance(view, ViewRef):
             raise ExecutionContractError
-        if not isinstance(grant, GrantReply) or grant.view_ref != view:
+        if not isinstance(grant, GrantReply) or grant.view_ref != view or view.owner_run_id != namespace.run_id:
             raise ExecutionContractError  # A grant for another view authorizes nothing here.
         if cache_dir is not None and not isinstance(cache_dir, Path):
             raise ExecutionContractError
         self._client = client
         self._namespace = namespace
+        self._workspace_id = view.workspace_id
+        self._purpose = view.purpose
+        self._view: ViewRef | None = view
+        self._grant: GrantReply | None = grant
+        self._active = True
+        self._cache_dir = cache_dir
+
+    def suspend(self) -> None:
+        """Disarm this binding before its managed view is published or handed off."""
+        self._active = False
+        self._grant = None
+        self._view = None
+
+    def rebind(self, *, namespace: NamespaceRef, view: ViewRef, grant: GrantReply) -> None:
+        """Bind the same port to a newly admitted view of its original namespace."""
+        if (
+            not isinstance(namespace, NamespaceRef)
+            or namespace != self._namespace
+            or not isinstance(view, ViewRef)
+            or not isinstance(grant, GrantReply)
+            or grant.operation is not Operation.CREATE_VIEW
+            or grant.view_ref != view
+            or view.access is not Access.WRITE
+            or view.workspace_id != self._workspace_id
+            or view.owner_run_id != self._namespace.run_id
+            or view.purpose is not self._purpose
+        ):
+            raise ExecutionContractError
         self._view = view
         self._grant = grant
-        self._cache_dir = cache_dir
+        self._active = True
+
+    def _require_active(self) -> tuple[ViewRef, GrantReply]:
+        if not self._active or self._view is None or self._grant is None:
+            raise WorkspacePortError("unavailable")
+        return self._view, self._grant
 
     @property
     def cache_dir(self) -> Path | None:
@@ -215,9 +257,11 @@ class ClientWorkspacePort:
     @property
     def base_revision_id(self) -> str:
         """Authority-pinned revision underlying this view; never read from the host tree."""
-        return self._view.base_revision
+        view, _grant = self._require_active()
+        return view.base_revision
 
     def read_file(self, path: str, *, offset_bytes: int = 0, max_bytes: int = PORT_READ_MAX_BYTES) -> PortRead:
+        view, grant = self._require_active()
         if type(offset_bytes) is not int or offset_bytes < 0 or type(max_bytes) is not int or max_bytes < 1:
             raise WorkspacePortError("invalid_request")
         if max_bytes > min(PORT_READ_MAX_BYTES, MAX_TEXT_BYTES):
@@ -228,8 +272,8 @@ class ClientWorkspacePort:
                 Operation.READ_FILE,
                 request_id=uuid4().hex,
                 namespace=self._namespace,
-                view=self._view,
-                grant=self._grant,
+                view=view,
+                grant=grant,
                 payload={"path": path, "offset_bytes": offset_bytes, "max_bytes": max_bytes},
                 deadline=None,
             )
@@ -243,7 +287,8 @@ class ClientWorkspacePort:
         return PortRead(content=str(result["content"]), sha256=str(result["sha256"]), eof=bool(result["eof"]))
 
     def write_file(self, path: str, content: str, *, expected_sha256: str | None = None) -> PortWrite:
-        if self._view.access is not Access.WRITE:
+        view, grant = self._require_active()
+        if view.access is not Access.WRITE:
             # The view the authority minted has no write path at all (E259); saying so
             # here costs no round trip that could not have succeeded.
             raise WorkspacePortError("denied")
@@ -258,8 +303,8 @@ class ClientWorkspacePort:
                 Operation.WRITE_FILE,
                 request_id=uuid4().hex,
                 namespace=self._namespace,
-                view=self._view,
-                grant=self._grant,
+                view=view,
+                grant=grant,
                 payload={"path": path, "content": content, "expected_sha256": expected_sha256},
                 deadline=None,
             )

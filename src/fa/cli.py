@@ -43,7 +43,7 @@ from fa.execution.composition import (
     managed_execution_for_run,
 )
 from fa.execution.tool_port import ClientWorkspacePort
-from fa.execution.types import Access, ExecutionContractError, ViewPurpose
+from fa.execution.types import Access, ExecutionContractError, GrantReply, NamespaceRef, Operation, ViewPurpose
 from fa.inner_loop import (
     EventLog,
     SessionState,
@@ -1424,6 +1424,162 @@ def _execution_for_cli_stage(
     return managed, managed is not None
 
 
+class _ManagedStageLease:
+    """One parent stage's suspend/resume binding over the run-owned writer."""
+
+    def __init__(
+        self,
+        *,
+        managed: ManagedExecution,
+        namespace: NamespaceRef,
+        view_grant: GrantReply,
+        workspace_io: ClientWorkspacePort,
+        managed_executor: ManagedBashExecutor,
+        plan_ref: PlanRef | None,
+        allow_nested_handoff: bool,
+    ) -> None:
+        if (
+            not isinstance(namespace, NamespaceRef)
+            or namespace != managed.binding.namespace
+            or not isinstance(view_grant, GrantReply)
+            or view_grant.operation is not Operation.CREATE_VIEW
+            or view_grant.view_ref is None
+            or view_grant.view_ref.access is not Access.WRITE
+            or view_grant.view_ref.workspace_id != managed.binding.workspace_id
+            or view_grant.view_ref.owner_run_id != namespace.run_id
+            or not isinstance(workspace_io, ClientWorkspacePort)
+            or not isinstance(managed_executor, ManagedBashExecutor)
+            or type(allow_nested_handoff) is not bool
+        ):
+            raise ExecutionContractError
+        self.managed = managed
+        self.namespace = namespace
+        self._view_grant: GrantReply | None = view_grant
+        self.workspace_io = workspace_io
+        self.managed_executor = managed_executor
+        self.plan_ref = plan_ref
+        self.allow_nested_handoff = allow_nested_handoff
+        self._state = "active"
+
+    @property
+    def is_handoff_enabled(self) -> bool:
+        """Only a direct managed ``fa run`` may expose this lease to its tool."""
+        return self.allow_nested_handoff
+
+    @property
+    def state(self) -> str:
+        """Closed state label for the lifecycle owner and tests."""
+        return self._state
+
+    @property
+    def writer_release_safe(self) -> bool:
+        """A writer may be released only after the stage view is proved settled."""
+        return self._state == "closed"
+
+    def suspend(self, *, deadline: float | None = None) -> str:
+        """Publish and disarm the parent view before child HANDOFF can begin."""
+        if self._state != "active" or self._view_grant is None:
+            raise ExecutionContractError
+        grant = self._view_grant
+        self._state = "settling"
+        self.workspace_io.suspend()
+        self.managed_executor.suspend()
+        try:
+            self.managed.publish_stage(grant, deadline=deadline)
+        except BaseException:
+            # Publication may be uncertain. Never reuse this binding or retry it
+            # with a fresh identity; the run-owned writer remains unreleased.
+            self._state = "broken"
+            self._view_grant = None
+            raise
+        self._view_grant = None
+        self._state = "suspended"
+        return self.managed.current_revision_id
+
+    def resume(self, *, deadline: float | None = None) -> None:
+        """Reopen at the authority-reported revision and rebind the same objects."""
+        if self._state != "suspended" or self._view_grant is not None:
+            raise ExecutionContractError
+        if self.managed.binding.namespace != self.namespace or self.managed.handoff_pending:
+            self._state = "broken"
+            raise ExecutionContractError
+        base_revision = self.managed.current_revision_id
+        grant: GrantReply | None = None
+        try:
+            grant = self.managed.open_view(
+                access=Access.WRITE,
+                purpose=ViewPurpose.PROJECT,
+                base_revision=base_revision,
+                plan_ref=self.plan_ref,
+                deadline=deadline,
+            )
+            if (
+                grant.operation is not Operation.CREATE_VIEW
+                or grant.view_ref is None
+                or grant.view_ref.access is not Access.WRITE
+                or grant.view_ref.workspace_id != self.managed.binding.workspace_id
+                or grant.view_ref.owner_run_id != self.namespace.run_id
+                or grant.input_tree_sha256 is None
+            ):
+                raise ExecutionContractError
+            self.workspace_io.rebind(namespace=self.namespace, view=grant.view_ref, grant=grant)
+            self.managed_executor.rebind(
+                namespace=self.namespace,
+                view=grant.view_ref,
+                grant=grant,
+                original_revision_id=base_revision,
+            )
+        except BaseException:
+            self.workspace_io.suspend()
+            self.managed_executor.suspend()
+            self._state = "broken"
+            if grant is not None:
+                try:
+                    self.managed.stop_view(grant)
+                except Exception as error:  # noqa: BLE001 - keep the original resume failure
+                    logger.warning("managed parent view cleanup failed: %s", error)
+            raise
+        self._view_grant = grant
+        self._state = "active"
+
+    def finish(self, *, accepted: bool) -> None:
+        """Settle the current view and close the lease; paused/unknown is not success."""
+        if self._state != "active" or self._view_grant is None:
+            raise ExecutionUnavailableError
+        grant = self._view_grant
+        self._state = "settling"
+        self.workspace_io.suspend()
+        self.managed_executor.suspend()
+        self._view_grant = None
+        try:
+            if accepted:
+                self.managed.publish_stage(grant)
+            elif not self.managed.stop_view(grant):
+                raise ExecutionUnavailableError
+        except BaseException:
+            self._state = "broken"
+            raise
+        self._state = "closed"
+
+    def abort(self) -> None:
+        """Best-effort stop of an active view after stage failure; never retries."""
+        if self._state != "active" or self._view_grant is None:
+            return
+        grant = self._view_grant
+        self._state = "settling"
+        self.workspace_io.suspend()
+        self.managed_executor.suspend()
+        self._view_grant = None
+        try:
+            if self.managed.stop_view(grant):
+                self._state = "closed"
+            else:
+                self._state = "broken"
+        except Exception as error:  # noqa: BLE001 - preserve the stage's original failure
+            self._state = "broken"
+            logger.warning("managed stage view cleanup failed: %s", error)
+
+
 def _drive_stage_with_managed_workspace(
     *,
     managed: ManagedExecution | None,
@@ -1434,7 +1590,7 @@ def _drive_stage_with_managed_workspace(
     workspace: Path,
     role: str,
     plan_ref: PlanRef | None,
-    build_registry: Callable[[WorkspacePort | None, BashExecutor | None], ToolRegistry],
+    build_registry: Callable[[WorkspacePort | None, BashExecutor | None, _ManagedStageLease | None], ToolRegistry],
     drive: Callable[[ToolRegistry], SessionOutcome],
 ) -> tuple[SessionOutcome, bool]:
     """Run one stage inside its authority-bound view, settling it before return.
@@ -1443,9 +1599,9 @@ def _drive_stage_with_managed_workspace(
     a direct ``fa run`` may own a writer for this invocation. In either case the
     stage gets a fresh view over the most recent authority-reported revision.
     """
-    view_grant = None
-    view_settled = False
-    view_settlement_attempted = False
+    lease: _ManagedStageLease | None = None
+    view_grant: GrantReply | None = None
+    view_settled = True
     release_confirmed = True
     try:
         workspace_io: WorkspacePort | None = None
@@ -1455,13 +1611,20 @@ def _drive_stage_with_managed_workspace(
             if profile is None or not profile.interactive:
                 raise ExecutionContractError
             base_revision = managed.current_revision_id
+            # If the CREATE_VIEW reply is uncertain there is no grant we can
+            # safely stop, so retain the writer rather than releasing it blindly.
+            view_settled = False
             view_grant = managed.open_view(
                 access=Access.WRITE,
                 purpose=ViewPurpose.PROJECT,
                 base_revision=base_revision,
                 plan_ref=plan_ref,
             )
-            if view_grant.view_ref is None or view_grant.input_tree_sha256 is None:
+            if (
+                view_grant.operation is not Operation.CREATE_VIEW
+                or view_grant.view_ref is None
+                or view_grant.input_tree_sha256 is None
+            ):
                 raise ExecutionContractError
             workspace_io = ClientWorkspacePort(
                 managed.client,
@@ -1481,29 +1644,39 @@ def _drive_stage_with_managed_workspace(
                 original_revision_id=base_revision,
                 controller_root=workspace,
             )
+            lease = _ManagedStageLease(
+                managed=managed,
+                namespace=managed.binding.namespace,
+                view_grant=view_grant,
+                workspace_io=workspace_io,
+                managed_executor=managed_executor,
+                plan_ref=plan_ref,
+                allow_nested_handoff=owns_writer,
+            )
 
-        outcome = drive(build_registry(workspace_io, managed_executor))
-        if view_grant is not None and managed is not None:
-            view_settlement_attempted = True
-            if outcome.exit_code == 0:
-                managed.publish_stage(view_grant)
-                view_settled = True
-            else:
-                view_settled = managed.stop_view(view_grant)
-                if not view_settled:
-                    raise ExecutionUnavailableError
+        outcome = drive(build_registry(workspace_io, managed_executor, lease))
+        if lease is not None:
+            lease.finish(accepted=outcome.exit_code == 0)
+            view_settled = lease.writer_release_safe
     except BaseException:
-        if managed is not None and view_grant is not None and not view_settled and not view_settlement_attempted:
+        if lease is not None:
+            lease.abort()
+            view_settled = lease.writer_release_safe
+        elif managed is not None and view_grant is not None:
             try:
-                managed.stop_view(view_grant)
+                view_settled = managed.stop_view(view_grant)
             except Exception as error:  # noqa: BLE001 - preserve the stage's original failure
+                view_settled = False
                 logger.warning("managed stage view cleanup failed (run=%s): %s", run_id, error)
         raise
     finally:
         if owns_writer:
-            release_confirmed = _settle_writer_release(
-                managed, run_id=run_id, session_db=session_db, command_name="run"
-            )
+            if view_settled and (lease is None or lease.writer_release_safe):
+                release_confirmed = _settle_writer_release(
+                    managed, run_id=run_id, session_db=session_db, command_name="run"
+                )
+            else:
+                release_confirmed = False
     return outcome, release_confirmed
 
 
@@ -1518,7 +1691,7 @@ def _run_cli_stage(
     workspace: Path,
     role: str,
     plan_ref: PlanRef | None,
-    build_registry: Callable[[WorkspacePort | None, BashExecutor | None], ToolRegistry],
+    build_registry: Callable[[WorkspacePort | None, BashExecutor | None, _ManagedStageLease | None], ToolRegistry],
     drive: Callable[[ToolRegistry], SessionOutcome],
 ) -> tuple[SessionOutcome | None, bool]:
     """Apply the direct-run/workflow-owner boundary and report managed failures."""
@@ -1927,6 +2100,7 @@ def _make_workflow_ctx_provider(
     secrets: Mapping[str, str] | None,
     state_ref: list[SessionState | None] | None = None,
     inject_overrides: Mapping[str, str] | None = None,
+    parent_stage_lease: _ManagedStageLease | None = None,
 ) -> Callable[[], WorkflowInvocationContext]:
     """Build the provider closure ``invoke_workflow`` reads at tool-call time.
 
@@ -1986,6 +2160,14 @@ def _make_workflow_ctx_provider(
             session_db=session_db,
             transport=transport,
             secrets=secrets,
+            managed_execution=(
+                parent_stage_lease.managed
+                if parent_stage_lease is not None and parent_stage_lease.is_handoff_enabled
+                else None
+            ),
+            parent_stage_lease=(
+                parent_stage_lease if parent_stage_lease is not None and parent_stage_lease.is_handoff_enabled else None
+            ),
             max_invocations=limits.max_workflow_invocations,
             session_facts_provider=session_facts_provider,
             blackboard_writer=blackboard_writer,
@@ -2694,7 +2876,11 @@ def _cmd_run(  # noqa: C901
     # re-estimate here — one estimate per run is a contract (T40).
     scope_hint = _publish_scope_estimate(scope_point, args.task or "", log, state, run_id)
 
-    def build_registry(workspace_io: WorkspacePort | None, managed_executor: BashExecutor | None) -> ToolRegistry:
+    def build_registry(
+        workspace_io: WorkspacePort | None,
+        managed_executor: BashExecutor | None,
+        stage_lease: _ManagedStageLease | None,
+    ) -> ToolRegistry:
         hooks_ref.append(
             _build_run_hook_registry(
                 workspace=workspace,
@@ -2730,6 +2916,7 @@ def _cmd_run(  # noqa: C901
                 # PLAN S5c / Q9: a pipeline this chat session launches inherits
                 # the session's --inject.
                 inject_overrides=_inject_overrides(args),
+                parent_stage_lease=stage_lease,
             ),
             workspace_io=workspace_io,
             managed_executor=managed_executor,

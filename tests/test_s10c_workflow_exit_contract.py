@@ -266,7 +266,7 @@ def _workflow_with_a_managed_execution(
     monkeypatch.setattr(fa_cli, "_execution_for_cli_stage", lambda *_a: (managed, False))
 
     def drive_fixture_stage(**kwargs: Any) -> tuple[Any, bool]:
-        registry = kwargs["build_registry"](None, None)
+        registry = kwargs["build_registry"](None, None, None)
         return kwargs["drive"](registry), True
 
     monkeypatch.setattr(fa_cli, "_drive_stage_with_managed_workspace", drive_fixture_stage)
@@ -323,6 +323,11 @@ def test_an_unconfirmed_release_leaves_a_durable_row(tmp_path: Path) -> None:
     with redirect_stderr(stderr):
         assert fa_cli._settle_writer_release(managed, run_id="wf-row", session_db=db) is False
 
+    assert stderr.getvalue() == (
+        "fa workflow: writer release for workspace ws-"
+        + "1" * 32
+        + " was not confirmed; the workspace may stay owned until recovery\n"
+    )
     row = db.get_meta("managed_execution_release")
     assert row is not None
     assert row["confirmed"] is False

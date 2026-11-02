@@ -1737,7 +1737,7 @@ def test_publish_refuses_a_valid_manifest_that_belongs_to_another_view(site: Sit
 # authority, C3 for the metadata-smuggling and traversal refusals.
 # ---------------------------------------------------------------------------
 
-_ROADMAP_PROSE = "## Intent\n\nShip the thing.\n\n## Out-of-scope\n\nEverything else.\n"
+_ROADMAP_PROSE = "## Intent\n\nShip the thing.\n\n## Out of scope\n\nEverything else.\n"
 _INCREMENT_PROSE = "## SLICE1: first\n\nSteps.\n\n## SLICE2: second\n\nSteps.\n"
 
 
@@ -1768,7 +1768,7 @@ def test_the_renderer_emits_exactly_three_files_with_controller_metadata() -> No
     assert "| I01 | [first-increment](worklogs/demo-project/increments/increment-01-first-increment.md) |" in roadmap
     assert roadmap.endswith(_ROADMAP_PROSE)
     assert increment.startswith(
-        "---\nIncrement-ID: RM-demo-project-I01\nRoadmap-ID: RM-demo-project\nslug: first-increment\n"
+        "---\nIncrement-ID: RM-demo-project-I01\nRoadmap-ID: RM-demo-project\n"
         "status: IN PROGRESS\nslices: 2\nshipped: —\n---\n"
     )
     assert ledger == "# Ledger — decision and evidence log\n\nFixed heading only; entries are appended by the run.\n"
@@ -1779,7 +1779,7 @@ def test_the_renderer_refuses_metadata_the_caller_disguised_outside_a_fence() ->
     from fa.execution.publication import render_bundle
 
     for prose, kind in (
-        ("## Intent\n\nRoadmap-ID: RM-evil\n\n## Out-of-scope\n\nnone\n", "roadmap"),
+        ("## Intent\n\nRoadmap-ID: RM-evil\n\n## Out of scope\n\nnone\n", "roadmap"),
         ("## SLICE1: a\n\nslices: 99\n", "increment"),
         ("## SLICE1: a\n\n---\nIncrement-ID: X\n", "increment"),
     ):
@@ -1799,8 +1799,9 @@ def test_the_renderer_refuses_a_roadmap_body_with_the_wrong_sections() -> None:
 
     for prose in (
         "## Intent\n\nonly one section\n",
-        "## Out-of-scope\n\nthen\n\n## Intent\n\nreversed\n",
-        "## Intent\n\nx\n\n## Out-of-scope\n\ny\n\n## Extra\n\nz\n",
+        "## Out of scope\n\nthen\n\n## Intent\n\nreversed\n",
+        "## Intent\n\nx\n\n## Out of scope\n\ny\n\n## Extra\n\nz\n",
+        "## Intent\n\nx\n\n## Out-of-scope\n\ny\n",
     ):
         with pytest.raises(SupervisorError) as refused:
             render_bundle("demo", "inc", prose, _INCREMENT_PROSE, created="2026-10-22")

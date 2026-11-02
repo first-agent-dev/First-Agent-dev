@@ -485,7 +485,7 @@ def _read_sealed_manifest(
 BUNDLE_ROOT = "worklogs"
 _LEDGER_BODY = "# Ledger — decision and evidence log\n\nFixed heading only; entries are appended by the run.\n"
 _MAX_BUNDLE_BYTES = 4 * 1024**2
-_ROADMAP_HEADINGS = ("## Intent", "## Out-of-scope")
+_ROADMAP_HEADINGS = ("## Intent", "## Out of scope")
 _METADATA_LINE = re.compile(r"^\s*(?:Roadmap-ID|Increment-ID|status|slices|shipped|active-increment)\s*:", re.M)
 _SLICE_HEADING = re.compile(r"^## SLICE(\d+):", re.M)
 
@@ -568,7 +568,6 @@ def render_bundle(
         "---\n"
         f"Increment-ID: RM-{project_slug}-I01\n"
         f"Roadmap-ID: RM-{project_slug}\n"
-        f"slug: {increment_slug}\n"
         "status: IN PROGRESS\n"
         f"slices: {len(slices)}\n"
         "shipped: —\n"

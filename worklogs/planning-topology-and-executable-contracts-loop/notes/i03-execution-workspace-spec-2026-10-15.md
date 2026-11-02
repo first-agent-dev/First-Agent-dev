@@ -1262,7 +1262,7 @@ OUTLINED/SHIPPED returns clarification, not automatic mutation authorization. Am
 
 Controller renders H1/frontmatter IDs/UTC date/status/active I01; increment I01 metadata/status/
 slice count from validated body and shipped `—`; ledger **header only**, no generated E# evidence.
-Input roadmap_body has exactly the H2 sections Intent and Out of scope (subheadings allowed);
+Input roadmap_body has exactly the H2 sections `## Intent` and `## Out of scope` (subheadings allowed; Q115 option A).
 renderer supplies fixed Artifact schema and its OWN Increments table with exactly I01 IN PROGRESS and the correct
 `increments/increment-01-<increment_slug>.md` link. No model-owned status table. Both body inputs
 forbid frontmatter/H1/control-metadata lines outside fenced examples; increment STEP records must all be TODO, no claimed
@@ -1375,8 +1375,8 @@ Metadata parser helper `_parse_artifact_metadata`: frontmatter≤4KiB UTF-8, fla
 existing PyYAML SafeLoader with duplicate-key rejection; forbid aliases/anchors/custom tags/nested
 values, no permissive skill-loader fallback. Validate required canonical keys/types/linkage from artifact schema §§2/3; slices is integer
 1–7, not bool; created is an ISO calendar date (normalize YAML date/string); unknown control keys reject. Canonical roadmap keys Roadmap-ID/slug/created/status/active-increment (existing
-supersedes optional); increment keys Increment-ID/Roadmap-ID/status/slices/shipped. IDs/linkage are
-not guessed from slug. Use existing plan grammar on the COMPLETE rendered text so positions stay
+supersedes optional); increment keys are exactly Increment-ID/Roadmap-ID/status/slices/shipped (no
+increment `slug` metadata). IDs/linkage are not guessed from slug. Use existing plan grammar on the COMPLETE rendered text so positions stay
 correct. Keep fixture examples for current RM-planning-topology IDs and generated new-project IDs.
 
 **Q102 (оператор, E311; дополнение к строке handoff §2.1).** Помимо передачи вниз,
@@ -1415,7 +1415,7 @@ Freeze literal rendering fixtures before implementing renderer: project director
 Controller owns frontmatter: Roadmap-ID `RM-<project_slug>`, Increment-ID `RM-<project_slug>-I01`,
 roadmap created=UTC date/status IN PROGRESS/active-increment I01; increment status IN PROGRESS,
 slices=actual extracted count, shipped=—. ledger is fixed heading only, no model E# rows.
-roadmap_body is Intent/Out-of-scope prose ONLY with those exact two headings; controller
+roadmap_body is prose with exactly the `## Intent` and `## Out of scope` headings (Q115 option A); controller
 renders Artifact schema and Increments table/link. increment_body is validated slice grammar, no
 frontmatter, no duplicate increment/roadmap/status metadata or lifecycle claims. Reject disguised
 metadata outside code fences using existing MarkdownIt tokens, not substring deletion or a new

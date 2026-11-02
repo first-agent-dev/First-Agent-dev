@@ -817,7 +817,7 @@ def test_failed_stage_stop_is_not_retried_by_cleanup(tmp_path: Path) -> None:
             workspace=workspace,
             role="chat",
             plan_ref=None,
-            build_registry=lambda _workspace_io, _managed_executor: ToolRegistry(),
+            build_registry=lambda _workspace_io, _managed_executor, _stage_lease: ToolRegistry(),
             drive=lambda _registry: SessionOutcome(1, "iteration_cap", 1, ""),
         )
     assert stop_calls == 1

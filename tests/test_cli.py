@@ -124,7 +124,7 @@ def _install_test_managed_cli_dependencies(
     monkeypatch.setattr(cli_module, "managed_execution_for_run", managed_for_run)
 
     def drive_fixture_stage(**kwargs: Any) -> tuple[Any, bool]:
-        registry = kwargs["build_registry"](None, None)
+        registry = kwargs["build_registry"](None, None, None)
         return kwargs["drive"](registry), True
 
     monkeypatch.setattr(cli_module, "_drive_stage_with_managed_workspace", drive_fixture_stage)

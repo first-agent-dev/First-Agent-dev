@@ -2488,3 +2488,31 @@ A real local UDS composition probe injected `DURABILITY_UNKNOWN` at the start of
 **Resolution (2026-11-02; operator selected option 1/A).** For managed runs, the run-scoped `ManagedExecution` is the holder of pending candidate proof and owner authority. An indeterminate publication must not trigger a host write or release the writer before reconciliation. Do not automatically retry PUBLISH; use only the exact-request replay/reconciliation semantics already permitted by the operation journal, and preserve fail-closed state if the result remains unknown. If the process dies before reconciliation, the workspace remains unavailable/quarantined for recovery; this selection does not promise autonomous restart recovery. No second writer, worker/IPC architecture, new wire operation, or Q108 change is authorized.
 
 **Scope and remaining work.** Legacy direct `fa workflow` behavior is unchanged in the current scope. Its observed orphan-view behavior remains an R25 acceptance gap, not an approved policy. The managed-run implementation must separately prove each uncertain candidate-saga phase (including lost CREATE_VIEW response), pending-handle ownership, no premature RELEASE, exact replay safety, and restart/quarantine behavior before claiming Q114 implementation complete. Do not assert that uncertainty means unchanged PLAN, do not treat `DURABILITY_UNKNOWN` as determinate refusal, and do not claim R25/S4P1 uncertainty coverage from the decision alone.
+
+---
+
+## Q115 — Canonical roadmap section heading for Q60 bootstrap
+
+**Status: RESOLVED — operator delegated the engineering choice; option A selected (2026-11-02).**
+
+**Source conflict.** The managed-acquisition specification §7.1 named the required sections as “Intent and Out of scope”, while the existing supervisor-side `execution.publication.render_bundle` and its fixtures required `## Out-of-scope`. The spelling is part of the model-authored bootstrap input contract; silently accepting both would weaken the strict two-heading schema, while changing it affects the existing renderer and tests.
+
+**Options.** (A) Use the literal Q60 form `## Out of scope` and update the existing renderer plus its regression fixtures. (B) Preserve `## Out-of-scope` and amend the Q60 managed-acquisition contract to match.
+
+**Resolution.** The operator delegated the choice and said to use the recommended option if spaces caused no issue. Select A: the space is valid Markdown heading text and does not affect file paths, IDs, metadata, or bundle identity except as part of the intended body bytes. The renderer accepts exactly `## Intent` and `## Out of scope`; `## Out-of-scope` remains rejected. Existing three-file rendering, controller-owned metadata, bundle hashing and install authority are unchanged.
+
+**Scope.** This resolves only the heading spelling. It does not close the managed-acquisition parser/resolver/runtime, authorize accepting alternate section forms, change legacy `fa workflow`, or provide live-host ledger append evidence.
+
+---
+
+## Q116 — Increment bootstrap metadata: is `slug` an allowed frontmatter key?
+
+**Status: RESOLVED — operator selected option B (2026-11-02).**
+
+**Source conflict.** The managed-acquisition spec §7.0 names the canonical increment metadata keys as `Increment-ID`, `Roadmap-ID`, `status`, `slices`, and `shipped`; the existing `execution.publication.render_bundle` additionally emitted `slug`. A strict metadata parser following §7.0 would reject the renderer's own output unless one side changed.
+
+**Options.** (A) Amend the schema to allow optional `slug`, validate it against the canonical relative path, and preserve the renderer output. (B) Preserve the exact §7.0 field set and remove `slug` from the increment frontmatter emitted by the renderer.
+
+**Resolution.** The operator selected B. Increment metadata uses only the five listed fields; project/increment slugs remain encoded in the canonical relative paths and are not duplicated in increment frontmatter. Roadmap `slug` remains part of the roadmap schema. The renderer and literal fixtures change in lockstep.
+
+**Scope.** This resolves only the increment metadata key set. It does not authorize path guessing, weaken YAML parsing, or close managed selection/bootstrap runtime, admission, ledger append, supervisor integration, or live-host evidence.
