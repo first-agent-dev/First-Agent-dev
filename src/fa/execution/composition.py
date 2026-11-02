@@ -66,6 +66,15 @@ class ExecutionBinding:
         _hex_id(self.workspace_id, "ws-")
 
 
+@dataclass(frozen=True)
+class _PendingHandoff:
+    """The non-secret identity needed to replay one unresolved HANDOFF exactly."""
+
+    request_id: str
+    target: NamespaceRef
+    uncertain: bool = False
+
+
 @dataclass
 class ManagedExecution:
     """One run's client, binding and the single writer grant it holds.
@@ -82,6 +91,7 @@ class ManagedExecution:
     grant: GrantReply
     view_profile: ExecutionProfile | None = None
     current_revision_id: str = field(init=False)
+    _pending_handoff: _PendingHandoff | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         if (
@@ -94,9 +104,96 @@ class ManagedExecution:
             raise ExecutionContractError
         self.current_revision_id = self.grant.revision_id
 
+    @property
+    def handoff_pending(self) -> bool:
+        """Whether the active owner namespace is unresolved after a HANDOFF attempt."""
+        return self._pending_handoff is not None
+
+    def handoff_to(self, target: NamespaceRef, *, deadline: float | None = None) -> GrantReply:
+        """Transfer this single managed grant to ``target`` without cloning its holder.
+
+        On an indeterminate reply the source binding/grant remain in this object,
+        together with only the request identity and target. No other managed
+        operation, including RELEASE, is allowed until :meth:`reconcile_handoff`
+        proves the result.
+        """
+        if self._pending_handoff is not None:
+            self._raise_handoff_uncertain()
+        if (
+            not isinstance(target, NamespaceRef)
+            or target.session_id != self.binding.namespace.session_id
+            or target.run_id == self.binding.namespace.run_id
+        ):
+            raise ExecutionContractError
+        self._pending_handoff = _PendingHandoff(uuid4().hex, target)
+        return self._attempt_handoff(deadline=deadline)
+
+    def reconcile_handoff(self, *, deadline: float | None = None) -> GrantReply:
+        """Replay one unresolved HANDOFF with its original id, proof, and target."""
+        if self._pending_handoff is None:
+            raise ExecutionContractError
+        return self._attempt_handoff(deadline=deadline)
+
+    def _attempt_handoff(self, *, deadline: float | None) -> GrantReply:
+        pending = self._pending_handoff
+        if pending is None:
+            raise ExecutionContractError
+        try:
+            moved = self.client.handoff(
+                self.binding,
+                pending.target,
+                grant=self.grant,
+                expected_revision_id=self.current_revision_id,
+                request_id=pending.request_id,
+                deadline=deadline,
+            )
+        except ExecutionRejectedError as error:
+            if pending.uncertain:
+                # A later refusal cannot prove what an earlier lost reply did.
+                raise ExecutionUncertainError("op-" + pending.request_id, code=error.code) from None
+            self._pending_handoff = None
+            raise
+        except ExecutionUnavailableError as error:
+            if pending.uncertain or error.operation_id is not None:
+                self._pending_handoff = _PendingHandoff(pending.request_id, pending.target, uncertain=True)
+                raise ExecutionUncertainError("op-" + pending.request_id, code="DURABILITY_UNKNOWN") from None
+            self._pending_handoff = None
+            raise
+        except BaseException:
+            # Once the request path has begun, an unclassified exception cannot
+            # authorize either owner to continue or the composition to RELEASE.
+            self._pending_handoff = _PendingHandoff(pending.request_id, pending.target, uncertain=True)
+            raise
+
+        if (
+            not isinstance(moved, GrantReply)
+            or moved.operation is not Operation.HANDOFF
+            or moved.generation != self.grant.generation
+            or moved.revision_id != self.current_revision_id
+        ):
+            self._pending_handoff = _PendingHandoff(pending.request_id, pending.target, uncertain=True)
+            raise ExecutionUncertainError("op-" + pending.request_id, code="CORRUPT_STATE")
+
+        self.binding = ExecutionBinding(pending.target, self.binding.workspace_id)
+        self.grant = moved
+        self.current_revision_id = moved.revision_id
+        self._pending_handoff = None
+        return moved
+
+    def _require_handoff_resolved(self) -> None:
+        if self._pending_handoff is not None:
+            self._raise_handoff_uncertain()
+
+    def _raise_handoff_uncertain(self) -> None:
+        pending = self._pending_handoff
+        if pending is None:
+            raise ExecutionContractError
+        raise ExecutionUncertainError("op-" + pending.request_id, code="DURABILITY_UNKNOWN")
+
     def publish_plan(
         self, source: PlanSnapshot, candidate: PlanSnapshot, *, deadline: float | None = None
     ) -> PlanPublication:
+        self._require_handoff_resolved()
         publication = self.client.publish_plan(self.binding, source, candidate, grant=self.grant, deadline=deadline)
         self.current_revision_id = publication.revision_id
         return publication
@@ -117,6 +214,7 @@ class ManagedExecution:
         the composition, not at the call site, so the controller never spells a
         wire payload itself and a second view-opening path cannot appear.
         """
+        self._require_handoff_resolved()
         return self.client.open_view(
             self.binding,
             access=access,
@@ -135,6 +233,7 @@ class ManagedExecution:
         degraded continuation that would be honest. The run keeps its writer — the
         next stage opens its own view over the revision this call produced.
         """
+        self._require_handoff_resolved()
         if not isinstance(grant, GrantReply) or grant.view_ref is None:
             raise ExecutionContractError
         publication = self.client.publish_stage(
@@ -150,6 +249,7 @@ class ManagedExecution:
         turned into a local assumption, because the authority still owns whatever
         the view holds.
         """
+        self._require_handoff_resolved()
         if not isinstance(grant, GrantReply) or grant.view_ref is None:
             raise ExecutionContractError
         view = grant.view_ref
@@ -169,6 +269,12 @@ class ManagedExecution:
         assumption: the authority keeps the workspace ``OWNED`` and recovery owns
         it from there.
         """
+        if self._pending_handoff is not None:
+            _logger.warning(
+                "managed execution: writer release withheld while HANDOFF is unresolved for %s",
+                self.binding.workspace_id,
+            )
+            return False
         try:
             self.client.request(
                 Operation.RELEASE,

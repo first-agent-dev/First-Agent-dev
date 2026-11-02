@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 from pathlib import Path
-from uuid import uuid4
+from typing import Any
 
 import pytest
 
-from fa.execution.client import _grant
-from fa.execution.composition import ExecutionBinding, ManagedExecution
+from fa.execution.client import ExecutionRejectedError, ExecutionUncertainError
+from fa.execution.composition import ExecutionBinding
 from fa.execution.supervisor import SupervisorError
 from fa.execution.types import Access, NamespaceRef, Operation, ViewPurpose
 from fa.inner_loop.plan_admission import read_plan_snapshot, snapshot_from_bytes
@@ -77,47 +77,120 @@ def test_unsettled_child_cannot_return_the_writer(site: Site) -> None:
         assert workspace_file(site, ids).read_bytes() == before
 
 
-def test_return_and_child_client_verbs_over_real_socket(site: Site, tmp_path: Path) -> None:
+def test_return_and_child_client_verbs_over_real_socket(
+    site: Site, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _plan_ref(site)
-    with _served(site, tmp_path) as parent:
-        child_ns = NamespaceRef(parent.binding.namespace.session_id, "child-run", parent.binding.namespace.run_id)
-        raw = parent.client.request(
-            Operation.HANDOFF,
-            request_id=uuid4().hex,
-            namespace=parent.binding.namespace,
-            view=None,
-            grant=parent.grant,
-            payload={"target_namespace": child_ns.to_dict()},
-            deadline=None,
-        )
-        child_grant = _grant(Operation.HANDOFF, raw)
-        child = ManagedExecution(parent.client, ExecutionBinding(child_ns, parent.binding.workspace_id), child_grant)
-        published = child.publish_plan(
+    with _served(site, tmp_path) as managed:
+        parent_binding = managed.binding
+        parent_grant = managed.grant
+        child_ns = NamespaceRef(parent_binding.namespace.session_id, "child-run", parent_binding.namespace.run_id)
+        invalid_child = NamespaceRef(parent_binding.namespace.session_id, "child-run", "not-the-parent")
+
+        with pytest.raises(ExecutionRejectedError):
+            managed.handoff_to(invalid_child)
+        assert not managed.handoff_pending
+        assert managed.binding is parent_binding and managed.grant is parent_grant
+
+        real_request = managed.client.request
+        seen: list[tuple[Operation, str, NamespaceRef, object, dict[str, object]]] = []
+        lose_first_reply = True
+
+        def lose_first_handoff_reply(operation: Operation, **kwargs: Any) -> dict[str, object]:
+            nonlocal lose_first_reply
+            if operation is Operation.HANDOFF:
+                seen.append(
+                    (
+                        operation,
+                        str(kwargs["request_id"]),
+                        kwargs["namespace"],
+                        kwargs["grant"],
+                        kwargs["payload"],
+                    )
+                )
+            result = real_request(operation, **kwargs)
+            if operation is Operation.HANDOFF and lose_first_reply:
+                lose_first_reply = False
+                raise ExecutionUncertainError("op-" + str(kwargs["request_id"]))
+            return result
+
+        monkeypatch.setattr(managed.client, "request", lose_first_handoff_reply)
+        with pytest.raises(ExecutionUncertainError):
+            managed.handoff_to(child_ns)
+        assert managed.handoff_pending
+        assert managed.binding is parent_binding and managed.grant is parent_grant
+
+        child_grant = managed.reconcile_handoff()
+        assert not managed.handoff_pending
+        assert managed.binding == ExecutionBinding(child_ns, parent_binding.workspace_id)
+        assert len(seen) == 2 and seen[0][1] == seen[1][1]
+        assert seen[0][2] == seen[1][2] == parent_binding.namespace
+        assert seen[0][3] is seen[1][3] is parent_grant
+        assert seen[0][4] == seen[1][4] == {"target_namespace": child_ns.to_dict()}
+        assert child_grant.operation is Operation.HANDOFF
+
+        published = managed.publish_plan(
             read_plan_snapshot(site.source, Path(PLAN_RELATIVE)),
             snapshot_from_bytes("draft.md", b"# child plan\n"),
         )
-        stage = child.open_view(
+        stage = managed.open_view(
             access=Access.WRITE,
             purpose=ViewPurpose.MUTATION,
             base_revision=published.revision_id,
             plan_ref=published.plan_ref,
         )
-        stage_result = child.publish_stage(stage)
-        result = child.client.request(
-            Operation.HANDOFF,
-            request_id=uuid4().hex,
-            namespace=child_ns,
-            view=None,
-            grant=child_grant,
-            payload={"target_namespace": parent.binding.namespace.to_dict()},
-            deadline=None,
-        )
-        returned = _grant(Operation.HANDOFF, result)
-        assert returned.generation == parent.grant.generation
+        stage_result = managed.publish_stage(stage)
+        returned = managed.handoff_to(parent_binding.namespace)
+        assert managed.binding == parent_binding
+        assert returned.generation == parent_grant.generation
         assert returned.revision_id == stage_result.revision_id
-        assert returned.capability not in {parent.grant.capability, child_grant.capability}
-        refreshed_parent = ManagedExecution(parent.client, parent.binding, returned)
-        assert refreshed_parent.close()
+        assert returned.capability not in {parent_grant.capability, child_grant.capability}
+        assert managed.close()
+
+
+def test_unresolved_handoff_keeps_writer_and_blocks_all_other_operations(
+    site: Site, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with _served(site, tmp_path) as managed:
+        parent_binding = managed.binding
+        child_ns = NamespaceRef(parent_binding.namespace.session_id, "child-run", parent_binding.namespace.run_id)
+        real_request = managed.client.request
+        handoffs: list[tuple[str, NamespaceRef, object, dict[str, object]]] = []
+        operations: list[Operation] = []
+
+        def lose_every_handoff_reply(operation: Operation, **kwargs: Any) -> dict[str, object]:
+            operations.append(operation)
+            result = real_request(operation, **kwargs)
+            if operation is Operation.HANDOFF:
+                handoffs.append(
+                    (
+                        str(kwargs["request_id"]),
+                        kwargs["namespace"],
+                        kwargs["grant"],
+                        kwargs["payload"],
+                    )
+                )
+                raise ExecutionUncertainError("op-" + str(kwargs["request_id"]))
+            return result
+
+        monkeypatch.setattr(managed.client, "request", lose_every_handoff_reply)
+        with pytest.raises(ExecutionUncertainError):
+            managed.handoff_to(child_ns)
+        with pytest.raises(ExecutionUncertainError):
+            managed.reconcile_handoff()
+        assert managed.handoff_pending
+        assert managed.binding is parent_binding
+        with pytest.raises(ExecutionUncertainError):
+            managed.open_view(
+                access=Access.WRITE,
+                purpose=ViewPurpose.PROJECT,
+                base_revision=managed.current_revision_id,
+            )
+        assert managed.close() is False
+        assert len(handoffs) == 2
+        assert handoffs[0] == handoffs[1]
+        assert handoffs[0][2] is managed.grant
+        assert operations == [Operation.HANDOFF, Operation.HANDOFF]
 
 
 def test_restart_with_child_owner_quarantines_instead_of_recreating_lineage(site: Site) -> None:

@@ -229,6 +229,52 @@ class ExecutionClient:
             raise ExecutionRejectedError(error["code"], error["operation_id"])
         return cast(dict[str, Any], response["result"])
 
+    def handoff(
+        self,
+        binding: object,
+        target: NamespaceRef,
+        *,
+        grant: GrantReply,
+        expected_revision_id: str,
+        request_id: str,
+        deadline: float | None = None,
+    ) -> GrantReply:
+        """Move one owner grant through the existing HANDOFF wire operation.
+
+        This method is deliberately one-shot. The run-scoped ``ManagedExecution``
+        retains ``request_id``, source binding, target, and the original proof if
+        the reply is uncertain, then explicitly reconciles with this same request.
+        A fresh id could not distinguish a lost successful move from a refusal.
+        """
+        namespace, _workspace_id = _binding_identity(binding)
+        if (
+            not isinstance(target, NamespaceRef)
+            or not isinstance(grant, GrantReply)
+            or grant.operation not in {Operation.ACQUIRE_WRITER, Operation.HANDOFF}
+        ):
+            raise ExecutionContractError
+        _hex_id(request_id, "", 32)
+        _hex_id(expected_revision_id, "rev-")
+        payload = {"target_namespace": target.to_dict()}
+        result = self.request(
+            Operation.HANDOFF,
+            request_id=request_id,
+            namespace=namespace,
+            view=None,
+            grant=grant,
+            payload=payload,
+            deadline=deadline,
+        )
+        try:
+            moved = _grant(Operation.HANDOFF, result)
+        except ExecutionContractError:
+            # The server may already have rotated the owner proof. Invalid reply
+            # shape is therefore uncertainty, never a reason to retry with a new id.
+            raise ExecutionUncertainError("op-" + request_id, code="CORRUPT_STATE") from None
+        if moved.generation != grant.generation or moved.revision_id != expected_revision_id:
+            raise ExecutionUncertainError("op-" + request_id, code="CORRUPT_STATE")
+        return moved
+
     def publish_plan(
         self,
         binding: object,
