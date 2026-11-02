@@ -84,6 +84,11 @@ def test_return_and_child_client_verbs_over_real_socket(
     with _served(site, tmp_path) as managed:
         parent_binding = managed.binding
         parent_grant = managed.grant
+        root_owner_run_id = parent_binding.namespace.run_id
+        assert managed.root_owner_run_id == root_owner_run_id
+        with pytest.raises(AttributeError):
+            managed.root_owner_run_id = "spoofed-owner"  # type: ignore[misc]
+        assert managed.root_owner_run_id == root_owner_run_id
         child_ns = NamespaceRef(parent_binding.namespace.session_id, "child-run", parent_binding.namespace.run_id)
         invalid_child = NamespaceRef(parent_binding.namespace.session_id, "child-run", "not-the-parent")
 
@@ -119,10 +124,12 @@ def test_return_and_child_client_verbs_over_real_socket(
             managed.handoff_to(child_ns)
         assert managed.handoff_pending
         assert managed.binding is parent_binding and managed.grant is parent_grant
+        assert managed.root_owner_run_id == root_owner_run_id
 
         child_grant = managed.reconcile_handoff()
         assert not managed.handoff_pending
         assert managed.binding == ExecutionBinding(child_ns, parent_binding.workspace_id)
+        assert managed.root_owner_run_id == root_owner_run_id
         assert len(seen) == 2 and seen[0][1] == seen[1][1]
         assert seen[0][2] == seen[1][2] == parent_binding.namespace
         assert seen[0][3] is seen[1][3] is parent_grant
@@ -142,6 +149,7 @@ def test_return_and_child_client_verbs_over_real_socket(
         stage_result = managed.publish_stage(stage)
         returned = managed.handoff_to(parent_binding.namespace)
         assert managed.binding == parent_binding
+        assert managed.root_owner_run_id == root_owner_run_id
         assert returned.generation == parent_grant.generation
         assert returned.revision_id == stage_result.revision_id
         assert returned.capability not in {parent_grant.capability, child_grant.capability}

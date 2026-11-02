@@ -102,7 +102,13 @@ class ManagedExecution:
             or (self.view_profile is not None and not isinstance(self.view_profile, ExecutionProfile))
         ):
             raise ExecutionContractError
+        self._root_owner_run_id = self.binding.namespace.run_id
         self.current_revision_id = self.grant.revision_id
+
+    @property
+    def root_owner_run_id(self) -> str:
+        """The original writer-owner run id, stable across HANDOFF namespace changes."""
+        return self._root_owner_run_id
 
     @property
     def handoff_pending(self) -> bool:
