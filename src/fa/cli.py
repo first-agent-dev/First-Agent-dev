@@ -1534,6 +1534,7 @@ def _cmd_workflow(
             inject_overrides=inject_overrides,
             plan_path=plan_path,
             plan_publisher=plan_publisher,
+            managed_execution=managed,
         )
     finally:
         # The workflow's own outcome stands (its terminal state is already

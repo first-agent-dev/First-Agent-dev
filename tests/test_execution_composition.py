@@ -7,6 +7,7 @@ controller then fails closed (CT115) instead of publishing over a host path.
 
 from __future__ import annotations
 
+import argparse
 import io
 import json
 import logging
@@ -25,7 +26,12 @@ import pytest
 
 from fa import cli
 from fa.execution import composition
-from fa.execution.client import ExecutionRejectedError, ExecutionUnavailableError, ExecutionUncertainError
+from fa.execution.client import (
+    ExecutionRejectedError,
+    ExecutionUnavailableError,
+    ExecutionUncertainError,
+    StagePublication,
+)
 from fa.execution.composition import (
     BoundPlanPublisher,
     ClientWorkspaceProvisioner,
@@ -36,7 +42,15 @@ from fa.execution.composition import (
     managed_execution_for_run,
 )
 from fa.execution.service import SupervisorService, read_config_file
-from fa.execution.types import ExecutionContractError, GrantReply, NamespaceRef, Operation
+from fa.execution.types import (
+    Access,
+    ExecutionContractError,
+    GrantReply,
+    NamespaceRef,
+    Operation,
+    ViewPurpose,
+    ViewRef,
+)
 from fa.inner_loop import workflow_controller
 from fa.inner_loop.plan_admission import PlanRef, read_plan_snapshot, snapshot_from_bytes
 from fa.session.manager import RunContext, SessionManagerError
@@ -127,6 +141,60 @@ class _RecordingClient:
         return {}
 
 
+def test_managed_stage_revision_advances_only_after_authority_publication() -> None:
+    """The next stage can use only the revision returned by a successful publish."""
+
+    class StageClient:
+        publication: StagePublication | None = None
+        fail = False
+
+        def publish_stage(self, *_: Any, **__: Any) -> StagePublication:
+            if self.fail:
+                raise ExecutionRejectedError("publish-refused", None)
+            assert self.publication is not None
+            return self.publication
+
+    client = StageClient()
+    binding = ExecutionBinding(NamespaceRef("session-1", "run-1"), "ws-" + "1" * 32)
+    initial_revision = "rev-" + "3" * 32
+    managed = ManagedExecution(
+        client,  # type: ignore[arg-type]
+        binding,
+        GrantReply(Operation.ACQUIRE_WRITER, "2" * 64, None, 1, initial_revision),
+    )
+    stage_grant = GrantReply(
+        Operation.CREATE_VIEW,
+        "4" * 64,
+        ViewRef(
+            binding.workspace_id,
+            "view-" + "5" * 32,
+            initial_revision,
+            "run-1",
+            1,
+            Access.WRITE,
+            ViewPurpose.MUTATION,
+        ),
+        None,
+        None,
+    )
+    client.publication = StagePublication(
+        "seal-" + "6" * 32,
+        "rev-" + "7" * 32,
+        "8" * 64,
+        "op-" + "9" * 32,
+    )
+
+    assert managed.current_revision_id == initial_revision
+    assert managed.publish_stage(stage_grant) is client.publication
+    assert managed.current_revision_id == client.publication.revision_id
+
+    current_revision = managed.current_revision_id
+    client.fail = True
+    with pytest.raises(ExecutionRejectedError):
+        managed.publish_stage(stage_grant)
+    assert managed.current_revision_id == current_revision
+
+
 def test_without_an_execution_block_there_is_no_managed_execution(tmp_path: Path) -> None:
     """producer-kill-check: fall back to a default socket when the key is absent."""
     run = _run(tmp_path)
@@ -156,9 +224,13 @@ def test_the_managed_execution_publishes_through_the_operator_config(site: Site,
             managed = managed_execution_for_run(run, config_path=yaml_path)
             assert managed is not None
             assert managed.binding == ExecutionBinding(NamespaceRef("session-1", "run-1"), workspace_id)
+            assert managed.view_profile == native_profile()
+            initial_revision = managed.current_revision_id
+            assert initial_revision == managed.grant.revision_id
             publisher = BoundPlanPublisher(managed, managed.binding)
             promoted = publisher.publish_candidate(source, candidate)
             assert promoted.sha256 == candidate.ref.sha256
+            assert managed.current_revision_id != initial_revision
             assert plan_path.read_bytes() == candidate.utf8_bytes
             with pytest.raises(ExecutionContractError):
                 BoundPlanPublisher(managed, ExecutionBinding(NamespaceRef("session-1", "run-2"), workspace_id))
@@ -375,8 +447,76 @@ def test_the_workflow_root_reaches_promotion(monkeypatch: pytest.MonkeyPatch, tm
     assert cli._cmd_workflow(args) == 0
     publisher = seen["plan_publisher"]
     assert isinstance(publisher, BoundPlanPublisher)
+    assert seen["managed_execution"] is managed
     assert published == [snapshot_from_bytes("draft.md", b"# Repaired plan\n").ref.sha256]
     assert client.calls == [Operation.RELEASE]  # the writer is released when the run returns
+
+
+def test_workflow_forwards_one_managed_execution_to_every_stage(tmp_path: Path) -> None:
+    """No stage reacquires authority; every dispatch sees the identical run-owned object."""
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    run = _run(workspace)
+    binding = ExecutionBinding(NamespaceRef("session-1", "run-1"), "ws-" + "1" * 32)
+
+    class StageAuthority:
+        def publish_stage(self, *_: Any, **__: Any) -> StagePublication:
+            return StagePublication("seal-" + "6" * 32, "rev-" + "7" * 32, "8" * 64, "op-" + "9" * 32)
+
+    initial_revision = "rev-" + "3" * 32
+    managed = ManagedExecution(
+        StageAuthority(),  # type: ignore[arg-type]
+        binding,
+        GrantReply(Operation.ACQUIRE_WRITER, "2" * 64, None, 1, initial_revision),
+        view_profile=native_profile(),
+    )
+    stage_grant = GrantReply(
+        Operation.CREATE_VIEW,
+        "4" * 64,
+        ViewRef(
+            binding.workspace_id,
+            "view-" + "5" * 32,
+            initial_revision,
+            "run-1",
+            1,
+            Access.WRITE,
+            ViewPurpose.MUTATION,
+        ),
+        None,
+        None,
+    )
+    dispatched: list[argparse.Namespace] = []
+    observed_revisions: list[str] = []
+
+    def stage(args: argparse.Namespace, **_: Any) -> int:
+        dispatched.append(args)
+        observed_revisions.append(args._managed_execution.current_revision_id)
+        if args.role == "planner":
+            args._managed_execution.publish_stage(stage_grant)
+        return 0
+
+    workflow_controller.run_workflow(
+        roles=["planner", "eval"],
+        task="exercise managed stage handoff",
+        per_role_task={},
+        mode="linear",
+        max_repairs=None,
+        max_replans=None,
+        run_id=run.run_id,
+        config=tmp_path / "models.yaml",
+        workspace=workspace,
+        max_turns=1,
+        run_stage_fn=stage,
+        run_context=run,
+        managed_execution=managed,
+    )
+
+    assert [args.role for args in dispatched] == ["planner", "eval"]
+    assert all(args._managed_execution is managed for args in dispatched)
+    assert all(args._managed_execution.view_profile == native_profile() for args in dispatched)
+    assert observed_revisions == [initial_revision, "rev-" + "7" * 32]
+    assert managed.current_revision_id == observed_revisions[-1]
+    assert all(args._managed_plan_ref is None for args in dispatched)
 
 
 class _ScriptedAuthority:
@@ -403,7 +543,11 @@ class _ScriptedAuthority:
 
 
 def _compose(monkeypatch: pytest.MonkeyPatch, client: Any, tmp_path: Path) -> Any:
-    monkeypatch.setattr(composition, "_service_config", lambda path=None: SimpleNamespace())
+    monkeypatch.setattr(
+        composition,
+        "_service_config",
+        lambda path=None: SimpleNamespace(profiles=(), view_profile_id=None),
+    )
     monkeypatch.setattr(composition, "_client_for", lambda config: client)
     monkeypatch.setattr(composition, "_root_binding", lambda config, path: ("projects", "."))
     return managed_execution_for_run(_run(tmp_path))

@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -29,6 +29,7 @@ from fa.execution.client import (
     PlanPublication,
     StagePublication,
 )
+from fa.execution.profiles import ExecutionProfile
 from fa.execution.provisioning import ERROR_CODES
 from fa.execution.service import ServiceConfig, read_config_file
 from fa.execution.types import (
@@ -65,24 +66,40 @@ class ExecutionBinding:
         _hex_id(self.workspace_id, "ws-")
 
 
-@dataclass(frozen=True)
+@dataclass
 class ManagedExecution:
     """One run's client, binding and the single writer grant it holds.
 
     The writer is acquired once per run, because a second acquisition of the same
     workspace is ``WORKSPACE_BUSY`` by construction (``workspace.py:1326-1338``)
     and holding it makes the run's publications and its host-side stages mutually
-    exclusive instead of merely polite.
+    exclusive instead of merely polite. The selected host profile and latest
+    authority-reported revision travel with this same run-owned object.
     """
 
     client: ExecutionClient
     binding: ExecutionBinding
     grant: GrantReply
+    view_profile: ExecutionProfile | None = None
+    current_revision_id: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.binding, ExecutionBinding)
+            or not isinstance(self.grant, GrantReply)
+            or self.grant.operation not in {Operation.ACQUIRE_WRITER, Operation.HANDOFF}
+            or self.grant.revision_id is None
+            or (self.view_profile is not None and not isinstance(self.view_profile, ExecutionProfile))
+        ):
+            raise ExecutionContractError
+        self.current_revision_id = self.grant.revision_id
 
     def publish_plan(
         self, source: PlanSnapshot, candidate: PlanSnapshot, *, deadline: float | None = None
     ) -> PlanPublication:
-        return self.client.publish_plan(self.binding, source, candidate, grant=self.grant, deadline=deadline)
+        publication = self.client.publish_plan(self.binding, source, candidate, grant=self.grant, deadline=deadline)
+        self.current_revision_id = publication.revision_id
+        return publication
 
     def open_view(
         self,
@@ -120,7 +137,11 @@ class ManagedExecution:
         """
         if not isinstance(grant, GrantReply) or grant.view_ref is None:
             raise ExecutionContractError
-        return self.client.publish_stage(self.binding.namespace, view=grant.view_ref, grant=grant, deadline=deadline)
+        publication = self.client.publish_stage(
+            self.binding.namespace, view=grant.view_ref, grant=grant, deadline=deadline
+        )
+        self.current_revision_id = publication.revision_id
+        return publication
 
     def stop_view(self, grant: GrantReply, *, deadline: float | None = None) -> bool:
         """End the view ``grant`` opened; ``False`` when its end was not proved.
@@ -293,15 +314,18 @@ def managed_execution_for_run(
     # `ExecutionUncertainError` deliberately escapes from here: the authority may
     # have issued the writer and lost our frame, and the only safe statement is
     # that this run cannot prove it holds the workspace (see `_control`).
-    grant = GrantReply(
-        Operation.ACQUIRE_WRITER,
-        acquired["capability"],
-        None,
-        acquired["generation"],
-        acquired["revision_id"],
-    )
+    capability = acquired.get("capability")
+    generation = acquired.get("generation")
+    revision_id = acquired.get("revision_id")
+    if not isinstance(capability, str) or type(generation) is not int or not isinstance(revision_id, str):
+        raise ExecutionContractError
+    grant = GrantReply(Operation.ACQUIRE_WRITER, capability, None, generation, revision_id)
     binding = ExecutionBinding(namespace, str(registered["workspace_id"]))
-    return ManagedExecution(client, binding, grant)
+    view_profile = next(
+        (profile for profile in config.profiles if profile.profile_id == config.view_profile_id),
+        None,
+    )
+    return ManagedExecution(client, binding, grant, view_profile=view_profile)
 
 
 @dataclass(frozen=True)

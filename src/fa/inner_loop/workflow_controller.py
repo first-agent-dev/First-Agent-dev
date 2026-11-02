@@ -85,6 +85,7 @@ from fa.paths import fa_session_log_root
 from fa.providers.errors import ConfigurationError
 
 if TYPE_CHECKING:
+    from fa.execution.composition import ManagedExecution
     from fa.inner_loop.session_db import SessionDatabase
     from fa.providers import ModelsConfig
     from fa.providers.base import Transport
@@ -222,6 +223,10 @@ class WorkflowContext:
     # Managed candidate promotion is supplied only by the execution composition.
     # None is a fail-closed boundary; the controller has no host-path writer fallback.
     plan_publisher: CandidatePlanPublisher | None = None
+    # One workflow-owned writer is forwarded unchanged to every stage. The stage
+    # boundary can consult its selected profile and latest authority revision.
+    managed_execution: ManagedExecution | None = None
+    managed_plan_ref: PlanRef | None = None
 
     def plan_text(self) -> str | None:
         """Use the immutable admitted snapshot, or read legacy optional input.
@@ -1246,6 +1251,8 @@ def _run_stage(
         # Role gating lives in resolve_injection_modes, so a coder-only
         # injection stays off here for a planner or eval stage.
         "injection_modes": resolve_injection_modes(role, overrides=ctx.inject_overrides),
+        "_managed_execution": ctx.managed_execution,
+        "_managed_plan_ref": ctx.managed_plan_ref,
     }
     if ctx.run_context is not None and ctx.session_context is not None:
         stage_kwargs.update(
@@ -2685,6 +2692,7 @@ def run_workflow(
     inject_overrides: Mapping[str, str] | None = None,
     plan_path: Path | None = None,
     plan_publisher: CandidatePlanPublisher | None = None,
+    managed_execution: ManagedExecution | None = None,
 ) -> tuple[int, FlowState | None]:
     """Run the workflow pipeline. Callable from CLI and from tools.
 
@@ -2776,6 +2784,8 @@ def run_workflow(
         inject_overrides=dict(inject_overrides or {}),
         plan_path=plan_path,
         plan_publisher=plan_publisher,
+        managed_execution=managed_execution,
+        managed_plan_ref=None if snapshot is None else snapshot.ref,
         verify_gate_mode=_gate_mode(),
         admission=(
             _WorkflowAdmission(snapshot, "planner" in roles, max_replans)
