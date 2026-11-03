@@ -272,6 +272,104 @@ def test_unknown_session_and_workspace_mismatch_fail_before_mutation(tmp_path: P
     assert escape.value.code == "workspace_escape"
 
 
+def test_resolve_active_session_for_workspace_uses_manifest_identity_without_mutation(tmp_path: Path) -> None:
+    """R01 authority primitive: explicit workspace resolves its actual session, not its basename."""
+    provision_requests: list[ProvisionRequest] = []
+    readiness_calls: list[Path] = []
+
+    def provisioner(request: ProvisionRequest) -> ProvisionedWorkspace:
+        provision_requests.append(request)
+        return _fixture_provisioner(request)
+
+    def preparer(workspace_path: Path, run_context: RunContext | None) -> ReadyState:
+        readiness_calls.append(workspace_path)
+        return _ready_state(workspace_path, run_context)
+
+    manager = _manager(
+        tmp_path,
+        workspace_preparer=preparer,
+        workspace_provisioner=provisioner,
+    )
+    workspace = manager.workspace_root / "friendly-project-name"
+    created = manager.provision_entrypoint_session(session_id="session-authoritative", workspace_override=workspace)
+    manifest_before = created.manifest_path.read_bytes()
+    db_before = created.session_db_path.read_bytes()
+    run_dirs_before = sorted(path.name for path in manager.run_root.iterdir())
+    workspace_entries_before = sorted(path.relative_to(workspace).as_posix() for path in workspace.rglob("*"))
+    provision_count_before = len(provision_requests)
+    readiness_count_before = len(readiness_calls)
+
+    resolved = manager.resolve_active_session_for_workspace(workspace)
+
+    assert resolved == created
+    assert resolved.session_id == "session-authoritative"
+    assert resolved.workspace_path == workspace.resolve()
+    assert resolved.session_db_path == created.session_db_path
+    assert created.manifest_path.read_bytes() == manifest_before
+    assert created.session_db_path.read_bytes() == db_before
+    assert sorted(path.name for path in manager.run_root.iterdir()) == run_dirs_before
+    assert sorted(path.relative_to(workspace).as_posix() for path in workspace.rglob("*")) == workspace_entries_before
+    assert len(provision_requests) == provision_count_before
+    assert len(readiness_calls) == readiness_count_before
+
+
+def test_resolve_active_session_for_workspace_rejects_missing_or_ambiguous_owners(tmp_path: Path) -> None:
+    """R01 authority primitive: only one active manifest may own the selected workspace."""
+    manager = _manager(tmp_path)
+    unowned = manager.workspace_root / "unowned"
+    unowned.mkdir(parents=True)
+    with pytest.raises(SessionManagerError) as missing:
+        manager.resolve_active_session_for_workspace(unowned)
+    assert missing.value.code == "workspace_session_missing"
+    assert not manager.sessions_root.exists()
+
+    first = manager.provision_entrypoint_session(
+        session_id="owner-one",
+        workspace_override=manager.workspace_root / "first-workspace",
+    )
+    second = manager.provision_entrypoint_session(
+        session_id="owner-two",
+        workspace_override=manager.workspace_root / "second-workspace",
+    )
+    second_payload = json.loads(second.manifest_path.read_text(encoding="utf-8"))
+    second_payload["workspace_path"] = str(first.workspace_path)
+    second.manifest_path.write_text(json.dumps(second_payload), encoding="utf-8")
+
+    with pytest.raises(SessionManagerError) as ambiguous:
+        manager.resolve_active_session_for_workspace(first.workspace_path)
+    assert ambiguous.value.code == "workspace_session_ambiguous"
+
+
+def test_resolve_active_session_for_workspace_rejects_untrusted_or_incomplete_state(tmp_path: Path) -> None:
+    """R01 authority primitive: paths and DB identity fail closed without provisioning."""
+    manager = _manager(tmp_path)
+    with pytest.raises(SessionManagerError) as no_selection:
+        manager.resolve_active_session_for_workspace(None)
+    assert no_selection.value.code == "workspace_invalid"
+    assert not manager.sessions_root.exists()
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    with pytest.raises(SessionManagerError) as escaped:
+        manager.resolve_active_session_for_workspace(outside)
+    assert escaped.value.code == "workspace_escape"
+
+    missing = manager.workspace_root / "missing"
+    with pytest.raises(SessionManagerError) as missing_workspace:
+        manager.resolve_active_session_for_workspace(missing)
+    assert missing_workspace.value.code == "workspace_missing"
+    assert not manager.sessions_root.exists()
+
+    created = manager.provision_entrypoint_session(
+        session_id="session-with-missing-db",
+        workspace_override=manager.workspace_root / "db-owner",
+    )
+    created.session_db_path.unlink()
+    with pytest.raises(SessionManagerError) as missing_db:
+        manager.resolve_active_session_for_workspace(created.workspace_path)
+    assert missing_db.value.code == "session_db_not_found"
+
+
 def test_workspace_cannot_be_owned_by_two_sessions(tmp_path: Path) -> None:
     """C3 D: reverse ownership prevents namespace aliasing."""
     manager = _manager(tmp_path)

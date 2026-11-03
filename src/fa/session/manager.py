@@ -217,6 +217,49 @@ class SessionManager:
                 owners.append(owner_id)
         return owners
 
+    def resolve_active_session_for_workspace(self, workspace_path: Path | None) -> SessionContext:
+        """Resolve the unique active session that owns an explicit workspace.
+
+        This is a read-only identity lookup for trusted controller routing. It
+        validates manager-owned manifest and DB identity, but never provisions,
+        prepares, attaches, reserves a run, or refreshes session timestamps.
+        The returned context is not a lease; callers must revalidate it through
+        the ordinary attach/run lifecycle before performing project operations.
+        """
+        workspace = self._validate_workspace_override(workspace_path)
+        if workspace is None:
+            raise SessionManagerError("workspace_invalid", "an explicit workspace path is required")
+        if not workspace.is_dir():
+            raise SessionManagerError("workspace_missing", f"workspace does not exist: {workspace}")
+
+        owners = self._workspace_owners(workspace, except_session_id=None)
+        if not owners:
+            raise SessionManagerError(
+                "workspace_session_missing",
+                f"no active session manifest owns workspace: {workspace}",
+            )
+        if len(owners) != 1:
+            raise SessionManagerError(
+                "workspace_session_ambiguous",
+                f"multiple active session manifests own workspace: {workspace}",
+            )
+
+        session_id = owners[0]
+        manifest_path = self._manifest_path(session_id)
+        manifest = self._read_manifest(manifest_path, expected_session_id=session_id)
+        manifest_workspace = Path(str(manifest["workspace_path"])).resolve()
+        if manifest_workspace != workspace:
+            raise SessionManagerError(
+                "workspace_mismatch",
+                f"workspace ownership changed during resolution: {workspace}",
+            )
+        db_path = Path(str(manifest["session_db_path"])).resolve()
+        try:
+            SessionDatabase.open_existing(db_path, session_id=session_id)
+        except SessionDatabaseError as exc:
+            raise SessionManagerError(exc.code, str(exc)) from exc
+        return SessionContext(session_id, workspace, db_path, manifest_path)
+
     @staticmethod
     def _already_owned(workspace_path: Path, owners: list[str]) -> SessionManagerError:
         return SessionManagerError(

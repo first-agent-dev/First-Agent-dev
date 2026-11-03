@@ -338,8 +338,6 @@ KNOWN_UNTESTED_CODES: dict[str, str] = {
     "session_provision_failed": (
         "wraps an OSError from mkdir/db-init; covered indirectly by the partial-provision rollback test"
     ),
-    "workspace_invalid": "non-directory workspace; the escape and mismatch cases are the security-relevant ones",
-    "workspace_missing": "manifest points at a workspace deleted out-of-band; filesystem-race shaped",
     "workspace_required": "internal invariant for attach without a resolved workspace",
     "session_context_mismatch": "begin_run called with a context from a different manager instance",
     "session_exists": "namespace collision on create; ids are generated, so only reachable by hand-crafted input",
