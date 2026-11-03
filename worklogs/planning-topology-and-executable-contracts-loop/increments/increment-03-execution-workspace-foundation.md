@@ -4385,4 +4385,22 @@ Current command categories for the required full matrix: `chunk` consumes a path
 
 **Producer/caller-edge kill-checks.** Producer mutant disabled the unique-owner guard; the ambiguous-manifest oracle killed it (**pytest exit 1; 1 failed**). Manifest-lookup caller-edge mutant substituted the workspace basename for `_workspace_owners`; the positive non-basename identity oracle killed it (**pytest exit 1; 1 failed**). Both temporary source mutants were restored. The production CLI/wrapper caller-edge is not yet present, so it is explicitly **not applicable to this helper-only slice** and must be tested in the adapter integration slice.
 
-**Acceptance boundary.** This is authority-primitive evidence only, not an R01 caller-edge or row negative oracle. Direct `fa workflow`, chat-only `invoke_workflow`, and managed `run_workflow` admission behavior are untouched. The complete command/path matrix, resolver production caller, wrapper→installed-controller composition, hostile-CWD/PYTHONPATH tests, R01, S4P1, and W0–W2 remain OPEN.
+**Acceptance boundary.** This is authority-primitive evidence only, not an R01 caller-edge or row negative oracle. Direct `fa workflow`, chat-only `invoke_workflow`, and managed `run_workflow` admission behavior are untouched. The command/path matrix, resolver production caller, wrapper→installed-controller composition, hostile-CWD/PYTHONPATH tests, R01, S4P1, and W0–W2 remain OPEN.
+
+### E434 — Record parser-known wrapper command/path inventory (2026-11-03; documentation only)
+
+**Traceability.** Q119-A requires every required wrapper product route and path-valued argument to retain its meaning while the installed controller runs from trusted CWD. The source audit covers the host branches in `scripts/fa`, parser actions from `fa.cli.build_parser()`, and their direct consumers.
+
+**Inventory result.** Q119 now classifies the wrapper's host-only Compose/script verbs separately from every parser-known product command: CWD-relative `chunk`, workspace-relative `inner-loop-smoke`, lifecycle-aware `run`/`workflow`, CWD/state/session-aware `stats`, CWD/workspace `authoring-check`, config-only diagnostic/provider commands, and the separate Compose `fa-egress-proxy` service. It also records `clean`/unknown-subcommand behavior, all relevant relative path inputs, and the constraints not to inject `stats --session-id`, run the proxy inside `first-agent`, or alter direct `fa workflow` semantics. These findings are based on the parser action inventory and consumers in `src/fa/cli.py`, plus the proxy command in `docker-compose.fa.yml`.
+
+**Current/target and safeguards.** No runtime route changed. `scripts/fa` non-help commands retain their existing routes until command-specific argument mapping is implemented. The matrix is a source checklist, not evidence that an adapter exists; no implicit project CWD, guessed session ID, or host fallback is authorized. Wrapper help remains fail-closed.
+
+**Verification.** Rebuilt/read parser actions with `fa.cli.build_parser()`, cross-checked path consumers and Compose service command, then `git diff --check`. Documentation-only: no runtime or mutation tests apply. Q119 policy is resolved, but route mapping/composition, R01, S4P1, and W0–W2 remain OPEN.
+
+### E435 — Promote proxy service-route conflict to Q120 (2026-11-03; documentation only)
+
+**Traceability/source.** The parser exposes `fa egress-proxy`, and `_cmd_egress_proxy` starts a network listener reading model/secrets/token paths. `docker-compose.fa.yml` owns the actual server command in the distinct `fa-egress-proxy` service with dedicated mounts. `scripts/fa` has no special proxy branch, so the default path sends this subcommand to `first-agent fa`, which is not the service that owns provider secrets and may start a duplicate listener if redirected naively.
+
+**Current/target and safeguards.** Q120 records two choices: classify proxy startup as Compose-internal and refuse it at the operator wrapper (recommended), or authorize a distinct Compose service-management operation with its own contract. Do not use `docker compose exec fa-egress-proxy ... egress-proxy` as a shortcut while the server is already running. No runtime route changed; `fa egress-proxy` remains as-is pending the decision. Q119-A's workspace mapping is otherwise unchanged.
+
+**Verification.** Read-only inspection of parser, `_cmd_egress_proxy`, Compose service command/mounts, and `scripts/fa` dispatch; `git diff --check`. Documentation-only; no producer/caller mutation applies. Q120 and R01/S4P1/W0–W2 remain OPEN.
