@@ -2565,3 +2565,24 @@ B. **Preserve Q112's zero-session-state rule.** Design and authorize a distinct 
 The options above are retained as decision history; option A is selected. This resolves only the temporal contract,
 not the implementation or evidence. R02/S4P1/W0 remain OPEN until the managed EXEC readiness route and named
 negative oracles are demonstrated.
+
+
+## Q119 — How should the wrapper preserve workspace selection when moving to the isolated controller?
+
+**Status: OPEN — blocks the ordinary `scripts/fa` route migration for R01.**
+
+**Source evidence (2026-11-03).** `scripts/fa:36–45` reads the path named by `sessions/.active` and supplies it as Docker Compose's `-w`; `:76–82,178–181` dispatch ordinary product commands as `first-agent fa`. `pyproject.toml:97–100` maps that console script to `fa.cli:main`, not the isolated `fa.controller_entry`. The wrapper's help is currently fail-closed, so the existing ordinary route is preserved pending this decision. In `src/fa/cli.py`, `_session_manager_for_args` resolves workspace roots using `FA_WORKSPACE_ROOT`, an explicit `--workspace`, or its `/sessions`/CWD defaults; parser-level `--workspace` options exist for `inner-loop-smoke`, `run`, `workflow`, `stats`, and `authoring-check`, but workspace selection is not uniform across product commands. The required isolated entry must run from a trusted CWD; using `.active` as Compose's process CWD is not an acceptable substitute for deciding product workspace authority.
+
+**Impact.** Replacing only the executable while preserving Compose `-w` does not establish the trusted-CWD contract and may alter commands whose workspace comes from an explicit parser argument, session manager, or CWD. Conversely, removing `-w` without a replacement can silently point CWD-relative commands at the trusted installation directory rather than the active project. Do not wire ordinary commands to the isolated entry or change CLI/parser defaults until the workspace policy and command coverage are explicit. All wrapper help remains disabled until the installed-controller help seam is available.
+
+**Resolution options.**
+
+A. **Command-aware explicit workspace adapter (recommended for a narrow, fail-closed migration).** From the trusted controller CWD, resolve/validate the active workspace through the accepted session authority, pass it only through each command's existing explicit workspace interface, and fail closed for any project command whose workspace semantics are not mapped. Add a source-backed command matrix and negative oracles before enabling each route. This preserves active-workspace intent where an existing contract supports it, but may temporarily refuse unmapped commands.
+
+B. **Common controller-level workspace context.** Define and implement one validated, controller-owned active-workspace context consumed by all project-oriented commands, including those currently dependent on CWD. The wrapper passes a reference/context input, not a project CWD. This can preserve a uniform implicit-active behavior, but requires a broader CLI composition and trust-boundary change with explicit validation and fallback rules.
+
+C. **Remove implicit active-workspace selection.** Invoke the isolated controller from trusted CWD and require explicit workspace/session selection for every project command. This is the smallest implicit-authority surface, but intentionally changes the legacy wrapper behavior and needs user-facing migration/error handling.
+
+**Engineering recommendation (unresolved).** Prefer A for incremental R01 progress: map and enable only commands with an existing, source-backed explicit workspace contract, keep unmapped project commands refused, and avoid inventing a global implicit workspace context. Before implementing it, verify each command's exact resolution path and confirm the active-workspace reference is authorized by the session manager rather than trusting the `.active` file contents alone.
+
+**Acceptance boundary.** This question does not authorize any runtime route change and closes no R01 row. Host-only commands and direct in-container `fa` remain unchanged. R01 and W0–W2 remain OPEN until the selected route is implemented, wrapper-to-installed-controller composition is tested, and the remaining row-specific gates are satisfied.

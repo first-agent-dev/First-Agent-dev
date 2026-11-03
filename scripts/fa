@@ -55,14 +55,29 @@ _is_help_arg() {
     esac
 }
 
-_host_help_unavailable() {
-    printf '%s\n' "fa: host wrapper help is disabled until an installed-controller help seam is available" >&2
+_help_unavailable() {
+    printf '%s\n' "fa: wrapper help is disabled until the isolated installed-controller help seam is available" >&2
     exit 2
 }
 
 _print_usage() {
-    _host_help_unavailable
+    _help_unavailable
 }
+
+_has_help_option() {
+    local arg
+    for arg in "$@"; do
+        case "$arg" in
+            -h|--help|-help) return 0 ;;
+        esac
+    done
+    return 1
+}
+
+_host_has_help() {
+    _is_help_arg "${1:-}" || _has_help_option "$@"
+}
+
 _delegate_to_agent() {
     if _have_workspace; then
         exec "${COMPOSE[@]}" exec "${TTY_FLAG[@]}" "${_W_FLAG[@]}" first-agent fa "$@"
@@ -71,56 +86,46 @@ _delegate_to_agent() {
     fi
 }
 
-_delegate_agent_help() {
-    local topic="$1"
-    shift || true
-    if [[ "$topic" == "help" ]]; then
-        _delegate_to_agent help "$@"
-    else
-        _delegate_to_agent "$topic" "$@"
-    fi
-}
-
 case "${1:-}" in
     # ── Infrastructure verbs (host-side, docker compose level) ──────────
     logs)
         shift
-        if _is_help_arg "${1:-}"; then _host_help_unavailable; fi
+        if _host_has_help "$@"; then _help_unavailable; fi
         exec "${COMPOSE[@]}" logs "$@" first-agent
         ;;
     proxy-logs)
         shift
-        if _is_help_arg "${1:-}"; then _host_help_unavailable; fi
+        if _host_has_help "$@"; then _help_unavailable; fi
         exec "${COMPOSE[@]}" logs "$@" fa-egress-proxy
         ;;
     status)
         shift
-        if _is_help_arg "${1:-}"; then _host_help_unavailable; fi
+        if _host_has_help "$@"; then _help_unavailable; fi
         exec "${COMPOSE[@]}" ps
         ;;
     up)
         shift
-        if _is_help_arg "${1:-}"; then _host_help_unavailable; fi
+        if _host_has_help "$@"; then _help_unavailable; fi
         exec "${COMPOSE[@]}" up -d
         ;;
     down)
         shift
-        if _is_help_arg "${1:-}"; then _host_help_unavailable; fi
+        if _host_has_help "$@"; then _help_unavailable; fi
         exec "${COMPOSE[@]}" down
         ;;
     restart)
         shift
-        if _is_help_arg "${1:-}"; then _host_help_unavailable; fi
+        if _host_has_help "$@"; then _help_unavailable; fi
         exec "${COMPOSE[@]}" restart first-agent fa-egress-proxy
         ;;
     rebuild)
         shift
-        if _is_help_arg "${1:-}"; then _host_help_unavailable; fi
+        if _host_has_help "$@"; then _help_unavailable; fi
         exec "${COMPOSE[@]}" up -d --build
         ;;
     shell)
         shift
-        if _is_help_arg "${1:-}"; then _host_help_unavailable; fi
+        if _host_has_help "$@"; then _help_unavailable; fi
         # shell uses TTY (interactive) — docker picks up the terminal from
         # stdin/stdout; ${TTY_FLAG[@]} is empty for interactive, -T for non-tty.
         # Arrays-as-flags: use _have_workspace helper to avoid testing an
@@ -133,15 +138,16 @@ case "${1:-}" in
         ;;
     update)
         shift
-        if _is_help_arg "${1:-}"; then _host_help_unavailable; fi
+        if _host_has_help "$@"; then _help_unavailable; fi
         exec "$REPO_DIR/scripts/fa-update.sh" "$@"
         ;;
     clean-rebuild)
         shift
-        if _is_help_arg "${1:-}"; then _host_help_unavailable; fi
+        if _host_has_help "$@"; then _help_unavailable; fi
         exec "$REPO_DIR/scripts/fa-clean-rebuild.sh" "$@"
         ;;
     clean)
+        if _host_has_help "${@:2}"; then _help_unavailable; fi
         if [[ "${2:-}" == "rebuild" || "${2:-}" == "clean-rebuild" ]]; then
             echo "fa: use 'fa clean-rebuild' (hyphen), not 'fa clean rebuild'" >&2
             exit 2
@@ -150,7 +156,7 @@ case "${1:-}" in
         ;;
     commit-traces)
         shift
-        if _is_help_arg "${1:-}"; then _host_help_unavailable; fi
+        if _host_has_help "$@"; then _help_unavailable; fi
         cd "$REPO_DIR"
         # -f: force-add gitignored trace files (they're ignored by default
         # so fa-update.sh stays clean; commit-traces is the deliberate path).
@@ -162,34 +168,22 @@ case "${1:-}" in
         ;;
     sessions)
         shift
-        if _is_help_arg "${1:-}"; then _host_help_unavailable; fi
+        if _host_has_help "$@"; then _help_unavailable; fi
         # shellcheck disable=SC2010
         ls -lt "$_FA_ROOT/sessions/" | grep -v "^total\\|\.active"
         ;;
 
     # ── Help ────────────────────────────────────────────────────────────
     ""|--help|-h|-help)
-        if [[ $# -ge 2 ]]; then
-            # Product CLI help is resolved only by the installed controller.
-            _delegate_agent_help "$2" --help "${@:3}"
-        fi
         _print_usage
         ;;
     help)
-        shift
-        if [[ $# -eq 0 ]]; then
-            _print_usage
-        fi
-        # Product CLI help is resolved only by the installed controller.
-        _delegate_to_agent help "$@"
+        _help_unavailable
         ;;
 
-    # ── Default: delegate to fa CLI inside the agent container ──────────
+    # ── Default: delegate product commands to the agent container ───────
     *)
-        if [[ "${2:-}" == "-help" ]]; then
-            # Compatibility for operators who type `fa run -help`.
-            set -- "$1" --help "${@:3}"
-        fi
+        if _has_help_option "$@"; then _help_unavailable; fi
         _delegate_to_agent "$@"
         ;;
 esac

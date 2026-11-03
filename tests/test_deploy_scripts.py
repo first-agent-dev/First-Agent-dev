@@ -62,7 +62,7 @@ def _get_docker_shadow_dir() -> Path:
     The stubs emit a deterministic "docker: not found" style message to stderr
     and exit non-zero, which matches the shape of a missing-binary error
     closely enough to satisfy scripts/fa's fallthrough behaviour AND the
-    assertion in ``test_fa_wrapper_unknown_help_topic_delegates_to_container``.
+    assertion in ``test_fa_wrapper_nonhelp_product_command_still_delegates_to_container``.
     The directory is cleaned up at interpreter exit.
     """
     global _docker_shadow_dir
@@ -309,7 +309,7 @@ def test_fa_wrapper_help_fails_closed_without_project_import(args: tuple[str, ..
     result = _run_fa_wrapper(*args, cwd=tmp_path, env_overrides={"PYTHONPATH": str(tmp_path)})
 
     assert result.returncode == 2
-    assert "host wrapper help is disabled" in result.stderr
+    assert "wrapper help is disabled" in result.stderr
     assert result.stdout == ""
     assert not marker.exists()
 
@@ -327,6 +327,7 @@ def test_fa_wrapper_help_fails_closed_without_project_import(args: tuple[str, ..
         "shell",
         "update",
         "clean-rebuild",
+        "clean",
         "commit-traces",
         "sessions",
     ],
@@ -346,29 +347,79 @@ def test_fa_wrapper_host_command_help_fails_closed_before_dispatch(command: str,
     result = _run_fa_wrapper(command, "--help", env_overrides=env_overrides)
 
     assert result.returncode == 2
-    assert "host wrapper help is disabled" in result.stderr
+    assert "wrapper help is disabled" in result.stderr
     assert result.stdout == ""
     assert not git_marker.exists()
 
 
-@pytest.mark.parametrize("args", [("--help", "run"), ("run", "--help"), ("help", "run")])
-def test_fa_wrapper_product_help_uses_container_route(args: tuple[str, ...], tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("command", "args"),
+    [
+        ("logs", ("--tail", "10", "--help")),
+        ("proxy-logs", ("--tail", "10", "--help")),
+        ("status", ("--format", "json", "--help")),
+        ("up", ("--wait", "--help")),
+        ("down", ("--timeout", "5", "--help")),
+        ("restart", ("--timeout", "5", "--help")),
+        ("rebuild", ("--pull", "--help")),
+        ("shell", ("--login", "--help")),
+        ("update", ("--assume-yes", "--help")),
+        ("clean-rebuild", ("--yes", "--help")),
+        ("clean", ("--keep-traces", "--help")),
+        ("commit-traces", ("--force", "--help")),
+        ("sessions", ("--active", "--help")),
+    ],
+)
+def test_fa_wrapper_host_help_flags_at_later_positions_fail_closed_before_dispatch(
+    command: str,
+    args: tuple[str, ...],
+    tmp_path: Path,
+) -> None:
+    env_overrides: dict[str, str] = {}
+    git_marker = tmp_path / "git-called"
+    if command == "commit-traces":
+        git_bin = tmp_path / "bin"
+        git_bin.mkdir()
+        git_stub = git_bin / "git"
+        git_stub.write_text(f"#!/bin/sh\nprintf called >> {str(git_marker)!r}\n", encoding="utf-8")
+        git_stub.chmod(0o755)
+        env = _wrapper_env()
+        env_overrides["PATH"] = os.pathsep.join((str(git_bin), env["PATH"]))
+
+    result = _run_fa_wrapper(command, *args, env_overrides=env_overrides)
+
+    assert result.returncode == 2
+    assert "wrapper help is disabled" in result.stderr
+    assert result.stdout == ""
+    assert not git_marker.exists()
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ("--help", "run"),
+        ("-h", "run"),
+        ("-help", "run"),
+        ("--help", "update"),
+        ("run", "--help"),
+        ("run", "-h"),
+        ("run", "-help"),
+        ("run", "task", "--help"),
+        ("help", "run"),
+        ("help", "update"),
+    ],
+)
+def test_fa_wrapper_product_help_fails_closed_without_project_import(args: tuple[str, ...], tmp_path: Path) -> None:
     marker = tmp_path / "project-code-ran"
     poison = f"from pathlib import Path\nPath({str(marker)!r}).touch()\nraise RuntimeError('project poison')\n"
     (tmp_path / "fa").mkdir()
     (tmp_path / "fa" / "__init__.py").write_text(poison, encoding="utf-8")
     result = _run_fa_wrapper(*args, cwd=tmp_path, env_overrides={"PYTHONPATH": str(tmp_path)})
 
-    assert result.returncode != 0
-    assert any(term in result.stderr for term in ("exec: docker", "docker:", 'service "first-agent" is not running'))
+    assert result.returncode == 2
+    assert "wrapper help is disabled" in result.stderr
+    assert result.stdout == ""
     assert not marker.exists()
-
-
-def test_fa_wrapper_global_host_topic_is_not_rendered_from_checkout() -> None:
-    result = _run_fa_wrapper("--help", "update")
-
-    assert result.returncode != 0
-    assert any(term in result.stderr for term in ("exec: docker", "docker:", 'service "first-agent" is not running'))
 
 
 def test_fa_wrapper_has_real_clean_rebuild_dispatch_case() -> None:
@@ -393,11 +444,10 @@ def test_fa_wrapper_rejects_clean_rebuild_typo_before_delegation() -> None:
     assert "fa clean-rebuild" in result.stderr
 
 
-def test_fa_wrapper_unknown_help_topic_delegates_to_container() -> None:
-    result = _run_fa_wrapper("help", "run")
+def test_fa_wrapper_nonhelp_product_command_still_delegates_to_container() -> None:
+    result = _run_fa_wrapper("run", "help")
 
-    # Docker is intentionally unavailable in the unit test environment; the
-    # important contract is that wrapper did NOT swallow `help run` as host help.
+    # A plain `help` task value is data, not a wrapper-help switch.
     assert result.returncode != 0
     assert any(term in result.stderr for term in ("exec: docker", "docker:", 'service "first-agent" is not running'))
 
@@ -420,7 +470,7 @@ def test_wrapper_env_preserves_host_binaries_and_shadows_docker() -> None:
        any real container runtime the developer's host may have installed).
     3. Invoking the shimmed docker fails non-zero with a deterministic
        "docker:" message, matching the assertion contract used by
-       ``test_fa_wrapper_unknown_help_topic_delegates_to_container``.
+       ``test_fa_wrapper_nonhelp_product_command_still_delegates_to_container``.
     """
     env = _wrapper_env()
     path = env.get("PATH", "")
@@ -469,7 +519,7 @@ def test_fa_wrapper_does_not_import_host_help_from_checkout() -> None:
 
     assert "-m fa.cli_help" not in text
     assert "PYTHONPATH=" not in text
-    assert "host wrapper help is disabled" in text
+    assert "wrapper help is disabled" in text
 
 
 def test_cli_help_contains_host_wrapper_topics() -> None:
