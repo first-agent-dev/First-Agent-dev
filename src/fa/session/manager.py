@@ -633,7 +633,7 @@ def _main() -> int:
             workspace_override=args.workspace,
         )
     except SessionManagerError as exc:
-        print(f"{exc.code}: {exc}", file=sys.stderr)
+        print(str(exc), file=sys.stderr)
         return 2
     print(json.dumps({"session_id": context.session_id, "manifest_path": str(context.manifest_path)}))
     return 0

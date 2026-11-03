@@ -446,7 +446,56 @@ def test_entrypoint_manager_refuses_missing_managed_provisioner_before_state_cha
     exit_code = manager_module._main()
 
     assert exit_code == 2
-    assert "managed_execution_unavailable" in capsys.readouterr().err
+    assert capsys.readouterr().err == (
+        "managed_execution_unavailable: entrypoint session provisioning requires configured managed execution\n"
+    )
+    assert not state_root.exists()
+    assert not workspace_root.exists()
+
+
+@pytest.mark.parametrize(
+    "missing_argument",
+    ["subcommand", "--state-root", "--workspace-root", "--session-id"],
+    ids=["subcommand", "state-root", "workspace-root", "session-id"],
+)
+def test_entrypoint_manager_cli_rejects_missing_required_arguments_before_backend_lookup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    missing_argument: str,
+) -> None:
+    """C2: malformed CLI input is rejected before managed authority or state is touched."""
+    state_root = tmp_path / "state"
+    workspace_root = tmp_path / "workspaces"
+    argv = [
+        "fa.session.manager",
+        "provision",
+        "--state-root",
+        str(state_root),
+        "--workspace-root",
+        str(workspace_root),
+        "--session-id",
+        "session-required-cli-input",
+    ]
+    if missing_argument == "subcommand":
+        argv = ["fa.session.manager"]
+    else:
+        argument_index = argv.index(missing_argument)
+        del argv[argument_index : argument_index + 2]
+
+    backend_lookups: list[bool] = []
+
+    def resolve_backend() -> None:
+        backend_lookups.append(True)
+        return None
+
+    monkeypatch.setattr("fa.execution.composition.client_workspace_provisioner", resolve_backend)
+    monkeypatch.setattr(sys, "argv", argv)
+
+    with pytest.raises(SystemExit) as exc_info:
+        manager_module._main()
+
+    assert exc_info.value.code == 2
+    assert backend_lookups == []
     assert not state_root.exists()
     assert not workspace_root.exists()
 
