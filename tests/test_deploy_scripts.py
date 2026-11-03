@@ -282,41 +282,93 @@ def test_deploy_producers_verify_runtime_user_tmpfs_write_and_exec() -> None:
         assert "workspace readiness cannot complete" in text
 
 
-def _run_fa_wrapper(*args: str) -> subprocess.CompletedProcess[str]:
+def _run_fa_wrapper(
+    *args: str,
+    cwd: Path | None = None,
+    env_overrides: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    env = _wrapper_env()
+    if env_overrides:
+        env.update(env_overrides)
     return subprocess.run(
         ["bash", str(_SCRIPTS / "fa"), *args],
+        cwd=cwd,
         capture_output=True,
         text=True,
         check=False,
-        env=_wrapper_env(),
+        env=env,
     )
 
 
-def test_fa_wrapper_host_topic_help_is_russian_and_detailed() -> None:
-    result = _run_fa_wrapper("help", "clean-rebuild")
+@pytest.mark.parametrize("args", [(), ("--help",), ("-h",), ("help",)])
+def test_fa_wrapper_help_fails_closed_without_project_import(args: tuple[str, ...], tmp_path: Path) -> None:
+    marker = tmp_path / "project-code-ran"
+    poison = f"from pathlib import Path\nPath({str(marker)!r}).touch()\nraise RuntimeError('project poison')\n"
+    (tmp_path / "fa").mkdir()
+    (tmp_path / "fa" / "__init__.py").write_text(poison, encoding="utf-8")
+    result = _run_fa_wrapper(*args, cwd=tmp_path, env_overrides={"PYTHONPATH": str(tmp_path)})
 
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert "fa clean-rebuild [env]" in result.stdout
-    assert "Переменные окружения" in result.stdout
-    assert "WIPE_STATE=1" in result.stdout
-    assert "ASSUME_YES=1" in result.stdout
-
-
-def test_fa_wrapper_command_help_form_for_update() -> None:
-    result = _run_fa_wrapper("update", "--help")
-
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert "fa update [env]" in result.stdout
-    assert "AUTO_STASH=1" in result.stdout
-    assert "--force" in result.stdout
+    assert result.returncode == 2
+    assert "host wrapper help is disabled" in result.stderr
+    assert result.stdout == ""
+    assert not marker.exists()
 
 
-def test_fa_wrapper_global_help_topic_form_for_update() -> None:
+@pytest.mark.parametrize(
+    "command",
+    [
+        "logs",
+        "proxy-logs",
+        "status",
+        "up",
+        "down",
+        "restart",
+        "rebuild",
+        "shell",
+        "update",
+        "clean-rebuild",
+        "commit-traces",
+        "sessions",
+    ],
+)
+def test_fa_wrapper_host_command_help_fails_closed_before_dispatch(command: str, tmp_path: Path) -> None:
+    env_overrides: dict[str, str] = {}
+    git_marker = tmp_path / "git-called"
+    if command == "commit-traces":
+        git_bin = tmp_path / "bin"
+        git_bin.mkdir()
+        git_stub = git_bin / "git"
+        git_stub.write_text(f"#!/bin/sh\nprintf called >> {str(git_marker)!r}\n", encoding="utf-8")
+        git_stub.chmod(0o755)
+        env = _wrapper_env()
+        env_overrides["PATH"] = os.pathsep.join((str(git_bin), env["PATH"]))
+
+    result = _run_fa_wrapper(command, "--help", env_overrides=env_overrides)
+
+    assert result.returncode == 2
+    assert "host wrapper help is disabled" in result.stderr
+    assert result.stdout == ""
+    assert not git_marker.exists()
+
+
+@pytest.mark.parametrize("args", [("--help", "run"), ("run", "--help"), ("help", "run")])
+def test_fa_wrapper_product_help_uses_container_route(args: tuple[str, ...], tmp_path: Path) -> None:
+    marker = tmp_path / "project-code-ran"
+    poison = f"from pathlib import Path\nPath({str(marker)!r}).touch()\nraise RuntimeError('project poison')\n"
+    (tmp_path / "fa").mkdir()
+    (tmp_path / "fa" / "__init__.py").write_text(poison, encoding="utf-8")
+    result = _run_fa_wrapper(*args, cwd=tmp_path, env_overrides={"PYTHONPATH": str(tmp_path)})
+
+    assert result.returncode != 0
+    assert any(term in result.stderr for term in ("exec: docker", "docker:", 'service "first-agent" is not running'))
+    assert not marker.exists()
+
+
+def test_fa_wrapper_global_host_topic_is_not_rendered_from_checkout() -> None:
     result = _run_fa_wrapper("--help", "update")
 
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert "fa update [env]" in result.stdout
-    assert "SKIP_TESTS=1" in result.stdout
+    assert result.returncode != 0
+    assert any(term in result.stderr for term in ("exec: docker", "docker:", 'service "first-agent" is not running'))
 
 
 def test_fa_wrapper_has_real_clean_rebuild_dispatch_case() -> None:
@@ -412,15 +464,12 @@ def test_wrapper_env_preserves_host_binaries_and_shadows_docker() -> None:
     assert "test shim" in result.stderr  # identifiable as the shim, not real docker
 
 
-def test_fa_wrapper_uses_cli_help_as_single_source_of_truth() -> None:
+def test_fa_wrapper_does_not_import_host_help_from_checkout() -> None:
     text = (_SCRIPTS / "fa").read_text(encoding="utf-8")
 
-    assert "-m fa.cli_help" in text
-    assert "--host-topic" in text
-    assert "--wrapper-usage" in text
-    # Detailed operator help belongs in src/fa/cli_help.py, not duplicated in bash heredocs.
-    assert "WIPE_STATE=1" not in text
-    assert "AUTO_STASH=1" not in text
+    assert "-m fa.cli_help" not in text
+    assert "PYTHONPATH=" not in text
+    assert "host wrapper help is disabled" in text
 
 
 def test_cli_help_contains_host_wrapper_topics() -> None:

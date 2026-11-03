@@ -55,16 +55,13 @@ _is_help_arg() {
     esac
 }
 
-_help_python() {
-    PYTHONPATH="$REPO_DIR/src${PYTHONPATH:+:$PYTHONPATH}" "${PYTHON:-python3}" -m fa.cli_help "$@"
+_host_help_unavailable() {
+    printf '%s\n' "fa: host wrapper help is disabled until an installed-controller help seam is available" >&2
+    exit 2
 }
 
 _print_usage() {
-    _help_python --wrapper-usage
-}
-
-_print_host_topic_help() {
-    _help_python --host-topic "${1:-}"
+    _host_help_unavailable
 }
 _delegate_to_agent() {
     if _have_workspace; then
@@ -88,42 +85,42 @@ case "${1:-}" in
     # ── Infrastructure verbs (host-side, docker compose level) ──────────
     logs)
         shift
-        if _is_help_arg "${1:-}"; then _print_host_topic_help logs; exit 0; fi
+        if _is_help_arg "${1:-}"; then _host_help_unavailable; fi
         exec "${COMPOSE[@]}" logs "$@" first-agent
         ;;
     proxy-logs)
         shift
-        if _is_help_arg "${1:-}"; then _print_host_topic_help proxy-logs; exit 0; fi
+        if _is_help_arg "${1:-}"; then _host_help_unavailable; fi
         exec "${COMPOSE[@]}" logs "$@" fa-egress-proxy
         ;;
     status)
         shift
-        if _is_help_arg "${1:-}"; then _print_host_topic_help status; exit 0; fi
+        if _is_help_arg "${1:-}"; then _host_help_unavailable; fi
         exec "${COMPOSE[@]}" ps
         ;;
     up)
         shift
-        if _is_help_arg "${1:-}"; then _print_host_topic_help up; exit 0; fi
+        if _is_help_arg "${1:-}"; then _host_help_unavailable; fi
         exec "${COMPOSE[@]}" up -d
         ;;
     down)
         shift
-        if _is_help_arg "${1:-}"; then _print_host_topic_help down; exit 0; fi
+        if _is_help_arg "${1:-}"; then _host_help_unavailable; fi
         exec "${COMPOSE[@]}" down
         ;;
     restart)
         shift
-        if _is_help_arg "${1:-}"; then _print_host_topic_help restart; exit 0; fi
+        if _is_help_arg "${1:-}"; then _host_help_unavailable; fi
         exec "${COMPOSE[@]}" restart first-agent fa-egress-proxy
         ;;
     rebuild)
         shift
-        if _is_help_arg "${1:-}"; then _print_host_topic_help rebuild; exit 0; fi
+        if _is_help_arg "${1:-}"; then _host_help_unavailable; fi
         exec "${COMPOSE[@]}" up -d --build
         ;;
     shell)
         shift
-        if _is_help_arg "${1:-}"; then _print_host_topic_help shell; exit 0; fi
+        if _is_help_arg "${1:-}"; then _host_help_unavailable; fi
         # shell uses TTY (interactive) — docker picks up the terminal from
         # stdin/stdout; ${TTY_FLAG[@]} is empty for interactive, -T for non-tty.
         # Arrays-as-flags: use _have_workspace helper to avoid testing an
@@ -136,12 +133,12 @@ case "${1:-}" in
         ;;
     update)
         shift
-        if _is_help_arg "${1:-}"; then _print_host_topic_help update; exit 0; fi
+        if _is_help_arg "${1:-}"; then _host_help_unavailable; fi
         exec "$REPO_DIR/scripts/fa-update.sh" "$@"
         ;;
     clean-rebuild)
         shift
-        if _is_help_arg "${1:-}"; then _print_host_topic_help clean-rebuild; exit 0; fi
+        if _is_help_arg "${1:-}"; then _host_help_unavailable; fi
         exec "$REPO_DIR/scripts/fa-clean-rebuild.sh" "$@"
         ;;
     clean)
@@ -153,7 +150,7 @@ case "${1:-}" in
         ;;
     commit-traces)
         shift
-        if _is_help_arg "${1:-}"; then _print_host_topic_help commit-traces; exit 0; fi
+        if _is_help_arg "${1:-}"; then _host_help_unavailable; fi
         cd "$REPO_DIR"
         # -f: force-add gitignored trace files (they're ignored by default
         # so fa-update.sh stays clean; commit-traces is the deliberate path).
@@ -165,32 +162,25 @@ case "${1:-}" in
         ;;
     sessions)
         shift
-        if _is_help_arg "${1:-}"; then _print_host_topic_help sessions; exit 0; fi
+        if _is_help_arg "${1:-}"; then _host_help_unavailable; fi
         # shellcheck disable=SC2010
         ls -lt "$_FA_ROOT/sessions/" | grep -v "^total\\|\.active"
         ;;
 
     # ── Help ────────────────────────────────────────────────────────────
     ""|--help|-h|-help)
-        if [[ $# -ge 2 ]] && _print_host_topic_help "$2"; then
-            exit 0
-        fi
         if [[ $# -ge 2 ]]; then
-            # Agent command global form: `fa --help run` / `fa -h run`.
+            # Product CLI help is resolved only by the installed controller.
             _delegate_agent_help "$2" --help "${@:3}"
         fi
         _print_usage
-        exit 0
         ;;
     help)
         shift
         if [[ $# -eq 0 ]]; then
             _print_usage
-            exit 0
         fi
-        if _print_host_topic_help "$1"; then
-            exit 0
-        fi
+        # Product CLI help is resolved only by the installed controller.
         _delegate_to_agent help "$@"
         ;;
 
