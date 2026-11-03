@@ -457,17 +457,20 @@ class SessionManager:
         self._atomic_write_json(manifest_path, data)
         return session
 
-    def provision_entrypoint_session(self, *, session_id: str, workspace_override: Path) -> SessionContext:
-        """Provision or attach the session selected by the container adapter.
+    def provision_entrypoint_session(
+        self,
+        *,
+        session_id: str,
+        workspace_override: Path | None = None,
+    ) -> SessionContext:
+        """Provision or attach the entrypoint's managed session root.
 
-        This is an internal entrypoint handoff, not a relaxed public attach
-        rule: the shell has already selected the workspace, while this method
-        remains the sole owner of the manifest and session DB creation.
+        With no explicit override, SessionManager selects its approved default
+        ``workspace_root / session_id``. This adapter does not relax public attach
+        rules and remains the sole owner of the manifest and session DB lifecycle.
         """
         validated = self.validate_session_id(session_id)
         override = self._validate_workspace_override(workspace_override)
-        if override is None:
-            raise SessionManagerError("workspace_required", "entrypoint provisioning requires a workspace")
         manifest_path = self._manifest_path(validated)
         if manifest_path.is_file():
             return self._attach_session(validated, override)
@@ -597,7 +600,7 @@ def _main() -> int:
     provision.add_argument("--state-root", type=Path, required=True)
     provision.add_argument("--workspace-root", type=Path, required=True)
     provision.add_argument("--session-id", required=True)
-    provision.add_argument("--workspace", type=Path, required=True)
+    provision.add_argument("--workspace", type=Path, default=None)
     args = parser.parse_args()
     if args.command != "provision":
         return 2
@@ -613,9 +616,15 @@ def _main() -> int:
                 "managed_execution_unavailable",
                 "entrypoint session provisioning requires configured managed execution",
             )
+        if "FA_SESSION_SOURCE" in os.environ:
+            configured_source = os.environ["FA_SESSION_SOURCE"].strip()
+            source_workspace = Path(configured_source) if configured_source else None
+        else:
+            source_workspace = Path("/repo") if Path("/repo").is_dir() else None
         manager = SessionManager(
             state_root=args.state_root,
             workspace_root=args.workspace_root,
+            source_workspace=source_workspace,
             workspace_preparer=_managed_workspace_preparer,
             workspace_provisioner=workspace_provisioner,
         )

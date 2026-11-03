@@ -13,7 +13,7 @@ Path inventory:
   G: managed provisioner injection (E263)
      G1 explicit reference: provisioner owns the bytes, receives a real
         provisioning run namespace, host cloning never runs
-     G2 new-root provisioning without the SLICE3 publication join is BLOCKED and
+     G2 managed new-root provisioning owns the default root; readiness failure
         retains its Q118 non-active session/DB/run tombstone
      G3 not-READY readiness blocks new session AND attach (`workspace_not_ready`)
      G4 a registered result is never an rmtree target after a later failure
@@ -224,10 +224,7 @@ def test_unexpected_new_session_preparer_failure_keeps_q118_tombstone(tmp_path: 
     manager = _manager(tmp_path, workspace_preparer=fail)
 
     with pytest.raises(SessionManagerError, match="session_provision_failed"):
-        manager.provision_entrypoint_session(
-            session_id="session-readiness-failed",
-            workspace_override=manager.workspace_root / "session-readiness-failed",
-        )
+        manager.provision_entrypoint_session(session_id="session-readiness-failed")
 
     tombstone = manager.sessions_root / "session-readiness-failed"
     manifest = json.loads((tombstone / "manifest.json").read_text(encoding="utf-8"))
@@ -258,6 +255,13 @@ def test_unknown_session_and_workspace_mismatch_fail_before_mutation(tmp_path: P
             workspace_override=wrong_workspace,
         )
     assert mismatch.value.code == "workspace_mismatch"
+    assert not wrong_workspace.exists()
+    with pytest.raises(SessionManagerError, match="workspace_mismatch") as entrypoint_mismatch:
+        manager.provision_entrypoint_session(
+            session_id=created.session_id,
+            workspace_override=wrong_workspace,
+        )
+    assert entrypoint_mismatch.value.code == "workspace_mismatch"
     assert not wrong_workspace.exists()
 
     with pytest.raises(SessionManagerError, match="workspace_escape") as escape:
@@ -374,12 +378,54 @@ def test_entrypoint_provisioning_uses_same_manager_owner(tmp_path: Path) -> None
     assert created.session_db_path.is_file()
 
 
+def test_entrypoint_provisioning_uses_manager_owned_default_root_without_workspace(
+    tmp_path: Path,
+) -> None:
+    """C1: omitted shell override selects the manager root and resume reuses it."""
+    requests: list[ProvisionRequest] = []
+    readiness_contexts: list[RunContext | None] = []
+
+    def provision(request: ProvisionRequest) -> ProvisionedWorkspace:
+        requests.append(request)
+        return _fixture_provisioner(request)
+
+    def prepare(workspace: Path, run_context: RunContext | None) -> ReadyState:
+        readiness_contexts.append(run_context)
+        return _ready_state(workspace, run_context)
+
+    manager = _manager(tmp_path, workspace_preparer=prepare, workspace_provisioner=provision)
+    created = manager.provision_entrypoint_session(
+        session_id="entrypoint-managed-root",
+        workspace_override=None,
+    )
+    attached = manager.provision_entrypoint_session(
+        session_id="entrypoint-managed-root",
+        workspace_override=None,
+    )
+
+    expected_root = (tmp_path / "workspaces" / "entrypoint-managed-root").resolve()
+    assert created.workspace_path == attached.workspace_path == expected_root
+    assert (expected_root / "README.md").read_text(encoding="utf-8") == "source"
+    assert created.manifest_path.is_file()
+    assert created.session_db_path.is_file()
+    assert [request.mode for request in requests] == [ProvisionMode.PROVISION, ProvisionMode.REUSE]
+    assert [request.workspace_path for request in requests] == [expected_root, expected_root]
+    assert requests[0].source_workspace == manager.source_workspace
+    assert requests[1].source_workspace is None
+    assert len(readiness_contexts) == 2
+    assert all(isinstance(context, RunContext) for context in readiness_contexts)
+    assert [context.run_id for context in readiness_contexts if context is not None] == [
+        requests[0].run_id,
+        requests[1].run_id,
+    ]
+    assert requests[0].run_id != requests[1].run_id
+
+
 def test_entrypoint_manager_refuses_missing_managed_provisioner_before_state_changes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """C2/C3: module CLI cannot silently reach the pre-cutover host path."""
     workspace_root = tmp_path / "workspaces"
-    workspace = workspace_root / "session-no-backend"
     state_root = tmp_path / "state"
     monkeypatch.setattr("fa.execution.composition.client_workspace_provisioner", lambda: None)
     monkeypatch.setattr(
@@ -394,8 +440,6 @@ def test_entrypoint_manager_refuses_missing_managed_provisioner_before_state_cha
             str(workspace_root),
             "--session-id",
             "session-no-backend",
-            "--workspace",
-            str(workspace),
         ],
     )
 
@@ -499,6 +543,159 @@ def test_entrypoint_manager_uses_injected_provisioner_for_success(
     assert json.loads(capsys.readouterr().out)["session_id"] == "session-existing"
     manifest = state_root / "sessions" / "session-existing" / "manifest.json"
     assert json.loads(manifest.read_text(encoding="utf-8"))["status"] == "active"
+
+
+def test_entrypoint_cli_provisions_manager_default_root_without_workspace_argument(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """C2/C3: CLI omission reaches the managed port with the manager-selected root."""
+    workspace_root = tmp_path / "workspaces"
+    state_root = tmp_path / "state"
+    requests: list[ProvisionRequest] = []
+    real_is_dir = Path.is_dir
+    monkeypatch.delenv("FA_SESSION_SOURCE", raising=False)
+
+    def source_visible(path: Path) -> bool:
+        return True if path == Path("/repo") else real_is_dir(path)
+
+    monkeypatch.setattr(Path, "is_dir", source_visible)
+
+    def provision(request: ProvisionRequest) -> ProvisionedWorkspace:
+        requests.append(request)
+        request.workspace_path.mkdir(parents=True)
+        (request.workspace_path / "managed.txt").write_text("managed", encoding="utf-8")
+        return _registered("ws-default-root", "rev-default-root", "c" * 64)
+
+    monkeypatch.setattr("fa.execution.composition.client_workspace_provisioner", lambda: provision)
+    monkeypatch.setattr(manager_module, "_managed_workspace_preparer", _ready_state)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "fa.session.manager",
+            "provision",
+            "--state-root",
+            str(state_root),
+            "--workspace-root",
+            str(workspace_root),
+            "--session-id",
+            "session-cli-default-root",
+        ],
+    )
+
+    exit_code = manager_module._main()
+
+    assert exit_code == 0
+    assert len(requests) == 1
+    request = requests[0]
+    expected_root = (workspace_root / "session-cli-default-root").resolve()
+    assert request.mode is ProvisionMode.PROVISION
+    assert request.workspace_path == expected_root
+    assert (expected_root / "managed.txt").read_text(encoding="utf-8") == "managed"
+    assert request.source_workspace == Path("/repo")
+    manifest = json.loads(
+        (state_root / "sessions" / "session-cli-default-root" / "manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest["status"] == "active"
+    output = json.loads(capsys.readouterr().out)
+    assert output["session_id"] == "session-cli-default-root"
+    assert output["manifest_path"] == str(state_root / "sessions" / "session-cli-default-root" / "manifest.json")
+
+
+def test_entrypoint_cli_explicit_source_overrides_default_repo_seed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """C2: configured source is forwarded instead of the default /repo seed."""
+    workspace_root = tmp_path / "workspaces"
+    state_root = tmp_path / "state"
+    source = tmp_path / "approved-source"
+    source.mkdir()
+    requests: list[ProvisionRequest] = []
+    real_is_dir = Path.is_dir
+    monkeypatch.setenv("FA_SESSION_SOURCE", str(source))
+
+    def source_visible(path: Path) -> bool:
+        return True if path == Path("/repo") else real_is_dir(path)
+
+    monkeypatch.setattr(Path, "is_dir", source_visible)
+
+    def provision(request: ProvisionRequest) -> ProvisionedWorkspace:
+        requests.append(request)
+        request.workspace_path.mkdir(parents=True)
+        return _registered("ws-explicit-source", "rev-explicit-source", "e" * 64)
+
+    monkeypatch.setattr("fa.execution.composition.client_workspace_provisioner", lambda: provision)
+    monkeypatch.setattr(manager_module, "_managed_workspace_preparer", _ready_state)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "fa.session.manager",
+            "provision",
+            "--state-root",
+            str(state_root),
+            "--workspace-root",
+            str(workspace_root),
+            "--session-id",
+            "session-cli-explicit-source",
+        ],
+    )
+
+    exit_code = manager_module._main()
+
+    assert exit_code == 0
+    assert len(requests) == 1
+    assert requests[0].source_workspace == source.resolve()
+
+
+def test_entrypoint_cli_explicit_empty_source_selects_clean_seed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """C2: the explicit empty source override wins over a present /repo seed."""
+    workspace_root = tmp_path / "workspaces"
+    state_root = tmp_path / "state"
+    requests: list[ProvisionRequest] = []
+    real_is_dir = Path.is_dir
+    monkeypatch.setenv("FA_SESSION_SOURCE", "")
+
+    def source_visible(path: Path) -> bool:
+        return True if path == Path("/repo") else real_is_dir(path)
+
+    monkeypatch.setattr(Path, "is_dir", source_visible)
+
+    def provision(request: ProvisionRequest) -> ProvisionedWorkspace:
+        requests.append(request)
+        request.workspace_path.mkdir(parents=True)
+        return _registered("ws-clean-seed", "rev-clean-seed", "d" * 64)
+
+    monkeypatch.setattr("fa.execution.composition.client_workspace_provisioner", lambda: provision)
+    monkeypatch.setattr(manager_module, "_managed_workspace_preparer", _ready_state)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "fa.session.manager",
+            "provision",
+            "--state-root",
+            str(state_root),
+            "--workspace-root",
+            str(workspace_root),
+            "--session-id",
+            "session-cli-clean-seed",
+        ],
+    )
+
+    exit_code = manager_module._main()
+
+    assert exit_code == 0
+    assert len(requests) == 1
+    assert requests[0].mode is ProvisionMode.PROVISION
+    assert requests[0].source_workspace is None
+    assert requests[0].workspace_path == (workspace_root / "session-cli-clean-seed").resolve()
 
 
 def test_ambiguous_partial_managed_root_is_retained_on_failure(tmp_path: Path) -> None:

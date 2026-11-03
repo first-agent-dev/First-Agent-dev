@@ -56,14 +56,47 @@ from __future__ import annotations
 
 import ast
 import json
+import shutil
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from fa.session.manager import SessionManager, SessionManagerError
+from fa.session.manager import RunContext, SessionManager, SessionManagerError
+from fa.session.provisioning import ProvisionedWorkspace, ProvisionMode, ProvisionRequest
+from fa.workspace_bootstrap import ReadyState, ReadyStatus
 
-_MANAGER_SOURCE = Path("src/fa/session/manager.py")
+_TEST_ROOT = Path(__file__).resolve().parents[1]
+if _TEST_ROOT.name == "mutants":
+    # mutmut runs a rewritten source tree beneath this directory; keep the AST
+    # inventory anchored to its immutable staged input, not the active mutant.
+    _TEST_ROOT = _TEST_ROOT.parent
+_MANAGER_SOURCE = _TEST_ROOT / "src" / "fa" / "session" / "manager.py"
+
+
+def _provision_workspace(request: ProvisionRequest) -> ProvisionedWorkspace:
+    if request.mode is ProvisionMode.PROVISION:
+        if request.source_workspace is None:
+            request.workspace_path.mkdir()
+        else:
+            shutil.copytree(request.source_workspace, request.workspace_path)
+    return ProvisionedWorkspace(
+        registered=True,
+        workspace_id="ws-manifest-fixture",
+        revision_id="rev-manifest-fixture",
+        tree_sha256="a" * 64,
+    )
+
+
+def _ready_workspace(workspace: Path, _run_context: RunContext | None) -> ReadyState:
+    return ReadyState(
+        status=ReadyStatus.READY,
+        fingerprint="sha256:manifest-fixture",
+        reason_code="ready_managed_artifact",
+        log_path=workspace / "managed-readiness.log",
+        repaired=False,
+        elapsed_ms=1,
+    )
 
 
 def _manager(tmp_path: Path) -> SessionManager:
@@ -74,6 +107,8 @@ def _manager(tmp_path: Path) -> SessionManager:
         state_root=tmp_path / "state",
         workspace_root=tmp_path / "workspaces",
         source_workspace=source,
+        workspace_preparer=_ready_workspace,
+        workspace_provisioner=_provision_workspace,
     )
 
 
@@ -302,9 +337,6 @@ KNOWN_UNTESTED_CODES: dict[str, str] = {
     "session_id_generation_failed": "same exhaustion path for session ids",
     "session_provision_failed": (
         "wraps an OSError from mkdir/db-init; covered indirectly by the partial-provision rollback test"
-    ),
-    "source_workspace_invalid": (
-        "constructor-time source workspace validation; exercised via SessionManager construction elsewhere"
     ),
     "workspace_invalid": "non-directory workspace; the escape and mismatch cases are the security-relevant ones",
     "workspace_missing": "manifest points at a workspace deleted out-of-band; filesystem-race shaped",

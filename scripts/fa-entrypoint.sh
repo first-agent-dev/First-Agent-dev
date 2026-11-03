@@ -18,7 +18,7 @@ STATUS_FILE="${FA_STATUS_FILE:-${WORKSPACE}/.fa/entrypoint-status.txt}"
 TASK_TEXT=""
 TASK_SOURCE=""
 CHILD_PID=""
-ENTRYPOINT_MANAGED_SESSION=0
+ENTRYPOINT_MANAGED_AUTO_RUN=0
 ENTRYPOINT_HAS_COMMAND_OVERRIDE=0
 if [[ $# -gt 0 ]]; then
   ENTRYPOINT_HAS_COMMAND_OVERRIDE=1
@@ -95,6 +95,12 @@ _fail_to_standby() {
   log "Invalid auto-run configuration: $detail"
   _write_status 2 "INVALID_CONFIG" "$detail"
   _standby
+}
+
+_publish_active_workspace() {
+  local workspace_path="$1"
+  printf '%s\n' "$workspace_path" > "/sessions/.active.tmp.$$"
+  mv -f "/sessions/.active.tmp.$$" "/sessions/.active"
 }
 
 _validate_session_id() {
@@ -183,68 +189,69 @@ _prepare_entrypoint_workspace() {
   return 0
 }
 
-# Session workspace setup — runs once on container start.
-# Creates a git clone from /repo into /sessions/<id>.
-# When FA_WORKSPACE is set the caller owns the workspace — skip session clone.
+# Session workspace setup — runs once on container start. Managed auto-run
+# delegates materialization, identity, and readiness to SessionManager. Explicit
+# command overrides and standby retain their legacy filesystem adapter path.
 if [[ -n "${FA_SESSION_ID:-}" ]]; then
-    _validate_session_id "$FA_SESSION_ID" || _fail_to_standby       "FA_SESSION_ID must match [A-Za-z0-9][A-Za-z0-9_.-]{0,127}; got '${FA_SESSION_ID}'"
+    _validate_session_id "$FA_SESSION_ID" || _fail_to_standby \
+        "FA_SESSION_ID must match [A-Za-z0-9][A-Za-z0-9_.-]{0,127}; got '${FA_SESSION_ID}'"
 fi
 
 if [[ -d "/repo/.git" ]] && [[ -z "${FA_WORKSPACE:-}" ]]; then
     SESSION_ID="${FA_SESSION_ID:-session-$(date -u +%Y%m%dT%H%M%S)-$$}"
     export FA_SESSION_ID="$SESSION_ID"
-    ENTRYPOINT_MANAGED_SESSION=1
     SESSION_DIR="/sessions/${SESSION_ID}"
-    SESSION_CREATED=0
 
-    if ! git check-ref-format --branch "agent/${SESSION_ID}" >/dev/null 2>&1; then
-        _fail_to_standby "FA_SESSION_ID does not form a valid Git branch: $SESSION_ID"
-    fi
-
-    if [[ ! -d "$SESSION_DIR/.git" ]]; then
-        # file:// protocol uses git's pack transport (not filesystem hardlinks).
-        # This avoids dubious-ownership and cross-device-link failures from
-        # bare-path --local clones while keeping the operation local.
-        if git clone "file:///repo" "$SESSION_DIR" \
-            && git -C "$SESSION_DIR" checkout -b "agent/${SESSION_ID}"; then
-            SESSION_CREATED=1
-            cd "$SESSION_DIR"
-            log "Created session workspace: $SESSION_DIR"
-        else
-            # Clean up partial clone so it doesn't accumulate on restarts, then
-            # stop before command override/auto-run can use an ambiguous path.
-            rm -rf "$SESSION_DIR" 2>/dev/null || true
-            _fail_to_standby "git clone/checkout failed for $SESSION_DIR"
-        fi
+    if [[ "$ENTRYPOINT_HAS_COMMAND_OVERRIDE" == "0" ]] && _truthy "${FA_AUTO_RUN:-0}"; then
+        # The manager validates the id and owns the default /sessions/<id> root.
+        # Do not touch host Git or project files before its managed handoff.
+        ENTRYPOINT_MANAGED_AUTO_RUN=1
+        WORKSPACE="$SESSION_DIR"
     else
-        cd "$SESSION_DIR"
-        log "Resumed session workspace: $SESSION_DIR"
-    fi
-
-    if ! _configure_entrypoint_workspace; then
-        if [[ "$SESSION_CREATED" == "1" ]]; then
-            rm -rf "$SESSION_DIR" 2>/dev/null || true
+        # Explicit override and standby intentionally preserve the legacy adapter.
+        if ! git check-ref-format --branch "agent/${SESSION_ID}" >/dev/null 2>&1; then
+            _fail_to_standby "FA_SESSION_ID does not form a valid Git branch: $SESSION_ID"
         fi
-        _fail_to_standby "managed Git configuration failed for $SESSION_DIR"
-    fi
 
-    if ! _prepare_entrypoint_workspace; then
-        if [[ "$SESSION_CREATED" == "1" ]]; then
-            rm -rf "$SESSION_DIR" 2>/dev/null || true
+        SESSION_CREATED=0
+        if [[ ! -d "$SESSION_DIR/.git" ]]; then
+            # file:// uses pack transport rather than cross-device hardlinks.
+            if git clone "file:///repo" "$SESSION_DIR" \
+                && git -C "$SESSION_DIR" checkout -b "agent/${SESSION_ID}"; then
+                SESSION_CREATED=1
+                cd "$SESSION_DIR"
+                log "Created session workspace: $SESSION_DIR"
+            else
+                rm -rf "$SESSION_DIR" 2>/dev/null || true
+                _fail_to_standby "git clone/checkout failed for $SESSION_DIR"
+            fi
+        else
+            cd "$SESSION_DIR"
+            log "Resumed session workspace: $SESSION_DIR"
         fi
-        detail="workspace readiness failed; managed auto-run refused"
-        log "Auto-run refused: $detail"
-        _write_status 2 "FAILED" "$detail"
-        _standby
-    fi
 
-    # Publish after setup/readiness; readiness failure blocks managed auto-run but not an explicit override.
-    echo "$SESSION_DIR" > "/sessions/.active.tmp.$$"
-    mv "/sessions/.active.tmp.$$" "/sessions/.active"
+        if ! _configure_entrypoint_workspace; then
+            if [[ "$SESSION_CREATED" == "1" ]]; then
+                rm -rf "$SESSION_DIR" 2>/dev/null || true
+            fi
+            _fail_to_standby "managed Git configuration failed for $SESSION_DIR"
+        fi
 
-    WORKSPACE="$SESSION_DIR"
-    if [[ -z "${FA_STATUS_FILE:-}" ]]; then
-        STATUS_FILE="${WORKSPACE}/.fa/entrypoint-status.txt"
+        if ! _prepare_entrypoint_workspace; then
+            if [[ "$SESSION_CREATED" == "1" ]]; then
+                rm -rf "$SESSION_DIR" 2>/dev/null || true
+            fi
+            detail="workspace readiness failed; managed auto-run refused"
+            log "Auto-run refused: $detail"
+            _write_status 2 "FAILED" "$detail"
+            _standby
+        fi
+
+        _publish_active_workspace "$SESSION_DIR"
+        WORKSPACE="$SESSION_DIR"
+        if [[ -z "${FA_STATUS_FILE:-}" ]]; then
+            STATUS_FILE="${WORKSPACE}/.fa/entrypoint-status.txt"
+        fi
     fi
 fi
 
@@ -253,7 +260,10 @@ fi
 # deliberately has NO /workspace mount so it runs the IMMUTABLE image code from
 # /opt/fa-venv; never prepend a non-existent (or, worse, agent-writable) path.
 # Guard with a real file check so a stray empty /workspace can't shadow the image.
-if [[ -f "${WORKSPACE%/}/src/fa/__init__.py" ]]; then
+if [[ "$ENTRYPOINT_MANAGED_AUTO_RUN" == "1" ]]; then
+  # Managed auto-run must import the installed controller, never session code.
+  unset PYTHONPATH
+elif [[ -f "${WORKSPACE%/}/src/fa/__init__.py" ]]; then
   export PYTHONPATH="${WORKSPACE%/}/src${PYTHONPATH:+:$PYTHONPATH}"
 fi
 # Prepend the image-owned venv so `fa` resolves to the installed console script.
@@ -270,23 +280,29 @@ log "PYTHONPATH=${PYTHONPATH:-<image-default>}"
 _provision_entrypoint_session() {
   local state_root="${FA_STATE_ROOT:-${HOME}/.fa}"
   local python_bin="${PYTHON:-python3}"
-  if ! "$python_bin" -m fa.session.manager provision \
-      --state-root "$state_root" \
-      --workspace-root "/sessions" \
-      --session-id "$FA_SESSION_ID" \
-      --workspace "$WORKSPACE"; then
-    _fail_to_standby "SessionManager entrypoint provisioning failed for $FA_SESSION_ID"
-  fi
+  "$python_bin" -m fa.session.manager provision \
+    --state-root "$state_root" \
+    --workspace-root "/sessions" \
+    --session-id "$FA_SESSION_ID" \
+    >/dev/null
 }
 
-# Auto-run is the only entrypoint mode that starts a logical FA invocation.
-# Provision its manifest/DB through the canonical Python owner before launch;
-# command override remains a filesystem/debug adapter and does not invent a
-# second logical session authority.
-if [[ "$ENTRYPOINT_MANAGED_SESSION" == "1" ]] \
-    && [[ "$ENTRYPOINT_HAS_COMMAND_OVERRIDE" == "0" ]] \
-    && _truthy "${FA_AUTO_RUN:-0}"; then
-  _provision_entrypoint_session
+# The managed path admits and readies the default session through one manager
+# reservation. Only success publishes the active pointer or reaches `fa run`.
+if [[ "$ENTRYPOINT_MANAGED_AUTO_RUN" == "1" ]]; then
+  if _provision_entrypoint_session; then
+    cd "$WORKSPACE"
+    if [[ -z "${FA_STATUS_FILE:-}" ]]; then
+      STATUS_FILE="${WORKSPACE}/.fa/entrypoint-status.txt"
+    fi
+    _publish_active_workspace "$WORKSPACE"
+  else
+    provision_rc=$?
+    detail="managed session provisioning/readiness failed (exit=$provision_rc)"
+    log "Auto-run refused: $detail"
+    _write_status 2 "FAILED" "$detail"
+    _standby
+  fi
 fi
 
 # Explicit docker command overrides always win, even if FA_AUTO_RUN is set.
