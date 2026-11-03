@@ -2,7 +2,10 @@
 
 **Status:** PLAN ONLY. No case below has been executed, no row in
 [e2e-live-verification-register.md](e2e-live-verification-register.md) is promoted, and nothing here
-is evidence of live behaviour. Dates this plan: 2026-10-22, after E265 (SLICE2 STEP4 part B-1).
+is evidence of live behaviour. This is the execution/evidence plan for the final **W4 live-only** wave;
+case contracts, fixtures, driver and negative-control sensitivity must be authored, reviewed and dry-run
+locally in W3 before deployment. W4 executes that frozen package only; it does not develop it on the host.
+Dates this plan: 2026-10-22, after E265 (SLICE2 STEP4 part B-1), wave boundary clarified 2026-11-03.
 
 **Current acceptance-scope ruling (2026-10-23):** final I03 acceptance requires live-host E2E for all
 changes in I01–I03 of this project. The I03 inventory has 27 surfaces/8 joins; Q88 selected explicit
@@ -10,12 +13,13 @@ I01-origin IDs and the package now maps all 42 I01 CTs plus seven in-scope defer
 three planned I01 cases. All remain `NOT RUN`; this is not live evidence. The canonical package is
 `worklogs/planning-topology-and-executable-contracts-loop/e2e/`.
 
-**Purpose.** The register already says *what* the host fixture must arrange and observe, one row per
-producer (27 surfaces, 8 joins as of 2026-10-23, all `PLANNED / UNEXECUTED`; the three I01-origin cases are separately indexed in the project package and are not added to this historical I02/I03 register). It does not say *how to build the suite*:
-what the harness must be, in what order the cases become writable, what counts as a valid oracle when
-the assertion cannot run in-process, and which cases are impossible before a later slice lands. This
-document answers that, so the suite can be written mechanically at SLICE6 instead of being designed
-under time pressure against a live host.
+**Purpose.** The register defines what the approved-host fixture must arrange and observe; it is not
+permission to author tests during deployment. W0–W3 implement and validate the case contracts, markers,
+fixtures, external driver, producer coverage and local negative controls on Arena in dependency order.
+After those local W3 gates close, W3's approved `fa update` builds and starts the candidate image on the
+user's host; this deployment/build is a prerequisite, not live acceptance. When W4 starts, the exact
+suite and commands are frozen, reviewed, and locally dry-run. A host-side missing prerequisite is
+BLOCKED, not an invitation to improvise test code against the deployed system.
 
 **Non-negotiable framing (inherited rules).**
 - Deployment is Linux/Docker/Ubuntu/Python only; no added Go runtime. Cases run against the actual
@@ -24,8 +28,12 @@ under time pressure against a live host.
   that cannot arrange its fixture is `BLOCKED`, not `PASS`.
 - Unknown terminality leaves ownership quarantined and the case `UNEXECUTED`; no retry is allowed to
   manufacture a verdict.
-- Every case must have a **negative control** in the same file: the same fixture with one producer
-  disabled, proving the oracle can see the producer at all. "Green twice" is not a proof.
+- Every case must have a **negative control** proving the oracle can detect the producer. W3 must
+  demonstrate sensitivity with a targeted local mutation/fault injection for each security/contract
+  oracle. W4 must not disable code or mutate the deployed production service: if an actual host negative
+  control requires a producer-disabled image, run only in an explicitly approved, labeled disposable
+  test image/cell with disjoint state and cleanup assertions. "Green twice" is not a proof, and a
+  negative control is never permission to damage or contaminate the user's production workspace.
 
 ---
 
@@ -35,9 +43,9 @@ Three layers, deliberately separate, because each fails differently:
 
 | Layer | Location | Purpose | Runs in CI? |
 | :--- | :--- | :--- | :--- |
-| `tests/integration/conftest.py` | in-repo | host probe + session-scoped fixtures (image, daemon, sessions root, evidence sink) | no (skipped without host) |
-| `tests/integration/live/test_*.py` | in-repo | the cases; each maps to exactly one register row or join | no |
-| `scripts/e2e_live.py` | in-repo | driver that runs the suite as an *external* observer, captures evidence, and writes the run manifest | no |
+| `tests/integration/conftest.py` | authored/unit-tested in W3; probes host only in W4 | fail-closed preflight + session-scoped fixtures (approved image, daemon, sessions root, evidence sink) | no |
+| `tests/integration/live/test_*.py` | authored/reviewed/dry-run in W3; execute against approved host only in W4 | each case maps to exactly one register row or join | no |
+| `scripts/e2e_live.py` | authored, contract-tested and dry-run in W3; invoked in W4 | external observer; captures evidence and writes immutable run manifest | no |
 
 Rules that make the layer honest:
 
@@ -69,20 +77,25 @@ Rules that make the layer honest:
 Cases cannot be written before their subject exists; writing them early produces the near-miss
 proxies the project already paid for once (E259: duplicated producers masking each other). Order:
 
-| Phase | Cases unlocked | Requires | Register rows |
+| Phase | W3 preparation (local gates first; image deploy prerequisite last) | W4 live execution | Dependency / rows |
 | :--- | :--- | :--- | :--- |
-| **P0 harness** | fixture, markers, driver, evidence sink, cleanup oracle | nothing beyond a host | — |
-| **P1 images/entry** | installed wheel, isolated entry, profile rendering, PTY deadlines | approved image build (`Dockerfile.fa`), pinned CPython 3.13 | LIVE-01, 02, 05, 15, 16 |
-| **P2 backend/cell** | create/start/attach/RUN, one-shot + interactive worker, cancel, force-stop | P1 | LIVE-10, 11, 12, 13, 18 |
-| **P3 authority/views** | registration, R0, pinned readers, rooted IO, same-view read-your-writes | P2 | LIVE-03, 14, 17 |
-| **P4 tools through the real port** | E264/E265 seams on an admitted view (below, §4) | P3 + the SLICE4 STEP2 composition | joins S02, S05, S07 |
-| **P5 journal/recovery/seal** | supervisor kill at each durable boundary, seal/drain, forward recovery | P3 + SLICE3 | LIVE-06, 07, 08, 09, joins S01, S03, S04, S06 |
-| **P6 composed service** | SessionManager/provisioner/CLI, strict readiness, real provider, controller-attested handoff | P4, P5 + SLICE4 cutover + SLICE6 review | LIVE-04, LIVE-27, joins S07, S08 |
+| **P0 harness** | implement markers, preflight, fixture contracts, external driver, evidence sink and cleanup checks; unit-test simulated host-present and `FA_REQUIRE_EXECUTION_HOST=1` missing-host refusal paths | verify the actual running host/image preflight before any case | none |
+| **P1 images/entry** | build/test the installed wheel and entrypoint contract locally; freeze image build inputs and expected identity | verify the already-running approved image digest, isolated entry, profile rendering and PTY deadlines; do not rebuild | LIVE-01, 02, 05, 15, 16 |
+| **P2 backend/cell** | test create/start/attach/RUN, one-shot+interactive semantics, cancel/force-stop and no-replay using local deterministic backends and mutation/fault controls | prove behavior against the approved Docker daemon, cgroups and real cells | LIVE-10, 11, 12, 13, 18 |
+| **P3 authority/views** | test registration, R0, pinned readers, rooted IO and same-view read-your-writes against the real local authority/UDS | verify actual deployed filesystem, mount and kernel behavior | LIVE-03, 14, 17 |
+| **P4 tools through the real port** | complete caller tests for E264/E265 on admitted views; local composition only, not stub-only | verify the same tool behavior in approved deployed cells | joins S02, S05, S07 |
+| **P5 journal/recovery/seal** | run deterministic kill/fault-injection at each durable boundary, seal/drain and forward-recovery matrix locally | verify actual crash/restart, filesystem durability and containment under approved host conditions | LIVE-06, 07, 08, 09; joins S01, S03, S04, S06 |
+| **P6 composed service** | implement and pass local SessionManager/provisioner/CLI and controller-attested HANDOFF composition; mock only provider I/O; validate controlled-provider case definitions | execute approved real-provider cases and deployed handoff/ledger observations | LIVE-04, LIVE-27; joins S07, S08 |
 
-**Blocked today:** P4 requires the actual composition root (SLICE4 STEP2 wires the provisioner and the
-port); P5 requires SLICE3's seal/publication; P6 requires SLICE4's atomic cutover (including the named
-146-occurrence readiness migration under Q78 option B). Writing those cases now would encode an
-invented composition — the exact failure mode of asserting against a stub.
+**W3→W4 boundary.** P0–P6 case code, fixtures, mutation-sensitivity checks, command vectors, and
+evidence schemas are reviewed and dry-run locally before deployment. The cases remain blocked on their
+product dependencies in W0–W2 until those callers exist; do not write success assertions against
+recording fakes. After all Arena-local W0–W3 implementation, test, coverage and review gates pass,
+W3 performs the separate approved `fa update` build/deploy prerequisite and verifies its SHA/digest/
+config/health. W3 remains OPEN until that prerequisite succeeds; it does not run or close live cases.
+W4 runs only the approved frozen package against that already-running image and does not update/rebuild. A missing Docker
+host is simulated only in W3 dry-run tests; with `FA_REQUIRE_EXECUTION_HOST=1`, an actually missing
+W4 host/image must fail before any row can be reported PASS.
 
 ---
 
@@ -100,9 +113,12 @@ Negative control: the mutation of the product this oracle must catch
 Cleanup:        the leak assertion
 ```
 
-The negative control is what makes a live case worth its cost. It must be *product code* disabled via
-an environment switch the image respects, or a rebuilt image with the line removed — never a
-monkeypatch of the process under test, which would prove nothing about the deployed artifact.
+The negative control is what makes a case worth its cost. Its sensitivity proof belongs in W3 and
+must disable the actual producer/caller through a targeted source mutation or fault injection; a test
+that only calls a helper or toggles an unrelated mock is invalid. In W4, test the unchanged approved
+artifact positively. If a host-side negative variant is itself required by a case, build/use an
+operator-approved disposable test image and isolated labelled state; never patch or mutate the live
+production service or user workspace.
 
 ---
 
@@ -229,9 +245,9 @@ directory; reopen the DB before comparing so the test proves durable state rathe
 
 ## 6. Cost, flakiness and evidence policy
 
-- Budget: P1 ≈ 10 min (image build amortised), P2 ≈ 15 min, P3 ≈ 10 min, P4 ≈ 10 min, P5 ≈ 20 min
-  (kill/restart cycles), P6 ≈ 20 min with a real provider. Per-case timeout 120 s except the kill
-  matrix (300 s) and provider cases (600 s).
+- Budget: P1 ≈ 10 min for W4 verification of the running image (image construction/start is the W3
+  `fa update` deployment prerequisite, not W4 work), P2 ≈ 15 min, P3 ≈ 10 min, P4 ≈ 10 min,
+  P5 ≈ 20 min (kill/restart cycles), P6 ≈ 20 min with a real provider. Per-case timeout 120 s except the kill matrix (300 s) and provider cases (600 s).
 - **No retries for evidence.** A flaky case is a defect in the case or the product; re-running until
   green converts an unknown into a false PASS.
 - A case that fails to *arrange* is reported `BLOCKED` with the arranging command and its actual
@@ -244,7 +260,52 @@ directory; reopen the DB before comparing so the test proves durable state rathe
 ## 7. What this plan deliberately does not do
 
 - It does not promote any row, invent a verdict, or claim that unit proof transfers to the host.
-- It does not schedule execution: the user's standing instruction is E2E at the end of I03, and P4–P6
-  are blocked on SLICE3/SLICE4 work anyway.
-- It does not add a second harness: `pytest` + the existing markers/driver conventions are enough. A
-  bespoke runner would be one more thing to keep honest.
+- It does not authorize the W3 host build/deploy prerequisite until all Arena-local W0–W3 gates,
+  tests, sensitivity checks, independent review and runbook preparation close. That approved build/deploy
+  is not live I03 acceptance; W4 is the only live-test/evidence wave.
+- It does not add a second harness: use `pytest`, the registered markers and this in-repo external
+  driver. The complete harness/fixture/test package must be reviewable and dry-run locally before W3's
+  image build/deploy step.
+
+## 8. W3 image-build/deploy prerequisite (frozen runbook requirement)
+
+After all Arena-local W0–W3 gates and independent review pass, W3's deployment run sheet invokes this
+approved build/deploy command on the user's Linux/Docker host:
+
+```sh
+AUTO_STASH=0 SKIP_TESTS=1 SKIP_UV_SYNC=1 PRUNE=0 fa update
+```
+
+Before invocation, record the approved candidate SHA, freshly fetch and confirm `origin/main` equals it,
+keep `main` frozen through the update (the updater has no pinned-SHA input), verify a clean host checkout,
+and obtain maintenance approval. This is grounded in `scripts/fa-update.sh`: `git_update()` refuses dirty
+state unless auto-stash is enabled (466–480), then fetches and fast-forwards `origin/main` (483–495).
+On a changed candidate, `evaluate_changes()` marks the build required and `build_and_deploy()` runs
+`docker compose build` then `docker compose up` (557–561, 672–694); it waits for health and runs container
+smoke checks. This host-side image build/start is intentionally the W3 deployment prerequisite, not an
+accidental W4 test/build. `PRUNE=0` retains the previous image/config for reviewed rollback (986–990).
+
+`SKIP_TESTS=1` returns from updater step 7 before its fixed `/sessions/deploy-smoke-test` deletion
+(875–877), host `uv sync` (879–897), and repository-wide host pytest (909–920). It skips only that
+updater-owned test block; it does **not** skip the separate W4 suite. Record step 7 as `SKIPPED`: the
+script initializes `TEST_RC=0` before returning (861–865), so its printed `Tests: rc=0` is not test-PASS
+evidence. The environment assignments apply to this `fa update` process only. Updater health/import
+smoke checks are deployment readiness evidence, not live I03 PASS evidence.
+
+W3 closes this deployment prerequisite only if the update/build exits 0 and independent checks show the
+approved source SHA, running image digest and config/profile match the candidate, and the agent
+container reports Docker health `healthy` (not `no-healthcheck`). Require the in-container `fa --version` and core-import smoke checks to visibly pass; `fa-update.sh` reports these as
+warnings rather than failing its own exit, so exit 0 alone is insufficient. Record proxy/selfcheck
+warnings, but do not infer a working REAL-provider path from them; W4 must prove that path. If build,
+health, required smoke or identity fails, stop: W3 remains OPEN and W4 must not start. A nonzero update
+does not prove that deployment did not occur; capture printed HEAD/health/test status and use the reviewed
+recovery procedure—no blind retry. W3 runs no live producer cases and records no live PASS.
+
+W4 begins only after the candidate image is already running and identified. Do not invoke `fa update`
+or rebuild in W4. Run the frozen W3-reviewed suite against the running image/managed cells: product
+operations and workloads execute there; the approved external driver is a bounded TCB observer that
+collects host Docker/kernel/cgroup/process/DB/event-ledger evidence. Do not run repository-wide/default
+project pytest or unreviewed project conftest on the controller. The only approved host test code is the
+explicitly approved, frozen `tests/integration` package and external driver, excluded from default
+collection; no fixture authoring or production mutation is permitted on host. Docker/host live testing
+is W4-only.

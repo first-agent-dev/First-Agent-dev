@@ -2,8 +2,9 @@
 
 Дата 2026-11-01, база исследования `796d0bf`. Это архитектурный обзор и проект
 плана, не утверждение нового публичного API и не разрешение на реализацию. Контекст:
-оба сценария `fa run chat` и `fa workflow` должны работать в полном I03;
-инкремент и host-приёмка остаются открыты. Сверка OpenCode v2.2.5 зафиксирована
+`fa run chat` проходит managed nested workflow в полном I03; прямой `fa workflow` остаётся
+поддерживаемым legacy manual/controller путём без managed-acquisition переписывания.
+Инкремент и host-приёмка остаются открыты. Сверка OpenCode v2.2.5 зафиксирована
 в [предыдущем исследовании](i03-heavy-turns-batching-research-2026-11-01.md).
 
 ## 1. Зачем нужна композиция и что найдено
@@ -137,10 +138,17 @@ C0–C3, либо явное согласование изменения пла�
    восстановления старой capability; resume/compaction не теряют значимые ошибки,
    неопределённость и ссылки на реально доступные артефакты. Не приписывать event
    log полноту истории модели без E2E. Блокер при изменении договора — Q#.
-5. **Оставшийся действующий граф W2 → W3 → W4**: controller orchestration,
-   actual `fa workflow` и `fa run chat`, stop/seal/publish, recovery, разные роли,
-   хостовые ресурсы, descendants и C1, затем независимый review и all I01–I03 live
-   rows. Никакой local fake или supplier не закрывает host deployment.
+5. **Оставшийся действующий граф W2 → W3 → W4 (wave boundary clarified 2026-11-03):**
+   W2 locally wires controller/acquisition/nested workflow; W3 locally proves chat-only
+   `invoke_workflow` composition through `fa run chat` (direct `fa workflow` remains the unchanged
+   legacy manual path), stop/seal/publish/recovery, roles and descendant-safety through real local
+   supervisor/authority paths, mutation-sensitive tests, independent review, fixture/driver code and
+   the deployment runbook. After those local gates close, W3 runs the approved
+   `AUTO_STASH=0 SKIP_TESTS=1 SKIP_UV_SYNC=1 PRUNE=0 fa update` on the user's host to build/start and
+   identify the candidate image; this is a deployment prerequisite, not live acceptance. W4 performs
+   only the frozen suite against that already-running image: actual Docker-cell behavior,
+   host-resource/cgroup/kernel, real-provider and all I01–I03 live-row acceptance. No local fake is
+   W4 evidence, and W4 does not rerun `fa update` or rebuild.
 
 ### План верификации безопасности batch
 

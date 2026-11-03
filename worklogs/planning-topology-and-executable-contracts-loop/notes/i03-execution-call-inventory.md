@@ -1,16 +1,16 @@
 # I03 execution call inventory — source-grounded initial version
 
-Date: 2026-10-15; E230 refresh 2026-10-16; **E285 refresh 2026-10-23 at `969fa06`** (coverage re-scanned, every
-`src/fa` process/import route classified; see [§E285](#e285-refresh-2026-10-23--every-srcfa-processimport-route-classified-at-969fa06)
-below the historical tables); **E414 R26 refresh 2026-11-02** (see addendum below). The initial d910 line table below is
-historical; refreshed exact symbol ranges follow it. **State: OPEN — E285 coverage baseline at `969fa06`; R02 and
-R20–R28 have targeted working-tree refreshes through 2026-11-02; no S4P1 row closed.** E402–E404 record local
-readiness/writer and publisher-caller evidence; E406/E407 record R25 determinate/uncertain PUBLISH findings under
-Q114-A; E414 corrects the R26 caller trace. None supplies every row's passing managed-backend negative oracle or
-deployed-host evidence. The E285 scan accounts for every launcher and dynamic-import call site in `src/fa` (28
-call sites in 16 files, each mapped to exactly one row) and the refreshed R26 trace now records the actual
-HANDOFF caller. What remains is the negative oracle *running* against the managed backend, authorized as the
-pre-W0 prerequisite by Q113; no row is closed by this inventory note.
+Date: 2026-10-15; E230 refresh 2026-10-16; **E285 coverage baseline 2026-10-23 at `969fa06`** (coverage
+re-scanned, every `src/fa` process/import route classified; see [§E285](#e285-refresh-2026-10-23--every-srcfa-processimport-route-classified-at-969fa06)
+below the historical tables); **E414 R26**; **E423–E424 R02 refresh**; and **E425–E426 deployment-boundary reconciliation 2026-11-03** (addenda below). The initial
+d910 line table below is historical; refreshed exact symbol ranges follow it. **State: OPEN — E285 remains the
+frozen coverage baseline; R02 and R20–R28 have targeted source refreshes, and no S4P1 row is closed.** E402–E404
+record local readiness/writer and publisher-caller evidence; E406/E407 record R25 determinate/uncertain PUBLISH
+findings under Q114-A; E414 corrects the R26 caller trace; E423–E424 update R02's managed auto-run path and
+local CLI proof; E425–E426 clarify that W3's approved `fa update` builds/starts the candidate image as a
+deployment prerequisite, while W4 alone owns live I01–I03 acceptance. This deployment prerequisite closes
+no inventory row and supplies no live negative-oracle result. The E285 scan accounts for 28 launcher/dynamic-import call sites in 16 files, each mapped to one row. W0's
+Q113 exit is every row's observed local negative oracle; host/deployed acceptance remains a separate W4 gate.
 The inventory review itself does not change runtime source. E402 separately records a narrow runtime fail-closed guard change and its tests; this note remains a static route inventory and no row is thereby closed. Static search is evidence of candidates, not a
 proof that a route is reachable or safe. 'Read-only' and fixed Git argv do not exempt project Git.
 
