@@ -1,6 +1,6 @@
 # Open questions — raised 2026-10-07 during I01/SLICE4
 
-Canonical record. Next free id after this file: **Q90** after Q89 below.
+Canonical record. Next free id after this file: **Q91** after Q90 below.
 
 **Current owner/disposition alignment, 2026-10-15 (E200–E203):** retained I02 owns explicit-plan
 Q57/Q58, CT92 rules and local admission/gate proof. Q59/Q60 exact nested choices, Q61/CT97
@@ -1065,8 +1065,15 @@ in-process hooks/read-only mounts as the complete boundary. Earlier alternatives
 historical rationale, not permission to bypass this direction. Exact deployment contracts and
 negative proof remain pending; this note does not mark Q61 runtime/security evidence complete.
 
-**Status: OPEN. CT97 remains recommended, not operator-ratified.** This decision gates coder
-write-boundary implementation and any claim that the active plan is protected.
+**Status: RESOLVED — operator selected option (a), 2026-11-02.** The trust boundary is the trusted
+controller in the parent plus one shared, disposable, per-stage OS-sandboxed copy-on-write workspace for
+all provider write surfaces, followed by trusted validated import. This resolves the architecture choice;
+it does not close CT97 implementation, runtime security evidence, or any S4P1/W0/W1 acceptance row.
+
+**Scope clarification (2026-11-02).** `invoke_workflow` is registered for the `chat` role only. The
+`acquisition_unavailable` check applies to the child pipeline's requested roles (default
+`planner,coder,eval`); it does not mean coder should receive or invoke `invoke_workflow`. Direct
+`fa workflow` remains a separate manual CLI path and is not changed by this decision.
 
 **Source-confirmed topology and exposure.** `invoke_workflow` synchronously calls
 `run_workflow` (`src/fa/inner_loop/tools/workflow_tool.py:463-484`); its stage callback is
@@ -2254,8 +2261,7 @@ oracle actually proves I01 behavior. The operator selected A. Q87/LIVE-26 remain
 
 ## Q89 — How does the wire `publish` express a plan (CANDIDATE) publish?
 
-**Status: OPEN (raised 2026-10-23, E286) — blocks A3's supervisor half (SLICE3 STEP3's CANDIDATE `publish`) and
-therefore A5. No code was written against either option.**
+**Status: RESOLVED — operator selected option 1 with refinements R1–R6 (2026-10-30).** The contract decision is implemented at the component/test level in E288; production `run_workflow` composition remains fail-closed until the managed session supplies the trusted execution publisher. The original alternatives and rationale below are retained as history; E287 is the pre-implementation plan.
 
 **The gap.** Two records settle the *semantics* of a candidate publish and neither settles its *encoding*.
 Spec §5 (`i03-execution-workspace-spec-2026-10-15.md`, CANDIDATE grants) says: "On seal, validate bounded buffer with
@@ -2294,17 +2300,517 @@ member's addition) but keeps one route, one reply and one writer. Option 2 split
 current across two places. Option 3 undoes the single-writer property by making the plan path a second operation with
 its own reservation/replay semantics.
 
-**What is not in question.** The destination comes from the view's pinned `candidate_scope.plan_ref`; the bytes arrive
-through `write_candidate` under the same scope; the commit is the existing PLAN intent and same-path replace
-(`I03-LIVE-23`); `plan_promotion.publish_plan_buffer` must be deleted in the same change that activates the managed
-route (R3 — a retained fallback is a second writer by another name); and the controller must not be able to name a
-different plan path.
+**Operator decision — option 1, with binding refinements (R1–R6).** The wire remains the single existing
+`Operation.PUBLISH`. `sealed_manifest_id` is nullable only for a CANDIDATE `view_ref`: it must be null for
+CANDIDATE and non-null for an ordinary sealed WRITE publication. PUBLISH receives its own closed reply schema
+with nullable `plan_ref`; ordinary publication returns null, candidate PLAN publication returns the exact new
+ref, and `INSTALL_PROJECT` keeps the original `_COMMITTED` shape.
 
-**Why it is raised instead of decided.** Q85's precedent and the operating rule are explicit: a new *contract* choice
-is promoted, not guessed. The three options differ in the wire contract every deployed controller/supervisor pair must
-agree on, and the manager-plane codec is versioned and closed. A local test can prove any of them; only the operator
-can choose which contract ships.
+- **R1 — closed-view proof and private buffer.** Candidate publication must use a view-capability proof that
+  tolerates the already-closed view and read the private candidate buffer inside the authority transaction.
+  `read_candidate`'s normal open-work path is not callable after closure.
+- **R2 — view capability, not OWNER substitution.** Authenticate the candidate view grant and retain binding
+  checks for `status == OWNED`, `active_actor == namespace`, and generation. Do not require or replace the view
+  proof with the independent OWNER grant.
+- **R3 — reply isolation.** Define a PUBLISH-only result containing nullable `plan_ref`; do not widen the
+  `_COMMITTED` schema used by `install_project`.
+- **R4 — dispatcher identity.** Thread the dispatcher's `op-<request_id>` through the PLAN intent and reply.
+  Because `operation_id` is in the plan manifest hashed by `_derive_revision_id`, regenerate affected revision
+  IDs and pinned expectations. Do not add a content-hash idempotency scheme; exact replay remains the supervisor
+  journal's responsibility.
+- **R5 — seal-equivalent barrier.** Candidate publishing requires a closed gate, no active work, and a matching
+  `terminal.json`, followed by the existing I02 plan validators. `record_terminal` by itself does not drain work.
+- **R6 — base pin.** Require `binding.current["revision_id"] == view_ref.base_revision` before committing the plan.
 
-**What would settle it.** The operator picks 1, 2 or 3. Option 1 then lands as a `protocol.py` schema delta plus a
-purpose branch in `service._publish` and the authority-side buffer read, with the owning banks
-`tests/test_execution_service.py` (wire) and `tests/test_workspace_publication.py` (`publish_plan` half) extended.
+The existing candidate-buffer methods also need to be reachable through the existing `WRITE_FILE` route for a
+CANDIDATE view, with exact `candidate_path` scope enforcement; this is transport for the already-authorized
+buffer, not a new wire operation. Keep ordinary sealed WRITE publication unchanged. Delete the live
+`plan_promotion.publish_plan_buffer` writer in the same cutover. Do not reopen options 2/3.
+
+**Historical deferrals.** The question was raised after E273. E276 later delivered CT107 forward recovery; E277–E280 delivered the service composition and dependencies. E287 recorded the source-verified implementation plan. These entries preserve their state at the time and are superseded by E288 below.
+
+**Implementation result (E288, component-level; no production activation).** The implementation now:
+
+- applies the PUBLISH-only nullable `plan_ref` result and the strict seal-null/CANDIDATE cross-field rule, leaving install's `_COMMITTED` untouched;
+- routes CANDIDATE buffer reads/writes through the exact scoped private-buffer methods, then publishes with the view capability through the closed-view-tolerant authority transaction, seal-equivalent barrier, I02 validators, base equality and dispatcher `op-<request_id>`;
+- stages through `ExecutionClientPlanPublisher` and has `run_workflow`/`WorkflowContext` accept the publisher port; missing injection is a closed `prepare-failed`, not a local fallback;
+- deletes `plan_promotion.publish_plan_buffer` and tests ordinary sealed publication separately.
+
+The transport/service path has an end-to-end AF_UNIX test. Targeted checks: protocol/service 112 passed; workspace publication/recovery/purposes 135 passed; the full `test_verify_gate_live.py` bank 572 passed (with the workspace venv on `PATH`); Ruff check/format, Mypy (7 source files), compileall and `git diff --check` passed. Two targeted mutants were caught: removing the candidate base-revision comparison let the stale-base test publish, and replacing the PLAN manifest's dispatched operation ID broke the revision-ID assertion. No live-host run, frozen I03-LIVE-23 edit, CT/STEP tick, or claim of deployed readiness is made.
+
+**Remaining composition boundary.** The ordinary CLI/session composition does not yet create or inject an `ExecutionClientPlanPublisher` with the managed namespace, workspace ID, owner capability and current revision. Until that SLICE4/managed-session integration exists, candidate repair/replan attempts fail closed; this option-1 contract is available only to a caller that supplies the trusted port. Do not treat the fake publisher used by controller tests as a production writer, and do not reconcile or rewrite I03-LIVE-23 without planner approval and later host evidence. This is recorded as the separate integration blocker Q90; it does not reopen Q89's wire decision.
+
+---
+
+## Q90 — Which managed composition supplies the trusted candidate publisher to `run_workflow`?
+
+**Status: OPEN — implementation dependency; Q89's protocol contract is already resolved.**
+
+**Context (source-verified).** E288 gives `WorkflowContext`/`run_workflow` an explicit `CandidatePlanPublisher` port and provides `ExecutionClientPlanPublisher`. The ordinary CLI/session composition currently has no `ExecutionClient` owner or publisher. `_session_manager_for_args()` supplies `workspace_preparer` but no `workspace_provisioner`; `RunContext` contains lifecycle IDs and paths, not managed execution identity or an `ExecutionBinding`; `_cmd_workflow()` passes lifecycle contexts to `run_workflow()` without a trusted publisher. The controller therefore fails closed when the port is absent; the host-path writer is deleted and must not be restored.
+
+There is also a contract gap in the existing adapter: `ExecutionClientPlanPublisher` currently accepts and stores an OWNER capability, while I03 §7 requires a frozen internal `ExecutionBinding` with identity/client references but no token fields, and requires `ExecutionClient` alone to cache and select raw grants privately. The current `ManagedProvisioner` registration result supplies workspace/revision/tree identity, but registration is not itself the active run's OWNER grant. Bind only after the managed workspace is validated and the supervisor has supplied the current run's grant and revision. `_child_run_context()` allocates a fresh child `RunContext`; it does not yet establish child execution authority, which must follow the supervisor's handoff contract rather than reuse the parent binding.
+
+**Impact.** Managed candidate repair/replan cannot yet publish through the new route from the ordinary CLI. The component, protocol and service paths are locally tested, but Q89 is not production-enabled and SLICE3 STEP3/SLICE4 remain open. Live host evidence remains deferred; I03-LIVE-23's frozen OWNER-grant oracle is not evidence for this route.
+
+**Options for the planner/managed-session owner.**
+
+1. **Preferred: use the managed lifecycle as the trusted identity boundary, with construction in its adjacent runtime composition.** After managed workspace registration and a fresh run admission, the managed composition validates the supervisor-backed workspace identity and obtains the current run-scoped grant/revision. It constructs a typed binding and publisher for that run. `SessionManager` remains responsible for lifecycle identity; it does not own/persist bearer capabilities. The publisher advances its confirmed base only from a confirmed PUBLISH result.
+2. **Compose at the CLI boundary only as a placement variation.** The CLI may assemble the adapter only from the same validated typed binding supplied by the managed lifecycle. It must not discover, mint, reconstruct, or infer the namespace, workspace identity, grant, or base revision. Under this constraint option 2 is not a separate trust boundary; it is a different location for adapter assembly.
+3. **Keep promotion disabled until that composition lands.** The current fail-closed port remains; no host writer or alternate protocol is reintroduced. This is the safe interim state, not production completion.
+
+**Engineering recommendation (not yet a resolution).** Choose option 1 with the ownership boundary stated above. Thread the spec's explicit `ExecutionBinding` through `WorkflowContext` and `SessionState`; keep raw OWNER/view grants inside `ExecutionClient`; use the supervisor's confirmed identities rather than CLI path inference; and give each nested run a fresh binding established through the specified handoff. Keep the existing `CandidatePlanPublisher` seam as the controller port, but make its production adapter operate through the binding/client rather than hold a capability. Missing, stale, mismatched, or uncertain authority remains fail-closed; do not add a host-path fallback, ambient `ContextVar`, second writer, or new wire operation. This recommendation does not itself mark Q89 production-enabled or resolve the implementation owner/step.
+
+**Evidence to plan (not executed).** Add deterministic lifecycle/service integration coverage for registration → run-scoped grant → binding → candidate PUBLISH, including a durable ledger append and the resulting authoritative revision. Negative cases should cover absent/stale/cross-run bindings, stale base, uncertain PUBLISH, and proof that raw grants do not enter `RunContext`, `SessionState`, events, or model-visible output. Plan any live E2E under the canonical `worklogs/planning-topology-and-executable-contracts-loop/e2e/` package; keep it deferred until I01–I03 are merged to `main` and deployed, then evaluate only with host evidence. Do not change frozen E2E baselines or substitute a host test for the ownership decision.
+
+**Requested resolution.** Planner assigns the implementation owner/step and chooses the recommended option-1 architecture (or an option-2 adapter-placement variant that satisfies the same binding and token-custody contracts); option 3 remains active meanwhile.
+
+**Resolution (2026-11-01, Q99, operator: "делай, как правильно по логике на будущее использование системы").** The custody
+contract is **option A with the invariant written down**, not a re-architecture. The sentence above ("`ExecutionClient`
+alone caches and selects raw grants") described a design SLICE7 deliberately did not build, and the reasoning that settled
+it is about lifetime, not about hiding: a bearer capability should live with the component whose lifetime *is* the
+authority's grant — `ManagedExecution` acquires the writer when the run opens and releases it when the run closes, and a
+capability that outlives its release path is the defect, not a feature. Two consequences are now contract:
+
+1. **One run, one grant, one holder.** `ManagedExecution` holds it; `BoundPlanPublisher` reaches it only through
+   `managed`; the client stays stateless and is handed the grant explicitly for each operation. That makes every use
+auditable at the call site, and the release has exactly one caller.
+2. **The boundary is what must never leak, not what must never be reachable in-process.** No grant in `RunContext`,
+   session state, events, logs or model-visible text; anything inside the trusted composition may hold it.
+
+Option B (a private run-scoped grant store inside the client) was rejected on purpose: it would make the client stateful,
+move `publish_plan`/`release` off their written STEP6-STEP7 contract, and still not hide the token from in-process
+introspection — only from accidental reach, which is exactly what the reachability test now checks
+(`test_the_writer_capability_lives_in_exactly_one_place`, one path per CLI-owned object, a second copy fails).
+
+**Current-source audit (2026-11-02; E408; implementation remains open).** The older Q90 option text and the SLICE5
+STEP2 draft predate the landed SLICE7 composition and need to be read with these corrections:
+
+- `_drive_stage_with_managed_workspace` (`src/fa/cli.py`) creates the parent `PROJECT` WRITE view, calls `drive()`
+  while that view remains live, and publishes/stops it only after `drive()` returns. A synchronous `invoke_workflow`
+  therefore cannot hand off the writer from inside its handler until it has an explicit parent-view suspend/settle
+  seam. After child return, the already-built registry still holds fixed-view `ClientWorkspacePort` and
+  `ManagedBashExecutor` instances; there is no current parent-view reopen/rebind or resume marker.
+- `_make_workflow_ctx_provider` does not receive the active `ManagedExecution`; its context has no managed binding.
+  `run_workflow` called by `workflow_tool.handler` receives neither `managed_execution` nor `plan_publisher`.
+  `_child_run_context` calls `SessionManager.begin_run` only. `managed_execution_for_run(child_context)` is not the
+  nested-child acquisition path: it registers/acquires a writer, which would compete with the parent instead of
+  consuming the HANDOFF grant.
+- The existing authority route already supports the lineage needed for a child: a target namespace must carry the
+  caller's `run_id` as `parent_run_id`; return is restricted to the exact recorded parent. `tests/test_execution_handoff_return.py::test_return_and_child_client_verbs_over_real_socket`
+  proves a child grant opens a WRITE view, publishes a PLAN and returns the grant. `RunContext` has no parent field,
+  so the nested composition must construct and retain the exact child `NamespaceRef` separately; do not broaden the
+  seven exact `active_actor` comparisons unless a new source-backed test proves that necessary.
+- The actual adapter is `BoundPlanPublisher(managed, binding)` (`src/fa/execution/composition.py`), not the older
+  `BoundPlanPublisher(client, binding)` wording. A child publisher must reach the child-scoped `ManagedExecution`,
+  whose grant was received by HANDOFF; it must not call the ordinary child writer-acquisition factory.
+- `tests/test_execution_handoff.py::test_the_route_rotates_the_capability_and_reserves_exactly_one_record` proves exact same-request-id replay
+  of HANDOFF with its original proof returns the recorded grant; a fresh request id with that old proof is rejected.
+  A client-side reconciliation may therefore use only the same request id, payload, namespace and proof. If that
+  remains indeterminate, do not dispatch the child, release the writer, invent a grant, or resume the parent on its
+  stale view. Return to the parent only after a confirmed reverse HANDOFF and a fresh parent view. Preserve Q114's
+  no-auto-PUBLISH-retry rule; do not change Q108 or legacy direct `fa workflow`.
+
+The resolved contract is sequential single-writer ownership: settle the parent WRITE view before HANDOFF; dispatch
+only after the child grant is confirmed; settle child views before reverse HANDOFF; then reopen the parent at the
+returned revision and make the chat explicitly refresh its workspace understanding. The trusted stage/tool boundary
+must provide suspend/resume and view rebinding without exposing grants through `RunContext`, session state, logs or the
+model. Failure to prove either transfer is fail-closed and must not RELEASE an owner whose location is unknown. This
+is a source-backed implementation contract, not a claim that Q90/CT108 or the live nested path is complete.
+
+---
+
+## Q112 — readiness-failure scope for managed `fa-entrypoint` auto-run
+
+**Status: RESOLVED — operator selected `auto_run_only`; narrowly amended by Q118 (2026-11-02).** A failed
+managed cell-local readiness check blocks active-workspace publication and `fa run`. The path may first create a
+provisional, non-active manifest/DB and reserve exactly one provisioning run, as specified by Q118; that run ID
+is never reusable. No workflow `event_log` events are appended on refusal. An explicit command override remains
+available as a diagnostic path, including when `FA_AUTO_RUN=1`; it must not run the auto-run provisioner. When
+auto-run is disabled, the existing standby behavior remains.
+
+**Source conflict.** `scripts/fa-entrypoint.sh::_prepare_entrypoint_workspace` returned success after every
+`workspace_bootstrap ensure` failure. The managed auto-run path then published `.active`, provisioned a
+session, and launched `fa run`. At the same time, existing
+`tests/test_fa_entrypoint.py::test_entrypoint_readiness_degradation_warns_and_continues` deliberately
+requires a failed readiness check not to suppress an explicit command override. The planned R02 oracle's
+phrase "no project command without backend" was broader than this existing distinction, while SLICE4 STEP2b's
+fail-open removal names the managed CLI cutover rather than this shell entrypoint.
+
+**Options considered.** (1) block managed auto-run only, preserving explicit command override; (2) block all
+commands, including diagnostic overrides; (3) keep fail-open and narrow R02's contract. The operator selected
+(1). Only a freshly created, unpublished clone may be removed after the refusal; a resumed workspace is
+preserved.
+
+**Implementation boundary.** Readiness must run inside the admitted managed EXEC cell; host-side
+`workspace_bootstrap ensure`, a config-presence check, or HEALTH is not EXEC-readiness proof. On refusal, retain
+the non-reusable run reservation/tombstone; do not publish `.active`, launch `fa run`, or append workflow events.
+Cleanup may remove only unregistered session-owned workspace state and must never delete supervisor-registered
+bytes. This contract does not claim the managed route is implemented or proven: R02 and S4P1 remain open until
+their named production/host evidence exists. No Docker or live-host run is implied.
+
+---
+
+## Q113 — W0/S4P1 exit versus managed-negative dependency on W1
+
+**Status: RESOLVED — operator selected strict row closure (option 2, 2026-11-02); no product contract is being reopened.** W0 remains open until every S4P1 row passes its named managed-backend negative oracle. The operator authorizes the necessary managed-composition prerequisite to be implemented before W0 exits; this is a recorded re-sequencing exception, not permission to mark rows closed early.
+
+**Source conflict.** The increment's execution order is W0 → W1 → W2; W0 includes S4P1's inventory rows, and the S4P1 table says to close each row with a current source line, caller, and nodeid. The inventory note separately says no S4P1 row closes until its named negative oracle runs against a managed backend, identified as SLICE4 STEP2/W1. Current source makes the dependency concrete: R27's `_cmd_run` builds the tool registry without `workspace_io`, and the planned live-chat canonical-tree negative is absent; R28's host-bootstrap isolation negative also depends on managed Bash; Q112/R02's separate backend-availability oracle is likewise not supplied by `workspace_bootstrap ensure`.
+
+Therefore, if W0 requires every S4P1 *row* to be closed, its stated evidence gate requires W1's managed composition first. If W0 requires only inventory completion (source/caller/current or planned nodeid and explicit dependencies), the negative-oracle executions can remain open and run during W1 without changing the wave order. The current plan text uses both formulations; this record does not decide between them.
+
+**Options for the operator/planner.**
+
+1. **W0 means inventory readiness.** Complete the source/caller/oracle map for every S4P1 row; leave rows explicitly OPEN until the managed negative oracles run in W1. W0 may exit on that inventory criterion, then W1 begins in the written order. This clarifies the wave exit without marking any S4P1 row closed or weakening its acceptance test.
+2. **W0 requires row closure.** Keep every managed-negative result as a W0 exit criterion; authorize a managed-composition prerequisite before W0 exit or explicitly re-sequence the required W1 work. The dependency order changes and must be recorded before implementation.
+
+**Resolution (2026-11-02; operator selected option 2, strict row closure).** W0 cannot exit until each S4P1 row's named negative oracle passes. The operator authorizes the managed-composition prerequisite needed to run those oracles before W0 exits; remaining W1 regression/cutover work stays after W0. This permits only the required prerequisite, not early row closure or live-host claims.
+
+**Guardrails.** No row is PASS/CLOSED without its named negative oracle; no live-host evidence is inferred from local source checks; no Docker is started before the planned post-merge host phase. Keep W0 open while prerequisite work and row oracles are incomplete.
+
+---
+
+## Q114 — How is an indeterminate candidate PLAN PUBLISH settled and reclaimed?
+
+**Status: RESOLVED — operator selected option 1/A (2026-11-02); implementation and acceptance remain OPEN.** This architecture direction is for the managed-run path and does not authorize changing legacy direct `fa workflow` behavior in the current scope. R25 remains OPEN until its uncertainty/lifecycle acceptance is implemented and reviewed. At the time of this Q114 decision, no wire change for candidate-PUBLISH settlement/reclaim was authorized; the later Q108 scope clarification below is limited to Q60 inventory metadata and does not alter this decision.
+
+**Source-grounded behavior (E407, 2026-11-02).** `ExecutionClient.publish_plan` makes one PUBLISH request. If its result is indeterminate, it sets `uncertain=True`; its `finally` deliberately skips `_release_view`, and the exception leaves the method without returning the locally held `ViewRef` or view grant. `ManagedExecution` has no pending-candidate/recovery field. The CLI's `_cmd_workflow` `finally` still calls `_settle_writer_release`/`ManagedExecution.close` after `run_workflow` returns.
+
+A real local UDS composition probe injected `DURABILITY_UNKNOWN` at the start of `WorkspaceAuthority.publish_candidate_plan` (before its commit body). The controller classified it as `PlanPromotionError("durability-unknown", replaced=True)` and sent no second PUBLISH or candidate-view RELEASE. However, `WorkspaceAuthority._has_unsettled_views` treats a view as unsettled only when `access != READ`; the CANDIDATE purpose is an `Access.READ` view. Consequently the CLI's owner RELEASE succeeded: `workspace.json` became `AVAILABLE`, while the view record and supervisor-private `candidate` bytes remained on disk with the view in `STOPPING`. The probe initially expected `OWNED` and failed (pytest exit 1); a temporary diagnostic expectation of `AVAILABLE` allowed the full oracle to pass (1 passed). The probe test and its extra import were removed afterward; no test now codifies this behavior as desired.
+
+`_closed_candidate_reader` requires the binding to remain `OWNED`, the active actor to match, and a live writer. After release, the old candidate view cannot publish; a later writer claim advances generation. `release_reader` needs the view ref and capability, which the unwound client call does not expose or persist. `_load` performs workspace/intent recovery but does not rehydrate or sweep persisted candidate-view records. Thus the current composition demonstrably permits an orphaned, private, non-publishable candidate view after an uncertainty-classified result. The PLAN itself may be either old or committed on a genuinely uncertain post-send outcome; do not assert old PLAN bytes as a general uncertainty invariant.
+
+**Impact.** R25's determinate refusal proof remains valid, but uncertainty handling does not yet define an end-to-end settlement/reclaim path. Repeated ambiguous candidate PUBLISH operations can leave private view records/buffers after the run owner is released; the authority has no caller-held view proof to publish or explicitly release that record. This affects failure recovery and resource lifecycle, not Q108 wire semantics, and is a demonstrated code/plan gap rather than a presumed R27/R28 blocker.
+
+**Bounded options for planner/operator.**
+
+1. **Retain run ownership and pending proof in the trusted managed execution.** Keep the exact candidate `ViewRef`, view grant and PUBLISH request identity privately in `ManagedExecution`; do not release the writer while that operation is unresolved. Reconcile using exact same-request replay where the existing journal permits, then release only after the candidate is proven `PUBLISHED`/`REJECTED`. Define process-death behavior explicitly (likely workspace quarantine/recovery); no host fallback and no model-visible grant.
+2. **Move reconciliation/cleanup to durable supervisor authority.** Persist enough operation↔candidate linkage for startup/runtime recovery to prove whether commit occurred, settle the candidate view accordingly, and only then permit owner release. Reuse existing exact operation replay if sufficient; if a new query/message or wire representation is required, stop at Q108 and obtain that decision rather than inventing it.
+3. **Accept orphaned candidate views under an explicit bounded lifecycle policy.** Define safe retention/expiry and garbage collection, but delete/reject only when journal and canonical PLAN/intent evidence prove the outcome; if outcome is still unknown, keep an authority-level fence rather than making the workspace AVAILABLE with an unpublishable view. This option requires explicit storage/availability tradeoff approval.
+
+**Engineering recommendation (not resolved).** Prefer option 1 for the in-process trusted-controller boundary already selected under Q61: the same `ManagedExecution` that owns the writer should own the unresolved candidate proof, keep the owner fenced, and reconcile without a second writer or new worker/IPC architecture. Confirm exact replay inputs and process-death/quarantine behavior against the operation-journal contract before implementation.
+
+**Resolution (2026-11-02; operator selected option 1/A).** For managed runs, the run-scoped `ManagedExecution` is the holder of pending candidate proof and owner authority. An indeterminate publication must not trigger a host write or release the writer before reconciliation. Do not automatically retry PUBLISH; use only the exact-request replay/reconciliation semantics already permitted by the operation journal, and preserve fail-closed state if the result remains unknown. If the process dies before reconciliation, the workspace remains unavailable/quarantined for recovery; this selection does not promise autonomous restart recovery. No second writer, worker/IPC architecture, or new wire operation for candidate-PUBLISH settlement/reclaim is authorized by this Q114 resolution; the separate Q108 scope clarification below governs the Q60 inventory metadata operation only.
+
+**Scope and remaining work.** Legacy direct `fa workflow` behavior is unchanged in the current scope. Its observed orphan-view behavior remains an R25 acceptance gap, not an approved policy. The managed-run implementation must separately prove each uncertain candidate-saga phase (including lost CREATE_VIEW response), pending-handle ownership, no premature RELEASE, exact replay safety, and restart/quarantine behavior before claiming Q114 implementation complete. Do not assert that uncertainty means unchanged PLAN, do not treat `DURABILITY_UNKNOWN` as determinate refusal, and do not claim R25/S4P1 uncertainty coverage from the decision alone.
+
+**Q108 scope clarification (2026-11-02).** After the operator separately selected Q108 route B, the no-new-wire-operation constraint above is clarified as applying to Q114 candidate-PUBLISH settlement/reclaim. The only separately authorized wire addition is Q60's bounded `LIST_PROJECT_ARTIFACTS` metadata operation under protocol v2, on a pinned READ/PROJECT view. It does not query or settle PUBLISH, alter writer retention, introduce automatic retry, change process-death quarantine, or otherwise reopen Q114. This scoped exception is not implementation or acceptance evidence.
+
+---
+
+## Q115 — Canonical roadmap section heading for Q60 bootstrap
+
+**Status: RESOLVED — operator delegated the engineering choice; option A selected (2026-11-02).**
+
+**Source conflict.** The managed-acquisition specification §7.1 named the required sections as “Intent and Out of scope”, while the existing supervisor-side `execution.publication.render_bundle` and its fixtures required `## Out-of-scope`. The spelling is part of the model-authored bootstrap input contract; silently accepting both would weaken the strict two-heading schema, while changing it affects the existing renderer and tests.
+
+**Options.** (A) Use the literal Q60 form `## Out of scope` and update the existing renderer plus its regression fixtures. (B) Preserve `## Out-of-scope` and amend the Q60 managed-acquisition contract to match.
+
+**Resolution.** The operator delegated the choice and said to use the recommended option if spaces caused no issue. Select A: the space is valid Markdown heading text and does not affect file paths, IDs, metadata, or bundle identity except as part of the intended body bytes. The renderer accepts exactly `## Intent` and `## Out of scope`; `## Out-of-scope` remains rejected. Existing three-file rendering, controller-owned metadata, bundle hashing and install authority are unchanged.
+
+**Scope.** This resolves only the heading spelling. It does not close the managed-acquisition parser/resolver/runtime, authorize accepting alternate section forms, change legacy `fa workflow`, or provide live-host ledger append evidence.
+
+---
+
+## Q116 — Increment bootstrap metadata: is `slug` an allowed frontmatter key?
+
+**Status: RESOLVED — operator selected option B (2026-11-02).**
+
+**Source conflict.** The managed-acquisition spec §7.0 names the canonical increment metadata keys as `Increment-ID`, `Roadmap-ID`, `status`, `slices`, and `shipped`; the existing `execution.publication.render_bundle` additionally emitted `slug`. A strict metadata parser following §7.0 would reject the renderer's own output unless one side changed.
+
+**Options.** (A) Amend the schema to allow optional `slug`, validate it against the canonical relative path, and preserve the renderer output. (B) Preserve the exact §7.0 field set and remove `slug` from the increment frontmatter emitted by the renderer.
+
+**Resolution.** The operator selected B. Increment metadata uses only the five listed fields; project/increment slugs remain encoded in the canonical relative paths and are not duplicated in increment frontmatter. Roadmap `slug` remains part of the roadmap schema. The renderer and literal fixtures change in lockstep.
+
+**Scope.** This resolves only the increment metadata key set. It does not authorize path guessing, weaken YAML parsing, or close managed selection/bootstrap runtime, admission, ledger append, supervisor integration, or live-host evidence.
+
+
+## Q117 — What managed prerequisite can prove EXEC availability before entrypoint project effects?
+
+**Status: RESOLVED — operator directed implementation now, using existing seams and avoiding HEALTH-only proof (2026-11-02).** The narrow injection seam alone is insufficient; pursue the actual managed provisioning/cell-readiness path under Q113 rather than adding a second HEALTH or wire-operation surface. `REGISTER_WORKSPACE{create:true}` and the existing PROVISIONING view/provisioner are the intended seams. Q118 resolves the temporal conflict by permitting one provisional, non-active run reservation before cell-local readiness. No S4P1 row or W0 is closed by this direction.
+
+**Source evidence (2026-11-02).** R02's named oracle is `test_entrypoint_runs_no_project_command_without_backend`, which requires no host project effects when managed execution is unavailable. `scripts/fa-entrypoint.sh:193–239` currently clones/configures/runs workspace readiness before invoking the manager provision command at `:270–290`. E415 fixed the module CLI's missing provisioner injection, but it is necessarily reached after those shell effects. A proposed early `Operation.HEALTH` check is insufficient: `src/fa/execution/service.py::_health:570–582` returns `self._authority.ready` and does not attest EXEC worker/cell readiness. The existing remote provisioner also rejects `ProvisionMode.PROVISION` at `src/fa/execution/composition.py:470–474` until the SLICE3 publication join. Moving the current session-provision command ahead of readiness would conflict with Q112's accepted readiness-before-session-provisioning order.
+
+**Impact.** A config-presence or HEALTH-only gate can block an initially absent supervisor, but it cannot prove that the managed EXEC path can own/run the workspace, nor eliminate the host-side project effects and race window. Strict R02/W0 closure therefore requires a managed new-root/session composition and a cell-local readiness route, or a change in the already ratified wave ordering. No runtime implementation or oracle weakening is authorized by this question itself.
+
+**Resolution options.**
+
+A. **Keep the strict target (recommended):** expand Q113's pre-W0 managed-composition prerequisite to include the production new-root provisioning join and the minimum cell-local entrypoint readiness route needed for the R02 negative oracle. Preserve Q112's explicit-command and readiness refusal behavior; do not count HEALTH alone as proof. This is a broader dependency than the earlier narrow injection seam and must be source-mapped before implementation.
+
+B. **Reopen the schedule, not the safety contract:** leave R02 and W0 OPEN until the planned W1 SLICE4 STEP2 provisioning/readiness cutover, then run every named oracle. This revises Q113's strict pre-W0 closure timing but does not weaken the no-project-command contract.
+
+The operator selected option A: preserve the strict R02 target and expand the pre-W0 managed-composition prerequisite to include the production new-root join and minimum cell-local readiness route. No option permits marking R02 complete from a health-only check. Implementation and all named oracles remain OPEN.
+
+
+## Q118 — May managed readiness create provisional run state before the session becomes active?
+
+**Status: RESOLVED — operator selected option A (2026-11-02).** Permit only the existing lifecycle's provisional,
+non-active session manifest/DB and one provisioning-run reservation before managed cell-local readiness. The
+reservation is durable and its run ID is a non-reusable tombstone if provisioning/readiness fails. Failure must
+not publish `.active`, launch `fa run`, or append workflow `event_log` events. Explicit-command override and
+standby behavior under Q112 are unchanged.
+
+**Source conflict.** Q112 requires a readiness failure to stop managed auto-run before session provisioning, `.active` publication, or `fa run`; the live proposal L-ENTRY-1 expects no manifest, `session.db`, run binding, run directory, or `event_log` append on readiness refusal. But the existing managed lifecycle seam needs an admitted `RunContext` for provisioning and cell execution: `SessionManager._new_session` creates a `provisioning` manifest and `SessionDatabase`, calls `begin_run`, then invokes `workspace_provisioner` and readiness (`src/fa/session/manager.py:350–391`). A cell-local bootstrap/readiness operation therefore needs namespace/run authority before the session can be promoted. No current API supplies an EXEC-capable cell for an unprovisioned session without this run context; HEALTH is insufficient (Q117).
+
+**Historical impact before resolution.** The existing manager/provisioner ordering creates provisional state
+before readiness. Preserving Q112's former zero-state wording would have required a separate preflight identity and
+lifecycle, adding a second orchestration surface and risking unbound run IDs. Q118 resolves this by authorizing the
+narrow provisional state; it does not weaken the no-host-project-command target.
+
+**Resolution options.**
+
+A. **Amend Q112 narrowly (recommended for lowest surface).** Permit a provisional, non-active session manifest/DB and one reserved provisioning run while managed cell-local readiness executes. On readiness failure, never publish `.active`, never launch `fa run`, never append workflow `event_log` events, retain the provisioning run ID as a non-reusable tombstone under existing reservation rules, remove only the unregistered session-owned workspace/session namespace, and never delete supervisor-registered bytes. Update L-ENTRY-1/L-ENTRY-5 to assert these exact state transitions. Explicit command override and standby behavior remain unchanged.
+
+B. **Preserve Q112's zero-session-state rule.** Design and authorize a distinct preflight namespace with a durable source of identity/run reservations, a managed root/view, and a no-session cleanup/quarantine contract; only after readiness succeeds may the ordinary SessionManager create the user session. This avoids the provisional user session but creates a second lifecycle seam and should be scoped explicitly before coding.
+
+The options above are retained as decision history; option A is selected. This resolves only the temporal contract,
+not the implementation or evidence. R02/S4P1/W0 remain OPEN until the managed EXEC readiness route and named
+negative oracles are demonstrated.
+
+
+## Q119 — How should the wrapper preserve workspace selection when moving to the isolated controller?
+
+**Status: RESOLVED — operator selected option A (2026-11-03); implementation and full command-matrix proof remain OPEN under R01.**
+
+**Source evidence (2026-11-03).** `scripts/fa:36–45` reads the path named by `sessions/.active` and supplies it as Docker Compose's `-w`; `:76–82,178–181` dispatch ordinary product commands as `first-agent fa`. `pyproject.toml:97–100` maps that console script to `fa.cli:main`, not the isolated `fa.controller_entry`. The wrapper's help is currently fail-closed, so the existing ordinary route is preserved pending this decision. In `src/fa/cli.py`, `_session_manager_for_args` resolves workspace roots using `FA_WORKSPACE_ROOT`, an explicit `--workspace`, or its `/sessions`/CWD defaults; parser-level `--workspace` options exist for `inner-loop-smoke`, `run`, `workflow`, `stats`, and `authoring-check`, but workspace selection is not uniform across product commands. The required isolated entry must run from a trusted CWD; using `.active` as Compose's process CWD is not an acceptable substitute for deciding product workspace authority.
+
+**Impact.** Replacing only the executable while preserving Compose `-w` does not establish the trusted-CWD contract and may alter commands whose workspace comes from an explicit parser argument, session manager, or CWD. Conversely, removing `-w` without a replacement can silently point CWD-relative commands at the trusted installation directory rather than the active project. Do not wire ordinary commands to the isolated entry or change CLI/parser defaults until the workspace policy and command coverage are explicit. All wrapper help remains disabled until the installed-controller help seam is available.
+
+**Resolution options.**
+
+A. **Command-aware explicit workspace adapter (recommended for a narrow, fail-closed migration).** From the trusted controller CWD, resolve/validate the active workspace through the accepted session authority, pass it only through each command's existing explicit workspace interface, and fail closed for any project command whose workspace semantics are not mapped. Add a source-backed command matrix and negative oracles before enabling each route. This preserves active-workspace intent where an existing contract supports it, but may temporarily refuse unmapped commands.
+
+B. **Common controller-level workspace context.** Define and implement one validated, controller-owned active-workspace context consumed by all project-oriented commands, including those currently dependent on CWD. The wrapper passes a reference/context input, not a project CWD. This can preserve a uniform implicit-active behavior, but requires a broader CLI composition and trust-boundary change with explicit validation and fallback rules.
+
+C. **Remove implicit active-workspace selection.** Invoke the isolated controller from trusted CWD and require explicit workspace/session selection for every project command. This is the smallest implicit-authority surface, but intentionally changes the legacy wrapper behavior and needs user-facing migration/error handling.
+
+**Target-contract audit (2026-11-03).** The authoritative I03 execution/workspace specification §2 requires `/opt/fa-venv/bin/python -I -m fa.controller_entry` to run from a trusted CWD, not from the active project, and the inventory target says project selection must be carried explicitly. A command-aware adapter can meet that boundary; `docker compose exec -w .active` cannot. However, A as originally phrased is only a safe *migration strategy*: keeping project commands permanently refused because they are unmapped would not demonstrate the full target behavior if those commands are in R01's required product surface. Temporary refusal is a rollout safeguard only. Before R01 acceptance, provide a source-backed matrix for every ordinary wrapper product command, preserve each supported command's intended workspace/session semantics through an authorized explicit interface, and either classify non-project commands as workspace-independent or add their required explicit contract. Do not weaken existing per-command session resolution or silently fall back to trusted CWD.
+
+The separate accepted boundaries remain: direct `fa workflow` is the legacy manual/controller path; `invoke_workflow` is chat-only; managed `run_workflow` admission must precede coder dispatch. This wrapper routing question does not authorize changing those paths or conflating them.
+
+**Engineering recommendation (selected).** Option A with full-coverage acceptance: resolve/validate the active selection through session authority, invoke the isolated controller from trusted CWD, map every product command to its existing or explicitly added workspace/session interface, and fail closed only for unmapped commands during migration. Close R01 only when the command matrix shows no required project command was silently redirected or left permanently unavailable, and wrapper-to-installed-controller composition plus hostile-CWD/PYTHONPATH tests pass. Before implementation, prove `.active` is an authorized session reference rather than trusting its file contents alone. The operator selected this policy; option B is not the chosen contract.
+
+**Resolution (2026-11-03; operator selected A, with the target-contract refinement above).** Keep the controller CWD trusted and carry project selection explicitly. Preserve `.active` intent by validating it through session authority and mapping every required product command to an explicit workspace/session or path interface. Fail closed for unmapped routes only during migration; R01 acceptance must not leave required product commands silently redirected or permanently unavailable. Relative path inputs whose prior meaning depended on active CWD must be resolved explicitly against the validated selection, not against trusted controller CWD. Direct `fa workflow` remains the legacy manual/controller path; `invoke_workflow` remains chat-only; managed `run_workflow` admission precedes coder dispatch.
+
+**Source audit (2026-11-03; resolver primitive implemented, production caller still OPEN).** `scripts/fa-entrypoint.sh:_publish_active_workspace` publishes only a workspace path; the managed entrypoint's path is `/sessions/$SESSION_ID`, but `.active` contains no session ID. `src/fa/cli.py:_session_manager_for_args` uses `FA_WORKSPACE_ROOT`, an explicit workspace, `/sessions`, or CWD; it does not read `.active`. The `run` and `workflow` parsers expose optional `--workspace` and `--session-id`; the manager's `resolve_workflow_workspace` and `create_or_attach_session` validate explicit inputs but do not provide reverse lookup. New `SessionManager.resolve_active_session_for_workspace` in `src/fa/session/manager.py` now performs a read-only unique-active-manifest and DB-identity lookup for an explicit workspace; it does not mutate timestamps, provision, prepare, or reserve a run. Its result is not a lease: the future caller must revalidate through the ordinary attach/run lifecycle. Tests cover a path whose basename differs from its session ID, no side effects, no/ambiguous owners, containment/missing paths, and missing DB. This helper has **no CLI or wrapper caller yet** and is not R01 production-caller evidence. Therefore do not derive session ID from `.active`'s basename or pass the active path alone and assume the intended session is selected. CWD-based project surfaces include `chunk`'s path argument and `inner-loop-smoke`, `stats`, and `authoring-check` workspace defaults; user-supplied relative config/plan/manifest/model paths also need explicit interpretation. `inject`, `help`, `selfcheck`, `routing-check`, `probe`, and `conformance` have no project-workspace selector in their current parser and require classification/path-default review in the full matrix. `egress-proxy` is classified as Compose-internal under Q120-A and is refused by the host wrapper before generic product dispatch; direct in-container behavior is unchanged.
+
+**Source command/path matrix (current parser and callers; 2026-11-03).** Host verbs from `scripts/fa` remain host/Compose routes; parser-known commands below describe only the default `first-agent fa` route. A future adapter must preserve path meaning without setting the controller CWD to the project:
+
+| Command | Current workspace/session behavior | Inputs whose old CWD meaning must be preserved explicitly |
+| --- | --- | --- |
+| Host verbs: `logs`, `proxy-logs`, `status`, `up`, `down`, `restart`, `rebuild`, `shell`, `update`, `clean-rebuild`, `commit-traces`, `sessions` | Host/Compose or host scripts; do not route through the controller. | Preserve existing host argv and working-directory rules; not product workspace selection. |
+| `chunk` | No workspace option; the positional `path` is opened relative to process CWD. | Positional path: anchor relative values to the validated active workspace (or require absolute input). |
+| `inner-loop-smoke` | `--workspace` defaults to `Path.cwd()`; smoke state and tools operate under that workspace. | `--workspace`, relative `--input`, `--output`. |
+| `run` | Optional `--workspace`/`--session-id`; `_cmd_run` initially falls back to CWD, but `_session_manager_for_args` then selects `FA_WORKSPACE_ROOT`, the explicit workspace's parent, `/sessions`, or CWD. It does not read `.active`. | Resolve active workspace to its manifest-owned session, then pass both explicit values; anchor user-supplied relative `--config` to the prior active CWD. Do not infer selection from `--workspace` alone. |
+| `workflow` | Optional `--workspace`/`--session-id`; session lifecycle goes through SessionManager. When `--plan` is supplied, workspace preflight requires an explicit workspace/session. Direct `fa workflow` remains the legacy manual/controller route. | Explicit workspace/session pair; relative `--plan` and `--config` must retain defined project-relative meaning. |
+| `inject` | Read-only inspection; no workspace/session allocation. | Optional relative `--config`; default config remains its declared default. |
+| `help` / global `--version` | Topic/JSON/version output only; wrapper help stays disabled until isolated help is wired. | No project path; render only from installed controller code. |
+| `selfcheck`, `routing-check`, `probe`, `conformance` | No project-workspace selector; consume model configuration/provider state. | User-supplied relative `--config`; defaults remain the parser-declared home path. `probe`/live `conformance` retain their existing provider side effects. |
+| `stats` | `--workspace` defaults to CWD; `--session-id` is optional. Source discovery is from FA state-root/session authorities; `--session-id` changes the selected data, and CWD is also used for the multi-session dead-zone fallback. | Preserve workspace and session-selection semantics separately; do not inject a session filter merely because `.active` exists. |
+| `authoring-check` | `--workspace` defaults to CWD; `--manifest` is passed to the checker. | Explicit workspace; resolve a relative manifest consistently with the former active CWD. |
+| `egress-proxy` | Not an agent-workspace or operator-wrapper route: Compose runs it as the separate `fa-egress-proxy` service (`docker-compose.fa.yml` command); `scripts/fa` now refuses it before generic product dispatch under Q120-A. | No wrapper-side path interpretation. Compose remains the sole production launcher; direct in-container invocation and its service-mounted `--models`, `--secrets`, and `--token-file` inputs are unchanged. |
+| `clean` / unknown subcommand | `scripts/fa clean` delegates, but current `fa.cli` has no `clean` parser; unknown commands are rejected by argparse. | Preserve the existing rejection unless a separate command contract is approved; do not invent workspace behavior. |
+
+This is the full parser-known command inventory and a source-based CWD/path checklist, not proof of the future argv adapter. In particular, the adapter must not add a `--session-id` to `stats` automatically, must not run `egress-proxy` in `first-agent`, and must preserve `run`/`workflow` lifecycle admission. Relative-path normalization, controller help, and command-specific argv insertion still need caller tests.
+
+**Acceptance boundary.** Q120-A now classifies the proxy route and `scripts/fa` refuses it before product dispatch; this closes only that route-classification question, not an R01 row. Host-only commands and direct in-container `fa` remain unchanged. R01, S4P1, and W0–W2 remain OPEN until command-specific normalization/mapping, production integration of the resolver with lifecycle revalidation, wrapper-to-installed-controller composition tests, and row-specific gates are satisfied.
+
+
+## Q120 — Is `fa egress-proxy` a wrapper route or a Compose-owned service entry?
+
+**Status: RESOLVED — operator selected A (2026-11-03); wrapper implementation and targeted tests are recorded in E436. R01 remains OPEN.**
+
+**Source conflict (as observed before the Q120-A wrapper change).** `src/fa/cli.py` exposes `egress-proxy` as a CLI subcommand and `_cmd_egress_proxy` starts a listening server while reading model, secret, and token files. `docker-compose.fa.yml` already launches that command in the dedicated `fa-egress-proxy` service with service-mounted paths. At the source audit, `scripts/fa` had no `egress-proxy` host branch, so the generic default dispatch sent `fa egress-proxy ...` to `first-agent fa`, not the proxy service. The agent service intentionally does not receive the real provider secrets, and starting a second listener in the agent is not the documented deployment route.
+
+**Impact.** Q119-A requires a complete matrix, but routing this command to the installed agent controller would violate the component boundary; blindly routing it to the already-running proxy service could start a duplicate listener. Its `--models`, `--secrets`, and `--token-file` path arguments also have service-specific rather than active-workspace semantics. No code should infer the intended behavior from the parser command's existence alone.
+
+**Resolution options.**
+
+A. **Treat it as Compose-internal (recommended).** `fa egress-proxy` is not an operator `scripts/fa` product route. The wrapper fails closed with a stable “managed by Compose” diagnostic; Compose remains the sole production launcher in `fa-egress-proxy`. Direct in-container invocation and service configuration stay unchanged. This explicitly classifies it out of the wrapper product surface rather than leaving it mapped to `first-agent`.
+
+B. **Authorize a separate proxy-service wrapper operation.** Define a dedicated, non-duplicate service-management action (for example, inspect/restart through Compose) and its argument/path contract. Do not implement it as `docker compose exec ... fa egress-proxy`, since the service already runs that server. This expands host wrapper surface and needs its own no-effect/production-caller tests.
+
+**Resolution (2026-11-03; operator selected A).** `fa egress-proxy` is Compose-internal, not an operator `scripts/fa` product route. The host wrapper now refuses it with exit 2 and a stable “managed by the fa-egress-proxy Compose service” diagnostic before Compose or product dispatch. Help forms still fail closed through the wrapper-help diagnostic. Compose remains the sole production launcher; Compose configuration and direct invocation inside the proxy container are unchanged. No duplicate `docker compose exec ... egress-proxy` route is added.
+
+**Acceptance boundary.** Q120 is resolved and the wrapper route behavior is covered by targeted refusal/no-dispatch and help-position tests (details in E436). This closes only the Q120 route-classification decision, not an R01 row; R01, S4P1, and W0–W2 remain OPEN.
+
+---
+
+## Q121 — What managed subagent contract and workflow/chat execution architecture should R13 adopt?
+
+**Status: RESOLVED — operator superseded the earlier W0 option A with full R13 implementation in W0 (2026-11-04).** This records implementation scope, not acceptance: R13 remains OPEN until its production callers and row-specific oracles pass; Q113 still requires every S4P1 row before W0 closes.
+
+**Clarified contract (operator, 2026-11-04).** The two primary surfaces are ordinary `fa run chat` and the heavier workflow invoked from that chat. A subagent may be called directly from ordinary chat and from workflow `planner` and `coder` roles. The stable contract is: one restricted generic toolset shared across parent roles in the first slice; stateless Bash (no inherited stateful parent shell); only the delegated task as conversational input, not the parent's transcript/context overhead; and a completion report returned to the caller. The parent role determines the task/prompt; per-role flags gate admission and do not create different child toolsets. Tool policy and scoped execution authority may be supplied as system/runtime metadata, but must not become replay of parent history. The operator also wants a limited, read-oriented same-session chat while a workflow continues; this is a requested experience to evaluate, not a ratified I03 requirement.
+
+**Operator refinement (2026-11-04).** All subagents are read-only for existing project files; a subagent may write new artifacts/notes only in a private scratch area. The subagent does the investigation/analysis; the main agent receives the report and applies/persists it. This avoids concurrent mutations. The legacy role names are not capability profiles; the subagent is generic, and the parent role (chat/planner/coder) determines the task. The coder subagent is disabled by default; each role has its own capability flag, default off, in the config file. The child uses the chat provider chain.
+
+**Decision.**
+
+- **R13/W0 sequencing — full behavior in W0 (operator supersedes prior option A; equivalent to full-child option B).** Implement the real generic managed child now for ordinary chat and workflow planner/coder callers; do not ship a temporary deny-only placeholder. The child uses the S-C read-only/scratch contract and the minimum Q122 per-view profile binding needed for a stateless READ child. Through the production caller, the W0 negative oracle performs one bounded child READ `EXEC` request to a real local supervisor configured to refuse before worker/cell launch: `exec_requests=1`, `exec_allowed=0`, `cell_launches=0`, `host_subprocesses=0`, `proxy_credentials=0`, `project_writes=0`. The positive local composition proves that an approved supervisor can run the read-only child and return a bounded report. Missing read-only profile or disabled role flags fail closed without parent-shell/host fallback. W1 remains after all W0 rows close and contains no second implementation of R13.
+- **Subagent execution — S-C restricted first rollout + private scratch.** The subagent receives a pinned READ view of the latest published revision and a writable private scratch for new artifacts/notes. It cannot write to existing project files. There is no writer handoff and no concurrent mutation. The main agent applies/persists the report. The coder main agent retains the write capability; the coder subagent is read-only/scratch for diagnosis and is disabled by default. S-A writer handoff remains the next step if a write-capable coder subagent is explicitly funded; it is outside this slice.
+- **Per-role capability flags.** Add `subagent.chat.enabled`, `subagent.planner.enabled`, and `subagent.coder.enabled`, all default `False`, to the existing `feature_flags:` block, plus the master `subagent_spawning_enabled` (default `False`). The managed tool is available only when the master and the parent-role flag are both true.
+- **Observer — W-A first, W-B target, W-C reject.** W-A is a separately addressable read-only observer attachment for the same session/workflow; it reads bounded durable status/event rows and pins the latest published revision. W-B is the post-I03 product target: a durable workflow child plus a same-session read-only chat lane, with a restricted observer profile, event cursors, revision pins, owner/capability separation, admission/close behavior, and explicit tool-registry restriction. W-C is incompatible with the one-writer contract. The observer is post-I03 and is not an implicit side effect of adding subagents.
+
+**Plan.** The detailed plan is [notes/r13-managed-subagent-plan-2026-11-04.md](r13-managed-subagent-plan-2026-11-04.md). The wave impact is recorded in `increments/increment-03-execution-workspace-foundation.md` and `roadmap.md`. The R13 inventory row is updated in `notes/i03-execution-call-inventory.md`.
+
+**Acceptance boundary.** This direction does not close R13. The named test `test_subagent_commands_carry_no_proxy_credential` is still absent. R13 remains OPEN until the managed-backend negative oracle passes through the production caller. W0 remains OPEN until every S4P1 row's named negative oracle passes. Q123 is RESOLVED by the full-child-in-W0 decision; R13 implementation and acceptance remain OPEN until tested. W1 starts only after W0 closes. The observer remains post-I03. No runtime change, test, or row closure follows from this entry.
+
+
+## Q122 — How should the supervisor support both interactive parent stages and non-interactive read-only child cells?
+
+**Status: RESOLVED — option A (profile set per view), operator selected 2026-11-04; implemented and locally accepted in R13/W0 (2026-11-04).** Global W0 remains OPEN until Q113's remaining row oracles pass; do not start W1 before that exit.
+
+**Selected architecture — profile set per view, no new service/authority.**
+
+- **`ServiceConfig`:** add `read_only_profile_id: str | None`; keep `view_profile_id` as the write profile; validate both against `config.profiles`; require the read-only profile to be non-interactive (`interactive is False`) and the write profile to be interactive (`interactive is True`). The supervisor identity digest must bind both profile definitions and the role mapping (`view_profile_id`, `read_only_profile_id`). Current `profile_set_sha256()` hashes profile definitions only, so update the canonical identity and health checks; changing the role mapping with the same profile set must change the identity.
+- **`WorkspaceAuthority`:** replace the single `self._view_profile` with `self._profiles: Mapping[str, ExecutionProfile]`, `self._view_profile` (write), and `self._read_only_profile`; add `view_profile(view_ref)` that reads the view record's `profile_id` and returns the profile. `create_view`/`pin_reader` select the profile based on access/purpose: READ -> read-only profile; WRITE -> write profile. The view record gets `"profile_id": profile.profile_id`; the `_VIEW_RECORD` schema gets `profile_id`; `_view_record_compat` fills the default write profile id for old records. `admit` uses `view.record["profile_id"]` to select the profile and validates `payload["profile_id"]`, `payload["timeout_ms"]`, and `profile.interactive != (payload["session_id"] is not None)`. The `approved_profile` property remains the write profile for backward compatibility.
+- **`CommandReceipts._profile(view)`:** use `self._authority.view_profile(view)` instead of `approved_profile`; the receipt's `profile_id`/`image_digest` bind to the view's profile; `require_binding` checks the view's profile.
+- **`OwnedCellTermination`:** take a `profile_resolver` callable (or a `profiles` mapping + `view_profile` resolver); use the view's profile in `stop_cells`/`cells_terminal`; the `SupervisorService` passes `self._authority.view_profile`. The `ViewStopper` passes the resolver; no new entity.
+- **`SupervisorService`:** select `self._view_profile` (write) and `self._read_only_profile` (read-only) from `config.profiles`; pass both to `WorkspaceAuthority`; pass the resolver to `OwnedCellTermination`.
+- **CellBackend/recovery:** replace every view-specific use of `approved_profile` with `view_profile(view)`, including episode lookup, CANCEL, PTY control and startup reconciliation; keep `approved_profile` only as a write-profile compatibility property.
+- **`ManagedExecution`:** add `read_only_profile: ExecutionProfile | None`; `managed_execution_for_run` selects it; the child runner uses it. If `read_only_profile_id` is absent, W1 child admission fails closed before view/EXEC admission; never fall back to the interactive write profile.
+- **`ManagedBashExecutor` read-only variant:** use the read-only profile; `session_id=None`; READ view; the supervisor's `admit` validates it against the view's profile.
+- **`ViewRef` wire unchanged;** the view record's `profile_id` is internal; no new wire operation.
+
+**Why this is the minimal surface.** It reuses the existing `ServiceConfig.profiles`, `ViewRef`, view record, `ExecutionProfile`, `ManagedBashExecutor`, `CellBackend`, `WorkspaceAuthority`, `ViewStopper`, and `OwnedCellTermination`; it adds one config field (`read_only_profile_id`), one internal view-record field (`profile_id`), and a profile resolver; it does not add a new service/authority or a new wire operation. Option B (separate authority) adds a second authority and a shared-state problem; option C violates stateless Bash.
+
+**Tests.**
+
+- `test_view_profile_binding`: READ view -> read-only profile; WRITE view -> write profile; `admit` validates the view's profile; a write profile on a READ view is rejected; a read-only profile on a WRITE view is rejected.
+- `test_view_record_profile_compat`: old record without `profile_id` -> default write profile; new record -> its profile.
+- `test_owned_cell_termination_profile`: read-only view's cell stopped with the read-only profile; write view's cell with the write profile.
+- `test_receipt_profile_binding`: receipt's `profile_id`/`image_digest` match the view's profile; `require_binding` passes.
+- `test_service_config_read_only_profile`: read-only profile must be non-interactive; write profile interactive; config validation; changing role assignment changes the supervisor identity digest.
+- `test_backend_uses_view_profile`: READ and WRITE views use their own profile for episode lookup, CANCEL/PTy control, receipts and terminality/recovery; no interactive fallback for a READ child.
+
+**Impact.** Q122's per-view profile work is pulled into R13/W0 so the real child has a non-interactive READ authority. The observer remains unaffected and post-I03.
+
+**Acceptance boundary (updated 2026-11-04).** Q122 per-view profile binding and its reader/view/backend/service regression coverage passed in the R13-local suite. This closes Q122's implementation acceptance for the R13/W0 local row; it does not close global W0. Q113 still requires every S4P1 row before W0 exits or W1 starts. Live-host acceptance remains reserved for the final wave.
+
+## Q123 — What must R13/W0 prove when the managed subagent route is deny-only?
+
+**Status: RESOLVED — operator selected full desired R13 behavior in W0 (2026-11-04), equivalent to option C below; this supersedes Q121's earlier deny-only option A.** Q113 remains strict: the R13 production caller must exercise a real child-managed EXEC refusal with row-specific no-effect evidence. The actual child runner, non-interactive per-view profile, and bounded report path are part of this W0 R13 slice; no temporary route-only denial is accepted as completion.
+
+**Source-verified conflict.** In the current managed registry, the legacy
+`fs_spawn_subagent` builder is only added when `workspace_io is None`; the
+managed role-registry path has no managed child executor and currently skips
+the legacy builder (`src/fa/inner_loop/profiles.py:198-220, 469-474`). A pure
+deny-before-exec route can prove unavailable/no host/no token through `drive_session`,
+but cannot by itself prove that the supervisor refused an EXEC. Sending a request
+from the parent's interactive/write executor would not prove stateless READ-child
+behavior and is not an acceptable substitute.
+
+**Resolution options.**
+
+A. **Zero child EXEC requests.** Keep Q121 option A strictly deny-before-exec;
+prove the actual production caller invokes the registered route and assert
+`exec_requests=0`, `exec_allowed=0`, `cell_launches=0`, `host_subprocesses=0`,
+`proxy_credentials=0`, and `project_writes=0`. This requires an explicit
+R13-specific adjustment to Q113/W0: a production-caller route denial, rather
+than supervisor refusal, is the managed negative for this row.
+
+B. **One supervisor-rejected child EXEC.** Keep Q113 strict; specify an exact
+production R13 caller edge, view/access/profile and bounded request that reaches
+the real supervisor and is rejected before any cell/worker launch. It must not
+reuse the parent's interactive shell/profile. This may require bringing a minimal
+Q122 profile-binding prerequisite into W0 or defining another existing-authority
+denial seam; decide the dependency impact explicitly before code.
+
+C. **Real child in W0.** Implement enough of W1's real child lifecycle to submit
+the read-only EXEC and observe supervisor refusal. This expands W0 and changes
+Q121 sequencing; do not do it without explicit re-sequencing authority.
+
+**Historical recommendation (superseded).** The operator chose full child behavior in W0 to avoid a deny-only phase followed by a second implementation. The exact refusal path is now the real child Bash tool on its non-interactive READ view; it must use one bounded EXEC request and the real supervisor must refuse before cell launch in the negative oracle.
+
+**Impact (updated 2026-11-04).** Q123's full-child contract is implemented and accepted for R13's Arena-local W0 row: chat/planner/coder production callers pass configured-supervisor negative and approved-local positive oracles with row-specific counters. R13's local row is CLOSED; global W0 remains OPEN under Q113 until unrelated S4P1 rows pass. Do not start W1. Final-wave host evidence remains NOT RUN.
+
+
+## Q124 — What enforceable writable-scratch quota should the managed R13 child receive?
+
+**Status: RESOLVED — operator selected A (64 MiB per child, 2026-11-04).**
+Q121/Q123 authorize full child behavior in W0 and Q122 selects per-view READ
+profiles. Runtime implementation and acceptance remain OPEN until this selected
+quota is mechanically enforced by the supervisor.
+
+**Source-verified gap.** `ExecutionProfile` enforces memory, PID and command-time
+budgets but has no scratch-size field. `ExecutionProfile.create_spec` mounts the
+supervisor-owned view scratch as a writable bind at `/scratch`. A bounded Bash
+command can still fill the backing filesystem. The cap and the over-limit result
+must be deterministic and enforced at the supervisor/container boundary, not by
+the model or a post-hoc size check.
+
+**Resolution options.**
+
+A. **64 MiB per child (recommended).** Enforce an ephemeral per-cell `/scratch`
+quota at the supervisor boundary. On exhaustion, the command receives the
+filesystem's deterministic limit error, the child reports a structured bounded
+failure, and the parent remains the only project writer.
+
+B. **256 MiB per child.** Same enforcement and fail-closed behavior as A, with a
+larger allowance for generated notes/artifacts.
+
+C. **Operator-configured quota.** Add a required positive scratch limit to the
+approved READ profile/config; refuse child admission if the supervisor cannot
+enforce it. This adds an operator/deployment setting and a profile-identity
+change.
+
+D. **Other.** Specify a different hard limit and required overflow behavior.
+
+**Resolution (2026-11-04; operator selected A).** Each managed child gets
+a hard 64 MiB writable `/scratch` quota enforced at the supervisor/container
+boundary. Exceeding it must produce an observable bounded command/child failure;
+cleanup is required after confirmed terminality. If the selected cap cannot be
+enforced, fail child admission closed. No host-backed fallback or project write
+is permitted.
+
+**Acceptance boundary (updated 2026-11-04).** R13's Arena-local W0 acceptance
+for the chosen limit is CLOSED: approved production-caller tests verify the
+64 MiB bounded scratch write, nonzero inner overflow attempt, bounded child
+report evidence, exact tmpfs request, read-only project mount, confirmed local
+terminal cleanup, zero project writes, and no host fallback. The local API peer
+and worker do not prove Docker-daemon ENOSPC or tmpfs release. Actual
+ledger-append and deployed-storage E2E remain NOT RUN and are reserved for the
+final wave; they are not a W0 Docker prerequisite. Q113 global W0 still requires
+all other row oracles, and W1 remains blocked until that gate closes.
+
+## Q125 — How should the optional R12 runtime satisfy Q113's W0 production-caller oracle?
+
+**Status: UNRESOLVED — R12 and W0 remain OPEN.** This is a W0 acceptance/scope
+question, not authorization to add a runtime caller.
+
+**Source-verified gap (2026-11-04).** R12 covers the optional public
+`fa.runtime` import, the optional FastAPI PTY server, and
+`RemoteRuntimeExecutor`. The scope-reduction decision classifies the server as
+cell-internal/optional and explicitly says the future remote client is not a
+security component: it has no approved-profile launch, ownership fencing,
+process-tree stop, or sealing. A source search found no production reference to
+`RemoteRuntimeExecutor`; the `run_bash` production resolver wraps
+`session.pty_pool` in `InProcessPtyExecutor`. The existing R12 C1 tests stub the
+HTTP transport and are component coverage, not evidence of a managed execution
+caller. On 2026-11-04 the focused bank ran with CPython 3.13.16: 9 passed and 6
+C1 tests skipped because the runtime-server extra is deferred. Thus the current
+record has no non-skipped R12 managed-backend negative oracle through a
+reachable production caller, as Q113 requires.
+
+**Resolution options.**
+
+A. **Keep the runtime optional; narrow R12 to the reachable production boundary.**
+Amend Q113's R12 oracle to a local test through the actual managed CLI/chat
+caller with the optional server unavailable, proving the managed refusal and
+zero host fallback. Treat HTTP client/server tests as component-only; make no
+claim that `RemoteRuntimeExecutor` is wired or secure. Specify the exact caller,
+nodeid, and no-effect counters before implementation.
+
+B. **Keep Q113 strict and defer R12 pending a separately approved integration.**
+Do not add a caller in this step. First define an approved production composition
+that makes the runtime reachable through existing managed execution authority,
+then implement and test its row-specific refusal. This keeps W0 open until that
+work is authorized and completed; `RemoteRuntimeExecutor` must not itself become
+a second management/security authority by implication.
+
+C. **Explicitly defer/exempt R12 from the W0 all-row exit.** Amend Q113 and the
+increment's W0 exit to record R12 as an outstanding deferred acceptance item;
+keep R12 OPEN and do not describe the revised W0 exit as satisfying the original
+all-row condition.
+
+No option is selected here. Until the operator resolves Q125, do not add runtime
+or test code, close R12, or start W1.

@@ -214,11 +214,69 @@ def load_capabilities_from_path(
     return load_capabilities(text)
 
 
+class ExecutionConfigError(ValueError):
+    """A present ``execution:`` block that does not name one usable service config.
+
+    Absence and malformation are different facts and callers act differently on
+    them: no block at all means "the operator configured no managed execution",
+    while a block that names nothing usable is a typo that must not silently
+    disable the managed path.
+    """
+
+
+def load_execution_config(text: str) -> Path | None:
+    """Return the supervisor service-config path from the ``execution:`` block.
+
+    The block is one key with one absolute path — the same JSON the supervisor
+    validates with ``service.read_config_file``:
+
+    .. code-block:: yaml
+
+        execution:
+          service_config: /var/lib/fa/execution.json
+
+    ``None`` means one thing only: there is no ``execution:`` block. An unusable
+    *present* block — an unknown key, a repeated key, a missing value, a relative
+    path or a parent traversal — raises :class:`ExecutionConfigError`, so a typo
+    cannot quietly turn the managed path off; each consumer decides how loudly to
+    answer it. The capability flags are parsed by :func:`load_capabilities` from
+    the same text; the two sections never read each other.
+    """
+
+    found: str | None = None
+    in_execution = False
+    present = False
+    for parsed_line in iter_yaml_lines(text):
+        if parsed_line.is_top_level:
+            in_execution = parsed_line.stripped.startswith("execution:")
+            present = present or in_execution
+            continue
+        if not in_execution:
+            continue
+        if ":" not in parsed_line.stripped:
+            raise ExecutionConfigError(f"line {parsed_line.line_no} has no ':' separator")
+        key, _, value = parsed_line.stripped.partition(":")
+        if key.strip() != "service_config" or found is not None:
+            raise ExecutionConfigError(f"line {parsed_line.line_no} is not a single 'service_config:' key")
+        found = strip_inline_comment(value).strip().strip('"').strip("'")
+
+    if not present:
+        return None
+    if not found:
+        raise ExecutionConfigError("the execution: block names no service_config")
+    path = Path(found).expanduser()
+    if not path.is_absolute() or ".." in path.parts:
+        raise ExecutionConfigError(f"service_config must be an absolute path without '..', got {found!r}")
+    return path
+
+
 __all__ = [
     "DEFAULT_CONFIG_PATH",
     "Capabilities",
     "CapabilityLoadResult",
     "CapabilityWarning",
+    "ExecutionConfigError",
     "load_capabilities",
     "load_capabilities_from_path",
+    "load_execution_config",
 ]

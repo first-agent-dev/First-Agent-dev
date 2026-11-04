@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 @runtime_checkable
 class BashExecutor(Protocol):
-    def run(self, command: str, timeout: int = 30, workdir: Path | None = None, session_id: str = "main") -> PtyResult:
+    def run(self, command: str, timeout: int = 30, workdir: Path | None = None, session_id: str | None = "main") -> PtyResult:
         pass
 
     def send_ctrl_c(self, session_id: str) -> str: ...
@@ -50,7 +50,8 @@ class InProcessPtyExecutor(BashExecutor):
         self.pool = pool
 
     @override
-    def run(self, command: str, timeout: int = 30, workdir: Path | None = None, session_id: str = "main") -> PtyResult:
+    def run(self, command: str, timeout: int = 30, workdir: Path | None = None, session_id: str | None = "main") -> PtyResult:
+        session_id = session_id or "main"
         sess = self.pool.acquire(session_id, workdir=str(workdir) if workdir else None)
         return sess.run(command, timeout=timeout)
 
@@ -74,6 +75,32 @@ class _RemotePtyResponse(TypedDict):
     exit_code: int
     truncated: bool
     session_id: str
+    timed_out: bool
+
+
+def _decode_remote_pty_response(data: object, requested_session_id: str) -> PtyResult:
+    if not isinstance(data, dict):
+        raise ValueError("Invalid remote PTY response: expected an object")
+    if (
+        not isinstance(data.get("stdout"), str)
+        or type(data.get("exit_code")) is not int
+        or type(data.get("truncated")) is not bool
+        or not isinstance(data.get("session_id"), str)
+        or type(data.get("timed_out")) is not bool
+    ):
+        raise ValueError("Invalid remote PTY response: missing or invalid result fields")
+
+    response = cast(_RemotePtyResponse, data)
+    if response["session_id"] != requested_session_id:
+        raise ValueError("Remote PTY response session identity mismatch")
+
+    return PtyResult(
+        stdout=response["stdout"],
+        exit_code=response["exit_code"],
+        truncated=response["truncated"],
+        session_id=response["session_id"],
+        timed_out=response["timed_out"],
+    )
 
 
 class _RemoteSessionsResponse(TypedDict):
@@ -92,8 +119,10 @@ class RemoteRuntimeExecutor(BashExecutor):
         self.timeout = timeout
 
     @override
-    def run(self, command: str, timeout: int = 30, workdir: Path | None = None, session_id: str = "main") -> PtyResult:
+    def run(self, command: str, timeout: int = 30, workdir: Path | None = None, session_id: str | None = "main") -> PtyResult:
         import requests
+
+        session_id = session_id or "main"
 
         try:
             resp = requests.post(
@@ -107,15 +136,9 @@ class RemoteRuntimeExecutor(BashExecutor):
                 timeout=self.timeout,
             )
             resp.raise_for_status()
-            data = cast(_RemotePtyResponse, resp.json())
-            return PtyResult(
-                stdout=data["stdout"],
-                exit_code=data["exit_code"],
-                truncated=data["truncated"],
-                session_id=data["session_id"],
-            )
-        except Exception as e:  # graceful degradation per Phase 0.5, failure-observable WARNING
-            logger.warning(f"RemoteRuntimeExecutor failed {e}, falling back")
+            return _decode_remote_pty_response(resp.json(), requested_session_id=session_id)
+        except Exception as e:  # fail closed; there is no host-side fallback
+            logger.warning("RemoteRuntimeExecutor failed: %s", e)
             raise
 
     @override

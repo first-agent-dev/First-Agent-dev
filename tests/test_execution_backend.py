@@ -44,7 +44,7 @@ from tests.test_execution_admission import request as admission_request
 from tests.test_execution_dispatch import profile
 from tests.test_execution_docker import Endpoint, Reply
 from tests.test_execution_views import create as create_view
-from tests.test_execution_workspace import ACTOR, OTHER, PEER, Site, ok, until
+from tests.test_execution_workspace import ACTOR, OTHER, PEER, Site, install_environment_artifact, ok, until
 from tests.test_execution_workspace import site as site
 
 UPGRADE = (
@@ -200,6 +200,7 @@ class Backend:
             controller_uids=frozenset({PEER.uid}),
             lock_timeout_ms=1000,
             view_profile=self.profile,
+            read_only_profile=replace(self.profile, profile_id="reader", interactive=False),
             approved_cache=self.cache,
         )
         self.authority.__enter__()
@@ -290,6 +291,14 @@ def exec_request(grant: Any, rid: str, command: str) -> dict[str, Any]:
     req["payload"]["operation_id"] = "op-" + rid
     req["payload"]["command"] = command
     req["payload"]["cwd"] = "."
+    return req
+
+
+def reader_exec_request(grant: Any, rid: str, command: str) -> dict[str, Any]:
+    """A READ view gets only a one-shot/non-interactive EXEC profile."""
+    req = exec_request(grant, rid, command)
+    req["payload"]["profile_id"] = "reader"
+    req["payload"]["session_id"] = None
     return req
 
 
@@ -543,7 +552,8 @@ def test_cancel_during_a_running_command_persists_intent_and_never_replays(backe
     assert_cancelled_command_outcome(failure)
 
 
-def test_second_view_gets_its_own_cell_and_never_reuses_the_first_shell(backend: Backend) -> None:
+def test_read_view_cannot_reuse_a_write_views_interactive_shell(backend: Backend) -> None:
+    """Q122/C3: READ profile binding rejects interactive WRITE input before Docker."""
     first = prepare(backend, "e" * 32, "export FA_FIRST=one")
     backend.peer.replies.extend(backend.episode_replies("op-" + "e" * 32))
     assert ok_backend(lambda: backend.owner().execute(PEER, first, deadline=until())).exit_code == 0
@@ -558,17 +568,22 @@ def test_second_view_gets_its_own_cell_and_never_reuses_the_first_shell(backend:
             deadline=until(),
         )
     )
-    second = exec_request(second_view, "f" * 32, "printf second")
-    claim(backend.authority, second)
     assert second_view.view_ref is not None
-    backend.peer.replies.extend(backend.episode_replies("op-" + "f" * 32, second_view.view_ref.view_id))
-    assert ok_backend(lambda: backend.owner().execute(PEER, second, deadline=until())).exit_code == 0
-    paths = [seen["path"] for seen in backend.peer.seen]
-    assert sum(1 for path in paths if "/containers/create" in path) == 2
-    assert sum(1 for path in paths if "/attach" in path) == 2
+    # This request deliberately carries the parent WRITE profile and a persistent
+    # session. It must be denied by READ profile binding before a second cell exists.
+    second = exec_request(second_view, "f" * 32, "printf must-not-run")
+    second["payload"]["profile_id"] = backend.profile.profile_id
+    second["payload"]["session_id"] = "main"
+    seen_before = len(backend.peer.seen)
+    episodes_before = backend.owner().episode_count()
+    denied("UNAPPROVED_PROFILE", lambda: backend.owner().execute(PEER, second, deadline=until()))
+    assert len(backend.peer.seen) == seen_before
+    assert backend.owner().episode_count() == episodes_before == 1
+    assert backend.worker.runs == 1
 
 
 def test_cancel_cannot_name_an_operation_from_another_view_in_same_namespace(backend: Backend) -> None:
+    """Q122/C3: a READ grant cannot cancel an operation bound to the WRITE view."""
     first = prepare(backend, "a3" * 16, "export FA_VIEW=A")
     backend.peer.replies.extend(backend.episode_replies(first["payload"]["operation_id"]))
     ok_backend(lambda: backend.owner().execute(PEER, first, deadline=until()))
@@ -585,13 +600,8 @@ def test_cancel_cannot_name_an_operation_from_another_view_in_same_namespace(bac
         )
     )
     assert second_view.view_ref is not None
-    second = exec_request(second_view, "a4" * 16, "export FA_VIEW=B")
-    claim(backend.authority, second)
-    backend.peer.replies.extend(
-        backend.episode_replies(second["payload"]["operation_id"], second_view.view_ref.view_id)
-    )
-    ok_backend(lambda: backend.owner().execute(PEER, second, deadline=until()))
-    before = backend.authority.journal.lookup(second["payload"]["operation_id"], ACTOR)
+    operation_id = first["payload"]["operation_id"]
+    before = backend.authority.journal.lookup(operation_id, ACTOR)
     assert before is not None and before["cancel_requested"] is False
     seen_before = len(backend.peer.seen)
     cancel = {
@@ -599,12 +609,12 @@ def test_cancel_cannot_name_an_operation_from_another_view_in_same_namespace(bac
         "request_id": "a5" * 16,
         "op": "cancel",
         "namespace": ACTOR.to_dict(),
-        "view_ref": backend.view.to_dict(),
-        "capability": backend.grant.capability,
-        "payload": {"operation_id": second["payload"]["operation_id"]},
+        "view_ref": second_view.view_ref.to_dict(),
+        "capability": second_view.capability,
+        "payload": {"operation_id": operation_id},
     }
     denied("UNAUTHORIZED", lambda: backend.owner().cancel(PEER, cancel, deadline=until()))
-    after = backend.authority.journal.lookup(second["payload"]["operation_id"], ACTOR)
+    after = backend.authority.journal.lookup(operation_id, ACTOR)
     assert after == before and len(backend.peer.seen) == seen_before
 
 
@@ -912,6 +922,106 @@ def test_created_cell_binds_only_the_authority_trusted_paths(backend: Backend) -
         "/opt/toolchain-cache": str(backend.cache),
     }
     assert body["HostConfig"]["Mounts"][0]["ReadOnly"] is False
+
+
+def test_read_view_one_shot_launch_uses_bounded_tmpfs_not_host_scratch(backend: Backend, tmp_path: Path) -> None:
+    """C3 producer: real authority/backend reaches Docker with the Q124 READ mount."""
+    backend.worker.close()
+    backend.worker = CountingWorker(
+        PtyPool(base_cwd=tmp_path, run_id="backend-read-view"),
+        workspace=tmp_path,
+        max_command_ms=backend.profile.max_command_ms,
+        one_shot=True,
+    )
+    reader = ok(
+        lambda: backend.authority.pin_reader(
+            PEER,
+            ACTOR,
+            workspace_id=backend.view.workspace_id,
+            revision_id=backend.view.base_revision,
+            plan_ref=None,
+            formal_evidence=False,
+            deadline=until(),
+        )
+    )
+    assert reader.view_ref is not None
+    req = reader_exec_request(reader, "a6" * 16, "printf read-view")
+    claim(backend.authority, req)
+    backend.peer.replies.extend(
+        backend.episode_replies(req["payload"]["operation_id"], reader.view_ref.view_id)
+    )
+    outcome = ok_backend(lambda: backend.owner().execute(PEER, req, deadline=until()))
+    assert outcome.exit_code == 0 and outcome.session_id is None and backend.worker.runs == 1
+
+    creates = [seen for seen in backend.peer.seen if "/containers/create" in seen["path"]]
+    assert len(creates) == 1
+    body = creates[0]["body"]
+    assert isinstance(body, dict)
+    host = body["HostConfig"]
+    assert host["Tmpfs"] == {"/scratch": "size=67108864,mode=1777,nosuid,nodev"}
+    mounts = {mount["Target"]: mount for mount in host["Mounts"]}
+    assert set(mounts) == {"/workspace", "/opt/toolchain-cache"}
+    assert mounts["/workspace"]["ReadOnly"] is True
+    view_root = backend.authority._state / "workspaces" / reader.view_ref.workspace_id / "views" / reader.view_ref.view_id
+    assert list((view_root / "execution/scratch").iterdir()) == [], "no host-backed scratch fallback"
+
+
+def test_read_view_tmpfs_rejection_fails_before_attach_or_host_fallback(one_shot_case: OneShot) -> None:
+    """C3 edge: a daemon that rejects tmpfs cannot create a cell or select bind scratch."""
+    case = one_shot_case.case
+    reader = ok(
+        lambda: case.authority.pin_reader(
+            PEER,
+            ACTOR,
+            workspace_id=case.view.workspace_id,
+            revision_id=case.view.base_revision,
+            plan_ref=None,
+            formal_evidence=False,
+            deadline=until(),
+        )
+    )
+    assert reader.view_ref is not None
+    req = reader_exec_request(reader, "a7" * 16, "printf must-not-launch")
+    claim(case.authority, req)
+    case.peer.replies.append(Reply(status=400, value={"message": "tmpfs unsupported"}))
+    denied("BACKEND_UNAVAILABLE", lambda: case.owner().execute(PEER, req, deadline=until()))
+
+    assert len(case.peer.seen) == 1
+    seen = case.peer.seen[0]
+    assert seen["path"].endswith("/containers/create?name=fa-job-" + req["payload"]["operation_id"].removeprefix("op-"))
+    body = seen["body"]
+    assert isinstance(body, dict)
+    assert body["HostConfig"]["Tmpfs"] == {"/scratch": "size=67108864,mode=1777,nosuid,nodev"}
+    assert all(mount["Target"] != "/scratch" for mount in body["HostConfig"]["Mounts"])
+    assert one_shot_case.streams == [] and case.worker.runs == 0
+
+
+def test_authority_bound_environment_artifact_is_mounted_readonly(backend: Backend) -> None:
+    view_root = backend.authority._state / "workspaces" / backend.view.workspace_id / "views" / backend.view.view_id
+    environment = install_environment_artifact(backend.cache, view_root / "source", profile=backend.profile)
+    request = prepare(backend, "a2" * 16, "pytest --version && mutmut --version")
+    backend.peer.replies.extend(backend.episode_replies("op-" + "a2" * 16))
+    ok_backend(lambda: backend.owner().execute(PEER, request, deadline=until()))
+    creates = [seen for seen in backend.peer.seen if "/containers/create" in seen["path"]]
+    assert len(creates) == 1
+    body = creates[0]["body"]
+    assert isinstance(body, dict)
+    mounts = {mount["Target"]: mount for mount in body["HostConfig"]["Mounts"]}
+    assert mounts["/workspace/.venv"]["Source"] == str(environment)
+    assert mounts["/workspace/.venv"]["ReadOnly"] is True
+    assert "VIRTUAL_ENV=/workspace/.venv" in body["Env"]
+    assert any(value.startswith("PATH=/workspace/.venv/bin:") for value in body["Env"])
+    trusted = backend.authority.execution_trusted(backend.view)
+    assert trusted is not None and trusted[-1] == environment
+    with pytest.raises(ExecutionContractError):
+        backend.owner()._validate_binding(
+            ACTOR,
+            backend.view,
+            trusted[1],
+            trusted[2],
+            trusted[3],
+            backend.cache / "unapproved.venv",
+        )
 
 
 def test_cancel_persists_the_exact_intent_before_the_cell_is_stopped(backend: Backend) -> None:

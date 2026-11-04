@@ -13,6 +13,8 @@ import pytest
 
 from fa.execution.protocol import (
     MAX_FRAME_BYTES,
+    MAX_PROJECT_ARTIFACTS_REPLY_BYTES,
+    MAX_PROJECT_INCREMENT_ENTRIES,
     MAX_TAIL_BYTES,
     MAX_TEXT_BYTES,
     DeadlineConnection,
@@ -134,7 +136,7 @@ RESULTS: dict[Operation, dict[str, Any]] = {
     Operation.ACQUIRE_WRITER: {"view_ref": None, "capability": CAP, "generation": 1, "revision_id": REV},
     Operation.HANDOFF: {"view_ref": None, "capability": CAP, "generation": 1, "revision_id": REV},
     Operation.PIN_READER: {"view_ref": {**VIEW, "access": "READ"}, "capability": CAP},
-    Operation.CREATE_VIEW: {"view_ref": VIEW, "capability": CAP},
+    Operation.CREATE_VIEW: {"view_ref": VIEW, "capability": CAP, "input_tree_sha256": SHA},
     Operation.READ_FILE: {"content": "ü", "sha256": SHA, "eof": True},
     Operation.WRITE_FILE: {"sha256": SHA, "bytes": 2},
     Operation.EDIT_FILE: {"sha256": SHA, "bytes": 2},
@@ -144,7 +146,7 @@ RESULTS: dict[Operation, dict[str, Any]] = {
     Operation.PTY_CONTROL: {"sessions": ["main"], "message": "ok"},
     Operation.STOP_VIEW: {"view_id": VID, "terminal": False},
     Operation.SEAL: {"sealed_manifest_id": "seal-" + RID, "revision_id": REV, "tree_sha256": SHA},
-    Operation.PUBLISH: COMMITTED,
+    Operation.PUBLISH: {**COMMITTED, "plan_ref": None, "already_published": False},
     Operation.INSTALL_PROJECT: COMMITTED,
     Operation.PREPARE_BUNDLE: {"validated_bundle_id": "bundle-" + RID, "bundle_sha256": SHA},
     Operation.RELEASE: {"released": True},
@@ -179,6 +181,28 @@ def response(op: Operation) -> dict[str, Any]:
     )
 
 
+def v2_request(op: Operation) -> dict[str, Any]:
+    if op is Operation.HEALTH:
+        return {
+            "protocol_version": 2,
+            "request_id": RID,
+            "op": op.value,
+            "namespace": None,
+            "view_ref": None,
+            "capability": None,
+            "payload": {},
+        }
+    return {
+        "protocol_version": 2,
+        "request_id": RID,
+        "op": Operation.LIST_PROJECT_ARTIFACTS.value,
+        "namespace": NS,
+        "view_ref": {**VIEW, "access": "READ", "purpose": "PROJECT"},
+        "capability": CAP,
+        "payload": {"project_slug": "demo-project"},
+    }
+
+
 def test_view_ref_from_dict_has_one_closed_validating_constructor() -> None:
     expected = ViewRef(WS, VID, REV, "run-1", 1, Access.WRITE, ViewPurpose.PROJECT)
     assert ViewRef.from_dict(VIEW) == expected
@@ -194,9 +218,114 @@ def test_view_ref_from_dict_has_one_closed_validating_constructor() -> None:
             ViewRef.from_dict(invalid)
 
 
-@pytest.mark.parametrize("op", list(Operation))
-def test_all_nineteen_complete_payloads_and_results(op: Operation) -> None:
-    assert set(PAYLOADS) == set(RESULTS) == set(Operation)
+def test_publish_schema_binds_nullable_seal_id_to_candidate_view_only() -> None:
+    ordinary = request(Operation.PUBLISH)
+    candidate_view = {**VIEW, "access": "READ", "purpose": "CANDIDATE"}
+    candidate = request(Operation.PUBLISH)
+    candidate["view_ref"] = candidate_view
+    candidate["payload"] = {"sealed_manifest_id": None, "expected_base_revision": REV}
+    assert decode_request(encode_json(candidate)) == candidate
+
+    invalid = [
+        {**ordinary, "payload": {"sealed_manifest_id": None, "expected_base_revision": REV}},
+        {**candidate, "payload": {"sealed_manifest_id": "seal-" + RID, "expected_base_revision": REV}},
+        {**candidate, "view_ref": {**candidate_view, "access": "WRITE"}},
+        {**candidate, "payload": {"sealed_manifest_id": None, "expected_base_revision": "rev-" + "7" * 32}},
+    ]
+    for record in invalid:
+        with pytest.raises(InvalidRequestError):
+            decode_request(encode_json(record))
+
+
+def test_publish_reply_requires_nullable_plan_ref_but_install_keeps_committed_shape() -> None:
+    publish = response(Operation.PUBLISH)
+    assert publish["result"]["plan_ref"] is None
+    assert publish["result"]["already_published"] is False
+    decode_reply(encode_json(publish), operation=Operation.PUBLISH, request_id=RID)
+    malformed = copy.deepcopy(publish)
+    del malformed["result"]["plan_ref"]
+    with pytest.raises(ExecutionContractError):
+        decode_reply(encode_json(malformed), operation=Operation.PUBLISH, request_id=RID)
+    install = response(Operation.INSTALL_PROJECT)
+    assert set(install["result"]) == set(COMMITTED)
+
+
+def test_already_published_reply_is_bound_to_a_named_plan_and_never_to_a_seal() -> None:
+    """CT117: true means "this intent is already the current bytes", so it needs a plan."""
+    plan_ref = {"workspace_relative_path": "docs/plan.md", "source_kind": "EXPLICIT", "sha256": SHA}
+    repeated = response(Operation.PUBLISH)
+    repeated["result"].update(plan_ref=plan_ref, already_published=True)
+    decode_reply(encode_json(repeated), operation=Operation.PUBLISH, request_id=RID)
+
+    unbound = copy.deepcopy(repeated)
+    unbound["result"]["plan_ref"] = None
+    with pytest.raises(ExecutionContractError):
+        decode_reply(encode_json(unbound), operation=Operation.PUBLISH, request_id=RID)
+
+    missing = response(Operation.PUBLISH)
+    del missing["result"]["already_published"]
+    with pytest.raises(ExecutionContractError):
+        decode_reply(encode_json(missing), operation=Operation.PUBLISH, request_id=RID)
+
+
+def test_only_the_newer_reader_tolerates_a_publish_reply_without_the_repeat_key() -> None:
+    """CT120/E304: one direction of skew is readable, and the server stays strict.
+
+    A server answering from before the key existed always committed, so its absence
+    means ``already_published: False`` - but the supervisor's own self-check must
+    still refuse a reply that omits a key it is required to emit.
+    """
+    legacy = response(Operation.PUBLISH)
+    del legacy["result"]["already_published"]
+    with pytest.raises(ExecutionContractError):
+        decode_reply(encode_json(legacy), operation=Operation.PUBLISH, request_id=RID)
+    tolerant = decode_reply(encode_json(legacy), operation=Operation.PUBLISH, request_id=RID, tolerate_legacy=True)
+    assert tolerant["result"]["already_published"] is False
+    # Tolerance is narrow: it never invents a repeat, so the plan-bound rule is untouched.
+    assert tolerant["result"]["plan_ref"] is legacy["result"]["plan_ref"]
+
+
+def test_create_view_reply_requires_the_exact_view_tree_identity() -> None:
+    """A caller may not construct a managed executor from an unbound view reply."""
+    legacy = response(Operation.CREATE_VIEW)
+    del legacy["result"]["input_tree_sha256"]
+    with pytest.raises(ExecutionContractError):
+        decode_reply(encode_json(legacy), operation=Operation.CREATE_VIEW, request_id=RID)
+
+
+@pytest.mark.parametrize("purpose", ["CANDIDATE", "VERIFICATION"])
+def test_a_reader_view_may_start_from_the_bytes_current_at_copy_time(purpose: str) -> None:
+    """CT117: the base is optional exactly where the publish re-reads it."""
+    record = request(Operation.CREATE_VIEW)
+    record["payload"].update(
+        access="READ",
+        purpose=purpose,
+        base_revision=None,
+        plan_ref={"workspace_relative_path": "docs/plan.md", "source_kind": "EXPLICIT", "sha256": SHA},
+        candidate_scope=None
+        if purpose == "VERIFICATION"
+        else {
+            "plan_ref": {
+                "workspace_relative_path": "docs/plan.md",
+                "source_kind": "EXPLICIT",
+                "sha256": SHA,
+            },
+        },
+    )
+    assert decode_request(encode_json(record)) == record
+
+
+@pytest.mark.parametrize("purpose", ["PROJECT", "MUTATION", "PROVISIONING"])
+def test_a_writer_view_still_names_the_bytes_it_mutates(purpose: str) -> None:
+    record = request(Operation.CREATE_VIEW)
+    record["payload"].update(access="WRITE", purpose=purpose, base_revision=None, plan_ref=None, candidate_scope=None)
+    with pytest.raises(InvalidRequestError):
+        decode_request(encode_json(record))
+
+
+@pytest.mark.parametrize("op", [op for op in Operation if op is not Operation.LIST_PROJECT_ARTIFACTS])
+def test_all_v1_operations_keep_their_complete_payloads_and_results(op: Operation) -> None:
+    assert set(PAYLOADS) == set(RESULTS) == set(Operation) - {Operation.LIST_PROJECT_ARTIFACTS}
     req, res = request(op), response(op)
     assert decode_request(encode_json(req)) == req
     assert decode_reply(encode_json(res), operation=op, request_id=RID) == res
@@ -220,6 +349,105 @@ def test_all_nineteen_complete_payloads_and_results(op: Operation) -> None:
     res["result"]["secret"] = CAP
     with pytest.raises(ExecutionContractError):
         decode_reply(encode_json(res), operation=op, request_id=RID)
+
+
+def test_v2_health_and_project_listing_have_closed_versioned_shapes() -> None:
+    health = v2_request(Operation.HEALTH)
+    assert decode_request(encode_json(health)) == health
+    health_reply = {
+        "protocol_version": 2,
+        "request_id": RID,
+        "status": "OK",
+        "result": {
+            "ready": True,
+            "protocol_version": 2,
+            "profile_set_sha256": SHA,
+            "features": ["list_project_artifacts"],
+        },
+        "error": None,
+    }
+    assert (
+        decode_reply(encode_json(health_reply), operation=Operation.HEALTH, request_id=RID, protocol_version=2)
+        == health_reply
+    )
+
+    listing = v2_request(Operation.LIST_PROJECT_ARTIFACTS)
+    assert decode_request(encode_json(listing)) == listing
+    result = {
+        "project_kind": "directory",
+        "roadmap_kind": "file",
+        "increments_kind": "directory",
+        "entries": [{"name": "increment-01-foundation.md", "kind": "file"}],
+    }
+    reply = {"protocol_version": 2, "request_id": RID, "status": "OK", "result": result, "error": None}
+    assert (
+        decode_reply(encode_json(reply), operation=Operation.LIST_PROJECT_ARTIFACTS, request_id=RID, protocol_version=2)
+        == reply
+    )
+
+    bad_listing_results = (
+        {**result, "entries": [{"name": "x", "kind": "symlink", "target": "secret"}]},
+        {**result, "entries": [{"name": "x", "kind": "file", "content": "secret"}]},
+        {
+            **result,
+            "entries": [{"name": "x", "kind": "file"}] * (MAX_PROJECT_INCREMENT_ENTRIES + 1),
+        },
+    )
+    for bad_result in bad_listing_results:
+        bad_reply = {**reply, "result": bad_result}
+        with pytest.raises(ExecutionContractError):
+            decode_reply(
+                encode_json(bad_reply),
+                operation=Operation.LIST_PROJECT_ARTIFACTS,
+                request_id=RID,
+                protocol_version=2,
+            )
+    bad_health = {
+        **health_reply,
+        "result": {**health_reply["result"], "features": ["list_project_artifacts", "other"]},
+    }
+    with pytest.raises(ExecutionContractError):
+        decode_reply(encode_json(bad_health), operation=Operation.HEALTH, request_id=RID, protocol_version=2)
+
+    encoded = encode_json(reply)
+    oversized = encoded + b" " * (MAX_PROJECT_ARTIFACTS_REPLY_BYTES - len(encoded) + 1)
+    with pytest.raises(ExecutionContractError):
+        decode_reply(oversized, operation=Operation.LIST_PROJECT_ARTIFACTS, request_id=RID, protocol_version=2)
+
+
+def test_protocol_versions_are_closed_and_legacy_rejection_is_opt_in() -> None:
+    listing = v2_request(Operation.LIST_PROJECT_ARTIFACTS)
+    with pytest.raises(InvalidRequestError):
+        decode_request(encode_json({**listing, "protocol_version": 1}))
+    v2_write = {**request(Operation.WRITE_FILE), "protocol_version": 2}
+    with pytest.raises(InvalidRequestError):
+        decode_request(encode_json(v2_write))
+    for invalid_payload in (
+        {"project_slug": "../demo-project"},
+        {"project_slug": "demo-project", "path": "worklogs/demo-project"},
+    ):
+        with pytest.raises(InvalidRequestError):
+            decode_request(encode_json({**listing, "payload": invalid_payload}))
+
+    old_server_rejection = {
+        "protocol_version": 1,
+        "request_id": RID,
+        "status": "ERROR",
+        "result": None,
+        "error": {"code": "INVALID_REQUEST", "retryable": False, "operation_id": None},
+    }
+    assert (
+        decode_reply(
+            encode_json(old_server_rejection),
+            operation=Operation.HEALTH,
+            request_id=RID,
+            protocol_version=2,
+            allow_legacy_v1_rejection=True,
+        )
+        == old_server_rejection
+    )
+    with pytest.raises(ExecutionContractError):
+        decode_reply(encode_json(old_server_rejection), operation=Operation.HEALTH, request_id=RID, protocol_version=2)
 
 
 @pytest.mark.parametrize(
@@ -299,7 +527,6 @@ def test_candidate_and_pty_dependent_shapes() -> None:
     with pytest.raises(InvalidRequestError):
         decode_request(encode_json(req))
     req["payload"]["candidate_scope"] = {
-        "candidate_path": "draft.md",
         "plan_ref": {"workspace_relative_path": "plan.md", "source_kind": "EXPLICIT", "sha256": SHA},
     }
     req["payload"]["plan_ref"] = req["payload"]["candidate_scope"]["plan_ref"]
@@ -451,7 +678,7 @@ def test_formal_admission_needs_plan_and_candidate_must_match(purpose: str) -> N
     req["payload"]["purpose"] = purpose
     plan = {"workspace_relative_path": "plan.md", "source_kind": "EXPLICIT", "sha256": SHA}
     if purpose == "CANDIDATE":
-        req["payload"]["candidate_scope"] = {"candidate_path": "draft.md", "plan_ref": plan.copy()}
+        req["payload"]["candidate_scope"] = {"plan_ref": plan.copy()}
     with pytest.raises(ExecutionContractError):
         decode_request(encode_json(req))
     req["payload"]["plan_ref"] = plan.copy()

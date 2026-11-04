@@ -71,7 +71,14 @@ class Probe:
                 access=Access(raw_view["access"]),
                 purpose=ViewPurpose(raw_view["purpose"]),
             )
-        return GrantReply(op, "e" * 64, view, value.get("generation"), value.get("revision_id"))
+        return GrantReply(
+            op,
+            "e" * 64,
+            view,
+            value.get("generation"),
+            value.get("revision_id"),
+            value.get("input_tree_sha256"),
+        )
 
     def exchange(self, req: dict[str, Any]) -> dict[str, Any] | None:
         controller, accepted = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)

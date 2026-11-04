@@ -19,12 +19,12 @@ import pytest
 from fa.execution import workspace
 from fa.execution.journal import JournalError
 from fa.execution.supervisor import PeerIdentity, SupervisorError
-from fa.execution.types import ExecutionContractError, GrantReply
+from fa.execution.types import Access, ExecutionContractError, GrantReply
 from fa.execution.workspace import WorkspaceAuthority
 from fa.inner_loop.plan_admission import PlanRef, read_plan_snapshot
 from fa.inner_loop.workflow_artifacts import _replace_private_bytes
 from tests.test_execution_readers import pin, read, record_path, ref, release
-from tests.test_execution_views import create, native_profile, write
+from tests.test_execution_views import create, native_profile, read_only_profile, write
 from tests.test_execution_workspace import ACTOR, OTHER, PEER, Site, ok, until
 from tests.test_execution_workspace import site as site
 
@@ -41,6 +41,7 @@ def setup(
         controller_uids=frozenset({PEER.uid}),
         lock_timeout_ms=1000,
         view_profile=native_profile(),
+        read_only_profile=read_only_profile(),
         approved_cache=approved if cache else None,
     ) as owner:
         ids = ok(lambda: site.register(owner))
@@ -54,20 +55,22 @@ def setup(
 
 def request(grant: GrantReply, **changes: Any) -> dict[str, Any]:
     rid = uuid4().hex
+    view = ref(grant)
+    selected_profile = read_only_profile() if view.access is Access.READ else native_profile()
     req: dict[str, Any] = {
         "protocol_version": 1,
         "request_id": rid,
         "op": "exec",
         "namespace": ACTOR.to_dict(),
-        "view_ref": ref(grant).to_dict(),
+        "view_ref": view.to_dict(),
         "capability": grant.capability,
         "payload": {
             "operation_id": "op-" + rid,
-            "profile_id": native_profile().profile_id,
+            "profile_id": selected_profile.profile_id,
             "command": "printf never-sent-by-authority",
             "cwd": "src",
             "timeout_ms": 500,
-            "session_id": "main",
+            "session_id": "main" if selected_profile.interactive else None,
         },
     }
     req.update(changes)

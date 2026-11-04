@@ -1,4 +1,4 @@
-"""Closed v1 JSON control contract; shape validation is NEVER authorization.
+"""Closed versioned JSON control contract; shape validation is NEVER authorization.
 
 Four-byte unsigned network-order length followed by bounded UTF-8 JSON. Socket
 callers must set a finite control-RPC timeout. There are no retries here.
@@ -18,8 +18,15 @@ import fastjsonschema  # type: ignore[import-untyped]  # Existing dependency shi
 from fa.execution.primitives import ExecutionContractError, Operation, _positive_integer
 
 MAX_FRAME_BYTES = 4 * 1024 * 1024
+# Opt-in framing ceiling for future large EXEC replies; ordinary requests and
+# replies keep MAX_FRAME_BYTES. This is not an EXEC payload/receipt limit.
+MAX_EXTENDED_FRAME_BYTES = 16 * 1024 * 1024
 MAX_TEXT_BYTES = 1024 * 1024
 MAX_TAIL_BYTES = 64 * 1024
+PROTOCOL_V1 = 1
+PROTOCOL_V2 = 2
+MAX_PROJECT_ARTIFACTS_REPLY_BYTES = 64 * 1024
+MAX_PROJECT_INCREMENT_ENTRIES = 64
 
 
 def _object(**properties: Any) -> dict[str, Any]:
@@ -66,7 +73,10 @@ VIEW = _object(
 PLAN_REF = _object(
     workspace_relative_path=PATH, source_kind=_enum("EXPLICIT", "EXISTING_SELECTION", "BOOTSTRAP"), sha256=SHA
 )
-CANDIDATE_SCOPE = _object(candidate_path=PATH, plan_ref=PLAN_REF)
+# CT120 (E302): the CANDIDATE view has one writable target, and the plan it
+# publishes is identified by `plan_ref` alone. The controller used to name a
+# second path beside it; the authority never used that name for IO.
+CANDIDATE_SCOPE = _object(plan_ref=PLAN_REF)
 RECEIPT = _object(
     schema_version={"type": "integer", "const": 1},
     operation_id=_id("op-"),
@@ -99,7 +109,11 @@ PAYLOADS: dict[Operation, dict[str, Any]] = {
     Operation.PIN_READER: _object(workspace_id=_id("ws-"), revision_id=_id("rev-"), plan_ref=_nullable(PLAN_REF)),
     Operation.CREATE_VIEW: _object(
         workspace_id=_id("ws-"),
-        base_revision=_id("rev-"),
+        # Null binds the view to whatever is current when the copy starts
+        # (CT117): a patch publish must not demand that nothing else moved.
+        # Only CANDIDATE/VERIFICATION accept it; a PROJECT/MUTATION writer
+        # still names the bytes it intends to mutate.
+        base_revision=_nullable(_id("rev-")),
         access=VIEW["properties"]["access"],
         purpose=VIEW["properties"]["purpose"],
         candidate_scope=_nullable(CANDIDATE_SCOPE),
@@ -123,7 +137,7 @@ PAYLOADS: dict[Operation, dict[str, Any]] = {
     Operation.PTY_CONTROL: _object(action=_enum("INTERRUPT", "CLOSE", "LIST"), session_id=_nullable(SESSION_ID)),
     Operation.STOP_VIEW: _object(),
     Operation.SEAL: _object(),
-    Operation.PUBLISH: _object(sealed_manifest_id=_id("seal-"), expected_base_revision=_id("rev-")),
+    Operation.PUBLISH: _object(sealed_manifest_id=_nullable(_id("seal-")), expected_base_revision=_id("rev-")),
     Operation.PREPARE_BUNDLE: _object(
         project_slug=CONFIG_ID,
         increment_slug=CONFIG_ID,
@@ -134,6 +148,7 @@ PAYLOADS: dict[Operation, dict[str, Any]] = {
     Operation.INSTALL_PROJECT: _object(validated_bundle_id=_id("bundle-"), project_slug=CONFIG_ID),
     Operation.HANDOFF: _object(target_namespace=NAMESPACE),
     Operation.RELEASE: _object(),
+    Operation.LIST_PROJECT_ARTIFACTS: _object(project_slug=CONFIG_ID),
 }
 _COMMITTED = _object(
     workspace_id=_id("ws-"),
@@ -142,15 +157,48 @@ _COMMITTED = _object(
     operation_id=_id("op-"),
     projection_complete={"type": "boolean", "const": True},
 )
+_PUBLISH_REPLY = _object(
+    workspace_id=_id("ws-"),
+    revision_id=_id("rev-"),
+    tree_sha256=SHA,
+    operation_id=_id("op-"),
+    projection_complete={"type": "boolean", "const": True},
+    plan_ref=_nullable(PLAN_REF),
+    # True only for a candidate publish whose intent is already the current
+    # bytes (CT117): the reply then names the revision that already exists
+    # instead of committing a second one. Sealed publishes always send False.
+    already_published=BOOL,
+)
 _OWNER_REPLY = _object(view_ref={"type": "null"}, capability=SHA, generation=POSITIVE, revision_id=_id("rev-"))
-_VIEW_REPLY = _object(view_ref=VIEW, capability=SHA)
+_VIEW_REPLY = {
+    "type": "object",
+    "properties": {"view_ref": VIEW, "capability": SHA, "input_tree_sha256": SHA},
+    "required": ["view_ref", "capability"],
+    "additionalProperties": False,
+}
+_CREATED_VIEW_REPLY = _object(view_ref=VIEW, capability=SHA, input_tree_sha256=SHA)
+_PROJECT_ARTIFACT_KIND = _enum("missing", "file", "directory", "symlink")
+_PROJECT_ENTRY = _object(
+    name={"type": "string", "minLength": 1, "maxLength": 255},
+    kind=_enum("file", "directory", "symlink"),
+)
+_PROJECT_ARTIFACTS_REPLY = _object(
+    project_kind=_PROJECT_ARTIFACT_KIND,
+    roadmap_kind=_PROJECT_ARTIFACT_KIND,
+    increments_kind=_PROJECT_ARTIFACT_KIND,
+    entries={
+        "type": "array",
+        "items": _PROJECT_ENTRY,
+        "maxItems": MAX_PROJECT_INCREMENT_ENTRIES,
+    },
+)
 RESULTS: dict[Operation, dict[str, Any]] = {
     Operation.HEALTH: _object(ready=BOOL, protocol_version={"type": "integer", "const": 1}, profile_set_sha256=SHA),
     Operation.REGISTER_WORKSPACE: _object(workspace_id=_id("ws-"), revision_id=_id("rev-")),
     Operation.ACQUIRE_WRITER: _OWNER_REPLY,
     Operation.HANDOFF: _OWNER_REPLY,
     Operation.PIN_READER: _VIEW_REPLY,
-    Operation.CREATE_VIEW: _VIEW_REPLY,
+    Operation.CREATE_VIEW: _CREATED_VIEW_REPLY,
     Operation.READ_FILE: _object(content=TEXT, sha256=SHA, eof=BOOL),
     Operation.WRITE_FILE: _object(sha256=SHA, bytes=UINT),
     Operation.EDIT_FILE: _object(sha256=SHA, bytes=UINT),
@@ -160,10 +208,25 @@ RESULTS: dict[Operation, dict[str, Any]] = {
     Operation.PTY_CONTROL: _object(sessions={"type": "array", "items": SESSION_ID, "uniqueItems": True}, message=TEXT),
     Operation.STOP_VIEW: _object(view_id=_id("view-"), terminal=BOOL),
     Operation.SEAL: _object(sealed_manifest_id=_id("seal-"), revision_id=_id("rev-"), tree_sha256=SHA),
-    Operation.PUBLISH: _COMMITTED,
+    Operation.PUBLISH: _PUBLISH_REPLY,
     Operation.INSTALL_PROJECT: _COMMITTED,
     Operation.PREPARE_BUNDLE: _object(validated_bundle_id=_id("bundle-"), bundle_sha256=SHA),
     Operation.RELEASE: _object(released={"type": "boolean", "const": True}),
+    Operation.LIST_PROJECT_ARTIFACTS: _PROJECT_ARTIFACTS_REPLY,
+}
+RESULTS_V2: dict[Operation, dict[str, Any]] = {
+    Operation.HEALTH: _object(
+        ready=BOOL,
+        protocol_version={"type": "integer", "const": PROTOCOL_V2},
+        profile_set_sha256=SHA,
+        features={
+            "type": "array",
+            "items": _enum("list_project_artifacts"),
+            "uniqueItems": True,
+            "const": ["list_project_artifacts"],
+        },
+    ),
+    Operation.LIST_PROJECT_ARTIFACTS: _PROJECT_ARTIFACTS_REPLY,
 }
 ERROR_CODES = (
     "INVALID_REQUEST",
@@ -184,16 +247,33 @@ ERROR_CODES = (
 )
 _ERROR = _object(code=_enum(*ERROR_CODES), retryable=BOOL, operation_id=_nullable(_id("op-")))
 _ENVELOPE = _object(
-    protocol_version={"type": "integer", "const": 1},
+    protocol_version={"type": "integer", "const": PROTOCOL_V1},
     request_id=_id(""),
-    op=_enum(*(op.value for op in Operation)),
+    op=_enum(*(op.value for op in Operation if op is not Operation.LIST_PROJECT_ARTIFACTS)),
     namespace=_nullable(NAMESPACE),
     view_ref=_nullable(VIEW),
     capability=_nullable(SHA),
     payload={"type": "object"},
 )
 _REPLY = _object(
-    protocol_version={"type": "integer", "const": 1},
+    protocol_version={"type": "integer", "const": PROTOCOL_V1},
+    request_id=_id(""),
+    status=_enum("OK", "ERROR"),
+    result={},
+    error=_nullable(_ERROR),
+)
+_V2_OPERATIONS = (Operation.HEALTH, Operation.LIST_PROJECT_ARTIFACTS)
+_ENVELOPE_V2 = _object(
+    protocol_version={"type": "integer", "const": PROTOCOL_V2},
+    request_id=_id(""),
+    op=_enum(*(op.value for op in _V2_OPERATIONS)),
+    namespace=_nullable(NAMESPACE),
+    view_ref=_nullable(VIEW),
+    capability=_nullable(SHA),
+    payload={"type": "object"},
+)
+_REPLY_V2 = _object(
+    protocol_version={"type": "integer", "const": PROTOCOL_V2},
     request_id=_id(""),
     status=_enum("OK", "ERROR"),
     result={},
@@ -201,10 +281,13 @@ _REPLY = _object(
 )
 _ENVELOPE_CHECK = fastjsonschema.compile(_ENVELOPE)
 _REPLY_CHECK = fastjsonschema.compile(_REPLY)
+_ENVELOPE_V2_CHECK = fastjsonschema.compile(_ENVELOPE_V2)
+_REPLY_V2_CHECK = fastjsonschema.compile(_REPLY_V2)
 _RECEIPT_CHECK = fastjsonschema.compile(RECEIPT)
 _PLAN_REF_CHECK = fastjsonschema.compile(PLAN_REF)
 _PAYLOAD_CHECKS = {op: fastjsonschema.compile(schema) for op, schema in PAYLOADS.items()}
 _RESULT_CHECKS = {op: fastjsonschema.compile(schema) for op, schema in RESULTS.items()}
+_RESULT_CHECKS_V2 = {op: fastjsonschema.compile(schema) for op, schema in RESULTS_V2.items()}
 
 
 class InvalidRequestError(ExecutionContractError):
@@ -220,7 +303,7 @@ def _byte_limits(value: Any, key: str = "") -> None:
         limit = MAX_TAIL_BYTES if key in {"stdout_tail", "stderr_tail"} else MAX_TEXT_BYTES
         if len(value.encode("utf-8")) > limit:
             raise ExecutionContractError
-        if key in {"path", "workspace_relative_path", "relative_root", "candidate_path", "cwd"}:
+        if key in {"path", "workspace_relative_path", "relative_root", "cwd"}:
             if value != "." or key != "cwd":
                 if any(part in {"", ".", ".."} for part in value.split("/")) or "\0" in value:
                     raise ExecutionContractError
@@ -255,8 +338,9 @@ def _nonfinite(_: str) -> None:
     raise ExecutionContractError
 
 
-def _loads(raw: bytes) -> dict[str, Any]:
-    if not raw or len(raw) > MAX_FRAME_BYTES:
+def _loads(raw: bytes, *, max_bytes: int = MAX_FRAME_BYTES) -> dict[str, Any]:
+    limit = _frame_limit(max_bytes)
+    if not raw or len(raw) > limit:
         raise ExecutionContractError
     try:
         value = json.loads(raw.decode("utf-8"), object_pairs_hook=_pairs, parse_constant=_nonfinite)
@@ -267,7 +351,8 @@ def _loads(raw: bytes) -> dict[str, Any]:
     return value
 
 
-def encode_json(value: dict[str, Any]) -> bytes:
+def encode_json(value: dict[str, Any], *, max_bytes: int = MAX_FRAME_BYTES) -> bytes:
+    limit = _frame_limit(max_bytes)
     try:
         _byte_limits(value)
         raw = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode(
@@ -275,7 +360,7 @@ def encode_json(value: dict[str, Any]) -> bytes:
         )
     except (ValueError, TypeError, RecursionError, UnicodeError):
         raise ExecutionContractError from None
-    if not raw or len(raw) > MAX_FRAME_BYTES:
+    if not raw or len(raw) > limit:
         raise ExecutionContractError
     return raw
 
@@ -287,11 +372,22 @@ def decode_request(raw: bytes) -> dict[str, Any]:
     if not valid_id:
         raise InvalidRequestError(None)
     try:
-        _check(_ENVELOPE_CHECK, record)
-        op = Operation(record["op"])
+        version = record.get("protocol_version")
+        if version == PROTOCOL_V1:
+            _check(_ENVELOPE_CHECK, record)
+            op = Operation(record["op"])
+            if op is Operation.LIST_PROJECT_ARTIFACTS:
+                raise ExecutionContractError
+        elif version == PROTOCOL_V2:
+            _check(_ENVELOPE_V2_CHECK, record)
+            op = Operation(record["op"])
+            if op not in _V2_OPERATIONS:
+                raise ExecutionContractError
+        else:
+            raise ExecutionContractError
         _check(_PAYLOAD_CHECKS[op], record["payload"])
         _request_bindings(record, op)
-    except ExecutionContractError:
+    except (KeyError, ExecutionContractError, ValueError, TypeError):
         raise InvalidRequestError(request_id) from None
     return record
 
@@ -312,11 +408,20 @@ def _request_bindings(record: dict[str, Any], op: Operation) -> None:
     if op is Operation.EXEC and payload["operation_id"] != "op-" + record["request_id"]:
         raise ExecutionContractError
     if op is Operation.CREATE_VIEW:
+        if payload["base_revision"] is None and payload["purpose"] not in {"CANDIDATE", "VERIFICATION"}:
+            raise ExecutionContractError
         if (payload["candidate_scope"] is not None) != (payload["purpose"] == "CANDIDATE"):
             raise ExecutionContractError
         if payload["purpose"] in {"VERIFICATION", "MUTATION", "CANDIDATE"} and payload["plan_ref"] is None:
             raise ExecutionContractError
         if payload["candidate_scope"] is not None and payload["candidate_scope"]["plan_ref"] != payload["plan_ref"]:
+            raise ExecutionContractError
+    if op is Operation.PUBLISH:
+        view = record["view_ref"]
+        candidate = view["purpose"] == "CANDIDATE"
+        if (payload["sealed_manifest_id"] is None) != candidate:
+            raise ExecutionContractError
+        if candidate and (view["access"] != "READ" or payload["expected_base_revision"] != view["base_revision"]):
             raise ExecutionContractError
     if op is Operation.PTY_CONTROL and ((payload["session_id"] is None) != (payload["action"] == "LIST")):
         raise ExecutionContractError
@@ -341,23 +446,111 @@ def validate_receipt(record: dict[str, Any]) -> None:
         raise ExecutionContractError
 
 
-def decode_reply(raw: bytes, *, operation: Operation, request_id: str) -> dict[str, Any]:
-    record = _loads(raw)
-    _check(_REPLY_CHECK, record)
+def _publish_reply_compat(result: dict[str, Any]) -> dict[str, Any]:
+    """A PUBLISH reply written before ``already_published`` existed is still a reply.
+
+    The key was added without a protocol bump, so a supervisor started before the
+    upgrade answers without it. Its absence is not ambiguity: a server that has no
+    repeat path always committed, which is exactly ``already_published: False``.
+    Tolerance is one-directional and belongs to the newer reader only - the
+    server's self-check stays strict, and the opposite window (a newer server
+    answering an older client) is why client and supervisor upgrade together.
+    """
+    if "already_published" not in result:
+        return {**result, "already_published": False}
+    return result
+
+
+def _reply_version(
+    record: dict[str, Any],
+    *,
+    operation: Operation,
+    request_id: str,
+    protocol_version: int,
+    allow_legacy_v1_rejection: bool,
+) -> bool:
+    actual_version = record.get("protocol_version")
+    legacy_rejection = protocol_version == PROTOCOL_V2 and allow_legacy_v1_rejection and actual_version == PROTOCOL_V1
+    checker = _REPLY_V2_CHECK if actual_version == PROTOCOL_V2 else _REPLY_CHECK
+    _check(checker, record)
     if record["request_id"] != request_id:
         raise ExecutionContractError
+    if legacy_rejection:
+        if record["status"] != "ERROR" or record["error"] is None or record["error"]["code"] != "INVALID_REQUEST":
+            raise ExecutionContractError
+    elif actual_version != protocol_version:
+        raise ExecutionContractError
+    return legacy_rejection
+
+
+def _validate_reply_body(
+    record: dict[str, Any],
+    *,
+    operation: Operation,
+    protocol_version: int,
+    tolerate_legacy: bool,
+) -> dict[str, Any]:
     if record["status"] == "ERROR":
         if record["error"] is None or record["result"] is not None:
             raise ExecutionContractError
-    else:
-        if record["error"] is not None:
+        return record
+    if record["error"] is not None:
+        raise ExecutionContractError
+    if protocol_version == PROTOCOL_V2:
+        if operation not in _V2_OPERATIONS:
             raise ExecutionContractError
-        _check(_RESULT_CHECKS[operation], record["result"])
-        if operation in {Operation.EXEC, Operation.INSPECT, Operation.CANCEL}:
-            validate_receipt(record["result"]["receipt"])
-        if operation is Operation.PIN_READER and record["result"]["view_ref"]["access"] != "READ":
+        result_checks = _RESULT_CHECKS_V2
+    else:
+        if operation is Operation.LIST_PROJECT_ARTIFACTS:
+            raise ExecutionContractError
+        result_checks = _RESULT_CHECKS
+    if tolerate_legacy and operation is Operation.PUBLISH and isinstance(record["result"], dict):
+        record = {**record, "result": _publish_reply_compat(record["result"])}
+    _check(result_checks[operation], record["result"])
+    if operation in {Operation.EXEC, Operation.INSPECT, Operation.CANCEL}:
+        validate_receipt(record["result"]["receipt"])
+    if operation is Operation.PIN_READER and record["result"]["view_ref"]["access"] != "READ":
+        raise ExecutionContractError
+    if operation is Operation.PUBLISH and record["result"]["already_published"]:
+        if record["result"]["plan_ref"] is None:
             raise ExecutionContractError
     return record
+
+
+def decode_reply(
+    raw: bytes,
+    *,
+    operation: Operation,
+    request_id: str,
+    tolerate_legacy: bool = False,
+    protocol_version: int = PROTOCOL_V1,
+    allow_legacy_v1_rejection: bool = False,
+) -> dict[str, Any]:
+    """Validate a reply under the request's exact wire version.
+
+    A v2 caller may opt into one compatibility case only: an older v1-only
+    server's explicit INVALID_REQUEST rejection of a v2 probe.
+    """
+    if protocol_version not in {PROTOCOL_V1, PROTOCOL_V2}:
+        raise ExecutionContractError
+    listing_reply = protocol_version == PROTOCOL_V2 and operation is Operation.LIST_PROJECT_ARTIFACTS
+    max_bytes = MAX_PROJECT_ARTIFACTS_REPLY_BYTES if listing_reply else MAX_FRAME_BYTES
+    if listing_reply and len(raw) > MAX_PROJECT_ARTIFACTS_REPLY_BYTES:
+        raise ExecutionContractError
+    record = _loads(raw, max_bytes=max_bytes)
+    _reply_version(
+        record,
+        operation=operation,
+        request_id=request_id,
+        protocol_version=protocol_version,
+        allow_legacy_v1_rejection=allow_legacy_v1_rejection,
+    )
+    return _validate_reply_body(
+        record,
+        operation=operation,
+        protocol_version=protocol_version,
+        tolerate_legacy=tolerate_legacy,
+    )
 
 
 class FrameConnection(Protocol):
@@ -424,14 +617,23 @@ def _read_exact(connection: FrameConnection, size: int) -> bytes:
     return bytes(data)
 
 
-def read_frame(connection: FrameConnection) -> bytes:
+def _frame_limit(max_bytes: int) -> int:
+    """Check a caller's frame budget before reading or writing any bytes."""
+    if type(max_bytes) is not int or not 0 < max_bytes <= MAX_EXTENDED_FRAME_BYTES:
+        raise ExecutionContractError
+    return max_bytes
+
+
+def read_frame(connection: FrameConnection, *, max_bytes: int = MAX_FRAME_BYTES) -> bytes:
+    limit = _frame_limit(max_bytes)
     length = struct.unpack("!I", _read_exact(connection, 4))[0]
-    if not 0 < length <= MAX_FRAME_BYTES:
+    if not 0 < length <= limit:
         raise ExecutionContractError
     return _read_exact(connection, length)
 
 
-def write_frame(connection: FrameConnection, raw: bytes) -> None:
-    if not 0 < len(raw) <= MAX_FRAME_BYTES:
+def write_frame(connection: FrameConnection, raw: bytes, *, max_bytes: int = MAX_FRAME_BYTES) -> None:
+    limit = _frame_limit(max_bytes)
+    if not 0 < len(raw) <= limit:
         raise ExecutionContractError
     connection.sendall(struct.pack("!I", len(raw)) + raw)

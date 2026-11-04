@@ -144,7 +144,14 @@ class PlanFixture(Fixture):
             access=Access.READ if req["op"] == "pin_reader" else Access.WRITE,
             purpose=ViewPurpose.PROJECT,
         )
-        return GrantReply(Operation(req["op"]), "b" * 64, view, None, None)
+        return GrantReply(
+            Operation(req["op"]),
+            "b" * 64,
+            view,
+            None,
+            None,
+            SHA if req["op"] == Operation.CREATE_VIEW.value else None,
+        )
 
     def dispatch(self, req: dict[str, Any]) -> dict[str, Any]:
         parsed = decode_request(encode_json(req))

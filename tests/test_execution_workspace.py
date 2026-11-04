@@ -23,6 +23,7 @@ from fa.execution.supervisor import PeerIdentity, SupervisorError
 from fa.execution.types import ExecutionContractError, GrantReply, NamespaceRef
 from fa.execution.workspace import InputLimits, WorkspaceAuthority
 from fa.inner_loop.workflow_artifacts import _replace_private_bytes
+from tests.test_execution_client import profile as execution_profile
 
 PEER = PeerIdentity(os.getpid(), os.getuid(), os.getgid())
 ACTOR = NamespaceRef("session-a", "run-a")
@@ -117,6 +118,225 @@ def test_registers_real_dirty_r0_and_preserves_index_modes(site: Site) -> None:
         assert site.metadata(ids)["generation"] == 1 and site.metadata(ids)["status"] == "AVAILABLE"
         assert before == (site.source.stat().st_mode, (site.source / ".git/index").read_bytes())
         assert list((site.state / "pending").iterdir()) == []
+
+
+def install_environment_artifact(
+    cache: Path,
+    source: Path,
+    *,
+    profile: Any | None = None,
+    corrupt_manifest: bool = False,
+) -> Path:
+    """Fixture an immutable cache entry using the production identity function."""
+    selected_profile = execution_profile() if profile is None else profile
+    source_fd = workspace._open_absolute(source)
+    try:
+        identity = workspace._environment_identity(source_fd, selected_profile)
+    finally:
+        os.close(source_fd)
+    fingerprint = hashlib.sha256(workspace._canonical(identity)).hexdigest()
+    entry = cache / workspace._ENVIRONMENT_STORE / fingerprint
+    venv = entry / ".venv"
+    binaries = venv / "bin"
+    binaries.mkdir(parents=True)
+    for executable in ("python", "pytest", "mutmut"):
+        path = binaries / executable
+        path.write_text("#!/bin/sh\nexit 0\n")
+        path.chmod(0o555)
+    manifest = {**identity, "fingerprint": fingerprint}
+    if corrupt_manifest:
+        manifest["image_digest"] = "sha256:" + "0" * 64
+    (entry / "manifest.json").write_text(json.dumps(manifest, sort_keys=True, separators=(",", ":")))
+    (entry / "manifest.json").chmod(0o444)
+    for directory in (binaries, venv, entry):
+        directory.chmod(0o555)
+    return venv
+
+
+def test_register_new_materializes_approved_source_and_keeps_partial_bytes_on_failure(tmp_path: Path) -> None:
+    sessions = tmp_path / "sessions"
+    source = tmp_path / "repo"
+    sessions.mkdir()
+    source.mkdir()
+    (source / "README.md").write_text("seed", encoding="utf-8")
+    (source / "pyproject.toml").write_text("[project]\nname = 'first-agent'\n", encoding="utf-8")
+    (source / "uv.lock").write_text("version = 1\n", encoding="utf-8")
+    (source / ".git").mkdir()
+    (source / ".git" / "index").write_text("must not copy", encoding="utf-8")
+    (source / ".venv").mkdir()
+    (source / ".venv" / "secret").write_text("must not copy", encoding="utf-8")
+    peer = PeerIdentity(os.getpid(), os.getuid(), os.getgid())
+    state = tmp_path / "protected"
+    with WorkspaceAuthority(
+        state,
+        approved_roots={"sessions": sessions, "repo": source},
+        controller_uids=frozenset({peer.uid}),
+        lock_timeout_ms=25,
+    ) as owner:
+        ids = owner.register_new(
+            peer,
+            ACTOR,
+            root_id="sessions",
+            relative_root="new-session",
+            input_id="repo",
+            deadline=until(),
+        )
+        root = sessions / "new-session"
+        assert (root / "README.md").read_text(encoding="utf-8") == "seed"
+        assert (root / "pyproject.toml").is_file() and (root / "uv.lock").is_file()
+        assert not (root / ".git").exists() and not (root / ".venv").exists()
+        assert (
+            owner.register_existing(PEER, ACTOR, root_id="sessions", relative_root="new-session", deadline=until())[
+                "workspace_id"
+            ]
+            == ids["workspace_id"]
+        )
+        with pytest.raises(SupervisorError) as collision:
+            owner.register_new(
+                peer,
+                NamespaceRef("session-b", "run-b"),
+                root_id="sessions",
+                relative_root="new-session",
+                input_id=None,
+                deadline=until(),
+            )
+        assert collision.value.code == "PATH_DENIED"
+
+
+def test_register_new_empty_seed_and_ambiguous_source_are_never_cleaned_up(tmp_path: Path) -> None:
+    sessions = tmp_path / "sessions"
+    source = tmp_path / "repo"
+    sessions.mkdir()
+    source.mkdir()
+    (source / "README.md").write_text("copied before refusal", encoding="utf-8")
+    outside = tmp_path / "outside-hardlink-target"
+    outside.write_text("same inode", encoding="utf-8")
+    os.link(outside, source / "z-hardlink")
+    peer = PeerIdentity(os.getpid(), os.getuid(), os.getgid())
+    with WorkspaceAuthority(
+        tmp_path / "protected",
+        approved_roots={"sessions": sessions, "repo": source},
+        controller_uids=frozenset({peer.uid}),
+        lock_timeout_ms=25,
+    ) as owner:
+        empty_ids = owner.register_new(
+            peer,
+            ACTOR,
+            root_id="sessions",
+            relative_root="clean",
+            input_id=None,
+            deadline=until(),
+        )
+        assert (sessions / "clean").is_dir()
+        assert list((sessions / "clean").iterdir()) == []
+        assert empty_ids["workspace_id"].startswith("ws-")
+        with pytest.raises(SupervisorError):
+            owner.register_new(
+                peer,
+                NamespaceRef("session-c", "run-c"),
+                root_id="sessions",
+                relative_root="partial",
+                input_id="repo",
+                deadline=until(),
+            )
+        partial = sessions / "partial"
+        assert partial.is_dir()
+        assert (partial / "README.md").read_text(encoding="utf-8") == "copied before refusal"
+
+
+def test_authority_baseline_discovery_requires_one_approved_first_agent_root(tmp_path: Path) -> None:
+    sessions = tmp_path / "sessions"
+    baseline = tmp_path / "repo"
+    duplicate = tmp_path / "duplicate"
+    sessions.mkdir()
+    for root in (baseline, duplicate):
+        root.mkdir()
+        (root / "pyproject.toml").write_text("[project]\nname='first-agent'\n", encoding="utf-8")
+        (root / "uv.lock").write_text("version = 1\n", encoding="utf-8")
+        (root / "src" / "fa").mkdir(parents=True)
+    peer = PeerIdentity(os.getpid(), os.getuid(), os.getgid())
+    with WorkspaceAuthority(
+        tmp_path / "protected",
+        approved_roots={"sessions": sessions, "repo": baseline},
+        controller_uids=frozenset({peer.uid}),
+        lock_timeout_ms=25,
+    ) as owner:
+        assert owner._baseline_environment_source() == owner._root_fds["repo"]
+    with WorkspaceAuthority(
+        tmp_path / "protected-duplicate",
+        approved_roots={"sessions": sessions, "repo": baseline, "other": duplicate},
+        controller_uids=frozenset({peer.uid}),
+        lock_timeout_ms=25,
+    ) as owner:
+        assert owner._baseline_environment_source() is None
+
+
+def test_lockless_clean_seed_uses_only_operator_approved_baseline_artifact(tmp_path: Path) -> None:
+    baseline = tmp_path / "first-agent"
+    clean = tmp_path / "clean"
+    baseline.mkdir()
+    clean.mkdir()
+    (baseline / "pyproject.toml").write_text("[project]\nname='first-agent'\n", encoding="utf-8")
+    (baseline / "uv.lock").write_text("version = 1\n", encoding="utf-8")
+    (baseline / "src" / "fa").mkdir(parents=True)
+    cache = tmp_path / "cache"
+    cache.mkdir(mode=0o755)
+    profile = execution_profile()
+    environment = install_environment_artifact(cache, baseline, profile=profile)
+    baseline_fd = workspace._open_absolute(baseline)
+    clean_fd = workspace._open_absolute(clean)
+    cache_fd = workspace._open_absolute(cache)
+    try:
+        identity = workspace._environment_identity(clean_fd, profile, baseline_source_fd=baseline_fd)
+        assert identity == workspace._environment_identity(baseline_fd, profile)
+        resolved = workspace._environment_artifact(clean_fd, cache_fd, cache, profile, baseline_source_fd=baseline_fd)
+        assert resolved is not None and resolved[0] == environment
+        os.close(resolved[1])
+        (clean / "pyproject.toml").write_text("[project]\nname='other'\n", encoding="utf-8")
+        (clean / "uv.lock").write_text("version = 2\n", encoding="utf-8")
+        assert (
+            workspace._environment_artifact(clean_fd, cache_fd, cache, profile, baseline_source_fd=baseline_fd) is None
+        )
+    finally:
+        os.close(baseline_fd)
+        os.close(clean_fd)
+        os.close(cache_fd)
+
+
+def test_environment_artifact_resolution_is_fingerprint_bound_and_fail_closed(tmp_path: Path) -> None:
+    source = tmp_path / "project"
+    source.mkdir()
+    (source / "pyproject.toml").write_text("[project]\nname = 'fixture'\n")
+    (source / "uv.lock").write_text("version = 1\n")
+    cache = tmp_path / "cache"
+    cache.mkdir(mode=0o755)
+    profile = execution_profile()
+    environment = install_environment_artifact(cache, source, profile=profile)
+    source_fd = workspace._open_absolute(source)
+    cache_fd = workspace._open_absolute(cache)
+    try:
+        resolved = workspace._environment_artifact(source_fd, cache_fd, cache, profile)
+        assert resolved is not None and resolved[0] == environment
+        assert os.fstat(resolved[1]).st_ino == environment.stat().st_ino
+        os.close(resolved[1])
+        (source / "uv.lock").write_text("version = 2\n")
+        assert workspace._environment_artifact(source_fd, cache_fd, cache, profile) is None
+    finally:
+        os.close(source_fd)
+        os.close(cache_fd)
+
+    corrupt_cache = tmp_path / "corrupt-cache"
+    corrupt_cache.mkdir(mode=0o755)
+    install_environment_artifact(corrupt_cache, source, profile=profile, corrupt_manifest=True)
+    source_fd = workspace._open_absolute(source)
+    cache_fd = workspace._open_absolute(corrupt_cache)
+    try:
+        with pytest.raises(SupervisorError) as observed:
+            workspace._environment_artifact(source_fd, cache_fd, corrupt_cache, profile)
+        assert observed.value.code == "UNAPPROVED_PROFILE"
+    finally:
+        os.close(source_fd)
+        os.close(cache_fd)
 
 
 @pytest.mark.parametrize("name", [".env", ".fa", ".venv", "secrets/key"])

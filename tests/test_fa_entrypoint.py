@@ -2,15 +2,18 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import subprocess
 import sys
 import time
+from dataclasses import asdict
 from pathlib import Path
 
 import pytest
 
 from fa.hygiene.hooks._util import HOOK_NAMES
 from tests._capabilities import requires_posix_paths
+from tests.test_execution_views import native_profile
 
 _ENTRYPOINT = Path(__file__).resolve().parents[1] / "scripts" / "fa-entrypoint.sh"
 _CANONICAL_PUSH_URL = "git@github.com:first-agent-dev/First-Agent-dev.git"
@@ -37,6 +40,7 @@ def _render_entrypoint(repo: Path, sessions: Path, destination: Path) -> None:
     modified = modified.replace("/repo ", f"{repo} ")
     modified = modified.replace('"/repo"', f'"{repo}"')
     modified = modified.replace('"/sessions/', f'"{sessions}/')
+    modified = modified.replace('--workspace-root "/sessions"', f'--workspace-root "{sessions}"')
     destination.write_text(modified, encoding="utf-8")
     destination.chmod(0o755)
 
@@ -155,22 +159,58 @@ def _write_python_readiness_stub(
     active_file: Path,
     called_file: Path,
     readiness_rc: int,
+    provision_file: Path | None = None,
+    provision_rc: int = 0,
+    manager_args_file: Path | None = None,
 ) -> Path:
     wrapper = bin_dir / "python-readiness-stub"
-    wrapper.write_text(
-        "#!/usr/bin/env bash\n"
-        "set -euo pipefail\n"
-        'if [[ "${1:-}" == "-m" && "${2:-}" == "fa.workspace_bootstrap" && "${3:-}" == "ensure" ]]; then\n'
-        f"  [[ ! -e {str(active_file)!r} ]] || exit 93\n"
-        f"  printf 'called\\n' > {str(called_file)!r}\n"
-        f"  printf '[WORKSPACE_BOOTSTRAP] forced test degradation\\n' >&2\n"
-        f"  exit {readiness_rc}\n"
-        "fi\n"
-        'exec "$FA_TEST_REAL_PYTHON" "$@"\n',
-        encoding="utf-8",
+    lines = ["#!/usr/bin/env bash", "set -euo pipefail"]
+    if provision_file is not None:
+        active = shlex.quote(str(active_file))
+        lines.extend(
+            [
+                'if [[ "${1:-}" == "-m" && "${2:-}" == "fa.session.manager" && "${3:-}" == "provision" ]]; then',
+                f'  [[ ! -f {active} ]] || [[ "$(cat {active})" != "$FA_TEST_SESSIONS/$FA_SESSION_ID" ]] || exit 93',
+            ]
+        )
+        if manager_args_file is not None:
+            lines.append(f"  printf '%s\\n' \"$@\" > {shlex.quote(str(manager_args_file))}")
+        lines.append(f"  printf 'called\\n' > {shlex.quote(str(provision_file))}")
+        lines.append(f'  if [[ {provision_rc} -eq 0 ]]; then mkdir -p "$FA_TEST_SESSIONS/$FA_SESSION_ID"; fi')
+        lines.extend([f"  exit {provision_rc}", "fi"])
+    lines.extend(
+        [
+            'if [[ "${1:-}" == "-m" && "${2:-}" == "fa.workspace_bootstrap" && "${3:-}" == "ensure" ]]; then',
+            f"  [[ ! -e {shlex.quote(str(active_file))} ]] || exit 93",
+            f"  printf 'called\\n' > {shlex.quote(str(called_file))}",
+            "  printf '[WORKSPACE_BOOTSTRAP] forced test degradation\\n' >&2",
+            f"  exit {readiness_rc}",
+            "fi",
+            'exec "$FA_TEST_REAL_PYTHON" "$@"',
+        ]
     )
+    wrapper.write_text("\n".join(lines) + "\n", encoding="utf-8")
     wrapper.chmod(0o755)
     return wrapper
+
+
+def _write_git_trace_stub(bin_dir: Path, env: dict[str, str]) -> Path:
+    trace = bin_dir / "git-trace.txt"
+    stub = bin_dir / "git"
+    stub.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                'printf \'%s\\n\' "$*" >> "$FA_TEST_GIT_TRACE"',
+                "exit 88",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    stub.chmod(0o755)
+    env["FA_TEST_GIT_TRACE"] = str(trace)
+    return trace
 
 
 def _write_fa_stub(bin_dir: Path, env: dict[str, str], exit_code: int = 0) -> Path:
@@ -438,7 +478,11 @@ def test_entrypoint_failed_clone_does_not_launch_override_or_child(tmp_path: Pat
     test_entrypoint = tmp_path / "fa-entrypoint-failed-clone.sh"
     _render_entrypoint(fake_repo, sessions_dir, test_entrypoint)
 
-    proc = subprocess.Popen(["bash", str(test_entrypoint)], env=env, text=True)
+    proc = subprocess.Popen(
+        ["bash", str(test_entrypoint), "bash", "-c", "printf must-not-run"],
+        env=env,
+        text=True,
+    )
     try:
         text = _wait_for_status(status, "status=INVALID_CONFIG", proc)
     finally:
@@ -529,7 +573,11 @@ def test_entrypoint_git_invalid_session_id_fails_before_clone_or_child(tmp_path:
         }
     )
 
-    proc = subprocess.Popen(["bash", str(entrypoint)], env=env, text=True)
+    proc = subprocess.Popen(
+        ["bash", str(entrypoint), "bash", "-c", "printf must-not-run"],
+        env=env,
+        text=True,
+    )
     try:
         text = _wait_for_status(status, "status=INVALID_CONFIG", proc)
     finally:
@@ -562,7 +610,11 @@ def test_entrypoint_fresh_configuration_failure_removes_clone_before_publication
         }
     )
 
-    proc = subprocess.Popen(["bash", str(entrypoint)], env=env, text=True)
+    proc = subprocess.Popen(
+        ["bash", str(entrypoint), "bash", "-c", "printf must-not-run"],
+        env=env,
+        text=True,
+    )
     try:
         text = _wait_for_status(status, "status=INVALID_CONFIG", proc)
     finally:
@@ -771,7 +823,7 @@ def test_entrypoint_real_readiness_creates_artifacts_before_standby(tmp_path: Pa
 
 
 def test_entrypoint_readiness_degradation_warns_and_continues(tmp_path: Path) -> None:
-    """C2/C3 P1: bootstrap rc 75 is warn/fail-open, not command suppression."""
+    """C2/C3 P1: a readiness failure does not suppress the explicit command override."""
 
     env, _status, bin_dir = _base_env(tmp_path)
     env.pop("FA_WORKSPACE", None)
@@ -809,8 +861,331 @@ def test_entrypoint_readiness_degradation_warns_and_continues(tmp_path: Path) ->
     assert completed.returncode == 0
     assert completed.stdout.endswith("continued")
     assert "forced test degradation" in completed.stderr
-    assert "readiness degraded (rc=75); continuing" in completed.stdout
+    assert "readiness degraded (rc=75); continuing explicit command override" in completed.stdout
     assert active.is_file()
+
+
+def test_managed_auto_run_provisions_before_publication_and_keeps_controller_import_pinned(
+    tmp_path: Path,
+) -> None:
+    """C1/C3: manager owns readiness before .active, fa, and controller import resolution."""
+    env, status, bin_dir = _base_env(tmp_path)
+    calls = _write_fa_stub(bin_dir, env)
+    env.pop("FA_WORKSPACE", None)
+    repo = tmp_path / "repo"
+    _make_source_repository(repo)
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    entrypoint = tmp_path / "entrypoint-managed-success.sh"
+    _render_entrypoint(repo, sessions, entrypoint)
+
+    session_id = "managed-success"
+    workspace = sessions / session_id
+    poisoned_package = workspace / "src" / "fa" / "__init__.py"
+    poisoned_package.parent.mkdir(parents=True)
+    poisoned_package.write_text('raise RuntimeError("session controller shadowed image")\\n', encoding="utf-8")
+    active = sessions / ".active"
+    readiness_called = tmp_path / "managed-readiness-called"
+    provision_called = tmp_path / "managed-provision-called"
+    manager_args = tmp_path / "manager-args.txt"
+    git_trace = _write_git_trace_stub(bin_dir, env)
+    python_stub = _write_python_readiness_stub(
+        bin_dir,
+        active_file=active,
+        called_file=readiness_called,
+        readiness_rc=75,
+        provision_file=provision_called,
+        manager_args_file=manager_args,
+    )
+    env.update(
+        {
+            "FA_SESSION_ID": session_id,
+            "FA_AUTO_RUN": "1",
+            "FA_TASK": "run only after managed readiness",
+            "FA_STUB_CALLS": str(calls),
+            "FA_TEST_SESSIONS": str(sessions),
+            "FA_EXPECT_ACTIVE": str(active),
+            "FA_EXPECT_POISON_SRC": str(workspace / "src"),
+            "PYTHONPATH": str(workspace / "src"),
+            "PYTHON": str(python_stub),
+            "FA_TEST_REAL_PYTHON": sys.executable,
+        }
+    )
+    env["BASH_FUNC_fa%%"] = (
+        '() { [[ -f "$FA_EXPECT_ACTIVE" ]] || exit 91; '
+        'case ":${PYTHONPATH:-}:" in *":$FA_EXPECT_POISON_SRC:"*) exit 92 ;; esac; '
+        'printf "%s\\n" "$*" >> "$FA_STUB_CALLS"; exit 0; }'
+    )
+
+    proc = subprocess.Popen(["bash", str(entrypoint)], env=env, text=True)
+    try:
+        text = _wait_for_status(status, "status=SUCCESS", proc)
+    finally:
+        _terminate(proc)
+
+    arguments = manager_args.read_text(encoding="utf-8").splitlines()
+    assert provision_called.read_text(encoding="utf-8") == "called\n"
+    assert "--workspace" not in arguments
+    assert arguments[0:3] == ["-m", "fa.session.manager", "provision"]
+    assert active.read_text(encoding="utf-8") == f"{workspace}\n"
+    assert (workspace / "src" / "fa" / "__init__.py").is_file()
+    assert not readiness_called.exists()
+    assert not git_trace.exists()
+    assert "status=SUCCESS" in text
+    assert "run --task" in calls.read_text(encoding="utf-8")
+
+
+def test_entrypoint_auto_run_refuses_after_managed_readiness_failure_before_active_or_run(
+    tmp_path: Path,
+) -> None:
+    """C1/C3: failed manager readiness leaves no active pointer or fa invocation."""
+    env, status, bin_dir = _base_env(tmp_path)
+    calls = _write_fa_stub(bin_dir, env)
+    env.pop("FA_WORKSPACE", None)
+    repo = tmp_path / "repo"
+    _make_source_repository(repo)
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    entrypoint = tmp_path / "entrypoint-readiness-refused.sh"
+    _render_entrypoint(repo, sessions, entrypoint)
+    active = sessions / ".active"
+    readiness_called = tmp_path / "readiness-called"
+    provision_called = tmp_path / "provision-called"
+    git_trace = _write_git_trace_stub(bin_dir, env)
+    python_stub = _write_python_readiness_stub(
+        bin_dir,
+        active_file=active,
+        called_file=readiness_called,
+        readiness_rc=75,
+        provision_file=provision_called,
+        provision_rc=75,
+    )
+    env.update(
+        {
+            "FA_SESSION_ID": "readiness-refused",
+            "FA_AUTO_RUN": "1",
+            "FA_TASK": "must not run",
+            "FA_STUB_CALLS": str(calls),
+            "FA_TEST_SESSIONS": str(sessions),
+            "PYTHON": str(python_stub),
+            "FA_TEST_REAL_PYTHON": sys.executable,
+        }
+    )
+
+    proc = subprocess.Popen(["bash", str(entrypoint)], env=env, text=True)
+    try:
+        text = _wait_for_status(status, "status=FAILED", proc)
+    finally:
+        _terminate(proc)
+
+    assert "managed session provisioning/readiness failed" in text
+    assert "status=FAILED" in text
+    assert "exit_code=2" in text
+    assert provision_called.read_text(encoding="utf-8") == "called\n"
+    assert not readiness_called.exists()
+    assert not active.exists()
+    assert not git_trace.exists()
+    assert not calls.exists()
+    assert not (sessions / "readiness-refused").exists()
+
+
+def test_entrypoint_real_manager_refuses_when_configured_supervisor_is_unavailable(tmp_path: Path) -> None:
+    """W0 R02: real entrypoint/manager/backend denial has no project effects."""
+    env, status, bin_dir = _base_env(tmp_path)
+    env.pop("FA_WORKSPACE", None)
+    repo = tmp_path / "repo"
+    _make_source_repository(repo)
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    entrypoint = tmp_path / "entrypoint-real-backend-refused.sh"
+    _render_entrypoint(repo, sessions, entrypoint)
+
+    home_fa = tmp_path / "home" / ".fa"
+    home_fa.mkdir(parents=True)
+    service_state = tmp_path / "supervisor-state"
+    service_state.mkdir()
+    profile = native_profile()
+    service_path = home_fa / "execution.json"
+    service_path.write_text(
+        json.dumps(
+            {
+                "state_root": str(service_state),
+                "socket_path": str(tmp_path / "supervisor.sock"),
+                "controller_uids": [os.getuid()],
+                "approved_roots": {"repo": str(repo), "sessions": str(sessions)},
+                "profiles": [asdict(profile)],
+                "rpc_timeout_ms": 250,
+                "lock_timeout_ms": 100,
+                "view_profile_id": profile.profile_id,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (home_fa / "config.yaml").write_text(f"execution:\n  service_config: {service_path}\n", encoding="utf-8")
+
+    session_id = "real-backend-refused"
+    active = sessions / ".active"
+    calls = _write_fa_stub(bin_dir, env)
+    git_trace = _write_git_trace_stub(bin_dir, env)
+    poison_root = tmp_path / "poison-pythonpath"
+    poison_package = poison_root / "fa" / "session"
+    poison_package.mkdir(parents=True)
+    (poison_root / "fa" / "__init__.py").write_text("raise RuntimeError('poison import')\n", encoding="utf-8")
+    (poison_package / "__init__.py").write_text("", encoding="utf-8")
+    poison_marker = tmp_path / "poison-imported"
+    (poison_package / "manager.py").write_text(
+        f"from pathlib import Path\nPath({str(poison_marker)!r}).touch()\nraise SystemExit(99)\n",
+        encoding="utf-8",
+    )
+    env.update(
+        {
+            "HOME": str(home_fa.parent),
+            "FA_STATE_ROOT": str(tmp_path / "manager-state"),
+            "FA_SESSION_SOURCE": str(repo),
+            "FA_SESSION_ID": session_id,
+            "FA_AUTO_RUN": "1",
+            "FA_TASK": "must not run",
+            "FA_TEST_SESSIONS": str(sessions),
+            "FA_STATUS_FILE": str(status),
+            "FA_STUB_CALLS": str(calls),
+            "FA_TEST_GIT_TRACE": str(git_trace),
+            "PYTHON": sys.executable,
+            "PYTHONPATH": str(poison_root),
+            "FA_VENV_BIN": "",
+        }
+    )
+
+    proc = subprocess.Popen(
+        ["bash", str(entrypoint)], env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+    )
+    try:
+        status_text = _wait_for_status(status, "status=", proc)
+    finally:
+        _terminate(proc)
+    _, stderr = proc.communicate(timeout=3)
+
+    session_dir = tmp_path / "manager-state" / "sessions" / session_id
+    assert "status=FAILED" in status_text
+    assert "exit_code=2" in status_text
+    assert "BACKEND_UNAVAILABLE" in stderr
+    assert not active.exists()
+    assert not (sessions / session_id).exists()
+    assert not git_trace.exists()
+    assert not calls.exists()
+    assert not poison_marker.exists()
+    manifest = json.loads((session_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["status"] == "provisioning"  # Q118: retain the admitted failure tombstone.
+    assert (session_dir / "session.db").is_file()
+    assert list((tmp_path / "manager-state" / "session-log").glob("run-*"))
+
+
+def test_entrypoint_readiness_refusal_preserves_resumed_workspace(tmp_path: Path) -> None:
+    """C1/C3: readiness refusal never deletes a pre-existing operator workspace."""
+    env, status, bin_dir = _base_env(tmp_path)
+    calls = _write_fa_stub(bin_dir, env)
+    env.pop("FA_WORKSPACE", None)
+    repo = tmp_path / "repo"
+    _make_source_repository(repo)
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    session_id = "readiness-resumed"
+    workspace = sessions / session_id
+    subprocess.run(
+        ["git", "clone", repo.resolve().as_uri(), str(workspace)],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    _git(workspace, "switch", "-c", f"agent/{session_id}")
+    user_file = workspace / "operator-work.txt"
+    user_file.write_text("keep this\n", encoding="utf-8")
+    entrypoint = tmp_path / "entrypoint-resumed-readiness-refused.sh"
+    _render_entrypoint(repo, sessions, entrypoint)
+    active = sessions / ".active"
+    readiness_called = tmp_path / "resumed-readiness-called"
+    provision_called = tmp_path / "resumed-provision-called"
+    git_trace = _write_git_trace_stub(bin_dir, env)
+    python_stub = _write_python_readiness_stub(
+        bin_dir,
+        active_file=active,
+        called_file=readiness_called,
+        readiness_rc=75,
+        provision_file=provision_called,
+        provision_rc=75,
+    )
+    env.update(
+        {
+            "FA_SESSION_ID": session_id,
+            "FA_AUTO_RUN": "1",
+            "FA_TASK": "must not run",
+            "FA_STUB_CALLS": str(calls),
+            "FA_TEST_SESSIONS": str(sessions),
+            "PYTHON": str(python_stub),
+            "FA_TEST_REAL_PYTHON": sys.executable,
+        }
+    )
+
+    proc = subprocess.Popen(["bash", str(entrypoint)], env=env, text=True)
+    try:
+        text = _wait_for_status(status, "status=FAILED", proc)
+    finally:
+        _terminate(proc)
+
+    assert "managed session provisioning/readiness failed" in text
+    assert workspace.is_dir()
+    assert user_file.read_text(encoding="utf-8") == "keep this\n"
+    assert provision_called.read_text(encoding="utf-8") == "called\n"
+    assert not readiness_called.exists()
+    assert not active.exists()
+    assert not git_trace.exists()
+    assert not calls.exists()
+
+
+def test_entrypoint_explicit_override_wins_over_autorun_after_readiness_failure(tmp_path: Path) -> None:
+    """C1/C3: an explicit command remains available and is never auto-run-provisioned."""
+    env, _status, bin_dir = _base_env(tmp_path)
+    env.pop("FA_WORKSPACE", None)
+    repo = tmp_path / "repo"
+    _make_source_repository(repo)
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    entrypoint = tmp_path / "entrypoint-command-override.sh"
+    _render_entrypoint(repo, sessions, entrypoint)
+    active = sessions / ".active"
+    readiness_called = tmp_path / "override-readiness-called"
+    provision_called = tmp_path / "override-provision-called"
+    python_stub = _write_python_readiness_stub(
+        bin_dir,
+        active_file=active,
+        called_file=readiness_called,
+        readiness_rc=75,
+        provision_file=provision_called,
+    )
+    env.update(
+        {
+            "FA_SESSION_ID": "override-after-readiness-failure",
+            "FA_AUTO_RUN": "1",
+            "PYTHON": str(python_stub),
+            "FA_TEST_REAL_PYTHON": sys.executable,
+        }
+    )
+
+    completed = subprocess.run(
+        ["bash", str(entrypoint), "bash", "-c", "printf explicit-override"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=30,
+    )
+
+    assert completed.returncode == 0
+    assert completed.stdout.endswith("explicit-override")
+    assert "continuing explicit command override" in completed.stdout
+    assert readiness_called.read_text(encoding="utf-8") == "called\n"
+    assert active.is_file()
+    assert not provision_called.exists()
 
 
 @requires_posix_paths

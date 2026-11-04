@@ -638,7 +638,7 @@ authorized. Changed accessor semantics still need explicit disposition. Q64 cali
 
 ## Hand-off to I03 (conditional concrete briefs, not delivery)
 
-Use [conditional six-slice foundation plan](increment-03-execution-workspace-foundation.md) and
+Use [conditional seven-slice foundation plan](increment-03-execution-workspace-foundation.md) and
 [migration bank](../notes/i02-to-i03-scope-migration-2026-10-15.md) for exact clause/case ownership.
 Keep existing SliceVerification/actual eval evidence facades and strengthened local parser; I03
 adds supervised execution/revision binding. Existing FastAPI PTY server is an optional cell-internal

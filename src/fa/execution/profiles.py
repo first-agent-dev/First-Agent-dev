@@ -18,6 +18,8 @@ from typing import Any
 from fa.execution.protocol import _loads
 from fa.execution.types import Access, ExecutionContractError, ViewRef, _hex_id, _positive_integer
 
+READ_SCRATCH_BYTES = 64 * 1024 * 1024
+
 
 def _configured_id(value: str) -> None:
     if not isinstance(value, str) or len(value) > 48 or re.fullmatch(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*", value) is None:
@@ -80,6 +82,7 @@ class ExecutionProfile:
         source: Path,
         scratch: Path,
         cache: Path,
+        environment: Path | None = None,
     ) -> dict[str, Any]:
         """Render only; paths must come from actual protected authority records."""
         _hex_id(operation_id, "op-")
@@ -90,6 +93,23 @@ class ExecutionProfile:
         for index, path in enumerate(paths):
             if any(path.is_relative_to(other) or other.is_relative_to(path) for other in paths[index + 1 :]):
                 raise ExecutionContractError
+        if environment is not None and (
+            not environment.is_absolute()
+            or ".." in environment.parts
+            or environment.name != ".venv"
+            or not environment.is_relative_to(cache / "fa-environments-v1")
+            or environment.is_relative_to(source)
+            or environment.is_relative_to(scratch)
+        ):
+            raise ExecutionContractError
+        read_view = view.access is Access.READ
+        if read_view and self.interactive:
+            raise ExecutionContractError
+        mount_inputs = (
+            ((source, "/workspace", True), (cache, "/opt/toolchain-cache", True))
+            if read_view
+            else ((source, "/workspace", False), (scratch, "/scratch", False), (cache, "/opt/toolchain-cache", True))
+        )
         mounts = [
             {
                 "Type": "bind",
@@ -98,12 +118,52 @@ class ExecutionProfile:
                 "ReadOnly": read_only,
                 "BindOptions": {"Propagation": "rprivate"},
             }
-            for path, target, read_only in (
-                (source, "/workspace", view.access is Access.READ),
-                (scratch, "/scratch", False),
-                (cache, "/opt/toolchain-cache", True),
-            )
+            for path, target, read_only in mount_inputs
         ]
+        environment_vars = ["HOME=/scratch/home", "TMPDIR=/scratch/tmp", "PYTHONDONTWRITEBYTECODE=1"]
+        if environment is not None:
+            mounts.append(
+                {
+                    "Type": "bind",
+                    "Source": str(environment),
+                    "Target": "/workspace/.venv",
+                    "ReadOnly": True,
+                    "BindOptions": {"Propagation": "rprivate"},
+                }
+            )
+            environment_vars.extend(
+                [
+                    "VIRTUAL_ENV=/workspace/.venv",
+                    "PATH=/workspace/.venv/bin:/opt/fa-venv/bin:/usr/local/bin:/usr/bin:/bin",
+                ]
+            )
+        host_config: dict[str, Any] = {
+            "Mounts": mounts,
+            "NetworkMode": "none",
+            "IpcMode": "private",
+            "PidMode": "",
+            "UTSMode": "",
+            "CgroupnsMode": "private",
+            "CgroupParent": self.cgroup_parent,
+            "Privileged": False,
+            "CapDrop": ["ALL"],
+            "ReadonlyRootfs": True,
+            "SecurityOpt": [
+                "no-new-privileges:true",
+                "seccomp=" + json.dumps(_loads(self.seccomp_json.encode()), separators=(",", ":")),
+            ],
+            "NanoCpus": self.nano_cpus,
+            "Memory": self.memory_bytes,
+            "MemorySwap": self.memory_bytes,
+            "PidsLimit": self.pids_limit,
+            "PublishAllPorts": False,
+        }
+        if read_view:
+            # Q124-A: a hard per-cell quota, enforced by Docker's tmpfs mount.
+            # Do not retry with the supervisor-owned host scratch bind if rejected.
+            host_config["Tmpfs"] = {
+                "/scratch": f"size={READ_SCRATCH_BYTES},mode=1777,nosuid,nodev",
+            }
         return {
             "name": "fa-job-" + operation_id.removeprefix("op-"),
             "body": {
@@ -112,51 +172,49 @@ class ExecutionProfile:
                 "WorkingDir": "/workspace",
                 "Entrypoint": ["/opt/fa-venv/bin/python", "-I", "-m", "fa.execution.cell_worker"],
                 "Cmd": ["--max-command-ms", str(self.max_command_ms)] + ([] if self.interactive else ["--one-shot"]),
-                "Env": ["HOME=/scratch/home", "TMPDIR=/scratch/tmp", "PYTHONDONTWRITEBYTECODE=1"],
+                "Env": environment_vars,
                 "OpenStdin": True,
                 "StdinOnce": False,
                 "Tty": False,
                 "NetworkDisabled": True,
                 "Labels": {"fa.execution.operation_id": operation_id, "fa.execution.view_id": view.view_id},
-                "HostConfig": {
-                    "Mounts": mounts,
-                    "NetworkMode": "none",
-                    "IpcMode": "private",
-                    "PidMode": "",
-                    "UTSMode": "",
-                    "CgroupnsMode": "private",
-                    "CgroupParent": self.cgroup_parent,
-                    "Privileged": False,
-                    "CapDrop": ["ALL"],
-                    "ReadonlyRootfs": True,
-                    "SecurityOpt": [
-                        "no-new-privileges:true",
-                        "seccomp=" + json.dumps(_loads(self.seccomp_json.encode()), separators=(",", ":")),
-                    ],
-                    "NanoCpus": self.nano_cpus,
-                    "Memory": self.memory_bytes,
-                    "MemorySwap": self.memory_bytes,
-                    "PidsLimit": self.pids_limit,
-                    "PublishAllPorts": False,
-                },
+                "HostConfig": host_config,
             },
         }
 
 
-def profile_set_sha256(profiles: Sequence[ExecutionProfile]) -> str:
-    """The digest `health` publishes: one canonical value for the approved set.
+def profile_set_sha256(
+    profiles: Sequence[ExecutionProfile],
+    *,
+    view_profile_id: str | None = None,
+    read_only_profile_id: str | None = None,
+) -> str:
+    """Digest the enforced profiles and their access-role mapping.
 
-    Derived from the already-validated profiles rather than from the input file,
-    so the digest names the policy that is actually enforced (image digests,
-    UID/GID, cgroup parent, syscall policy and budgets included) and a host that
-    edited its config without reloading cannot appear to have applied it.
-    Ordering is by `profile_id`, so config order is not part of the identity.
+    Derived from validated profiles rather than the input file. Ordering is
+    canonical, while changing either selected profile changes the supervisor's
+    published identity even when the approved profile set is otherwise equal.
     """
     ordered = sorted(profiles, key=lambda profile: profile.profile_id)
-    if not ordered or len({profile.profile_id for profile in ordered}) != len(ordered):
+    ids = {profile.profile_id for profile in ordered}
+    if not ordered or len(ids) != len(ordered):
         raise ExecutionContractError
+    if view_profile_id is not None and view_profile_id not in ids:
+        raise ExecutionContractError
+    if read_only_profile_id is not None:
+        read_profile = next((profile for profile in ordered if profile.profile_id == read_only_profile_id), None)
+        if read_profile is None or read_profile.interactive:
+            raise ExecutionContractError
     return hashlib.sha256(
         json.dumps(
-            [profile.to_dict() for profile in ordered], sort_keys=True, separators=(",", ":"), allow_nan=False
+            {
+                "profiles": [profile.to_dict() for profile in ordered],
+                "read_scratch_bytes": READ_SCRATCH_BYTES,
+                "view_profile_id": view_profile_id,
+                "read_only_profile_id": read_only_profile_id,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
         ).encode("utf-8")
     ).hexdigest()

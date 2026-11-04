@@ -41,7 +41,12 @@ from fa.inner_loop.plan_ids import (
     extract_plan_ids,
     precheck,
 )
-from fa.inner_loop.plan_promotion import PlanPromotionError, publish_plan_buffer, seed_plan_candidate
+from fa.inner_loop.plan_promotion import (
+    CandidatePlanPublisher,
+    PlanPromotionError,
+    retain_plan_draft,
+    seed_plan_candidate,
+)
 from fa.inner_loop.planner_dispatch import PlannerDispatch, PlannerDispatchError, PlannerDispatchKind
 from fa.inner_loop.prompt import ADVERSARIAL_EVAL_STANCE_PREAMBLE
 from fa.inner_loop.slice_verification import (
@@ -80,6 +85,7 @@ from fa.paths import fa_session_log_root
 from fa.providers.errors import ConfigurationError
 
 if TYPE_CHECKING:
+    from fa.execution.composition import ManagedExecution
     from fa.inner_loop.session_db import SessionDatabase
     from fa.providers import ModelsConfig
     from fa.providers.base import Transport
@@ -214,6 +220,13 @@ class WorkflowContext:
     # observe/enforce if the operator edits config while a stage is in flight.
     verify_gate_mode: str = "observe"
     admission: _WorkflowAdmission | None = None
+    # Managed candidate promotion is supplied only by the execution composition.
+    # None is a fail-closed boundary; the controller has no host-path writer fallback.
+    plan_publisher: CandidatePlanPublisher | None = None
+    # One workflow-owned writer is forwarded unchanged to every stage. The stage
+    # boundary can consult its selected profile and latest authority revision.
+    managed_execution: ManagedExecution | None = None
+    managed_plan_ref: PlanRef | None = None
 
     def plan_text(self) -> str | None:
         """Use the immutable admitted snapshot, or read legacy optional input.
@@ -1238,6 +1251,8 @@ def _run_stage(
         # Role gating lives in resolve_injection_modes, so a coder-only
         # injection stays off here for a planner or eval stage.
         "injection_modes": resolve_injection_modes(role, overrides=ctx.inject_overrides),
+        "_managed_execution": ctx.managed_execution,
+        "_managed_plan_ref": ctx.managed_plan_ref,
     }
     if ctx.run_context is not None and ctx.session_context is not None:
         stage_kwargs.update(
@@ -2270,13 +2285,53 @@ def _validate_plan_admission(snapshot: PlanSnapshot) -> _PlanAdmissionValidation
     return _PlanAdmissionValidation(snapshot, "PASS", diagnostics)
 
 
+def _require_managed_publisher(ctx: WorkflowContext) -> CandidatePlanPublisher:
+    """CT115: a repair needs the authority, and its absence is a named refusal.
+
+    A plan that admits needs no publication — its bytes are already canonical — so
+    an unmanaged run keeps working for explicit plans. A repair invalidates that:
+    the revised bytes must be committed somewhere, and ``prepare-failed`` would
+    name the wrong fault when the real one is "this run has no managed execution".
+    The check therefore sits next to the reserved planner attempt, not at the top
+    of the gate, and it is the only place that decides the run cannot publish.
+    """
+    publisher = ctx.plan_publisher
+    if publisher is None:
+        raise PlanPromotionError("managed-execution-absent")
+    return publisher
+
+
 def _promote_validated_plan(
-    workspace: Path, source: PlanSnapshot, validated: _PlanAdmissionValidation, *, deadline: float | None = None
+    source: PlanSnapshot,
+    validated: _PlanAdmissionValidation,
+    *,
+    publisher: CandidatePlanPublisher,
+    deadline: float | None = None,
 ) -> PlanSnapshot:
-    """Only the validated immutable buffer is published; no draft path is recopied."""
+    """Publish only validated bytes through the injected managed candidate port.
+
+    The host path is not opened here and there is no fallback: the caller supplies
+    the port it proved it has (``_require_managed_publisher``), so a missing
+    authority is refused before any repair is dispatched.
+    """
     if validated.outcome != "PASS":
         raise PlanPromotionError("prepare-failed")
-    ref = publish_plan_buffer(workspace, source, validated.snapshot.utf8_bytes, deadline=deadline)
+    try:
+        ref = publisher.publish_candidate(source, validated.snapshot, deadline=deadline)
+    except PlanPromotionError:
+        raise
+    except Exception as error:  # sanitize transport/backend details into the admission schema's closed vocabulary
+        code = getattr(error, "code", None)
+        uncertain = code in {"DURABILITY_UNKNOWN", "CORRUPT_STATE", "EXECUTION_UNKNOWN", "TERMINALITY_UNKNOWN"}
+        rule = "durability-unknown" if uncertain else "prepare-failed"
+        raise PlanPromotionError(rule, replaced=uncertain) from error
+    expected = PlanRef(
+        source.ref.workspace_relative_path,
+        source.ref.source_kind,
+        validated.snapshot.ref.sha256,
+    )
+    if ref != expected:
+        raise PlanPromotionError("hash-mismatch", replaced=True)
     return replace(validated.snapshot, ref=ref)
 
 
@@ -2374,6 +2429,7 @@ def _run_admission_repair(
     *,
     kind: PlannerDispatchKind,
     draft: PlanSnapshot,
+    publisher: CandidatePlanPublisher,
     diagnostics: tuple[_AdmissionDiagnostic, ...] = (),
     reason: str = "",
 ) -> tuple[_PlanAdmissionValidation, PlanSnapshot | None]:
@@ -2420,12 +2476,24 @@ def _run_admission_repair(
             os.unlink(target.name, dir_fd=parent)
             os.fsync(parent)
     validation = _validate_plan_admission(candidate)
-    promoted = (
-        _promote_validated_plan(ctx.workspace, source, validation, deadline=ctx.deadline_mono)
-        if validation.outcome == "PASS"
-        else None
-    )
+    promoted: PlanSnapshot | None = None
+    if validation.outcome == "PASS":
+        try:
+            promoted = _promote_validated_plan(source, validation, publisher=publisher, deadline=ctx.deadline_mono)
+        except PlanPromotionError:
+            # CT119: the candidate was already unlinked above, so the only copy of
+            # the bytes the authority refused is the snapshot in memory.
+            _retain_rejected_draft(ctx, validation.snapshot)
+            raise
     return validation, promoted
+
+
+def _retain_rejected_draft(ctx: WorkflowContext, snapshot: PlanSnapshot) -> None:
+    """Keep refused bytes under their hash; never turn retention into the failure."""
+    try:
+        retain_plan_draft(ctx.workspace, ctx.run_id, snapshot.utf8_bytes, deadline=ctx.deadline_mono)
+    except Exception as error:  # noqa: BLE001 - the promotion rule must survive any retention fault
+        logger.warning("plan.draft.retained=false run_id=%s workspace=%s error=%s", ctx.run_id, ctx.workspace, error)
 
 
 def _admission_error(
@@ -2522,6 +2590,7 @@ def _admit_plan(
                 _admission_failed(ctx, "planner-budget" if state.planner_allowed else "planner-unavailable")
                 return False
             attempt_kind = kind.value
+            publisher = _require_managed_publisher(ctx)  # CT115: before the attempt is reserved.
             state.planner_calls += 1  # Reserve even when seeding/provider/writer/publication fails.
             validated, promoted = _run_admission_repair(
                 ctx,
@@ -2529,6 +2598,7 @@ def _admit_plan(
                 run_stage_fn,
                 kind=kind,
                 draft=validated.snapshot,
+                publisher=publisher,
                 diagnostics=validated.diagnostics,
                 reason=reason,
             )
@@ -2621,6 +2691,8 @@ def run_workflow(
     deadline_mono: float | None = None,
     inject_overrides: Mapping[str, str] | None = None,
     plan_path: Path | None = None,
+    plan_publisher: CandidatePlanPublisher | None = None,
+    managed_execution: ManagedExecution | None = None,
 ) -> tuple[int, FlowState | None]:
     """Run the workflow pipeline. Callable from CLI and from tools.
 
@@ -2711,6 +2783,9 @@ def run_workflow(
         deadline_mono=deadline_mono,
         inject_overrides=dict(inject_overrides or {}),
         plan_path=plan_path,
+        plan_publisher=plan_publisher,
+        managed_execution=managed_execution,
+        managed_plan_ref=None if snapshot is None else snapshot.ref,
         verify_gate_mode=_gate_mode(),
         admission=(
             _WorkflowAdmission(snapshot, "planner" in roles, max_replans)

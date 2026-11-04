@@ -34,6 +34,10 @@ from tests.test_execution_workspace import ACTOR, OTHER, PEER, Site, ok, until
 from tests.test_execution_workspace import site as site
 
 
+def read_only_profile():
+    return replace(profile(), profile_id="reader", interactive=False)
+
+
 def pin(owner: WorkspaceAuthority, ids: dict[str, str], **kwargs: Any) -> GrantReply:
     grant = owner.pin_reader(
         kwargs.get("peer", PEER),
@@ -87,7 +91,7 @@ def record_path(site: Site, grant: GrantReply) -> Path:
 
 
 def test_fresh_genesis_has_durable_nonsecret_reader_without_writer(site: Site) -> None:
-    with site.owner(view_profile=profile()) as owner:
+    with site.owner(view_profile=profile(), read_only_profile=read_only_profile()) as owner:
         ids = ok(lambda: site.register(owner))
         grant = ok(lambda: pin(owner, ids))
         record = json.loads(record_path(site, grant).read_text())
@@ -110,7 +114,7 @@ def test_fresh_genesis_has_durable_nonsecret_reader_without_writer(site: Site) -
 
 
 def test_pin_does_not_follow_canonical_bytes_and_survives_writer_epoch_advance(site: Site) -> None:
-    with site.owner(view_profile=profile()) as owner:
+    with site.owner(view_profile=profile(), read_only_profile=read_only_profile()) as owner:
         ids = ok(lambda: site.register(owner))
         grant = ok(lambda: pin(owner, ids))
         first = ok(lambda: site.claim(owner, ids))
@@ -129,7 +133,7 @@ def test_pin_does_not_follow_canonical_bytes_and_survives_writer_epoch_advance(s
     ["namespace", "principal", "capability", "owner-cap", "generation", "revision", "access", "run", "workspace"],
 )
 def test_wrong_reader_identity_denies_read_and_release(site: Site, which: str) -> None:
-    with site.owner(view_profile=profile()) as owner:
+    with site.owner(view_profile=profile(), read_only_profile=read_only_profile()) as owner:
         ids = ok(lambda: site.register(owner))
         grant = ok(lambda: pin(owner, ids))
         kwargs: dict[str, Any] = {}
@@ -164,7 +168,7 @@ def test_wrong_reader_identity_denies_read_and_release(site: Site, which: str) -
 
 
 def test_reader_cannot_release_writer_and_owner_cannot_read_with_reader_ids(site: Site) -> None:
-    with site.owner(view_profile=profile()) as owner:
+    with site.owner(view_profile=profile(), read_only_profile=read_only_profile()) as owner:
         ids = ok(lambda: site.register(owner))
         grant = ok(lambda: pin(owner, ids))
         with pytest.raises(SupervisorError) as failure:
@@ -176,7 +180,7 @@ def test_reader_cannot_release_writer_and_owner_cannot_read_with_reader_ids(site
 
 
 def test_reader_releases_only_itself_and_retains_data_record(site: Site) -> None:
-    with site.owner(view_profile=profile()) as owner:
+    with site.owner(view_profile=profile(), read_only_profile=read_only_profile()) as owner:
         ids = ok(lambda: site.register(owner))
         one = ok(lambda: pin(owner, ids))
         two = ok(lambda: pin(owner, ids, namespace=OTHER))
@@ -193,11 +197,11 @@ def test_reader_releases_only_itself_and_retains_data_record(site: Site) -> None
 
 
 def test_restart_keeps_retention_but_never_reconstructs_capability(site: Site) -> None:
-    with site.owner(view_profile=profile()) as owner:
+    with site.owner(view_profile=profile(), read_only_profile=read_only_profile()) as owner:
         ids = ok(lambda: site.register(owner))
         old = ok(lambda: pin(owner, ids))
     before = record_path(site, old).read_bytes()
-    with site.owner(view_profile=profile()) as owner:
+    with site.owner(view_profile=profile(), read_only_profile=read_only_profile()) as owner:
         with pytest.raises(SupervisorError) as failure:
             read(owner, old)
         assert failure.value.code == "UNAUTHORIZED"
@@ -213,7 +217,7 @@ def test_restart_keeps_retention_but_never_reconstructs_capability(site: Site) -
 def test_actual_pinned_plan_context_is_bound_and_rechecked(site: Site, formal: bool) -> None:
     (site.source / "plan.md").write_text("# Admitted actual plan\n")
     admitted = read_plan_snapshot(site.source, Path("plan.md")).ref
-    with site.owner(view_profile=profile()) as owner:
+    with site.owner(view_profile=profile(), read_only_profile=read_only_profile()) as owner:
         ids = ok(lambda: site.register(owner))
         grant = ok(lambda: pin(owner, ids, plan_ref=admitted, formal=formal))
         assert json.loads(record_path(site, grant).read_text())["plan_ref"]["sha256"] == admitted.sha256
@@ -230,7 +234,7 @@ def test_actual_pinned_plan_context_is_bound_and_rechecked(site: Site, formal: b
 def test_plan_mismatch_denies_pin_before_retention(site: Site, kind: str) -> None:
     (site.source / "plan.md").write_text("# Admitted plan\n")
     admitted = read_plan_snapshot(site.source, Path("plan.md")).ref
-    with site.owner(view_profile=profile()) as owner:
+    with site.owner(view_profile=profile(), read_only_profile=read_only_profile()) as owner:
         ids = ok(lambda: site.register(owner))
         plan = (
             None
@@ -257,7 +261,7 @@ def test_unconfigured_profile_and_invalid_uid_are_not_guessed(site: Site) -> Non
 
 @pytest.mark.parametrize("path", ["../untracked.txt", ".git/index", ".env", "/untracked.txt"])
 def test_reader_rooted_path_denials_have_no_fallback(site: Site, path: str) -> None:
-    with site.owner(view_profile=profile()) as owner:
+    with site.owner(view_profile=profile(), read_only_profile=read_only_profile()) as owner:
         ids = ok(lambda: site.register(owner))
         grant = ok(lambda: pin(owner, ids))
         with pytest.raises(SupervisorError) as failure:
@@ -266,7 +270,10 @@ def test_reader_rooted_path_denials_have_no_fallback(site: Site, path: str) -> N
 
 
 def test_authorized_reader_primitive_is_really_readonly(site: Site) -> None:
-    with site.owner(view_profile=replace(profile(), uid=os.getuid() or 1000, gid=os.getgid() or 1000)) as owner:
+    with site.owner(
+        view_profile=replace(profile(), uid=os.getuid() or 1000, gid=os.getgid() or 1000),
+        read_only_profile=read_only_profile(),
+    ) as owner:
         ids = ok(lambda: site.register(owner))
         grant = ok(lambda: pin(owner, ids))
         with pytest.raises(SupervisorError) as failure:
@@ -281,7 +288,7 @@ def test_authorized_reader_primitive_is_really_readonly(site: Site) -> None:
 
 @pytest.mark.parametrize("kind", ["bytes", "manifest", "data-root", "view-root", "record"])
 def test_retained_source_and_record_identity_changes_are_rejected(site: Site, kind: str) -> None:
-    with site.owner(view_profile=profile()) as owner:
+    with site.owner(view_profile=profile(), read_only_profile=read_only_profile()) as owner:
         ids = ok(lambda: site.register(owner))
         grant = ok(lambda: pin(owner, ids))
         revision = site.revision(ids)
@@ -314,7 +321,7 @@ def test_retained_source_and_record_identity_changes_are_rejected(site: Site, ki
 def test_retention_failure_never_returns_grant_and_closes_all_fds(
     site: Site, phase: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    with site.owner(view_profile=profile()) as owner:
+    with site.owner(view_profile=profile(), read_only_profile=read_only_profile()) as owner:
         ids = ok(lambda: site.register(owner))
         before = len(list(Path("/proc/self/fd").iterdir()))
         original_replace = _replace_private_bytes
@@ -354,7 +361,7 @@ def test_retention_failure_never_returns_grant_and_closes_all_fds(
 def test_expiry_after_retention_returns_no_grant_and_keeps_uncertain_reference(
     site: Site, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    with site.owner(view_profile=profile()) as owner:
+    with site.owner(view_profile=profile(), read_only_profile=read_only_profile()) as owner:
         ids = ok(lambda: site.register(owner))
         original = WorkspaceAuthority._retain_reader
         end = time.monotonic() + 0.1
@@ -377,7 +384,7 @@ def test_expiry_after_retention_returns_no_grant_and_keeps_uncertain_reference(
 def test_native_read_handler_keeps_descriptors_until_release_or_shutdown_drains(
     site: Site, action: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    with site.owner(view_profile=profile()) as owner:
+    with site.owner(view_profile=profile(), read_only_profile=read_only_profile()) as owner:
         ids = ok(lambda: site.register(owner))
         grant = ok(lambda: pin(owner, ids))
         entered, allow, close_started = threading.Event(), threading.Event(), threading.Event()
@@ -423,7 +430,7 @@ def test_real_reader_windows_hash_complete_retained_file(site: Site, kind: str) 
         else b"untracked"
     )
     (site.source / "window").write_bytes(raw)
-    with site.owner(view_profile=profile()) as owner:
+    with site.owner(view_profile=profile(), read_only_profile=read_only_profile()) as owner:
         ids = ok(lambda: site.register(owner))
         grant = ok(lambda: pin(owner, ids))
         if kind in {"binary", "split-utf8"}:
@@ -441,7 +448,7 @@ def test_real_reader_windows_hash_complete_retained_file(site: Site, kind: str) 
 def test_release_fsync_failure_revokes_token_and_preserves_retention(
     site: Site, phase: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    with site.owner(view_profile=profile()) as owner:
+    with site.owner(view_profile=profile(), read_only_profile=read_only_profile()) as owner:
         ids = ok(lambda: site.register(owner))
         grant = ok(lambda: pin(owner, ids))
         original = _replace_private_bytes
@@ -469,7 +476,7 @@ def test_release_fsync_failure_revokes_token_and_preserves_retention(
 
 
 def test_expired_reader_requests_have_zero_read_or_release_effects(site: Site, monkeypatch: pytest.MonkeyPatch) -> None:
-    with site.owner(view_profile=profile()) as owner:
+    with site.owner(view_profile=profile(), read_only_profile=read_only_profile()) as owner:
         ids = ok(lambda: site.register(owner))
         grant = ok(lambda: pin(owner, ids))
         calls: list[str] = []
@@ -494,7 +501,7 @@ def test_expired_reader_requests_have_zero_read_or_release_effects(site: Site, m
 
 
 def test_read_queued_past_original_deadline_does_not_run_late(site: Site, monkeypatch: pytest.MonkeyPatch) -> None:
-    with site.owner(view_profile=profile()) as owner:
+    with site.owner(view_profile=profile(), read_only_profile=read_only_profile()) as owner:
         ids = ok(lambda: site.register(owner))
         grant = ok(lambda: pin(owner, ids))
         calls: list[str] = []
@@ -526,7 +533,7 @@ def test_read_queued_past_original_deadline_does_not_run_late(site: Site, monkey
 
 
 def test_missing_revision_is_determinate_denial_without_poisoning_owner(site: Site) -> None:
-    with site.owner(view_profile=profile()) as owner:
+    with site.owner(view_profile=profile(), read_only_profile=read_only_profile()) as owner:
         ids = ok(lambda: site.register(owner))
         with pytest.raises(SupervisorError) as failure:
             pin(owner, ids, revision_id="rev-" + "f" * 32)
@@ -536,10 +543,10 @@ def test_missing_revision_is_determinate_denial_without_poisoning_owner(site: Si
 
 
 def test_quarantined_old_writer_cannot_block_immutable_reader_or_renew_ownership(site: Site) -> None:
-    with site.owner(view_profile=profile()) as owner:
+    with site.owner(view_profile=profile(), read_only_profile=read_only_profile()) as owner:
         ids = ok(lambda: site.register(owner))
         writer = ok(lambda: site.claim(owner, ids))
-    with site.owner(view_profile=profile()) as owner:
+    with site.owner(view_profile=profile(), read_only_profile=read_only_profile()) as owner:
         assert site.metadata(ids)["status"] == "QUARANTINED"
         grant = ok(lambda: pin(owner, ids))
         assert ref(grant).generation == writer.generation
@@ -554,7 +561,7 @@ def test_native_retention_collision_never_overwrites_original_pin_or_renews_toke
 ) -> None:
     from uuid import UUID
 
-    with site.owner(view_profile=profile()) as owner:
+    with site.owner(view_profile=profile(), read_only_profile=read_only_profile()) as owner:
         ids = ok(lambda: site.register(owner))
         monkeypatch.setattr(workspace, "uuid4", lambda: UUID(int=1))
         grant = ok(lambda: pin(owner, ids))
@@ -568,7 +575,7 @@ def test_native_retention_collision_never_overwrites_original_pin_or_renews_toke
 
 
 def test_known_issued_secret_cannot_hide_in_retained_metadata(site: Site, monkeypatch: pytest.MonkeyPatch) -> None:
-    with site.owner(view_profile=profile()) as owner:
+    with site.owner(view_profile=profile(), read_only_profile=read_only_profile()) as owner:
         ids = ok(lambda: site.register(owner))
         tree = json.loads((site.revision(ids) / "tree.json").read_text())
         monkeypatch.setattr(secrets, "token_hex", lambda size: tree["tree_sha256"])
@@ -581,7 +588,7 @@ def test_known_issued_secret_cannot_hide_in_retained_metadata(site: Site, monkey
 def test_plan_validation_expiry_cannot_begin_retention(site: Site, monkeypatch: pytest.MonkeyPatch) -> None:
     from fa.execution.plans import ProtectedPlanContext
 
-    with site.owner(view_profile=profile()) as owner:
+    with site.owner(view_profile=profile(), read_only_profile=read_only_profile()) as owner:
         ids = ok(lambda: site.register(owner))
         end = time.monotonic() + 0.05
         original = WorkspaceAuthority._retain_reader
@@ -605,7 +612,7 @@ def test_plan_validation_expiry_cannot_begin_retention(site: Site, monkeypatch: 
 
 
 def test_completed_releases_retire_descriptors_and_heavy_maps_without_gc_or_fd_reuse(site: Site) -> None:
-    with site.owner(view_profile=profile()) as owner:
+    with site.owner(view_profile=profile(), read_only_profile=read_only_profile()) as owner:
         ids = ok(lambda: site.register(owner))
         before = len(list(Path("/proc/self/fd").iterdir()))
         grants: list[GrantReply] = []

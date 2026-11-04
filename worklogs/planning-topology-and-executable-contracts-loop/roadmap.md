@@ -51,10 +51,52 @@ The map below is expected to be refined as reality teaches.
 |---|---|---|---|
 | **I01** | Plan grammar & extractor | **IN PROGRESS** | the harness can parse and lint the new plan format |
 | I02 | Executable contracts & verify gate | **SHIPPED** ([plan](increments/increment-02-verify-gate-and-kill-checks.md)) | Retained explicit-plan Q57/Q58 admission/repair/promotion, slice-scoped verify/kill classification, T0 and real local controller/session/eval proof. Seven sections through SLICE6 (including SLICE2b). Locally implemented and diff-reviewed (E229), pending E2E as I03 ships; actual just check remains red on the common readiness failure, not OS isolation/deployed acceptance. Every unique live producer case remains I03-owned. E223 explicitly moves deployed functional/source-to-behaviour verification, environment/inherited-baseline acceptance, broad independent implementation/evidence review and integrated deployment signoff to final I03, all incomplete. [Migration map](notes/i02-to-i03-scope-migration-2026-10-15.md). |
-| I03 | Execution/workspace foundation & integrated acceptance | **OUTLINED** ([finalized six-slice plan](increments/increment-03-execution-workspace-foundation.md)) | Mandatory Linux/Docker project-code cells with PTY, trusted launch/host supervisor, exclusive workspace writer/private views/pinned readers, sealing/fenced publication/recovery, real nested selection/bootstrap/simple Q66, and final reviewed deployed I02+I03 acceptance. Owns CT96/CT97, managed clauses and all former SLICE7 CT88/CT89. Reuse existing facades; no standalone FastAPI completion gate or second authority. Six briefs ordered A/B/C/E/D/F; E230 source-reviewed contracts and real-provider direct+nested final witnesses; E231 route/bundle/live-schema/checkpoint decisions resolved; E232 partial CT98 exists; E234 resolves Q75(a) and adds C0/C3 replay/type foundations. E257–E259 add local admission/CellBackend/view-purpose components; E260 records the plan correction for R1–R5 and binds their future witnesses to the E2E register; E261 records the still-open in-flight noninteractive CANCEL owner gap; E262–E266 close it and the CT104 barrier; E267 adds the local seal component (`publication.py`, CT105) and register row I03-LIVE-19, with publish/recovery still open. These are C0/C3/local proofs, not production composition or host acceptance. Q66 runtime input proof, real factory/caller/mount cutover, descendant terminality, Docker/Ubuntu evidence and E223’s four final acceptance duties remain open. I03 remains OUTLINED; no shipping or deployment status follows. |
+| I03 | Execution/workspace foundation & integrated acceptance | **OUTLINED** ([finalized seven-slice plan](increments/increment-03-execution-workspace-foundation.md)) | Mandatory Linux/Docker project-code cells with PTY, trusted launch/host supervisor, exclusive workspace writer/private views/pinned readers, sealing/fenced publication/recovery, real nested selection/bootstrap/simple Q66, and final reviewed deployed I02+I03 acceptance. Owns CT96/CT97, managed clauses and all former SLICE7 CT88/CT89. Reuse existing facades; no standalone FastAPI completion gate or second authority. Six briefs ordered A/B/C/E/D/F; E230 source-reviewed contracts and real-provider direct+nested final witnesses; E231 route/bundle/live-schema/checkpoint decisions resolved; E232 partial CT98 exists; E234 resolves Q75(a) and adds C0/C3 replay/type foundations. E257–E259 add local admission/CellBackend/view-purpose components; E260 records the plan correction for R1–R5 and binds their future witnesses to the E2E register; E261 records the still-open in-flight noninteractive CANCEL owner gap; E262–E266 close it and the CT104 barrier; E267 adds the local seal component (`publication.py`, CT105) and register row I03-LIVE-19, with publish/recovery still open. These are C0/C3/local proofs, not production composition or host acceptance. Q66 runtime input proof, real factory/caller/mount cutover, descendant terminality, Docker/Ubuntu evidence and E223’s four final acceptance duties remain open. I03 remains OUTLINED; no shipping or deployment status follows. R13/W0 (operator, 2026-11-04): full read-only/scratch managed child implemented and its local row DoD closed across chat/planner/coder production callers; global W0 still requires all Q113 rows. Per-role capability flags default off; observer W-A then W-B post-I03. Live-host ledger/ENOSPC E2E is reserved for the final wave. See [R13 plan](notes/r13-managed-subagent-plan-2026-11-04.md). |
 | I04 | Evidence ledger, pinned invariants, retry hygiene | outlined | the loop carries evidence, pins governance, retries clean, never wedges (includes the ledger **parser**, moved here from I01 — build it beside its consumers; and the **pinned-invariants injection**, drafted as an I01 slice on 2026-10-06 and moved back here as scope creep — contracts banked in `notes/role-prompts-conformance.md`, ledger E79) |
 | I05 | Rolling-wave, ASK#, autonomy, chat orchestration | outlined | the roadmap closes across runs; the ceremony/scope/draft work lands here, revised |
 | I06 | Telemetry & distillation (parallel deferred) | outlined | runs are measured and distilled; slice-DAG parallelism deferred |
+
+**R13 implementation and local acceptance boundary (2026-11-04).** The
+operator superseded the deny-only W0 split and directed full generic
+read-only/scratch child behavior in W0, including Q122 per-view profiles; role
+flags gate access, not child toolset shape. Q123 is resolved. R13's Arena-local
+W0 row DoD is CLOSED after positive and negative production-caller oracles for
+chat/planner/coder, including configured-backend refusal and Q124 evidence.
+Global W0 remains OPEN until every Q113 row passes; W1 starts only after that.
+Live-host ledger-append and Docker ENOSPC/mount-release E2E are reserved for the
+final wave. See the R13 plan.
+
+### Идея после I03: управляемая композиция инструментов
+
+После полного I03 и его host-приёмки отдельно оценить зависимые цепочки инструментов
+в одном ходе без промежуточного вызова LLM: сравнить native multi-call, предметный
+инструмент, ограниченный pipeline и Code Mode на измеренных сценариях. Это не выбор
+реализации и не новый инкремент. Любой будущий путь должен сохранять авторизацию
+view, lifecycle hooks, отдельные результаты/историю и честную неопределённость;
+не считать многодействие транзакцией. Обоснование и текущие незакрытые стыки —
+[заметка I03](notes/i03-composition-and-batch-foundation-plan-2026-11-01.md).
+Порядок I04–I06 не меняется.
+
+### Будущая отдельная фича после I03: наблюдатель за workflow
+
+После завершения и тестирования I03 рассмотреть отдельную фичу: параллельный read-only
+собеседник, которому пользователь может задавать вопросы о ходе выполняющегося workflow.
+Базовый кандидат — отдельный агент или опциональный субагент с доступом к проверенным статусу,
+событиям и опубликованным ревизиям, с заметками в отдельном безопасном хранилище; он не изменяет
+проект или авторитетные записи workflow. Показывать различие между промежуточными событиями и
+опубликованным состоянием. Более широкий detached workflow с продолжающимся основным чатом —
+возможное последующее развитие, не обязательная часть первого варианта. Интерфейс, изоляция,
+доступ к данным, хранение заметок и проверки проектируются отдельно по результатам I03.
+
+**Статус: идея, не спланирована и не входит в I03.** ID и порядок определить при rolling-wave
+планировании; существующие I04–I06 не переименовываются и не переносятся.
+
+**Уточнение оператора (2026-11-04).** Выбран порядок **W-A → W-B**: сначала отдельный
+read-only observer attachment, затем same-session read-only chat lane с durable workflow
+child. W-C (full chat tools + workflow mutate concurrently) отклонён как несовместимый с
+one-writer контрактом. Observer остаётся post-I03 и не является implicit side effect
+добавления subagent. Решение по subagent (read-only/scratch, без writer handoff) не меняет
+observer trade-off. Детали — [R13 plan](notes/r13-managed-subagent-plan-2026-11-04.md).
 
 <a id="slice-loop-tracker-l2-eval-successor"></a>
 ### Deferred capability: slice-loop/tracker/L2-eval successor

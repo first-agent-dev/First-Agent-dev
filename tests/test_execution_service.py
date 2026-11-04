@@ -24,6 +24,7 @@ What must stay true (each test names the producer it kills):
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import socket
@@ -33,10 +34,13 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
+from fa.execution.client import ExecutionClient
+import fa.execution.profiles as execution_profiles
 from fa.execution.profiles import profile_set_sha256
 from fa.execution.protocol import decode_reply, encode_json, read_frame, write_frame
 from fa.execution.service import (
@@ -47,8 +51,9 @@ from fa.execution.service import (
     read_config_file,
 )
 from fa.execution.supervisor import SupervisorError, build_supervisor, main
-from fa.execution.types import ExecutionContractError, Operation, ViewRef
-from tests.test_execution_views import native_profile
+from fa.execution.types import ExecutionContractError, GrantReply, Operation, ViewRef
+from fa.inner_loop.plan_admission import read_plan_snapshot, snapshot_from_bytes
+from tests.test_execution_views import native_profile, read_only_profile
 from tests.test_execution_workspace import ACTOR, PEER, Site
 from tests.test_execution_workspace import site as site
 
@@ -65,10 +70,11 @@ def _config(site: Site, **overrides: Any) -> ServiceConfig:
         "socket_path": site.state.parent / "supervisor.sock",
         "controller_uids": frozenset({PEER.uid}),
         "approved_roots": {"projects": site.roots},
-        "profiles": (native_profile(),),
+        "profiles": (native_profile(), read_only_profile()),
         "rpc_timeout_ms": 2000,
         "lock_timeout_ms": 25,
         "view_profile_id": native_profile().profile_id,
+        "read_only_profile_id": read_only_profile().profile_id,
     }
     values.update(overrides)
     return ServiceConfig(**values)
@@ -82,10 +88,11 @@ def request(
     view_ref: dict[str, Any] | None = None,
     capability: str | None = None,
     namespace: dict[str, Any] | None = None,
+    protocol_version: int = 1,
 ) -> dict[str, Any]:
     """One exact closed envelope; the caller supplies only what the op owns."""
     return {
-        "protocol_version": 1,
+        "protocol_version": protocol_version,
         "request_id": request_id,
         "op": operation.value,
         "namespace": None if operation is Operation.HEALTH else ACTOR.to_dict() if namespace is None else namespace,
@@ -114,7 +121,8 @@ def exchange(
             write_frame(controller, raw)
             response = read_frame(controller)
         future.result(timeout=8)
-    return decode_reply(response, operation=operation, request_id=request_id)
+    protocol_version = int(json.loads(raw)["protocol_version"])
+    return decode_reply(response, operation=operation, request_id=request_id, protocol_version=protocol_version)
 
 
 def _error(reply: dict[str, Any]) -> str:
@@ -139,13 +147,39 @@ def test_the_route_table_covers_each_closed_operation_exactly_once(site: Site) -
             assert callable(getattr(service, name, None)), name
 
 
-def test_the_profile_set_digest_is_content_bound_and_order_independent(site: Site) -> None:
-    """producer-kill-check: digest the config order (or a constant) instead of the set."""
+def test_the_profile_set_digest_is_content_role_and_scratch_bound_and_order_independent(
+    site: Site, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """producer-kill-check: digest config order, role mapping, profile content, and Q124 limit."""
     interactive = native_profile()
     one_shot = replace(interactive, profile_id="oneshot", interactive=False)
-    assert profile_set_sha256((interactive, one_shot)) == profile_set_sha256((one_shot, interactive))
-    assert profile_set_sha256((interactive, one_shot)) != profile_set_sha256(
-        (replace(interactive, memory_bytes=interactive.memory_bytes // 2), one_shot)
+    one_shot_alt = replace(interactive, profile_id="oneshot-alt", interactive=False)
+    profiles = (interactive, one_shot, one_shot_alt)
+    digest = profile_set_sha256(
+        profiles,
+        view_profile_id=interactive.profile_id,
+        read_only_profile_id=one_shot.profile_id,
+    )
+    assert digest == profile_set_sha256(
+        tuple(reversed(profiles)),
+        view_profile_id=interactive.profile_id,
+        read_only_profile_id=one_shot.profile_id,
+    )
+    assert digest != profile_set_sha256(
+        profiles,
+        view_profile_id=interactive.profile_id,
+        read_only_profile_id=one_shot_alt.profile_id,
+    )
+    assert digest != profile_set_sha256(
+        (replace(interactive, memory_bytes=interactive.memory_bytes // 2), one_shot, one_shot_alt),
+        view_profile_id=interactive.profile_id,
+        read_only_profile_id=one_shot.profile_id,
+    )
+    monkeypatch.setattr(execution_profiles, "READ_SCRATCH_BYTES", execution_profiles.READ_SCRATCH_BYTES + 1)
+    assert digest != profile_set_sha256(
+        profiles,
+        view_profile_id=interactive.profile_id,
+        read_only_profile_id=one_shot.profile_id,
     )
 
 
@@ -170,16 +204,78 @@ def test_config_refuses_unknown_keys_and_a_socket_reachable_through_a_root(site:
 def test_health_publishes_the_digest_of_the_profiles_actually_enforced(site: Site) -> None:
     """producer-kill-check: hash the config file, or ignore profile content."""
     profile = native_profile()
+    reader = read_only_profile()
+    expected_digest = profile_set_sha256(
+        (profile, reader),
+        view_profile_id=profile.profile_id,
+        read_only_profile_id=reader.profile_id,
+    )
     with SupervisorService(_config(site)) as service:
         reply = service.handle(PEER, request(Operation.HEALTH, {}), deadline=until())
         assert reply == {
             "ready": True,
             "protocol_version": 1,
-            "profile_set_sha256": profile_set_sha256((profile,)),
+            "profile_set_sha256": expected_digest,
         }
-        assert service.profile_set_sha256 != profile_set_sha256((replace(profile, max_command_ms=999),))
+        assert service.profile_set_sha256 != profile_set_sha256(
+            (replace(profile, max_command_ms=999), reader),
+            view_profile_id=profile.profile_id,
+            read_only_profile_id=reader.profile_id,
+        )
         # Health is the one operation with no journal record at all.
         assert service.authority.journal.lookup("op-" + RID, ACTOR) is None
+
+
+def test_v2_health_negotiates_only_the_project_artifact_listing_feature(site: Site) -> None:
+    with SupervisorService(_config(site)) as service:
+        reply = exchange(service, Operation.HEALTH, {}, protocol_version=2)
+        assert reply["status"] == "OK"
+        assert reply["result"] == {
+            "ready": True,
+            "protocol_version": 2,
+            "profile_set_sha256": profile_set_sha256(
+                (native_profile(), read_only_profile()),
+                view_profile_id=native_profile().profile_id,
+                read_only_profile_id=read_only_profile().profile_id,
+            ),
+            "features": ["list_project_artifacts"],
+        }
+        assert service.authority.journal.lookup("op-" + RID, ACTOR) is None
+
+
+def test_v2_listing_uses_the_authorized_read_manifest_without_reservation(site: Site) -> None:
+    project = site.source / "worklogs/demo-project"
+    (project / "increments").mkdir(parents=True)
+    (project / "roadmap.md").write_text("roadmap", encoding="utf-8")
+    (project / "increments/increment-01-plan.md").write_text("increment", encoding="utf-8")
+    with SupervisorService(_config(site)) as service:
+        workspace_id = _registered(service)
+        _, revision = _writer(service, workspace_id, request_id="2" * 32)
+        pinned = exchange(
+            service,
+            Operation.PIN_READER,
+            {"workspace_id": workspace_id, "revision_id": revision, "plan_ref": None},
+            request_id="3" * 32,
+        )
+        assert pinned["status"] == "OK", pinned
+        list_request_id = "4" * 32
+        listed = exchange(
+            service,
+            Operation.LIST_PROJECT_ARTIFACTS,
+            {"project_slug": "demo-project"},
+            request_id=list_request_id,
+            view_ref=pinned["result"]["view_ref"],
+            capability=pinned["result"]["capability"],
+            protocol_version=2,
+        )
+        assert listed["status"] == "OK", listed
+        assert listed["result"] == {
+            "project_kind": "directory",
+            "roadmap_kind": "file",
+            "increments_kind": "directory",
+            "entries": [{"name": "increment-01-plan.md", "kind": "file"}],
+        }
+        assert service.authority.journal.lookup("op-" + list_request_id, ACTOR) is None
 
 
 def test_health_over_the_wire_is_a_readonly_reply_with_no_reservation(site: Site) -> None:
@@ -190,7 +286,11 @@ def test_health_over_the_wire_is_a_readonly_reply_with_no_reservation(site: Site
         assert reply["result"] == {
             "ready": True,
             "protocol_version": 1,
-            "profile_set_sha256": profile_set_sha256((native_profile(),)),
+            "profile_set_sha256": profile_set_sha256(
+                (native_profile(), read_only_profile()),
+                view_profile_id=native_profile().profile_id,
+                read_only_profile_id=read_only_profile().profile_id,
+            ),
         }
         assert service.authority.journal.lookup("op-" + RID, ACTOR) is None
 
@@ -388,6 +488,171 @@ def test_stop_view_refuses_a_cell_it_cannot_stop(site: Site) -> None:
         assert _error(sealed) == "TERMINALITY_UNKNOWN"
 
 
+def test_candidate_plan_publication_uses_view_grant_private_buffer_and_dispatch_id(
+    site: Site, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """producer-kill-check: bypass the candidate route or substitute an OWNER grant."""
+    plan_relative = "worklogs/demo/increments/increment-01-demo.md"
+    plan_path = site.source / plan_relative
+    plan_path.parent.mkdir(parents=True, exist_ok=True)
+    old_plan = b"# Existing plan\n"
+    new_plan = b"# Candidate plan\n"
+    plan_path.write_bytes(old_plan)
+    plan_ref = {
+        "workspace_relative_path": plan_relative,
+        "source_kind": "EXPLICIT",
+        "sha256": hashlib.sha256(old_plan).hexdigest(),
+    }
+    buffer_label = plan_relative
+
+    with SupervisorService(_config(site)) as service:
+        workspace_id = _registered(service)
+        owner_capability, base_revision = _writer(service, workspace_id, request_id="a" * 32)
+        candidate = exchange(
+            service,
+            Operation.CREATE_VIEW,
+            {
+                "workspace_id": workspace_id,
+                "base_revision": base_revision,
+                "access": "READ",
+                "purpose": "CANDIDATE",
+                "candidate_scope": {"plan_ref": plan_ref},
+                "plan_ref": plan_ref,
+            },
+            request_id="b" * 32,
+            capability=owner_capability,
+        )
+        assert candidate["status"] == "OK", candidate
+        view = candidate["result"]["view_ref"]
+        view_capability = candidate["result"]["capability"]
+
+        write = exchange(
+            service,
+            Operation.WRITE_FILE,
+            {"path": buffer_label, "content": new_plan.decode(), "expected_sha256": None},
+            request_id="c" * 32,
+            view_ref=view,
+            capability=view_capability,
+        )
+        assert write["status"] == "OK", write
+        read = exchange(
+            service,
+            Operation.READ_FILE,
+            {"path": buffer_label, "offset_bytes": 0, "max_bytes": 1024},
+            request_id="d" * 32,
+            view_ref=view,
+            capability=view_capability,
+        )
+        assert read["status"] == "OK", read
+        assert read["result"]["content"] == new_plan.decode()
+        assert not (site.source / ".fa").exists(), "candidate bytes escaped supervisor staging"
+
+        view_ref = ViewRef.from_dict(view)
+        service.authority.close_admission(PEER, ACTOR, view_ref=view_ref, capability=view_capability, deadline=until())
+        service.authority.drain(PEER, ACTOR, view_ref=view_ref, capability=view_capability, deadline=until())
+        service.authority.record_terminal(PEER, ACTOR, view_ref=view_ref, capability=view_capability, deadline=until())
+
+        def owner_proof_forbidden(*_args: Any, **_kwargs: Any) -> Any:
+            raise AssertionError("candidate PUBLISH must not require the OWNER grant")
+
+        monkeypatch.setattr(service.authority, "_owner_only", owner_proof_forbidden)
+        published = exchange(
+            service,
+            Operation.PUBLISH,
+            {"sealed_manifest_id": None, "expected_base_revision": base_revision},
+            request_id="e" * 32,
+            view_ref=view,
+            capability=view_capability,
+        )
+        assert published["status"] == "OK", published
+        assert published["result"]["operation_id"] == "op-" + "e" * 32
+        assert published["result"]["plan_ref"] == {
+            **plan_ref,
+            "sha256": hashlib.sha256(new_plan).hexdigest(),
+        }
+        assert plan_path.read_bytes() == new_plan
+        intent_path = site.state / "workspaces" / workspace_id / "intent.json"
+        assert not intent_path.exists()
+        assert not (site.source / ".fa/admission").exists()
+        assert not [path for path in (site.source / ".fa/publish-tmp").iterdir() if path.exists()]
+
+        # Exact request replay is journal-owned; a fresh request is not a second
+        # intent is a repeat under CT117: it names the committed revision, never a second commit.
+        replay = exchange(
+            service,
+            Operation.PUBLISH,
+            {"sealed_manifest_id": None, "expected_base_revision": base_revision},
+            request_id="e" * 32,
+            view_ref=view,
+            capability=view_capability,
+        )
+        assert replay == published
+        fresh = exchange(
+            service,
+            Operation.PUBLISH,
+            {"sealed_manifest_id": None, "expected_base_revision": base_revision},
+            request_id="f" * 32,
+            view_ref=view,
+            capability=view_capability,
+        )
+        assert fresh["status"] == "OK", fresh
+        assert fresh["result"]["already_published"] is True
+        assert fresh["result"]["revision_id"] == published["result"]["revision_id"]
+        assert plan_path.read_bytes() == new_plan
+
+
+def test_the_client_verb_uses_the_candidate_route_end_to_end(site: Site) -> None:
+    """producer-kill-check: bypass Operation.PUBLISH or reintroduce a host writer."""
+    plan_relative = "worklogs/demo/increments/increment-01-demo.md"
+    plan_path = site.source / plan_relative
+    plan_path.parent.mkdir(parents=True, exist_ok=True)
+    plan_path.write_bytes(b"# Existing plan\n")
+    source = read_plan_snapshot(site.source, Path(plan_relative))
+    candidate = snapshot_from_bytes("draft.md", b"# Repaired plan\n")
+
+    with SupervisorService(_config(site)) as service:
+        workspace_id = _registered(service)
+        writer = _writer_grant(service, workspace_id, request_id="1" * 32)
+        base_revision = str(writer.revision_id)
+        client = ExecutionClient(
+            service.socket_path,
+            server_uid=os.getuid(),
+            rpc_timeout_ms=2000,
+        )
+        binding = SimpleNamespace(namespace=ACTOR, workspace_id=workspace_id)
+        stop = threading.Event()
+        runner = threading.Thread(target=service.serve_forever, args=(stop,), daemon=True)
+        runner.start()
+        try:
+            publication = client.publish_plan(binding, source, candidate, grant=writer, deadline=until())
+            promoted = publication.plan_ref
+            assert promoted.workspace_relative_path == plan_relative
+            assert promoted.source_kind == source.ref.source_kind
+            assert promoted.sha256 == hashlib.sha256(candidate.utf8_bytes).hexdigest()
+            assert publication.already_published is False
+            assert plan_path.read_bytes() == candidate.utf8_bytes
+            assert not (site.source / ".fa/admission").exists()
+            workspaces = site.state / "workspaces" / workspace_id
+            assert not (workspaces / "intent.json").exists()
+            first_revision = json.loads((workspaces / "current.json").read_text())["revision_id"]
+            assert first_revision != base_revision
+
+            # A controller can reuse the managed port for the next validated repair;
+            # it must advance its base CAS from the committed result, not retain R0.
+            next_source = read_plan_snapshot(site.source, Path(plan_relative))
+            next_candidate = snapshot_from_bytes("draft.md", b"# Repaired plan, pass two\n")
+            next_publication = client.publish_plan(binding, next_source, next_candidate, grant=writer, deadline=until())
+            assert next_publication.plan_ref.sha256 == hashlib.sha256(next_candidate.utf8_bytes).hexdigest()
+            assert next_publication.already_published is False
+            assert plan_path.read_bytes() == next_candidate.utf8_bytes
+            assert json.loads((workspaces / "current.json").read_text())["revision_id"] != first_revision
+            assert not (workspaces / "intent.json").exists()
+        finally:
+            stop.set()
+            runner.join(timeout=5)
+            assert not runner.is_alive(), "serve_forever ignored its stop event"
+
+
 def test_the_publication_half_is_reachable_through_the_wire(site: Site) -> None:
     """producer-kill-check: drop any one call in stop -> seal -> publish -> bundle -> install."""
     with SupervisorService(_config(site)) as service:
@@ -432,7 +697,12 @@ def test_the_publication_half_is_reachable_through_the_wire(site: Site) -> None:
             "tree_sha256",
             "operation_id",
             "projection_complete",
+            "plan_ref",
+            "already_published",
         }
+        assert published["result"]["plan_ref"] is None
+        # A sealed publish never repeats: it replaces a view's bytes exactly once.
+        assert published["result"]["already_published"] is False
         assert published["result"]["revision_id"] == sealed["result"]["revision_id"]
         assert published["result"]["operation_id"] == "op-" + "5" * 32
         assert (site.source / "note.txt").read_text() == "published through the codec\n"
@@ -510,16 +780,45 @@ def test_routes_without_an_owner_refuse_with_a_closed_code(
             assert record is not None and record["state"] == "UNKNOWN"
 
 
-def test_register_create_true_refuses_because_no_provisioner_owner_exists(site: Site) -> None:
-    """producer-kill-check: hand a create=true registration to `register_existing`."""
-    with SupervisorService(_config(site)) as service:
-        reply = exchange(
+def test_register_create_true_materializes_approved_or_empty_seed(site: Site, tmp_path: Path) -> None:
+    """C1 producer proof: create=true reaches the authority materializer exactly once."""
+    sessions = tmp_path / "sessions"
+    repo = tmp_path / "repo"
+    state = tmp_path / "service-state"
+    sessions.mkdir()
+    repo.mkdir()
+    (repo / "README.md").write_text("managed source", encoding="utf-8")
+    config = _config(
+        site,
+        state_root=state,
+        socket_path=tmp_path / "service.sock",
+        approved_roots={"sessions": sessions, "repo": repo},
+    )
+    with SupervisorService(config) as service:
+        seeded = exchange(
             service,
             Operation.REGISTER_WORKSPACE,
-            {"root_id": "projects", "relative_root": "made-up", "create": True, "input_id": None},
+            {"root_id": "sessions", "relative_root": "seeded", "create": True, "input_id": "repo"},
+            request_id="1" * 32,
         )
-        assert _error(reply) == "BACKEND_UNAVAILABLE"
-        assert not (site.roots / "made-up").exists()
+        assert seeded["status"] == "OK", seeded
+        assert (sessions / "seeded" / "README.md").read_text(encoding="utf-8") == "managed source"
+        empty = exchange(
+            service,
+            Operation.REGISTER_WORKSPACE,
+            {"root_id": "sessions", "relative_root": "clean", "create": True, "input_id": None},
+            request_id="2" * 32,
+        )
+        assert empty["status"] == "OK", empty
+        assert list((sessions / "clean").iterdir()) == []
+        collision = exchange(
+            service,
+            Operation.REGISTER_WORKSPACE,
+            {"root_id": "sessions", "relative_root": "seeded", "create": True, "input_id": None},
+            request_id="3" * 32,
+        )
+        assert _error(collision) == "PATH_DENIED"
+        assert (sessions / "seeded" / "README.md").read_text(encoding="utf-8") == "managed source"
 
 
 # ---------------------------------------------------------------------------
@@ -618,7 +917,7 @@ def test_profiles_must_be_explicit_and_unique(site: Site) -> None:
 # ---------------------------------------------------------------------------
 
 
-_ROADMAP_PROSE = "## Intent\n\nShip the thing.\n\n## Out-of-scope\n\nEverything else.\n"
+_ROADMAP_PROSE = "## Intent\n\nShip the thing.\n\n## Out of scope\n\nEverything else.\n"
 _INCREMENT_PROSE = "## SLICE1: first\n\nSteps.\n\n## SLICE2: second\n\nSteps.\n"
 
 
@@ -665,6 +964,19 @@ def _writer(service: SupervisorService, workspace_id: str, *, request_id: str) -
     return str(reply["result"]["capability"]), str(reply["result"]["revision_id"])
 
 
+def _writer_grant(service: SupervisorService, workspace_id: str, *, request_id: str) -> GrantReply:
+    reply = exchange(service, Operation.ACQUIRE_WRITER, {"workspace_id": workspace_id}, request_id=request_id)
+    assert reply["status"] == "OK", reply
+    result = reply["result"]
+    return GrantReply(
+        Operation.ACQUIRE_WRITER,
+        result["capability"],
+        None,
+        result["generation"],
+        result["revision_id"],
+    )
+
+
 def _view(
     service: SupervisorService,
     workspace_id: str,
@@ -689,6 +1001,40 @@ def _view(
     )
     assert reply["status"] == "OK", reply
     return reply["result"]["view_ref"], str(reply["result"]["capability"])
+
+
+def test_create_view_reply_contains_the_authority_bound_input_tree(site: Site) -> None:
+    """C1/C3: the reply carries the exact digest held in this view, not a host recomputation."""
+    with SupervisorService(_config(site)) as service:
+        workspace_id = _registered(service)
+        capability, revision_id = _writer(service, workspace_id, request_id="1" * 32)
+        reply = exchange(
+            service,
+            Operation.CREATE_VIEW,
+            {
+                "workspace_id": workspace_id,
+                "base_revision": revision_id,
+                "access": "WRITE",
+                "purpose": "PROJECT",
+                "candidate_scope": None,
+                "plan_ref": None,
+            },
+            request_id="2" * 32,
+            capability=capability,
+        )
+        assert reply["status"] == "OK", reply
+        result = reply["result"]
+        view_ref = ViewRef.from_dict(result["view_ref"])
+        expected_tree, expected_plan = service.authority.execution_identity(
+            PEER, ACTOR, view_ref=view_ref, capability=result["capability"], deadline=until()
+        )
+        assert result["input_tree_sha256"] == expected_tree
+        assert expected_plan is None
+        view_record = json.loads(
+            (site.state / "workspaces" / workspace_id / "views" / view_ref.view_id / "view.json").read_text()
+        )
+        assert result["input_tree_sha256"] == view_record["input_tree_sha256"]
+        assert result["capability"] not in json.dumps(view_record)
 
 
 def test_exec_and_cancel_issue_receipts_over_the_closed_socket(site: Site, tmp_path: Path) -> None:

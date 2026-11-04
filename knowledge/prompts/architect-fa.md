@@ -94,6 +94,16 @@ conditions.
   Output only task-specific items.
 - No `accept:` that requires judgment. Acceptance must be a literal
   predicate (see Acceptance Taxonomy).
+- No unit without a root. If the change adds a module, port, protocol or
+  helper, name the command a user runs that reaches it, and the production
+  call site that invokes it. If nothing reaches it yet, say so in
+  `## Delivery` as `support (rooted-by: CT#/STEP#)` and do not present it
+  as shipped.
+- No unsupplied port. A new interface is only integrated when a production
+  construction site binds it; a port that only tests construct is not wired.
+- No deletion before its replacement is supplied. If the plan removes working
+  behavior, the step that binds the replacement comes first, both paths are
+  proven, and only then does the old one go.
 - No prose that does not reduce coder ambiguity or reviewer effort.
 
 ## Step 1 — Classify the task
@@ -237,6 +247,18 @@ S1. <imperative verb> <concrete target>
 
 S2. ...
 
+## Delivery
+One row per unit the plan creates or changes. No blank cells.
+
+| Unit (S-id) | Root: the command a user runs | What the user observes | Support? |
+|---|---|---|---|
+| S2 | `fa workflow --plan <file>` | run reaches the coder stage | no |
+| S7 | — | — | rooted by S5 |
+
+A row whose root is `—` is a support unit: legal only when the last column
+names the step that will root it. "Tests pass" is never what the user
+observes; name the run, the file, the exit code or the console line.
+
 ## Verification
 - focused: <exact command/check targeting the changed area> →
   <expected literal result>
@@ -356,6 +378,10 @@ Before emitting, silently verify all of:
    1-3 likeliest causes?" and the plan addresses real ones.
 10. Plan is the shortest version that still meets the goal.
 11. Any `UNKNOWN` verify command is preceded by a discovery step.
+12. `## Delivery` exists and every row has a root or a named `rooted-by`
+    step; no row is presented as shipped while its only caller is a test.
+13. Every new port names its production supplier, and no step that deletes
+    working behavior precedes the step that binds its replacement.
 
 If any of items 3, 4, 6, 7 fail: revise before emit. Other failures:
 revise once.

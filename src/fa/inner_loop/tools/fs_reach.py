@@ -11,6 +11,7 @@ from __future__ import annotations
 import atexit
 import logging
 from collections.abc import Mapping
+from contextlib import ExitStack
 from pathlib import Path
 from typing import Any
 
@@ -39,22 +40,30 @@ _DESCRIPTION = (
 class _ReachHolder:
     """Lazily holds the process-wide StructuralIndex for one workspace."""
 
-    def __init__(self, db_path: Path) -> None:
+    def __init__(self, db_path: Path, *, in_memory: bool = False, strict_rooted_reads: bool = False) -> None:
         self._db = db_path
+        self._in_memory = in_memory
+        self._strict_rooted_reads = strict_rooted_reads
         self._index: Any = None
 
     def get(self) -> Any:
         if self._index is None:
             from fa.memory.structural_index import StructuralIndex
 
-            self._index = StructuralIndex(self._db)
+            self._index = StructuralIndex(
+                self._db,
+                in_memory=self._in_memory,
+                strict_rooted_reads=self._strict_rooted_reads,
+            )
         return self._index
 
-    def close(self) -> None:
+    def close(self, *, strict: bool = False) -> None:
         if self._index is not None:
             try:
                 self._index.close()
             except Exception:
+                if strict:
+                    raise
                 logger.debug("error closing StructuralIndex", exc_info=True)
 
 
@@ -87,23 +96,45 @@ def _parse_enum(
     return value, None
 
 
-def build_fs_reach_tool(workspace_root: Path, *, workspace_io: WorkspacePort | None = None) -> ToolSpec:
-    """Build the ``fs_reach`` ToolSpec bound to a workspace (CT-6)."""
+def build_fs_reach_tool(
+    workspace_root: Path,
+    *,
+    workspace_io: WorkspacePort | None = None,
+    scratch_db: Path | None = None,
+    in_memory: bool = False,
+    strict_rooted_reads: bool = False,
+    cleanup: ExitStack | None = None,
+) -> ToolSpec:
+    """Build the ``fs_reach`` ToolSpec bound to a workspace (CT-6).
+
+    An optional cleanup stack owns this tool's lifetime and closes its index
+    strictly on exit. Without one, legacy atexit cleanup is unchanged.
+    """
+    if type(strict_rooted_reads) is not bool:
+        raise ValueError("strict_rooted_reads must be a bool")
+    if strict_rooted_reads and not in_memory:
+        raise ValueError("strict_rooted_reads requires an in-memory index")
     root = Path(workspace_root).resolve()
-    host_db = root / ".fa" / "structural.db"
+    host_db = scratch_db if scratch_db is not None else root / ".fa" / "structural.db"
 
     def _resolve_index() -> _ReachHolder | None:
         try:
             db = index_db(workspace_io, root, "structural.db", host_db)
         except WorkspacePortError:
             return None
-        holder = _ReachHolder(db)
-        atexit.register(holder.close)
+        holder = _ReachHolder(db, in_memory=in_memory, strict_rooted_reads=strict_rooted_reads)
+        if cleanup is None:
+            atexit.register(holder.close)
+        else:
+            cleanup.callback(holder.close, strict=True)
         return holder
 
-    holder = _resolve_index()
+    # A host root and a private cache path do not prove a view-bound index.
+    holder = _resolve_index() if workspace_io is None else None
 
     def handler(params: Mapping[str, object]) -> ToolResult:
+        if workspace_io is not None:
+            return ToolResult.fail("reach_failed", "managed cell-local reach index is unavailable", retryable=False)
         if holder is None:
             return ToolResult.fail(
                 "reach_failed",
@@ -171,6 +202,12 @@ def _handle(params: Mapping[str, object], holder: _ReachHolder, root: Path) -> T
     index = holder.get()
     stats = index.ensure_indexed(root)
     if not stats.available:
+        if holder._strict_rooted_reads and stats.errors:
+            return ToolResult.fail(
+                "reach_failed",
+                "rooted workspace read was refused; no partial reach result is available",
+                retryable=False,
+            )
         result: dict[str, Any] = {
             "status": "unavailable",
             "query": symbol,

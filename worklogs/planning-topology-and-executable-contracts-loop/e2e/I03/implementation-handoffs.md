@@ -93,3 +93,110 @@ are authored here; candidate exercise details are proposals for planner/reviewer
   (E274 / `I03-LIVE-24`); `../README.md` (`I03-LIVE-24`); `tests/test_workspace_authorize.py`.
 - **Planner disposition:** pending. This coder handoff does not amend the oracle, case ownership,
   fixture authorization, or live result.
+
+## I03-LIVE-27 — Q85 / CT113 / E283 controller-attested workspace handoff
+
+- **Contracts / producers:** Q85 (answered by E282); CT113; SLICE2 STEP6; `I03-LIVE-27`;
+  L-HAND-1 and L-HAND-2. The local authority+route leg is implemented (E283). The distinct
+  controller leg is still pending under CT108 / SLICE5 STEP2; the integrated outer-chat join is
+  I03-LIVE-S08. These are linked obligations, not one claimed implementation.
+- **Verified source references:** `src/fa/execution/primitives.py::Operation.HANDOFF`;
+  `src/fa/execution/service.py::SupervisorService._handoff`;
+  `src/fa/execution/workspace.py::WorkspaceAuthority.handoff`, `_handoff_owner`, `_settled`;
+  `src/fa/execution/client.py::ExecutionClient.request`;
+  `src/fa/inner_loop/tools/workflow_tool.py::build_invoke_workflow_tool`'s `handler` and
+  `_child_run_context`; `src/fa/session/manager.py::SessionManager.begin_run`;
+  `tests/test_execution_handoff.py`.
+- **Production path:** The existing `handoff` wire operation carries the caller namespace and
+  `target_namespace`; `_handoff` constructs the target `NamespaceRef` and calls the authority.
+  `WorkspaceAuthority.handoff` proves the owner, requires every WRITE view settled and no
+  `intent.json`, requires this process's live writer fd, then checks same session, target parent
+  equals caller run, and target run differs. `_handoff_owner` performs one private metadata replace
+  and read-back before returning a fresh capability; generation, owner namespace, status and current
+  revision do not change. Q85 deliberately makes the parent link controller-attested: the controller
+  must allocate the child via `_child_run_context` / the existing `SessionManager.begin_run`; the
+  authority does not look up or attest target-run existence.
+- **Pending controller seam (source-verified, not implemented):** `ExecutionClient.request` is a
+  generic one-shot RPC and does not resend after an uncertain send, but there is no controller call
+  to `Operation.HANDOFF` and no `ExecutionClient.handoff` convenience method. The current workflow
+  handler refuses acquisition-dependent nested roles before child dispatch; it has no parent
+  mutator drain/suspension or server-acknowledged grant-transfer path. SLICE5 STEP2 must later drain
+  and settle parent writes, allocate once, call the existing wire operation once, validate the returned
+  grant, and dispatch only after acknowledgement. A refusal or uncertain reply means no child dispatch
+  and no retry with a new request id. The parent/child controller proof is not supplied by this local
+  authority handoff or by I03-LIVE-27 alone.
+- **Observable effect / artifact:** Local CT113 tests observe the same-generation grant transfer,
+  changed active actor, unchanged owner/status/revision, old-capability denial, cached same-request
+  replay, and byte-identical refusal state for unsettled views/intent and invalid namespaces. The
+  planner-owned I03-LIVE-27 row remains the surface oracle; L-HAND-1 covers the grant/epoch/replay
+  chain and L-HAND-2 covers unsettled refusal. The separate I03-LIVE-S08 join owns the actual nested
+  controller/outer-chat witness.
+- **Host prerequisites:** An approved filesystem and deployed service/dispatcher under the controller
+  UID; an actual same-session child allocated by `SessionManager.begin_run`; a live writer fd; and
+  real view/cell settlement observations for the open/sealed cases. The approved deployed SHA, image,
+  profile, configuration and commands must be supplied from the actual host, not inferred here.
+- **Candidate fixture / command: [PROPOSAL]** After SLICE6 STEP7 review and planner/operator
+  disposition, map the existing L-HAND-1/2 host scenarios to I03-LIVE-27 on an approved disposable
+  workspace. Keep the existing expected observations and negative controls; no new fixture, host
+  command, acceptance oracle or case ownership is proposed in this handoff.
+- **Local proof:** `tests/test_execution_handoff.py` is the real-authority/composed-route bank
+  (17 passed; 15/15 assertion-only mutants killed in the existing E283 evidence). It proves local
+  component behavior only: it does not allocate the target through a real `begin_run`, run a deployed
+  service as the controller UID, or supply a kernel-observed live-cell settlement.
+- **Host-only assumptions / limitations:** I03-LIVE-27 is **PLANNED / UNEXECUTED** and its live result
+  remains **NOT RUN**. L-HAND-1/2 are planned host evidence, not local status promotions. This entry
+  does not prove the pending SLICE5 controller path, the I03-LIVE-S08 nested workflow, installed
+  origins, Docker/cgroup behavior, or deployment readiness. No fixture exists and STEP7 review must
+  precede any fixture/helper implementation.
+- **Evidence references:** `../README.md` and `live-verification.md` (`I03-LIVE-27`);
+  `../../notes/i03-live-e2e-test-plan-2026-10-22.md` (L-HAND-1/2);
+  `../../notes/e2e-live-verification-register.md` (E282/E283);
+  `../../increments/increment-03-execution-workspace-foundation.md` (CT113, SLICE2 STEP6,
+  CT108/SLICE5 STEP2, E287); `tests/test_execution_handoff.py`.
+- **Planner disposition:** pending. This coder handoff records source facts and evidence limits only;
+  it does not amend the planner-owned oracle, case ownership, fixture authorization, host result, or
+  live status.
+
+## I03-LIVE-S07 — Q109-B rooted managed discovery (candidate ledger-append exercise)
+
+- **Contracts / producers:** Q109-B; I03 spec §4; S4P2/STEP2b/Q97; existing
+  `I03-LIVE-S07` cell-local tool-route oracle. This proposal does not create a new live ID or change
+  the current `NOT RUN` result.
+- **Verified local seam:** `project_tools._dispatch("fs_reach", ...)` builds the real registry; the
+  managed reach builder opts into strict rooted reads; `StructuralIndex._build` enumerates candidates
+  and the rooted reader opens the relative file under one pinned root descriptor. The implemented
+  `tests/test_execution_project_tools.py::test_cell_reach_refuses_symlink_replacement_after_enumeration`
+  replaces an enumerated source with an outside-view symlink and checks for a non-retryable refusal.
+- **Local verification (2026-11-01):** The rooted-read target bank completed with 87 passed and two
+  existing Q106 xfails. Positive controls resolve in-root file/directory symlinks to one canonical
+  target; reader-level escape, link-replacement, identity-drift and over-limit tests refuse. The
+  integrated C3 race returns non-retryable `reach_failed` with no partial result. Ruff, mypy
+  (`--python-version 3.13`), compileall and `git diff --check` passed.
+  Targeted mutation checks both killed (a) bypassing `RootedFileReader` in the producer and (b)
+  removing the managed strict-read binding. Pytest ran under Python 3.11 with a temporary
+  `typing.override` compatibility shim; Python 3.13 was unavailable, so this is not supported-runtime
+  evidence or live-host acceptance.
+- **Candidate live exercise: [PROPOSAL]** After STEP7 review, Q108 transport and STEP2b production
+  wiring, arrange one approved mutable PROJECT view with a safe Python file and a controlled outside
+  sentinel. Invoke the installed fixed project-helper EXEC through the real controller/supervisor.
+  Inject replacement only after enumeration and before content open. Positive control: an ordinary
+  in-view symbol resolves. Adversarial outcome: the race returns an explicit non-retryable refusal,
+  never the sentinel name/content, and performs no host-path read. Re-submit the exact completed
+  request identity to exercise Q75 replay: assert the same stored refusal and exactly one original
+  journal operation/RUN, with no helper re-execution. Append the dated attempt/evidence directory to
+  the existing `I03-LIVE-S07` attempt table only after observing the deployed SHA, image, profile,
+  config, run ID, command, return code/effect and independent reviewer.
+- **Negative controls / host limits:** Removing the rooted-reader producer or its binding in a test
+  build must make the adversarial case observe the sentinel and fail. This is a host-owned test mutant,
+  not permission to edit an approved deployment. Local fault injection proves neither Docker/cgroup
+  containment nor deployed journal behavior; actual fixture and command remain unassigned until the
+  live-plan owner approves them.
+- **Planner disposition:** pending. This proposal does not amend the I03-LIVE-S07 oracle, authorize a
+  fixture/host command, or assign a live result.
+
+## Q112/R02 — entrypoint readiness refusal and session-ledger handoff (PROPOSAL ONLY)
+
+- **Source and contract:** `scripts/fa-entrypoint.sh::_prepare_entrypoint_workspace` and its managed-session caller refuse auto-run after failed `workspace_bootstrap ensure`, before session provisioning, `.active` publication, and `fa run`; an explicit command override remains available and skips auto-run provisioning. Only a fresh unpublished clone may be removed; a resumed workspace is retained.
+- **Local evidence:** `tests/test_fa_entrypoint.py` passed 20 tests on CPython 3.13.16. Ruff, `bash -n`, `compileall`, and `git diff --check` passed. Producer mutation bypassing the refusal and edge mutation provisioning an explicit override were both killed and restored. This is shell/test-double evidence only; successful bootstrap is not proof of a managed EXEC backend.
+- **Deferred live exercise:** `../../notes/i03-live-e2e-test-plan-2026-10-22.md`, §4.2 proposes fresh/resumed readiness refusal, explicit override, and successful managed auto-run cases. The host oracle reads the authoritative SQLite `session.db`: `session_meta` run bindings plus `event_log` rows, with before/after snapshots reopened from disk. It verifies no provision/run append on refusal or override and one run binding plus durable run events on the successful control.
+- **Host-only assumptions / limitations:** proposal only; no fixture, deployed command, live ID assignment, or host evidence is authorized or present. Execute after merge to `main` and the planned user-host `fa update`, with an approved image/state root and controlled readiness cause. Record actual evidence only in the planner-approved register; Docker/cgroup and backend acceptance are not inferred from local tests.

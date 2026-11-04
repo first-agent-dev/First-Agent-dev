@@ -33,6 +33,9 @@ class FeatureFlags:
     telemetry_enabled: bool = True
     tool_batching_enabled: bool = True
     subagent_spawning_enabled: bool = False
+    subagent_chat_enabled: bool = False
+    subagent_planner_enabled: bool = False
+    subagent_coder_enabled: bool = False
     context_budget_enabled: bool = True
     pty_pool_max_size: int = 2
     worktree_mode: str = "shared"
@@ -60,12 +63,25 @@ class FeatureFlags:
     # artifacts; missing/invalid configuration stays in the rollout-safe mode.
     workflow_verify_gate_mode: str = "observe"
 
+    def subagent_enabled_for(self, role: str) -> bool:
+        """Require both the master gate and the parent-role gate."""
+        field_name = {
+            "chat": "subagent_chat_enabled",
+            "planner": "subagent_planner_enabled",
+            "coder": "subagent_coder_enabled",
+        }.get(role)
+        return self.subagent_spawning_enabled and field_name is not None and bool(getattr(self, field_name))
+
     def as_dict(self) -> dict[str, Any]:
+
         return {
             "blackboard.enabled": self.blackboard_enabled,
             "telemetry.enabled": self.telemetry_enabled,
             "tool_batching.enabled": self.tool_batching_enabled,
             "subagent_spawning_enabled": self.subagent_spawning_enabled,
+            "subagent.chat.enabled": self.subagent_chat_enabled,
+            "subagent.planner.enabled": self.subagent_planner_enabled,
+            "subagent.coder.enabled": self.subagent_coder_enabled,
             "context_budget_enabled": self.context_budget_enabled,
             "pty_pool.max_size": self.pty_pool_max_size,
             "worktree.mode": self.worktree_mode,
@@ -99,6 +115,9 @@ FAIL_CLOSED_FLAGS: frozenset[str] = frozenset(
 FAIL_OPEN_FLAGS: frozenset[str] = frozenset(
     {
         "subagent_spawning_enabled",  # default=False → don't spawn when unconfigured
+        "subagent_chat_enabled",
+        "subagent_planner_enabled",
+        "subagent_coder_enabled",
         "blackboard_enabled",
         "telemetry_enabled",
         "tool_batching_enabled",
@@ -139,6 +158,9 @@ _KNOWN_FLAGS: dict[str, str] = {
     "telemetry.enabled": "bool",
     "tool_batching.enabled": "bool",
     "subagent_spawning_enabled": "bool",
+    "subagent.chat.enabled": "bool",
+    "subagent.planner.enabled": "bool",
+    "subagent.coder.enabled": "bool",
     "context_budget_enabled": "bool",
     "pty_pool.max_size": "int",
     "pty_pool_max_size": "int",
@@ -305,6 +327,9 @@ def load_feature_flags(text: str) -> FeatureFlagsLoadResult:
         telemetry_enabled=_get_bool(found, "telemetry.enabled", [], True),
         tool_batching_enabled=_get_bool(found, "tool_batching.enabled", [], True),
         subagent_spawning_enabled=_get_bool(found, "subagent_spawning_enabled", [], False),
+        subagent_chat_enabled=_get_bool(found, "subagent.chat.enabled", [], False),
+        subagent_planner_enabled=_get_bool(found, "subagent.planner.enabled", [], False),
+        subagent_coder_enabled=_get_bool(found, "subagent.coder.enabled", [], False),
         context_budget_enabled=_get_bool(found, "context_budget_enabled", [], True),
         pty_pool_max_size=_get_int(found, "pty_pool.max_size", ["pty_pool_max_size"], 2),
         worktree_mode=_get_str(found, "worktree.mode", ["worktree_mode"], "shared"),

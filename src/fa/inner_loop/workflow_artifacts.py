@@ -40,6 +40,7 @@ __all__ = [
     "FindingSeverity",
     "FlowState",
     "FlowStatus",
+    "ManagedAdmissionBinding",
     "RouteDecision",
     "StepResult",
     "StepVerdict",
@@ -562,6 +563,24 @@ class AdmissionIOError(OSError):
         super().__init__(f"admission storage error: {rule}")
 
 
+@dataclass(frozen=True, slots=True)
+class ManagedAdmissionBinding:
+    """Immutable workspace/owner epoch attached to one v2 admission history."""
+
+    workspace_id: str
+    owner_run_id: str
+    generation: int
+    base_revision: str
+
+    def to_record_fields(self) -> dict[str, object]:
+        return {
+            "workspace_id": self.workspace_id,
+            "owner_run_id": self.owner_run_id,
+            "generation": self.generation,
+            "base_revision": self.base_revision,
+        }
+
+
 @contextmanager
 def _private_artifact_directory(directory: Path) -> Iterator[int]:
     path = directory.absolute()
@@ -718,21 +737,29 @@ def write_admission_record(
     plan_ref: PlanRef | None,
     attempt: Mapping[str, object] | None = None,
     status: str = "ACQUIRING",
+    managed_binding: ManagedAdmissionBinding | None = None,
     deadline: float | None = None,
 ) -> dict[str, Any]:
     """Initialize or append one attempt under one process-shared lock (CT92).
 
-    The caller supplies attempt fields except its index; numbering is assigned
-    under the lock. The complete old and proposed record are checked. A later
-    replacement/fsync failure never truncates or rolls back the committed file.
+    With no managed binding this preserves the complete v1 writer contract. A
+    supplied binding creates a v2 history; every later append must supply the
+    same immutable identity. Existing records are never upgraded or downgraded.
+    Attempt numbering is assigned under the lock, and both old and proposed
+    whole histories are checked before the atomic replacement.
     """
+    version = 2 if managed_binding is not None else 1
     initial: dict[str, Any] = {
-        "schema_version": 1,
+        "schema_version": version,
         "run_id": run_id,
         "status": "ACQUIRING",
         "plan_ref": asdict(plan_ref) if plan_ref is not None else None,
         "attempts": [],
     }
+    if managed_binding is not None:
+        if not isinstance(managed_binding, ManagedAdmissionBinding):
+            raise AdmissionRecordError
+        initial.update(managed_binding.to_record_fields())
     validate_admission_record(initial, run_id=run_id)
     if path.name != "admission.json":
         raise AdmissionRecordError
@@ -748,6 +775,12 @@ def write_admission_record(
                         raise AdmissionIOError("corrupt-record") from error
                     try:
                         record = validate_admission_record(old, run_id=run_id)
+                        if record["schema_version"] != version:
+                            raise AdmissionRecordError
+                        if managed_binding is not None and any(
+                            record[key] != value for key, value in managed_binding.to_record_fields().items()
+                        ):
+                            raise AdmissionRecordError
                         # Detach all caller-owned mutable data before validation/persistence.
                         payload = json.loads(json.dumps(record, allow_nan=False))
                         payload["status"] = status

@@ -29,7 +29,9 @@ from fa.hygiene.hooks.install import install_hooks
 
 ReadyReason = Literal[
     "ready_fast_path",
+    "ready_managed_artifact",
     "ready_repaired",
+    "managed_artifact_probe_failed",
     "lock_timeout",
     "tool_missing",
     "sync_failed",
@@ -79,6 +81,7 @@ _PYTHON_ARGV = (".venv/bin/python", "-c", "<version-probe>")
 _ENVIRONMENT_REASONS: frozenset[ReadyReason] = frozenset(
     {
         "lock_timeout",
+        "managed_artifact_probe_failed",
         "tool_missing",
         "sync_failed",
         "sync_timeout",
@@ -92,7 +95,9 @@ _ENVIRONMENT_REASONS: frozenset[ReadyReason] = frozenset(
 )
 _TELEMETRY: dict[ReadyReason, tuple[str, tuple[str, ...]]] = {
     "ready_fast_path": ("fast_validate", ()),
+    "ready_managed_artifact": ("managed_environment_probe", ("pytest --version", "mutmut --version")),
     "ready_repaired": ("ready", ()),
+    "managed_artifact_probe_failed": ("managed_environment_probe", ("pytest --version", "mutmut --version")),
     "lock_timeout": ("lock", ()),
     "tool_missing": ("uv_version", _UV_VERSION_ARGV),
     "sync_failed": ("uv_sync", _UV_SYNC_ARGV),
@@ -148,7 +153,7 @@ class _Hash(Protocol):
 
 
 def _status_for(reason_code: ReadyReason) -> ReadyStatus:
-    if reason_code in ("ready_fast_path", "ready_repaired"):
+    if reason_code in ("ready_fast_path", "ready_managed_artifact", "ready_repaired"):
         return ReadyStatus.READY
     if reason_code in _ENVIRONMENT_REASONS:
         return ReadyStatus.DEGRADED_ENVIRONMENT

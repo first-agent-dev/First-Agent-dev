@@ -163,11 +163,17 @@ class CompletedReplyCache:
     loss/restart, failure to retain a completed reply requires safe reconciliation
     via the durable operation state, not another execution. There is deliberately
     no callback that can generate a missing result or manufacture fresh authority.
+    The optional byte budget counts retained immutable public-result bytes only;
+    entry metadata, grants and transient copies are not an RSS measurement.
     """
 
-    def __init__(self, *, max_entries: int) -> None:
+    def __init__(self, *, max_entries: int, max_public_bytes: int | None = None) -> None:
         _positive_integer(max_entries)
+        if max_public_bytes is not None:
+            _positive_integer(max_public_bytes)
         self._max_entries = max_entries
+        self._max_public_bytes = max_public_bytes
+        self._public_bytes = 0
         self._entries: dict[str, _CompletedReply] = {}
         self._lock = Lock()
 
@@ -189,9 +195,13 @@ class CompletedReplyCache:
                 if existing.reply != reply:
                     raise ReplayConflictError
                 return
-            if len(self._entries) >= self._max_entries:
+            size = len(reply.canonical_result) if isinstance(reply, PublicReply) else 0
+            if len(self._entries) >= self._max_entries or (
+                self._max_public_bytes is not None and self._public_bytes + size > self._max_public_bytes
+            ):
                 raise ReplyUnavailableError
             self._entries[binding.request_id] = _CompletedReply(binding, original_proof, reply)
+            self._public_bytes += size
 
     def replay(self, binding: ReplayBinding, original_proof: str | None) -> GrantReply | PublicReply:
         _validate_original_proof(binding, original_proof)
@@ -252,7 +262,14 @@ AUTHORITY_GATED_OPERATIONS = frozenset(
 )
 # The only operations the dispatcher may serve without a durable reservation:
 # health, an immutable read, and observation of an already-reserved operation.
-READONLY_OPERATIONS = frozenset({Operation.HEALTH, Operation.READ_FILE, Operation.INSPECT})
+READONLY_OPERATIONS = frozenset(
+    {
+        Operation.HEALTH,
+        Operation.READ_FILE,
+        Operation.INSPECT,
+        Operation.LIST_PROJECT_ARTIFACTS,
+    }
+)
 
 
 def _require_budget(deadline: float) -> None:
@@ -335,10 +352,14 @@ class SupervisorDispatcher:
 
     @staticmethod
     def _reply(
-        request_id: str, *, result: dict[str, Any] | None = None, error: SupervisorError | None = None
+        request_id: str,
+        *,
+        result: dict[str, Any] | None = None,
+        error: SupervisorError | None = None,
+        protocol_version: int = 1,
     ) -> dict[str, Any]:
         return {
-            "protocol_version": 1,
+            "protocol_version": protocol_version,
             "request_id": request_id,
             "status": "OK" if error is None else "ERROR",
             "result": result,
@@ -420,7 +441,9 @@ class SupervisorDispatcher:
                 produced = self._handle(peer, copy.deepcopy(request), deadline=deadline)
                 if not isinstance(produced, dict):
                     raise ExecutionContractError
-                response = self._reply(request["request_id"], result=produced)
+                response = self._reply(
+                    request["request_id"], result=produced, protocol_version=request["protocol_version"]
+                )
             else:
                 namespace = NamespaceRef(**request["namespace"])
                 # The wire-validated ViewRef is included in the exact-input hash;
@@ -446,7 +469,12 @@ class SupervisorDispatcher:
                     else:
                         value = self._completed(reserved.record, binding, request["capability"])
                 response = self._reply(request["request_id"], result=value)
-            return decode_reply(encode_json(response), operation=operation, request_id=request["request_id"])
+            return decode_reply(
+                encode_json(response),
+                operation=operation,
+                request_id=request["request_id"],
+                protocol_version=request["protocol_version"],
+            )
         except Exception as exc:  # noqa: BLE001 — private boundary must sanitize arbitrary backend exceptions.
             if reserved_id is not None and namespace is not None:
                 try:
@@ -457,16 +485,28 @@ class SupervisorDispatcher:
                     self._journal.mark_unknown(reserved_id, namespace)
                 except JournalError as mark_error:
                     code = "EXECUTION_UNKNOWN" if mark_error.code == "BACKEND_UNAVAILABLE" else "DURABILITY_UNKNOWN"
-                    return self._reply(request["request_id"], error=SupervisorError(code, reserved_id))
+                    return self._reply(
+                        request["request_id"],
+                        error=SupervisorError(code, reserved_id),
+                        protocol_version=request["protocol_version"],
+                    )
                 except (OSError, ExecutionContractError):
-                    return self._reply(request["request_id"], error=SupervisorError("DURABILITY_UNKNOWN", reserved_id))
+                    return self._reply(
+                        request["request_id"],
+                        error=SupervisorError("DURABILITY_UNKNOWN", reserved_id),
+                        protocol_version=request["protocol_version"],
+                    )
             if isinstance(exc, SupervisorError):
                 error = exc
             elif isinstance(exc, JournalError):
                 error = SupervisorError(exc.code, reserved_id)
             else:
                 error = SupervisorError("EXECUTION_UNKNOWN" if reserved_id else "BACKEND_UNAVAILABLE", reserved_id)
-            return self._reply(request["request_id"], error=error)
+            return self._reply(
+                request["request_id"],
+                error=error,
+                protocol_version=request["protocol_version"],
+            )
 
     def serve_connection(self, connection: socket.socket) -> None:
         with connection:
@@ -498,7 +538,15 @@ class SupervisorDispatcher:
                         # consumes its requested budget from the original receipt.
                         deadline = framed.started_at + request["payload"]["timeout_ms"] / 1000
                 response = self._dispatch(PeerIdentity(pid, uid, gid), request, deadline=deadline)
-                write_frame(framed, encode_json(response))
+                from fa.execution.protocol import MAX_PROJECT_ARTIFACTS_REPLY_BYTES, PROTOCOL_V2
+
+                limit = (
+                    MAX_PROJECT_ARTIFACTS_REPLY_BYTES
+                    if request["protocol_version"] == PROTOCOL_V2
+                    and request["op"] == Operation.LIST_PROJECT_ARTIFACTS.value
+                    else None
+                )
+                write_frame(framed, encode_json(response) if limit is None else encode_json(response, max_bytes=limit))
             except (OSError, ExecutionContractError):
                 # Lost replies never roll back durable state or replay a handler.
                 return

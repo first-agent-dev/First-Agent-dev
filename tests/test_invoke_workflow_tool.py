@@ -26,11 +26,15 @@ from __future__ import annotations
 import re
 import threading
 from collections.abc import Mapping
+from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
+from fa.execution.client import ExecutionRejectedError, ExecutionUncertainError
+from fa.execution.composition import BoundPlanPublisher, ExecutionBinding, ManagedExecution
+from fa.execution.types import GrantReply, NamespaceRef, Operation
 from fa.inner_loop.injections import CODER_SLICE_CEREMONY, MODE_ENFORCE
 from fa.inner_loop.registry import ToolResult, ToolSpec, validate_tool_schema_portability
 from fa.inner_loop.tool_names import is_valid_wire_name
@@ -129,6 +133,8 @@ class _RecordingWorkflow:
         session_db: Any = None,
         deadline_mono: float | None = None,
         inject_overrides: Mapping[str, str] | None = None,
+        plan_publisher: Any = None,
+        managed_execution: Any = None,
     ) -> tuple[int, FlowState | None]:
         self.calls.append(
             {
@@ -146,6 +152,11 @@ class _RecordingWorkflow:
                 "run_stage_fn": run_stage_fn,
                 "deadline_mono": deadline_mono,
                 "inject_overrides": inject_overrides,
+                "session_context": session_context,
+                "run_context": run_context,
+                "session_db": session_db,
+                "plan_publisher": plan_publisher,
+                "managed_execution": managed_execution,
             }
         )
         if self._on_call is not None:
@@ -176,6 +187,106 @@ def _ctx(
 
 def _tool(workflow: _RecordingWorkflow, ctx: WorkflowInvocationContext | None) -> ToolSpec:
     return build_invoke_workflow_tool(workflow, lambda: ctx)
+
+
+class _RecordingHandoffClient:
+    """Keep HANDOFF calls observable while ManagedExecution owns their semantics."""
+
+    def __init__(self, events: list[str], *, failure: tuple[int, BaseException] | None = None) -> None:
+        self.events = events
+        self.failure = failure
+        self.calls: list[tuple[NamespaceRef, NamespaceRef, str, float | None]] = []
+
+    def handoff(
+        self,
+        binding: ExecutionBinding,
+        target: NamespaceRef,
+        *,
+        grant: GrantReply,
+        expected_revision_id: str,
+        request_id: str,
+        deadline: float | None = None,
+    ) -> GrantReply:
+        source = binding.namespace
+        self.events.append("handoff")
+        self.calls.append((source, target, request_id, deadline))
+        if self.failure is not None and len(self.calls) == self.failure[0]:
+            raise self.failure[1]
+        return GrantReply(
+            Operation.HANDOFF,
+            "c" * 64,
+            None,
+            grant.generation,
+            expected_revision_id,
+        )
+
+
+class _RecordingParentLease:
+    is_handoff_enabled = True
+
+    def __init__(self, events: list[str], *, fail_resume: bool = False) -> None:
+        self.events = events
+        self.state = "active"
+        self.deadlines: list[float | None] = []
+        self.fail_resume = fail_resume
+
+    def suspend(self, *, deadline: float | None = None) -> str:
+        assert self.state == "active"
+        self.state = "suspended"
+        self.deadlines.append(deadline)
+        self.events.append("suspend")
+        return "rev-" + "a" * 32
+
+    def resume(self, *, deadline: float | None = None) -> None:
+        assert self.state == "suspended"
+        self.deadlines.append(deadline)
+        self.events.append("resume")
+        if self.fail_resume:
+            self.state = "broken"
+            raise RuntimeError("resume was not proved")
+        self.state = "active"
+
+
+def _managed_context(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    client_failure: tuple[int, BaseException] | None = None,
+) -> tuple[WorkflowInvocationContext, ManagedExecution, _RecordingParentLease, list[str]]:
+    from fa.session.manager import SessionManager
+
+    state_root = tmp_path / "state"
+    monkeypatch.setenv("FA_STATE_ROOT", str(state_root))
+    manager = SessionManager(state_root=state_root, workspace_root=tmp_path / "workspaces")
+    session = manager.provision_entrypoint_session(
+        session_id="parent-session", workspace_override=tmp_path / "workspaces/workspace"
+    )
+    parent = manager.begin_run(session, requested_run_id="run-parent")
+    parent_namespace = NamespaceRef(parent.session_id, parent.run_id)
+    events: list[str] = []
+    client = _RecordingHandoffClient(events, failure=client_failure)
+    owner_grant = GrantReply(
+        Operation.ACQUIRE_WRITER,
+        "b" * 64,
+        None,
+        1,
+        "rev-" + "a" * 32,
+    )
+    managed = ManagedExecution(
+        client=client,  # type: ignore[arg-type]  # this fake owns only the called HANDOFF port
+        binding=ExecutionBinding(parent_namespace, "ws-" + "d" * 32),
+        grant=owner_grant,
+    )
+    lease = _RecordingParentLease(events)
+    ctx = replace(
+        _ctx(tmp_path, parent_run_id=parent.run_id),
+        workspace=session.workspace_path,
+        session_context=session,
+        run_context=parent,
+        managed_execution=managed,
+        parent_stage_lease=lease,
+    )
+    return ctx, managed, lease, events
 
 
 def _call(spec: ToolSpec, **params: object) -> ToolResult:
@@ -572,7 +683,7 @@ def test_result_carries_the_ct4_fields(tmp_path: Path) -> None:
     """
     workflow = _RecordingWorkflow(exit_code=0, terminal_state=_TerminalState(status="DONE", route="complete"))
     result = _call(_tool(workflow, _ctx(tmp_path)), task="x")
-    assert set(_payload(result)) == {"run_id", "exit_code", "status", "route", "timed_out"}
+    assert set(_payload(result)) == {"run_id", "exit_code", "status", "route", "timed_out", "parent_view_refreshed"}
     assert _payload(result)["exit_code"] == 0
     assert _payload(result)["status"] == "DONE"
     assert _payload(result)["route"] == "complete"
@@ -687,6 +798,119 @@ def test_acquisition_unavailable_before_child_or_handoff(tmp_path: Path, roles: 
     accepted = spec.handler({"task": "plan", "roles": "planner"})
     assert _payload(accepted)["run_id"] == "run-parent-wf1"
     assert len(workflow.calls) == 1
+
+
+def test_managed_noncoder_handoff_returns_fresh_parent_view_before_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ctx, managed, lease, events = _managed_context(tmp_path, monkeypatch)
+
+    def assert_child_is_only_dispatched_after_ack() -> None:
+        assert lease.state == "suspended"
+        assert managed.binding.namespace.run_id == "run-parent-wf1"
+        events.append("dispatch")
+
+    workflow = _RecordingWorkflow(on_call=assert_child_is_only_dispatched_after_ack)
+    result = _call(_tool(workflow, ctx), task="review", roles="planner,eval")
+    payload = _payload(result)
+
+    child_namespace = NamespaceRef("parent-session", "run-parent-wf1", parent_run_id="run-parent")
+    parent_namespace = NamespaceRef("parent-session", "run-parent")
+    assert events == ["suspend", "handoff", "dispatch", "handoff", "resume"]
+    assert [call[:2] for call in cast(_RecordingHandoffClient, managed.client).calls] == [
+        (parent_namespace, child_namespace),
+        (child_namespace, parent_namespace),
+    ]
+    assert workflow.calls[0]["run_context"].run_id == child_namespace.run_id
+    assert workflow.calls[0]["managed_execution"] is managed
+    publisher = workflow.calls[0]["plan_publisher"]
+    assert isinstance(publisher, BoundPlanPublisher)
+    assert publisher._binding == ExecutionBinding(child_namespace, managed.binding.workspace_id)
+    assert managed.binding.namespace == parent_namespace
+    assert lease.state == "active"
+    assert payload["parent_view_refreshed"] is True
+    assert "parent workspace refreshed" in result.summary
+
+
+def test_legacy_or_disabled_parent_lease_cannot_enter_managed_handoff(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ctx, _managed, lease, events = _managed_context(tmp_path, monkeypatch)
+    lease.is_handoff_enabled = False
+    workflow = _RecordingWorkflow()
+
+    result = _call(_tool(workflow, ctx), task="review", roles="planner")
+
+    assert _error_code(result) == "workflow_context_error"
+    assert workflow.calls == []
+    assert events == []
+    assert not (tmp_path / "state/session-log/run-parent-wf1").exists()
+
+
+def test_determinate_initial_handoff_refusal_resumes_parent_without_dispatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ctx, managed, lease, events = _managed_context(
+        tmp_path,
+        monkeypatch,
+        client_failure=(1, ExecutionRejectedError("WORKSPACE_BUSY", "op-refused")),
+    )
+    workflow = _RecordingWorkflow()
+    result = _call(_tool(workflow, ctx), task="review", roles="planner")
+
+    assert _error_code(result) == "workflow_handoff_refused"
+    assert workflow.calls == []
+    assert events == ["suspend", "handoff", "resume"]
+    assert managed.binding.namespace == NamespaceRef("parent-session", "run-parent")
+    assert lease.state == "active"
+    assert len(cast(_RecordingHandoffClient, managed.client).calls) == 1
+
+
+def test_uncertain_initial_handoff_never_dispatches_or_resumes_parent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ctx, managed, lease, events = _managed_context(
+        tmp_path,
+        monkeypatch,
+        client_failure=(1, ExecutionUncertainError("op-lost", code="DURABILITY_UNKNOWN")),
+    )
+    workflow = _RecordingWorkflow()
+    result = _call(_tool(workflow, ctx), task="review", roles="planner")
+
+    assert _error_code(result) == "workflow_handoff_uncertain"
+    assert workflow.calls == []
+    assert events == ["suspend", "handoff"]
+    assert managed.handoff_pending is True
+    assert lease.state == "suspended"
+
+
+def test_unconfirmed_return_handoff_does_not_rebind_parent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    ctx, managed, lease, events = _managed_context(
+        tmp_path,
+        monkeypatch,
+        client_failure=(2, ExecutionRejectedError("WORKSPACE_BUSY", "op-child-open")),
+    )
+    workflow = _RecordingWorkflow(on_call=lambda: events.append("dispatch"))
+    result = _call(_tool(workflow, ctx), task="review", roles="planner")
+
+    assert _error_code(result) == "workflow_return_unconfirmed"
+    assert len(workflow.calls) == 1
+    assert events == ["suspend", "handoff", "dispatch", "handoff"]
+    assert managed.binding.namespace.run_id == "run-parent-wf1"
+    assert lease.state == "suspended"
+
+
+def test_child_exception_still_returns_writer_then_refreshes_parent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ctx, managed, lease, events = _managed_context(tmp_path, monkeypatch)
+    workflow = _RecordingWorkflow(raises=RuntimeError("child failed"))
+    result = _call(_tool(workflow, ctx), task="review", roles="planner")
+
+    assert _error_code(result) == "workflow_error"
+    assert events == ["suspend", "handoff", "handoff", "resume"]
+    assert managed.binding.namespace == NamespaceRef("parent-session", "run-parent")
+    assert lease.state == "active"
 
 
 @pytest.mark.parametrize("params", [{"roles": "unknown"}, {"roles": "planner,planner"}, {"mode": "adaptive"}])
