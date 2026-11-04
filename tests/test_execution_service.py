@@ -39,8 +39,8 @@ from typing import Any
 
 import pytest
 
-from fa.execution.client import ExecutionClient
 import fa.execution.profiles as execution_profiles
+from fa.execution.client import ExecutionClient
 from fa.execution.profiles import profile_set_sha256
 from fa.execution.protocol import decode_reply, encode_json, read_frame, write_frame
 from fa.execution.service import (

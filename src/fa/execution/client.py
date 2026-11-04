@@ -802,7 +802,13 @@ class ManagedBashExecutor:
         except ValueError:
             raise ExecutionContractError from None
 
-    def run(self, command: str, timeout: int = 30, workdir: Path | None = None, session_id: str | None = "main") -> PtyResult:
+    def run(
+        self,
+        command: str,
+        timeout: int = 30,
+        workdir: Path | None = None,
+        session_id: str | None = "main",
+    ) -> PtyResult:
         self._require_active()
         _positive_integer(timeout)
         request_id = uuid4().hex

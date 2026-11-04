@@ -947,9 +947,7 @@ def test_read_view_one_shot_launch_uses_bounded_tmpfs_not_host_scratch(backend: 
     assert reader.view_ref is not None
     req = reader_exec_request(reader, "a6" * 16, "printf read-view")
     claim(backend.authority, req)
-    backend.peer.replies.extend(
-        backend.episode_replies(req["payload"]["operation_id"], reader.view_ref.view_id)
-    )
+    backend.peer.replies.extend(backend.episode_replies(req["payload"]["operation_id"], reader.view_ref.view_id))
     outcome = ok_backend(lambda: backend.owner().execute(PEER, req, deadline=until()))
     assert outcome.exit_code == 0 and outcome.session_id is None and backend.worker.runs == 1
 
@@ -962,7 +960,9 @@ def test_read_view_one_shot_launch_uses_bounded_tmpfs_not_host_scratch(backend: 
     mounts = {mount["Target"]: mount for mount in host["Mounts"]}
     assert set(mounts) == {"/workspace", "/opt/toolchain-cache"}
     assert mounts["/workspace"]["ReadOnly"] is True
-    view_root = backend.authority._state / "workspaces" / reader.view_ref.workspace_id / "views" / reader.view_ref.view_id
+    view_root = (
+        backend.authority._state / "workspaces" / reader.view_ref.workspace_id / "views" / reader.view_ref.view_id
+    )
     assert list((view_root / "execution/scratch").iterdir()) == [], "no host-backed scratch fallback"
 
 

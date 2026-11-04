@@ -1120,11 +1120,13 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
         self._view_profile = view_profile
         self._read_only_profile = read_only_profile
         self._profiles = {
-            profile.profile_id: profile
-            for profile in (view_profile, read_only_profile)
-            if profile is not None
+            profile.profile_id: profile for profile in (view_profile, read_only_profile) if profile is not None
         }
-        if view_profile is not None and read_only_profile is not None and view_profile.profile_id == read_only_profile.profile_id:
+        if (
+            view_profile is not None
+            and read_only_profile is not None
+            and view_profile.profile_id == read_only_profile.profile_id
+        ):
             raise ExecutionContractError
         self._readers: dict[str, _ReaderPin] = {}
         self._projects: dict[str, _ProjectView] = {}
