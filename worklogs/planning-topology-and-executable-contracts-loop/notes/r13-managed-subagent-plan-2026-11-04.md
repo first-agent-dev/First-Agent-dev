@@ -152,8 +152,6 @@ The first slice uses one generic toolset for all parents:
 
 - `fs_read_file`
 - `fs_run_bash` (read-only project + writable scratch)
-- `fs_blackboard_query`
-- `fs_exploration_metrics`
 
 `fs_search` and `fs_reach` are **not** in the first-slice toolset: the managed
 cell-local search/reach fail closed when `workspace_io` is not None
@@ -161,6 +159,15 @@ cell-local search/reach fail closed when `workspace_io` is not None
 `src/fa/inner_loop/tools/fs_reach.py:136`). The first slice uses `fs_read_file`
 and read-only `fs_run_bash` for inspection; `fs_search`/`fs_reach` are added only
 after S2P4 wires the managed cell-local index.
+
+`fs_blackboard_query` and `fs_exploration_metrics` are also excluded from the
+first slice: `blackboard_query.py:143-154` calls
+`ensure_artifacts_indexed(session.blackboard, session.workspace_root, ...)`,
+which reads the host workspace and mutates the shared parent blackboard; and
+`fs_exploration_metrics.py:128-130` calls `session.clear_gold_files()` on
+`reset=true`. The first slice uses only `fs_read_file` and read-only
+`fs_run_bash`; a view-bound read-only blackboard/metrics source is a later
+option.
 
 No write/edit tools, no `fs_spawn_subagent`, no `invoke_workflow`. The parent role
 determines the task, not the child's capability. Role-specific toolsets are a
@@ -190,16 +197,21 @@ The plan adds a read-only/stateless managed executor (or generalizes
 - issues one `Operation.EXEC` per command;
 - never falls back to host subprocess or PTY.
 
-The supervisor's `admit` uses the single approved `self._view_profile` and
-checks `payload["profile_id"] == self._view_profile.profile_id` and
-`profile.interactive != (session_id is not None)`
-(`src/fa/execution/workspace.py:5357-5364`,
-`src/fa/execution/backend.py:319`). The read-only child therefore requires a
-**non-interactive approved profile** configured for the supervisor. If the
-configured profile is interactive, the child cannot use it; the runner must
-return a structured `subagent_profile_unavailable` result, not fall back to a
-host shell or a PTY. The profile is a deployment/config input, not a model
-field.
+The supervisor's `admit` uses the view's profile (Q122 resolution): the
+authority binds a profile set; `create_view`/`pin_reader` select the profile
+based on access/purpose (READ -> read-only profile; WRITE -> write profile);
+the view record carries `profile_id`; `admit` validates `payload["profile_id"]`
+against the view's profile and checks `profile.interactive != (session_id is not
+None)` (`src/fa/execution/workspace.py:5357-5364`,
+`src/fa/execution/backend.py:319`). The read-only child uses the non-interactive
+read-only profile; the parent stages use the interactive write profile. The
+`ServiceConfig` adds `read_only_profile_id`; the `WorkspaceAuthority` adds a
+profile set and `view_profile(view_ref)`; the `CommandReceipts` and
+`OwnedCellTermination` use the view's profile. The `ViewRef` wire is unchanged;
+the view record's `profile_id` is internal. If the read-only profile is not
+configured, the child returns a structured `subagent_profile_unavailable`
+result, not a host shell or PTY. The profile is a deployment/config input, not a
+model field.
 
 ### 3.5 Report contract
 
@@ -241,6 +253,30 @@ The `SubagentEnvelope.type` enum is extended with `subagent` (or the parent
 role); the `from_verifier` shell path is not used by the managed child. A
 `from_session_outcome` classmethod builds the report from the `SessionOutcome`.
 
+### 3.6 Child role prompt and PinnedBuffer
+
+`drive_session` selects the base prompt with
+`_ROLE_PROMPTS.get(role, CODER_SYSTEM_PROMPT)`
+(`src/fa/inner_loop/coder_loop.py:1087`). `_ROLE_PROMPTS` has `planner`, `coder`,
+`eval`, and `chat`, but no `subagent` (`src/fa/inner_loop/prompt.py:1149`).
+A child `role="subagent"` would therefore get the **coder** base prompt, with
+`GENERIC_SUBAGENT_PROMPT` only appended as extra text. The plan adds a
+`SUBAGENT_SYSTEM_PROMPT` and a `"subagent"` key to `_ROLE_PROMPTS`. The child
+prompt is the read-only/scratch subagent prompt + the delegated task; it is not
+the coder prompt and not the parent transcript.
+
+`drive_session` also creates `PinnedBuffer(state.workspace_root)`
+(`src/fa/inner_loop/coder_loop.py:611`), and `PinnedBuffer.refresh` reads
+`AGENTS.md`, `knowledge/llms.txt`, and `llms.txt` with `Path.read_text()`
+(`src/fa/memory/pinned_buffer.py:45-52`). For the child, this bypasses the READ
+view and can inject more project text than the task-only contract allows. The
+plan adds a `pinned_buffer` (or `workspace_reader`) parameter to `drive_session`,
+defaulting to the current behavior for the parent. The child passes a
+**view-bound reader** that reads the three pinned files through the child's
+`ClientWorkspacePort` (READ view), or a **disabled** buffer if the operator
+prefers a task-only child prompt with no project instructions. The parent path
+is unchanged. The child must not read the pinned files from the host workspace.
+
 ## 4. Lifecycle
 
 ### 4.1 Read-only/scratch child (all roles)
@@ -250,8 +286,12 @@ role); the `from_verifier` shell path is not used by the managed child. A
    `ToolResult.fail("subagent_disabled", ..., retryable=False)`.
 2. Reserve one spawn slot atomically
    (`SessionState.try_reserve_subagent_spawn`,
-   `src/fa/inner_loop/state.py:662`). If exhausted, return
-   `ToolResult.fail("spawn_limit", ..., retryable=False)`.
+   `src/fa/inner_loop/state.py:662`) **and** one active-child slot
+   (`try_reserve_active_subagent`, new in `SessionState`). The spawn limit (3)
+   is a total budget; the active-child limit is 1. If either is exhausted,
+   return `ToolResult.fail("spawn_limit"/"active_child_busy", ...,
+   retryable=False)`. Release the active-child slot only after the child is
+   confirmed terminal and the reader is released (or the failure is recorded).
 3. Derive the child run id from the parent run id and the task id. Construct the
    child namespace `NamespaceRef(parent_session_id, child_run_id)` and the child
    binding `ExecutionBinding(child_namespace, managed.binding.workspace_id)`.
@@ -284,8 +324,11 @@ role); the `from_verifier` shell path is not used by the managed child. A
    registry=..., hooks=..., state=..., role="subagent",
    acting_family=chat_family, max_turns=..., max_tokens=...,
    limits=..., system_prompt_extra=GENERIC_SUBAGENT_PROMPT,
+   pinned_buffer=view_bound_or_disabled,
    redactor=..., output=..., injection_modes=None,
-   initial_memory_summary="")`.
+   initial_memory_summary="")`. The `pinned_buffer` is a new `drive_session`
+   parameter; the child passes a view-bound reader or a disabled buffer, never
+   the host `PinnedBuffer(state.workspace_root)`.
 10. Build the report from the `SessionOutcome`: `exit_code` from
     `SessionOutcome.exit_code`; `terminal_state` from `stop_reason`; `summary`
     from `final_text` (bounded); `evidence` from `tool_results`; `notes` from
@@ -365,8 +408,18 @@ managed tool checks the per-role flags.
   call `subprocess.run`, does not add `X_FA_PROXY_TOKEN`, and does not fall back
   to the host.
 - R13 oracle: production `drive_session`/registry with the feature enabled and a
-  real local supervisor that refuses EXEC; assert zero EXEC, zero host
-  subprocesses, and no proxy credential.
+  real local supervisor that refuses EXEC. The oracle records and asserts:
+  - `exec_requests`: EXEC requests sent to the supervisor (may be 1; the
+    supervisor refuses);
+  - `exec_allowed`: EXEC operations that returned a receipt/result (must be 0);
+  - `cell_launches`: cells/workers launched (must be 0);
+  - `host_subprocesses`: host subprocesses (must be 0);
+  - `proxy_credentials`: `X_FA_PROXY_TOKEN` occurrences (must be 0);
+  - `project_writes`: project bytes changed (must be 0).
+  The phrase "zero EXEC" means zero allowed EXEC operations/effects, not zero
+  requests; the supervisor must be asked and must refuse. This distinction is
+  required to prove the managed-backend negative oracle through the production
+  caller, not only the tool's early deny-only response.
 - Named test: `test_subagent_commands_carry_no_proxy_credential` (absent today).
 - The R13 row closes on the negative oracle; the real subagent is W1.
 
@@ -438,6 +491,26 @@ managed tool checks the per-role flags.
 - `test_subagent_managed_bash_no_host_git` (managed branch skips
   `_get_write_set_from_git_status`; verified at `run_bash.py:172`).
 - `test_subagent_no_host_worktree` (no `WorktreeManager` in managed path).
+- `test_subagent_view_bound_pinned_buffer` (the child's `PinnedBuffer` reads
+  through the READ view or is disabled; no host `Path.read_text` of
+  `AGENTS.md`/`knowledge/llms.txt`/`llms.txt`).
+- `test_subagent_subagent_prompt` (the actual provider payload uses
+  `SUBAGENT_SYSTEM_PROMPT`, not `CODER_SYSTEM_PROMPT`; no parent transcript).
+- `test_subagent_active_child_single_flight` (one active child; second call
+  fails; slot released only after confirmed terminal/cleanup).
+- `test_subagent_resource_limits` (max_turns/max_tokens/timeout/report bytes/
+  scratch bytes; cumulative budget).
+- `test_subagent_secret_paths_excluded` (`.env`, `.git`, `.fa`, `.venv` not in
+  the view; `fs_read_file` cannot read them).
+- `test_subagent_bash_secret_path_gate` (child Bash referencing
+  `/run/secrets/fa.env` is blocked; the cell does not mount host secrets).
+- `test_subagent_hostile_write` (`echo > /workspace/foo`, symlink, `git add`/
+  `git write-tree` fail; source read-only).
+- `test_subagent_blackboard_metrics_excluded` (first slice does not include
+  `fs_blackboard_query`/`fs_exploration_metrics`).
+- `test_subagent_w0_oracle_metrics` (records `exec_requests`, `exec_allowed`,
+  `cell_launches`, `host_subprocesses`, `proxy_credentials`, `project_writes`;
+  asserts allowed/effects are zero).
 
 ## 10. Source-grounded gaps
 
@@ -463,6 +536,13 @@ managed tool checks the per-role flags.
 | Child state | `state.py:342-377` `SessionState` fields; `:419` `__post_init__` | Factory must copy session DB/blackboard/etc. and override run id/log/transaction/bash/workspace_io; do not reuse parent transaction/log/bash |
 | Managed search | `fs_search.py:1061`; `fs_reach.py:136` fail closed when `workspace_io` is not None | Defer `fs_search`/`fs_reach` to S2P4; first slice uses `fs_read_file` + read-only `fs_run_bash` |
 | Managed Bash tool | `run_bash.py:172` `_get_write_set_from_git_status` only when `not managed`; `:384` managed branch | Verified: managed branch skips host Git; keep it that way |
+| Child prompt | `prompt.py:1149` `_ROLE_PROMPTS` has no `subagent`; `coder_loop.py:1087` falls back to `CODER_SYSTEM_PROMPT` | Add `SUBAGENT_SYSTEM_PROMPT` and a `"subagent"` key; test the actual provider payload |
+| PinnedBuffer | `coder_loop.py:611` `PinnedBuffer(state.workspace_root)`; `pinned_buffer.py:45-52` reads `AGENTS.md`/`knowledge/llms.txt`/`llms.txt` via `Path.read_text()` | Add a `pinned_buffer`/`workspace_reader` parameter to `drive_session`; child uses a view-bound reader or disabled buffer; no host read |
+| Blackboard/metrics | `blackboard_query.py:143-154` `ensure_artifacts_indexed`; `fs_exploration_metrics.py:128-130` `clear_gold_files` | Exclude both from the first slice; they read host paths/mutate shared state |
+| Secret paths | `workspace.py:788` `_Capture._excluded` excludes `.git`/`.fa`/`.venv`/`.env`; `view_io.py:34` `_BLOCKED_COMPONENTS`; `sandbox/secret_paths.py` gate | State the policy; add `test_subagent_secret_paths_excluded` and `test_subagent_bash_secret_path_gate` |
+| Supervisor profile set | `service.py:118` `ServiceConfig.profiles` (multiple) + `view_profile_id` (single); `workspace.py:1111` `self._view_profile`; `:5355` `admit` uses it | **Q122 resolved (direction): profile set per view.** Add `read_only_profile_id`; authority binds a profile set and `view_profile(view_ref)`; view record carries `profile_id`; `admit`/`CommandReceipts`/`OwnedCellTermination` use the view's profile; `ViewRef` wire unchanged |
+| Active child | `state.py:662` `try_reserve_subagent_spawn` (total budget only) | Add `try_reserve_active_subagent`/`release_active_subagent`; active-child limit 1; release only after confirmed terminal/cleanup |
+| W0 oracle | `increment-03` W0 `:180`; `inventory` R13 `:87` | Record `exec_requests`, `exec_allowed`, `cell_launches`, `host_subprocesses`, `proxy_credentials`, `project_writes`; assert allowed/effects zero |
 | Observer | `roadmap.md:70` | Post-I03; W-A first, W-B target |
 | Plan | `increment-03` W0 `:180`; W1 `:181`; S4P1 `:128`; S4P2 `:129` | Update W0/W1 scope and R13 row |
 | Inventory | `i03-execution-call-inventory.md:87` R13 | Update with the decision and the read-only/scratch contract |
@@ -488,3 +568,64 @@ The adversarial plan review is recorded in
 parser, tool registry, read-only executor, lifecycle, report schema, tests,
 W0/W1 sequencing, and observer against the source. Confirmed defects are
 separated from suspicions; the plan is rewritten where the review finds a gap.
+
+## 13. Review follow-up fixes (2026-11-04)
+
+The second adversarial review found seven additional issues. The plan is
+updated as follows; Q122 records the one policy blocker.
+
+1. **Child `PinnedBuffer` host read.** `drive_session` creates
+   `PinnedBuffer(state.workspace_root)` (`src/fa/inner_loop/coder_loop.py:611`),
+   which reads `AGENTS.md`/`knowledge/llms.txt`/`llms.txt` via `Path.read_text()`
+   (`src/fa/memory/pinned_buffer.py:45-52`). Fix: add a `pinned_buffer`/
+   `workspace_reader` parameter to `drive_session`; the child passes a
+   view-bound reader or a disabled buffer; the parent path is unchanged. Test:
+   `test_subagent_view_bound_pinned_buffer`.
+2. **`fs_blackboard_query`/`fs_exploration_metrics` side effects.**
+   `blackboard_query.py:143-154` calls `ensure_artifacts_indexed` on the parent
+   blackboard/workspace; `fs_exploration_metrics.py:128-130` calls
+   `clear_gold_files()` on reset. Fix: exclude both from the first slice; the
+   toolset is `fs_read_file` + read-only `fs_run_bash`. Test:
+   `test_subagent_blackboard_metrics_excluded`.
+3. **`subagent` role prompt.** `_ROLE_PROMPTS` has no `subagent`
+   (`src/fa/inner_loop/prompt.py:1149`); `coder_loop.py:1087` falls back to
+   `CODER_SYSTEM_PROMPT`. Fix: add `SUBAGENT_SYSTEM_PROMPT` and a `"subagent"`
+   key; the child prompt is read-only/scratch + task, not the coder prompt.
+   Test: `test_subagent_subagent_prompt`.
+4. **Secret file policy.** The view excludes `.git`/`.fa`/`.venv`/`.env`
+   (`src/fa/execution/workspace.py:788`, `src/fa/execution/view_io.py:34`); the
+   `src/fa/sandbox/secret_paths.py` gate blocks secret paths. Fix: state the
+   policy; add `test_subagent_secret_paths_excluded` and
+   `test_subagent_bash_secret_path_gate`; test hostile writes
+   (`test_subagent_hostile_write`).
+5. **Supervisor profile set.** `ServiceConfig.profiles` is multiple but
+   `view_profile_id` selects one; `WorkspaceAuthority` binds one
+   `_view_profile`; `admit` uses it. Fix: **Q122**; extend the authority to a
+   profile set and select per view, or use a separate authority. Do not assume
+   a non-interactive profile is available.
+6. **W0 oracle wording.** "Zero EXEC" is ambiguous. Fix: record
+   `exec_requests`, `exec_allowed`, `cell_launches`, `host_subprocesses`,
+   `proxy_credentials`, `project_writes`; assert allowed/effects zero; the
+   supervisor must be asked and must refuse. Test:
+   `test_subagent_w0_oracle_metrics`.
+7. **Single-flight and resource limits.** The spawn limit (3) is a total budget,
+   not an active-child limit. Fix: add `try_reserve_active_subagent`/
+   `release_active_subagent`; active-child limit 1; release only after
+   confirmed terminal/cleanup; add per-child `max_turns`/`max_tokens`/
+   `timeout_ms`/report bytes/scratch bytes and a cumulative budget. Tests:
+   `test_subagent_active_child_single_flight`,
+   `test_subagent_resource_limits`.
+
+**Generic vs role-specific toolset.** The operator's 2026-11-04 refinement is
+authoritative: the subagent is generic; the parent role determines the
+task/prompt; the toolset is the same minimal read-only/scratch profile for all
+parents. Q121's "role-specific toolset" is the legacy contract; this plan
+records the refinement. The per-role flags are access gates, not toolset
+differentiation. If the operator later wants role-specific toolsets, they can be
+added, but the first slice is generic.
+
+**Policy blocker resolved (direction).** Q122 (supervisor profile set) was the
+only new policy/contract choice. The operator selected option A (profile set per
+view) on 2026-11-04; the direction is recorded in Q122. The implementation
+remains OPEN. The other findings are code/test fixes or plan wording. No runtime
+code is changed by this review.

@@ -236,3 +236,126 @@ child. The managed child uses the pinned reader and the cell scratch. The
   recovery on uncertainty.
 - The observer remains post-I03; W-A first, W-B later; W-C rejected.
 - No row is closed by this plan or review. R13, W0, and W1 remain OPEN.
+
+## 6. Second review — follow-up (2026-11-04)
+
+The operator supplied a second adversarial review with seven findings. I
+verified each against the current source and updated the plan. The findings and
+fixes:
+
+### F1 — Child `PinnedBuffer` reads the host workspace (confirmed)
+
+`drive_session` creates `PinnedBuffer(state.workspace_root)`
+(`src/fa/inner_loop/coder_loop.py:611`); `PinnedBuffer.refresh` reads
+`AGENTS.md`, `knowledge/llms.txt`, and `llms.txt` with `Path.read_text()`
+(`src/fa/memory/pinned_buffer.py:45-52`). The child's READ view is bypassed, and
+the child can receive more project text than the task-only contract allows.
+
+**Fix:** add a `pinned_buffer`/`workspace_reader` parameter to `drive_session`
+(default = current parent behavior). The child passes a view-bound reader that
+reads the three pinned files through the child's `ClientWorkspacePort` (READ
+view), or a disabled buffer if the operator prefers a task-only child prompt.
+The parent path is unchanged. Test: `test_subagent_view_bound_pinned_buffer`.
+
+### F2 — `fs_blackboard_query`/`fs_exploration_metrics` side effects (confirmed)
+
+`blackboard_query.py:143-154` calls
+`ensure_artifacts_indexed(session.blackboard, session.workspace_root, ...)`,
+which reads the host workspace and mutates the shared parent blackboard.
+`fs_exploration_metrics.py:128-130` calls `session.clear_gold_files()` on
+`reset=true`.
+
+**Fix:** exclude both from the first-slice toolset. The first slice uses only
+`fs_read_file` and read-only `fs_run_bash`. A view-bound read-only
+blackboard/metrics source is a later option. Test:
+`test_subagent_blackboard_metrics_excluded`.
+
+### F3 — `subagent` role prompt falls back to coder (confirmed)
+
+`_ROLE_PROMPTS` has `planner`, `coder`, `eval`, `chat`, but no `subagent`
+(`src/fa/inner_loop/prompt.py:1149`); `coder_loop.py:1087` uses
+`_ROLE_PROMPTS.get(role, CODER_SYSTEM_PROMPT)`. A child `role="subagent"` gets
+the coder base prompt; `GENERIC_SUBAGENT_PROMPT` is only extra text.
+
+**Fix:** add `SUBAGENT_SYSTEM_PROMPT` and a `"subagent"` key to
+`_ROLE_PROMPTS`. The child prompt is read-only/scratch + task, not the coder
+prompt. Test the actual provider payload: `test_subagent_subagent_prompt`.
+
+### F4 — Secret file policy (test gap; current code has a baseline)
+
+The view excludes `.git`, `.fa`, `.venv`, and `.env`
+(`src/fa/execution/workspace.py:788`, `src/fa/execution/view_io.py:34`); the
+`src/fa/sandbox/secret_paths.py` gate blocks commands referencing secret paths.
+The child's Bash runs in the cell; host secrets are not mounted. This is not a
+confirmed defect, but the policy must be stated and tested.
+
+**Fix:** state the policy in the plan; add
+`test_subagent_secret_paths_excluded` and
+`test_subagent_bash_secret_path_gate`; add `test_subagent_hostile_write` for
+`/workspace` writes, symlinks, and `git add`/`git write-tree`.
+
+### F5 — Supervisor profile set (confirmed; Q122)
+
+`ServiceConfig.profiles` is a tuple of approved profiles, but
+`view_profile_id` selects one (`src/fa/execution/service.py:118-136`);
+`WorkspaceAuthority` binds one `_view_profile` (`src/fa/execution/workspace.py:1111`);
+`admit` uses it (`:5357-5364`). The read-only child needs a non-interactive
+profile; the parent stages may use an interactive profile. The current
+authority cannot serve both.
+
+**Fix:** **Q122 resolved (direction): option A.** Extend `WorkspaceAuthority` to
+a profile set and select the profile per view; the view record carries the
+profile id; `create_view`/`pin_reader` select the profile; `admit` uses the
+view's profile. Add `read_only_profile_id` to `ServiceConfig`; the
+`CommandReceipts`/`OwnedCellTermination` use the view's profile; the `ViewRef`
+wire is unchanged. Option B (separate authority) and option C (same interactive
+profile, PTY child) are rejected. The implementation remains OPEN; W1's real
+child requires this direction to be implemented.
+
+### F6 — W0 oracle wording (confirmed ambiguity)
+
+"Zero EXEC" is ambiguous: if the supervisor refuses EXEC, there is an EXEC
+request. The oracle must distinguish requests from allowed operations/effects.
+
+**Fix:** record `exec_requests` (may be 1), `exec_allowed` (must be 0),
+`cell_launches` (must be 0), `host_subprocesses` (must be 0),
+`proxy_credentials` (must be 0), and `project_writes` (must be 0). The
+supervisor must be asked and must refuse. Test:
+`test_subagent_w0_oracle_metrics`.
+
+### F7 — Single-flight and resource limits (confirmed gap)
+
+The spawn limit (3) is a total budget, not an active-child limit. The tool is
+synchronous, but a batch/concurrent caller could start multiple children.
+
+**Fix:** add `try_reserve_active_subagent`/`release_active_subagent` to
+`SessionState`; active-child limit 1; release only after confirmed
+terminal/cleanup. Add per-child `max_turns`, `max_tokens`, `timeout_ms`, report
+bytes, scratch bytes, and a cumulative budget. Tests:
+`test_subagent_active_child_single_flight`, `test_subagent_resource_limits`.
+
+### Generic vs role-specific toolset (clarification)
+
+The operator's 2026-11-04 refinement is authoritative: the subagent is generic;
+the parent role determines the task/prompt; the toolset is the same minimal
+read-only/scratch profile for all parents. Q121's "role-specific toolset" is the
+legacy contract; the plan records the refinement. The per-role flags are access
+gates, not toolset differentiation. If the operator later wants role-specific
+toolsets, they can be added, but the first slice is generic.
+
+### Plan changes made
+
+- `notes/r13-managed-subagent-plan-2026-11-04.md`: added section 3.6 (child
+  role prompt and PinnedBuffer), updated section 3.3 (toolset), 4.1 (active-child
+  reservation and `pinned_buffer`), 6 (W0 oracle metrics), 9 (tests), 10
+  (source-grounded gaps), and 13 (review follow-up fixes).
+- `notes/open-questions-2026-10-07.md`: added Q122 (supervisor profile set).
+
+### Residual risk
+
+- Q122 is resolved (direction: profile set per view); the implementation remains
+  OPEN. The R13/W0 deny-only oracle can still run; the real child in W1 requires
+  the Q122 direction to be implemented.
+- The other findings are code/test fixes or plan wording; no runtime code was
+  changed by this review.
+- No row is closed. R13, W0, and W1 remain OPEN.

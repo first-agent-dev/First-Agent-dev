@@ -2652,3 +2652,33 @@ B. **Authorize a separate proxy-service wrapper operation.** Define a dedicated,
 **Plan.** The detailed plan is [notes/r13-managed-subagent-plan-2026-11-04.md](r13-managed-subagent-plan-2026-11-04.md). The wave impact is recorded in `increments/increment-03-execution-workspace-foundation.md` and `roadmap.md`. The R13 inventory row is updated in `notes/i03-execution-call-inventory.md`.
 
 **Acceptance boundary.** This direction does not close R13. The named test `test_subagent_commands_carry_no_proxy_credential` is still absent. R13 remains OPEN until the managed-backend negative oracle passes through the production caller. W0 remains OPEN until every S4P1 row's named negative oracle passes. W1 starts only after W0 closes. The observer remains post-I03. No runtime change, test, or row closure follows from this entry.
+
+
+## Q122 — How should the supervisor support both interactive parent stages and non-interactive read-only child cells?
+
+**Status: RESOLVED (direction) — operator selected option A (profile set per view) on 2026-11-04; implementation remains OPEN.** The R13/W0 deny-only oracle can still run; the real child in W1 requires this direction to be implemented.
+
+**Selected architecture — profile set per view, no new service/authority.**
+
+- **`ServiceConfig`:** add `read_only_profile_id: str | None`; keep `view_profile_id` as the write profile; validate both against `config.profiles`; require the read-only profile to be non-interactive (`interactive is False`) and the write profile to be interactive (`interactive is True`). The `profile_set_sha256` includes both; the health/identity checks reflect the new config.
+- **`WorkspaceAuthority`:** replace the single `self._view_profile` with `self._profiles: Mapping[str, ExecutionProfile]`, `self._view_profile` (write), and `self._read_only_profile`; add `view_profile(view_ref)` that reads the view record's `profile_id` and returns the profile. `create_view`/`pin_reader` select the profile based on access/purpose: READ -> read-only profile; WRITE -> write profile. The view record gets `"profile_id": profile.profile_id`; the `_VIEW_RECORD` schema gets `profile_id`; `_view_record_compat` fills the default write profile id for old records. `admit` uses `view.record["profile_id"]` to select the profile and validates `payload["profile_id"]`, `payload["timeout_ms"]`, and `profile.interactive != (payload["session_id"] is not None)`. The `approved_profile` property remains the write profile for backward compatibility.
+- **`CommandReceipts._profile(view)`:** use `self._authority.view_profile(view)` instead of `approved_profile`; the receipt's `profile_id`/`image_digest` bind to the view's profile; `require_binding` checks the view's profile.
+- **`OwnedCellTermination`:** take a `profile_resolver` callable (or a `profiles` mapping + `view_profile` resolver); use the view's profile in `stop_cells`/`cells_terminal`; the `SupervisorService` passes `self._authority.view_profile`. The `ViewStopper` passes the resolver; no new entity.
+- **`SupervisorService`:** select `self._view_profile` (write) and `self._read_only_profile` (read-only) from `config.profiles`; pass both to `WorkspaceAuthority`; pass the resolver to `OwnedCellTermination`.
+- **`ManagedExecution`:** add `read_only_profile: ExecutionProfile | None`; `managed_execution_for_run` selects it; the child runner uses it.
+- **`ManagedBashExecutor` read-only variant:** use the read-only profile; `session_id=None`; READ view; the supervisor's `admit` validates it against the view's profile.
+- **`ViewRef` wire unchanged;** the view record's `profile_id` is internal; no new wire operation.
+
+**Why this is the minimal surface.** It reuses the existing `ServiceConfig.profiles`, `ViewRef`, view record, `ExecutionProfile`, `ManagedBashExecutor`, `CellBackend`, `WorkspaceAuthority`, `ViewStopper`, and `OwnedCellTermination`; it adds one config field (`read_only_profile_id`), one internal view-record field (`profile_id`), and a profile resolver; it does not add a new service/authority or a new wire operation. Option B (separate authority) adds a second authority and a shared-state problem; option C violates stateless Bash.
+
+**Tests.**
+
+- `test_view_profile_binding`: READ view -> read-only profile; WRITE view -> write profile; `admit` validates the view's profile; a write profile on a READ view is rejected; a read-only profile on a WRITE view is rejected.
+- `test_view_record_profile_compat`: old record without `profile_id` -> default write profile; new record -> its profile.
+- `test_owned_cell_termination_profile`: read-only view's cell stopped with the read-only profile; write view's cell with the write profile.
+- `test_receipt_profile_binding`: receipt's `profile_id`/`image_digest` match the view's profile; `require_binding` passes.
+- `test_service_config_read_only_profile`: read-only profile must be non-interactive; write profile interactive; config validation; `profile_set_sha256` includes both.
+
+**Impact.** W1's read-only child can run once this direction is implemented. The R13/W0 negative oracle is unaffected. The observer is unaffected.
+
+**Acceptance boundary.** Q122 does not close R13, W0, or W1. No runtime change, test, or row closure follows from this entry.
