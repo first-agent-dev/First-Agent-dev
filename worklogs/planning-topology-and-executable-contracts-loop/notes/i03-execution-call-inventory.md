@@ -101,6 +101,58 @@ cell runs against its own sandbox, not a workspace view).
 | R27 | `cli.py::_cmd_run:2483` → `_run_cli_stage:1505` → `_drive_stage_with_managed_workspace:1422`; reuse or compose one writer, open `WRITE/PROJECT`, bind `ClientWorkspacePort` + `ManagedBashExecutor`, settle then release only a directly owned writer; callback builds the view-bound role registry before `drive_session` | explicit, chat, workflow stage | local UDS supervisor; managed IO/Bash are bound; Blackboard stamps use admitted `base_revision` plus complete view-read `knowledge/llms.txt`; managed `LearningObserver` is omitted to prevent host-path writes | `tests/test_execution_composition.py::test_direct_chat_keeps_canonical_tree_unchanged_until_stage_publication` (direct acquisition and existing-owner reuse; project-file snapshot unchanged while live, then write appears after publication) plus `tests/test_managed_mutation_metadata.py`, `tests/test_managed_mutation_guard.py`, `tests/test_managed_registry_binding.py` | Local positive and negative CLI oracles pass; R27 remains OPEN under broader S4P1 row closure and final deployed-host acceptance remains `NOT RUN`. |
 | R28 | `host_bootstrap.py::_run:24–39`, `main:95–115`; direct production caller `justfile:113` (`agent-bootstrap`), no Python production caller | operator | TCB host; arbitrary current host Bash is not shown to exclude this script | `tests/test_workspace_bootstrap_aliases.py::test_host_bootstrap_delegates_current_just_to_wrapper_and_emits_ready`; `…::test_host_bootstrap_missing_uv_is_stable_and_does_not_call_wrapper` | `…::test_no_model_tool_can_reach_the_host_bootstrap` (planned, absent; requires W1 managed Bash cutover) |
 
+### R13 managed subagent decision (2026-11-04; row remains OPEN)
+
+**Decision (operator, 2026-11-04; plan, not authorization).** R13/W0 option A:
+register the managed subagent route in managed chat/planner/coder composition but
+return a structured non-retryable unavailable result until an approved managed
+subagent executor exists; remove the controller `subprocess.run` path and
+proxy-token injection from the managed composition. The R13 negative oracle uses
+production `drive_session`/registry with the feature enabled and a real local
+supervisor that refuses EXEC; assert zero EXEC, zero host subprocesses, and no
+proxy credential. The real subagent is a W1 implementation slice.
+
+**Target contract (operator refinement).** The subagent is generic, not a legacy
+role label. All subagents are read-only for existing project files; a subagent may
+write new artifacts/notes only in a private scratch area. The subagent does the
+investigation/analysis; the main agent (chat/planner/coder) receives the report and
+applies/persists it. There is no writer handoff and no concurrent mutation in this
+slice. The coder subagent is read-only/scratch for diagnosis and is disabled by
+default. The child uses the chat provider chain. Per-role capability flags
+(`subagent.chat.enabled`, `subagent.planner.enabled`, `subagent.coder.enabled`)
+default off, plus the master `subagent_spawning_enabled` default off.
+
+**Source-grounded gaps (current tree).**
+
+- `src/fa/feature_flags.py:35` has only the global `subagent_spawning_enabled`
+  (default `False`); `:41` has the global max spawns; `:101` FAIL_OPEN; `:307`
+  parser. No per-role flags exist.
+- `src/fa/inner_loop/profiles.py:209` adds the legacy subagent builder only when
+  `workspace_io is None`; `:474` silently skips `fs_spawn_subagent` in managed
+  composition. `planner` and `coder` profiles do not declare the tool.
+- `src/fa/inner_loop/tools/spawn_subagent.py:222` calls the legacy runner; `:257`
+  is the legacy builder. `src/fa/inner_loop/subagent_runner.py:338` injects
+  `X_FA_PROXY_TOKEN`; `:343` is `subprocess.run`; `:346` is `shell=True`; `:183`
+  builds filtered history but does not pass it to a child model.
+- `src/fa/execution/client.py:700` `ManagedBashExecutor` is interactive-only
+  (`:723`) and requires `Access.WRITE` (`:728`); `:805` passes
+  `session_id="main"`. The supervisor already supports non-interactive READ cells
+  (`src/fa/execution/backend.py:236`, `:319`) and mounts the source read-only for
+  READ views (`src/fa/execution/profiles.py:100`).
+- `src/fa/inner_loop/state.py:678` `create_subagent_workspace` is a scratch path,
+  not managed isolation; `:662` `try_reserve_subagent_spawn` is a valid atomic
+  budget primitive.
+- `src/fa/inner_loop/subagent_envelope.py` has the report schema but
+  `from_verifier` builds it from a shell exit code; `write_envelope_artifact`
+  writes to `.fa/subagents/<id>.json` in the workspace. The managed report needs
+  notes/artifact_refs/evidence and must go to the run log dir.
+
+**Boundary.** This decision does not close R13. The named test
+`test_subagent_commands_carry_no_proxy_credential` is still absent. The R13 row
+remains OPEN until the managed-backend negative oracle passes through the
+production caller. The real subagent is W1; the observer is post-I03. See
+[notes/r13-managed-subagent-plan-2026-11-04.md](r13-managed-subagent-plan-2026-11-04.md).
+
 ### R20 working-tree refresh (2026-11-01; remains OPEN)
 
 - Current producer: `memory/_safe_walk.py::_git_ls_files:452–497`; the no-`.git` short circuit is at

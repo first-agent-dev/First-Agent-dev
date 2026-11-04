@@ -223,6 +223,56 @@ The dated 2026-10-31 step table below is a historical implementation snapshot; u
 
 **High-ROI next sequence (local first; no closure by inference):** (1) **W0:** refresh R01–R28 source/caller/nodeid records and execute every Q113-authorized managed-negative oracle through its production caller; implement only the minimal local composition needed for a named row. (2) **W1:** finish S4P2 caller cutover, S2P4 search/reach + Q97/Q111 bounds and S3P3 publication caller; run each affected W0 row and its producer/caller kill. (3) **W2:** wire Q108-B into the chat-only acquisition caller, typed selection/bootstrap/clarification and ordinary `run_workflow` PlanSnapshot admission; prove nested HANDOFF/return through local real supervisor composition and keep direct `fa workflow` unchanged. (4) **W3:** complete all local exits across S1–S6 from the step table, local mutation/full-path regression gates, fixture and external-driver implementation, independent review, candidate/runbook/rollback preparation. Before W3 closes, add the Q108 producer as an explicit `NEW:` mapping to I03-LIVE-S08 and update `shared_case_ids` plus coverage contract tests; do not rewrite the frozen producer baseline or claim the current 35 I03 IDs already cover Q108. (5) After W0–W2 and W3's Arena-local gates/review close, run the approved W3 `fa update` image-build/deploy prerequisite and verify the running candidate; only then may **W4** begin, with the frozen live suite, artifact review, and final sign-off. W4 does not rerun `fa update`. Preserve every live case as `NOT RUN` until an actual attempt is recorded; independent review and approved host/run are W3/W4 gates respectively.
 
+### R13 managed subagent slice (operator decision 2026-11-04; plan, not authorization)
+
+The operator selected **R13/W0 option A** and a **read-only/scratch subagent** as the first
+implementation. The detailed plan is
+[notes/r13-managed-subagent-plan-2026-11-04.md](../notes/r13-managed-subagent-plan-2026-11-04.md).
+This section records the wave impact; it does not close R13, W0, or W1.
+
+- **W0 (R13 negative oracle).** Register the managed subagent route in managed
+  chat/planner/coder composition, but return a structured non-retryable unavailable
+  result until an approved managed subagent executor exists. Remove the controller
+  `subprocess.run` path and proxy-token injection from the managed composition. The
+  R13 oracle uses production `drive_session`/registry with the feature enabled and a
+  real local supervisor that refuses EXEC; assert zero EXEC, zero host subprocesses,
+  and no proxy credential. The named test
+  `test_subagent_commands_carry_no_proxy_credential` is absent today and must be
+  added. This is a narrow managed-registry exception, not a positive execution claim.
+- **W1 (real subagent).** Implement the generic read-only/scratch subagent: a pinned
+  READ view of the latest published revision, a writable private scratch for new
+  artifacts/notes, no write to existing project files, no writer handoff, and no
+  concurrent mutation. The subagent does the investigation/analysis; the main agent
+  (chat/planner/coder) receives the report and applies/persists it. The coder main
+  agent retains the write capability; the coder subagent is read-only/scratch for
+  diagnosis and is **disabled by default**. The child uses the chat provider chain.
+- **Per-role capability flags.** Add `subagent.chat.enabled`,
+  `subagent.planner.enabled`, and `subagent.coder.enabled`, all default `False`, to
+  the existing `feature_flags:` block, plus the master `subagent_spawning_enabled`
+  (default `False`). The managed tool is available only when the master and the
+  parent-role flag are both true. The current global flag
+  (`src/fa/feature_flags.py:35`) is not sufficient.
+- **Explicit limitation.** The subagent cannot implement/test a bounded change; the
+  main agent must do the mutation. This is the S-C restricted first rollout, not a
+  silent substitute for coder support. S-A writer handoff remains the next step if a
+  write-capable coder subagent is explicitly funded; it is outside this slice.
+- **Observer.** W-A first (separate read-only observer attachment), W-B target
+  (same-session read-only chat lane with a durable workflow child), W-C rejected.
+  The observer is post-I03 and is not an implicit side effect of adding subagents.
+  See `roadmap.md` and the plan note.
+
+**Source-grounded gaps.** `profiles.py:209` adds the legacy subagent builder only
+when `workspace_io is None`; `:474` silently skips it in managed composition.
+`spawn_subagent.py:222` and `subagent_runner.py:343` are the legacy host
+`subprocess.run` path; `:338` adds `X_FA_PROXY_TOKEN`; `:183` builds filtered
+history but does not pass it to a child model. `client.py:700` `ManagedBashExecutor`
+is interactive-only and requires `Access.WRITE` (`:723`, `:728`); the supervisor
+already supports non-interactive READ cells (`backend.py:236`, `:319`) and mounts
+the source read-only for READ views (`execution/profiles.py:100`). `state.py:678`
+`create_subagent_workspace` is a scratch path, not managed isolation; `:662`
+`try_reserve_subagent_spawn` is a valid atomic budget primitive. The managed child
+must not use `WorktreeManager` or the legacy runner; R23 is a separate S4P1 row.
+
 **Сверка волн на 2026-11-01 (E317; статусы не закрываются этой записью).** W0: SLICE7 —
 11/11 `LOCAL-CLOSED`, но S4P1 остаётся `PARTIAL` (строки inventory без закрытых source/caller/nodeid),
 S6P6 — `LOCAL-CLOSED` по источникам E287 и воспроизведённому exit E364; реальные
