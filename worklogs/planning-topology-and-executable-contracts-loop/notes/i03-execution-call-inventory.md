@@ -132,6 +132,34 @@ Arena-local test peer/worker is not live-host evidence and no Docker host is a
 W0 prerequisite.
 
 
+### W0 audit refresh (2026-11-04) — R01, R03, R14–R28
+
+**Read-only audit; no row closed.** The inventory's named nodeids for R15–R28 are stale; only `tests/test_execution_tool_index.py::test_a_managed_search_runs_no_host_git_subprocess` was found. The other named nodeids are absent. The actual test names and the production-caller vs component status are:
+
+| Row | Current producer (verified) | Actual test(s) | Type | Gap |
+|---|---|---|---|---|
+| R01 | `scripts/fa:36–45,58–82,89–181`; `pyproject.toml:98`; `Dockerfile.fa:97–98`; `SessionManager.resolve_active_session_for_workspace:220` | `tests/test_deploy_scripts.py` wrapper tests; `tests/test_controller_installed.py` direct installed-CLI | component/script-level | wrapper→installed-controller composition absent |
+| R03 | `scripts/bootstrap/workspace.py:16–17`; `justfile:112` | `tests/test_workspace_bootstrap_aliases.py`; `tests/test_workspace_bootstrap.py` | component/script-level | managed-cell bootstrap absent |
+| R14 | `tools/__init.py:175,230,285,337` | `tests/test_execution_tool_index.py::test_a_managed_registry_ships_no_host_git_tools` | component (fake port) | named `test_profile_construction_failure_registers_no_project_command` absent |
+| R15 | `write_file.py:102`; `edit_file.py:160` | `tests/test_execution_tool_port.py::test_tools_built_with_the_port_read_write_and_edit_through_it` | component (real authority + PROJECT view) | named `test_file_handlers_write_through_the_view_only` absent; `tests/test_managed_workspace.py` absent |
+| R16 | `workflow_controller._git_output:848` | `tests/test_slice_verification_runner.py` (no `_git_output` test) | component | named `test_stage_diff_never_runs_controller_git` absent |
+| R17 | `pair_tools._run_git:28` | `tests/test_subagent_termination_wiring.py` (subagent timeout/ctrl_c; not pair_tools) | component | named `test_pair_tools_use_the_writer_view_and_never_the_canonical_index` absent |
+| R18 | `mutation_guard._base_commit:60` | `tests/test_s5_blackboard_contract.py::test_same_base_commit_conflict_denied` (blackboard conflict) | component | named `test_denied_base_commit_lookup_blocks_admission` absent |
+| R19 | `intent_guard._default_git_runner:272` | `tests/test_intent_guard.py::test_intent_guard_silently_allows_when_git_fails` (injected failing runner) | component | named `test_intent_git_failure_never_bypasses_view_admission` absent |
+| R20 | `_safe_walk._git_ls_files:452` | `tests/test_execution_tool_index.py::test_a_managed_search_runs_no_host_git_subprocess`; `tests/test_safe_walk.py` | component (fake port) | production managed search absent |
+| R21 | `_common.git_ls_files:22` | `tests/test_tools_common.py::TestGitLsFiles` | unit | no production caller; dormant/dead code |
+| R22 | `pr_intent._run_git:817`; `hooks/_util.resolve_hooks_dir:91` | `tests/test_pr_intent_snapshot.py` (classifier/intent) | component | named `test_pr_prepare_reads_only_a_managed_revision` absent |
+| R23 | `worktree_manager.create_subagent_workspace:196` | `tests/test_s5_isolation_boundary.py` (artifact root/sanitization) | component | named `test_subagent_isolation_never_touches_the_canonical_root` absent; legacy worktree, not managed child |
+| R24 | `slice_verification._run_one:330` | `tests/test_mutation_overlay.py`; `tests/test_verify_slice.py` | component | named `test_kill_proof_requires_a_fresh_operation_and_source_binding` absent |
+| R25 | `cli._cmd_workflow:1742`; `workflow_controller._require_managed_publisher:2288`; `_promote_validated_plan:2304` | `tests/test_verify_gate_live.py` CT94; `tests/test_execution_composition.py` | component/local | production `fa workflow` managed-publisher negative oracle absent |
+| R26 | `cli._make_workflow_ctx_provider:2088`; `workflow_tool._child_run_context:405`; `SessionManager.begin_run:590` | `tests/test_invoke_workflow_tool.py`; `tests/test_handoff_payload.py` | component | production nested-workflow negative oracle absent |
+| R27 | `cli._cmd_run:2713`; `_run_cli_stage:1682`; `_drive_stage_with_managed_workspace:1582` | `tests/test_execution_composition.py::test_direct_chat_keeps_canonical_tree_unchanged_until_stage_publication` | production CLI + real local UDS | broader S4P1 row closure + final deployed-host acceptance |
+| R28 | `host_bootstrap._run:24`; `main:95`; `justfile:112` | `tests/test_workspace_bootstrap_aliases.py` | component/script-level | named `test_no_model_tool_can_reach_the_host_bootstrap` absent; depends on W1 managed Bash cutover |
+
+**Verified findings.** The named nodeids in the R15–R28 rows are stale; the actual test names are in the table. Most audited tests are component/local, not production-caller. The production-caller evidence exists for R10/R11/R13/R27 and the actual CLI tests; R14–R26 and R28 are component/local or absent. R21 is dormant/dead code. R23 is legacy; the managed child is R13. R12/Q125 is unresolved; see the Q125 audit. **Q126** is proposed for the R23 disposition (retire as legacy vs keep as historical candidate). No new Q# is required for the other rows; the unresolved dependencies are tracked in Q113/Q125/Q119/Q120/Q114/Q90. The full per-row audit is `notes/w0-r01-r03-r14-r28-audit-2026-11-04.md`.
+
+**Acceptance boundary.** This refresh does not close any S4P1 row. R01, R03, R14–R28 remain OPEN; R12/Q125 remains OPEN; W0 remains OPEN. No runtime/test code was changed.
+
 ### R20 working-tree refresh (2026-11-01; remains OPEN)
 
 - Current producer: `memory/_safe_walk.py::_git_ls_files:452–497`; the no-`.git` short circuit is at

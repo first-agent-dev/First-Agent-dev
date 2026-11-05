@@ -2814,3 +2814,20 @@ all-row condition.
 
 No option is selected here. Until the operator resolves Q125, do not add runtime
 or test code, close R12, or start W1.
+
+
+## Q126 — What is the disposition of the legacy R23 worktree row?
+
+**Status: OPEN — R23 is a legacy host-Git row; the managed child is R13.** R23 remains OPEN as a separate S4P1 row.
+
+**Source conflict.** `workspace/worktree_manager.py::create_subagent_workspace:196–231` uses host Git. The managed child is `src/fa/inner_loop/tools/managed_subagent.py` (R13), which does not use the worktree manager. R23 is a separate S4P1 row; the managed path must not use the worktree manager.
+
+**Options.**
+
+A. **Retire R23 as legacy.** Record that the managed child is R13; R23 is a historical host-worktree candidate, not a managed route; close/retire the row with a disposition note. No host-Git oracle is required for the managed path.
+
+B. **Keep R23 as a historical candidate.** Keep the row OPEN; require a separate host-Git negative oracle if the operator wants to preserve the legacy worktree path. It is not the managed child and does not block R13.
+
+**Recommendation (not a decision).** A. The managed child is R13; R23 is legacy; retiring it avoids a false dependency and a host-Git oracle for a path the managed product does not use. If the operator wants to preserve the legacy worktree path, B is the safer historical record.
+
+**Acceptance boundary.** Q126 does not close R23, R13, W0, or W1. No runtime/test code is changed by this audit.
