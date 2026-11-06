@@ -15,6 +15,8 @@ from fa.execution.protocol import (
     MAX_FRAME_BYTES,
     MAX_PROJECT_ARTIFACTS_REPLY_BYTES,
     MAX_PROJECT_INCREMENT_ENTRIES,
+    MAX_REVISION_DIFF_ENTRIES,
+    MAX_REVISION_DIFF_REPLY_BYTES,
     MAX_TAIL_BYTES,
     MAX_TEXT_BYTES,
     DeadlineConnection,
@@ -195,11 +197,13 @@ def v2_request(op: Operation) -> dict[str, Any]:
     return {
         "protocol_version": 2,
         "request_id": RID,
-        "op": Operation.LIST_PROJECT_ARTIFACTS.value,
+        "op": op.value,
         "namespace": NS,
         "view_ref": {**VIEW, "access": "READ", "purpose": "PROJECT"},
         "capability": CAP,
-        "payload": {"project_slug": "demo-project"},
+        "payload": {"project_slug": "demo-project"}
+        if op is Operation.LIST_PROJECT_ARTIFACTS
+        else {"base_revision": REV},
     }
 
 
@@ -323,9 +327,19 @@ def test_a_writer_view_still_names_the_bytes_it_mutates(purpose: str) -> None:
         decode_request(encode_json(record))
 
 
-@pytest.mark.parametrize("op", [op for op in Operation if op is not Operation.LIST_PROJECT_ARTIFACTS])
+@pytest.mark.parametrize(
+    "op", [op for op in Operation if op not in {Operation.LIST_PROJECT_ARTIFACTS, Operation.DIFF_REVISIONS}]
+)
 def test_all_v1_operations_keep_their_complete_payloads_and_results(op: Operation) -> None:
-    assert set(PAYLOADS) == set(RESULTS) == set(Operation) - {Operation.LIST_PROJECT_ARTIFACTS}
+    assert (
+        set(PAYLOADS)
+        == set(RESULTS)
+        == set(Operation)
+        - {
+            Operation.LIST_PROJECT_ARTIFACTS,
+            Operation.DIFF_REVISIONS,
+        }
+    )
     req, res = request(op), response(op)
     assert decode_request(encode_json(req)) == req
     assert decode_reply(encode_json(res), operation=op, request_id=RID) == res
@@ -362,7 +376,7 @@ def test_v2_health_and_project_listing_have_closed_versioned_shapes() -> None:
             "ready": True,
             "protocol_version": 2,
             "profile_set_sha256": SHA,
-            "features": ["list_project_artifacts"],
+            "features": ["diff_revisions", "list_project_artifacts"],
         },
         "error": None,
     }
@@ -384,6 +398,40 @@ def test_v2_health_and_project_listing_have_closed_versioned_shapes() -> None:
         decode_reply(encode_json(reply), operation=Operation.LIST_PROJECT_ARTIFACTS, request_id=RID, protocol_version=2)
         == reply
     )
+
+    diff_request = v2_request(Operation.DIFF_REVISIONS)
+    assert decode_request(encode_json(diff_request)) == diff_request
+    diff_result = {
+        "changes": [
+            {"path": "src/new.py", "change": "added"},
+            {"path": "src/old.py", "change": "deleted"},
+        ],
+        "total_changes": 2,
+        "truncated": False,
+    }
+    diff_reply = {
+        "protocol_version": 2,
+        "request_id": RID,
+        "status": "OK",
+        "result": diff_result,
+        "error": None,
+    }
+    assert (
+        decode_reply(encode_json(diff_reply), operation=Operation.DIFF_REVISIONS, request_id=RID, protocol_version=2)
+        == diff_reply
+    )
+    for bad_diff in (
+        {**diff_result, "changes": [{"path": "secret.py", "change": "modified", "content": "bytes"}]},
+        {**diff_result, "changes": [{"path": "x", "change": "renamed"}]},
+        {**diff_result, "changes": [{"path": "x", "change": "added"}] * (MAX_REVISION_DIFF_ENTRIES + 1)},
+    ):
+        with pytest.raises(ExecutionContractError):
+            decode_reply(
+                encode_json({**diff_reply, "result": bad_diff}),
+                operation=Operation.DIFF_REVISIONS,
+                request_id=RID,
+                protocol_version=2,
+            )
 
     bad_listing_results = (
         {**result, "entries": [{"name": "x", "kind": "symlink", "target": "secret"}]},
@@ -413,12 +461,26 @@ def test_v2_health_and_project_listing_have_closed_versioned_shapes() -> None:
     oversized = encoded + b" " * (MAX_PROJECT_ARTIFACTS_REPLY_BYTES - len(encoded) + 1)
     with pytest.raises(ExecutionContractError):
         decode_reply(oversized, operation=Operation.LIST_PROJECT_ARTIFACTS, request_id=RID, protocol_version=2)
+    encoded_diff = encode_json(diff_reply)
+    oversized_diff = encoded_diff + b" " * (MAX_REVISION_DIFF_REPLY_BYTES - len(encoded_diff) + 1)
+    with pytest.raises(ExecutionContractError):
+        decode_reply(
+            oversized_diff,
+            operation=Operation.DIFF_REVISIONS,
+            request_id=RID,
+            protocol_version=2,
+        )
+    with pytest.raises(ExecutionContractError):
+        decode_reply(encode_json(diff_reply), operation=Operation.DIFF_REVISIONS, request_id=RID)
 
 
 def test_protocol_versions_are_closed_and_legacy_rejection_is_opt_in() -> None:
     listing = v2_request(Operation.LIST_PROJECT_ARTIFACTS)
+    diff = v2_request(Operation.DIFF_REVISIONS)
     with pytest.raises(InvalidRequestError):
         decode_request(encode_json({**listing, "protocol_version": 1}))
+    with pytest.raises(InvalidRequestError):
+        decode_request(encode_json({**diff, "protocol_version": 1}))
     v2_write = {**request(Operation.WRITE_FILE), "protocol_version": 2}
     with pytest.raises(InvalidRequestError):
         decode_request(encode_json(v2_write))

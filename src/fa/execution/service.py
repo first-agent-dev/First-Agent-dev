@@ -58,7 +58,12 @@ from fa.execution.backend import CellBackend
 from fa.execution.docker import DockerEngine
 from fa.execution.plans import ProtectedPlanContext
 from fa.execution.profiles import ExecutionProfile, profile_set_sha256
-from fa.execution.protocol import MAX_PROJECT_ARTIFACTS_REPLY_BYTES, PROTOCOL_V2, encode_json
+from fa.execution.protocol import (
+    MAX_PROJECT_ARTIFACTS_REPLY_BYTES,
+    MAX_REVISION_DIFF_REPLY_BYTES,
+    PROTOCOL_V2,
+    encode_json,
+)
 from fa.execution.receipts import CommandReceipts
 from fa.execution.supervisor import (
     CompletedReplyCache,
@@ -591,7 +596,7 @@ class SupervisorService:
                 "ready": self._authority.ready,
                 "protocol_version": PROTOCOL_V2,
                 "profile_set_sha256": self._profile_set_sha256,
-                "features": ["list_project_artifacts"],
+                "features": ["diff_revisions", "list_project_artifacts"],
             }
         return {
             "ready": self._authority.ready,
@@ -622,6 +627,31 @@ class SupervisorService:
         }
         try:
             encode_json(response, max_bytes=MAX_PROJECT_ARTIFACTS_REPLY_BYTES)
+        except ExecutionContractError:
+            raise SupervisorError("INPUT_POLICY") from None
+        return result
+
+    def _diff_revisions(self, peer: PeerIdentity, request: dict[str, Any], deadline: float) -> dict[str, Any]:
+        view = self._view(request)
+        if view.access is not Access.READ or view.purpose is not ViewPurpose.PROJECT:
+            raise SupervisorError("INPUT_POLICY")
+        result = self._authority.diff_revisions(
+            peer,
+            self._namespace(request),
+            view_ref=view,
+            capability=self._capability(request),
+            base_revision=request["payload"]["base_revision"],
+            deadline=deadline,
+        )
+        response = {
+            "protocol_version": PROTOCOL_V2,
+            "request_id": request["request_id"],
+            "status": "OK",
+            "result": result,
+            "error": None,
+        }
+        try:
+            encode_json(response, max_bytes=MAX_REVISION_DIFF_REPLY_BYTES)
         except ExecutionContractError:
             raise SupervisorError("INPUT_POLICY") from None
         return result
@@ -911,6 +941,7 @@ _ROUTE_NAMES: dict[Operation, str] = {
     Operation.PUBLISH: "_publish",
     Operation.PREPARE_BUNDLE: "_prepare_bundle",
     Operation.LIST_PROJECT_ARTIFACTS: "_list_project_artifacts",
+    Operation.DIFF_REVISIONS: "_diff_revisions",
     Operation.INSTALL_PROJECT: "_install_project",
     Operation.HANDOFF: "_handoff",
     Operation.RELEASE: "_release",

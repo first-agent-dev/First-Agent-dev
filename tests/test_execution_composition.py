@@ -635,6 +635,7 @@ class _ManagedChatProviderOracle:
         self.parent_calls = 0
         self.child_calls = 0
         self.eval_calls = 0
+        self.eval_requests: list[Any] = []
         self.child_project_write = False
 
     def canonical_snapshot(self) -> tuple[tuple[str, bytes], ...]:
@@ -661,6 +662,7 @@ class _ManagedChatProviderOracle:
         )
         if self.parent_role == "coder" and is_eval:
             self.eval_calls += 1
+            self.eval_requests.append(request)
             return (
                 ResponseInfo("### Verdict\nPASS\n### Step results\n- S1: PASS - verified\n", 1, 1, "stop"),
                 logical_call_id or "managed-eval",
@@ -1213,8 +1215,62 @@ def test_subagent_commands_carry_no_proxy_credential(  # noqa: C901 -- intention
     assert write_result["result"]["path"].endswith("managed-chat-note.txt")
 
 
+def _watch_workflow_revision_diff(service: Any, provider_oracle: Any, mode: str) -> tuple[list[Any], list[Any]]:
+    calls: list[Any] = []
+    effects: list[Any] = []
+    original = service._diff_revisions
+
+    def counted(peer: Any, request: dict[str, Any], deadline: float) -> Any:
+        calls.append(request)
+        workspace_id = request["view_ref"]["workspace_id"]
+        before_tree = provider_oracle.canonical_snapshot()
+        before_revision = service.authority._bindings[workspace_id].current["revision_id"]
+        effects.append((workspace_id, before_tree, before_revision))
+        if mode == "refused":
+            assert provider_oracle.canonical_snapshot() == before_tree
+            assert service.authority._bindings[workspace_id].current["revision_id"] == before_revision
+            raise SupervisorError("BACKEND_UNAVAILABLE")
+        result = original(peer, request, deadline)
+        assert provider_oracle.canonical_snapshot() == before_tree
+        assert service.authority._bindings[workspace_id].current["revision_id"] == before_revision
+        return result
+
+    service._diff_revisions = counted  # type: ignore[method-assign]
+    return calls, effects
+
+
+def _assert_workflow_revision_diff(
+    stage_role: str,
+    mode: str,
+    calls: list[Any],
+    effects: list[Any],
+    provider_oracle: Any,
+    service: Any,
+    managed: ManagedExecution,
+) -> None:
+    assert len(calls) == int(stage_role == "coder")
+    if stage_role != "coder":
+        assert not calls and not provider_oracle.eval_requests
+        return
+    request = calls[0]
+    assert request["protocol_version"] == 2 and request["op"] == "diff_revisions"
+    assert request["view_ref"]["access"] == "READ" and request["view_ref"]["purpose"] == "PROJECT"
+    assert request["payload"]["base_revision"].startswith("rev-")
+    assert len(provider_oracle.eval_requests) == 1
+    eval_messages = json.dumps(provider_oracle.eval_requests[0].messages, default=str)
+    if mode == "refused":
+        assert "Changed files: unavailable" in eval_messages
+        assert "Changed files: NONE" not in eval_messages
+    else:
+        assert "Changed files: NONE between the sealed managed revisions" in eval_messages
+    for _workspace_id, before_tree, _before_revision in effects:
+        assert provider_oracle.canonical_snapshot() == before_tree
+        assert service.authority.journal.lookup("op-" + request["request_id"], managed.binding.namespace) is None
+
+
 @pytest.mark.parametrize("stage_role", ["planner", "coder"])
 @pytest.mark.parametrize("backend_mode", ["unavailable", "unapproved", "approved"])
+@pytest.mark.parametrize("revision_diff_mode", ["available", "refused"])
 def test_workflow_stage_runs_managed_child_with_local_backend(
     site: Site,
     tmp_path: Path,
@@ -1222,6 +1278,7 @@ def test_workflow_stage_runs_managed_child_with_local_backend(
     local_cell_peer: Endpoint,
     stage_role: str,
     backend_mode: str,
+    revision_diff_mode: str,
 ) -> None:
     from fa.feature_flags import FeatureFlags, FeatureFlagsLoadResult
     from fa.inner_loop.session_db import SessionDatabase
@@ -1364,6 +1421,8 @@ eval:
     exec_requests: list[dict[str, Any]] = []
     exec_denials: list[str] = []
     proxy_credential_leaks: list[str] = []
+    revision_diff_calls: list[dict[str, Any]] = []
+    revision_diff_effects: list[tuple[str, tuple[tuple[str, bytes], ...], str]] = []
     with SupervisorService(read_config_file(service_path)) as service:
         assert (service._backend is not None) is (backend_mode != "unavailable")
         original_exec = service._exec
@@ -1380,6 +1439,9 @@ eval:
                 raise
 
         service._exec = counted_exec  # type: ignore[method-assign]
+        revision_diff_calls, revision_diff_effects = _watch_workflow_revision_diff(
+            service, provider_oracle, revision_diff_mode
+        )
         with _serving_supervisor(service):
             assert cli._cmd_workflow(args, secrets=SecretStore({"K": "sk-test-live"})) == 0
         assert len(managed_instances) == 1
@@ -1389,6 +1451,15 @@ eval:
     assert provider_oracle.parent_calls == (2 if stage_role == "planner" else 3)
     assert provider_oracle.child_calls == 3
     assert provider_oracle.eval_calls == int(stage_role == "coder")
+    _assert_workflow_revision_diff(
+        stage_role,
+        revision_diff_mode,
+        revision_diff_calls,
+        revision_diff_effects,
+        provider_oracle,
+        service,
+        managed_instances[0],
+    )
     assert not provider_oracle.child_project_write
     assert provider_oracle.observed == [provider_oracle.canonical_snapshot()]
     assert not (site.source / "managed-chat-note.txt").exists()
@@ -1844,7 +1915,14 @@ def test_managed_readiness_probes_both_required_tools_and_settles_same_run(
     assert calls[0][1]["access"] is Access.WRITE
     assert calls[0][1]["purpose"] is ViewPurpose.PROVISIONING
     assert calls[1][0] == "bind"
-    assert calls[2] == ("exec", ("pytest --version && mutmut --version", 30, "readiness"))
+    assert calls[2] == (
+        "exec",
+        (
+            "/workspace/.venv/bin/python -I -m pytest --version && /workspace/.venv/bin/python -I -m mutmut --version",
+            30,
+            "readiness",
+        ),
+    )
     assert [name for name, _ in calls[-3:]] == ["suspend", "stop", "release"]
 
 

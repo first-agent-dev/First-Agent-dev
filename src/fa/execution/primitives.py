@@ -41,6 +41,7 @@ class Operation(StrEnum):
     HANDOFF = "handoff"
     PREPARE_BUNDLE = "prepare_bundle"
     LIST_PROJECT_ARTIFACTS = "list_project_artifacts"
+    DIFF_REVISIONS = "diff_revisions"
 
 
 def _hex_id(value: object, prefix: str, length: int = 32) -> None:

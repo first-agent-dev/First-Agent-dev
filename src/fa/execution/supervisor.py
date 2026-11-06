@@ -268,6 +268,7 @@ READONLY_OPERATIONS = frozenset(
         Operation.READ_FILE,
         Operation.INSPECT,
         Operation.LIST_PROJECT_ARTIFACTS,
+        Operation.DIFF_REVISIONS,
     }
 )
 
@@ -538,14 +539,18 @@ class SupervisorDispatcher:
                         # consumes its requested budget from the original receipt.
                         deadline = framed.started_at + request["payload"]["timeout_ms"] / 1000
                 response = self._dispatch(PeerIdentity(pid, uid, gid), request, deadline=deadline)
-                from fa.execution.protocol import MAX_PROJECT_ARTIFACTS_REPLY_BYTES, PROTOCOL_V2
-
-                limit = (
-                    MAX_PROJECT_ARTIFACTS_REPLY_BYTES
-                    if request["protocol_version"] == PROTOCOL_V2
-                    and request["op"] == Operation.LIST_PROJECT_ARTIFACTS.value
-                    else None
+                from fa.execution.protocol import (
+                    MAX_PROJECT_ARTIFACTS_REPLY_BYTES,
+                    MAX_REVISION_DIFF_REPLY_BYTES,
+                    PROTOCOL_V2,
                 )
+
+                limit = None
+                if request["protocol_version"] == PROTOCOL_V2:
+                    if request["op"] == Operation.LIST_PROJECT_ARTIFACTS.value:
+                        limit = MAX_PROJECT_ARTIFACTS_REPLY_BYTES
+                    elif request["op"] == Operation.DIFF_REVISIONS.value:
+                        limit = MAX_REVISION_DIFF_REPLY_BYTES
                 write_frame(framed, encode_json(response) if limit is None else encode_json(response, max_bytes=limit))
             except (OSError, ExecutionContractError):
                 # Lost replies never roll back durable state or replay a handler.

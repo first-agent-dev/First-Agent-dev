@@ -2262,6 +2262,57 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                 "entries": entries,
             }
 
+    def diff_revisions(
+        self,
+        peer: PeerIdentity,
+        namespace: NamespaceRef,
+        *,
+        view_ref: ViewRef,
+        capability: str,
+        base_revision: str,
+        deadline: float,
+    ) -> dict[str, Any]:
+        """Compare sealed manifest metadata; never read or return file contents."""
+        if (
+            not isinstance(view_ref, ViewRef)
+            or view_ref.access is not Access.READ
+            or view_ref.purpose is not ViewPurpose.PROJECT
+        ):
+            raise SupervisorError("INPUT_POLICY")
+        try:
+            _hex_id(base_revision, "rev-")
+        except ExecutionContractError:
+            raise SupervisorError("INVALID_REQUEST") from None
+        with self._reader_io(
+            peer,
+            namespace,
+            view_ref=view_ref,
+            capability=capability,
+            deadline=deadline,
+        ) as (_io, pin):
+            if base_revision == view_ref.base_revision:
+                return {"changes": [], "total_changes": 0, "truncated": False}
+            binding = self._binding(view_ref.workspace_id)
+            with self._revision(binding, base_revision, deadline) as (_data, base, _child):
+                before = {entry["path"]: entry for entry in base["entries"]}
+            after = pin.entries
+            changes: list[dict[str, str]] = []
+            total_changes = 0
+            for path in sorted(before.keys() | after.keys()):
+                _budget(deadline)
+                old, new = before.get(path), after.get(path)
+                if old == new:
+                    continue
+                change = "added" if old is None else "deleted" if new is None else "modified"
+                total_changes += 1
+                if len(changes) < MAX_REVISION_DIFF_ENTRIES:
+                    changes.append({"path": path, "change": change})
+            return {
+                "changes": changes,
+                "total_changes": total_changes,
+                "truncated": total_changes > len(changes),
+            }
+
     def release_reader(
         self,
         peer: PeerIdentity,
@@ -5341,7 +5392,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
             return None
 
         # View-scoped: the exact actor/view/access binding, nothing weaker.
-        if operation is Operation.LIST_PROJECT_ARTIFACTS:
+        if operation in {Operation.LIST_PROJECT_ARTIFACTS, Operation.DIFF_REVISIONS}:
             if view.access is not Access.READ or view.purpose is not ViewPurpose.PROJECT:
                 raise SupervisorError("INPUT_POLICY")
             self._reader_proof(peer, namespace, view, capability)

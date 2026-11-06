@@ -50,6 +50,13 @@ from fa.workspace_bootstrap import ReadyReason, ReadyState, ReadyStatus
 
 _logger = logging.getLogger(__name__)
 
+# The approved environment artifact is mounted read-only at this fixed path in
+# managed cells. Use its isolated interpreter rather than PATH/project source;
+# the host-side workspace bootstrap wrapper is not a managed product runner.
+_MANAGED_READINESS_COMMAND = (
+    "/workspace/.venv/bin/python -I -m pytest --version && /workspace/.venv/bin/python -I -m mutmut --version"
+)
+
 
 @dataclass(frozen=True)
 class ExecutionBinding:
@@ -239,6 +246,40 @@ class ManagedExecution:
             grant=self.grant,
             deadline=deadline,
         )
+
+    def revision_changes(
+        self,
+        base_revision_id: str,
+        target_revision_id: str,
+        *,
+        deadline: float | None = None,
+    ) -> dict[str, Any]:
+        """Compare this run's sealed base and current revision through a read pin."""
+        self._require_handoff_resolved()
+        _hex_id(base_revision_id, "rev-")
+        _hex_id(target_revision_id, "rev-")
+        if target_revision_id != self.current_revision_id:
+            raise ExecutionUnavailableError
+        reader = self.client.pin_reader(self.binding, target_revision_id, deadline=deadline)
+        view = reader.view_ref
+        if view is None:
+            raise ExecutionUnavailableError
+        try:
+            result = self.client.diff_revisions(
+                self.binding.namespace,
+                view=view,
+                grant=reader,
+                base_revision=base_revision_id,
+                deadline=deadline,
+            )
+        finally:
+            if not self.client.stop_view(self.binding.namespace, view=view, grant=reader, deadline=deadline):
+                _logger.warning(
+                    "managed execution: revision-diff reader pin not confirmed closed for %s",
+                    self.binding.workspace_id,
+                )
+                raise ExecutionUnavailableError
+        return result
 
     def publish_stage(self, grant: GrantReply, *, deadline: float | None = None) -> StagePublication:
         """Commit the stage view ``grant`` opened; raise when the commit is unproved.
@@ -534,7 +575,7 @@ def managed_environment_readiness(workspace: Path, run_context: RunContext | Non
             original_revision_id=base_revision,
             controller_root=workspace,
         )
-        result = executor.run("pytest --version && mutmut --version", timeout=30, session_id="readiness")
+        result = executor.run(_MANAGED_READINESS_COMMAND, timeout=30, session_id="readiness")
         output = result.stdout
         if result.exit_code == 0 and not result.timed_out:
             reason = "ready_managed_artifact"
