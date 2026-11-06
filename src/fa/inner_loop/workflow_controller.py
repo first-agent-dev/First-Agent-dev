@@ -234,7 +234,6 @@ class WorkflowContext:
     # One workflow-owned writer is forwarded unchanged to every stage. The stage
     # boundary can consult its selected profile and latest authority revision.
     managed_execution: ManagedExecution | None = None
-    managed_revision_pair: _ManagedRevisionPair = field(default_factory=_ManagedRevisionPair)
     managed_plan_ref: PlanRef | None = None
 
     def plan_text(self) -> str | None:

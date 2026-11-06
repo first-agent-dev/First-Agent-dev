@@ -22,7 +22,6 @@ from uuid import uuid4
 from fa.execution.profiles import ExecutionProfile
 from fa.execution.protocol import (
     MAX_PROJECT_ARTIFACTS_REPLY_BYTES,
-    MAX_REVISION_DIFF_REPLY_BYTES,
     PROTOCOL_V1,
     PROTOCOL_V2,
     DeadlineConnection,
@@ -226,12 +225,11 @@ class ExecutionClient:
                     framed.add_execution_budget(payload["timeout_ms"])
                 # The reader tolerates a reply written before an additive key existed;
                 # the server's own self-check does not.
-                reply_limit = None
-                if protocol_version == PROTOCOL_V2:
-                    if operation is Operation.LIST_PROJECT_ARTIFACTS:
-                        reply_limit = MAX_PROJECT_ARTIFACTS_REPLY_BYTES
-                    elif operation is Operation.DIFF_REVISIONS:
-                        reply_limit = MAX_REVISION_DIFF_REPLY_BYTES
+                reply_limit = (
+                    MAX_PROJECT_ARTIFACTS_REPLY_BYTES
+                    if protocol_version == PROTOCOL_V2 and operation is Operation.LIST_PROJECT_ARTIFACTS
+                    else None
+                )
                 raw_response = read_frame(framed) if reply_limit is None else read_frame(framed, max_bytes=reply_limit)
                 response = decode_reply(
                     raw_response,
@@ -325,13 +323,10 @@ class ExecutionClient:
             raise
         except ExecutionUncertainError:
             raise ExecutionUnavailableError from None
-        features = health.get("features")
         if (
             health.get("ready") is not True
             or health.get("protocol_version") != PROTOCOL_V2
-            or not isinstance(features, list)
-            or "list_project_artifacts" not in features
-            or features != sorted(set(features))
+            or health.get("features") != ["list_project_artifacts"]
         ):
             raise ExecutionUnavailableError
         try:
@@ -353,76 +348,6 @@ class ExecutionClient:
         except ExecutionUncertainError:
             # This operation is read-only; a lost result cannot imply workspace
             # mutation, but it cannot be treated as a complete inventory either.
-            raise ExecutionUnavailableError from None
-
-    def diff_revisions(
-        self,
-        namespace: NamespaceRef,
-        *,
-        view: ViewRef,
-        grant: GrantReply,
-        base_revision: str,
-        deadline: float | None = None,
-    ) -> dict[str, Any]:
-        """Return bounded metadata changes from ``base_revision`` to a pinned view."""
-        _hex_id(base_revision, "rev-")
-        if (
-            not isinstance(namespace, NamespaceRef)
-            or not isinstance(view, ViewRef)
-            or view.access is not Access.READ
-            or view.purpose is not ViewPurpose.PROJECT
-            or view.owner_run_id != namespace.run_id
-            or not isinstance(grant, GrantReply)
-            or grant.view_ref != view
-            or grant.operation is not Operation.PIN_READER
-        ):
-            raise ExecutionContractError
-        try:
-            health = self.request(
-                Operation.HEALTH,
-                request_id=uuid4().hex,
-                namespace=None,
-                view=None,
-                grant=None,
-                payload={},
-                deadline=deadline,
-                protocol_version=PROTOCOL_V2,
-                allow_legacy_v1_rejection=True,
-            )
-        except ExecutionRejectedError as error:
-            if error.code == "INVALID_REQUEST":
-                raise ExecutionUnavailableError from None
-            raise
-        except ExecutionUncertainError:
-            raise ExecutionUnavailableError from None
-        features = health.get("features")
-        if (
-            health.get("ready") is not True
-            or health.get("protocol_version") != PROTOCOL_V2
-            or not isinstance(features, list)
-            or "diff_revisions" not in features
-            or features != sorted(set(features))
-        ):
-            raise ExecutionUnavailableError
-        try:
-            return self.request(
-                Operation.DIFF_REVISIONS,
-                request_id=uuid4().hex,
-                namespace=namespace,
-                view=view,
-                grant=grant,
-                payload={"base_revision": base_revision},
-                deadline=deadline,
-                protocol_version=PROTOCOL_V2,
-                allow_legacy_v1_rejection=True,
-            )
-        except ExecutionRejectedError as error:
-            if error.code == "INVALID_REQUEST":
-                raise ExecutionUnavailableError from None
-            raise
-        except ExecutionUncertainError:
-            # No workspace mutation can follow a lost read-only reply, but the
-            # metadata is incomplete and must never be represented as an empty diff.
             raise ExecutionUnavailableError from None
 
     def handoff(

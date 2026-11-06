@@ -1413,7 +1413,7 @@ def test_cli_new_run_refuses_unavailable_supervisor_before_host_git_provider_or_
 def test_cli_blocks_degraded_managed_readiness_without_host_probe_fallback(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: CaptureFixture[str]
 ) -> None:
-    """W0 R03/R06/R07: real CLI/UDS readiness fails closed without host bootstrap fallback."""
+    """W0 R06/R07: a real UDS authority blocks degraded readiness before host probes."""
     models = tmp_path / "models.yaml"
     models.write_text(_FAKE_MODELS_YAML, encoding="utf-8")
     home = tmp_path / "home"
@@ -1426,24 +1426,6 @@ def test_cli_blocks_degraded_managed_readiness_without_host_probe_fallback(
     seed = tmp_path / "seed"
     seed.mkdir()
     (seed / "seed.txt").write_text("supervisor-owned seed\n", encoding="utf-8")
-    # This checked-out wrapper must never be launched by the controller. If a
-    # host fallback runs it, its src prepend imports the poison module below.
-    poison_marker = tmp_path / "project-bootstrap-imported-on-controller"
-    poison_source = seed / "src" / "fa"
-    poison_source.mkdir(parents=True)
-    (poison_source / "__init__.py").write_text("", encoding="utf-8")
-    (poison_source / "workspace_bootstrap.py").write_text(
-        "from pathlib import Path\n"
-        f"Path({str(poison_marker)!r}).touch()\n"
-        "raise RuntimeError('poisoned project bootstrap imported')\n",
-        encoding="utf-8",
-    )
-    bootstrap_script = seed / "scripts" / "bootstrap" / "workspace.py"
-    bootstrap_script.parent.mkdir(parents=True)
-    bootstrap_script.write_text(
-        (Path(__file__).resolve().parents[1] / "scripts" / "bootstrap" / "workspace.py").read_text(encoding="utf-8"),
-        encoding="utf-8",
-    )
     sessions = tmp_path / "sessions"
     sessions.mkdir()
     profile = native_profile()
@@ -1471,13 +1453,12 @@ def test_cli_blocks_degraded_managed_readiness_without_host_probe_fallback(
     monkeypatch.setenv("FA_STATE_ROOT", str(manager_state))
     monkeypatch.setenv("FA_WORKSPACE_ROOT", str(sessions))
     monkeypatch.setenv("FA_SESSION_SOURCE", str(seed))
-    monkeypatch.setenv("PYTHONPATH", str(seed / "src"))
     monkeypatch.setattr(cli_module, "_load_secret_store", lambda: _TEST_SECRETS)
 
     marker_bin = tmp_path / "host-bin"
     marker_bin.mkdir()
     host_markers: dict[str, Path] = {}
-    for tool in ("git", "uv", "pytest", "mutmut", "python3"):
+    for tool in ("git", "uv", "pytest", "mutmut"):
         marker = tmp_path / f"host-{tool}-called"
         host_markers[tool] = marker
         stub = marker_bin / tool
@@ -1530,7 +1511,6 @@ def test_cli_blocks_degraded_managed_readiness_without_host_probe_fallback(
     assert pty_attempts == []
     assert not (sessions / ".active").exists()
     assert all(not marker.exists() for marker in host_markers.values())
-    assert not poison_marker.exists(), "managed caller executed the poisoned checkout bootstrap on the controller"
 
     manifests = list((manager_state / "sessions").glob("*/manifest.json"))
     assert len(manifests) == 1
@@ -1538,8 +1518,6 @@ def test_cli_blocks_degraded_managed_readiness_without_host_probe_fallback(
     assert manifest["status"] == "provisioning"  # Q118 failure tombstone; not active.
     workspace = Path(manifest["workspace_path"])
     assert (workspace / "seed.txt").read_text(encoding="utf-8") == "supervisor-owned seed\n"
-    assert (workspace / "scripts" / "bootstrap" / "workspace.py").read_bytes() == bootstrap_script.read_bytes()
-    assert not poison_marker.exists()
     readiness_logs = list((manager_state / "session-log").glob("run-*/managed-readiness.log"))
     assert len(readiness_logs) == 1
     assert "managed readiness refused" in readiness_logs[0].read_text(encoding="utf-8")

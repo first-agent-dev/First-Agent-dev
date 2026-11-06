@@ -217,24 +217,6 @@ class SessionManager:
                 owners.append(owner_id)
         return owners
 
-    def validate_new_workspace_disjoint(self, workspace_path: Path) -> Path:
-        """Validate a new explicit workspace against all active/provisioning roots."""
-        workspace = self._validate_workspace_override(workspace_path)
-        if workspace is None:
-            raise SessionManagerError("workspace_invalid", "an explicit workspace path is required")
-        if not self.sessions_root.exists():
-            return workspace
-        for manifest_path in sorted(self.sessions_root.glob("*/manifest.json")):
-            owner_id = manifest_path.parent.name
-            data = self._read_manifest(manifest_path, expected_session_id=owner_id, allow_provisioning=True)
-            owner_workspace = Path(str(data["workspace_path"])).resolve()
-            if workspace.is_relative_to(owner_workspace) or owner_workspace.is_relative_to(workspace):
-                raise SessionManagerError(
-                    "workspace_overlap",
-                    f"workspace {workspace} overlaps active/provisioning workspace {owner_workspace}",
-                )
-        return workspace
-
     def resolve_active_session_for_workspace(self, workspace_path: Path | None) -> SessionContext:
         """Resolve the unique active session that owns an explicit workspace.
 

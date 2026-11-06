@@ -57,22 +57,13 @@ _is_help_arg() {
     esac
 }
 
-_is_host_verb() {
-    case "${1:-}" in
-        logs|proxy-logs|egress-proxy|status|up|down|restart|rebuild|shell|update|clean-rebuild|clean|commit-traces|sessions)
-            return 0
-            ;;
-        *) return 1 ;;
-    esac
-}
-
 _help_unavailable() {
-    printf '%s\n' "fa: wrapper help is disabled for this host/administrative command" >&2
+    printf '%s\n' "fa: wrapper help is disabled until the isolated installed-controller help seam is available" >&2
     exit 2
 }
 
 _print_usage() {
-    _delegate_help_to_controller "$@"
+    _help_unavailable
 }
 
 _has_help_option() {
@@ -95,23 +86,6 @@ _delegate_to_agent() {
     else
         exec "${COMPOSE[@]}" exec "${TTY_FLAG[@]}" first-agent fa "$@"
     fi
-}
-
-_delegate_help_to_controller() {
-    # Help is workspace-independent. Start from immutable image code, never the
-    # active project, and preserve controller_entry's isolated import gate.
-    exec "${COMPOSE[@]}" exec "${TTY_FLAG[@]}" -w /opt/first-agent first-agent \
-        /opt/fa-venv/bin/python -I -m fa.controller_entry "$@"
-}
-
-_delegate_workspace_command_to_controller() {
-    local -a ACTIVE_WORKSPACE_ENV=()
-    if _have_workspace; then
-        ACTIVE_WORKSPACE_ENV=(-e "FA_WRAPPER_ACTIVE_WORKSPACE=$_SESSION_WORKSPACE")
-    fi
-    exec "${COMPOSE[@]}" exec "${TTY_FLAG[@]}" "${ACTIVE_WORKSPACE_ENV[@]}" \
-        -w /opt/first-agent first-agent \
-        /opt/fa-venv/bin/python -I -m fa.controller_entry "$@"
 }
 
 case "${1:-}" in
@@ -209,49 +183,15 @@ case "${1:-}" in
 
     # ── Help ────────────────────────────────────────────────────────────
     ""|--help|-h|-help)
-        if _is_host_verb "${2:-}"; then _help_unavailable; fi
-        _print_usage "$@"
+        _print_usage
         ;;
     help)
-        if _is_host_verb "${2:-}"; then _help_unavailable; fi
-        _delegate_help_to_controller "$@"
-        ;;
-    workflow)
-        if _has_help_option "$@"; then _delegate_help_to_controller "$@"; fi
-        _delegate_workspace_command_to_controller "$@"
-        ;;
-    stats)
-        if _has_help_option "$@"; then _delegate_help_to_controller "$@"; fi
-        _delegate_workspace_command_to_controller "$@"
-        ;;
-    authoring-check)
-        if _has_help_option "$@"; then _delegate_help_to_controller "$@"; fi
-        _delegate_workspace_command_to_controller "$@"
-        ;;
-    run)
-        if _has_help_option "$@"; then _delegate_help_to_controller "$@"; fi
-        _delegate_workspace_command_to_controller "$@"
-        ;;
-    inner-loop-smoke)
-        if _has_help_option "$@"; then _delegate_help_to_controller "$@"; fi
-        if _have_workspace; then
-            printf '%s\n' "fa inner-loop-smoke: refusing managed .active workspace; use a manual controller invocation with an explicit disposable --workspace" >&2
-            exit 2
-        fi
-        _delegate_workspace_command_to_controller "$@"
-        ;;
-    chunk)
-        if _has_help_option "$@"; then _delegate_help_to_controller "$@"; fi
-        if _have_workspace; then
-            _delegate_workspace_command_to_controller "$@"
-        else
-            _delegate_to_agent "$@"
-        fi
+        _help_unavailable
         ;;
 
-    # ── Default: delegate product commands to the installed controller ──
+    # ── Default: delegate product commands to the agent container ───────
     *)
-        if _has_help_option "$@"; then _delegate_help_to_controller "$@"; fi
-        _delegate_workspace_command_to_controller "$@"
+        if _has_help_option "$@"; then _help_unavailable; fi
+        _delegate_to_agent "$@"
         ;;
 esac

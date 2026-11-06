@@ -27,8 +27,6 @@ PROTOCOL_V1 = 1
 PROTOCOL_V2 = 2
 MAX_PROJECT_ARTIFACTS_REPLY_BYTES = 64 * 1024
 MAX_PROJECT_INCREMENT_ENTRIES = 64
-MAX_REVISION_DIFF_REPLY_BYTES = 3 * 1024 * 1024
-MAX_REVISION_DIFF_ENTRIES = 128
 
 
 def _object(**properties: Any) -> dict[str, Any]:
@@ -151,7 +149,6 @@ PAYLOADS: dict[Operation, dict[str, Any]] = {
     Operation.HANDOFF: _object(target_namespace=NAMESPACE),
     Operation.RELEASE: _object(),
     Operation.LIST_PROJECT_ARTIFACTS: _object(project_slug=CONFIG_ID),
-    Operation.DIFF_REVISIONS: _object(base_revision=_id("rev-")),
 }
 _COMMITTED = _object(
     workspace_id=_id("ws-"),
@@ -195,15 +192,6 @@ _PROJECT_ARTIFACTS_REPLY = _object(
         "maxItems": MAX_PROJECT_INCREMENT_ENTRIES,
     },
 )
-_REVISION_CHANGE = _object(
-    path={"type": "string", "maxLength": 4096},
-    change=_enum("added", "modified", "deleted"),
-)
-_REVISION_DIFF_REPLY = _object(
-    changes={"type": "array", "items": _REVISION_CHANGE, "maxItems": MAX_REVISION_DIFF_ENTRIES},
-    total_changes=UINT,
-    truncated=BOOL,
-)
 RESULTS: dict[Operation, dict[str, Any]] = {
     Operation.HEALTH: _object(ready=BOOL, protocol_version={"type": "integer", "const": 1}, profile_set_sha256=SHA),
     Operation.REGISTER_WORKSPACE: _object(workspace_id=_id("ws-"), revision_id=_id("rev-")),
@@ -225,9 +213,6 @@ RESULTS: dict[Operation, dict[str, Any]] = {
     Operation.PREPARE_BUNDLE: _object(validated_bundle_id=_id("bundle-"), bundle_sha256=SHA),
     Operation.RELEASE: _object(released={"type": "boolean", "const": True}),
     Operation.LIST_PROJECT_ARTIFACTS: _PROJECT_ARTIFACTS_REPLY,
-    # Shared result projection for OperationJournal's closed Operation table;
-    # decode_reply still rejects this v2-only operation under protocol v1.
-    Operation.DIFF_REVISIONS: _REVISION_DIFF_REPLY,
 }
 RESULTS_V2: dict[Operation, dict[str, Any]] = {
     Operation.HEALTH: _object(
@@ -236,12 +221,12 @@ RESULTS_V2: dict[Operation, dict[str, Any]] = {
         profile_set_sha256=SHA,
         features={
             "type": "array",
-            "items": _enum("diff_revisions", "list_project_artifacts"),
+            "items": _enum("list_project_artifacts"),
             "uniqueItems": True,
+            "const": ["list_project_artifacts"],
         },
     ),
     Operation.LIST_PROJECT_ARTIFACTS: _PROJECT_ARTIFACTS_REPLY,
-    Operation.DIFF_REVISIONS: _REVISION_DIFF_REPLY,
 }
 ERROR_CODES = (
     "INVALID_REQUEST",
@@ -264,7 +249,7 @@ _ERROR = _object(code=_enum(*ERROR_CODES), retryable=BOOL, operation_id=_nullabl
 _ENVELOPE = _object(
     protocol_version={"type": "integer", "const": PROTOCOL_V1},
     request_id=_id(""),
-    op=_enum(*(op.value for op in Operation if op not in {Operation.LIST_PROJECT_ARTIFACTS, Operation.DIFF_REVISIONS})),
+    op=_enum(*(op.value for op in Operation if op is not Operation.LIST_PROJECT_ARTIFACTS)),
     namespace=_nullable(NAMESPACE),
     view_ref=_nullable(VIEW),
     capability=_nullable(SHA),
@@ -277,7 +262,7 @@ _REPLY = _object(
     result={},
     error=_nullable(_ERROR),
 )
-_V2_OPERATIONS = (Operation.HEALTH, Operation.LIST_PROJECT_ARTIFACTS, Operation.DIFF_REVISIONS)
+_V2_OPERATIONS = (Operation.HEALTH, Operation.LIST_PROJECT_ARTIFACTS)
 _ENVELOPE_V2 = _object(
     protocol_version={"type": "integer", "const": PROTOCOL_V2},
     request_id=_id(""),
@@ -391,7 +376,7 @@ def decode_request(raw: bytes) -> dict[str, Any]:
         if version == PROTOCOL_V1:
             _check(_ENVELOPE_CHECK, record)
             op = Operation(record["op"])
-            if op in {Operation.LIST_PROJECT_ARTIFACTS, Operation.DIFF_REVISIONS}:
+            if op is Operation.LIST_PROJECT_ARTIFACTS:
                 raise ExecutionContractError
         elif version == PROTOCOL_V2:
             _check(_ENVELOPE_V2_CHECK, record)
@@ -516,7 +501,7 @@ def _validate_reply_body(
             raise ExecutionContractError
         result_checks = _RESULT_CHECKS_V2
     else:
-        if operation in {Operation.LIST_PROJECT_ARTIFACTS, Operation.DIFF_REVISIONS}:
+        if operation is Operation.LIST_PROJECT_ARTIFACTS:
             raise ExecutionContractError
         result_checks = _RESULT_CHECKS
     if tolerate_legacy and operation is Operation.PUBLISH and isinstance(record["result"], dict):
@@ -549,15 +534,8 @@ def decode_reply(
     if protocol_version not in {PROTOCOL_V1, PROTOCOL_V2}:
         raise ExecutionContractError
     listing_reply = protocol_version == PROTOCOL_V2 and operation is Operation.LIST_PROJECT_ARTIFACTS
-    revision_diff_reply = protocol_version == PROTOCOL_V2 and operation is Operation.DIFF_REVISIONS
-    max_bytes = (
-        MAX_PROJECT_ARTIFACTS_REPLY_BYTES
-        if listing_reply
-        else MAX_REVISION_DIFF_REPLY_BYTES
-        if revision_diff_reply
-        else MAX_FRAME_BYTES
-    )
-    if len(raw) > max_bytes:
+    max_bytes = MAX_PROJECT_ARTIFACTS_REPLY_BYTES if listing_reply else MAX_FRAME_BYTES
+    if listing_reply and len(raw) > MAX_PROJECT_ARTIFACTS_REPLY_BYTES:
         raise ExecutionContractError
     record = _loads(raw, max_bytes=max_bytes)
     _reply_version(

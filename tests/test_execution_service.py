@@ -226,7 +226,7 @@ def test_health_publishes_the_digest_of_the_profiles_actually_enforced(site: Sit
         assert service.authority.journal.lookup("op-" + RID, ACTOR) is None
 
 
-def test_v2_health_negotiates_project_artifact_and_revision_diff_features(site: Site) -> None:
+def test_v2_health_negotiates_only_the_project_artifact_listing_feature(site: Site) -> None:
     with SupervisorService(_config(site)) as service:
         reply = exchange(service, Operation.HEALTH, {}, protocol_version=2)
         assert reply["status"] == "OK"
@@ -238,7 +238,7 @@ def test_v2_health_negotiates_project_artifact_and_revision_diff_features(site: 
                 view_profile_id=native_profile().profile_id,
                 read_only_profile_id=read_only_profile().profile_id,
             ),
-            "features": ["diff_revisions", "list_project_artifacts"],
+            "features": ["list_project_artifacts"],
         }
         assert service.authority.journal.lookup("op-" + RID, ACTOR) is None
 
@@ -276,106 +276,6 @@ def test_v2_listing_uses_the_authorized_read_manifest_without_reservation(site: 
             "entries": [{"name": "increment-01-plan.md", "kind": "file"}],
         }
         assert service.authority.journal.lookup("op-" + list_request_id, ACTOR) is None
-
-
-def test_v2_diff_compares_sealed_manifests_through_a_pinned_read_view(site: Site) -> None:
-    """C1/C3: production route returns bounded path metadata, never file bytes or a journal receipt."""
-    from fa.execution.publication import publish_view, seal_view
-    from fa.execution.types import ViewRef
-
-    with SupervisorService(_config(site)) as service:
-        workspace_id = _registered(service)
-        writer_capability, base_revision = _writer(service, workspace_id, request_id="2" * 32)
-        view, view_capability = _view(
-            service,
-            workspace_id,
-            base_revision,
-            writer_capability,
-            request_id="3" * 32,
-        )
-        view_ref = ViewRef.from_dict(view)
-        service.authority.write_file(
-            PEER,
-            ACTOR,
-            view_ref=view_ref,
-            capability=view_capability,
-            path="dirty.txt",
-            content="managed revision changed",
-            expected_sha256=hashlib.sha256((site.source / "dirty.txt").read_bytes()).hexdigest(),
-            deadline=until(),
-        )
-        service.authority.write_file(
-            PEER,
-            ACTOR,
-            view_ref=view_ref,
-            capability=view_capability,
-            path="added.py",
-            content="new managed file",
-            expected_sha256=None,
-            deadline=until(),
-        )
-        stopped = service._stopper.stop_view(
-            PEER, ACTOR, view_ref=view_ref, capability=view_capability, deadline=until()
-        )
-        assert stopped.terminal
-        sealed = seal_view(
-            service.authority,
-            PEER,
-            ACTOR,
-            view_ref=view_ref,
-            capability=view_capability,
-            deadline=until(),
-        )
-        published = publish_view(
-            service.authority,
-            PEER,
-            ACTOR,
-            view_ref=view_ref,
-            capability=view_capability,
-            sealed_manifest_id=sealed.sealed_manifest_id,
-            expected_base_revision=base_revision,
-            operation_id="op-" + "4" * 32,
-            deadline=until(),
-        )
-        pinned = exchange(
-            service,
-            Operation.PIN_READER,
-            {"workspace_id": workspace_id, "revision_id": published.revision_id, "plan_ref": None},
-            request_id="5" * 32,
-        )
-        assert pinned["status"] == "OK", pinned
-        reader_view = pinned["result"]["view_ref"]
-        reader_capability = pinned["result"]["capability"]
-        diff_request_id = "6" * 32
-        diff = exchange(
-            service,
-            Operation.DIFF_REVISIONS,
-            {"base_revision": base_revision},
-            request_id=diff_request_id,
-            view_ref=reader_view,
-            capability=reader_capability,
-            protocol_version=2,
-        )
-        assert diff["status"] == "OK", diff
-        assert diff["result"] == {
-            "changes": [
-                {"path": "added.py", "change": "added"},
-                {"path": "dirty.txt", "change": "modified"},
-            ],
-            "total_changes": 2,
-            "truncated": False,
-        }
-        assert "managed revision changed" not in json.dumps(diff)
-        assert service.authority.journal.lookup("op-" + diff_request_id, ACTOR) is None
-        released = exchange(
-            service,
-            Operation.RELEASE,
-            {},
-            request_id="7" * 32,
-            view_ref=reader_view,
-            capability=reader_capability,
-        )
-        assert released["status"] == "OK", released
 
 
 def test_health_over_the_wire_is_a_readonly_reply_with_no_reservation(site: Site) -> None:
