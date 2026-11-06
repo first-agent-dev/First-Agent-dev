@@ -170,7 +170,6 @@ PROFILES_RAW: dict[str, dict[str, Any]] = {
             "fs_run_bash",
             "fs_exploration_metrics",
             "fs_reach",
-            "fs_spawn_subagent",
         ],
         "stateless": False,
         "bash_impl": "stateful",
@@ -205,19 +204,6 @@ def _add_optional_tool_builders(
         builders["fs_edit_file"] = lambda: build_edit_file_tool(root, workspace_io=workspace_io)
     except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable, edit_file optional
         logger.warning(f"edit_file builder not available: {exc}")
-
-    if workspace_io is None:
-        # spawn_subagent is declared by profiles (chat, baseline) but had no builder
-        # here, so a profile that asked for it silently lost the tool. The tool
-        # itself is feature-flagged off by default and fails with ``disabled`` when
-        # invoked; registering it keeps the profile declaration and the built
-        # registry in agreement instead of diverging silently.
-        try:
-            from fa.inner_loop.tools.spawn_subagent import build_spawn_subagent_tool
-
-            builders["fs_spawn_subagent"] = lambda: build_spawn_subagent_tool(root)
-        except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable
-            logger.warning(f"spawn_subagent builder not available: {exc}")
 
     # Observability + pair tools (from Stage 0)
     try:
@@ -471,7 +457,7 @@ def build_registry_for_role(
         else:
             builder = builders.get(tool_name)
         if builder is None:
-            if workspace_io is not None and tool_name != "fs_spawn_subagent":
+            if workspace_io is not None:
                 raise RuntimeError(f"managed tool unavailable: {tool_name}")
             logger.warning(f"Tool {tool_name} requested for role {role} but no builder found, skipping")
             continue

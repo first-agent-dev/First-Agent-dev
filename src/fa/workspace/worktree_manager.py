@@ -1,8 +1,8 @@
 """
 WorktreeManager Abstraction — SharedDir primary for v0.1 (100% stable) per ADR-14/15 v3 reduced surface
 
-IsolatedWorktreeManager is retained for tests and future isolation. The factory returns
-SharedDir by default, with a warning when isolation is requested.
+IsolatedWorktreeManager is retained only for historical direct-test compatibility.
+It is not a supported product route; the factory refuses isolated mode.
 
 Per Q1, custom BranchAlreadyCheckedOutError and CleanupFailedError exceptions include git worktree details.
 Safety-critical checks do not use assert; asserts are limited to internal invariants
@@ -143,7 +143,11 @@ class SharedDirWorktreeManager(WorktreeManager):
 
 
 class IsolatedWorktreeManager(WorktreeManager):
-    """Isolated worktree — deferred to branch worktree-isolated, kept for tests/backward compat."""
+    """Historical host-Git implementation, retained for direct characterization only.
+
+    No supported product caller uses this class; ``WorktreeManagerFactory``
+    rejects isolated mode. Managed subagents use R13 instead.
+    """
 
     def __init__(self, session_root: Path, repo_root: Path, run_id: str = ""):
         session_resolved = Path(session_root).resolve()
@@ -288,12 +292,12 @@ class WorktreeManagerFactory:
         operator asks for isolation, does not get it, and is never told — so
         they reason about a boundary that is not there.
 
-        ``isolated`` is deferred by ADR-14/15 v3, not broken:
-        ``IsolatedWorktreeManager`` stays importable for tests and remains the
-        documented upgrade path. Refusing here says "not available", which is
-        true, rather than "done", which is not.
+        ``isolated`` is retired from supported product use under Q126-A.
+        The historical manager remains available only for direct characterization
+        tests; it is not an upgrade path or a product fallback. Refusing here says
+        "not available", which is true, rather than "done", which is not.
         """
-        del repo_root  # SharedDir needs only the session root; kept for the isolated upgrade path.
+        del repo_root  # SharedDir needs only the session root; isolated mode is unsupported.
         mode = getattr(flags, "worktree_mode", "shared") if flags else "shared"
         if mode != "shared":
             raise ValueError(
@@ -308,7 +312,6 @@ __all__ = [
     "SUBAGENT_ARTIFACT_DIRNAME",
     "BranchAlreadyCheckedOutError",
     "CleanupFailedError",
-    "IsolatedWorktreeManager",
     "SharedDirWorktreeManager",
     "WorktreeManager",
     "WorktreeManagerFactory",

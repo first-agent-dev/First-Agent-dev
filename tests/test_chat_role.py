@@ -84,13 +84,9 @@ class TestProfileRegistration:
         assert "fs_write_file" in tools, "chat needs fs_write_file for notes and scratch files"
         assert "fs_edit_file" in tools, "chat needs fs_edit_file for small in-line edits"
 
-    def test_chat_profile_declares_spawn_subagent(self) -> None:
-        """Declared so the profile matches the registry that gets built.
-
-        The tool is feature-flagged off and fails with ``disabled`` when
-        invoked; the defect was the profile and registry disagreeing.
-        """
-        assert "fs_spawn_subagent" in PROFILES_RAW["chat"]["tools"]
+    def test_chat_profile_does_not_advertise_legacy_host_subagent(self) -> None:
+        """R23/Q126-A: unmanaged profiles cannot advertise the legacy runner."""
+        assert "fs_spawn_subagent" not in PROFILES_RAW["chat"]["tools"]
 
     def test_chat_profile_has_read_file(self) -> None:
         assert "fs_read_file" in PROFILES_RAW["chat"]["tools"]
@@ -158,10 +154,9 @@ class TestChatRegistry:
     def test_profile_layer_builds_every_declared_tool(self, tmp_path: Path) -> None:
         """``build_registry_for_role`` alone must satisfy the chat profile.
 
-        Targets the *profile layer* deliberately.
-        ``_register_extra_tools`` re-registers ``fs_spawn_subagent`` for every
-        role afterwards, so asserting on the fully-composed registry cannot
-        detect a missing builder here — it would pass vacuously.
+        Targets the *profile layer* deliberately. Managed R13 is attached later
+        by the CLI stage caller; no unmanaged profile builder may expose the
+        legacy host runner.
         """
         from fa.inner_loop.profiles import build_registry_for_role
 

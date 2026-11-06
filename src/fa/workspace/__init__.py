@@ -1,5 +1,5 @@
 """fa.workspace — WorktreeManager abstraction"""
 
-from .worktree_manager import IsolatedWorktreeManager, SharedDirWorktreeManager, WorktreeManager
+from .worktree_manager import SharedDirWorktreeManager, WorktreeManager
 
-__all__ = ["IsolatedWorktreeManager", "SharedDirWorktreeManager", "WorktreeManager"]
+__all__ = ["SharedDirWorktreeManager", "WorktreeManager"]

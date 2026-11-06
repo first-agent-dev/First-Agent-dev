@@ -2518,9 +2518,9 @@ def _register_managed_subagent_tool(
 ) -> ToolRegistry:
     """Add the managed child only at the managed production caller edge.
 
-    Legacy/local runs retain their existing ``spawn_subagent`` builder. In a
-    managed stage the old subprocess builder is intentionally absent, so this
-    is the sole production registration path for chat/planner/coder children.
+    Supported product subagents are managed R13 only. Unmanaged product
+    registries intentionally omit the legacy host-subprocess builder; this is
+    the sole supported registration path for chat/planner/coder children.
     """
     if workspace_io is None or role not in {"chat", "planner", "coder"}:
         return registry

@@ -359,14 +359,11 @@ def test_pr6_wiring_cr_cleaning_via_bash(tmp_path: Path) -> None:
 
 
 def test_pr6_wiring_subagent_role_env_and_events(tmp_path: Path) -> None:
-    """LIVE-PATH PROOF:
-    - root: drive_session
-    - test: ...::test_pr6_wiring_subagent_role_env_and_events
-    - matrix: A-gates-only with subagent_spawning_enabled=True
-    - oracle: subagent_spawn_start/done events, envelope type researcher, env propagated, artifact exists
-    - kill-check: removing spawn_start log in spawn_subagent.py fails event check
+    """Legacy-helper characterization; not supported product-route evidence.
 
-    Product claim: fs_spawn_subagent is role-bounded, env-aware, observable.
+    The old builder is directly registered here only to preserve historical
+    wiring coverage. Product registries must omit it; managed R13 is the only
+    supported product subagent path.
     """
     log = EventLog(tmp_path / "events.jsonl", run_id="pr6-subagent")
     state = SessionState(
@@ -376,6 +373,9 @@ def test_pr6_wiring_subagent_role_env_and_events(tmp_path: Path) -> None:
         feature_flags=FeatureFlags(subagent_spawning_enabled=True, max_subagent_spawns_per_session=5),
     )
     registry = build_baseline_registry(tmp_path)
+    from fa.inner_loop.tools.spawn_subagent import build_spawn_subagent_tool
+
+    registry.register(build_spawn_subagent_tool(tmp_path))  # legacy helper characterization only
     hooks = HookRegistry()
 
     mock_chain = MagicMock(spec=ProviderChain)
@@ -454,6 +454,9 @@ def test_pr6_wiring_subagent_sandbox_deny(tmp_path: Path) -> None:
         feature_flags=FeatureFlags(subagent_spawning_enabled=True),
     )
     registry = build_baseline_registry(tmp_path)
+    from fa.inner_loop.tools.spawn_subagent import build_spawn_subagent_tool
+
+    registry.register(build_spawn_subagent_tool(tmp_path))  # legacy helper characterization only
     hooks = HookRegistry()
     hooks.register(SandboxHook(tmp_path))
     hooks.register(SecretGuard(secrets=frozenset({"sekret"})))

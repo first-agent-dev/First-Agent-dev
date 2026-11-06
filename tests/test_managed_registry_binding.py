@@ -186,3 +186,67 @@ def test_missing_planner_limit_never_falls_back_to_full_write(
         monkeypatch.setattr(profiles, "_build_tool_builders", without_limit)
         with pytest.raises(RuntimeError, match="managed tool unavailable: fs_write_file"):
             cli._build_role_registry("planner", site.source, bash_timeout_seconds=2, workspace_io=port)
+
+
+@pytest.mark.parametrize("role", ["chat", "planner", "coder", "eval"])
+def test_unmanaged_product_run_registries_omit_legacy_host_subagent(
+    role: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Q126-A EDGE oracle: ordinary role registries cannot dispatch the old host runner."""
+    from fa.inner_loop.subagent_runner import SubagentRunner
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    runner_calls: list[object] = []
+
+    def forbidden_runner(self: Any, *args: Any, **kwargs: Any) -> Any:
+        runner_calls.append((self, args, kwargs))
+        raise AssertionError("legacy host SubagentRunner reached from a product registry")
+
+    monkeypatch.setattr(SubagentRunner, "run_stateless", forbidden_runner)
+    registry = cli._build_run_tool_registry(
+        role,
+        workspace,
+        bash_timeout_seconds=2,
+        draft_store=PrDraftStore(tmp_path / "draft"),
+    )
+
+    assert "fs_spawn_subagent" not in registry.names()
+    assert runner_calls == []
+    assert not (workspace / ".fa" / "subagents").exists()
+
+
+def test_session_state_rejects_isolated_worktree_without_git_effects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Q126-A producer oracle: the actual SessionState caller never creates a Git worktree."""
+    import subprocess
+
+    from fa.feature_flags import FeatureFlags
+    from fa.inner_loop.state import SessionState
+    from fa.workspace import worktree_manager
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    subprocess.run(["git", "init", "-q", str(workspace)], check=True)
+    git_calls: list[object] = []
+
+    def record_git(*args: Any, **kwargs: Any) -> Any:
+        git_calls.append((args, kwargs))
+        raise AssertionError("isolated host-Git producer reached from SessionState")
+
+    monkeypatch.setattr(worktree_manager.subprocess, "run", record_git)
+    state = SessionState(
+        workspace_root=workspace,
+        run_id="q126-isolated-refusal",
+        feature_flags=FeatureFlags(worktree_mode="isolated"),
+    )
+
+    assert state.worktree_manager is None
+    assert git_calls == []
+    assert not (workspace / ".fa" / "worktrees").exists()
+    log = state.log
+    assert log is not None
+    assert any(
+        event.kind == "config_warning" and event.content.get("key") == "worktree.mode" for event in log.read_all()
+    )

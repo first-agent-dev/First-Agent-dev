@@ -42,6 +42,7 @@ Read `../roadmap.md` first, then `../increments/`, then come here for detail.
 | [`state-of-play-2026-10-06.md`](state-of-play-2026-10-06.md) | Project summary + document map as of the reading pass. |
 | [`operator-note-2026-10-06.md`](operator-note-2026-10-06.md) | Operator note for the 2026-10-06 session. |
 | [`w0-external-audit-and-r23-handoff-2026-11-04.md`](w0-external-audit-and-r23-handoff-2026-11-04.md) | External read-only W0 audit snapshot plus the operator-approved Q126-A/R23 handoff; historical source, not new runtime evidence. Use the current inventory/Q126 decision for present status. |
+| [`r23-q126a-callgraph-closeout-2026-11-06.md`](r23-q126a-callgraph-closeout-2026-11-06.md) | Current two-path R23 source/caller audit, supported-registry cleanup, production no-effect and R13 evidence, mutation sensitivity, and explicit RETIRED / NOT APPLICABLE disposition (not PASS). |
 | `ARCHITECTURE-REVIEW.md`, `REVIEW-planning-big-tasks-for-ai-agents.md`, `production-patterns-review-2026-10-06.md`, `first-agent-bridge.md` | Inputs from earlier review sessions; evidence, not rules. |
 
 ---

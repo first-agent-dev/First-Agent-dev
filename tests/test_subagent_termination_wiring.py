@@ -241,14 +241,11 @@ def test_ctrl_c_interrupts_pty_session_via_drive_session(tmp_path: Path) -> None
 
 
 def test_subagent_spawn_and_cleanup_via_drive_session(tmp_path: Path) -> None:
-    """LIVE-PATH PROOF:
-    - root: drive_session with fs_spawn_subagent
-    - test: tests/test_subagent_termination_wiring.py::test_subagent_spawn_and_cleanup_via_drive_session
-    - matrix: A-gates-only with subagent_spawning_enabled=True
-    - oracle: events contain spawn_start + spawn_done, artifact .fa/subagents/t-1.json exists
-    - kill-check: removing spawn_subagent registration makes tool dispatch fail
+    """Legacy-helper characterization; not supported product-route evidence.
 
-    Product claim: subagent spawn creates artifact, events logged, workspace cleanup happens.
+    The old builder is explicitly registered to preserve the helper's
+    artifact/event lifecycle tests. Product R13 is exercised separately through
+    the managed CLI caller.
     """
     log = EventLog(tmp_path / "events.jsonl", run_id="spawn-cleanup")
     state = SessionState(
@@ -258,6 +255,9 @@ def test_subagent_spawn_and_cleanup_via_drive_session(tmp_path: Path) -> None:
         feature_flags=FeatureFlags(subagent_spawning_enabled=True, max_subagent_spawns_per_session=5),
     )
     registry = build_baseline_registry(tmp_path)
+    from fa.inner_loop.tools.spawn_subagent import build_spawn_subagent_tool
+
+    registry.register(build_spawn_subagent_tool(tmp_path))  # legacy helper characterization only
     hooks = HookRegistry()
 
     mock_chain = MagicMock(spec=ProviderChain)

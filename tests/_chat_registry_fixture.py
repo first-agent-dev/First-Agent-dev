@@ -1,11 +1,10 @@
-"""Shared builder for the LIVE chat tool corpus.
+"""Shared builder for the unmanaged chat registry composition root.
 
-Three test modules need the same thing: the tool registry a real
-``fa run --role chat`` ships, which is ``cli._build_run_tool_registry`` with a
-workflow context bound — not the profile registry and not
-``build_chat_registry``. Assembling that takes ten lines of context plumbing,
-and a third copy triggered pylint's ``duplicate-code``; per the tests-writing
-skill (§"third copy of same mocks"), it is extracted here instead.
+This helper exercises ``cli._build_run_tool_registry`` with a workflow context
+but without a managed stage lease. It is used for prompt/profile coherence, not
+to claim the full managed production corpus; managed R13 is attached separately
+by the live stage caller. A third copy of this context plumbing triggered
+pylint's ``duplicate-code``, so it is extracted here.
 
 Kept deliberately thin: it wires production builders together and adds no
 behaviour of its own, so it cannot become a place where tests quietly diverge
@@ -33,11 +32,10 @@ def build_live_chat_registry(
     transport: Transport | None = None,
     secrets: Mapping[str, str] | None = None,
 ) -> ToolRegistry:
-    """Build the exact registry a live ``fa run --role <role>`` would use.
+    """Build the CLI registry before the managed stage-edge capability is added.
 
-    ``with_workflow_ctx=False`` exercises the degraded path — a chat registry
-    built outside a live run, which legitimately has no pipeline to escalate
-    into and must still be usable.
+    ``with_workflow_ctx=False`` exercises the degraded chat path with no
+    pipeline to escalate into; neither form exposes the legacy host runner.
     """
     provider = None
     if with_workflow_ctx:

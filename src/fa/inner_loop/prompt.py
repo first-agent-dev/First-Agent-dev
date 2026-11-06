@@ -1024,8 +1024,9 @@ ADVERSARIAL_EVAL_STANCE_PREAMBLE = (
 #    reach for is a genuine judgement call. The prior version's "## Available
 #    tools" and "## Tools you do NOT have" lists are exactly the drift this
 #    avoids: they claimed the role had no write tools while the profile
-#    registered ``fs_write_file``/``fs_edit_file``/``fs_spawn_subagent``, and
-#    the mismatch is what ``tests/test_prompt_registry_coherence.py`` now pins.
+#    registered ``fs_write_file``/``fs_edit_file``, and the mismatch is what
+#    ``tests/test_prompt_registry_coherence.py`` now pins. Managed subagent
+#    capability is bound separately at the managed CLI caller edge.
 # 3. **Affirmative phrasing.** Behaviour is stated as the action to take.
 # 4. **Right altitude.** Environment facts and decision boundaries the model
 #    cannot infer, not restatements of capabilities the weights already carry.

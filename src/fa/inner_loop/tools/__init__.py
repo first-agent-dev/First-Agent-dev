@@ -70,13 +70,6 @@ except ImportError as exc:
     build_diff_tool = None
     build_send_ctrl_c_tool = None
 
-build_spawn_subagent_tool: Callable[[Path], ToolSpec] | None
-try:
-    from fa.inner_loop.tools.spawn_subagent import build_spawn_subagent_tool
-except ImportError as exc:
-    logger.warning(f"Failed to import spawn_subagent tool: {exc}")
-    build_spawn_subagent_tool = None
-
 
 def _resolve_fts_path(workspace_root: Path) -> Path:
     """Resolve the FTS DB path from feature flags, falling back to .fa/fts.db."""
@@ -103,7 +96,7 @@ def _register_optional_tool(
         spec = builder()
         # D13: the SECOND composition layer. ``build_registry_for_role`` only
         # sees profile tools; everything added here (fs_search, fs_usage,
-        # fs_chronicle_search, fs_spawn_subagent, pr_prepare, ...) bypassed the
+        # fs_chronicle_search, pr_prepare, ...) bypassed the
         # wire-name guard entirely, so a malformed name in an optional builder
         # still reached the provider. Same policy, same enforcement point type:
         # a composition root, not ToolRegistry.register (which 16 test sites
@@ -166,10 +159,6 @@ def _register_extra_tools(
         _register_optional_tool(registry, "fs_undo", undo_builder)
         _register_optional_tool(registry, "fs_diff", diff_builder)
         _register_optional_tool(registry, "fs_send_ctrl_c", build_send_ctrl_c_tool)
-
-    if workspace_io is None:
-        spawn_builder = None if build_spawn_subagent_tool is None else lambda: build_spawn_subagent_tool(workspace_root)
-        _register_optional_tool(registry, "fs_spawn_subagent", spawn_builder)
 
 
 def build_baseline_registry(

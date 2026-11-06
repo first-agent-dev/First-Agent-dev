@@ -62,17 +62,15 @@ def _chat_tools() -> set[str]:
     Q15=A — standardise on the live corpus. There are THREE composition layers,
     and each earlier one is a strict subset of the next:
 
-    1. ``build_registry_for_role("chat", ...)`` — the profile (9 tools);
+    1. ``build_registry_for_role("chat", ...)`` — the profile (8 tools);
     2. ``build_chat_registry`` — adds ``fs_chronicle_search`` and ``fs_usage``
-       via ``_register_extra_tools`` (11);
+       via ``_register_extra_tools`` (10);
     3. ``cli._build_run_tool_registry`` — adds ``pr_prepare`` and, for chat,
-       ``invoke_workflow`` (13).
+       ``invoke_workflow`` (12). Managed R13 is bound separately at the stage edge.
 
-    Only layer 3 is what a live ``fa run --role chat`` ships, so only layer 3
-    can answer "does the prompt describe the tools the model actually has".
-    Asserting against layer 1 or 2 would let the prompt name a tool added by a
-    later layer -- or, as S4b showed, let a CLI-seam-registered tool sit
-    permanently exempted while being fully live.
+    Layer 3 is the ordinary CLI registry composition used for prompt/profile
+    coherence. A managed stage adds R13 separately after this seam; this helper
+    does not fabricate a managed lease or claim that extra capability.
     """
     from tests._chat_registry_fixture import build_live_chat_registry
 
@@ -422,7 +420,7 @@ def test_wire_name_error_propagates_from_the_optional_tool_layer() -> None:
     """C1 (kill-check, D12 second layer) — mutant M2.1.
 
     ``_register_extra_tools`` adds tools (``fs_search``, ``fs_usage``,
-    ``fs_chronicle_search``, ``fs_spawn_subagent``, ...) through
+    ``fs_chronicle_search``, ...) through
     ``_register_optional_tool``, which has its own degrade-on-``Exception``
     fallback. Poisoning a profile builder never reaches it, so reverting the
     fix *only there* survived the rest of this file's tests. A malformed wire

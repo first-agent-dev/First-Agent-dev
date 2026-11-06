@@ -47,8 +47,8 @@ def _nonportable_spec(name: str) -> ToolSpec:
 def test_extra_tool_registration_failures_and_duplicates_are_observable(tmp_path: Path, caplog: Any) -> None:
     """S14b.1: Every optional registration branch fails independently and remains retry-safe.
 
-    Mocks the module-level builder callables (build_fs_search_tool,
-    build_usage_tool, build_spawn_subagent_tool, ...) to simulate failures;
+    Mocks the supported optional builder callables (build_fs_search_tool,
+    build_usage_tool, ...) to simulate failures;
     asserts surviving tools register, failed ones are absent, duplicates
     are suppressed on the second call, and WARNINGs are observable.
     """
@@ -63,7 +63,6 @@ def test_extra_tool_registration_failures_and_duplicates_are_observable(tmp_path
         "build_undo_tool",
         "build_diff_tool",
         "build_send_ctrl_c_tool",
-        "build_spawn_subagent_tool",
     )
     original = {name: getattr(tool_module, name) for name in names}
     try:
@@ -81,9 +80,6 @@ def test_extra_tool_registration_failures_and_duplicates_are_observable(tmp_path
         tool_module.build_undo_tool = lambda _: _spec("fs_undo")
         tool_module.build_diff_tool = lambda _: _spec("fs_diff")
         tool_module.build_send_ctrl_c_tool = lambda: _spec("fs_send_ctrl_c")
-        # spawn fails → absent
-        tool_module.build_spawn_subagent_tool = lambda _: (_ for _ in ()).throw(RuntimeError("spawn broken"))
-
         caplog.set_level(logging.WARNING)
         registry = ToolRegistry()
         tool_module._register_extra_tools(
@@ -122,7 +118,6 @@ def test_extra_tool_registration_failures_and_duplicates_are_observable(tmp_path
     # No duplicates: set size equals list size.
     assert len(registry.names()) == len(registered)
     assert any("usage" in record.message.lower() for record in caplog.records)
-    assert any("spawn" in record.message.lower() for record in caplog.records)
 
 
 def test_baseline_registry_fallback_is_live_when_profiles_fail(tmp_path: Path, caplog: Any) -> None:
