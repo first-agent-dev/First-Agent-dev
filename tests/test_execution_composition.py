@@ -8,6 +8,7 @@ controller then fails closed (CT115) instead of publishing over a host path.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import io
 import json
 import logging
@@ -925,6 +926,161 @@ def test_managed_coder_run_never_offers_pair_tools_or_calls_host_git(
     assert all(pair_names.isdisjoint(names) for names in provider_tool_sets)
     assert len(provider_tool_sets) == 1
     assert index_path.read_bytes() == index_before
+
+
+def test_managed_coder_write_uses_revision_metadata_without_host_git(
+    site: Site,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R18 production-caller oracle: managed Blackboard stamps never probe host Git."""
+    from fa.feature_flags import FeatureFlags, FeatureFlagsLoadResult
+    from fa.inner_loop.session_db import SessionDatabase
+    from fa.inner_loop.tools import mutation_guard
+    from fa.providers import ProviderChain, SecretStore
+    from fa.session.manager import RunContext, SessionContext
+
+    state_root = tmp_path / "fa-state"
+    monkeypatch.setenv("FA_STATE_ROOT", str(state_root))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))
+    monkeypatch.setattr(cli, "_build_pty_pool", lambda **_kwargs: object())
+    monkeypatch.setattr(
+        "fa.feature_flags.load_feature_flags_from_path",
+        lambda: FeatureFlagsLoadResult(FeatureFlags(blackboard_enabled=True)),
+    )
+
+    llms_content = "# R18 managed workspace map\n"
+    knowledge = site.source / "knowledge"
+    knowledge.mkdir()
+    (knowledge / "llms.txt").write_text(llms_content, encoding="utf-8")
+    models = tmp_path / "models.yaml"
+    models.write_text(
+        """coder:
+  name: "test-model"
+  family: "openai"
+  chain:
+    - provider: openrouter
+      model: "test/model"
+      base_url: "https://example.invalid/v1"
+      api_key_env: K
+""",
+        encoding="utf-8",
+    )
+
+    base_commit_calls: list[Path] = []
+    original_base_commit = mutation_guard._base_commit
+
+    def record_base_commit(root: Path) -> str:
+        base_commit_calls.append(root)
+        return original_base_commit(root)
+
+    monkeypatch.setattr(mutation_guard, "_base_commit", record_base_commit)
+    provider_calls = 0
+    canonical_visible_during_run: list[bool] = []
+    write_sent = False
+
+    def provider_request(
+        _chain: Any, request: Any, *, logical_call_id: str | None = None
+    ) -> tuple[ResponseInfo, str, list[Any]]:
+        nonlocal provider_calls, write_sent
+        provider_calls += 1
+        names = {
+            str(tool.get("function", {}).get("name", ""))
+            for tool in request.tools
+            if isinstance(tool.get("function"), dict)
+        }
+        if provider_calls == 1:
+            assert "pr_prepare" in names
+            call = {
+                "id": "r18-pr-prepare",
+                "type": "function",
+                "function": {
+                    "name": "pr_prepare",
+                    "arguments": json.dumps({"intent": "CHORE", "invariant": "n/a"}),
+                },
+            }
+            return ResponseInfo("", 1, 1, "tool_calls", (call,)), logical_call_id or "r18", []
+        if not write_sent:
+            assert provider_calls == 2 and "fs_write_file" in names
+            write_sent = True
+            call = {
+                "id": "r18-managed-write",
+                "type": "function",
+                "function": {
+                    "name": "fs_write_file",
+                    "arguments": json.dumps({"path": "src/r18.py", "content": "VALUE = 18\n"}),
+                },
+            }
+            return ResponseInfo("", 1, 1, "tool_calls", (call,)), logical_call_id or "r18", []
+        canonical_visible_during_run.append((site.source / "src" / "r18.py").exists())
+        return ResponseInfo("done", 1, 1, "stop"), logical_call_id or "r18", []
+
+    monkeypatch.setattr(ProviderChain, "request", provider_request)
+    index_path = site.source / ".git" / "index"
+    index_before = index_path.read_bytes()
+    service_path, config_path = _configs(tmp_path, _document(site))
+    session_db_path = tmp_path / "session.db"
+    run_log_dir = tmp_path / "session-log" / "run-1"
+    session_db = SessionDatabase(session_db_path, session_id="session-1")
+    session_context = SessionContext("session-1", site.source, session_db_path, tmp_path / "manifest.json")
+    run_context = RunContext("run-1", "session-1", site.source, session_db_path, run_log_dir)
+
+    with SupervisorService(read_config_file(service_path)) as service:
+        workspace_id = _registered(service)
+        with _serving_supervisor(service):
+            managed = managed_execution_for_run(run_context, config_path=config_path)
+            assert managed is not None and managed.binding.workspace_id == workspace_id
+            operations: list[Operation] = []
+            original_request = managed.client.request
+
+            def record_request(operation: Operation, **kwargs: Any) -> Any:
+                operations.append(operation)
+                return original_request(operation, **kwargs)
+
+            monkeypatch.setattr(managed.client, "request", record_request)
+            args = cli.build_parser().parse_args(
+                [
+                    "run",
+                    "--role",
+                    "coder",
+                    "--config",
+                    str(models),
+                    "--workspace",
+                    str(site.source),
+                    "--run-id",
+                    "run-1",
+                    "--max-turns",
+                    "3",
+                    "write the R18 probe",
+                ]
+            )
+            args._managed_execution = managed
+            args._session_context = session_context
+            args._run_context = run_context
+            args._session_db = session_db
+            run_exit_code: int | None = None
+            release_confirmed = False
+            try:
+                run_exit_code = cli._cmd_run(args, secrets=SecretStore({"K": "sk-test-live"}))
+            finally:
+                release_confirmed = managed.close()
+
+    assert provider_calls == 3 and write_sent
+    assert base_commit_calls == []
+    assert run_exit_code == 0
+    assert release_confirmed
+    assert canonical_visible_during_run == [False]
+    assert operations.count(Operation.WRITE_FILE) == 1
+    assert index_path.read_bytes() == index_before
+    assert (site.source / "src" / "r18.py").read_text(encoding="utf-8") == "VALUE = 18\n"
+    rows = session_db.query_blackboard_rows(entry_type="file_version")
+    assert len(rows) == 1
+    assert rows[0]["write_set"] == ["src/r18.py"]
+    versions = rows[0]["version_dependencies"]
+    assert versions["base_revision"].startswith("rev-")
+    assert versions["llms.txt"] == hashlib.sha256(llms_content.encode("utf-8")).hexdigest()[:12]
+    assert "base_commit" not in versions
 
 
 @pytest.fixture
