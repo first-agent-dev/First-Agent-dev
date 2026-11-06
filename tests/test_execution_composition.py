@@ -813,6 +813,120 @@ def _serving_supervisor(service: SupervisorService) -> Iterator[None]:
         assert not runner.is_alive()
 
 
+def test_managed_coder_run_never_offers_pair_tools_or_calls_host_git(
+    site: Site,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R17 production-caller oracle: the managed coder cannot reach pair-tool host Git."""
+    from fa.inner_loop.session_db import SessionDatabase
+    from fa.inner_loop.tools import pair_tools
+    from fa.providers import ProviderChain, SecretStore
+    from fa.session.manager import RunContext, SessionContext
+
+    state_root = tmp_path / "fa-state"
+    monkeypatch.setenv("FA_STATE_ROOT", str(state_root))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))
+    monkeypatch.setattr(cli, "_build_pty_pool", lambda **_kwargs: object())
+
+    models = tmp_path / "models.yaml"
+    models.write_text(
+        """coder:
+  name: "test-model"
+  family: "openai"
+  chain:
+    - provider: openrouter
+      model: "test/model"
+      base_url: "https://example.invalid/v1"
+      api_key_env: K
+""",
+        encoding="utf-8",
+    )
+
+    git_calls: list[tuple[list[str], Path]] = []
+    original_run_git = pair_tools._run_git
+
+    def record_pair_git(args: list[str], cwd: Path, timeout: int = 10) -> Any:
+        git_calls.append((list(args), cwd))
+        return original_run_git(args, cwd=cwd, timeout=timeout)
+
+    monkeypatch.setattr(pair_tools, "_run_git", record_pair_git)
+    provider_tool_sets: list[set[str]] = []
+    pair_names = {"fs_checkpoint", "fs_undo", "fs_diff"}
+    pair_probe_sent = False
+
+    def provider_request(
+        _chain: Any, request: Any, *, logical_call_id: str | None = None
+    ) -> tuple[ResponseInfo, str, list[Any]]:
+        nonlocal pair_probe_sent
+        names = {
+            str(tool.get("function", {}).get("name", ""))
+            for tool in request.tools
+            if isinstance(tool.get("function"), dict)
+        }
+        provider_tool_sets.append(names)
+        # If a regression offers any host-Git tool, exercise that real
+        # registered handler rather than treating schema presence as proof.
+        requested = next((name for name in ("fs_checkpoint", "fs_undo", "fs_diff") if name in names), None)
+        if requested is not None and not pair_probe_sent:
+            pair_probe_sent = True
+            arguments = {"message": "R17 host-Git reachability probe"} if requested == "fs_checkpoint" else {}
+            call = {
+                "id": "r17-pair-tool-probe",
+                "type": "function",
+                "function": {"name": requested, "arguments": json.dumps(arguments)},
+            }
+            return ResponseInfo("", 1, 1, "tool_calls", (call,)), logical_call_id or "r17", []
+        return ResponseInfo("done", 1, 1, "stop"), logical_call_id or "r17", []
+
+    monkeypatch.setattr(ProviderChain, "request", provider_request)
+    index_path = site.source / ".git" / "index"
+    index_before = index_path.read_bytes()
+    service_path, config_path = _configs(tmp_path, _document(site))
+    session_db_path = tmp_path / "session.db"
+    run_log_dir = tmp_path / "session-log" / "run-1"
+    session_db = SessionDatabase(session_db_path, session_id="session-1")
+    session_context = SessionContext("session-1", site.source, session_db_path, tmp_path / "manifest.json")
+    run_context = RunContext("run-1", "session-1", site.source, session_db_path, run_log_dir)
+
+    with SupervisorService(read_config_file(service_path)) as service:
+        workspace_id = _registered(service)
+        with _serving_supervisor(service):
+            managed = managed_execution_for_run(run_context, config_path=config_path)
+            assert managed is not None and managed.binding.workspace_id == workspace_id
+            args = cli.build_parser().parse_args(
+                [
+                    "run",
+                    "--role",
+                    "coder",
+                    "--config",
+                    str(models),
+                    "--workspace",
+                    str(site.source),
+                    "--run-id",
+                    "run-1",
+                    "--max-turns",
+                    "3",
+                    "inspect the workspace",
+                ]
+            )
+            args._managed_execution = managed
+            args._session_context = session_context
+            args._run_context = run_context
+            args._session_db = session_db
+            try:
+                assert cli._cmd_run(args, secrets=SecretStore({"K": "sk-test-live"})) == 0
+            finally:
+                assert managed.close()
+
+    assert provider_tool_sets
+    assert git_calls == []
+    assert all(pair_names.isdisjoint(names) for names in provider_tool_sets)
+    assert len(provider_tool_sets) == 1
+    assert index_path.read_bytes() == index_before
+
+
 @pytest.fixture
 def local_cell_peer(tmp_path: Path) -> Iterator[Endpoint]:
     private = tmp_path / "local-docker-peer"
