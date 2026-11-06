@@ -20,6 +20,7 @@ stopped container, lost reply or elapsed budget is ever converted into `True`.
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -46,6 +47,7 @@ class OwnedCellTermination:
         *,
         cells: Any | None,
         profile: ExecutionProfile | None,
+        profile_for_view: Callable[[ViewRef], ExecutionProfile | None] | None = None,
         cgroup_root: Path = Path("/sys/fs/cgroup"),
     ) -> None:
         if not isinstance(journal, OperationJournal):
@@ -56,9 +58,12 @@ class OwnedCellTermination:
             raise ExecutionContractError
         if profile is not None and not isinstance(profile, ExecutionProfile):
             raise ExecutionContractError
+        if profile_for_view is not None and not callable(profile_for_view):
+            raise ExecutionContractError
         if not isinstance(cgroup_root, Path) or not cgroup_root.is_absolute():
             raise ExecutionContractError
         self._journal, self._cells, self._profile = journal, cells, profile
+        self._profile_for_view = profile_for_view
         self._cgroup_root = cgroup_root
 
     def _bindings(self, namespace: NamespaceRef, view_ref: ViewRef) -> list[dict[str, Any]]:
@@ -75,12 +80,18 @@ class OwnedCellTermination:
             if record["namespace"] == namespace.to_dict() and record["view_ref"] == view_ref.to_dict()
         ]
 
+    def _profile_for(self, view_ref: ViewRef) -> ExecutionProfile | None:
+        if self._profile_for_view is not None:
+            return self._profile_for_view(view_ref)
+        return self._profile
+
     def stop_cells(self, namespace: NamespaceRef, view_ref: ViewRef, *, deadline: float) -> None:
-        """Stop every owned cell of this view; never create, replace or replay one."""
+        """Stop every owned cell with the profile bound to this exact view."""
         records = self._bindings(namespace, view_ref)
         if not records:
             return
-        if self._cells is None or self._profile is None:
+        profile = self._profile_for(view_ref)
+        if self._cells is None or profile is None:
             raise SupervisorError("BACKEND_UNAVAILABLE")
         for record in records:
             if deadline <= time.monotonic():
@@ -93,7 +104,7 @@ class OwnedCellTermination:
                     operation_id=record["operation_id"],
                     namespace=namespace,
                     view=view_ref,
-                    profile=self._profile,
+                    profile=profile,
                     deadline=deadline,
                 )
             except JournalError as error:
@@ -113,11 +124,12 @@ class OwnedCellTermination:
             # No EXEC record binds a cell: nothing was created, so nothing can
             # still be writing. A journal fact, not an inference from silence.
             return True
-        if self._profile is None:
+        profile = self._profile_for(view_ref)
+        if profile is None:
             return None
         try:
             verdicts = [
-                cgroup.descendants_empty(self._cgroup_root, self._profile.cgroup_parent, container_id)
+                cgroup.descendants_empty(self._cgroup_root, profile.cgroup_parent, container_id)
                 for container_id in container_ids
             ]
         except ValueError:

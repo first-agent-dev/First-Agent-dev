@@ -31,8 +31,11 @@ import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
+from fa.execution.client import ExecutionRejectedError
+from fa.execution.composition import BoundPlanPublisher, ExecutionBinding, ManagedExecution
+from fa.execution.types import NamespaceRef
 from fa.inner_loop.expansion import TIER_HIGH, TIER_SAFE
 from fa.inner_loop.path_risk import (
     ScopeRiskConfig,
@@ -82,6 +85,17 @@ _ACTIVE = threading.local()
 logger = logging.getLogger(__name__)
 
 
+class ParentStageLease(Protocol):
+    """Trusted in-process lifecycle seam for a parent stage around child work."""
+
+    @property
+    def is_handoff_enabled(self) -> bool: ...
+
+    def suspend(self, *, deadline: float | None = None) -> str: ...
+
+    def resume(self, *, deadline: float | None = None) -> None: ...
+
+
 @dataclass(frozen=True)
 class WorkflowInvocationContext:
     """Everything ``run_workflow`` needs that the tool cannot invent itself.
@@ -102,6 +116,10 @@ class WorkflowInvocationContext:
     session_db: Any = None
     transport: Any = None
     secrets: Mapping[str, str] | None = None
+    # Parent-managed writer and stage lease are supplied only by direct managed
+    # ``fa run``. ``fa workflow`` intentionally retains its legacy context.
+    managed_execution: Any = None
+    parent_stage_lease: ParentStageLease | None = None
     # S10 / CT6 (audit F2): structural escalation budget K — the maximum
     # number of invocations allowed per chat session. The tool counts
     # invocations itself (the -wfN closure); this is the bound it enforces.
@@ -403,6 +421,212 @@ def _child_run_context(ctx: WorkflowInvocationContext, candidate: str) -> RunCon
     return manager.begin_run(session, requested_run_id=candidate)
 
 
+def _managed_parent_namespace(ctx: WorkflowInvocationContext) -> NamespaceRef | None:
+    """Validate the direct-run handoff seam before allocating or suspending anything."""
+    managed = ctx.managed_execution
+    lease = ctx.parent_stage_lease
+    if managed is None and lease is None:
+        return None
+    if (
+        not isinstance(managed, ManagedExecution)
+        or lease is None
+        or getattr(lease, "is_handoff_enabled", False) is not True
+        or not callable(getattr(lease, "suspend", None))
+        or not callable(getattr(lease, "resume", None))
+        or not isinstance(ctx.session_context, SessionContext)
+        or not isinstance(ctx.run_context, RunContext)
+    ):
+        raise SessionManagerError("managed_handoff_unavailable", "parent managed handoff binding is incomplete")
+    parent = NamespaceRef(ctx.session_context.session_id, ctx.parent_run_id)
+    if (
+        ctx.run_context.run_id != ctx.parent_run_id
+        or ctx.run_context.session_id != ctx.session_context.session_id
+        or ctx.run_context.workspace_path != ctx.workspace
+        or ctx.session_context.workspace_path != ctx.workspace
+        or managed.binding.namespace != parent
+    ):
+        raise SessionManagerError("managed_handoff_mismatch", "parent managed handoff binding does not match")
+    return parent
+
+
+def _begin_managed_child(
+    *,
+    managed: ManagedExecution,
+    child_namespace: NamespaceRef,
+    parent_stage_lease: ParentStageLease,
+    deadline: float,
+) -> ToolResult | None:
+    """Suspend the parent and require server acknowledgement before child dispatch."""
+    try:
+        suspended_revision = parent_stage_lease.suspend(deadline=deadline)
+        if suspended_revision != managed.current_revision_id:
+            raise RuntimeError("parent publication revision did not match the owner grant")
+    except Exception as exc:  # noqa: BLE001 - stale parent view is never reused
+        return ToolResult.fail("parent_suspend_failed", f"parent workspace suspension failed [{type(exc).__name__}]")
+    try:
+        managed.handoff_to(child_namespace, deadline=deadline)
+    except ExecutionRejectedError as exc:
+        # A first, determinate refusal leaves ownership with the parent. Resume
+        # only by opening a fresh view; never revive the old grant.
+        try:
+            parent_stage_lease.resume(deadline=deadline)
+        except Exception as resume_error:  # noqa: BLE001 - parent remains fail-closed
+            return ToolResult.fail(
+                "parent_resume_failed",
+                f"HANDOFF refusal could not reopen the parent [{type(resume_error).__name__}]",
+            )
+        return ToolResult.fail("workflow_handoff_refused", f"child dispatch refused [{exc.code}]")
+    except Exception as exc:  # noqa: BLE001 - no dispatch or parent resume on uncertainty
+        return ToolResult.fail(
+            "workflow_handoff_uncertain",
+            f"child ownership could not be confirmed [{type(exc).__name__}]; parent remains suspended",
+        )
+    if managed.binding.namespace != child_namespace:
+        return ToolResult.fail("workflow_handoff_invalid", "HANDOFF did not bind the exact child namespace")
+    return None
+
+
+def _return_managed_child_to_parent(
+    *,
+    managed: ManagedExecution,
+    parent_namespace: NamespaceRef,
+    parent_stage_lease: ParentStageLease,
+    deadline: float,
+) -> str | None:
+    """Reverse HANDOFF, then reopen/rebind the parent at the returned revision."""
+    try:
+        managed.handoff_to(parent_namespace, deadline=deadline)
+    except Exception as error:  # noqa: BLE001 - unresolved child authority is fail-closed
+        return f"return HANDOFF failed: {type(error).__name__}"
+    if managed.binding.namespace != parent_namespace:
+        return "return HANDOFF did not restore the exact parent namespace"
+    try:
+        parent_stage_lease.resume(deadline=deadline)
+    except Exception as error:  # noqa: BLE001 - never continue with suspended adapters
+        return f"parent view refresh failed: {type(error).__name__}"
+    return None
+
+
+def _dispatch_child_workflow(
+    run_workflow_fn: Callable[..., tuple[int, FlowState | None]],
+    *,
+    workflow_kwargs: dict[str, object],
+    managed: ManagedExecution | None,
+    child_namespace: NamespaceRef | None,
+) -> tuple[int, FlowState | None, Exception | None]:
+    """Call the real workflow seam and contain child exceptions for reconciliation."""
+    _ACTIVE.running = True
+    try:
+        if managed is not None:
+            if child_namespace is None:
+                raise RuntimeError("managed child namespace missing")
+            child_binding = ExecutionBinding(child_namespace, managed.binding.workspace_id)
+            workflow_kwargs["managed_execution"] = managed
+            workflow_kwargs["plan_publisher"] = BoundPlanPublisher(managed, child_binding)
+        exit_code, terminal_state = run_workflow_fn(**workflow_kwargs)
+        return exit_code, terminal_state, None
+    except Exception as exc:  # noqa: BLE001 - reconcile authority before reporting child failure
+        return 2, None, exc
+    finally:
+        _ACTIVE.running = False
+
+
+def _execute_child_with_managed_lifecycle(
+    run_workflow_fn: Callable[..., tuple[int, FlowState | None]],
+    *,
+    workflow_kwargs: dict[str, object],
+    managed: ManagedExecution | None,
+    parent_namespace: NamespaceRef | None,
+    child_namespace: NamespaceRef | None,
+    parent_stage_lease: ParentStageLease | None,
+    deadline: float,
+) -> tuple[int, FlowState | None, Exception | None, ToolResult | None]:
+    """Own the complete HANDOFF/child/return cycle; never resume on stale authority."""
+    if managed is not None:
+        if parent_namespace is None or child_namespace is None or parent_stage_lease is None:
+            return 2, None, None, ToolResult.fail("workflow_context_error", "managed child binding is incomplete")
+        failure = _begin_managed_child(
+            managed=managed,
+            child_namespace=child_namespace,
+            parent_stage_lease=parent_stage_lease,
+            deadline=deadline,
+        )
+        if failure is not None:
+            return 2, None, None, failure
+
+    exit_code, terminal_state, workflow_error = _dispatch_child_workflow(
+        run_workflow_fn,
+        workflow_kwargs=workflow_kwargs,
+        managed=managed,
+        child_namespace=child_namespace,
+    )
+    if managed is not None and parent_namespace is not None and parent_stage_lease is not None:
+        return_error = _return_managed_child_to_parent(
+            managed=managed,
+            parent_namespace=parent_namespace,
+            parent_stage_lease=parent_stage_lease,
+            deadline=deadline,
+        )
+        if return_error is not None:
+            return (
+                2,
+                None,
+                None,
+                ToolResult.fail("workflow_return_unconfirmed", f"{return_error}; parent remains suspended"),
+            )
+    return exit_code, terminal_state, workflow_error, None
+
+
+@dataclass(frozen=True)
+class _PreparedInvocation:
+    task: str
+    roles: list[str]
+    mode: str
+    max_repairs: int
+    max_replans: int
+    candidate: str
+
+
+def _prepare_invocation(
+    params: Mapping[str, object], ctx: WorkflowInvocationContext, invocation_count: int
+) -> _PreparedInvocation | ToolResult:
+    """Validate public fields and reserve the next stable child identifier."""
+    task = _as_str(params, "task", "").strip()
+    if not task:
+        return ToolResult.fail("invalid_params", "`task` must be a non-empty string", retryable=True)
+    roles = parse_roles(_as_str(params, "roles", DEFAULT_WORKFLOW_ROLES))
+    if not roles:
+        return ToolResult.fail(
+            "invalid_roles",
+            "`roles` must name at least one role, e.g. 'planner,coder,eval'",
+            retryable=True,
+        )
+    mode = _as_str(params, "mode", DEFAULT_WORKFLOW_MODE)
+    if mode not in WORKFLOW_MODES:
+        return ToolResult.fail(
+            "invalid_mode",
+            f"`mode` {mode!r} is not one of {list(WORKFLOW_MODES)}",
+            retryable=True,
+        )
+    if _requires_acquisition(roles):
+        return ToolResult.fail(
+            "acquisition_unavailable",
+            "nested coder workflows need I03 managed plan acquisition; "
+            "use an explicit-plan CLI/library workflow instead",
+        )
+    candidate = child_run_id(ctx.parent_run_id, invocation_count + 1)
+    if not _RUN_ID_RE.match(candidate):
+        return ToolResult.fail("invalid_child_run_id", f"derived child run id {candidate!r} is invalid")
+    return _PreparedInvocation(
+        task=task,
+        roles=roles,
+        mode=mode,
+        max_repairs=_clamp(_as_int(params, "max_repairs", DEFAULT_TOOL_MAX_REPAIRS), low=0, high=MAX_REPAIRS_CEILING),
+        max_replans=_clamp(_as_int(params, "max_replans", DEFAULT_TOOL_MAX_REPLANS), low=0, high=MAX_REPLANS_CEILING),
+        candidate=candidate,
+    )
+
+
 def build_invoke_workflow_tool(
     run_workflow_fn: Callable[..., tuple[int, FlowState | None]],
     ctx_provider: Callable[[], WorkflowInvocationContext | None],
@@ -443,47 +667,21 @@ def build_invoke_workflow_tool(
         if budget_failure is not None:
             return budget_failure
 
-        task = _as_str(params, "task", "").strip()
-        if not task:
-            return ToolResult.fail("invalid_params", "`task` must be a non-empty string", retryable=True)
+        prepared = _prepare_invocation(params, ctx, invocation_count)
+        if isinstance(prepared, ToolResult):
+            return prepared
+        task, roles, mode = prepared.task, prepared.roles, prepared.mode
+        max_repairs, max_replans = prepared.max_repairs, prepared.max_replans
+        candidate = prepared.candidate
 
-        # (c) Roles.
-        roles = parse_roles(_as_str(params, "roles", DEFAULT_WORKFLOW_ROLES))
-        if not roles:
-            return ToolResult.fail(
-                "invalid_roles",
-                "`roles` must name at least one role, e.g. 'planner,coder,eval'",
-                retryable=True,
-            )
+        try:
+            parent_namespace = _managed_parent_namespace(ctx)
+        except SessionManagerError as exc:
+            return ToolResult.fail("workflow_context_error", f"managed child allocation refused: {exc.code}")
 
-        # (d) Mode. The schema also constrains this; the handler check is the
-        # fail-closed half for any caller that bypasses schema validation.
-        mode = _as_str(params, "mode", DEFAULT_WORKFLOW_MODE)
-        if mode not in WORKFLOW_MODES:
-            return ToolResult.fail(
-                "invalid_mode",
-                f"`mode` {mode!r} is not one of {list(WORKFLOW_MODES)}",
-                retryable=True,
-            )
-
-        if _requires_acquisition(roles):
-            return ToolResult.fail(
-                "acquisition_unavailable",
-                "nested coder workflows need I03 managed plan acquisition; "
-                "use an explicit-plan CLI/library workflow instead",
-            )
-
-        max_repairs = _clamp(_as_int(params, "max_repairs", DEFAULT_TOOL_MAX_REPAIRS), low=0, high=MAX_REPAIRS_CEILING)
-        max_replans = _clamp(_as_int(params, "max_replans", DEFAULT_TOOL_MAX_REPLANS), low=0, high=MAX_REPLANS_CEILING)
-
-        # (e) Child run id, validated before use.
-        candidate = child_run_id(ctx.parent_run_id, invocation_count + 1)
-        if not _RUN_ID_RE.match(candidate):
-            return ToolResult.fail(
-                "invalid_child_run_id",
-                f"derived child run id {candidate!r} does not match {_RUN_ID_RE.pattern}",
-            )
-
+        # (f) One absolute deadline includes child allocation, both HANDOFFs,
+        # parent-view refresh, and every child stage.
+        deadline = time.monotonic() + ctx.workflow_timeout_seconds
         try:
             _validate_workflow_request(
                 roles=roles,
@@ -496,52 +694,62 @@ def build_invoke_workflow_tool(
                 inject_overrides=ctx.inject_overrides,
             )
             child_context = _child_run_context(ctx, candidate)
+            if parent_namespace is not None and child_context is None:
+                raise SessionManagerError("child_context_missing", "managed child needs a session run context")
         except (SessionManagerError, WorkflowRequestError) as exc:
             return ToolResult.fail("workflow_context_error", f"child run allocation refused: {exc.code}")
+        invocation_count += 1
+
+        child_namespace = (
+            NamespaceRef(child_context.session_id, child_context.run_id, parent_run_id=ctx.parent_run_id)
+            if parent_namespace is not None and child_context is not None
+            else None
+        )
 
         # (f2) Planner handoff (S10 / CT6, DP-9): file-map + Do-exactly built
         # from LIVE session facts; degrades to the raw goal when unavailable.
         handoff_task = _resolve_handoff_task(task=task, candidate=candidate, ctx=ctx)
 
-        # (f) Deadline. Computed here so the elapsed budget covers the whole
-        # nested pipeline, not one stage.
-        deadline = time.monotonic() + ctx.workflow_timeout_seconds
-
-        invocation_count += 1
-        _ACTIVE.running = True
-        try:
-            exit_code, terminal_state = run_workflow_fn(
-                roles=roles,
-                task=handoff_task,
-                per_role_task={},
-                mode=mode,
-                max_repairs=max_repairs,
-                max_replans=max_replans,
-                run_id=candidate,
-                config=ctx.config,
-                workspace=ctx.workspace,
-                max_turns=ctx.max_turns,
-                output_mode="quiet",
-                run_stage_fn=ctx.run_stage_fn,
-                transport=ctx.transport,
-                secrets=ctx.secrets,
-                session_context=ctx.session_context,
-                run_context=child_context,
-                session_db=ctx.session_db,
-                deadline_mono=deadline,
-                # PLAN S5c / Q9: inherit the chat session's --inject.
-                inject_overrides=ctx.inject_overrides,
-            )
-        except Exception as exc:  # noqa: BLE001 - a tool must not kill the chat session
-            # (h) Contained deliberately. An escaping exception here would end
-            # the operator's chat turn over a failure in a *nested* pipeline
-            # whose artifacts are already on disk and inspectable.
+        managed = ctx.managed_execution if parent_namespace is not None else None
+        parent_lease = ctx.parent_stage_lease if parent_namespace is not None else None
+        workflow_kwargs: dict[str, object] = {
+            "roles": roles,
+            "task": handoff_task,
+            "per_role_task": {},
+            "mode": mode,
+            "max_repairs": max_repairs,
+            "max_replans": max_replans,
+            "run_id": candidate,
+            "config": ctx.config,
+            "workspace": ctx.workspace,
+            "max_turns": ctx.max_turns,
+            "output_mode": "quiet",
+            "run_stage_fn": ctx.run_stage_fn,
+            "transport": ctx.transport,
+            "secrets": ctx.secrets,
+            "session_context": ctx.session_context,
+            "run_context": child_context,
+            "session_db": ctx.session_db,
+            "deadline_mono": deadline,
+            # PLAN S5c / Q9: inherit the chat session's --inject.
+            "inject_overrides": ctx.inject_overrides,
+        }
+        exit_code, terminal_state, workflow_error, lifecycle_error = _execute_child_with_managed_lifecycle(
+            run_workflow_fn,
+            workflow_kwargs=workflow_kwargs,
+            managed=managed,
+            parent_namespace=parent_namespace,
+            child_namespace=child_namespace,
+            parent_stage_lease=parent_lease,
+            deadline=deadline,
+        )
+        if lifecycle_error is not None:
+            return lifecycle_error
+        if workflow_error is not None:
             return ToolResult.fail(
                 "workflow_error",
-                f"workflow {candidate} raised {type(exc).__name__}: {exc}",
+                f"workflow {candidate} raised {type(workflow_error).__name__}: {workflow_error}",
             )
-        finally:
-            _ACTIVE.running = False
 
         # (i) Structured result per CT4 OUTPUTS. No "verdict" field: run_workflow
         # returns (exit_code, FlowState) and FlowState has no verdict; the
@@ -559,6 +767,8 @@ def build_invoke_workflow_tool(
             summary = f"workflow {candidate} finished: status={status or 'unknown'}"
         else:
             summary = f"workflow {candidate} exited {exit_code}: status={status or 'unknown'}"
+        if managed is not None:
+            summary += "; parent workspace refreshed at the returned revision"
 
         return ToolResult.ok(
             summary,
@@ -568,6 +778,7 @@ def build_invoke_workflow_tool(
                 "status": status,
                 "route": route,
                 "timed_out": timed_out,
+                "parent_view_refreshed": managed is not None,
             },
         )
 

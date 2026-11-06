@@ -103,7 +103,7 @@ class CommandReceipts:
             state, exit_code, barrier = JobState.TIMED_OUT, None, False
         else:
             observation = self._observe(outcome.operation_id, view, outcome.container_id, observed_by)
-            state, exit_code, barrier = self._command_state(outcome, observation, observed_by)
+            state, exit_code, barrier = self._command_state(outcome, observation, view, observed_by)
         return {
             "receipt": self._receipt(
                 peer,
@@ -187,7 +187,7 @@ class CommandReceipts:
             observation = self._observe_optional(target, view, container_id, observed_by)
             if observation is not None and observation.status == "exited":
                 exit_code = observation.exit_code
-                barrier = self._barrier(container_id, observed_by)
+                barrier = self._barrier(container_id, view, observed_by)
         return {
             "receipt": self._receipt(
                 peer,
@@ -210,15 +210,15 @@ class CommandReceipts:
     # -------------------------------------------------------------- observation
 
     def _command_state(
-        self, outcome: CommandOutcome, observation: ContainerObservation, deadline: float
+        self, outcome: CommandOutcome, observation: ContainerObservation, view: ViewRef, deadline: float
     ) -> tuple[JobState, int | None, bool]:
         """The only mapping from a finished RUN plus one observation to a state."""
-        profile = self._profile()
+        profile = self._profile(view)
         if observation.status == "exited":
             if observation.exit_code != outcome.exit_code:
                 # The command's own claim and the container's fact disagree.
                 raise SupervisorError("EXECUTION_UNKNOWN")
-            if not self._barrier(observation.container_id, deadline):
+            if not self._barrier(observation.container_id, view, deadline):
                 # §2.1: a normal EXITED needs the barrier as well as the exit.
                 raise SupervisorError("EXECUTION_UNKNOWN")
             return JobState.EXITED, observation.exit_code, True
@@ -245,7 +245,7 @@ class CommandReceipts:
         if cancelled and observation.status != "exited":
             return JobState.CANCELLED, None, False
         if observation.status == "exited":
-            if not self._barrier(observation.container_id, deadline):
+            if not self._barrier(observation.container_id, view, deadline):
                 return JobState.UNKNOWN, None, False
             return JobState.EXITED, observation.exit_code, True
         if observation.status == "running":
@@ -269,7 +269,7 @@ class CommandReceipts:
             return self._engine.inspect_owned(
                 operation_id=operation_id,
                 view=view,
-                profile=self._profile(),
+                profile=self._profile(view),
                 container_id=container_id,
                 deadline=deadline,
             )
@@ -283,9 +283,9 @@ class CommandReceipts:
         except TimeoutError:
             return None
 
-    def _barrier(self, container_id: str, deadline: float) -> bool:
+    def _barrier(self, container_id: str, view: ViewRef, deadline: float) -> bool:
         """Poll the kernel fact to the deadline; only `populated 0` is true."""
-        profile = self._profile()
+        profile = self._profile(view)
         while True:
             try:
                 verdict = cgroup.descendants_empty(self._cgroup_root, profile.cgroup_parent, container_id)
@@ -321,7 +321,7 @@ class CommandReceipts:
         deadline: float,
     ) -> dict[str, Any]:
         """Build and self-check one receipt against the trusted identity."""
-        profile = self._profile()
+        profile = self._profile(view)
         tree, plan_sha256 = self._authority.execution_identity(
             peer, namespace, view_ref=view, capability=capability, deadline=deadline
         )
@@ -381,8 +381,8 @@ class CommandReceipts:
             raise SupervisorError("UNAUTHORIZED")
         return capability
 
-    def _profile(self) -> ExecutionProfile:
-        profile = self._authority.approved_profile
+    def _profile(self, view: ViewRef) -> ExecutionProfile:
+        profile = self._authority.view_profile(view)
         if profile is None:
             raise SupervisorError("UNAPPROVED_PROFILE")
         return profile

@@ -560,6 +560,11 @@ def test_drive_session_logs_usage_and_session_summary(tmp_path: Path) -> None:
     summary = [event for event in events if event.kind == "session_summary"][-1]
     assert summary.content["n_turns"] == 1
     assert summary.content["cache_hit_ratio"] == 0.7
+    # Q98: the durable end-of-run row carries the stage's own verdict, so a finished
+    # workflow can be traced by per-stage codes instead of a console transcript.
+    assert summary.content["role"] == "coder"
+    assert summary.content["exit_code"] == 0
+    assert summary.content["stop_reason"] == "stopped_by_llm"
 
 
 def test_drive_session_cache_slo_against_recorded_transcript(tmp_path: Path) -> None:

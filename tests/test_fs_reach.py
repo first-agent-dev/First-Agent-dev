@@ -189,7 +189,13 @@ def test_fs_reach_tool_names_composition() -> None:
     assert "fs_reach" in TOOL_NAMES
 
 
-# ── S22 LIVE-PATH: in-file oracle against the real FA source ────────────────
+def test_strict_rooted_reads_require_disposable_index(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="in-memory index"):
+        build_fs_reach_tool(tmp_path, strict_rooted_reads=True)
+    assert not (tmp_path / ".fa" / "structural.db").exists()
+
+
+# ── S22 LIVE-PATH: in-file oracle against the actual FA source ──────────────
 
 
 def _real_repo_available() -> bool:

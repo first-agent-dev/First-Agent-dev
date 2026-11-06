@@ -4,9 +4,11 @@
 # Two layers behind one command:
 #   1. Infrastructure verbs (logs, restart, up, down, rebuild, status, shell)
 #      run on the HOST via docker compose — closed set, docker compose API.
-#   2. Everything else delegates to `fa` CLI INSIDE the agent container
-#      (selfcheck, probe, run, chunk, authoring-check, --version, …).
-#      New Python subcommands work automatically — no wrapper change needed.
+#   2. Product commands run INSIDE the agent container. Help, `run`, `workflow`,
+#      and `stats`, plus active `chunk` and explicit disposable-workspace
+#      `inner-loop-smoke`, use the isolated installed controller; other product
+#      commands retain legacy `fa` dispatch during migration. New Python
+#      subcommands still work on the legacy route.
 #
 # Install:  sudo ln -sf /srv/first-agent/repo/First-Agent-dev/scripts/fa /usr/local/bin/fa
 # Override: FA_COMPOSE_FILE=docker-compose.custom.yml fa status
@@ -55,17 +57,38 @@ _is_help_arg() {
     esac
 }
 
-_help_python() {
-    PYTHONPATH="$REPO_DIR/src${PYTHONPATH:+:$PYTHONPATH}" "${PYTHON:-python3}" -m fa.cli_help "$@"
+_is_host_verb() {
+    case "${1:-}" in
+        logs|proxy-logs|egress-proxy|status|up|down|restart|rebuild|shell|update|clean-rebuild|clean|commit-traces|sessions)
+            return 0
+            ;;
+        *) return 1 ;;
+    esac
+}
+
+_help_unavailable() {
+    printf '%s\n' "fa: wrapper help is disabled for this host/administrative command" >&2
+    exit 2
 }
 
 _print_usage() {
-    _help_python --wrapper-usage
+    _delegate_help_to_controller "$@"
 }
 
-_print_host_topic_help() {
-    _help_python --host-topic "${1:-}"
+_has_help_option() {
+    local arg
+    for arg in "$@"; do
+        case "$arg" in
+            -h|--help|-help) return 0 ;;
+        esac
+    done
+    return 1
 }
+
+_host_has_help() {
+    _is_help_arg "${1:-}" || _has_help_option "$@"
+}
+
 _delegate_to_agent() {
     if _have_workspace; then
         exec "${COMPOSE[@]}" exec "${TTY_FLAG[@]}" "${_W_FLAG[@]}" first-agent fa "$@"
@@ -74,56 +97,69 @@ _delegate_to_agent() {
     fi
 }
 
-_delegate_agent_help() {
-    local topic="$1"
-    shift || true
-    if [[ "$topic" == "help" ]]; then
-        _delegate_to_agent help "$@"
-    else
-        _delegate_to_agent "$topic" "$@"
+_delegate_help_to_controller() {
+    # Help is workspace-independent. Start from immutable image code, never the
+    # active project, and preserve controller_entry's isolated import gate.
+    exec "${COMPOSE[@]}" exec "${TTY_FLAG[@]}" -w /opt/first-agent first-agent \
+        /opt/fa-venv/bin/python -I -m fa.controller_entry "$@"
+}
+
+_delegate_workspace_command_to_controller() {
+    local -a ACTIVE_WORKSPACE_ENV=()
+    if _have_workspace; then
+        ACTIVE_WORKSPACE_ENV=(-e "FA_WRAPPER_ACTIVE_WORKSPACE=$_SESSION_WORKSPACE")
     fi
+    exec "${COMPOSE[@]}" exec "${TTY_FLAG[@]}" "${ACTIVE_WORKSPACE_ENV[@]}" \
+        -w /opt/first-agent first-agent \
+        /opt/fa-venv/bin/python -I -m fa.controller_entry "$@"
 }
 
 case "${1:-}" in
     # ── Infrastructure verbs (host-side, docker compose level) ──────────
     logs)
         shift
-        if _is_help_arg "${1:-}"; then _print_host_topic_help logs; exit 0; fi
+        if _host_has_help "$@"; then _help_unavailable; fi
         exec "${COMPOSE[@]}" logs "$@" first-agent
         ;;
     proxy-logs)
         shift
-        if _is_help_arg "${1:-}"; then _print_host_topic_help proxy-logs; exit 0; fi
+        if _host_has_help "$@"; then _help_unavailable; fi
         exec "${COMPOSE[@]}" logs "$@" fa-egress-proxy
+        ;;
+    egress-proxy)
+        shift
+        if _host_has_help "$@"; then _help_unavailable; fi
+        printf '%s\n' "fa: egress-proxy is managed by the fa-egress-proxy Compose service; use 'fa up' to start it" >&2
+        exit 2
         ;;
     status)
         shift
-        if _is_help_arg "${1:-}"; then _print_host_topic_help status; exit 0; fi
+        if _host_has_help "$@"; then _help_unavailable; fi
         exec "${COMPOSE[@]}" ps
         ;;
     up)
         shift
-        if _is_help_arg "${1:-}"; then _print_host_topic_help up; exit 0; fi
+        if _host_has_help "$@"; then _help_unavailable; fi
         exec "${COMPOSE[@]}" up -d
         ;;
     down)
         shift
-        if _is_help_arg "${1:-}"; then _print_host_topic_help down; exit 0; fi
+        if _host_has_help "$@"; then _help_unavailable; fi
         exec "${COMPOSE[@]}" down
         ;;
     restart)
         shift
-        if _is_help_arg "${1:-}"; then _print_host_topic_help restart; exit 0; fi
+        if _host_has_help "$@"; then _help_unavailable; fi
         exec "${COMPOSE[@]}" restart first-agent fa-egress-proxy
         ;;
     rebuild)
         shift
-        if _is_help_arg "${1:-}"; then _print_host_topic_help rebuild; exit 0; fi
+        if _host_has_help "$@"; then _help_unavailable; fi
         exec "${COMPOSE[@]}" up -d --build
         ;;
     shell)
         shift
-        if _is_help_arg "${1:-}"; then _print_host_topic_help shell; exit 0; fi
+        if _host_has_help "$@"; then _help_unavailable; fi
         # shell uses TTY (interactive) — docker picks up the terminal from
         # stdin/stdout; ${TTY_FLAG[@]} is empty for interactive, -T for non-tty.
         # Arrays-as-flags: use _have_workspace helper to avoid testing an
@@ -136,15 +172,16 @@ case "${1:-}" in
         ;;
     update)
         shift
-        if _is_help_arg "${1:-}"; then _print_host_topic_help update; exit 0; fi
+        if _host_has_help "$@"; then _help_unavailable; fi
         exec "$REPO_DIR/scripts/fa-update.sh" "$@"
         ;;
     clean-rebuild)
         shift
-        if _is_help_arg "${1:-}"; then _print_host_topic_help clean-rebuild; exit 0; fi
+        if _host_has_help "$@"; then _help_unavailable; fi
         exec "$REPO_DIR/scripts/fa-clean-rebuild.sh" "$@"
         ;;
     clean)
+        if _host_has_help "${@:2}"; then _help_unavailable; fi
         if [[ "${2:-}" == "rebuild" || "${2:-}" == "clean-rebuild" ]]; then
             echo "fa: use 'fa clean-rebuild' (hyphen), not 'fa clean rebuild'" >&2
             exit 2
@@ -153,7 +190,7 @@ case "${1:-}" in
         ;;
     commit-traces)
         shift
-        if _is_help_arg "${1:-}"; then _print_host_topic_help commit-traces; exit 0; fi
+        if _host_has_help "$@"; then _help_unavailable; fi
         cd "$REPO_DIR"
         # -f: force-add gitignored trace files (they're ignored by default
         # so fa-update.sh stays clean; commit-traces is the deliberate path).
@@ -165,41 +202,56 @@ case "${1:-}" in
         ;;
     sessions)
         shift
-        if _is_help_arg "${1:-}"; then _print_host_topic_help sessions; exit 0; fi
+        if _host_has_help "$@"; then _help_unavailable; fi
         # shellcheck disable=SC2010
         ls -lt "$_FA_ROOT/sessions/" | grep -v "^total\\|\.active"
         ;;
 
     # ── Help ────────────────────────────────────────────────────────────
     ""|--help|-h|-help)
-        if [[ $# -ge 2 ]] && _print_host_topic_help "$2"; then
-            exit 0
-        fi
-        if [[ $# -ge 2 ]]; then
-            # Agent command global form: `fa --help run` / `fa -h run`.
-            _delegate_agent_help "$2" --help "${@:3}"
-        fi
-        _print_usage
-        exit 0
+        if _is_host_verb "${2:-}"; then _help_unavailable; fi
+        _print_usage "$@"
         ;;
     help)
-        shift
-        if [[ $# -eq 0 ]]; then
-            _print_usage
-            exit 0
+        if _is_host_verb "${2:-}"; then _help_unavailable; fi
+        _delegate_help_to_controller "$@"
+        ;;
+    workflow)
+        if _has_help_option "$@"; then _delegate_help_to_controller "$@"; fi
+        _delegate_workspace_command_to_controller "$@"
+        ;;
+    stats)
+        if _has_help_option "$@"; then _delegate_help_to_controller "$@"; fi
+        _delegate_workspace_command_to_controller "$@"
+        ;;
+    authoring-check)
+        if _has_help_option "$@"; then _delegate_help_to_controller "$@"; fi
+        _delegate_workspace_command_to_controller "$@"
+        ;;
+    run)
+        if _has_help_option "$@"; then _delegate_help_to_controller "$@"; fi
+        _delegate_workspace_command_to_controller "$@"
+        ;;
+    inner-loop-smoke)
+        if _has_help_option "$@"; then _delegate_help_to_controller "$@"; fi
+        if _have_workspace; then
+            printf '%s\n' "fa inner-loop-smoke: refusing managed .active workspace; use a manual controller invocation with an explicit disposable --workspace" >&2
+            exit 2
         fi
-        if _print_host_topic_help "$1"; then
-            exit 0
+        _delegate_workspace_command_to_controller "$@"
+        ;;
+    chunk)
+        if _has_help_option "$@"; then _delegate_help_to_controller "$@"; fi
+        if _have_workspace; then
+            _delegate_workspace_command_to_controller "$@"
+        else
+            _delegate_to_agent "$@"
         fi
-        _delegate_to_agent help "$@"
         ;;
 
-    # ── Default: delegate to fa CLI inside the agent container ──────────
+    # ── Default: delegate product commands to the installed controller ──
     *)
-        if [[ "${2:-}" == "-help" ]]; then
-            # Compatibility for operators who type `fa run -help`.
-            set -- "$1" --help "${@:3}"
-        fi
-        _delegate_to_agent "$@"
+        if _has_help_option "$@"; then _delegate_help_to_controller "$@"; fi
+        _delegate_workspace_command_to_controller "$@"
         ;;
 esac

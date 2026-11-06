@@ -6,25 +6,43 @@ tracebacks before raising HTTP exceptions, ensuring observability.
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+
+def test_server_imports_without_fastapi(tmp_path: Path) -> None:
+    """The public package import yields no server or pool when FastAPI is absent."""
+    source_root = Path(__file__).resolve().parents[1] / "src"
+    env = os.environ.copy()
+    env["PYTHONPATH"] = os.pathsep.join(part for part in (str(source_root), env.get("PYTHONPATH", "")) if part)
+    script = """
 from unittest.mock import patch
 
+with patch("importlib.import_module", side_effect=ImportError("FastAPI unavailable")):
+    import fa.runtime as runtime
+    import fa.runtime.server as server
 
-def test_server_imports_without_fastapi() -> None:
-    """Server module must import cleanly when FastAPI is absent."""
-    # Simulate FastAPI not installed by mocking importlib to raise ImportError
-    with patch("importlib.import_module", side_effect=ImportError("fastapi not installed")):
-        # Re-import the module to trigger the except ImportError branch
-        import sys
+assert runtime.app is None
+assert server.HAS_FASTAPI is False
+assert server.app is None
+assert server.pool is None
+assert server.runtime_pool is None
+print("optional-server-not-loaded")
+"""
 
-        if "fa.runtime.server" in sys.modules:
-            del sys.modules["fa.runtime.server"]
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
 
-        import fa.runtime.server as server
-
-        # Verify fallback state
-        assert server.HAS_FASTAPI is False
-        assert server.app is None
-        assert server.pool is None
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "optional-server-not-loaded"
 
 
 def test_server_has_fastapi_when_available() -> None:

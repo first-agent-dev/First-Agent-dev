@@ -41,7 +41,12 @@ from fa.inner_loop.plan_ids import (
     extract_plan_ids,
     precheck,
 )
-from fa.inner_loop.plan_promotion import PlanPromotionError, publish_plan_buffer, seed_plan_candidate
+from fa.inner_loop.plan_promotion import (
+    CandidatePlanPublisher,
+    PlanPromotionError,
+    retain_plan_draft,
+    seed_plan_candidate,
+)
 from fa.inner_loop.planner_dispatch import PlannerDispatch, PlannerDispatchError, PlannerDispatchKind
 from fa.inner_loop.prompt import ADVERSARIAL_EVAL_STANCE_PREAMBLE
 from fa.inner_loop.slice_verification import (
@@ -80,6 +85,7 @@ from fa.paths import fa_session_log_root
 from fa.providers.errors import ConfigurationError
 
 if TYPE_CHECKING:
+    from fa.execution.composition import ManagedExecution
     from fa.inner_loop.session_db import SessionDatabase
     from fa.providers import ModelsConfig
     from fa.providers.base import Transport
@@ -174,6 +180,14 @@ class _WorkflowAdmission:
     failure: str | None = None
 
 
+@dataclass(slots=True)
+class _ManagedRevisionPair:
+    """The sealed revision boundary around the most recent coder stage."""
+
+    base_revision_id: str | None = None
+    target_revision_id: str | None = None
+
+
 @dataclass(frozen=True)
 class WorkflowContext:
     """Invariant per-run configuration shared by every workflow stage."""
@@ -214,6 +228,14 @@ class WorkflowContext:
     # observe/enforce if the operator edits config while a stage is in flight.
     verify_gate_mode: str = "observe"
     admission: _WorkflowAdmission | None = None
+    # Managed candidate promotion is supplied only by the execution composition.
+    # None is a fail-closed boundary; the controller has no host-path writer fallback.
+    plan_publisher: CandidatePlanPublisher | None = None
+    # One workflow-owned writer is forwarded unchanged to every stage. The stage
+    # boundary can consult its selected profile and latest authority revision.
+    managed_execution: ManagedExecution | None = None
+    managed_revision_pair: _ManagedRevisionPair = field(default_factory=_ManagedRevisionPair)
+    managed_plan_ref: PlanRef | None = None
 
     def plan_text(self) -> str | None:
         """Use the immutable admitted snapshot, or read legacy optional input.
@@ -816,13 +838,6 @@ judge's context. Truncation is always announced, never silent.
 EVAL_VERIFICATION_MAX_CHARS: Final = 20_000
 """Cap on detailed deterministic verification evidence sent to the evaluator."""
 
-EVAL_GIT_TIMEOUT_SECONDS: Final = 15
-"""Per-invocation cap on the advisory git calls.
-
-A hung ``git`` must not silently consume the workflow deadline; on timeout the
-section is omitted and the run continues.
-"""
-
 EVAL_DOC_PATHS: Final = ("knowledge/adr/DIGEST.md", "knowledge/adr/README.md")
 """Repo docs offered to the judge as PATHS, not pasted bodies.
 
@@ -830,38 +845,6 @@ Eval has ``fs_read_file``; pasting bodies would burn context on documents it
 may not need. Only paths that exist are listed, so a moved doc drops out
 rather than sending the judge to a dead reference.
 """
-
-
-def _git_output(args: list[str], cwd: Path, runner: Callable[..., object] | None = None) -> str | None:
-    """Run one advisory git command; ``None`` when it could not be answered.
-
-    Deliberately NOT ``fa.hygiene.pr_intent._run_git``: that helper passes
-    ``check=True`` and raises on a non-zero exit. This input is advisory, so a
-    workspace that is not a git repo, a detached HEAD, or a missing git binary
-    must degrade to "no diff available" rather than take the run down. Every
-    failure mode collapses to ``None``.
-    """
-    # Local import: keeps subprocess off this module's import surface.
-    import subprocess
-
-    run = runner if runner is not None else subprocess.run
-    try:
-        # Fixed "git" argv, list form, no shell.
-        result = run(
-            ["git", *args],
-            cwd=cwd,
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=EVAL_GIT_TIMEOUT_SECONDS,
-        )
-    except (OSError, subprocess.SubprocessError, ValueError):
-        # FileNotFoundError (git absent), TimeoutExpired, bad cwd -- all advisory.
-        logger.warning("workflow: advisory `git %s` unavailable; continuing", " ".join(args))
-        return None
-    if getattr(result, "returncode", 1) != 0:
-        return None
-    return str(getattr(result, "stdout", "") or "")
 
 
 def _verification_evidence_lines(
@@ -919,7 +902,6 @@ def _eval_evidence_block(
     *,
     verification: PlanVerification | None = None,
     repair_round: int = 0,
-    runner: Callable[..., object] | None = None,
 ) -> str:
     """Build the evidence preamble handed to the eval stage. (S13)
 
@@ -933,11 +915,11 @@ def _eval_evidence_block(
     declared slice IDs, what actually changed on disk, and where the reference
     docs live.
 
-    Every section degrades independently. A missing plan, a workspace that is
-    not a git repo, or an absent git binary each drop their own section and
-    leave the rest intact; none raises. Sections that would be empty are
-    OMITTED rather than emitted as a bare heading, because an empty heading
-    reads as "checked, found nothing" when the truth is "never looked".
+    Managed revision metadata is read-only and advisory. If the sealed revision
+    pair or its metadata comparison is unavailable, the block says so explicitly;
+    it never falls back to controller-side Git and never reports unavailable as
+    an empty change set. The current eval remains an LLM judgment; verify evidence
+    below is still the separate mechanical gate.
 
     Returns ``""`` when nothing could be gathered, so the caller appends
     nothing rather than a hollow frame.
@@ -970,36 +952,57 @@ def _eval_evidence_block(
             )
         )
 
-    stat = _git_output(["diff", "HEAD", "--stat"], ctx.workspace, runner)
-    diff = _git_output(["diff", "HEAD"], ctx.workspace, runner)
-    status = _git_output(["status", "--porcelain"], ctx.workspace, runner)
-
-    if stat is None and diff is None and status is None:
-        lines.append("Changed files: unavailable (not a git repository, or git could not be run).")
+    pair = ctx.managed_revision_pair
+    if ctx.managed_execution is None or pair.base_revision_id is None or pair.target_revision_id is None:
+        lines.append("Changed files: unavailable (managed sealed-revision evidence was not captured).")
     else:
-        # `git diff HEAD` covers staged AND unstaged work, so a coder that
-        # staged everything and one that staged nothing yield the same
-        # evidence. It CANNOT see untracked files, which is why porcelain
-        # status is included: a slice whose entire contribution is a new file
-        # would otherwise show an empty diff and could be passed on nothing.
-        untracked = tuple(line[3:] for line in (status or "").splitlines() if line.startswith("??"))
-        if untracked:
-            lines.append(f"New untracked files ({len(untracked)}): {', '.join(untracked)}")
-            lines.append("These are NOT in the diff below; read them with fs_read_file before judging.")
-        if stat:
-            lines.append(f"Diff stat (git diff HEAD):\n{stat.rstrip()}")
-        if diff:
-            body = diff
-            if len(body) > EVAL_DIFF_MAX_CHARS:
-                body = (
-                    body[:EVAL_DIFF_MAX_CHARS] + f"\n[diff truncated at {EVAL_DIFF_MAX_CHARS} chars of {len(diff)}"
-                    " -- read the remaining files with fs_read_file]"
+        try:
+            revision_diff = ctx.managed_execution.revision_changes(
+                pair.base_revision_id,
+                pair.target_revision_id,
+                deadline=ctx.deadline_mono,
+            )
+            changes = revision_diff["changes"]
+            total_changes = revision_diff["total_changes"]
+            truncated = revision_diff["truncated"]
+            if (
+                not isinstance(changes, list)
+                or type(total_changes) is not int
+                or total_changes < len(changes)
+                or type(truncated) is not bool
+                or truncated != (total_changes > len(changes))
+                or any(
+                    not isinstance(item, dict)
+                    or not isinstance(item.get("path"), str)
+                    or item.get("change") not in {"added", "modified", "deleted"}
+                    for item in changes
                 )
-            lines.append(f"Diff (git diff HEAD):\n{body}")
-        elif not untracked:
-            # Explicit, not silence: "nothing changed" is itself a finding
-            # worth a FAIL, and an absent section reads as "diff unavailable".
-            lines.append("Changed files: NONE. `git diff HEAD` is empty and there are no untracked files.")
+            ):
+                raise ValueError("managed revision metadata is malformed")
+        except Exception as error:  # noqa: BLE001 — incomplete advisory evidence is never treated as success
+            logger.warning("workflow: managed revision evidence unavailable (%s)", type(error).__name__)
+            lines.append("Changed files: unavailable (managed sealed-revision comparison failed).")
+        else:
+            if total_changes == 0:
+                lines.append(
+                    "Changed files: NONE between the sealed managed revisions "
+                    f"{pair.base_revision_id} and {pair.target_revision_id}."
+                )
+            else:
+                entries = [f"- {item['change']}: {item['path']}" for item in changes]
+                body = "\n".join(entries)
+                if len(body) > EVAL_DIFF_MAX_CHARS:
+                    body = body[:EVAL_DIFF_MAX_CHARS] + (
+                        f"\n[metadata display truncated at {EVAL_DIFF_MAX_CHARS} characters; "
+                        "read relevant files with fs_read_file]"
+                    )
+                lines.append(
+                    f"Changed files between sealed managed revisions "
+                    f"({total_changes} total; metadata_truncated={truncated}):\n{body}"
+                )
+                lines.append(
+                    "Revision records contain paths only; read relevant current files with fs_read_file before judging."
+                )
 
     existing_docs = [name for name in EVAL_DOC_PATHS if (ctx.workspace / name).is_file()]
     if existing_docs:
@@ -1178,6 +1181,19 @@ def _stage_task(
     return stage_task
 
 
+def _capture_managed_revision_boundary(ctx: WorkflowContext, role: str, *, after_stage: bool = False) -> None:
+    """Capture the writer's published revision IDs around one coder dispatch."""
+    if role != "coder":
+        return
+    pair = ctx.managed_revision_pair
+    if after_stage:
+        if ctx.managed_execution is not None:
+            pair.target_revision_id = ctx.managed_execution.current_revision_id
+        return
+    pair.base_revision_id = ctx.managed_execution.current_revision_id if ctx.managed_execution is not None else None
+    pair.target_revision_id = None
+
+
 def _run_stage(
     ctx: WorkflowContext,
     role: str,
@@ -1238,6 +1254,8 @@ def _run_stage(
         # Role gating lives in resolve_injection_modes, so a coder-only
         # injection stays off here for a planner or eval stage.
         "injection_modes": resolve_injection_modes(role, overrides=ctx.inject_overrides),
+        "_managed_execution": ctx.managed_execution,
+        "_managed_plan_ref": ctx.managed_plan_ref,
     }
     if ctx.run_context is not None and ctx.session_context is not None:
         stage_kwargs.update(
@@ -1292,6 +1310,7 @@ def _run_stage(
     if _deadline_exceeded(ctx):
         _write_deadline_state(ctx, role, progress=progress)
         return StageResult(role=role, exit_code=WORKFLOW_DEADLINE_EXIT_CODE)
+    _capture_managed_revision_boundary(ctx, role)
     code = run_stage_fn(
         stage_args,
         transport=ctx.transport,
@@ -1299,6 +1318,7 @@ def _run_stage(
         outcome_sink=sink,
         **dispatch_kwargs,
     )
+    _capture_managed_revision_boundary(ctx, role, after_stage=True)
     if _scoped_stage_failed(dispatch, sink):
         return StageResult(role=role, exit_code=code or 2)
     report: EvalReport | None = None
@@ -2270,13 +2290,53 @@ def _validate_plan_admission(snapshot: PlanSnapshot) -> _PlanAdmissionValidation
     return _PlanAdmissionValidation(snapshot, "PASS", diagnostics)
 
 
+def _require_managed_publisher(ctx: WorkflowContext) -> CandidatePlanPublisher:
+    """CT115: a repair needs the authority, and its absence is a named refusal.
+
+    A plan that admits needs no publication — its bytes are already canonical — so
+    an unmanaged run keeps working for explicit plans. A repair invalidates that:
+    the revised bytes must be committed somewhere, and ``prepare-failed`` would
+    name the wrong fault when the real one is "this run has no managed execution".
+    The check therefore sits next to the reserved planner attempt, not at the top
+    of the gate, and it is the only place that decides the run cannot publish.
+    """
+    publisher = ctx.plan_publisher
+    if publisher is None:
+        raise PlanPromotionError("managed-execution-absent")
+    return publisher
+
+
 def _promote_validated_plan(
-    workspace: Path, source: PlanSnapshot, validated: _PlanAdmissionValidation, *, deadline: float | None = None
+    source: PlanSnapshot,
+    validated: _PlanAdmissionValidation,
+    *,
+    publisher: CandidatePlanPublisher,
+    deadline: float | None = None,
 ) -> PlanSnapshot:
-    """Only the validated immutable buffer is published; no draft path is recopied."""
+    """Publish only validated bytes through the injected managed candidate port.
+
+    The host path is not opened here and there is no fallback: the caller supplies
+    the port it proved it has (``_require_managed_publisher``), so a missing
+    authority is refused before any repair is dispatched.
+    """
     if validated.outcome != "PASS":
         raise PlanPromotionError("prepare-failed")
-    ref = publish_plan_buffer(workspace, source, validated.snapshot.utf8_bytes, deadline=deadline)
+    try:
+        ref = publisher.publish_candidate(source, validated.snapshot, deadline=deadline)
+    except PlanPromotionError:
+        raise
+    except Exception as error:  # sanitize transport/backend details into the admission schema's closed vocabulary
+        code = getattr(error, "code", None)
+        uncertain = code in {"DURABILITY_UNKNOWN", "CORRUPT_STATE", "EXECUTION_UNKNOWN", "TERMINALITY_UNKNOWN"}
+        rule = "durability-unknown" if uncertain else "prepare-failed"
+        raise PlanPromotionError(rule, replaced=uncertain) from error
+    expected = PlanRef(
+        source.ref.workspace_relative_path,
+        source.ref.source_kind,
+        validated.snapshot.ref.sha256,
+    )
+    if ref != expected:
+        raise PlanPromotionError("hash-mismatch", replaced=True)
     return replace(validated.snapshot, ref=ref)
 
 
@@ -2374,6 +2434,7 @@ def _run_admission_repair(
     *,
     kind: PlannerDispatchKind,
     draft: PlanSnapshot,
+    publisher: CandidatePlanPublisher,
     diagnostics: tuple[_AdmissionDiagnostic, ...] = (),
     reason: str = "",
 ) -> tuple[_PlanAdmissionValidation, PlanSnapshot | None]:
@@ -2420,12 +2481,24 @@ def _run_admission_repair(
             os.unlink(target.name, dir_fd=parent)
             os.fsync(parent)
     validation = _validate_plan_admission(candidate)
-    promoted = (
-        _promote_validated_plan(ctx.workspace, source, validation, deadline=ctx.deadline_mono)
-        if validation.outcome == "PASS"
-        else None
-    )
+    promoted: PlanSnapshot | None = None
+    if validation.outcome == "PASS":
+        try:
+            promoted = _promote_validated_plan(source, validation, publisher=publisher, deadline=ctx.deadline_mono)
+        except PlanPromotionError:
+            # CT119: the candidate was already unlinked above, so the only copy of
+            # the bytes the authority refused is the snapshot in memory.
+            _retain_rejected_draft(ctx, validation.snapshot)
+            raise
     return validation, promoted
+
+
+def _retain_rejected_draft(ctx: WorkflowContext, snapshot: PlanSnapshot) -> None:
+    """Keep refused bytes under their hash; never turn retention into the failure."""
+    try:
+        retain_plan_draft(ctx.workspace, ctx.run_id, snapshot.utf8_bytes, deadline=ctx.deadline_mono)
+    except Exception as error:  # noqa: BLE001 - the promotion rule must survive any retention fault
+        logger.warning("plan.draft.retained=false run_id=%s workspace=%s error=%s", ctx.run_id, ctx.workspace, error)
 
 
 def _admission_error(
@@ -2522,6 +2595,7 @@ def _admit_plan(
                 _admission_failed(ctx, "planner-budget" if state.planner_allowed else "planner-unavailable")
                 return False
             attempt_kind = kind.value
+            publisher = _require_managed_publisher(ctx)  # CT115: before the attempt is reserved.
             state.planner_calls += 1  # Reserve even when seeding/provider/writer/publication fails.
             validated, promoted = _run_admission_repair(
                 ctx,
@@ -2529,6 +2603,7 @@ def _admit_plan(
                 run_stage_fn,
                 kind=kind,
                 draft=validated.snapshot,
+                publisher=publisher,
                 diagnostics=validated.diagnostics,
                 reason=reason,
             )
@@ -2621,6 +2696,8 @@ def run_workflow(
     deadline_mono: float | None = None,
     inject_overrides: Mapping[str, str] | None = None,
     plan_path: Path | None = None,
+    plan_publisher: CandidatePlanPublisher | None = None,
+    managed_execution: ManagedExecution | None = None,
 ) -> tuple[int, FlowState | None]:
     """Run the workflow pipeline. Callable from CLI and from tools.
 
@@ -2711,6 +2788,9 @@ def run_workflow(
         deadline_mono=deadline_mono,
         inject_overrides=dict(inject_overrides or {}),
         plan_path=plan_path,
+        plan_publisher=plan_publisher,
+        managed_execution=managed_execution,
+        managed_plan_ref=None if snapshot is None else snapshot.ref,
         verify_gate_mode=_gate_mode(),
         admission=(
             _WorkflowAdmission(snapshot, "planner" in roles, max_replans)
@@ -2810,7 +2890,6 @@ __all__ = [
     "DEFAULT_MAX_REPLANS",
     "EVAL_DIFF_MAX_CHARS",
     "EVAL_DOC_PATHS",
-    "EVAL_GIT_TIMEOUT_SECONDS",
     "EVAL_VERDICT_TO_TERMINAL_STATUS",
     "EVAL_VERIFICATION_MAX_CHARS",
     "MAX_REPAIRS_CEILING",

@@ -117,6 +117,8 @@ from fa.skills._inject import plan_artifact_present
 
 logger = logging.getLogger(__name__)
 
+_DEFAULT_PINNED_BUFFER = object()
+
 # Default LLM-turn cap. Distinct from :attr:`RuntimeLimits.max_iterations`
 # which counts *tool calls* across one ``run_session`` invocation; one
 # LLM turn may emit multiple tool calls so the two caps are
@@ -170,7 +172,25 @@ def _usage_event_content(response: ResponseInfo) -> dict[str, int]:
     }
 
 
-def _session_summary_content(totals: Mapping[str, int], n_turns: int) -> dict[str, object]:
+def _session_summary_content(
+    totals: Mapping[str, int],
+    n_turns: int,
+    *,
+    role: str,
+    exit_code: int,
+    stop_reason: str,
+) -> dict[str, object]:
+    """The durable end-of-run row: usage totals **and** the run's own decision.
+
+    Q98 (operator, 2026-11-01) asked for one thing above all: "we must see
+    success/error codes for every workflow stage in sequence, so the work can be
+    traced back by status". Before this, the stage's decision existed only as a
+    console line (``OK: stopped_by_llm``) and a ``global_history`` row that the
+    workflow collapses into a single aggregate — a finished run left no per-stage
+    code anywhere in its own artifacts. ``run_started`` already records the role,
+    so one summary row per stage now carries the whole stage verdict, and
+    ``fa stats`` reads it instead of inferring a clean stop.
+    """
     cache_read = totals["cache_read_input_tokens"]
     cache_creation = totals["cache_creation_input_tokens"]
     input_tokens = totals["input_tokens"]
@@ -185,6 +205,9 @@ def _session_summary_content(totals: Mapping[str, int], n_turns: int) -> dict[st
         "uncached_input_tokens": uncached,
         "output_tokens": totals["output_tokens"],
         "cache_hit_ratio": cache_hit_ratio,
+        "role": role,
+        "exit_code": exit_code,
+        "stop_reason": stop_reason,
     }
 
 
@@ -197,8 +220,8 @@ def _merge_memory_summary_context(initial_summary: str, rebuilt_summary: str) ->
 
 
 #: Condensates injected by the coder-stage slice ceremony, in prompt order.
-#: Purpose-built ``INJECT.md`` files (~50-60 lines each) rather than the full
-#: ``SKILL.md`` bodies (643 + 828 lines), which would dominate the context
+#: Purpose-built ``INJECT.md`` files (~70 lines each) rather than the full
+#: ``SKILL.md`` bodies (734 + 867 lines), which would dominate the context
 #: window. PLAN S5 / CT1.
 CEREMONY_SKILLS: Final[tuple[str, ...]] = ("feature-planning", "tests-writing")
 
@@ -439,6 +462,7 @@ def drive_session(
     max_tokens: int = DEFAULT_MAX_TOKENS,
     redactor: SecretRedactor | None = None,
     output: EventBus | None = None,
+    pinned_buffer: Any = _DEFAULT_PINNED_BUFFER,
 ) -> SessionOutcome:
     """Drive an LLM-driven coder session to terminal state.
 
@@ -527,6 +551,7 @@ def drive_session(
             max_tokens=max_tokens,
             redactor=redactor,
             output=output,
+            pinned_buffer=pinned_buffer,
         )
     finally:
         reset_current_session(token)
@@ -553,6 +578,7 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
     max_tokens: int = DEFAULT_MAX_TOKENS,
     redactor: SecretRedactor | None = None,
     output: EventBus | None = None,
+    pinned_buffer: Any = _DEFAULT_PINNED_BUFFER,
 ) -> SessionOutcome:
     effective_limits = limits if limits is not None else RuntimeLimits.anchored_defaults()
     log = state.require_log()
@@ -587,7 +613,9 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
     # target architecture. Current implementation uses static config from models.yaml.
     # See: knowledge/adr/ADR-17-context-management-and-compaction.md
     budget = ContextBudget(limit_tokens=context_limit, configured_threshold=compaction_threshold)
-    pinned_buffer = PinnedBuffer(state.workspace_root)
+    active_pinned_buffer = (
+        PinnedBuffer(state.workspace_root) if pinned_buffer is _DEFAULT_PINNED_BUFFER else pinned_buffer
+    )
 
     usage_totals = {
         "input_tokens": 0,
@@ -725,7 +753,13 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
         # Waiver: internal invariant (log attached before loop starts).
         assert log is not None  # noqa: S101
         if not summary_written:
-            summary = _session_summary_content(usage_totals, usage_turns)
+            summary = _session_summary_content(
+                usage_totals,
+                usage_turns,
+                role=role,
+                exit_code=outcome.exit_code,
+                stop_reason=outcome.stop_reason,
+            )
             log.append(
                 actor="runtime",
                 kind="session_summary",
@@ -1044,10 +1078,13 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
 
         # ── PinnedBuffer Every Turn (Phase 2 / PR 2) ────────────────────────
         try:
-            pinned_text = pinned_buffer.extract_pinned_content(extra_instructions=system_prompt_extra)
+            if active_pinned_buffer is None:
+                pinned_text = system_prompt_extra
+            else:
+                pinned_text = active_pinned_buffer.extract_pinned_content(extra_instructions=system_prompt_extra)
         except Exception as exc:  # noqa: BLE001 # graceful degradation
             logger.warning("PinnedBuffer update failed on turn %d: %s", turn, exc)
-            pinned_text = ""
+            pinned_text = system_prompt_extra
 
         # ── PromptComposer Sole Assembly Path (Phase 3 / PR 3) ──────────────
         from fa.inner_loop.prompt import _ROLE_PROMPTS, CODER_SYSTEM_PROMPT

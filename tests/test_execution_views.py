@@ -37,6 +37,11 @@ def native_profile() -> ExecutionProfile:
     return replace(profile(), uid=os.getuid() or 1000, gid=os.getgid() or 1000)
 
 
+def read_only_profile() -> ExecutionProfile:
+    """The separately approved, non-interactive profile for READ/PIN_READER."""
+    return replace(native_profile(), profile_id="reader", interactive=False)
+
+
 def create(owner: WorkspaceAuthority, ids: dict[str, str], lease: GrantReply, **kwargs: Any) -> GrantReply:
     grant = owner.create_view(
         kwargs.get("peer", PEER),
@@ -111,7 +116,7 @@ def test_materialized_dirty_bytes_logical_modes_cell_ownership_and_nonsecret_ret
 
 
 def test_actual_rooted_write_read_your_writes_external_private_edit_and_old_reader_bytes(site: Site) -> None:
-    with site.owner(view_profile=native_profile()) as owner:
+    with site.owner(view_profile=native_profile(), read_only_profile=read_only_profile()) as owner:
         ids = ok(lambda: site.register(owner))
         old = ok(lambda: pin(owner, ids))
         lease = ok(lambda: site.claim(owner, ids))
@@ -165,7 +170,7 @@ def test_view_proof_denies_reads_and_writes_before_effects(site: Site, kind: str
 
 @pytest.mark.parametrize("kind", ["principal", "namespace", "token", "reader-token"])
 def test_owner_creation_proof_before_any_materialization(site: Site, kind: str) -> None:
-    with site.owner(view_profile=native_profile()) as owner:
+    with site.owner(view_profile=native_profile(), read_only_profile=read_only_profile()) as owner:
         ids = ok(lambda: site.register(owner))
         reader = ok(lambda: pin(owner, ids))
         lease = ok(lambda: site.claim(owner, ids))
@@ -419,7 +424,7 @@ def test_no_approved_profile_cannot_create_a_project_view(site: Site) -> None:
 
 
 def test_reader_grant_never_authorizes_rooted_writes(site: Site) -> None:
-    with site.owner(view_profile=native_profile()) as owner:
+    with site.owner(view_profile=native_profile(), read_only_profile=read_only_profile()) as owner:
         ids = ok(lambda: site.register(owner))
         reader = ok(lambda: pin(owner, ids))
         with pytest.raises(SupervisorError) as failure:

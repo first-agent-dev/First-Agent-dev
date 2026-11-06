@@ -22,8 +22,9 @@ Dormant owners (declared, with the unit that activates each):
 - `handoff`: no `WorkspaceAuthority.handoff` exists at all.
   Activating unit: the owner-handoff unit (terminal/settled source views,
   parent-child namespace proof).
-- `register_workspace` with `create=true`: only `register_existing` exists; the
-  creating/materializing provisioner is SLICE5's managed acquisition.
+- `register_workspace` with `create=true`: the authority materializes one absent
+  root from an approved input root or the empty seed, then registers that same
+  canonical root before the caller performs cell-local readiness.
 
 `stop_view` is composed with the real `OwnedCellTermination`: a view that never
 bound a cell is empty by the journal alone, and a view that did is stopped
@@ -57,6 +58,12 @@ from fa.execution.backend import CellBackend
 from fa.execution.docker import DockerEngine
 from fa.execution.plans import ProtectedPlanContext
 from fa.execution.profiles import ExecutionProfile, profile_set_sha256
+from fa.execution.protocol import (
+    MAX_PROJECT_ARTIFACTS_REPLY_BYTES,
+    MAX_REVISION_DIFF_REPLY_BYTES,
+    PROTOCOL_V2,
+    encode_json,
+)
 from fa.execution.receipts import CommandReceipts
 from fa.execution.supervisor import (
     CompletedReplyCache,
@@ -96,6 +103,7 @@ _REQUIRED_KEYS = frozenset(
 _OPTIONAL_KEYS = frozenset(
     {
         "view_profile_id",
+        "read_only_profile_id",
         "excluded_paths",
         "approved_cache",
         "reply_cache_entries",
@@ -117,10 +125,10 @@ class ServiceConfig:
     """Operator-supplied deployment facts; every field is explicit, no defaults.
 
     `profiles` are the approved cell profiles the dispatcher may route; the
-    digest published by `health` is derived from these exact objects, so an
-    edited file that was never reloaded cannot appear to have been applied.
-    `view_profile_id` selects the single profile the authority binds to a view
-    (cell dispatch stays closed when it is null).
+    health digest binds both these exact objects and their access-role mapping.
+    `view_profile_id` selects the WRITE profile and `read_only_profile_id`
+    selects the non-interactive READ profile. Either absent selection fails
+    closed for that view class.
     """
 
     state_root: Path
@@ -131,6 +139,7 @@ class ServiceConfig:
     rpc_timeout_ms: int
     lock_timeout_ms: int
     view_profile_id: str | None = None
+    read_only_profile_id: str | None = None
     excluded_paths: tuple[str, ...] = ()
     approved_cache: Path | None = None
     reply_cache_entries: int = 1024
@@ -157,10 +166,15 @@ class ServiceConfig:
             _positive_integer(value)
         if type(self.max_workers) is not int or not 1 <= self.max_workers <= 64:
             raise ExecutionContractError
-        if self.view_profile_id is not None and self.view_profile_id not in {
-            profile.profile_id for profile in self.profiles
-        }:
+        profile_ids = {profile.profile_id for profile in self.profiles}
+        if self.view_profile_id is not None and self.view_profile_id not in profile_ids:
             raise ExecutionContractError
+        if self.read_only_profile_id is not None:
+            read_profile = next(
+                (profile for profile in self.profiles if profile.profile_id == self.read_only_profile_id), None
+            )
+            if read_profile is None or read_profile.interactive:
+                raise ExecutionContractError
         if any(not isinstance(path, str) for path in self.excluded_paths):
             raise ExecutionContractError
         if self.approved_cache is not None and not isinstance(self.approved_cache, Path):
@@ -251,6 +265,7 @@ def load_config(document: object) -> ServiceConfig:
             rpc_timeout_ms=document["rpc_timeout_ms"],
             lock_timeout_ms=document["lock_timeout_ms"],
             view_profile_id=document.get("view_profile_id"),
+            read_only_profile_id=document.get("read_only_profile_id"),
             excluded_paths=tuple(excluded),
             approved_cache=None if cache is None else Path(cache),
             reply_cache_entries=document.get("reply_cache_entries", 1024),
@@ -312,9 +327,16 @@ class SupervisorService:
         if not isinstance(config, ServiceConfig):
             raise ExecutionContractError
         self._config = config
-        self._profile_set_sha256 = profile_set_sha256(config.profiles)
+        self._profile_set_sha256 = profile_set_sha256(
+            config.profiles,
+            view_profile_id=config.view_profile_id,
+            read_only_profile_id=config.read_only_profile_id,
+        )
         self._view_profile = next(
             (profile for profile in config.profiles if profile.profile_id == config.view_profile_id), None
+        )
+        self._read_only_profile = next(
+            (profile for profile in config.profiles if profile.profile_id == config.read_only_profile_id), None
         )
         self._authority = WorkspaceAuthority(
             config.state_root,
@@ -324,6 +346,7 @@ class SupervisorService:
             limits=InputLimits(),
             excluded_paths=config.excluded_paths,
             view_profile=self._view_profile,
+            read_only_profile=self._read_only_profile,
             approved_cache=config.approved_cache,
         )
         self._dispatcher = SupervisorDispatcher(
@@ -367,6 +390,7 @@ class SupervisorService:
                 self._authority.journal,
                 cells=None if self._backend is None else self._backend.cells,
                 profile=self._view_profile,
+                profile_for_view=self._authority.view_profile,
                 cgroup_root=config.cgroup_root,
             ),
         )
@@ -566,28 +590,94 @@ class SupervisorService:
         except TypeError:
             raise SupervisorError("INPUT_POLICY") from None
 
-    def _health(self, _peer: PeerIdentity, _request: dict[str, Any], _deadline: float) -> dict[str, Any]:
+    def _health(self, _peer: PeerIdentity, request: dict[str, Any], _deadline: float) -> dict[str, Any]:
+        if request["protocol_version"] == PROTOCOL_V2:
+            return {
+                "ready": self._authority.ready,
+                "protocol_version": PROTOCOL_V2,
+                "profile_set_sha256": self._profile_set_sha256,
+                "features": ["diff_revisions", "list_project_artifacts"],
+            }
         return {
             "ready": self._authority.ready,
             "protocol_version": 1,
             "profile_set_sha256": self._profile_set_sha256,
         }
 
+    def _list_project_artifacts(self, peer: PeerIdentity, request: dict[str, Any], deadline: float) -> dict[str, Any]:
+        view = self._view(request)
+        if view.access is not Access.READ or view.purpose is not ViewPurpose.PROJECT:
+            raise SupervisorError("INPUT_POLICY")
+        result = self._authority.list_project_artifacts(
+            peer,
+            self._namespace(request),
+            view_ref=view,
+            capability=self._capability(request),
+            project_slug=request["payload"]["project_slug"],
+            deadline=deadline,
+        )
+        # Bound the complete encoded reply, including its fixed envelope, rather
+        # than accepting a schema-valid but unbounded metadata projection.
+        response = {
+            "protocol_version": PROTOCOL_V2,
+            "request_id": request["request_id"],
+            "status": "OK",
+            "result": result,
+            "error": None,
+        }
+        try:
+            encode_json(response, max_bytes=MAX_PROJECT_ARTIFACTS_REPLY_BYTES)
+        except ExecutionContractError:
+            raise SupervisorError("INPUT_POLICY") from None
+        return result
+
+    def _diff_revisions(self, peer: PeerIdentity, request: dict[str, Any], deadline: float) -> dict[str, Any]:
+        view = self._view(request)
+        if view.access is not Access.READ or view.purpose is not ViewPurpose.PROJECT:
+            raise SupervisorError("INPUT_POLICY")
+        result = self._authority.diff_revisions(
+            peer,
+            self._namespace(request),
+            view_ref=view,
+            capability=self._capability(request),
+            base_revision=request["payload"]["base_revision"],
+            deadline=deadline,
+        )
+        response = {
+            "protocol_version": PROTOCOL_V2,
+            "request_id": request["request_id"],
+            "status": "OK",
+            "result": result,
+            "error": None,
+        }
+        try:
+            encode_json(response, max_bytes=MAX_REVISION_DIFF_REPLY_BYTES)
+        except ExecutionContractError:
+            raise SupervisorError("INPUT_POLICY") from None
+        return result
+
     def _register_workspace(self, peer: PeerIdentity, request: dict[str, Any], deadline: float) -> dict[str, Any]:
         payload = request["payload"]
         if payload["create"]:
-            # No creating/materializing owner exists yet (SLICE5 acquisition).
-            raise SupervisorError("BACKEND_UNAVAILABLE")
-        if payload["input_id"] is not None:
-            # An approved materialized input is only meaningful for a new root.
-            raise SupervisorError("INPUT_POLICY")
-        result = self._authority.register_existing(
-            peer,
-            self._namespace(request),
-            root_id=payload["root_id"],
-            relative_root=payload["relative_root"],
-            deadline=deadline,
-        )
+            result = self._authority.register_new(
+                peer,
+                self._namespace(request),
+                root_id=payload["root_id"],
+                relative_root=payload["relative_root"],
+                input_id=payload["input_id"],
+                deadline=deadline,
+            )
+        else:
+            if payload["input_id"] is not None:
+                # An approved materialized input is only meaningful for a new root.
+                raise SupervisorError("INPUT_POLICY")
+            result = self._authority.register_existing(
+                peer,
+                self._namespace(request),
+                root_id=payload["root_id"],
+                relative_root=payload["relative_root"],
+                deadline=deadline,
+            )
         return {"workspace_id": result["workspace_id"], "revision_id": result["revision_id"]}
 
     def _acquire_writer(self, peer: PeerIdentity, request: dict[str, Any], deadline: float) -> GrantReply:
@@ -634,12 +724,34 @@ class SupervisorService:
 
     def _read_file(self, peer: PeerIdentity, request: dict[str, Any], deadline: float) -> dict[str, Any]:
         payload = request["payload"]
+        view_ref = self._view(request)
+        namespace, capability = self._namespace(request), self._capability(request)
+        if view_ref.purpose is ViewPurpose.CANDIDATE:
+            try:
+                return dict(
+                    self._authority.read_candidate(
+                        peer,
+                        namespace,
+                        view_ref=view_ref,
+                        capability=capability,
+                        path=payload["path"],
+                        offset_bytes=payload["offset_bytes"],
+                        max_bytes=payload["max_bytes"],
+                        deadline=deadline,
+                    )
+                )
+            except SupervisorError as error:
+                # A CANDIDATE view also pins ordinary source reads. Only the exact
+                # candidate path is intercepted; a scope mismatch falls through
+                # to the normal rooted reader, which still enforces its own path policy.
+                if error.code != "PATH_DENIED":
+                    raise
         return dict(
             self._authority.read_file(
                 peer,
-                self._namespace(request),
-                view_ref=self._view(request),
-                capability=self._capability(request),
+                namespace,
+                view_ref=view_ref,
+                capability=capability,
                 path=payload["path"],
                 offset_bytes=payload["offset_bytes"],
                 max_bytes=payload["max_bytes"],
@@ -649,12 +761,17 @@ class SupervisorService:
 
     def _write_file(self, peer: PeerIdentity, request: dict[str, Any], deadline: float) -> dict[str, Any]:
         payload = request["payload"]
+        view_ref = self._view(request)
+        namespace, capability = self._namespace(request), self._capability(request)
+        writer = (
+            self._authority.write_candidate if view_ref.purpose is ViewPurpose.CANDIDATE else self._authority.write_file
+        )
         return dict(
-            self._authority.write_file(
+            writer(
                 peer,
-                self._namespace(request),
-                view_ref=self._view(request),
-                capability=self._capability(request),
+                namespace,
+                view_ref=view_ref,
+                capability=capability,
                 path=payload["path"],
                 content=payload["content"],
                 expected_sha256=payload["expected_sha256"],
@@ -713,17 +830,31 @@ class SupervisorService:
 
     def _publish(self, peer: PeerIdentity, request: dict[str, Any], deadline: float) -> dict[str, Any]:
         payload = request["payload"]
-        result = publication.publish_view(
-            self._authority,
-            peer,
-            self._namespace(request),
-            view_ref=self._view(request),
-            capability=self._capability(request),
-            sealed_manifest_id=payload["sealed_manifest_id"],
-            expected_base_revision=payload["expected_base_revision"],
-            operation_id=self._operation_id(request),
-            deadline=deadline,
-        )
+        view_ref = self._view(request)
+        namespace, capability = self._namespace(request), self._capability(request)
+        result: publication.PlanPublishResult | publication.PublishResult
+        if view_ref.purpose is ViewPurpose.CANDIDATE:
+            result = publication.publish_plan(
+                self._authority,
+                peer,
+                namespace,
+                view_ref=view_ref,
+                capability=capability,
+                operation_id=self._operation_id(request),
+                deadline=deadline,
+            )
+        else:
+            result = publication.publish_view(
+                self._authority,
+                peer,
+                namespace,
+                view_ref=view_ref,
+                capability=capability,
+                sealed_manifest_id=payload["sealed_manifest_id"],
+                expected_base_revision=payload["expected_base_revision"],
+                operation_id=self._operation_id(request),
+                deadline=deadline,
+            )
         return asdict(result)
 
     def _prepare_bundle(self, peer: PeerIdentity, request: dict[str, Any], deadline: float) -> dict[str, Any]:
@@ -759,7 +890,7 @@ class SupervisorService:
         return asdict(result)
 
     def _handoff(self, peer: PeerIdentity, request: dict[str, Any], deadline: float) -> GrantReply:
-        """Move the owner grant to the caller's own child run (CT113)."""
+        """Move the owner grant along the authority's permitted lineage (CT113/Q102)."""
         try:
             target = NamespaceRef(**request["payload"]["target_namespace"])
         except (TypeError, ExecutionContractError):
@@ -809,6 +940,8 @@ _ROUTE_NAMES: dict[Operation, str] = {
     Operation.SEAL: "_seal",
     Operation.PUBLISH: "_publish",
     Operation.PREPARE_BUNDLE: "_prepare_bundle",
+    Operation.LIST_PROJECT_ARTIFACTS: "_list_project_artifacts",
+    Operation.DIFF_REVISIONS: "_diff_revisions",
     Operation.INSTALL_PROJECT: "_install_project",
     Operation.HANDOFF: "_handoff",
     Operation.RELEASE: "_release",

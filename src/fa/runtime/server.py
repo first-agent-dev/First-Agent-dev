@@ -64,6 +64,7 @@ if HAS_FASTAPI:
         exit_code: int
         truncated: bool
         session_id: str
+        timed_out: bool
 
     class KillRequest(BaseModel):  # type: ignore[misc]  # optional dependency is loaded dynamically
         session_id: str
@@ -78,6 +79,7 @@ if HAS_FASTAPI:
                 exit_code=result.exit_code,
                 truncated=result.truncated,
                 session_id=result.session_id,
+                timed_out=result.timed_out,
             )
         except AssertionError as e:
             logger.error("/execute assertion failure session=%s: %s", req.session_id, e, exc_info=True)

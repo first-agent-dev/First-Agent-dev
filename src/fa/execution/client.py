@@ -7,26 +7,46 @@ that. No transport failure here triggers a resend or replacement operation ID.
 
 from __future__ import annotations
 
+import hashlib
+import logging
+import math
 import socket
 import stat
 import struct
+import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 from uuid import uuid4
 
 from fa.execution.profiles import ExecutionProfile
-from fa.execution.protocol import DeadlineConnection, decode_reply, decode_request, encode_json, read_frame, write_frame
+from fa.execution.protocol import (
+    MAX_PROJECT_ARTIFACTS_REPLY_BYTES,
+    MAX_REVISION_DIFF_REPLY_BYTES,
+    PROTOCOL_V1,
+    PROTOCOL_V2,
+    DeadlineConnection,
+    decode_reply,
+    decode_request,
+    encode_json,
+    read_frame,
+    write_frame,
+)
 from fa.execution.types import (
+    Access,
     ExecutionContractError,
     ExecutionReceipt,
+    GrantReply,
     JobState,
     NamespaceRef,
     Operation,
     OperationRef,
+    ViewPurpose,
     ViewRef,
+    _hex_id,
     _positive_integer,
-    validate_capability,
 )
+from fa.inner_loop.plan_admission import PlanRef, PlanSnapshot
 from fa.runtime.pty_pool import PtyResult
 
 
@@ -76,6 +96,75 @@ def _connect_authenticated(connection: socket.socket, path: Path, server_uid: in
         raise ExecutionUnavailableError
 
 
+@dataclass(frozen=True)
+class PlanPublication:
+    """One candidate publication: the promoted ref, the revision, and whether it was a repeat.
+
+    `already_published` is the authority's answer (CT117): true means the pinned
+    plan was already the current bytes and no second revision was committed.
+    """
+
+    plan_ref: PlanRef
+    revision_id: str
+    already_published: bool
+
+
+@dataclass(frozen=True)
+class StagePublication:
+    """One execution view committed to the canonical tree.
+
+    The receipt the stage loop records: which sealed manifest was published, the
+    revision it became, the tree the authority projected, and the supervisor
+    operation that carries the evidence. Construction validates all four, so a
+    caller cannot keep a half-formed link.
+    """
+
+    sealed_manifest_id: str
+    revision_id: str
+    tree_sha256: str
+    operation_id: str
+
+    def __post_init__(self) -> None:
+        _hex_id(self.sealed_manifest_id, "seal-")
+        _hex_id(self.revision_id, "rev-")
+        _hex_id(self.tree_sha256, "", 64)
+        _hex_id(self.operation_id, "op-")
+
+
+def _binding_identity(binding: object) -> tuple[NamespaceRef, str]:
+    """Read the two identity fields a managed binding owns, and never infer others."""
+    namespace = getattr(binding, "namespace", None)
+    workspace_id = getattr(binding, "workspace_id", None)
+    if not isinstance(namespace, NamespaceRef) or not isinstance(workspace_id, str):
+        raise ExecutionContractError
+    _hex_id(workspace_id, "ws-")
+    return namespace, workspace_id
+
+
+def _plan_ref_dict(ref: PlanRef) -> dict[str, str]:
+    """The wire shape of a plan identity; the only place it is spelled out."""
+    if not isinstance(ref, PlanRef):
+        raise ExecutionContractError
+    return {
+        "workspace_relative_path": ref.workspace_relative_path,
+        "source_kind": ref.source_kind,
+        "sha256": ref.sha256,
+    }
+
+
+def _grant(operation: Operation, result: dict[str, Any]) -> GrantReply:
+    """The one place a grant reply becomes the typed grant a caller keeps (CT118)."""
+    view_ref = result["view_ref"]
+    return GrantReply(
+        operation,
+        result["capability"],
+        None if view_ref is None else ViewRef.from_dict(view_ref),
+        result.get("generation"),
+        result.get("revision_id"),
+        result.get("input_tree_sha256"),
+    )
+
+
 class ExecutionClient:
     def __init__(self, socket_path: Path, *, server_uid: int, rpc_timeout_ms: int) -> None:
         if type(server_uid) is not int or server_uid < 0:
@@ -97,32 +186,61 @@ class ExecutionClient:
         request_id: str,
         namespace: NamespaceRef | None,
         view: ViewRef | None,
-        capability: str | None,
+        grant: GrantReply | None,
         payload: dict[str, Any],
+        deadline: float | None = None,
+        protocol_version: int = PROTOCOL_V1,
+        allow_legacy_v1_rejection: bool = False,
     ) -> dict[str, Any]:
+        if grant is not None and not isinstance(grant, GrantReply):
+            raise ExecutionContractError  # A raw string is not a grant a caller may pass on.
         raw = encode_json(
             {
-                "protocol_version": 1,
+                "protocol_version": protocol_version,
                 "request_id": request_id,
                 "op": operation.value,
                 "namespace": None if namespace is None else namespace.to_dict(),
                 "view_ref": None if view is None else view.to_dict(),
-                "capability": capability,
+                "capability": None if grant is None else grant.to_wire_capability(),
                 "payload": payload,
             }
         )
         decode_request(raw)  # Reject caller bugs BEFORE connecting/sending.
+        timeout_ms = self._timeout_ms
+        if deadline is not None:
+            if type(deadline) not in {int, float} or not math.isfinite(deadline):
+                raise ExecutionContractError
+            remaining_ms = int((deadline - time.monotonic()) * 1000)
+            if remaining_ms <= 0:
+                raise ExecutionUnavailableError
+            timeout_ms = min(timeout_ms, remaining_ms)
         attempted_send = False
         try:
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
-                framed = DeadlineConnection(connection, timeout_ms=self._timeout_ms)
+                framed = DeadlineConnection(connection, timeout_ms=timeout_ms)
                 connection.settimeout(framed.remaining())
                 self._connect(connection)
                 attempted_send = True  # sendall can lose a partial/completed write.
                 write_frame(framed, raw)
                 if operation is Operation.EXEC:
                     framed.add_execution_budget(payload["timeout_ms"])
-                response = decode_reply(read_frame(framed), operation=operation, request_id=request_id)
+                # The reader tolerates a reply written before an additive key existed;
+                # the server's own self-check does not.
+                reply_limit = None
+                if protocol_version == PROTOCOL_V2:
+                    if operation is Operation.LIST_PROJECT_ARTIFACTS:
+                        reply_limit = MAX_PROJECT_ARTIFACTS_REPLY_BYTES
+                    elif operation is Operation.DIFF_REVISIONS:
+                        reply_limit = MAX_REVISION_DIFF_REPLY_BYTES
+                raw_response = read_frame(framed) if reply_limit is None else read_frame(framed, max_bytes=reply_limit)
+                response = decode_reply(
+                    raw_response,
+                    operation=operation,
+                    request_id=request_id,
+                    tolerate_legacy=True,
+                    protocol_version=protocol_version,
+                    allow_legacy_v1_rejection=allow_legacy_v1_rejection,
+                )
         except (OSError, ExecutionContractError):
             if attempted_send:
                 raise ExecutionUncertainError("op-" + request_id) from None
@@ -135,6 +253,523 @@ class ExecutionClient:
                 raise ExecutionUnavailableError(operation_id=error["operation_id"])
             raise ExecutionRejectedError(error["code"], error["operation_id"])
         return cast(dict[str, Any], response["result"])
+
+    def pin_reader(
+        self,
+        binding: object,
+        revision_id: str,
+        *,
+        plan_ref: PlanRef | None = None,
+        deadline: float | None = None,
+    ) -> GrantReply:
+        """Pin one immutable READ/PROJECT view using the existing v1 operation."""
+        namespace, workspace_id = _binding_identity(binding)
+        _hex_id(revision_id, "rev-")
+        result = self.request(
+            Operation.PIN_READER,
+            request_id=uuid4().hex,
+            namespace=namespace,
+            view=None,
+            grant=None,
+            payload={
+                "workspace_id": workspace_id,
+                "revision_id": revision_id,
+                "plan_ref": None if plan_ref is None else _plan_ref_dict(plan_ref),
+            },
+            deadline=deadline,
+        )
+        return _grant(Operation.PIN_READER, result)
+
+    def list_project_artifacts(
+        self,
+        namespace: NamespaceRef,
+        *,
+        view: ViewRef,
+        grant: GrantReply,
+        project_slug: str,
+        deadline: float | None = None,
+    ) -> dict[str, Any]:
+        """Negotiate v2 and list bounded Q60 metadata from one READ/PROJECT view.
+
+        HEALTH has no side effect; a v1-only supervisor's explicit rejection (or
+        an indeterminate probe) is therefore an unavailable feature, not an
+        uncertain workspace mutation. LIST is attempted once and never falls
+        back to a host path or v1 operation.
+        """
+        if (
+            not isinstance(namespace, NamespaceRef)
+            or not isinstance(view, ViewRef)
+            or view.access is not Access.READ
+            or view.purpose is not ViewPurpose.PROJECT
+            or view.owner_run_id != namespace.run_id
+            or not isinstance(grant, GrantReply)
+            or grant.view_ref != view
+            or not isinstance(project_slug, str)
+        ):
+            raise ExecutionContractError
+        try:
+            health = self.request(
+                Operation.HEALTH,
+                request_id=uuid4().hex,
+                namespace=None,
+                view=None,
+                grant=None,
+                payload={},
+                deadline=deadline,
+                protocol_version=PROTOCOL_V2,
+                allow_legacy_v1_rejection=True,
+            )
+        except ExecutionRejectedError as error:
+            if error.code == "INVALID_REQUEST":
+                raise ExecutionUnavailableError from None
+            raise
+        except ExecutionUncertainError:
+            raise ExecutionUnavailableError from None
+        features = health.get("features")
+        if (
+            health.get("ready") is not True
+            or health.get("protocol_version") != PROTOCOL_V2
+            or not isinstance(features, list)
+            or "list_project_artifacts" not in features
+            or features != sorted(set(features))
+        ):
+            raise ExecutionUnavailableError
+        try:
+            return self.request(
+                Operation.LIST_PROJECT_ARTIFACTS,
+                request_id=uuid4().hex,
+                namespace=namespace,
+                view=view,
+                grant=grant,
+                payload={"project_slug": project_slug},
+                deadline=deadline,
+                protocol_version=PROTOCOL_V2,
+                allow_legacy_v1_rejection=True,
+            )
+        except ExecutionRejectedError as error:
+            if error.code == "INVALID_REQUEST":
+                raise ExecutionUnavailableError from None
+            raise
+        except ExecutionUncertainError:
+            # This operation is read-only; a lost result cannot imply workspace
+            # mutation, but it cannot be treated as a complete inventory either.
+            raise ExecutionUnavailableError from None
+
+    def diff_revisions(
+        self,
+        namespace: NamespaceRef,
+        *,
+        view: ViewRef,
+        grant: GrantReply,
+        base_revision: str,
+        deadline: float | None = None,
+    ) -> dict[str, Any]:
+        """Return bounded metadata changes from ``base_revision`` to a pinned view."""
+        _hex_id(base_revision, "rev-")
+        if (
+            not isinstance(namespace, NamespaceRef)
+            or not isinstance(view, ViewRef)
+            or view.access is not Access.READ
+            or view.purpose is not ViewPurpose.PROJECT
+            or view.owner_run_id != namespace.run_id
+            or not isinstance(grant, GrantReply)
+            or grant.view_ref != view
+            or grant.operation is not Operation.PIN_READER
+        ):
+            raise ExecutionContractError
+        try:
+            health = self.request(
+                Operation.HEALTH,
+                request_id=uuid4().hex,
+                namespace=None,
+                view=None,
+                grant=None,
+                payload={},
+                deadline=deadline,
+                protocol_version=PROTOCOL_V2,
+                allow_legacy_v1_rejection=True,
+            )
+        except ExecutionRejectedError as error:
+            if error.code == "INVALID_REQUEST":
+                raise ExecutionUnavailableError from None
+            raise
+        except ExecutionUncertainError:
+            raise ExecutionUnavailableError from None
+        features = health.get("features")
+        if (
+            health.get("ready") is not True
+            or health.get("protocol_version") != PROTOCOL_V2
+            or not isinstance(features, list)
+            or "diff_revisions" not in features
+            or features != sorted(set(features))
+        ):
+            raise ExecutionUnavailableError
+        try:
+            return self.request(
+                Operation.DIFF_REVISIONS,
+                request_id=uuid4().hex,
+                namespace=namespace,
+                view=view,
+                grant=grant,
+                payload={"base_revision": base_revision},
+                deadline=deadline,
+                protocol_version=PROTOCOL_V2,
+                allow_legacy_v1_rejection=True,
+            )
+        except ExecutionRejectedError as error:
+            if error.code == "INVALID_REQUEST":
+                raise ExecutionUnavailableError from None
+            raise
+        except ExecutionUncertainError:
+            # No workspace mutation can follow a lost read-only reply, but the
+            # metadata is incomplete and must never be represented as an empty diff.
+            raise ExecutionUnavailableError from None
+
+    def handoff(
+        self,
+        binding: object,
+        target: NamespaceRef,
+        *,
+        grant: GrantReply,
+        expected_revision_id: str,
+        request_id: str,
+        deadline: float | None = None,
+    ) -> GrantReply:
+        """Move one owner grant through the existing HANDOFF wire operation.
+
+        This method is deliberately one-shot. The run-scoped ``ManagedExecution``
+        retains ``request_id``, source binding, target, and the original proof if
+        the reply is uncertain, then explicitly reconciles with this same request.
+        A fresh id could not distinguish a lost successful move from a refusal.
+        """
+        namespace, _workspace_id = _binding_identity(binding)
+        if (
+            not isinstance(target, NamespaceRef)
+            or not isinstance(grant, GrantReply)
+            or grant.operation not in {Operation.ACQUIRE_WRITER, Operation.HANDOFF}
+        ):
+            raise ExecutionContractError
+        _hex_id(request_id, "", 32)
+        _hex_id(expected_revision_id, "rev-")
+        payload = {"target_namespace": target.to_dict()}
+        result = self.request(
+            Operation.HANDOFF,
+            request_id=request_id,
+            namespace=namespace,
+            view=None,
+            grant=grant,
+            payload=payload,
+            deadline=deadline,
+        )
+        try:
+            moved = _grant(Operation.HANDOFF, result)
+        except ExecutionContractError:
+            # The server may already have rotated the owner proof. Invalid reply
+            # shape is therefore uncertainty, never a reason to retry with a new id.
+            raise ExecutionUncertainError("op-" + request_id, code="CORRUPT_STATE") from None
+        if moved.generation != grant.generation or moved.revision_id != expected_revision_id:
+            raise ExecutionUncertainError("op-" + request_id, code="CORRUPT_STATE")
+        return moved
+
+    def publish_plan(
+        self,
+        binding: object,
+        source: PlanSnapshot,
+        candidate: PlanSnapshot,
+        *,
+        grant: GrantReply,
+        deadline: float | None = None,
+    ) -> PlanPublication:
+        """Publish one validated candidate through a CANDIDATE view (CT116/CT118).
+
+        `binding` is the run's execution identity — `namespace` and `workspace_id` —
+        supplied by the managed composition (STEP8); this client infers neither.
+        The source ref is pinned from `source`, so the model never supplies a target
+        and candidate bytes travel only through the scoped WRITE_FILE. The CAS the
+        PUBLISH carries is the base of the view the authority just minted, never a
+        cached field: a concurrent commit cannot leave the pair stale. Every RPC is
+        one-shot; a lost PUBLISH reply is not retried and never becomes a local write.
+        """
+        namespace, workspace_id = _binding_identity(binding)
+        if not isinstance(grant, GrantReply) or grant.operation not in {Operation.ACQUIRE_WRITER, Operation.HANDOFF}:
+            raise ExecutionContractError
+        if not isinstance(source, PlanSnapshot) or not isinstance(candidate, PlanSnapshot):
+            raise ExecutionContractError
+        raw = candidate.utf8_bytes
+        if not isinstance(raw, bytes) or hashlib.sha256(raw).hexdigest() != candidate.ref.sha256:
+            raise ExecutionContractError
+        plan_ref = _plan_ref_dict(source.ref)
+        # CT120: the buffer's address is the plan's own canonical path, which the
+        # authority already holds in `plan_ref`; it is a label, not a host path.
+        buffer_label = source.ref.workspace_relative_path
+        view: ViewRef | None = None
+        view_grant: GrantReply | None = None
+        uncertain = False
+        try:
+            created = self.request(
+                Operation.CREATE_VIEW,
+                request_id=uuid4().hex,
+                namespace=namespace,
+                view=None,
+                grant=grant,
+                payload={
+                    "workspace_id": workspace_id,
+                    # CANDIDATE may open on a null base (protocol.py:330): the
+                    # authority names the base it mints, and PUBLISH CASes that one.
+                    "base_revision": None,
+                    "access": "READ",
+                    "purpose": "CANDIDATE",
+                    "candidate_scope": {"plan_ref": plan_ref},
+                    "plan_ref": plan_ref,
+                },
+                deadline=deadline,
+            )
+            view = ViewRef.from_dict(created["view_ref"])
+            view_grant = _grant(Operation.CREATE_VIEW, created)
+            self.request(
+                Operation.WRITE_FILE,
+                request_id=uuid4().hex,
+                namespace=namespace,
+                view=view,
+                grant=view_grant,
+                payload={"path": buffer_label, "content": raw.decode("utf-8"), "expected_sha256": None},
+                deadline=deadline,
+            )
+            stop_request_id = uuid4().hex
+            stopped = self.request(
+                Operation.STOP_VIEW,
+                request_id=stop_request_id,
+                namespace=namespace,
+                view=view,
+                grant=view_grant,
+                payload={},
+                deadline=deadline,
+            )
+            if stopped["terminal"] is not True:
+                raise ExecutionUncertainError("op-" + stop_request_id, code="TERMINALITY_UNKNOWN")
+            publish_request_id = uuid4().hex
+            try:
+                result = self.request(
+                    Operation.PUBLISH,
+                    request_id=publish_request_id,
+                    namespace=namespace,
+                    view=view,
+                    grant=view_grant,
+                    payload={"sealed_manifest_id": None, "expected_base_revision": view.base_revision},
+                    deadline=deadline,
+                )
+            except ExecutionUncertainError:
+                uncertain = True
+                raise
+            expected_ref = {**plan_ref, "sha256": hashlib.sha256(raw).hexdigest()}
+            if result["plan_ref"] != expected_ref:
+                uncertain = True
+                raise ExecutionUncertainError("op-" + publish_request_id, code="DURABILITY_UNKNOWN")
+            return PlanPublication(
+                PlanRef(**expected_ref),
+                str(result["revision_id"]),
+                bool(result["already_published"]),
+            )
+        except ExecutionUncertainError:
+            # The candidate view stays open: releasing it would assert that the
+            # writer is settled, which is the one thing this client cannot prove.
+            uncertain = True
+            raise
+        finally:
+            if view is not None and view_grant is not None and not uncertain:
+                self._release_view(namespace, view, view_grant, deadline)
+
+    def publish_stage(
+        self, namespace: NamespaceRef, *, view: ViewRef, grant: GrantReply, deadline: float | None = None
+    ) -> StagePublication:
+        """Commit one execution view: prove it terminal, seal it, publish it.
+
+        The order is the authority's, not a preference: `SEAL` refuses a view whose
+        admission was never closed and whose terminality was never recorded
+        (``workspace.py:2573-2578``), and `PUBLISH` refuses a manifest that does not
+        match the frozen bytes. So a stage's writes become canonical bytes only
+        through a view that really stopped — which is also what makes a provider
+        process unable to keep writing while the tree is being projected.
+
+        The CAS this verb carries is the view's **own** base revision, never a
+        cached or caller-supplied one: a concurrent commit therefore surfaces as
+        ``STALE_REVISION`` at seal time, before a single byte is projected.
+
+        Every step is one attempt. A lost PUBLISH reply is reported, not retried:
+        the authority may already have committed the revision, and only recovery
+        can prove which of the two happened.
+        """
+        if not isinstance(namespace, NamespaceRef) or not isinstance(view, ViewRef):
+            raise ExecutionContractError
+        if not isinstance(grant, GrantReply) or grant.view_ref != view:
+            raise ExecutionContractError  # A grant for another view authorizes nothing here.
+        if view.access is not Access.WRITE:
+            raise ExecutionContractError  # A read view holds no bytes this run may commit.
+        stop_request_id = uuid4().hex
+        stopped = self.request(
+            Operation.STOP_VIEW,
+            request_id=stop_request_id,
+            namespace=namespace,
+            view=view,
+            grant=grant,
+            payload={},
+            deadline=deadline,
+        )
+        if stopped["terminal"] is not True:
+            # Not proved terminal: the tree is not frozen, so nothing may be sealed.
+            raise ExecutionUncertainError("op-" + stop_request_id, code="TERMINALITY_UNKNOWN")
+        sealed = self.request(
+            Operation.SEAL,
+            request_id=uuid4().hex,
+            namespace=namespace,
+            view=view,
+            grant=grant,
+            payload={},
+            deadline=deadline,
+        )
+        sealed_manifest_id = sealed["sealed_manifest_id"]
+        _hex_id(sealed_manifest_id, "seal-")
+        publish_request_id = uuid4().hex
+        published = self.request(
+            Operation.PUBLISH,
+            request_id=publish_request_id,
+            namespace=namespace,
+            view=view,
+            grant=grant,
+            payload={"sealed_manifest_id": sealed_manifest_id, "expected_base_revision": view.base_revision},
+            deadline=deadline,
+        )
+        if published["revision_id"] != sealed["revision_id"]:
+            # The committed revision is not the one seal derived from these bytes.
+            raise ExecutionUncertainError("op-" + publish_request_id, code="DURABILITY_UNKNOWN")
+        return StagePublication(
+            sealed_manifest_id,
+            str(published["revision_id"]),
+            str(published["tree_sha256"]),
+            str(published["operation_id"]),
+        )
+
+    def open_view(
+        self,
+        binding: object,
+        *,
+        access: Access,
+        purpose: ViewPurpose,
+        base_revision: str | None,
+        plan_ref: PlanRef | None = None,
+        grant: GrantReply | None = None,
+        deadline: float | None = None,
+    ) -> GrantReply:
+        """Open one purpose-bound view for this run and return the grant that owns it.
+
+        ``base_revision`` is the caller's CAS precondition and is never inferred
+        here: a caller that names bytes the authority no longer holds is refused
+        with ``STALE_REVISION`` instead of being handed a newer view. The
+        authority's closed purpose matrix decides what is legal
+        (``workspace.py:1930``); this verb only carries it.
+
+        One attempt, like every other request on this client: an uncertain
+        CREATE_VIEW is reported, not retried, because a second attempt could
+        open a second view against the same writer.
+        """
+        namespace, workspace_id = _binding_identity(binding)
+        if not isinstance(access, Access) or not isinstance(purpose, ViewPurpose):
+            raise ExecutionContractError
+        if not isinstance(grant, GrantReply) or grant.operation not in {Operation.ACQUIRE_WRITER, Operation.HANDOFF}:
+            raise ExecutionContractError
+        created = self.request(
+            Operation.CREATE_VIEW,
+            request_id=uuid4().hex,
+            namespace=namespace,
+            view=None,
+            grant=grant,
+            payload={
+                "workspace_id": workspace_id,
+                "base_revision": base_revision,
+                "access": access.value,
+                "purpose": purpose.value,
+                "candidate_scope": None,
+                "plan_ref": None if plan_ref is None else _plan_ref_dict(plan_ref),
+            },
+            deadline=deadline,
+        )
+        return _grant(Operation.CREATE_VIEW, created)
+
+    def stop_view(
+        self, namespace: NamespaceRef, *, view: ViewRef, grant: GrantReply, deadline: float | None = None
+    ) -> bool:
+        """End a view. ``True`` only when the authority proved it terminal.
+
+        The two endings in the authority are different operations, so this verb
+        follows the view's own access rather than guessing:
+
+        * an EXECUTION view (WRITE) ends with ``STOP_VIEW``: irreversible closure,
+          then one terminality verdict. ``RELEASE`` is not sent for it — the
+          authority's release is the *reader pin* revocation
+          (``workspace.py:1863``) and refuses a view that never held a pin.
+        * a READ view additionally holds that pin, so the proved view is then
+          released; a release whose answer was lost is an unproved end, while a
+          refused one only says there is no pin left to revoke.
+
+        A view that did not become terminal keeps its copy and stays owned: that
+        is ``False``, which sends the caller to recovery instead of to a retry.
+        """
+        if not isinstance(namespace, NamespaceRef) or not isinstance(view, ViewRef):
+            raise ExecutionContractError
+        if not isinstance(grant, GrantReply) or grant.view_ref != view:
+            raise ExecutionContractError  # A grant for another view authorizes nothing here.
+        try:
+            stopped = self.request(
+                Operation.STOP_VIEW,
+                request_id=uuid4().hex,
+                namespace=namespace,
+                view=view,
+                grant=grant,
+                payload={},
+                deadline=deadline,
+            )
+            if stopped["terminal"] is not True:
+                return False
+            if view.access is Access.READ:
+                self._release_view(namespace, view, grant, deadline, strict=True)
+        except (ExecutionUncertainError, ExecutionUnavailableError, ExecutionRejectedError):
+            return False
+        return True
+
+    def _release_view(
+        self,
+        namespace: NamespaceRef,
+        view: ViewRef,
+        grant: GrantReply,
+        deadline: float | None,
+        *,
+        strict: bool = False,
+    ) -> None:
+        """Revoke a READ view's pin.
+
+        ``strict`` is for the caller that must be told the truth, and the truth is
+        the same distinction the rest of this client makes: an *indeterminate*
+        release may have left the pin held, so it is raised; a *rejected* release is
+        the authority saying it holds no such pin (``workspace.py:1875`` refuses a
+        view that never held one), which leaves nothing to revoke. The best-effort
+        caller keeps the difference visible in the log instead.
+        """
+        try:
+            self.request(
+                Operation.RELEASE,
+                request_id=uuid4().hex,
+                namespace=namespace,
+                view=view,
+                grant=grant,
+                payload={},
+                deadline=deadline,
+            )
+        except (ExecutionUncertainError, ExecutionUnavailableError):
+            if strict:
+                raise
+            logging.getLogger(__name__).warning("candidate view cleanup was not confirmed")
+        except ExecutionRejectedError:
+            logging.getLogger(__name__).warning("candidate view cleanup was refused")
 
 
 class ManagedBashExecutor:
@@ -151,33 +786,86 @@ class ManagedBashExecutor:
         *,
         namespace: NamespaceRef,
         view: ViewRef,
-        capability: str,
+        grant: GrantReply,
         profile: ExecutionProfile,
         input_tree_sha256: str,
         plan_sha256: str | None,
         original_revision_id: str | None,
         controller_root: Path,
     ) -> None:
-        validate_capability(capability)
+        if not isinstance(grant, GrantReply):
+            raise ExecutionContractError
         if not profile.interactive or not controller_root.is_absolute() or ".." in controller_root.parts:
+            raise ExecutionContractError
+        if (
+            grant.operation is not Operation.CREATE_VIEW
+            or grant.view_ref != view
+            or view.access is not Access.WRITE
+            or view.owner_run_id != namespace.run_id
+        ):
             raise ExecutionContractError
         self._client = client
         self._namespace = namespace
-        self._view = view
-        self._capability = capability
+        self._workspace_id = view.workspace_id
+        self._view: ViewRef | None = view
+        self._grant: GrantReply | None = grant
+        self._active = True
         self._profile = profile
         self._tree = input_tree_sha256
         self._plan = plan_sha256
         self._original_revision = original_revision_id
         self._root = controller_root
 
+    def suspend(self) -> None:
+        """Disarm this executor before the bound view is settled or handed off."""
+        self._active = False
+        self._grant = None
+        self._view = None
+
+    def rebind(
+        self,
+        *,
+        namespace: NamespaceRef,
+        view: ViewRef,
+        grant: GrantReply,
+        original_revision_id: str | None,
+    ) -> None:
+        """Bind the same executor to a newly opened view in its original namespace."""
+        if (
+            not isinstance(namespace, NamespaceRef)
+            or namespace != self._namespace
+            or not isinstance(view, ViewRef)
+            or not isinstance(grant, GrantReply)
+            or grant.operation is not Operation.CREATE_VIEW
+            or grant.view_ref != view
+            or view.access is not Access.WRITE
+            or view.workspace_id != self._workspace_id
+            or view.owner_run_id != self._namespace.run_id
+            or grant.input_tree_sha256 is None
+            or len(grant.input_tree_sha256) != 64
+            or any(char not in "0123456789abcdef" for char in grant.input_tree_sha256)
+            or original_revision_id != view.base_revision
+        ):
+            raise ExecutionContractError
+        self._view = view
+        self._grant = grant
+        self._tree = grant.input_tree_sha256
+        self._original_revision = original_revision_id
+        self._active = True
+
+    def _require_active(self) -> tuple[ViewRef, GrantReply]:
+        if not self._active or self._view is None or self._grant is None:
+            raise ExecutionUnavailableError
+        return self._view, self._grant
+
     def _request(self, operation: Operation, payload: dict[str, Any], request_id: str) -> dict[str, Any]:
+        view, grant = self._require_active()
         return self._client.request(
             operation,
             request_id=request_id,
             namespace=self._namespace,
-            view=self._view,
-            capability=self._capability,
+            view=view,
+            grant=grant,
             payload=payload,
         )
 
@@ -189,18 +877,24 @@ class ManagedBashExecutor:
         except ValueError:
             raise ExecutionContractError from None
 
-    def run(self, command: str, timeout: int = 30, workdir: Path | None = None, session_id: str = "main") -> PtyResult:
+    def run(
+        self,
+        command: str,
+        timeout: int = 30,
+        workdir: Path | None = None,
+        session_id: str | None = "main",
+    ) -> PtyResult:
+        self._require_active()
         _positive_integer(timeout)
         request_id = uuid4().hex
-        return self._execute_once(command, timeout, workdir, session_id, request_id)
+        return self._execute_once(command, timeout, workdir, session_id or "main", request_id)
 
     # §execution-client-once: transport uncertainty never resends a shell command.
     def _execute_once(
         self, command: str, timeout: int, workdir: Path | None, session_id: str, request_id: str
     ) -> PtyResult:
-        operation = OperationRef(
-            "op-" + request_id, self._view.view_id, self._view.owner_run_id, self._view.generation, self._tree
-        )
+        view, _grant = self._require_active()
+        operation = OperationRef("op-" + request_id, view.view_id, view.owner_run_id, view.generation, self._tree)
         result = self._request(
             Operation.EXEC,
             {
@@ -218,10 +912,10 @@ class ManagedBashExecutor:
             receipt.require_binding(
                 operation=operation,
                 namespace=self._namespace,
-                view=self._view,
+                view=view,
                 profile_id=self._profile.profile_id,
                 image_digest=self._profile.image_digest,
-                revision_id=self._view.base_revision,
+                revision_id=view.base_revision,
                 original_revision_id=self._original_revision,
                 plan_sha256=self._plan,
             )
@@ -249,3 +943,133 @@ class ManagedBashExecutor:
     def list_sessions(self) -> list[str]:
         result = self._control("LIST", None)
         return list(result["sessions"])
+
+
+class ReadOnlyManagedBashExecutor:
+    """One-shot Bash over a pinned READ view and a non-interactive profile.
+
+    This executor has no rebind or PTY control path. Every command sends one
+    EXEC with ``session_id=None``; an error or uncertainty is never retried on
+    the controller host.
+    """
+
+    interactive = False
+
+    def __init__(
+        self,
+        client: ExecutionClient,
+        *,
+        namespace: NamespaceRef,
+        view: ViewRef,
+        grant: GrantReply,
+        profile: ExecutionProfile,
+        plan_ref: PlanRef | None,
+        controller_root: Path,
+    ) -> None:
+        if (
+            not isinstance(client, ExecutionClient)
+            or not isinstance(namespace, NamespaceRef)
+            or not isinstance(view, ViewRef)
+            or view.access is not Access.READ
+            or view.purpose is not ViewPurpose.PROJECT
+            or view.owner_run_id != namespace.run_id
+            or not isinstance(grant, GrantReply)
+            or grant.operation is not Operation.PIN_READER
+            or grant.view_ref != view
+            or grant.input_tree_sha256 is None
+            or not isinstance(profile, ExecutionProfile)
+            or profile.interactive
+            or not isinstance(controller_root, Path)
+            or not controller_root.is_absolute()
+            or ".." in controller_root.parts
+        ):
+            raise ExecutionContractError
+        self._client = client
+        self._namespace = namespace
+        self._view: ViewRef | None = view
+        self._grant: GrantReply | None = grant
+        self._profile = profile
+        self._tree = grant.input_tree_sha256
+        self._plan = None if plan_ref is None else plan_ref.sha256
+        self._root = controller_root
+        self._active = True
+
+    def suspend(self) -> None:
+        """Disarm the reader executor before STOP_VIEW is attempted."""
+        self._active = False
+        self._view = None
+        self._grant = None
+
+    def _require_active(self) -> tuple[ViewRef, GrantReply]:
+        if not self._active or self._view is None or self._grant is None:
+            raise ExecutionUnavailableError
+        return self._view, self._grant
+
+    def _cwd(self, workdir: Path | None) -> str:
+        if workdir is None:
+            return "."
+        try:
+            return (workdir.relative_to(self._root) if workdir.is_absolute() else workdir).as_posix()
+        except ValueError:
+            raise ExecutionContractError from None
+
+    def run(
+        self,
+        command: str,
+        timeout: int = 30,
+        workdir: Path | None = None,
+        session_id: str | None = None,
+    ) -> PtyResult:
+        view, grant = self._require_active()
+        if session_id is not None or not isinstance(command, str) or not command:
+            raise ExecutionContractError
+        _positive_integer(timeout)
+        request_id = uuid4().hex
+        operation = OperationRef("op-" + request_id, view.view_id, view.owner_run_id, view.generation, self._tree)
+        result = self._client.request(
+            Operation.EXEC,
+            request_id=request_id,
+            namespace=self._namespace,
+            view=view,
+            grant=grant,
+            payload={
+                "operation_id": operation.operation_id,
+                "profile_id": self._profile.profile_id,
+                "command": command,
+                "cwd": self._cwd(workdir),
+                "timeout_ms": min(timeout * 1000, self._profile.max_command_ms),
+                "session_id": None,
+            },
+        )
+        receipt = ExecutionReceipt.from_dict(result["receipt"])
+        try:
+            receipt.require_binding(
+                operation=operation,
+                namespace=self._namespace,
+                view=view,
+                profile_id=self._profile.profile_id,
+                image_digest=self._profile.image_digest,
+                revision_id=view.base_revision,
+                original_revision_id=view.base_revision,
+                plan_sha256=self._plan,
+            )
+        except ExecutionContractError:
+            raise ExecutionUncertainError(operation.operation_id) from None
+        if receipt.state is JobState.TIMED_OUT:
+            raise ExecutionTimedOutError(receipt)
+        if receipt.state is JobState.LAUNCH_FAILED:
+            raise ExecutionUnavailableError
+        if receipt.state is not JobState.EXITED or receipt.exit_code is None:
+            raise ExecutionUncertainError(operation.operation_id)
+        return PtyResult(receipt.stdout_tail + receipt.stderr_tail, receipt.exit_code, receipt.truncated, "", False)
+
+    def send_ctrl_c(self, session_id: str) -> str:
+        del session_id
+        raise ExecutionContractError
+
+    def close(self, session_id: str) -> None:
+        del session_id
+        raise ExecutionContractError
+
+    def list_sessions(self) -> list[str]:
+        return []

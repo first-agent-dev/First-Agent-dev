@@ -19,7 +19,7 @@ def _positive_integer(value: object) -> None:
 
 
 class Operation(StrEnum):
-    """The nineteen closed v1 operation names; not executable callbacks."""
+    """Closed operation names; protocol versions select the allowed subset."""
 
     HEALTH = "health"
     REGISTER_WORKSPACE = "register_workspace"
@@ -40,6 +40,8 @@ class Operation(StrEnum):
     PTY_CONTROL = "pty_control"
     HANDOFF = "handoff"
     PREPARE_BUNDLE = "prepare_bundle"
+    LIST_PROJECT_ARTIFACTS = "list_project_artifacts"
+    DIFF_REVISIONS = "diff_revisions"
 
 
 def _hex_id(value: object, prefix: str, length: int = 32) -> None:

@@ -55,6 +55,7 @@ def test_workspace_wrapper_imports_checkout_source_and_forwards_argv(tmp_path: P
         check=False,
     )
 
+    assert record.is_file(), "workspace wrapper did not import the checked-out readiness engine"
     assert result.returncode == 0, result.stderr
     payload = json.loads(record.read_text(encoding="utf-8"))
     assert payload["argv"] == ["check", "--workspace", "."]

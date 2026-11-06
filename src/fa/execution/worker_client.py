@@ -16,7 +16,7 @@ from typing import Any
 
 from fa.execution.cell_protocol import decode_cell_reply, decode_cell_request
 from fa.execution.docker import DockerAttachStream, DockerUnavailableError, _remaining
-from fa.execution.protocol import _loads
+from fa.execution.protocol import MAX_FRAME_BYTES, _frame_limit, _loads
 from fa.execution.types import ExecutionContractError
 
 
@@ -29,6 +29,7 @@ class WorkerUnavailableError(RuntimeError):
 class _Pending:
     request: dict[str, Any]
     deadline: float
+    max_reply_bytes: int
     event: threading.Event = field(default_factory=threading.Event)
     result: dict[str, Any] | None = None
 
@@ -44,7 +45,8 @@ class _Exchange:
 
 
 class WorkerClient:
-    def __init__(self, stream: DockerAttachStream) -> None:
+    def __init__(self, stream: DockerAttachStream, *, max_reply_bytes: int = MAX_FRAME_BYTES) -> None:
+        self._read_limit = _frame_limit(max_reply_bytes)
         self._stream = stream
         self._condition = threading.Condition()
         self._pending: dict[str, _Pending] = {}
@@ -69,18 +71,25 @@ class WorkerClient:
                     if self._closed:
                         return
                     deadline = min(p.deadline for p in self._pending.values())
-                raw = self._stream.read_frame(deadline=deadline)
-                request_id = _loads(raw).get("request_id")
+                if self._read_limit == MAX_FRAME_BYTES:
+                    raw = self._stream.read_frame(deadline=deadline)
+                else:
+                    raw = self._stream.read_frame(deadline=deadline, max_bytes=self._read_limit)
+                request_id = _loads(raw, max_bytes=self._read_limit).get("request_id")
                 if not isinstance(request_id, str):
                     raise ExecutionContractError
                 with self._condition:
                     pending = self._pending.get(request_id)
-                    if pending is None or pending.event.is_set():
+                    if pending is None or pending.event.is_set() or len(raw) > pending.max_reply_bytes:
                         raise ExecutionContractError
                     _remaining(pending.deadline)
                     req = pending.request
                     result = decode_cell_reply(
-                        raw, request_id=request_id, action=req["action"], session_id=req["payload"].get("session_id")
+                        raw,
+                        request_id=request_id,
+                        action=req["action"],
+                        session_id=req["payload"].get("session_id"),
+                        max_bytes=pending.max_reply_bytes,
                     )
                     if result is None:
                         raise ExecutionContractError
@@ -99,18 +108,21 @@ class WorkerClient:
         except (OSError, DockerUnavailableError, ExecutionContractError):
             self._fail()
 
-    def begin(self, raw: bytes, *, deadline: float) -> _Exchange:
+    def begin(self, raw: bytes, *, deadline: float, max_reply_bytes: int = MAX_FRAME_BYTES) -> _Exchange:
         """Write ONE bounded frame and return its exchange. Never resends.
 
         The caller must await_reply() or abandon() the returned exchange; the
         transport stays poisoned after any write or reply failure.
         """
         req = decode_cell_request(raw)  # Closed private request before IO/registration.
+        limit = _frame_limit(max_reply_bytes)
+        if limit > self._read_limit or (limit > MAX_FRAME_BYTES and req["action"] != "RUN"):
+            raise ExecutionContractError
         gate = self._run_gate if req["action"] == "RUN" else self._control_gate
         if not gate.acquire(timeout=_remaining(deadline)):
             raise WorkerUnavailableError
         request_id = req["request_id"]
-        pending = _Pending(req, deadline)
+        pending = _Pending(req, deadline, limit)
         registered = False
         try:
             with self._condition:
@@ -161,9 +173,9 @@ class WorkerClient:
             self._condition.notify_all()
         exchange.gate.release()
 
-    def request(self, raw: bytes, *, deadline: float) -> dict[str, Any]:
+    def request(self, raw: bytes, *, deadline: float, max_reply_bytes: int = MAX_FRAME_BYTES) -> dict[str, Any]:
         """One bounded exchange: write, then wait for its own reply."""
-        exchange = self.begin(raw, deadline=deadline)
+        exchange = self.begin(raw, deadline=deadline, max_reply_bytes=max_reply_bytes)
         return self.await_reply(exchange, deadline=deadline)
 
     def close(self, *, deadline: float) -> None:

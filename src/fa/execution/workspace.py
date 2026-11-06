@@ -1,9 +1,10 @@
-"""Protected existing-workspace registration, R0 retention and exclusive writer.
+"""Protected workspace materialization, R0 retention and exclusive writer.
 
 The actual owner, not a wire service or a temporary admission callback. New-root
-installation, backend drain and publication are subsequent
-construction steps. No factory is activated here. Legacy writers must already be
-quiesced by deployment; metadata/hash checks are not a kernel snapshot/CAS.
+materialization uses only approved root descriptors and empty seeds; backend
+readiness and publication remain separate transitions. No factory is activated
+here. Legacy writers must already be quiesced by deployment; metadata/hash
+checks are not a kernel snapshot/CAS.
 """
 
 from __future__ import annotations
@@ -21,12 +22,13 @@ import shutil
 import stat
 import threading
 import time
+import tomllib
 from collections.abc import Callable, Generator, Mapping, Sequence
 from contextlib import AbstractContextManager, ExitStack, contextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path, PurePosixPath
 from types import TracebackType
-from typing import Any, Self, override
+from typing import Any, Self, cast, override
 from uuid import uuid4
 
 import fastjsonschema  # type: ignore[import-untyped]  # Existing schema library has no typing metadata.
@@ -37,6 +39,7 @@ from fa.execution.profiles import ExecutionProfile, _configured_id
 from fa.execution.protocol import (
     CANDIDATE_SCOPE,
     CONFIG_ID,
+    MAX_REVISION_DIFF_ENTRIES,
     MAX_TEXT_BYTES,
     NAMESPACE,
     PLAN_REF,
@@ -195,6 +198,7 @@ _VIEW_RECORD = fastjsonschema.compile(
         input_tree_sha256=SHA,
         sealed_manifest_id=_nullable(_id("seal-")),
         operation_ids={"type": "array", "items": _id("op-")},
+        profile_id=_nullable(CONFIG_ID),
         candidate_scope=_nullable(CANDIDATE_SCOPE),
         plan_ref=_nullable(PLAN_REF),
     )
@@ -300,17 +304,14 @@ def _candidate_scope(
         raise SupervisorError("INPUT_POLICY")
     if not scope_required:
         return None
-    if not isinstance(candidate_scope, Mapping) or set(candidate_scope) != {"candidate_path", "plan_ref"}:
+    if not isinstance(candidate_scope, Mapping) or set(candidate_scope) != {"plan_ref"}:
         raise ExecutionContractError
     if not isinstance(plan_ref, PlanRef) or not isinstance(candidate_scope["plan_ref"], Mapping):
         raise ExecutionContractError
-    # Path semantics (relative, no traversal/NUL) are enforced once at the
-    # record layer (protocol._byte_limits inside _check(_VIEW_RECORD)); this
-    # matrix owns only the combination rules, never a second path parser.
-    scope = {
-        "candidate_path": candidate_scope["candidate_path"],
-        "plan_ref": dict(candidate_scope["plan_ref"]),
-    }
+    # CT120: the scope carries no address of its own. The candidate buffer is the
+    # plan's canonical path inside the private view, so `plan_ref` names both the
+    # bytes to write and the file they will commit to — one identity, not two.
+    scope = {"plan_ref": dict(candidate_scope["plan_ref"])}
     if scope["plan_ref"] != _plan_ref_dict(plan_ref):
         raise SupervisorError("INPUT_POLICY")
     return scope
@@ -370,17 +371,19 @@ class _ExecutionInputs:
     source: Path
     scratch: Path
     cache: Path
+    environment: Path | None
     source_fd: int
     scratch_fd: int
     cache_fd: int
+    environment_fd: int | None
     context: ProtectedPlanContext
     sealed_sha256: str | None = None
     projection: Path | None = None
 
     def close(self) -> None:
-        for name in ("source_fd", "scratch_fd", "cache_fd"):
+        for name in ("source_fd", "scratch_fd", "cache_fd", "environment_fd"):
             fd = getattr(self, name)
-            if fd >= 0:
+            if fd is not None and fd >= 0:
                 setattr(self, name, -1)
                 os.close(fd)
 
@@ -482,6 +485,175 @@ def _open_absolute(path: Path) -> int:
         raise
 
 
+_ENVIRONMENT_STORE = "fa-environments-v1"
+_ENVIRONMENT_EXTRA = "dev"
+_ENVIRONMENT_INPUT_LIMIT = 8 * 1024 * 1024
+_ENVIRONMENT_MANIFEST_LIMIT = 8192
+
+
+def _read_environment_input(source_fd: int, name: str) -> bytes | None:
+    try:
+        fd = os.open(name, _FILE, dir_fd=source_fd)
+    except FileNotFoundError:
+        return None
+    except OSError:
+        raise SupervisorError("UNAPPROVED_PROFILE") from None
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_size > _ENVIRONMENT_INPUT_LIMIT:
+            raise SupervisorError("UNAPPROVED_PROFILE")
+        content = bytearray()
+        while len(content) <= _ENVIRONMENT_INPUT_LIMIT:
+            part = os.read(fd, min(64 * 1024, _ENVIRONMENT_INPUT_LIMIT + 1 - len(content)))
+            if not part:
+                return bytes(content)
+            content.extend(part)
+        raise SupervisorError("UNAPPROVED_PROFILE")
+    finally:
+        os.close(fd)
+
+
+def _environment_identity(
+    source_fd: int, profile: ExecutionProfile, *, baseline_source_fd: int | None = None
+) -> dict[str, Any]:
+    pyproject = _read_environment_input(source_fd, "pyproject.toml")
+    lock = _read_environment_input(source_fd, "uv.lock")
+    # An empty/lockless seed may use only the unique, operator-approved
+    # First-Agent baseline. Once either project input exists, exact project
+    # identity wins and a miss never falls back to this baseline.
+    if pyproject is None and lock is None and baseline_source_fd is not None:
+        pyproject = _read_environment_input(baseline_source_fd, "pyproject.toml")
+        lock = _read_environment_input(baseline_source_fd, "uv.lock")
+    return {
+        "schema_version": 1,
+        "profile_id": profile.profile_id,
+        "image": profile.image,
+        "image_digest": profile.image_digest,
+        "pyproject_sha256": None if pyproject is None else hashlib.sha256(pyproject).hexdigest(),
+        "uv_lock_sha256": None if lock is None else hashlib.sha256(lock).hexdigest(),
+        "extra": _ENVIRONMENT_EXTRA,
+    }
+
+
+def _verify_environment_manifest(artifact_fd: int, identity: dict[str, Any], fingerprint: str) -> None:
+    try:
+        manifest_fd = os.open("manifest.json", _FILE, dir_fd=artifact_fd)
+    except OSError:
+        raise SupervisorError("UNAPPROVED_PROFILE") from None
+    try:
+        info = os.fstat(manifest_fd)
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_uid != os.getuid()
+            or info.st_mode & 0o222
+            or info.st_size > _ENVIRONMENT_MANIFEST_LIMIT
+        ):
+            raise SupervisorError("UNAPPROVED_PROFILE")
+        content = bytearray()
+        while len(content) <= _ENVIRONMENT_MANIFEST_LIMIT:
+            part = os.read(manifest_fd, min(4096, _ENVIRONMENT_MANIFEST_LIMIT + 1 - len(content)))
+            if not part:
+                break
+            content.extend(part)
+        if len(content) > _ENVIRONMENT_MANIFEST_LIMIT:
+            raise SupervisorError("UNAPPROVED_PROFILE")
+        raw = bytes(content)
+    finally:
+        os.close(manifest_fd)
+    try:
+        manifest = json.loads(raw, object_pairs_hook=_pairs, parse_constant=_nonfinite)
+    except (ExecutionContractError, UnicodeDecodeError, ValueError, RecursionError):
+        raise SupervisorError("UNAPPROVED_PROFILE") from None
+    if type(manifest) is not dict or manifest != {**identity, "fingerprint": fingerprint}:
+        raise SupervisorError("UNAPPROVED_PROFILE")
+
+
+def _environment_executable(bin_fd: int, executable: str) -> bool:
+    try:
+        info = os.stat(executable, dir_fd=bin_fd, follow_symlinks=False)
+    except OSError:
+        return False
+    if stat.S_ISREG(info.st_mode):
+        return bool(info.st_mode & 0o111)
+    if executable != "python" or not stat.S_ISLNK(info.st_mode):
+        return False
+    try:
+        target = os.readlink(executable, dir_fd=bin_fd)
+    except OSError:
+        return False
+    if not target or ".." in Path(target).parts:
+        return False
+    if Path(target).is_absolute():
+        return target.startswith(("/usr/local/bin/python", "/opt/uv-python/"))
+    return "/" not in target and target.startswith("python")
+
+
+def _open_environment_venv(artifact_fd: int) -> int:
+    try:
+        environment_fd = os.open(".venv", _DIRECTORY, dir_fd=artifact_fd)
+    except OSError:
+        raise SupervisorError("UNAPPROVED_PROFILE") from None
+    try:
+        info = os.fstat(environment_fd)
+        if info.st_uid != os.getuid() or info.st_mode & 0o222:
+            raise SupervisorError("UNAPPROVED_PROFILE")
+        try:
+            bin_fd = os.open("bin", _DIRECTORY, dir_fd=environment_fd)
+        except OSError:
+            raise SupervisorError("UNAPPROVED_PROFILE") from None
+        try:
+            for executable in ("python", "pytest", "mutmut"):
+                if not _environment_executable(bin_fd, executable):
+                    raise SupervisorError("UNAPPROVED_PROFILE")
+        finally:
+            os.close(bin_fd)
+        return environment_fd
+    except BaseException:
+        os.close(environment_fd)
+        raise
+
+
+def _environment_artifact(
+    source_fd: int,
+    cache_fd: int,
+    cache: Path,
+    profile: ExecutionProfile,
+    *,
+    baseline_source_fd: int | None = None,
+) -> tuple[Path, int] | None:
+    """Resolve one immutable approved bundle; never accept a caller/model path."""
+    identity = _environment_identity(source_fd, profile, baseline_source_fd=baseline_source_fd)
+    fingerprint = hashlib.sha256(_canonical(identity)).hexdigest()
+    artifact_path = cache / _ENVIRONMENT_STORE / fingerprint
+    try:
+        store_fd = os.open(_ENVIRONMENT_STORE, _DIRECTORY, dir_fd=cache_fd)
+    except FileNotFoundError:
+        return None
+    except OSError:
+        raise SupervisorError("UNAPPROVED_PROFILE") from None
+    try:
+        store_info = os.fstat(store_fd)
+        if store_info.st_uid != os.getuid() or store_info.st_mode & 0o022:
+            raise SupervisorError("UNAPPROVED_PROFILE")
+        try:
+            artifact_fd = os.open(fingerprint, _DIRECTORY, dir_fd=store_fd)
+        except FileNotFoundError:
+            return None
+        except OSError:
+            raise SupervisorError("UNAPPROVED_PROFILE") from None
+        try:
+            artifact_info = os.fstat(artifact_fd)
+            if artifact_info.st_uid != os.getuid() or artifact_info.st_mode & 0o222:
+                raise SupervisorError("UNAPPROVED_PROFILE")
+            _verify_environment_manifest(artifact_fd, identity, fingerprint)
+            environment_fd = _open_environment_venv(artifact_fd)
+            return artifact_path / ".venv", environment_fd
+        finally:
+            os.close(artifact_fd)
+    finally:
+        os.close(store_fd)
+
+
 def _mount_path(raw: str) -> PurePosixPath:
     # proc mountinfo escapes whitespace and backslash with these octal sequences.
     for source, target in (("\\040", " "), ("\\011", "\t"), ("\\012", "\n"), ("\\134", "\\")):
@@ -538,6 +710,25 @@ def _terminal_record(directory: int) -> dict[str, Any] | None:
         return None
 
 
+def _view_record_compat(value: dict[str, Any]) -> dict[str, Any]:
+    """Normalize records from before profile binding and the buffer alias removal.
+
+    A missing ``profile_id`` marks a legacy record; consumers resolve it only to
+    the configured write profile. New READ views always persist their selected
+    non-interactive profile id. The old candidate buffer alias is ignored because
+    the authority never used it for IO.
+    """
+    if "profile_id" not in value:
+        value = dict(value, profile_id=None)
+    scope = value.get("candidate_scope")
+    if isinstance(scope, dict):
+        declared = set(CANDIDATE_SCOPE["properties"])
+        undeclared = set(scope) - declared
+        if undeclared:
+            value = dict(value, candidate_scope={key: item for key, item in scope.items() if key in declared})
+    return value
+
+
 def _read_json(fd: int, name: str, validator: Callable[..., Any], limit: int) -> dict[str, Any]:
     source = os.open(name, _FILE, dir_fd=fd)
     try:
@@ -556,8 +747,10 @@ def _read_json(fd: int, name: str, validator: Callable[..., Any], limit: int) ->
         value = json.loads(bytes(data).decode("utf-8"), object_pairs_hook=_pairs, parse_constant=_nonfinite)
         if not isinstance(value, dict):
             raise ExecutionContractError
+        if validator is _VIEW_RECORD:
+            value = _view_record_compat(value)
         _check(validator, value)
-        return value
+        return cast(dict[str, Any], value)
     except (ExecutionContractError, ValueError, UnicodeError, RecursionError):
         raise SupervisorError("CORRUPT_STATE") from None
     finally:
@@ -860,10 +1053,14 @@ class _Binding:
     writer: int | None = None
     grant: str | None = None
     principal: str | None = None
+    # Like the writer fd and grant, this lineage is valid only for this live
+    # authority. An OWNED workspace is quarantined on restart, never resumed.
+    parents: tuple[NamespaceRef, ...] = ()
 
     def close_writer(self) -> None:
         self.grant = None
         self.principal = None
+        self.parents = ()
         if self.writer is not None:
             os.close(self.writer)
             self.writer = None
@@ -892,12 +1089,19 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
         limits: InputLimits | None = None,
         excluded_paths: tuple[str, ...] = (),
         view_profile: ExecutionProfile | None = None,
+        read_only_profile: ExecutionProfile | None = None,
         approved_cache: Path | None = None,
     ) -> None:
         if not approved_roots or not controller_uids or any(type(uid) is not int or uid < 0 for uid in controller_uids):
             raise ExecutionContractError
         if view_profile is not None and (
             not isinstance(view_profile, ExecutionProfile) or max(view_profile.uid, view_profile.gid) > 2**32 - 2
+        ):
+            raise ExecutionContractError
+        if read_only_profile is not None and (
+            not isinstance(read_only_profile, ExecutionProfile)
+            or read_only_profile.interactive
+            or max(read_only_profile.uid, read_only_profile.gid) > 2**32 - 2
         ):
             raise ExecutionContractError
         if approved_cache is not None and (
@@ -915,6 +1119,16 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
             raise ExecutionContractError
         self._approved_cache = approved_cache
         self._view_profile = view_profile
+        self._read_only_profile = read_only_profile
+        self._profiles = {
+            profile.profile_id: profile for profile in (view_profile, read_only_profile) if profile is not None
+        }
+        if (
+            view_profile is not None
+            and read_only_profile is not None
+            and view_profile.profile_id == read_only_profile.profile_id
+        ):
+            raise ExecutionContractError
         self._readers: dict[str, _ReaderPin] = {}
         self._projects: dict[str, _ProjectView] = {}
         self._state = state_root
@@ -999,6 +1213,53 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
             yield
         finally:
             self._mutex.release()
+
+    def _baseline_environment_source(self) -> int | None:
+        """Return one approved First-Agent lock root, or None when absent/ambiguous."""
+        candidates: list[int] = []
+        for source_fd in self._root_fds.values():
+            try:
+                pyproject = _read_environment_input(source_fd, "pyproject.toml")
+                lock = _read_environment_input(source_fd, "uv.lock")
+                if pyproject is None or lock is None:
+                    continue
+                project = tomllib.loads(pyproject.decode("utf-8"))
+                project_table = project.get("project") if isinstance(project, dict) else None
+                if not isinstance(project_table, dict) or project_table.get("name") != "first-agent":
+                    continue
+                src_fd = os.open("src", _DIRECTORY, dir_fd=source_fd)
+                try:
+                    fa_fd = os.open("fa", _DIRECTORY, dir_fd=src_fd)
+                    os.close(fa_fd)
+                finally:
+                    os.close(src_fd)
+            except (OSError, UnicodeDecodeError, ValueError, SupervisorError):
+                continue
+            candidates.append(source_fd)
+        return candidates[0] if len(candidates) == 1 else None
+
+    def _select_parent(self, root_id: str, relative_root: str) -> tuple[int, str, Path]:
+        if root_id not in self._root_fds:
+            raise SupervisorError("PATH_DENIED")
+        try:
+            parts = _parts(relative_root, self._limits.max_depth)
+        except ViewIOError as error:
+            raise SupervisorError(error.code) from None
+        parent = os.dup(self._root_fds[root_id])
+        root_path = self._roots[root_id]
+        try:
+            if _identity(os.fstat(parent)) != _identity(os.fstat(self._root_fds[root_id])):
+                raise SupervisorError("CORRUPT_STATE")
+            for part in parts[:-1]:
+                previous = parent
+                parent = os.open(part, _DIRECTORY, dir_fd=previous)
+                os.close(previous)
+                if _mount_id(parent) != _mount_id(self._root_fds[root_id]):
+                    raise SupervisorError("PATH_DENIED")
+            return parent, parts[-1], root_path.joinpath(*parts)
+        except BaseException:
+            os.close(parent)
+            raise
 
     def _select(self, root_id: str, relative_root: str) -> tuple[int, Path]:
         if root_id not in self._root_fds:
@@ -1189,6 +1450,73 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
             if error.code == "STALE_REVISION":
                 raise SupervisorError("CORRUPT_STATE") from None
             raise
+
+    def register_new(
+        self,
+        peer: PeerIdentity,
+        namespace: NamespaceRef,
+        *,
+        root_id: str,
+        relative_root: str,
+        input_id: str | None,
+        deadline: float,
+    ) -> dict[str, str]:
+        """Materialize one absent root from an approved root or an empty seed.
+
+        The new canonical directory is never removed on failure: after mkdir,
+        a crash or failed registration makes its ownership ambiguous and later
+        provisioning must fail closed at the existing path.
+        """
+        if not isinstance(namespace, NamespaceRef):
+            raise ExecutionContractError
+        with self._transaction(peer, deadline):
+            if input_id is not None and input_id not in self._root_fds:
+                raise SupervisorError("PATH_DENIED")
+            target = -1
+            parent = -1
+            try:
+                parent, leaf, path = self._select_parent(root_id, relative_root)
+                try:
+                    os.mkdir(leaf, 0o700, dir_fd=parent)
+                except FileExistsError:
+                    raise SupervisorError("PATH_DENIED") from None
+                target = os.open(leaf, _DIRECTORY, dir_fd=parent)
+                if _mount_id(target) != _mount_id(self._root_fds[root_id]):
+                    raise SupervisorError("PATH_DENIED")
+                target_location = _location(target, path)
+                if input_id is not None:
+                    source = self._root_fds[input_id]
+                    source_path = self._roots[input_id]
+                    if _overlap(_location(source, source_path), target_location):
+                        raise SupervisorError("PATH_DENIED")
+                    self._snapshot(source, target, deadline)
+                os.fsync(target)
+                os.fsync(parent)
+                metadata = {
+                    "schema_version": 1,
+                    "workspace_id": "ws-" + uuid4().hex,
+                    "root_id": root_id,
+                    "relative_root": relative_root,
+                    "root_dev": os.fstat(target).st_dev,
+                    "root_ino": os.fstat(target).st_ino,
+                    "generation": 1,
+                    "owner_namespace": None,
+                    "active_actor": None,
+                    "status": "AVAILABLE",
+                }
+                provisional = _Binding(metadata, {}, -1, target, path, target_location)
+                self._disjoint(provisional)
+                result = self._register(provisional, deadline)
+                target = -1  # The installed binding owns it now.
+                return result
+            except OSError:
+                self._healthy = False
+                raise SupervisorError("DURABILITY_UNKNOWN") from None
+            finally:
+                if target != -1:
+                    os.close(target)
+                if parent != -1:
+                    os.close(parent)
 
     def register_existing(
         self, peer: PeerIdentity, namespace: NamespaceRef, *, root_id: str, relative_root: str, deadline: float
@@ -1412,16 +1740,13 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
         capability: str,
         deadline: float,
     ) -> GrantReply:
-        """Move the ONE active mutator grant to this actor's own child run (CT113).
+        """Move the active grant to a child or back to its delegating parent.
 
-        Q85/§7.1: the parent link is controller-attested after an actual
-        `begin_run`, so this proves the link it is told — same session, the
-        caller's run as the target's parent, a different run — and never the
-        target run's existence. The move is ONE fsynced metadata replace that
-        keeps `owner_namespace`, `generation`, `status` and `revision_id`: a
-        handoff is not a new write epoch, so pins and the child's views keep the
-        generation they were opened at. Every refusal happens before any write,
-        and the reply's capability is only returned after the replace reads back.
+        Downward links are controller-attested (Q85); return requires the exact
+        recorded parent namespace (Q102). The live lineage, like the grant, is
+        lost on restart, when OWNED workspaces are quarantined. The move keeps
+        the owner and generation and issues a fresh capability only after the
+        metadata replacement is read back. All refusals precede the replacement.
         """
         if not isinstance(target, NamespaceRef):
             raise ExecutionContractError
@@ -1435,12 +1760,16 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
             return self._handoff_owner(binding, namespace, target)
 
     def _handoff_owner(self, binding: _Binding, namespace: NamespaceRef, target: NamespaceRef) -> GrantReply:
-        """The wire invariants, then the swap; the old capability dies with it."""
-        if (
-            target.session_id != namespace.session_id
-            or target.run_id == namespace.run_id
-            or target.parent_run_id != namespace.run_id
+        """Validate one lineage edge, then rotate the capability and actor."""
+        if target.session_id != namespace.session_id or target.run_id == namespace.run_id:
+            raise SupervisorError("INPUT_POLICY")
+        if binding.parents and target == binding.parents[-1]:
+            parents = binding.parents[:-1]
+        elif target.parent_run_id == namespace.run_id and all(
+            target.run_id != parent.run_id for parent in binding.parents
         ):
+            parents = (*binding.parents, namespace)
+        else:
             raise SupervisorError("INPUT_POLICY")
         try:
             grant = secrets.token_hex(32)
@@ -1450,6 +1779,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                 # Never hand out an unproven grant: recovery owns this workspace now.
                 self._healthy = False
                 raise SupervisorError("DURABILITY_UNKNOWN")
+            binding.parents = parents
             binding.grant = grant
             return GrantReply(
                 Operation.HANDOFF,
@@ -1483,6 +1813,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                 binding.writer = None
             binding.grant = None
             binding.principal = None
+            binding.parents = ()
             return {"released": True}
         except OSError:
             self._healthy = False
@@ -1531,7 +1862,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
         if not isinstance(namespace, NamespaceRef) or type(formal_evidence) is not bool:
             raise ExecutionContractError
         with self._transaction(peer, deadline):
-            if self._view_profile is None:
+            if self._read_only_profile is None:
                 raise SupervisorError("UNAPPROVED_PROFILE")
             binding = self._binding(workspace_id)
             self._recheck(binding)
@@ -1552,7 +1883,14 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                         Access.READ,
                         ViewPurpose.PROJECT,
                     )
-                    grant = GrantReply(Operation.PIN_READER, secrets.token_hex(32), ref, None, None)
+                    grant = GrantReply(
+                        Operation.PIN_READER,
+                        secrets.token_hex(32),
+                        ref,
+                        None,
+                        None,
+                        input_tree_sha256=tree["tree_sha256"],
+                    )
                     record = {
                         "schema_version": 1,
                         "view_ref": ref.to_dict(),
@@ -1561,6 +1899,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                         "input_tree_sha256": tree["tree_sha256"],
                         "sealed_manifest_id": None,
                         "operation_ids": [],
+                        "profile_id": self._read_only_profile.profile_id,
                         "candidate_scope": None,
                         "plan_ref": context.to_plan_ref(),
                     }
@@ -1690,7 +2029,14 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                     Access.READ,
                     purpose,
                 )
-                grant = GrantReply(Operation.CREATE_VIEW, secrets.token_hex(32), ref, None, None)
+                grant = GrantReply(
+                    Operation.CREATE_VIEW,
+                    secrets.token_hex(32),
+                    ref,
+                    None,
+                    None,
+                    input_tree_sha256=tree["tree_sha256"],
+                )
                 record = {
                     "schema_version": 1,
                     "view_ref": ref.to_dict(),
@@ -1699,6 +2045,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                     "input_tree_sha256": tree["tree_sha256"],
                     "sealed_manifest_id": None,
                     "operation_ids": [],
+                    "profile_id": self._read_only_profile.profile_id,
                     "candidate_scope": scope,
                     "plan_ref": context.to_plan_ref(),
                 }
@@ -1792,7 +2139,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
         with self._transaction(peer, deadline), self._file_work(peer, namespace, view_ref, capability, deadline):
             try:
                 pin = self._reader(peer, namespace, view_ref, capability)
-                profile = self._view_profile
+                profile = self._profile_for_record(pin.record)
                 if profile is None:
                     raise SupervisorError("UNAPPROVED_PROFILE")
                 with (
@@ -1842,6 +2189,129 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
             if entry is None or entry["type"] != "file" or result["sha256"] != entry["sha256"]:
                 raise SupervisorError("CORRUPT_STATE")
             return result
+
+    def list_project_artifacts(
+        self,
+        peer: PeerIdentity,
+        namespace: NamespaceRef,
+        *,
+        view_ref: ViewRef,
+        capability: str,
+        project_slug: str,
+        deadline: float,
+    ) -> dict[str, Any]:
+        """Project bounded Q60 metadata from the immutable reader manifest only."""
+        if (
+            not isinstance(view_ref, ViewRef)
+            or view_ref.access is not Access.READ
+            or view_ref.purpose is not ViewPurpose.PROJECT
+            or not isinstance(project_slug, str)
+            or re.fullmatch(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*", project_slug) is None
+            or len(project_slug) > 48
+        ):
+            raise SupervisorError("INPUT_POLICY")
+        project_path = f"worklogs/{project_slug}"
+        roadmap_path = f"{project_path}/roadmap.md"
+        increments_path = f"{project_path}/increments"
+        with self._reader_io(
+            peer,
+            namespace,
+            view_ref=view_ref,
+            capability=capability,
+            deadline=deadline,
+        ) as (_io, pin):
+            project = pin.entries.get(project_path)
+            project_kind = "missing" if project is None else project.get("type")
+            if project_kind not in {"missing", "file", "directory", "symlink"}:
+                raise SupervisorError("CORRUPT_STATE")
+            roadmap = pin.entries.get(roadmap_path) if project_kind == "directory" else None
+            increments = pin.entries.get(increments_path) if project_kind == "directory" else None
+            roadmap_kind = "missing" if roadmap is None else roadmap.get("type")
+            increments_kind = "missing" if increments is None else increments.get("type")
+            if roadmap_kind not in {"missing", "file", "directory", "symlink"}:
+                raise SupervisorError("CORRUPT_STATE")
+            if increments_kind not in {"missing", "file", "directory", "symlink"}:
+                raise SupervisorError("CORRUPT_STATE")
+            entries: list[dict[str, str]] = []
+            if increments_kind == "directory":
+                prefix = increments_path + "/"
+                for path, entry in pin.entries.items():
+                    _budget(deadline)
+                    if not path.startswith(prefix):
+                        continue
+                    name = path[len(prefix) :]
+                    if "/" in name:
+                        continue
+                    kind = entry.get("type")
+                    if kind not in {"file", "directory", "symlink"}:
+                        raise SupervisorError("CORRUPT_STATE")
+                    try:
+                        name_bytes = name.encode("utf-8")
+                    except UnicodeError:
+                        raise SupervisorError("INPUT_POLICY") from None
+                    if not name or len(name_bytes) > 255:
+                        raise SupervisorError("INPUT_POLICY")
+                    entries.append({"name": name, "kind": kind})
+                    if len(entries) > 64:
+                        raise SupervisorError("INPUT_POLICY")
+            entries.sort(key=lambda item: item["name"])
+            return {
+                "project_kind": project_kind,
+                "roadmap_kind": roadmap_kind,
+                "increments_kind": increments_kind,
+                "entries": entries,
+            }
+
+    def diff_revisions(
+        self,
+        peer: PeerIdentity,
+        namespace: NamespaceRef,
+        *,
+        view_ref: ViewRef,
+        capability: str,
+        base_revision: str,
+        deadline: float,
+    ) -> dict[str, Any]:
+        """Compare sealed manifest metadata; never read or return file contents."""
+        if (
+            not isinstance(view_ref, ViewRef)
+            or view_ref.access is not Access.READ
+            or view_ref.purpose is not ViewPurpose.PROJECT
+        ):
+            raise SupervisorError("INPUT_POLICY")
+        try:
+            _hex_id(base_revision, "rev-")
+        except ExecutionContractError:
+            raise SupervisorError("INVALID_REQUEST") from None
+        with self._reader_io(
+            peer,
+            namespace,
+            view_ref=view_ref,
+            capability=capability,
+            deadline=deadline,
+        ) as (_io, pin):
+            if base_revision == view_ref.base_revision:
+                return {"changes": [], "total_changes": 0, "truncated": False}
+            binding = self._binding(view_ref.workspace_id)
+            with self._revision(binding, base_revision, deadline) as (_data, base, _child):
+                before = {entry["path"]: entry for entry in base["entries"]}
+            after = pin.entries
+            changes: list[dict[str, str]] = []
+            total_changes = 0
+            for path in sorted(before.keys() | after.keys()):
+                _budget(deadline)
+                old, new = before.get(path), after.get(path)
+                if old == new:
+                    continue
+                change = "added" if old is None else "deleted" if new is None else "modified"
+                total_changes += 1
+                if len(changes) < MAX_REVISION_DIFF_ENTRIES:
+                    changes.append({"path": path, "change": change})
+            return {
+                "changes": changes,
+                "total_changes": total_changes,
+                "truncated": total_changes > len(changes),
+            }
 
     def release_reader(
         self,
@@ -1931,7 +2401,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
             # before any copy, never silently given the newer revision.
             if base_revision is not None and base_revision != binding.current["revision_id"]:
                 raise SupervisorError("STALE_REVISION")
-            profile = self._view_profile
+            profile = self._read_only_profile if access is Access.READ else self._view_profile
             if profile is None:
                 raise SupervisorError("UNAPPROVED_PROFILE")
             if access is Access.READ:
@@ -1970,7 +2440,14 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                         access,
                         purpose,
                     )
-                    grant = GrantReply(Operation.CREATE_VIEW, secrets.token_hex(32), ref, None, None)
+                    grant = GrantReply(
+                        Operation.CREATE_VIEW,
+                        secrets.token_hex(32),
+                        ref,
+                        None,
+                        None,
+                        input_tree_sha256=tree["tree_sha256"],
+                    )
                     record = {
                         "schema_version": 1,
                         "view_ref": ref.to_dict(),
@@ -1979,6 +2456,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                         "input_tree_sha256": tree["tree_sha256"],
                         "sealed_manifest_id": None,
                         "operation_ids": [],
+                        "profile_id": profile.profile_id,
                         "candidate_scope": None,
                         "plan_ref": context.to_plan_ref(),
                     }
@@ -2170,7 +2648,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                     # then the E259 purpose gate at the effect boundary.
                     self._purpose_write_policy(self._proof_only(peer, namespace, view_ref, capability).ref, write_path)
                 view = self._project_view(peer, namespace, view_ref, capability)
-                profile = self._view_profile
+                profile = self._profile_for_record(view.record)
                 if profile is None:
                     raise SupervisorError("UNAPPROVED_PROFILE")
                 with (
@@ -2253,12 +2731,13 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
         if not isinstance(pin, _ReaderPin) or pin.ref.purpose is not ViewPurpose.CANDIDATE:
             raise SupervisorError("UNAUTHORIZED")
         scope = pin.record.get("candidate_scope")
-        if scope is None or path != scope["candidate_path"]:
+        plan = pin.record.get("plan_ref")
+        if scope is None or not isinstance(plan, Mapping) or path != plan.get("workspace_relative_path"):
             raise SupervisorError("PATH_DENIED")
         return pin
 
     @staticmethod
-    def _buffer_bytes(pin: _ReaderPin) -> bytes | None:
+    def _buffer_bytes(pin: _ReaderPin, *, max_bytes: int | None = None) -> bytes | None:
         try:
             fd = os.open("candidate", os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK, dir_fd=pin.directory)
         except FileNotFoundError:
@@ -2267,11 +2746,17 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
             info = os.fstat(fd)
             if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
                 raise SupervisorError("DURABILITY_UNKNOWN")
+            if max_bytes is not None and info.st_size > max_bytes:
+                raise SupervisorError("INPUT_POLICY")
             chunks: list[bytes] = []
+            total = 0
             while True:
                 chunk = os.read(fd, 65536)
                 if not chunk:
                     break
+                total += len(chunk)
+                if max_bytes is not None and total > max_bytes:
+                    raise SupervisorError("INPUT_POLICY")
                 chunks.append(chunk)
             return b"".join(chunks)
         finally:
@@ -2310,7 +2795,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                 raise SupervisorError("INVALID_REQUEST")
             if len(raw) > self._limits.max_file_bytes:
                 raise SupervisorError("INPUT_POLICY")
-            existing = self._buffer_bytes(pin)
+            existing = self._buffer_bytes(pin, max_bytes=self._limits.max_file_bytes)
             if expected_sha256 is None:
                 if existing is not None:
                     raise SupervisorError("STALE_REVISION")
@@ -2345,7 +2830,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                 or not 1 <= max_bytes <= MAX_TEXT_BYTES
             ):
                 raise SupervisorError("INVALID_REQUEST")
-            data = self._buffer_bytes(pin)
+            data = self._buffer_bytes(pin, max_bytes=self._limits.max_file_bytes)
             if data is None:
                 raise SupervisorError("STALE_REVISION")
             try:
@@ -2398,15 +2883,44 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
 
     @property
     def approved_profile(self) -> ExecutionProfile | None:
-        """The single approved cell profile, or None when none was configured."""
+        """Compatibility accessor for the configured WRITE profile."""
         return self._view_profile
 
-    def execution_trusted(self, view: ViewRef) -> tuple[NamespaceRef, Path, Path, Path] | None:
-        """The authority's own trusted namespace and source/scratch/cache triple.
+    def _profile_for_record(self, record: Mapping[str, Any]) -> ExecutionProfile:
+        """Resolve a durable view's selected profile, including legacy records."""
+        raw_profile_id = record.get("profile_id")
+        if raw_profile_id is None:
+            profile = self._view_profile  # explicit compatibility for pre-binding records
+        else:
+            ref = ViewRef.from_dict(record["view_ref"])
+            expected = self._read_only_profile if ref.access is Access.READ else self._view_profile
+            profile = self._profiles.get(raw_profile_id)
+            if expected is None or profile is None or profile.profile_id != expected.profile_id:
+                raise SupervisorError("UNAPPROVED_PROFILE")
+        if profile is None:
+            raise SupervisorError("UNAPPROVED_PROFILE")
+        return profile
+
+    def view_profile(self, view_ref: ViewRef) -> ExecutionProfile | None:
+        """Return the configured profile bound to this exact admitted view."""
+        if not isinstance(view_ref, ViewRef):
+            raise ExecutionContractError
+        view: _ReaderPin | _ProjectView | None = self._readers.get(view_ref.view_id)
+        if view is None:
+            view = self._projects.get(view_ref.view_id)
+        if view is None or view.ref != view_ref:
+            return None
+        try:
+            return self._profile_for_record(view.record)
+        except SupervisorError:
+            return None
+
+    def execution_trusted(self, view: ViewRef) -> tuple[NamespaceRef, Path, Path, Path, Path | None] | None:
+        """The authority's own namespace and exact source/scratch/cache/env inputs.
 
         A raw path is never an authorization. This exists so the backend can
-        prove that the paths it hands to Docker are the ones the authority
-        actually admitted, not paths chosen by a caller or a model.
+        prove that every path it hands to Docker is the one the authority
+        actually admitted, not a path chosen by a caller or a model.
         """
         inputs = self._inputs.get(view.view_id)
         if inputs is None:
@@ -2414,7 +2928,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
         owner = self._readers.get(view.view_id) if view.access is Access.READ else self._projects.get(view.view_id)
         if owner is None or owner.ref != view:
             return None
-        return (owner.namespace, inputs.source, inputs.scratch, inputs.cache)
+        return (owner.namespace, inputs.source, inputs.scratch, inputs.cache, inputs.environment)
 
     def _proof_only(
         self, peer: PeerIdentity, namespace: NamespaceRef, ref: ViewRef, capability: str
@@ -3390,49 +3904,65 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
 
     # -- Plan replacement (STEP3 Q58 / CT107a): same-path, forward-only ---------
 
-    def publish_plan(
+    def publish_candidate_plan(
         self,
         peer: PeerIdentity,
         namespace: NamespaceRef,
         *,
+        view_ref: ViewRef,
         capability: str,
-        plan_ref: PlanRef,
-        buffer: bytes,
+        operation_id: str,
         deadline: float,
     ) -> dict[str, Any]:
-        """Replace the canonical plan at its own path, then commit the revision.
+        """Promote the one scoped candidate buffer through the candidate view grant.
 
-        Q58's transport and §5.1's PLAN row, in that order: validate the exact
-        bytes and the caller's source hash with **no** writes → durable intent →
-        the same-path replace (the irreversible point) → revision and pointer
-        forward → proof → `DONE`. A failure at or after the replace is
-        uncertainty, never a reason to restore the old bytes.
-
-        Semantic admission (precheck, kill directives) belongs to the controller;
-        this method owns bytes, namespace, source identity and the boundary.
+        The view proof remains authoritative after closure. This transaction
+        re-proves workspace ownership/binding, the terminal barrier and pinned
+        PlanRef, then reads the private staged bytes and enters the same forward-
+        only PLAN commit core. The operation id is the dispatcher's
+        ``op-<request_id>``; exact replay belongs to its journal.
         """
-        if not isinstance(plan_ref, PlanRef) or not isinstance(buffer, (bytes, bytearray)):
+        if not isinstance(view_ref, ViewRef):
             raise ExecutionContractError
+        _hex_id(operation_id, "op-")
         with self._transaction(peer, deadline):
-            binding = self._owner_only(peer, namespace, capability)
-            inputs = self._plan_prepare(binding, plan_ref, bytes(buffer), deadline)
+            pin, binding = self._closed_candidate_reader(peer, namespace, view_ref, capability)
+            gate = self._gate(view_ref)
+            if not gate.closed or pin.record["state"] != "STOPPING":
+                raise SupervisorError("VIEW_CLOSED")
+            self._wait_drained(view_ref, deadline)
+            expected_terminal = {"schema_version": 1, "view_ref": view_ref.to_dict()}
+            if _terminal_record(pin.directory) != expected_terminal:
+                raise SupervisorError("TERMINALITY_UNKNOWN")
+            scope = pin.record.get("candidate_scope")
+            plan_ref = pin.context.plan_ref
+            if scope is None or plan_ref is None or scope["plan_ref"] != _plan_ref_dict(plan_ref):
+                raise SupervisorError("INPUT_POLICY")
+            buffer = self._buffer_bytes(pin, max_bytes=min(self._limits.max_file_bytes, _MAX_PLAN_BYTES))
+            if buffer is None:
+                raise SupervisorError("STALE_REVISION")
+            repeated = self._already_published(binding, plan_ref, buffer, operation_id, deadline)
+            if repeated is not None:
+                # Nothing is written, but the same gates still prove the workspace
+                # is settled and its bytes are the current revision: a repeat is a
+                # claim about state, so it owes the same evidence as a commit.
+                self._forward_gates(binding, deadline)
+                self._settle_view(pin.directory, pin.record)
+                return repeated
+            inputs = self._plan_prepare(binding, plan_ref, buffer, operation_id, deadline)
             parent = self._project_parent(binding.source, inputs.plan_relative)
             scratch = -1
             try:
                 first = self._plan_source_identity(parent, inputs)
                 scratch = self._temporary_directory(binding.source)
                 self._plan_stage(binding, inputs, scratch)
-                # Q58: the source is re-proved immediately before the replace,
-                # by bytes and by identity, so a non-cooperating host writer
-                # between prepare and here is a refusal rather than a lost edit.
+                # Re-prove bytes and inode identity immediately before replace.
                 if _fingerprint(first) != _fingerprint(self._plan_source_identity(parent, inputs)):
                     raise SupervisorError("STALE_REVISION")
                 # Durable BEFORE the irreversible byte (spec §5.1).
                 self._write_intent(binding.fd, inputs.intent)
                 os.replace(inputs.temporary, inputs.name, src_dir_fd=scratch, dst_dir_fd=parent)
             except SupervisorError:
-                # Only the steps above can refuse, and none of them is the
-                # replace: this attempt changed nothing, so it is discarded whole.
                 self._plan_abort(binding, inputs)
                 raise
             except OSError:
@@ -3441,14 +3971,110 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
             finally:
                 if scratch != -1:
                     os.close(scratch)
-            # The file is replaced: from here on, only forward, and every
-            # failure is `_plan_finish`'s to classify and never to undo.
+            # After replace, recovery is forward-only; never restore old bytes.
             try:
                 return self._plan_finish(binding, inputs, parent, deadline)
             finally:
                 os.close(parent)
 
-    def _plan_prepare(self, binding: _Binding, plan_ref: PlanRef, buffer: bytes, deadline: float) -> _PlanInputs:
+    def _closed_candidate_reader(
+        self,
+        peer: PeerIdentity,
+        namespace: NamespaceRef,
+        view_ref: ViewRef,
+        capability: str,
+    ) -> tuple[_ReaderPin, _Binding]:
+        """Authenticate a closed CANDIDATE pin and re-prove its durable identity.
+
+        Unlike ``_reader_proof`` this deliberately tolerates STOPPING, but it
+        does not relax capability, namespace, principal, view, revision-pin or
+        workspace binding checks.
+        """
+        view = self._proof_only(peer, namespace, view_ref, capability)
+        if not isinstance(view, _ReaderPin) or view_ref.purpose is not ViewPurpose.CANDIDATE:
+            raise SupervisorError("UNAUTHORIZED")
+        if view.record["state"] != "STOPPING":
+            raise SupervisorError("VIEW_CLOSED")
+        binding = self._binding(view_ref.workspace_id)
+        self._recheck(binding)
+        if (
+            binding.metadata["status"] != "OWNED"
+            or binding.metadata["active_actor"] != namespace.to_dict()
+            or binding.metadata["generation"] != view_ref.generation
+            or binding.principal != peer.principal
+            or binding.writer is None
+        ):
+            raise SupervisorError("STALE_GENERATION")
+        # CT117: a candidate publication is a patch, so the view's base is the
+        # revision this copy started from, not a demand that nothing else moved.
+        # The freshness that matters is per file and lives in
+        # `_plan_source_identity`'s `old_sha256` CAS against the pinned PlanRef;
+        # every other predicate above (owner, actor, generation, principal,
+        # writer) still applies unchanged.
+        with ExitStack() as stack:
+            views = os.open("views", _DIRECTORY, dir_fd=binding.fd)
+            stack.callback(os.close, views)
+            directory = os.open(view_ref.view_id, _DIRECTORY, dir_fd=views)
+            stack.callback(os.close, directory)
+            _private(directory)
+            if _identity(os.fstat(directory)) != _identity(os.fstat(view.directory)):
+                raise SupervisorError("CORRUPT_STATE")
+            if _read_json(directory, "view.json", _VIEW_RECORD, 1024**2) != view.record:
+                raise SupervisorError("CORRUPT_STATE")
+            revisions = os.open("revisions", _DIRECTORY, dir_fd=binding.fd)
+            stack.callback(os.close, revisions)
+            revision = os.open(view_ref.base_revision, _DIRECTORY, dir_fd=revisions)
+            stack.callback(os.close, revision)
+            data = os.open("data", _DIRECTORY, dir_fd=revision)
+            stack.callback(os.close, data)
+            if (
+                _identity(os.fstat(data)) != _identity(os.fstat(view.source))
+                or _fingerprint(os.stat("tree.json", dir_fd=revision, follow_symlinks=False)) != view.manifest
+            ):
+                raise SupervisorError("CORRUPT_STATE")
+        try:
+            view.context.recheck()
+        except ExecutionContractError:
+            raise SupervisorError("INPUT_POLICY") from None
+        return view, binding
+
+    def _already_published(
+        self, binding: _Binding, plan_ref: PlanRef, buffer: bytes, operation_id: str, deadline: float
+    ) -> dict[str, Any] | None:
+        """The reply for an intent the committed tree already holds, else None.
+
+        A re-attempt of the same publication is not a refusal (CT117): the bytes
+        are already where the caller wants them, so the answer is the revision
+        that exists, named against the request's own PlanRef. Nothing is written:
+        no staging, no intent, no replace, no new revision. The target shape and
+        the plan decoding are proved here for the same reason `_plan_prepare`
+        proves them — an invalid intent must never be answered with "done".
+        """
+        path, _parts = self._plan_parts(plan_ref)
+        try:
+            _decode_plan_bytes(buffer)  # strict UTF-8, non-empty, plan size limit
+        except PlanRefError:
+            raise SupervisorError("INPUT_POLICY") from None
+        new_sha256 = hashlib.sha256(buffer).hexdigest()
+        with self._revision(binding, binding.current["revision_id"], deadline) as (_fd, base, _child):
+            existing = {entry["path"]: entry for entry in base["entries"]}.get(path)
+        if existing is None or existing["type"] != "file":
+            raise SupervisorError("INPUT_POLICY")  # not a committed plan file
+        if existing["sha256"] != new_sha256:
+            return None
+        return {
+            "workspace_id": binding.metadata["workspace_id"],
+            "revision_id": binding.current["revision_id"],
+            "tree_sha256": binding.current["tree_sha256"],
+            "operation_id": operation_id,
+            "projection_complete": True,
+            "plan_ref": PlanRef(path, plan_ref.source_kind, new_sha256),
+            "already_published": True,
+        }
+
+    def _plan_prepare(
+        self, binding: _Binding, plan_ref: PlanRef, buffer: bytes, operation_id: str, deadline: float
+    ) -> _PlanInputs:
         """Prove every precondition and compute the revision before any write."""
         path, parts = self._plan_parts(plan_ref)
         try:
@@ -3469,7 +4095,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
         entries = self._plan_entries(base_entries, path, len(buffer), new_sha256)
         tree_sha256 = hashlib.sha256(_canonical(list(entries))).hexdigest()
         base_revision = binding.current["revision_id"]
-        operation_id = "op-" + hashlib.sha256(f"plan\x00{base_revision}\x00{new_sha256}".encode()).hexdigest()[:32]
+        _hex_id(operation_id, "op-")
         plan_manifest = {
             "schema_version": 1,
             "kind": "PLAN",
@@ -3962,12 +4588,15 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
 
     @staticmethod
     def _published_receipt(inputs: _PublishInputs) -> dict[str, Any]:
+        """The sealed publish reply: never a repeat, so `already_published` is always False."""
         return {
             "workspace_id": inputs.view_ref.workspace_id,
             "revision_id": inputs.revision_id,
             "tree_sha256": inputs.tree_sha256,
             "operation_id": inputs.operation_id,
             "projection_complete": True,
+            "plan_ref": None,
+            "already_published": False,
         }
 
     def _probe_writable(self, binding: _Binding) -> None:
@@ -4752,10 +5381,22 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
             if operation is Operation.CREATE_VIEW:
                 if binding is None:  # capability-free create is impossible by §2.1
                     raise SupervisorError("UNAUTHORIZED")
-                return self._pinned_plan_context(binding, payload["base_revision"], payload["plan_ref"], deadline)
+                # The wire allows a null base only for CANDIDATE/VERIFICATION
+                # (`protocol._request_bindings`), and on that path the base is the
+                # CURRENT revision: the plan context must be the one the view will
+                # be minted on, not "anything goes". A named base keeps its CAS.
+                base_revision = payload["base_revision"]
+                if base_revision is None:
+                    base_revision = binding.current["revision_id"]
+                return self._pinned_plan_context(binding, base_revision, payload["plan_ref"], deadline)
             return None
 
         # View-scoped: the exact actor/view/access binding, nothing weaker.
+        if operation in {Operation.LIST_PROJECT_ARTIFACTS, Operation.DIFF_REVISIONS}:
+            if view.access is not Access.READ or view.purpose is not ViewPurpose.PROJECT:
+                raise SupervisorError("INPUT_POLICY")
+            self._reader_proof(peer, namespace, view, capability)
+            return None
         proved = self._proof_only(peer, namespace, view, capability)
         if operation is Operation.EXEC:
             # EXEC binds the plan the VIEW was admitted with, never a claim in
@@ -4821,7 +5462,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
         ref = ViewRef.from_dict(raw)
         with self._transaction(peer, deadline):
             view = self._live_view(peer, namespace, ref, req["capability"])
-            profile = self._view_profile
+            profile = self._profile_for_record(view.record)
             payload = req["payload"]
             if (
                 profile is None
@@ -4928,9 +5569,33 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                     fd = _open_absolute(path)
                     opened.callback(os.close, fd)
                     fds.append(fd)
+                baseline_source_fd = None
+                if (
+                    _read_environment_input(fds[0], "pyproject.toml") is None
+                    and _read_environment_input(fds[0], "uv.lock") is None
+                ):
+                    baseline_source_fd = self._baseline_environment_source()
+                resolved_environment = _environment_artifact(
+                    fds[0], cache_fd, cache, profile, baseline_source_fd=baseline_source_fd
+                )
+                environment: Path | None = None
+                environment_fd: int | None = None
+                if resolved_environment is not None:
+                    environment, environment_fd = resolved_environment
+                    opened.callback(os.close, environment_fd)
                 context = ProtectedPlanContext(root / "source", view.context.plan_ref, view.context.formal_evidence)
                 inputs = _ExecutionInputs(
-                    root / "source", root / "scratch", cache, fds[0], fds[1], cache_fd, context, sealed, installed
+                    root / "source",
+                    root / "scratch",
+                    cache,
+                    environment,
+                    fds[0],
+                    fds[1],
+                    cache_fd,
+                    environment_fd,
+                    context,
+                    sealed,
+                    installed,
                 )
                 self._validate_inputs(view.ref, inputs, deadline)
                 self._stack.callback(inputs.close)
@@ -5004,11 +5669,18 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
     def _validate_inputs(self, ref: ViewRef, inputs: _ExecutionInputs, deadline: float) -> None:
         _budget(deadline)
         try:
-            for path, fd in (
+            bound_paths = [
                 (inputs.source, inputs.source_fd),
                 (inputs.scratch, inputs.scratch_fd),
                 (inputs.cache, inputs.cache_fd),
-            ):
+            ]
+            if inputs.environment is not None:
+                if inputs.environment_fd is None or not inputs.environment.is_relative_to(inputs.cache):
+                    raise SupervisorError("CORRUPT_STATE")
+                bound_paths.append((inputs.environment, inputs.environment_fd))
+            elif inputs.environment_fd is not None:
+                raise SupervisorError("CORRUPT_STATE")
+            for path, fd in bound_paths:
                 current = _open_absolute(path)
                 try:
                     if _identity(os.fstat(current)) != _identity(os.fstat(fd)):

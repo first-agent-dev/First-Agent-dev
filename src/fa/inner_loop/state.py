@@ -373,6 +373,8 @@ class SessionState:
     workspace_io: WorkspacePort | None = None
     worktree_manager: WorktreeManager | None = None
     session_db: SessionDatabase | None = None
+    managed_child: bool = False
+
     # The CLI wires this after bootstrap; pending events are flushed on attach.
     output_bus: EventBus | None = None
     _pending_output_events: list[OutputEvent] = field(default_factory=list, init=False, repr=False)
@@ -390,6 +392,8 @@ class SessionState:
     _gold_files: set[str] = field(default_factory=set, init=False, repr=False)
     subagent_spawns: int = 0
     _subagent_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
+    _active_subagents: int = field(default=0, init=False, repr=False)
+    _active_subagent_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
 
     def require_log(self) -> EventLog:
         """Return the authoritative session log or fail closed."""
@@ -418,6 +422,13 @@ class SessionState:
 
     def __post_init__(self) -> None:  # noqa: C901 -- complexity from FeatureFlags + Transaction + Blackboard + Telemetry + WorktreeManager init, DI via SessionState, graceful degradation
         self.workspace_root = self.workspace_root.resolve()
+        if type(self.managed_child) is not bool:
+            raise ValueError("managed_child must be a bool")
+        if self.managed_child and any(
+            value is not None
+            for value in (self.artifact_store, self.blackboard, self.telemetry, self.pty_pool, self.worktree_manager)
+        ):
+            raise ValueError("managed child state cannot inherit host-backed optional stores or executors")
         if self.log is None:
             # Call-time resolution (V10): see ``default_state_root``. Using the
             # import-time constant here made every ``SessionState`` built
@@ -473,18 +484,17 @@ class SessionState:
                 logger.warning(f"Failed to init Transaction: {exc}")
 
         # ArtifactStore for offloading full outputs
-        if self.artifact_store is None:
+        if self.artifact_store is None and not self.managed_child:
             try:
                 from fa.inner_loop.artifacts import ArtifactStore
 
-                # Store under .fa/telemetry or session log artifacts?
-                # Use workspace_root/.fa/artifacts for token-efficient offload
+                # Parent output artifacts remain in the workspace's private FA state.
                 self.artifact_store = ArtifactStore(self.workspace_root / ".fa" / "artifacts")
             except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
                 logger.warning(f"Failed to init ArtifactStore: {exc}")
 
         # Blackboard if enabled
-        if self.blackboard is None:
+        if self.blackboard is None and not self.managed_child:
             # S13: FAIL-OPEN — blackboard_enabled defaults to True (convenience)
             enabled = self.feature_flags.blackboard_enabled if self.feature_flags is not None else True
             if enabled:
@@ -506,7 +516,7 @@ class SessionState:
                         self.blackboard = None
 
         # Telemetry if enabled
-        if self.telemetry is None:
+        if self.telemetry is None and not self.managed_child:
             # S13: FAIL-OPEN — telemetry_enabled defaults to True (convenience)
             enabled = self.feature_flags.telemetry_enabled if self.feature_flags is not None else True
             if enabled:
@@ -519,7 +529,7 @@ class SessionState:
                     self.telemetry = None
 
         # WorktreeManager via Factory from flags (Phase 1)
-        if self.worktree_manager is None:
+        if self.worktree_manager is None and not self.managed_child:
             from fa.workspace.worktree_manager import WorktreeManagerFactory
 
             flags = self.feature_flags
@@ -548,7 +558,7 @@ class SessionState:
                     self.worktree_manager = None
 
         # PtyPool — FIND-007 fix: stateful shell wired into live session by default
-        if self.pty_pool is None:
+        if self.pty_pool is None and not self.managed_child:
             try:
                 from fa.runtime import PtyPool
 
@@ -674,6 +684,28 @@ class SessionState:
                 return False
             self.subagent_spawns += 1
             return True
+
+    def try_reserve_active_subagent(self, max_active: int = 1) -> bool:
+        """Reserve the bounded active-child slot atomically."""
+        if type(max_active) is not int or max_active < 1:
+            raise ValueError("max_active must be a positive integer")
+        with self._active_subagent_lock:
+            if self._active_subagents >= max_active:
+                return False
+            self._active_subagents += 1
+            return True
+
+    def release_active_subagent(self) -> None:
+        """Release a child slot only after its managed reader is confirmed closed."""
+        with self._active_subagent_lock:
+            if self._active_subagents <= 0:
+                raise RuntimeError("no active subagent reservation")
+            self._active_subagents -= 1
+
+    def get_active_subagents(self) -> int:
+        """Thread-safe active-child count, for lifecycle tests and diagnostics."""
+        with self._active_subagent_lock:
+            return self._active_subagents
 
     def create_subagent_workspace(self, task_id: str, base_branch: str = "main") -> Path:
         """Return the per-task artifact root, or fail closed (V18, Q11-B Option A).

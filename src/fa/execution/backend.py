@@ -146,7 +146,7 @@ class CellBackend:
         authenticated principal, namespace, exact view and approved profile, so
         a foreign principal, namespace or view can never reach a live shell.
         """
-        profile = self._authority.approved_profile
+        profile = self._authority.view_profile(view)
         if profile is None:
             return None
         key = _EpisodeKey.build(peer, namespace, view, profile.profile_id)
@@ -161,13 +161,20 @@ class CellBackend:
         source: Any,
         scratch: Any,
         cache: Any,
+        environment: Any,
     ) -> None:
-        """Only the authority's own trusted triple may reach Docker."""
+        """Only the authority's own trusted input paths may reach Docker."""
         trusted = self._authority.execution_trusted(view)
         if trusted is None:
             raise ExecutionContractError
-        owner, trusted_source, trusted_scratch, trusted_cache = trusted
-        if owner != namespace or source != trusted_source or scratch != trusted_scratch or cache != trusted_cache:
+        owner, trusted_source, trusted_scratch, trusted_cache, trusted_environment = trusted
+        if (
+            owner != namespace
+            or source != trusted_source
+            or scratch != trusted_scratch
+            or cache != trusted_cache
+            or environment != trusted_environment
+        ):
             raise ExecutionContractError
 
     @staticmethod
@@ -238,6 +245,7 @@ class CellBackend:
                         source=inputs.source,
                         scratch=inputs.scratch,
                         cache=inputs.cache,
+                        environment=inputs.environment,
                         deadline=deadline,
                     )
                     stream = self._cells.attach_created(req, profile=scope.profile, deadline=deadline)
@@ -275,6 +283,7 @@ class CellBackend:
                         source=inputs.source,
                         scratch=inputs.scratch,
                         cache=inputs.cache,
+                        environment=inputs.environment,
                         deadline=deadline,
                     )
                     stream = self._cells.attach_created(req, profile=scope.profile, deadline=deadline)
@@ -374,7 +383,7 @@ class CellBackend:
             raise SupervisorError("INPUT_POLICY")
         view = self._view_of(raw)
         operation_id = req["payload"]["operation_id"]
-        profile = self._authority.approved_profile
+        profile = self._authority.view_profile(view)
         if profile is None:
             raise SupervisorError("UNAPPROVED_PROFILE")
         if not profile.interactive:
@@ -460,7 +469,7 @@ class CellBackend:
         if raw is None:
             raise SupervisorError("INPUT_POLICY")
         view = self._view_of(raw)
-        profile = self._authority.approved_profile
+        profile = self._authority.view_profile(view)
         if profile is None:
             raise SupervisorError("UNAPPROVED_PROFILE")
         if not profile.interactive:
@@ -497,9 +506,6 @@ class CellBackend:
 
     def reconcile(self, *, deadline: float) -> list[dict[str, Any]]:
         """Stop surviving owned cells of uncertain records. Never create or re-run."""
-        profile = self._authority.approved_profile
-        if profile is None:
-            raise SupervisorError("UNAPPROVED_PROFILE")
         results: list[dict[str, Any]] = []
         try:
             records = self._journal.owned_cells(deadline=deadline)
@@ -510,6 +516,9 @@ class CellBackend:
             stopped = False
             for record in candidates:
                 view = self._view_of(record["view_ref"])
+                profile = self._authority.view_profile(view)
+                if profile is None:
+                    continue
                 try:
                     observed = self._engine.force_stop_owned(
                         operation_id=record["operation_id"],

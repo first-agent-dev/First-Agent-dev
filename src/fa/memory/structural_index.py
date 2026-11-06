@@ -40,8 +40,9 @@ import time
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
+from uuid import uuid4
 
-from fa.memory._safe_walk import iter_searchable_files
+from fa.memory._safe_walk import RootedFileReader, iter_searchable_files
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +55,7 @@ _DOCSTRING_CAP = 400
 _SYMBOL_HASH_LEN = 16
 _FILE_HASH_LEN = 24
 _LANGUAGE_PROBE_LIMIT = 200
+_MAX_SOURCE_FILE_BYTES = 200_000  # Must match the structural walk's existing candidate cap.
 
 
 def _hash16(text: str) -> str:
@@ -148,17 +150,29 @@ def _base_name(node: ast.AST) -> str:
 class StructuralIndex:
     """Lazy, thread-safe structural call-graph index (CT-5)."""
 
-    def __init__(self, db_path: Path) -> None:
+    def __init__(self, db_path: Path, *, in_memory: bool = False, strict_rooted_reads: bool = False) -> None:
+        if type(strict_rooted_reads) is not bool:
+            raise ValueError("strict_rooted_reads must be a bool")
         self.db_path = Path(db_path)
+        self._strict_rooted_reads = strict_rooted_reads
+        self._memory_uri = f"file:fa-struct-{uuid4().hex}?mode=memory&cache=shared" if in_memory else None
+        self._anchor = (
+            sqlite3.connect(self._memory_uri, uri=True, check_same_thread=False)
+            if self._memory_uri is not None
+            else None
+        )
         self._stats: StructIndexStats | None = None
 
     # -- connection / schema -------------------------------------------------
 
     def _connect(self) -> sqlite3.Connection:
-        # Ensure the parent directory exists for ANY caller (tests construct
-        # the index directly; the tool path and direct use must both work).
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(str(self.db_path), timeout=10.0)
+        if self._memory_uri is None:
+            # Ensure the parent directory exists for direct and tool callers.
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
+            conn = sqlite3.connect(str(self.db_path), timeout=10.0)
+        else:
+            conn = sqlite3.connect(self._memory_uri, timeout=10.0, uri=True)
+            conn.execute("PRAGMA temp_store=MEMORY")
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")
         return conn
@@ -322,12 +336,10 @@ class StructuralIndex:
         return next_frontier, unresolved_level
 
     def close(self) -> None:
-        """No-op for API parity with SearchIndex/atexit holders.
-
-        Connections are short-lived per operation, so there is nothing to
-        close; registered with ``atexit`` by the builder for symmetry with
-        the fs_search holder pattern (ResourceWarning parity, D-S16-18).
-        """
+        """Close the in-memory anchor; disk connections remain short-lived."""
+        if self._anchor is not None:
+            self._anchor.close()
+            self._anchor = None
 
     # -- internals -------------------------------------------------------------
 
@@ -348,20 +360,54 @@ class StructuralIndex:
             out.append(symbol)
         return out
 
+    @staticmethod
+    def _read_rooted_candidate(reader: RootedFileReader, rel: str) -> tuple[str, bytes] | None:
+        try:
+            return reader.read_bytes_with_path(rel, max_bytes=_MAX_SOURCE_FILE_BYTES)
+        except OSError:
+            return None
+
+    def _index_candidate(
+        self,
+        conn: sqlite3.Connection,
+        fp: Path,
+        rel: str,
+        reader: RootedFileReader | None,
+        seen_rooted_paths: set[str],
+    ) -> tuple[str, tuple[int, int, int, int, str | None]] | None:
+        if reader is None:
+            return rel, self._index_one_file(conn, fp, rel)
+        rooted_source = self._read_rooted_candidate(reader, rel)
+        if rooted_source is None:
+            return None
+        indexed_rel, source_bytes = rooted_source
+        if indexed_rel in seen_rooted_paths:
+            return indexed_rel, (0, 1, 0, 0, None)
+        seen_rooted_paths.add(indexed_rel)
+        result = self._index_one_file(conn, fp, indexed_rel, source_bytes=source_bytes)
+        return indexed_rel, result
+
     def _build(self, root: Path) -> StructIndexStats:
         root_resolved = root.resolve()
         conn = self._connect()
+        rooted_reader: RootedFileReader | None = None
         try:
             self._init_schema(conn)
+            if self._strict_rooted_reads:
+                rooted_reader = RootedFileReader(root_resolved)
             walked: list[tuple[Path, str]] = []
             extensions: set[str] = set()
             try:
                 for fp, rel, _mtime, _size in iter_searchable_files(
-                    root_resolved, patterns=("*.py",), include_tests=True
+                    root_resolved,
+                    patterns=("*.py",),
+                    include_tests=True,
+                    max_file_size=_MAX_SOURCE_FILE_BYTES,
+                    strict_paths=self._strict_rooted_reads,
                 ):
                     walked.append((fp, rel))
                     if len(extensions) < _LANGUAGE_PROBE_LIMIT:
-                        extensions.add(fp.suffix.lower())
+                        extensions.add(Path(rel).suffix.lower())
             except Exception as exc:  # noqa: BLE001 - walk failure = unavailable, never crash
                 logger.warning("structural index walk failed: %s", exc)
                 return StructIndexStats(available=False, errors=((str(root_resolved), str(exc)),))
@@ -372,7 +418,12 @@ class StructuralIndex:
                 # WHAT is actually in the workspace.
                 probe_exts: set[str] = set()
                 try:
-                    for fp, _rel, _m, _s in iter_searchable_files(root_resolved, patterns=("*",), include_tests=True):
+                    for fp, _rel, _m, _s in iter_searchable_files(
+                        root_resolved,
+                        patterns=("*",),
+                        include_tests=True,
+                        strict_paths=self._strict_rooted_reads,
+                    ):
                         if len(probe_exts) >= _LANGUAGE_PROBE_LIMIT:
                             break
                         probe_exts.add(fp.suffix.lower())
@@ -389,16 +440,20 @@ class StructuralIndex:
             total_edges = 0
             indexed_files: set[str] = set()
             errors: list[tuple[str, str]] = []
+            seen_rooted_paths: set[str] = set()
 
             for fp, rel in walked:
-                result = self._index_one_file(conn, fp, rel)
+                candidate = self._index_candidate(conn, fp, rel, rooted_reader, seen_rooted_paths)
+                if candidate is None:
+                    return StructIndexStats(available=False, errors=((rel, "rooted source read refused"),))
+                indexed_rel, result = candidate
                 files_indexed += result[0]
                 files_skipped += result[1]
                 total_symbols += result[2]
                 total_edges += result[3]
-                indexed_files.add(rel)
+                indexed_files.add(indexed_rel)
                 if result[4] is not None:
-                    errors.append((rel, result[4]))
+                    errors.append((indexed_rel, result[4]))
 
             self._sweep_ghosts(conn, indexed_files)
 
@@ -416,15 +471,24 @@ class StructuralIndex:
             return StructIndexStats(available=False, errors=((str(self.db_path), str(exc)),))
         finally:
             conn.close()
+            if rooted_reader is not None:
+                rooted_reader.close()
 
-    def _index_one_file(self, conn: sqlite3.Connection, fp: Path, rel: str) -> tuple[int, int, int, int, str | None]:
+    def _index_one_file(
+        self,
+        conn: sqlite3.Connection,
+        fp: Path,
+        rel: str,
+        *,
+        source_bytes: bytes | None = None,
+    ) -> tuple[int, int, int, int, str | None]:
         """Index one file. Returns (indexed, skipped, symbols, edges, error).
 
         ``skipped`` counts fresh-hash and syntax-error skips alike; ``error``
         carries a human message for the stats ledger when non-None.
         """
         try:
-            data = fp.read_bytes()
+            data = source_bytes if source_bytes is not None else fp.read_bytes()
         except OSError as exc:
             return (0, 0, 0, 0, f"read failed: {exc}")
         file_hash = hashlib.sha256(data).hexdigest()[:_FILE_HASH_LEN]

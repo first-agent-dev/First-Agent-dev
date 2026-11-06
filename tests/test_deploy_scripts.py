@@ -62,7 +62,7 @@ def _get_docker_shadow_dir() -> Path:
     The stubs emit a deterministic "docker: not found" style message to stderr
     and exit non-zero, which matches the shape of a missing-binary error
     closely enough to satisfy scripts/fa's fallthrough behaviour AND the
-    assertion in ``test_fa_wrapper_unknown_help_topic_delegates_to_container``.
+    assertion in ``test_fa_wrapper_nonhelp_product_command_still_delegates_to_container``.
     The directory is cleaned up at interpreter exit.
     """
     global _docker_shadow_dir
@@ -282,41 +282,639 @@ def test_deploy_producers_verify_runtime_user_tmpfs_write_and_exec() -> None:
         assert "workspace readiness cannot complete" in text
 
 
-def _run_fa_wrapper(*args: str) -> subprocess.CompletedProcess[str]:
+def _run_fa_wrapper(
+    *args: str,
+    cwd: Path | None = None,
+    env_overrides: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    env = _wrapper_env()
+    if env_overrides:
+        env.update(env_overrides)
     return subprocess.run(
         ["bash", str(_SCRIPTS / "fa"), *args],
+        cwd=cwd,
         capture_output=True,
         text=True,
         check=False,
-        env=_wrapper_env(),
+        env=env,
     )
 
 
-def test_fa_wrapper_host_topic_help_is_russian_and_detailed() -> None:
-    result = _run_fa_wrapper("help", "clean-rebuild")
+@pytest.mark.parametrize("args", [(), ("--help",), ("-h",), ("help",)])
+def test_fa_wrapper_help_delegates_to_isolated_controller(args: tuple[str, ...], tmp_path: Path) -> None:
+    marker = tmp_path / "project-code-ran"
+    poison = f"from pathlib import Path\nPath({str(marker)!r}).touch()\nraise RuntimeError('project poison')\n"
+    (tmp_path / "fa").mkdir()
+    (tmp_path / "fa" / "__init__.py").write_text(poison, encoding="utf-8")
+    result = _run_fa_wrapper(*args, cwd=tmp_path, env_overrides={"PYTHONPATH": str(tmp_path)})
 
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert "fa clean-rebuild [env]" in result.stdout
-    assert "Переменные окружения" in result.stdout
-    assert "WIPE_STATE=1" in result.stdout
-    assert "ASSUME_YES=1" in result.stdout
-
-
-def test_fa_wrapper_command_help_form_for_update() -> None:
-    result = _run_fa_wrapper("update", "--help")
-
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert "fa update [env]" in result.stdout
-    assert "AUTO_STASH=1" in result.stdout
-    assert "--force" in result.stdout
+    # The test-only docker stub refuses execution, proving the wrapper delegates
+    # instead of importing host/project help; installed-controller composition
+    # is exercised separately in test_controller_installed.py.
+    assert result.returncode == 127
+    assert "docker: not found (test shim" in result.stderr
+    assert result.stdout == ""
+    assert not marker.exists()
 
 
-def test_fa_wrapper_global_help_topic_form_for_update() -> None:
-    result = _run_fa_wrapper("--help", "update")
+def test_fa_wrapper_egress_proxy_is_compose_owned_and_refused_before_dispatch(tmp_path: Path) -> None:
+    docker_bin = tmp_path / "bin"
+    docker_bin.mkdir()
+    docker_marker = tmp_path / "docker-called"
+    docker_stub = docker_bin / "docker"
+    docker_stub.write_text(
+        f"#!/bin/sh\nprintf called >> {str(docker_marker)!r}\n",
+        encoding="utf-8",
+    )
+    docker_stub.chmod(0o755)
 
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert "fa update [env]" in result.stdout
-    assert "SKIP_TESTS=1" in result.stdout
+    project_marker = tmp_path / "project-imported"
+    poison = f"from pathlib import Path\nPath({str(project_marker)!r}).touch()\n"
+    (tmp_path / "fa").mkdir()
+    (tmp_path / "fa" / "__init__.py").write_text(poison, encoding="utf-8")
+    env = _wrapper_env()
+    env_overrides = {
+        "PATH": os.pathsep.join((str(docker_bin), env["PATH"])),
+        "PYTHONPATH": str(tmp_path),
+    }
+
+    result = _run_fa_wrapper("egress-proxy", env_overrides=env_overrides)
+
+    assert result.returncode == 2
+    assert "egress-proxy is managed by the fa-egress-proxy Compose service" in result.stderr
+    assert result.stdout == ""
+    assert not docker_marker.exists()
+    assert not project_marker.exists()
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "logs",
+        "proxy-logs",
+        "status",
+        "up",
+        "down",
+        "restart",
+        "rebuild",
+        "shell",
+        "update",
+        "clean-rebuild",
+        "clean",
+        "commit-traces",
+        "sessions",
+        "egress-proxy",
+    ],
+)
+def test_fa_wrapper_host_command_help_fails_closed_before_dispatch(command: str, tmp_path: Path) -> None:
+    env_overrides: dict[str, str] = {}
+    git_marker = tmp_path / "git-called"
+    if command == "commit-traces":
+        git_bin = tmp_path / "bin"
+        git_bin.mkdir()
+        git_stub = git_bin / "git"
+        git_stub.write_text(f"#!/bin/sh\nprintf called >> {str(git_marker)!r}\n", encoding="utf-8")
+        git_stub.chmod(0o755)
+        env = _wrapper_env()
+        env_overrides["PATH"] = os.pathsep.join((str(git_bin), env["PATH"]))
+
+    result = _run_fa_wrapper(command, "--help", env_overrides=env_overrides)
+
+    assert result.returncode == 2
+    assert "wrapper help is disabled" in result.stderr
+    assert result.stdout == ""
+    assert not git_marker.exists()
+
+
+@pytest.mark.parametrize(
+    ("command", "args"),
+    [
+        ("logs", ("--tail", "10", "--help")),
+        ("proxy-logs", ("--tail", "10", "--help")),
+        ("status", ("--format", "json", "--help")),
+        ("up", ("--wait", "--help")),
+        ("down", ("--timeout", "5", "--help")),
+        ("restart", ("--timeout", "5", "--help")),
+        ("rebuild", ("--pull", "--help")),
+        ("shell", ("--login", "--help")),
+        ("update", ("--assume-yes", "--help")),
+        ("clean-rebuild", ("--yes", "--help")),
+        ("clean", ("--keep-traces", "--help")),
+        ("commit-traces", ("--force", "--help")),
+        ("sessions", ("--active", "--help")),
+        ("egress-proxy", ("--models", "models.yml", "--help")),
+    ],
+)
+def test_fa_wrapper_host_help_flags_at_later_positions_fail_closed_before_dispatch(
+    command: str,
+    args: tuple[str, ...],
+    tmp_path: Path,
+) -> None:
+    env_overrides: dict[str, str] = {}
+    git_marker = tmp_path / "git-called"
+    if command == "commit-traces":
+        git_bin = tmp_path / "bin"
+        git_bin.mkdir()
+        git_stub = git_bin / "git"
+        git_stub.write_text(f"#!/bin/sh\nprintf called >> {str(git_marker)!r}\n", encoding="utf-8")
+        git_stub.chmod(0o755)
+        env = _wrapper_env()
+        env_overrides["PATH"] = os.pathsep.join((str(git_bin), env["PATH"]))
+
+    result = _run_fa_wrapper(command, *args, env_overrides=env_overrides)
+
+    assert result.returncode == 2
+    assert "wrapper help is disabled" in result.stderr
+    assert result.stdout == ""
+    assert not git_marker.exists()
+
+
+def test_fa_wrapper_host_verb_help_remains_refused(tmp_path: Path) -> None:
+    from fa.cli_help import HOST_COMMANDS
+
+    for command in HOST_COMMANDS:
+        for prefix in (("--help",), ("help",)):
+            result = _run_fa_wrapper(*prefix, command, cwd=tmp_path)
+            assert result.returncode == 2, (prefix, command, result.stderr)
+            assert "wrapper help is disabled" in result.stderr
+            assert result.stdout == ""
+
+
+def test_fa_wrapper_run_uses_installed_controller_and_passes_active_workspace(tmp_path: Path) -> None:
+    import shutil
+
+    repo = tmp_path / "operator" / "repo"
+    scripts = repo / "scripts"
+    scripts.mkdir(parents=True)
+    wrapper = scripts / "fa"
+    shutil.copy2(_SCRIPTS / "fa", wrapper)
+    compose_file = repo / "docker-compose.fa.yml"
+    compose_file.write_text("services: {}\n", encoding="utf-8")
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    active_workspace = "/sessions/session-from-active"
+    (sessions / ".active").write_text(active_workspace + "\n", encoding="utf-8")
+
+    docker_bin = tmp_path / "bin"
+    docker_bin.mkdir()
+    argv_log = tmp_path / "docker-argv"
+    docker = docker_bin / "docker"
+    docker.write_text(
+        '#!/bin/sh\nprintf "%s\\0" "$@" > "$FA_WRAPPER_ARGV"\nexit 0\n',
+        encoding="utf-8",
+    )
+    docker.chmod(0o755)
+    env = _wrapper_env()
+    env["PATH"] = os.pathsep.join((str(docker_bin), env["PATH"]))
+    env["FA_WRAPPER_ARGV"] = str(argv_log)
+    result = subprocess.run(
+        ["bash", str(wrapper), "run", "--task", "bounded task", "--config", "./models.yaml"],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    argv = argv_log.read_bytes().rstrip(b"\0").decode().split("\0")
+    exec_index = argv.index("exec")
+    assert argv[exec_index : exec_index + 7] == [
+        "exec",
+        "-T",
+        "-e",
+        f"FA_WRAPPER_ACTIVE_WORKSPACE={active_workspace}",
+        "-w",
+        "/opt/first-agent",
+        "first-agent",
+    ]
+    assert argv[exec_index + 7 :] == [
+        "/opt/fa-venv/bin/python",
+        "-I",
+        "-m",
+        "fa.controller_entry",
+        "run",
+        "--task",
+        "bounded task",
+        "--config",
+        "./models.yaml",
+    ]
+    assert active_workspace not in argv[exec_index + 1 : exec_index + 3]
+
+
+def test_fa_wrapper_chunk_uses_installed_controller_and_passes_active_workspace(tmp_path: Path) -> None:
+    import shutil
+
+    repo = tmp_path / "operator" / "repo"
+    scripts = repo / "scripts"
+    scripts.mkdir(parents=True)
+    wrapper = scripts / "fa"
+    shutil.copy2(_SCRIPTS / "fa", wrapper)
+    (repo / "docker-compose.fa.yml").write_text("services: {}\n", encoding="utf-8")
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    active_workspace = "/sessions/session-from-active"
+    (sessions / ".active").write_text(active_workspace + "\n", encoding="utf-8")
+
+    docker_bin = tmp_path / "bin"
+    docker_bin.mkdir()
+    argv_log = tmp_path / "docker-argv"
+    docker = docker_bin / "docker"
+    docker.write_text(
+        '#!/bin/sh\nprintf "%s\\0" "$@" > "$FA_WRAPPER_ARGV"\nexit 0\n',
+        encoding="utf-8",
+    )
+    docker.chmod(0o755)
+    env = _wrapper_env()
+    env["PATH"] = os.pathsep.join((str(docker_bin), env["PATH"]))
+    env["FA_WRAPPER_ARGV"] = str(argv_log)
+    result = subprocess.run(
+        ["bash", str(wrapper), "chunk", "README.md"],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    argv = argv_log.read_bytes().rstrip(b"\0").decode().split("\0")
+    exec_index = argv.index("exec")
+    assert argv[exec_index : exec_index + 7] == [
+        "exec",
+        "-T",
+        "-e",
+        f"FA_WRAPPER_ACTIVE_WORKSPACE={active_workspace}",
+        "-w",
+        "/opt/first-agent",
+        "first-agent",
+    ]
+    assert argv[exec_index + 7 :] == [
+        "/opt/fa-venv/bin/python",
+        "-I",
+        "-m",
+        "fa.controller_entry",
+        "chunk",
+        "README.md",
+    ]
+
+
+@pytest.mark.parametrize("command", ["inject", "selfcheck", "routing-check", "probe", "conformance"])
+def test_fa_wrapper_generic_product_commands_use_installed_controller(command: str, tmp_path: Path) -> None:
+    repo = tmp_path / "operator" / "repo"
+    scripts = repo / "scripts"
+    scripts.mkdir(parents=True)
+    wrapper = scripts / "fa"
+    shutil.copy2(_SCRIPTS / "fa", wrapper)
+    (repo / "docker-compose.fa.yml").write_text("services: {}\n", encoding="utf-8")
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    active_workspace = "/sessions/session-from-active"
+    (sessions / ".active").write_text(active_workspace + "\n", encoding="utf-8")
+
+    docker_bin = tmp_path / "bin"
+    docker_bin.mkdir()
+    argv_log = tmp_path / "docker-argv"
+    docker = docker_bin / "docker"
+    docker.write_text(
+        '#!/bin/sh\nprintf "%s\\0" "$@" > "$FA_WRAPPER_ARGV"\nexit 0\n',
+        encoding="utf-8",
+    )
+    docker.chmod(0o755)
+    env = _wrapper_env()
+    env["PATH"] = os.pathsep.join((str(docker_bin), env["PATH"]))
+    env["FA_WRAPPER_ARGV"] = str(argv_log)
+    result = subprocess.run(
+        ["bash", str(wrapper), command, "--config", "models.yaml"],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    argv = argv_log.read_bytes().rstrip(b"\0").decode().split("\0")
+    exec_index = argv.index("exec")
+    assert argv[exec_index : exec_index + 7] == [
+        "exec",
+        "-T",
+        "-e",
+        f"FA_WRAPPER_ACTIVE_WORKSPACE={active_workspace}",
+        "-w",
+        "/opt/first-agent",
+        "first-agent",
+    ]
+    assert argv[exec_index + 7 :] == [
+        "/opt/fa-venv/bin/python",
+        "-I",
+        "-m",
+        "fa.controller_entry",
+        command,
+        "--config",
+        "models.yaml",
+    ]
+
+
+def test_fa_wrapper_authoring_check_uses_installed_controller_and_active_workspace(tmp_path: Path) -> None:
+    repo = tmp_path / "operator" / "repo"
+    scripts = repo / "scripts"
+    scripts.mkdir(parents=True)
+    wrapper = scripts / "fa"
+    shutil.copy2(_SCRIPTS / "fa", wrapper)
+    (repo / "docker-compose.fa.yml").write_text("services: {}\n", encoding="utf-8")
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    active_workspace = "/sessions/session-from-active"
+    (sessions / ".active").write_text(active_workspace + "\n", encoding="utf-8")
+
+    docker_bin = tmp_path / "bin"
+    docker_bin.mkdir()
+    argv_log = tmp_path / "docker-argv"
+    docker = docker_bin / "docker"
+    docker.write_text(
+        '#!/bin/sh\nprintf "%s\\0" "$@" > "$FA_WRAPPER_ARGV"\nexit 0\n',
+        encoding="utf-8",
+    )
+    docker.chmod(0o755)
+    env = _wrapper_env()
+    env["PATH"] = os.pathsep.join((str(docker_bin), env["PATH"]))
+    env["FA_WRAPPER_ARGV"] = str(argv_log)
+    result = subprocess.run(
+        [
+            "bash",
+            str(wrapper),
+            "authoring-check",
+            "--workspace",
+            "./subproject",
+            "--manifest",
+            "manifest.toml",
+        ],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    argv = argv_log.read_bytes().rstrip(b"\0").decode().split("\0")
+    exec_index = argv.index("exec")
+    assert argv[exec_index : exec_index + 7] == [
+        "exec",
+        "-T",
+        "-e",
+        f"FA_WRAPPER_ACTIVE_WORKSPACE={active_workspace}",
+        "-w",
+        "/opt/first-agent",
+        "first-agent",
+    ]
+    assert argv[exec_index + 7 :] == [
+        "/opt/fa-venv/bin/python",
+        "-I",
+        "-m",
+        "fa.controller_entry",
+        "authoring-check",
+        "--workspace",
+        "./subproject",
+        "--manifest",
+        "manifest.toml",
+    ]
+
+
+def test_fa_wrapper_stats_uses_installed_controller_and_active_workspace(tmp_path: Path) -> None:
+    repo = tmp_path / "operator" / "repo"
+    scripts = repo / "scripts"
+    scripts.mkdir(parents=True)
+    wrapper = scripts / "fa"
+    shutil.copy2(_SCRIPTS / "fa", wrapper)
+    (repo / "docker-compose.fa.yml").write_text("services: {}\n", encoding="utf-8")
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    active_workspace = "/sessions/session-from-active"
+    (sessions / ".active").write_text(active_workspace + "\n", encoding="utf-8")
+
+    docker_bin = tmp_path / "bin"
+    docker_bin.mkdir()
+    argv_log = tmp_path / "docker-argv"
+    docker = docker_bin / "docker"
+    docker.write_text(
+        '#!/bin/sh\nprintf "%s\\0" "$@" > "$FA_WRAPPER_ARGV"\nexit 0\n',
+        encoding="utf-8",
+    )
+    docker.chmod(0o755)
+    env = _wrapper_env()
+    env["PATH"] = os.pathsep.join((str(docker_bin), env["PATH"]))
+    env["FA_WRAPPER_ARGV"] = str(argv_log)
+    result = subprocess.run(
+        [
+            "bash",
+            str(wrapper),
+            "stats",
+            "--session-id",
+            "explicit-session",
+            "--workspace",
+            "./reports",
+            "--dead-zones",
+        ],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    argv = argv_log.read_bytes().rstrip(b"\0").decode().split("\0")
+    exec_index = argv.index("exec")
+    assert argv[exec_index : exec_index + 7] == [
+        "exec",
+        "-T",
+        "-e",
+        f"FA_WRAPPER_ACTIVE_WORKSPACE={active_workspace}",
+        "-w",
+        "/opt/first-agent",
+        "first-agent",
+    ]
+    assert argv[exec_index + 7 :] == [
+        "/opt/fa-venv/bin/python",
+        "-I",
+        "-m",
+        "fa.controller_entry",
+        "stats",
+        "--session-id",
+        "explicit-session",
+        "--workspace",
+        "./reports",
+        "--dead-zones",
+    ]
+
+
+def test_fa_wrapper_workflow_uses_installed_controller_and_active_workspace(tmp_path: Path) -> None:
+    repo = tmp_path / "operator" / "repo"
+    scripts = repo / "scripts"
+    scripts.mkdir(parents=True)
+    wrapper = scripts / "fa"
+    shutil.copy2(_SCRIPTS / "fa", wrapper)
+    (repo / "docker-compose.fa.yml").write_text("services: {}\n", encoding="utf-8")
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    active_workspace = "/sessions/session-from-active"
+    (sessions / ".active").write_text(active_workspace + "\n", encoding="utf-8")
+
+    docker_bin = tmp_path / "bin"
+    docker_bin.mkdir()
+    argv_log = tmp_path / "docker-argv"
+    docker = docker_bin / "docker"
+    docker.write_text(
+        '#!/bin/sh\nprintf "%s\\0" "$@" > "$FA_WRAPPER_ARGV"\nexit 0\n',
+        encoding="utf-8",
+    )
+    docker.chmod(0o755)
+    env = _wrapper_env()
+    env["PATH"] = os.pathsep.join((str(docker_bin), env["PATH"]))
+    env["FA_WRAPPER_ARGV"] = str(argv_log)
+    result = subprocess.run(
+        ["bash", str(wrapper), "workflow", "eval", "active task", "--config", "./models.yaml"],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    argv = argv_log.read_bytes().rstrip(b"\0").decode().split("\0")
+    exec_index = argv.index("exec")
+    assert argv[exec_index : exec_index + 7] == [
+        "exec",
+        "-T",
+        "-e",
+        f"FA_WRAPPER_ACTIVE_WORKSPACE={active_workspace}",
+        "-w",
+        "/opt/first-agent",
+        "first-agent",
+    ]
+    assert argv[exec_index + 7 :] == [
+        "/opt/fa-venv/bin/python",
+        "-I",
+        "-m",
+        "fa.controller_entry",
+        "workflow",
+        "eval",
+        "active task",
+        "--config",
+        "./models.yaml",
+    ]
+
+
+def test_fa_wrapper_inner_loop_smoke_refuses_active_workspace_before_compose(tmp_path: Path) -> None:
+    repo = tmp_path / "operator" / "repo"
+    scripts = repo / "scripts"
+    scripts.mkdir(parents=True)
+    wrapper = scripts / "fa"
+    shutil.copy2(_SCRIPTS / "fa", wrapper)
+    (repo / "docker-compose.fa.yml").write_text("services: {}\n", encoding="utf-8")
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    (sessions / ".active").write_text("/sessions/managed-session\n", encoding="utf-8")
+
+    docker_bin = tmp_path / "bin"
+    docker_bin.mkdir()
+    argv_log = tmp_path / "docker-argv"
+    docker = docker_bin / "docker"
+    docker.write_text(
+        '#!/bin/sh\nprintf "%s\\0" "$@" > "$FA_WRAPPER_ARGV"\nexit 0\n',
+        encoding="utf-8",
+    )
+    docker.chmod(0o755)
+    env = _wrapper_env()
+    env["PATH"] = os.pathsep.join((str(docker_bin), env["PATH"]))
+    env["FA_WRAPPER_ARGV"] = str(argv_log)
+    result = subprocess.run(
+        ["bash", str(wrapper), "inner-loop-smoke", "--workspace", str(tmp_path / "disposable")],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 2
+    assert "refusing managed .active workspace" in result.stderr
+    assert not argv_log.exists(), "the wrapper reached Docker before refusing the active workspace"
+
+
+def test_fa_wrapper_inner_loop_smoke_uses_installed_controller_without_active_workspace(tmp_path: Path) -> None:
+    repo = tmp_path / "operator" / "repo"
+    scripts = repo / "scripts"
+    scripts.mkdir(parents=True)
+    wrapper = scripts / "fa"
+    shutil.copy2(_SCRIPTS / "fa", wrapper)
+    (repo / "docker-compose.fa.yml").write_text("services: {}\n", encoding="utf-8")
+
+    docker_bin = tmp_path / "bin"
+    docker_bin.mkdir()
+    argv_log = tmp_path / "docker-argv"
+    docker = docker_bin / "docker"
+    docker.write_text(
+        '#!/bin/sh\nprintf "%s\\0" "$@" > "$FA_WRAPPER_ARGV"\nexit 0\n',
+        encoding="utf-8",
+    )
+    docker.chmod(0o755)
+    env = _wrapper_env()
+    env["PATH"] = os.pathsep.join((str(docker_bin), env["PATH"]))
+    env["FA_WRAPPER_ARGV"] = str(argv_log)
+    disposable_workspace = tmp_path / "disposable"
+    result = subprocess.run(
+        ["bash", str(wrapper), "inner-loop-smoke", "--workspace", str(disposable_workspace)],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    argv = argv_log.read_bytes().rstrip(b"\0").decode().split("\0")
+    exec_index = argv.index("exec")
+    assert argv[exec_index : exec_index + 5] == ["exec", "-T", "-w", "/opt/first-agent", "first-agent"]
+    assert argv[exec_index + 5 :] == [
+        "/opt/fa-venv/bin/python",
+        "-I",
+        "-m",
+        "fa.controller_entry",
+        "inner-loop-smoke",
+        "--workspace",
+        str(disposable_workspace),
+    ]
+    assert not any(arg.startswith("FA_WRAPPER_ACTIVE_WORKSPACE=") for arg in argv)
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ("--help", "run"),
+        ("-h", "run"),
+        ("-help", "run"),
+        ("run", "--help"),
+        ("run", "-h"),
+        ("run", "-help"),
+        ("run", "task", "--help"),
+        ("help", "run"),
+    ],
+)
+def test_fa_wrapper_product_help_delegates_to_isolated_controller(args: tuple[str, ...], tmp_path: Path) -> None:
+    marker = tmp_path / "project-code-ran"
+    poison = f"from pathlib import Path\nPath({str(marker)!r}).touch()\nraise RuntimeError('project poison')\n"
+    (tmp_path / "fa").mkdir()
+    (tmp_path / "fa" / "__init__.py").write_text(poison, encoding="utf-8")
+    result = _run_fa_wrapper(*args, cwd=tmp_path, env_overrides={"PYTHONPATH": str(tmp_path)})
+
+    assert result.returncode == 127
+    assert "docker: not found (test shim" in result.stderr
+    assert result.stdout == ""
+    assert not marker.exists()
 
 
 def test_fa_wrapper_has_real_clean_rebuild_dispatch_case() -> None:
@@ -341,11 +939,10 @@ def test_fa_wrapper_rejects_clean_rebuild_typo_before_delegation() -> None:
     assert "fa clean-rebuild" in result.stderr
 
 
-def test_fa_wrapper_unknown_help_topic_delegates_to_container() -> None:
-    result = _run_fa_wrapper("help", "run")
+def test_fa_wrapper_nonhelp_product_command_still_delegates_to_container() -> None:
+    result = _run_fa_wrapper("run", "help")
 
-    # Docker is intentionally unavailable in the unit test environment; the
-    # important contract is that wrapper did NOT swallow `help run` as host help.
+    # A plain `help` task value is data, not a wrapper-help switch.
     assert result.returncode != 0
     assert any(term in result.stderr for term in ("exec: docker", "docker:", 'service "first-agent" is not running'))
 
@@ -368,7 +965,7 @@ def test_wrapper_env_preserves_host_binaries_and_shadows_docker() -> None:
        any real container runtime the developer's host may have installed).
     3. Invoking the shimmed docker fails non-zero with a deterministic
        "docker:" message, matching the assertion contract used by
-       ``test_fa_wrapper_unknown_help_topic_delegates_to_container``.
+       ``test_fa_wrapper_nonhelp_product_command_still_delegates_to_container``.
     """
     env = _wrapper_env()
     path = env.get("PATH", "")
@@ -412,15 +1009,16 @@ def test_wrapper_env_preserves_host_binaries_and_shadows_docker() -> None:
     assert "test shim" in result.stderr  # identifiable as the shim, not real docker
 
 
-def test_fa_wrapper_uses_cli_help_as_single_source_of_truth() -> None:
+def test_fa_wrapper_help_uses_installed_isolated_controller_not_checkout() -> None:
     text = (_SCRIPTS / "fa").read_text(encoding="utf-8")
+    route = text.split("_delegate_help_to_controller() {", 1)[1].split("\n}", 1)[0]
 
-    assert "-m fa.cli_help" in text
-    assert "--host-topic" in text
-    assert "--wrapper-usage" in text
-    # Detailed operator help belongs in src/fa/cli_help.py, not duplicated in bash heredocs.
-    assert "WIPE_STATE=1" not in text
-    assert "AUTO_STASH=1" not in text
+    assert "-m fa.cli_help" not in text
+    assert "PYTHONPATH=" not in text
+    assert "/opt/fa-venv/bin/python -I -m fa.controller_entry" in route
+    assert "-w /opt/first-agent" in route
+    assert "_W_FLAG" not in route
+    assert "wrapper help is disabled" in text  # host-verb help remains refused
 
 
 def test_cli_help_contains_host_wrapper_topics() -> None:

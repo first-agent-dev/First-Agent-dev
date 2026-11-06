@@ -109,9 +109,19 @@ class SandboxHook(GuardMiddleware):
         call = payload.tool_call
         if call is None:
             return Decision.allow()
+        if call.name == "fs_spawn_subagent" and "command" not in call.params:
+            # The managed production capability is a task-only delegation, not
+            # controller Bash. Only its exact closed input shape reaches the
+            # registered handler; the supervisor-bound child still owns all
+            # project/scratch execution authority. Legacy spawns continue below
+            # through the existing Bash policy and retain their command schema.
+            task = call.params.get("task")
+            if set(call.params) == {"task"} and isinstance(task, str) and task.strip():
+                return Decision.allow()
+            return Decision.deny("managed subagent input must contain only a non-empty task")
         if call.name in {"fs_run_bash", "fs_spawn_subagent"}:
-            # Q19: subagent spawns are NOT confined by this gate, and S5.6
-            # deliberately does not pretend otherwise.
+            # Q19: legacy subprocess spawns are NOT confined by this gate, and
+            # S5.6 deliberately does not pretend otherwise.
             #
             # Measured during S5.6 preflight: pointing the gate (or the runner
             # cwd) at a per-task artifact root does not contain anything —
@@ -120,14 +130,11 @@ class SandboxHook(GuardMiddleware):
             # GENERAL_WRITE and is allowed with no path check, and ``..`` walks
             # straight out of any cwd.
             #
-            # Denying general-write for spawns was implemented and measured to
-            # deny 8 of 10 realistic verifier commands (``pytest -q``,
-            # ``mypy src/``, ``make test`` ... are GENERAL_WRITE because a test
-            # run writes caches), i.e. it removes the role's entire purpose.
-            # Reverted; see plan §11 Q19.
-            #
-            # Real containment needs an OS-level boundary (one writable mount),
-            # tracked as Q19 option (c). V24/V25 remain OPEN.
+            # Denying general-write for legacy spawns was implemented and
+            # measured to deny 8 of 10 realistic verifier commands (``pytest
+            # -q``, ``mypy src/``, ``make test`` ... are GENERAL_WRITE because
+            # a test run writes caches), i.e. it removes the role's purpose.
+            # Reverted; see plan §11 Q19. Managed containment is supervisor-side.
             return self._handle_bash(call.params.get("command"))
         if call.name in _FS_PATH_TOOLS:
             # Path-only reads stay on the containment path (the common case).

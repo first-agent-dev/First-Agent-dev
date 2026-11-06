@@ -26,6 +26,7 @@ import threading
 import time
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import pytest
 
@@ -1736,7 +1737,7 @@ def test_publish_refuses_a_valid_manifest_that_belongs_to_another_view(site: Sit
 # authority, C3 for the metadata-smuggling and traversal refusals.
 # ---------------------------------------------------------------------------
 
-_ROADMAP_PROSE = "## Intent\n\nShip the thing.\n\n## Out-of-scope\n\nEverything else.\n"
+_ROADMAP_PROSE = "## Intent\n\nShip the thing.\n\n## Out of scope\n\nEverything else.\n"
 _INCREMENT_PROSE = "## SLICE1: first\n\nSteps.\n\n## SLICE2: second\n\nSteps.\n"
 
 
@@ -1767,7 +1768,7 @@ def test_the_renderer_emits_exactly_three_files_with_controller_metadata() -> No
     assert "| I01 | [first-increment](worklogs/demo-project/increments/increment-01-first-increment.md) |" in roadmap
     assert roadmap.endswith(_ROADMAP_PROSE)
     assert increment.startswith(
-        "---\nIncrement-ID: RM-demo-project-I01\nRoadmap-ID: RM-demo-project\nslug: first-increment\n"
+        "---\nIncrement-ID: RM-demo-project-I01\nRoadmap-ID: RM-demo-project\n"
         "status: IN PROGRESS\nslices: 2\nshipped: —\n---\n"
     )
     assert ledger == "# Ledger — decision and evidence log\n\nFixed heading only; entries are appended by the run.\n"
@@ -1778,7 +1779,7 @@ def test_the_renderer_refuses_metadata_the_caller_disguised_outside_a_fence() ->
     from fa.execution.publication import render_bundle
 
     for prose, kind in (
-        ("## Intent\n\nRoadmap-ID: RM-evil\n\n## Out-of-scope\n\nnone\n", "roadmap"),
+        ("## Intent\n\nRoadmap-ID: RM-evil\n\n## Out of scope\n\nnone\n", "roadmap"),
         ("## SLICE1: a\n\nslices: 99\n", "increment"),
         ("## SLICE1: a\n\n---\nIncrement-ID: X\n", "increment"),
     ):
@@ -1798,8 +1799,9 @@ def test_the_renderer_refuses_a_roadmap_body_with_the_wrong_sections() -> None:
 
     for prose in (
         "## Intent\n\nonly one section\n",
-        "## Out-of-scope\n\nthen\n\n## Intent\n\nreversed\n",
-        "## Intent\n\nx\n\n## Out-of-scope\n\ny\n\n## Extra\n\nz\n",
+        "## Out of scope\n\nthen\n\n## Intent\n\nreversed\n",
+        "## Intent\n\nx\n\n## Out of scope\n\ny\n\n## Extra\n\nz\n",
+        "## Intent\n\nx\n\n## Out-of-scope\n\ny\n",
     ):
         with pytest.raises(SupervisorError) as refused:
             render_bundle("demo", "inc", prose, _INCREMENT_PROSE, created="2026-10-22")
@@ -2453,21 +2455,96 @@ def _with_plan(site: Site, *, mode: int = 0o644) -> Any:
     return read_plan_snapshot(site.source, Path(PLAN_RELATIVE)).ref
 
 
-def _publish_plan(owner: WorkspaceAuthority, plan_ref: Any, buffer: bytes = PLAN_NEW.encode(), **kwargs: Any) -> Any:
+def _candidate_plan_view(
+    owner: WorkspaceAuthority,
+    ids: dict[str, str],
+    lease: GrantReply,
+    plan_ref: Any,
+    buffer: bytes = PLAN_NEW.encode(),
+    *,
+    stop: bool = True,
+) -> GrantReply:
+    """Stage candidate bytes only in the view's private supervisor buffer."""
+    plan_wire = {
+        "workspace_relative_path": plan_ref.workspace_relative_path,
+        "source_kind": plan_ref.source_kind,
+        "sha256": plan_ref.sha256,
+    }
+    grant = owner.create_view(
+        PEER,
+        ACTOR,
+        workspace_id=ids["workspace_id"],
+        capability=lease.capability,
+        purpose=ViewPurpose.CANDIDATE,
+        access=Access.READ,
+        candidate_scope={"plan_ref": plan_wire},
+        plan_ref=plan_ref,
+        formal_evidence=False,
+        deadline=until(),
+        base_revision=lease.revision_id,
+    )
+    try:
+        text = buffer.decode("utf-8") if len(buffer) <= 1024 * 1024 else "temporary valid candidate\n"
+    except UnicodeDecodeError:
+        text = "temporary valid candidate\n"
+    owner.write_candidate(
+        PEER,
+        ACTOR,
+        view_ref=ref(grant),
+        capability=grant.capability,
+        path=plan_ref.workspace_relative_path,
+        content=text,
+        expected_sha256=None,
+        deadline=until(),
+    )
+    if buffer != text.encode("utf-8"):
+        # Simulate private-store corruption that cannot be expressed by the TEXT wire codec.
+        pin = owner._readers[ref(grant).view_id]
+        fd = os.open("candidate", os.O_WRONLY | os.O_TRUNC, dir_fd=pin.directory)
+        try:
+            os.write(fd, buffer)
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    if stop:
+        owner.close_admission(PEER, ACTOR, view_ref=ref(grant), capability=grant.capability, deadline=until())
+        owner.drain(PEER, ACTOR, view_ref=ref(grant), capability=grant.capability, deadline=until())
+        owner.record_terminal(PEER, ACTOR, view_ref=ref(grant), capability=grant.capability, deadline=until())
+    return grant
+
+
+def _publish_candidate(
+    owner: WorkspaceAuthority,
+    grant: GrantReply,
+    *,
+    operation_id: str | None = None,
+    capability: str | None = None,
+) -> Any:
     from fa.execution.publication import publish_plan
 
     return publish_plan(
         owner,
         PEER,
         ACTOR,
-        capability=kwargs.pop("capability", None) or kwargs.pop("grant").capability,
-        plan_ref=plan_ref,
-        buffer=buffer,
+        view_ref=ref(grant),
+        capability=grant.capability if capability is None else capability,
+        operation_id=operation_id or "op-" + uuid4().hex,
         deadline=until(),
     )
 
 
-def test_publish_plan_replaces_the_canonical_file_and_commits_a_revision(site: Site) -> None:
+def _publish_plan(owner: WorkspaceAuthority, plan_ref: Any, buffer: bytes = PLAN_NEW.encode(), **kwargs: Any) -> Any:
+    lease = kwargs.pop("grant")
+    capability = kwargs.pop("capability", None)
+    operation_id = kwargs.pop("operation_id", None)
+    ids = kwargs.pop("ids")
+    candidate = _candidate_plan_view(owner, ids, lease, plan_ref, buffer)
+    return _publish_candidate(owner, candidate, operation_id=operation_id, capability=capability)
+
+
+def test_publish_plan_replaces_the_canonical_file_and_commits_a_revision(
+    site: Site, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """producer-kill-check: replace the plan but never commit the revision/pointer."""
     plan_ref = _with_plan(site, mode=0o640)
     old_bytes = (site.source / PLAN_RELATIVE).read_bytes()
@@ -2476,7 +2553,41 @@ def test_publish_plan_replaces_the_canonical_file_and_commits_a_revision(site: S
         lease = ok(lambda: site.claim(owner, ids))
         base_revision = _current(site, ids)["revision_id"]
 
-        result = _publish_plan(owner, plan_ref, grant=lease)
+        captured: dict[str, Any] = {}
+        prepare = WorkspaceAuthority._plan_prepare
+
+        def capture_prepare(
+            authority: WorkspaceAuthority,
+            binding: Any,
+            pinned_ref: Any,
+            buffer: bytes,
+            operation_id: str,
+            deadline: float,
+        ) -> Any:
+            inputs = prepare(authority, binding, pinned_ref, buffer, operation_id, deadline)
+            captured["inputs"] = inputs
+            return inputs
+
+        monkeypatch.setattr(WorkspaceAuthority, "_plan_prepare", capture_prepare)
+        operation_id = "op-" + "a" * 32
+        result = _publish_plan(owner, plan_ref, grant=lease, ids=ids, operation_id=operation_id)
+
+        inputs = captured["inputs"]
+        manifest = {
+            "schema_version": 1,
+            "kind": "PLAN",
+            "operation_id": operation_id,
+            "workspace_id": inputs.workspace_id,
+            "generation": inputs.generation,
+            "base_revision": inputs.base_revision,
+            "target_relative": inputs.plan_relative,
+            "new_sha256": inputs.new_sha256,
+            "tree_sha256": inputs.tree_sha256,
+            "entries": list(inputs.entries),
+        }
+        assert result.operation_id == operation_id
+        assert derive_revision_id(manifest) == result.revision_id
+        assert derive_revision_id({**manifest, "operation_id": "op-" + "b" * 32}) != result.revision_id
 
         canonical = site.source / PLAN_RELATIVE
         assert canonical.read_bytes() == PLAN_NEW.encode()  # complete new bytes, same path
@@ -2508,52 +2619,116 @@ def test_publish_plan_replaces_the_canonical_file_and_commits_a_revision(site: S
         assert site.register(reopened)["revision_id"] == result.revision_id
 
 
-def test_publish_plan_refuses_a_stale_source_hash_and_changes_nothing(site: Site) -> None:
-    """producer-kill-check: drop the source-hash CAS (replace whatever is there)."""
+def test_candidate_publish_applies_a_patch_after_an_unrelated_revision_commit(site: Site) -> None:
+    """producer-kill-check: restore workspace-wide base equality (a snapshot, not a patch)."""
     plan_ref = _with_plan(site)
-    stale = type(plan_ref)(plan_ref.workspace_relative_path, plan_ref.source_kind, "0" * 64)
     with site.owner(view_profile=native_profile()) as owner:
         ids = ok(lambda: site.register(owner))
         lease = ok(lambda: site.claim(owner, ids))
-        base_revision = _current(site, ids)["revision_id"]
+        candidate = _candidate_plan_view(owner, ids, lease, plan_ref)
+        old_revision = lease.revision_id
 
-        with pytest.raises(SupervisorError) as refused:
-            _publish_plan(owner, stale, grant=lease)
+        ordinary = _view(owner, ids, lease)
+        owner.write_file(
+            PEER,
+            ACTOR,
+            view_ref=ref(ordinary),
+            capability=ordinary.capability,
+            path="unrelated.txt",
+            content="revision advanced without changing the plan\n",
+            expected_sha256=None,
+            deadline=until(),
+        )
+        _stop(owner, ordinary)
+        _publish(owner, ordinary, _seal(owner, ordinary))
+        advanced_revision = _current(site, ids)["revision_id"]
+        assert advanced_revision != old_revision
 
-        assert refused.value.code == "STALE_REVISION"
-        assert (site.source / PLAN_RELATIVE).read_text() == PLAN_OLD
-        assert _current(site, ids)["revision_id"] == base_revision
+        result = _publish_candidate(owner, candidate, operation_id="op-" + "1" * 32)
+
+        # The patch lands on top of the newer revision instead of being refused.
+        assert result.already_published is False
+        assert result.revision_id != advanced_revision
+        assert (site.source / PLAN_RELATIVE).read_text() == PLAN_NEW
+        assert (site.source / "unrelated.txt").read_text() == "revision advanced without changing the plan\n"
+        assert _current(site, ids)["revision_id"] == result.revision_id
         assert _intent(site, ids) is None
 
 
-def test_publish_plan_refuses_a_plan_that_is_not_the_canonical_file(site: Site) -> None:
-    """producer-kill-check: replace any caller-named path (a general write API)."""
+def test_candidate_publish_refuses_plan_bytes_that_moved_since_the_snapshot(site: Site) -> None:
+    """producer-kill-check: drop the per-file CAS now that the view base is not compared."""
     plan_ref = _with_plan(site)
-    # A committed, replaceable-looking file that is *not* a plan: without the
-    # shape rule this one would be replaced, so it is the real kill target.
-    roadmap = site.source / "worklogs/demo/roadmap.md"
-    roadmap.write_text("# roadmap\n")
     with site.owner(view_profile=native_profile()) as owner:
         ids = ok(lambda: site.register(owner))
         lease = ok(lambda: site.claim(owner, ids))
-        absent = type(plan_ref)("worklogs/demo/increments/increment-02-other.md", plan_ref.source_kind, plan_ref.sha256)
-        outside = type(plan_ref)("src/fa/execution/workspace.py", plan_ref.source_kind, plan_ref.sha256)
-        roadmap_ref = read_plan_snapshot(site.source, Path("worklogs/demo/roadmap.md")).ref
-        not_a_plan = type(plan_ref)("worklogs/demo/notes/increment-01-demo.md", plan_ref.source_kind, plan_ref.sha256)
-        wrong_suffix = type(plan_ref)(
-            "worklogs/demo/increments/increment-01-demo.txt", plan_ref.source_kind, plan_ref.sha256
+        first = _publish_plan(owner, plan_ref, PLAN_NEW.encode(), grant=lease, ids=ids)
+        assert first.already_published is False
+
+        with pytest.raises(SupervisorError) as stale:
+            _publish_plan(owner, plan_ref, (PLAN_NEW + "\n## SLICE3: third\n").encode(), grant=lease, ids=ids)
+
+        assert stale.value.code == "STALE_REVISION"
+        assert (site.source / PLAN_RELATIVE).read_text() == PLAN_NEW
+        assert _current(site, ids)["revision_id"] == first.revision_id
+        assert _intent(site, ids) is None
+
+
+def test_candidate_publish_of_the_current_bytes_reports_a_repeat_and_writes_nothing(site: Site) -> None:
+    """producer-kill-check: answer a re-applied intent with INPUT_POLICY instead of the evidence."""
+    plan_ref = _with_plan(site)
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        before_current = _current(site, ids)
+        canonical = site.source / PLAN_RELATIVE
+        before_bytes = canonical.read_bytes()
+
+        result = _publish_plan(owner, plan_ref, PLAN_OLD.encode(), grant=lease, ids=ids)
+
+        assert result.already_published is True
+        assert result.revision_id == before_current["revision_id"]
+        assert result.tree_sha256 == before_current["tree_sha256"]
+        assert result.plan_ref.sha256 == hashlib.sha256(PLAN_OLD.encode()).hexdigest()
+        assert canonical.read_bytes() == before_bytes
+        assert _current(site, ids) == before_current
+        assert _intent(site, ids) is None
+        assert not [path for path in canonical.parent.iterdir() if path.name.startswith(".")]
+
+        # The same intent again is still a repeat, not a second commit.
+        again = _publish_plan(owner, plan_ref, PLAN_OLD.encode(), grant=lease, ids=ids)
+        assert again.already_published is True
+        assert again.revision_id == before_current["revision_id"]
+        assert _current(site, ids) == before_current
+
+
+def test_plan_commit_path_is_fixed_by_the_pinned_ref_not_a_publish_argument(site: Site) -> None:
+    """producer-kill-check: reintroduce a caller-supplied target in the publish API."""
+    plan_ref = _with_plan(site)
+    roadmap = site.source / "worklogs/demo/roadmap.md"
+    roadmap.write_text("# roadmap\n")
+    from inspect import signature
+
+    from fa.execution.publication import publish_plan
+
+    assert "plan_ref" not in signature(publish_plan).parameters
+    assert "buffer" not in signature(publish_plan).parameters
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        bad_refs = (
+            type(plan_ref)("src/fa/execution/workspace.py", plan_ref.source_kind, plan_ref.sha256),
+            read_plan_snapshot(site.source, Path("worklogs/demo/roadmap.md")).ref,
+            type(plan_ref)("worklogs/demo/notes/increment-01-demo.md", plan_ref.source_kind, plan_ref.sha256),
+            type(plan_ref)("worklogs/demo/increments/increment-01-demo.txt", plan_ref.source_kind, plan_ref.sha256),
+            type(plan_ref)("worklogs/demo/increments/../../escape.md", plan_ref.source_kind, plan_ref.sha256),
         )
-        protected = type(plan_ref)("worklogs/.fa/increments/x.md", plan_ref.source_kind, plan_ref.sha256)
-        traversal = type(plan_ref)("worklogs/demo/increments/../../escape.md", plan_ref.source_kind, plan_ref.sha256)
-
-        for ref in (absent, outside, roadmap_ref, not_a_plan, wrong_suffix, traversal):
+        for bad_ref in bad_refs:
             with pytest.raises(SupervisorError) as refused:
-                _publish_plan(owner, ref, grant=lease)
-            assert refused.value.code == "INPUT_POLICY", ref.workspace_relative_path
+                owner._plan_parts(bad_ref)
+            assert refused.value.code == "INPUT_POLICY", bad_ref.workspace_relative_path
+        protected = type(plan_ref)("worklogs/.fa/increments/x.md", plan_ref.source_kind, plan_ref.sha256)
         with pytest.raises(SupervisorError) as denied:
-            _publish_plan(owner, protected, grant=lease)
+            owner._plan_parts(protected)
         assert denied.value.code == "PATH_DENIED"
-
         assert (site.source / PLAN_RELATIVE).read_text() == PLAN_OLD
         assert roadmap.read_text() == "# roadmap\n"
         assert _intent(site, ids) is None
@@ -2570,13 +2745,11 @@ def test_publish_plan_refuses_bytes_that_are_not_a_plan(site: Site) -> None:
 
         for buffer in (b"\xff\xfe\x00", b"", b"   \n\t\n", b"# plan\n" + b"x" * MAX_PLAN_BYTES):
             with pytest.raises(SupervisorError) as refused:
-                _publish_plan(owner, plan_ref, buffer, grant=lease)
+                _publish_plan(owner, plan_ref, buffer, grant=lease, ids=ids)
             assert refused.value.code == "INPUT_POLICY", buffer[:8]
 
-        # Identical bytes are not a replacement.
-        with pytest.raises(SupervisorError) as noop:
-            _publish_plan(owner, plan_ref, PLAN_OLD.encode(), grant=lease)
-        assert noop.value.code == "INPUT_POLICY"
+        # Identical bytes are a repeat, not a replacement — covered by
+        # `test_candidate_publish_of_the_current_bytes_reports_a_repeat_and_writes_nothing`.
         assert (site.source / PLAN_RELATIVE).read_text() == PLAN_OLD
 
 
@@ -2589,21 +2762,62 @@ def test_publish_plan_requires_the_owner_grant_and_no_live_view(site: Site) -> N
         _view(owner, ids, lease)
 
         with pytest.raises(SupervisorError) as busy:
-            _publish_plan(owner, plan_ref, grant=lease)
+            _publish_plan(owner, plan_ref, grant=lease, ids=ids)
         assert busy.value.code == "WORKSPACE_BUSY"
 
         assert (site.source / PLAN_RELATIVE).read_text() == PLAN_OLD
 
 
-def test_publish_plan_refuses_a_wrong_capability(site: Site) -> None:
-    """producer-kill-check: accept any OWNER-capable caller (skip the grant proof)."""
+def test_candidate_publish_requires_closed_view_and_matching_terminal_receipt(site: Site) -> None:
+    """producer-kill-check: infer terminality from record_terminal or an OPEN view."""
+    plan_ref = _with_plan(site)
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        open_candidate = _candidate_plan_view(owner, ids, lease, plan_ref, stop=False)
+        with pytest.raises(SupervisorError) as open_view:
+            _publish_candidate(owner, open_candidate)
+        assert open_view.value.code == "VIEW_CLOSED"
+
+        incomplete = _candidate_plan_view(owner, ids, lease, plan_ref, stop=False)
+        owner.close_admission(PEER, ACTOR, view_ref=ref(incomplete), capability=incomplete.capability, deadline=until())
+        owner.drain(PEER, ACTOR, view_ref=ref(incomplete), capability=incomplete.capability, deadline=until())
+        with pytest.raises(SupervisorError) as no_receipt:
+            _publish_candidate(owner, incomplete)
+        assert no_receipt.value.code == "TERMINALITY_UNKNOWN"
+        assert (site.source / PLAN_RELATIVE).read_text() == PLAN_OLD
+
+
+def test_record_terminal_does_not_substitute_for_draining_active_candidate_work(site: Site) -> None:
+    """producer-kill-check: allow PLAN replace after terminal.json while work is active."""
+    plan_ref = _with_plan(site)
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        candidate = _candidate_plan_view(owner, ids, lease, plan_ref, stop=False)
+        view_ref = ref(candidate)
+        owner.close_admission(PEER, ACTOR, view_ref=view_ref, capability=candidate.capability, deadline=until())
+        owner._gate(view_ref).active.add("held-work")
+        owner.record_terminal(PEER, ACTOR, view_ref=view_ref, capability=candidate.capability, deadline=until())
+        try:
+            with pytest.raises(SupervisorError) as busy:
+                _publish_candidate(owner, candidate, operation_id="op-" + "c" * 32)
+            assert busy.value.code == "BACKEND_UNAVAILABLE"
+            assert (site.source / PLAN_RELATIVE).read_text() == PLAN_OLD
+            assert _intent(site, ids) is None
+        finally:
+            owner._gate(view_ref).active.discard("held-work")
+
+
+def test_candidate_publish_refuses_owner_capability_in_place_of_view_grant(site: Site) -> None:
+    """producer-kill-check: accept the OWNER grant instead of the candidate view grant."""
     plan_ref = _with_plan(site)
     with site.owner(view_profile=native_profile()) as owner:
         ids = ok(lambda: site.register(owner))
         lease = ok(lambda: site.claim(owner, ids))
 
         with pytest.raises(SupervisorError) as unauthorized:
-            _publish_plan(owner, plan_ref, grant=lease, capability="0" * 64)
+            _publish_plan(owner, plan_ref, grant=lease, capability=lease.capability, ids=ids)
 
         assert unauthorized.value.code == "UNAUTHORIZED"
         assert (site.source / PLAN_RELATIVE).read_text() == PLAN_OLD
@@ -2629,7 +2843,7 @@ def test_publish_plan_refuses_a_plan_swapped_for_a_link_before_the_replace(
 
         monkeypatch.setattr(WorkspaceAuthority, "_plan_stage", stage_then_link)
         with pytest.raises(SupervisorError) as refused:
-            _publish_plan(owner, plan_ref, grant=lease)
+            _publish_plan(owner, plan_ref, grant=lease, ids=ids)
         monkeypatch.undo()
 
         assert refused.value.code == "PATH_DENIED"
@@ -2680,7 +2894,7 @@ def test_publish_plan_refuses_after_a_concurrent_write_between_staging_and_repla
 
         monkeypatch.setattr(WorkspaceAuthority, "_plan_stage", stage_then_lose_the_race)
         with pytest.raises(SupervisorError) as refused:
-            _publish_plan(owner, plan_ref, grant=lease)
+            _publish_plan(owner, plan_ref, grant=lease, ids=ids)
         monkeypatch.undo()
 
         assert refused.value.code == "STALE_REVISION"
@@ -2716,7 +2930,7 @@ def test_publish_plan_refuses_bytes_that_are_not_the_ones_it_staged(
 
         monkeypatch.setattr(WorkspaceAuthority, "_plan_stage", stage_then_swap)
         with pytest.raises(SupervisorError) as refused:
-            _publish_plan(owner, plan_ref, grant=lease)
+            _publish_plan(owner, plan_ref, grant=lease, ids=ids)
         monkeypatch.undo()
 
         assert refused.value.code == "CORRUPT_STATE"
@@ -2747,7 +2961,7 @@ def test_publish_plan_refuses_a_replaced_plan_with_the_wrong_mode(site: Site, mo
 
         monkeypatch.setattr(WorkspaceAuthority, "_plan_stage", stage_then_lose_the_mode)
         with pytest.raises(SupervisorError) as refused:
-            _publish_plan(owner, plan_ref, grant=lease)
+            _publish_plan(owner, plan_ref, grant=lease, ids=ids)
         monkeypatch.undo()
 
         assert refused.value.code == "CORRUPT_STATE"
@@ -2771,7 +2985,7 @@ def test_a_failure_after_the_plan_replace_keeps_the_new_bytes_and_the_intent(
 
         monkeypatch.setattr(WorkspaceAuthority, "_write_revision_from_canonical", exploding)
         with pytest.raises(SupervisorError) as failed:
-            _publish_plan(owner, plan_ref, grant=lease)
+            _publish_plan(owner, plan_ref, grant=lease, ids=ids)
         monkeypatch.undo()
 
         assert failed.value.code == "DURABILITY_UNKNOWN"

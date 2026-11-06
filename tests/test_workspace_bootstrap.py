@@ -31,7 +31,6 @@ import pytest
 
 import fa.workspace_bootstrap as bootstrap
 from fa.hygiene.hooks._util import HOOK_NAMES
-from fa.session.manager import SessionManager
 from fa.workspace_bootstrap import ReadyState, ReadyStatus, ensure_workspace_ready
 from tests._capabilities import requires_posix_modes, requires_symlinks
 
@@ -537,11 +536,11 @@ def test_custom_path_with_current_fa_copies_cannot_reuse_fast_ready_marker(
     assert _calls(calls_path)[calls_before:] == [["uv", "--version"]]
 
 
-def test_git_session_manager_repairs_on_create_and_fast_validates_on_attach(
+def test_legacy_existing_workspace_bootstrap_still_repairs_then_fast_validates(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """C1 P3/P4: real manager producer consumes the real readiness transaction."""
+    """C1: the legacy direct workspace-bootstrap operation retains its behavior."""
 
     source = _make_workspace(tmp_path)
     _install_fake_uv(tmp_path, monkeypatch)
@@ -575,31 +574,12 @@ def test_git_session_manager_repairs_on_create_and_fast_validates_on_attach(
         text=True,
         timeout=30,
     )
-    states: list[ReadyState] = []
+    first = ensure_workspace_ready(source)
+    second = ensure_workspace_ready(source)
 
-    def prepare(workspace: Path) -> ReadyState:
-        state = ensure_workspace_ready(workspace)
-        states.append(state)
-        return state
-
-    manager = SessionManager(
-        state_root=tmp_path / "state",
-        workspace_root=tmp_path / "managed-workspaces",
-        source_workspace=source,
-        workspace_preparer=prepare,
-    )
-
-    created = manager.create_or_attach_session(session_id=None, workspace_override=None)
-    attached = manager.create_or_attach_session(
-        session_id=created.session_id,
-        workspace_override=created.workspace_path,
-    )
-
-    assert attached.workspace_path == created.workspace_path
-    assert [state.reason_code for state in states] == ["ready_repaired", "ready_fast_path"]
-    assert all(state.status is ReadyStatus.READY for state in states)
-    assert _marker(created.workspace_path)["state"] == "ready"
-    assert json.loads(created.manifest_path.read_text(encoding="utf-8"))["status"] == "active"
+    assert [first.reason_code, second.reason_code] == ["ready_repaired", "ready_fast_path"]
+    assert first.status is second.status is ReadyStatus.READY
+    assert _marker(source)["state"] == "ready"
 
 
 def test_missing_cache_sentinel_forces_prewarm_and_marker_repair(

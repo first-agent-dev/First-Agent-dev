@@ -31,8 +31,15 @@ One packet per edit. Do not bundle unrelated contracts.
 - Failure behavior: `<errors, deny, fallback, rollback, idempotency, cleanup>`
 - Definition of Done: `<observable state/artifact/contract>`
 - Negative proof: `removing <producer> makes <T#> fail`
+- Edge negative proof: `removing <caller call | supplier binding> makes <T#> fail`
+- Delivery: root `<command a user runs>` | support (`rooted-by: CT#/STEP#`);
+  what the user observes; cutover `none` or `<old producer> -> supplier bound at <file:symbol>, delete at STEP<n>`
 - Tests-writing class: `C0 | C0p | C1 | C2 | C3 | C4`
 - Producer kill-check target: `<exact production call site/branch/write/gate>`
+- Edge kill-check target: `<exact caller's call or composition binding>`
+
+A unit whose only caller is its own test is L1, not shipped. A port only tests
+construct has no supplier: do not delete the code it was meant to replace.
 
 ## AFTER EDIT GATE
 
@@ -41,6 +48,12 @@ Run and report actual output, not a summary:
 - Targeted tests: `$ <command>` + real output
 - Static checks on changed files: `$ <command>` + real output
 - Diff inspection: `$ git diff -- <files>`
+- Reachability: `$ grep -rn "<new symbol>" src/ | grep -v "<own package>"` + real
+  output. Empty => the unit is L1: name the step that roots it, or say SUPPORT.
+- Supplier (new port): `$ grep -rn "<PortName>(" src/` minus its own module.
+  Empty => nothing constructs it in production; do not delete what it replaces.
+- Cutover (if deleting): old path still proven until the delete step + supplier
+  bound before it.
 - Contract status: `GAP#`/`CT#`/`T#` -> PASS/FAIL because `<evidence>`
 
 Never mark complete from "no exception". State the positive oracle and the
@@ -52,6 +65,16 @@ bug, plan mismatch, stale preflight, or new blocking `Q#`.
 After a big chunk, or before declaring shipped: remove the producer call or
 invert the key branch, rerun the named tests, confirm they fail, restore.
 A surviving mutation means a weak oracle — strengthen before ship.
+
+## E2E EVIDENCE ROLES
+
+Before coding, the planner records case IDs/owners, local-vs-live oracles, host
+prerequisites, evidence paths, and run-sheet obligations. The coder appends only
+source-verified seams/proofs/limitations and labelled proposals; it does not alter
+the oracle, ownership, or live result. The planner finalizes the host run sheet
+from actual host facts. An independent reviewer completes the manual checklist before
+fixture/helper implementation. No harness, evaluator, or coder assigns live
+`PASS`; preserve generic `READY` semantics.
 
 ## STOP RULE
 

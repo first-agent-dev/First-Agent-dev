@@ -417,6 +417,25 @@ def _spawn_decision(command: str, root: Path) -> Any:
     )
 
 
+def test_managed_task_only_spawn_bypasses_bash_classifier_but_closes_shape() -> None:
+    """R13: task-only delegation is not mistaken for controller Bash."""
+    from fa.inner_loop.hooks.base import HookPayload, LifecyclePoint
+    from fa.inner_loop.hooks.builtin import SandboxHook
+    from fa.inner_loop.registry import ToolCall
+
+    hook = SandboxHook(Path.cwd())
+    allowed = hook.handle(
+        LifecyclePoint.BEFORE_TOOL_EXEC,
+        HookPayload(tool_call=ToolCall("fs_spawn_subagent", {"task": "Inspect one file"})),
+    )
+    malformed = hook.handle(
+        LifecyclePoint.BEFORE_TOOL_EXEC,
+        HookPayload(tool_call=ToolCall("fs_spawn_subagent", {"task": "Inspect one file", "role": "verifier"})),
+    )
+    assert allowed.action == "allow"
+    assert malformed.action == "deny"
+
+
 def test_artifact_root_contains_rm_chmod_git() -> None:
     """C1: the narrowing that genuinely works, works.
 

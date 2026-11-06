@@ -74,6 +74,7 @@ Short definitions of terms used in First-Agent and this wiki.
 | **LLM agent** | See *Agent*. |
 | **LLM as Untrusted Compiler** | ADR-11 threat model: the LLM author can edit the guardrails in the same patch as the code they constrain. |
 | **MCP** | Model Context Protocol — a JSON-RPC shaped contract between an MCP host (agent) and MCP server. FA v0.1 implements a **convention** (in-process dispatcher), not a dependency. |
+| **Managed subagent (R13/W0)** | Generic child invoked from ordinary chat and workflow planner/coder callers; task-only input, stateless Bash on a pinned non-interactive READ view, private scratch for new notes/artifacts, and a bounded report. Parent remains the sole project writer. Q122 per-view profile binding is part of W0; R13/global W0 remain OPEN until production-caller evidence passes. See [R13 plan](../worklogs/planning-topology-and-executable-contracts-loop/notes/r13-managed-subagent-plan-2026-11-04.md). |
 | **Mechanical Wiki** | v0.1 memory architecture variant ([ADR-3](./adr/ADR-3-memory-architecture-variant.md)): filesystem-canonical Markdown + YAML frontmatter, deterministic chunker, SQLite FTS5 read-side. **No embeddings, no graph, no Mem0.** |
 | **Minimalism-first** | Project principle ([`project-overview.md` §1.2](./project-overview.md#12-enforceable-principle--minimalism-first)): every proposed harness component passes a 4-question test before addition. Contrast: *Subtraction-first*. |
 | **Module** | A self contained unit of agent code located at `src/<name>/` with its own tests and README. |
