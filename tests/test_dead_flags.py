@@ -48,7 +48,6 @@ class TestDeadFlagsUnit:
             "max_subagent_spawns_per_session",
             "blackboard_filtered_history_include_plans",
             "max_chain_retries",
-            "intent_guard_mode",
             # PLAN S5a: mode for the coder-role per-slice ceremony injection
             # (fa.inner_loop.injections). Default "off".
             "coder_slice_ceremony_mode",

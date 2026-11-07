@@ -478,8 +478,12 @@ class DockerCells:
         req = decode_request(encode_json(request))
         if req["op"] != "exec" or req["payload"]["profile_id"] != profile.profile_id:
             raise ExecutionContractError
-        if req["payload"]["timeout_ms"] > profile.max_command_ms or profile.interactive != (
-            req["payload"]["session_id"] is not None
+        payload = req["payload"]
+        is_project_tool = "project_tool" in payload
+        if (
+            payload["timeout_ms"] > profile.max_command_ms
+            or (not is_project_tool and profile.interactive != (payload["session_id"] is not None))
+            or (is_project_tool and req["view_ref"]["purpose"] != "PROJECT")
         ):
             raise ExecutionContractError
         namespace = NamespaceRef(**req["namespace"])

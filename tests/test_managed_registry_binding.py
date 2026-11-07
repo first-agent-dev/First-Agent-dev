@@ -250,3 +250,161 @@ def test_session_state_rejects_isolated_worktree_without_git_effects(
     assert any(
         event.kind == "config_warning" and event.content.get("key") == "worktree.mode" for event in log.read_all()
     )
+
+
+def test_missing_explicit_executor_fails_closed_through_production_chat_session(
+    site: Site, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R11 C1 oracle: a live managed view with no Bash executor never becomes host Bash."""
+    import json
+
+    from fa.feature_flags import FeatureFlags
+    from fa.inner_loop.artifacts import ArtifactStore
+    from fa.inner_loop.coder_loop import drive_session
+    from fa.inner_loop.runtime_limits import RuntimeLimits
+    from fa.inner_loop.session_db import SessionDatabase
+    from fa.inner_loop.state import EventLog, SessionState
+    from fa.providers.base import ResponseInfo
+    from fa.providers.chain import ChainConfig, ChainEntry, ProviderChain
+
+    plan = _plan_ref(site)
+    fallback_calls: list[tuple[Any, ...]] = []
+    host_process_calls: list[tuple[Any, ...]] = []
+
+    def trapped_fallback(*args: Any, **_kwargs: Any) -> Any:
+        fallback_calls.append(args)
+        return run_bash.ToolResult.fail("mutant_host_fallback", "host fallback tripwire", retryable=False)
+
+    def trapped_subprocess(*args: Any, **_kwargs: Any) -> Any:
+        host_process_calls.append(args)
+        raise AssertionError("host subprocess tripwire reached")
+
+    with _served(site, tmp_path) as managed:
+        grant = managed.open_view(
+            access=Access.WRITE,
+            purpose=ViewPurpose.PROJECT,
+            base_revision=managed.grant.revision_id,
+            plan_ref=plan,
+        )
+        assert grant.view_ref is not None
+        port = ClientWorkspacePort(
+            managed.client, namespace=managed.binding.namespace, view=grant.view_ref, grant=grant
+        )
+        operations: list[Operation] = []
+        original_request = managed.client.request
+
+        def record_request(operation: Operation, **kwargs: Any) -> dict[str, Any]:
+            operations.append(operation)
+            return original_request(operation, **kwargs)
+
+        monkeypatch.setattr(managed.client, "request", record_request)
+        monkeypatch.setattr(run_bash, "_run_subprocess_fallback", trapped_fallback)
+        monkeypatch.setattr(run_bash.subprocess, "run", trapped_subprocess)
+
+        run_id = managed.binding.namespace.run_id
+        session_id = managed.binding.namespace.session_id
+        session_db = SessionDatabase(tmp_path / "r11-session.db", session_id=session_id)
+        log = EventLog(
+            tmp_path / "r11-run" / "events.jsonl",
+            run_id=run_id,
+            session_db=session_db,
+            session_id=session_id,
+        )
+        monkeypatch.setattr("fa.runtime.PtyPool", lambda **_kwargs: None)
+        state = SessionState(
+            workspace_root=site.source,
+            session_id=session_id,
+            run_id=run_id,
+            log=log,
+            session_db=session_db,
+            feature_flags=FeatureFlags(blackboard_enabled=False, telemetry_enabled=False),
+            artifact_store=ArtifactStore(tmp_path / "r11-artifacts"),
+            workspace_io=port,
+        )
+        limits = RuntimeLimits.anchored_defaults()
+        registry = cli._build_run_tool_registry(
+            "chat",
+            site.source,
+            bash_timeout_seconds=limits.bash_timeout_seconds,
+            draft_store=PrDraftStore(tmp_path / "r11-draft.md"),
+            workspace_io=port,
+            managed_executor=None,
+        )
+        output_bus_ref: list[Any] = []
+        hooks = cli._build_run_hook_registry(
+            workspace=site.source,
+            log=log,
+            limits=limits,
+            redactor=None,
+            run_log_dir=tmp_path / "r11-run",
+            output_bus_ref=output_bus_ref,
+            managed_workspace=True,
+        )
+
+        class ScriptedProvider:
+            def __init__(self) -> None:
+                self.calls: list[Any] = []
+
+            def request(self, request: Any, **_kwargs: Any) -> ResponseInfo:
+                self.calls.append(request)
+                if len(self.calls) == 1:
+                    offered = {
+                        str(tool.get("function", {}).get("name", ""))
+                        for tool in request.tools
+                        if isinstance(tool.get("function"), dict)
+                    }
+                    assert "fs_run_bash" in offered, "production chat registry lost its role-assigned Bash tool"
+                    call = {
+                        "id": "r11-managed-bash",
+                        "type": "function",
+                        "function": {
+                            "name": "fs_run_bash",
+                            "arguments": json.dumps({"command": "touch r11-host-marker"}),
+                        },
+                    }
+                    return ResponseInfo("", 1, 1, "tool_calls", (call,))
+                assert len(self.calls) == 2
+                return ResponseInfo("managed refusal recorded", 1, 1, "stop")
+
+        scripted = ScriptedProvider()
+        chain_config = ChainConfig(
+            role="chat",
+            name="r11-test-model",
+            family="openai",
+            chain=(
+                ChainEntry(
+                    provider="openrouter",
+                    model="test/model",
+                    base_url="https://example.invalid/v1",
+                    api_key_env="K",
+                ),
+            ),
+        )
+        chain = ProviderChain(chain_config, provider_factory=lambda _entry: scripted, env={"K": "sk-test-live"})
+        outcome = drive_session(
+            "probe missing managed executor",
+            provider_chain=chain,
+            registry=registry,
+            hooks=hooks,
+            state=state,
+            role="chat",
+            acting_family="openai",
+            limits=limits,
+            max_turns=2,
+        )
+        rows = session_db.read_event_rows(run_id=run_id)
+        bash_results = [
+            row["content"] for row in rows if row["kind"] == "tool_result" and row["tool_name"] == "fs_run_bash"
+        ]
+        assert outcome.exit_code == 0 and len(scripted.calls) == 2
+        assert len(bash_results) == 1
+        assert fallback_calls == [] and host_process_calls == []
+        assert bash_results[0]["ok"] is False
+        assert bash_results[0]["error"]["code"] == "execution_unavailable"
+        assert bash_results[0]["error"]["retryable"] is False
+        assert operations.count(Operation.EXEC) == 0
+        assert not (site.source / "r11-host-marker").exists()
+        port.suspend()
+        # The local no-backend fixture ends with this test; release is not part
+        # of R11, and a stopped WRITE view is not a settled publication.
+        assert managed.stop_view(grant)

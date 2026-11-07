@@ -325,9 +325,11 @@ def test_subagent_child_exec_refusal_has_no_host_subprocess_or_writer_handoff(tm
     def fake_drive(task: str, **kwargs: Any) -> SessionOutcome:
         nonlocal child_registry
         child_registry = kwargs["registry"]
-        # Observe-only IntentGuard must not shell out to the controller git
-        # tree for an allowed private-scratch command. The READ mount remains
-        # the authority for project writes.
+        # Q130: the managed child has no runtime IntentGuard seat. The READ
+        # mount remains the authority for project writes.
+        from fa.inner_loop.hooks.intent_guard import IntentGuard
+
+        assert not any(isinstance(hook, IntentGuard) for chain in kwargs["hooks"]._chains.values() for hook in chain)
         kwargs["hooks"].dispatch(
             LifecyclePoint.BEFORE_TOOL_EXEC,
             HookPayload(

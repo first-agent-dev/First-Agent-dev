@@ -410,6 +410,44 @@ def test_command_budget_extends_reply_deadline_but_control_does_not(
         assert response is None and record["state"] == "DONE"
 
 
+def test_project_tool_exec_is_authorized_without_session_but_shell_mode_remains_strict(tmp_path: Path) -> None:
+    from tests.test_execution_protocol import request as wire_request
+
+    class TypedExecFixture(Fixture):
+        @override
+        def authorize(self, peer: PeerIdentity, req: dict[str, Any], *, deadline: float) -> ProtectedPlanContext | None:
+            super().authorize(peer, req, deadline=deadline)
+            return ProtectedPlanContext(tmp_path, None, False)
+
+    case = TypedExecFixture(tmp_path)
+    req = wire_request(Operation.EXEC)
+    req["capability"] = CAP
+    req["payload"] = {
+        "operation_id": "op-" + RID,
+        "profile_id": "interactive",
+        "project_tool": {"tool": "fs_search", "params": {"query": "needle"}},
+        "timeout_ms": 1000,
+    }
+    peer = PeerIdentity(os.getpid(), os.getuid(), os.getgid())
+    assert isinstance(case.service._authorize_request(peer, req, deadline=time.monotonic() + 2), ProtectedPlanContext)
+
+    shell = {
+        **req,
+        "payload": {
+            "operation_id": "op-" + RID,
+            "profile_id": "interactive",
+            "command": "printf sentinel",
+            "cwd": ".",
+            "timeout_ms": 1000,
+            "session_id": None,
+        },
+    }
+    with pytest.raises(SupervisorError) as caught:
+        case.service._authorize_request(peer, shell, deadline=time.monotonic() + 2)
+    assert caught.value.code == "INPUT_POLICY"
+    assert case.auth_calls == 1
+
+
 @pytest.mark.parametrize("invalid", ["unknown-profile", "excessive-budget", "wrong-mode"])
 def test_unapproved_exec_cannot_extend_the_input_frame_deadline(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, invalid: str

@@ -15,9 +15,9 @@ Three design constraints drove the shape:
 
 2.  **Configured per invocation.** The effective mode is resolved ONCE, at
     startup, from ``--inject <name>=<mode>`` if given, else ``~/.fa/config.yaml``,
-    else ``off`` (:func:`resolve_injection_modes`). This mirrors
-    ``_resolve_intent_guard_mode`` (cli.py) so the codebase has one
-    override-then-config idiom rather than two.
+    else ``off`` (:func:`resolve_injection_modes`). This follows the
+    project's override-then-config convention without sharing the retired
+    runtime IntentGuard setting.
 
     A deliberate NON-goal (plan v5 RK15): re-reading config mid-run. One
     ``fa workflow`` invocation is a single process spanning many stages, so a
@@ -29,10 +29,9 @@ Three design constraints drove the shape:
 3.  **Never rewrites a prompt by accident.** Every unknown, malformed, or
     unreadable input resolves to :data:`FALLBACK_MODE`, which is ``observe``:
     telemetry only, payload untouched. A config typo therefore cannot turn a
-    context rewrite ON -- that needs an explicit ``enforce``. Note the
-    polarity is still the opposite of IntentGuard, which fails CLOSED to
-    "enforce" because it is a safety gate; this is an advisory payload, so the
-    unconfigured state is "tell me, don't act".
+    context rewrite ON -- that needs an explicit ``enforce``. This is an
+    advisory payload, so the unconfigured state is "tell me, don't act"; it is
+    independent of the retired runtime IntentGuard policy.
 
 The mode vocabulary is deliberately the same three states for every injection
 (:data:`INJECTION_MODES`), so an operator learns it once:
@@ -324,8 +323,8 @@ def resolve_injection_modes(
 ) -> dict[str, str]:
     """Resolve every injection's effective mode for *role*, once.
 
-    Precedence is ``--inject`` flag > config file > ``off``, matching
-    ``_resolve_intent_guard_mode``'s override-then-config shape.
+    Precedence is ``--inject`` flag > config file > ``off``; this resolver
+    owns its own setting and does not depend on the retired IntentGuard mode.
 
     Role gating is applied to overrides too: ``--inject coder_slice_ceremony=
     enforce`` on a planner stage still yields ``off``. The flag says what the

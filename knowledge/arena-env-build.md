@@ -1,139 +1,87 @@
-# Arena sandbox: Python test-environment recovery
+# Arena sandbox: восстановление Python test-environment
 
-Use this when the sandbox has only an older system Python and no `apt`/root. It builds an isolated CPython 3.13 toolchain; it does not modify the system Python. A cold build may take 10–15 minutes on 2 CPUs. Keep this guide in the checkout; caches and virtualenvs may disappear between sessions.
+Это runbook для восстановления корректного тестового окружения этого проекта. Для обычного восстановления используйте исполняемый сценарий `scripts/arena-env-build.sh`; этот документ фиксирует его контракт, pins и диагностику. Не копируйте команды сборки между проектами: extras, lockfile и требования здесь относятся именно к `first-agent`.
 
-## 1. Locate this checkout and check what already exists
+## Быстрый путь
 
-Run from anywhere inside the project:
+Из корня checkout:
 
 ```bash
-PROJECT_ROOT="$(git rev-parse --show-toplevel)"
-BUILD_ROOT="${BUILD_ROOT:-$HOME/.cache/arena-python313}"
-PY="$BUILD_ROOT/prefix/bin/python3.13"
-cd "$PROJECT_ROOT"
-python3 -VV
-git status --short
-git branch --show-current
-[ -x "$PY" ] && "$PY" -VV || echo 'Python 3.13 not built'
-[ -x .venv/bin/python ] && .venv/bin/python -VV || echo 'Project venv not built'
+./scripts/arena-env-build.sh
 ```
 
-If the toolchain exists, skip to step 3. Do not assume another session's absolute paths or branch name apply here.
+Сценарий выбирает самый короткий безопасный путь:
 
-## 2. Build Python 3.13 from source (only if needed)
+1. Проверяет, можно ли переиспользовать интерпретатор текущего `.venv`.
+2. Иначе проверяет кэшированный toolchain в `${BUILD_ROOT:-$HOME/.cache/arena-python313}/prefix`.
+3. Если пригодного CPython нет — собирает CPython 3.13.16 из закреплённых исходников в staging-prefix и публикует его только после runtime/FTS5 smoke.
+4. Обеспечивает `uv 0.13.7` (переиспользует точную версию из `PATH`/`UV_BIN` или ставит её в отдельный cached tool-venv; системный Python не меняет).
+5. Выполняет `uv sync --frozen --extra dev --python <выбранный CPython>` с системными CA-сертификатами, затем проверяет созданный `.venv`.
 
-Run this block from the project checkout. It writes a temporary script into that checkout, while downloads and build outputs go under `$BUILD_ROOT`. Override `BUILD_ROOT` if desired. Start detached for long-running tool calls; check the log for `BUILD_DONE` before proceeding.
+`uv sync` может обновить только локальный `.venv`; исходники проекта, системный Python, Git branch/index и пользовательские файлы сценарий не изменяет. Сборки, исходники, архивы и bootstrap `uv` находятся вне checkout в `BUILD_ROOT`. Ничего из этого кэша сценарий автоматически не удаляет.
+
+### Режимы
 
 ```bash
-PROJECT_ROOT="$(git rev-parse --show-toplevel)"
-BUILD_ROOT="${BUILD_ROOT:-$HOME/.cache/arena-python313}"
-mkdir -p "$BUILD_ROOT"
-cat > "$PROJECT_ROOT/.arena-build-python313.sh" <<'BUILD_SCRIPT'
-#!/usr/bin/env bash
-set -Eeuo pipefail
-ROOT="${BUILD_ROOT:-$HOME/.cache/arena-python313}"
-SRC="$ROOT/src"; PREFIX="$ROOT/prefix"; JOBS="${JOBS:-2}"
-mkdir -p "$SRC" "$PREFIX"
-fetch() {
-  local name="$1" url="$2" dir="$3" tmp
-  [[ -s "$SRC/$name.tar.gz" ]] || curl -fL --retry 3 "$url" -o "$SRC/$name.tar.gz"
-  if [[ ! -d "$SRC/$dir" ]]; then
-    tmp="$SRC/.extract-$dir-$$"; mkdir "$tmp"
-    tar -xzf "$SRC/$name.tar.gz" --strip-components=1 -C "$tmp"
-    mv "$tmp" "$SRC/$dir"
-  fi
-}
-fetch cpython https://codeload.github.com/python/cpython/tar.gz/refs/tags/v3.13.16 cpython-3.13.16
-fetch openssl https://codeload.github.com/python/cpython-source-deps/tar.gz/refs/heads/openssl-3.0 cpython-source-deps-openssl-3.0
-fetch zlib https://codeload.github.com/python/cpython-source-deps/tar.gz/refs/heads/zlib cpython-source-deps-zlib
-fetch libffi https://codeload.github.com/python/cpython-source-deps/tar.gz/refs/heads/libffi cpython-source-deps-libffi
-fetch bzip2 https://codeload.github.com/python/cpython-source-deps/tar.gz/refs/heads/bzip2 cpython-source-deps-bzip2
-fetch sqlite https://codeload.github.com/python/cpython-source-deps/tar.gz/refs/heads/sqlite cpython-source-deps-sqlite
-
-cd "$SRC/cpython-source-deps-zlib"; ./configure --prefix="$PREFIX"; make -j"$JOBS"; make install
-cd "$SRC/cpython-source-deps-openssl-3.0"; ./config --prefix="$PREFIX" --libdir=lib; make -j"$JOBS"; make install_sw
-cd "$SRC/cpython-source-deps-libffi"; chmod +x configure; ./configure --prefix="$PREFIX"; make -j"$JOBS"; make install
-cd "$SRC/cpython-source-deps-bzip2"
-make -j"$JOBS"; make install PREFIX="$PREFIX"
-# Fresh PIC objects are required; this Makefile has no install target.
-rm -f ./*.o libbz2.so*
-make -f Makefile-libbz2_so CFLAGS='-O2 -fPIC -Wall -Winline' -j"$JOBS"
-install -m755 libbz2.so.1.0.8 "$PREFIX/lib/"
-ln -sf libbz2.so.1.0.8 "$PREFIX/lib/libbz2.so.1.0"
-ln -sf libbz2.so.1.0 "$PREFIX/lib/libbz2.so"
-install -m644 bzlib.h "$PREFIX/include/"
-cd "$SRC/cpython-source-deps-sqlite"
-gcc -O2 -fPIC -DSQLITE_ENABLE_FTS5 -c sqlite3.c -o sqlite3.o
-gcc -shared -o libsqlite3.so sqlite3.o -lpthread -ldl -lm
-install -m644 sqlite3.h "$PREFIX/include/"; install -m755 libsqlite3.so "$PREFIX/lib/"
-cd "$SRC/cpython-3.13.16"
-export CPPFLAGS="-I$PREFIX/include" LDFLAGS="-L$PREFIX/lib -Wl,-rpath,$PREFIX/lib"
-export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
-./configure --prefix="$PREFIX" --with-openssl="$PREFIX" --with-openssl-rpath=auto
-make -j"$JOBS"; make install
-"$PREFIX/bin/python3.13" -VV
-"$PREFIX/bin/python3.13" - <<'PY'
-import bz2, ctypes, sqlite3, ssl, zlib
-c = sqlite3.connect(':memory:')
-c.execute('CREATE VIRTUAL TABLE probe USING fts5(text)')
-c.execute("INSERT INTO probe VALUES ('fts works')")
-assert c.execute("SELECT count(*) FROM probe WHERE probe MATCH 'works'").fetchone()[0] == 1
-print('stdlib + FTS5 OK', ssl.OPENSSL_VERSION, sqlite3.sqlite_version)
-PY
-echo BUILD_DONE
-BUILD_SCRIPT
-
-# Detached build; do not start another while this one is running.
-setsid env BUILD_ROOT="$BUILD_ROOT" bash "$PROJECT_ROOT/.arena-build-python313.sh" \
-  > "$BUILD_ROOT/build.log" 2>&1 < /dev/null &
-echo "Build started; log: $BUILD_ROOT/build.log"
+./scripts/arena-env-build.sh --check          # read-only: проверить текущий .venv, без сети/sync/build
+./scripts/arena-env-build.sh                  # fast path или восстановление + frozen dev sync
+./scripts/arena-env-build.sh --rebuild-python # принудительная пересборка CPython в staging-prefix
 ```
 
-Wait for completion:
+Дополнительные настройки:
+
+- `BUILD_ROOT=/путь` — перенести cache/build outputs.
+- `JOBS=2` — число параллельных build jobs; значение по умолчанию намеренно умеренное для sandbox.
+- `UV_BIN=/путь/к/uv` — явно выбрать исполняемый `uv`; он обязан быть версии `0.13.7`.
+
+`--check` подтверждает версию CPython, необходимые stdlib-модули/SQLite FTS5, наличие `pytest` и `ruff`. Он **не** синхронизирует зависимости и не доказывает, что тесты проекта проходят. Обычный запуск подтверждает frozen sync и те же runtime/dev-tool smoke checks, но также **не запускает полный pytest suite**. После восстановления запускайте требуемые тесты и фиксируйте фактические результаты отдельно.
+
+## Контракт окружения этого проекта
+
+- Текущий recovery target: **CPython 3.13.16**. `pyproject.toml` и `uv.lock` формально допускают `>=3.13`; версия 3.13.16 выбрана как воспроизводимый локальный sandbox toolchain, а не выведена из этого диапазона автоматически.
+- Проект имеет `uv.lock`; тестовая группа — extra `dev` из текущего `pyproject.toml`. Синхронизация выполняется с `--frozen`, чтобы не переписать lock и не разрешать новые версии.
+- Проверяется не только `import sqlite3`: smoke создаёт FTS5 virtual table, вставляет и ищет строку. Также импортируются `ssl`, `zlib`, `bz2` и `ctypes`.
+- `uv` закреплён на `0.13.7` и хранится/используется отдельно от системного Python и project `.venv`.
+- Никакого `apt`, root, Docker, `pip install --break-system-packages` или ручного изменения системного Python не требуется.
+
+## Закреплённые исходники CPython toolchain
+
+Архивы загружаются с `codeload.github.com` по immutable commit, проверяются SHA-256 **до распаковки** и кэшируются. Хэши ниже относятся к соответствующим codeload tar archives; изменение commit или digest требует обновить их вместе и повторно проверить архивы.
+
+| Источник | Commit | SHA-256 codeload archive |
+|---|---|---|
+| CPython 3.13.16 | `cbc944f4bc59639a444dd971c737788ba2283a91` | `172762c6e0b6e7fb9d323788b004d33703b29bf9908015e080e4646d9d43c1a5` |
+| OpenSSL source dependency | `f2ca6496947165bc40da8422fc59b7b22926d84a` | `39977bbe62e40ee8ef2059a153fb4e2eadf6b0c47c4344484c681b6c0f8d1bb5` |
+| zlib source dependency | `4dc98e1909830e2bdc2a9cc2236e3c5d5037335b` | `1fe30e919eb560f495de9ee4bd7ba5216ce13f454affb4ccc32e15efa3878f5e` |
+| libffi source dependency | `e7a5ad74ebde4c7fc7ba679875dc46bda35e2a15` | `663f5d15e8e6f0d33438a44784dcd53f8edf72f3575648060be7a1a86240296a` |
+| bzip2 source dependency | `05301997b2f9590f49c672cf3dfd3d3dfa7ad521` | `ab14accac86cdd92021d50465deeb221b476d6675bd1383d3c7fb83751c2e0a3` |
+| SQLite source dependency | `f048e6a40879da9828ca2cf3b260f3e0a26117fb` | `593de968b2a18824c15a1310e62d131b3203beb3fc81ead7d2e726832cf805c2` |
+
+The build retains the previously verified fixes: OpenSSL uses `--libdir=lib`; libffi's `configure` is made executable; bzip2 shared objects are freshly compiled with `-fPIC`; SQLite is compiled with `SQLITE_ENABLE_FTS5`; CPython uses the staged libraries during build and its final prefix for runtime lookup. A cold build may take 10–15 minutes on 2 CPUs. Set `JOBS` deliberately; aggressive parallelism can exhaust a small sandbox.
+
+## Safeguards and failure recovery
+
+- Cold builds require `curl`, `sha256sum`, `tar`, `gcc`, `make`, and `perl`. The script checks these before building.
+- A wrong archive digest, unsupported Python, missing FTS5, failed `uv sync`, or missing test tools is a hard failure; there is no fallback to system Python or an unfrozen install.
+- A newly built toolchain is assembled in a staging directory. It replaces `prefix` only after the staged Python passes the runtime/FTS5 smoke. A prior prefix is retained as `prefix.previous.<timestamp>`; failed staging directories and source archives are preserved for diagnosis.
+- A checksum-mismatched cached archive is not silently deleted or redownloaded over; inspect it manually. A lock directory at `BUILD_ROOT/.arena-env-build.lock` means another run may be active or a previous process left a stale lock. Inspect before removing it.
+- If the cold build fails, read the command and line reported by the script, then inspect `$BUILD_ROOT/src` and `.prefix-build.*`. Do not “fix” failures by changing system Python, dropping `--frozen`, or deleting unknown cache/worktree data.
+- The script only guarantees environment construction and smoke checks. A successful `ENVIRONMENT_READY` is not a test-suite PASS, mutation PASS, W0 row closure, Docker result, or deployed-host acceptance.
+
+## Verify and run tests
 
 ```bash
-tail -f "$BUILD_ROOT/build.log"   # stop after BUILD_DONE
-```
-
-Known fixes embedded above: OpenSSL branch is `openssl-3.0` and must use `--libdir=lib`; libffi's configure may need `chmod +x`; bzip2 shared objects must be freshly compiled with `-fPIC`; SQLite is an amalgamation and needs `-DSQLITE_ENABLE_FTS5`. `import sqlite3` alone does not test FTS5. Avoid PGO (`--enable-optimizations`) unless its extra build time is warranted.
-
-## 3. Create/refresh the project environment
-
-Use the interpreter built above. Choose extras from the **current project's** `pyproject.toml`; do not copy extras from another repository. `--frozen` is for projects with a valid lockfile.
-
-```bash
-PROJECT_ROOT="$(git rev-parse --show-toplevel)"
-BUILD_ROOT="${BUILD_ROOT:-$HOME/.cache/arena-python313}"
-export PATH="$BUILD_ROOT/prefix/bin:$PATH"
-python3 -m pip install --break-system-packages uv
-cd "$PROJECT_ROOT"
-UV_SYSTEM_CERTS=true uv sync --frozen
-# Add this project's test extra if needed, e.g. append: --extra dev
-# Omit --frozen when the project has no lockfile.
-```
-
-## 4. Verify, then test
-
-```bash
-PROJECT_ROOT="$(git rev-parse --show-toplevel)"
-cd "$PROJECT_ROOT"
+./scripts/arena-env-build.sh --check
 .venv/bin/python -VV
-.venv/bin/python - <<'PY'
-import bz2, ctypes, sqlite3, ssl, zlib
-c = sqlite3.connect(':memory:')
-c.execute('CREATE VIRTUAL TABLE probe USING fts5(text)')
-c.execute("INSERT INTO probe VALUES ('fts works')")
-assert c.execute("SELECT count(*) FROM probe WHERE probe MATCH 'works'").fetchone()[0] == 1
-print('runtime + FTS5 OK', ssl.OPENSSL_VERSION, sqlite3.sqlite_version)
-PY
 .venv/bin/python -m pytest --version
+.venv/bin/ruff --version
 .venv/bin/python -m pytest -q path/to/relevant_tests.py
-# Run the full suite when appropriate:
+# Run the full suite only when appropriate:
 .venv/bin/python -m pytest -q
 ```
 
-Report actual test counts and failures. A working interpreter, pytest import, or FTS5 smoke test does not mean the project's tests pass. Diagnose failures from their tracebacks; don't label them environmental or pre-existing without evidence.
+Record actual commands, exit codes, counts, expected xfails, skips, and failures. A working interpreter, `pytest --version`, or FTS5 smoke alone does not mean the project's tests passed. Diagnose tracebacks; do not label failures environmental or pre-existing without evidence.
 
-## 5. Git recovery (brief)
+## Git/worktree safety
 
-Each session may use a different branch. Inspect the current checkout; never paste a branch name from an old handoff. If `HEAD` is stale, fetch the current branch and verify that on-disk files exactly match the intended remote commit before moving Git's pointer. Only then use `git reset --mixed <verified-commit>`; it preserves files. Never use `checkout`, `restore`, or `reset --hard` to repair a stale pointer or discard unsurveyed work.
+The recovery script must be run inside the intended checkout. Before using it, inspect `git status --short` and `git branch --show-current`; it does not repair stale Git pointers or discard work. It never switches branches, changes the index, or resets files. Keep build artifacts out of Git by using the default cache under `$HOME/.cache` (or another external `BUILD_ROOT`).

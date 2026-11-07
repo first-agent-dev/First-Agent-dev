@@ -221,15 +221,17 @@ two views cannot drift.
 Existing-test protection (research note
 [`llm-agent-failure-modes-guardrails-2026-06.md`](../../research/llm-agent-failure-modes-guardrails-2026-06.md)
 R-6; empirical basis: agents blocked by a failing test tend to edit
-the test, not the code). Enforced by `validate_test_edits` at both
-seats (git hook + IntentGuard), keyed on the **classifier** intent —
-the D-5 typed-`INTENT:` override never applies to this rule.
+the test, not the code). `validate_test_edits` remains enforced by the
+`commit-msg` hook, keyed on the **classifier** intent — the D-5 typed-
+`INTENT:` override never applies to this rule. Runtime IntentGuard is
+retired; an optional `pr_prepare` note is not a mutation permit or a
+substitute for commit-message validation.
 
-- Deleting or renaming a file under `tests/**`: **blocked under every
-  intent shape**, no declaration escape. A genuinely obsolete test is
-  removed by a human in a dedicated `CHORE` PR.
+- Deleting or renaming a file under `tests/**`: **blocked by the
+  commit-msg hook under every intent shape**, no declaration escape. A
+  genuinely obsolete test is removed by a human in a dedicated `CHORE` PR.
 - Modifying an existing `tests/**` file while the staged diff is
-  FIX-shaped: requires a declaration block in the PR draft —
+  FIX-shaped: the **commit message** requires a declaration block —
 
 ```text
 TEST-EDITS:

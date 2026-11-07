@@ -2,16 +2,32 @@
 
 from __future__ import annotations
 
+import base64
+import json
 import socket
+import subprocess
+import sys
 import threading
+import time
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+import fa.execution.cell_worker as cell_worker
+from fa.execution.cell_protocol import decode_cell_reply, decode_cell_request, encode_cell_request
 from fa.execution.cell_worker import CellWorker, serve
-from fa.execution.protocol import MAX_TAIL_BYTES, _loads, encode_json, read_frame, write_frame
+from fa.execution.protocol import (
+    MAX_PROJECT_TOOL_ENVELOPE_BYTES,
+    MAX_PROJECT_TOOL_REQUEST_BYTES,
+    MAX_PROJECT_TOOL_TIMEOUT_MS,
+    MAX_TAIL_BYTES,
+    _loads,
+    encode_json,
+    read_frame,
+    write_frame,
+)
 from fa.execution.types import ExecutionContractError
 from fa.runtime.pty_pool import PtyPool, PtyResult, PtySession
 
@@ -43,6 +59,56 @@ def run_message(
     )
 
 
+def project_message(*, tool: str = "fs_search", params: dict[str, Any] | None = None, timeout_ms: int = 1000) -> bytes:
+    return message(
+        "PROJECT_TOOL",
+        {"tool": tool, "params": {"query": "needle"} if params is None else params, "timeout_ms": timeout_ms},
+    )
+
+
+def test_project_tool_private_codec_is_closed_and_bounded() -> None:
+    request = encode_cell_request(
+        request_id="1" * 32,
+        action="PROJECT_TOOL",
+        payload={"tool": "fs_search", "params": {"query": "needle"}, "timeout_ms": 1000},
+    )
+    assert decode_cell_request(request)["action"] == "PROJECT_TOOL"
+    for payload in (
+        {"tool": "fs_run_bash", "params": {}, "timeout_ms": 1000},
+        {"tool": "fs_search", "params": {}, "timeout_ms": MAX_PROJECT_TOOL_TIMEOUT_MS + 1},
+        {"tool": "fs_search", "params": {"query": "x" * (MAX_PROJECT_TOOL_REQUEST_BYTES + 1)}, "timeout_ms": 1000},
+        {"tool": "fs_search", "params": {}, "timeout_ms": 1000, "command": "sentinel"},
+    ):
+        with pytest.raises(ExecutionContractError):
+            decode_cell_request(message("PROJECT_TOOL", payload))
+
+    reply = encode_json(
+        {
+            "version": 1,
+            "request_id": "1" * 32,
+            "result": {"stdout": "{}", "exit_code": 0, "truncated": False, "session_id": None, "timed_out": False},
+            "error": None,
+        }
+    )
+    assert decode_cell_reply(reply, request_id="1" * 32, action="PROJECT_TOOL", session_id=None) is not None
+    too_long = encode_json(
+        {
+            "version": 1,
+            "request_id": "1" * 32,
+            "result": {
+                "stdout": "x" * (MAX_PROJECT_TOOL_ENVELOPE_BYTES + 1),
+                "exit_code": 0,
+                "truncated": False,
+                "session_id": None,
+                "timed_out": False,
+            },
+            "error": None,
+        }
+    )
+    with pytest.raises(ExecutionContractError):
+        decode_cell_reply(too_long, request_id="1" * 32, action="PROJECT_TOOL", session_id=None)
+
+
 def test_real_local_pty_preserves_export_cwd_and_full_result(worker: CellWorker, tmp_path: Path) -> None:
     (tmp_path / "sub").mkdir()
     exported = worker.handle(run_message("export FA_CELL_UNIT=kept"))
@@ -64,6 +130,86 @@ def test_unknown_control_data_never_reaches_pty(worker: CellWorker, payload: dic
         worker.handle(message("RUN", payload))
     assert worker.handle(message("LIST", {}))["sessions"] == []
     assert not (tmp_path / "forbidden").exists()
+
+
+def test_project_tool_uses_fixed_helper_argv_without_pty(worker: CellWorker, monkeypatch: pytest.MonkeyPatch) -> None:
+    real_popen = subprocess.Popen
+    calls: list[tuple[list[str], dict[str, Any]]] = []
+    envelope = '{"summary":"ok","result":{},"error":null,"artifacts":[]}'
+
+    def forbidden_pty(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("PROJECT_TOOL must not acquire a PTY")
+
+    def launch(argv: list[str], **kwargs: Any) -> subprocess.Popen[bytes]:
+        calls.append((argv, kwargs))
+        assert argv[:4] == [sys.executable, "-I", "-m", "fa.execution.project_tools"]
+        decoded = json.loads(base64.b64decode(argv[4], validate=True))
+        assert decoded == {"tool": "fs_search", "params": {"query": "needle"}}
+        assert kwargs["cwd"] == str(worker._workspace)
+        assert kwargs["start_new_session"] is True
+        assert kwargs.get("shell", False) is False
+        assert kwargs["stdin"] == subprocess.DEVNULL
+        return real_popen(
+            [sys.executable, "-c", "import sys; sys.stdout.write(sys.argv[1] + '\\n')", envelope], **kwargs
+        )
+
+    monkeypatch.setattr(PtyPool, "acquire", forbidden_pty)
+    monkeypatch.setattr(cell_worker.subprocess, "Popen", launch)
+    result = worker.handle(project_message())
+    assert result == {
+        "stdout": envelope,
+        "exit_code": 0,
+        "truncated": False,
+        "session_id": None,
+        "timed_out": False,
+    }
+    assert len(calls) == 1
+
+
+def test_project_tool_child_output_overrun_is_truncated_non_success(
+    worker: CellWorker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_popen = subprocess.Popen
+
+    def launch(argv: list[str], **kwargs: Any) -> subprocess.Popen[bytes]:
+        script = "import sys;sys.stdout.write('x' * " + str(MAX_PROJECT_TOOL_ENVELOPE_BYTES + 20) + " + '\\n')"
+        return real_popen([sys.executable, "-c", script], **kwargs)
+
+    monkeypatch.setattr(cell_worker.subprocess, "Popen", launch)
+    result = worker.handle(project_message())
+    assert result["truncated"] is True
+    assert result["exit_code"] != 0
+    assert len(result["stdout"].encode()) <= MAX_PROJECT_TOOL_ENVELOPE_BYTES + 1
+
+
+def test_project_tool_timeout_kills_and_reaps_its_child_group(
+    worker: CellWorker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_popen = subprocess.Popen
+    helper = (
+        "import subprocess,sys,time;"
+        "child=subprocess.Popen([sys.executable,'-c','import time;time.sleep(10)']);"
+        "print(child.pid,flush=True);time.sleep(10)"
+    )
+
+    def launch(argv: list[str], **kwargs: Any) -> subprocess.Popen[bytes]:
+        return real_popen([sys.executable, "-c", helper], **kwargs)
+
+    monkeypatch.setattr(cell_worker.subprocess, "Popen", launch)
+    result = worker.handle(project_message(timeout_ms=100))
+    assert result["timed_out"] is True
+    assert result["exit_code"] < 0
+    child_pids = [int(pid) for pid in result["stdout"].split() if pid.isdigit()]
+    assert child_pids
+    for _ in range(100):
+        states = []
+        for pid in child_pids:
+            stat_path = Path(f"/proc/{pid}/stat")
+            states.append(None if not stat_path.exists() else stat_path.read_text().split()[2])
+        if all(state in {None, "Z"} for state in states):
+            break
+        time.sleep(0.01)
+    assert all(state in {None, "Z"} for state in states)
 
 
 @pytest.mark.parametrize("cwd", ["../escape", "/", "missing", "link"])

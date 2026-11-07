@@ -12,6 +12,8 @@ import fastjsonschema  # type: ignore[import-untyped]  # Existing dependency lac
 from fa.execution.protocol import (
     BOOL,
     MAX_FRAME_BYTES,
+    MAX_PROJECT_TOOL_ENVELOPE_BYTES,
+    MAX_PROJECT_TOOL_TIMEOUT_MS,
     MAX_TAIL_BYTES,
     PATH,
     POSITIVE,
@@ -23,11 +25,13 @@ from fa.execution.protocol import (
     _nullable,
     _object,
     encode_json,
+    project_tool_request_bytes,
 )
 from fa.execution.types import ExecutionContractError
 
 _PAYLOADS = {
     "RUN": _object(command=TEXT, cwd=PATH, timeout_ms=POSITIVE, session_id=_nullable(SESSION_ID)),
+    "PROJECT_TOOL": _object(tool={"enum": ["fs_search", "fs_reach"]}, params={"type": "object"}, timeout_ms=POSITIVE),
     "INTERRUPT": _object(session_id=SESSION_ID),
     "CLOSE": _object(session_id=SESSION_ID),
     "LIST": _object(),
@@ -75,6 +79,11 @@ def decode_cell_request(raw: bytes) -> dict[str, Any]:
         cwd = record["payload"]["cwd"]
         if cwd != "." and any(part in {"", ".", ".."} for part in cwd.split("/")):
             raise ExecutionContractError
+    elif record["action"] == "PROJECT_TOOL":
+        payload = record["payload"]
+        if payload["timeout_ms"] > MAX_PROJECT_TOOL_TIMEOUT_MS:
+            raise ExecutionContractError
+        project_tool_request_bytes(payload["tool"], payload["params"])
     return record
 
 
@@ -96,11 +105,13 @@ def decode_cell_reply(
             raise ExecutionContractError
         return None
     result = record["result"]
-    _check(_RUN if action == "RUN" else _CONTROL, result)
-    if action == "RUN":
+    _check(_RUN if action in {"RUN", "PROJECT_TOOL"} else _CONTROL, result)
+    if action in {"RUN", "PROJECT_TOOL"}:
+        expected_session_id = session_id if action == "RUN" else None
+        output_limit = MAX_PROJECT_TOOL_ENVELOPE_BYTES if action == "PROJECT_TOOL" else MAX_TAIL_BYTES
         if (
-            result["session_id"] != session_id
-            or len(result["stdout"].encode("utf-8")) > MAX_TAIL_BYTES
+            result["session_id"] != expected_session_id
+            or len(result["stdout"].encode("utf-8")) > output_limit
             or (not result["timed_out"] and not 0 <= result["exit_code"] <= 255)
         ):
             raise ExecutionContractError

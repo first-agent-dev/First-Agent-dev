@@ -40,7 +40,7 @@ class _Exchange:
 
     request_id: str
     pending: _Pending
-    gate: threading.Lock
+    gates: tuple[threading.Lock, ...]
     retired: bool = False
 
 
@@ -70,12 +70,21 @@ class WorkerClient:
                     self._condition.wait_for(lambda: self._closed or bool(self._pending))
                     if self._closed:
                         return
-                    deadline = min(p.deadline for p in self._pending.values())
-                if self._read_limit == MAX_FRAME_BYTES:
+                    pending_snapshot = tuple(self._pending.values())
+                    deadline = min(item.deadline for item in pending_snapshot)
+                    # Ordinary RUN/control exchanges retain the channel-wide ceiling because
+                    # a larger RUN may be registered while the stream reader is blocked.
+                    # PROJECT_TOOL owns both gates, so its sole pending reply can be capped now.
+                    read_limit = (
+                        pending_snapshot[0].max_reply_bytes
+                        if len(pending_snapshot) == 1 and pending_snapshot[0].request["action"] == "PROJECT_TOOL"
+                        else self._read_limit
+                    )
+                if read_limit == MAX_FRAME_BYTES:
                     raw = self._stream.read_frame(deadline=deadline)
                 else:
-                    raw = self._stream.read_frame(deadline=deadline, max_bytes=self._read_limit)
-                request_id = _loads(raw, max_bytes=self._read_limit).get("request_id")
+                    raw = self._stream.read_frame(deadline=deadline, max_bytes=read_limit)
+                request_id = _loads(raw, max_bytes=read_limit).get("request_id")
                 if not isinstance(request_id, str):
                     raise ExecutionContractError
                 with self._condition:
@@ -118,9 +127,20 @@ class WorkerClient:
         limit = _frame_limit(max_reply_bytes)
         if limit > self._read_limit or (limit > MAX_FRAME_BYTES and req["action"] != "RUN"):
             raise ExecutionContractError
-        gate = self._run_gate if req["action"] == "RUN" else self._control_gate
-        if not gate.acquire(timeout=_remaining(deadline)):
-            raise WorkerUnavailableError
+        gates: tuple[threading.Lock, ...]
+        if req["action"] == "PROJECT_TOOL":
+            gates = (self._run_gate, self._control_gate)
+        elif req["action"] == "RUN":
+            gates = (self._run_gate,)
+        else:
+            gates = (self._control_gate,)
+        acquired: list[threading.Lock] = []
+        for gate in gates:
+            if not gate.acquire(timeout=_remaining(deadline)):
+                for held in reversed(acquired):
+                    held.release()
+                raise WorkerUnavailableError
+            acquired.append(gate)
         request_id = req["request_id"]
         pending = _Pending(req, deadline, limit)
         registered = False
@@ -140,9 +160,10 @@ class WorkerClient:
         except (OSError, DockerUnavailableError, ExecutionContractError, WorkerUnavailableError):
             if registered:
                 self._fail()
-            gate.release()
+            for held in reversed(acquired):
+                held.release()
             raise WorkerUnavailableError from None
-        return _Exchange(request_id, pending, gate)
+        return _Exchange(request_id, pending, gates)
 
     def await_reply(self, exchange: _Exchange, *, deadline: float) -> dict[str, Any]:
         """Wait for the reply of an already sent exchange. No second frame."""
@@ -171,7 +192,8 @@ class WorkerClient:
             exchange.retired = True
             self._pending.pop(exchange.request_id, None)
             self._condition.notify_all()
-        exchange.gate.release()
+        for gate in reversed(exchange.gates):
+            gate.release()
 
     def request(self, raw: bytes, *, deadline: float, max_reply_bytes: int = MAX_FRAME_BYTES) -> dict[str, Any]:
         """One bounded exchange: write, then wait for its own reply."""

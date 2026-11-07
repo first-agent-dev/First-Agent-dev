@@ -5,14 +5,12 @@ Verifies the extracted common functions work correctly and handle edge cases.
 
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 import pytest
 
+import fa.inner_loop.tools._common as common
 from fa.inner_loop.tools._common import (
-    git_ls_files,
     prepare_workspace_context,
     truncate_for_preview,
     validate_bash_command,
@@ -20,137 +18,10 @@ from fa.inner_loop.tools._common import (
 )
 
 
-class TestGitLsFiles:
-    """Tests for git_ls_files() function."""
-
-    def test_git_ls_files_returns_tracked_files(self, tmp_path: Path) -> None:
-        """git_ls_files returns tracked files from git repository."""
-        # Initialize a git repo
-        subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
-        subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=tmp_path, check=True, capture_output=True)
-        subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, check=True, capture_output=True)
-
-        # Create and track files
-        (tmp_path / "file1.txt").write_text("content1")
-        (tmp_path / "file2.py").write_text("content2")
-        subprocess.run(["git", "add", "."], cwd=tmp_path, check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "initial"], cwd=tmp_path, check=True, capture_output=True)
-
-        result = git_ls_files(tmp_path)
-
-        assert "file1.txt" in result
-        assert "file2.py" in result
-        assert len(result) == 2
-
-    def test_git_ls_files_returns_untracked_not_ignored(self, tmp_path: Path) -> None:
-        """git_ls_files returns untracked files that are not in .gitignore."""
-        # Initialize a git repo
-        subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
-        subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=tmp_path, check=True, capture_output=True)
-        subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, check=True, capture_output=True)
-
-        # Create .gitignore
-        (tmp_path / ".gitignore").write_text("*.log\n")
-
-        # Create tracked file
-        (tmp_path / "tracked.txt").write_text("tracked")
-        subprocess.run(["git", "add", "."], cwd=tmp_path, check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "initial"], cwd=tmp_path, check=True, capture_output=True)
-
-        # Create untracked files
-        (tmp_path / "untracked.txt").write_text("untracked")
-        (tmp_path / "ignored.log").write_text("ignored")
-
-        result = git_ls_files(tmp_path)
-
-        assert "tracked.txt" in result
-        assert "untracked.txt" in result
-        assert "ignored.log" not in result
-        assert ".gitignore" in result
-
-    def test_git_ls_files_returns_empty_on_non_git_dir(self, tmp_path: Path) -> None:
-        """git_ls_files returns empty list when not in a git repository."""
-        result = git_ls_files(tmp_path)
-        assert result == []
-
-    def test_git_ls_files_handles_subprocess_timeout(self, tmp_path: Path) -> None:
-        """git_ls_files returns empty list on subprocess timeout."""
-        # Initialize a git repo
-        subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
-        subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=tmp_path, check=True, capture_output=True)
-        subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, check=True, capture_output=True)
-
-        with patch("subprocess.run") as mock_run:
-            mock_run.side_effect = subprocess.TimeoutExpired(cmd="git ls-files", timeout=10)
-            result = git_ls_files(tmp_path)
-
-        assert result == []
-
-    def test_git_ls_files_handles_subprocess_error(self, tmp_path: Path) -> None:
-        """git_ls_files returns empty list on subprocess error."""
-        # Initialize a git repo
-        subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
-        subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=tmp_path, check=True, capture_output=True)
-        subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, check=True, capture_output=True)
-
-        with patch("subprocess.run") as mock_run:
-            mock_run.side_effect = OSError("Permission denied")
-            result = git_ls_files(tmp_path)
-
-        assert result == []
-
-    def test_git_ls_files_handles_nonzero_return_code(self, tmp_path: Path) -> None:
-        """git_ls_files returns empty list when git returns non-zero exit code."""
-        # Initialize a git repo
-        subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
-        subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=tmp_path, check=True, capture_output=True)
-        subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, check=True, capture_output=True)
-
-        with patch("subprocess.run") as mock_run:
-            mock_result = MagicMock()
-            mock_result.returncode = 1
-            mock_result.stdout = ""
-            mock_run.return_value = mock_result
-            result = git_ls_files(tmp_path)
-
-        assert result == []
-
-    def test_git_ls_files_filters_empty_lines(self, tmp_path: Path) -> None:
-        """git_ls_files filters out empty lines from git output."""
-        # Initialize a git repo
-        subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
-        subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=tmp_path, check=True, capture_output=True)
-        subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, check=True, capture_output=True)
-
-        # Create a file
-        (tmp_path / "file.txt").write_text("content")
-        subprocess.run(["git", "add", "."], cwd=tmp_path, check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "initial"], cwd=tmp_path, check=True, capture_output=True)
-
-        with patch("subprocess.run") as mock_run:
-            mock_result = MagicMock()
-            mock_result.returncode = 0
-            mock_result.stdout = "file.txt\n\n\n"
-            mock_run.return_value = mock_result
-            result = git_ls_files(tmp_path)
-
-        assert result == ["file.txt"]
-
-    def test_git_ls_files_strips_whitespace(self, tmp_path: Path) -> None:
-        """git_ls_files strips whitespace from file paths."""
-        # Initialize a git repo
-        subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
-        subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=tmp_path, check=True, capture_output=True)
-        subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, check=True, capture_output=True)
-
-        with patch("subprocess.run") as mock_run:
-            mock_result = MagicMock()
-            mock_result.returncode = 0
-            mock_result.stdout = "  file1.txt  \n  file2.py  \n"
-            mock_run.return_value = mock_result
-            result = git_ls_files(tmp_path)
-
-        assert result == ["file1.txt", "file2.py"]
+def test_legacy_git_ls_files_helper_is_removed_from_module_api() -> None:
+    """Q131-C: remove the dormant host-Git helper without removing shared utilities."""
+    assert not hasattr(common, "git_ls_files")
+    assert "git_ls_files" not in common.__all__
 
 
 class TestValidateSearchParams:

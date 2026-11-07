@@ -370,16 +370,7 @@ row_run() { # row_run <label> <max_turns> <task> [assert_hook] [nonzero_ok]
     l1)
       if [ "$rc" -eq 0 ] && [ "${exp:-0}" -eq 0 ]; then
         echo "  [PASS] no escalation on a safe docs task"
-        # S12.6: ceremony cost is a NOTE, never a FAIL — denial counts vary
-        # by model (2026-08-31 gemini l1: 2 IntentGuard denials was normal
-        # enforce-mode behaviour). Expectation: <=1 once the agent knows the
-        # draft flow; more means the prompt guidance is not landing.
-        ig_denials="$(grep '"kind": "tool_result"' "$events" | grep -c 'IntentGuard' || true)"
-        if [ "${ig_denials:-0}" -gt 1 ]; then
-          echo "  [NOTE] IntentGuard denials: $ig_denials (expected <=1; ceremony friction, not a row failure)"
-        else
-          echo "  [OBS] IntentGuard denials: ${ig_denials:-0}"
-        fi
+        # Q130 retired the runtime guard; there is no draft-ceremony metric.
       elif [ "${exp:-0}" -ne 0 ]; then
         # A negative control that escalates is a FINDING, not a note: the
         # row's whole purpose is "safe work must not escalate". Exit 3.
@@ -711,8 +702,8 @@ s127_assert_bash_stderr() {
   S127_ROW_FAILED=0
   s127_expect "$1" "$2" "failing bash ran" present '"tool_name": "fs_run_bash"'
   # F7: require the handler summary for a non-zero LAST-STAGE exit
-  # ("bash exited N"). Do NOT OR with ok:false (IntentGuard/pr_prepare denials)
-  # or stderr-presence (a 2>&1 | tail pipeline can print the traceback then
+  # ("bash exited N"). Do NOT OR with ok:false (tool errors, including an
+  # optional-note failure) or stderr-presence (a 2>&1 | tail pipeline can print the traceback then
   # exit 0). Task text must not contain "bash exited N" (false-pass).
   s127_expect "$1" "$2" "non-zero last-stage exit surfaced (bash exited N)" present 'bash exited [1-9]'
   s127_finish "S127_BASH_STDERR_FAILED"
@@ -800,16 +791,9 @@ cmd_setup() {
   check_history_schema
   echo "== session-manifest audit (blocking classes only; production state never swept):"
   audit_sessions
-  # S12.6: print the effective operator modes so a trial row is never run
-  # against a flag state the operator did not intend. Read from the HOST side
-  # of the container config (~/.fa/config.yaml, config.py:40); absence of the
-  # file or key means the shipped defaults.
+  # Q130: runtime IntentGuard is retired; legacy mode config is ignored.
+  echo "== runtime IntentGuard: retired (legacy config ignored)"
   local cfg="$STATE_HOST/config.yaml"
-  if [ -r "$cfg" ] && grep -qE '^\s*intent_guard(_|\.)mode:' "$cfg" 2>/dev/null; then
-    echo "== intent_guard.mode: $(grep -oE 'intent_guard(_|\.)mode:\s*\S+' "$cfg" | head -1 | awk '{print $2}') (from $cfg)"
-  else
-    echo "== intent_guard.mode: enforce (default)"
-  fi
   if [ -r "$cfg" ] && grep -qE '^\s*tool_batching\.enabled:' "$cfg" 2>/dev/null; then
     echo "== tool_batching.enabled: $(grep -oE 'tool_batching\.enabled:\s*\S+' "$cfg" | head -1 | awk '{print $2}') (from $cfg)"
   else
@@ -831,9 +815,7 @@ cmd_l1() {
 }
 
 cmd_env() {
-  # S12.6: 6-turn cap — enforce-mode IntentGuard ceremony can cost >=2 turns
-  # before the probe even runs (live evidence: 2026-08-31 l2 t9), so a 2-turn
-  # cap was unachievable in the default mode.
+  # Keep the existing six-turn cap; runtime mutation no longer depends on a draft ceremony.
   row_run env 6 "Using bash, run \`pytest --version\` in this workspace and reply with only the version."
 }
 

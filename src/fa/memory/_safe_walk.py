@@ -113,9 +113,10 @@ class RootedFileReader:
         self._root_fd = self._open_directory_chain(resolved)
         try:
             opened = os.fstat(self._root_fd)
-            if (
-                not stat.S_ISDIR(opened.st_mode)
-                or (opened.st_dev, opened.st_ino, opened.st_mode) != (before.st_dev, before.st_ino, before.st_mode)
+            if not stat.S_ISDIR(opened.st_mode) or (opened.st_dev, opened.st_ino, opened.st_mode) != (
+                before.st_dev,
+                before.st_ino,
+                before.st_mode,
             ):
                 raise RootedReadError("root_changed")
             self._root_identity = (opened.st_dev, opened.st_ino)
@@ -208,9 +209,7 @@ class RootedFileReader:
         verified.append((parent_index, name, self._identity(named), target))
         return self._symlink_target_parts(target)
 
-    def _open_directory_component(
-        self, name: str, parent_fd: int, named: os.stat_result
-    ) -> int:
+    def _open_directory_component(self, name: str, parent_fd: int, named: os.stat_result) -> int:
         try:
             child_fd = os.open(
                 name,
@@ -221,19 +220,14 @@ class RootedFileReader:
             raise RootedReadError("path_changed") from exc
         try:
             child_stat = os.fstat(child_fd)
-            if (
-                self._node_identity(named) != self._node_identity(child_stat)
-                or child_stat.st_dev != self._root_device
-            ):
+            if self._node_identity(named) != self._node_identity(child_stat) or child_stat.st_dev != self._root_device:
                 raise RootedReadError("path_changed")
             return child_fd
         except BaseException:
             os.close(child_fd)
             raise
 
-    def _open_regular_component(
-        self, name: str, parent_fd: int, named: os.stat_result
-    ) -> tuple[int, os.stat_result]:
+    def _open_regular_component(self, name: str, parent_fd: int, named: os.stat_result) -> tuple[int, os.stat_result]:
         try:
             file_fd = os.open(
                 name,
@@ -288,9 +282,7 @@ class RootedFileReader:
                     symlink_count += 1
                     if symlink_count > 40:
                         raise RootedReadError("symlink_loop")
-                    absolute, target_parts = self._read_link_target(
-                        component, parent_fd, parent_index, named, verified
-                    )
+                    absolute, target_parts = self._read_link_target(component, parent_fd, parent_index, named, verified)
                     if absolute:
                         active = [0]
                         resolved.clear()
@@ -454,9 +446,8 @@ def _git_ls_files(root: Path, timeout: float = 5.0) -> list[str] | None:
 
     Resolves ``git`` to an absolute path via ``shutil.which`` to satisfy
     bandit S607 (no partial-executable-path subprocess invocation).
-    Uses ``--cached --others --exclude-standard`` which is the same flag
-    set used by ``glob.py``'s ``git_ls_files`` helper in the existing
-    codebase (cross-checked in preflight).
+    Uses ``--cached --others --exclude-standard`` to include tracked paths
+    and unignored untracked paths when Git metadata is available.
     """
     # A root with no ``.git`` cannot be enumerated by git (a managed view never
     # carries one: ``.git`` is excluded from projections). Skip the subprocess

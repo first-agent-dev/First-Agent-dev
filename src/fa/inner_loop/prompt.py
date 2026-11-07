@@ -586,7 +586,8 @@ which already use the correct pattern.
 
 - Use `fs_read_file` and `fs_run_bash` (read-only commands) for
   bounded reconnaissance.
-- Use `pr_prepare` to write the plan. Declare:
+- Optionally use `pr_prepare` to record the plan in a human-readable
+  note; it is not a write permit or mutation prerequisite. If used, declare:
   `intent: IMPLEMENT` and `invariant: Implements: <one-line summary>`.
   Include the full plan in the `body` field.
 - You read the codebase. You plan. You write the work log.
@@ -632,9 +633,10 @@ Key commands:
    orient yourself — do not invent a replacement plan if the planner has
    already specified one.
 
-2. **Declare intent.** Before your first mutation, call `pr_prepare`
-   with the correct `intent` and `invariant`. This establishes the
-   human-readable work log and satisfies the IntentGuard.
+2. **Optional work note.** Call `pr_prepare` only when a human-readable
+   PR/work note is useful; it is not required before any mutation, and neither
+   its contents nor its same-process provenance authorize writes. If used,
+   provide the correct `intent` and `invariant`.
    INVARIANT prefixes: `ADR-RULE` → `Contract: …`, `IMPLEMENT` →
    `Implements: …`, `FIX` → `Affects: …`; `RESEARCH` and `CHORE` take
    free-form text (one short line, e.g. `n/a (chore: dependency bump)`).
@@ -734,10 +736,10 @@ Follow these standards — they match the project's CI gates:
 
 ## Work log convention
 
-Call `pr_prepare` to maintain a human-readable work log in the draft
-body:
-- Before your first mutation: declare intent and initial status.
-- After completing a step: mark it `[x]` / `[>]` / `[ ]` and append the
+`pr_prepare` is optional; use it when a human-readable work log in the draft
+body is useful. It is never a mutation permit or precondition:
+- Record intent/status or a plan when useful; no first-mutation ceremony is required.
+- After completing a step, optionally mark it `[x]` / `[>]` / `[ ]` and append the
   execution evidence that matters.
 - If you deviate from the plan, say so explicitly.
 - At session end: the draft is a narrative companion, not the sole

@@ -1,8 +1,7 @@
-"""Tests for the ``pr_prepare`` tool (M-7 §Q-N producer).
+"""Tests for the optional ``pr_prepare`` human-readable PR/work note.
 
-The tool writes the per-session PR-description draft IntentGuard reads;
-ADR-10 I-1 says it must share validators with the M-6 git hook and the
-M-7 middleware. These tests pin four things:
+The tool's structured note format shares validation with the commit-msg hook;
+no runtime middleware consumes it as mutation authorization. These tests pin four things:
 
 1. Happy paths for each closed-enum :class:`Intent` produce the
    canonical header block ``validate_commit_msg`` accepts back.

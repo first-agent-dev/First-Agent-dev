@@ -22,7 +22,7 @@ from fa.config import DEFAULT_CONFIG_PATH
 _TRUE_LITERALS = frozenset({"true", "yes", "on", "1"})
 _FALSE_LITERALS = frozenset({"false", "no", "off", "0"})
 
-_LEGACY_FLAGS: frozenset[str] = frozenset({"context_compaction_enabled"})
+_LEGACY_FLAGS: frozenset[str] = frozenset({"context_compaction_enabled", "intent.guard.mode"})
 
 
 @dataclass(frozen=True)
@@ -44,15 +44,12 @@ class FeatureFlags:
     max_subagent_spawns_per_session: int = 3
     blackboard_filtered_history_include_plans: bool = False
     max_chain_retries: int = 0  # S22: session-level chain retry limit (default=0 → fail-fast, user opts in)
-    # S12.4 (CT4): IntentGuard enforcement mode. Closed enum; unknown values
-    # degrade to "enforce" at the guard (fail-closed) with a warning.
-    intent_guard_mode: str = "enforce"
     # PLAN S5a: mode for the coder role's per-slice implementation ceremony
     # injection. Closed enum {off, observe, enforce}; see
     # fa.inner_loop.injections. Default "off" -- an injection rewrites the
     # model's context, so it must be opted into explicitly. This is the
-    # OPPOSITE polarity from intent_guard_mode above, which fails closed to
-    # "enforce" because it is a safety gate rather than an advisory payload.
+    # Unlike historical IntentGuard's fail-closed mode, this is an advisory
+    # payload; the unconfigured state is "tell me, don't act".
     # PLAN S5a (operator, 2026-09-07): defaults to "observe", not "off".
     # `observe` emits telemetry that the trigger fired but leaves the request
     # payload untouched, so an unconfigured run still cannot have its prompt
@@ -90,7 +87,6 @@ class FeatureFlags:
             "max_subagent_spawns_per_session": self.max_subagent_spawns_per_session,
             "blackboard.filtered_history_include_plans": self.blackboard_filtered_history_include_plans,
             "max_chain_retries": self.max_chain_retries,
-            "intent_guard.mode": self.intent_guard_mode,
             "injections.coder_slice_ceremony.mode": self.coder_slice_ceremony_mode,
             "workflow.verify_gate.mode": self.workflow_verify_gate_mode,
         }
@@ -106,7 +102,6 @@ class FeatureFlags:
 FAIL_CLOSED_FLAGS: frozenset[str] = frozenset(
     {
         "context_budget_enabled",  # default=True when flags missing → budget check active
-        "intent_guard_mode",  # S12.4: default="enforce" when flags missing → guard active
     }
 )
 
@@ -172,8 +167,6 @@ _KNOWN_FLAGS: dict[str, str] = {
     "max_subagent_spawns_per_session": "int",
     "blackboard.filtered_history_include_plans": "bool",
     "max_chain_retries": "int",
-    "intent_guard.mode": "str",
-    "intent_guard_mode": "str",
     "injections.coder_slice_ceremony.mode": "str",
     "coder_slice_ceremony_mode": "str",
     "workflow.verify_gate.mode": "str",
@@ -200,10 +193,10 @@ def _build_dotted(prefixes: list[tuple[int, str]], cur_indent: int, key: str) ->
 
 
 def _normalize_key(dotted: str) -> str:
-    if dotted in _KNOWN_FLAGS:
+    if dotted in _KNOWN_FLAGS or dotted in _LEGACY_FLAGS:
         return dotted
     norm = dotted.replace("_", ".")
-    if norm in _KNOWN_FLAGS:
+    if norm in _KNOWN_FLAGS or norm in _LEGACY_FLAGS:
         return norm
     return dotted
 
@@ -283,15 +276,12 @@ def load_feature_flags(text: str) -> FeatureFlagsLoadResult:
         dotted = _normalize_key(dotted)
 
         if dotted in _LEGACY_FLAGS:
-            warnings.append(
-                FeatureFlagWarning(
-                    line_no=line_no,
-                    key=dotted,
-                    detail=(
-                        "deprecated and ignored; use models.yaml compaction_threshold presence to enable compaction"
-                    ),
-                )
+            detail = (
+                "retired and ignored; runtime IntentGuard has no production fa run caller"
+                if dotted == "intent.guard.mode"
+                else "deprecated and ignored; use models.yaml compaction_threshold presence to enable compaction"
             )
+            warnings.append(FeatureFlagWarning(line_no=line_no, key=dotted, detail=detail))
             continue
 
         if dotted not in _KNOWN_FLAGS:
@@ -340,7 +330,6 @@ def load_feature_flags(text: str) -> FeatureFlagsLoadResult:
             found, "blackboard.filtered_history_include_plans", [], False
         ),
         max_chain_retries=_get_int(found, "max_chain_retries", [], 0),
-        intent_guard_mode=_get_str(found, "intent_guard.mode", ["intent_guard_mode"], "enforce"),
         coder_slice_ceremony_mode=_get_str(
             found,
             "injections.coder_slice_ceremony.mode",

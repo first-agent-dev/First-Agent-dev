@@ -327,8 +327,12 @@ class SupervisorDispatcher:
             profile = self._profiles.get(request["payload"]["profile_id"])
             if profile is None:
                 raise SupervisorError("UNAPPROVED_PROFILE")
-            if request["payload"]["timeout_ms"] > profile.max_command_ms or profile.interactive != (
-                request["payload"]["session_id"] is not None
+            payload = request["payload"]
+            is_project_tool = "project_tool" in payload
+            if (
+                payload["timeout_ms"] > profile.max_command_ms
+                or (not is_project_tool and profile.interactive != (payload["session_id"] is not None))
+                or (is_project_tool and request["view_ref"]["purpose"] != "PROJECT")
             ):
                 raise SupervisorError("INPUT_POLICY")
         context = self._authorize(
@@ -529,10 +533,13 @@ class SupervisorDispatcher:
                     return
                 if request["op"] == "exec":
                     profile = self._profiles.get(request["payload"]["profile_id"])
+                    payload = request["payload"]
+                    is_project_tool = "project_tool" in payload
                     if (
                         profile is not None
-                        and request["payload"]["timeout_ms"] <= profile.max_command_ms
-                        and profile.interactive == (request["payload"]["session_id"] is not None)
+                        and payload["timeout_ms"] <= profile.max_command_ms
+                        and (is_project_tool or profile.interactive == (payload["session_id"] is not None))
+                        and (not is_project_tool or request["view_ref"]["purpose"] == "PROJECT")
                     ):
                         framed.add_execution_budget(request["payload"]["timeout_ms"])
                         # Reply waiting may include the control allowance; execution

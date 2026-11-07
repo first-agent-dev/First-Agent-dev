@@ -250,7 +250,7 @@ def _run_subprocess_fallback(
             command,
             cwd=root,
             # The command is an intentional LLM-selected shell program; the
-            # sandbox/IntentGuard admission path runs before this tool.
+            # sandbox and managed-execution admission path govern this tool.
             shell=True,
             check=False,
             capture_output=True,

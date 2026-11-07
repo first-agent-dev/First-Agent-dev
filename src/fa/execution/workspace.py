@@ -5464,12 +5464,14 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
             view = self._live_view(peer, namespace, ref, req["capability"])
             profile = self._profile_for_record(view.record)
             payload = req["payload"]
+            is_project_tool = "project_tool" in payload
             if (
                 profile is None
                 or self._approved_cache is None
                 or payload["profile_id"] != profile.profile_id
                 or payload["timeout_ms"] > profile.max_command_ms
-                or profile.interactive != (payload["session_id"] is not None)
+                or (not is_project_tool and profile.interactive != (payload["session_id"] is not None))
+                or (is_project_tool and ref.purpose is not ViewPurpose.PROJECT)
             ):
                 raise SupervisorError("UNAPPROVED_PROFILE")
             self._execution_claim(req, namespace, ref, deadline=deadline)

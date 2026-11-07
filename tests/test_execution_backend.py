@@ -19,6 +19,8 @@ import os
 import queue
 import socket
 import struct
+import subprocess
+import sys
 import threading
 import time
 from collections.abc import Callable, Iterator
@@ -29,6 +31,7 @@ from typing import Any, override
 
 import pytest
 
+import fa.execution.cell_worker as cell_worker
 from fa.execution.backend import CellBackend, CommandOutcome, _EpisodeKey
 from fa.execution.cell_protocol import decode_cell_request, encode_cell_request
 from fa.execution.cell_worker import CellWorker, serve
@@ -429,6 +432,47 @@ def test_two_commands_share_one_cell_and_two_durable_records(backend: Backend) -
     assert first_record is not None and second_record is not None
     assert first_record["container_id"] == CID and second_record["container_id"] == CID
     assert second_record["view_ref"] == first_record["view_ref"]
+
+
+def test_typed_project_tool_exec_uses_same_admitted_cell_without_pty(
+    backend: Backend, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    request_id = "4" * 32
+    request = exec_request(backend.grant, request_id, "unused shell sentinel")
+    request["payload"] = {
+        "operation_id": "op-" + request_id,
+        "profile_id": backend.profile.profile_id,
+        "project_tool": {"tool": "fs_search", "params": {"query": "needle"}},
+        "timeout_ms": 1000,
+    }
+    claim(backend.authority, request)
+    backend.peer.replies.extend(backend.episode_replies(request["payload"]["operation_id"]))
+    actions: list[str] = []
+    original_handle = CellWorker.handle
+    original_popen = subprocess.Popen
+    envelope = '{"summary":"ok","result":{},"error":null,"artifacts":[]}'
+    child_argv: list[list[str]] = []
+
+    def capture_action(self: CellWorker, raw: bytes) -> dict[str, Any]:
+        actions.append(decode_cell_request(raw)["action"])
+        return original_handle(self, raw)
+
+    def forbidden_pty(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("typed project tool must not acquire a PTY")
+
+    def launch(argv: list[str], **kwargs: Any) -> subprocess.Popen[bytes]:
+        child_argv.append(argv)
+        return original_popen(
+            [sys.executable, "-c", "import sys; sys.stdout.write(sys.argv[1] + '\\n')", envelope], **kwargs
+        )
+
+    monkeypatch.setattr(CellWorker, "handle", capture_action)
+    monkeypatch.setattr(PtyPool, "acquire", forbidden_pty)
+    monkeypatch.setattr(cell_worker.subprocess, "Popen", launch)
+    outcome = ok_backend(lambda: backend.owner().execute(PEER, request, deadline=until()))
+    assert outcome.exit_code == 0 and outcome.stdout == envelope and outcome.session_id is None
+    assert actions == ["PROJECT_TOOL"] and backend.worker.runs == 0
+    assert len(child_argv) == 1 and child_argv[0][1:4] == ["-I", "-m", "fa.execution.project_tools"]
 
 
 def test_noninteractive_commands_use_null_sessions_and_fresh_one_shot_cells(
@@ -964,6 +1008,64 @@ def test_read_view_one_shot_launch_uses_bounded_tmpfs_not_host_scratch(backend: 
         backend.authority._state / "workspaces" / reader.view_ref.workspace_id / "views" / reader.view_ref.view_id
     )
     assert list((view_root / "execution/scratch").iterdir()) == [], "no host-backed scratch fallback"
+
+
+def test_typed_project_tool_exec_uses_exact_read_pin_and_one_shot_cell(
+    backend: Backend, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    backend.worker.close()
+    backend.worker = CountingWorker(
+        PtyPool(base_cwd=tmp_path, run_id="backend-project-reader"),
+        workspace=tmp_path,
+        max_command_ms=backend.profile.max_command_ms,
+        one_shot=True,
+    )
+    reader = ok(
+        lambda: backend.authority.pin_reader(
+            PEER,
+            ACTOR,
+            workspace_id=backend.view.workspace_id,
+            revision_id=backend.view.base_revision,
+            plan_ref=None,
+            formal_evidence=False,
+            deadline=until(),
+        )
+    )
+    assert reader.view_ref is not None
+    request_id = "a8" * 16
+    request = reader_exec_request(reader, request_id, "unused shell sentinel")
+    request["payload"] = {
+        "operation_id": "op-" + request_id,
+        "profile_id": "reader",
+        "project_tool": {"tool": "fs_reach", "params": {"query": "symbol"}},
+        "timeout_ms": 1000,
+    }
+    claim(backend.authority, request)
+    backend.peer.replies.extend(backend.episode_replies(request["payload"]["operation_id"], reader.view_ref.view_id))
+    original_handle = CellWorker.handle
+    original_popen = subprocess.Popen
+    actions: list[str] = []
+    envelope = '{"summary":"ok","result":{},"error":null,"artifacts":[]}'
+
+    def capture_action(self: CellWorker, raw: bytes) -> dict[str, Any]:
+        actions.append(decode_cell_request(raw)["action"])
+        return original_handle(self, raw)
+
+    def forbidden_pty(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("read-pinned PROJECT_TOOL must not acquire a PTY")
+
+    def launch(argv: list[str], **kwargs: Any) -> subprocess.Popen[bytes]:
+        return original_popen(
+            [sys.executable, "-c", "import sys; sys.stdout.write(sys.argv[1] + '\\n')", envelope], **kwargs
+        )
+
+    monkeypatch.setattr(CellWorker, "handle", capture_action)
+    monkeypatch.setattr(PtyPool, "acquire", forbidden_pty)
+    monkeypatch.setattr(cell_worker.subprocess, "Popen", launch)
+    outcome = ok_backend(lambda: backend.owner().execute(PEER, request, deadline=until()))
+    assert outcome.exit_code == 0 and outcome.stdout == envelope and outcome.session_id is None
+    assert actions == ["PROJECT_TOOL"] and backend.worker.runs == 0
+    assert backend.owner().episode_count() == 0
 
 
 def test_read_view_tmpfs_rejection_fails_before_attach_or_host_fallback(one_shot_case: OneShot) -> None:

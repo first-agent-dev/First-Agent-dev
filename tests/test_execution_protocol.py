@@ -565,6 +565,37 @@ def test_paths_cannot_escape_or_normalize_away_components(path: str) -> None:
             decode_request(encode_json(req))
 
 
+def test_exec_project_tool_variant_is_closed_and_preserves_shell_payload() -> None:
+    shell = request(Operation.EXEC)
+    assert decode_request(encode_json(shell)) == shell
+
+    project = request(Operation.EXEC)
+    project["payload"] = {
+        "operation_id": "op-" + RID,
+        "profile_id": "verification",
+        "project_tool": {"tool": "fs_search", "params": {"query": "needle", "output_mode": "matches"}},
+        "timeout_ms": 25_000,
+    }
+    assert decode_request(encode_json(project)) == project
+
+    for change in (
+        {"command": "sentinel"},
+        {"cwd": "."},
+        {"session_id": None},
+        {"project_tool": {"tool": "run_bash", "params": {}}},
+        {"project_tool": {"tool": "fs_search", "params": [], "extra": True}},
+    ):
+        malformed = copy.deepcopy(project)
+        malformed["payload"].update(change)
+        with pytest.raises(InvalidRequestError):
+            decode_request(encode_json(malformed))
+
+    oversized = copy.deepcopy(project)
+    oversized["payload"]["project_tool"]["params"] = {"query": "x" * 70_000}
+    with pytest.raises(InvalidRequestError):
+        decode_request(encode_json(oversized))
+
+
 @pytest.mark.parametrize(
     "field,value",
     [

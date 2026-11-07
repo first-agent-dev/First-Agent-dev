@@ -1,44 +1,26 @@
-"""``pr_prepare`` — write the per-session PR-description draft (M-7 §Q-N).
+"""``pr_prepare`` — write an optional per-session PR/work note.
 
-Producer side of the
-:class:`fa.inner_loop.hooks.intent_guard.IntentGuard` read seam landed in
-PR #22. The middleware reads the draft from
-``~/.fa/session-log/<run_id>/pr_draft.md``; without a producer the
-``allow-on-no-draft`` branch fired on every mutating tool call and the
-guard never actually denied. This tool is the producer: the LLM
-composes the header fields per
-:doc:`knowledge/skills/pr-creation/SKILL.md` §Output format and the
-handler renders them into the exact byte shape M-6's
-``validate_commit_msg`` accepts.
+The tool renders structured PR-intent headers and optional narrative into
+``~/.fa/session-log/<run_id>/pr_draft.md``. It remains a human-readable review
+surface and does not authorize or gate workspace mutation. Its contents and
+same-process provenance are not runtime policy evidence.
 
-Single-source-of-truth (ADR-10 I-1): this module imports the same
-``HEADER_*`` constants, the ``_INVARIANT_REQUIRED_PREFIXES`` table, and
-runs the same :func:`fa.hygiene.pr_intent.validate_commit_msg` as the
-git hook (M-6) and the harness middleware (M-7). One validator powers
-three consumers; any drift would surface in M-6's dual-located-rule
-snapshot test (``tests/test_pr_intent_snapshot.py``).
+This module imports the same ``HEADER_*`` constants, invariant-prefix table,
+and pure :func:`fa.hygiene.pr_intent.validate_commit_msg` used by the commit-msg
+hook. That shared validator keeps the note format aligned with commit-boundary
+validation; the hook remains the authoritative staged-path/test-edit seat.
 
 Design notes:
 
-* The draft target is closure-captured at construction time; the LLM
-  does not get a ``path`` parameter. This removes the «LLM writes to
-  the wrong location» failure mode.
-* The shared :class:`fa.inner_loop.pr_draft.PrDraftStore` adds
-  current-session provenance on top of the stable on-disk file so
-  ``IntentGuard`` trusts only drafts produced by this tool in the
-  current run, not stale or externally fabricated files.
-* Permission tier is ``"workspace"`` because the tool writes to disk.
-  The ``read`` / ``workspace`` enum is the only choice the registry
-  exposes today; the actual write target is under ``~/.fa/session-log/``,
-  but the LLM-observable invariant is «this tool mutates persistent
-  state», which is what the ``workspace`` tier signals.
-* Validation runs in two layers: (1) explicit per-field checks for
-  the FIX-only clauses + invariant prefix, mirroring
-  :func:`validate_commit_msg`'s Check 2 / Check 3; (2) a final
-  ``validate_commit_msg`` pass on the rendered text as a defensive
-  belt-and-braces so any contract drift in this renderer surfaces as
-  a tool-level failure rather than a silent corrupt-draft leak into
-  ``IntentGuard``.
+* The draft target is closure-captured at construction time; the LLM does not
+  get a ``path`` parameter.
+* ``PrDraftStore`` atomically persists the note and tracks a same-process digest
+  to detect accidental artifact tampering. The digest is not mutation authority.
+* Permission tier is ``"workspace"`` because the tool writes persistent
+  session-log state; it does not write project source or grant project writes.
+* Validation retains the existing PR-note shape and FIX-only clauses. It may
+  reject an invalid note, but that tool result does not block a later workspace
+  mutation or make the optional note a write permit.
 """
 
 from __future__ import annotations
@@ -186,8 +168,8 @@ def _validate_invariant_prefix(intent: Intent, invariant: str) -> str | None:
 def build_prepare_pr_tool(draft_store: PrDraftStore) -> ToolSpec:
     """Return the ``pr_prepare`` :class:`ToolSpec` bound to ``draft_store``.
 
-    ``draft_store`` carries both the stable on-disk path and the
-    current-session trust marker shared with :class:`IntentGuard`.
+    ``draft_store`` carries the stable on-disk path and an artifact-integrity
+    marker for this process; neither grants mutation authorization.
     """
 
     def handler(params: Mapping[str, object]) -> ToolResult:
@@ -227,9 +209,9 @@ def build_prepare_pr_tool(draft_store: PrDraftStore) -> ToolSpec:
         )
 
         # Defensive belt-and-braces: re-validate the rendered text with
-        # the same validator IntentGuard / the git hook use. Any drift
-        # in this renderer surfaces here rather than as a silent
-        # corrupt-draft leak. Staged paths are intentionally empty —
+        # the same validator the commit-msg hook uses. Any drift in this
+        # renderer surfaces as an optional-note validation error. Staged
+        # paths are intentionally empty —
         # citation-resolution against the staged tree is the git
         # hook's job at ``commit-msg`` time, not ours.
         downstream = validate_commit_msg(
@@ -268,13 +250,11 @@ def build_prepare_pr_tool(draft_store: PrDraftStore) -> ToolSpec:
     return ToolSpec(
         name="pr_prepare",
         description=(
-            "Write the per-session PR-description draft to "
-            "~/.fa/session-log/<run_id>/pr_draft.md so the IntentGuard "
-            "middleware (M-7) can validate subsequent mutating tool "
-            "calls against the declared INTENT / INVARIANT (and the "
-            "FIX-only CLASS / DEGREE-OF-FREEDOM CLOSED / "
-            "DETERMINISTIC MECHANISM clauses). The path is fixed at "
-            "session bootstrap; the tool takes no `path` parameter."
+            "Optionally write a human-readable PR/work note to "
+            "~/.fa/session-log/<run_id>/pr_draft.md. The note's contents "
+            "and provenance do not authorize or gate workspace mutations; "
+            "call this only when a review note is useful. The path is fixed "
+            "at session bootstrap; the tool takes no `path` parameter."
         ),
         input_schema=_INPUT_SCHEMA,
         permission="workspace",

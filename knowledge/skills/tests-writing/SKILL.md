@@ -368,7 +368,7 @@ C1-consumer, or C0-consumer-only. Audit for unpaired C0-consumer-only tests.
 | :--- | :--- |
 | Sandbox containment | Exec denied outside workspace (C3) |
 | Secret leakage | Secret NOT in model-facing messages (C3) |
-| IntentGuard | Deny without trusted draft + allow with (C3) |
+| Commit-msg intent/test-edit hook | Reject malformed/missing required commit metadata and unauthorized test edits (C3); runtime IntentGuard is retired |
 | Tool permission model | `read` tool cannot write (C3) |
 | Path containment | `../` denied |
 | Egress / proxy | Agent side carries proxy token only |
@@ -452,7 +452,7 @@ host evidence and an unexecuted case remains `NOT RUN`.
 | Docstring | root + matrix + claim + kill-check target + path inventory |
 | Authority | Normal pytest; `just check` is authority |
 | CI gates | `just check` → pytest + coverage + typecheck + contract check |
-| Test edits | `validate_test_edits` / IntentGuard under FIX |
+| Test edits | `validate_test_edits` in the commit-msg hook under FIX; no runtime IntentGuard gate |
 | Isolation | `tmp_path`; freeze time; mock LLM always in A |
 | Determinism | Offline; sort unstable collections |
 | Subprocess env | Shadow-bin dirs on PATH (see §15.1); **never filter PATH directories** |

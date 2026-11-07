@@ -20,7 +20,11 @@ from fa.execution.cell_protocol import encode_cell_request
 from fa.execution.docker import DockerCells, DockerEngine, DockerUnavailableError
 from fa.execution.journal import JournalError, OperationJournal
 from fa.execution.profiles import ExecutionProfile
-from fa.execution.protocol import decode_request, encode_json
+from fa.execution.protocol import (
+    MAX_PROJECT_TOOL_REPLY_FRAME_BYTES,
+    decode_request,
+    encode_json,
+)
 from fa.execution.supervisor import PeerIdentity, SupervisorError
 from fa.execution.types import ExecutionContractError, NamespaceRef, Operation, ViewRef
 from fa.execution.worker_client import WorkerClient, WorkerUnavailableError
@@ -204,9 +208,13 @@ class CellBackend:
             key = _EpisodeKey.build(peer, namespace, view, scope.profile.profile_id)
             episode = self._live_episode(scope, req, key, deadline=deadline)
             if scope.profile.interactive:
+                if "project_tool" in req["payload"]:
+                    return self._project_tool(episode, scope, req, namespace, deadline=deadline)
                 return self._run(episode, scope, req, namespace, deadline=deadline)
             failure: BaseException | None = None
             try:
+                if "project_tool" in req["payload"]:
+                    return self._project_tool(episode, scope, req, namespace, deadline=deadline)
                 return self._run(episode, scope, req, namespace, deadline=deadline)
             except BaseException as error:
                 failure = error
@@ -233,8 +241,10 @@ class CellBackend:
         same view share this creation, so a second cell is never created for a
         live episode.
         """
+        payload = req["payload"]
+        is_project_tool = "project_tool" in payload
         if not scope.profile.interactive:
-            if req["payload"]["session_id"] is not None:
+            if payload.get("session_id") is not None:
                 raise SupervisorError("INPUT_POLICY")
             inputs = scope.inputs
             try:
@@ -259,7 +269,7 @@ class CellBackend:
                 raise SupervisorError("BACKEND_UNAVAILABLE") from None
             return _Episode(req, container_id, WorkerClient(stream))
 
-        if req["payload"]["session_id"] is None:
+        if not is_project_tool and payload["session_id"] is None:
             raise SupervisorError("INPUT_POLICY")
         with self._bounded_mutex(deadline):
             existing = self._episodes.get(key)
@@ -363,6 +373,67 @@ class CellBackend:
             timed_out=result["timed_out"],
             truncated=result["truncated"],
             session_id=result["session_id"],
+            duration_ms=max(0, int((time.monotonic() - started) * 1000)),
+        )
+
+    def _project_tool(
+        self,
+        episode: _Episode,
+        scope: WorkAdmission,
+        req: dict[str, Any],
+        namespace: NamespaceRef,
+        *,
+        deadline: float,
+    ) -> CommandOutcome:
+        """Send one closed project helper action through the admitted cell worker."""
+        payload = req["payload"]
+        operation_id = payload["operation_id"]
+        view = self._view_of(req["view_ref"])
+        try:
+            with scope.effect():
+                record = self._journal.lookup(operation_id, namespace, deadline=deadline)
+                if record is None:
+                    raise SupervisorError("EXECUTION_UNKNOWN")
+                if record["view_ref"] != view.to_dict():
+                    raise SupervisorError("UNAUTHORIZED")
+                if record["container_id"] != episode.container_id:
+                    self._journal.record_container(operation_id, namespace, episode.container_id, deadline=deadline)
+        except JournalError as error:
+            raise SupervisorError(error.code) from None
+        project_tool = payload["project_tool"]
+        frame = encode_cell_request(
+            request_id=operation_id.removeprefix("op-"),
+            action="PROJECT_TOOL",
+            payload={
+                "tool": project_tool["tool"],
+                "params": project_tool["params"],
+                "timeout_ms": payload["timeout_ms"],
+            },
+        )
+        exchange = None
+        started = time.monotonic()
+        try:
+            with scope.send():
+                try:
+                    exchange = episode.worker.begin(
+                        frame,
+                        deadline=deadline,
+                        max_reply_bytes=MAX_PROJECT_TOOL_REPLY_FRAME_BYTES - 4,
+                    )
+                except WorkerUnavailableError:
+                    raise SupervisorError("EXECUTION_UNKNOWN") from None
+            result = episode.worker.await_reply(exchange, deadline=deadline)
+        except WorkerUnavailableError:
+            raise SupervisorError("EXECUTION_UNKNOWN") from None
+        return CommandOutcome(
+            operation_id=operation_id,
+            container_id=episode.container_id,
+            exit_code=result["exit_code"],
+            stdout=result["stdout"],
+            stderr="",
+            timed_out=result["timed_out"],
+            truncated=result["truncated"],
+            session_id=None,
             duration_ms=max(0, int((time.monotonic() - started) * 1000)),
         )
 

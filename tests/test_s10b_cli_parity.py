@@ -476,7 +476,6 @@ def test_s10b_parity_loop_guard_warn_sink_reaches_the_output_bus(tmp_path: Path)
         log=log,
         limits=limits,
         redactor=None,
-        draft_store=PrDraftStore(tmp_path / "pr_draft.md"),
         run_log_dir=tmp_path,
         output_bus_ref=bus_ref,  # type: ignore[arg-type]
     )
@@ -595,9 +594,9 @@ def test_s10b_prepare_pr_draft_returns_resumed_text(tmp_path: Path) -> None:
 def test_s10b_prepare_pr_draft_without_resume_clears_the_draft(tmp_path: Path) -> None:
     """C0p (S10b.2 / M-7): a fresh run removes the previous session's draft.
 
-    Security-relevant: ``IntentGuard`` trusts the draft's provenance, so a
-    non-resume run must not inherit one. This is the ``remove_file=not resume``
-    half of the contract.
+    Artifact hygiene: a non-resume run removes the previous session's note so
+    it is not accidentally shown as current context. Its presence is not an
+    authorization signal.
 
     Oracle: no text returned · the draft file is gone.
     Kill-check target: invert ``remove_file=not resume`` → the file survives
@@ -633,36 +632,27 @@ def test_s10b_build_output_bus_unknown_mode_attaches_no_renderer(tmp_path: Path)
     assert len(console._listeners) >= 1, "console mode must attach one — else the assertion above is vacuous"
 
 
-@requires_posix_paths
-def test_s10b_prepare_pr_draft_clear_failure_is_fatal(tmp_path: Path) -> None:
-    """C0p (S10b.2 / M-7): failing to CLEAR the draft store is fatal, unlike a read failure.
+def test_s10b_prepare_pr_draft_clear_failure_is_nonfatal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Optional note cleanup failure warns but cannot block a run or its writes."""
+    draft_path = tmp_path / "pr_draft.md"
+    draft_path.write_text("stale optional note", encoding="utf-8")
+    store = PrDraftStore(draft_path)
 
-    The severity asymmetry in this helper is the whole reason it is worth
-    testing: a failed *read* warns and continues, a failed *clear* must abort
-    with exit 2. ``IntentGuard`` trusts the draft's provenance, so proceeding
-    with a draft that could not be reset would let a mutating tool act on
-    intent the current session never established. Failing closed is correct.
+    def fail_clear(*, remove_file: bool = False) -> None:
+        del remove_file
+        raise OSError("read-only note directory")
 
-    Oracle: a non-``None`` error message naming the path — which the caller
-    turns into exit 2.
-    Kill-check target: the ``except OSError`` around ``draft_store.clear``;
-    swallow it and this fails while the read-failure test stays green, which
-    is exactly the severity collapse this pins against.
-    """
-    protected = tmp_path / "locked"
-    protected.mkdir()
-    draft_path = protected / "pr_draft.md"
-    draft_path.write_text("existing", encoding="utf-8")
-    protected.chmod(0o500)  # read+execute only: the file cannot be unlinked
+    monkeypatch.setattr(store, "clear", fail_clear)
+    text, error = _prepare_pr_draft(store, draft_path, resume=False)
 
-    try:
-        text, error = _prepare_pr_draft(PrDraftStore(draft_path), draft_path, resume=False)
-    finally:
-        protected.chmod(0o700)
-
-    assert error is not None, "an unclearable draft store must be fatal, not a warning"
-    assert "failed to reset PR draft path" in error
+    assert error is None
     assert text == ""
+    assert draft_path.read_text(encoding="utf-8") == "stale optional note"
+    assert "warning — could not reset optional note" in capsys.readouterr().err
 
 
 # ══════════════════════════════════════════════════════════════════════════

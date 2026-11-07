@@ -62,7 +62,6 @@ from fa.inner_loop.hooks import (
     AuthExpiredBlocker,
     FailureClassifierObserver,
     HookRegistry,
-    IntentGuard,
     LearningObserver,
     LockfileBlocker,
     LoopGuard,
@@ -187,8 +186,8 @@ def _prepare_managed_workspace(workspace: Path, run_context: RunContext | None) 
 _READINESS_PROMPT_EXTRA = (
     "Workspace ready: the project venv is at ./.venv — run tests with "
     "`uv run pytest ...` (or `.venv/bin/pytest`); never reinstall or rebuild "
-    "the environment. Before the first workspace mutation, call `pr_prepare` "
-    "(use CHORE for chores)."
+    "the environment. `pr_prepare` is optional; use it only for a human-readable "
+    "PR/work note. It is not a write permit or a prerequisite for mutations."
 )
 
 
@@ -240,27 +239,6 @@ def _inject_overrides(args: argparse.Namespace) -> dict[str, str]:
     except InjectionFlagError as exc:
         logger.warning("ignoring --inject (%s)", exc)
         return {}
-
-
-def _resolve_intent_guard_mode(override: str | None) -> str:
-    """Resolve the S12.4 IntentGuard enforcement mode.
-
-    An explicit *override* wins (tests, callers that already parsed config);
-    otherwise the value is read lazily from ``~/.fa/config.yaml`` following
-    the precedent in ``profiles.py``. Every degradation path lands on
-    ``"enforce"`` so a missing, unreadable, or malformed config can never
-    turn the guard off (FAIL_CLOSED, feature_flags.py).
-    """
-
-    if override is not None:
-        return override
-    try:
-        from fa.feature_flags import load_feature_flags_from_path
-
-        return load_feature_flags_from_path().flags.intent_guard_mode
-    except Exception as exc:  # noqa: BLE001 — fail closed to "enforce"
-        logger.warning("IntentGuard mode unavailable (%s); enforcing", exc)
-        return "enforce"
 
 
 def _session_manager_for_args(args: argparse.Namespace) -> SessionManager:
@@ -2549,18 +2527,15 @@ def _build_run_hook_registry(
     log: EventLog,
     limits: RuntimeLimits,
     redactor: SecretRedactor | None,
-    draft_store: PrDraftStore,
     run_log_dir: Path,
     output_bus_ref: list[EventBus],
-    intent_guard_mode: str | None = None,
     managed_workspace: bool = False,
 ) -> HookRegistry:
     """Assemble the guard/observer stack for a ``fa run`` session.
 
     Extracted from ``_cmd_run`` (S10b.2). Registration ORDER is behavioural,
-    not cosmetic: ``SandboxHook`` is registered first so only
-    workspace-contained paths reach ``IntentGuard``'s classifier, and the
-    original ordering is preserved exactly.
+    not cosmetic: ``SandboxHook`` is registered first so path-containment
+    checks remain ahead of the other runtime middleware.
 
     **``output_bus_ref`` is a one-element list, and that is on purpose.** In
     the pre-extraction code, ``_loop_guard_warn_sink`` was a closure over
@@ -2624,28 +2599,10 @@ def _build_run_hook_registry(
     hooks.register(RateLimitBlocker(suppression_seconds=limits.rate_limit_suppression_seconds))
     hooks.register(LockfileBlocker(suppression_seconds=limits.lockfile_suppression_seconds))
     hooks.register(AuthExpiredBlocker(suppression_seconds=limits.auth_expired_suppression_seconds))
-    # M-7 IntentGuard: reads the per-session PR draft at
-    # ~/.fa/session-log/<run_id>/pr_draft.md (populated by the M-7 §Q-N
-    # ``pr_prepare`` tool). Registered after SandboxHook so only
-    # workspace-contained paths reach the intent classifier.
-    # S12.4 (CT4): ``intent_guard_mode`` is a 3-state operator toggle
-    # (enforce|observe|off, default enforce). ``off`` skips registration so
-    # the guard costs nothing; ``observe`` keeps every denial in the
-    # DispatchRecord (hooks/base.py:163 records reason for allows too) but
-    # converts it to an allow, so live trials keep the telemetry without the
-    # draft ceremony blocking the run. Resolution is lazy so callers that
-    # already parsed config (or tests) can pin it.
-    resolved_intent_guard_mode = _resolve_intent_guard_mode(intent_guard_mode)
-    if resolved_intent_guard_mode == "off":
-        logger.warning("IntentGuard disabled (intent_guard.mode=off)")
-    else:
-        hooks.register(
-            IntentGuard(
-                repo_root=workspace,
-                draft_store=draft_store,
-                mode=resolved_intent_guard_mode,
-            )
-        )
+    # Runtime IntentGuard is intentionally not registered in production
+    # fa run sessions. Workspace Authority, role-scoped tools and the
+    # independent commit-msg hook remain the applicable control surfaces;
+    # pr_prepare is optional narrative and never grants write permission.
     hooks.register(AuditHook(event_log=log))
     hooks.register(SecretGuard(secrets=redactor.secrets if redactor is not None else frozenset()))
     hooks.register(CostGuardian(budget_usd=limits.cost_budget_usd, event_log=log))
@@ -2742,25 +2699,12 @@ def _prepare_pr_draft(
     *,
     resume: bool,
 ) -> tuple[str, str | None]:
-    """Read any resumable PR draft and reset the store. Returns ``(text, error)``.
+    """Read any resumable note and reset its current-process integrity marker.
 
-    Extracted from ``_cmd_run`` (S10b.2). ``error`` is ``None`` on success; a
-    non-``None`` error is fatal (exit 2) at the call site.
-
-    **Two failures, two different severities — and the asymmetry is the point.**
-
-    * Failing to *read* an existing draft is a **warning**: the run continues
-      with empty resume context. The operator loses continuity, not the run.
-    * Failing to *clear* the draft store is **fatal**: M-7's ``IntentGuard``
-      trusts the draft's provenance, so continuing with a stale or
-      externally-fabricated draft would let a mutating tool run against
-      intent the current session never established. Failing closed is the
-      security-correct behaviour.
-
-    Both are preserved exactly as they were inline. The warning is printed here
-    rather than returned because it is not the caller's decision — there is no
-    exit code attached to it, and returning "a message that is not an error"
-    would invite a caller to treat it as one.
+    Returns ``(text, None)``. Read or cleanup failures are continuity warnings,
+    not authorization failures: the note is optional and never controls whether
+    a workspace mutation may run. A stale file may remain if removal fails, but
+    it cannot grant or deny a write.
     """
     resume_draft_text = ""
     if resume and draft_path.is_file():
@@ -2775,7 +2719,10 @@ def _prepare_pr_draft(
     try:
         draft_store.clear(remove_file=not resume)
     except OSError as exc:
-        return resume_draft_text, f"fa run: failed to reset PR draft path {draft_store.path}: {exc}"
+        print(
+            f"fa run: warning — could not reset optional note at {draft_store.path}: {exc}",
+            file=sys.stderr,
+        )
 
     return resume_draft_text, None
 
@@ -3072,10 +3019,9 @@ def _cmd_run(  # noqa: C901
     # they are None. (ADR-7's T=1.0-on-retry is a retry-policy concern owned by the
     # FailureClassifierObserver, not a first-attempt default.)
 
-    # M-7 §Q-N: ``pr_prepare`` is the producer side of the
-    # IntentGuard read seam. The shared ``PrDraftStore`` binds the
-    # stable on-disk path to current-session provenance so stale or
-    # externally-fabricated drafts are not trusted by the guard.
+    # ``pr_prepare`` writes an optional human-readable note outside the
+    # project workspace. Its same-process digest protects the note artifact
+    # from accidental tampering, but it is not mutation authorization.
     draft_path = run_log_dir / "pr_draft.md"
     draft_store = PrDraftStore(draft_path)
 
@@ -3091,10 +3037,9 @@ def _cmd_run(  # noqa: C901
     # handoff). Same one-element-list seam as output_bus_ref.
     workflow_state_ref: list[SessionState | None] = [None]
 
-    # --resume preserves the on-disk draft for the next role to read;
-    # only the in-memory SHA-256 digest is reset, which forces the
-    # current session to re-establish trust via a fresh ``pr_prepare``
-    # call before any mutating tool is allowed (IntentGuard contract).
+    # --resume preserves the optional on-disk note for the next role to read;
+    # the new process starts with an empty in-memory digest, so the retained
+    # bytes are context only and never establish mutation authorization.
     # ``getattr`` fallback keeps pre-``--resume`` tests working.
     resume = getattr(args, "resume", False)
 
@@ -3170,7 +3115,6 @@ def _cmd_run(  # noqa: C901
                 log=log,
                 limits=limits,
                 redactor=redactor,
-                draft_store=draft_store,
                 run_log_dir=run_log_dir,
                 output_bus_ref=output_bus_ref,
                 managed_workspace=workspace_io is not None,

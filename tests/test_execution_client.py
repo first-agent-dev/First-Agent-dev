@@ -25,6 +25,7 @@ from fa.execution.client import (
     ExecutionUnavailableError,
     ExecutionUncertainError,
     ManagedBashExecutor,
+    ManagedProjectToolExecutor,
 )
 from fa.execution.profiles import ExecutionProfile
 from fa.execution.protocol import ERROR_CODES, DeadlineConnection, decode_request, encode_json, read_frame, write_frame
@@ -184,6 +185,67 @@ def executor(client: ExecutionClient) -> ManagedBashExecutor:
         original_revision_id=VIEW.base_revision,
         controller_root=Path("/sessions/source"),
     )
+
+
+def project_executor(client: ExecutionClient) -> ManagedProjectToolExecutor:
+    grant = GrantReply(Operation.CREATE_VIEW, CAP, VIEW, None, None, SHA)
+    return ManagedProjectToolExecutor(
+        client,
+        namespace=NS,
+        view=VIEW,
+        grant=grant,
+        profile=profile(),
+        input_tree_sha256=SHA,
+        plan_sha256=SHA,
+        original_revision_id=VIEW.base_revision,
+    )
+
+
+def test_project_tool_executor_uses_typed_exec_and_exact_view_binding(tmp_path: Path) -> None:
+    envelope = '{"summary":"ok","result":{},"error":null,"artifacts":[]}'
+
+    def project_result(req: dict[str, Any]) -> dict[str, Any]:
+        value = result(req)
+        value["receipt"].update(stdout_tail=envelope, stderr_tail="")
+        return value
+
+    params = {"query": "needle 🧪", "output_mode": "matches"}
+    with endpoint(tmp_path, project_result) as (client, seen):
+        assert project_executor(client).execute("fs_search", params, timeout=60) == envelope
+    assert len(seen) == 1
+    req = seen[0]
+    assert req["op"] == "exec"
+    assert req["namespace"] == NS.to_dict()
+    assert req["view_ref"] == VIEW.to_dict()
+    assert req["capability"] == CAP
+    assert req["payload"] == {
+        "operation_id": "op-" + req["request_id"],
+        "profile_id": "interactive",
+        "project_tool": {"tool": "fs_search", "params": params},
+        "timeout_ms": 25_000,
+    }
+    assert not ({"command", "cwd", "session_id"} & set(req["payload"]))
+
+
+def test_project_tool_executor_rejects_envelope_over_q97_limit(tmp_path: Path) -> None:
+    def oversized_result(req: dict[str, Any]) -> dict[str, Any]:
+        value = result(req)
+        value["receipt"].update(stdout_tail="x" * 65_000, stderr_tail="")
+        return value
+
+    with endpoint(tmp_path, oversized_result) as (client, _):
+        with pytest.raises(ExecutionRejectedError):
+            project_executor(client).execute("fs_search", {"query": "needle"})
+
+
+def test_project_tool_executor_rejects_unallowlisted_or_oversized_request_before_send(tmp_path: Path) -> None:
+    with endpoint(tmp_path) as (client, seen):
+        project = project_executor(client)
+        with pytest.raises(ExecutionContractError):
+            project.execute("fs_run_bash", {})
+        with pytest.raises(ExecutionContractError):
+            project.execute("fs_search", {"query": "x" * 70_000})
+        assert seen == []
 
 
 def test_all_four_methods_use_only_one_udspath_and_keep_pty_contract(tmp_path: Path) -> None:

@@ -13,6 +13,7 @@ import math
 import socket
 import stat
 import struct
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,6 +23,9 @@ from uuid import uuid4
 from fa.execution.profiles import ExecutionProfile
 from fa.execution.protocol import (
     MAX_PROJECT_ARTIFACTS_REPLY_BYTES,
+    MAX_PROJECT_TOOL_ENVELOPE_BYTES,
+    MAX_PROJECT_TOOL_REQUEST_BYTES,
+    MAX_PROJECT_TOOL_TIMEOUT_MS,
     MAX_REVISION_DIFF_REPLY_BYTES,
     PROTOCOL_V1,
     PROTOCOL_V2,
@@ -29,6 +33,7 @@ from fa.execution.protocol import (
     decode_reply,
     decode_request,
     encode_json,
+    project_tool_request_bytes,
     read_frame,
     write_frame,
 )
@@ -1073,3 +1078,122 @@ class ReadOnlyManagedBashExecutor:
 
     def list_sessions(self) -> list[str]:
         return []
+
+
+class ManagedProjectToolExecutor:
+    """One-shot typed project-tool EXEC bound to one admitted project view.
+
+    It does not expose a command, path, cwd, PTY session, or host fallback. The
+    cell helper's output remains untrusted until the caller validates its envelope.
+    """
+
+    def __init__(
+        self,
+        client: ExecutionClient,
+        *,
+        namespace: NamespaceRef,
+        view: ViewRef,
+        grant: GrantReply,
+        profile: ExecutionProfile,
+        input_tree_sha256: str,
+        plan_sha256: str | None,
+        original_revision_id: str | None,
+    ) -> None:
+        if not isinstance(view, ViewRef):
+            raise ExecutionContractError
+        expected_grant = Operation.CREATE_VIEW if view.access is Access.WRITE else Operation.PIN_READER
+        if (
+            not isinstance(client, ExecutionClient)
+            or not isinstance(namespace, NamespaceRef)
+            or view.purpose is not ViewPurpose.PROJECT
+            or view.owner_run_id != namespace.run_id
+            or not isinstance(grant, GrantReply)
+            or grant.operation is not expected_grant
+            or grant.view_ref != view
+            or grant.input_tree_sha256 != input_tree_sha256
+            or not isinstance(profile, ExecutionProfile)
+            or not isinstance(input_tree_sha256, str)
+            or len(input_tree_sha256) != 64
+            or any(char not in "0123456789abcdef" for char in input_tree_sha256)
+            or original_revision_id != view.base_revision
+            or (
+                plan_sha256 is not None
+                and (
+                    not isinstance(plan_sha256, str)
+                    or len(plan_sha256) != 64
+                    or any(c not in "0123456789abcdef" for c in plan_sha256)
+                )
+            )
+        ):
+            raise ExecutionContractError
+        self._client = client
+        self._namespace = namespace
+        self._view: ViewRef | None = view
+        self._grant: GrantReply | None = grant
+        self._profile = profile
+        self._tree = input_tree_sha256
+        self._plan = plan_sha256
+        self._original_revision = original_revision_id
+        self._active = True
+        self._lock = threading.Lock()
+
+    def suspend(self) -> None:
+        """Disarm this executor before its bound view is settled or handed off."""
+        self._active = False
+        self._view = None
+        self._grant = None
+
+    def execute(self, tool: str, params: dict[str, Any], *, timeout: int = 25) -> str:
+        """Send one bounded project-tool request and return its untrusted envelope."""
+        request_body = project_tool_request_bytes(tool, params)
+        if len(request_body) > MAX_PROJECT_TOOL_REQUEST_BYTES:
+            raise ExecutionContractError
+        _positive_integer(timeout)
+        with self._lock:
+            if not self._active or self._view is None or self._grant is None:
+                raise ExecutionUnavailableError
+            view, grant = self._view, self._grant
+            request_id = uuid4().hex
+            operation = OperationRef("op-" + request_id, view.view_id, view.owner_run_id, view.generation, self._tree)
+            result = self._client.request(
+                Operation.EXEC,
+                request_id=request_id,
+                namespace=self._namespace,
+                view=view,
+                grant=grant,
+                payload={
+                    "operation_id": operation.operation_id,
+                    "profile_id": self._profile.profile_id,
+                    "project_tool": {"tool": tool, "params": params},
+                    "timeout_ms": min(timeout * 1000, self._profile.max_command_ms, MAX_PROJECT_TOOL_TIMEOUT_MS),
+                },
+            )
+        receipt = ExecutionReceipt.from_dict(result["receipt"])
+        try:
+            receipt.require_binding(
+                operation=operation,
+                namespace=self._namespace,
+                view=view,
+                profile_id=self._profile.profile_id,
+                image_digest=self._profile.image_digest,
+                revision_id=view.base_revision,
+                original_revision_id=self._original_revision,
+                plan_sha256=self._plan,
+            )
+        except ExecutionContractError:
+            raise ExecutionUncertainError(operation.operation_id) from None
+        if receipt.state is JobState.TIMED_OUT:
+            raise ExecutionTimedOutError(receipt)
+        if receipt.state is JobState.LAUNCH_FAILED:
+            raise ExecutionUnavailableError(operation_id=operation.operation_id)
+        if receipt.state is not JobState.EXITED or receipt.exit_code is None:
+            raise ExecutionUncertainError(operation.operation_id)
+        if (
+            receipt.exit_code != 0
+            or receipt.truncated
+            or receipt.stderr_tail
+            or not receipt.stdout_tail.isascii()
+            or len(receipt.stdout_tail.encode("ascii")) > MAX_PROJECT_TOOL_ENVELOPE_BYTES
+        ):
+            raise ExecutionRejectedError("PROJECT_TOOL_FAILED", operation.operation_id)
+        return receipt.stdout_tail

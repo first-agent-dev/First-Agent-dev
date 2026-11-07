@@ -316,6 +316,49 @@ def test_real_git_editor_commit_reaches_prepare_and_validate(tmp_path: Path) -> 
     assert _git_process(repo, "status", "--porcelain=v1", env=env).stdout == ""
 
 
+def test_real_git_commit_blocks_undeclared_existing_test_edit(tmp_path: Path) -> None:
+    """R22 C2: commit-msg still denies an undeclared FIX-shaped test modification."""
+
+    repo, env, uv_records = _make_real_git_hook_repo(tmp_path)
+    source = repo / "src" / "fa" / "hook_subject.py"
+    test_file = repo / "tests" / "test_hook_subject.py"
+    source.parent.mkdir(parents=True)
+    test_file.parent.mkdir(parents=True)
+    source.write_text("VALUE = 0\n", encoding="utf-8")
+    test_file.write_text("def test_value():\n    assert True\n", encoding="utf-8")
+    assert _git_process(repo, "add", "-A", env=env).returncode == 0
+    setup = _git_process(repo, "commit", "-m", "track hook test fixture", env=env)
+    assert setup.returncode == 0, setup.stdout + setup.stderr
+    baseline_head = _git_process(repo, "rev-parse", "HEAD", env=env).stdout.strip()
+    calls_before = _uv_argvs(uv_records)
+    assert len([argv for argv in calls_before if "validate" in argv]) == 1
+
+    source.write_text("VALUE = 1\n", encoding="utf-8")
+    test_file.write_text("def test_value():\n    assert 1 == VALUE\n", encoding="utf-8")
+    assert _git_process(repo, "add", "-A", env=env).returncode == 0
+    message = (
+        "fix: exercise the commit-boundary test edit rule\n\n"
+        "INTENT: FIX\n"
+        "CLASS: REPAIR\n"
+        "INVARIANT: Affects: src/fa/hook_subject.py\n"
+        "DEGREE-OF-FREEDOM CLOSED: the commit hook checks staged paths\n"
+        "DETERMINISTIC MECHANISM: n/a (commit-boundary enforcement)\n"
+    )
+
+    result = _git_process(repo, "commit", "-m", message, env=env)
+
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "test_edit_undeclared" in result.stderr
+    assert _git_process(repo, "rev-parse", "HEAD", env=env).stdout.strip() == baseline_head
+    assert _git_process(repo, "diff", "--cached", "--name-status", env=env).stdout.splitlines() == [
+        "M\tsrc/fa/hook_subject.py",
+        "M\ttests/test_hook_subject.py",
+    ]
+    calls_after = _uv_argvs(uv_records)
+    assert len([argv for argv in calls_after if "validate" in argv]) == 2
+    assert [argv for argv in calls_after if "prepare" in argv] == []
+
+
 @pytest.mark.parametrize("message_mode", ["dash-m", "dash-F", "dash-F-stdin"])
 def test_real_git_authored_message_sources_skip_prepare_but_validate(
     message_mode: str,

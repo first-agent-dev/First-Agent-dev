@@ -7,6 +7,7 @@ callers must set a finite control-RPC timeout. There are no retries here.
 from __future__ import annotations
 
 import json
+import math
 import re
 import socket
 import struct
@@ -23,6 +24,10 @@ MAX_FRAME_BYTES = 4 * 1024 * 1024
 MAX_EXTENDED_FRAME_BYTES = 16 * 1024 * 1024
 MAX_TEXT_BYTES = 1024 * 1024
 MAX_TAIL_BYTES = 64 * 1024
+MAX_PROJECT_TOOL_REQUEST_BYTES = 64 * 1024
+MAX_PROJECT_TOOL_ENVELOPE_BYTES = 60 * 1024
+MAX_PROJECT_TOOL_REPLY_FRAME_BYTES = 64 * 1024
+MAX_PROJECT_TOOL_TIMEOUT_MS = 25_000
 PROTOCOL_V1 = 1
 PROTOCOL_V2 = 2
 MAX_PROJECT_ARTIFACTS_REPLY_BYTES = 64 * 1024
@@ -126,14 +131,24 @@ PAYLOADS: dict[Operation, dict[str, Any]] = {
     ),
     Operation.WRITE_FILE: _object(path=PATH, content=TEXT, expected_sha256=_nullable(SHA)),
     Operation.EDIT_FILE: _object(path=PATH, content=TEXT, expected_sha256=SHA),
-    Operation.EXEC: _object(
-        operation_id=_id("op-"),
-        profile_id=CONFIG_ID,
-        command=TEXT,
-        cwd=PATH,
-        timeout_ms=POSITIVE,
-        session_id=_nullable(SESSION_ID),
-    ),
+    Operation.EXEC: {
+        "oneOf": [
+            _object(
+                operation_id=_id("op-"),
+                profile_id=CONFIG_ID,
+                command=TEXT,
+                cwd=PATH,
+                timeout_ms=POSITIVE,
+                session_id=_nullable(SESSION_ID),
+            ),
+            _object(
+                operation_id=_id("op-"),
+                profile_id=CONFIG_ID,
+                project_tool=_object(tool=_enum("fs_search", "fs_reach"), params={"type": "object"}),
+                timeout_ms=POSITIVE,
+            ),
+        ]
+    },
     Operation.INSPECT: _object(operation_id=_id("op-")),
     Operation.CANCEL: _object(operation_id=_id("op-")),
     Operation.PTY_CONTROL: _object(action=_enum("INTERRUPT", "CLOSE", "LIST"), session_id=_nullable(SESSION_ID)),
@@ -340,6 +355,68 @@ def _check(checker: Any, value: Any) -> None:
         raise ExecutionContractError from None
 
 
+def _project_tool_string_bytes(value: str) -> int:
+    if type(value) is not str or len(value) > MAX_PROJECT_TOOL_REQUEST_BYTES:
+        raise ExecutionContractError
+    return len(value.encode("utf-8"))
+
+
+def _project_tool_scalar_string_bytes(value: Any) -> int:
+    if type(value) is str:
+        return _project_tool_string_bytes(value)
+    if type(value) is int and not -(2**63) <= value < 2**63:
+        raise ExecutionContractError
+    if type(value) is float and not math.isfinite(value):
+        raise ExecutionContractError
+    if type(value) not in {str, int, float, bool, type(None)}:
+        raise ExecutionContractError
+    return 0
+
+
+def _project_tool_params_string_bytes(params: dict[str, Any]) -> int:
+    pending: list[tuple[Any, int]] = [(params, 0)]
+    node_count = 0
+    string_bytes = 0
+    while pending:
+        value, depth = pending.pop()
+        node_count += 1
+        if node_count > 8_192 or depth > 32:
+            raise ExecutionContractError
+        if type(value) is dict:
+            if node_count + len(pending) + len(value) > 8_192:
+                raise ExecutionContractError
+            for key, child in value.items():
+                string_bytes += _project_tool_string_bytes(key)
+                pending.append((child, depth + 1))
+        elif type(value) is list:
+            if node_count + len(pending) + len(value) > 8_192:
+                raise ExecutionContractError
+            for child in value:
+                pending.append((child, depth + 1))
+        else:
+            string_bytes += _project_tool_scalar_string_bytes(value)
+        if string_bytes > MAX_PROJECT_TOOL_REQUEST_BYTES:
+            raise ExecutionContractError
+    return string_bytes
+
+
+def project_tool_request_bytes(tool: str, params: dict[str, Any]) -> bytes:
+    """Return the bounded compact JSON body used by a typed project-tool EXEC."""
+    if type(tool) is not str or tool not in {"fs_search", "fs_reach"} or type(params) is not dict:
+        raise ExecutionContractError
+    if _project_tool_string_bytes(tool) + _project_tool_params_string_bytes(params) > MAX_PROJECT_TOOL_REQUEST_BYTES:
+        raise ExecutionContractError
+    try:
+        raw = json.dumps(
+            {"tool": tool, "params": params}, ensure_ascii=False, allow_nan=False, separators=(",", ":")
+        ).encode("utf-8")
+    except (TypeError, ValueError, RecursionError, UnicodeError):
+        raise ExecutionContractError from None
+    if len(raw) > MAX_PROJECT_TOOL_REQUEST_BYTES:
+        raise ExecutionContractError
+    return raw
+
+
 def _pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     result: dict[str, Any] = {}
     for key, value in pairs:
@@ -407,6 +484,12 @@ def decode_request(raw: bytes) -> dict[str, Any]:
     return record
 
 
+def _validate_project_tool_payload(payload: dict[str, Any]) -> None:
+    if payload["timeout_ms"] > MAX_PROJECT_TOOL_TIMEOUT_MS:
+        raise ExecutionContractError
+    project_tool_request_bytes(payload["project_tool"]["tool"], payload["project_tool"]["params"])
+
+
 def _request_bindings(record: dict[str, Any], op: Operation) -> None:
     null_proof = op in {Operation.HEALTH, Operation.REGISTER_WORKSPACE, Operation.ACQUIRE_WRITER, Operation.PIN_READER}
     if (record["capability"] is None) != null_proof or (record["namespace"] is None) != (op is Operation.HEALTH):
@@ -420,8 +503,11 @@ def _request_bindings(record: dict[str, Any], op: Operation) -> None:
     if op is not Operation.RELEASE and (record["view_ref"] is None) != owner:
         raise ExecutionContractError
     payload = record["payload"]
-    if op is Operation.EXEC and payload["operation_id"] != "op-" + record["request_id"]:
-        raise ExecutionContractError
+    if op is Operation.EXEC:
+        if payload["operation_id"] != "op-" + record["request_id"]:
+            raise ExecutionContractError
+        if "project_tool" in payload:
+            _validate_project_tool_payload(payload)
     if op is Operation.CREATE_VIEW:
         if payload["base_revision"] is None and payload["purpose"] not in {"CANDIDATE", "VERIFICATION"}:
             raise ExecutionContractError

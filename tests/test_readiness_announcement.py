@@ -48,7 +48,9 @@ def test_extra_wording_is_pinned(tmp_path: Path) -> None:
     assert "./.venv" in extra
     assert "uv run pytest" in extra
     assert "pr_prepare" in extra
-    assert "CHORE" in extra
+    assert "optional" in extra
+    assert "not a write permit" in extra
+    assert "Before the first workspace mutation" not in extra
 
 
 # ── C1: the shipped _cmd_run drive path actually delivers it ─────────────────

@@ -303,29 +303,22 @@ def test_s12_env_pty_rows_reuse_row_run() -> None:
     assert "row_run pty 6" in pty_fn, "pty row not on row_run with the 6-turn cap"
 
 
-def test_s12_setup_prints_effective_flag_modes() -> None:
-    """S12.6: setup surfaces the operator flag state before tokens are spent;
-    a missing config must print the shipped default, never silence."""
+def test_s12_setup_reports_runtime_intent_guard_retired() -> None:
+    """Q130: setup reports the fixed runtime policy, independent of legacy config."""
     text = _text()
     setup_body = text.split("cmd_setup()", 1)[1].split("\n}", 1)[0]
-    assert "intent_guard.mode: enforce (default)" in setup_body, "default printout removed"
+    assert "runtime IntentGuard: retired (legacy config ignored)" in setup_body
+    assert "intent_guard.mode:" not in setup_body
     assert "tool_batching.enabled: true (default)" in setup_body, "batching default printout removed"
-    assert "$STATE_HOST/config.yaml" in setup_body, "config source is not the container-side config"
 
 
-def test_s12_l1_ceremony_note_is_never_a_fail() -> None:
-    """S12.6: IntentGuard denial counts on l1 are informational ([NOTE]/[OBS])
-    — model variance must not fail the negative-control row."""
+def test_s12_l1_has_no_retired_runtime_guard_metric() -> None:
+    """Q130: l1 keeps its negative-control oracle without counting retired guard denials."""
     text = _text()
     l1_body = text.split("    l1)", 1)[1].split("      ;;", 1)[0]
-    assert "IntentGuard denials" in l1_body, "ceremony note removed"
-    assert "[NOTE]" in l1_body, "ceremony note lost its NOTE class"
-    # The ceremony block itself (ig_denials .. its closing fi) must never
-    # touch the verdict code; the l1 case's own vrc=3 belongs to the
-    # negative-control branch, which is a different failure class.
-    ceremony = l1_body.split("ig_denials=", 1)[1].split("\n        fi", 1)[0]
-    assert "vrc=" not in ceremony, "ceremony friction must never set the objective-miss code"
-    assert "flag=" not in ceremony, "ceremony friction must never flag the ledger row"
+    assert "IntentGuard denials" not in l1_body
+    assert "ig_denials" not in text
+    assert "NEGATIVE_CONTROL_FAILED" in l1_body
 
 
 def test_per_turn_model_text_via_detail_debug_not_timeline_redump() -> None:
@@ -356,7 +349,7 @@ def test_adversarial_battery_is_green() -> None:
 
 
 def test_s127_bash_stderr_row_requires_nonzero_last_stage_exit() -> None:
-    """F7: bash-stderr must not OR-pass on ok:false (IntentGuard) or stderr
+    """F7: bash-stderr must not OR-pass on a generic tool error or stderr
     while a | tail pipeline exits 0. Task must forbid a masking pipe and
     must not contain the oracle string ``bash exited N``.
     """

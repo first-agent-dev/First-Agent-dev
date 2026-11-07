@@ -933,7 +933,9 @@ def test_managed_coder_write_uses_revision_metadata_without_host_git(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """R18 production-caller oracle: managed Blackboard stamps never probe host Git."""
+    """R18/R22 C1 oracle: managed write stamps and optional pr_prepare avoid host Git."""
+    import subprocess
+
     from fa.feature_flags import FeatureFlags, FeatureFlagsLoadResult
     from fa.inner_loop.session_db import SessionDatabase
     from fa.inner_loop.tools import mutation_guard
@@ -976,6 +978,17 @@ def test_managed_coder_write_uses_revision_metadata_without_host_git(
         return original_base_commit(root)
 
     monkeypatch.setattr(mutation_guard, "_base_commit", record_base_commit)
+    host_git_calls: list[list[str]] = []
+    original_subprocess_run = subprocess.run
+
+    def forbid_host_git(command: Any, *args: Any, **kwargs: Any) -> Any:
+        argv = [str(part) for part in command] if isinstance(command, (list, tuple)) else [str(command)]
+        if argv and Path(argv[0]).name.casefold() == "git":
+            host_git_calls.append(argv)
+            raise AssertionError(f"managed pr_prepare reached host Git: {argv!r}")
+        return original_subprocess_run(command, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", forbid_host_git)
     provider_calls = 0
     canonical_visible_during_run: list[bool] = []
     write_sent = False
@@ -1068,8 +1081,13 @@ def test_managed_coder_write_uses_revision_metadata_without_host_git(
 
     assert provider_calls == 3 and write_sent
     assert base_commit_calls == []
+    assert host_git_calls == []
     assert run_exit_code == 0
     assert release_confirmed
+    draft_path = run_log_dir / "pr_draft.md"
+    assert draft_path.is_file()
+    assert draft_path.is_relative_to(run_log_dir) and not draft_path.is_relative_to(site.source)
+    assert draft_path.read_text(encoding="utf-8").startswith("INTENT: CHORE\nINVARIANT: n/a\n")
     assert canonical_visible_during_run == [False]
     assert operations.count(Operation.WRITE_FILE) == 1
     assert index_path.read_bytes() == index_before
@@ -1081,6 +1099,284 @@ def test_managed_coder_write_uses_revision_metadata_without_host_git(
     assert versions["base_revision"].startswith("rev-")
     assert versions["llms.txt"] == hashlib.sha256(llms_content.encode("utf-8")).hexdigest()[:12]
     assert "base_commit" not in versions
+
+
+def test_managed_fs_search_refuses_before_host_git_or_workspace_io(
+    site: Site,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R20 C1 oracle: managed search refusal does not reach host Git or the workspace."""
+    import subprocess
+
+    from fa.inner_loop.session_db import SessionDatabase
+    from fa.providers import ProviderChain, SecretStore
+    from fa.session.manager import RunContext, SessionContext
+
+    state_root = tmp_path / "fa-state"
+    monkeypatch.setenv("FA_STATE_ROOT", str(state_root))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))
+    monkeypatch.setattr(cli, "_build_pty_pool", lambda **_kwargs: object())
+
+    models = tmp_path / "models.yaml"
+    models.write_text(
+        """coder:
+  name: "test-model"
+  family: "openai"
+  chain:
+    - provider: openrouter
+      model: "test/model"
+      base_url: "https://example.invalid/v1"
+      api_key_env: K
+""",
+        encoding="utf-8",
+    )
+
+    git_invocations: list[list[str]] = []
+
+    def record_host_git(argv: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        git_invocations.append(list(argv))
+        return subprocess.CompletedProcess(list(argv), 0, stdout="", stderr="")
+
+    monkeypatch.setattr("fa.memory._safe_walk.subprocess.run", record_host_git)
+    provider_calls = 0
+    tool_result_messages: list[str] = []
+
+    def provider_request(
+        _chain: Any, request: Any, *, logical_call_id: str | None = None
+    ) -> tuple[ResponseInfo, str, list[Any]]:
+        nonlocal provider_calls
+        provider_calls += 1
+        names = {
+            str(tool.get("function", {}).get("name", ""))
+            for tool in request.tools
+            if isinstance(tool.get("function"), dict)
+        }
+        if provider_calls == 1:
+            assert "fs_search" in names
+            call = {
+                "id": "r20-managed-search",
+                "type": "function",
+                "function": {
+                    "name": "fs_search",
+                    "arguments": json.dumps({"query": "alpha", "output_mode": "files"}),
+                },
+            }
+            return ResponseInfo("", 1, 1, "tool_calls", (call,)), logical_call_id or "r20", []
+        tool_result_messages.extend(
+            str(message.get("content", "")) for message in request.messages if message.get("role") == "tool"
+        )
+        return ResponseInfo("done", 1, 1, "stop"), logical_call_id or "r20", []
+
+    monkeypatch.setattr(ProviderChain, "request", provider_request)
+    index_path = site.source / ".git" / "index"
+    index_before = index_path.read_bytes()
+    fts_path = site.source / ".fa" / "fts.db"
+    assert not fts_path.exists()
+    service_path, config_path = _configs(tmp_path, _document(site))
+    session_db_path = tmp_path / "session.db"
+    run_log_dir = tmp_path / "session-log" / "run-1"
+    session_db = SessionDatabase(session_db_path, session_id="session-1")
+    session_context = SessionContext("session-1", site.source, session_db_path, tmp_path / "manifest.json")
+    run_context = RunContext("run-1", "session-1", site.source, session_db_path, run_log_dir)
+
+    with SupervisorService(read_config_file(service_path)) as service:
+        workspace_id = _registered(service)
+        with _serving_supervisor(service):
+            managed = managed_execution_for_run(run_context, config_path=config_path)
+            assert managed is not None and managed.binding.workspace_id == workspace_id
+            operations: list[Operation] = []
+            original_request = managed.client.request
+
+            def record_request(operation: Operation, **kwargs: Any) -> Any:
+                operations.append(operation)
+                return original_request(operation, **kwargs)
+
+            monkeypatch.setattr(managed.client, "request", record_request)
+            args = cli.build_parser().parse_args(
+                [
+                    "run",
+                    "--role",
+                    "coder",
+                    "--config",
+                    str(models),
+                    "--workspace",
+                    str(site.source),
+                    "--run-id",
+                    "run-1",
+                    "--max-turns",
+                    "3",
+                    "search the admitted workspace",
+                ]
+            )
+            args._managed_execution = managed
+            args._session_context = session_context
+            args._run_context = run_context
+            args._session_db = session_db
+            try:
+                assert cli._cmd_run(args, secrets=SecretStore({"K": "sk-test-live"})) == 0
+            finally:
+                assert managed.close()
+
+    assert provider_calls == 2
+    assert tool_result_messages == ["ERROR[search_failed]: managed cell-local search index is unavailable"]
+    assert git_invocations == []
+    assert not any(operation in {Operation.READ_FILE, Operation.WRITE_FILE} for operation in operations), operations
+    assert index_path.read_bytes() == index_before
+    assert not fts_path.exists()
+
+
+def test_managed_coder_first_write_needs_no_pr_prepare_and_never_calls_intent_guard(
+    site: Site,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R19 production oracle: optional note absent, managed write publishes, legacy guard producers stay cold."""
+    from fa.feature_flags import FeatureFlags, FeatureFlagsLoadResult
+    from fa.inner_loop.hooks import intent_guard
+    from fa.inner_loop.session_db import SessionDatabase
+    from fa.providers import ProviderChain, SecretStore
+    from fa.session.manager import RunContext, SessionContext
+
+    state_root = tmp_path / "fa-state"
+    monkeypatch.setenv("FA_STATE_ROOT", str(state_root))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))
+    monkeypatch.setattr(cli, "_build_pty_pool", lambda **_kwargs: object())
+    monkeypatch.setattr(
+        "fa.feature_flags.load_feature_flags_from_path",
+        lambda: FeatureFlagsLoadResult(FeatureFlags(blackboard_enabled=True)),
+    )
+
+    llms_content = "# R19 managed workspace map\n"
+    knowledge = site.source / "knowledge"
+    knowledge.mkdir()
+    (knowledge / "llms.txt").write_text(llms_content, encoding="utf-8")
+    models = tmp_path / "models.yaml"
+    models.write_text(
+        """coder:
+  name: "test-model"
+  family: "openai"
+  chain:
+    - provider: openrouter
+      model: "test/model"
+      base_url: "https://example.invalid/v1"
+      api_key_env: K
+""",
+        encoding="utf-8",
+    )
+
+    git_calls: list[Path] = []
+    path_projection_calls: list[tuple[Any, ...]] = []
+
+    def record_git_runner(guard: Any) -> str:
+        git_calls.append(guard._repo_root)
+        return ""
+
+    def record_project_call(*args: Any, **_kwargs: Any) -> list[Any]:
+        path_projection_calls.append(args)
+        return []
+
+    monkeypatch.setattr(intent_guard.IntentGuard, "_default_git_runner", record_git_runner)
+    monkeypatch.setattr(intent_guard, "_project_call", record_project_call)
+
+    provider_calls = 0
+    canonical_visible_during_run: list[bool] = []
+
+    def provider_request(
+        _chain: Any, request: Any, *, logical_call_id: str | None = None
+    ) -> tuple[ResponseInfo, str, list[Any]]:
+        nonlocal provider_calls
+        provider_calls += 1
+        names = {
+            str(tool.get("function", {}).get("name", ""))
+            for tool in request.tools
+            if isinstance(tool.get("function"), dict)
+        }
+        if provider_calls == 1:
+            assert "fs_write_file" in names and "pr_prepare" in names
+            call = {
+                "id": "r19-first-write",
+                "type": "function",
+                "function": {
+                    "name": "fs_write_file",
+                    "arguments": json.dumps({"path": "src/r19.py", "content": "VALUE = 19\n"}),
+                },
+            }
+            return ResponseInfo("", 1, 1, "tool_calls", (call,)), logical_call_id or "r19", []
+        assert provider_calls == 2
+        canonical_visible_during_run.append((site.source / "src" / "r19.py").exists())
+        return ResponseInfo("done", 1, 1, "stop"), logical_call_id or "r19", []
+
+    monkeypatch.setattr(ProviderChain, "request", provider_request)
+    index_path = site.source / ".git" / "index"
+    index_before = index_path.read_bytes()
+    service_path, config_path = _configs(tmp_path, _document(site))
+    session_db_path = tmp_path / "session.db"
+    run_log_dir = tmp_path / "session-log" / "run-1"
+    session_db = SessionDatabase(session_db_path, session_id="session-1")
+    session_context = SessionContext("session-1", site.source, session_db_path, tmp_path / "manifest.json")
+    run_context = RunContext("run-1", "session-1", site.source, session_db_path, run_log_dir)
+
+    with SupervisorService(read_config_file(service_path)) as service:
+        workspace_id = _registered(service)
+        with _serving_supervisor(service):
+            managed = managed_execution_for_run(run_context, config_path=config_path)
+            assert managed is not None and managed.binding.workspace_id == workspace_id
+            operations: list[Operation] = []
+            requests: list[tuple[Operation, dict[str, Any]]] = []
+            original_request = managed.client.request
+
+            def record_request(operation: Operation, **kwargs: Any) -> Any:
+                operations.append(operation)
+                requests.append((operation, kwargs))
+                return original_request(operation, **kwargs)
+
+            monkeypatch.setattr(managed.client, "request", record_request)
+            args = cli.build_parser().parse_args(
+                [
+                    "run",
+                    "--role",
+                    "coder",
+                    "--config",
+                    str(models),
+                    "--workspace",
+                    str(site.source),
+                    "--run-id",
+                    "run-1",
+                    "--max-turns",
+                    "3",
+                    "write the R19 probe",
+                ]
+            )
+            args._managed_execution = managed
+            args._session_context = session_context
+            args._run_context = run_context
+            args._session_db = session_db
+            run_exit_code: int | None = None
+            release_confirmed = False
+            try:
+                run_exit_code = cli._cmd_run(args, secrets=SecretStore({"K": "sk-test-live"}))
+            finally:
+                release_confirmed = managed.close()
+
+    assert provider_calls == 2
+    assert run_exit_code == 0 and release_confirmed
+    assert canonical_visible_during_run == [False]
+    assert operations.count(Operation.WRITE_FILE) == 1
+    assert operations.count(Operation.PUBLISH) == 1
+    assert operations.index(Operation.WRITE_FILE) < operations.index(Operation.PUBLISH)
+    create_view_payload = next(
+        kwargs["payload"] for operation, kwargs in requests if operation is Operation.CREATE_VIEW
+    )
+    assert create_view_payload["purpose"] == "PROJECT"
+    assert create_view_payload["access"] == "WRITE"
+    assert git_calls == []
+    assert path_projection_calls == []
+    assert index_path.read_bytes() == index_before
+    assert not (run_log_dir / "pr_draft.md").exists(), "the provider must not need or call pr_prepare"
+    assert (site.source / "src" / "r19.py").read_text(encoding="utf-8") == "VALUE = 19\n"
 
 
 @pytest.fixture
@@ -1336,6 +1632,21 @@ def test_subagent_commands_carry_no_proxy_credential(  # noqa: C901 -- intention
     exec_denials: list[str] = []
     proxy_credential_leaks: list[str] = []
     host_subprocess_calls = _watch_managed_child_host_execution(monkeypatch)
+    from fa.inner_loop.hooks import intent_guard as intent_guard_module
+
+    intent_guard_git_calls: list[Path] = []
+    intent_guard_path_calls: list[tuple[Any, ...]] = []
+
+    def record_intent_guard_git(guard: Any) -> str:
+        intent_guard_git_calls.append(guard._repo_root)
+        return ""
+
+    def record_intent_guard_path(*args: Any, **_kwargs: Any) -> list[Any]:
+        intent_guard_path_calls.append(args)
+        return []
+
+    monkeypatch.setattr(intent_guard_module.IntentGuard, "_default_git_runner", record_intent_guard_git)
+    monkeypatch.setattr(intent_guard_module, "_project_call", record_intent_guard_path)
     with SupervisorService(read_config_file(service_path)) as service:
         assert (service._backend is not None) is (backend_mode != "unavailable")
         original_exec = service._exec
@@ -1398,6 +1709,8 @@ def test_subagent_commands_carry_no_proxy_credential(  # noqa: C901 -- intention
     assert exec_payload["command"] == exec_command
     assert exec_payload["session_id"] is None and exec_payload["timeout_ms"] > 0
     assert not proxy_credential_leaks and not host_subprocess_calls
+    assert intent_guard_git_calls == []
+    assert intent_guard_path_calls == []
     assert (service._backend is not None) is (backend_mode != "unavailable")
     assert not provider_oracle.child_project_write, "child produced a project write"
     cell_launches = sum(
@@ -2391,3 +2704,131 @@ def test_the_manager_takes_its_provisioner_from_the_operator_config(
     assert broken.value.code == "workspace_config_invalid"
     config_path.unlink()
     assert cli._session_manager_for_args(args).workspace_provisioner is None
+
+
+def test_r10_managed_chat_bash_refusal_never_falls_back_to_host(
+    tmp_path: Path, site: Site, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R10 production-caller oracle: registered chat Bash reaches managed EXEC and fails closed."""
+    from fa.inner_loop.session_db import SessionDatabase
+    from fa.inner_loop.tools import run_bash as run_bash_module
+    from fa.providers import ProviderChain, SecretStore
+
+    monkeypatch.setenv("FA_STATE_ROOT", str(tmp_path / "fa-state"))
+    monkeypatch.setattr(cli, "_build_pty_pool", lambda **_kwargs: object())
+    models = tmp_path / "models.yaml"
+    models.write_text(
+        """chat:
+  name: "test-model"
+  family: "openai"
+  chain:
+    - provider: openrouter
+      model: "test/model"
+      base_url: "https://example.invalid/v1"
+      api_key_env: K
+""",
+        encoding="utf-8",
+    )
+    service_path, config_path = _configs(tmp_path, _document(site))
+    session_db_path = tmp_path / "session.db"
+    run_log_dir = tmp_path / "session-log" / "run-r10"
+    session_db = SessionDatabase(session_db_path, session_id="session-r10")
+    session_context = SessionContext("session-r10", site.source, session_db_path, tmp_path / "manifest.json")
+    run_context = RunContext("run-r10", "session-r10", site.source, session_db_path, run_log_dir)
+    provider_calls = 0
+
+    def provider_request(
+        _chain: Any, request: Any, *, logical_call_id: str | None = None
+    ) -> tuple[ResponseInfo, str, list[Any]]:
+        nonlocal provider_calls
+        provider_calls += 1
+        names = {
+            str(tool.get("function", {}).get("name", ""))
+            for tool in request.tools
+            if isinstance(tool.get("function"), dict)
+        }
+        if provider_calls == 1:
+            assert "fs_run_bash" in names, "production chat registry did not expose its assigned Bash tool"
+            call = {
+                "id": "r10-managed-bash",
+                "type": "function",
+                "function": {
+                    "name": "fs_run_bash",
+                    "arguments": json.dumps({"command": "touch r10-host-marker"}),
+                },
+            }
+            return ResponseInfo("", 1, 1, "tool_calls", (call,)), logical_call_id or "r10", []
+        assert provider_calls == 2
+        return ResponseInfo("managed refusal recorded", 1, 1, "stop"), logical_call_id or "r10", []
+
+    monkeypatch.setattr(ProviderChain, "request", provider_request)
+    fallback_calls: list[tuple[Any, ...]] = []
+    host_process_calls: list[tuple[Any, ...]] = []
+
+    def trapped_fallback(*args: Any, **_kwargs: Any) -> Any:
+        fallback_calls.append(args)
+        return run_bash_module.ToolResult.fail("mutant_host_fallback", "host fallback tripwire", retryable=False)
+
+    def trapped_subprocess(*args: Any, **_kwargs: Any) -> Any:
+        host_process_calls.append(args)
+        raise AssertionError("host subprocess tripwire reached")
+
+    monkeypatch.setattr(run_bash_module, "_run_subprocess_fallback", trapped_fallback)
+    monkeypatch.setattr(run_bash_module.subprocess, "run", trapped_subprocess)
+    exec_requests: list[dict[str, Any]] = []
+    exec_denials: list[str] = []
+
+    with SupervisorService(read_config_file(service_path)) as service:
+        workspace_id = _registered(service)
+        assert workspace_id
+        original_exec = service._exec
+
+        def counted_exec(peer: Any, request: dict[str, Any], deadline: float) -> Any:
+            exec_requests.append(request)
+            try:
+                return original_exec(peer, request, deadline)
+            except SupervisorError as exc:
+                exec_denials.append(exc.code)
+                raise
+
+        service._exec = counted_exec  # type: ignore[method-assign]
+        with _serving_supervisor(service):
+            managed = managed_execution_for_run(run_context, config_path=config_path)
+            assert managed is not None
+            args = cli.build_parser().parse_args(
+                [
+                    "run",
+                    "--role",
+                    "chat",
+                    "--config",
+                    str(models),
+                    "--workspace",
+                    str(site.source),
+                    "--run-id",
+                    "run-r10",
+                    "--max-turns",
+                    "3",
+                    "probe managed Bash refusal",
+                ]
+            )
+            args._managed_execution = managed
+            args._session_context = session_context
+            args._run_context = run_context
+            args._session_db = session_db
+            try:
+                exit_code = cli._cmd_run(args, secrets=SecretStore({"K": "sk-test-live"}))
+            finally:
+                release_confirmed = managed.close()
+
+    rows = session_db.read_event_rows(run_id="run-r10")
+    bash_results = [
+        row["content"] for row in rows if row["kind"] == "tool_result" and row["tool_name"] == "fs_run_bash"
+    ]
+    assert exit_code == 0 and release_confirmed
+    assert provider_calls == 2 and len(bash_results) == 1
+    assert fallback_calls == [] and host_process_calls == []
+    assert bash_results[0]["ok"] is False
+    assert bash_results[0]["error"]["code"] == "execution_unavailable"
+    assert bash_results[0]["error"]["retryable"] is False
+    assert len(exec_requests) == 1 and exec_denials == ["BACKEND_UNAVAILABLE"]
+    assert not (site.source / "r10-host-marker").exists()

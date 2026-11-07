@@ -955,8 +955,8 @@ def _cli_validate(commit_msg_file: Path, repo_root: Path) -> int:
 
     # Ordinary human/manual commits are allowed through the hook seat when
     # they contain no PR-intent metadata at all. The rich PR-intent contract
-    # is enforced when a metadata block is explicitly present and in the
-    # agent runtime via `pr_prepare` + `IntentGuard`.
+    # is enforced when a metadata block is explicitly present. Runtime
+    # IntentGuard was retired by Q130; `pr_prepare` is optional narrative only.
     if not has_pr_intent_headers(text):
         return 0
     name_status = _run_git(["diff", "--cached", "--name-status"], cwd=repo_root)

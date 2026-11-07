@@ -13,7 +13,14 @@ import pytest
 
 from fa.execution.cell_protocol import decode_cell_reply, encode_cell_request
 from fa.execution.docker import DockerAttachStream
-from fa.execution.protocol import MAX_EXTENDED_FRAME_BYTES, MAX_FRAME_BYTES, MAX_TAIL_BYTES, encode_json, read_frame
+from fa.execution.protocol import (
+    MAX_EXTENDED_FRAME_BYTES,
+    MAX_FRAME_BYTES,
+    MAX_PROJECT_TOOL_REPLY_FRAME_BYTES,
+    MAX_TAIL_BYTES,
+    encode_json,
+    read_frame,
+)
 from fa.execution.types import ExecutionContractError
 from fa.execution.worker_client import WorkerClient, WorkerUnavailableError
 
@@ -46,18 +53,26 @@ def deadline() -> float:
 
 
 def req(action: str, request_id: str) -> bytes:
-    payload: dict[str, Any] = (
-        {} if action == "LIST" else {"command": "not executed", "cwd": ".", "timeout_ms": 1000, "session_id": "main"}
-    )
+    if action == "LIST":
+        payload: dict[str, Any] = {}
+    elif action == "PROJECT_TOOL":
+        payload = {"tool": "fs_search", "params": {"query": "needle"}, "timeout_ms": 1000}
+    else:
+        payload = {"command": "not executed", "cwd": ".", "timeout_ms": 1000, "session_id": "main"}
     return encode_cell_request(request_id=request_id, action=action, payload=payload)
 
 
 def reply(action: str, request_id: str) -> bytes:
-    result: dict[str, Any] = (
-        {"sessions": [], "message": ""}
-        if action == "LIST"
-        else {"stdout": "ok", "exit_code": 0, "truncated": False, "session_id": "main", "timed_out": False}
-    )
+    if action == "LIST":
+        result: dict[str, Any] = {"sessions": [], "message": ""}
+    else:
+        result = {
+            "stdout": "ok",
+            "exit_code": 0,
+            "truncated": False,
+            "session_id": None if action == "PROJECT_TOOL" else "main",
+            "timed_out": False,
+        }
     return encode_json({"version": 1, "request_id": request_id, "result": result, "error": None})
 
 
@@ -76,6 +91,22 @@ def assert_sent(peer: socket.socket, request_id: str) -> None:
     from fa.execution.protocol import _loads
 
     assert _loads(read_frame(peer))["request_id"] == request_id
+
+
+def test_project_tool_reply_budget_is_enforced_before_body_read(
+    transport: tuple[ObservedStream, socket.socket],
+) -> None:
+    stream, peer = transport
+    client = WorkerClient(stream)
+    budget = MAX_PROJECT_TOOL_REPLY_FRAME_BYTES - 4
+    try:
+        exchange = client.begin(req("PROJECT_TOOL", "9" * 32), deadline=deadline(), max_reply_bytes=budget)
+        assert_sent(peer, "9" * 32)
+        peer.sendall(b"\x01\0\0\0" + struct.pack("!I", 4) + struct.pack("!I", budget + 1))
+        with pytest.raises(WorkerUnavailableError):
+            client.await_reply(exchange, deadline=deadline())
+    finally:
+        client.close(deadline=deadline())
 
 
 @pytest.mark.parametrize("run_first", [True, False])

@@ -1,14 +1,13 @@
 """Shared utilities for inner_loop tools.
 
-This module contains common functions and constants used by multiple tools
-(glob, grep, instant_grep, etc.) to avoid duplication and ensure consistency.
+Keep reusable validation, workspace-context and output-framing helpers here
+rather than duplicating them across tool implementations.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-import subprocess
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
@@ -17,40 +16,6 @@ from fa.inner_loop.registry import ToolResult
 from fa.inner_loop.tools.base import optional_int, require_string
 
 logger = logging.getLogger(__name__)
-
-
-def git_ls_files(root: Path) -> list[str]:
-    """Return files respecting .gitignore: tracked + untracked not ignored.
-
-    Uses --cached --others --exclude-standard (token-efficient git native).
-    Falls back to empty list on failure — caller will use walk fallback.
-
-    Args:
-        root: Repository root directory
-
-    Returns:
-        List of file paths relative to root, or empty list on failure
-
-    Example:
-        >>> files = git_ls_files(Path("/repo"))
-        >>> print(files[:3])
-        ['README.md', 'src/main.py', 'tests/test_main.py']
-    """
-    try:
-        res = subprocess.run(
-            ["git", "ls-files", "--cached", "--others", "--exclude-standard"],  # noqa: S607
-            cwd=root,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        if res.returncode == 0:
-            return [line.strip() for line in res.stdout.splitlines() if line.strip()]
-    except subprocess.TimeoutExpired:
-        logger.warning("git ls-files timed out for root=%s", root)
-    except Exception as exc:  # noqa: BLE001 — best-effort, fallback to walk
-        logger.warning("git ls-files failed: %s, fallback to walk", exc)
-    return []
 
 
 def validate_search_params(
@@ -187,7 +152,6 @@ def prepare_workspace_context(
 
 
 __all__ = [
-    "git_ls_files",
     "prepare_workspace_context",
     "truncate_for_preview",
     "validate_bash_command",

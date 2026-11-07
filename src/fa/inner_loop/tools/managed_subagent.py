@@ -35,9 +35,7 @@ from fa.inner_loop.coder_loop import SessionOutcome, drive_session
 from fa.inner_loop.context import get_current_session
 from fa.inner_loop.hooks.base import HookRegistry
 from fa.inner_loop.hooks.builtin import SandboxHook
-from fa.inner_loop.hooks.intent_guard import IntentGuard
 from fa.inner_loop.plan_admission import PlanRef
-from fa.inner_loop.pr_draft import PrDraftStore
 from fa.inner_loop.registry import ToolRegistry, ToolResult, ToolSpec
 from fa.inner_loop.state import EventLog, SessionState
 from fa.inner_loop.tools.read_file import build_read_file_tool
@@ -369,16 +367,10 @@ def build_managed_subagent_tool(  # noqa: C901
 
             child_hooks = HookRegistry()
             child_hooks.register(SandboxHook(root))
-            # A READ view plus the two-tool registry is the mutation authority.
-            # Observe-only avoids IntentGuard's host git subprocess and does not
-            # reject legitimate private /scratch writes before supervisor EXEC.
-            child_hooks.register(
-                IntentGuard(
-                    repo_root=root,
-                    draft_store=PrDraftStore(child_dir / "pr_draft.md"),
-                    mode="observe",
-                )
-            )
+            # The admitted READ view plus the two-tool registry is the child
+            # authority. Runtime IntentGuard is intentionally not part of any
+            # production fa run path; private /scratch remains governed by the
+            # managed executor and the READ mount remains read-only.
             outcome = drive_session(
                 task,
                 provider_chain=chat_chain,

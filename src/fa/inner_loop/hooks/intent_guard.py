@@ -1,17 +1,13 @@
-"""IntentGuard (Wave-2 R-PR-C — M-7): harness-time enforcement of §Reference.
+"""Legacy IntentGuard component (M-7); not a production ``fa run`` gate.
 
-A :class:`GuardMiddleware` that re-runs the M-6 PR-intent classifier
-over the staged-diff snapshot a tool call is about to mutate, then
-re-uses the M-6 commit-message validator against the session's
-working PR-description draft. Both seats — the
-``prepare-commit-msg`` / ``commit-msg`` git hook (M-6, PR #20) and
-this middleware — share the SAME
-:func:`fa.hygiene.pr_intent.classify_intent` +
-:func:`fa.hygiene.pr_intent.validate_commit_msg` functions, satisfying
-ADR-10 I-1 single-source-of-truth: one classifier + one validator,
-two consumers.
+Q130 retires its registration from all production ``fa run`` paths, including
+managed child sessions. This component remains for direct characterization;
+its controller-Git/path probes are not permitted as production authority.
+Commit-msg validation remains an independent hook boundary. The implementation
+below documents the legacy component behavior only; it is not a current runtime
+contract and ``pr_prepare`` does not authorize workspace mutations.
 
-The middleware:
+Legacy component behavior:
 
 - Attaches to :attr:`LifecyclePoint.BEFORE_TOOL_EXEC` only (per the
   M-7 row in ``knowledge/BACKLOG.md``); ``BEFORE_LLM_CALL``

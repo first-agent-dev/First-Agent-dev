@@ -364,14 +364,15 @@ else
   defect "S18b: dirty pane passed silently (rc=$RC)"
 fi
 
-echo "== S19 (S12.6 CT6): setup prints effective flag modes (default when no config)"
+echo "== S19 (Q130): setup reports retired runtime guard; legacy config is ignored"
 OUT="$(bash scripts/run_live_check.sh setup 2>&1)"; RC=$?
-if printf '%s' "$OUT" | grep -qF 'intent_guard.mode: enforce (default)'; then ok "S19 default-mode printout"
-else miss "S19 default-mode printout" "$OUT"; fi
+if printf '%s' "$OUT" | grep -qF 'runtime IntentGuard: retired (legacy config ignored)'; then ok "S19 retired-mode printout"
+else miss "S19 retired-mode printout" "$OUT"; fi
 printf 'feature_flags:\n  intent_guard.mode: observe\n' > "$FA_STATE_HOST/config.yaml"
 OUT="$(bash scripts/run_live_check.sh setup 2>&1)"; RC=$?
-if printf '%s' "$OUT" | grep -qF 'intent_guard.mode: observe'; then ok "S19 config-mode printout"
-else miss "S19 config-mode printout" "$OUT"; fi
+if printf '%s' "$OUT" | grep -qF 'runtime IntentGuard: retired (legacy config ignored)' \
+   && ! printf '%s' "$OUT" | grep -qF 'intent_guard.mode: observe'; then ok "S19 legacy mode ignored"
+else miss "S19 legacy mode ignored" "$OUT"; fi
 rm -f "$FA_STATE_HOST/config.yaml"
 
 echo "== S16 (STOP REASON): abnormal stop is surfaced in verdict + ledger notes"

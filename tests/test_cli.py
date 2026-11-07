@@ -916,13 +916,16 @@ def test_fa_run_registers_pr_prepare_tool(
         assert expected_name in names
     prepare = next(tool for tool in tools if tool["function"]["name"] == "pr_prepare")
     assert "pr_draft.md" in prepare["function"]["description"]
+    assert "optionally" in prepare["function"]["description"].lower()
+    assert "do not authorize" in prepare["function"]["description"]
     assert prepare["function"]["parameters"]["required"] == ["intent", "invariant"]
 
 
-def test_fa_run_denies_first_mutation_until_pr_prepare_runs(
+def test_fa_run_allows_first_mutation_before_optional_pr_prepare(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """The first real mutation succeeds even when pr_prepare follows it in the same turn."""
     config = tmp_path / "models.yaml"
     config.write_text(_FAKE_MODELS_YAML, encoding="utf-8")
     monkeypatch.setenv("TEST_FA_RUN_KEY", "sk-test-x")
@@ -932,7 +935,7 @@ def test_fa_run_denies_first_mutation_until_pr_prepare_runs(
     transport = _ScriptedTransport(
         [
             _tool_calls_body(
-                _tool_call("tc-write", "fs_write_file", '{"path": "src/fa/x.py", "content": "x\\n"}'),
+                _tool_call("tc-write", "fs_write_file", json.dumps({"path": "src/fa/x.py", "content": "x\n"})),
                 _tool_call("tc-prepare", "pr_prepare", '{"intent": "CHORE", "invariant": "n/a"}'),
             ),
             _stop_body("done"),
@@ -943,7 +946,7 @@ def test_fa_run_denies_first_mutation_until_pr_prepare_runs(
     exit_code = _cmd_run(args, transport=transport, secrets=_TEST_SECRETS)
 
     assert exit_code == 0
-    assert not (tmp_path / "src" / "fa" / "x.py").exists()
+    assert (tmp_path / "src" / "fa" / "x.py").read_text(encoding="utf-8") == "x\n"
     draft_path = home / ".fa" / "session-log" / "test-run" / "pr_draft.md"
     assert draft_path.read_text(encoding="utf-8") == "INTENT: CHORE\nINVARIANT: n/a\n"
     events = [
@@ -956,8 +959,7 @@ def test_fa_run_denies_first_mutation_until_pr_prepare_runs(
     write_result = next(
         event for event in events if event["kind"] == "tool_result" and event["tool_call_id"] == "tc-write"
     )
-    assert write_result["content"]["error"]["code"] == "hook_deny"
-    assert "call `pr_prepare`" in write_result["content"]["error"]["message"]
+    assert write_result["content"]["ok"] is True
 
 
 def test_fa_run_clears_stale_pr_draft_on_startup(
@@ -1024,7 +1026,7 @@ def test_fa_run_verify_only_bash_allowed_before_pr_prepare(
 
 
 @pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
-def test_fa_run_repo_write_bash_requires_pr_prepare(
+def test_fa_run_repo_write_bash_succeeds_without_pr_prepare(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1051,7 +1053,7 @@ def test_fa_run_repo_write_bash_requires_pr_prepare(
     exit_code = _cmd_run(args, transport=transport, secrets=_TEST_SECRETS)
 
     assert exit_code == 0
-    assert not (tmp_path / "src" / "fa" / "x.py").exists()
+    assert (tmp_path / "src" / "fa" / "x.py").read_text(encoding="utf-8") == "x\n"
     events = [
         json.loads(line)
         for line in (home / ".fa" / "session-log" / "test-run" / "events.jsonl")
@@ -1062,12 +1064,11 @@ def test_fa_run_repo_write_bash_requires_pr_prepare(
     bash_result = next(
         event for event in events if event["kind"] == "tool_result" and event["tool_call_id"] == "tc-bash"
     )
-    assert bash_result["content"]["error"]["code"] == "hook_deny"
-    assert "call `pr_prepare`" in bash_result["content"]["error"]["message"]
+    assert bash_result["content"]["ok"] is True
 
 
 @pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
-def test_fa_run_opaque_exec_bash_requires_pr_prepare(
+def test_fa_run_opaque_exec_bash_succeeds_without_pr_prepare(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1077,7 +1078,7 @@ def test_fa_run_opaque_exec_bash_requires_pr_prepare(
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("USERPROFILE", str(home))
-    command = 'python -c "import pathlib; pathlib.Path("src/fa/x.py").write_text("x")"'
+    command = f'mkdir -p src/fa && {_PYTHON} -c \'from pathlib import Path; Path("src/fa/x.py").write_text("x")\''
     transport = _ScriptedTransport(
         [
             _tool_calls_body(
@@ -1091,7 +1092,7 @@ def test_fa_run_opaque_exec_bash_requires_pr_prepare(
     exit_code = _cmd_run(args, transport=transport, secrets=_TEST_SECRETS)
 
     assert exit_code == 0
-    assert not (tmp_path / "src" / "fa" / "x.py").exists()
+    assert (tmp_path / "src" / "fa" / "x.py").read_text(encoding="utf-8") == "x"
     events = [
         json.loads(line)
         for line in (home / ".fa" / "session-log" / "test-run" / "events.jsonl")
@@ -1102,8 +1103,7 @@ def test_fa_run_opaque_exec_bash_requires_pr_prepare(
     bash_result = next(
         event for event in events if event["kind"] == "tool_result" and event["tool_call_id"] == "tc-bash"
     )
-    assert bash_result["content"]["error"]["code"] == "hook_deny"
-    assert "call `pr_prepare`" in bash_result["content"]["error"]["message"]
+    assert bash_result["content"]["ok"] is True
 
 
 @requires_pty_backend
@@ -1201,7 +1201,7 @@ def test_fa_run_repo_write_bash_allowed_after_pr_prepare(
     assert bash_result["content"]["ok"] is True
 
 
-def test_fa_run_system_prompt_mentions_pr_prepare_before_mutation(
+def test_fa_run_system_prompt_marks_pr_prepare_optional(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1216,7 +1216,8 @@ def test_fa_run_system_prompt_mentions_pr_prepare_before_mutation(
     assert exit_code == 0
     system_message = transport.calls[0]["messages"][0]["content"]
     assert "pr_prepare" in system_message
-    assert "Before your first mutation" in system_message
+    assert "optional" in system_message
+    assert "Before your first mutation" not in system_message
 
 
 def test_parsed_run_refuses_missing_provisioner_before_lifecycle_or_provider(

@@ -8,22 +8,111 @@ Stdio is a private Docker attach stream, not a project-selected control socket.
 from __future__ import annotations
 
 import argparse
+import base64
+import os
+import selectors
+import signal
+import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import Any, BinaryIO
 from uuid import uuid4
 
 from fa.execution.cell_protocol import decode_cell_request
 from fa.execution.protocol import (
+    MAX_PROJECT_TOOL_ENVELOPE_BYTES,
+    MAX_PROJECT_TOOL_TIMEOUT_MS,
     MAX_TAIL_BYTES,
     FrameConnection,
     encode_json,
+    project_tool_request_bytes,
     read_frame,
     write_frame,
 )
 from fa.execution.types import ExecutionContractError, _positive_integer
 from fa.runtime.pty_pool import PtyPool, PtySession
+
+_PROJECT_TOOL_ENV = {
+    "HOME": "/scratch/home",
+    "PATH": "/usr/bin:/bin",
+    "PYTHONNOUSERSITE": "1",
+    "TMPDIR": "/scratch/tmp",
+}
+
+
+def _kill_project_process_group(process: subprocess.Popen[bytes]) -> None:
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+
+
+def _drain_project_streams(selector: selectors.BaseSelector, deadline: float) -> tuple[bool, bool]:
+    timed_out = False
+    truncated = False
+    while selector.get_map():
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            timed_out = True
+            break
+        for key, _ in selector.select(min(remaining, 0.1)):
+            chunk = os.read(key.fd, 4096)
+            if not chunk:
+                selector.unregister(key.fileobj)
+                continue
+            target, limit = key.data
+            if len(target) + len(chunk) > limit:
+                truncated = True
+                break
+            target.extend(chunk)
+        if truncated:
+            break
+    return timed_out, truncated
+
+
+def _capture_project_tool(process: subprocess.Popen[bytes], *, timeout_ms: int) -> tuple[bytes, bytes, int, bool, bool]:
+    if process.stdout is None or process.stderr is None:
+        raise ExecutionContractError
+    streams = (
+        (process.stdout, bytearray(), MAX_PROJECT_TOOL_ENVELOPE_BYTES + 1),
+        (process.stderr, bytearray(), MAX_TAIL_BYTES),
+    )
+    selector = selectors.DefaultSelector()
+    try:
+        for stream, buffer, limit in streams:
+            os.set_blocking(stream.fileno(), False)
+            selector.register(stream, selectors.EVENT_READ, (buffer, limit))
+        deadline = time.monotonic() + timeout_ms / 1000
+        timed_out, truncated = _drain_project_streams(selector, deadline)
+        if not timed_out and not truncated:
+            try:
+                process.wait(timeout=max(0.0, deadline - time.monotonic()))
+            except subprocess.TimeoutExpired:
+                timed_out = True
+        if timed_out or truncated:
+            _kill_project_process_group(process)
+        try:
+            exit_code = process.wait(timeout=1.0)
+        except subprocess.TimeoutExpired:
+            _kill_project_process_group(process)
+            try:
+                exit_code = process.wait(timeout=1.0)
+            except subprocess.TimeoutExpired:
+                raise ExecutionContractError from None
+        return bytes(streams[0][1]), bytes(streams[1][1]), exit_code, timed_out, truncated
+    except BaseException:
+        _kill_project_process_group(process)
+        try:
+            process.wait(timeout=1.0)
+        except subprocess.TimeoutExpired:
+            _kill_project_process_group(process)
+        raise
+    finally:
+        selector.close()
+        process.stdout.close()
+        process.stderr.close()
 
 
 class CellWorker:
@@ -49,6 +138,8 @@ class CellWorker:
             return {"sessions": [], "message": ""}
         if action == "RUN":
             return self._run(payload)
+        if action == "PROJECT_TOOL":
+            return self._project_tool(payload)
         if action == "LIST":
             return {"sessions": self._pool.list_sessions(), "message": ""}
         session_id = payload["session_id"]
@@ -98,6 +189,48 @@ class CellWorker:
             "timed_out": outcome.timed_out,
         }
 
+    def _project_tool(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if self._one_shot:
+            if self._one_shot_consumed:
+                raise ExecutionContractError
+            self._one_shot_consumed = True
+        request = project_tool_request_bytes(payload["tool"], payload["params"])
+        timeout_ms = min(payload["timeout_ms"], self._max_command_ms, MAX_PROJECT_TOOL_TIMEOUT_MS)
+        argv = [sys.executable, "-I", "-m", "fa.execution.project_tools", base64.b64encode(request).decode("ascii")]
+        try:
+            process = subprocess.Popen(  # noqa: S603 - fixed interpreter/module/argv, bounded JSON is one base64 argument
+                argv,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                cwd=str(self._workspace),
+                env=dict(_PROJECT_TOOL_ENV),
+                close_fds=True,
+                shell=False,
+                start_new_session=True,
+            )
+        except OSError:
+            return {"stdout": "", "exit_code": 78, "truncated": False, "session_id": None, "timed_out": False}
+        stdout, stderr, exit_code, timed_out, truncated = _capture_project_tool(process, timeout_ms=timeout_ms)
+        if stdout.endswith(b"\n"):
+            stdout = stdout[:-1]
+        else:
+            exit_code = 1
+        if stderr:
+            exit_code = 1
+        try:
+            output = stdout.decode("utf-8")
+        except UnicodeError:
+            output = ""
+            exit_code = 1
+        return {
+            "stdout": output,
+            "exit_code": exit_code,
+            "truncated": truncated,
+            "session_id": None,
+            "timed_out": timed_out,
+        }
+
     def close(self) -> None:
         for session_id in self._pool.list_sessions():
             self._pool.kill(session_id)
@@ -137,7 +270,7 @@ def _reply(connection: FrameConnection, request_id: str, result: dict[str, Any] 
 
 
 def serve_once(worker: CellWorker, connection: FrameConnection) -> int:
-    """Exactly one RUN; no synthetic normal exit for indeterminate execution.
+    """Exactly one RUN or PROJECT_TOOL; no synthetic normal exit for indeterminate execution.
 
     Worker data is still untrusted. The supervisor must check actual container
     exit and the independent descendant barrier before issuing a receipt.
@@ -146,7 +279,7 @@ def serve_once(worker: CellWorker, connection: FrameConnection) -> int:
         raw = read_frame(connection)
         record = decode_cell_request(raw)
         result: dict[str, Any] | None = None
-        if record["action"] == "RUN":
+        if record["action"] in {"RUN", "PROJECT_TOOL"}:
             try:
                 result = worker.handle(raw)
                 if (
@@ -163,6 +296,43 @@ def serve_once(worker: CellWorker, connection: FrameConnection) -> int:
     finally:
         worker.stopped = True
         worker.close()  # PTY cleanup, never a cgroup/descendant proof.
+
+
+def _serve_project_tool(
+    worker: CellWorker,
+    connection: FrameConnection,
+    raw: bytes,
+    request_id: str,
+    *,
+    writes: Any,
+    running: Any,
+    stream_failed: threading.Event,
+) -> None:
+    with writes:
+        accepted = running.acquire(blocking=False)
+    if not accepted:
+        with writes:
+            try:
+                _reply(connection, request_id, None)
+            except OSError:
+                stream_failed.set()
+                worker.stopped = True
+        return
+    result: dict[str, Any] | None = None
+    try:
+        try:
+            result = worker.handle(raw)
+        except (OSError, ExecutionContractError, RuntimeError):
+            result = None
+    finally:
+        with writes:
+            try:
+                _reply(connection, request_id, result)
+            except OSError:
+                stream_failed.set()
+                worker.stopped = True
+            finally:
+                running.release()
 
 
 def serve(worker: CellWorker, connection: FrameConnection) -> None:
@@ -216,6 +386,16 @@ def serve(worker: CellWorker, connection: FrameConnection) -> None:
                 worker._acquire(record["payload"])
                 active = threading.Thread(target=run, args=(raw, record["request_id"]), daemon=True)
                 active.start()
+            elif record["action"] == "PROJECT_TOOL":
+                _serve_project_tool(
+                    worker,
+                    connection,
+                    raw,
+                    record["request_id"],
+                    writes=writes,
+                    running=running,
+                    stream_failed=stream_failed,
+                )
             else:
                 result = worker.handle(raw)
                 if worker.stopped and active is not None:

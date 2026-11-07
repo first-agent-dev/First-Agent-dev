@@ -1,29 +1,12 @@
 # pylint: disable=duplicate-code  # Atomic-write cleanup mirrors workflow_artifacts intentionally.
-"""Per-session PR-draft store shared by ``pr_prepare`` and ``IntentGuard``.
+"""Per-session optional PR/work-note store for ``pr_prepare``.
 
-The initial M-7 implementation treated ``~/.fa/session-log/<run_id>/pr_draft.md``
-as the entire trust boundary: if the file existed, :class:`IntentGuard`
-trusted it. That left three gaps:
-
-1. the first mutating tool call still passed when no draft had been
-   prepared yet (``allow-on-no-draft``);
-2. ``fs_run_bash`` could fabricate the file directly, bypassing the
-   ``pr_prepare`` tool's schema + renderer validation; and
-3. a stale file from a previous session using the same ``run_id`` could
-   poison a later run.
-
-This store closes those gaps by tracking *current-session provenance* in
-memory while still persisting the human-readable draft on disk:
-
-- :meth:`write_text` performs an atomic write and records the digest of
-  the exact bytes that ``pr_prepare`` produced in this process;
-- :meth:`read_current_text` returns text only when the on-disk file both
-  exists and still matches the current-session digest; and
-- :meth:`clear` resets the in-memory trust marker and optionally removes
-  any stale on-disk draft before a new session starts.
-
-Result: the draft remains inspectable at the stable path, but only
-``pr_prepare`` writes from *this* session are trusted by the guard.
+The stable ``~/.fa/session-log/<run_id>/pr_draft.md`` artifact remains
+inspectable and resumable. Atomic replacement plus an in-memory digest detect
+accidental changes to bytes written by the current process; this provenance is
+artifact-integrity metadata only, never mutation authorization. Production
+``fa run`` paths do not register IntentGuard, and no caller may treat this
+store's presence or digest as a write permit.
 """
 
 from __future__ import annotations
@@ -43,12 +26,11 @@ def _digest_text(text: str) -> str:
 
 @dataclass
 class PrDraftStore:
-    """Current-session trust wrapper around ``pr_draft.md``.
+    """Optional note store with a current-process artifact-integrity digest.
 
     ``path`` is the stable filesystem location used for human inspection.
-    ``_current_digest`` is the in-memory proof that the current process
-    wrote the draft via ``pr_prepare`` and that the file has not been
-    modified since.
+    ``_current_digest`` detects whether bytes still match the current process'
+    last write; it is not a write authorization signal.
     """
 
     path: Path
@@ -66,18 +48,18 @@ class PrDraftStore:
             return
 
     def write_text(self, text: str) -> None:
-        """Atomically persist ``text`` and trust it for this session."""
+        """Atomically persist ``text`` and remember its digest for integrity checks."""
 
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._write_text_atomic(text)
         self._current_digest = _digest_text(text)
 
     def read_current_text(self) -> str | None:
-        """Return the trusted current-session draft, else ``None``.
+        """Return note text if it still matches this process' last write.
 
-        ``None`` covers all untrusted states: never prepared in this
-        session, stale file from a previous run, external tampering after
-        ``pr_prepare``, or an unreadable/missing file.
+        ``None`` covers never-written, stale, modified, unreadable, or missing
+        note states. It conveys artifact integrity only, never permission to
+        perform a workspace mutation.
         """
 
         if self._current_digest is None:
