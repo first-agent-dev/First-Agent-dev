@@ -4,6 +4,16 @@
 
 **Operator disposition (2026-10-30):** selected **A — Strict gate closure, best effort**. Individual findings needing direct review may be deferred in the tracker, but remain **BLOCKING**; that is not a pass, waiver, or permission to advance W1.
 
+## Recovered snapshot and CT113 handoff typing follow-up
+
+The patch was recovered onto `9ba095d` in `0fcc93a`, retaining the feature commit's link-availability guards and its uploaded patch. The initial recovery retained the longer skill injections; `756576d` restored the patch's compact injections while preserving the CT88/CT89 E2E handoff wording. The corresponding condensate and skill-conformance banks passed (48 passed); removing `run sheet` from the restored wording killed the conformance test, and the file was restored byte-identically. This was a documentation/injection recovery correction, not live-host acceptance.
+
+A full baseline on `0fcc93a`, before that injection correction, ran with `GIT_DIR` and `GIT_WORK_TREE` unset: `just test` exited **1**, with **89 failed, 7,137 passed, 18 skipped, 4 xfailed, 2 warnings, 11 errors** in 761.00 seconds. Two failures were the oversized retained injection bodies; the previously recorded skill-conformance failure passed with the longer wording. After the injection correction, the focused 48-test bank passed, but the full pytest gate has **not** been rerun; do not treat the earlier total as the current exact count. Shellcheck was not installed, accounting for 12 skips. Baseline `just _pyrefly` exited **1** with **61 errors**, matching the preceding Q137 count.
+
+The CT113 handoff test now passes explicitly typed peer, namespace, and capability arguments rather than unpacking a mixed-type dictionary; the three foreign-principal/actor/token cases and byte-identical workspace refusal oracle are retained. `pytest -q tests/test_execution_handoff.py --tb=short` exited **0** (17 passed); `pyrefly check tests/test_execution_handoff.py` exited **0** (0 errors); Ruff check, format check, and `git diff --check` exited **0**. Restoring the old dictionary killed the static mutant with the original diagnostic; changing the test caller to send valid proofs killed all three negative cases. The test file was restored byte-identically (SHA-256 `577c1c938f7dbe57bc9b3aa278453412d15377f25cf30eaa6ebdd1958c02bc44`) and the 17-test bank passed again. These are test/static and test-caller mutations, not new production-producer or production-EDGE mutation evidence; no production source was changed. The existing I03-LIVE-27 handoff host plan remains unexecuted.
+
+After this slice, full `just _pyrefly` exited **1** with **60 errors**. Comparing diagnostic message and path to the recovered 61-error run gives **one resolved, zero new**: the unpacked-keyword diagnostic in `tests/test_execution_handoff.py`. The exact prior list remains below as historical evidence. Q137, including its managed mutation-metadata direct-review deferral, remains **BLOCKING**; W1 implementation remains paused.
+
 ## Commands and exact results
 
 - Full pytest command: `just test` (run with `GIT_DIR` and `GIT_WORK_TREE` unset).

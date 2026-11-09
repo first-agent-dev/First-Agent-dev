@@ -187,17 +187,13 @@ def test_a_foreign_peer_namespace_or_capability_cannot_move_the_grant(site: Site
     with site.owner() as owner:
         ids = ok(lambda: site.register(owner))
         lease = ok(lambda: site.claim(owner, ids))
-        kwargs = (
-            {"peer": PeerIdentity(PEER.pid, PEER.uid, PEER.gid + 1)}
-            if wrong == "principal"
-            else {"namespace": NamespaceRef("session-b", "run-b")}
-            if wrong == "actor"
-            else {"capability": secrets.token_hex(32)}
-        )
+        peer = PeerIdentity(PEER.pid, PEER.uid, PEER.gid + 1) if wrong == "principal" else PEER
+        namespace = NamespaceRef("session-b", "run-b") if wrong == "actor" else ACTOR
+        capability = secrets.token_hex(32) if wrong == "token" else lease.capability
         before = workspace_file(site, ids).read_bytes()
 
         with pytest.raises(SupervisorError) as rejected:
-            move(owner, lease, **kwargs)
+            move(owner, lease, peer=peer, namespace=namespace, capability=capability)
 
         assert rejected.value.code == "UNAUTHORIZED"
         assert workspace_file(site, ids).read_bytes() == before
