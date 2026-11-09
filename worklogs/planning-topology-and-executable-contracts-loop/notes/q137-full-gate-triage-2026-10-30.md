@@ -14,6 +14,16 @@ The CT113 handoff test now passes explicitly typed peer, namespace, and capabili
 
 After this slice, full `just _pyrefly` exited **1** with **60 errors**. Comparing diagnostic message and path to the recovered 61-error run gives **one resolved, zero new**: the unpacked-keyword diagnostic in `tests/test_execution_handoff.py`. The exact prior list remains below as historical evidence. Q137, including its managed mutation-metadata direct-review deferral, remains **BLOCKING**; W1 implementation remains paused.
 
+## CT90 resumed-session preflight fixture repair
+
+The failed `tests/test_verify_gate_live.py::test_plan_preflight_resumed_session_does_not_touch_manifest_or_db` stopped during setup with `managed_execution_unavailable`: `SessionManager._new_session` now requires both the managed materializer and readiness preparer. The test now reuses `tests.test_session_lifecycle._manager` to create the session, then replaces both seams with assertion-failing sentinels before calling the real read-only resolver. It retains exact `workspace_mismatch`, file-set, file-bytes and mtime assertions. The fixture is a local test seam, not proof of a live supervisor or the production CLI edge.
+
+Targeted pytest for this test, the read-only workspace resolver control, the lifecycle provisioning control and missing-provisioner refusal control exited **0** (4 passed). Ruff check, Ruff format check and `git diff --check` exited **0**. Targeted Pyrefly exited **1** with five existing diagnostics in this file; the previous full-gate log also contained five in this file. The full pytest and full Pyrefly gates were not rerun for this slice.
+
+Mutants, each applied separately and restored byte-identically: replacing the resolver's manifest-read producer with the workspace root made the selected path assertion fail; making the resolver call the preparer hit the new assertion sentinel; bypassing the resolver in the test caller failed the selected path assertion. Each targeted pytest invocation exited **1**. The last is only a test-caller mutation, **not** a production CLI EDGE kill. Restored test exited **0** (1 passed). Restored SHA-256: `src/fa/session/manager.py` `c3c83f6580cbb64e633a9fb4e0dfcb91843ecf6cbe29007eb556a4c439c8d549`; `tests/test_verify_gate_live.py` `4ee92a01517b8f45551ba6adc01920892c433fc210696283e16ca83fb1c9bcb8`. No product code changed; this closes only the selected stale test setup, not CT90's full CLI proof or Q137.
+
+No live-host test is claimed. The existing I03 live plan includes ledger-append cases L-RCPT-2/L-RCPT-6 and the separate Q112 session-ledger proposal; this test-only fixture change does not create a new live feature or alter their acceptance scope.
+
 ## Commands and exact results
 
 - Full pytest command: `just test` (run with `GIT_DIR` and `GIT_WORK_TREE` unset).

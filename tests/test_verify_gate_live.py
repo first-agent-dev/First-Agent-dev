@@ -1195,13 +1195,22 @@ def test_plan_preflight_workspace_resolution_is_read_only(tmp_path: Path) -> Non
     assert str(failure.value) == "workspace_required: create or choose an existing workspace with --workspace first"
 
 
-def test_plan_preflight_resumed_session_does_not_touch_manifest_or_db(tmp_path: Path) -> None:
-    from fa.session.manager import SessionManager, SessionManagerError
+def test_plan_preflight_resumed_session_does_not_touch_manifest_or_db(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from fa.session.manager import SessionManagerError
+    from tests.test_session_lifecycle import _manager
 
-    manager = SessionManager(state_root=tmp_path / "state", workspace_root=tmp_path / "workspaces")
+    manager = _manager(tmp_path)
     session = manager.provision_entrypoint_session(
         session_id="existing", workspace_override=tmp_path / "workspaces" / "one"
     )
+
+    def forbidden(*args: object, **kwargs: object) -> None:
+        raise AssertionError("read-only workflow preflight must not provision or prepare")
+
+    monkeypatch.setattr(manager, "workspace_provisioner", forbidden)
+    monkeypatch.setattr(manager, "workspace_preparer", forbidden)
     files = [p for p in tmp_path.rglob("*") if p.is_file()]
     before = {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in files}
     assert manager.resolve_workflow_workspace(session_id="existing", workspace_override=None) == session.workspace_path
