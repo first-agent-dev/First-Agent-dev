@@ -155,7 +155,9 @@ def test_a_recorded_verdict_outranks_the_clean_stop_inference(tmp_path: Path) ->
     """
     events = _minimal_session_events()
     summary = next(event for event in events if event["kind"] == "session_summary")
-    summary["content"] = {**summary["content"], "role": "coder", "exit_code": 2, "stop_reason": "stopped_by_llm"}
+    content = summary["content"]
+    assert isinstance(content, dict)
+    summary["content"] = {**content, "role": "coder", "exit_code": 2, "stop_reason": "stopped_by_llm"}
     events_path = tmp_path / "test-run" / "events.jsonl"
     _write_events(events_path, events)
 

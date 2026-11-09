@@ -40,6 +40,7 @@ import time
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 from fa.memory._safe_walk import RootedFileReader, iter_searchable_files
@@ -56,6 +57,14 @@ _SYMBOL_HASH_LEN = 16
 _FILE_HASH_LEN = 24
 _LANGUAGE_PROBE_LIMIT = 200
 _MAX_SOURCE_FILE_BYTES = 200_000  # Must match the structural walk's existing candidate cap.
+MAX_MANAGED_AST_NODES = 2_000_000
+MAX_MANAGED_FILE_AST_NODES = 256_000
+MAX_MANAGED_SYMBOLS = 100_000
+MAX_MANAGED_EDGES = 250_000
+MAX_MANAGED_FILE_EDGES = 25_000
+MAX_MANAGED_SQLITE_PAGE_SIZE = 4_096
+MAX_MANAGED_SQLITE_PAGES = 32_768
+MAX_MANAGED_SQLITE_CACHE_KIB = 16 * 1024
 
 
 def _hash16(text: str) -> str:
@@ -86,6 +95,15 @@ class StructIndexStats:
     available: bool = True
     detected_languages: tuple[str, ...] = ()
     errors: tuple[tuple[str, str], ...] = ()  # (relpath, message)
+
+
+@dataclass(slots=True)
+class _ManagedReachBudget:
+    """Mutable per-call counters retained only while one managed index is built."""
+
+    nodes: int = 0
+    symbols: int = 0
+    edges: int = 0
 
 
 @dataclass(frozen=True)
@@ -150,11 +168,22 @@ def _base_name(node: ast.AST) -> str:
 class StructuralIndex:
     """Lazy, thread-safe structural call-graph index (CT-5)."""
 
-    def __init__(self, db_path: Path, *, in_memory: bool = False, strict_rooted_reads: bool = False) -> None:
-        if type(strict_rooted_reads) is not bool:
-            raise ValueError("strict_rooted_reads must be a bool")
+    def __init__(
+        self,
+        db_path: Path,
+        *,
+        in_memory: bool = False,
+        strict_rooted_reads: bool = False,
+        managed_bounded: bool = False,
+    ) -> None:
+        if type(strict_rooted_reads) is not bool or type(managed_bounded) is not bool:
+            raise ValueError("strict_rooted_reads and managed_bounded must be bool")
+        if managed_bounded and (not in_memory or not strict_rooted_reads):
+            raise ValueError("managed bounded reach requires an in-memory rooted index")
         self.db_path = Path(db_path)
         self._strict_rooted_reads = strict_rooted_reads
+        self._managed_bounded = managed_bounded
+        self._managed_deadline: float | None = None
         self._memory_uri = f"file:fa-struct-{uuid4().hex}?mode=memory&cache=shared" if in_memory else None
         self._anchor = (
             sqlite3.connect(self._memory_uri, uri=True, check_same_thread=False)
@@ -173,6 +202,20 @@ class StructuralIndex:
         else:
             conn = sqlite3.connect(self._memory_uri, timeout=10.0, uri=True)
             conn.execute("PRAGMA temp_store=MEMORY")
+        if self._managed_bounded:
+            conn.execute(f"PRAGMA page_size={MAX_MANAGED_SQLITE_PAGE_SIZE}")
+            conn.execute(f"PRAGMA max_page_count={MAX_MANAGED_SQLITE_PAGES}")
+            conn.execute(f"PRAGMA cache_size=-{MAX_MANAGED_SQLITE_CACHE_KIB}")
+            if (
+                conn.execute("PRAGMA page_size").fetchone()[0] != MAX_MANAGED_SQLITE_PAGE_SIZE
+                or conn.execute("PRAGMA max_page_count").fetchone()[0] > MAX_MANAGED_SQLITE_PAGES
+                or conn.execute("PRAGMA cache_size").fetchone()[0] != -MAX_MANAGED_SQLITE_CACHE_KIB
+            ):
+                conn.close()
+                raise sqlite3.OperationalError("managed SQLite limits unavailable")
+            if self._managed_deadline is not None:
+                deadline = self._managed_deadline
+                conn.set_progress_handler(lambda: int(time.monotonic() >= deadline), 1000)
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")
         return conn
@@ -226,6 +269,28 @@ class StructuralIndex:
             if not force and self._stats is not None:
                 return self._stats
             self._stats = self._build(root)
+            return self._stats
+
+    def ensure_managed_indexed(
+        self,
+        root: Path,
+        inventory: Any,
+        *,
+        rooted_reader: RootedFileReader | None,
+        deadline: float,
+    ) -> StructIndexStats:
+        """Build a one-shot managed index, rolling back every aggregate refusal."""
+        from fa.memory.managed_discovery import ManagedDiscoveryError
+
+        if not self._managed_bounded or rooted_reader is None:
+            raise ManagedDiscoveryError("unsafe_path")
+        if type(deadline) not in {int, float} or deadline <= 0:
+            raise ManagedDiscoveryError("deadline")
+        with _BUILD_LOCK:
+            if self._stats is not None:
+                return self._stats
+            self._managed_deadline = float(deadline)
+            self._stats = self._build_managed(root, inventory, rooted_reader, deadline=float(deadline))
             return self._stats
 
     def find_symbols(self, name: str, *, kind: str | None = None) -> list[SymbolRow]:
@@ -474,6 +539,136 @@ class StructuralIndex:
             if rooted_reader is not None:
                 rooted_reader.close()
 
+    def _build_managed(
+        self,
+        root: Path,
+        inventory: Any,
+        rooted_reader: RootedFileReader,
+        *,
+        deadline: float,
+    ) -> StructIndexStats:
+        from fa.memory.managed_discovery import (
+            MAX_MANAGED_CANDIDATES,
+            MAX_MANAGED_SOURCE_BYTES,
+            ManagedDiscoveryError,
+            _read_managed_candidate,
+        )
+
+        if len(inventory.candidates) > MAX_MANAGED_CANDIDATES:
+            raise ManagedDiscoveryError("candidate_budget")
+        if inventory.eligible_source_bytes > MAX_MANAGED_SOURCE_BYTES:
+            raise ManagedDiscoveryError("source_budget")
+        if time.monotonic() >= deadline:
+            raise ManagedDiscoveryError("deadline")
+        if not inventory.candidates or all(candidate.oversized for candidate in inventory.candidates):
+            return StructIndexStats(
+                files_skipped=inventory.oversized_files,
+                available=False,
+                detected_languages=inventory.detected_languages,
+            )
+
+        conn = self._connect()
+        stats = _ManagedReachBudget()
+        files_indexed = 0
+        files_skipped = inventory.oversized_files
+        actual_source_bytes = 0
+        errors: list[tuple[str, str]] = []
+        try:
+            self._init_schema(conn)
+            conn.execute("BEGIN")
+            self._check_managed_deadline(deadline)
+            self._check_managed_page_budget(conn)
+            for candidate in inventory.candidates:
+                self._check_managed_deadline(deadline)
+                if candidate.oversized:
+                    continue
+                if candidate.size_bytes > _MAX_SOURCE_FILE_BYTES:
+                    raise ManagedDiscoveryError("unsafe_path")
+                canonical_rel, raw = _read_managed_candidate(rooted_reader, candidate)
+                if actual_source_bytes + len(raw) > MAX_MANAGED_SOURCE_BYTES:
+                    raise ManagedDiscoveryError("source_budget")
+                actual_source_bytes += len(raw)
+                result = self._index_one_file(
+                    conn,
+                    root / canonical_rel,
+                    canonical_rel,
+                    source_bytes=raw,
+                    managed_budget=stats,
+                    commit=False,
+                )
+                files_indexed += result[0]
+                files_skipped += result[1]
+                if result[4] is not None:
+                    errors.append((canonical_rel, result[4]))
+                self._check_managed_deadline(deadline)
+                self._check_managed_page_budget(conn)
+            self._check_managed_deadline(deadline)
+            conn.commit()
+            return StructIndexStats(
+                files_indexed=files_indexed,
+                files_skipped=files_skipped,
+                symbols=stats.symbols,
+                edges=stats.edges,
+                available=True,
+                detected_languages=inventory.detected_languages,
+                errors=tuple(errors),
+            )
+        except ManagedDiscoveryError:
+            conn.rollback()
+            raise
+        except sqlite3.Error:
+            conn.rollback()
+            if time.monotonic() >= deadline:
+                raise ManagedDiscoveryError("deadline") from None
+            raise ManagedDiscoveryError("index_budget") from None
+        finally:
+            conn.close()
+
+    @staticmethod
+    def _check_managed_deadline(deadline: float) -> None:
+        from fa.memory.managed_discovery import ManagedDiscoveryError
+
+        if time.monotonic() >= deadline:
+            raise ManagedDiscoveryError("deadline")
+
+    @staticmethod
+    def _check_managed_page_budget(conn: sqlite3.Connection) -> None:
+        from fa.memory.managed_discovery import ManagedDiscoveryError
+
+        page_size = int(conn.execute("PRAGMA page_size").fetchone()[0])
+        page_count = int(conn.execute("PRAGMA page_count").fetchone()[0])
+        max_pages = int(conn.execute("PRAGMA max_page_count").fetchone()[0])
+        if (
+            page_size != MAX_MANAGED_SQLITE_PAGE_SIZE
+            or page_count > MAX_MANAGED_SQLITE_PAGES
+            or max_pages > MAX_MANAGED_SQLITE_PAGES
+        ):
+            raise ManagedDiscoveryError("index_budget")
+
+    def _count_managed_ast_nodes(self, tree: ast.AST, limit: int) -> int:
+        from fa.memory.managed_discovery import ManagedDiscoveryError
+
+        if limit <= 0:
+            raise ManagedDiscoveryError("ast_budget")
+        pending = [tree]
+        count = 0
+        while pending:
+            if count % 512 == 0:
+                self._check_managed_deadline(self._active_deadline())
+            node = pending.pop()
+            count += 1
+            if count > limit:
+                raise ManagedDiscoveryError("ast_budget")
+            pending.extend(ast.iter_child_nodes(node))
+        return count
+
+    def _active_deadline(self) -> float:
+        from fa.memory.managed_discovery import ManagedDiscoveryError
+
+        if self._managed_deadline is None:
+            raise ManagedDiscoveryError("deadline")
+        return self._managed_deadline
+
     def _index_one_file(
         self,
         conn: sqlite3.Connection,
@@ -481,6 +676,8 @@ class StructuralIndex:
         rel: str,
         *,
         source_bytes: bytes | None = None,
+        managed_budget: _ManagedReachBudget | None = None,
+        commit: bool = True,
     ) -> tuple[int, int, int, int, str | None]:
         """Index one file. Returns (indexed, skipped, symbols, edges, error).
 
@@ -505,11 +702,25 @@ class StructuralIndex:
         except Exception as exc:  # noqa: BLE001 - decode is replace-mode; defensive only
             return (0, 1, 0, 0, f"parse failed: {exc}")
 
+        if managed_budget is not None:
+            allowed_nodes = min(MAX_MANAGED_FILE_AST_NODES, MAX_MANAGED_AST_NODES - managed_budget.nodes)
+            managed_budget.nodes += self._count_managed_ast_nodes(tree, allowed_nodes)
+
         file_symbols: dict[str, _FileSymbol] = {}
         edges: set[tuple[str, str, int]] = set()
         for anchor in self._extract_anchors(rel, source):
             file_symbols[anchor.qualname] = anchor
-        self._walk_tree(tree, rel, file_symbols, edges)
+        edge_limit = None
+        if managed_budget is not None:
+            edge_limit = min(MAX_MANAGED_FILE_EDGES, MAX_MANAGED_EDGES - managed_budget.edges)
+        self._walk_tree(tree, rel, file_symbols, edges, edge_limit=edge_limit)
+        if managed_budget is not None:
+            if managed_budget.symbols + len(file_symbols) > MAX_MANAGED_SYMBOLS:
+                from fa.memory.managed_discovery import ManagedDiscoveryError
+
+                raise ManagedDiscoveryError("symbol_budget")
+            managed_budget.symbols += len(file_symbols)
+            managed_budget.edges += len(edges)
 
         # per-file replace: DELETE then INSERT (incremental update)
         conn.execute("DELETE FROM symbols WHERE path = ?", (rel,))
@@ -542,7 +753,8 @@ class StructuralIndex:
             "INSERT OR REPLACE INTO struct_meta (path, file_hash, indexed_at) VALUES (?,?,?)",
             (rel, file_hash, time.time()),
         )
-        conn.commit()
+        if commit:
+            conn.commit()
         return (1, 0, len(file_symbols), len(edges), None)
 
     def _sweep_ghosts(self, conn: sqlite3.Connection, indexed_files: set[str]) -> None:
@@ -607,6 +819,8 @@ class StructuralIndex:
         rel: str,
         file_symbols: dict[str, _FileSymbol],
         edges: set[tuple[str, str, int]],
+        *,
+        edge_limit: int | None = None,
     ) -> None:
         """Two passes: symbols first (order-independent resolution), then edges.
 
@@ -616,7 +830,7 @@ class StructuralIndex:
         for item in ast.iter_child_nodes(tree):
             _collect_symbols_pass(item, [], rel, file_symbols)
         for item in ast.iter_child_nodes(tree):
-            _collect_edges_pass(item, [], rel, file_symbols, edges)
+            _collect_edges_pass(item, [], rel, file_symbols, edges, edge_limit=edge_limit)
 
     @staticmethod
     def _resolve_callee(
@@ -667,6 +881,14 @@ class StructuralIndex:
 
 __all__ = [
     "KIND_DOC_ANCHOR",
+    "MAX_MANAGED_AST_NODES",
+    "MAX_MANAGED_EDGES",
+    "MAX_MANAGED_FILE_AST_NODES",
+    "MAX_MANAGED_FILE_EDGES",
+    "MAX_MANAGED_SQLITE_CACHE_KIB",
+    "MAX_MANAGED_SQLITE_PAGES",
+    "MAX_MANAGED_SQLITE_PAGE_SIZE",
+    "MAX_MANAGED_SYMBOLS",
     "StructIndexStats",
     "StructuralIndex",
     "SymbolRow",
@@ -710,11 +932,13 @@ def _collect_edges_pass(
     rel: str,
     file_symbols: dict[str, _FileSymbol],
     edges: set[tuple[str, str, int]],
+    *,
+    edge_limit: int | None = None,
 ) -> None:
     """Pass 2: resolve call edges against the COMPLETE in-file symbol set."""
     if isinstance(node, ast.ClassDef):
         for child in ast.iter_child_nodes(node):
-            _collect_edges_pass(child, [*scope, (node.name, True)], rel, file_symbols, edges)
+            _collect_edges_pass(child, [*scope, (node.name, True)], rel, file_symbols, edges, edge_limit=edge_limit)
         return
     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
         own_scope = [*scope, (node.name, False)]
@@ -724,9 +948,15 @@ def _collect_edges_pass(
         caller_id = _hash16(f"{rel}:{qualname}")
         for call in _iter_body_calls(node):
             callee = StructuralIndex._resolve_callee(call, file_symbols, class_qualname)
-            edges.add((caller_id, callee, call.lineno))
+            edge = (caller_id, callee, call.lineno)
+            if edge not in edges:
+                edges.add(edge)
+                if edge_limit is not None and len(edges) > edge_limit:
+                    from fa.memory.managed_discovery import ManagedDiscoveryError
+
+                    raise ManagedDiscoveryError("edge_budget")
         for child in ast.iter_child_nodes(node):
-            _collect_edges_pass(child, own_scope, rel, file_symbols, edges)
+            _collect_edges_pass(child, own_scope, rel, file_symbols, edges, edge_limit=edge_limit)
         return
     for child in ast.iter_child_nodes(node):
-        _collect_edges_pass(child, scope, rel, file_symbols, edges)
+        _collect_edges_pass(child, scope, rel, file_symbols, edges, edge_limit=edge_limit)

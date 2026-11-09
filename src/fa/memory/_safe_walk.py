@@ -311,16 +311,41 @@ class RootedFileReader:
                 os.close(directory_fd)
             raise
 
-    def read_bytes_with_path(self, rel: str, *, max_bytes: int) -> tuple[str, bytes]:
-        """Read a stable bounded file and return its canonical root-relative path."""
+    def read_bytes_with_path(
+        self,
+        rel: str,
+        *,
+        max_bytes: int,
+        expected_identity: tuple[int, int, int, int, int, int] | None = None,
+    ) -> tuple[str, bytes]:
+        """Read a stable bounded file and return its canonical root-relative path.
+
+        ``expected_identity`` optionally binds the read to a prior managed
+        inventory observation: device, inode, mode, size, mtime_ns, ctime_ns.
+        """
         if type(max_bytes) is not int or max_bytes < 0:
             raise RootedReadError("invalid_limit")
+        if expected_identity is not None and (
+            type(expected_identity) is not tuple
+            or len(expected_identity) != 6
+            or any(type(value) is not int for value in expected_identity)
+        ):
+            raise RootedReadError("invalid_identity")
         parts = self._relative_parts(rel)
         self._assert_root_identity()
         file_fd = -1
         directory_fds: list[int] = []
         try:
             file_fd, directory_fds, verified, canonical_rel, before = self._open_relative_file(parts)
+            if expected_identity is not None and expected_identity != (
+                before.st_dev,
+                before.st_ino,
+                before.st_mode,
+                before.st_size,
+                before.st_mtime_ns,
+                before.st_ctime_ns,
+            ):
+                raise RootedReadError("preflight_identity_changed")
             if before.st_size > max_bytes:
                 raise RootedReadError("file_too_large")
 

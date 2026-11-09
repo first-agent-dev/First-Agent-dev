@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from fa.memory._safe_walk import DEFAULT_PATTERNS, _matches_any_pattern, _path_is_excluded
+from fa.memory._safe_walk import DEFAULT_PATTERNS, RootedFileReader, _matches_any_pattern, _path_is_excluded
 from fa.memory.search_index import MAX_SEARCH_FILE_BYTES
 
 MAX_MANAGED_WALK_ENTRIES = 8_192
@@ -37,6 +37,11 @@ class ManagedDiscoveryError(RuntimeError):
             "path_budget",
             "candidate_budget",
             "source_budget",
+            "ast_budget",
+            "symbol_budget",
+            "edge_budget",
+            "index_budget",
+            "output_budget",
             "unsafe_path",
         ],
     ) -> None:
@@ -76,6 +81,10 @@ class ManagedCandidate:
     ctime_ns: int
     oversized: bool
 
+    @property
+    def rooted_identity(self) -> tuple[int, int, int, int, int, int]:
+        return (self.device, self.inode, self.mode, self.size_bytes, self.mtime_ns, self.ctime_ns)
+
 
 @dataclass(frozen=True, slots=True)
 class ManagedInventory:
@@ -85,6 +94,22 @@ class ManagedInventory:
     candidates: tuple[ManagedCandidate, ...]
     eligible_source_bytes: int
     oversized_files: int
+    detected_languages: tuple[str, ...] = ()
+
+
+def _read_managed_candidate(reader: RootedFileReader, candidate: ManagedCandidate) -> tuple[str, bytes]:
+    """Read exactly the file identity accepted by inventory preflight."""
+    try:
+        canonical_relative, raw = reader.read_bytes_with_path(
+            candidate.relative_path,
+            max_bytes=candidate.size_bytes,
+            expected_identity=candidate.rooted_identity,
+        )
+    except OSError:
+        raise ManagedDiscoveryError("unsafe_path") from None
+    if canonical_relative != candidate.relative_path or len(raw) != candidate.size_bytes:
+        raise ManagedDiscoveryError("unsafe_path")
+    return canonical_relative, raw
 
 
 def _identity(info: os.stat_result) -> tuple[int, int, int]:
@@ -125,6 +150,7 @@ class _InventoryBuilder:
         self.entries = 0
         self.source_bytes = 0
         self.oversized_files = 0
+        self.extensions: set[str] = set()
         self.candidates: list[ManagedCandidate] = []
         self.open_fds: set[int] = set()
 
@@ -177,7 +203,11 @@ class _InventoryBuilder:
             return None
         if stat.S_ISDIR(info.st_mode):
             return self._open_child_directory(directory_fd, name, info), parts, depth
-        if not stat.S_ISREG(info.st_mode) or not _matches_any_pattern(relative_path, name, self.patterns):
+        if not stat.S_ISREG(info.st_mode):
+            return None
+        if len(self.extensions) < 200:
+            self.extensions.add(Path(name).suffix.lower())
+        if not _matches_any_pattern(relative_path, name, self.patterns):
             return None
         if len(self.candidates) >= self.limits.candidates:
             raise ManagedDiscoveryError("candidate_budget")
@@ -233,7 +263,13 @@ class _InventoryBuilder:
                 pending.extend(children)
             _check_deadline(self.deadline)
             self.candidates.sort(key=lambda candidate: candidate.relative_path)
-            return ManagedInventory(self.entries, tuple(self.candidates), self.source_bytes, self.oversized_files)
+            return ManagedInventory(
+                self.entries,
+                tuple(self.candidates),
+                self.source_bytes,
+                self.oversized_files,
+                tuple(sorted(self.extensions)),
+            )
         finally:
             self.close()
 

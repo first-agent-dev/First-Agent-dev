@@ -55,6 +55,7 @@ def test_managed_success_is_one_wire_execution_without_host_git(
         tool = build_run_bash_tool(tmp_path, managed_executor=_executor(client, tmp_path))
         answer = tool.handler({"command": "printf ok"})
     assert answer.error is None
+    assert answer.result is not None
     assert answer.result["stdout"] == "stdoutstderr"
     assert [item["op"] for item in seen] == ["exec"]
     assert host_calls == []

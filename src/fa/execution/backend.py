@@ -338,7 +338,13 @@ class CellBackend:
                 if record["view_ref"] != view.to_dict():
                     raise SupervisorError("UNAUTHORIZED")
                 if record["container_id"] != episode.container_id:
-                    self._journal.record_container(operation_id, namespace, episode.container_id, deadline=deadline)
+                    self._journal.record_container(
+                        operation_id,
+                        namespace,
+                        episode.container_id,
+                        cell_owner_operation_id=episode.creation_request["payload"]["operation_id"],
+                        deadline=deadline,
+                    )
         except JournalError as error:
             raise SupervisorError(error.code) from None
         frame = encode_cell_request(
@@ -397,7 +403,13 @@ class CellBackend:
                 if record["view_ref"] != view.to_dict():
                     raise SupervisorError("UNAUTHORIZED")
                 if record["container_id"] != episode.container_id:
-                    self._journal.record_container(operation_id, namespace, episode.container_id, deadline=deadline)
+                    self._journal.record_container(
+                        operation_id,
+                        namespace,
+                        episode.container_id,
+                        cell_owner_operation_id=episode.creation_request["payload"]["operation_id"],
+                        deadline=deadline,
+                    )
         except JournalError as error:
             raise SupervisorError(error.code) from None
         project_tool = payload["project_tool"]
@@ -591,16 +603,24 @@ class CellBackend:
                 if profile is None:
                     continue
                 try:
+                    namespace = NamespaceRef(**record["namespace"])
+                    owner_operation_id = self._journal.resolve_cell_owner(
+                        record["operation_id"],
+                        namespace,
+                        view=view,
+                        container_id=container_id,
+                        deadline=deadline,
+                    )
                     observed = self._engine.force_stop_owned(
-                        operation_id=record["operation_id"],
+                        operation_id=owner_operation_id,
                         view=view,
                         profile=profile,
                         container_id=container_id,
                         deadline=deadline,
                     )
-                except (DockerUnavailableError, ExecutionContractError, OSError):
+                except (DockerUnavailableError, ExecutionContractError, JournalError, OSError):
                     continue
-                results.append({"operation_id": record["operation_id"], "status": observed.status})
+                results.append({"operation_id": owner_operation_id, "status": observed.status})
                 stopped = True
                 break
             if not stopped:

@@ -16,7 +16,8 @@
 2. Иначе проверяет кэшированный toolchain в `${BUILD_ROOT:-$HOME/.cache/arena-python313}/prefix`.
 3. Если пригодного CPython нет — собирает CPython 3.13.16 из закреплённых исходников в staging-prefix и публикует его только после runtime/FTS5 smoke.
 4. Обеспечивает `uv 0.13.7` (переиспользует точную версию из `PATH`/`UV_BIN` или ставит её в отдельный cached tool-venv; системный Python не меняет).
-5. Выполняет `uv sync --frozen --extra dev --python <выбранный CPython>` с системными CA-сертификатами, затем проверяет созданный `.venv`.
+5. Выполняет `uv sync --frozen --extra dev --python <выбранный CPython>` с системными CA-сертификатами.
+6. Устанавливает закреплённый `rust-just==1.57.0` в отдельный tool-cache, добавляет project-local launchers `just` и `uv` в `.venv/bin`, затем проверяет инструменты, необходимые для `just check`.
 
 `uv sync` может обновить только локальный `.venv`; исходники проекта, системный Python, Git branch/index и пользовательские файлы сценарий не изменяет. Сборки, исходники, архивы и bootstrap `uv` находятся вне checkout в `BUILD_ROOT`. Ничего из этого кэша сценарий автоматически не удаляет.
 
@@ -34,14 +35,24 @@
 - `JOBS=2` — число параллельных build jobs; значение по умолчанию намеренно умеренное для sandbox.
 - `UV_BIN=/путь/к/uv` — явно выбрать исполняемый `uv`; он обязан быть версии `0.13.7`.
 
-`--check` подтверждает версию CPython, необходимые stdlib-модули/SQLite FTS5, наличие `pytest` и `ruff`. Он **не** синхронизирует зависимости и не доказывает, что тесты проекта проходят. Обычный запуск подтверждает frozen sync и те же runtime/dev-tool smoke checks, но также **не запускает полный pytest suite**. После восстановления запускайте требуемые тесты и фиксируйте фактические результаты отдельно.
+`--check` — read-only: он подтверждает версию CPython, stdlib/SQLite FTS5, pinned `uv`/`just` и наличие команд из dev extra, используемых `just check`. Он **не** синхронизирует зависимости и не доказывает, что проверки проекта проходят. Обычный запуск выполняет frozen sync и устанавливает launchers в локальный `.venv`; полный pytest suite он не запускает.
+
+Для запуска гейтов активируйте проектное окружение, чтобы `just` и `uv` были в `PATH`:
+
+```bash
+source .venv/bin/activate
+just check
+just check-deep
+```
+
+Либо запускайте явно с PATH из `.venv`: `PATH="$PWD/.venv/bin:$PATH" just check`. `just check`/`check-deep` могут завершиться ошибками самого кода или тестов; успешная проверка окружения означает только, что нужные исполняемые инструменты доступны.
 
 ## Контракт окружения этого проекта
 
 - Текущий recovery target: **CPython 3.13.16**. `pyproject.toml` и `uv.lock` формально допускают `>=3.13`; версия 3.13.16 выбрана как воспроизводимый локальный sandbox toolchain, а не выведена из этого диапазона автоматически.
 - Проект имеет `uv.lock`; тестовая группа — extra `dev` из текущего `pyproject.toml`. Синхронизация выполняется с `--frozen`, чтобы не переписать lock и не разрешать новые версии.
 - Проверяется не только `import sqlite3`: smoke создаёт FTS5 virtual table, вставляет и ищет строку. Также импортируются `ssl`, `zlib`, `bz2` и `ctypes`.
-- `uv` закреплён на `0.13.7` и хранится/используется отдельно от системного Python и project `.venv`.
+- `uv` закреплён на `0.13.7`; `rust-just` закреплён на `1.57.0`. Оба инструмента отделены от системного Python; `just` установлен в `$BUILD_ROOT/just-tools`, а их project-local launchers находятся в игнорируемом `.venv/bin`.
 - Никакого `apt`, root, Docker, `pip install --break-system-packages` или ручного изменения системного Python не требуется.
 
 ## Закреплённые исходники CPython toolchain
@@ -62,7 +73,8 @@ The build retains the previously verified fixes: OpenSSL uses `--libdir=lib`; li
 ## Safeguards and failure recovery
 
 - Cold builds require `curl`, `sha256sum`, `tar`, `gcc`, `make`, and `perl`. The script checks these before building.
-- A wrong archive digest, unsupported Python, missing FTS5, failed `uv sync`, or missing test tools is a hard failure; there is no fallback to system Python or an unfrozen install.
+- A wrong archive digest, unsupported Python, missing FTS5, failed `uv sync`, wrong pinned `uv`/`just`, or missing gate tool is a hard failure; there is no fallback to system Python or an unfrozen install.
+- `--check` never installs tools. If it reports a missing `just` or `uv` launcher, rerun the normal environment builder; it installs launchers only inside the ignored project `.venv` and cached tool directory.
 - A newly built toolchain is assembled in a staging directory. It replaces `prefix` only after the staged Python passes the runtime/FTS5 smoke. A prior prefix is retained as `prefix.previous.<timestamp>`; failed staging directories and source archives are preserved for diagnosis.
 - A checksum-mismatched cached archive is not silently deleted or redownloaded over; inspect it manually. A lock directory at `BUILD_ROOT/.arena-env-build.lock` means another run may be active or a previous process left a stale lock. Inspect before removing it.
 - If the cold build fails, read the command and line reported by the script, then inspect `$BUILD_ROOT/src` and `.prefix-build.*`. Do not “fix” failures by changing system Python, dropping `--frozen`, or deleting unknown cache/worktree data.

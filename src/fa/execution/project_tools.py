@@ -23,6 +23,7 @@ from fa.inner_loop.tools.fs_search import build_fs_search_tool
 _MAX_REQUEST_BYTES = 64 * 1024
 # Leaves room under the worker's 64 KiB output tail for the newline and framing.
 _MAX_ENVELOPE_BYTES = 60 * 1024
+_MAX_TOOL_RESULT_BYTES = _MAX_ENVELOPE_BYTES
 _TOOLS = frozenset({"fs_search", "fs_reach"})
 
 
@@ -44,24 +45,34 @@ def _dispatch(tool: str, params: dict[str, Any], *, root: Path, scratch: Path) -
             if tool == "fs_search":
                 registry.register(
                     build_fs_search_tool(
-                        Path(":memory:"), source, cleanup=cleanup, strict_rooted_reads=True
+                        Path(":memory:"),
+                        source,
+                        cleanup=cleanup,
+                        strict_rooted_reads=True,
+                        managed_bounded=True,
                     )
                 )
             else:
                 registry.register(
-                    build_fs_reach_tool(source, in_memory=True, strict_rooted_reads=True, cleanup=cleanup)
+                    build_fs_reach_tool(
+                        source,
+                        in_memory=True,
+                        strict_rooted_reads=True,
+                        cleanup=cleanup,
+                        managed_bounded=True,
+                    )
                 )
-            return registry.dispatch(ToolCall(tool, params))
+            result = registry.dispatch(ToolCall(tool, params))
+            return _enforce_tool_result_budget(tool, result)
     except Exception:  # noqa: BLE001 - untrusted tool data must not become a traceback or partial success
         return _refusal()
 
 
-def _envelope(result: ToolResult) -> str:
-    """Encode one bounded envelope; artifacts stay with the controller."""
+def _payload(result: ToolResult) -> dict[str, Any]:
     if result.artifacts:
         result = _refusal()
     error = result.error
-    payload: dict[str, Any] = {
+    return {
         "summary": result.summary,
         "result": result.result,
         "error": None
@@ -69,6 +80,25 @@ def _envelope(result: ToolResult) -> str:
         else {"code": error.code, "message": error.message, "retryable": error.retryable},
         "artifacts": [],
     }
+
+
+def _enforce_tool_result_budget(tool: str, result: ToolResult) -> ToolResult:
+    """Reject the complete ToolResult before it can escape the cell helper."""
+    try:
+        encoded = json.dumps(_payload(result), ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode(
+            "utf-8"
+        )
+        if len(encoded) <= _MAX_TOOL_RESULT_BYTES:
+            return result
+    except (TypeError, ValueError, UnicodeError, RecursionError):
+        pass
+    code = "reach_failed" if tool == "fs_reach" else "search_failed"
+    return ToolResult.fail(code, "managed discovery refused (output_budget)", retryable=False)
+
+
+def _envelope(result: ToolResult) -> str:
+    """Encode one bounded envelope; artifacts stay with the controller."""
+    payload = _payload(result)
     try:
         # A PTY may normalize/drop combining characters without reporting
         # truncation. First reject invalid Unicode, then send ASCII-only JSON.

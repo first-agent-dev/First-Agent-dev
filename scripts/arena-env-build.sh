@@ -5,6 +5,8 @@ set -Eeuo pipefail
 
 readonly EXPECTED_PYTHON="3.13.16"
 readonly UV_VERSION="0.13.7"
+readonly JUST_VERSION="1.57.0"
+readonly JUST_PACKAGE="rust-just==$JUST_VERSION"
 readonly DEFAULT_BUILD_ROOT="${HOME}/.cache/arena-python313"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(git -C "$SCRIPT_DIR/.." rev-parse --show-toplevel)"
@@ -20,7 +22,8 @@ usage() {
 Usage: scripts/arena-env-build.sh [--check | --rebuild-python | --help]
 
   (no option)       Reuse a valid CPython/venv when possible, build CPython if
-                    needed, sync this project's frozen dev dependencies, verify.
+                    needed, sync frozen dev dependencies, install pinned uv/just
+                    gate launchers in .venv/bin, and verify.
   --check           Read-only check of the current .venv; do not build or sync.
   --rebuild-python  Force a fresh staged CPython build from pinned source archives,
                     then sync and verify. Existing prefixes are preserved.
@@ -86,15 +89,34 @@ is_usable_python() {
   runtime_smoke "$python" >/dev/null 2>&1
 }
 
+is_pinned_uv() {
+  local version="$1"
+  [[ "$version" == "uv $UV_VERSION" || "$version" == "uv $UV_VERSION "* ]]
+}
+
+is_pinned_just() {
+  [[ "$1" == "just $JUST_VERSION" ]]
+}
+
 check_project_venv() {
   local venv_python="$PROJECT_ROOT/.venv/bin/python"
   [[ -x "$venv_python" ]] || fail "project .venv is missing; run without --check to restore it"
   is_usable_python "$venv_python" || fail "project .venv must be CPython $EXPECTED_PYTHON with SSL/zlib/bz2 and SQLite FTS5"
-  "$venv_python" -m pytest --version
-  [[ -x "$PROJECT_ROOT/.venv/bin/ruff" ]] || fail "dev extra is incomplete: .venv/bin/ruff is missing"
-  "$PROJECT_ROOT/.venv/bin/ruff" --version
+  local venv_bin="$PROJECT_ROOT/.venv/bin"
+  local tool
+  for tool in pytest ruff deptry pylint mypy pyrefly mutmut vulture pip-audit fa; do
+    [[ -x "$venv_bin/$tool" ]] || fail "dev extra is incomplete: .venv/bin/$tool is missing"
+  done
+  [[ -x "$venv_bin/uv" ]] || fail "gate launcher is missing: .venv/bin/uv; rerun without --check"
+  [[ -x "$venv_bin/just" ]] || fail "gate launcher is missing: .venv/bin/just; rerun without --check"
+  is_pinned_uv "$("$venv_bin/uv" --version)" || fail "project .venv must expose uv $UV_VERSION"
+  is_pinned_just "$("$venv_bin/just" --version)" || fail "project .venv must expose just $JUST_VERSION"
+  "$venv_bin/pytest" --version
+  "$venv_bin/ruff" --version
+  "$venv_bin/just" --version
   runtime_smoke "$venv_python"
-  printf 'ENVIRONMENT_CHECK_OK: CPython %s; project dev tools present\n' "$EXPECTED_PYTHON"
+  printf 'ENVIRONMENT_CHECK_OK: CPython %s; pinned uv/just and just-check dev tools present\n' "$EXPECTED_PYTHON"
+  printf 'Run gates with: source %s/.venv/bin/activate && just check\n' "$PROJECT_ROOT"
 }
 
 if [[ "$MODE" == "check" ]]; then
@@ -219,6 +241,7 @@ build_python() {
     cd "$cpython_source"
     export CPPFLAGS="-I$stage/include"
     export LDFLAGS="-L$stage/lib -Wl,-rpath,$PREFIX/lib"
+    export LD_LIBRARY_PATH="$stage/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
     export PKG_CONFIG_PATH="$stage/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
     ./configure --prefix="$stage" --with-openssl="$stage" --with-openssl-rpath=auto
     make -j"$JOBS"
@@ -259,9 +282,35 @@ select_python() {
   build_python
 }
 
-is_pinned_uv() {
-  local version="$1"
-  [[ "$version" == "uv $UV_VERSION" || "$version" == "uv $UV_VERSION "* ]]
+ensure_uv_launcher() {
+  local launcher="$PROJECT_ROOT/.venv/bin/uv"
+  if [[ -x "$launcher" ]] && is_pinned_uv "$("$launcher" --version 2>/dev/null || true)"; then
+    return 0
+  fi
+  if [[ -e "$launcher" && ! -L "$launcher" ]]; then
+    fail "refusing to replace non-symlink .venv/bin/uv; inspect the project environment"
+  fi
+  ln -sfn -- "$UV_PATH" "$launcher"
+  is_pinned_uv "$("$launcher" --version)" || fail "could not expose pinned uv in .venv/bin"
+}
+
+ensure_just() {
+  local venv_bin="$PROJECT_ROOT/.venv/bin"
+  local launcher="$venv_bin/just"
+  if [[ -x "$launcher" ]] && is_pinned_just "$("$launcher" --version 2>/dev/null || true)"; then
+    printf 'Reusing pinned just %s from %s\n' "$JUST_VERSION" "$launcher"
+    return 0
+  fi
+
+  printf 'Installing %s into the external tool cache with a project .venv launcher\n' "$JUST_PACKAGE" >&2
+  UV_TOOL_DIR="$BUILD_ROOT/just-tools" UV_TOOL_BIN_DIR="$venv_bin" \
+    "$UV_PATH" tool install --force --python "$PYTHON" "$JUST_PACKAGE"
+  is_pinned_just "$("$launcher" --version)" || fail "isolated just bootstrap did not produce just $JUST_VERSION"
+}
+
+ensure_gate_launchers() {
+  ensure_uv_launcher
+  ensure_just
 }
 
 ensure_uv() {
@@ -309,5 +358,6 @@ UV_PATH="$(ensure_uv)"
 printf 'Syncing frozen dev environment with %s\n' "$UV_PATH"
 cd "$PROJECT_ROOT"
 UV_SYSTEM_CERTS=true "$UV_PATH" sync --frozen --extra dev --python "$PYTHON"
+ensure_gate_launchers
 check_project_venv
-printf 'ENVIRONMENT_READY: CPython %s; frozen dev extra installed\n' "$EXPECTED_PYTHON"
+printf 'ENVIRONMENT_READY: CPython %s; frozen dev extra and pinned uv/just gate launchers installed\n' "$EXPECTED_PYTHON"

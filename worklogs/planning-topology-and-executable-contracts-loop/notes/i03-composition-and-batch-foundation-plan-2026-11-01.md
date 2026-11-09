@@ -193,3 +193,122 @@ hooks, view/grant, journal, event log и result projection. Исследоват
 безопасно представлять происхождение nested calls, stateful Bash, потерю ответа,
 ограниченные ветвления/циклы и I/O; никаких скрытых host access, новых полномочий,
 самоповторов или предположения о едином snapshot. Не нарушать порядок I04–I06.
+
+## 6. Q135 — F1-only prerequisite; F2–F4 deferred
+
+This is a bounded application of E357/E358, not a plan amendment, new CT/STEP,
+deployment authorization, or evidence that any exit is closed. Following the
+operator direction, source review resolves only F1: `_execute_batch_parallel`
+catches exceptions around submission/collection and can re-dispatch every
+executable payload; E356 recorded duplicate handler effects. The F1-only local
+prerequisite may proceed under the already accepted no-repeat invariant. F2–F4
+remain unresolved and are deferred until live E2E after W3 because current
+contracts/source do not settle their production reachability or exact semantics.
+The overall Q135 safety gate stays BLOCKING; no dependent production cutover is
+authorized by this local slice.
+
+### Eight-point application
+
+1. **Behavior/gap.** Close F1–F4 in the existing `run_session` batch path before
+   any dependent production cutover: never retry a submitted/started call because
+   bookkeeping failed; do not report cancellation/terminality solely from a wait
+   timeout; ensure a hook-rewritten effective call cannot inherit an unsafe
+   parallel/effect classification; and preserve one-to-one call/result identity.
+   F1 is source-confirmed plus recorded local fault injection. F2–F4 have only the
+   synthetic local reachability recorded in §3/E358.
+2. **Seams and candidate files.** Reuse `src/fa/inner_loop/loop.py`'s
+   `_execute_batch_parallel`/`run_session`, `HookRegistry`, `ToolRegistry.dispatch`
+   (which validates the effective call's schema), and the existing
+   `coder_loop.py::drive_session` caller. Candidate code files are
+   `src/fa/inner_loop/loop.py` and, only if the ID contract belongs at provider
+   normalization, `src/fa/inner_loop/coder_loop.py`. Candidate owning banks are
+   `tests/test_tool_batching.py`, `tests/test_coder_loop.py`, and the existing
+   production-composition bank `tests/test_execution_composition.py`. The direct
+   `cli.py::_cmd_inner_loop_smoke` caller must be inventoried, but is a diagnostic
+   route, not the `fa run chat` production root. Do not change `registry.py`, CLI,
+   provider adapters, or introduce a scheduler/worker unless source review proves
+   the current seams cannot enforce the approved contract; any expansion is a
+   new Q# before editing.
+3. **Dependency and mapping.** Preserve Q97/STEP2b → Q103. Before STEP2b's
+   dependent cutover, attach local regression/producer-caller evidence to existing
+   SLICE4 STEP2 (cutover), STEP4 (real direct C1 composition), and STEP5 (full-path
+   producer kills); do not claim the generic CT97/CT110/CT111 banks prove batch
+   safety unless their actual call paths are exercised. If the safety prerequisite
+   cannot close, keep the dependent cutover blocked; do not reorder Q103 or mark
+   an unchecked STEP complete. Final deployed acceptance remains SLICE6, not this
+   local application.
+4. **Safety invariants / F1-only mechanism.** Reuse the already accepted F1
+   invariant: track each submitted future and settle it at most once; never run a
+   blanket sequential fallback over submitted or possibly submitted work. Preserve
+   original call order in returned results. Sequential fallback is allowed only
+   if the executor fails before any submit attempt. If a submit was attempted but
+   no future was retained, return an explicit non-retryable `exec_failed` result;
+   calls not attempted after a partial failure receive an explicit retryable
+   `exec_failed` result because they did not run. No hard cancellation claim may
+   be made for `ThreadPoolExecutor`; no new pool/process architecture is assumed.
+   F2–F4 are not changed here: after `Decision.modify`, schema validation already
+   occurs through `ToolRegistry.dispatch`, but batch reclassification remains
+   unresolved; repeated-ID and empty-ID policy remains open.
+5. **Failure semantics / unresolved contract.** F2 must distinguish elapsed wait
+   budget from stopped work: `Future.cancel()` is not proof that a running handler
+   stopped, and the executor context waits for workers on exit. Decide whether the
+   existing synchronous wait is retained with an honest timeout/non-retry outcome,
+   or whether any stronger deadline requires a separately approved cancellable
+   owner. F3 must preserve lifecycle/security checks for an effective rewritten
+   call. F4 must choose where duplicate IDs are rejected/normalized and what the
+   caller observes, without inventing a public empty-ID contract. Until these
+   decisions are approved, no code may guess at them.
+6. **Test classes and oracles (`/tests-writing`).** C0/C0p: duplicate/missing IDs,
+   malformed calls, submission/collection faults, and order/correlation properties;
+   every invalid-ID outcome must be checked before the first handler effect. C1:
+   real `drive_session` + `run_session`, real registry/hooks/state, only provider
+   I/O mocked; assert ordered per-call structured results and exact handler
+   call-count/effects for pre-submit, partial-submit, post-completion and lost
+   bookkeeping cases. C3: adversarial hook rewrite from read to a different
+   permission/effect class, plus duplicate IDs and mixed outcomes. Add C2 only if
+   the CLI diagnostic route itself changes. Avoid sleep-only timing and reimplemented
+   scheduler doubles; use barriers/events and fault injection at the existing seam.
+7. **Production path and live acceptance.** C1 producer/caller proof is required
+   before claiming the code is shipped. At SLICE6 STEP7, the planner/reviewer must
+   decide whether to add a new live register row or extend a reviewed existing row;
+   STEP8 fixture work follows review, STEP9 maps the producer, and STEP10 runs the
+   actual deployed suite. Candidate witness: one real provider response with
+   multiple calls in one authorized view, mixed per-call outcomes, exact IDs/results,
+   bounded concurrency/resources, and no duplicate effect or host access. Local
+   injected-failure tests are not host evidence; do not claim real-provider delivery
+   of an injected internal fault unless a reviewed deployment-safe harness exists.
+   This runtime path does not append the planning ledger, so a ledger-append E2E
+   is not applicable here.
+8. **Verification / closure.** Producer kill: remove/neutralize the no-re-dispatch
+   and per-future settlement decision in `_execute_batch_parallel`; the counter,
+   result-correlation, and no-duplicate-effect C1 oracle must fail. EDGE kill:
+   bypass the production `drive_session -> run_session` call; the same caller-rooted
+   C1 oracle must lose the behavior. F3/F4 receive their own producer and caller
+   mutations after their source owners are selected. Then run affected tests,
+   relevant Ruff/type gates, diff review, and targeted mutation checks with call-phase
+   failures (no collection/setup errors credited). SLICE6 host/release evidence
+   remains separate; E357/E358 probes and local tests cannot close it.
+
+### Existing-step map and decision gate
+
+| Finding | Current proof / gap | Existing owner proposed for evidence | Not claimed |
+|---|---|---|---|
+| F1 | E356 fault injection + current broad exception fallback | SLICE4 STEP2/STEP5; C1 through `drive_session` | No production incident frequency or deployed proof |
+| F2 | E358 local short-wait probe; executor still joins workers | SLICE4 STEP4/STEP5, then SLICE6 STEP7–10 if terminality is claimed | No hard cancellation/deadline guarantee |
+| F3 | E358 synthetic BEFORE-hook rewrite | SLICE4 STEP4/STEP5 with the actual production hook chain | No claim a shipped hook currently rewrites tool/effect class |
+| F4 | E358 duplicate-ID collision in `results_map` + set-based pairing check | C0/C3 plus SLICE4 C1 caller root; index any required deployed row at SLICE6 | No provider-wide uniqueness guarantee |
+
+**Review gate:** Q135 remains BLOCKING overall. This turn's bounded local scope is
+only the F1 no-repeat prerequisite in `src/fa/inner_loop/loop.py`, with its C1
+caller-rooted test in `tests/test_coder_loop.py`; it does not close batch safety.
+F2 timeout/terminality, F3 effective-call rewrite, and F4 duplicate/empty-ID
+semantics are deferred until live E2E after W3. Keep STEP2b and every dependent
+production enablement blocked until those decisions and their oracles are closed;
+do not silently disable batching or call that a fix. The live acceptance remains
+separate, and the runtime path does not append the planning ledger.
+
+**F1-only local verification:** `tests/test_coder_loop.py` and
+`tests/test_tool_batching.py` — 33 passed; Ruff check/format passed; focused
+Pyrefly — 0 errors. The producer re-dispatch mutant and the caller-edge bypass
+mutant were both killed by the C1 oracle. These local results do not close Q135,
+STEP2b, or the SLICE6 live/deployed gate.

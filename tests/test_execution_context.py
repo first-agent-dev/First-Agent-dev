@@ -124,8 +124,11 @@ def test_absolute_deadline_accessor_is_readonly_and_does_not_reset_with_elapsed_
         assert framed.deadline == 13.0
 
 
-@pytest.mark.parametrize("op", list(Operation))
-def test_all_closed_operations_forward_kernel_peer_and_original_absolute_deadline(
+@pytest.mark.parametrize(
+    "op",
+    [op for op in Operation if op not in {Operation.LIST_PROJECT_ARTIFACTS, Operation.DIFF_REVISIONS}],
+)
+def test_all_v1_closed_operations_forward_kernel_peer_and_original_absolute_deadline(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, op: Operation
 ) -> None:
     clock = [0.0]

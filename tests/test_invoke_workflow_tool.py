@@ -247,17 +247,50 @@ class _RecordingParentLease:
         self.state = "active"
 
 
+def _workflow_session_manager(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Any, Path]:
+    """Provide the typed managed lifecycle seam used by handoff unit tests."""
+    from fa.session.manager import SessionManager
+    from fa.session.provisioning import ProvisionedWorkspace, ProvisionMode
+    from fa.workspace_bootstrap import ReadyState, ReadyStatus
+
+    def provision(request: Any) -> ProvisionedWorkspace:
+        assert request.mode is ProvisionMode.PROVISION
+        request.workspace_path.mkdir(parents=True, exist_ok=False)
+        return ProvisionedWorkspace(
+            registered=True,
+            workspace_id="ws-workflow-test",
+            revision_id="rev-workflow-test",
+            tree_sha256="a" * 64,
+        )
+
+    def prepare(workspace: Path, _run_context: Any) -> ReadyState:
+        return ReadyState(
+            status=ReadyStatus.READY,
+            fingerprint="sha256:workflow-test",
+            reason_code="ready_managed_artifact",
+            log_path=workspace / ".fa" / "managed-readiness.log",
+            repaired=False,
+            elapsed_ms=1,
+        )
+
+    state_root = tmp_path / "state"
+    monkeypatch.setenv("FA_STATE_ROOT", str(state_root))
+    manager = SessionManager(
+        state_root=state_root,
+        workspace_root=tmp_path / "workspaces",
+        workspace_preparer=prepare,
+        workspace_provisioner=provision,
+    )
+    return manager, state_root
+
+
 def _managed_context(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     *,
     client_failure: tuple[int, BaseException] | None = None,
 ) -> tuple[WorkflowInvocationContext, ManagedExecution, _RecordingParentLease, list[str]]:
-    from fa.session.manager import SessionManager
-
-    state_root = tmp_path / "state"
-    monkeypatch.setenv("FA_STATE_ROOT", str(state_root))
-    manager = SessionManager(state_root=state_root, workspace_root=tmp_path / "workspaces")
+    manager, _state_root = _workflow_session_manager(tmp_path, monkeypatch)
     session = manager.provision_entrypoint_session(
         session_id="parent-session", workspace_override=tmp_path / "workspaces/workspace"
     )
@@ -928,11 +961,7 @@ def test_noncoder_child_rejects_invalid_parent_authority(
 ) -> None:
     from dataclasses import replace
 
-    from fa.session.manager import SessionManager
-
-    state = tmp_path / "state"
-    monkeypatch.setenv("FA_STATE_ROOT", str(state))
-    manager = SessionManager(state_root=state, workspace_root=tmp_path / "workspaces")
+    manager, state = _workflow_session_manager(tmp_path, monkeypatch)
     session = manager.provision_entrypoint_session(
         session_id="parent-session", workspace_override=tmp_path / "workspaces/workspace"
     )

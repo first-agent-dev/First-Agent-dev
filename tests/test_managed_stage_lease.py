@@ -7,7 +7,7 @@ import time
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any, cast, override
 
 import pytest
 
@@ -46,6 +46,7 @@ class _RecordingClient(ExecutionClient):
         super().__init__(source._path, server_uid=source._server_uid, rpc_timeout_ms=source._timeout_ms)
         self.sent: list[Operation] = []
 
+    @override
     def request(self, operation: Operation, **kwargs: Any) -> dict[str, Any]:
         self.sent.append(operation)
         return super().request(operation, **kwargs)
@@ -54,6 +55,7 @@ class _RecordingClient(ExecutionClient):
 class _ReleaseRefusingClient(_RecordingClient):
     """Inject one authoritative RELEASE refusal while forwarding all stage RPCs."""
 
+    @override
     def request(self, operation: Operation, **kwargs: Any) -> dict[str, Any]:
         if operation is Operation.RELEASE:
             self.sent.append(operation)

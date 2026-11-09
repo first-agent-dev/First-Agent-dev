@@ -67,8 +67,14 @@ def test_extra_tool_registration_failures_and_duplicates_are_observable(tmp_path
     original = {name: getattr(tool_module, name) for name in names}
     try:
         # fs_search succeeds → present (signature mirrors the real builder)
-        def build_fs_search(_db_path: Path, _workspace_root: Path, *, workspace_io: object = None) -> ToolSpec:
-            del workspace_io
+        def build_fs_search(
+            _db_path: Path,
+            _workspace_root: Path,
+            *,
+            workspace_io: object = None,
+            project_tool_executor: Any | None = None,
+        ) -> ToolSpec:
+            del workspace_io, project_tool_executor
             return _spec("fs_search")
 
         tool_module.build_fs_search_tool = build_fs_search
@@ -143,10 +149,12 @@ def test_profile_registry_propagates_schema_contract_failure(
         *,
         planner_dispatch: PlannerDispatch | None = None,
         workspace_io: WorkspacePort | None = None,
+        managed_executor: Any | None = None,
+        project_tool_executor: Any | None = None,
     ) -> dict[str, Callable[[], ToolSpec]]:
         # Mirror the production composition-root signature; a drifting double
         # turns the guard under test into a TypeError from the fallback path.
-        del bash_timeout, planner_dispatch, workspace_io
+        del bash_timeout, planner_dispatch, workspace_io, managed_executor, project_tool_executor
         return {"fs_run_bash": lambda: _nonportable_spec("fs_run_bash")}
 
     monkeypatch.setattr(profile_module, "_build_tool_builders", broken_builders)
@@ -170,8 +178,14 @@ def test_extra_registry_propagates_schema_contract_failure(
 ) -> None:
     """C1: extra-tool source defects hard-fail while ordinary failures degrade."""
 
-    def build_bad_fs_search(_db_path: Path, _workspace_root: Path, *, workspace_io: object = None) -> ToolSpec:
-        del workspace_io
+    def build_bad_fs_search(
+        _db_path: Path,
+        _workspace_root: Path,
+        *,
+        workspace_io: object = None,
+        project_tool_executor: Any | None = None,
+    ) -> ToolSpec:
+        del workspace_io, project_tool_executor
         return _nonportable_spec("fs_search")
 
     monkeypatch.setattr(tool_module, "build_fs_search_tool", build_bad_fs_search)

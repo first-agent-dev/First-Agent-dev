@@ -20,7 +20,7 @@ from fa.execution.supervisor import SupervisorError
 from fa.execution.types import Access, ExecutionContractError, GrantReply, ViewPurpose
 from fa.execution.workspace import WorkspaceAuthority
 from fa.inner_loop.plan_admission import PlanRef, read_plan_snapshot
-from tests.test_execution_readers import record_path, ref
+from tests.test_execution_readers import read_only_profile, record_path, ref
 from tests.test_execution_views import native_profile
 from tests.test_execution_workspace import ACTOR, PEER, Site, ok, until
 from tests.test_execution_workspace import site as site
@@ -59,7 +59,7 @@ def scope_for(plan_ref: PlanRef) -> dict[str, Any]:
 @contextmanager
 def setup(site: Site) -> Generator[tuple[WorkspaceAuthority, dict[str, str], GrantReply, PlanRef]]:
     (site.source / "plan.md").write_text("# plan\n")
-    with site.owner(view_profile=native_profile()) as owner:
+    with site.owner(view_profile=native_profile(), read_only_profile=read_only_profile()) as owner:
         ids = ok(lambda: site.register(owner))
         lease = ok(lambda: site.claim(owner, ids))
         plan_ref = read_plan_snapshot(site.source, Path("plan.md")).ref

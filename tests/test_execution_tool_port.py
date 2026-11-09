@@ -34,6 +34,7 @@ from fa.inner_loop.tools.edit_file import build_edit_file_tool
 from fa.inner_loop.tools.read_file import build_read_file_tool
 from fa.inner_loop.tools.workspace_port import (
     PORT_READ_MAX_BYTES,
+    PortProjectArtifactListing,
     PortRead,
     PortWrite,
     WorkspacePortError,
@@ -199,6 +200,9 @@ class RacingPort:
 
     def write_file(self, path: str, content: str, *, expected_sha256: str | None = None) -> PortWrite:
         return self.inner.write_file(path, content, expected_sha256=expected_sha256)
+
+    def list_project_artifacts(self, project_slug: str) -> PortProjectArtifactListing:
+        raise AssertionError(f"edit_file must not list project artifacts: {project_slug}")
 
 
 def test_edit_reports_a_conflict_instead_of_overwriting_a_concurrent_writer(site: Site) -> None:

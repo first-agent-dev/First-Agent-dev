@@ -265,6 +265,23 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 _SEED_BASELINE = _REPO_ROOT / "knowledge" / "trace" / "codebase_map.json"
 
 
+def test_inner_loop_smoke_refuses_wrapper_active_workspace_before_effects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: CaptureFixture[str]
+) -> None:
+    workspace = tmp_path / "managed-workspace"
+    workspace.mkdir()
+    monkeypatch.setenv("FA_WRAPPER_ACTIVE_WORKSPACE", str(workspace))
+    parser = build_parser()
+    args = parser.parse_args(["inner-loop-smoke", "--workspace", str(workspace)])
+
+    assert args.func(args) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "workspace refused [smoke_active_workspace_refused]" in captured.err
+    assert not (workspace / ".fa").exists()
+    assert not (workspace / "knowledge" / "trace").exists()
+
+
 @requires_pty_backend
 def test_inner_loop_smoke_wires_learning_observer(tmp_path: Path) -> None:
     """LearningObserver is registered in the smoke CLI and writes
@@ -603,10 +620,10 @@ def test_fa_run_sends_exact_portable_coder_tool_corpus(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """C2 S13.11: shipped `_cmd_run` sends all 17 portable coder tools.
+    """C2 S13.11: shipped `_cmd_run` sends the exact portable coder corpus.
 
-    (S15: fs_exploration_metrics joined the implementer profile — 15→16.
-    S16: fs_reach joined — 16→17. TEST-EDITS declared in PR.)
+    S15/S16 added exploration metrics and reach. Q126-A/E469 retired the
+    legacy host-only subagent tool from product profiles: 17→16.
 
     This is the production-corpus oracle CONF-8 must share. It is intentionally
     stricter than ``test_drive_session_renders_tool_specs_into_request``: a
@@ -630,9 +647,10 @@ def test_fa_run_sends_exact_portable_coder_tool_corpus(
     assert isinstance(tools, list)
     by_name = {tool["function"]["name"]: tool for tool in tools}
 
-    assert len(tools) == 17
+    assert len(tools) == 16
     assert len(by_name) == len(tools)
-    assert {"fs_search", "pr_prepare"} <= set(by_name)
+    assert {"fs_search", "fs_reach", "fs_exploration_metrics", "pr_prepare"} <= set(by_name)
+    assert "fs_spawn_subagent" not in by_name
 
     forbidden = {"anyOf", "oneOf", "allOf", "$ref", "$defs"}
 

@@ -157,6 +157,7 @@ def test_simple_task_keeps_write_tools(tmp_path: Path) -> None:
     """
     names = _build(tmp_path, task=SIMPLE_TASK)
     assert WITHHELD_WRITE_TOOLS <= set(names)
+    assert "fs_spawn_subagent" not in names
 
 
 def test_medium_confidence_task_keeps_write_tools(tmp_path: Path) -> None:
@@ -255,11 +256,10 @@ def test_withheld_set_is_pinned_to_its_exact_members() -> None:
     WITHHELD_WRITE_TOOLS and therefore shrinks with it. This literal is the
     anchor that makes the set's contents a reviewed decision.
 
-    ``fs_spawn_subagent`` belongs here because a subagent inherits a
-    write-capable corpus — withholding the direct write tools while leaving a
-    way to spawn a writer would be a gate in name only.
+    Q126-A/E469 retired the legacy host-only subagent route from product
+    registries, so the gate pins only the supported direct write tools.
     """
-    assert WITHHELD_WRITE_TOOLS == {"fs_write_file", "fs_edit_file", "fs_spawn_subagent"}
+    assert WITHHELD_WRITE_TOOLS == {"fs_write_file", "fs_edit_file"}
 
 
 def test_gated_corpus_has_the_exact_expected_membership(tmp_path: Path) -> None:
@@ -280,7 +280,7 @@ def test_gated_corpus_has_the_exact_expected_membership(tmp_path: Path) -> None:
     assert "fs_spawn_subagent" not in gated
     assert "fs_read_file" in gated
     assert "fs_run_bash" in gated
-    assert len(gated) == len(ungated) - 3
+    assert len(gated) == len(ungated) - 2
 
 
 def test_gate_threshold_is_pinned_to_its_measured_value() -> None:

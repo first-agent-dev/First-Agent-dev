@@ -15,12 +15,17 @@ asserting on the exact request body the FakeProvider receives.
 from __future__ import annotations
 
 import json
+from collections import Counter
 from collections.abc import Mapping
+from concurrent.futures import wait as real_wait
 from pathlib import Path
+from threading import Lock
 from typing import Any, override
 
 import pytest
 
+import fa.inner_loop.loop as loop_module
+from fa.feature_flags import FeatureFlags
 from fa.inner_loop.coder_loop import (
     DEFAULT_MAX_TURNS,
     SessionOutcome,
@@ -35,7 +40,7 @@ from fa.inner_loop.hooks import (
     LifecyclePoint,
     SandboxHook,
 )
-from fa.inner_loop.registry import ToolRegistry, ToolSpec
+from fa.inner_loop.registry import ToolRegistry, ToolResult, ToolSpec
 from fa.inner_loop.runtime_limits import RuntimeLimits
 from fa.inner_loop.state import EventLog, SessionState
 from fa.inner_loop.tools import build_baseline_registry
@@ -228,6 +233,117 @@ def test_drive_session_dispatches_tool_calls_then_completes(tmp_path: Path) -> N
     assert tool_messages[0]["tool_call_id"] == "tc-1"
     assert tool_messages[0]["content"].startswith("echo hi\n\n")
     assert '"text": "hi"' in tool_messages[0]["content"]
+
+
+@pytest.mark.parametrize(
+    "fault",
+    ["wait-after-completion", "executor-before-submit", "submit-after-enqueue"],
+)
+def test_drive_session_settles_parallel_batch_without_replaying_effects(
+    fault: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The provider-facing caller preserves each effect once after pool faults."""
+    tool_calls = (
+        {
+            "id": "batch-a",
+            "type": "function",
+            "function": {"name": "read_probe", "arguments": '{"key": "a"}'},
+        },
+        {
+            "id": "batch-b",
+            "type": "function",
+            "function": {"name": "read_probe", "arguments": '{"key": "b"}'},
+        },
+    )
+    provider = FakeProvider(
+        [
+            _make_response(finish_reason="tool_calls", tool_calls=tool_calls),
+            _make_response(text="done", finish_reason="stop"),
+        ]
+    )
+    effects: Counter[str] = Counter()
+    effect_lock = Lock()
+
+    def read_probe(params: Mapping[str, Any]) -> ToolResult:
+        key = str(params["key"])
+        with effect_lock:
+            effects[key] += 1
+        return ToolResult.ok(f"read {key}", result=key)
+
+    registry = ToolRegistry()
+    registry.register(
+        ToolSpec(
+            name="read_probe",
+            description="A side-effect-counted read probe for the batch safety oracle.",
+            input_schema={
+                "type": "object",
+                "properties": {"key": {"type": "string"}},
+                "required": ["key"],
+            },
+            handler=read_probe,
+            permission="read",
+        )
+    )
+    hooks = HookRegistry()
+    hooks.register(SandboxHook(tmp_path))
+    state = _make_state(tmp_path)
+    state.feature_flags = FeatureFlags(
+        tool_batching_enabled=True,
+        blackboard_enabled=False,
+        telemetry_enabled=False,
+    )
+
+    if fault == "wait-after-completion":
+
+        def wait_then_raise(futures: Any, *, timeout: float | None = None) -> Any:
+            real_wait(futures, timeout=timeout)
+            raise RuntimeError("injected wait bookkeeping failure")
+
+        monkeypatch.setattr(loop_module, "wait", wait_then_raise)
+    elif fault == "executor-before-submit":
+
+        def fail_executor_creation(*, max_workers: int) -> Any:
+            del max_workers
+            raise RuntimeError("injected executor construction failure")
+
+        monkeypatch.setattr(loop_module, "ThreadPoolExecutor", fail_executor_creation)
+    else:
+        original_submit = loop_module.ThreadPoolExecutor.submit
+        submit_count = 0
+
+        def submit_then_lose_future(executor: Any, fn: Any, /, *args: Any, **kwargs: Any) -> Any:
+            nonlocal submit_count
+            submit_count += 1
+            future = original_submit(executor, fn, *args, **kwargs)
+            if submit_count == 2:
+                future.result(timeout=5)
+                raise RuntimeError("injected lost Future after enqueue")
+            return future
+
+        monkeypatch.setattr(loop_module.ThreadPoolExecutor, "submit", submit_then_lose_future)
+
+    outcome = drive_session(
+        "read two independent items",
+        provider_chain=_make_chain(provider),
+        registry=registry,
+        hooks=hooks,
+        state=state,
+    )
+
+    assert outcome.exit_code == 0
+    assert outcome.stop_reason == "stopped_by_llm"
+    assert effects == Counter({"a": 1, "b": 1})
+    assert len(outcome.tool_results) == 2
+    if fault == "submit-after-enqueue":
+        assert outcome.tool_results[0].summary == "read a"
+        assert outcome.tool_results[1].error is not None
+        assert outcome.tool_results[1].error.code == "exec_failed"
+        assert outcome.tool_results[1].error.retryable is False
+        assert "outcome is unknown" in outcome.tool_results[1].error.message
+    else:
+        assert [result.summary for result in outcome.tool_results] == ["read a", "read b"]
+    follow_up_tools = [message for message in provider.calls[1].messages if message.get("role") == "tool"]
+    assert [message["tool_call_id"] for message in follow_up_tools] == ["batch-a", "batch-b"]
 
 
 # -- Iteration cap -----------------------------------------------------------

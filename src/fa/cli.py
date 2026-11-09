@@ -35,6 +35,7 @@ from fa.execution.client import (
     ExecutionUnavailableError,
     ExecutionUncertainError,
     ManagedBashExecutor,
+    ManagedProjectToolExecutor,
 )
 from fa.execution.composition import (
     BoundPlanPublisher,
@@ -352,7 +353,7 @@ def _apply_wrapper_session_workspace(args: argparse.Namespace) -> None:
 
     manager = _session_manager_for_args(argparse.Namespace(workspace=active_workspace))
     active_session = manager.resolve_active_session_for_workspace(active_workspace)
-    if relative_config:
+    if relative_config and config_value is not None:
         args.config = active_session.workspace_path / Path(config_value)
     if use_active_selection:
         args.workspace = active_session.workspace_path
@@ -423,7 +424,7 @@ def _apply_wrapper_authoring_workspace(args: argparse.Namespace) -> None:
         if not workspace.is_relative_to(active_root):
             raise SessionManagerError("workspace_escape", "relative --workspace escapes the active workspace")
         args.workspace = workspace
-    if relative_manifest:
+    if relative_manifest and manifest is not None:
         manifest_path = (active_root / Path(manifest)).resolve()
         if not manifest_path.is_relative_to(active_root):
             raise SessionManagerError("workspace_escape", "relative --manifest escapes the active workspace")
@@ -1617,6 +1618,7 @@ class _ManagedStageLease:
         view_grant: GrantReply,
         workspace_io: ClientWorkspacePort,
         managed_executor: ManagedBashExecutor,
+        project_tool_executor: ManagedProjectToolExecutor,
         plan_ref: PlanRef | None,
         allow_nested_handoff: bool,
     ) -> None:
@@ -1631,6 +1633,8 @@ class _ManagedStageLease:
             or view_grant.view_ref.owner_run_id != namespace.run_id
             or not isinstance(workspace_io, ClientWorkspacePort)
             or not isinstance(managed_executor, ManagedBashExecutor)
+            or not isinstance(project_tool_executor, ManagedProjectToolExecutor)
+            or not project_tool_executor.is_bound_to(namespace, view_grant.view_ref, view_grant)
             or type(allow_nested_handoff) is not bool
         ):
             raise ExecutionContractError
@@ -1639,6 +1643,7 @@ class _ManagedStageLease:
         self._view_grant: GrantReply | None = view_grant
         self.workspace_io = workspace_io
         self.managed_executor = managed_executor
+        self.project_tool_executor = project_tool_executor
         self.plan_ref = plan_ref
         self.allow_nested_handoff = allow_nested_handoff
         self._state = "active"
@@ -1666,6 +1671,7 @@ class _ManagedStageLease:
         self._state = "settling"
         self.workspace_io.suspend()
         self.managed_executor.suspend()
+        self.project_tool_executor.suspend()
         try:
             self.managed.publish_stage(grant, deadline=deadline)
         except BaseException:
@@ -1711,9 +1717,16 @@ class _ManagedStageLease:
                 grant=grant,
                 original_revision_id=base_revision,
             )
+            self.project_tool_executor.rebind(
+                namespace=self.namespace,
+                view=grant.view_ref,
+                grant=grant,
+                original_revision_id=base_revision,
+            )
         except BaseException:
             self.workspace_io.suspend()
             self.managed_executor.suspend()
+            self.project_tool_executor.suspend()
             self._state = "broken"
             if grant is not None:
                 try:
@@ -1732,6 +1745,7 @@ class _ManagedStageLease:
         self._state = "settling"
         self.workspace_io.suspend()
         self.managed_executor.suspend()
+        self.project_tool_executor.suspend()
         self._view_grant = None
         try:
             if accepted:
@@ -1751,6 +1765,7 @@ class _ManagedStageLease:
         self._state = "settling"
         self.workspace_io.suspend()
         self.managed_executor.suspend()
+        self.project_tool_executor.suspend()
         self._view_grant = None
         try:
             if self.managed.stop_view(grant):
@@ -1788,6 +1803,7 @@ def _drive_stage_with_managed_workspace(
     try:
         workspace_io: WorkspacePort | None = None
         managed_executor: BashExecutor | None = None
+        managed_project_tool_executor: ManagedProjectToolExecutor | None = None
         if managed is not None:
             profile = managed.view_profile
             if profile is None or not profile.interactive:
@@ -1826,12 +1842,23 @@ def _drive_stage_with_managed_workspace(
                 original_revision_id=base_revision,
                 controller_root=workspace,
             )
+            managed_project_tool_executor = ManagedProjectToolExecutor(
+                managed.client,
+                namespace=managed.binding.namespace,
+                view=view_grant.view_ref,
+                grant=view_grant,
+                profile=profile,
+                input_tree_sha256=view_grant.input_tree_sha256,
+                plan_sha256=None if plan_ref is None else plan_ref.sha256,
+                original_revision_id=base_revision,
+            )
             lease = _ManagedStageLease(
                 managed=managed,
                 namespace=managed.binding.namespace,
                 view_grant=view_grant,
                 workspace_io=workspace_io,
                 managed_executor=managed_executor,
+                project_tool_executor=managed_project_tool_executor,
                 plan_ref=plan_ref,
                 allow_nested_handoff=owns_writer,
             )
@@ -2215,6 +2242,7 @@ def _build_role_registry(
     planner_dispatch: PlannerDispatch | None = None,
     workspace_io: WorkspacePort | None = None,
     managed_executor: BashExecutor | None = None,
+    project_tool_executor: ManagedProjectToolExecutor | None = None,
 ) -> ToolRegistry:
     """Select the role-appropriate tool registry.
 
@@ -2234,6 +2262,8 @@ def _build_role_registry(
     """
     if workspace_io is None and managed_executor is not None:
         raise ValueError("managed executor requires a managed workspace port")
+    if workspace_io is None and project_tool_executor is not None:
+        raise ValueError("managed project-tool executor requires a managed workspace port")
     if workspace_io is not None:
         if role == "planner":
             return build_planner_registry(
@@ -2242,6 +2272,7 @@ def _build_role_registry(
                 planner_dispatch=planner_dispatch,
                 workspace_io=workspace_io,
                 managed_executor=managed_executor,
+                project_tool_executor=project_tool_executor,
             )
         if role == "eval":
             return build_eval_registry(
@@ -2249,6 +2280,7 @@ def _build_role_registry(
                 bash_timeout_seconds=bash_timeout_seconds,
                 workspace_io=workspace_io,
                 managed_executor=managed_executor,
+                project_tool_executor=project_tool_executor,
             )
         if role == "chat":
             return build_chat_registry(
@@ -2256,12 +2288,14 @@ def _build_role_registry(
                 bash_timeout_seconds=bash_timeout_seconds,
                 workspace_io=workspace_io,
                 managed_executor=managed_executor,
+                project_tool_executor=project_tool_executor,
             )
         return build_baseline_registry(
             workspace,
             bash_timeout_seconds=bash_timeout_seconds,
             workspace_io=workspace_io,
             managed_executor=managed_executor,
+            project_tool_executor=project_tool_executor,
         )
     if role == "planner":
         return build_planner_registry(
@@ -2428,6 +2462,7 @@ def _build_run_tool_registry(
     planner_dispatch: PlannerDispatch | None = None,
     workspace_io: WorkspacePort | None = None,
     managed_executor: BashExecutor | None = None,
+    project_tool_executor: ManagedProjectToolExecutor | None = None,
 ) -> ToolRegistry:
     """Build the exact role tool corpus used by a live ``fa run``.
 
@@ -2455,6 +2490,8 @@ def _build_run_tool_registry(
 
     if workspace_io is None and managed_executor is not None:
         raise ValueError("managed executor requires a managed workspace port")
+    if workspace_io is None and project_tool_executor is not None:
+        raise ValueError("managed project-tool executor requires a managed workspace port")
     if workspace_io is None:
         registry = _build_role_registry(
             role, workspace, bash_timeout_seconds=bash_timeout_seconds, planner_dispatch=planner_dispatch
@@ -2467,6 +2504,7 @@ def _build_run_tool_registry(
             planner_dispatch=planner_dispatch,
             workspace_io=workspace_io,
             managed_executor=managed_executor,
+            project_tool_executor=project_tool_executor,
         )
     registry = _apply_escalation_gate(registry, role=role, scope_point=scope_point, gate_enabled=gate_enabled)
     registry.register(build_prepare_pr_tool(draft_store))
@@ -3147,6 +3185,7 @@ def _cmd_run(  # noqa: C901
             ),
             workspace_io=workspace_io,
             managed_executor=managed_executor,
+            project_tool_executor=None if stage_lease is None else stage_lease.project_tool_executor,
         )
         return _register_managed_subagent_tool(
             registry,

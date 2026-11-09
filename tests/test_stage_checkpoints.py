@@ -40,7 +40,7 @@ import secrets
 import time
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, cast, override
 
 import pytest
 
@@ -150,12 +150,14 @@ class LyingStages(LocalStages):
         super().__init__(owner)
         self.lie = lie
 
+    @override
     def stop_view(self, view: ViewRef, capability: str, *, request_id: str, deadline: float) -> ViewStopResult:
         result = super().stop_view(view, capability, request_id=request_id, deadline=deadline)
         if self.lie == "unknown-view":
             return ViewStopResult("view-" + "0" * 32, result.terminal, result.verdict)
         return result
 
+    @override
     def publish(
         self,
         view: ViewRef,
@@ -210,6 +212,7 @@ class SilentStages:
 class TruthyStop(LocalStages):
     """A real terminal stop, reported as truthy-but-not-``True``."""
 
+    @override
     def stop_view(self, view: ViewRef, capability: str, *, request_id: str, deadline: float) -> ViewStopResult:
         super().stop_view(view, capability, request_id=request_id, deadline=deadline)
         return ViewStopResult(view.view_id, cast(bool, 1), TerminalVerdict.TERMINAL)

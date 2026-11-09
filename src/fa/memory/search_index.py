@@ -31,7 +31,7 @@ import time
 from dataclasses import dataclass, field
 from dataclasses import replace as dataclasses_replace
 from pathlib import Path
-from typing import Any, Self
+from typing import Any, Literal, Self
 from uuid import uuid4
 
 from fa.memory._safe_walk import DEFAULT_PATTERNS, RootedFileReader, RootedReadError, iter_searchable_files
@@ -293,9 +293,21 @@ def walk_scope_listing(
 class SearchIndex:
     """Unified BM25+trigram FTS5 index over a workspace."""
 
-    def __init__(self, db_path: Path, *, rooted_reader: RootedFileReader | None = None) -> None:
+    def __init__(
+        self,
+        db_path: Path,
+        *,
+        rooted_reader: RootedFileReader | None = None,
+        managed_bounded: bool = False,
+    ) -> None:
+        if type(managed_bounded) is not bool:
+            raise ValueError("managed_bounded must be bool")
         self.db_path = Path(db_path)
         self._rooted_reader = rooted_reader
+        self._managed_bounded = managed_bounded
+        self._managed_deadline: float | None = None
+        self._managed_sources: dict[str, bytes] = {}
+        self._managed_candidates: tuple[Any, ...] = ()
         self._memory_key = uuid4().hex if self.db_path == Path(":memory:") else None
         if self._memory_key is None:
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -313,6 +325,16 @@ class SearchIndex:
             self._conn = sqlite3.connect(str(self.db_path), timeout=10.0)
             if self._memory_key is not None:
                 self._conn.execute("PRAGMA temp_store=MEMORY")
+            if self._managed_bounded:
+                self._conn.execute("PRAGMA page_size=4096")
+                self._conn.execute("PRAGMA max_page_count=32768")
+                self._conn.execute("PRAGMA cache_size=-16384")
+                if (
+                    self._conn.execute("PRAGMA page_size").fetchone()[0] != 4096
+                    or self._conn.execute("PRAGMA max_page_count").fetchone()[0] > 32768
+                    or self._conn.execute("PRAGMA cache_size").fetchone()[0] != -16384
+                ):
+                    raise sqlite3.OperationalError("managed SQLite limits unavailable")
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.execute("PRAGMA synchronous=NORMAL")
         except sqlite3.Error as exc:
@@ -372,12 +394,15 @@ class SearchIndex:
         try:
             if self._conn is not None:
                 try:
+                    self._conn.set_progress_handler(None, 0)
                     self._conn.close()
                 except sqlite3.Error:
                     if strict:
                         raise
         finally:
             self._conn = None
+            self._managed_sources.clear()
+            self._managed_candidates = ()
             if self._memory_key is not None:
                 prefix = f"memory:{self._memory_key}::"
                 for key in tuple(_refresh_state):
@@ -652,6 +677,103 @@ class SearchIndex:
                 pass
         return stats
 
+    def _check_managed_page_budget(self) -> None:
+        if self._conn is None:
+            raise sqlite3.OperationalError("managed SQLite connection unavailable")
+        page_size = int(self._conn.execute("PRAGMA page_size").fetchone()[0])
+        page_count = int(self._conn.execute("PRAGMA page_count").fetchone()[0])
+        max_pages = int(self._conn.execute("PRAGMA max_page_count").fetchone()[0])
+        if page_size != 4096 or page_count > 32768 or max_pages > 32768:
+            from fa.memory.managed_discovery import ManagedDiscoveryError
+
+            raise ManagedDiscoveryError("index_budget")
+
+    def _index_managed_candidate(self, root: Path, candidate: Any, stats: SearchStats, *, source_remaining: int) -> int:
+        from fa.memory.managed_discovery import ManagedDiscoveryError, _read_managed_candidate
+
+        if candidate.oversized:
+            stats.skipped += 1
+            return 0
+        if self._rooted_reader is None:
+            raise ManagedDiscoveryError("unsafe_path")
+        canonical_rel, raw = _read_managed_candidate(self._rooted_reader, candidate)
+        if len(raw) > source_remaining:
+            raise ManagedDiscoveryError("source_budget")
+        self._check_managed_deadline()
+        if self._conn is None:
+            raise ManagedDiscoveryError("index_budget")
+        self._managed_sources[canonical_rel] = raw
+        self._index_one_file(root / canonical_rel, canonical_rel, 0.0, len(raw), stats, source_bytes=raw)
+        if stats.errors:
+            raise ManagedDiscoveryError("index_budget")
+        self._check_managed_page_budget()
+        return len(raw)
+
+    def ensure_managed_indexed(self, root: Path, inventory: Any, *, deadline: float) -> SearchStats:
+        """Build a one-shot bounded index from a complete managed inventory.
+
+        Unlike the legacy refresh path this never falls back to an unbounded
+        walker. Any read, deadline, or SQLite quota failure aborts the call.
+        """
+        from fa.memory.managed_discovery import (
+            MAX_MANAGED_CANDIDATES,
+            MAX_MANAGED_SOURCE_BYTES,
+            ManagedDiscoveryError,
+        )
+
+        if not self._managed_bounded or self._rooted_reader is None:
+            raise ManagedDiscoveryError("unsafe_path")
+        if type(deadline) not in {int, float} or deadline <= 0:
+            raise ManagedDiscoveryError("deadline")
+        if not self._available or self._conn is None:
+            raise ManagedDiscoveryError("index_budget")
+        if len(inventory.candidates) > MAX_MANAGED_CANDIDATES:
+            raise ManagedDiscoveryError("candidate_budget")
+        if inventory.eligible_source_bytes > MAX_MANAGED_SOURCE_BYTES:
+            raise ManagedDiscoveryError("source_budget")
+
+        self._managed_deadline = float(deadline)
+        self._managed_sources.clear()
+        self._managed_candidates = tuple(inventory.candidates)
+        self._conn.set_progress_handler(lambda: int(time.monotonic() >= deadline), 1000)
+        stats = SearchStats(total_candidates=len(inventory.candidates))
+        try:
+            self._check_managed_deadline()
+            self._conn.execute("DELETE FROM files_fts")
+            self._conn.execute("DELETE FROM files_fts_bm25")
+            self._conn.execute("DELETE FROM fts_meta")
+            actual_source_bytes = 0
+            for candidate in inventory.candidates:
+                self._check_managed_deadline()
+                actual_source_bytes += self._index_managed_candidate(
+                    root,
+                    candidate,
+                    stats,
+                    source_remaining=MAX_MANAGED_SOURCE_BYTES - actual_source_bytes,
+                )
+            self._check_managed_deadline()
+            self._conn.commit()
+            self._indexed_for_session = True
+            return stats
+        except ManagedDiscoveryError:
+            self._conn.rollback()
+            self._managed_sources.clear()
+            self._managed_candidates = ()
+            raise
+        except sqlite3.Error:
+            self._conn.rollback()
+            self._managed_sources.clear()
+            self._managed_candidates = ()
+            if time.monotonic() >= deadline:
+                raise ManagedDiscoveryError("deadline") from None
+            raise ManagedDiscoveryError("index_budget") from None
+
+    def _check_managed_deadline(self) -> None:
+        from fa.memory.managed_discovery import ManagedDiscoveryError
+
+        if self._managed_deadline is not None and time.monotonic() >= self._managed_deadline:
+            raise ManagedDiscoveryError("deadline")
+
     # ------------------------------------------------------------------
     # Query helpers (PURE — no FS / DB IO)
     # ------------------------------------------------------------------
@@ -807,6 +929,13 @@ class SearchIndex:
         return "" if raw is None else cls._decode_text_for_match(raw)
 
     def _compute_total_bytes(self, root: Path, rels: list[str]) -> int:
+        if self._managed_bounded:
+            from fa.memory.managed_discovery import ManagedDiscoveryError
+
+            try:
+                return sum(len(self._managed_sources[rel]) for rel in rels)
+            except KeyError:
+                raise ManagedDiscoveryError("unsafe_path") from None
         total: int = 0
         for rel in rels:
             if self._rooted_reader is not None:
@@ -978,12 +1107,12 @@ class SearchIndex:
         # FTS5 MATCH/LIKE cannot honor Python regex or case-sensitive
         # semantics against a case-folded tokenizer.
         if effective.regex:
-            return self._search_python_walk(
+            return self._search_query_fallback(
                 params=effective,
                 root=root,
-                _subdir=subdir,
+                subdir=subdir,
                 result=result,
-                as_regex=bool(effective.regex),
+                as_regex=True,
             )
 
         # F2: ephemeral instances (e.g. subagent_prompts creates one per
@@ -1044,10 +1173,10 @@ class SearchIndex:
                     rooted_reader=self._rooted_reader,
                 )
 
-        return self._search_python_walk(
+        return self._search_query_fallback(
             params=effective,
             root=root,
-            _subdir=subdir,
+            subdir=subdir,
             result=result,
             as_regex=False,
         )
@@ -1078,6 +1207,15 @@ class SearchIndex:
         try:
             rows = self._conn.execute(sql, params).fetchall()
         except sqlite3.Error as exc:
+            if self._managed_bounded:
+                from fa.memory.managed_discovery import ManagedDiscoveryError
+
+                reason: Literal["deadline", "index_budget"] = (
+                    "deadline"
+                    if self._managed_deadline and time.monotonic() >= self._managed_deadline
+                    else "index_budget"
+                )
+                raise ManagedDiscoveryError(reason) from None
             logger.debug("BM25 query failed (%s); falling back", exc)
             return []
         return [(rel, float(score)) for rel, score in rows][:limit]
@@ -1107,6 +1245,15 @@ class SearchIndex:
             params.append(limit * 2)
             rows = self._conn.execute(sql, params).fetchall()
         except sqlite3.Error as exc:
+            if self._managed_bounded:
+                from fa.memory.managed_discovery import ManagedDiscoveryError
+
+                reason: Literal["deadline", "index_budget"] = (
+                    "deadline"
+                    if self._managed_deadline and time.monotonic() >= self._managed_deadline
+                    else "index_budget"
+                )
+                raise ManagedDiscoveryError(reason) from None
             logger.debug("trigram query failed (%s); falling back", exc)
             return []
         return [(rel, 0.0) for (rel,) in rows][:limit]
@@ -1132,6 +1279,79 @@ class SearchIndex:
         except (OSError, ValueError) as exc:
             logger.debug("skipping %s during walk: %s", fp, exc)
             return None
+
+    def _search_query_fallback(
+        self,
+        *,
+        params: SearchParams,
+        root: Path,
+        subdir: Path,
+        result: SearchResult,
+        as_regex: bool,
+    ) -> SearchResult:
+        if self._managed_bounded:
+            return self._search_managed_sources(params=params, root=root, result=result, as_regex=as_regex)
+        return self._search_python_walk(
+            params=params,
+            root=root,
+            _subdir=subdir,
+            result=result,
+            as_regex=as_regex,
+        )
+
+    def _search_managed_sources(
+        self,
+        *,
+        params: SearchParams,
+        root: Path,
+        result: SearchResult,
+        as_regex: bool,
+    ) -> SearchResult:
+        from fa.memory.managed_discovery import ManagedDiscoveryError
+
+        pat = re.compile(params.query) if as_regex else None
+        needle = params.query.lower()
+        hits: list[tuple[str, float]] = []
+        match_counts: dict[str, int] = {}
+        per_file_matches: dict[str, list[tuple[int, str]]] = {}
+        for rel, raw in sorted(self._managed_sources.items()):
+            self._check_managed_deadline()
+            if not self._passes_filters(
+                rel,
+                subdir_rel=params.subdir_rel,
+                glob_pat=params.glob_pat,
+                exclude_set=params.exclude_set,
+            ):
+                continue
+            text = self._decode_text_for_match(raw)
+            if as_regex:
+                if pat is None:
+                    raise ManagedDiscoveryError("index_budget")
+                rows = [
+                    (line_no, line.rstrip()) for line_no, line in enumerate(text.splitlines(), 1) if pat.search(line)
+                ]
+                count = len(rows)
+                if rows:
+                    per_file_matches[rel] = rows
+            else:
+                lowered = text.lower()
+                count = lowered.count(needle)
+            if count:
+                hits.append((rel, 0.0))
+                match_counts[rel] = count
+        result.method = "regex_fallback" if as_regex else "literal_fallback"
+        if not self._managed_sources and any(not candidate.oversized for candidate in self._managed_candidates):
+            raise ManagedDiscoveryError("index_budget")
+        return self._format_hits(
+            hits,
+            params=params,
+            root=root,
+            method=result.method,
+            result=result,
+            match_counts_override=match_counts,
+            per_file_matches_override=per_file_matches if as_regex else None,
+            rooted_reader=self._rooted_reader,
+        )
 
     def _search_python_walk(
         self,
@@ -1300,7 +1520,14 @@ class SearchIndex:
                 truncated = True
                 continue  # count remaining regions from in-memory hits; no extra read
             fp: Path = root / rel
-            if self._rooted_reader is None:
+            if self._managed_bounded:
+                from fa.memory.managed_discovery import ManagedDiscoveryError
+
+                raw = self._managed_sources.get(rel)
+                if raw is None:
+                    raise ManagedDiscoveryError("unsafe_path")
+                text = self._decode_text_for_match(raw)
+            elif self._rooted_reader is None:
                 text = self._read_text_for_match(fp, MAX_SEARCH_FILE_BYTES)
             else:
                 rel, raw = self._rooted_reader.read_bytes_with_path(rel, max_bytes=MAX_SEARCH_FILE_BYTES)
@@ -1354,6 +1581,26 @@ class SearchIndex:
                 grouped.append([(ln, content)])
         return grouped
 
+    def _load_index_hit(self, fp: Path, rel: str, root: Path, read_cap: int) -> tuple[str, str | None] | None:
+        if self._managed_bounded:
+            from fa.memory.managed_discovery import ManagedDiscoveryError
+
+            raw = self._managed_sources.get(rel)
+            if raw is None:
+                raise ManagedDiscoveryError("unsafe_path")
+            return rel, self._decode_text_for_match(raw)
+        if self._rooted_reader is not None:
+            canonical_rel, raw = self._rooted_reader.read_bytes_with_path(rel, max_bytes=read_cap)
+            return canonical_rel, self._decode_text_for_match(raw)
+        try:
+            resolved = fp.resolve()
+            if not resolved.is_relative_to(root) or not resolved.is_file():
+                return None
+            canonical_rel = str(resolved.relative_to(root)).replace("\\", "/")
+            return canonical_rel, None
+        except OSError:
+            return None
+
     def _collect_matches(
         self,
         hits: list[tuple[str, float]],
@@ -1389,24 +1636,10 @@ class SearchIndex:
             ):
                 continue
             fp: Path = root / rel
-            if self._rooted_reader is None:
-                try:
-                    resolved: Path = fp.resolve()
-                    if not resolved.is_relative_to(root):
-                        logger.warning("skipping indexed path outside root: %s", rel)
-                        continue
-                    if not resolved.is_file():
-                        continue
-                except OSError as exc:
-                    logger.warning("stat failed for %s: %s", rel, exc)
-                    continue
-                # Re-normalize rel against the resolved path (defense against
-                # symlink swap during iteration).
-                rel = str(resolved.relative_to(root)).replace("\\", "/")
-                rooted_text = None
-            else:
-                rel, raw = self._rooted_reader.read_bytes_with_path(rel, max_bytes=read_cap)
-                rooted_text = self._decode_text_for_match(raw)
+            loaded = self._load_index_hit(fp, rel, root, read_cap)
+            if loaded is None:
+                continue
+            rel, rooted_text = loaded
             matched_files.append(rel)
             if rel in precomputed:
                 fm_list = precomputed[rel]
@@ -1429,6 +1662,19 @@ class SearchIndex:
                 truncated = True
                 break
         return matched_files, match_counts, per_file_matches, truncated
+
+    def _managed_file_rows(self, rels: list[str], limit: int) -> list[dict[str, Any]]:
+        from fa.memory.managed_discovery import ManagedDiscoveryError
+
+        rows: list[dict[str, Any]] = []
+        for rel in sorted(rels)[:limit]:
+            raw = self._managed_sources.get(rel)
+            if raw is None:
+                raise ManagedDiscoveryError("unsafe_path")
+            text = self._decode_text_for_match(raw)
+            lines = len(text.splitlines()) if text else (0 if not raw else None)
+            rows.append({"path": rel, "lines": lines, "bytes": len(raw)})
+        return rows
 
     def _format_hits(
         self,
@@ -1466,15 +1712,28 @@ class SearchIndex:
         result.total_bytes = self._compute_total_bytes(root, matched_files)
 
         if params.output_mode == "files":
-            _rels, skipped_large = walk_scope_listing(
-                root,
-                subdir_rel=params.subdir_rel,
-                glob_pat=params.glob_pat,
-                exclude_set=params.exclude_set,
-                rooted_reader=rooted_reader,
-            )
-            result.skipped_large_files = skipped_large
-            result.files = files_stat_rows(root, matched_files, params.limit, rooted_reader=rooted_reader)
+            if self._managed_bounded:
+                result.skipped_large_files = sum(
+                    candidate.oversized
+                    and self._passes_filters(
+                        candidate.relative_path,
+                        subdir_rel=params.subdir_rel,
+                        glob_pat=params.glob_pat,
+                        exclude_set=params.exclude_set,
+                    )
+                    for candidate in self._managed_candidates
+                )
+                result.files = self._managed_file_rows(matched_files, params.limit)
+            else:
+                _rels, skipped_large = walk_scope_listing(
+                    root,
+                    subdir_rel=params.subdir_rel,
+                    glob_pat=params.glob_pat,
+                    exclude_set=params.exclude_set,
+                    rooted_reader=rooted_reader,
+                )
+                result.skipped_large_files = skipped_large
+                result.files = files_stat_rows(root, matched_files, params.limit, rooted_reader=rooted_reader)
             result.returned = len(result.files)
             result.total = len(matched_files)
         elif params.output_mode == "matches":

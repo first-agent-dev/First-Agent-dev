@@ -30,6 +30,34 @@ def test_batching_grouping() -> None:
         assert old not in read_only
 
 
+def test_managed_discovery_is_serial_per_view_while_legacy_reads_remain_parallel() -> None:
+    from fa.inner_loop.loop import classify_batches, is_parallelizable
+    from fa.inner_loop.registry import ToolCall, ToolRegistry, ToolResult, ToolSpec
+
+    def spec(name: str, *, managed: bool) -> ToolSpec:
+        return ToolSpec(
+            name=name,
+            description=name,
+            input_schema={"type": "object", "properties": {}, "additionalProperties": False},
+            permission="read",
+            handler=lambda _params: ToolResult.ok("ok"),
+            tags=("managed-view-serial",) if managed else (),
+        )
+
+    calls = [ToolCall("fs_search", {}, "search"), ToolCall("fs_reach", {}, "reach")]
+    managed_registry = ToolRegistry()
+    managed_registry.register(spec("fs_search", managed=True))
+    managed_registry.register(spec("fs_reach", managed=True))
+    assert not is_parallelizable(calls[0], managed_registry)
+    assert classify_batches(calls, managed_registry) == [[calls[0]], [calls[1]]]
+
+    legacy_registry = ToolRegistry()
+    legacy_registry.register(spec("fs_search", managed=False))
+    legacy_registry.register(spec("fs_reach", managed=False))
+    assert is_parallelizable(calls[0], legacy_registry)
+    assert classify_batches(calls, legacy_registry) == [calls]
+
+
 def test_threadpool_parallel() -> None:
     import time
     from concurrent.futures import ThreadPoolExecutor

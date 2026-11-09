@@ -15,7 +15,6 @@ from fa.execution import project_tools
 from fa.inner_loop.registry import ToolResult
 from fa.inner_loop.tools.fs_reach import build_fs_reach_tool
 from fa.inner_loop.tools.fs_search import build_fs_search_tool
-from fa.memory import structural_index
 from fa.memory.search_index import SearchIndex, _refresh_state
 from fa.memory.structural_index import StructuralIndex
 
@@ -84,6 +83,50 @@ def test_existing_reach_default_still_uses_legacy_db(tmp_path: Path) -> None:
     assert (root / ".fa" / "structural.db").is_file()
 
 
+@pytest.mark.parametrize(
+    ("tool", "params", "error_code"),
+    [
+        ("fs_search", {"query": "safe_symbol", "output_mode": "files"}, "search_failed"),
+        ("fs_reach", {"symbol": "safe_symbol", "direction": "down"}, "reach_failed"),
+    ],
+)
+def test_cell_discovery_rejects_same_size_file_replacement_after_inventory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tool: str,
+    params: dict[str, Any],
+    error_code: str,
+) -> None:
+    root, scratch = _tree(tmp_path, "mutable-view", "def safe_symbol():\n    pass\n")
+    target = root / "chain.py"
+    from fa.memory import managed_discovery
+
+    original_inventory = managed_discovery.inventory_managed_files
+    replaced = False
+
+    def replace_after_inventory(root_arg: Path, *, deadline: float, **kwargs: Any) -> Any:
+        nonlocal replaced
+        inventory = original_inventory(root_arg, deadline=deadline, **kwargs)
+        if any(candidate.relative_path == "chain.py" for candidate in inventory.candidates):
+            replacement = root / "replacement.tmp"
+            replacement.write_text("def evil_symbol():\n    pass\n", encoding="utf-8")
+            replacement.replace(target)
+            replaced = True
+        return inventory
+
+    monkeypatch.setattr(managed_discovery, "inventory_managed_files", replace_after_inventory)
+    result = project_tools._dispatch(tool, params, root=root, scratch=scratch)
+
+    assert replaced is True
+    assert result.error is not None and result.error.code == error_code
+    assert result.error.message.endswith("(unsafe_path)")
+    assert result.error.retryable is False
+    assert result.result is None
+    assert "evil_symbol" not in json.dumps(result.result)
+    assert list(scratch.iterdir()) == []
+    assert not (root / ".fa").exists()
+
+
 def test_cell_reach_refuses_symlink_replacement_after_enumeration(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -91,19 +134,21 @@ def test_cell_reach_refuses_symlink_replacement_after_enumeration(
     target = root / "chain.py"
     outside = tmp_path / "outside.py"
     outside.write_text("def escaped_secret():\n    pass\n", encoding="utf-8")
-    original_walk = structural_index.iter_searchable_files
+    from fa.memory import managed_discovery
+
+    original_inventory = managed_discovery.inventory_managed_files
     swapped = False
 
-    def replace_after_enumeration(*args: Any, **kwargs: Any) -> Any:
+    def replace_after_inventory(root_arg: Path, *, deadline: float, **kwargs: Any) -> Any:
         nonlocal swapped
-        for row in original_walk(*args, **kwargs):
-            yield row
-            if row[1] == "chain.py" and not swapped:
-                swapped = True
-                target.unlink()
-                target.symlink_to(outside)
+        inventory = original_inventory(root_arg, deadline=deadline, **kwargs)
+        if any(candidate.relative_path == "chain.py" for candidate in inventory.candidates):
+            target.unlink()
+            target.symlink_to(outside)
+            swapped = True
+        return inventory
 
-    monkeypatch.setattr(structural_index, "iter_searchable_files", replace_after_enumeration)
+    monkeypatch.setattr(managed_discovery, "inventory_managed_files", replace_after_inventory)
     result = project_tools._dispatch("fs_reach", {"symbol": "escaped_secret"}, root=root, scratch=scratch)
 
     assert swapped is True
@@ -555,7 +600,7 @@ def test_cell_search_rooted_refusal_has_no_fallback_partial_result_or_external_b
     params: dict[str, Any],
 ) -> None:
     from fa.inner_loop.tools import fs_search
-    from fa.memory import _safe_walk, search_index
+    from fa.memory import _safe_walk, managed_discovery
 
     root, scratch = _tree(tmp_path, f"strict-{surface}", "def safe_symbol():\n    pass\n")
     target = root / "chain.py"
@@ -579,16 +624,17 @@ def test_cell_search_rooted_refusal_has_no_fallback_partial_result_or_external_b
 
         monkeypatch.setattr(_safe_walk.RootedFileReader, "read_bytes_with_path", swap_before_rooted_read)
     else:
-        original_walk = search_index.iter_searchable_files
+        original_inventory = managed_discovery.inventory_managed_files
 
-        def swap_after_enumeration(*args: Any, **kwargs: Any) -> Any:
-            for row in original_walk(*args, **kwargs):
-                yield row
-                if row[1] == "chain.py":
-                    replace_target()
+        def swap_after_inventory(root_arg: Path, *, deadline: float, **kwargs: Any) -> Any:
+            inventory = original_inventory(root_arg, deadline=deadline, **kwargs)
+            if any(candidate.relative_path == "chain.py" for candidate in inventory.candidates):
+                replace_target()
+            return inventory
 
-        monkeypatch.setattr(search_index, "iter_searchable_files", swap_after_enumeration)
+        monkeypatch.setattr(managed_discovery, "inventory_managed_files", swap_after_inventory)
         if surface == "fallback":
+
             def force_fallback(holder: Any, root_arg: Path, max_file_size: int, warnings: list[str]) -> None:
                 del root_arg, max_file_size, warnings
                 holder._indexed = False

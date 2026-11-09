@@ -30,6 +30,8 @@ from pathlib import Path
 import pytest
 
 from fa.execution.client import ExecutionRejectedError, ExecutionUncertainError, StagePublication
+from fa.execution.composition import ManagedExecution
+from fa.execution.tool_port import ClientWorkspacePort
 from fa.execution.types import (
     Access,
     ExecutionContractError,
@@ -38,7 +40,7 @@ from fa.execution.types import (
     ViewPurpose,
     ViewRef,
 )
-from fa.inner_loop.plan_admission import read_plan_snapshot, snapshot_from_bytes
+from fa.inner_loop.plan_admission import PlanRef, read_plan_snapshot, snapshot_from_bytes
 from fa.inner_loop.tools.workspace_port import WorkspacePortError
 from tests.test_execution_client_port import (
     PLAN_BYTES,
@@ -70,7 +72,9 @@ PUBLISH_REPLY = {
 }
 
 
-def _stage_port(managed, plan, *, purpose: ViewPurpose = ViewPurpose.MUTATION):
+def _stage_port(
+    managed: ManagedExecution, plan: PlanRef, *, purpose: ViewPurpose = ViewPurpose.MUTATION
+) -> tuple[ClientWorkspacePort, GrantReply]:
     """One write view of the run's workspace, plus the grant that owns it."""
     grant = managed.open_view(
         access=Access.WRITE, purpose=purpose, base_revision=managed.grant.revision_id, plan_ref=plan
@@ -177,6 +181,7 @@ def test_a_seal_refusal_stops_the_commit_before_any_publish() -> None:
     manifest the authority refused to seal.
     """
     grant = _fixed_grant()
+    assert grant.view_ref is not None
     client = _FramedClient(
         {
             Operation.STOP_VIEW: {"terminal": True, "view_id": "view-1"},
@@ -248,6 +253,7 @@ def test_an_unproven_end_seals_nothing() -> None:
     """C0: no terminality verdict means no seal, no publish — one refusal, no guessing."""
     client = _FramedClient({Operation.STOP_VIEW: {"terminal": False, "view_id": "view-1"}})
     grant = _fixed_grant()
+    assert grant.view_ref is not None
 
     with pytest.raises(ExecutionUncertainError):
         client.publish_stage(_namespace(), view=grant.view_ref, grant=grant)
@@ -258,14 +264,18 @@ def test_an_unproven_end_seals_nothing() -> None:
 def test_a_read_view_and_a_foreign_grant_never_reach_the_wire() -> None:
     """C0: the two caller bugs are refused locally, with no round trip."""
     read_grant = _read_view_grant()
+    assert read_grant.view_ref is not None
     read_client = _FramedClient({})
     with pytest.raises(ExecutionContractError):
         read_client.publish_stage(_namespace(), view=read_grant.view_ref, grant=read_grant)
 
     write_grant = _fixed_grant()
+    other_grant = _other_write_grant()
+    assert write_grant.view_ref is not None and other_grant.view_ref is not None
+    assert write_grant.view_ref != other_grant.view_ref
     foreign_client = _FramedClient({})
     with pytest.raises(ExecutionContractError):
-        foreign_client.publish_stage(_namespace(), view=write_grant.view_ref, grant=_other_write_grant())
+        foreign_client.publish_stage(_namespace(), view=write_grant.view_ref, grant=other_grant)
 
     assert read_client.sent == [] and foreign_client.sent == []
 
@@ -273,6 +283,7 @@ def test_a_read_view_and_a_foreign_grant_never_reach_the_wire() -> None:
 def test_an_unproven_publish_is_reported() -> None:
     """C3: a lost publish reply may have committed the revision — it is reported as unproved."""
     grant = _fixed_grant()
+    assert grant.view_ref is not None
     client = _FramedClient(
         {
             Operation.STOP_VIEW: {"terminal": True, "view_id": "view-1"},
@@ -290,6 +301,7 @@ def test_an_unproven_publish_is_reported() -> None:
 def test_a_reply_that_names_another_revision_is_never_accepted() -> None:
     """C3: the committed revision must be the one seal derived from these bytes."""
     grant = _fixed_grant()
+    assert grant.view_ref is not None
     client = _FramedClient(
         {
             Operation.STOP_VIEW: {"terminal": True, "view_id": "view-1"},
@@ -305,6 +317,7 @@ def test_a_reply_that_names_another_revision_is_never_accepted() -> None:
 def test_a_malformed_seal_id_in_the_reply_is_a_contract_bug() -> None:
     """C3: a reply this client cannot type is a contract breach, not a publication."""
     grant = _fixed_grant()
+    assert grant.view_ref is not None
     client = _FramedClient(
         {
             Operation.STOP_VIEW: {"terminal": True, "view_id": "view-1"},

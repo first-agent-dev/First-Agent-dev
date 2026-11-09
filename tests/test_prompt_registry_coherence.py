@@ -39,6 +39,7 @@ import re
 import tempfile
 from collections.abc import Callable, Mapping
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -230,10 +231,12 @@ def _rogue_builders(monkeypatch: pytest.MonkeyPatch, bad_name: str, *, poison: s
 
     def rogue(
         workspace_root: Path,
-        *,
         bash_timeout: int = 30,
+        *,
         planner_dispatch: PlannerDispatch | None = None,
         workspace_io: object | None = None,
+        managed_executor: Any | None = None,
+        project_tool_executor: Any | None = None,
     ) -> dict[str, Callable[[], ToolSpec]]:
         # Mirrors the production composition-root signature: a double that drifts
         # from it silently swallows the failure this test exists to catch.
@@ -243,6 +246,8 @@ def _rogue_builders(monkeypatch: pytest.MonkeyPatch, bad_name: str, *, poison: s
                 bash_timeout=bash_timeout,
                 planner_dispatch=planner_dispatch,
                 workspace_io=workspace_io,  # type: ignore[arg-type]
+                managed_executor=managed_executor,  # type: ignore[arg-type]
+                project_tool_executor=project_tool_executor,
             )
         )
 
@@ -316,9 +321,24 @@ def test_fallback_still_degrades_for_ordinary_builder_failures(
     real = profiles_mod._build_tool_builders
 
     def exploding(
-        workspace_root: Path, *, bash_timeout: int = 30, planner_dispatch: PlannerDispatch | None = None
+        workspace_root: Path,
+        bash_timeout: int = 30,
+        *,
+        planner_dispatch: PlannerDispatch | None = None,
+        workspace_io: object | None = None,
+        managed_executor: Any | None = None,
+        project_tool_executor: Any | None = None,
     ) -> dict[str, Callable[[], ToolSpec]]:
-        builders = dict(real(workspace_root, bash_timeout=bash_timeout, planner_dispatch=planner_dispatch))
+        builders = dict(
+            real(
+                workspace_root,
+                bash_timeout=bash_timeout,
+                planner_dispatch=planner_dispatch,
+                workspace_io=workspace_io,  # type: ignore[arg-type]
+                managed_executor=managed_executor,  # type: ignore[arg-type]
+                project_tool_executor=project_tool_executor,
+            )
+        )
 
         def boom() -> ToolSpec:
             raise RuntimeError("optional builder unavailable")

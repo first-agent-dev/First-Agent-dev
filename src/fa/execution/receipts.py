@@ -102,7 +102,8 @@ class CommandReceipts:
             # can answer could change that, so the daemon is not asked at all.
             state, exit_code, barrier = JobState.TIMED_OUT, None, False
         else:
-            observation = self._observe(outcome.operation_id, view, outcome.container_id, observed_by)
+            cell_owner = self._cell_owner(outcome.operation_id, namespace, view, outcome.container_id, observed_by)
+            observation = self._observe(cell_owner, view, outcome.container_id, observed_by)
             state, exit_code, barrier = self._command_state(outcome, observation, view, observed_by)
         return {
             "receipt": self._receipt(
@@ -147,7 +148,8 @@ class CommandReceipts:
             barrier = cancelled
             exit_code = None
         else:
-            observation = self._observe_optional(operation_id, view, container_id, observed_by)
+            cell_owner = self._cell_owner(operation_id, namespace, view, container_id, observed_by)
+            observation = self._observe_optional(cell_owner, view, container_id, observed_by)
             state, exit_code, barrier = self._inspected_state(observation, cancelled, view, observed_by)
         return {
             "receipt": self._receipt(
@@ -184,7 +186,8 @@ class CommandReceipts:
         exit_code: int | None = None
         barrier = container_id is None  # intent alone proves no cell can appear
         if container_id is not None:
-            observation = self._observe_optional(target, view, container_id, observed_by)
+            cell_owner = self._cell_owner(target, namespace, view, container_id, observed_by)
+            observation = self._observe_optional(cell_owner, view, container_id, observed_by)
             if observation is not None and observation.status == "exited":
                 exit_code = observation.exit_code
                 barrier = self._barrier(container_id, view, observed_by)
@@ -400,3 +403,23 @@ class CommandReceipts:
             # caller's to inspect or cancel.
             raise SupervisorError("UNAUTHORIZED")
         return record
+
+    def _cell_owner(
+        self,
+        operation_id: str,
+        namespace: NamespaceRef,
+        view: ViewRef,
+        container_id: str,
+        deadline: float,
+    ) -> str:
+        """Resolve the creator identity without changing the per-call receipt ID."""
+        try:
+            return self._authority.journal.resolve_cell_owner(
+                operation_id,
+                namespace,
+                view=view,
+                container_id=container_id,
+                deadline=deadline,
+            )
+        except JournalError as error:
+            raise SupervisorError(error.code) from None

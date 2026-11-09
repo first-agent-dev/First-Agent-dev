@@ -1128,20 +1128,65 @@ class ManagedProjectToolExecutor:
             raise ExecutionContractError
         self._client = client
         self._namespace = namespace
+        self._workspace_id = view.workspace_id
         self._view: ViewRef | None = view
         self._grant: GrantReply | None = grant
         self._profile = profile
         self._tree = input_tree_sha256
         self._plan = plan_sha256
         self._original_revision = original_revision_id
+        self._last_view_id = view.view_id
         self._active = True
         self._lock = threading.Lock()
 
     def suspend(self) -> None:
         """Disarm this executor before its bound view is settled or handed off."""
-        self._active = False
-        self._view = None
-        self._grant = None
+        with self._lock:
+            self._active = False
+            self._view = None
+            self._grant = None
+
+    def is_bound_to(self, namespace: NamespaceRef, view: ViewRef, grant: GrantReply) -> bool:
+        """Return whether this active executor carries exactly the lease binding."""
+        with self._lock:
+            return self._active and self._namespace == namespace and self._view == view and self._grant == grant
+
+    def rebind(
+        self,
+        *,
+        namespace: NamespaceRef,
+        view: ViewRef,
+        grant: GrantReply,
+        original_revision_id: str | None,
+    ) -> None:
+        """Rebind only to a fresh WRITE/PROJECT view in the same admitted workspace."""
+        if (
+            not isinstance(namespace, NamespaceRef)
+            or namespace != self._namespace
+            or not isinstance(view, ViewRef)
+            or view.purpose is not ViewPurpose.PROJECT
+            or view.access is not Access.WRITE
+            or view.workspace_id != self._workspace_id
+            or view.view_id == self._last_view_id
+            or view.owner_run_id != namespace.run_id
+            or not isinstance(grant, GrantReply)
+            or grant.operation is not Operation.CREATE_VIEW
+            or grant.view_ref != view
+            or not isinstance(grant.input_tree_sha256, str)
+            or len(grant.input_tree_sha256) != 64
+            or any(char not in "0123456789abcdef" for char in grant.input_tree_sha256)
+            or original_revision_id != view.base_revision
+        ):
+            raise ExecutionContractError
+        with self._lock:
+            if self._active:
+                raise ExecutionContractError
+            self._view = view
+            self._grant = grant
+            self._tree = grant.input_tree_sha256
+            self._original_revision = original_revision_id
+            self._last_view_id = view.view_id
+            self._active = True
 
     def execute(self, tool: str, params: dict[str, Any], *, timeout: int = 25) -> str:
         """Send one bounded project-tool request and return its untrusted envelope."""
@@ -1152,6 +1197,8 @@ class ManagedProjectToolExecutor:
         with self._lock:
             if not self._active or self._view is None or self._grant is None:
                 raise ExecutionUnavailableError
+            timeout_ms = min(timeout * 1000, self._profile.max_command_ms, MAX_PROJECT_TOOL_TIMEOUT_MS)
+            deadline = time.monotonic() + timeout_ms / 1000
             view, grant = self._view, self._grant
             request_id = uuid4().hex
             operation = OperationRef("op-" + request_id, view.view_id, view.owner_run_id, view.generation, self._tree)
@@ -1165,8 +1212,9 @@ class ManagedProjectToolExecutor:
                     "operation_id": operation.operation_id,
                     "profile_id": self._profile.profile_id,
                     "project_tool": {"tool": tool, "params": params},
-                    "timeout_ms": min(timeout * 1000, self._profile.max_command_ms, MAX_PROJECT_TOOL_TIMEOUT_MS),
+                    "timeout_ms": timeout_ms,
                 },
+                deadline=deadline,
             )
         receipt = ExecutionReceipt.from_dict(result["receipt"])
         try:

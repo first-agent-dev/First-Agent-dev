@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -190,41 +189,12 @@ def test_stats_discovers_session_by_db_not_jsonl(tmp_path: Path) -> None:
 # ── LOGIC-8: Friendly error on EventLog RuntimeError ──────────────────────
 
 
-def test_cmd_run_friendly_error_on_db_unavailable(tmp_path: Path) -> None:
-    """C1: _cmd_run catches RuntimeError from EventLog authority unavailability.
-
-    Kill-check: removing the try/except produces a raw RuntimeError traceback
-    instead of a friendly message.
-    """
-
-    args = MagicMock()
-    args.task_pos = None
-    args.task = "test task"
-    args.role = "coder"
-    args.config = tmp_path / "nonexistent_models.yaml"
-    args.workspace = tmp_path
-    args.max_turns = 1
-    args.run_id = ""
-    args.resume = False
-    args.output_mode = "quiet"
-    args.detail = "standard"
-    args.no_color = False
-
-    # The test is that _cmd_run returns 2 for configuration errors
-    # (not a raw traceback). A non-existent models.yaml triggers a
-    # ConfigurationError before we even get to drive_session.
-    # For the actual LOGIC-8 fix, we need to test the RuntimeError path.
-    # Since we can't easily make session.db unwritable in this env,
-    # we verify the code structure: the try/except wraps drive_session.
+def test_run_cli_stage_routes_db_runtime_errors_to_friendly_mapper() -> None:
+    """C0 caller-edge check: the live stage boundary invokes the extracted mapper."""
     import inspect
 
     import fa.cli as cli_module
 
-    source = inspect.getsource(cli_module._cmd_run)
-    # Verify the fix is present: RuntimeError catch for event_log_authority_unavailable
-    assert "event_log_authority_unavailable" in source, (
-        "LOGIC-8 fix missing: _cmd_run should catch RuntimeError with 'event_log_authority_unavailable' check"
-    )
-    assert "RuntimeError as exc" in source, (
-        "LOGIC-8 fix missing: _cmd_run should have try/except RuntimeError around drive_session"
-    )
+    source = inspect.getsource(cli_module._run_cli_stage)
+    assert "except RuntimeError as error" in source
+    assert "_session_db_runtime_error_message(error" in source

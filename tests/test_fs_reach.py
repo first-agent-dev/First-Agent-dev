@@ -347,3 +347,339 @@ def test_seed_anchors_resolve_and_are_findable() -> None:
     assert len(search_result) == 1 and search_result[0].error is None, search_result[0].error
     found_paths = [row.get("path") for row in (search_result[0].result or {}).get("files", [])]
     assert "src/fa/blackboard/blackboard.py" in found_paths
+
+
+def _managed_reach_tool(root: Path, cleanup: Any) -> Any:
+    return build_fs_reach_tool(
+        root,
+        in_memory=True,
+        strict_rooted_reads=True,
+        managed_bounded=True,
+        cleanup=cleanup,
+    )
+
+
+def test_managed_fs_reach_parity_and_q134_oversized_count(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from contextlib import ExitStack
+
+    from fa.memory._safe_walk import RootedFileReader
+
+    source = "def a():\n    return b()\n\ndef b():\n    return 1\n"
+    (tmp_path / "m.py").write_text(source, encoding="utf-8")
+    (tmp_path / "large.py").write_bytes(b"x" * 200_001)
+
+    disk = build_fs_reach_tool(tmp_path, scratch_db=tmp_path.parent / "legacy-structural.db")
+    disk_result = _invoke(disk, {"symbol": "a", "direction": "down"})
+    assert disk_result.error is None
+
+    read_paths: list[str] = []
+    original_read = RootedFileReader.read_bytes_with_path
+
+    def observe_read(self: Any, rel: str, **kwargs: Any) -> tuple[str, bytes]:
+        assert rel != "large.py", "Q134 oversized file must not be read/indexed"
+        read_paths.append(rel)
+        return original_read(self, rel, **kwargs)
+
+    monkeypatch.setattr(RootedFileReader, "read_bytes_with_path", observe_read)
+    with ExitStack() as cleanup:
+        managed = _managed_reach_tool(tmp_path, cleanup)
+        managed_result = _invoke(managed, {"symbol": "a", "direction": "down"})
+    assert managed_result.error is None, managed_result.error
+    assert managed_result.result["resolved_to"] == disk_result.result["resolved_to"]
+    assert managed_result.result["callees"] == disk_result.result["callees"]
+    assert managed_result.result["files_skipped"] == 1
+    assert "m.py" in read_paths and "large.py" not in read_paths
+    assert not (tmp_path / ".fa" / "structural.db").exists()
+
+
+def test_managed_fs_reach_source_refusal_precedes_index_allocation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from contextlib import ExitStack
+
+    from fa.memory import managed_discovery
+    from fa.memory.structural_index import StructuralIndex
+
+    (tmp_path / "source.py").write_bytes(b"abc")
+    original = managed_discovery.inventory_managed_files
+
+    def over_source_budget(root: Path, *, patterns: tuple[str, ...], deadline: float) -> Any:
+        return original(
+            root,
+            patterns=patterns,
+            deadline=deadline,
+            limits=managed_discovery.ManagedDiscoveryLimits(source_bytes=2),
+        )
+
+    allocated = False
+    original_init = StructuralIndex.__init__
+
+    def observe_init(self: Any, *args: Any, **kwargs: Any) -> None:
+        nonlocal allocated
+        allocated = True
+        original_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(managed_discovery, "inventory_managed_files", over_source_budget)
+    monkeypatch.setattr(StructuralIndex, "__init__", observe_init)
+    with ExitStack() as cleanup:
+        tool = _managed_reach_tool(tmp_path, cleanup)
+        result = _invoke(tool, {"symbol": "source"})
+
+    assert result.error is not None and result.error.code == "reach_failed"
+    assert result.error.message == "managed reach refused (source_budget)"
+    assert result.result is None
+    assert allocated is False
+
+
+@pytest.mark.parametrize(
+    ("limit_name", "limit", "source"),
+    [
+        ("MAX_MANAGED_AST_NODES", 5, "x = 1\n"),
+        ("MAX_MANAGED_FILE_AST_NODES", 5, "x = 1\n"),
+        ("MAX_MANAGED_SYMBOLS", 1, "def a():\n    pass\n"),
+        ("MAX_MANAGED_FILE_EDGES", 1, "def a():\n    b()\n\ndef b():\n    pass\n"),
+        ("MAX_MANAGED_EDGES", 1, "def a():\n    b()\n\ndef b():\n    pass\n"),
+    ],
+)
+def test_managed_reach_accepts_exact_ast_and_cardinality_budgets(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    limit_name: str,
+    limit: int,
+    source: str,
+) -> None:
+    from contextlib import ExitStack
+
+    from fa.memory import structural_index
+
+    (tmp_path / "unit.py").write_text(source, encoding="utf-8")
+    monkeypatch.setattr(structural_index, limit_name, limit)
+    with ExitStack() as cleanup:
+        tool = _managed_reach_tool(tmp_path, cleanup)
+        result = _invoke(tool, {"symbol": "a", "direction": "down"})
+    assert result.error is None, result.error
+    assert result.result is not None
+
+
+@pytest.mark.parametrize(
+    ("limit_name", "limit", "source", "reason"),
+    [
+        ("MAX_MANAGED_AST_NODES", 5, "def a():\n    return b()\n", "ast_budget"),
+        ("MAX_MANAGED_FILE_AST_NODES", 5, "def a():\n    return b()\n", "ast_budget"),
+        ("MAX_MANAGED_SYMBOLS", 1, "def a():\n    pass\n\ndef b():\n    pass\n", "symbol_budget"),
+        (
+            "MAX_MANAGED_FILE_EDGES",
+            1,
+            "def a():\n    b()\n    c()\n\ndef b():\n    pass\n\ndef c():\n    pass\n",
+            "edge_budget",
+        ),
+        (
+            "MAX_MANAGED_EDGES",
+            1,
+            "def a():\n    b()\n    c()\n\ndef b():\n    pass\n\ndef c():\n    pass\n",
+            "edge_budget",
+        ),
+    ],
+)
+def test_managed_reach_ast_and_cardinality_budgets_refuse_whole_call(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    limit_name: str,
+    limit: int,
+    source: str,
+    reason: str,
+) -> None:
+    from contextlib import ExitStack
+
+    from fa.memory import structural_index
+
+    (tmp_path / "unit.py").write_text(source, encoding="utf-8")
+    monkeypatch.setattr(structural_index, limit_name, limit)
+    with ExitStack() as cleanup:
+        tool = _managed_reach_tool(tmp_path, cleanup)
+        result = _invoke(tool, {"symbol": "a", "direction": "down"})
+    assert result.error is not None and result.error.code == "reach_failed"
+    assert result.error.message == f"managed reach refused ({reason})"
+    assert result.result is None
+
+
+def test_managed_reach_page_count_accepts_exact_cap_and_refuses_cap_plus_one() -> None:
+    from fa.memory.managed_discovery import ManagedDiscoveryError
+    from fa.memory.structural_index import StructuralIndex
+
+    class _Cursor:
+        def __init__(self, value: int) -> None:
+            self.value = value
+
+        def fetchone(self) -> tuple[int]:
+            return (self.value,)
+
+    class _PragmaConnection:
+        def __init__(self, page_count: int) -> None:
+            self.values = {
+                "PRAGMA page_size": 4096,
+                "PRAGMA page_count": page_count,
+                "PRAGMA max_page_count": 32_768,
+            }
+
+        def execute(self, statement: str) -> _Cursor:
+            return _Cursor(self.values[statement])
+
+    StructuralIndex._check_managed_page_budget(_PragmaConnection(32_768))  # type: ignore[arg-type]
+    with pytest.raises(ManagedDiscoveryError) as caught:
+        StructuralIndex._check_managed_page_budget(_PragmaConnection(32_769))  # type: ignore[arg-type]
+    assert caught.value.reason == "index_budget"
+
+
+def test_managed_reach_fails_closed_when_cache_size_is_one_kib_over(monkeypatch: pytest.MonkeyPatch) -> None:
+    import sqlite3
+
+    from fa.memory import structural_index
+    from fa.memory.structural_index import StructuralIndex
+
+    actual_connect = sqlite3.connect
+    connections: list[Any] = []
+
+    class _Cursor:
+        def fetchone(self) -> tuple[int]:
+            return (-16_385,)
+
+    class _MisreportedConnection:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            self.inner = actual_connect(*args, **kwargs)
+            self.closed = False
+
+        def execute(self, statement: str, *args: Any) -> Any:
+            cursor = self.inner.execute(statement, *args)
+            return _Cursor() if statement == "PRAGMA cache_size" else cursor
+
+        def close(self) -> None:
+            self.closed = True
+            self.inner.close()
+
+    def connect(*args: Any, **kwargs: Any) -> _MisreportedConnection:
+        connection = _MisreportedConnection(*args, **kwargs)
+        connections.append(connection)
+        return connection
+
+    monkeypatch.setattr(structural_index.sqlite3, "connect", connect)
+    index = StructuralIndex(Path(":memory:"), in_memory=True, strict_rooted_reads=True, managed_bounded=True)
+    try:
+        with pytest.raises(sqlite3.OperationalError, match="managed SQLite limits unavailable"):
+            index._connect()
+        assert connections[-1].closed is True
+    finally:
+        index.close()
+
+
+def test_managed_reach_sqlite_limits_and_page_refusal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import time
+    from contextlib import ExitStack
+
+    from fa.memory import managed_discovery, structural_index
+    from fa.memory._safe_walk import RootedFileReader
+    from fa.memory.structural_index import StructuralIndex
+
+    (tmp_path / "unit.py").write_text("def a():\n    return 1\n", encoding="utf-8")
+    inventory = managed_discovery.inventory_managed_files(
+        tmp_path,
+        patterns=("*.py",),
+        deadline=time.monotonic() + 2,
+    )
+    with ExitStack() as cleanup:
+        index = StructuralIndex(Path(":memory:"), in_memory=True, strict_rooted_reads=True, managed_bounded=True)
+        cleanup.callback(index.close)
+        index._managed_deadline = time.monotonic() + 2
+        conn = index._connect()
+        try:
+            assert conn.execute("PRAGMA page_size").fetchone()[0] == 4096
+            assert conn.execute("PRAGMA max_page_count").fetchone()[0] <= 32_768
+            assert conn.execute("PRAGMA cache_size").fetchone()[0] == -(16 * 1024)
+        finally:
+            conn.close()
+        monkeypatch.setattr(structural_index, "MAX_MANAGED_SQLITE_PAGES", 1)
+        with RootedFileReader(tmp_path) as reader, pytest.raises(managed_discovery.ManagedDiscoveryError) as caught:
+            index.ensure_managed_indexed(
+                tmp_path,
+                inventory,
+                rooted_reader=reader,
+                deadline=time.monotonic() + 2,
+            )
+        assert caught.value.reason == "index_budget"
+        check = index._connect()
+        try:
+            assert check.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall() == []
+        finally:
+            check.close()
+
+
+def test_managed_fs_reach_expired_deadline_refuses_before_index_allocation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import time
+    from contextlib import ExitStack
+
+    from fa.inner_loop.tools import fs_reach
+    from fa.memory import managed_discovery
+    from fa.memory.structural_index import StructuralIndex
+
+    (tmp_path / "unit.py").write_text("def a():\n    return 1\n", encoding="utf-8")
+    inventory = managed_discovery.inventory_managed_files(
+        tmp_path,
+        patterns=("*.py",),
+        deadline=time.monotonic() + 2,
+    )
+    monkeypatch.setattr(fs_reach, "_prepare_managed_inventory", lambda _root: (inventory, time.monotonic() - 1))
+    allocated = False
+    original_init = StructuralIndex.__init__
+
+    def observe_init(self: Any, *args: Any, **kwargs: Any) -> None:
+        nonlocal allocated
+        allocated = True
+        original_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(StructuralIndex, "__init__", observe_init)
+    with ExitStack() as cleanup:
+        tool = _managed_reach_tool(tmp_path, cleanup)
+        result = _invoke(tool, {"symbol": "a"})
+    assert result.error is not None and result.error.message == "managed reach refused (deadline)"
+    assert result.result is None
+    assert allocated is False
+
+
+@pytest.mark.parametrize(
+    ("limit_name", "limit", "source", "reason"),
+    [
+        (
+            "MAX_MANAGED_AST_NODES",
+            9,
+            "def first():\n    return 1\n",
+            "ast_budget",
+        ),
+        ("MAX_MANAGED_SYMBOLS", 1, "def first():\n    pass\n", "symbol_budget"),
+        ("MAX_MANAGED_EDGES", 1, "def first():\n    unknown()\n", "edge_budget"),
+    ],
+)
+def test_managed_reach_aggregate_limits_are_shared_across_files(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    limit_name: str,
+    limit: int,
+    source: str,
+    reason: str,
+) -> None:
+    from contextlib import ExitStack
+
+    from fa.memory import structural_index
+
+    (tmp_path / "a.py").write_text(source, encoding="utf-8")
+    (tmp_path / "b.py").write_text(source.replace("first", "second"), encoding="utf-8")
+    monkeypatch.setattr(structural_index, limit_name, limit)
+    monkeypatch.setattr(structural_index, "MAX_MANAGED_FILE_AST_NODES", 100)
+    monkeypatch.setattr(structural_index, "MAX_MANAGED_FILE_EDGES", 100)
+    with ExitStack() as cleanup:
+        tool = _managed_reach_tool(tmp_path, cleanup)
+        result = _invoke(tool, {"symbol": "first", "direction": "down"})
+    assert result.error is not None and result.error.code == "reach_failed"
+    assert result.error.message == f"managed reach refused ({reason})"
+    assert result.result is None

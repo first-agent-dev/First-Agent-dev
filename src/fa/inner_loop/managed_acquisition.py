@@ -14,7 +14,7 @@ import re
 from collections.abc import Hashable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import date
-from typing import Any, Literal, TypeAlias, TypeGuard
+from typing import Any, Literal, TypeAlias, TypeGuard, override
 
 import yaml
 from yaml.nodes import MappingNode
@@ -210,6 +210,7 @@ def _valid_body(value: object) -> str:
 class _UniqueKeyLoader(yaml.SafeLoader):
     """SafeLoader variant that refuses duplicate and non-string mapping keys."""
 
+    @override
     def construct_mapping(self, node: MappingNode, deep: bool = False) -> dict[Hashable, Any]:
         if not isinstance(node, MappingNode):
             raise AcquisitionMetadataError

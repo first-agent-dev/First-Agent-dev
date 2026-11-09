@@ -432,6 +432,14 @@ def test_two_commands_share_one_cell_and_two_durable_records(backend: Backend) -
     assert first_record is not None and second_record is not None
     assert first_record["container_id"] == CID and second_record["container_id"] == CID
     assert second_record["view_ref"] == first_record["view_ref"]
+    assert first_record["cell_owner_operation_id"] == first_record["operation_id"]
+    assert second_record["cell_owner_operation_id"] == first_record["operation_id"]
+    assert (
+        backend.authority.journal.resolve_cell_owner(
+            second_record["operation_id"], ACTOR, view=backend.view, container_id=CID
+        )
+        == first_record["operation_id"]
+    )
 
 
 def test_typed_project_tool_exec_uses_same_admitted_cell_without_pty(

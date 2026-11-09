@@ -18,6 +18,7 @@ from __future__ import annotations
 import atexit
 import json
 import logging
+import time
 from collections.abc import Mapping
 from contextlib import ExitStack
 from pathlib import Path
@@ -346,9 +347,16 @@ def _resolve_subdir(root: Path, subpath: str | None) -> Path:
 class _IndexHolder:
     """Holds a lazily-created SearchIndex singleton for the process."""
 
-    def __init__(self, db_path: Path, *, rooted_reader: RootedFileReader | None = None) -> None:
+    def __init__(
+        self,
+        db_path: Path,
+        *,
+        rooted_reader: RootedFileReader | None = None,
+        managed_bounded: bool = False,
+    ) -> None:
         self._db = db_path
         self._rooted_reader = rooted_reader
+        self._managed_bounded = managed_bounded
         self._index: SearchIndex | None = None
         self._indexed: bool = False
 
@@ -356,7 +364,11 @@ class _IndexHolder:
         if self._index is None:
             from fa.memory.search_index import SearchIndex
 
-            self._index = SearchIndex(self._db, rooted_reader=self._rooted_reader)
+            self._index = SearchIndex(
+                self._db,
+                rooted_reader=self._rooted_reader,
+                managed_bounded=self._managed_bounded,
+            )
         return self._index
 
     def close(self, *, strict: bool = False) -> None:
@@ -378,6 +390,9 @@ def _ensure_index(
     root: Path,
     max_file_size: int,
     warnings: list[str],
+    *,
+    managed_inventory: Any = None,
+    deadline: float | None = None,
 ) -> dict[str, int] | None:
     """Lazily build/refresh the FTS index.
 
@@ -403,15 +418,22 @@ def _ensure_index(
         holder._indexed = False
         return None
     try:
-        stats = index.ensure_indexed(
-            root,
-            # Always index the superset of indexable files (including
-            # tests/ and default-excluded directories). Query-time
-            # filtering is applied by _passes_filters so the index can
-            # serve any future narrower query without rebuilding.
-            include_tests=True,
-            max_file_size=max_file_size,
-        )
+        if holder._managed_bounded:
+            if managed_inventory is None or deadline is None:
+                from fa.memory.managed_discovery import ManagedDiscoveryError
+
+                raise ManagedDiscoveryError("unsafe_path")
+            stats = index.ensure_managed_indexed(root, managed_inventory, deadline=deadline)
+        else:
+            stats = index.ensure_indexed(
+                root,
+                # Always index the superset of indexable files (including
+                # tests/ and default-excluded directories). Query-time
+                # filtering is applied by _passes_filters so the index can
+                # serve any future narrower query without rebuilding.
+                include_tests=True,
+                max_file_size=max_file_size,
+            )
         holder._indexed = True
         return {
             "indexed": stats.indexed,
@@ -422,7 +444,11 @@ def _ensure_index(
         }
     except RootedReadError:
         raise
-    except Exception as exc:  # noqa: BLE001 - INV-HARDEN-5 fail-degraded
+    except Exception as exc:
+        from fa.memory.managed_discovery import ManagedDiscoveryError
+
+        if isinstance(exc, ManagedDiscoveryError):
+            raise
         logger.warning("fs_search indexing failed: %s", exc)
         warnings.append(f"index build/refresh failed ({exc}); using streaming fallback")
         # Mark unavailable so subsequent calls go straight to walk.
@@ -575,6 +601,46 @@ def _build_search_params(
     )
 
 
+def _managed_search_observation_paths(result: dict[str, Any], params: Mapping[str, object]) -> list[str] | None:
+    """Validate every returned managed path before it becomes controller provenance."""
+    mode = params.get("output_mode", "files")
+    if mode == "outline":
+        raw_paths: object = [result.get("path")]
+    elif mode in {"files", "matches"}:
+        raw_paths = result.get(mode)
+    else:
+        return None
+    if not isinstance(raw_paths, list):
+        return None
+    paths: list[str] = []
+    for row in raw_paths:
+        value = row if mode == "outline" else row.get("path") if isinstance(row, Mapping) else None
+        if (
+            not isinstance(value, str)
+            or not value
+            or value.startswith("/")
+            or "\\" in value
+            or any(part in {"", ".", ".."} for part in value.split("/"))
+        ):
+            return None
+        paths.append(value)
+    return paths
+
+
+def _register_validated_search_paths(paths: list[str]) -> None:
+    """Register already-validated paths as pending controller observations."""
+    if not paths:
+        return
+    try:
+        from fa.inner_loop.context import get_current_session
+
+        session = get_current_session()
+        if session is not None:
+            session.add_search_result_paths(paths)
+    except Exception as exc:  # noqa: BLE001 - telemetry best-effort, failure-observable
+        logger.warning(f"fs_search telemetry failed: {exc}")
+
+
 def _register_search_result_paths(result: dict[str, Any]) -> None:
     """S15 (CT-3): register returned paths as PENDING search results.
 
@@ -583,23 +649,14 @@ def _register_search_result_paths(result: dict[str, Any]) -> None:
     ``surfaced_by`` attribution deterministic under the parallel executor.
     Best-effort: a telemetry failure must never fail the search itself.
     """
-    try:
-        from fa.inner_loop.context import get_current_session
-
-        session = get_current_session()
-        if session is None:
-            return
-        surfaced_paths: list[str] = []
-        for key in _OUTPUT_KEYS:
-            rows = result.get(key)
-            if isinstance(rows, list):
-                for row in rows:
-                    if isinstance(row, Mapping) and isinstance(row.get("path"), str):
-                        surfaced_paths.append(row["path"])
-        if surfaced_paths:
-            session.add_search_result_paths(surfaced_paths)
-    except Exception as exc:  # noqa: BLE001 - telemetry best-effort, failure-observable
-        logger.warning(f"fs_search telemetry failed: {exc}")
+    surfaced_paths: list[str] = []
+    for key in _OUTPUT_KEYS:
+        rows = result.get(key)
+        if isinstance(rows, list):
+            for row in rows:
+                if isinstance(row, Mapping) and isinstance(row.get("path"), str):
+                    surfaced_paths.append(row["path"])
+    _register_validated_search_paths(surfaced_paths)
 
 
 def _load_outline_rows(
@@ -676,6 +733,7 @@ def _do_outline(
     warnings_list: list[str],
     *,
     rooted_reader: RootedFileReader | None = None,
+    managed_bounded: bool = False,
 ) -> ToolResult:
     """S12.7 (CT9): structural outline of ONE py/md file (plan §A6).
 
@@ -734,10 +792,10 @@ def _do_outline(
     truncated = len(shown) < total
     if truncated:
         warnings_list.append(f"showing {len(shown)} of {total} rows — raise limit or filter with query")
-    while _estimate_size({"rows": row_dicts}) > MAX_RESPONSE_BYTES and len(row_dicts) > 1:
+    while not managed_bounded and _estimate_size({"rows": row_dicts}) > MAX_RESPONSE_BYTES and len(row_dicts) > 1:
         row_dicts.pop()
         truncated = True
-    if truncated and len(row_dicts) < len(shown):
+    if not managed_bounded and truncated and len(row_dicts) < len(shown):
         warnings_list.append(f"byte cap {MAX_RESPONSE_BYTES} reached — {total} rows total, narrow with query")
 
     result: dict[str, Any] = {
@@ -772,6 +830,86 @@ def _register_outline_path(rel: str) -> None:
         logger.warning(f"outline telemetry failed: {exc}")
 
 
+def _do_managed_files_listing(
+    root: Path,
+    subdir: Path,
+    glob_pat: str | None,
+    exclude_set: frozenset[str],
+    limit: int,
+    warnings_list: list[str],
+    data: Mapping[str, object],
+    *,
+    rooted_reader: RootedFileReader,
+    inventory: Any,
+    deadline: float,
+) -> ToolResult:
+    """Render bounded listing rows from the already-complete managed inventory."""
+    import time
+
+    from fa.memory.managed_discovery import ManagedDiscoveryError
+    from fa.memory.search_index import SearchIndex
+
+    if not subdir.exists():
+        rel = subdir.relative_to(root)
+        return ToolResult.fail(
+            "invalid_params",
+            f"path does not exist: {rel} — list '.' first or check the spelling",
+            retryable=True,
+        )
+    subdir_rel = _subdir_rel(root, subdir)
+    selected = [
+        candidate
+        for candidate in inventory.candidates
+        if SearchIndex._passes_filters(
+            candidate.relative_path,
+            subdir_rel=subdir_rel,
+            glob_pat=glob_pat,
+            exclude_set=exclude_set,
+        )
+    ]
+    skipped = sum(candidate.oversized for candidate in selected)
+    eligible = [candidate for candidate in selected if not candidate.oversized]
+    rows: list[dict[str, Any]] = []
+    for candidate in eligible[:limit]:
+        if time.monotonic() >= deadline:
+            raise ManagedDiscoveryError("deadline")
+        try:
+            canonical_rel, raw = rooted_reader.read_bytes_with_path(
+                candidate.relative_path,
+                max_bytes=candidate.size_bytes,
+                expected_identity=candidate.rooted_identity,
+            )
+        except RootedReadError:
+            raise ManagedDiscoveryError("unsafe_path") from None
+        if canonical_rel != candidate.relative_path or len(raw) != candidate.size_bytes:
+            raise ManagedDiscoveryError("unsafe_path")
+        text = SearchIndex._decode_text_for_match(raw)
+        lines = len(text.splitlines()) if text else (0 if not raw else None)
+        rows.append({"path": canonical_rel, "lines": lines, "bytes": len(raw)})
+
+    total = len(eligible)
+    truncated = len(rows) < total
+    if truncated:
+        warnings_list.append(f"showing {len(rows)} of {total} files — raise limit or narrow path")
+    result: dict[str, Any] = {
+        "query": "",
+        "method": "walk_listing",
+        "returned": len(rows),
+        "truncated": truncated,
+        "total": total,
+        "total_bytes": int(sum(row["bytes"] for row in rows)),
+        "index_stats": None,
+        "files": rows,
+        "skipped_large_files": skipped,
+    }
+    if warnings_list:
+        result["warnings"] = warnings_list
+    _attach_ignored_params(result, data)
+    _register_search_result_paths(result)
+    summary = _build_summary("", "files", "walk_listing", result)
+    return ToolResult.ok(summary, result=result)
+
+
 def _do_files_listing(
     root: Path,
     subdir: Path,
@@ -782,6 +920,9 @@ def _do_files_listing(
     data: Mapping[str, object] | None = None,
     *,
     rooted_reader: RootedFileReader | None = None,
+    managed_inventory: Any = None,
+    managed_deadline: float | None = None,
+    managed_bounded: bool = False,
 ) -> ToolResult:
     """S12.7 (§A6 v7 / CT11): absent query + files mode = pure listing.
 
@@ -792,6 +933,23 @@ def _do_files_listing(
     """
     from fa.memory.search_index import files_stat_rows, walk_scope_listing
 
+    if managed_bounded:
+        from fa.memory.managed_discovery import ManagedDiscoveryError
+
+        if rooted_reader is None or managed_inventory is None or managed_deadline is None:
+            raise ManagedDiscoveryError("unsafe_path")
+        return _do_managed_files_listing(
+            root,
+            subdir,
+            glob_pat,
+            exclude_set,
+            limit,
+            warnings_list,
+            data or {},
+            rooted_reader=rooted_reader,
+            inventory=managed_inventory,
+            deadline=managed_deadline,
+        )
     if not subdir.exists():
         rel = subdir.relative_to(root)
         return ToolResult.fail(
@@ -856,6 +1014,151 @@ def _parse_output_mode(data: Mapping[str, object]) -> tuple[str, ToolResult | No
     return output_mode, None
 
 
+def _prepare_managed_inventory(
+    root: Path, *, managed_bounded: bool, output_mode: str
+) -> tuple[Any, float | None, ToolResult | None]:
+    if not managed_bounded or output_mode == "outline":
+        return None, None, None
+    from fa.memory.managed_discovery import (
+        MAX_MANAGED_DEADLINE_MS,
+        ManagedDiscoveryError,
+        inventory_managed_files,
+    )
+
+    deadline = time.monotonic() + MAX_MANAGED_DEADLINE_MS / 1000
+    try:
+        return inventory_managed_files(root, deadline=deadline), deadline, None
+    except ManagedDiscoveryError as exc:
+        refusal = ToolResult.fail(
+            "search_failed",
+            f"managed search refused ({exc.reason})",
+            retryable=False,
+        )
+        return None, deadline, refusal
+
+
+def _managed_oversized_count(
+    inventory: Any,
+    *,
+    root: Path,
+    subdir: Path,
+    glob_pat: str | None,
+    exclude_set: frozenset[str],
+) -> int:
+    from fa.memory.search_index import SearchIndex
+
+    subdir_rel = _subdir_rel(root, subdir)
+    return sum(
+        candidate.oversized
+        and SearchIndex._passes_filters(
+            candidate.relative_path,
+            subdir_rel=subdir_rel,
+            glob_pat=glob_pat,
+            exclude_set=exclude_set,
+        )
+        for candidate in inventory.candidates
+    )
+
+
+def _managed_search_failure(exc: Exception, deadline: float | None) -> ToolResult:
+    from fa.memory.managed_discovery import ManagedDiscoveryError
+
+    if isinstance(exc, ManagedDiscoveryError):
+        reason = exc.reason
+    elif deadline is not None and time.monotonic() >= deadline:
+        reason = "deadline"
+    elif isinstance(exc, RootedReadError):
+        reason = "unsafe_path"
+    else:
+        reason = "index_budget"
+    return ToolResult.fail("search_failed", f"managed search refused ({reason})", retryable=False)
+
+
+def _execute_search(
+    holder: _IndexHolder,
+    *,
+    root: Path,
+    subdir: Path,
+    db: Path,
+    search_params: Any,
+    warnings_list: list[str],
+    rooted_reader: RootedFileReader | None,
+    managed_bounded: bool,
+    managed_inventory: Any,
+    managed_deadline: float | None,
+) -> tuple[Any, dict[str, int] | None, ToolResult | None]:
+    from fa.memory.search_index import MAX_SEARCH_FILE_BYTES
+
+    try:
+        index_stats = _ensure_index(
+            holder,
+            root,
+            MAX_SEARCH_FILE_BYTES,
+            warnings_list,
+            managed_inventory=managed_inventory,
+            deadline=managed_deadline,
+        )
+        if holder._indexed:
+            result = _do_indexed_search(holder, search_params, root, subdir)
+        elif managed_bounded:
+            from fa.memory.managed_discovery import ManagedDiscoveryError
+
+            raise ManagedDiscoveryError("index_budget")
+        else:
+            result = _do_fallback_search(db, search_params, root, subdir, warnings_list, rooted_reader=rooted_reader)
+        return result, index_stats, None
+    except Exception as exc:
+        if managed_bounded:
+            return None, None, _managed_search_failure(exc, managed_deadline)
+        logger.warning("fs_search unexpected error: %s", exc, exc_info=True)
+        failure = ToolResult.fail("search_failed", f"internal error in fs_search: {exc}", retryable=False)
+        return None, None, failure
+
+
+def _complete_search_result(
+    sr: Any,
+    *,
+    query: str,
+    output_mode: str,
+    index_stats: dict[str, int] | None,
+    warnings_list: list[str],
+    data: Mapping[str, object],
+    managed_bounded: bool,
+    managed_inventory: Any,
+    root: Path,
+    subdir: Path,
+    glob_pat: str | None,
+    exclude_set: frozenset[str],
+) -> ToolResult:
+    result: dict[str, Any] = {
+        "query": query,
+        "method": sr.method,
+        "returned": sr.returned,
+        "truncated": bool(sr.truncated),
+        "total": int(sr.total if getattr(sr, "total", 0) else sr.returned),
+        "total_bytes": int(sr.total_bytes),
+        "index_stats": index_stats,
+    }
+    _output_for_mode(result, sr, output_mode)
+    if managed_bounded and managed_inventory is not None and output_mode == "files":
+        result["skipped_large_files"] = _managed_oversized_count(
+            managed_inventory,
+            root=root,
+            subdir=subdir,
+            glob_pat=glob_pat,
+            exclude_set=exclude_set,
+        )
+    if warnings_list:
+        result["warnings"] = warnings_list
+    elif sr.warnings:
+        result["warnings"] = list(sr.warnings)
+    _attach_ignored_params(result, data)
+    if not managed_bounded:
+        _enforce_response_cap(result)
+    summary = _build_summary(query, output_mode, sr.method, result)
+    return ToolResult.ok(summary, result=result)
+
+
 def _handle(
     params: Mapping[str, object],
     holder: _IndexHolder,
@@ -863,6 +1166,7 @@ def _handle(
     db: Path,
     *,
     rooted_reader: RootedFileReader | None = None,
+    managed_bounded: bool = False,
 ) -> ToolResult:
     warnings_list: list[str] = []
 
@@ -931,16 +1235,40 @@ def _handle(
         return ToolResult.fail("invalid_params", err, retryable=True)
     exclude_set = frozenset(exclude_dirs) if exclude_dirs else frozenset()
 
+    managed_inventory, managed_deadline, inventory_refusal = _prepare_managed_inventory(
+        root, managed_bounded=managed_bounded, output_mode=output_mode
+    )
+    if inventory_refusal is not None:
+        return inventory_refusal
+
     # S12.7 (CT9): outline mode — structural fold of ONE file; never
     # touches the search index. Leniency warnings survive; generic limit
     # clamp noise does not (outline has its own limit semantics).
     if output_mode == "outline":
-        return _do_outline(root, subdir, query, data, leniency, rooted_reader=rooted_reader)
+        return _do_outline(
+            root,
+            subdir,
+            query,
+            data,
+            leniency,
+            rooted_reader=rooted_reader,
+            managed_bounded=managed_bounded,
+        )
 
     # S12.7 (§A6 v7 / CT11): absent query + files = pure scope listing.
     if query is None and output_mode == "files":
         return _do_files_listing(
-            root, subdir, glob_pat, exclude_set, limit, warnings_list, data, rooted_reader=rooted_reader
+            root,
+            subdir,
+            glob_pat,
+            exclude_set,
+            limit,
+            warnings_list,
+            data,
+            rooted_reader=rooted_reader,
+            managed_inventory=managed_inventory,
+            managed_deadline=managed_deadline,
+            managed_bounded=managed_bounded,
         )
 
     if query is None:  # unreachable: files+None listed and matches+None failed above
@@ -956,51 +1284,40 @@ def _handle(
         regex=regex,
     )
 
-    # lazy index + search (fixed internal size cap — §A6 v7)
-    from fa.memory.search_index import MAX_SEARCH_FILE_BYTES
+    sr, index_stats_dict, search_error = _execute_search(
+        holder,
+        root=root,
+        subdir=subdir,
+        db=db,
+        search_params=search_params,
+        warnings_list=warnings_list,
+        rooted_reader=rooted_reader,
+        managed_bounded=managed_bounded,
+        managed_inventory=managed_inventory,
+        managed_deadline=managed_deadline,
+    )
+    if search_error is not None:
+        return search_error
+    if sr is None:
+        return ToolResult.fail("search_failed", "search result unavailable", retryable=False)
 
-    index_stats_dict = _ensure_index(holder, root, MAX_SEARCH_FILE_BYTES, warnings_list)
-
-    try:
-        if holder._indexed:
-            sr = _do_indexed_search(holder, search_params, root, subdir)
-        else:
-            sr = _do_fallback_search(
-                db, search_params, root, subdir, warnings_list, rooted_reader=rooted_reader
-            )
-    except Exception as exc:
-        logger.warning("fs_search unexpected error: %s", exc, exc_info=True)
-        return ToolResult.fail(
-            "search_failed",
-            f"internal error in fs_search: {exc}",
-            retryable=False,
-        )
-
-    # assemble result dict
-    result: dict[str, Any] = {
-        "query": query,
-        "method": sr.method,
-        "returned": sr.returned,
-        "truncated": bool(sr.truncated),
-        "total": int(sr.total if getattr(sr, "total", 0) else sr.returned),
-        "total_bytes": int(sr.total_bytes),
-        "index_stats": index_stats_dict,
-    }
-    _output_for_mode(result, sr, output_mode)
-    if warnings_list:
-        result["warnings"] = warnings_list
-    elif sr.warnings:
-        result["warnings"] = list(sr.warnings)
-    _attach_ignored_params(result, data)
-
-    _enforce_response_cap(result)
-
-    # S15 (CT-3): surface this search's returned paths to the attribution
-    # pipeline (pending set — run_session promotes at batch end).
-    _register_search_result_paths(result)
-
-    summary = _build_summary(query, output_mode, sr.method, result)
-    return ToolResult.ok(summary, result=result)
+    completed = _complete_search_result(
+        sr,
+        query=query,
+        output_mode=output_mode,
+        index_stats=index_stats_dict,
+        warnings_list=warnings_list,
+        data=data,
+        managed_bounded=managed_bounded,
+        managed_inventory=managed_inventory,
+        root=root,
+        subdir=subdir,
+        glob_pat=glob_pat,
+        exclude_set=exclude_set,
+    )
+    if isinstance(completed.result, dict):
+        _register_search_result_paths(completed.result)
+    return completed
 
 
 # ---------------------------------------------------------------------------
@@ -1008,13 +1325,15 @@ def _handle(
 # ---------------------------------------------------------------------------
 
 
-def build_fs_search_tool(
+def build_fs_search_tool(  # noqa: C901 - legacy and managed handlers share the established tool schema
     db_path: Path,
     workspace_root: Path,
     *,
     workspace_io: WorkspacePort | None = None,
     cleanup: ExitStack | None = None,
     strict_rooted_reads: bool = False,
+    managed_bounded: bool = False,
+    project_tool_executor: Any | None = None,
 ) -> ToolSpec:
     """Build the fs_search ToolSpec bound to a workspace and FTS DB path.
 
@@ -1030,8 +1349,12 @@ def build_fs_search_tool(
     """
     root = Path(workspace_root).resolve()
     host_db = Path(db_path)
-    if not isinstance(strict_rooted_reads, bool):
-        raise TypeError("strict_rooted_reads must be bool")
+    if not isinstance(strict_rooted_reads, bool) or not isinstance(managed_bounded, bool):
+        raise TypeError("strict_rooted_reads and managed_bounded must be bool")
+    if managed_bounded and not strict_rooted_reads:
+        raise ValueError("managed bounded search requires rooted reads")
+    if project_tool_executor is not None and workspace_io is None:
+        raise ValueError("project tool executor requires a managed workspace port")
     rooted_reader = RootedFileReader(root) if strict_rooted_reads else None
     if rooted_reader is not None:
         if cleanup is None:
@@ -1045,7 +1368,7 @@ def build_fs_search_tool(
             db = index_db(workspace_io, root, "search.db", host_db)
         except WorkspacePortError:
             return None, None
-        holder = _IndexHolder(db, rooted_reader=rooted_reader)
+        holder = _IndexHolder(db, rooted_reader=rooted_reader, managed_bounded=managed_bounded)
         if cleanup is None:
             atexit.register(holder.close)
         else:
@@ -1059,7 +1382,21 @@ def build_fs_search_tool(
     def handler(params: Mapping[str, object]) -> ToolResult:
         nonlocal holder, db
         if workspace_io is not None:
-            return ToolResult.fail("search_failed", "managed cell-local search index is unavailable", retryable=False)
+            if project_tool_executor is None:
+                return ToolResult.fail(
+                    "search_failed", "managed cell-local search index is unavailable", retryable=False
+                )
+            from fa.inner_loop.tools.managed_project_tool import dispatch_managed_project_tool
+
+            result = dispatch_managed_project_tool(project_tool_executor, "fs_search", dict(params))
+            if result.error is None and isinstance(result.result, dict):
+                paths = _managed_search_observation_paths(result.result, params)
+                if paths is None:
+                    return ToolResult.fail(
+                        "project_tool_failed", "managed search returned invalid path data", retryable=False
+                    )
+                _register_validated_search_paths(paths)
+            return result
         if holder is None or db is None:
             # A managed view without a private cache home: refuse, never index
             # into the tree being searched (it is the artefact under validation).
@@ -1069,8 +1406,20 @@ def build_fs_search_tool(
                 retryable=False,
             )
         try:
-            return _handle(params, holder, root, db, rooted_reader=rooted_reader)
+            return _handle(
+                params,
+                holder,
+                root,
+                db,
+                rooted_reader=rooted_reader,
+                managed_bounded=managed_bounded,
+            )
         except Exception as exc:
+            from fa.memory.managed_discovery import ManagedDiscoveryError
+
+            if managed_bounded:
+                reason = exc.reason if isinstance(exc, ManagedDiscoveryError) else "unsafe_path"
+                return ToolResult.fail("search_failed", f"managed search refused ({reason})", retryable=False)
             logger.warning("fs_search top-level error: %s", exc, exc_info=True)
             return ToolResult.fail(
                 "search_failed",
@@ -1084,7 +1433,9 @@ def build_fs_search_tool(
         input_schema=_INPUT_SCHEMA,
         permission="read",
         handler=handler,
-        tags=("fs", "search", "discovery"),
+        tags=("fs", "search", "discovery", "managed-view-serial")
+        if project_tool_executor is not None
+        else ("fs", "search", "discovery"),
         # S12.7 (CT2/GAP4): projection ceiling (was 30_000). MAX_RESPONSE_BYTES
         # remains the INTERNAL response cap until the S7 mode restructure.
         max_context_bytes=DEFAULT_TOOL_CONTEXT_BYTES,

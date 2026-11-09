@@ -28,7 +28,7 @@ import pytest
 
 from fa import cli
 from fa.execution import composition
-from fa.execution.cell_worker import serve_once
+from fa.execution.cell_worker import serve, serve_once
 from fa.execution.client import (
     ExecutionRejectedError,
     ExecutionUnavailableError,
@@ -239,6 +239,48 @@ def test_session_cli_refuses_missing_provisioner_before_workspace_lifecycle(
 
     assert refused.value.code == "managed_execution_unavailable"
     assert lifecycle_calls == []
+
+
+def test_r01_wrapper_run_refuses_overlapping_new_workspace_before_lifecycle_or_provider(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """C2 Q128-B: wrapper preflight refuses an overlapping new root without effects.
+
+    The real ``_cmd_run`` caller uses a real SessionManager with an active
+    manifest/DB. Producer kill-check: remove SessionManager's overlap decision.
+    EDGE kill-check: bypass ``validate_new_workspace_disjoint`` at the CLI call.
+    Either mutant must lose the early ``workspace_overlap`` refusal or perform
+    a provider/lifecycle effect.
+    """
+    from tests.test_cli import _FAKE_MODELS_YAML, _TEST_SECRETS, _make_run_args, _ScriptedTransport
+    from tests.test_session_lifecycle import _manager as make_session_manager
+
+    manager = make_session_manager(tmp_path)
+    active = manager.create_or_attach_session(session_id=None, workspace_override=None)
+    config = tmp_path / "models.yaml"
+    config.write_text(_FAKE_MODELS_YAML, encoding="utf-8")
+    args = _make_run_args(workspace=tmp_path, config=config, run_id="overlap-preflight")
+    args.session_id = None
+    args.resume = False
+    args.output_mode = "console"
+    args.detail = "standard"
+    args.no_color = False
+    args.workspace = "nested"
+    transport = _ScriptedTransport([])
+
+    monkeypatch.setattr(cli, "_session_manager_for_args", lambda _args: manager)
+    monkeypatch.setenv("FA_WRAPPER_ACTIVE_WORKSPACE", str(active.workspace_path))
+    manifests_before = tuple(sorted(manager.sessions_root.glob("*/manifest.json")))
+    nested_workspace = active.workspace_path / "nested"
+
+    code = cli._cmd_run(args, transport=transport, secrets=_TEST_SECRETS)
+    stderr = capsys.readouterr().err
+
+    assert transport.calls == []
+    assert tuple(sorted(manager.sessions_root.glob("*/manifest.json"))) == manifests_before
+    assert not nested_workspace.exists()
+    assert args.workspace == "nested" and args.session_id is None
+    assert code == 2 and "[workspace_overlap]" in stderr
 
 
 def test_session_stage_refuses_missing_managed_execution_before_registry_or_provider(
@@ -801,6 +843,600 @@ class _ManagedChatProviderOracle:
         return ResponseInfo("done", 1, 1, "stop"), logical_call_id or "managed-chat", []
 
 
+@pytest.mark.parametrize("refuse_publication", [False, True])
+def test_workflow_root_publishes_candidate_through_real_local_authority(
+    site: Site,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    refuse_publication: bool,
+) -> None:
+    """S3P3 C1: parsed workflow repairs a plan and uses the actual local publisher."""
+    from fa.inner_loop.session_db import SessionDatabase
+    from fa.providers import ProviderChain, SecretStore
+
+    monkeypatch.setenv("FA_STATE_ROOT", str(tmp_path / "fa-state"))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))
+
+    canonical_relative = "worklogs/planning-topology-and-executable-contracts-loop/increments/s3p3-cli-fixture.md"
+    plan_path = site.source / canonical_relative
+    plan_path.parent.mkdir(parents=True, exist_ok=True)
+    source_bytes = b"## SLICE 1: bad heading\n"
+    candidate_bytes = (
+        b"Plan-ID: PLAN-cli-fixture\n\n## SLICE1: CLI routing fixture\nCONTRACTS:\n"
+        b"  CT9001 [CONSTRAINT]: candidate revision remains valid.\n"
+        b"TESTS: tests/test_fixture_contract.py\n"
+    )
+    plan_path.write_bytes(source_bytes)
+    candidate_snapshot = snapshot_from_bytes("draft.md", candidate_bytes)
+    assert workflow_controller._validate_plan_admission(candidate_snapshot).outcome == "PASS"
+    initial_snapshot = read_plan_snapshot(site.source, Path(canonical_relative))
+    assert workflow_controller._validate_plan_admission(initial_snapshot).outcome == "DIAGNOSTICS"
+
+    def canonical_snapshot() -> dict[str, bytes]:
+        excluded = {".git", ".fa", ".venv", ".env"}
+        return {
+            path.relative_to(site.source).as_posix(): path.read_bytes()
+            for path in sorted(site.source.rglob("*"))
+            if path.is_file()
+            and not path.is_symlink()
+            and not excluded.intersection(path.relative_to(site.source).parts)
+        }
+
+    canonical_before = canonical_snapshot()
+    index_path = site.source / ".git" / "index"
+    index_before = index_path.read_bytes()
+
+    models = tmp_path / "models.yaml"
+    models.write_text(
+        """planner:
+  name: test-model
+  family: openai
+  chain:
+    - provider: openrouter
+      model: test/model
+      base_url: https://example.invalid/v1
+      api_key_env: K
+coder:
+  name: test-model
+  family: openai
+  chain:
+    - provider: openrouter
+      model: test/model
+      base_url: https://example.invalid/v1
+      api_key_env: K
+eval:
+  name: test-model
+  family: openai
+  chain:
+    - provider: openrouter
+      model: test/model
+      base_url: https://example.invalid/v1
+      api_key_env: K
+""",
+        encoding="utf-8",
+    )
+    service_path, service_config = _configs(tmp_path, _document(site))
+    monkeypatch.setattr(composition, "DEFAULT_CONFIG_PATH", service_config)
+
+    session_id = "s3p3-session"
+    run_id = "s3p3-refusal" if refuse_publication else "s3p3-success"
+    session_dir = tmp_path / "session"
+    session_dir.mkdir()
+    session_db_path = session_dir / "session.db"
+    session_db = SessionDatabase(session_db_path, session_id=session_id)
+    session = SessionContext(session_id, site.source, session_db_path, session_dir / "manifest.json")
+    run_log_dir = tmp_path / "workflow-run-logs" / run_id
+    run_log_dir.mkdir(parents=True)
+    run = RunContext(run_id, session_id, site.source, session_db_path, run_log_dir)
+    monkeypatch.setattr(
+        cli,
+        "_resolve_workflow_lifecycle",
+        lambda _args, resolved_run_id: (resolved_run_id, session, run, session_db),
+    )
+
+    class _WorkflowWorkspace:
+        @staticmethod
+        def resolve_workflow_workspace(**_kwargs: Any) -> Path:
+            return site.source
+
+    monkeypatch.setattr(cli, "_session_manager_for_args", lambda _args: _WorkflowWorkspace())
+    managed_instances: list[ManagedExecution] = []
+    original_managed_for_run = cli.managed_execution_for_run
+
+    def capture_managed(*args: Any, **kwargs: Any) -> ManagedExecution | None:
+        managed = original_managed_for_run(*args, **kwargs)
+        if managed is not None:
+            managed_instances.append(managed)
+        return managed
+
+    monkeypatch.setattr(cli, "managed_execution_for_run", capture_managed)
+    provider_calls: list[str] = []
+    candidate_writes: list[str] = []
+
+    def provider_request(
+        _chain: Any, request: Any, *, logical_call_id: str | None = None
+    ) -> tuple[Any, str, list[Any]]:
+        provider_calls.append(str(logical_call_id or "s3p3"))
+        write_spec = next(
+            (
+                tool
+                for tool in request.tools
+                if isinstance(tool.get("function"), dict) and tool["function"].get("name") == "fs_write_file"
+            ),
+            None,
+        )
+        properties = (
+            write_spec.get("function", {}).get("parameters", {}).get("properties", {}) if write_spec is not None else {}
+        )
+        target_values = properties.get("path", {}).get("enum") if isinstance(properties, dict) else None
+        tool_messages = [message for message in request.messages if message.get("role") == "tool"]
+        if isinstance(target_values, list) and len(target_values) == 1:
+            target = target_values[0]
+            if tool_messages:
+                response = ResponseInfo("candidate repaired", 1, 1, "stop")
+                return response, logical_call_id or "s3p3", []
+            candidate_writes.append(target)
+            call = {
+                "id": "s3p3-candidate-write",
+                "type": "function",
+                "function": {
+                    "name": "fs_write_file",
+                    "arguments": json.dumps({"path": target, "content": candidate_bytes.decode("utf-8")}),
+                },
+            }
+            return ResponseInfo("", 1, 1, "tool_calls", (call,)), logical_call_id or "s3p3", []
+        system = request.messages[0].get("content", "") if request.messages else ""
+        final_text = (
+            "## Verification Summary\n\n### Step results\n- S1: PASS — candidate committed.\n\n"
+            "### Verdict\nPASS\n\n### Route decision\ncomplete\n"
+            if "First-Agent evaluator" in str(system)
+            else "stage complete"
+        )
+        return ResponseInfo(final_text, 1, 1, "stop"), logical_call_id or "s3p3", []
+
+    monkeypatch.setattr(ProviderChain, "request", provider_request)
+    args = cli.build_parser().parse_args(
+        [
+            "workflow",
+            "planner,coder",
+            "repair and publish the admitted candidate",
+            "--workspace",
+            str(site.source),
+            "--session-id",
+            session_id,
+            "--run-id",
+            run_id,
+            "--config",
+            str(models),
+            "--max-turns",
+            "5",
+            "--plan",
+            canonical_relative,
+        ]
+    )
+    publish_attempts: list[str] = []
+    publish_replies: list[dict[str, Any]] = []
+    with SupervisorService(read_config_file(service_path)) as service:
+        actual_publish = service.authority.publish_candidate_plan
+
+        def record_publish(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            publish_attempts.append(str(kwargs["operation_id"]))
+            if refuse_publication:
+                raise SupervisorError("INPUT_POLICY")
+            reply = actual_publish(*args, **kwargs)
+            publish_replies.append(reply)
+            return reply
+
+        monkeypatch.setattr(service.authority, "publish_candidate_plan", record_publish)
+        with _serving_supervisor(service):
+            exit_code = cli._cmd_workflow(args, secrets=SecretStore({"K": "sk-test-s3p3"}))
+            assert len(managed_instances) == 1
+            again = managed_execution_for_run(run, config_path=service_config)
+            assert again is not None
+            assert again.binding.workspace_id == managed_instances[0].binding.workspace_id
+            assert again.close() is True
+        workspace_id = managed_instances[0].binding.workspace_id
+        assert site.metadata({"workspace_id": workspace_id})["status"] == "AVAILABLE"
+
+    assert exit_code == (2 if refuse_publication else 0)
+    assert provider_calls and candidate_writes and len(candidate_writes) == 1
+    assert len(publish_attempts) == 1  # determinate refusal is not replayed
+    assert len(publish_replies) == int(not refuse_publication)
+    assert index_path.read_bytes() == index_before
+    expected_tree = canonical_before.copy()
+    if refuse_publication:
+        assert canonical_snapshot() == canonical_before
+        assert plan_path.read_bytes() == source_bytes
+    else:
+        expected_tree[canonical_relative] = candidate_bytes
+        assert canonical_snapshot() == expected_tree
+        assert plan_path.read_bytes() == candidate_bytes
+        reply = publish_replies[0]
+        assert reply["plan_ref"].sha256 == candidate_snapshot.ref.sha256
+        assert reply["plan_ref"].workspace_relative_path == canonical_relative
+        assert reply["revision_id"] != managed_instances[0].grant.revision_id
+
+
+def _constrain_managed_inventory_candidates(monkeypatch: pytest.MonkeyPatch, candidate_limit: int) -> None:
+    from fa.memory import managed_discovery
+
+    if type(candidate_limit) is not int or candidate_limit < 1:
+        raise ValueError("inventory_candidate_limit must be a positive integer")
+    original_inventory = managed_discovery.inventory_managed_files
+
+    def constrained_inventory(root: Path, *, deadline: float, **kwargs: Any) -> Any:
+        kwargs["limits"] = managed_discovery.ManagedDiscoveryLimits(candidates=candidate_limit)
+        return original_inventory(root, deadline=deadline, **kwargs)
+
+    monkeypatch.setattr(managed_discovery, "inventory_managed_files", constrained_inventory)
+
+
+def _run_managed_discovery_c1(
+    site: Site,
+    tmp_path: Path,
+    local_cell_peer: Endpoint,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    calls: tuple[tuple[str, dict[str, Any]], ...],
+    expected_tool_result: str | None = None,
+    inventory_candidate_limit: int | None = None,
+) -> tuple[int, tuple[str, ...], tuple[str, ...]]:
+    """R20 C1 oracle: fa run reaches the typed cell helper without host fallback."""
+    import subprocess
+    from types import SimpleNamespace
+
+    import fa.execution.cell_worker as cell_worker
+    from fa.execution import project_tools
+    from fa.execution.client import ManagedProjectToolExecutor
+    from fa.inner_loop.session_db import SessionDatabase
+    from fa.providers import ProviderChain, SecretStore
+
+    if inventory_candidate_limit is not None:
+        _constrain_managed_inventory_candidates(monkeypatch, inventory_candidate_limit)
+    from fa.session.manager import RunContext, SessionContext
+
+    state_root = tmp_path / "fa-state"
+    monkeypatch.setenv("FA_STATE_ROOT", str(state_root))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))
+    monkeypatch.setattr(cli, "_build_pty_pool", lambda **_kwargs: object())
+
+    models = tmp_path / "models.yaml"
+    models.write_text(
+        """coder:
+  name: "test-model"
+  family: "openai"
+  chain:
+    - provider: openrouter
+      model: "test/model"
+      base_url: "https://example.invalid/v1"
+      api_key_env: K
+""",
+        encoding="utf-8",
+    )
+
+    git_invocations: list[list[str]] = []
+    helper_tool_names: list[str] = []
+    helper_calls_lock = threading.Lock()
+    active_executor_calls = 0
+    max_active_executor_calls = 0
+    executor_calls_lock = threading.Lock()
+
+    def record_host_git(argv: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        git_invocations.append(list(argv))
+        return subprocess.CompletedProcess(list(argv), 0, stdout="", stderr="")
+
+    monkeypatch.setattr("fa.memory._safe_walk.subprocess.run", record_host_git)
+
+    class _ProjectToolProcess:
+        def __init__(self, args: list[str]) -> None:
+            self.args = args
+
+    def start_project_tool(args: list[str], **kwargs: Any) -> _ProjectToolProcess:
+        assert len(args) == 5
+        assert args[1:4] == ["-I", "-m", "fa.execution.project_tools"]
+        assert kwargs == {
+            "stdin": subprocess.DEVNULL,
+            "stdout": subprocess.PIPE,
+            "stderr": subprocess.PIPE,
+            "cwd": str((tmp_path / "local-cell-workspace").resolve()),
+            "env": {
+                "HOME": "/scratch/home",
+                "PATH": "/usr/bin:/bin",
+                "PYTHONNOUSERSITE": "1",
+                "TMPDIR": "/scratch/tmp",
+            },
+            "close_fds": True,
+            "shell": False,
+            "start_new_session": True,
+        }
+        return _ProjectToolProcess(args)
+
+    def run_shipped_project_helper(
+        process: _ProjectToolProcess,
+        *,
+        timeout_ms: int,
+    ) -> tuple[bytes, bytes, int, bool, bool]:
+        assert timeout_ms > 0
+        parsed = project_tools._parse(process.args[-1])
+        assert parsed is not None
+        with helper_calls_lock:
+            helper_tool_names.append(parsed[0])
+        view_sources = sorted((site.state / "workspaces" / workspace_id / "views").glob("*/source"))
+        assert len(view_sources) == 1
+        scratch = tmp_path / "project-tool-scratch"
+        scratch.mkdir(exist_ok=True)
+        result = project_tools._dispatch(parsed[0], parsed[1], root=view_sources[0], scratch=scratch)
+        return (project_tools._envelope(result) + "\n").encode("utf-8"), b"", 0, False, False
+
+    monkeypatch.setattr(
+        cell_worker,
+        "subprocess",
+        SimpleNamespace(Popen=start_project_tool, DEVNULL=subprocess.DEVNULL, PIPE=subprocess.PIPE),
+    )
+    monkeypatch.setattr(cell_worker, "_capture_project_tool", run_shipped_project_helper)
+    original_execute = ManagedProjectToolExecutor.execute
+
+    def track_executor_entry(
+        executor: ManagedProjectToolExecutor,
+        tool: str,
+        params: dict[str, Any],
+        *,
+        timeout: int = 25,
+    ) -> str:
+        nonlocal active_executor_calls, max_active_executor_calls
+        with executor_calls_lock:
+            active_executor_calls += 1
+            max_active_executor_calls = max(max_active_executor_calls, active_executor_calls)
+        try:
+            # Measure overlap before ManagedProjectToolExecutor's own lock; otherwise
+            # its transport lock would conceal a broken loop scheduler edge.
+            time.sleep(0.05)
+            return original_execute(executor, tool, params, timeout=timeout)
+        finally:
+            with executor_calls_lock:
+                active_executor_calls -= 1
+
+    monkeypatch.setattr(ManagedProjectToolExecutor, "execute", track_executor_entry)
+
+    provider_calls = 0
+    tool_result_messages: list[str] = []
+
+    def provider_request(
+        _chain: Any, request: Any, *, logical_call_id: str | None = None
+    ) -> tuple[ResponseInfo, str, list[Any]]:
+        nonlocal provider_calls
+        provider_calls += 1
+        names = {
+            str(tool.get("function", {}).get("name", ""))
+            for tool in request.tools
+            if isinstance(tool.get("function"), dict)
+        }
+        if provider_calls == 1:
+            tool_calls = []
+            for index, (name, params) in enumerate(calls):
+                assert name in names
+                tool_calls.append(
+                    {
+                        "id": f"r20-managed-{name}-{index}",
+                        "type": "function",
+                        "function": {"name": name, "arguments": json.dumps(params)},
+                    }
+                )
+            return ResponseInfo("", 1, 1, "tool_calls", tuple(tool_calls)), logical_call_id or "r20", []
+        tool_result_messages.extend(
+            str(message.get("content", "")) for message in request.messages if message.get("role") == "tool"
+        )
+        return ResponseInfo("done", 1, 1, "stop"), logical_call_id or "r20", []
+
+    monkeypatch.setattr(ProviderChain, "request", provider_request)
+    from fa.inner_loop.state import SessionState
+
+    state_instances: list[SessionState] = []
+
+    def capture_state(*args: Any, **kwargs: Any) -> SessionState:
+        state = SessionState(*args, **kwargs)
+        state_instances.append(state)
+        return state
+
+    monkeypatch.setattr(cli, "SessionState", capture_state)
+    index_path = site.source / ".git" / "index"
+    index_before = index_path.read_bytes()
+    canonical_before = {
+        "dirty.txt": (site.source / "dirty.txt").read_bytes(),
+        "untracked.txt": (site.source / "untracked.txt").read_bytes(),
+    }
+    fts_path = site.source / ".fa" / "fts.db"
+    assert not fts_path.exists()
+    document = _document(site)
+    _configure_local_cell_backend(
+        local_cell_peer,
+        tmp_path,
+        document,
+        interactive_worker=True,
+        project_tool_calls=len(calls),
+    )
+    service_path, config_path = _configs(tmp_path, document)
+    session_db_path = tmp_path / "session.db"
+    run_log_dir = tmp_path / "session-log" / "run-1"
+    session_db = SessionDatabase(session_db_path, session_id="session-1")
+    session_context = SessionContext("session-1", site.source, session_db_path, tmp_path / "manifest.json")
+    run_context = RunContext("run-1", "session-1", site.source, session_db_path, run_log_dir)
+
+    with SupervisorService(read_config_file(service_path)) as service:
+        workspace_id = _registered(service)
+        with _serving_supervisor(service):
+            managed = managed_execution_for_run(run_context, config_path=config_path)
+            assert managed is not None and managed.binding.workspace_id == workspace_id
+            operations: list[Operation] = []
+            exec_bindings: list[tuple[str, str, str, str]] = []
+            original_request = managed.client.request
+
+            def record_request(operation: Operation, **kwargs: Any) -> Any:
+                operations.append(operation)
+                if operation is Operation.EXEC:
+                    view = kwargs["view"]
+                    grant = kwargs["grant"]
+                    payload = kwargs["payload"]
+                    exec_bindings.append(
+                        (
+                            view.view_id,
+                            grant.view_ref.view_id,
+                            payload["profile_id"],
+                            kwargs["request_id"],
+                        )
+                    )
+                return original_request(operation, **kwargs)
+
+            monkeypatch.setattr(managed.client, "request", record_request)
+            args = cli.build_parser().parse_args(
+                [
+                    "run",
+                    "--role",
+                    "coder",
+                    "--config",
+                    str(models),
+                    "--workspace",
+                    str(site.source),
+                    "--run-id",
+                    "run-1",
+                    "--max-turns",
+                    "3",
+                    "search the admitted workspace",
+                ]
+            )
+            args._managed_execution = managed
+            args._session_context = session_context
+            args._run_context = run_context
+            args._session_db = session_db
+            try:
+                assert cli._cmd_run(args, secrets=SecretStore({"K": "sk-test-live"})) == 0
+            finally:
+                assert managed.close()
+
+    assert provider_calls == 2
+    assert len(tool_result_messages) == len(calls)
+    if expected_tool_result is None:
+        assert all("ERROR[" not in message for message in tool_result_messages)
+    else:
+        assert tool_result_messages == [expected_tool_result] * len(calls)
+    assert sorted(helper_tool_names) == sorted(name for name, _ in calls)
+    assert max_active_executor_calls == 1
+    assert git_invocations == []
+    assert operations.count(Operation.EXEC) == len(calls), operations
+    assert len(exec_bindings) == len(calls)
+    view_ids = tuple(binding[0] for binding in exec_bindings)
+    assert len(set(view_ids)) == 1
+    assert all(view_id == grant_view_id for view_id, grant_view_id, _, _ in exec_bindings)
+    assert len({profile_id for _, _, profile_id, _ in exec_bindings}) == 1
+    assert len({request_id for _, _, _, request_id in exec_bindings}) == len(calls)
+    creates = [
+        item for item in local_cell_peer.seen if item["method"] == "POST" and "/containers/create?" in item["path"]
+    ]
+    starts = [item for item in local_cell_peer.seen if item["method"] == "POST" and item["path"].endswith("/start")]
+    kills = [item for item in local_cell_peer.seen if item["method"] == "POST" and "/kill?" in item["path"]]
+    assert len(creates) == 1 and len(starts) == 1 and len(kills) == 1
+    assert creates[0]["body"]["Labels"]["fa.execution.operation_id"] == "op-" + exec_bindings[0][3]
+    assert all(
+        CELL_CID in item["path"]
+        for item in local_cell_peer.seen
+        if "/containers/" in item["path"] and "/containers/create?" not in item["path"]
+    )
+    assert not any(operation in {Operation.READ_FILE, Operation.WRITE_FILE} for operation in operations), operations
+    assert index_path.read_bytes() == index_before
+    assert {name: (site.source / name).read_bytes() for name in canonical_before} == canonical_before
+    assert not fts_path.exists()
+    assert len(state_instances) == 1
+    if expected_tool_result is None:
+        assert state_instances[0].last_search_paths
+        assert all(
+            not path.startswith("/") and ".." not in path.split("/") for path in state_instances[0].last_search_paths
+        )
+    else:
+        assert not state_instances[0].last_search_paths
+    assert not local_cell_peer.replies, "the interactive EXEC and settlement HTTP sequence must be exhausted"
+    return max_active_executor_calls, tuple(helper_tool_names), view_ids
+
+
+def test_managed_fs_search_uses_typed_exec_without_host_git_or_workspace_io(
+    site: Site,
+    tmp_path: Path,
+    local_cell_peer: Endpoint,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R20 C1 success path through the managed role registry and typed helper."""
+    max_active, helpers, view_ids = _run_managed_discovery_c1(
+        site,
+        tmp_path,
+        local_cell_peer,
+        monkeypatch,
+        calls=(("fs_search", {"output_mode": "files"}),),
+    )
+    assert max_active == 1 and helpers == ("fs_search",) and len(view_ids) == 1
+
+
+@pytest.mark.parametrize(
+    ("tool", "params", "expected_tool_result"),
+    [
+        (
+            "fs_search",
+            {"output_mode": "files"},
+            "ERROR[search_failed]: managed search refused (candidate_budget)",
+        ),
+        (
+            "fs_reach",
+            {"symbol": "Site", "direction": "down"},
+            "ERROR[reach_failed]: managed reach refused (candidate_budget)",
+        ),
+    ],
+)
+def test_managed_discovery_budget_refusal_reaches_typed_exec_without_host_fallback(
+    site: Site,
+    tmp_path: Path,
+    local_cell_peer: Endpoint,
+    monkeypatch: pytest.MonkeyPatch,
+    tool: str,
+    params: dict[str, Any],
+    expected_tool_result: str,
+) -> None:
+    """Production C1 proves bounded producer and helper edge before index allocation."""
+    (site.source / "budget-first.py").write_text("value = 1\n", encoding="utf-8")
+    (site.source / "budget-second.py").write_text("value = 2\n", encoding="utf-8")
+    max_active, helpers, view_ids = _run_managed_discovery_c1(
+        site,
+        tmp_path,
+        local_cell_peer,
+        monkeypatch,
+        calls=((tool, params),),
+        expected_tool_result=expected_tool_result,
+        inventory_candidate_limit=1,
+    )
+    assert max_active == 1 and helpers == (tool,) and len(view_ids) == 1
+
+
+def test_managed_discovery_calls_serialize_per_view(
+    site: Site,
+    tmp_path: Path,
+    local_cell_peer: Endpoint,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Production C1: same-view search/reach entries do not overlap before EXEC's own lock."""
+    max_active, helpers, view_ids = _run_managed_discovery_c1(
+        site,
+        tmp_path,
+        local_cell_peer,
+        monkeypatch,
+        calls=(
+            ("fs_search", {"output_mode": "files"}),
+            ("fs_reach", {"symbol": "Site"}),
+        ),
+    )
+    assert max_active == 1
+    assert sorted(helpers) == ["fs_reach", "fs_search"]
+    assert len(view_ids) == 2 and len(set(view_ids)) == 1
+
+
 @contextmanager
 def _serving_supervisor(service: SupervisorService) -> Iterator[None]:
     stop = threading.Event()
@@ -1220,7 +1856,8 @@ def test_managed_fs_search_refuses_before_host_git_or_workspace_io(
                 assert managed.close()
 
     assert provider_calls == 2
-    assert tool_result_messages == ["ERROR[search_failed]: managed cell-local search index is unavailable"]
+    assert tool_result_messages == ["ERROR[execution_unavailable]: managed project tool backend unavailable"]
+    assert operations.count(Operation.EXEC) == 1
     assert git_invocations == []
     assert not any(operation in {Operation.READ_FILE, Operation.WRITE_FILE} for operation in operations), operations
     assert index_path.read_bytes() == index_before
@@ -1417,7 +2054,12 @@ def _local_cell_observation(peer: Endpoint, profile: Any, status: str, *, exit_c
 
 
 def _configure_local_cell_backend(
-    peer: Endpoint, tmp_path: Path, document: dict[str, Any]
+    peer: Endpoint,
+    tmp_path: Path,
+    document: dict[str, Any],
+    *,
+    interactive_worker: bool = False,
+    project_tool_calls: int = 1,
 ) -> tuple[Any, Any, CountingWorker]:
     cell_profile = replace(native_profile(), uid=os.getuid(), gid=os.getgid(), max_command_ms=5000)
     reader_profile = replace(read_only_profile(), uid=os.getuid(), gid=os.getgid(), max_command_ms=5000)
@@ -1437,7 +2079,7 @@ def _configure_local_cell_backend(
         PtyPool(base_cwd=worker_root),
         workspace=worker_root,
         max_command_ms=reader_profile.max_command_ms,
-        one_shot=True,
+        one_shot=not interactive_worker,
     )
     document.update(
         {
@@ -1452,7 +2094,14 @@ def _configure_local_cell_backend(
     worker_exit_codes: list[int] = []
 
     def attach_worker(connection: socket.socket) -> None:
-        worker_exit_codes.append(serve_once(cell_worker, MuxWorker(connection)))
+        mux = MuxWorker(connection)
+        if interactive_worker:
+            try:
+                serve(cell_worker, mux)
+            except (OSError, ValueError):
+                pass  # Service shutdown closes the persistent attach.
+        else:
+            worker_exit_codes.append(serve_once(cell_worker, mux))
 
     def inspect_reply(status: str) -> Reply:
         return Reply(
@@ -1471,10 +2120,15 @@ def _configure_local_cell_backend(
             Reply(204),
             inspect_reply("running"),
             Reply(raw=UPGRADE, upgraded=attach_worker),
-            inspect_reply("exited"),
-            inspect_reply("exited"),
         ]
     )
+    if interactive_worker:
+        if type(project_tool_calls) is not int or project_tool_calls < 1:
+            raise ValueError("project_tool_calls must be a positive integer")
+        peer.replies.extend(inspect_reply("running") for _ in range(project_tool_calls))
+        peer.replies.extend([inspect_reply("running"), Reply(204), inspect_reply("exited")])
+    else:
+        peer.replies.extend([inspect_reply("exited"), inspect_reply("exited")])
     return cell_profile, reader_profile, cell_worker
 
 

@@ -10,7 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 from copy import deepcopy
-from typing import Any, Literal
+from typing import Any, Literal, override
 
 import pytest
 
@@ -552,9 +552,9 @@ def _inventory_port(
     files: dict[str, bytes] | None = None,
     entries: tuple[PortDirectoryEntry, ...] | None = None,
     *,
-    project_kind: str = "directory",
-    roadmap_kind: str = "file",
-    increments_kind: str = "directory",
+    project_kind: Literal["missing", "file", "directory", "symlink"] = "directory",
+    roadmap_kind: Literal["missing", "file", "directory", "symlink"] = "file",
+    increments_kind: Literal["missing", "file", "directory", "symlink"] = "directory",
 ) -> _InventoryPort:
     rendered = _rendered_inventory_files() if files is None else files
     rows = entries if entries is not None else (PortDirectoryEntry("increment-01-foundation.md", "file"),)
@@ -655,6 +655,7 @@ def test_inventory_enforces_count_per_file_aggregate_and_digest_bounds(monkeypat
     assert total_too_large.value.rule == "too-large"
 
     class WrongDigestPort(_InventoryPort):
+        @override
         def read_file(self, path: str, *, offset_bytes: int = 0, max_bytes: int = 1024 * 1024) -> PortRead:
             result = super().read_file(path, offset_bytes=offset_bytes, max_bytes=max_bytes)
             return PortRead(result.content, "0" * 64, result.eof)
@@ -668,6 +669,7 @@ def test_inventory_enforces_count_per_file_aggregate_and_digest_bounds(monkeypat
 
 def test_inventory_rejects_unfinished_reads_and_unsupported_slugs() -> None:
     class TruncatedPort(_InventoryPort):
+        @override
         def read_file(self, path: str, *, offset_bytes: int = 0, max_bytes: int = 1024 * 1024) -> PortRead:
             result = super().read_file(path, offset_bytes=offset_bytes, max_bytes=max_bytes)
             return PortRead(result.content, result.sha256, False)

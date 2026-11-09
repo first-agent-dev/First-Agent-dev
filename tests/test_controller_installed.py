@@ -162,13 +162,38 @@ def test_image_recipe_audits_noneditable_install_before_site_enabled_cli() -> No
     assert text[pre_site:cli].rstrip().endswith("&& \\")
 
 
-@pytest.mark.parametrize("args", [(), ("--help",), ("help",), ("help", "run"), ("run", "--help")])
+@pytest.mark.parametrize(
+    ("args", "controller_args"),
+    [
+        ((), ()),
+        (("--help",), ("--help",)),
+        (("-h",), ("--help",)),
+        (("-help",), ("--help",)),
+        (("help",), ("--help",)),
+        (("help", "run"), ("help", "run")),
+        (("--help", "run"), ("run", "--help")),
+        (("-h", "run"), ("run", "--help")),
+        (("-help", "run"), ("run", "--help")),
+        (("run", "--help"), ("run", "--help")),
+        (("run", "-h"), ("run", "-h")),
+        (("run", "-help"), ("run", "--help")),
+        (("run", "task", "--help"), ("run", "task", "--help")),
+    ],
+)
 def test_wrapper_product_help_invokes_installed_isolated_controller(
-    installed: Path, tmp_path: Path, args: tuple[str, ...]
+    installed: Path, tmp_path: Path, args: tuple[str, ...], controller_args: tuple[str, ...]
 ) -> None:
     """Exercise scripts/fa -> container exec shape -> installed controller, without Docker."""
+    repo = tmp_path / "host" / "repo"
+    scripts = repo / "scripts"
+    scripts.mkdir(parents=True)
+    shutil.copy2(ROOT / "scripts" / "fa", scripts / "fa")
+    (repo / "docker-compose.fa.yml").write_text("services: {}\n", encoding="utf-8")
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
     project = tmp_path / "active-project"
     project.mkdir()
+    (sessions / ".active").write_text(f"{project.resolve()}\n", encoding="utf-8")
     marker = tmp_path / "project-code-ran"
     (project / "fa").mkdir()
     poison = f"from pathlib import Path\nPath({str(marker)!r}).touch()\nraise RuntimeError('project poison')\n"
@@ -202,7 +227,7 @@ def test_wrapper_product_help_invokes_installed_isolated_controller(
         "FA_WRAPPER_INSTALLED_PYTHON": str(installed / "bin" / "python"),
     }
     run = subprocess.run(
-        ["bash", str(ROOT / "scripts" / "fa"), *args],
+        ["bash", str(scripts / "fa"), *args],
         cwd=project,
         env=env,
         text=True,
@@ -225,7 +250,7 @@ def test_wrapper_product_help_invokes_installed_isolated_controller(
         "/opt/fa-venv/bin/python",
         "-I",
     ]
-    assert argv[exec_index + 7 :] == ["-m", "fa.controller_entry", *args]
+    assert argv[exec_index + 7 :] == ["-m", "fa.controller_entry", *controller_args]
 
 
 def test_wrapper_product_command_uses_installed_controller_with_hostile_project_env(

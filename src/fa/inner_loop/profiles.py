@@ -317,6 +317,7 @@ def _build_tool_builders(
     planner_dispatch: PlannerDispatch | None = None,
     workspace_io: WorkspacePort | None = None,
     managed_executor: BashExecutor | None = None,
+    project_tool_executor: Any | None = None,
 ) -> dict[str, Callable[[], ToolSpec]]:
     """Map tool name -> builder lambda, uses existing builders, graceful degradation.
 
@@ -345,7 +346,9 @@ def _build_tool_builders(
     try:
         from fa.inner_loop.tools.fs_reach import build_fs_reach_tool
 
-        builders["fs_reach"] = lambda: build_fs_reach_tool(root, workspace_io=workspace_io)
+        builders["fs_reach"] = lambda: build_fs_reach_tool(
+            root, workspace_io=workspace_io, project_tool_executor=project_tool_executor
+        )
     except Exception as exc:  # noqa: BLE001
         logger.warning(f"Failed to setup builder fs_reach: {exc}")
 
@@ -389,9 +392,14 @@ def _build_tool_builders(
             fts_path = ".fa/fts.db"
 
         def _build_fs_search(bp: str = fts_path) -> Any:
-            # ``root / bp`` is the legacy host-mode location. A bound port
-            # refuses until the view-local discovery supplier is connected.
-            return build_fs_search_tool(root / bp, root, workspace_io=workspace_io)
+            # ``root / bp`` is used only by legacy host mode. A managed view
+            # dispatches through its bound typed executor, or refuses if absent.
+            return build_fs_search_tool(
+                root / bp,
+                root,
+                workspace_io=workspace_io,
+                project_tool_executor=project_tool_executor,
+            )
 
         builders["fs_search"] = _build_fs_search
     except Exception as exc:  # noqa: BLE001
@@ -416,7 +424,7 @@ def _build_tool_builders(
     return builders
 
 
-def build_registry_for_role(
+def build_registry_for_role(  # noqa: C901 - role composition owns the closed tool-builder and fail-closed branches
     role: str,
     workspace_root: Path,
     *,
@@ -424,6 +432,7 @@ def build_registry_for_role(
     planner_dispatch: PlannerDispatch | None = None,
     workspace_io: WorkspacePort | None = None,
     managed_executor: BashExecutor | None = None,
+    project_tool_executor: Any | None = None,
 ) -> ToolRegistry:
     """Build ToolRegistry with only tools for given role, token efficient.
 
@@ -437,6 +446,8 @@ def build_registry_for_role(
         raise PlannerDispatchError
     if workspace_io is None and managed_executor is not None:
         raise ValueError("managed executor requires a managed workspace port")
+    if workspace_io is None and project_tool_executor is not None:
+        raise ValueError("project-tool executor requires a managed workspace port")
     profile = PROFILES_RAW[role]
     wanted = profile.get("tools", [])
     builders = _build_tool_builders(
@@ -445,6 +456,7 @@ def build_registry_for_role(
         planner_dispatch=planner_dispatch,
         workspace_io=workspace_io,
         **({"managed_executor": managed_executor} if workspace_io is not None else {}),
+        project_tool_executor=project_tool_executor,
     )
 
     registry = ToolRegistry()

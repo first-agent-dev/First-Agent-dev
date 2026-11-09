@@ -42,7 +42,7 @@ from fa.execution.service import SupervisorService
 from fa.execution.supervisor import PeerIdentity, SupervisorError
 from fa.execution.types import GrantReply, NamespaceRef, Operation
 from fa.execution.workspace import WorkspaceAuthority
-from tests.test_execution_readers import pin, read, ref
+from tests.test_execution_readers import pin, read, read_only_profile, ref
 from tests.test_execution_service import _config, _registered, _writer, exchange
 from tests.test_execution_views import native_profile
 from tests.test_execution_workspace import ACTOR, PEER, Site, ok, until
@@ -85,7 +85,7 @@ def move(
 
 def test_handoff_moves_the_grant_without_advancing_the_generation(site: Site) -> None:
     """producer-kill-check: advance the generation (or skip the replace) on handoff."""
-    with site.owner(view_profile=native_profile()) as owner:
+    with site.owner(view_profile=native_profile(), read_only_profile=read_only_profile()) as owner:
         ids = ok(lambda: site.register(owner))
         lease = ok(lambda: site.claim(owner, ids))
         retained = ok(lambda: pin(owner, ids))

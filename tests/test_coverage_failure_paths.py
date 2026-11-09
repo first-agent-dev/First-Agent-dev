@@ -209,7 +209,6 @@ def test_profile_optional_builders_all_missing_are_skipped(caplog: Any, tmp_path
         "build_diff_tool",
         "build_send_ctrl_c_tool",
         "build_undo_tool",
-        "build_spawn_subagent_tool",
     )
     original = {name: getattr(tools, name) for name in names}
     try:

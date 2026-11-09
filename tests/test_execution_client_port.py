@@ -30,10 +30,11 @@ import json
 import os
 import socket
 import threading
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, override
 
 import pytest
 
@@ -62,7 +63,7 @@ from fa.execution.types import (
     ViewPurpose,
     ViewRef,
 )
-from fa.inner_loop.managed_acquisition import SelectExistingChoice, resolve_existing_choice
+from fa.inner_loop.managed_acquisition import ResolvedExistingIncrement, SelectExistingChoice, resolve_existing_choice
 from fa.inner_loop.managed_inventory import AcquisitionInventoryError, inventory_project_artifacts
 from fa.inner_loop.plan_admission import PlanRef, read_plan_snapshot
 from fa.inner_loop.tools.read_file import build_read_file_tool
@@ -101,6 +102,7 @@ class _CountingClient(ExecutionClient):
         self.sent: list[Operation] = []
         self.sent_view_ids: list[str | None] = []
 
+    @override
     def request(self, operation: Operation, **kwargs: Any) -> dict[str, Any]:
         self.sent.append(operation)
         view = kwargs.get("view")
@@ -116,6 +118,7 @@ class _ScriptedClient(ExecutionClient):
         self.error = error
         self.sent: list[Operation] = []
 
+    @override
     def request(self, operation: Operation, **kwargs: Any) -> dict[str, Any]:
         self.sent.append(operation)
         raise self.error
@@ -148,6 +151,25 @@ def _served(site: Site, tmp_path: Path) -> Iterator[ManagedExecution]:
         runner = threading.Thread(target=service.serve_forever, args=(stop,), daemon=True)
         runner.start()
         try:
+            ready_client = ExecutionClient(service.socket_path, server_uid=os.getuid(), rpc_timeout_ms=5000)
+            ready_deadline = time.monotonic() + 5.0
+            while True:
+                try:
+                    ready_client.request(
+                        Operation.HEALTH,
+                        request_id="8" * 32,
+                        namespace=None,
+                        view=None,
+                        grant=None,
+                        payload={},
+                        deadline=min(ready_deadline, time.monotonic() + 1.0),
+                        protocol_version=2,
+                    )
+                    break
+                except ExecutionUnavailableError:
+                    if time.monotonic() >= ready_deadline:
+                        raise
+                    time.sleep(0.01)
             managed = managed_execution_for_run(_run(site.source), config_path=yaml_path)
             assert managed is not None
             # The composition holds the writer for the run that registered nothing:
@@ -273,6 +295,7 @@ def test_v2_inventory_and_file_reads_share_one_pinned_read_view(site: Site, tmp_
     """C1/producer+edge: real controller port reaches manifest and same-view READ_FILE."""
     _create_inventory_project(site.source)
     with _served(site, tmp_path) as managed:
+        assert managed.grant.revision_id is not None
         read_grant = managed.client.pin_reader(managed.binding, managed.grant.revision_id)
         assert read_grant.view_ref is not None
         client = _socket_client(site, tmp_path)
@@ -291,6 +314,7 @@ def test_v2_inventory_and_file_reads_share_one_pinned_read_view(site: Site, tmp_
         inventory = inventory_project_artifacts(port, "demo-project")
         assert inventory is not None
         resolved = resolve_existing_choice(SelectExistingChoice("demo-project", "I01"), (inventory,))
+        assert isinstance(resolved, ResolvedExistingIncrement)
         assert resolved.snapshot.ref.workspace_relative_path == inventory.increments[0].relative_path
         assert client.sent == [
             Operation.HEALTH,
@@ -316,6 +340,7 @@ def test_v2_listing_reports_symlink_kind_without_target_and_inventory_refuses_ca
 ) -> None:
     _create_inventory_project(site.source, canonical_symlink=True)
     with _served(site, tmp_path) as managed:
+        assert managed.grant.revision_id is not None
         read_grant = managed.client.pin_reader(managed.binding, managed.grant.revision_id)
         port = _port(managed.client, managed.binding.namespace, read_grant)
         listing = port.list_project_artifacts("demo-project")
@@ -348,6 +373,7 @@ def test_v2_listing_rejects_write_views_and_cross_namespace_authority(site: Site
             )
         assert write_denied.value.code == "INPUT_POLICY"
 
+        assert managed.grant.revision_id is not None
         read_grant = managed.client.pin_reader(managed.binding, managed.grant.revision_id)
         assert read_grant.view_ref is not None
         wrong_namespace = NamespaceRef("session-1", "other-run")
@@ -438,6 +464,7 @@ def test_v2_listing_refuses_encoded_output_over_the_byte_ceiling(site: Site, tmp
         name = f"{index:02d}" + "\x01" * 253
         (increments / name).write_text("x", encoding="utf-8")
     with _served(site, tmp_path) as managed:
+        assert managed.grant.revision_id is not None
         grant = managed.client.pin_reader(managed.binding, managed.grant.revision_id)
         port = _port(managed.client, managed.binding.namespace, grant)
         with pytest.raises(WorkspacePortError) as refused:
@@ -448,6 +475,7 @@ def test_v2_listing_refuses_encoded_output_over_the_byte_ceiling(site: Site, tmp
 def test_v2_listing_refuses_more_than_the_bounded_entry_count(site: Site, tmp_path: Path) -> None:
     _create_inventory_project(site.source, extra_entries=65)
     with _served(site, tmp_path) as managed:
+        assert managed.grant.revision_id is not None
         read_grant = managed.client.pin_reader(managed.binding, managed.grant.revision_id)
         port = _port(managed.client, managed.binding.namespace, read_grant)
         with pytest.raises(WorkspacePortError) as refused:
@@ -676,6 +704,7 @@ class _FramedClient(ExecutionClient):
         self._answers = answers
         self.sent: list[Operation] = []
 
+    @override
     def request(self, operation: Operation, **kwargs: Any) -> dict[str, Any]:
         self.sent.append(operation)
         answer = self._answers[operation]
@@ -702,6 +731,7 @@ def test_an_execution_view_is_ended_by_stop_alone() -> None:
     grant = _fixed_grant()
     client = _FramedClient({Operation.STOP_VIEW: {"terminal": True, "view_id": "view-1"}})
 
+    assert grant.view_ref is not None
     assert client.stop_view(_namespace(), view=grant.view_ref, grant=grant) is True
     assert client.sent == [Operation.STOP_VIEW]
 
@@ -716,6 +746,7 @@ def test_a_read_view_ends_by_stop_and_release() -> None:
         }
     )
 
+    assert grant.view_ref is not None
     assert client.stop_view(_namespace(), view=grant.view_ref, grant=grant) is True
     assert client.sent == [Operation.STOP_VIEW, Operation.RELEASE]
 
@@ -743,6 +774,7 @@ def test_an_unproved_or_undetermined_end_is_not_a_closed_view(
         answers[Operation.RELEASE] = release
     client = _FramedClient(answers)
 
+    assert grant.view_ref is not None
     assert client.stop_view(_namespace(), view=grant.view_ref, grant=grant) is expected
     if not terminal:
         assert Operation.RELEASE not in client.sent

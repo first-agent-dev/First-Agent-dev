@@ -67,12 +67,15 @@ def test_cmd_run_handles_event_log_write_failed(tmp_path: Path) -> None:
     # Now verify both branches are handled in the actual _cmd_run code
     import inspect
 
-    from fa.cli import _cmd_run
+    from fa.cli import _run_cli_stage, _session_db_runtime_error_message
 
-    source = inspect.getsource(_cmd_run)
-    # Both conditions must be present in the source
-    assert "event_log_authority_unavailable" in source, "Missing event_log_authority_unavailable handler in _cmd_run"
-    assert "event_log_write_failed" in source, "Missing event_log_write_failed handler in _cmd_run (NEW-3 fix)"
+    caller_source = inspect.getsource(_run_cli_stage)
+    assert "_session_db_runtime_error_message(error" in caller_source, "Missing caller edge to the DB error mapper"
+    db_path = tmp_path / "session.db"
+    authority_message = _session_db_runtime_error_message(RuntimeError("event_log_authority_unavailable"), db_path)
+    write_message = _session_db_runtime_error_message(exc, db_path)
+    assert authority_message is not None and "session database not available" in authority_message
+    assert write_message is not None and "failed to write event" in write_message
 
 
 def test_event_log_write_failed_produces_distinct_message() -> None:

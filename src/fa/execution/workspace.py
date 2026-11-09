@@ -2001,6 +2001,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
         scope: dict[str, Any] | None,
         plan_ref: PlanRef | None,
         formal_evidence: bool,
+        read_only_profile: ExecutionProfile,
         deadline: float,
     ) -> GrantReply:
         """VERIFICATION/CANDIDATE: one immutable reader view of the CURRENT revision.
@@ -2045,7 +2046,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                     "input_tree_sha256": tree["tree_sha256"],
                     "sealed_manifest_id": None,
                     "operation_ids": [],
-                    "profile_id": self._read_only_profile.profile_id,
+                    "profile_id": read_only_profile.profile_id,
                     "candidate_scope": scope,
                     "plan_ref": context.to_plan_ref(),
                 }
@@ -2415,6 +2416,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                     scope,
                     plan_ref,
                     formal_evidence,
+                    profile,
                     deadline,
                 )
             stage = self._state / "pending" / uuid4().hex

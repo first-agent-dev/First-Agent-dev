@@ -1064,3 +1064,239 @@ def test_ephemeral_index_instance_uses_existing_fresh_index(tmp_path: Path) -> N
         r2 = si2.search(SearchParams(query="F2_UNIQUE_TOKEN_EPHEMERAL", output_mode="files", limit=10), root=tmp_path)
         assert r2.method.startswith("fts5"), f"F2 REGRESSION: ephemeral instance fell back to {r2.method}"
         assert any(f["path"] == "f2_marker.py" for f in r2.files)
+
+
+def test_managed_search_uses_bounded_inventory_and_surfaces_oversized_files(tmp_path: Path) -> None:
+    from contextlib import ExitStack
+
+    from fa.inner_loop.tools.fs_search import build_fs_search_tool
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "small.py").write_text("needle = 1\n", encoding="utf-8")
+    (tmp_path / "src" / "large.py").write_bytes(b"x" * 200_001)
+    with ExitStack() as cleanup:
+        tool = build_fs_search_tool(
+            Path(":memory:"),
+            tmp_path,
+            cleanup=cleanup,
+            strict_rooted_reads=True,
+            managed_bounded=True,
+        )
+        result = tool.handler({"query": "needle", "output_mode": "files", "path": "src"})
+    assert result.error is None
+    assert result.result is not None
+    assert [row["path"] for row in result.result["files"]] == ["src/small.py"]
+    assert result.result["skipped_large_files"] == 1
+    assert not (tmp_path / ".fa" / "fts.db").exists()
+
+
+def test_managed_search_source_overrun_refuses_before_index_allocation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from contextlib import ExitStack
+
+    from fa.inner_loop.tools import fs_search
+    from fa.memory import managed_discovery
+    from fa.memory.search_index import SearchIndex
+
+    (tmp_path / "oversource.py").write_bytes(b"123")
+    original_inventory = managed_discovery.inventory_managed_files
+
+    def tiny_budget(root: Path, *, deadline: float, **_kwargs: Any) -> Any:
+        return original_inventory(
+            root,
+            patterns=("*.py",),
+            deadline=deadline,
+            limits=managed_discovery.ManagedDiscoveryLimits(source_bytes=2),
+        )
+
+    allocated = False
+
+    def unexpected_index_init(self: Any, *args: Any, **kwargs: Any) -> None:
+        nonlocal allocated
+        allocated = True
+        raise AssertionError("source refusal must precede SearchIndex allocation")
+
+    monkeypatch.setattr(managed_discovery, "inventory_managed_files", tiny_budget)
+    monkeypatch.setattr(SearchIndex, "__init__", unexpected_index_init)
+    with ExitStack() as cleanup:
+        tool = fs_search.build_fs_search_tool(
+            Path(":memory:"),
+            tmp_path,
+            cleanup=cleanup,
+            strict_rooted_reads=True,
+            managed_bounded=True,
+        )
+        result = tool.handler({"query": "123"})
+    assert result.error is not None and result.error.code == "search_failed"
+    assert result.error.message == "managed search refused (source_budget)"
+    assert result.error.retryable is False and result.result is None
+    assert not allocated
+
+
+def test_managed_search_listing_does_not_use_legacy_walker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from contextlib import ExitStack
+
+    from fa.inner_loop.tools import fs_search
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "visible.py").write_text("alpha\nbeta\n", encoding="utf-8")
+
+    def forbidden(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("managed listing must consume the bounded inventory")
+
+    from fa.memory import search_index
+
+    monkeypatch.setattr(search_index, "walk_scope_listing", forbidden)
+    with ExitStack() as cleanup:
+        tool = fs_search.build_fs_search_tool(
+            Path(":memory:"),
+            tmp_path,
+            cleanup=cleanup,
+            strict_rooted_reads=True,
+            managed_bounded=True,
+        )
+        result = tool.handler({"path": "src", "output_mode": "files"})
+    assert result.error is None
+    assert result.result is not None
+    assert result.result["files"] == [{"path": "src/visible.py", "lines": 2, "bytes": 11}]
+    assert result.result["truncated"] is False
+
+
+def test_managed_search_configures_sqlite_caps_and_output_budget_is_fail_closed(tmp_path: Path) -> None:
+    import json
+
+    from fa.execution.project_tools import _MAX_TOOL_RESULT_BYTES, _enforce_tool_result_budget, _payload
+    from fa.inner_loop.registry import ToolResult
+    from fa.memory._safe_walk import RootedFileReader
+    from fa.memory.search_index import SearchIndex
+
+    with (
+        RootedFileReader(tmp_path) as reader,
+        SearchIndex(Path(":memory:"), rooted_reader=reader, managed_bounded=True) as index,
+    ):
+        assert index._conn is not None
+        assert index._conn.execute("PRAGMA page_size").fetchone()[0] == 4096
+        assert index._conn.execute("PRAGMA max_page_count").fetchone()[0] == 32768
+        assert index._conn.execute("PRAGMA cache_size").fetchone()[0] == -16384
+
+    empty = ToolResult.ok("s", result={"v": ""})
+    overhead = len(
+        json.dumps(_payload(empty), ensure_ascii=True, allow_nan=False, separators=(",", ":")).encode("ascii")
+    )
+    exact = ToolResult.ok("s", result={"v": "a" * (_MAX_TOOL_RESULT_BYTES - overhead)})
+    over = ToolResult.ok("s", result={"v": "a" * (_MAX_TOOL_RESULT_BYTES - overhead + 1)})
+    assert len(
+        json.dumps(_payload(exact), ensure_ascii=True, allow_nan=False, separators=(",", ":")).encode("ascii")
+    ) == (_MAX_TOOL_RESULT_BYTES)
+    assert _enforce_tool_result_budget("fs_search", exact) is exact
+    refused = _enforce_tool_result_budget("fs_search", over)
+    assert refused.error is not None and refused.error.code == "search_failed"
+    assert refused.error.message == "managed discovery refused (output_budget)"
+    assert refused.error.retryable is False and refused.result is None
+
+
+def test_managed_search_fails_closed_when_cache_size_is_one_kib_over(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from fa.memory import search_index
+
+    actual_connect = search_index.sqlite3.connect
+    connections: list[Any] = []
+
+    class _Cursor:
+        def fetchone(self) -> tuple[int]:
+            return (-16_385,)
+
+    class _MisreportedConnection:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            self.inner = actual_connect(*args, **kwargs)
+
+        def execute(self, statement: str, *args: Any) -> Any:
+            cursor = self.inner.execute(statement, *args)
+            return _Cursor() if statement == "PRAGMA cache_size" else cursor
+
+        def close(self) -> None:
+            self.inner.close()
+
+    def connect(*args: Any, **kwargs: Any) -> _MisreportedConnection:
+        connection = _MisreportedConnection(*args, **kwargs)
+        connections.append(connection)
+        return connection
+
+    monkeypatch.setattr(search_index.sqlite3, "connect", connect)
+    index = search_index.SearchIndex(Path(":memory:"), managed_bounded=True)
+    try:
+        assert index._available is False and index._conn is None
+    finally:
+        for connection in connections:
+            connection.close()
+
+
+def test_managed_sqlite_page_count_accepts_exact_cap_and_refuses_cap_plus_one() -> None:
+    from fa.memory.managed_discovery import ManagedDiscoveryError
+    from fa.memory.search_index import SearchIndex
+
+    class _Cursor:
+        def __init__(self, value: int) -> None:
+            self.value = value
+
+        def fetchone(self) -> tuple[int]:
+            return (self.value,)
+
+    class _PragmaConnection:
+        def __init__(self, page_count: int) -> None:
+            self.values = {"PRAGMA page_size": 4096, "PRAGMA page_count": page_count, "PRAGMA max_page_count": 32768}
+
+        def execute(self, statement: str) -> _Cursor:
+            return _Cursor(self.values[statement])
+
+    index = object.__new__(SearchIndex)
+    index._conn = _PragmaConnection(32768)  # type: ignore[assignment]
+    index._check_managed_page_budget()
+
+    index._conn = _PragmaConnection(32769)  # type: ignore[assignment]
+    with pytest.raises(ManagedDiscoveryError) as caught:
+        index._check_managed_page_budget()
+    assert caught.value.reason == "index_budget"
+
+
+def test_managed_index_actual_source_counter_refuses_before_any_fts_rows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import time
+
+    from fa.memory import managed_discovery
+    from fa.memory._safe_walk import RootedFileReader
+    from fa.memory.managed_discovery import ManagedCandidate, ManagedDiscoveryError, ManagedInventory
+    from fa.memory.search_index import SearchIndex
+
+    source = tmp_path / "source.py"
+    source.write_bytes(b"abc")
+    observed = managed_discovery.inventory_managed_files(
+        tmp_path,
+        patterns=("*.py",),
+        deadline=time.monotonic() + 2,
+    ).candidates[0]
+    candidate = ManagedCandidate(
+        relative_path=observed.relative_path,
+        size_bytes=observed.size_bytes,
+        device=observed.device,
+        inode=observed.inode,
+        mode=observed.mode,
+        mtime_ns=observed.mtime_ns,
+        ctime_ns=observed.ctime_ns,
+        oversized=False,
+    )
+    inventory = ManagedInventory(entries=1, candidates=(candidate,), eligible_source_bytes=2, oversized_files=0)
+    monkeypatch.setattr(managed_discovery, "MAX_MANAGED_SOURCE_BYTES", 2)
+
+    with (
+        RootedFileReader(tmp_path) as reader,
+        SearchIndex(Path(":memory:"), rooted_reader=reader, managed_bounded=True) as index,
+    ):
+        with pytest.raises(ManagedDiscoveryError) as caught:
+            index.ensure_managed_indexed(tmp_path, inventory, deadline=time.monotonic() + 2)
+        assert caught.value.reason == "source_budget"
+        assert index._conn is not None
+        assert index._conn.execute("SELECT COUNT(*) FROM fts_meta").fetchone()[0] == 0

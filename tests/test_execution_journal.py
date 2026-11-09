@@ -192,6 +192,55 @@ def test_restart_marks_unfinished_unknown_and_never_returns_fresh(tmp_path: Path
         restarted.begin(OID, NS)
 
 
+def test_reused_cell_records_resolve_to_the_creator_only_for_the_exact_view_and_cid(tmp_path: Path) -> None:
+    owner = journal(tmp_path)
+    first = request()
+    owner.reserve(first)
+    owner.begin(OID, NS)
+    owner.record_container(OID, NS, CID)
+
+    second_id = "op-" + "a" * 32
+    second = {
+        **first,
+        "request_id": "a" * 32,
+        "payload": {**first["payload"], "operation_id": second_id},
+    }
+    owner.reserve(second)
+    owner.begin(second_id, NS)
+    owner.record_container(second_id, NS, CID, cell_owner_operation_id=OID)
+    assert owner.resolve_cell_owner(second_id, NS, view=VIEW, container_id=CID) == OID
+
+    other_view = ViewRef.from_dict({**VIEW.to_dict(), "view_id": "view-" + "9" * 32})
+    with pytest.raises(JournalError) as wrong_view:
+        owner.resolve_cell_owner(second_id, NS, view=other_view, container_id=CID)
+    assert wrong_view.value.code == "EXECUTION_UNKNOWN"
+    with pytest.raises(JournalError) as wrong_cid:
+        owner.resolve_cell_owner(second_id, NS, view=VIEW, container_id="a" * 64)
+    assert wrong_cid.value.code == "EXECUTION_UNKNOWN"
+
+
+def test_a_reused_cell_cannot_be_bound_across_views(tmp_path: Path) -> None:
+    owner = journal(tmp_path)
+    owner.reserve(request())
+    owner.begin(OID, NS)
+    owner.record_container(OID, NS, CID)
+    other_view = ViewRef.from_dict({**VIEW.to_dict(), "view_id": "view-" + "9" * 32})
+    second_id = "op-" + "a" * 32
+    second = {
+        **request(),
+        "request_id": "a" * 32,
+        "view_ref": other_view.to_dict(),
+        "payload": {**request()["payload"], "operation_id": second_id},
+    }
+    owner.reserve(second)
+    owner.begin(second_id, NS)
+    with pytest.raises(JournalError) as caught:
+        owner.record_container(second_id, NS, CID, cell_owner_operation_id=OID)
+    assert caught.value.code == "EXECUTION_UNKNOWN"
+    record = owner.lookup(second_id, NS)
+    assert record is not None and record["container_id"] is None
+
+
 def test_owned_cell_inventory_includes_done_exec_records_but_unfinished_does_not(tmp_path: Path) -> None:
     owner = journal(tmp_path)
     owner.reserve(request())

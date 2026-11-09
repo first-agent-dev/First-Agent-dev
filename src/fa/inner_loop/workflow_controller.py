@@ -1233,6 +1233,7 @@ def _run_stage(
     _announce_stage(ctx, role, progress, transition_reason)
     stage_task = _stage_task(ctx, role, prior_verification, progress.repair_round)
 
+    stage_plan_ref = ctx.admission.snapshot.ref if ctx.admission is not None else ctx.managed_plan_ref
     stage_kwargs: dict[str, object] = {
         "task_pos": None,
         "task": stage_task,
@@ -1255,7 +1256,7 @@ def _run_stage(
         # injection stays off here for a planner or eval stage.
         "injection_modes": resolve_injection_modes(role, overrides=ctx.inject_overrides),
         "_managed_execution": ctx.managed_execution,
-        "_managed_plan_ref": ctx.managed_plan_ref,
+        "_managed_plan_ref": stage_plan_ref,
     }
     if ctx.run_context is not None and ctx.session_context is not None:
         stage_kwargs.update(
