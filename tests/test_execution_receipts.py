@@ -706,9 +706,8 @@ def test_a_cancel_receipt_is_accepted_by_the_journal_but_can_never_be_exited(
         result = CommandReceipts(
             case.authority, case.owner(), case.docker(), cgroup_root=tmp_path / "cgroup", poll_interval_s=0.01
         ).cancel(PEER, cancel_request, deadline=until())
-        case.authority.journal.complete(
-            "op-" + "7" * 32, NamespaceRef(**cancel_request["namespace"]), result, original_proof=request["capability"]
-        )
+        assert cancel_request["namespace"] == ACTOR.to_dict()
+        case.authority.journal.complete("op-" + "7" * 32, ACTOR, result, original_proof=request["capability"])
         stored = case.authority.journal.lookup("op-" + "7" * 32, ACTOR)
         assert stored is not None and stored["state"] == "DONE"
         assert stored["result"]["receipt"]["state"] == "CANCELLED"

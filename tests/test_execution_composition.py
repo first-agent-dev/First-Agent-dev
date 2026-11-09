@@ -3338,7 +3338,7 @@ def test_the_manager_takes_its_provisioner_from_the_operator_config(
     """producer-kill-check: leave the manager on the host path while an execution service is configured."""
     config_path = tmp_path / "config.yaml"
     monkeypatch.setattr(composition, "DEFAULT_CONFIG_PATH", config_path)
-    args = SimpleNamespace(workspace=site.source)
+    args = argparse.Namespace(workspace=site.source)
     assert cli._session_manager_for_args(args).workspace_provisioner is None  # no operator file: host path
     service_path = tmp_path / "execution.json"
     service_path.write_text(json.dumps(_document(site)), encoding="utf-8")

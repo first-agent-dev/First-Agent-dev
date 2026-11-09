@@ -1303,14 +1303,25 @@ def test_plan_preflight_real_cli_uses_selected_workspace_not_cwd(
         ("escape", "path_escape"),
     ],
 )
-def test_plan_preflight_resolver_rejects_invalid_session_without_writes(tmp_path: Path, change: str, code: str) -> None:
-    from fa.session.manager import SessionManager, SessionManagerError
+def test_plan_preflight_resolver_rejects_invalid_session_without_writes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str, code: str
+) -> None:
+    import shutil
 
-    manager = SessionManager(state_root=tmp_path / "state", workspace_root=tmp_path / "workspaces")
+    from fa.session.manager import SessionManagerError
+    from tests.test_session_lifecycle import _manager
+
+    manager = _manager(tmp_path)
     selected = tmp_path / "workspaces" / "selected"
     session = manager.provision_entrypoint_session(session_id="known", workspace_override=selected)
+
+    def forbidden(*args: object, **kwargs: object) -> None:
+        raise AssertionError("read-only workflow preflight must not provision or prepare")
+
+    monkeypatch.setattr(manager, "workspace_provisioner", forbidden)
+    monkeypatch.setattr(manager, "workspace_preparer", forbidden)
     if change == "missing-workspace":
-        selected.rmdir()
+        shutil.rmtree(selected)
     elif change == "corrupt":
         session.manifest_path.write_text("{bad", encoding="utf-8")
     elif change in {"inactive", "escape"}:

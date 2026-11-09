@@ -23,6 +23,7 @@ from fa.execution.supervisor import AUTHORITY_GATED_OPERATIONS, READONLY_OPERATI
 from fa.execution.types import Access, GrantReply, ViewPurpose
 from fa.execution.workspace import WorkspaceAuthority
 from fa.inner_loop.plan_admission import read_plan_snapshot
+from tests.test_execution_readers import read_only_profile
 from tests.test_execution_views import native_profile
 from tests.test_execution_workspace import ACTOR, PEER, Site, ok, until
 from tests.test_execution_workspace import site as site
@@ -272,6 +273,7 @@ def test_view_operations_prove_the_exact_actor_and_view(site: Site) -> None:
         ids = ok(lambda: site.register(owner))
         lease = ok(lambda: site.claim(owner, ids))
         grant = _project_view(owner, ids, lease)
+        assert grant.view_ref is not None
         payloads = {
             Operation.READ_FILE: {"path": "roadmap.md", "offset_bytes": 0, "max_bytes": 64},
             Operation.WRITE_FILE: {"path": "roadmap.md", "content": "x", "expected_sha256": None},
@@ -297,10 +299,11 @@ def test_view_operations_prove_the_exact_actor_and_view(site: Site) -> None:
 def test_exec_authorizes_the_stored_plan_not_a_payload_claim(site: Site) -> None:
     """producer-kill-check: build the exec context from the request instead of the view."""
     plan_ref = _with_plan(site)
-    with site.owner(view_profile=native_profile()) as owner:
+    with site.owner(view_profile=native_profile(), read_only_profile=read_only_profile()) as owner:
         ids = ok(lambda: site.register(owner))
         lease = ok(lambda: site.claim(owner, ids))
         grant = _project_view(owner, ids, lease, plan_ref=plan_ref, purpose=ViewPurpose.VERIFICATION)
+        assert grant.view_ref is not None
         request = _request(Operation.EXEC, view=grant.view_ref.to_dict(), capability=grant.capability)
         request["payload"] = {
             # The wire binds the operation id to the request id, not the reverse.
@@ -328,6 +331,7 @@ def test_release_has_exactly_two_shapes(site: Site) -> None:
         ids = ok(lambda: site.register(owner))
         lease = ok(lambda: site.claim(owner, ids))
         grant = _project_view(owner, ids, lease)
+        assert grant.view_ref is not None
         assert _authorize(owner, _request(Operation.RELEASE, capability=lease.capability)) is None
         assert (
             _authorize(owner, _request(Operation.RELEASE, view=grant.view_ref.to_dict(), capability=grant.capability))

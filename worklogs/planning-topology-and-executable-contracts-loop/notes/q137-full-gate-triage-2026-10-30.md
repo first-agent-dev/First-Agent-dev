@@ -1,6 +1,6 @@
 # Q137 — Full pytest/Pyrefly gate triage (2026-10-30)
 
-**Status: BLOCKING.** W0 remains closed. W1 implementation remains paused pending closure or explicit disposition of these findings. The original exact lists below are the initial full-gate snapshot after PY-SRC-01; the follow-up section records the latest verified run after the first Q137 repair slice. No gate readiness is claimed. Q135 (deferred F2–F4) and Q136 (Pylint) remain separate.
+**Status: BLOCKING.** W0 remains closed. W1 implementation remains paused pending closure or explicit disposition of these findings. The original exact lists below are historical; the recovered-gate follow-up records the latest full-gate results and remaining diagnostics. No gate readiness is claimed. Q135 (deferred F2–F4) and Q136 (Pylint) remain separate.
 
 **Operator disposition (2026-10-30):** selected **A — Strict gate closure, best effort**. Individual findings needing direct review may be deferred in the tracker, but remain **BLOCKING**; that is not a pass, waiver, or permission to advance W1.
 
@@ -23,6 +23,160 @@ Targeted pytest for this test, the read-only workspace resolver control, the lif
 Mutants, each applied separately and restored byte-identically: replacing the resolver's manifest-read producer with the workspace root made the selected path assertion fail; making the resolver call the preparer hit the new assertion sentinel; bypassing the resolver in the test caller failed the selected path assertion. Each targeted pytest invocation exited **1**. The last is only a test-caller mutation, **not** a production CLI EDGE kill. Restored test exited **0** (1 passed). Restored SHA-256: `src/fa/session/manager.py` `c3c83f6580cbb64e633a9fb4e0dfcb91843ecf6cbe29007eb556a4c439c8d549`; `tests/test_verify_gate_live.py` `4ee92a01517b8f45551ba6adc01920892c433fc210696283e16ca83fb1c9bcb8`. No product code changed; this closes only the selected stale test setup, not CT90's full CLI proof or Q137.
 
 No live-host test is claimed. The existing I03 live plan includes ledger-append cases L-RCPT-2/L-RCPT-6 and the separate Q112 session-ledger proposal; this test-only fixture change does not create a new live feature or alter their acceptance scope.
+
+## Recovered-gate follow-up: receipt, authority, discovery and preflight tests
+
+**Latest full gates.** With `GIT_DIR`/`GIT_WORK_TREE` unset and `.venv/bin` on PATH, `just test` exited **1**: **80 failed, 7,146 passed, 18 skipped, 4 xfailed, 2 warnings, 11 errors** in 746.04 seconds. Against the recovered `0fcc93a` baseline, **9 failure/error nodeids resolved, 0 new**: the two skill-condensate size failures fixed in `756576d`; the resumed-session preflight test fixed in `feae782`; five invalid-session preflight parameters and the stored-plan authorization test fixed in this slice. The 12 shellcheck skips remain because shellcheck is absent; six runtime-extra skips remain. `just _pyrefly` exited **1** with **41 errors** (168 suppressed, 71 warnings not shown). Comparing full diagnostic message/path multisets against the immediately preceding 60-error run: **19 resolved, 0 new**. Repeated diagnostics at multiple call sites are counted separately, not as independent root causes. Q137 remains **BLOCKING**; W1 remains paused.
+
+**Receipt/Q75 (3 Pyrefly diagnostics).** The cancel test asserts that the request's namespace is exactly `ACTOR.to_dict()` and completes the journal using the same typed `ACTOR`, instead of unpacking a dynamic request mapping. `pytest -q tests/test_execution_receipts.py --tb=short`: **21 passed**, exit 0; targeted Pyrefly: **0 errors**, exit 0. Mutating the cancel producer's `CANCELLED` state to `EXITED` failed the test; changing its request/namespace assertion to a foreign namespace failed. Both mutants exited 1 and were restored; the former is a producer kill and the latter a test-binding mutant, not a production EDGE kill. Restored target: **1 passed**. The existing live receipt-ledger L-RCPT-2/L-RCPT-6 plan remains NOT RUN.
+
+**CT99 view authorization and publication (7 diagnostics; 1 previously failing pytest nodeid).** Assert the expected non-null view/generation at the real grant boundary. Supply the existing approved read-only profile for the stored-plan verification view; do not weaken the profile gate. Six selected authorization/publication tests passed; targeted Pyrefly reported **0 errors**. Replacing `authorize`'s `_authorize_operation` call with `None` failed the exact-actor/view test (production EDGE killed); changing the generation expectation in the writer claim producer failed with `DURABILITY_UNKNOWN` (producer killed). Restored six-test bank: **6 passed**. These are local tests, not deployed acceptance.
+
+**Q97/Q111 managed discovery (4 diagnostics).** Replace non-port `object()` values with a typed `WorkspacePort` sentinel whose operations raise if called; remove the existing test-only type ignore. Executor routing, no host index, malicious-path refusal, serial tags, and missing-executor refusal remain asserted. `pytest -q tests/test_managed_project_tool_paths.py tests/test_managed_discovery_refusal.py --tb=short`: **18 passed**, exit 0; targeted Pyrefly: **0 errors**. Mutating the executor call producer to return a malformed envelope and disconnecting the reach builder's project-tool executor both killed their respective tests (exit 1); the restored bank again passed 18. This does not close W1 or claim production-host isolation.
+
+**CT116 operator-config binding (5 diagnostics).** Use real `argparse.Namespace` rather than `SimpleNamespace` at `_session_manager_for_args`, preserving the absent/valid/foreign-UID/bad-config cases. The selected test passed, targeted Pyrefly reports **6 remaining diagnostics** in the file (previously 11), and Ruff passes. Making the provisioner producer return `None` and independently disconnecting the CLI's provisioner binding each killed the test (exit 1); restored test passed. No runtime source change retained.
+
+**CT90 invalid-session preflight (5 previously failing pytest nodeids).** Reuse the existing managed lifecycle fixture and set post-setup provisioner/preparer assertion sentinels; remove the fixture workspace for the missing-workspace case. All five exact errors and byte/mtime/file-set no-write assertions remain. Five parametrized cases plus the prior resumed-session test: **6 passed**; Ruff passes; targeted Pyrefly remains red with the same five existing errors in this test file. Replacing the manifest-read producer and, separately, forcing every test call to use an unknown session each produced four failures and one expected pass; the latter is a test-caller mutation, not production CLI EDGE evidence. Restored five-case bank: **5 passed**. `src/fa/session/manager.py` and test file were restored byte-identically. No product changes or live-host results claimed.
+
+**Common checks.** Ruff check and format check on all six edited test files, `git diff --check`, and document-link checks passed. No full-gate pass, deployed-host acceptance, or closure of the remaining Q137 findings is claimed.
+
+### Current pytest failure/error nodeids (91)
+
+- `tests/test_dead_flags.py::TestDeadFlagsCLI::test_exit_code_zero_on_clean_tree`
+- `tests/test_dead_flags.py::TestDeadFlagsCLI::test_json_output_valid`
+- `tests/test_dead_flags.py::TestDeadFlagsCLI::test_text_output_no_dead`
+- `tests/test_dead_flags.py::TestDeadFlagsUnit::test_all_current_fields_present`
+- `tests/test_dead_flags.py::TestDeadFlagsUnit::test_each_field_has_usage`
+- `tests/test_dead_flags.py::TestDeadFlagsUnit::test_no_dead_flags_on_clean_tree`
+- `tests/test_execution_pty_control.py::test_a_foreign_view_or_grant_is_unauthorized_and_sends_nothing`
+- `tests/test_iteration_cap.py::test_cmd_run_applies_config_per_role_limit_end_to_end`
+- `tests/test_pyrefly_import_topology.py::test_pyrefly_check_passes`
+- `tests/test_readiness_announcement.py::test_drive_path_announces_ready_workspace`
+- `tests/test_readiness_announcement.py::test_drive_path_silent_without_venv`
+- `tests/test_s10a_cli_coverage.py::test_s10a_authoring_check_runs_on_a_real_workspace`
+- `tests/test_s10a_cli_coverage.py::test_s10a_run_builds_compactor_chain_under_proxy`
+- `tests/test_s10a_cli_coverage.py::test_s10a_run_proxy_mode_rewrites_the_chain`
+- `tests/test_s10a_cli_coverage.py::test_s10a_run_resume_reads_the_existing_draft`
+- `tests/test_s10a_cli_coverage.py::test_s10a_stats_aggregate_across_sessions`
+- `tests/test_s10a_cli_coverage.py::test_s10a_stats_console_render_and_dead_zones`
+- `tests/test_s10a_cli_coverage.py::test_s10a_stats_renders_a_real_session`
+- `tests/test_s10a_cli_coverage.py::test_s10a_stats_reports_source_errors_from_discovery`
+- `tests/test_s10b_cli_parity.py::test_s10b_parity_happy_path`
+- `tests/test_s10b_cli_parity.py::test_s10b_parity_outcome_sink_suppresses_global_history_export`
+- `tests/test_s10b_cli_parity.py::test_s10b_parity_proxy_mode`
+- `tests/test_s10b_cli_parity.py::test_s10b_parity_proxy_mode_builds_compactor_chain`
+- `tests/test_s10b_cli_parity.py::test_s10b_parity_quiet_mode_moves_status_off_stdout`
+- `tests/test_s10b_cli_parity.py::test_s10b_parity_without_sink_exports_global_history`
+- `tests/test_s10b_cli_parity.py::test_s10b_stats_parity_dead_zones_report`
+- `tests/test_s10b_cli_parity.py::test_s10b_stats_parity_single_session_json_shape`
+- `tests/test_s10b_complexity_ratchet.py::test_s10b_c901_waiver_budget`
+- `tests/test_s10b_complexity_ratchet.py::test_s10b_retired_waiver_stays_retired[_cmd_run]`
+- `tests/test_s10b_complexity_ratchet.py::test_s13_11_c901_ratchet_tracks_retired_waiver`
+- `tests/test_s10c_artifact_posture.py::test_s10c_directories_are_0700`
+- `tests/test_s10c_artifact_posture.py::test_s10c_named_artifacts_are_0600[global_history.db]`
+- `tests/test_s10c_artifact_posture.py::test_s10c_named_artifacts_are_0600[session-log/posture/events.jsonl]`
+- `tests/test_s10c_artifact_posture.py::test_s10c_named_artifacts_are_0600[session-log/posture/llm_bodies.jsonl]`
+- `tests/test_s10c_artifact_posture.py::test_s10c_no_artifact_is_group_or_world_accessible`
+- `tests/test_s10c_artifact_posture.py::test_s10c_session_db_and_wal_sidecars_are_private`
+- `tests/test_s10c_artifact_posture.py::test_s10c_session_dir_is_private_at_creation_without_the_repair_pass`
+- `tests/test_s127_budget.py::test_s127_scatter_table_matches_registry`
+- `tests/test_s127_outline.py::test_s127_fold_cli_py_matches_ast_truth`
+- `tests/test_s13_10_tool_names.py::test_composition_root_accepts_a_non_fs_pr_prefixed_name`
+- `tests/test_s13_10_tool_names.py::test_composition_root_rejects_non_portable_name`
+- `tests/test_s7_cli_run_paths.py::test_output_mode_never_suppresses_the_durable_trace[D-console]`
+- `tests/test_s7_cli_run_paths.py::test_output_mode_never_suppresses_the_durable_trace[D-quiet]`
+- `tests/test_s7_cli_run_paths.py::test_two_runs_in_one_process_do_not_leak_session_state`
+- `tests/test_s7_correlation.py::test_documented_non_join_tool_call_id_is_empty_without_tool_calls`
+- `tests/test_s7_correlation.py::test_event_ids_are_unique_and_ordered_within_the_run`
+- `tests/test_s7_correlation.py::test_every_trace_row_carries_the_run_and_session_identity`
+- `tests/test_s7_correlation.py::test_logical_call_id_joins_the_trace_to_the_captured_body`
+- `tests/test_s7_correlation.py::test_one_provider_call_correlates_its_attempt_and_call_rows`
+- `tests/test_s9_stats_projection.py::test_s9_authority_and_projection_agree`
+- `tests/test_s9_stats_projection.py::test_s9_discovery_rejects_inactive_manifest`
+- `tests/test_s9_stats_projection.py::test_s9_discovery_rejects_manifest_pointing_elsewhere`
+- `tests/test_s9_stats_projection.py::test_s9_run_id_reuse_is_refused_so_reexport_cannot_occur`
+- `tests/test_scope_hint_cache_key.py::test_live_agents_map_is_identical_across_estimates`
+- `tests/test_scope_hint_cache_key.py::test_live_hint_reaches_the_model`
+- `tests/test_tool_schema_portability.py::test_every_current_role_tool_schema_satisfies_pts_v1`
+- `tests/test_verify_gate_live.py::test_acquisition_unavailable_live_chat_and_noncoder_child_binding[None]`
+- `tests/test_verify_gate_live.py::test_acquisition_unavailable_live_chat_and_noncoder_child_binding[coder]`
+- `tests/test_verify_gate_live.py::test_acquisition_unavailable_live_chat_and_noncoder_child_binding[eval]`
+- `tests/test_verify_gate_live.py::test_acquisition_unavailable_live_chat_and_noncoder_child_binding[planner,eval]`
+- `tests/test_verify_gate_live.py::test_acquisition_unavailable_live_chat_and_noncoder_child_binding[planner]`
+- `tests/test_verify_gate_live.py::test_ct91_public_q68_failed_prepare_invalidates_even_after_recovery[enforce]`
+- `tests/test_verify_gate_live.py::test_ct91_public_q68_failed_prepare_invalidates_even_after_recovery[observe]`
+- `tests/test_verify_gate_live.py::test_plan_preflight_allocated_workspace_mismatch_blocks_provider`
+- `tests/test_verify_gate_live.py::test_plan_preflight_new_workspace_cannot_bypass_existing_owner`
+- `tests/test_verify_gate_live.py::test_plan_preflight_real_cli_uses_selected_workspace_not_cwd[False]`
+- `tests/test_verify_gate_live.py::test_plan_preflight_real_cli_uses_selected_workspace_not_cwd[True]`
+- `tests/test_vulture_clean.py::test_vulture_clean_src`
+- `tests/test_workflow_global_history.py::test_standalone_run_still_exports_its_own_row`
+- `tests/test_workspace_authorize.py::test_the_readonly_classification_covers_the_closed_enum`
+- `tests/test_workspace_publication.py::test_a_failure_after_the_plan_replace_keeps_the_new_bytes_and_the_intent`
+- `tests/test_workspace_publication.py::test_candidate_publish_applies_a_patch_after_an_unrelated_revision_commit`
+- `tests/test_workspace_publication.py::test_candidate_publish_of_the_current_bytes_reports_a_repeat_and_writes_nothing`
+- `tests/test_workspace_publication.py::test_candidate_publish_refuses_owner_capability_in_place_of_view_grant`
+- `tests/test_workspace_publication.py::test_candidate_publish_refuses_plan_bytes_that_moved_since_the_snapshot`
+- `tests/test_workspace_publication.py::test_candidate_publish_requires_closed_view_and_matching_terminal_receipt`
+- `tests/test_workspace_publication.py::test_pinned_readers_keep_the_old_revision_across_publish`
+- `tests/test_workspace_publication.py::test_publish_plan_refuses_a_plan_swapped_for_a_link_before_the_replace`
+- `tests/test_workspace_publication.py::test_publish_plan_refuses_a_replaced_plan_with_the_wrong_mode`
+- `tests/test_workspace_publication.py::test_publish_plan_refuses_after_a_concurrent_write_between_staging_and_replace`
+- `tests/test_workspace_publication.py::test_publish_plan_refuses_bytes_that_are_not_a_plan`
+- `tests/test_workspace_publication.py::test_publish_plan_refuses_bytes_that_are_not_the_ones_it_staged`
+- `tests/test_workspace_publication.py::test_publish_plan_replaces_the_canonical_file_and_commits_a_revision`
+- `tests/test_workspace_publication.py::test_publish_plan_requires_the_owner_grant_and_no_live_view`
+- `tests/test_workspace_publication.py::test_record_terminal_does_not_substitute_for_draining_active_candidate_work`
+- `tests/test_workspace_publication.py::test_seal_leaves_canonical_bytes_current_and_pins_untouched`
+- `tests/test_workspace_readiness_integration.py::test_clean_candidate_real_readiness_commit_and_local_publication`
+- `tests/test_workspace_recovery.py::test_recovery_clears_a_plan_intent_when_the_old_bytes_are_still_there`
+- `tests/test_workspace_recovery.py::test_recovery_completes_a_replaced_plan_forward`
+- `tests/test_workspace_recovery.py::test_recovery_refuses_a_plan_intent_that_does_not_describe_the_bytes`
+- `tests/test_workspace_recovery.py::test_recovery_refuses_a_plan_that_matches_neither_hash`
+
+### Current Pyrefly diagnostics (41)
+
+- `tests/test_execution_composition.py:229:33` — This expression is implicitly inferred to be `Any | None`. Please provide an explicit type annotation. [implicit-any-attribute]
+- `tests/test_execution_composition.py:305:13` — Argument `SimpleNamespace` is not assignable to parameter `log` with type `EventLog` in function `fa.cli._run_cli_stage` [bad-argument-type]
+- `tests/test_execution_composition.py:557:30` — Argument `SimpleNamespace` is not assignable to parameter `args` with type `Namespace` in function `fa.cli._cmd_workflow` [bad-argument-type]
+- `tests/test_execution_composition.py:2806:21` — Argument `SimpleNamespace` is not assignable to parameter `managed` with type `ManagedExecution | None` in function `fa.cli._drive_stage_with_managed_workspace` [bad-argument-type]
+- `tests/test_execution_composition.py:2966:9` — Argument `_ScriptedAuthority` is not assignable to parameter `client` with type `ExecutionClient` in function `fa.execution.composition.ManagedExecution.__init__` [bad-argument-type]
+- `tests/test_execution_composition.py:3051:34` — Argument `SimpleNamespace` is not assignable to parameter `args` with type `Namespace` in function `fa.cli._cmd_workflow` [bad-argument-type]
+- `tests/test_managed_mutation_metadata.py:63:45` — Argument `_Port` is not assignable to parameter `workspace_io` with type `WorkspacePort` in function `fa.inner_loop.tools.mutation_guard.managed_version_dependencies` [bad-argument-type]
+- `tests/test_managed_mutation_metadata.py:100:45` — Argument `_Port` is not assignable to parameter `workspace_io` with type `WorkspacePort` in function `fa.inner_loop.tools.mutation_guard.managed_version_dependencies` [bad-argument-type]
+- `tests/test_managed_mutation_metadata.py:128:55` — Argument `_Port` is not assignable to parameter `workspace_io` with type `WorkspacePort` in function `fa.inner_loop.tools.mutation_guard.managed_version_dependencies` [bad-argument-type]
+- `tests/test_managed_registry_binding.py:383:62` — Argument `(_entry: ChainEntry) -> test_missing_explicit_executor_fails_closed_through_production_chat_session.ScriptedProvider` is not assignable to parameter `provider_factory` with type `(ChainEntry) -> Provider` in function `fa.providers.chain.ProviderChain.__init__` [bad-argument-type]
+- `tests/test_managed_subagent.py:200:17` — Argument `_ParentWriter` is not assignable to parameter `managed` with type `ManagedExecution` in function `fa.inner_loop.tools.managed_subagent.build_managed_subagent_tool` [bad-argument-type]
+- `tests/test_managed_subagent.py:201:22` — Argument `_ParentState` is not assignable to parameter `parent_state` with type `SessionState` in function `fa.inner_loop.tools.managed_subagent.build_managed_subagent_tool` [bad-argument-type]
+- `tests/test_managed_subagent.py:203:20` — Argument `SimpleNamespace` is not assignable to parameter `chat_chain` with type `ProviderChain | None` in function `fa.inner_loop.tools.managed_subagent.build_managed_subagent_tool` [bad-argument-type]
+- `tests/test_managed_subagent.py:233:12` — `None` is not subscriptable [unsupported-operation]
+- `tests/test_managed_subagent.py:234:12` — `None` is not subscriptable [unsupported-operation]
+- `tests/test_managed_subagent.py:234:53` — `None` is not subscriptable [unsupported-operation]
+- `tests/test_managed_subagent.py:253:60` — `None` is not subscriptable [unsupported-operation]
+- `tests/test_managed_subagent.py:275:32` — `SimpleNamespace` is not assignable to attribute `read_only_profile` with type `ExecutionProfile` [bad-assignment]
+- `tests/test_managed_subagent.py:298:22` — Argument `object` is not assignable to parameter `workspace_io` with type `WorkspacePort | None` in function `fa.cli._register_managed_subagent_tool` [bad-argument-type]
+- `tests/test_managed_subagent.py:299:21` — Argument `SimpleNamespace` is not assignable to parameter `stage_lease` with type `_ManagedStageLease | None` in function `fa.cli._register_managed_subagent_tool` [bad-argument-type]
+- `tests/test_managed_subagent.py:300:22` — Argument `_ParentState` is not assignable to parameter `parent_state` with type `SessionState` in function `fa.cli._register_managed_subagent_tool` [bad-argument-type]
+- `tests/test_managed_subagent.py:303:16` — Argument `SimpleNamespace` is not assignable to parameter `limits` with type `RuntimeLimits` in function `fa.cli._register_managed_subagent_tool` [bad-argument-type]
+- `tests/test_managed_subagent.py:308:16` — Argument `object` is not assignable to parameter `iterable` with type `Iterable[@_]` in function `set.__init__` [bad-argument-type]
+- `tests/test_managed_subagent.py:357:12` — `None` is not subscriptable [unsupported-operation]
+- `tests/test_managed_subagent.py:358:57` — `None` is not subscriptable [unsupported-operation]
+- `tests/test_plan_candidate_retention.py:95:13` — Argument `_Ctx` is not assignable to parameter `ctx` with type `WorkflowContext` in function `fa.inner_loop.workflow_controller._run_admission_repair` [bad-argument-type]
+- `tests/test_plan_candidate_retention.py:96:13` — Argument `None` is not assignable to parameter `progress` with type `WorkflowProgress` in function `fa.inner_loop.workflow_controller._run_admission_repair` [bad-argument-type]
+- `tests/test_plan_candidate_retention.py:139:9` — Argument `_Ctx` is not assignable to parameter `ctx` with type `WorkflowContext` in function `fa.inner_loop.workflow_controller._run_admission_repair` [bad-argument-type]
+- `tests/test_plan_candidate_retention.py:140:9` — Argument `None` is not assignable to parameter `progress` with type `WorkflowProgress` in function `fa.inner_loop.workflow_controller._run_admission_repair` [bad-argument-type]
+- `tests/test_stage_checkpoints.py:344:30` — Unpacked keyword argument `list[str] | Any` is not assignable to parameter `kind` with type `CheckpointKind` in function `fa.execution.checkpoints.CheckpointRecord.__init__` [bad-argument-type]
+- `tests/test_stage_checkpoints.py:344:30` — Unpacked keyword argument `list[str] | Any` is not assignable to parameter `artifact_sha256` with type `str` in function `fa.execution.checkpoints.CheckpointRecord.__init__` [bad-argument-type]
+- `tests/test_stage_checkpoints.py:344:30` — Unpacked keyword argument `list[str] | Any` is not assignable to parameter `plan_sha256` with type `str` in function `fa.execution.checkpoints.CheckpointRecord.__init__` [bad-argument-type]
+- `tests/test_stage_checkpoints.py:344:30` — Unpacked keyword argument `list[str] | Any` is not assignable to parameter `revision_id` with type `str` in function `fa.execution.checkpoints.CheckpointRecord.__init__` [bad-argument-type]
+- `tests/test_stage_checkpoints.py:344:30` — Unpacked keyword argument `list[str] | Any` is not assignable to parameter `original_revision_id` with type `str` in function `fa.execution.checkpoints.CheckpointRecord.__init__` [bad-argument-type]
+- `tests/test_stage_checkpoints.py:344:30` — Unpacked keyword argument `list[str] | Any` is not assignable to parameter `tree_sha256` with type `str` in function `fa.execution.checkpoints.CheckpointRecord.__init__` [bad-argument-type]
+- `tests/test_stage_checkpoints.py:344:30` — Unpacked keyword argument `list[str] | Any` is not assignable to parameter `operation_ids` with type `tuple[str, ...]` in function `fa.execution.checkpoints.CheckpointRecord.__init__` [bad-argument-type]
+- `tests/test_verify_gate_live.py:3291:78` — Argument `test_ct94_real_session_edits_fresh_candidate_before_validated_publication.RecordingPublisher` is not assignable to parameter `publisher` with type `CandidatePlanPublisher` in function `fa.inner_loop.workflow_controller._promote_validated_plan` [bad-argument-type]
+- `tests/test_verify_gate_live.py:3348:45` — Argument `SimpleNamespace` is not assignable to parameter `ctx` with type `WorkflowContext` in function `fa.inner_loop.workflow_controller._require_managed_publisher` [bad-argument-type]
+- `tests/test_verify_gate_live.py:3355:48` — Argument `SimpleNamespace` is not assignable to parameter `ctx` with type `WorkflowContext` in function `fa.inner_loop.workflow_controller._require_managed_publisher` [bad-argument-type]
+- `tests/test_verify_gate_live.py:3375:78` — Argument `test_ct94_promotion_port_receives_only_the_pinned_destination.RecordingPublisher` is not assignable to parameter `publisher` with type `CandidatePlanPublisher` in function `fa.inner_loop.workflow_controller._promote_validated_plan` [bad-argument-type]
+- `tests/test_verify_gate_live.py:3546:24` — Argument `_CT91TestPlanPublisher` is not assignable to parameter `plan_publisher` with type `CandidatePlanPublisher | None` in function `fa.inner_loop.workflow_controller.run_workflow` [bad-argument-type]
 
 ## Commands and exact results
 

@@ -836,6 +836,7 @@ def test_a_published_view_settles_the_owner(site: Site) -> None:
     with site.owner(view_profile=native_profile()) as owner:
         ids = ok(lambda: site.register(owner))
         lease = ok(lambda: site.claim(owner, ids))
+        assert lease.generation is not None
         grant = _stopped(owner, ids, lease)
         _seal(owner, grant)
         _set_state(site, grant, "PUBLISHED")
@@ -1239,6 +1240,7 @@ def test_publish_settles_the_owner_and_a_reclaim_advances_generation(site: Site)
     with site.owner(view_profile=native_profile()) as owner:
         ids = ok(lambda: site.register(owner))
         lease = ok(lambda: site.claim(owner, ids))
+        assert lease.generation is not None
         grant = _stopped(owner, ids, lease)
         sealed = _seal(owner, grant)
         _publish(owner, grant, sealed)
@@ -1258,6 +1260,7 @@ def test_publish_then_release_is_restart_clean_and_publish_without_release_is_no
     with site.owner(view_profile=native_profile()) as owner:
         ids = ok(lambda: site.register(owner))
         lease = ok(lambda: site.claim(owner, ids))
+        assert lease.generation is not None
         grant = _stopped(owner, ids, lease)
         sealed = _seal(owner, grant)
         _publish(owner, grant, sealed)
