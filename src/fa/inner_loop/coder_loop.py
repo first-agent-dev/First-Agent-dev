@@ -118,9 +118,9 @@ from fa.inner_loop.path_risk import (
 from fa.inner_loop.prompt import (
     render_tool_specs,
 )
-from fa.inner_loop.registry import ToolCall, ToolRegistry, ToolResult
+from fa.inner_loop.registry import ToolRegistry, ToolResult
 from fa.inner_loop.runtime_limits import RuntimeLimits
-from fa.inner_loop.scope_turn import evaluate_scope_turn
+from fa.inner_loop.scope_turn import ScopeState, evaluate_scope_turn
 from fa.inner_loop.state import EventLog, SessionState, _now_iso_z
 from fa.inner_loop.tool_turn import (
     _failed_tool_names,
@@ -694,22 +694,10 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
         _seed_level = difficulty_to_level(scope_mode) if scope_mode else 1
     except ValueError:
         _seed_level = 1
-    _expansion = ExpansionState(level=_seed_level)
-    _active_skill_name: str = ""
-    _exhausted_flag = False
-    # Per-turn observation block. REBUILT (not appended) at every boundary so a
-    # stale L2 line never survives L3. It is composed ON TOP of the caller's
-    # turn_context (the S3 scope hint), which is session-constant and must be
-    # preserved (RK-H) — the two strings only meet at the composer binding.
-    observation_context = ""
-    # Pairs produced during the previous turn's tool batch, evaluated at the
-    # next boundary (F6: observations land in the NEXT request).
-    _prev_calls: tuple[ToolCall, ...] = ()
-    _prev_results: tuple[ToolResult, ...] = ()
-    # S10.9 / CT-H3: delta gate for the durable near-miss telemetry
-    # (expansion_observed) — one event per distinct policy-relevant evidence
-    # tuple per run, never on a transition turn.
-    _last_observed_evidence: tuple[tuple[str, object], ...] | None = None
+    # Six locals became one value: they are written by the same two places
+    # (entry and the turn boundary) and read by the same three, so keeping them
+    # apart was six chances to update five of six (see ScopeState).
+    scope = ScopeState(expansion=ExpansionState(level=_seed_level))
     # S22: Session-level chain exhaustion counter for max_chain_retries guard.
     # Distinct from the inner per-turn retry loop (_per_turn_chain_retries):
     #   - Inner loop retries provider_chain.request() with cooldown waits
@@ -891,22 +879,19 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                 state=state,
                 scope_tiers=_scope_tiers,
                 scope_mode=scope_mode,
-                expansion=_expansion,
-                active_skill_name=_active_skill_name,
-                exhausted_flag=_exhausted_flag,
-                previous_calls=_prev_calls,
-                previous_results=_prev_results,
-                last_observed_evidence=_last_observed_evidence,
+                expansion=scope.expansion,
+                active_skill_name=scope.active_skill_name,
+                exhausted_flag=scope.exhausted_flag,
+                previous_calls=scope.previous_calls,
+                previous_results=scope.previous_results,
+                last_observed_evidence=scope.last_observed_evidence,
                 log=log,
                 output=output,
                 turn=turn,
                 max_turns=max_turns,
             )
-            _expansion = scope_turn.expansion
-            _active_skill_name = scope_turn.active_skill_name
-            _last_observed_evidence = scope_turn.last_observed_evidence
+            scope.adopt(scope_turn)
             render = scope_turn.render
-            observation_context = render.turn_context
             # Append, never replace: ceremony may already have populated this.
             if render.skill_block is not None:
                 skill_block_for_request = [*(skill_block_for_request or []), render.skill_block]
@@ -990,7 +975,7 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
             # capture the value at the LAST turn, not this one. The caller's
             # turn_context (S3 scope hint) is session-constant and preserved.
             turn_context_value: str = (
-                f"{turn_context}\n\n{observation_context}".strip() if observation_context else turn_context
+                f"{turn_context}\n\n{scope.observation_context}".strip() if scope.observation_context else turn_context
             ),
             # S10 / CT5 F3: the L2 skill block from this turn's boundary;
             # None on every non-entry turn. Bound as a default arg for the
@@ -1408,12 +1393,12 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
         # S10 / CT2: remember THIS turn's (call, result) pairs; the next
         # turn's boundary evaluates them for the verify_failed trigger (F6 —
         # effects are visible at the next request, not mid-turn).
-        _prev_calls = tuple(tool_calls)
-        _prev_results = tuple(turn_results)
-        _exhausted_flag = append_tool_turn_messages(
+        scope.previous_calls = tuple(tool_calls)
+        scope.previous_results = tuple(turn_results)
+        scope.exhausted_flag = append_tool_turn_messages(
             tool_calls,
             turn_results,
-            exhausted_flag=_exhausted_flag,
+            exhausted_flag=scope.exhausted_flag,
             log=log,
             output=output,
             turn=turn,

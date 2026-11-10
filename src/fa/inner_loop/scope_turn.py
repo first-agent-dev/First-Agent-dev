@@ -32,6 +32,52 @@ class ScopeTurnResult:
     render: ObservationRender
 
 
+@dataclass
+class ScopeState:
+    """What the chat-scope boundary carries from one turn to the next.
+
+    Six locals in the driver, reassigned in two places (entry and the boundary)
+    and read in three. They only ever move together — the boundary reads all
+    six and writes back four — so they are one value, not six variables.
+
+    Mutable on purpose: the driver's loop owns the transition, and a frozen
+    dataclass here would force `replace()` on every turn for no gain. The
+    *result* of a boundary is still frozen (`ScopeTurnResult`); this is the
+    accumulator the loop threads.
+
+    ``exhausted_flag`` is set by the tool batch rather than the boundary, which
+    is why it is not in `ScopeTurnResult`: the observation render consumes it,
+    the tool turn produces it.
+    """
+
+    expansion: ExpansionState
+    active_skill_name: str = ""
+    exhausted_flag: bool = False
+    #: Per-turn observation block, REBUILT (never appended) at every boundary so
+    #: a stale L2 line never survives L3. Composed on top of the caller's
+    #: `turn_context`, which is session-constant (RK-H).
+    observation_context: str = ""
+    #: Pairs produced by the previous turn's tool batch, evaluated at the NEXT
+    #: boundary (F6: observations land in the next request).
+    previous_calls: tuple[ToolCall, ...] = ()
+    previous_results: tuple[ToolResult, ...] = ()
+    #: S10.9 / CT-H3: delta gate for `expansion_observed` — one event per
+    #: distinct evidence tuple per run, never on a transition turn.
+    last_observed_evidence: tuple[tuple[str, object], ...] | None = None
+
+    def adopt(self, result: ScopeTurnResult) -> None:
+        """Take the boundary's decision back into the loop's state.
+
+        Ordering matters and is the reason this is a method rather than four
+        assignments at the call site: `observation_context` is rebuilt from the
+        render, so it must not be assigned before the render is adopted.
+        """
+        self.expansion = result.expansion
+        self.active_skill_name = result.active_skill_name
+        self.last_observed_evidence = result.last_observed_evidence
+        self.observation_context = result.render.turn_context
+
+
 def _verify_failed_in_pairs(
     *,
     calls: Sequence[ToolCall],
