@@ -113,6 +113,7 @@ from fa.inner_loop.provider_turn import record_provider_call
 from fa.inner_loop.registry import ToolRegistry, ToolResult
 from fa.inner_loop.runtime_limits import RuntimeLimits
 from fa.inner_loop.scope_turn import ScopeState, evaluate_scope_turn
+from fa.inner_loop.session_setup import prepare_session
 from fa.inner_loop.state import EventLog, SessionState, _now_iso_z
 from fa.inner_loop.tool_turn import (
     _failed_tool_names,
@@ -129,7 +130,6 @@ from fa.inner_loop.tool_turn import (
     _redact as _redact,
 )
 from fa.inner_loop.turn_state import TurnState
-from fa.inner_loop.usage_ledger import UsageLedger
 from fa.observability.redaction import SecretRedactor
 from fa.output import EventBus, OutputEvent
 from fa.providers.base import RequestInfo, ResponseInfo
@@ -613,41 +613,28 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
     effective_limits = limits if limits is not None else RuntimeLimits.anchored_defaults()
     log = state.require_log()
     tool_payload = render_tool_specs(registry.specs())
-    tool_defs_for_prompt = [dict(tool) for tool in tool_payload]
     artifact_store = ArtifactStore.from_event_log(log)
 
-    from fa.memory.context_budget import ContextBudget, estimate_tokens
+    from fa.memory.context_budget import estimate_tokens
     from fa.memory.pinned_buffer import PinnedBuffer
 
-    # G1 fix: direct access — ChainConfig always has both fields.
-    # The old getattr+or pattern had a logic trap: `or 150000` silently
-    # converted context_limit=0 to 150000. ChainConfig.validate() already
-    # rejects context_limit <= 0 (chain.py:63), but the floor below is
-    # defense-in-depth for misconfigured-but-positive values.
-    context_limit = provider_chain.config.context_limit
-    compaction_threshold = provider_chain.config.compaction_threshold
-
-    # MIN_CONTEXT_LIMIT: below this, context budget is meaningless.
-    # Catches typos like context_limit=100 (meant 100000).
-    min_context_limit = 32_000
-    if context_limit < min_context_limit:
-        log.append(
-            actor="runtime",
-            kind="telemetry",
-            content={"message": f"context_limit={context_limit} below floor {min_context_limit}, clamped"},
-        )
-        context_limit = min_context_limit
-
-    # TODO: Adaptive context sizing — eventually derive context_limit from API response
-    # metadata (model's actual context_window). ADR-17 §Option B point 5 describes the
-    # target architecture. Current implementation uses static config from models.yaml.
-    # See: knowledge/adr/ADR-17-context-management-and-compaction.md
-    budget = ContextBudget(limit_tokens=context_limit, configured_threshold=compaction_threshold)
-    active_pinned_buffer = (
-        PinnedBuffer(state.workspace_root) if pinned_buffer is _DEFAULT_PINNED_BUFFER else pinned_buffer
+    # Preconditions first: budget (with its floor), buffer, ledger, clock. The
+    # assembler records the clamp itself — that row is operator-facing.
+    setup = prepare_session(
+        log=log,
+        context_limit=provider_chain.config.context_limit,
+        compaction_threshold=provider_chain.config.compaction_threshold,
+        pinned_buffer=PinnedBuffer(state.workspace_root) if pinned_buffer is _DEFAULT_PINNED_BUFFER else pinned_buffer,
+        tool_payload=tool_payload,
     )
+    budget = setup.budget
+    compaction_threshold = setup.compaction_threshold
+    # `Any` at the parameter boundary (callers pass stand-ins), narrowed here.
+    active_pinned_buffer: PinnedBuffer | None = setup.pinned_buffer  # type: ignore[assignment]
+    ledger = setup.ledger
+    tool_defs_for_prompt = setup.tool_defs_for_prompt
+    _session_start_mono = setup.started_at
 
-    ledger = UsageLedger()
     turn_state = TurnState.from_restored(restore_conversation_history(log, initial_memory_summary))
 
     log.append(actor="user", kind="user_msg", content={"text": task})
@@ -657,7 +644,6 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
         content={"role": role, "max_turns": max_turns, "temperature": temperature},
     )
 
-    _session_start_mono = time.monotonic()
     # LOGIC-5: `turn_state.last_budget_ratio` is the number finish() reports as
     # context_used_pct. It lives on TurnState rather than here because Q#4 was
     # a stale value read by the exit, and a field with one owner is harder to
