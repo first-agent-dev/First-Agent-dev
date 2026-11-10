@@ -290,3 +290,54 @@ def test_unknown_exception_is_loud(tmp_path: Path) -> None:
     """The driver's `except` list and this table must not silently disagree."""
     with pytest.raises(TypeError, match="ValueError"):
         _handle(ValueError("not a provider failure"), log=_log(tmp_path))
+
+
+def test_exhaustion_count_reaches_the_session_end_metric(tmp_path: Path) -> None:
+    """Seam test: row-counter → `session_meta.chain_exhaustion_events`.
+
+    Everything above asserts the counter on the `EventLog`. Its only consumer is
+    the end-of-session metric, and the test that pins that metric
+    (`test_s9_guardrail_metrics`) drives a CLEAN session where the value is 0
+    regardless — so it would stay green if the increment were deleted. This one
+    fails a real chain exhaustion once and reads the value the session actually
+    persisted.
+    """
+    from fa.feature_flags import FeatureFlags
+    from fa.inner_loop import coder_loop
+    from fa.inner_loop.hooks import HookRegistry
+    from fa.inner_loop.registry import ToolRegistry
+    from fa.inner_loop.state import EventLog, SessionState
+    from fa.providers import ChainConfig, ChainEntry, ProviderChain
+    from fa.providers.errors import ProviderTransientError
+    from tests.test_coder_loop import FakeProvider
+
+    entry = ChainEntry(
+        provider="openrouter",
+        model="test/model",
+        base_url="https://example.invalid/v1",
+        api_key_env="TEST_KEY",
+        cooldown_seconds=300,
+    )
+    failing = ProviderTransientError("503", status=503, kind="service_unavailable")
+    chain = ProviderChain(
+        ChainConfig(role="coder", name="test-model", family="", chain=(entry,)),
+        provider_factory=lambda _e: FakeProvider([failing]),
+        env={"TEST_KEY": "k"},
+    )
+    log = EventLog(tmp_path / "events.jsonl", run_id="metric")
+    state = SessionState(
+        workspace_root=tmp_path,
+        run_id="metric",
+        log=log,
+        feature_flags=FeatureFlags(context_budget_enabled=False, max_chain_retries=0),
+    )
+
+    coder_loop.drive_session(
+        "metric", provider_chain=chain, registry=ToolRegistry(), hooks=HookRegistry(), state=state, max_turns=1
+    )
+
+    assert state.session_db is not None
+    assert state.session_db.get_meta("chain_exhaustion_events") == 1
+    kind_counts = state.session_db.get_meta("kind_counts")
+    assert isinstance(kind_counts, dict), f"kind_counts must be a mapping, got {type(kind_counts)}"
+    assert kind_counts["run_stopped"] == 1
