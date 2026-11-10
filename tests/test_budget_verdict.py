@@ -226,3 +226,47 @@ def test_driver_calls_the_verdict_on_the_real_budget_path(tmp_path: Path) -> Non
     assert seen, "drive_session never called classify_budget — the seam is dormant"
     assert seen[0][0] == "stage2", f"unexpected verdict action: {seen[0][0]}"
     assert seen[0][1] == 80_000, "stage2_threshold must come from the driver's budget"
+
+
+# ---------------------------------------------------------------------------
+# hard_stop_row — the durable row must come from the verdict, not a second check
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("tokens", [95_000, 94_000, 85_000, 72_000, 10_000])
+def test_hard_stop_row_is_byte_equal_to_the_budgets_own_row(tokens: int) -> None:
+    """C1: deriving the row from the verdict changes nothing observable.
+
+    ``StageThreeStop`` builds the ``context_budget_hard_stop`` payload from
+    ``verdict.raw`` instead of calling ``budget.check()`` a second time. That is
+    only safe if the two are the same mapping, so it is asserted rather than
+    argued: if the ladder or the row shape moves, this fails instead of
+    ``fa stats`` quietly reading a different key set.
+
+    The two message variants are the two call sites — the budget's own sentence
+    and the circuit breaker's.
+    """
+    budget = ContextBudget(limit_tokens=100_000, configured_threshold=80_000)
+    verdict = _verdict(budget, tokens)
+
+    for message in (budget.check(tokens)["message"], "Compaction circuit breaker triggered: locked."):
+        assert verdict.hard_stop_row(message=message) == budget.hard_stop_row(tokens, message=message)
+
+
+def test_hard_stop_row_overrides_only_the_message() -> None:
+    """C1: the breaker's wording must not drag the numbers with it.
+
+    Q#5's whole point was one schema for every exit. Overriding ``message`` is
+    allowed; letting a caller change ``action`` or ``ratio`` by accident is not,
+    so the override is proven to be surgical.
+    """
+    budget = ContextBudget(limit_tokens=100_000, configured_threshold=80_000)
+    verdict = _verdict(budget, 94_000)
+
+    row = verdict.hard_stop_row(message="breaker wording")
+
+    assert row["message"] == "breaker wording"
+    assert row["action"] == verdict.action == "stage3"
+    assert row["ratio"] == pytest.approx(0.94)
+    assert row["current_tokens"] == 94_000
+    assert row["stage3_threshold"] == budget.stage3_threshold

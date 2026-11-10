@@ -1143,7 +1143,6 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                         messages_payload = stage2.messages_payload
                         request_extras = stage2.request_extras
                         usage = stage2.usage
-                        decision = stage2.decision
                         # Re-classify: after masking the decision is a different one, and
                         # every later read goes through the verdict. Q#4 lives here.
                         verdict = stage2.verdict
@@ -1167,7 +1166,6 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                             tool_payload=tool_payload,
                             compose_request=_compose_request_payload,
                             compactor_chain=compactor_chain,
-                            verdict_for_console=verdict,
                         )
                         if stage3.stopped:
                             # Q#4, applied to the exit itself: the percentage the
@@ -1183,7 +1181,6 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                             messages_payload = stage3.messages_payload
                             request_extras = stage3.request_extras
                             usage = stage3.usage
-                            decision = stage3.decision
                             verdict = stage3.verdict
                             last_budget_ratio = verdict.ratio
 

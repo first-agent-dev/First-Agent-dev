@@ -263,43 +263,62 @@ def _older_history_text(older_history: list[dict[str, Any]], memory_summary: str
     return text + "\n".join(lines)
 
 
-def _record_stage3_stop(
-    *,
-    turn: int,
-    max_turns: int,
-    log: EventLog,
-    output: EventBus | None,
-    budget: ContextBudget,
-    usage_for_row: int,
-    message: str,
-    verdict_for_console: BudgetVerdict,
-    extra_event: str | None = None,
-) -> None:
-    """Write the two rows and the console mirrors that precede a hard stop.
+@dataclass(frozen=True)
+class StageThreeStop:
+    """Everything a stage-3 stop needs to write its rows and console mirror.
 
-    Shared by both stage-3 exits so the pair cannot drift: the durable row is
-    ``hard_stop_row`` (Q#5 — one schema for every exit), and the console gets
-    the same verdict the row was built from, with the exit's own wording.
+    One carrier instead of nine keyword arguments, so a call site reads as
+    "this stop, here" rather than a wall of names that must all be right.
+
+    Two fields exist for a reason that is easy to lose:
+
+    * ``verdict`` is the budget's own verdict at the post-compaction usage.
+      The durable ``context_budget_hard_stop`` row is derived from it — not
+      from a second ``budget.check()`` — so the row and the console cannot
+      disagree (Q#4 was
+      exactly that drift). No ``usage`` field: the verdict already carries it
+      as ``current_tokens``, and a second copy is a second thing to get wrong.
+    * ``message`` overrides only the wording: the circuit breaker explains
+      itself, the ordinary exit shows the budget's sentence. Everything else
+      (``action``, ``ratio``, the ladder) comes from ``verdict``.
     """
-    log.append(
+
+    turn: int
+    max_turns: int
+    log: EventLog
+    output: EventBus | None
+    verdict: BudgetVerdict
+    message: str
+    breaker: bool = False
+
+
+def _record_stage3_stop(stop: StageThreeStop) -> None:
+    """Write the rows and console mirrors that precede a stage-3 hard stop.
+
+    Shared by both stage-3 exits so the pair cannot drift. Order is part of the
+    contract and is asserted as a sequence: the console mirror precedes the
+    ``run_stopped`` row, and on the breaker path an extra ``loop_warn`` sits
+    between them (S23).
+    """
+    stop.log.append(
         actor="runtime",
         kind="context_budget_hard_stop",
-        content=budget.hard_stop_row(usage_for_row, message=message),
+        content=stop.verdict.hard_stop_row(message=stop.message),
     )
     _emit_context_warn(
-        verdict_for_console,
-        output=output,
-        turn=turn,
-        max_turns=max_turns,
+        stop.verdict,
+        output=stop.output,
+        turn=stop.turn,
+        max_turns=stop.max_turns,
         action="stage3",
-        message=message,
+        message=stop.message,
     )
-    if output is not None and extra_event == "loop_warn":
-        output.emit(
+    if stop.output is not None and stop.breaker:
+        stop.output.emit(
             OutputEvent(
                 type="loop_warn",
-                turn=turn,
-                max_turns=max_turns,
+                turn=stop.turn,
+                max_turns=stop.max_turns,
                 data={
                     "detector": "compaction_circuit_breaker",
                     "message": (
@@ -308,10 +327,10 @@ def _record_stage3_stop(
                 },
             )
         )
-    log.append(
+    stop.log.append(
         actor="runtime",
         kind="run_stopped",
-        content={"reason": "context_budget_hard_stop", "turns": turn},
+        content={"reason": "context_budget_hard_stop", "turns": stop.turn},
     )
 
 
@@ -328,17 +347,15 @@ def run_stage3_compaction(
     tool_payload: Sequence[Mapping[str, Any]],
     compose_request: Any,
     compactor_chain: Any,
-    verdict_for_console: BudgetVerdict,
     recent_turns_to_keep: int = 4,
 ) -> Stage3Result:
     """Compact via the LLM compactor, then decide whether the session can go on.
 
-    ``verdict_for_console`` is passed in rather than re-derived at entry because
-    the caller already holds the verdict the *entry* decision produced; this
-    module only re-derives it when the prompt actually changes (after masking's
-    result, or after compaction). Recomputing it here would spend a second
-    ``estimate_tokens`` call on an unchanged prompt and, in the broken case,
-    disagree with the caller.
+    The verdict is re-derived here, and only *after* the prompt changes: the
+    entry decision describes the pre-compaction prompt, so carrying it in would
+    report the number the compaction was meant to fix (measured: a 99% stop
+    where the row said 92%). Nothing is computed at entry — there is no second
+    ``estimate_tokens`` call on an unchanged prompt.
 
     Returns:
 
@@ -392,7 +409,6 @@ def run_stage3_compaction(
             logger.warning("No older history to compact for Stage 3")
             return _finish_stage3(
                 applied=False,
-                did_compact=False,
                 history=history,
                 memory_summary=memory_summary,
                 messages_payload=[],
@@ -472,7 +488,6 @@ def run_stage3_compaction(
 
     return _finish_stage3(
         applied=compacted,
-        did_compact=compacted,
         history=protected_window,
         memory_summary=updated_summary,
         messages_payload=list(messages_payload),
@@ -528,15 +543,15 @@ def _circuit_breaker_exit(
         stage3_threshold=budget.stage3_threshold,
     )
     _record_stage3_stop(
-        turn=turn,
-        max_turns=max_turns,
-        log=log,
-        output=output,
-        budget=budget,
-        usage_for_row=post_compaction_usage,
-        message=circuit_breaker_message,
-        verdict_for_console=verdict,
-        extra_event="loop_warn",
+        StageThreeStop(
+            turn=turn,
+            max_turns=max_turns,
+            log=log,
+            output=output,
+            verdict=verdict,
+            message=circuit_breaker_message,
+            breaker=True,
+        )
     )
     return Stage3Result(
         applied=True,
@@ -555,7 +570,6 @@ def _circuit_breaker_exit(
 def _finish_stage3(
     *,
     applied: bool,
-    did_compact: bool,
     history: list[dict[str, Any]],
     memory_summary: str,
     messages_payload: list[dict[str, Any]],
@@ -587,14 +601,14 @@ def _finish_stage3(
             decision["message"],
         )
         _record_stage3_stop(
-            turn=turn,
-            max_turns=max_turns,
-            log=log,
-            output=output,
-            budget=budget,
-            usage_for_row=post_compaction_usage,
-            message=decision["message"],
-            verdict_for_console=verdict,
+            StageThreeStop(
+                turn=turn,
+                max_turns=max_turns,
+                log=log,
+                output=output,
+                verdict=verdict,
+                message=decision["message"],
+            )
         )
         return Stage3Result(
             applied=applied,
@@ -610,7 +624,7 @@ def _finish_stage3(
         )
 
     return Stage3Result(
-        applied=applied and did_compact,
+        applied=applied,
         stopped=False,
         stop_message="",
         history=history,

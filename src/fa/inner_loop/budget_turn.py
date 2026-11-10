@@ -64,6 +64,22 @@ class BudgetVerdict:
         """True when this verdict can end the session (stage-3 pressure)."""
         return self.action == "stage3"
 
+    def hard_stop_row(self, *, message: str) -> dict[str, Any]:
+        """The ``context_budget_hard_stop`` payload for this verdict.
+
+        Derived from ``raw``, not from a second ``budget.check()``: the row and
+        the console mirror then describe the *same* measurement by
+        construction, so they cannot drift (Q#4 was a stale percent reaching the
+        console while the row carried the fresh one). ``raw`` is exactly what
+        ``ContextBudget.check()`` returned for this usage, so this is byte-equal
+        to ``ContextBudget.hard_stop_row(usage, message=...)`` — asserted by a
+        test, because "byte-equal" is a claim that will rot.
+
+        ``message`` is replaced: the breaker explains itself, while ``action``,
+        ``ratio`` and the thresholds stay the budget's own words.
+        """
+        return {**dict(self.raw), "message": message}
+
 
 def classify_budget(
     decision: Mapping[str, Any],

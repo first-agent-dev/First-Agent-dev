@@ -28,7 +28,6 @@ from typing import Any
 
 import pytest
 
-from fa.inner_loop.budget_turn import BudgetVerdict, classify_budget
 from fa.inner_loop.compaction.compaction_turn import Stage3Result, run_stage3_compaction
 from fa.inner_loop.state import EventLog
 from fa.memory.context_budget import ContextBudget
@@ -82,14 +81,6 @@ def _history(turns: int = 6) -> list[dict[str, Any]]:
     return messages
 
 
-def _verdict(budget: ContextBudget, tokens: int) -> BudgetVerdict:
-    return classify_budget(
-        budget.check(tokens),
-        stage2_threshold=budget.stage2_threshold,
-        stage3_threshold=budget.stage3_threshold,
-    )
-
-
 def _run(
     wiring: tuple[EventLog, EventBus, _Capture],
     monkeypatch: pytest.MonkeyPatch,
@@ -126,7 +117,6 @@ def _run(
         tool_payload=[{"name": "fs_read_file"}],
         compose_request=_compose,
         compactor_chain=None,
-        verdict_for_console=_verdict(budget, usage),
     )
     return result, budget
 
