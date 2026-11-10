@@ -78,7 +78,7 @@ MAX_NESTED_FUNCTION_DEPTH = 4
 
 #: Driver-body lines. Not the primary metric (see module docstring), kept so a
 #: slice cannot "fix" nesting by inlining a hundred more lines.
-MAX_DRIVER_LINES = 821  # 848 -> 836 (ledger) -> 821 (ScopeState)
+MAX_DRIVER_LINES = 771  # 848 -> 836 (ledger) -> 821 (ScopeState) -> 771 (provider_turn)
 
 
 def _driver() -> ast.FunctionDef | ast.AsyncFunctionDef:

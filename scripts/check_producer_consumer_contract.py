@@ -108,6 +108,10 @@ PRODUCER_FILES = [
     # kind of false alarm that trains people to lower the floor.
     "src/fa/inner_loop/budget_effects.py",
     "src/fa/inner_loop/compaction/compaction_turn.py",
+    # `provider_turn` took `provider_attempt`/`llm_call`/`llm_response` out of
+    # `coder_loop` (2026-11-10). Same reason as the two above: unlisted, the
+    # checker calls a moved emit a removed one.
+    "src/fa/inner_loop/provider_turn.py",
     "src/fa/inner_loop/coder_loop.py",
     "src/fa/inner_loop/tool_turn.py",
     "src/fa/inner_loop/scope_turn.py",
