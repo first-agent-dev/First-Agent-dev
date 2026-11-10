@@ -383,3 +383,64 @@ def test_driver_performs_the_stop_the_seam_reported(
 
     assert (outcome.exit_code, outcome.stop_reason) == (exit_code, reason)
     assert log.chain_exhaustion_count == 0  # neither path is a chain exhaustion
+
+
+def test_composition_shape_failure_reports_identically_to_the_provider_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """C1: both shape-failure origins produce the same exit and the same rows.
+
+    There used to be two implementations of this reporting — a driver closure for
+    the composition path and the handler for the provider path — and they drifted
+    far enough that the console line was written twice. Now the driver delegates
+    and only performs the stop. This test asserts the *composition* origin
+    reaches that same code, which is the half the provider scenario cannot cover.
+    """
+    from fa.feature_flags import FeatureFlags
+    from fa.inner_loop import coder_loop
+    from fa.inner_loop.hooks import HookRegistry
+    from fa.inner_loop.registry import ToolRegistry
+    from fa.inner_loop.state import EventLog, SessionState
+    from tests.fixtures.session_wiring import make_mock_chain, mock_success_response
+
+    seen: list[str] = []
+    real = coder_loop.handle_provider_failure
+
+    def spy(exc: BaseException, **kwargs: Any) -> Any:
+        seen.append(type(exc).__name__)
+        return real(exc, **kwargs)
+
+    monkeypatch.setattr(coder_loop, "handle_provider_failure", spy)
+
+    log = EventLog(tmp_path / "events.jsonl", run_id="composition")
+    state = SessionState(
+        workspace_root=tmp_path,
+        run_id="composition",
+        log=log,
+        feature_flags=FeatureFlags(context_budget_enabled=False),
+    )
+    chain = make_mock_chain(context_limit=100_000)
+    chain.request.return_value = mock_success_response("done")
+
+    # The composer raises before HTTP: a dangling-tool history on resume.
+    # Patched at the composer, because the driver's wrapper is a local closure —
+    # there is no module attribute to replace, and patching one that does not
+    # exist fails loudly (`AttributeError`) rather than silently testing nothing.
+    def _explode(**_kwargs: Any) -> Any:
+        raise ProviderRequestShapeError("history pairing invariant violated", status=400)
+
+    from fa.inner_loop import prompt_composer
+
+    # The driver imports the composer INSIDE the closure, so the definition
+    # module is the address that matters here (unlike `handle_provider_failure`,
+    # which is imported at module load).
+    monkeypatch.setattr(prompt_composer, "compose_turn_request", _explode)
+
+    outcome = coder_loop.drive_session(
+        "composition", provider_chain=chain, registry=ToolRegistry(), hooks=HookRegistry(), state=state, max_turns=1
+    )
+
+    assert seen == ["ProviderRequestShapeError"], "the composition path must use the shared handler"
+    assert (outcome.exit_code, outcome.stop_reason) == (2, "request_shape")
+    assert [row.kind for row in log.read_all()][-2:] == ["run_stopped", "session_summary"]
+    assert chain.request.call_count == 0, "a local shape failure must fail before HTTP"

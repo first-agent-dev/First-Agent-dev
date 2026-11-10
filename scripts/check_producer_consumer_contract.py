@@ -72,6 +72,11 @@ def extract_handler_events() -> set[str]:
 # a path nobody enumerated (skill §3.14 path inventory) — update the floor in
 # the same commit that adds the emit.
 PRODUCER_SITE_FLOOR: dict[str, int] = {
+    # 4 throughout. The provider-failure slice (2026-11-10) moved the
+    # shape-failure console line into `provider_turn`, then removed the driver's
+    # duplicate copy so there is one implementation of it, not two: the count
+    # moved files and came back to the same number. The two exhaustion paths
+    # share `_emit_attempts_failed` and count as one site.
     "api_retry": 4,
     "compaction_end": 5,
     "compaction_start": 2,

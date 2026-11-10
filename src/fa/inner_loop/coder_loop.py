@@ -779,37 +779,29 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
             )
         )
 
-    def _request_shape_failure(exc: ProviderRequestShapeError) -> SessionOutcome:
-        """Log + emit + finish a request-shape failure (CT5 / I-50 / I-51).
+    def _fail_request_shape(exc: ProviderRequestShapeError) -> SessionOutcome:
+        """End the session for a request-shape failure — decided and recorded elsewhere.
 
-        Shared by both the composition-time path (a dangling-tool or invalid
-        message order raised locally before HTTP) and the provider-returned
-        400/422 path, so an operator sees the same graceful `request_shape`
-        exit-2 and the real provider/reason either way. Previously a
-        composition-time failure (e.g. dangling tool_calls on resume) escaped as
-        an uncaught ValueError traceback because it happened outside the
-        provider-request try block.
+        Composition-time and provider-time shape failures report the same way
+        (S13.4: a dangling-tool history on resume used to escape as an uncaught
+        ValueError). Both now go through `provider_turn`, which owns the
+        `run_stopped` row and its `api_retry` mirror; this wrapper only performs
+        the stop, because `finish_at` closes over this function's state.
+
+        Keeping a second copy of those two effects here is how they drift: the
+        console line was already implemented twice before this.
         """
-        log.append(
-            actor="runtime",
-            kind="run_stopped",
-            content={"reason": "request_shape", "detail": str(exc)},
+        failure = handle_provider_failure(
+            exc,
+            exhaustion_count=turn_state.chain_exhaustion_count,
+            max_retries=0,
+            log=log,
+            output=output,
+            turn=turn,
+            max_turns=max_turns,
         )
-        if output is not None:
-            output.emit(
-                OutputEvent(
-                    type="api_retry",
-                    turn=turn,
-                    max_turns=max_turns,
-                    data={
-                        "provider": getattr(exc, "provider", None) or "unknown",
-                        "status": exc.status,
-                        "retry_after_s": 0,
-                        "reason": f"request_shape_error: {exc}",
-                    },
-                )
-            )
-        return finish_at(2, "request_shape")
+        assert failure.stop is not None  # noqa: S101 # a shape failure never retries
+        return finish_at(failure.stop.exit_code, failure.stop.reason, final_text=failure.stop.final_text)
 
     while turn < max_turns:
         turn += 1
@@ -920,7 +912,7 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                 # letting a dev-only assertion crash the CLI with a traceback. The
                 # chain conformance (S13.4) is the authoritative pairing gate; this
                 # catch keeps the dev assertion loud but non-fatal on bad data.
-                return _request_shape_failure(
+                return _fail_request_shape(
                     ProviderRequestShapeError(
                         "history pairing invariant violated: orphaned/duplicate tool calls in conversation history",
                         status=400,
@@ -986,7 +978,7 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
             # assistant-final history on resume, which used to escape as an uncaught
             # traceback) is a request-shape error: fail locally, before HTTP, as the
             # same graceful exit-2 the provider-returned 400 path produces.
-            return _request_shape_failure(exc)
+            return _fail_request_shape(exc)
 
         # ── ContextBudget Gating (Phase 1 / PR 1) ───────────────────────────
         # S13: FAIL-CLOSED — context_budget_enabled defaults to True when flags unavailable
