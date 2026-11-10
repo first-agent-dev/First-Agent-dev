@@ -297,7 +297,7 @@ def test_console_mirror_kinds_pair_per_site() -> None:
             continue
         if kind in CROSS_BOUNDARY_PAIRS:
             continue
-        if name == "coder_loop.py" and kind == "run_stopped" and lineno == _iteration_cap_stop_site(path):
+        if name == "coder_loop.py" and kind == "run_stopped" and lineno in _terminal_stop_sites(path):
             continue
         nearest = _nearest_emit_distance(path, lineno)
         if nearest is None or nearest > _INLINE_PAIR_WINDOW:
@@ -429,20 +429,55 @@ def _string_literals(node: ast.AST) -> list[str]:
     return []
 
 
-def _iteration_cap_stop_site(path: str) -> int | None:
-    """The final stop row is mirrored by finish() -> session_end, not a nearby emit.
+def _terminal_stop_sites(path: str) -> dict[int, str]:
+    """Stop rows that are mirrored through ``finish`` -> ``session_end``.
 
-    Constrain this cross-boundary case to the adjacent final append and return;
-    a C1 test separately proves the actual output and row on that path.
+    Returns ``{lineno: reason}``. The pairing is real but not textual: the row is
+    written, then the branch returns through ``finish_at`` (a wrapper that really
+    reaches ``finish``), which emits ``session_end``. A C1 test proves the output
+    and the row on each path.
+
+    The rule used to apply to the *last* statement pair of the driver only, which
+    made it pass for the wrong reason: the interrupt row sat within 30 lines of a
+    ``llm_response`` emit and was counted as an inline pair, so the exemption was
+    never consulted. Moving that emit to another module exposed it — and then the
+    iteration-cap site itself fell outside the window. Both are the same
+    cross-boundary pair, so both are recognised by the same rule.
     """
     tree = ast.parse(pathlib.Path(path).read_text(encoding="utf-8"))
     driver = next(
         node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "_drive_session_inner"
     )
-    append, returned = driver.body[-2:]
-    if not (isinstance(append, ast.Expr) and isinstance(append.value, ast.Call) and isinstance(returned, ast.Return)):
+    return _scan_terminal_stops(driver)
+
+
+def _scan_terminal_stops(driver: ast.FunctionDef) -> dict[int, str]:
+    """Walk every block of the driver for a stop row followed by a ``finish`` exit."""
+    found: dict[int, str] = {}
+
+    def visit(body: list[ast.stmt]) -> None:
+        for index, node in enumerate(body):
+            if isinstance(node, (ast.If, ast.For, ast.While, ast.Try, ast.With)):
+                for field in ("body", "orelse", "finalbody"):
+                    visit(getattr(node, field, []) or [])
+                for handler in getattr(node, "handlers", []) or []:
+                    visit(handler.body)
+            if index + 1 >= len(body):
+                continue
+            append, returned = node, body[index + 1]
+            reason = _stop_row_reason(append)
+            if reason is not None and _is_finish_exit(driver, returned):
+                found[append.lineno] = reason
+
+    visit(driver.body)
+    return found
+
+
+def _stop_row_reason(node: ast.stmt) -> str | None:
+    """The ``reason`` of a ``run_stopped`` append, or None."""
+    if not (isinstance(node, ast.Expr) and isinstance(node.value, ast.Call)):
         return None
-    call = append.value
+    call = node.value
     if not (isinstance(call.func, ast.Attribute) and call.func.attr == "append"):
         return None
     kwargs = {kw.arg: kw.value for kw in call.keywords}
@@ -457,17 +492,28 @@ def _iteration_cap_stop_site(path: str) -> int | None:
         for k, v in zip(content.keys, content.values, strict=True)
         if isinstance(k, ast.Constant) and isinstance(v, ast.Constant)
     }
-    if pairs.get("reason") != "iteration_cap":
-        return None
-    if not (isinstance(returned.value, ast.Call) and isinstance(returned.value.func, ast.Name)):
-        return None
-    # The exit may be the direct ``finish(...)`` or the named wrapper the driver
-    # funnels every terminal branch through. The exemption is only honest if the
-    # wrapper really calls ``finish`` — otherwise "mirrored through finish" is a
-    # claim about a name, not about behaviour.
-    if returned.value.func.id != "finish" and not _reaches_finish(driver, returned.value.func.id):
-        return None
-    return call.lineno
+    reason = pairs.get("reason")
+    return reason if isinstance(reason, str) else None
+
+
+def _is_finish_exit(driver: ast.FunctionDef, node: ast.stmt) -> bool:
+    """True if this statement returns through ``finish`` or a wrapper reaching it."""
+    if not (isinstance(node, ast.Return) and isinstance(node.value, ast.Call)):
+        return False
+    func = node.value.func
+    if not isinstance(func, ast.Name):
+        return False
+    return func.id == "finish" or _reaches_finish(driver, func.id)
+
+
+def _iteration_cap_stop_site(path: str) -> int | None:
+    """The iteration-cap stop row, or None.
+
+    No longer the gate itself — ``_terminal_stop_sites`` covers every terminal
+    stop — but kept because a test asserts the iteration-cap path still exists.
+    """
+    sites = _terminal_stop_sites(path)
+    return next((lineno for lineno, reason in sites.items() if reason == "iteration_cap"), None)
 
 
 def _reaches_finish(driver: ast.FunctionDef, wrapper_name: str) -> bool:
