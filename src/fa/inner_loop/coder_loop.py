@@ -87,6 +87,7 @@ from fa.inner_loop.budget_effects import (
     record_compaction_pressure as _record_compaction_pressure,
 )
 from fa.inner_loop.budget_turn import classify_budget as classify_budget
+from fa.inner_loop.compaction.compaction_turn import run_stage2_masking
 from fa.inner_loop.conversation_history import (
     _assert_tool_pairing_invariant as _assert_tool_pairing_invariant,
 )
@@ -1121,89 +1122,32 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                         )
                         return finish_at(1, "context_budget_hard_stop", final_text=decision["message"])
                 else:
-                    logger.info("ContextBudget Stage 2 reached. Triggering deterministic observation masking first...")
-                    log.append(
-                        actor="runtime",
-                        kind="compaction_stage2_start",
-                        content={"tokens_before": usage, "threshold": budget.stage2_threshold},
+                    # Stage-2 masking lives in compaction_turn: it owns its own rows,
+                    # events and the one deliberate except that keeps the run alive.
+                    stage2 = run_stage2_masking(
+                        turn=turn,
+                        max_turns=max_turns,
+                        history=conversation_history,
+                        memory_summary=memory_summary,
+                        usage=usage,
+                        budget=budget,
+                        log=log,
+                        output=output,
+                        tool_payload=tool_payload,
+                        compose_request=_compose_request_payload,
+                        artifact_store=artifact_store,
+                        recent_turns_to_keep=4,
                     )
-                    # FIX-2: emit compaction_start for console visibility
-                    if output is not None:
-                        output.emit(
-                            OutputEvent(
-                                type="compaction_start",
-                                turn=turn,
-                                max_turns=max_turns,
-                                data={"stage": 2, "tokens_before": usage},
-                            )
-                        )
-                    try:
-                        from fa.inner_loop.compaction.compactor import project_messages_after_mask
-
-                        masked_history = project_messages_after_mask(
-                            messages=conversation_history,
-                            artifact_store=artifact_store,
-                            recent_turns_to_keep=4,
-                        )
-                        _request_body, messages_payload, request_extras = _compose_request_payload(
-                            active_summary=memory_summary,
-                            observations=masked_history,
-                        )
-                        post_mask_usage = estimate_tokens(messages_payload, tool_payload)
-                        log.append(
-                            actor="runtime",
-                            kind="compaction_stage2_done",
-                            content={"tokens_before": usage, "tokens_after": post_mask_usage},
-                        )
-                        # FIX-2: emit compaction_end for console visibility
-                        if output is not None:
-                            output.emit(
-                                OutputEvent(
-                                    type="compaction_end",
-                                    turn=turn,
-                                    max_turns=max_turns,
-                                    data={
-                                        "stage": 2,
-                                        "tokens_before": usage,
-                                        "tokens_after": post_mask_usage,
-                                        "ok": True,
-                                    },
-                                )
-                            )
-                        logger.info(
-                            "Stage 2 Compaction successful. Reclaimed tokens: %d -> %d",
-                            usage,
-                            post_mask_usage,
-                        )
-                        conversation_history = masked_history
-                        usage = post_mask_usage
-                        decision = budget.check(usage)
-                        # Re-classify: after masking the decision is a different
-                        # one, and every later read goes through the verdict.
-                        verdict = classify_budget(
-                            decision,
-                            stage2_threshold=budget.stage2_threshold,
-                            stage3_threshold=budget.stage3_threshold,
-                        )
+                    if stage2.applied:
+                        conversation_history = stage2.history
+                        messages_payload = stage2.messages_payload
+                        request_extras = stage2.request_extras
+                        usage = stage2.usage
+                        decision = stage2.decision
+                        # Re-classify: after masking the decision is a different one, and
+                        # every later read goes through the verdict. Q#4 lives here.
+                        verdict = stage2.verdict
                         last_budget_ratio = verdict.ratio
-                    except Exception as exc:  # noqa: BLE001 # graceful degradation
-                        logger.warning("Stage 2 Compaction failed: %s, continuing with verbatim prompt", exc)
-                        log.append(
-                            actor="runtime",
-                            kind="compaction_stage2_error",
-                            content={"error": str(exc)},
-                        )
-                        # compaction error → console
-                        if output is not None:
-                            output.emit(
-                                OutputEvent(
-                                    type="compaction_end",
-                                    turn=turn,
-                                    max_turns=max_turns,
-                                    data={"stage": 2, "ok": False, "error": str(exc)},
-                                )
-                            )
-
                     if decision["action"] == "stage3":
                         logger.info("Stage 2 masking insufficient. Triggering Stage 3 LLM Compaction...")
                         log.append(

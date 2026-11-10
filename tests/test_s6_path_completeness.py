@@ -496,6 +496,14 @@ def _nearest_emit_distance(path: str, lineno: int) -> int | None:
     return min(distances) if distances else None
 
 
+def _package_event_helpers() -> dict[str, list[str]]:
+    """Event types produced by every emit-helper in the package, by helper name."""
+    helpers: dict[str, list[str]] = {}
+    for _path, tree in _iter_trees():
+        helpers.update(_event_constructor_helpers(tree))
+    return helpers
+
+
 def _nearest_pairing_helper(path: str, lineno: int, window: int = 40) -> str | None:
     """Name of a local emit-helper called within ``window`` lines of the append.
 
@@ -503,15 +511,17 @@ def _nearest_pairing_helper(path: str, lineno: int, window: int = 40) -> str | N
     helper must itself emit, so "call some function" is not enough.
     """
     tree = ast.parse(pathlib.Path(path).read_text(encoding="utf-8"))
-    helpers = _event_constructor_helpers(tree)
+    local = _event_constructor_helpers(tree)
+    # A helper imported under an alias (`from ...budget_effects import
+    # emit_context_warn as _emit_context_warn`) leaves its emit in the imported
+    # module. Resolve the alias instead of reporting the site as unpaired: the
+    # call really is paired, the emit just is not in this file — the same false
+    # negative the counter had before it learned aliases.
+    helpers = {**local, **_imported_helper_aliases(tree, _package_event_helpers())}
     for node in ast.walk(tree):
-        if (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id in helpers
-            and abs(node.lineno - lineno) <= window
-        ):
-            return node.func.id
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in helpers:
+            if abs(node.lineno - lineno) <= window:
+                return node.func.id
     return None
 
 
