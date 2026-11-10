@@ -779,6 +779,37 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
 
         return replace(outcome, failed_tools=tuple(sorted(failed_tools)))
 
+    def finish_at(
+        exit_code: int,
+        stop_reason: str,
+        *,
+        final_text: str = "",
+        extra_results: Sequence[ToolResult] = (),
+    ) -> SessionOutcome:
+        """The single way this driver ends a session.
+
+        Every terminal branch used to spell out the same eight-line
+        ``finish(SessionOutcome(...))`` with five fields, so the ONE thing that
+        had to differ — the reason — was buried in boilerplate identical to its
+        neighbours. That is not hypothetical: the terminal-stop branch reported
+        ``iteration_cap`` for a guard denial and dropped the results it had
+        executed, and it survived review because the block looked like all the
+        others (S6-F5). Naming the call makes the difference visible and gives
+        new exits no way to forget a field or bypass the summary guard.
+
+        ``turns`` is always the current ``turn``; ``tool_results`` is everything
+        collected so far plus whatever this turn executed (``extra_results``).
+        """
+        return finish(
+            SessionOutcome(
+                exit_code=exit_code,
+                stop_reason=stop_reason,
+                turns=turn,
+                final_text=final_text,
+                tool_results=(*collected_results, *extra_results),
+            )
+        )
+
     def _request_shape_failure(exc: ProviderRequestShapeError) -> SessionOutcome:
         """Log + emit + finish a request-shape failure (CT5 / I-50 / I-51).
 
@@ -809,15 +840,7 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                     },
                 )
             )
-        return finish(
-            SessionOutcome(
-                exit_code=2,
-                stop_reason="request_shape",
-                turns=turn,
-                final_text="",
-                tool_results=tuple(collected_results),
-            )
-        )
+        return finish_at(2, "request_shape")
 
     while turn < max_turns:
         turn += 1
@@ -920,15 +943,7 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                         data={"hook": "BEFORE_LLM_CALL", "reason": str(exc)},
                     )
                 )
-            return finish(
-                SessionOutcome(
-                    exit_code=1,
-                    stop_reason=f"hook_deny:{LifecyclePoint.BEFORE_LLM_CALL.value}",
-                    turns=turn,
-                    final_text="",
-                    tool_results=tuple(collected_results),
-                )
-            )
+            return finish_at(1, f"hook_deny:{LifecyclePoint.BEFORE_LLM_CALL.value}")
         if __debug__:
             try:
                 _assert_tool_pairing_invariant(conversation_history)
@@ -1109,15 +1124,7 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                             kind="run_stopped",
                             content={"reason": "context_budget_hard_stop", "turns": turn},
                         )
-                        return finish(
-                            SessionOutcome(
-                                exit_code=1,
-                                stop_reason="context_budget_hard_stop",
-                                turns=turn,
-                                final_text=decision["message"],
-                                tool_results=tuple(collected_results),
-                            )
-                        )
+                        return finish_at(1, "context_budget_hard_stop", final_text=decision["message"])
                 else:
                     logger.info("ContextBudget Stage 2 reached. Triggering deterministic observation masking first...")
                     log.append(
@@ -1368,15 +1375,7 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                                         kind="run_stopped",
                                         content={"reason": "context_budget_hard_stop", "turns": turn},
                                     )
-                                    return finish(
-                                        SessionOutcome(
-                                            exit_code=1,
-                                            stop_reason="context_budget_hard_stop",
-                                            turns=turn,
-                                            final_text=circuit_breaker_message,
-                                            tool_results=tuple(collected_results),
-                                        )
-                                    )
+                                    return finish_at(1, "context_budget_hard_stop", final_text=circuit_breaker_message)
 
                                 conversation_history = protected_window
                                 memory_summary = updated_summary
@@ -1430,15 +1429,7 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                             kind="run_stopped",
                             content={"reason": "context_budget_hard_stop", "turns": turn},
                         )
-                        return finish(
-                            SessionOutcome(
-                                exit_code=1,
-                                stop_reason="context_budget_hard_stop",
-                                turns=turn,
-                                final_text=decision["message"],
-                                tool_results=tuple(collected_results),
-                            )
-                        )
+                        return finish_at(1, "context_budget_hard_stop", final_text=decision["message"])
 
         # Prompt-composer extras (``prompt_cache_key``, ``prompt_cache_retention``)
         # come from the request body builder. Per-provider fields (Mistral's
@@ -1530,15 +1521,7 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                 kind="run_stopped",
                 content={"reason": "abnormal_stop:interrupt"},
             )
-            return finish(
-                SessionOutcome(
-                    exit_code=130,
-                    stop_reason="abnormal_stop:interrupt",
-                    turns=turn,
-                    final_text="",
-                    tool_results=tuple(collected_results),
-                )
-            )
+            return finish_at(130, "abnormal_stop:interrupt")
         except ProviderChainExhaustedError as exc:
             # The per-turn retry seam already persisted this exception's attempts.
             # Re-emitting them here would count the final attempt twice in stats.
@@ -1602,15 +1585,7 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                             },
                         )
                     )
-            return finish(
-                SessionOutcome(
-                    exit_code=2,
-                    stop_reason="chain_exhausted",
-                    turns=turn,
-                    final_text="",
-                    tool_results=tuple(collected_results),
-                )
-            )
+            return finish_at(2, "chain_exhausted")
         except ProviderRequestShapeError as exc:
             return _request_shape_failure(exc)
         try:
@@ -1638,15 +1613,7 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                         data={"hook": "AFTER_LLM_CALL", "reason": str(exc)},
                     )
                 )
-            return finish(
-                SessionOutcome(
-                    exit_code=1,
-                    stop_reason=f"hook_deny:{LifecyclePoint.AFTER_LLM_CALL.value}",
-                    turns=turn,
-                    final_text="",
-                    tool_results=tuple(collected_results),
-                )
-            )
+            return finish_at(1, f"hook_deny:{LifecyclePoint.AFTER_LLM_CALL.value}")
 
         tool_calls = record_model_response(response, conversation_history, log)
 
@@ -1681,15 +1648,7 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
             # through to the shared `iteration_cap` tail used to report a cap
             # that never fired and drop executed results from `tool_results`.
             assert turn_results.stop is not None  # noqa: S101 — _handle_* returned True
-            return finish(
-                SessionOutcome(
-                    exit_code=1,
-                    stop_reason=_stop_reason_for(turn_results.stop),
-                    turns=turn,
-                    final_text="",
-                    tool_results=(*collected_results, *turn_results.results),
-                )
-            )
+            return finish_at(1, _stop_reason_for(turn_results.stop), extra_results=turn_results.results)
         failed_tools.update(_failed_tool_names(tool_calls, turn_results.results))
 
         turn_results = prepare_continuing_tool_results(
@@ -1728,15 +1687,7 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
         kind="run_stopped",
         content={"reason": "iteration_cap", "turns": turn},
     )
-    return finish(
-        SessionOutcome(
-            exit_code=1,
-            stop_reason="iteration_cap",
-            turns=turn,
-            final_text="",
-            tool_results=tuple(collected_results),
-        )
-    )
+    return finish_at(1, "iteration_cap")
 
 
 __all__ = [
