@@ -136,6 +136,7 @@ from fa.inner_loop.tool_turn import (
 from fa.inner_loop.tool_turn import (
     _redact as _redact,
 )
+from fa.inner_loop.usage_ledger import UsageLedger
 from fa.observability.redaction import SecretRedactor
 from fa.output import EventBus, OutputEvent
 from fa.providers.base import RequestInfo, ResponseInfo
@@ -653,14 +654,7 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
         PinnedBuffer(state.workspace_root) if pinned_buffer is _DEFAULT_PINNED_BUFFER else pinned_buffer
     )
 
-    usage_totals = {
-        "input_tokens": 0,
-        "cache_read_input_tokens": 0,
-        "cache_creation_input_tokens": 0,
-        "output_tokens": 0,
-    }
-    usage_turns = 0
-    summary_written = False
+    ledger = UsageLedger()
     memory_summary, conversation_history = restore_conversation_history(log, initial_memory_summary)
 
     log.append(actor="user", kind="user_msg", content={"text": task})
@@ -725,23 +719,19 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
     chain_exhaustion_count = 0
 
     def record_usage(response: ResponseInfo) -> None:
-        nonlocal usage_turns
         # Waiver: internal invariant (log attached before loop starts).
         assert log is not None  # noqa: S101
         row = _usage_event_content(response)
         log.append(actor="runtime", kind="usage", content=row)
-        for key, value in row.items():
-            usage_totals[key] += value
-        usage_turns += 1
+        ledger.record(row)
 
     def finish(outcome: SessionOutcome) -> SessionOutcome:
-        nonlocal summary_written
         # Waiver: internal invariant (log attached before loop starts).
         assert log is not None  # noqa: S101
-        if not summary_written:
+        if ledger.claim_summary():
             summary = _session_summary_content(
-                usage_totals,
-                usage_turns,
+                ledger.totals,
+                ledger.turns,
                 role=role,
                 exit_code=outcome.exit_code,
                 stop_reason=outcome.stop_reason,
@@ -751,7 +741,6 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                 kind="session_summary",
                 content=summary,
             )
-            summary_written = True
             # ── Output: session_end ────────────────────────────────────────
             if output is not None:
                 output.emit(
@@ -764,8 +753,8 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                             "ok": outcome.exit_code == 0,
                             "turns": outcome.turns,
                             "wall_s": time.monotonic() - _session_start_mono,
-                            "total_in": usage_totals.get("input_tokens", 0),
-                            "total_out": usage_totals.get("output_tokens", 0),
+                            "total_in": ledger.totals.get("input_tokens", 0),
+                            "total_out": ledger.totals.get("output_tokens", 0),
                             "cache_hit_ratio": summary.get("cache_hit_ratio", 0.0),
                             "context_used_pct": round(last_budget_ratio * 100, 1),
                         },

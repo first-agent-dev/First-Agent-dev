@@ -64,8 +64,13 @@ MAX_NESTED_FUNCTIONS = 5
 #: `nonlocal` statements inside the driver's nested functions. This is the
 #: load-bearing number: a `nonlocal` write means a nested function mutates
 #: state the loop owns, which is exactly what makes the exits unmovable.
-#: Target: 0 — `UsageLedger` and `summary_written` become fields of an object.
-MAX_NONLOCAL_WRITES = 2
+#:
+#: 2 -> 0 in the `UsageLedger` slice (2026-11-10): `usage_turns` and
+#: `summary_written` became fields of a named object, so `record_usage` and
+#: `finish` take it as an argument instead of capturing it. Zero is the target
+#: and there is no reason to move it back up: a new `nonlocal` is a new
+#: unnamed object.
+MAX_NONLOCAL_WRITES = 0
 
 #: Deepest nesting inside any nested function (the bodies must stay readable
 #: too — extracting into an already-unreadable closure moves the problem).
@@ -73,10 +78,10 @@ MAX_NESTED_FUNCTION_DEPTH = 4
 
 #: Driver-body lines. Not the primary metric (see module docstring), kept so a
 #: slice cannot "fix" nesting by inlining a hundred more lines.
-MAX_DRIVER_LINES = 848
+MAX_DRIVER_LINES = 836  # 848 -> 836 with the ledger slice
 
 
-def _driver() -> ast.FunctionDef:
+def _driver() -> ast.FunctionDef | ast.AsyncFunctionDef:
     """Parse the driver, with a liveness check on the lookup itself."""
     tree = ast.parse(CODER_LOOP.read_text(encoding="utf-8"))
     for node in ast.walk(tree):
@@ -123,9 +128,9 @@ def _nesting_depth(node: ast.AST, depth: int = 0) -> int:
     return best
 
 
-def _nested_functions(driver: ast.FunctionDef) -> list[ast.FunctionDef]:
+def _nested_functions(driver: ast.AST) -> list[ast.FunctionDef | ast.AsyncFunctionDef]:
     """Functions defined directly in the driver's body or nested in them."""
-    found: list[ast.FunctionDef] = []
+    found: list[ast.FunctionDef | ast.AsyncFunctionDef] = []
 
     def walk(node: ast.AST) -> None:
         for child in ast.iter_child_nodes(node):
@@ -137,7 +142,7 @@ def _nested_functions(driver: ast.FunctionDef) -> list[ast.FunctionDef]:
     return found
 
 
-def _nonlocal_writes(driver: ast.FunctionDef) -> list[tuple[str, int]]:
+def _nonlocal_writes(driver: ast.AST) -> list[tuple[str, int]]:
     """``(name, lineno)`` for every ``nonlocal`` inside the driver's closures."""
     return [
         (name, node.lineno)
