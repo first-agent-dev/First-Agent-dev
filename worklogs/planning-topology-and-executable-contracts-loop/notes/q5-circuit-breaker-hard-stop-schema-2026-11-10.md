@@ -30,7 +30,18 @@ elif kind == "context_budget_hard_stop":
     )
 ```
 
-Прогон двух реальных строк через `_parse_events`:
+Живой прогон драйвера (`tests/fixtures/budget_effects_probe.py`, кейс
+`circuit_breaker`) даёт строку **без ключа `ratio` вообще**:
+
+```
+{'message': 'Compaction circuit breaker triggered: anti-thrashing loop locked.',
+ 'current_tokens': 94000, 'limit_tokens': 100000, 'threshold': 80000}
+```
+
+Для сравнения, соседний кейс `stage3_after_compaction` пишет 9 ключей с
+`'ratio': 0.92`.
+
+Прогон двух строк через `_parse_events`:
 
 ```
 action='hard_stop'  pct=95.0   message='critical 95%'

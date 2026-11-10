@@ -57,6 +57,7 @@ def run_case(
     breaker: bool = False,
     tokens_after: int | None = None,
     output: bool = True,
+    seed_history: bool = False,
 ) -> dict[str, Any]:
     """Drive one scripted session and snapshot everything observable.
 
@@ -85,6 +86,32 @@ def run_case(
     bus = EventBus() if output else None
     if bus is not None:
         bus.add(_Capture(captured))
+
+    if seed_history:
+        # Stage 3 only compacts when there is history OUTSIDE the protected
+        # tail: with `recent_turns_to_keep=4` a fresh session is one big turn,
+        # so `find_turn_boundary_backward` returns 0, `older_history` is empty,
+        # and the run falls through to the "still over budget" hard stop. The
+        # circuit-breaker branch is therefore unreachable without history —
+        # measured: the first probe version reported exit=0 there.
+        for i in range(1, 8):
+            log.append(
+                actor="model",
+                kind="model_msg",
+                content={
+                    "text": "Bulky step content " * 300,
+                    "tool_calls": [
+                        {"id": f"tc-{i}", "type": "function", "function": {"name": "fs_read_file", "arguments": "{}"}}
+                    ],
+                },
+            )
+            log.append(
+                actor="tool",
+                kind="tool_result",
+                content={"summary": "short summary", "result": {"stdout": "A" * 150}, "ok": True},
+                tool_name="fs_read_file",
+                tool_call_id=f"tc-{i}",
+            )
 
     chain = make_mock_chain(context_limit=100_000, compaction_threshold=threshold)
     chain.request.return_value = mock_success_response("done")
@@ -136,7 +163,9 @@ def main(argv: list[str]) -> None:
         "stage2_enabled": run_case(85_000, threshold=80_000, run_id="probe-stage2-on"),
         "stage3_disabled": run_case(95_000, threshold=None, run_id="probe-stage3-off"),
         # 3rd failed reclaim in a row: breaker fires on the stage-3 success path.
-        "circuit_breaker": run_case(95_000, threshold=80_000, run_id="probe-cb", breaker=True, tokens_after=94_000),
+        "circuit_breaker": run_case(
+            95_000, threshold=80_000, run_id="probe-cb", breaker=True, tokens_after=94_000, seed_history=True
+        ),
         # Masking and stage-3 both land on 92_000: still over the 90_000 Stage-3
         # rung, so the second stage-3 hard-stop return fires, with the Q#4
         # percentage measured after compaction.
