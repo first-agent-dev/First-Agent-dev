@@ -24,6 +24,7 @@ import pytest
 
 from fa.inner_loop.provider_turn import record_provider_call
 from fa.inner_loop.state import EventLog
+from fa.providers.errors import ProviderRequestShapeError
 from fa.providers.types import ChainAttemptRecord
 
 if TYPE_CHECKING:
@@ -190,3 +191,195 @@ def test_no_attempts_does_not_raise(tmp_path: Path) -> None:
     assert rollup["chain"] == []
     assert rollup["wallclock_ms"] == 0
     assert bus.events[0].data["ms"] == 0
+
+
+# ── Is the seam alive? The driver must go through it, not around it ──────
+#
+# A module with 16 passing tests proves the decision table is right; it does not
+# prove the driver uses it. The same edge mutant bit `classify_budget` before, so
+# this is checked behaviourally: make the chain fail, and assert the outcome the
+# seam produced reaches `SessionOutcome`.
+
+
+def test_driver_routes_provider_exhaustion_through_handle_provider_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """C1: the retry/stop decision is made by `provider_turn`, not re-inlined.
+
+    The chain here is a real `ProviderChain` over a one-entry `FakeProvider`, not
+    a mock: `drive_session` calls `chain.request()`, so the seam it goes through
+    is the real one. Stubbing the chain instead would test the stub.
+    """
+    from fa.feature_flags import FeatureFlags
+    from fa.inner_loop import coder_loop
+    from fa.inner_loop.hooks import HookRegistry
+    from fa.inner_loop.registry import ToolRegistry
+    from fa.inner_loop.state import EventLog, SessionState
+    from fa.providers import ChainConfig, ChainEntry, ProviderChain
+    from fa.providers.errors import ProviderTransientError
+    from tests.test_coder_loop import FakeProvider
+
+    seen: list[str] = []
+    real = coder_loop.handle_provider_failure
+
+    def spy(exc: BaseException, **kwargs: Any) -> Any:
+        seen.append(type(exc).__name__)
+        return real(exc, **kwargs)
+
+    # Patched where the driver LOOKS THE NAME UP: it imports the function at
+    # module load, so patching `provider_turn` leaves the driver holding the
+    # original. (Measured — that variant reports the seam dormant here while
+    # the module's own tests stay green. Same trap as the ContextBudget patch.)
+    monkeypatch.setattr(coder_loop, "handle_provider_failure", spy)
+
+    entry = ChainEntry(
+        provider="openrouter",
+        model="test/model",
+        base_url="https://example.invalid/v1",
+        api_key_env="TEST_KEY",
+        cooldown_seconds=300,
+    )
+    provider = FakeProvider([ProviderTransientError("503", status=503, kind="service_unavailable")])
+    chain = ProviderChain(
+        ChainConfig(role="coder", name="test-model", family="", chain=(entry,)),
+        provider_factory=lambda _e: provider,
+        env={"TEST_KEY": "k"},
+    )
+    log = EventLog(tmp_path / "events.jsonl", run_id="seam")
+    state = SessionState(
+        workspace_root=tmp_path,
+        run_id="seam",
+        log=log,
+        feature_flags=FeatureFlags(context_budget_enabled=False, max_chain_retries=0),
+    )
+
+    outcome = coder_loop.drive_session(
+        "seam", provider_chain=chain, registry=ToolRegistry(), hooks=HookRegistry(), state=state, max_turns=2
+    )
+
+    assert seen, "the driver never called handle_provider_failure — the seam is dormant"
+    assert outcome.exit_code == 2 and outcome.stop_reason == "chain_exhausted"
+    # The counter reached session state: its only consumer is the end-of-session
+    # metric, so a driver that dropped the returned value would look identical.
+    assert log.chain_exhaustion_count == 1
+
+
+def test_driver_retries_the_turn_when_the_failure_says_retry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """C1: `ProviderRetry` must reach `continue`, not be flattened into a stop.
+
+    Mutating the driver's retry branch to `if False` left every test green before
+    this one existed: the stop path is exercised by the exhaustion scenario, and
+    nothing noticed that a retryable failure had become terminal. ``max_retries=1``
+    means the first exhaustion retries and the second stops, so one session
+    exercises both halves of the decision.
+    """
+    from fa.feature_flags import FeatureFlags
+    from fa.inner_loop import coder_loop
+    from fa.inner_loop.hooks import HookRegistry
+    from fa.inner_loop.registry import ToolRegistry
+    from fa.inner_loop.state import EventLog, SessionState
+    from fa.providers import ChainConfig, ChainEntry, ProviderChain
+    from fa.providers.errors import ProviderTransientError
+    from tests.test_coder_loop import FakeProvider
+
+    entry = ChainEntry(
+        provider="openrouter",
+        model="test/model",
+        base_url="https://example.invalid/v1",
+        api_key_env="TEST_KEY",
+        cooldown_seconds=300,
+    )
+    failing = ProviderTransientError("503", status=503, kind="service_unavailable")
+    provider = FakeProvider([failing, failing])
+    chain = ProviderChain(
+        ChainConfig(role="coder", name="test-model", family="", chain=(entry,)),
+        provider_factory=lambda _e: provider,
+        env={"TEST_KEY": "k"},
+    )
+    log = EventLog(tmp_path / "events.jsonl", run_id="retry")
+    state = SessionState(
+        workspace_root=tmp_path,
+        run_id="retry",
+        log=log,
+        feature_flags=FeatureFlags(context_budget_enabled=False, max_chain_retries=1),
+    )
+
+    outcome = coder_loop.drive_session(
+        "retry", provider_chain=chain, registry=ToolRegistry(), hooks=HookRegistry(), state=state, max_turns=3
+    )
+
+    # Two turns were driven, and the event counter saw both exhaustions even
+    # though only one of them was a retry.
+    assert outcome.stop_reason == "chain_exhausted"
+    assert outcome.turns == 2
+    assert log.chain_exhaustion_count == 2
+    assert provider.calls, "the retry must reach the provider again"
+
+
+@pytest.mark.parametrize(
+    ("error", "exit_code", "reason"),
+    [
+        (ProviderRequestShapeError("bad request body", status=400, provider="openrouter"), 2, "request_shape"),
+        (KeyboardInterrupt(), 130, "abnormal_stop:interrupt"),
+    ],
+    ids=["shape", "interrupt"],
+)
+def test_driver_performs_the_stop_the_seam_reported(
+    tmp_path: Path, error: BaseException, exit_code: int, reason: str
+) -> None:
+    """C1: the stop is the one `provider_turn` decided, not a constant.
+
+    Hardcoding `finish_at(2, "chain_exhausted")` in the driver passed every test
+    before this one: the exhaustion scenario asserts exactly that pair, so the
+    wrong constant and the right value were indistinguishable. These two
+    scenarios need different exit codes, which is what makes the constant visible.
+    """
+    from fa.feature_flags import FeatureFlags
+    from fa.inner_loop import coder_loop
+    from fa.inner_loop.hooks import HookRegistry
+    from fa.inner_loop.registry import ToolRegistry
+    from fa.inner_loop.state import EventLog, SessionState
+    from fa.providers import ChainConfig, ChainEntry, ProviderChain
+
+    entry = ChainEntry(
+        provider="openrouter",
+        model="test/model",
+        base_url="https://example.invalid/v1",
+        api_key_env="TEST_KEY",
+        cooldown_seconds=300,
+    )
+
+    class _Raises:
+        """Provider that raises the given BaseException.
+
+        `FakeProvider` tests `isinstance(item, Exception)`, and `KeyboardInterrupt`
+        is a BaseException — it would be *returned* and then read as a response
+        (measured: `AttributeError: 'KeyboardInterrupt' object has no attribute
+        'in_tokens'`). The provider contract allows an interrupt mid-call, so the
+        fake has to be able to produce one.
+        """
+
+        name = "raises"
+
+        def request(self, request: Any, **_kwargs: Any) -> Any:
+            raise error
+
+    chain = ProviderChain(
+        ChainConfig(role="coder", name="test-model", family="", chain=(entry,)),
+        provider_factory=lambda _e: _Raises(),
+        env={"TEST_KEY": "k"},
+    )
+    log = EventLog(tmp_path / "events.jsonl", run_id="stop")
+    state = SessionState(
+        workspace_root=tmp_path,
+        run_id="stop",
+        log=log,
+        feature_flags=FeatureFlags(context_budget_enabled=False, max_chain_retries=0),
+    )
+
+    outcome = coder_loop.drive_session(
+        "stop", provider_chain=chain, registry=ToolRegistry(), hooks=HookRegistry(), state=state, max_turns=2
+    )
+
+    assert (outcome.exit_code, outcome.stop_reason) == (exit_code, reason)
+    assert log.chain_exhaustion_count == 0  # neither path is a chain exhaustion

@@ -19,13 +19,18 @@ because a consumer can mistake it for "free".
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Any
 
 from fa.inner_loop.state import EventLog
 from fa.output import EventBus, OutputEvent
 from fa.providers.base import ResponseInfo
+from fa.providers.errors import ProviderChainExhaustedError, ProviderRequestShapeError
 from fa.providers.types import ChainAttemptRecord
+
+logger = logging.getLogger(__name__)
 
 #: Attempt fields that appear on both the per-attempt row and the rollup entry.
 #: Kept together so the two shapes cannot drift: a field added to one and not the
@@ -100,4 +105,165 @@ def record_provider_call(
     )
 
 
-__all__ = ["record_provider_call"]
+# ── Failures: what the turn should do, expressed as a value ──────────────
+#
+# The three handlers around the provider call were the last 64-line block in the
+# driver, and they were unreadable for one reason: each one *decided* something
+# (retry the turn, stop with this code) and then *performed* it with a `return`
+# or a `continue`. The decision could not be tested without driving a session,
+# and the `continue` could not be reviewed next to the two `return`s it mirrors.
+#
+# Same rule as the budget ladder: values out, exits stay with the driver.
+
+
+@dataclass(frozen=True)
+class ProviderTurnStop:
+    """A stop the driver performs with `finish_at`."""
+
+    exit_code: int
+    reason: str
+    final_text: str = ""
+
+
+@dataclass(frozen=True)
+class ProviderRetry:
+    """Retry the whole turn: re-enter the loop with this exhaustion counter."""
+
+    exhaustion_count: int
+    max_retries: int
+
+
+@dataclass(frozen=True)
+class ProviderFailure:
+    """Exactly one of ``stop`` / ``retry``; ``exhaustion_count`` is post-update.
+
+    ``exhaustion_count`` travels even on the stop path because the counter is
+    session state that advanced here: returning only the decision would leave
+    the driver guessing whether to increment.
+    """
+
+    stop: ProviderTurnStop | None
+    retry: ProviderRetry | None
+    exhaustion_count: int
+
+
+def _retry_event(attempt: ChainAttemptRecord, *, turn: int, max_turns: int) -> OutputEvent:
+    """One ``api_retry`` line for one failed attempt.
+
+    Built in one place because the retry path and both stop paths emit it, and a
+    field added to two of the three would be a silent hole in the console.
+    """
+    return OutputEvent(
+        type="api_retry",
+        turn=turn,
+        max_turns=max_turns,
+        data={
+            "provider": attempt.provider,
+            "status": attempt.status,
+            "retry_after_s": 0,
+            "reason": attempt.error or "unknown",
+        },
+    )
+
+
+def _emit_attempts_failed(
+    attempts: Sequence[ChainAttemptRecord], *, output: EventBus | None, turn: int, max_turns: int
+) -> None:
+    if output is None:
+        return
+    for attempt in attempts:
+        output.emit(_retry_event(attempt, turn=turn, max_turns=max_turns))
+
+
+def handle_provider_failure(
+    exc: BaseException,
+    *,
+    exhaustion_count: int,
+    max_retries: int,
+    log: EventLog,
+    output: EventBus | None,
+    turn: int,
+    max_turns: int,
+) -> ProviderFailure:
+    """Turn a provider exception into the driver's next move, writing what it decides.
+
+    ``exhaustion_count`` is the count *before* this failure; the value returned is
+    the count after it. The increment happens for every exhaustion, retried or
+    not — it is a count of events, not of retries, and `fa stats` reports it as
+    ``chain_exhaustion_events`` at session end.
+
+    Order of effects is part of the contract and differs by path:
+    ``run_stopped`` precedes ``api_retry`` on both stop paths, and on the retry
+    path the log line precedes the console lines. Callers reused the previous
+    inline order; the tests pin it.
+    """
+    if isinstance(exc, KeyboardInterrupt):
+        log.append(actor="runtime", kind="run_stopped", content={"reason": "abnormal_stop:interrupt"})
+        return ProviderFailure(
+            stop=ProviderTurnStop(exit_code=130, reason="abnormal_stop:interrupt"),
+            retry=None,
+            exhaustion_count=exhaustion_count,
+        )
+
+    if isinstance(exc, ProviderRequestShapeError):
+        # CT5 / I-50 / I-51: a shape failure is FA's own construction bug, reported
+        # the same way whether it was raised locally before HTTP or returned as
+        # 400/422 by the provider.
+        log.append(actor="runtime", kind="run_stopped", content={"reason": "request_shape", "detail": str(exc)})
+        if output is not None:
+            output.emit(
+                OutputEvent(
+                    type="api_retry",
+                    turn=turn,
+                    max_turns=max_turns,
+                    data={
+                        "provider": getattr(exc, "provider", None) or "unknown",
+                        "status": exc.status,
+                        "retry_after_s": 0,
+                        "reason": f"request_shape_error: {exc}",
+                    },
+                )
+            )
+        return ProviderFailure(
+            stop=ProviderTurnStop(exit_code=2, reason="request_shape"),
+            retry=None,
+            exhaustion_count=exhaustion_count,
+        )
+
+    if not isinstance(exc, ProviderChainExhaustedError):
+        # Loud rather than silent: an unhandled exception type here would mean the
+        # driver's `except` list and this table disagree, which is a wiring bug.
+        raise TypeError(f"handle_provider_failure does not handle {type(exc).__name__}")
+
+    # The per-turn retry seam already persisted this exception's attempts;
+    # re-emitting them here would count the final attempt twice in stats.
+    updated = exhaustion_count + 1
+    log.chain_exhaustion_count += 1
+
+    if updated <= max_retries:
+        # Session-level retry (CT13): run the WHOLE turn again. Distinct from the
+        # per-turn cooldown retries inside `_request_with_cooldown_retries`.
+        logger.info("Provider chain exhausted, session-level retry (%d/%d)", updated, max_retries)
+        _emit_attempts_failed(exc.attempts, output=output, turn=turn, max_turns=max_turns)
+        return ProviderFailure(
+            stop=None,
+            retry=ProviderRetry(exhaustion_count=updated, max_retries=max_retries),
+            exhaustion_count=updated,
+        )
+
+    log.append(actor="runtime", kind="run_stopped", content={"reason": "chain_exhausted", "detail": str(exc)})
+    _emit_attempts_failed(exc.attempts, output=output, turn=turn, max_turns=max_turns)
+    return ProviderFailure(
+        stop=ProviderTurnStop(exit_code=2, reason="chain_exhausted"),
+        retry=None,
+        exhaustion_count=updated,
+    )
+
+
+__all__ = [
+    "ProviderFailure",
+    "ProviderRetry",
+    "ProviderTurnStop",
+    "handle_provider_failure",
+    "record_provider_call",
+]

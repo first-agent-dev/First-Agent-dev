@@ -109,6 +109,7 @@ from fa.inner_loop.path_risk import (
 from fa.inner_loop.prompt import (
     render_tool_specs,
 )
+from fa.inner_loop.provider_turn import handle_provider_failure as handle_provider_failure
 from fa.inner_loop.provider_turn import record_provider_call
 from fa.inner_loop.registry import ToolRegistry, ToolResult
 from fa.inner_loop.runtime_limits import RuntimeLimits
@@ -1055,79 +1056,26 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                 max_turns=max_turns,
             )
             record_usage(response)
-        except KeyboardInterrupt:
-            log.append(
-                actor="runtime",
-                kind="run_stopped",
-                content={"reason": "abnormal_stop:interrupt"},
+        except (KeyboardInterrupt, ProviderChainExhaustedError, ProviderRequestShapeError) as exc:
+            # The decision (retry the turn / stop like this) is a value; the stop
+            # is performed here, because `finish_at` closes over this function's
+            # state. Same rule as the budget ladder.
+            failure = handle_provider_failure(
+                exc,
+                exhaustion_count=turn_state.chain_exhaustion_count,
+                max_retries=state.feature_flags.max_chain_retries if state.feature_flags is not None else 0,
+                log=log,
+                output=output,
+                turn=turn,
+                max_turns=max_turns,
             )
-            return finish_at(130, "abnormal_stop:interrupt")
-        except ProviderChainExhaustedError as exc:
-            # The per-turn retry seam already persisted this exception's attempts.
-            # Re-emitting them here would count the final attempt twice in stats.
-
-            # S22: Session-level chain retry logic (CT13).
-            # max_chain_retries (FeatureFlags, default=0 → fail-fast)
-            # controls how many times to retry the ENTIRE turn after chain
-            # exhaustion. This is DISTINCT from:
-            #   - transport_retries (ChainEntry, models.yaml) — HTTP-level per-provider
-            #   - _per_turn_chain_retries (inner while loop) — per-turn cooldown-wait retries
-            # The session-level retry fires only after ALL entries are exhausted
-            # AND the inner per-turn retries are spent.
-            turn_state.chain_exhaustion_count += 1
-            if log is not None:
-                log.chain_exhaustion_count += 1
-
-            max_chain_retries = state.feature_flags.max_chain_retries if state.feature_flags is not None else 0
-            if turn_state.chain_exhaustion_count <= max_chain_retries:
-                # Retry the entire provider chain — continue to next turn
-                logger.info(
-                    "Provider chain exhausted, session-level retry (%d/%d)",
-                    turn_state.chain_exhaustion_count,
-                    max_chain_retries,
-                )
-                if output is not None:
-                    for _att in exc.attempts:
-                        output.emit(
-                            OutputEvent(
-                                type="api_retry",
-                                turn=turn,
-                                max_turns=max_turns,
-                                data={
-                                    "provider": _att.provider,
-                                    "status": _att.status,
-                                    "retry_after_s": 0,
-                                    "reason": _att.error or "unknown",
-                                },
-                            )
-                        )
+            turn_state.chain_exhaustion_count = failure.exhaustion_count
+            if failure.retry is not None:
                 continue  # back to the top of while turn < max_turns
-
-            # Max retries reached — session exits with chain_exhausted
-            log.append(
-                actor="runtime",
-                kind="run_stopped",
-                content={"reason": "chain_exhausted", "detail": str(exc)},
-            )
-            # ── Output: api_retry (all entries failed, no more retries) ────
-            if output is not None:
-                for _att in exc.attempts:
-                    output.emit(
-                        OutputEvent(
-                            type="api_retry",
-                            turn=turn,
-                            max_turns=max_turns,
-                            data={
-                                "provider": _att.provider,
-                                "status": _att.status,
-                                "retry_after_s": 0,
-                                "reason": _att.error or "unknown",
-                            },
-                        )
-                    )
-            return finish_at(2, "chain_exhausted")
-        except ProviderRequestShapeError as exc:
-            return _request_shape_failure(exc)
+            # Waiver: a provider failure is never both and never neither — the
+            # two branches above exhaust the dataclass's meaningful states.
+            assert failure.stop is not None  # noqa: S101
+            return finish_at(failure.stop.exit_code, failure.stop.reason, final_text=failure.stop.final_text)
         try:
             hooks.dispatch(
                 LifecyclePoint.AFTER_LLM_CALL,
