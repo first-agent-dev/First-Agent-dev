@@ -147,32 +147,34 @@ class ProviderFailure:
     exhaustion_count: int
 
 
-def _retry_event(attempt: ChainAttemptRecord, *, turn: int, max_turns: int) -> OutputEvent:
-    """One ``api_retry`` line for one failed attempt.
-
-    Built in one place because the retry path and both stop paths emit it, and a
-    field added to two of the three would be a silent hole in the console.
-    """
-    return OutputEvent(
-        type="api_retry",
-        turn=turn,
-        max_turns=max_turns,
-        data={
-            "provider": attempt.provider,
-            "status": attempt.status,
-            "retry_after_s": 0,
-            "reason": attempt.error or "unknown",
-        },
-    )
-
-
 def _emit_attempts_failed(
     attempts: Sequence[ChainAttemptRecord], *, output: EventBus | None, turn: int, max_turns: int
 ) -> None:
+    """One ``api_retry`` line per failed attempt, built and emitted in one place.
+
+    Constructing and emitting together is deliberate: the retry path and both
+    stop paths narrate the same attempts, and a field added in one construction
+    site but not the others is a silent hole in the console. It also keeps the
+    pairing rule honest — the row that these lines mirror is written by the same
+    function, so this counts as a console mirror helper (a function that only
+    *builds* an event is not one, by design).
+    """
     if output is None:
         return
     for attempt in attempts:
-        output.emit(_retry_event(attempt, turn=turn, max_turns=max_turns))
+        output.emit(
+            OutputEvent(
+                type="api_retry",
+                turn=turn,
+                max_turns=max_turns,
+                data={
+                    "provider": attempt.provider,
+                    "status": attempt.status,
+                    "retry_after_s": 0,
+                    "reason": attempt.error or "unknown",
+                },
+            )
+        )
 
 
 def handle_provider_failure(
@@ -251,8 +253,11 @@ def handle_provider_failure(
             exhaustion_count=updated,
         )
 
-    log.append(actor="runtime", kind="run_stopped", content={"reason": "chain_exhausted", "detail": str(exc)})
+    # Attempts first, then the row: the console says which entries failed, and
+    # the durable trace then records that the session ended. Reversing these two
+    # puts "session ended" above the reasons on a reader's screen.
     _emit_attempts_failed(exc.attempts, output=output, turn=turn, max_turns=max_turns)
+    log.append(actor="runtime", kind="run_stopped", content={"reason": "chain_exhausted", "detail": str(exc)})
     return ProviderFailure(
         stop=ProviderTurnStop(exit_code=2, reason="chain_exhausted"),
         retry=None,

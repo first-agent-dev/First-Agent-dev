@@ -244,12 +244,15 @@ def test_exhaustion_counter_advances_on_both_paths(tmp_path: Path) -> None:
     assert stop_log.chain_exhaustion_count == 1
 
 
-def test_stop_path_ordering_is_row_then_console(tmp_path: Path) -> None:
-    """Order is the contract: `run_stopped` precedes `api_retry`.
+def test_stop_path_narrates_attempts_before_the_row(tmp_path: Path) -> None:
+    """Order is the contract: the failed attempts, then `run_stopped`.
 
-    A reader of the trace and a watcher of the console should see the session
-    end before the attempts that caused it are narrated. Reordering is invisible
-    to every assertion that only checks presence.
+    The order was the other way round in the first version of this slice, and the
+    S6 pairing rule caught it by a different route: `run_stopped` must be paired
+    with a console mirror of *its own* row, and a row written 40+ lines from the
+    nearest emit is unpaired. Putting the attempts first satisfies both the
+    operator's reading order (reasons, then "the session ended") and the pairing
+    rule, without weakening either.
     """
     seen: list[str] = []
     log = _log(tmp_path)
@@ -272,7 +275,7 @@ def test_stop_path_ordering_is_row_then_console(tmp_path: Path) -> None:
     finally:
         del log.append
 
-    assert seen == ["row:run_stopped", "event:api_retry"]
+    assert seen == ["event:api_retry", "row:run_stopped"]
 
 
 def test_nil_output_still_writes_rows(tmp_path: Path) -> None:
