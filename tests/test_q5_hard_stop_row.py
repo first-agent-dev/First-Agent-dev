@@ -168,7 +168,12 @@ def test_every_hard_stop_row_is_built_by_the_budget() -> None:
     alive if one of them moves to another module during the compaction slice.
     """
     appends = _hard_stop_appends()
-    assert len(appends) >= 3, f"expected at least 3 hard-stop sites, found {len(appends)}"
+    # Three exits write this kind (stage-3 without compaction, stage-3 after
+    # compaction, circuit breaker). Since the compaction slice they share one
+    # builder call inside `_record_stage3_stop`, so the *append* count is 2 —
+    # the exits are pinned behaviourally instead
+    # (`test_compaction_turn_stage3.py` asserts all three, key for key).
+    assert len(appends) >= 2, f"expected at least 2 hard-stop builder calls, found {len(appends)}"
     for path, node in appends:
         content = next((kw.value for kw in node.keywords if kw.arg == "content"), None)
         assert isinstance(content, ast.Call), (

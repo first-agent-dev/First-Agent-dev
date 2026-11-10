@@ -23,6 +23,7 @@ Kill-check: reverting each fix makes the corresponding test fail.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 from fa.inner_loop.coder_loop import SessionOutcome
@@ -97,6 +98,32 @@ def test_event_log_write_failed_produces_distinct_message() -> None:
     )
 
 
+def _budget_with_scripted_ladder(decisions: list[dict[str, Any]], *, compaction_attempt_ok: bool = True) -> object:
+    """Real ContextBudget whose `check` replays ``decisions`` in order.
+
+    The stage-3 slice put the compaction branch behind one seam, so the code
+    performs the same `budget.check` calls it always did — now from one place.
+    A `MagicMock` budget still works, but its `side_effect` list has to match
+    the number of checks exactly, and that count is an implementation detail;
+    scripting the *decisions* keeps these tests about behaviour.
+    """
+    from fa.memory.context_budget import ContextBudget
+
+    budget = ContextBudget(limit_tokens=100000, configured_threshold=80_000)
+    scripted = list(decisions)
+    original = budget.check
+
+    def check(current_tokens: int) -> dict[str, object]:
+        return scripted.pop(0) if scripted else original(current_tokens)
+
+    budget.check = check  # type: ignore[method-assign]
+    # The anti-thrashing breaker is asserted by its own scripts (and by
+    # `test_compaction_turn_stage3.py` against the real 3-strike rule), so the
+    # outcome is injected here instead of staging three real attempts.
+    budget.record_compaction_attempt = lambda **_kwargs: compaction_attempt_ok  # type: ignore[method-assign]
+    return budget
+
+
 # ── NEW-1: Compaction-enabled hard-stop emits context_warn ────────────────
 
 
@@ -139,19 +166,15 @@ def test_compaction_stage3_still_exceeds_emits_context_warn(tmp_path: Path) -> N
 
     # Patch estimate_tokens and budget to force stage3 after compaction
     with patch("fa.memory.context_budget.estimate_tokens", return_value=95000):
-        with patch("fa.memory.context_budget.ContextBudget") as mock_budget_class:
-            mock_budget = MagicMock()
-            # First check: stage2 (trigger compaction path)
-            # After compaction: stage3 still exceeds
-            mock_budget.check.side_effect = [
-                {"action": "stage2", "ratio": 0.85, "message": "stage2 reached"},
-                {"action": "stage3", "ratio": 0.95, "message": "stage3 after compaction"},
-            ]
-            mock_budget.stage2_threshold = 0.75
-            mock_budget.stage3_threshold = 0.85
-            mock_budget.record_compaction_attempt.return_value = True
-            mock_budget_class.return_value = mock_budget
-
+        with patch(
+            "fa.memory.context_budget.ContextBudget",
+            return_value=_budget_with_scripted_ladder(
+                [
+                    {"action": "stage2", "ratio": 0.85, "message": "stage2 reached"},
+                    {"action": "stage3", "ratio": 0.95, "message": "stage3 after compaction"},
+                ]
+            ),
+        ):
             with patch("fa.inner_loop.compaction.compactor.project_messages_after_mask") as mock_mask:
                 mock_mask.return_value = []
 
@@ -219,18 +242,16 @@ def test_circuit_breaker_emits_compaction_end(tmp_path: Path) -> None:
     # enough space. We need conversation_history to have content so the
     # stage3 compaction path executes.
     with patch("fa.memory.context_budget.estimate_tokens", return_value=95000):
-        with patch("fa.memory.context_budget.ContextBudget") as mock_budget_class:
-            mock_budget = MagicMock()
-            mock_budget.check.side_effect = [
-                {"action": "stage2", "ratio": 0.85, "message": "stage2 reached"},
-                {"action": "stage3", "ratio": 0.95, "message": "stage3 after stage2"},
-            ]
-            mock_budget.stage2_threshold = 0.75
-            mock_budget.stage3_threshold = 0.85
-            # Circuit breaker: compaction failed to reclaim enough space
-            mock_budget.record_compaction_attempt.return_value = False
-            mock_budget_class.return_value = mock_budget
-
+        with patch(
+            "fa.memory.context_budget.ContextBudget",
+            return_value=_budget_with_scripted_ladder(
+                [
+                    {"action": "stage2", "ratio": 0.85, "message": "stage2 reached"},
+                    {"action": "stage3", "ratio": 0.95, "message": "stage3 after stage2"},
+                ],
+                compaction_attempt_ok=False,
+            ),
+        ):
             with patch("fa.inner_loop.compaction.compactor.project_messages_after_mask") as mock_mask:
                 # Return some masked history so compaction path continues
                 mock_mask.return_value = [{"role": "user", "content": "test"}]
@@ -475,19 +496,16 @@ def test_circuit_breaker_emits_context_warn(tmp_path: Path) -> None:
 
     # Simulate: stage2 → compaction → circuit breaker (record_compaction_attempt returns False)
     with patch("fa.memory.context_budget.estimate_tokens", return_value=95000):
-        with patch("fa.memory.context_budget.ContextBudget") as mock_budget_class:
-            mock_budget = MagicMock()
-            mock_budget.check.side_effect = [
-                {"action": "stage2", "ratio": 0.85, "message": "stage2 reached"},
-                {"action": "stage3", "ratio": 0.95, "message": "stage3 after stage2"},
-            ]
-            mock_budget.stage2_threshold = 0.75
-            mock_budget.stage3_threshold = 0.85
-            mock_budget.limit_tokens = 100000
-            # Circuit breaker: compaction failed to reclaim enough space
-            mock_budget.record_compaction_attempt.return_value = False
-            mock_budget_class.return_value = mock_budget
-
+        with patch(
+            "fa.memory.context_budget.ContextBudget",
+            return_value=_budget_with_scripted_ladder(
+                [
+                    {"action": "stage2", "ratio": 0.85, "message": "stage2 reached"},
+                    {"action": "stage3", "ratio": 0.95, "message": "stage3 after stage2"},
+                ],
+                compaction_attempt_ok=False,
+            ),
+        ):
             with patch("fa.inner_loop.compaction.compactor.project_messages_after_mask") as mock_mask:
                 mock_mask.return_value = [{"role": "user", "content": "test"}]
 

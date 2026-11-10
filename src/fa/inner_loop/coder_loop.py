@@ -87,7 +87,7 @@ from fa.inner_loop.budget_effects import (
     record_compaction_pressure as _record_compaction_pressure,
 )
 from fa.inner_loop.budget_turn import classify_budget as classify_budget
-from fa.inner_loop.compaction.compaction_turn import run_stage2_masking
+from fa.inner_loop.compaction.compaction_turn import run_stage2_masking, run_stage3_compaction
 from fa.inner_loop.conversation_history import (
     _assert_tool_pairing_invariant as _assert_tool_pairing_invariant,
 )
@@ -1148,243 +1148,44 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                         # every later read goes through the verdict. Q#4 lives here.
                         verdict = stage2.verdict
                         last_budget_ratio = verdict.ratio
-                    if decision["action"] == "stage3":
-                        logger.info("Stage 2 masking insufficient. Triggering Stage 3 LLM Compaction...")
-                        log.append(
-                            actor="runtime",
-                            kind="compaction_stage3_start",
-                            content={"tokens_before": usage, "threshold": budget.stage3_threshold},
-                        )
-                        # FIX-2: emit compaction_start for stage3
-                        if output is not None:
-                            output.emit(
-                                OutputEvent(
-                                    type="compaction_start",
-                                    turn=turn,
-                                    max_turns=max_turns,
-                                    data={"stage": 3, "tokens_before": usage},
-                                )
-                            )
-                        try:
-                            from fa.inner_loop.compaction.compactor import (
-                                FullLLMCompactor,
-                                find_turn_boundary_backward,
-                            )
-
-                            cutoff_idx = find_turn_boundary_backward(conversation_history, recent_turns_to_keep=4)
-                            older_history = conversation_history[:cutoff_idx]
-                            protected_window = conversation_history[cutoff_idx:]
-
-                            older_history_text = ""
-                            if memory_summary:
-                                older_history_text += (
-                                    f"PREVIOUS COMPACTION SUMMARY:\n{memory_summary}\n\nNEW CONVERSATION TO ADD:\n"
-                                )
-
-                            if older_history:
-                                lines = []
-                                for msg in older_history:
-                                    msg_role = msg.get("role", "unknown").upper()
-                                    msg_content = msg.get("content") or msg.get("text") or ""
-                                    lines.append(f"{msg_role}: {msg_content}")
-                                    if "tool_calls" in msg:
-                                        for tc in msg["tool_calls"]:
-                                            fn = tc.get("function", {}) if isinstance(tc, dict) else {}
-                                            fn_name = fn.get("name")
-                                            fn_args = fn.get("arguments")
-                                            lines.append(f"CALL TOOL: {fn_name} with arguments {fn_args}")
-                                older_history_text += "\n".join(lines)
-
-                            if older_history_text:
-                                compactor = FullLLMCompactor(compactor_chain=compactor_chain)
-                                updated_summary = compactor.compact(older_history_text)
-                                _request_body, messages_payload, request_extras = _compose_request_payload(
-                                    active_summary=updated_summary,
-                                    observations=protected_window,
-                                )
-                                post_compaction_usage = estimate_tokens(messages_payload, tool_payload)
-                                log.append(
-                                    actor="runtime",
-                                    kind="compaction_stage3_done",
-                                    content={
-                                        "tokens_before": usage,
-                                        "tokens_after": post_compaction_usage,
-                                        "summary": updated_summary,
-                                    },
-                                )
-                                # FIX-2: emit compaction_end for stage3 done
-                                if output is not None:
-                                    output.emit(
-                                        OutputEvent(
-                                            type="compaction_end",
-                                            turn=turn,
-                                            max_turns=max_turns,
-                                            data={
-                                                "stage": 3,
-                                                "tokens_before": usage,
-                                                "tokens_after": post_compaction_usage,
-                                                "ok": True,
-                                            },
-                                        )
-                                    )
-                                logger.info(
-                                    "Stage 3 LLM Compaction done. Reclaimed tokens: %d -> %d",
-                                    usage,
-                                    post_compaction_usage,
-                                )
-
-                                is_ok = budget.record_compaction_attempt(
-                                    tokens_before=usage, tokens_after=post_compaction_usage
-                                )
-                                if not is_ok:
-                                    logger.error(
-                                        "Compaction circuit breaker triggered: less than 10%% space "
-                                        "reclaimed 3 consecutive times. Anti-thrashing loop locked. "
-                                        "Consider increasing context_limit or reducing conversation "
-                                        "complexity in ~/.fa/models.yaml."
-                                    )
-                                    circuit_breaker_message = (
-                                        "Compaction circuit breaker triggered: anti-thrashing loop locked."
-                                    )
-                                    log.append(
-                                        actor="runtime",
-                                        kind="compaction_circuit_breaker",
-                                        content={"message": circuit_breaker_message},
-                                    )
-                                    # NEW-2: emit compaction_end for circuit breaker
-                                    # console visibility — the operator sees
-                                    # "❌ compaction circuit_breaker" instead of
-                                    # only a generic context_budget_hard_stop.
-                                    if output is not None:
-                                        output.emit(
-                                            OutputEvent(
-                                                type="compaction_end",
-                                                turn=turn,
-                                                max_turns=max_turns,
-                                                data={
-                                                    "stage": 3,
-                                                    "ok": False,
-                                                    "error": f"circuit_breaker: {circuit_breaker_message}",
-                                                },
-                                            )
-                                        )
-                                        # FINDING-V2 fix: emit context_warn for circuit
-                                        # breaker hard-stop path — mirrors the other
-                                        # stage3 path (L974) so the operator always
-                                        # sees the context percentage before the
-                                        # session dies, regardless of which
-                                        # compaction sub-path triggers the stop.
-                                        _emit_context_warn(
-                                            verdict,
-                                            output=output,
-                                            turn=turn,
-                                            max_turns=max_turns,
-                                            action="stage3",
-                                            message=circuit_breaker_message,
-                                        )
-                                        # S23: emit loop_warn for compaction circuit
-                                        # breaker — actionable console guidance so
-                                        # the operator sees "loop detected:
-                                        # compaction_circuit_breaker" with an
-                                        # explicit message instead of just a
-                                        # generic context_budget_hard_stop.
-                                        output.emit(
-                                            OutputEvent(
-                                                type="loop_warn",
-                                                turn=turn,
-                                                max_turns=max_turns,
-                                                data={
-                                                    "detector": "compaction_circuit_breaker",
-                                                    "message": (
-                                                        "Compaction circuit breaker triggered — context budget "
-                                                        "exceeded after compaction attempts"
-                                                    ),
-                                                },
-                                            )
-                                        )
-                                    # Q#5: same nine keys as every other hard stop. The
-                                    # four-key payload reported 0% context in `fa stats`,
-                                    # though overflow is what tripped the breaker. The
-                                    # breaker's own wording stays on the row: it is the
-                                    # message that explains the exit.
-                                    log.append(
-                                        actor="runtime",
-                                        kind="context_budget_hard_stop",
-                                        content=budget.hard_stop_row(
-                                            post_compaction_usage, message=circuit_breaker_message
-                                        ),
-                                    )
-                                    log.append(
-                                        actor="runtime",
-                                        kind="run_stopped",
-                                        content={"reason": "context_budget_hard_stop", "turns": turn},
-                                    )
-                                    return finish_at(1, "context_budget_hard_stop", final_text=circuit_breaker_message)
-
-                                conversation_history = protected_window
-                                memory_summary = updated_summary
-                                usage = post_compaction_usage
-                                decision = budget.check(usage)
-                                verdict = classify_budget(
-                                    decision,
-                                    stage2_threshold=budget.stage2_threshold,
-                                    stage3_threshold=budget.stage3_threshold,
-                                )
-                                # Q#4: the ratio must describe the state the next
-                                # decision runs on. The stage-2 branch above always
-                                # refreshed it; stage-3 did not, so a hard-stop or
-                                # circuit-breaker right after a successful
-                                # compaction printed the percentage measured BEFORE
-                                # it — a different number than the one the run died
-                                # on. Display-only: nothing read the stale value.
-                                last_budget_ratio = verdict.ratio
-                            else:
-                                logger.warning("No older history to compact for Stage 3")
-                        except Exception as exc:  # noqa: BLE001 # graceful degradation
-                            logger.warning("Stage 3 Compaction failed: %s", exc)
-                            log.append(
-                                actor="runtime",
-                                kind="compaction_stage3_error",
-                                content={"error": str(exc)},
-                            )
-                            # compaction error → console
-                            if output is not None:
-                                output.emit(
-                                    OutputEvent(
-                                        type="compaction_end",
-                                        turn=turn,
-                                        max_turns=max_turns,
-                                        data={"stage": 3, "ok": False, "error": str(exc)},
-                                    )
-                                )
-
-                    if decision["action"] == "stage3":
-                        logger.warning(
-                            "ContextBudget Gate Breach: Stage 3 still exceeds budget! %s",
-                            decision["message"],
-                        )
-                        log.append(
-                            actor="runtime",
-                            kind="context_budget_hard_stop",
-                            content=budget.hard_stop_row(usage, message=decision["message"]),
-                        )
-                        # NEW-1: emit context_warn for compaction-enabled hard-stop
-                        # path — mirrors the non-compaction stage3 path so the
-                        # operator always sees the context percentage before
-                        # the session dies, regardless of compaction setting.
-                        _emit_context_warn(
-                            verdict,
-                            output=output,
+                    # Guard on the verdict, not on the pre-masking decision: after
+                    # stage-2 the decision has been re-derived, so reading the older
+                    # name here would act on a stale value (Q#4's shape, one level up).
+                    if verdict.action == "stage3":
+                        # Stage-3 compaction, the anti-thrashing breaker and the exit
+                        # decision live in compaction_turn: they own rows and events, but
+                        # not how a session ends — they report it, and the driver performs it.
+                        stage3 = run_stage3_compaction(
                             turn=turn,
                             max_turns=max_turns,
-                            action="stage3",
+                            history=conversation_history,
+                            memory_summary=memory_summary,
+                            usage=usage,
+                            budget=budget,
+                            log=log,
+                            output=output,
+                            tool_payload=tool_payload,
+                            compose_request=_compose_request_payload,
+                            compactor_chain=compactor_chain,
+                            verdict_for_console=verdict,
                         )
-                        log.append(
-                            actor="runtime",
-                            kind="run_stopped",
-                            content={"reason": "context_budget_hard_stop", "turns": turn},
-                        )
-                        return finish_at(1, "context_budget_hard_stop", final_text=decision["message"])
+                        if stage3.stopped:
+                            # Q#4, applied to the exit itself: the percentage the
+                            # session reports must describe the state the stop was
+                            # decided on, not the one before compaction. Without
+                            # this the summary printed the pre-compaction ratio
+                            # (measured: 99% where the run died at 92%).
+                            last_budget_ratio = stage3.verdict.ratio
+                            return finish_at(1, "context_budget_hard_stop", final_text=stage3.stop_message)
+                        if stage3.applied:
+                            conversation_history = stage3.history
+                            memory_summary = stage3.memory_summary
+                            messages_payload = stage3.messages_payload
+                            request_extras = stage3.request_extras
+                            usage = stage3.usage
+                            decision = stage3.decision
+                            verdict = stage3.verdict
+                            last_budget_ratio = verdict.ratio
 
         # Prompt-composer extras (``prompt_cache_key``, ``prompt_cache_retention``)
         # come from the request body builder. Per-provider fields (Mistral's

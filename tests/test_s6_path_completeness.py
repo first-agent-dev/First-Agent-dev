@@ -257,12 +257,14 @@ def test_provider_retry_and_compaction_have_producers() -> None:
     assert counts.get("api_retry", 0) >= 4, f"provider-retry producers regressed: {counts.get('api_retry')}"
     assert counts.get("compaction_start", 0) >= 1
     assert counts.get("compaction_end", 0) >= 1
-    # Six sites (warn, stage2-without-compaction, stage3-without-compaction,
-    # compaction-enabled stage3, circuit breaker, and the record-only warn that
-    # shares the helper). The floor was 5 while five hand-written emits existed;
-    # the S6-F5 slice's own lesson applies here too — a floor that equals the
-    # current count cannot detect the next deletion.
-    assert counts.get("context_warn", 0) >= 6, f"context-budget producers regressed: {counts.get('context_warn')}"
+    # Five sites: warn, stage2-without-compaction, stage3-without-compaction,
+    # the circuit breaker, and compaction-enabled stage3. It was six until the
+    # compaction slice moved both stage-3 hard stops into one shared
+    # `_record_stage3_stop` — they now share a single call site, so the *site*
+    # count dropped by design rather than by deletion. The exits themselves are
+    # pinned one by one in `test_compaction_turn_stage3.py`, which is the check
+    # that actually notices a missing emit.
+    assert counts.get("context_warn", 0) >= 5, f"context-budget producers regressed: {counts.get('context_warn')}"
 
 
 # ---------------------------------------------------------------------------

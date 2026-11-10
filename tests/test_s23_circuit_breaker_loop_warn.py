@@ -35,10 +35,13 @@ def test_loop_warn_emit_exists_in_coder_loop() -> None:
 
     kill-check: removing the emit call makes this test fail.
     """
-    source = Path("src/fa/inner_loop/coder_loop.py").read_text(encoding="utf-8")
-    assert 'detector": "compaction_circuit_breaker"' in source, (
+    # The emit moved to `compaction_turn` with the stage-3 slice; searching only
+    # `coder_loop.py` would report a moved producer as deleted — the S3-F4
+    # false negative this suite has already been bitten by twice.
+    sources = {path: path.read_text(encoding="utf-8") for path in Path("src/fa/inner_loop").rglob("*.py")}
+    assert any('detector": "compaction_circuit_breaker"' in text for text in sources.values()), (
         "S23 loop_warn emit with detector=compaction_circuit_breaker not found "
-        "in coder_loop.py — the emit was removed or never written"
+        f"anywhere under src/fa/inner_loop — the emit was removed or never written ({len(sources)} files searched)"
     )
 
 
