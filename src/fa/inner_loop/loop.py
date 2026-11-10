@@ -321,48 +321,67 @@ def _execute_one_sequential(
     return result, None
 
 
-def _execute_batch_parallel(  # noqa: C901 -- complexity from fallback chain graceful degradation, documented, will split Phase 3 per Paper 2 §4.4
-    batch: list[ToolCall],
+def _settle_parallel_batch_failure(
+    exc: Exception,
+    exec_payloads: list[HookPayload],
     registry: ToolRegistry,
-    hooks: HookRegistry,
-    state: SessionState,
-    role: str,
-    acting_family: str,
-) -> tuple[list[ToolResult] | None, StopInfo | None]:
-    """Execute read-only batch in parallel, preserve order, synthetic error for orphaned.
+    attempted: set[int],
+    futures: dict[Future[ToolResult], tuple[int, HookPayload]],
+    results_map: dict[str, ToolResult],
+) -> None:
+    """Settle retained futures without replaying work whose submission was attempted."""
+    import logging
 
-    Returns ``(results, stop)``. The stop is returned rather than left for the
-    caller to infer from the log (S6-F4).
-
-    Fixed for FIND-012: denied results must be preserved in returned tuple in original order.
-    """
-
-    log = state.require_log()
-
-    # BEFORE sequentially (guards fast, deterministic, must check sandbox before parallel)
-    # For order preservation we keep same index as batch.
-    payloads: list[HookPayload | None] = []
-    denied_results: list[ToolResult | None] = []
-
-    for call in batch:
-        state.record_tool_call(call)
+    logging.getLogger(__name__).warning(
+        "ThreadPool parallel batch failed %s; settling submitted work without replay", exc
+    )
+    retained_indexes = {idx for idx, _ in futures.values()}
+    for future, (_, p) in futures.items():
+        if p.tool_call is None:
+            continue
         try:
-            payload = hooks.dispatch(
-                LifecyclePoint.BEFORE_TOOL_EXEC,
-                HookPayload(tool_call=call, role=role, acting_family=acting_family),
+            if not future.done():
+                raise RuntimeError("submitted tool outcome is not yet known")
+            res = future.result()
+        except Exception as future_exc:  # noqa: BLE001
+            res = ToolResult.fail(
+                "exec_failed",
+                f"Parallel exec outcome unknown after batch failure: {future_exc}",
+                retryable=False,
             )
-            payloads.append(payload)
-            denied_results.append(None)
-        except PermissionError as exc:
-            result = default_tool_result_for_denial(str(exc))
-            state.record_tool_result(call, result)
-            state.observations.append(result.summary)
-            payloads.append(None)  # Denied placeholder
-            denied_results.append(result)
+        results_map[p.tool_call.call_id] = res
 
-    # Filter executable payloads
-    exec_payloads = [p for p in payloads if p is not None and p.tool_call is not None]
+    if not attempted:
+        # Executor construction/entry failed before any submit attempt:
+        # no handler could have started, so the legacy serial fallback
+        # remains exactly-once and safe.
+        for p in exec_payloads:
+            if p.tool_call is None:
+                continue
+            try:
+                results_map[p.tool_call.call_id] = registry.dispatch(p.tool_call)
+            except Exception as fallback_exc:  # noqa: BLE001
+                results_map[p.tool_call.call_id] = ToolResult.fail("exec_failed", str(fallback_exc))
+    else:
+        for idx, p in enumerate(exec_payloads):
+            if p.tool_call is None:
+                continue
+            if idx in attempted and idx not in retained_indexes:
+                results_map[p.tool_call.call_id] = ToolResult.fail(
+                    "exec_failed",
+                    "Parallel submit was attempted but no Future was retained; execution outcome is unknown",
+                    retryable=False,
+                )
+            elif idx not in attempted:
+                results_map[p.tool_call.call_id] = ToolResult.fail(
+                    "exec_failed",
+                    "Parallel batch aborted before this call was submitted",
+                    retryable=True,
+                )
 
+
+def _dispatch_parallel_batch(exec_payloads: list[HookPayload], registry: ToolRegistry) -> dict[str, ToolResult]:
+    """Dispatch a guarded batch and settle pool failures without duplicate execution."""
     results_map: dict[str, ToolResult] = {}
     if exec_payloads:
         max_workers = min(len(exec_payloads), _MAX_TOOL_WORKERS)
@@ -407,55 +426,54 @@ def _execute_batch_parallel(  # noqa: C901 -- complexity from fallback chain gra
                         results_map[p.tool_call.call_id] = ToolResult.fail(
                             "exec_timeout", "Parallel exec timeout after 30s"
                         )
-        except Exception as exc:  # noqa: BLE001 # graceful degradation without replay
-            import logging
+        except Exception as exc:  # noqa: BLE001 - settle uncertain submissions without replay
+            _settle_parallel_batch_failure(exc, exec_payloads, registry, attempted, futures, results_map)
+    return results_map
 
-            logging.getLogger(__name__).warning(
-                "ThreadPool parallel batch failed %s; settling submitted work without replay", exc
+
+def _execute_batch_parallel(
+    batch: list[ToolCall],
+    registry: ToolRegistry,
+    hooks: HookRegistry,
+    state: SessionState,
+    role: str,
+    acting_family: str,
+) -> tuple[list[ToolResult] | None, StopInfo | None]:
+    """Execute read-only batch in parallel, preserve order, synthetic error for orphaned.
+
+    Returns ``(results, stop)``. The stop is returned rather than left for the
+    caller to infer from the log (S6-F4).
+
+    Fixed for FIND-012: denied results must be preserved in returned tuple in original order.
+    """
+
+    log = state.require_log()
+
+    # BEFORE sequentially (guards fast, deterministic, must check sandbox before parallel)
+    # For order preservation we keep same index as batch.
+    payloads: list[HookPayload | None] = []
+    denied_results: list[ToolResult | None] = []
+
+    for call in batch:
+        state.record_tool_call(call)
+        try:
+            payload = hooks.dispatch(
+                LifecyclePoint.BEFORE_TOOL_EXEC,
+                HookPayload(tool_call=call, role=role, acting_family=acting_family),
             )
-            retained_indexes = {idx for idx, _ in futures.values()}
-            for future, (_, p) in futures.items():
-                if p.tool_call is None:
-                    continue
-                try:
-                    if not future.done():
-                        raise RuntimeError("submitted tool outcome is not yet known")
-                    res = future.result()
-                except Exception as future_exc:  # noqa: BLE001
-                    res = ToolResult.fail(
-                        "exec_failed",
-                        f"Parallel exec outcome unknown after batch failure: {future_exc}",
-                        retryable=False,
-                    )
-                results_map[p.tool_call.call_id] = res
+            payloads.append(payload)
+            denied_results.append(None)
+        except PermissionError as exc:
+            result = default_tool_result_for_denial(str(exc))
+            state.record_tool_result(call, result)
+            state.observations.append(result.summary)
+            payloads.append(None)  # Denied placeholder
+            denied_results.append(result)
 
-            if not attempted:
-                # Executor construction/entry failed before any submit attempt:
-                # no handler could have started, so the legacy serial fallback
-                # remains exactly-once and safe.
-                for p in exec_payloads:
-                    if p.tool_call is None:
-                        continue
-                    try:
-                        results_map[p.tool_call.call_id] = registry.dispatch(p.tool_call)
-                    except Exception as fallback_exc:  # noqa: BLE001
-                        results_map[p.tool_call.call_id] = ToolResult.fail("exec_failed", str(fallback_exc))
-            else:
-                for idx, p in enumerate(exec_payloads):
-                    if p.tool_call is None:
-                        continue
-                    if idx in attempted and idx not in retained_indexes:
-                        results_map[p.tool_call.call_id] = ToolResult.fail(
-                            "exec_failed",
-                            "Parallel submit was attempted but no Future was retained; execution outcome is unknown",
-                            retryable=False,
-                        )
-                    elif idx not in attempted:
-                        results_map[p.tool_call.call_id] = ToolResult.fail(
-                            "exec_failed",
-                            "Parallel batch aborted before this call was submitted",
-                            retryable=True,
-                        )
+    # Filter executable payloads
+    exec_payloads = [p for p in payloads if p is not None and p.tool_call is not None]
+
+    results_map = _dispatch_parallel_batch(exec_payloads, registry)
 
     # AFTER and record in original order (preserve order, including denied)
     ordered_results: list[ToolResult] = []

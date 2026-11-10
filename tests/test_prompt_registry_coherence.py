@@ -246,7 +246,7 @@ def _rogue_builders(monkeypatch: pytest.MonkeyPatch, bad_name: str, *, poison: s
                 bash_timeout=bash_timeout,
                 planner_dispatch=planner_dispatch,
                 workspace_io=workspace_io,  # type: ignore[arg-type]
-                managed_executor=managed_executor,  # type: ignore[arg-type]
+                managed_executor=managed_executor,
                 project_tool_executor=project_tool_executor,
             )
         )
@@ -335,7 +335,7 @@ def test_fallback_still_degrades_for_ordinary_builder_failures(
                 bash_timeout=bash_timeout,
                 planner_dispatch=planner_dispatch,
                 workspace_io=workspace_io,  # type: ignore[arg-type]
-                managed_executor=managed_executor,  # type: ignore[arg-type]
+                managed_executor=managed_executor,
                 project_tool_executor=project_tool_executor,
             )
         )

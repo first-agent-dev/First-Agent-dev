@@ -804,6 +804,7 @@ __all__ = [
     "DEFAULT_WORKFLOW_MODE",
     "DEFAULT_WORKFLOW_ROLES",
     "INVOKE_WORKFLOW_SCHEMA",
+    "ParentStageLease",
     "WorkflowInvocationContext",
     "build_handoff_task",
     "build_invoke_workflow_tool",

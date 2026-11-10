@@ -1066,6 +1066,43 @@ def test_ephemeral_index_instance_uses_existing_fresh_index(tmp_path: Path) -> N
         assert any(f["path"] == "f2_marker.py" for f in r2.files)
 
 
+@pytest.mark.parametrize("raises", [False, True])
+def test_managed_search_closes_rooted_reader_with_its_cleanup_stack(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, raises: bool
+) -> None:
+    import os
+    from contextlib import ExitStack
+
+    from fa.inner_loop.tools import fs_search
+    from fa.memory._safe_walk import RootedFileReader
+
+    (tmp_path / "a.py").write_text("needle = 1\n", encoding="utf-8")
+    readers: list[Any] = []
+    real_reader = RootedFileReader
+
+    def capture_reader(root: Path) -> Any:
+        reader = real_reader(root)
+        readers.append(reader)
+        return reader
+
+    monkeypatch.setattr(fs_search, "RootedFileReader", capture_reader)
+    with pytest.raises(ValueError, match="sentinel") if raises else ExitStack():
+        with ExitStack() as cleanup:
+            tool = fs_search.build_fs_search_tool(
+                Path(":memory:"), tmp_path, cleanup=cleanup, strict_rooted_reads=True, managed_bounded=True
+            )
+            assert len(readers) == 1
+            fd = readers[0]._root_fd
+            os.fstat(fd)
+            result = tool.handler({"query": "needle", "output_mode": "files"})
+            assert result.error is None and result.result is not None
+            assert [row["path"] for row in result.result["files"]] == ["a.py"]
+            if raises:
+                raise ValueError("sentinel")
+    with pytest.raises(OSError):
+        os.fstat(fd)
+
+
 def test_managed_search_uses_bounded_inventory_and_surfaces_oversized_files(tmp_path: Path) -> None:
     from contextlib import ExitStack
 
@@ -1166,7 +1203,7 @@ def test_managed_search_listing_does_not_use_legacy_walker(tmp_path: Path, monke
 def test_managed_search_configures_sqlite_caps_and_output_budget_is_fail_closed(tmp_path: Path) -> None:
     import json
 
-    from fa.execution.project_tools import _MAX_TOOL_RESULT_BYTES, _enforce_tool_result_budget, _payload
+    from fa.execution.project_tools import _enforce_tool_result_budget, _payload
     from fa.inner_loop.registry import ToolResult
     from fa.memory._safe_walk import RootedFileReader
     from fa.memory.search_index import SearchIndex
@@ -1184,11 +1221,12 @@ def test_managed_search_configures_sqlite_caps_and_output_budget_is_fail_closed(
     overhead = len(
         json.dumps(_payload(empty), ensure_ascii=True, allow_nan=False, separators=(",", ":")).encode("ascii")
     )
-    exact = ToolResult.ok("s", result={"v": "a" * (_MAX_TOOL_RESULT_BYTES - overhead)})
-    over = ToolResult.ok("s", result={"v": "a" * (_MAX_TOOL_RESULT_BYTES - overhead + 1)})
-    assert len(
-        json.dumps(_payload(exact), ensure_ascii=True, allow_nan=False, separators=(",", ":")).encode("ascii")
-    ) == (_MAX_TOOL_RESULT_BYTES)
+    exact = ToolResult.ok("s", result={"v": "a" * (61_440 - overhead)})
+    over = ToolResult.ok("s", result={"v": "a" * (61_441 - overhead)})
+    assert (
+        len(json.dumps(_payload(exact), ensure_ascii=True, allow_nan=False, separators=(",", ":")).encode("ascii"))
+        == 61_440
+    )
     assert _enforce_tool_result_budget("fs_search", exact) is exact
     refused = _enforce_tool_result_budget("fs_search", over)
     assert refused.error is not None and refused.error.code == "search_failed"
@@ -1199,9 +1237,11 @@ def test_managed_search_configures_sqlite_caps_and_output_budget_is_fail_closed(
 def test_managed_search_fails_closed_when_cache_size_is_one_kib_over(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    import sqlite3
+
     from fa.memory import search_index
 
-    actual_connect = search_index.sqlite3.connect
+    actual_connect = sqlite3.connect
     connections: list[Any] = []
 
     class _Cursor:
@@ -1224,7 +1264,7 @@ def test_managed_search_fails_closed_when_cache_size_is_one_kib_over(
         connections.append(connection)
         return connection
 
-    monkeypatch.setattr(search_index.sqlite3, "connect", connect)
+    monkeypatch.setattr(sqlite3, "connect", connect)
     index = search_index.SearchIndex(Path(":memory:"), managed_bounded=True)
     try:
         assert index._available is False and index._conn is None
@@ -1300,3 +1340,106 @@ def test_managed_index_actual_source_counter_refuses_before_any_fts_rows(
         assert caught.value.reason == "source_budget"
         assert index._conn is not None
         assert index._conn.execute("SELECT COUNT(*) FROM fts_meta").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("kind", ["search", "reach"])
+@pytest.mark.parametrize("cleanup_fails", [False, True])
+def test_discovery_scope_closes_index_strictly_and_reader_even_on_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str, cleanup_fails: bool
+) -> None:
+    """Both tool builders register index before reader on LIFO teardown, even if close fails."""
+    import os
+    from contextlib import ExitStack, nullcontext
+
+    from fa.inner_loop.tools import fs_reach, fs_search
+    from fa.memory._safe_walk import RootedFileReader
+
+    (tmp_path / "sample.py").write_text("def needle():\n    return 1\n", encoding="utf-8")
+    module = fs_search if kind == "search" else fs_reach
+    holder_class = fs_search._IndexHolder if kind == "search" else fs_reach._ReachHolder
+    original_close = holder_class.close
+    readers: list[RootedFileReader] = []
+    closes: list[bool] = []
+
+    def reader(root: Path) -> RootedFileReader:
+        result = RootedFileReader(root)
+        readers.append(result)
+        return result
+
+    def close(holder: Any, *, strict: bool = False) -> None:
+        closes.append(strict)
+        original_close(holder, strict=strict)
+        if cleanup_fails:
+            raise RuntimeError("injected index close failure")
+
+    monkeypatch.setattr(module, "RootedFileReader", reader)
+    monkeypatch.setattr(holder_class, "close", close)
+    with pytest.raises(RuntimeError, match="injected index close failure") if cleanup_fails else nullcontext():
+        with ExitStack() as cleanup:
+            if kind == "search":
+                tool = fs_search.build_fs_search_tool(
+                    Path(":memory:"), tmp_path, cleanup=cleanup, strict_rooted_reads=True, managed_bounded=True
+                )
+                params = {"query": "needle", "output_mode": "files"}
+            else:
+                tool = fs_reach.build_fs_reach_tool(
+                    tmp_path, cleanup=cleanup, in_memory=True, strict_rooted_reads=True, managed_bounded=True
+                )
+                params = {"symbol": "needle"}
+            assert len(readers) == 1
+            fd = readers[0]._root_fd
+            os.fstat(fd)
+            assert tool.handler(params).error is None
+    assert closes == [True]
+    with pytest.raises(OSError):
+        os.fstat(fd)
+
+
+@pytest.mark.parametrize("kind", ["search", "reach"])
+def test_discovery_legacy_shutdown_registers_reader_and_non_strict_index(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    """Without an explicit scope, both closers are registered for process exit."""
+    import atexit
+    import os
+
+    from fa.inner_loop.tools import fs_reach, fs_search
+    from fa.memory._safe_walk import RootedFileReader
+
+    (tmp_path / "sample.py").write_text("def needle():\n    return 1\n", encoding="utf-8")
+    module = fs_search if kind == "search" else fs_reach
+    holder_class = fs_search._IndexHolder if kind == "search" else fs_reach._ReachHolder
+    original_close = holder_class.close
+    readers: list[RootedFileReader] = []
+    callbacks: list[Any] = []
+    closes: list[bool] = []
+
+    def reader(root: Path) -> RootedFileReader:
+        result = RootedFileReader(root)
+        readers.append(result)
+        return result
+
+    def close(holder: Any, *, strict: bool = False) -> None:
+        closes.append(strict)
+        original_close(holder, strict=strict)
+
+    monkeypatch.setattr(module, "RootedFileReader", reader)
+    monkeypatch.setattr(holder_class, "close", close)
+    monkeypatch.setattr(atexit, "register", lambda callback: callbacks.append(callback))
+    if kind == "search":
+        tool = fs_search.build_fs_search_tool(
+            Path(":memory:"), tmp_path, strict_rooted_reads=True, managed_bounded=True
+        )
+        params = {"query": "needle", "output_mode": "files"}
+    else:
+        tool = fs_reach.build_fs_reach_tool(tmp_path, in_memory=True, strict_rooted_reads=True, managed_bounded=True)
+        params = {"symbol": "needle"}
+    assert len(readers) == 1 and len(callbacks) == 2
+    fd = readers[0]._root_fd
+    os.fstat(fd)
+    assert tool.handler(params).error is None
+    for callback in reversed(callbacks):
+        callback()
+    assert closes == [False]
+    with pytest.raises(OSError):
+        os.fstat(fd)

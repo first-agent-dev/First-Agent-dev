@@ -34,6 +34,7 @@ from fa.execution.profiles import ExecutionProfile
 from fa.execution.supervisor import SupervisorError
 from fa.execution.termination import OwnedCellTermination
 from fa.execution.types import Access, ExecutionContractError, GrantReply, NamespaceRef, ViewPurpose, ViewRef
+from fa.execution.workspace import WorkspaceAuthority
 from tests.test_execution_admission import claim as claim_operation
 from tests.test_execution_admission import request as exec_request
 from tests.test_execution_readers import ref
@@ -161,7 +162,7 @@ class RecordingCells:
             raise self.failure
 
 
-def _project_view(owner: Any, ids: dict[str, str], lease: GrantReply) -> GrantReply:
+def _project_view(owner: WorkspaceAuthority, ids: dict[str, str], lease: GrantReply) -> GrantReply:
     return owner.create_view(
         PEER,
         ACTOR,

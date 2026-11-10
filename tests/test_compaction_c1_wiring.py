@@ -120,3 +120,49 @@ def test_invalid_threshold_fails_closed(threshold: int) -> None:
     )
     with pytest.raises(ConfigurationError):
         config.validate({}, require_api_keys=False)
+
+
+@pytest.mark.parametrize("stage", [2, 3])
+def test_compaction_recomposes_actual_provider_payload(tmp_path: Path, stage: int) -> None:
+    """C1: stage-specific reconstruction reaches the real provider request."""
+    log = EventLog(tmp_path / "events.jsonl", run_id=f"recompose-{stage}")
+    state = SessionState(workspace_root=tmp_path, run_id=f"recompose-{stage}", log=log)
+    for i in range(7):
+        call = {"id": f"tc-{i}", "type": "function", "function": {"name": "fs_read_file", "arguments": "{}"}}
+        text = "old-assistant-marker " * 18000 if stage == 3 and i < 2 else f"step-{i}"
+        stdout = "old-tool-marker " * 22000 if stage == 2 and i == 0 else "small-output"
+        log.append(actor="model", kind="model_msg", content={"text": text, "tool_calls": [call]})
+        log.append(
+            actor="tool",
+            kind="tool_result",
+            content={"summary": "tool output", "result": {"stdout": stdout}, "ok": True},
+            tool_name="fs_read_file",
+            tool_call_id=f"tc-{i}",
+        )
+    chain = make_mock_chain(context_limit=100_000, compaction_threshold=80_000, family="anthropic")
+    chain.request.return_value = mock_success_response("done")
+    compactor = make_mock_chain(context_limit=100_000)
+    compactor.request.return_value = mock_success_response(
+        "## PREVIOUSLY\ncompact-summary-marker\n\n## PARKED\nNone\n\n## CURRENT\nDoing task\n\n## NEXT ACTION\nProceed"
+    )
+    result = drive_session(
+        "recompose task",
+        provider_chain=chain,
+        compactor_chain=compactor,
+        registry=ToolRegistry(),
+        hooks=HookRegistry(),
+        state=state,
+        max_turns=1,
+    )
+    assert result.exit_code == 0 and chain.request.call_count == 1
+    payload = repr(chain.request.call_args.args[0].messages)
+    rows = log.read_all()
+    assert any(e.kind == "compaction_stage2_done" for e in rows)
+    if stage == 2:
+        assert compactor.request.call_count == 0
+        assert "old-tool-marker " * 100 not in payload
+    else:
+        assert compactor.request.call_count == 1
+        assert any(e.kind == "compaction_stage3_done" for e in rows)
+        assert "compact-summary-marker" in payload
+        assert "old-assistant-marker " * 100 not in payload

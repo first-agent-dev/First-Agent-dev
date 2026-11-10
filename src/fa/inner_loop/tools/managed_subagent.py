@@ -28,6 +28,7 @@ from fa.execution.client import (
     ReadOnlyManagedBashExecutor,
 )
 from fa.execution.composition import ExecutionBinding, ManagedExecution
+from fa.execution.profiles import ExecutionProfile
 from fa.execution.tool_port import ClientWorkspacePort
 from fa.execution.types import Access, NamespaceRef, Operation, ViewPurpose
 from fa.feature_flags import FeatureFlags
@@ -40,6 +41,7 @@ from fa.inner_loop.registry import ToolRegistry, ToolResult, ToolSpec
 from fa.inner_loop.state import EventLog, SessionState
 from fa.inner_loop.tools.read_file import build_read_file_tool
 from fa.inner_loop.tools.run_bash import build_run_bash_tool
+from fa.observability.redaction import SecretRedactor
 from fa.providers.chain import ProviderChain
 
 logger = logging.getLogger(__name__)
@@ -121,7 +123,7 @@ class SubagentReport:
         return encoded
 
 
-def _redact(redactor: Any | None, text: str) -> str:
+def _redact(redactor: SecretRedactor | None, text: str) -> str:
     if redactor is None:
         return text
     try:
@@ -131,7 +133,7 @@ def _redact(redactor: Any | None, text: str) -> str:
         return "[output withheld: redaction failed]"
 
 
-def _bounded_tool_evidence(outcome: SessionOutcome, redactor: Any | None) -> list[str]:
+def _bounded_tool_evidence(outcome: SessionOutcome, redactor: SecretRedactor | None) -> list[str]:
     evidence: list[str] = []
     for result in outcome.tool_results:
         parts = [result.summary]
@@ -156,7 +158,7 @@ def _make_report(
     parent_run_id: str,
     parent_role: str,
     duration_ms: int,
-    redactor: Any | None,
+    redactor: SecretRedactor | None,
 ) -> SubagentReport:
     final_text = _redact(redactor, outcome.final_text).strip()
     if not final_text:
@@ -211,6 +213,46 @@ def _failure(code: str, message: str, *, retryable: bool = False) -> ToolResult:
     return ToolResult.fail(code, message[:600], retryable=retryable)
 
 
+def _admit_managed_child(
+    params: Mapping[str, object],
+    *,
+    parent_state: SessionState,
+    parent_role: str,
+    managed: ManagedExecution,
+    chat_chain: ProviderChain | None,
+) -> tuple[str, int, ExecutionProfile, ProviderChain] | ToolResult:
+    """Validate all child admission prerequisites before reserving or pinning."""
+    current = get_current_session()
+    if current is not parent_state or parent_state.managed_child:
+        return _failure("no_active_session", "managed subagent requires its production parent session")
+    task = params.get("task")
+    if not isinstance(task, str) or not task.strip():
+        return _failure("invalid_params", "task must be non-empty UTF-8 text within the 16,000-byte limit")
+    try:
+        task_bytes = len(task.encode("utf-8"))
+    except UnicodeEncodeError:
+        return _failure("invalid_params", "task must be valid UTF-8 text")
+    if task_bytes > _MAX_TASK_BYTES:
+        return _failure("invalid_params", "task must be non-empty UTF-8 text within the 16,000-byte limit")
+    flags = parent_state.feature_flags
+    if not isinstance(flags, FeatureFlags) or not flags.subagent_enabled_for(parent_role):
+        return _failure("disabled", f"managed subagents are disabled for role {parent_role}")
+    spawn_limit = flags.max_subagent_spawns_per_session
+    if type(spawn_limit) is not int or spawn_limit < 0:
+        return _failure("configuration_error", "managed child spawn limit is invalid")
+    if chat_chain is None:
+        return _failure("subagent_provider_unavailable", "no configured chat provider chain is available")
+    profile = managed.read_only_profile
+    if profile is None or profile.interactive:
+        return _failure(
+            "subagent_profile_unavailable",
+            "managed child requires an approved non-interactive READ profile",
+        )
+    if not parent_state.session_id or parent_state.session_db is None:
+        return _failure("session_unavailable", "managed child requires the parent's authoritative session DB")
+    return task, spawn_limit, profile, chat_chain
+
+
 # C901: keep reserve -> pin -> drive -> stop -> report ordering visible in one
 # lifecycle. Splitting the finally-path across callbacks would obscure which
 # failures retain the active-child slot and which are terminal.
@@ -225,7 +267,7 @@ def build_managed_subagent_tool(  # noqa: C901
     chat_compactor: ProviderChain | None,
     limits: Any,
     plan_ref: PlanRef | None,
-    redactor: Any | None,
+    redactor: SecretRedactor | None,
 ) -> ToolSpec:
     """Bind the task-only managed child capability into one production stage."""
     root = Path(workspace_root).resolve()
@@ -240,34 +282,12 @@ def build_managed_subagent_tool(  # noqa: C901
         raise ValueError("managed subagent parent role must be chat, planner, or coder")
 
     def handler(params: Mapping[str, object]) -> ToolResult:  # noqa: C901
-        current = get_current_session()
-        if current is not parent_state or parent_state.managed_child:
-            return _failure("no_active_session", "managed subagent requires its production parent session")
-        task = params.get("task")
-        if not isinstance(task, str) or not task.strip():
-            return _failure("invalid_params", "task must be non-empty UTF-8 text within the 16,000-byte limit")
-        try:
-            task_bytes = len(task.encode("utf-8"))
-        except UnicodeEncodeError:
-            return _failure("invalid_params", "task must be valid UTF-8 text")
-        if task_bytes > _MAX_TASK_BYTES:
-            return _failure("invalid_params", "task must be non-empty UTF-8 text within the 16,000-byte limit")
-        flags = parent_state.feature_flags
-        if not isinstance(flags, FeatureFlags) or not flags.subagent_enabled_for(parent_role):
-            return _failure("disabled", f"managed subagents are disabled for role {parent_role}")
-        spawn_limit = flags.max_subagent_spawns_per_session
-        if type(spawn_limit) is not int or spawn_limit < 0:
-            return _failure("configuration_error", "managed child spawn limit is invalid")
-        if chat_chain is None:
-            return _failure("subagent_provider_unavailable", "no configured chat provider chain is available")
-        profile = managed.read_only_profile
-        if profile is None or profile.interactive:
-            return _failure(
-                "subagent_profile_unavailable",
-                "managed child requires an approved non-interactive READ profile",
-            )
-        if not parent_state.session_id or parent_state.session_db is None:
-            return _failure("session_unavailable", "managed child requires the parent's authoritative session DB")
+        admission = _admit_managed_child(
+            params, parent_state=parent_state, parent_role=parent_role, managed=managed, chat_chain=chat_chain
+        )
+        if isinstance(admission, ToolResult):
+            return admission
+        task, spawn_limit, profile, child_chain = admission
         if not parent_state.try_reserve_subagent_spawn(spawn_limit):
             return _failure("spawn_limit", "managed child spawn limit reached")
         if not parent_state.try_reserve_active_subagent(max_active=1):
@@ -373,13 +393,13 @@ def build_managed_subagent_tool(  # noqa: C901
             # managed executor and the READ mount remains read-only.
             outcome = drive_session(
                 task,
-                provider_chain=chat_chain,
+                provider_chain=child_chain,
                 compactor_chain=chat_compactor,
                 registry=child_registry,
                 hooks=child_hooks,
                 state=child_state,
                 role="subagent",
-                acting_family=chat_chain.config.family,
+                acting_family=child_chain.config.family,
                 limits=limits,
                 max_turns=_MAX_CHILD_TURNS,
                 system_prompt_extra="",

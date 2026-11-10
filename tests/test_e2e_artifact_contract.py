@@ -324,11 +324,15 @@ def test_register_only_reuses_s06_for_its_explicit_extension() -> None:
 
 
 def _producer_baseline_document() -> dict[str, Any]:
-    return json.loads((PROJECT_E2E / "I03" / "producer-baseline.json").read_text(encoding="utf-8"))
+    document = json.loads((PROJECT_E2E / "I03" / "producer-baseline.json").read_text(encoding="utf-8"))
+    assert isinstance(document, dict)
+    return document
 
 
 def _producer_coverage_document() -> dict[str, Any]:
-    return json.loads((PROJECT_E2E / "I03" / "producer-coverage.json").read_text(encoding="utf-8"))
+    document = json.loads((PROJECT_E2E / "I03" / "producer-coverage.json").read_text(encoding="utf-8"))
+    assert isinstance(document, dict)
+    return document
 
 
 def test_frozen_producer_snapshot_preserves_each_key_lineage_and_host_oracle() -> None:
@@ -574,22 +578,20 @@ def test_checker_entrypoint_calls_producer_coverage_and_reports_counts(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     calls: list[Path] = []
-    monkeypatch.setattr(
-        coverage_checker,
-        "_check_producer_coverage",
-        lambda root: (
-            calls.append(root)
-            or {
-                "unique_producers": 125,
-                "legacy_cases": 89,
-                "i03_cases": 35,
-                "exact_duplicate_keys": 2,
-                "i01_contracts": 42,
-                "i01_deferred": 7,
-                "i01_cases": 3,
-            }
-        ),
-    )
+
+    def count_coverage(root: Path) -> dict[str, int]:
+        calls.append(root)
+        return {
+            "unique_producers": 125,
+            "legacy_cases": 89,
+            "i03_cases": 35,
+            "exact_duplicate_keys": 2,
+            "i01_contracts": 42,
+            "i01_deferred": 7,
+            "i01_cases": 3,
+        }
+
+    monkeypatch.setattr(coverage_checker, "_check_producer_coverage", count_coverage)
     root = REPO_ROOT
     assert coverage_checker.main(["--root", str(root)]) == 0
     assert calls == [root]

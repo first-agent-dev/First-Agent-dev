@@ -64,12 +64,12 @@ def test_noncanonical_base64_and_unknown_tool_are_not_requests() -> None:
 
 def test_oversized_base64_rejected_before_decoding(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[str] = []
-    original = project_tools.base64.b64decode
+    original = base64.b64decode
 
     def observe(data: str, *, validate: bool) -> bytes:
         calls.append(data)
         return original(data, validate=validate)
 
-    monkeypatch.setattr(project_tools.base64, "b64decode", observe)
+    monkeypatch.setattr(base64, "b64decode", observe)
     too_large = "A" * (4 * ((project_tools._MAX_REQUEST_BYTES + 2) // 3) + 4)
     assert project_tools._parse(too_large) is None and calls == []

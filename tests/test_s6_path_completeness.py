@@ -272,6 +272,7 @@ def test_console_mirror_kinds_pair_per_site() -> None:
     * an emit within ``_INLINE_PAIR_WINDOW`` lines (all `coder_loop` sites do —
       measured max 24);
     * a documented cross-boundary pairing (``CROSS_BOUNDARY_PAIRS``);
+    * the final iteration-cap row, paired through ``finish`` (also C1-tested);
     * the Q12 exemption (``loop.py`` ``run_stopped``).
 
     Anything else is an unpaired mirror kind: a durable row the operator never
@@ -286,6 +287,8 @@ def test_console_mirror_kinds_pair_per_site() -> None:
         if (name, kind) in Q12_EXEMPT_SITES:
             continue
         if kind in CROSS_BOUNDARY_PAIRS:
+            continue
+        if name == "coder_loop.py" and kind == "run_stopped" and lineno == _iteration_cap_stop_site(path):
             continue
         nearest = _nearest_emit_distance(path, lineno)
         if nearest is None or nearest > _INLINE_PAIR_WINDOW:
@@ -409,6 +412,45 @@ def _string_literals(node: ast.AST) -> list[str]:
     if isinstance(node, ast.IfExp):
         return _string_literals(node.body) + _string_literals(node.orelse)
     return []
+
+
+def _iteration_cap_stop_site(path: str) -> int | None:
+    """The final stop row is mirrored by finish() -> session_end, not a nearby emit.
+
+    Constrain this cross-boundary case to the adjacent final append and return;
+    a C1 test separately proves the actual output and row on that path.
+    """
+    tree = ast.parse(pathlib.Path(path).read_text(encoding="utf-8"))
+    driver = next(
+        node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "_drive_session_inner"
+    )
+    append, returned = driver.body[-2:]
+    if not (isinstance(append, ast.Expr) and isinstance(append.value, ast.Call) and isinstance(returned, ast.Return)):
+        return None
+    call = append.value
+    if not (isinstance(call.func, ast.Attribute) and call.func.attr == "append"):
+        return None
+    kwargs = {kw.arg: kw.value for kw in call.keywords}
+    kind = kwargs.get("kind")
+    if not (isinstance(kind, ast.Constant) and kind.value == "run_stopped"):
+        return None
+    content = kwargs.get("content")
+    if not isinstance(content, ast.Dict):
+        return None
+    pairs = {
+        k.value: v.value
+        for k, v in zip(content.keys, content.values, strict=True)
+        if isinstance(k, ast.Constant) and isinstance(v, ast.Constant)
+    }
+    if pairs.get("reason") != "iteration_cap":
+        return None
+    if not (
+        isinstance(returned.value, ast.Call)
+        and isinstance(returned.value.func, ast.Name)
+        and returned.value.func.id == "finish"
+    ):
+        return None
+    return call.lineno
 
 
 def _nearest_emit_distance(path: str, lineno: int) -> int | None:

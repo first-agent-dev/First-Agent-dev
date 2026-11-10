@@ -15,7 +15,6 @@ back to streaming walk (INV-S14b-2).
 
 from __future__ import annotations
 
-import atexit
 import json
 import logging
 import time
@@ -32,7 +31,7 @@ from fa.inner_loop.tools.outline import (
     fold_markdown,
     fold_python_source,
 )
-from fa.inner_loop.tools.workspace_port import WorkspacePort, WorkspacePortError, index_db
+from fa.inner_loop.tools.workspace_port import WorkspacePort, WorkspacePortError, _register_discovery_cleanup, index_db
 from fa.memory._safe_walk import RootedFileReader, RootedReadError
 
 if TYPE_CHECKING:
@@ -1325,7 +1324,7 @@ def _handle(
 # ---------------------------------------------------------------------------
 
 
-def build_fs_search_tool(  # noqa: C901 - legacy and managed handlers share the established tool schema
+def build_fs_search_tool(
     db_path: Path,
     workspace_root: Path,
     *,
@@ -1357,10 +1356,7 @@ def build_fs_search_tool(  # noqa: C901 - legacy and managed handlers share the 
         raise ValueError("project tool executor requires a managed workspace port")
     rooted_reader = RootedFileReader(root) if strict_rooted_reads else None
     if rooted_reader is not None:
-        if cleanup is None:
-            atexit.register(rooted_reader.close)
-        else:
-            cleanup.callback(rooted_reader.close)
+        _register_discovery_cleanup(cleanup, rooted_reader.close)
 
     def _resolve_index() -> tuple[_IndexHolder | None, Path | None]:
         """Bind the index home per call: the view may not be known at build time."""
@@ -1369,10 +1365,7 @@ def build_fs_search_tool(  # noqa: C901 - legacy and managed handlers share the 
         except WorkspacePortError:
             return None, None
         holder = _IndexHolder(db, rooted_reader=rooted_reader, managed_bounded=managed_bounded)
-        if cleanup is None:
-            atexit.register(holder.close)
-        else:
-            cleanup.callback(holder.close, strict=True)
+        _register_discovery_cleanup(cleanup, holder.close, strict=True)
         return holder, db
 
     # The controller's root is not the admitted view. A private cache path

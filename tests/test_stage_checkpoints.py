@@ -338,8 +338,12 @@ def test_a_record_is_exactly_the_seven_frozen_keys() -> None:
     # "A checkpoint is not success" is structural: there is no field to read.
     assert not {"status", "passed", "outcome", "result", "success", "verdict"} & set(record.to_dict())
     assert CheckpointRecord.from_dict(record.to_dict()) == record
-    # A kind is the closed enum, not its text; operation ids are one tuple.
-    for broken in ({**record.to_dict(), "kind": "STAGE"}, {**record.to_dict(), "operation_ids": ["op-" + "1" * 32]}):
+    # These deliberately malformed runtime arguments cannot have constructor types.
+    broken_records: list[dict[str, Any]] = [
+        {**record.to_dict(), "kind": "STAGE"},
+        {**record.to_dict(), "operation_ids": ["op-" + "1" * 32]},
+    ]
+    for broken in broken_records:
         with pytest.raises(ExecutionContractError):
             CheckpointRecord(**broken)
 

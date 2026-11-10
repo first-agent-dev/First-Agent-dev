@@ -1135,7 +1135,9 @@ def _load_eval_independence(ctx: WorkflowContext) -> Mapping[str, object] | None
 def _scoped_stage_failed(dispatch: PlannerDispatch | None, sink: list[SessionOutcome]) -> bool:
     if dispatch is None or dispatch.kind == PlannerDispatchKind.ORDINARY_PLANNING:
         return False
-    return not sink or sink[-1].exit_code != 0 or "fs_write_file" in sink[-1].failed_tools
+    return (
+        not sink or sink[-1].exit_code != 0 or bool({"fs_write_file", "pr_prepare"}.intersection(sink[-1].failed_tools))
+    )
 
 
 def _announce_stage(ctx: WorkflowContext, role: str, progress: WorkflowProgress, transition_reason: str) -> None:

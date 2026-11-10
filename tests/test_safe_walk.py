@@ -17,7 +17,7 @@ from fa.memory._safe_walk import (
     RootedReadError,
     iter_searchable_files,
 )
-from tests._capabilities import requires_symlinks
+from tests._capabilities import requires_hardlinks, requires_symlinks
 
 
 def _mk(root: Path, rel: str, content: str = "x", size: int | None = None) -> Path:
@@ -28,6 +28,21 @@ def _mk(root: Path, rel: str, content: str = "x", size: int | None = None) -> Pa
     else:
         p.write_text(content, encoding="utf-8")
     return p
+
+
+@pytest.mark.parametrize("raises", [False, True])
+def test_rooted_reader_context_closes_fd_and_does_not_suppress_exception(tmp_path: Path, raises: bool) -> None:
+    reader = RootedFileReader(tmp_path)
+    fd = reader._root_fd
+    if raises:
+        with pytest.raises(ValueError, match="sentinel"):
+            with reader:
+                raise ValueError("sentinel")
+    else:
+        with reader:
+            os.fstat(fd)
+    with pytest.raises(OSError):
+        os.fstat(fd)
 
 
 def test_iter_searchable_files_basic_inclusion(tmp_path: Path) -> None:
@@ -215,13 +230,11 @@ def test_rooted_file_reader_refuses_replaced_parent_directory(tmp_path: Path) ->
             reader.read_bytes("src/mod.py", max_bytes=100)
 
 
+@requires_hardlinks
 def test_rooted_file_reader_refuses_hardlinks(tmp_path: Path) -> None:
     source = _mk(tmp_path, "view/source.py", "def linked():\n    pass\n")
     alias = tmp_path / "view" / "alias.py"
-    try:
-        os.link(source, alias)
-    except OSError as exc:
-        pytest.skip(f"hardlinks unavailable: {exc}")
+    os.link(source, alias)
     with RootedFileReader(tmp_path / "view") as reader:
         with pytest.raises(RootedReadError, match="hardlinked_file"):
             reader.read_bytes("alias.py", max_bytes=100)
@@ -254,9 +267,7 @@ def test_rooted_file_reader_refuses_symlink_replacement_during_read(
             reader.read_bytes_with_path("alias.py", max_bytes=200_000)
 
 
-def test_rooted_file_reader_rejects_identity_drift_during_read(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_rooted_file_reader_rejects_identity_drift_during_read(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     source = _mk(tmp_path, "view/mod.py", size=100_000)
     with RootedFileReader(tmp_path / "view") as reader:
         original_read = os.read
@@ -281,14 +292,10 @@ def test_strict_walker_keeps_oversized_source_as_refusal_candidate(tmp_path: Pat
     assert [rel for _, rel, _, _ in walked] == ["src/large.py"]
 
 
+@requires_symlinks
 def test_strict_walker_emits_alias_and_target_candidates(tmp_path: Path) -> None:
     real = _mk(tmp_path, "src/real.py", "def target():\n    pass\n")
     alias = tmp_path / "src" / "alias.py"
-    try:
-        alias.symlink_to(real)
-    except OSError as exc:
-        pytest.skip(f"symlinks unavailable: {exc}")
-    rels = sorted(
-        rel for _, rel, _, _ in iter_searchable_files(tmp_path, strict_paths=True, use_git_ls_files=False)
-    )
+    alias.symlink_to(real)
+    rels = sorted(rel for _, rel, _, _ in iter_searchable_files(tmp_path, strict_paths=True, use_git_ls_files=False))
     assert rels == ["src/alias.py", "src/real.py"]

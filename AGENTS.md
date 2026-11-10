@@ -26,6 +26,14 @@ Goal-formulation in 4 pillars + minimalism-first principle:
 - [`knowledge/instructions/`](./knowledge/instructions/README.md) — deploy and operating docs for human.
 - [`knowledge/adr/README.md`](./knowledge/adr/README.md) — index of ADRs.
 
+## Agent-legible code boundaries
+
+Design code so another agent can locate the owner of a behavior, understand its
+invariants and effects, and change and verify it using a small, cohesive working
+set. Keep related responsibilities together and boundaries explicit; avoid both
+monoliths and helper scattering, and never split, merge, or pad files merely to
+hit a line count.
+
 ## Pre-flight checklist
 
 Run BEFORE making any edits, opening a branch, or writing analysis on

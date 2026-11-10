@@ -116,7 +116,6 @@ _EXPECTED_SCATTER: dict[str, int] = {
     # ceiling tier (S12.7 CT2/GAP4)
     "fs_read_file": 32_768,
     "fs_write_file": 32_768,
-    "fs_spawn_subagent": 32_768,
     "fs_exploration_metrics": 32_768,
     "fs_search": 32_768,
     "fs_reach": 32_768,

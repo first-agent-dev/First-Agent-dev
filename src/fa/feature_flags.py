@@ -62,12 +62,12 @@ class FeatureFlags:
 
     def subagent_enabled_for(self, role: str) -> bool:
         """Require both the master gate and the parent-role gate."""
-        field_name = {
-            "chat": "subagent_chat_enabled",
-            "planner": "subagent_planner_enabled",
-            "coder": "subagent_coder_enabled",
-        }.get(role)
-        return self.subagent_spawning_enabled and field_name is not None and bool(getattr(self, field_name))
+        role_enabled = {
+            "chat": self.subagent_chat_enabled,
+            "planner": self.subagent_planner_enabled,
+            "coder": self.subagent_coder_enabled,
+        }.get(role, False)
+        return self.subagent_spawning_enabled and bool(role_enabled)
 
     def as_dict(self) -> dict[str, Any]:
 

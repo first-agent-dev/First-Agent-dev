@@ -240,6 +240,8 @@ def check_console_mirror_dual_write(console_mirror_kinds: set[str]) -> list[str]
     # Files that contain output.emit calls
     producer_files = [
         REPO_ROOT / "src" / "fa" / "inner_loop" / "coder_loop.py",
+        REPO_ROOT / "src" / "fa" / "inner_loop" / "tool_turn.py",
+        REPO_ROOT / "src" / "fa" / "inner_loop" / "scope_turn.py",
         REPO_ROOT / "src" / "fa" / "inner_loop" / "tools" / "spawn_subagent.py",
         REPO_ROOT / "src" / "fa" / "cli.py",
         REPO_ROOT / "src" / "fa" / "inner_loop" / "state.py",

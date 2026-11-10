@@ -404,7 +404,7 @@ class RootedFileReader:
     def __enter__(self) -> Self:
         return self
 
-    def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+    def __exit__(self, _exc_type: object, exc: object, _traceback: object) -> None:
         self.close()
 
 

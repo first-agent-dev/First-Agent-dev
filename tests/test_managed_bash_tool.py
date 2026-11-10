@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -39,7 +40,7 @@ def _no_host(monkeypatch: pytest.MonkeyPatch) -> list[object]:
         calls.append((args, kwargs))
         raise AssertionError("host subprocess forbidden")
 
-    monkeypatch.setattr(run_bash.subprocess, "run", forbidden)
+    monkeypatch.setattr(subprocess, "run", forbidden)
     # Exercise the legacy git-status tracking path, without a host command.
     monkeypatch.setattr(
         run_bash, "_resolve_execution_context", lambda _root: run_bash._ExecutionContext(None, None, object())

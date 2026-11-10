@@ -2200,6 +2200,40 @@ def _resolve_run_models(
     return models, chain_config
 
 
+def _build_managed_child_chain(
+    role: str,
+    models: ModelsConfig,
+    chain: ProviderChain,
+    *,
+    transport: Transport,
+    secrets: Mapping[str, str],
+    proxy_url: str,
+) -> ProviderChain | None:
+    """Resolve only the chat provider for managed children; never fall back to the parent."""
+    managed_child_chain: ProviderChain | None = chain if role == "chat" else None
+    if managed_child_chain is None and role in {"planner", "coder"}:
+        child_config = models.roles.get("chat")
+        if child_config is not None:
+            if proxy_url:
+                child_config, child_proxy_error = _proxy_rewrite_chain(child_config, proxy_url)
+                if child_proxy_error:
+                    logger.warning("Managed subagent chat provider unavailable: %s", child_proxy_error)
+                    child_config = None
+            if child_config is not None:
+                try:
+                    managed_child_chain = _build_provider_chain(
+                        child_config,
+                        transport=transport,
+                        secrets=secrets,
+                    )
+                except Exception as exc:  # noqa: BLE001 - child capability fails closed, parent run continues
+                    logger.warning("Managed subagent chat provider unavailable: %s", exc)
+        else:
+            logger.info("Managed subagent unavailable: no chat role is configured")
+
+    return managed_child_chain
+
+
 def _build_compactor_chain(
     models: ModelsConfig,
     *,
@@ -2903,10 +2937,85 @@ def _valid_planner_dispatch(dispatch: PlannerDispatch | None, role: object, run_
     )
 
 
-# C901 waiver (16>15): this remains the CLI orchestration seam; managed view
-# ownership, settlement, and release are extracted into helpers. Keep the explicit
-# missing-outcome return instead of fabricating a model/session outcome.
-def _cmd_run(  # noqa: C901
+def _finish_cli_run(
+    *,
+    outcome: SessionOutcome,
+    outcome_sink: list[SessionOutcome] | None,
+    release_confirmed: bool,
+    run_id: str,
+    log: EventLog,
+    state: SessionState,
+    role: str,
+    chain_config: ChainConfig,
+    workspace: Path,
+    duration_ms: int,
+    output_mode: str,
+) -> int:
+    """Settle standalone projections or workflow outcome, then render the terminal result."""
+    # Slice 9: export to global_history.db as derived projection (best-effort, never crashes main)
+    # LOGIC-11: skip per-stage export when called from _cmd_workflow (outcome_sink
+    # is non-None). The workflow controller exports a single aggregate row after
+    # all stages complete, avoiding INSERT OR REPLACE overwriting by later stages.
+    if outcome_sink is None:
+        try:
+            from fa.inner_loop.global_history import export_session_to_global_history
+
+            export_session_to_global_history(
+                run_id=run_id,
+                outcome=outcome,
+                log=log,
+                role=role,
+                model=chain_config.name,
+                family=chain_config.family,
+                workspace_root=workspace,
+                duration_ms=duration_ms,
+            )
+            # S8: mirror the routing outcome onto the blackboard, matching the
+            # S3.5 scope_estimate precedent (cli.py:1858) so the operator can
+            # see calibration in-session rather than only in the cross-run DB.
+            # Best-effort and separately guarded: the sqlite export above is the
+            # projection of record, and a blackboard failure must not be able to
+            # roll it back or fail the run.
+            _write_routing_outcome_to_blackboard(
+                state=state,
+                run_id=run_id,
+                outcome=outcome,
+                log=log,
+                workspace=workspace,
+                duration_ms=duration_ms,
+            )
+        except Exception as exc:  # noqa: BLE001 - best-effort export must not break run
+            import logging
+
+            logging.getLogger(__name__).warning("global_history export failed for %s: %s", run_id, exc)
+
+    # Workflow seam: let an orchestrating caller capture the terminal outcome
+    # (e.g. to parse the eval role's final message into ``eval_report.json``)
+    # without changing this function's int return contract.
+    if outcome_sink is not None:
+        outcome_sink.append(outcome)
+    status = "OK" if outcome.exit_code == 0 else "ERROR"
+    # S8.4 / I-38 (Q32 option a, scoped to quiet). ``--output-mode quiet``
+    # exists so ``fa run --task ... > result.txt`` yields a parseable artifact
+    # — the contract ``QuietRenderer``'s docstring already promised and the CLI
+    # did not keep: measured 34 bytes of status line on stdout under quiet, and
+    # 102 bytes across a three-stage ``fa workflow``.
+    #
+    # Scoped deliberately. ``quiet`` is a console-verbosity control, so only it
+    # moves the human status line to stderr; default ``console`` output is
+    # byte-for-byte unchanged. Durable side effects (session.db rows, workflow
+    # artifacts, the global_history row) are identical in both modes — quiet
+    # never changes what is processed, only what is displayed.
+    #
+    # ``final_text`` stays on stdout in BOTH modes: it is the payload.
+    status_stream = sys.stderr if output_mode == "quiet" else sys.stdout
+    print(f"{status}: {outcome.stop_reason} (turns={outcome.turns})", file=status_stream)
+    if outcome.final_text:
+        print(outcome.final_text)
+    return _run_exit_code(outcome, release_confirmed=release_confirmed)
+
+
+def _cmd_run(
     args: argparse.Namespace,
     *,
     transport: Transport | None = None,
@@ -3014,31 +3123,9 @@ def _cmd_run(  # noqa: C901
         proxy_url=proxy_url,
     )
 
-    # Managed children always use the chat role's provider chain, irrespective
-    # of whether the parent is chat, planner, or coder. Reuse the existing
-    # chain for chat parents; build a separate configured chain for workflow
-    # planner/coder callers. Missing or invalid child config disables only the
-    # child capability and never falls back to the parent's role chain.
-    managed_child_chain: ProviderChain | None = chain if args.role == "chat" else None
-    if managed_child_chain is None and args.role in {"planner", "coder"}:
-        child_config = models.roles.get("chat")
-        if child_config is not None:
-            if proxy_mode:
-                child_config, child_proxy_error = _proxy_rewrite_chain(child_config, proxy_url)
-                if child_proxy_error:
-                    logger.warning("Managed subagent chat provider unavailable: %s", child_proxy_error)
-                    child_config = None
-            if child_config is not None:
-                try:
-                    managed_child_chain = _build_provider_chain(
-                        child_config,
-                        transport=effective_transport,
-                        secrets=secrets,
-                    )
-                except Exception as exc:  # noqa: BLE001 - child capability fails closed, parent run continues
-                    logger.warning("Managed subagent chat provider unavailable: %s", exc)
-        else:
-            logger.info("Managed subagent unavailable: no chat role is configured")
+    managed_child_chain = _build_managed_child_chain(
+        args.role, models, chain, transport=effective_transport, secrets=secrets, proxy_url=proxy_url
+    )
 
     # S14b.2 (S11): per-role iteration caps resolve here — the single seam
     # every `fa run` / `fa workflow` stage flows through (workflow stage
@@ -3257,67 +3344,19 @@ def _cmd_run(  # noqa: C901
     if outcome is None:
         return 2
     _run_duration_ms = int((time.monotonic() - _run_start_mono) * 1000)
-    # Slice 9: export to global_history.db as derived projection (best-effort, never crashes main)
-    # LOGIC-11: skip per-stage export when called from _cmd_workflow (outcome_sink
-    # is non-None). The workflow controller exports a single aggregate row after
-    # all stages complete, avoiding INSERT OR REPLACE overwriting by later stages.
-    if outcome_sink is None:
-        try:
-            from fa.inner_loop.global_history import export_session_to_global_history
-
-            export_session_to_global_history(
-                run_id=run_id,
-                outcome=outcome,
-                log=log,
-                role=role,
-                model=chain_config.name,
-                family=chain_config.family,
-                workspace_root=workspace,
-                duration_ms=_run_duration_ms,
-            )
-            # S8: mirror the routing outcome onto the blackboard, matching the
-            # S3.5 scope_estimate precedent (cli.py:1858) so the operator can
-            # see calibration in-session rather than only in the cross-run DB.
-            # Best-effort and separately guarded: the sqlite export above is the
-            # projection of record, and a blackboard failure must not be able to
-            # roll it back or fail the run.
-            _write_routing_outcome_to_blackboard(
-                state=state,
-                run_id=run_id,
-                outcome=outcome,
-                log=log,
-                workspace=workspace,
-                duration_ms=_run_duration_ms,
-            )
-        except Exception as exc:  # noqa: BLE001 - best-effort export must not break run
-            import logging
-
-            logging.getLogger(__name__).warning("global_history export failed for %s: %s", run_id, exc)
-
-    # Workflow seam: let an orchestrating caller capture the terminal outcome
-    # (e.g. to parse the eval role's final message into ``eval_report.json``)
-    # without changing this function's int return contract.
-    if outcome_sink is not None:
-        outcome_sink.append(outcome)
-    status = "OK" if outcome.exit_code == 0 else "ERROR"
-    # S8.4 / I-38 (Q32 option a, scoped to quiet). ``--output-mode quiet``
-    # exists so ``fa run --task ... > result.txt`` yields a parseable artifact
-    # — the contract ``QuietRenderer``'s docstring already promised and the CLI
-    # did not keep: measured 34 bytes of status line on stdout under quiet, and
-    # 102 bytes across a three-stage ``fa workflow``.
-    #
-    # Scoped deliberately. ``quiet`` is a console-verbosity control, so only it
-    # moves the human status line to stderr; default ``console`` output is
-    # byte-for-byte unchanged. Durable side effects (session.db rows, workflow
-    # artifacts, the global_history row) are identical in both modes — quiet
-    # never changes what is processed, only what is displayed.
-    #
-    # ``final_text`` stays on stdout in BOTH modes: it is the payload.
-    status_stream = sys.stderr if output_mode == "quiet" else sys.stdout
-    print(f"{status}: {outcome.stop_reason} (turns={outcome.turns})", file=status_stream)
-    if outcome.final_text:
-        print(outcome.final_text)
-    return _run_exit_code(outcome, release_confirmed=release_confirmed)
+    return _finish_cli_run(
+        outcome=outcome,
+        outcome_sink=outcome_sink,
+        release_confirmed=release_confirmed,
+        run_id=run_id,
+        log=log,
+        state=state,
+        role=role,
+        chain_config=chain_config,
+        workspace=workspace,
+        duration_ms=_run_duration_ms,
+        output_mode=output_mode,
+    )
 
 
 def _cmd_routing_check(args: argparse.Namespace) -> int:

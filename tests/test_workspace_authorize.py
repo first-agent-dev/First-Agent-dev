@@ -139,7 +139,7 @@ def test_a_pre_grant_operation_may_not_carry_a_capability_or_a_view(site: Site) 
     """
     with site.owner(view_profile=native_profile()) as owner:
         ids = ok(lambda: site.register(owner))
-        payloads = {
+        payloads: dict[Operation, dict[str, Any]] = {
             Operation.REGISTER_WORKSPACE: {
                 "root_id": "projects",
                 "relative_root": "another",
@@ -274,7 +274,7 @@ def test_view_operations_prove_the_exact_actor_and_view(site: Site) -> None:
         lease = ok(lambda: site.claim(owner, ids))
         grant = _project_view(owner, ids, lease)
         assert grant.view_ref is not None
-        payloads = {
+        payloads: dict[Operation, dict[str, Any]] = {
             Operation.READ_FILE: {"path": "roadmap.md", "offset_bytes": 0, "max_bytes": 64},
             Operation.WRITE_FILE: {"path": "roadmap.md", "content": "x", "expected_sha256": None},
             Operation.SEAL: {},
@@ -389,6 +389,7 @@ def test_the_readonly_classification_covers_the_closed_enum() -> None:
             Operation.READ_FILE,
             Operation.INSPECT,
             Operation.LIST_PROJECT_ARTIFACTS,
+            Operation.DIFF_REVISIONS,
         }
     )
 

@@ -26,8 +26,7 @@ R14) — import it from ``fa.inner_loop.registry``, never re-type the
 literal. Source of truth for every per-tool value:
 
 - Ceiling tier (spec budget = 32_768):
-    ``fs_read_file``, ``fs_write_file``, ``fs_spawn_subagent``,
-    ``fs_exploration_metrics`` and any tool without an explicit budget
+    ``fs_read_file``, ``fs_write_file``, ``fs_exploration_metrics`` and any tool without an explicit budget
     (``fs_prepare_pr``, workflow tool) — ride the default;
     ``fs_search`` (was 30_000), ``fs_reach`` (was 30_000, an S12.7
     inventory miss confirmed live and unified here), ``fs_run_bash``
@@ -37,6 +36,8 @@ literal. Source of truth for every per-tool value:
   their frames; the spec budget is the projection-chokepoint ceiling,
   not the internal cap.
 - Deliberate small outliers (kept, with reason):
+   16_384  fs_spawn_subagent — managed R13 child report; registered only on
+           managed stages, not the baseline registry (Q126);
     4_000  fs_edit_file, fs_chronicle_search, fs_diff — ack-shaped
            envelopes; full payload recoverable via ``[artifact:]``;
     2_048  fs_blackboard_query — compact answer envelope (S8 mention

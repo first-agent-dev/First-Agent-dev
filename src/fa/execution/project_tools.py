@@ -85,9 +85,10 @@ def _payload(result: ToolResult) -> dict[str, Any]:
 def _enforce_tool_result_budget(tool: str, result: ToolResult) -> ToolResult:
     """Reject the complete ToolResult before it can escape the cell helper."""
     try:
-        encoded = json.dumps(_payload(result), ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode(
-            "utf-8"
-        )
+        payload = _payload(result)
+        # Reject lone surrogates even though ASCII escaping can represent them.
+        json.dumps(payload, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8")
+        encoded = json.dumps(payload, ensure_ascii=True, allow_nan=False, separators=(",", ":")).encode("ascii")
         if len(encoded) <= _MAX_TOOL_RESULT_BYTES:
             return result
     except (TypeError, ValueError, UnicodeError, RecursionError):

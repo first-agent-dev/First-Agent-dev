@@ -13,6 +13,7 @@ from fa.memory.managed_discovery import (
     ManagedDiscoveryLimits,
     inventory_managed_files,
 )
+from tests._capabilities import requires_symlinks
 
 
 def _file(root: Path, relative: str, data: bytes = b"x") -> None:
@@ -112,17 +113,15 @@ def test_depth_path_and_expired_deadline_are_explicit_refusals(tmp_path: Path) -
     assert caught.value.reason == "deadline"
 
 
+@requires_symlinks
 def test_inventory_prunes_excluded_directories_and_never_follows_symlinks(tmp_path: Path) -> None:
     _file(tmp_path, "src/ok.py")
     _file(tmp_path, "vendor/hidden.py")
     outside = tmp_path.parent / (tmp_path.name + "-outside")
     outside.mkdir()
     (outside / "secret.py").write_text("def secret(): pass\n", encoding="utf-8")
-    try:
-        (tmp_path / "escape.py").symlink_to(outside / "secret.py")
-        (tmp_path / "linked-dir").symlink_to(outside, target_is_directory=True)
-    except (OSError, NotImplementedError):
-        pytest.skip("symlinks unavailable")
+    (tmp_path / "escape.py").symlink_to(outside / "secret.py")
+    (tmp_path / "linked-dir").symlink_to(outside, target_is_directory=True)
     inventory = inventory_managed_files(
         tmp_path,
         patterns=("*.py",),

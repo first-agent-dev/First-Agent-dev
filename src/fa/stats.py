@@ -383,6 +383,7 @@ def _parse_events(events: tuple[TraceEvent, ...], fallback_run_id: str) -> Sessi
     stop_reason = "unknown"
     ok = True
     has_session_summary = False
+    has_recorded_verdict = False
 
     # Tool counts
     tool_counter: Counter[str] = Counter()
@@ -600,13 +601,17 @@ def _parse_events(events: tuple[TraceEvent, ...], fallback_run_id: str) -> Sessi
             # inference below, which reported a stage that exited non-zero as
             # ``ok`` purely because it wrote a summary and no ``run_stopped``.
             # Logs written before the keys existed keep the old inference exactly.
+            recorded_code = content.get("exit_code")
+            if isinstance(recorded_code, int):
+                has_recorded_verdict = True
+                if stop_reason == "unknown":
+                    ok = recorded_code == 0
+                elif recorded_code != 0:
+                    ok = False
             if stop_reason == "unknown":
                 recorded_reason = content.get("stop_reason")
                 if isinstance(recorded_reason, str) and recorded_reason:
                     stop_reason = recorded_reason
-                recorded_code = content.get("exit_code")
-                if isinstance(recorded_code, int):
-                    ok = recorded_code == 0
 
         # ── S3.5: scope estimation events ─────────────────────────────
         elif kind == "scope_estimate":
@@ -638,7 +643,8 @@ def _parse_events(events: tuple[TraceEvent, ...], fallback_run_id: str) -> Sessi
     # with stop_reason="stopped_by_llm".
     if has_session_summary and stop_reason == "unknown":
         stop_reason = "stopped_by_llm"
-        ok = True
+        if not has_recorded_verdict:
+            ok = True
 
     # Build typed results
     tool_usage = sorted(
@@ -723,36 +729,9 @@ def _bar(count: int, max_count: int, width: int = 16) -> str:
 # ── Rendering ──────────────────────────────────────────────────────────────
 
 
-def render_session(analytics: SessionAnalytics, *, stream: TextIO | None = None) -> None:  # noqa: C901 — section renderer
-    """Render single-session report to ``stream`` (default: the CURRENT ``sys.stderr``).
-
-    ``stream`` defaults to ``None`` and resolves inside the body **on purpose**
-    (I-41). The previous signature was ``stream: TextIO = sys.stderr``, and
-    Python evaluates default arguments once, at **import** time — so this
-    module captured whichever object ``sys.stderr`` was when ``fa.stats`` was
-    first imported and wrote there forever after, ignoring every later
-    rebinding.
-
-    That was a live defect, not a style point: it surfaced as
-    ``ValueError: I/O operation on closed file`` when the renderer ran after a
-    test whose captured stderr had since been closed. The same shape breaks any
-    caller that redirects output — a harness, a daemon reopening its logs, a
-    CLI capturing a subcommand.
-
-    **Third instance of this class** in this codebase, after V10 (``state.py``)
-    and S8.8 (``global_history.py``). If you add a parameter whose default is a
-    mutable global or a stream, resolve it in the body.
-    """
-    a = analytics
-    out = stream if stream is not None else sys.stderr
+def _render_session_activity(a: SessionAnalytics, out: TextIO) -> None:
+    """Render tool, file and shell activity."""
     w = out.write
-
-    w(f"\n{'═' * 50}\n")
-    w(f"📊 Session: {a.run_id}\n")
-    status = "✅" if a.ok else "❌"
-    w(f"   {status} {a.role} │ {a.turns} turns │ {a.start_ts[:10]}\n")
-    w(f"   Stop: {a.stop_reason}\n")
-    w(f"{'═' * 50}\n\n")
 
     # Tools
     if a.tool_usage:
@@ -786,6 +765,11 @@ def render_session(analytics: SessionAnalytics, *, stream: TextIO | None = None)
             w(f"   {b.count}x{warn}  {cmd_preview}\n")
         w("\n")
 
+
+def _render_session_provider_and_guards(a: SessionAnalytics, out: TextIO) -> None:
+    """Render token usage, provider health and guard activity."""
+    w = out.write
+
     # Tokens
     if a.token_timeline:
         w("📊 Tokens:\n")
@@ -816,6 +800,11 @@ def render_session(analytics: SessionAnalytics, *, stream: TextIO | None = None)
                 parts_g.append(f"{g.warn} warn")
             w(f"   {g.hook:<20s} {', '.join(parts_g)}\n")
         w("\n")
+
+
+def _render_session_failures(a: SessionAnalytics, out: TextIO) -> None:
+    """Render tool errors, compaction, child and budget outcomes."""
+    w = out.write
 
     # Tool errors
     if a.tool_errors:
@@ -853,6 +842,11 @@ def render_session(analytics: SessionAnalytics, *, stream: TextIO | None = None)
             w(f"   {cbe.action}: {cbe.pct:.0f}% — {cbe.message[:60]}\n")
         w("\n")
 
+
+def _render_session_pressure_and_scope(a: SessionAnalytics, out: TextIO) -> None:
+    """Render pressure signals, message counts and scope estimates."""
+    w = out.write
+
     # Compaction warnings (S19)
     if a.compaction_warnings:
         w("⚡ Compaction pressure:\n")
@@ -881,6 +875,43 @@ def render_session(analytics: SessionAnalytics, *, stream: TextIO | None = None)
                 preview = se.task_preview[:80] + ("..." if len(se.task_preview) > 80 else "")
                 w(f"   task: {preview}\n")
         w("\n")
+
+
+def render_session(analytics: SessionAnalytics, *, stream: TextIO | None = None) -> None:
+    """Render single-session report to ``stream`` (default: the CURRENT ``sys.stderr``).
+
+    ``stream`` defaults to ``None`` and resolves inside the body **on purpose**
+    (I-41). The previous signature was ``stream: TextIO = sys.stderr``, and
+    Python evaluates default arguments once, at **import** time — so this
+    module captured whichever object ``sys.stderr`` was when ``fa.stats`` was
+    first imported and wrote there forever after, ignoring every later
+    rebinding.
+
+    That was a live defect, not a style point: it surfaced as
+    ``ValueError: I/O operation on closed file`` when the renderer ran after a
+    test whose captured stderr had since been closed. The same shape breaks any
+    caller that redirects output — a harness, a daemon reopening its logs, a
+    CLI capturing a subcommand.
+
+    **Third instance of this class** in this codebase, after V10 (``state.py``)
+    and S8.8 (``global_history.py``). If you add a parameter whose default is a
+    mutable global or a stream, resolve it in the body.
+    """
+    a = analytics
+    out = stream if stream is not None else sys.stderr
+    w = out.write
+
+    w(f"\n{'═' * 50}\n")
+    w(f"📊 Session: {a.run_id}\n")
+    status = "✅" if a.ok else "❌"
+    w(f"   {status} {a.role} │ {a.turns} turns │ {a.start_ts[:10]}\n")
+    w(f"   Stop: {a.stop_reason}\n")
+    w(f"{'═' * 50}\n\n")
+
+    _render_session_activity(a, out)
+    _render_session_provider_and_guards(a, out)
+    _render_session_failures(a, out)
+    _render_session_pressure_and_scope(a, out)
 
     # Efficiency
     warnings = efficiency_warnings(a)

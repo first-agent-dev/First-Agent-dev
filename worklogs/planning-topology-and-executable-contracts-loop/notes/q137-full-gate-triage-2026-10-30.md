@@ -1,6 +1,6 @@
 # Q137 — Full pytest/Pyrefly gate triage (2026-10-30)
 
-**Status: BLOCKING.** W0 remains closed. W1 implementation remains paused pending closure or explicit disposition of these findings. The original exact lists below are historical; the recovered-gate follow-up records the latest full-gate results and remaining diagnostics. No gate readiness is claimed. Q135 (deferred F2–F4) and Q136 (Pylint) remain separate.
+**Status: BLOCKING.** W0 remains closed and W1 remains paused. This document preserves the original and intermediate gate history, not the latest snapshot; see [`q137-working-entry-inventory-2026-11-09.md`](q137-working-entry-inventory-2026-11-09.md) for later full-gate results and local repair/refactor evidence. The latest immutable full test run before later edits was 37 failed / 7252 passed / 18 skipped / 4 xfailed / 11 errors (exit 1); it has not been rerun against current source. Q135 and Q136 remain separate; no readiness or live-host acceptance is claimed.
 
 **Operator disposition (2026-10-30):** selected **A — Strict gate closure, best effort**. Individual findings needing direct review may be deferred in the tracker, but remain **BLOCKING**; that is not a pass, waiver, or permission to advance W1.
 

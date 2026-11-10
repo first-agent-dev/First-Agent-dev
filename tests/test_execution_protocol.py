@@ -368,7 +368,7 @@ def test_all_v1_operations_keep_their_complete_payloads_and_results(op: Operatio
 def test_v2_health_and_project_listing_have_closed_versioned_shapes() -> None:
     health = v2_request(Operation.HEALTH)
     assert decode_request(encode_json(health)) == health
-    health_reply = {
+    health_reply: dict[str, Any] = {
         "protocol_version": 2,
         "request_id": RID,
         "status": "OK",

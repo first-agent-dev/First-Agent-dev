@@ -310,4 +310,6 @@ def test_every_current_role_tool_schema_satisfies_pts_v1(
             checked.add((spec.name, str(spec.input_schema)))
 
     assert any(name == "fs_search" for name, _schema in checked)
-    assert any(name == "fs_spawn_subagent" for name, _schema in checked)
+    # Q126: the legacy host child is not in any unmanaged product registry.
+    # The separately registered managed child is checked at its caller edge.
+    assert all(name != "fs_spawn_subagent" for name, _schema in checked)

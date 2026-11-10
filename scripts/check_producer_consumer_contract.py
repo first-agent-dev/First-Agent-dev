@@ -97,6 +97,8 @@ PRODUCER_SITE_FLOOR: dict[str, int] = {
 
 PRODUCER_FILES = [
     "src/fa/inner_loop/coder_loop.py",
+    "src/fa/inner_loop/tool_turn.py",
+    "src/fa/inner_loop/scope_turn.py",
     "src/fa/inner_loop/tools/spawn_subagent.py",
     "src/fa/cli.py",
     "src/fa/observability/cost_guardian.py",

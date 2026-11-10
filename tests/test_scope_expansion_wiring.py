@@ -417,6 +417,7 @@ def test_console_mirror_expansion_exhausted_emitted() -> None:
         chain = make_mock_chain(context_limit=100_000, compaction_threshold=None)
         chain.request.side_effect = [
             mock_tool_call_response("call-1", "fs_read_file", {"path": "x.py"}),
+            mock_tool_call_response("call-2", "fs_read_file", {"path": "x.py"}),
             mock_success_response("done"),
         ]
         drive_session(
@@ -426,7 +427,7 @@ def test_console_mirror_expansion_exhausted_emitted() -> None:
             hooks=HookRegistry(),
             state=state,
             role="chat",
-            max_turns=2,
+            max_turns=3,
             scope_mode="chat_direct",
             output=bus,
         )
@@ -434,7 +435,8 @@ def test_console_mirror_expansion_exhausted_emitted() -> None:
         assert len(exhausted) == 1
         log = state.log
         assert log is not None
-        assert any(e.kind == "expansion_exhausted" for e in log.read_all())
+        assert len([e for e in log.read_all() if e.kind == "expansion_exhausted"]) == 1
+        assert chain.request.call_count == 3
 
 
 def test_facts_provider_uses_the_same_resolved_config(tmp_path: Path, monkeypatch: Any) -> None:
@@ -477,3 +479,55 @@ def test_facts_provider_uses_the_same_resolved_config(tmp_path: Path, monkeypatc
     facts = ctx.session_facts_provider()
     assert facts, "live state present -> facts must not be empty"
     assert "generated" in facts["risk_config"].high_prefixes
+
+
+def test_high_read_then_failed_verify_escalates_next_turn(tmp_path: Path) -> None:
+    """C1: previous-turn classified failure changes the next request, not this one."""
+    from fa.inner_loop.registry import ToolResult, ToolSpec
+
+    repo_skills = Path(__file__).resolve().parents[1] / "knowledge" / "skills"
+    (tmp_path / "knowledge").mkdir()
+    (tmp_path / "knowledge" / "skills").symlink_to(repo_skills, target_is_directory=True)
+    state = _state_with_files(tmp_path, reads=["src/fa/state.py"])
+    registry = ToolRegistry()
+    registry.register(
+        ToolSpec(
+            name="fs_run_bash",
+            description="verify",
+            input_schema={"type": "object"},
+            permission="read",
+            handler=lambda params: ToolResult.fail("verify_failed", "failed"),
+        )
+    )
+    chain = make_mock_chain(context_limit=100_000, compaction_threshold=None)
+    chain.request.side_effect = [
+        mock_tool_call_response("verify-1", "fs_run_bash", {"command": "pytest -q"}),
+        mock_success_response("done"),
+    ]
+    drive_session(
+        "verify",
+        provider_chain=chain,
+        registry=registry,
+        hooks=HookRegistry(),
+        state=state,
+        role="chat",
+        scope_mode="chat_direct",
+        max_turns=2,
+    )
+    events = _expansion_events(state)
+    assert [(e.content["level_from"], e.content["level_to"], e.content["evidence"]) for e in events] == [
+        (1, 2, "read_high_arm"),
+        (2, 3, "verify_failed"),
+    ]
+    payloads = _sent_payloads(chain)
+    assert "ConditionalSkills" in payloads[0] and "Scope escalation" not in payloads[0]
+    assert "Scope escalation" in payloads[1] and "ConditionalSkills" not in payloads[1]
+
+
+def test_scope_missing_skill_is_advisory_and_transition_survives(tmp_path: Path, caplog: Any) -> None:
+    """C1: missing skill emits a warning, while the high-read transition survives."""
+    state = _state_with_files(tmp_path, reads=["src/fa/state.py"])
+    chain = _drive(state, scope_mode="chat_direct")
+    assert chain.request.call_count == 1
+    assert _expansion_events(state)[0].content["evidence"] == "read_high_arm"
+    assert "L2 skill injection" in caplog.text

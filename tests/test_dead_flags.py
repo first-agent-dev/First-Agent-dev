@@ -40,6 +40,9 @@ class TestDeadFlagsUnit:
             "telemetry_enabled",
             "tool_batching_enabled",
             "subagent_spawning_enabled",
+            "subagent_chat_enabled",
+            "subagent_planner_enabled",
+            "subagent_coder_enabled",
             "context_budget_enabled",
             "pty_pool_max_size",
             "worktree_mode",
@@ -81,6 +84,33 @@ class TestDeadFlagsUnit:
                 assert f["usage_count"] == 0
             else:
                 assert f["usage_count"] > 0, f"Field {f['name']} has 0 usage refs"
+
+
+def test_called_flag_decision_counts_reads_but_not_dead_methods_or_serialization(tmp_path: Path) -> None:
+    source = tmp_path / "src" / "fa"
+    source.mkdir(parents=True)
+    (source / "feature_flags.py").write_text(
+        "class FeatureFlags:\n"
+        "    def enabled(self) -> bool:\n"
+        "        return self.used\n"
+        "    def unused(self) -> bool:\n"
+        "        return self.dead\n"
+        "    def as_dict(self) -> dict:\n"
+        "        return {'serialized': self.serialized}\n",
+        encoding="utf-8",
+    )
+    caller = source / "caller.py"
+    caller.write_text("flags.enabled()\nflags.as_dict()\n# flags.unused()\n", encoding="utf-8")
+    with patch("scripts.check_dead_flags._get_declared_fields", return_value=["used", "dead", "serialized"]):
+        result = check_dead_flags(tmp_path)
+    fields = {item["name"]: item for item in result["declared_fields"]}
+    assert not fields["used"]["is_dead"] and fields["used"]["usage_count"] == 1
+    assert fields["dead"]["is_dead"] and fields["serialized"]["is_dead"]
+    assert result["dead_count"] == 2
+
+    caller.write_text("# flags.enabled()\nflags.as_dict()\n", encoding="utf-8")
+    with patch("scripts.check_dead_flags._get_declared_fields", return_value=["used", "dead", "serialized"]):
+        assert check_dead_flags(tmp_path)["dead_count"] == 3
 
 
 class TestDeadFlagsCLI:

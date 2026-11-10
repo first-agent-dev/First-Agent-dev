@@ -1769,6 +1769,18 @@ def test_fa_stats_reads_current_session_db_and_rejects_legacy_without_writes(
             "content": {"n_turns": 1, "input_tokens": 1, "output_tokens": 1},
         }
     )
+    db.append_event_row(
+        {
+            "event_id": "ev-2",
+            "session_id": session_id,
+            "ts": "2026-06-21T14:00:01Z",
+            "run_id": run_id,
+            "harness_id": "fa-inner-loop@0.1.0",
+            "actor": "runtime",
+            "kind": "compaction_warning",
+            "content": {"action": "stage2", "compaction_enabled": False, "ratio": 0.8, "threshold": 0.7},
+        }
+    )
     args = argparse.Namespace(
         run_id=run_id,
         session_id=session_id,
@@ -1781,6 +1793,14 @@ def test_fa_stats_reads_current_session_db_and_rejects_legacy_without_writes(
     assert _cmd_stats(args) == 0
     rendered = json.loads(capsys.readouterr().out)
     assert rendered["run_id"] == run_id
+
+    args.output = "text"
+    assert _cmd_stats(args) == 0
+    text = capsys.readouterr().err
+    assert "Session: run-stats" in text
+    assert "Compaction pressure:" in text
+    assert "stage2: ratio=80% threshold=70% (disabled)" in text
+    assert "Tool errors:" not in text
 
     legacy_home = tmp_path / "legacy-home"
     monkeypatch.setenv("HOME", str(legacy_home))
@@ -1812,3 +1832,108 @@ def test_fa_run_resume_without_session_id_fails_before_provider(tmp_path: Path, 
     assert _cmd_run(args, transport=transport, secrets=_TEST_SECRETS) == 2
     assert transport.calls == []
     assert "requires --session-id" in capsys.readouterr().err
+
+
+def test_managed_child_chain_selects_only_chat_and_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """C0/R13: child selection never silently adopts a workflow parent's provider."""
+    from fa.providers import load_models_config_from_path
+
+    config = tmp_path / "models.yaml"
+    config.write_text(_FAKE_MODELS_YAML + _FAKE_MODELS_YAML.replace("coder:", "chat:"), encoding="utf-8")
+    models = load_models_config_from_path(config, env=_TEST_SECRETS)
+    transport = _ScriptedTransport([])
+    parent = cli_module._build_provider_chain(models.roles["coder"], transport=transport, secrets=_TEST_SECRETS)
+    build = cli_module._build_provider_chain
+    builds: list[str] = []
+
+    def recording_build(*args: Any, **kwargs: Any) -> Any:
+        builds.append(args[0].role)
+        return build(*args, **kwargs)
+
+    monkeypatch.setattr(cli_module, "_build_provider_chain", recording_build)
+
+    def select(role: str, *, proxy_url: str = "") -> Any:
+        return cli_module._build_managed_child_chain(
+            role, models, parent, transport=transport, secrets=_TEST_SECRETS, proxy_url=proxy_url
+        )
+
+    assert select("chat") is parent
+    assert builds == []
+    assert select("eval") is None
+    for role in ("planner", "coder"):
+        child = select(role)
+        assert child is not None and child is not parent
+        assert child.config.role == "chat"
+    assert builds == ["chat", "chat"]
+
+    monkeypatch.setattr(cli_module, "_proxy_rewrite_chain", lambda config, url: (config, "bad proxy"))
+    assert select("coder", proxy_url="https://proxy.invalid") is None
+    assert builds == ["chat", "chat"]
+
+    def broken_build(*args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("child unavailable")
+
+    monkeypatch.setattr(cli_module, "_build_provider_chain", broken_build)
+    assert select("planner") is None
+
+    missing = load_models_config_from_path(tmp_path / "missing.yaml", env=_TEST_SECRETS)
+    assert (
+        cli_module._build_managed_child_chain(
+            "coder", missing, parent, transport=transport, secrets=_TEST_SECRETS, proxy_url=""
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize("mode", ["standalone", "workflow", "export-failure"])
+def test_managed_cli_completion_projects_only_standalone_and_preserves_outcome(
+    mode: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: CaptureFixture[str]
+) -> None:
+    """C2/LOGIC-11: real CLI and history, with external provider/authority boundaries doubled."""
+    from fa.inner_loop.coder_loop import SessionOutcome
+    from fa.inner_loop.global_history import GlobalHistoryStore, default_global_history_path
+
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    monkeypatch.setenv("FA_STATE_ROOT", str(home / ".fa"))
+    monkeypatch.delenv("FA_SESSION_SOURCE", raising=False)
+    config = tmp_path / "models.yaml"
+    config.write_text(_FAKE_MODELS_YAML, encoding="utf-8")
+    _install_test_managed_cli_dependencies(monkeypatch, home=home, workspace_root=tmp_path.parent)
+    args = _make_run_args(workspace=tmp_path, config=config, run_id="")
+    args.session_id = None
+    args.resume = False
+    args.output_mode = "quiet"
+    sink: list[SessionOutcome] | None = [] if mode == "workflow" else None
+    export_attempts: list[str] = []
+
+    if mode == "export-failure":
+
+        def failed_export(**kwargs: Any) -> None:
+            export_attempts.append(str(kwargs["run_id"]))
+            raise RuntimeError("projection unavailable")
+
+        monkeypatch.setattr("fa.inner_loop.global_history.export_session_to_global_history", failed_export)
+
+    transport = _ScriptedTransport([_stop_body("completion payload")])
+    assert _cmd_run(args, transport=transport, secrets=_TEST_SECRETS, outcome_sink=sink) == 0
+    output = capsys.readouterr()
+    assert "OK: stopped_by_llm" in output.err
+    assert "OK: stopped_by_llm" not in output.out
+    assert "completion payload" in output.out
+    assert len(transport.calls) == 1
+    path = default_global_history_path()
+    if mode == "standalone":
+        assert path.is_file()
+        rows = GlobalHistoryStore(path).read_all()
+        assert len(rows) == 1 and rows[0]["role"] == "coder"
+    else:
+        assert not path.exists()
+    if mode == "workflow":
+        assert sink is not None and len(sink) == 1
+        assert sink[0].stop_reason == "stopped_by_llm"
+    if mode == "export-failure":
+        assert len(export_attempts) == 1

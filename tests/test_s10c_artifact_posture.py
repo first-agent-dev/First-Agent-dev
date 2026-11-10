@@ -354,10 +354,10 @@ def test_s10c_session_dir_is_private_at_creation_without_the_repair_pass(
     Kill-check target: ``mode=PRIVATE_DIR_MODE`` on ``session_dir.mkdir`` —
     this is the test that now fails when it is removed.
     """
-    from fa.session.manager import SessionManager
+    from tests.test_session_lifecycle import _manager
 
     state_root = tmp_path / "state"
-    manager = SessionManager(state_root=state_root, workspace_root=tmp_path / "ws")
+    manager = _manager(tmp_path)
     session = manager.create_or_attach_session(session_id=None, workspace_override=None)
 
     session_dir = state_root / "sessions" / session.session_id

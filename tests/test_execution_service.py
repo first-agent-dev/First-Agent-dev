@@ -367,6 +367,19 @@ def test_v2_diff_compares_sealed_manifests_through_a_pinned_read_view(site: Site
         }
         assert "managed revision changed" not in json.dumps(diff)
         assert service.authority.journal.lookup("op-" + diff_request_id, ACTOR) is None
+        denied_id = "8" * 32
+        denied = exchange(
+            service,
+            Operation.DIFF_REVISIONS,
+            {"base_revision": base_revision},
+            request_id=denied_id,
+            view_ref=reader_view,
+            capability="0" * 64,
+            protocol_version=2,
+        )
+        assert denied["status"] == "ERROR" and denied["result"] is None
+        assert _error(denied) == "UNAUTHORIZED"
+        assert service.authority.journal.lookup("op-" + denied_id, ACTOR) is None
         released = exchange(
             service,
             Operation.RELEASE,

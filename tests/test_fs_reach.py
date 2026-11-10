@@ -534,7 +534,6 @@ def test_managed_reach_page_count_accepts_exact_cap_and_refuses_cap_plus_one() -
 def test_managed_reach_fails_closed_when_cache_size_is_one_kib_over(monkeypatch: pytest.MonkeyPatch) -> None:
     import sqlite3
 
-    from fa.memory import structural_index
     from fa.memory.structural_index import StructuralIndex
 
     actual_connect = sqlite3.connect
@@ -562,7 +561,7 @@ def test_managed_reach_fails_closed_when_cache_size_is_one_kib_over(monkeypatch:
         connections.append(connection)
         return connection
 
-    monkeypatch.setattr(structural_index.sqlite3, "connect", connect)
+    monkeypatch.setattr(sqlite3, "connect", connect)
     index = StructuralIndex(Path(":memory:"), in_memory=True, strict_rooted_reads=True, managed_bounded=True)
     try:
         with pytest.raises(sqlite3.OperationalError, match="managed SQLite limits unavailable"):

@@ -424,7 +424,18 @@ def _build_tool_builders(
     return builders
 
 
-def build_registry_for_role(  # noqa: C901 - role composition owns the closed tool-builder and fail-closed branches
+def _builder_for_role(
+    builders: Mapping[str, Callable[[], ToolSpec]], *, role: str, tool_name: str, managed: bool
+) -> Callable[[], ToolSpec] | None:
+    """Select the scoped planner writer, with legacy fallback only outside managed views."""
+    if role == "planner" and tool_name == "fs_write_file":
+        builder = builders.get("fs_write_file_limited")
+        if builder is not None or managed:
+            return builder
+    return builders.get(tool_name)
+
+
+def build_registry_for_role(
     role: str,
     workspace_root: Path,
     *,
@@ -461,13 +472,7 @@ def build_registry_for_role(  # noqa: C901 - role composition owns the closed to
 
     registry = ToolRegistry()
     for tool_name in wanted:
-        # For planner, use limited write_file if requested
-        if role == "planner" and tool_name == "fs_write_file":
-            builder = builders.get("fs_write_file_limited")
-            if builder is None and workspace_io is None:
-                builder = builders.get(tool_name)
-        else:
-            builder = builders.get(tool_name)
+        builder = _builder_for_role(builders, role=role, tool_name=tool_name, managed=workspace_io is not None)
         if builder is None:
             if workspace_io is not None:
                 raise RuntimeError(f"managed tool unavailable: {tool_name}")

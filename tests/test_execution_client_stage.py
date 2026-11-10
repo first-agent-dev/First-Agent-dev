@@ -44,7 +44,6 @@ from fa.inner_loop.plan_admission import PlanRef, read_plan_snapshot, snapshot_f
 from fa.inner_loop.tools.workspace_port import WorkspacePortError
 from tests.test_execution_client_port import (
     PLAN_BYTES,
-    PLAN_RELATIVE,
     _fixed_grant,
     _FramedClient,
     _namespace,
@@ -53,6 +52,7 @@ from tests.test_execution_client_port import (
     _read_view_grant,
     _served,
 )
+from tests.test_execution_composition import PLAN_RELATIVE
 from tests.test_execution_workspace import Site
 from tests.test_execution_workspace import site as site
 

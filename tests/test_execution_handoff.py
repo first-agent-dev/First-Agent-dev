@@ -42,6 +42,7 @@ from fa.execution.service import SupervisorService
 from fa.execution.supervisor import PeerIdentity, SupervisorError
 from fa.execution.types import GrantReply, NamespaceRef, Operation
 from fa.execution.workspace import WorkspaceAuthority
+from fa.inner_loop.workflow_artifacts import _replace_private_bytes
 from tests.test_execution_readers import pin, read, read_only_profile, ref
 from tests.test_execution_service import _config, _registered, _writer, exchange
 from tests.test_execution_views import native_profile
@@ -272,7 +273,7 @@ def test_a_grant_is_never_returned_unless_the_swap_reads_back(site: Site, monkey
         # A replace that silently loses the swap: the durable bytes keep the OLD
         # actor while memory already moved. The authority must refuse the grant
         # and degrade, because recovery owns this workspace from now on.
-        original = workspace_module._replace_private_bytes
+        original = _replace_private_bytes
         monkeypatch.setattr(
             workspace_module,
             "_replace_private_bytes",

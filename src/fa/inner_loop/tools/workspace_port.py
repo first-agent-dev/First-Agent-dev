@@ -14,6 +14,9 @@ tool layer keeps no dependency on the execution subsystem.
 
 from __future__ import annotations
 
+import atexit
+from collections.abc import Callable
+from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Protocol
@@ -186,9 +189,21 @@ def index_db(port: WorkspacePort | None, root: Path, filename: str, fallback: Pa
     return candidate
 
 
+def _register_discovery_cleanup(cleanup: ExitStack | None, close: Callable[..., None], *, strict: bool = False) -> None:
+    """Keep legacy shutdown best-effort; explicit tool scopes close indexes strictly."""
+    if cleanup is None:
+        atexit.register(close)
+    elif strict:
+        cleanup.callback(close, strict=True)
+    else:
+        cleanup.callback(close)
+
+
 __all__ = [
     "PORT_PROJECT_LIST_MAX_ENTRIES",
     "PORT_READ_MAX_BYTES",
+    "PROJECT_ARTIFACT_KINDS",
+    "PROJECT_ENTRY_KINDS",
     "PortDirectoryEntry",
     "PortProjectArtifactListing",
     "PortRead",

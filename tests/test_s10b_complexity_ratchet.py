@@ -52,7 +52,7 @@ SRC_FA = REPO_ROOT / "src" / "fa"
 # it to make a red gate green defeats the entire purpose of the file; if a new
 # function genuinely cannot be written under 15, that is a design discussion,
 # not a number edit.
-_C901_WAIVER_BUDGET = 14
+_C901_WAIVER_BUDGET = 12
 
 # Liveness control. A census that silently matched nothing would satisfy
 # "count <= budget" vacuously — the most common way a gate in this workstream
@@ -64,7 +64,7 @@ _C901_WAIVER_BUDGET = 14
 # obvious "fix" is to edit the floor down — training exactly the reflex this
 # file exists to prevent. A floor below the budget still catches a broken
 # census (which yields 0, verified) while leaving room for the ratchet to move.
-_C901_CENSUS_FLOOR = 12
+_C901_CENSUS_FLOOR = 10
 
 _MAX_COMPLEXITY_CEILING = 15
 
@@ -119,8 +119,8 @@ def test_s13_11_c901_ratchet_tracks_retired_waiver() -> None:
     """C0 T13: one retired waiver lowers the exact budget/floor authority."""
 
     census = _waiver_census()
-    assert len(census) == 12
-    assert (_C901_WAIVER_BUDGET, _C901_CENSUS_FLOOR, _MAX_COMPLEXITY_CEILING) == (14, 12, 15)
+    assert len(census) == 10
+    assert (_C901_WAIVER_BUDGET, _C901_CENSUS_FLOOR, _MAX_COMPLEXITY_CEILING) == (12, 10, 15)
 
 
 def test_s10b_c901_waiver_budget() -> None:
@@ -286,3 +286,32 @@ def test_s10b_retired_waiver_stays_retired(function_name: str) -> None:
         f"ruff --ignore-noqa reports it. The waiver was deleted without the "
         f"decomposition that justifies deleting it."
     )
+
+
+@pytest.mark.parametrize(
+    ("relative_path", "owner", "function_name"),
+    [
+        ("inner_loop/loop.py", None, "_execute_batch_parallel"),
+        ("inner_loop/state.py", "SessionState", "__post_init__"),
+        ("stats.py", None, "render_session"),
+    ],
+)
+def test_recently_retired_waivers_stay_retired(relative_path: str, owner: str | None, function_name: str) -> None:
+    """C1: both the waiver and Ruff's actual complexity stay retired at each seam."""
+    path = SRC_FA / relative_path
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    scope: ast.Module | ast.ClassDef = tree
+    if owner is not None:
+        scope = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == owner)
+    function = next(
+        node
+        for node in scope.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == function_name
+    )
+    assert not _NOQA_C901.search(source.splitlines()[function.lineno - 1])
+    findings = _true_complexity_findings()
+    for finding in findings:
+        location = finding["location"]
+        assert isinstance(location, dict)
+        assert not (Path(str(finding["filename"])).resolve() == path.resolve() and location["row"] == function.lineno)

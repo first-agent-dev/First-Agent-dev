@@ -22,7 +22,7 @@ import json
 import sys
 import typing
 from pathlib import Path
-from typing import Any
+from typing import Any, override
 
 import pytest
 
@@ -392,3 +392,88 @@ def test_i41_explicit_stream_still_wins(monkeypatch: pytest.MonkeyPatch) -> None
 
     assert "Session: i41-run" in explicit.getvalue()
     assert ambient.getvalue() == "", "an explicit stream must not also write to sys.stderr"
+
+
+def test_render_session_preserves_sections_limits_and_empty_report() -> None:
+    """C0: all report groups retain order, bounds, error branches and flush."""
+    from fa.stats import (
+        BashCommand,
+        CircuitBreakerRecord,
+        CompactionRecord,
+        CompactionWarningRecord,
+        ContextBudgetEvent,
+        FileAccess,
+        GuardActivity,
+        ProviderHealth,
+        ScopeEstimateRecord,
+        SubagentRecord,
+        ToolError,
+        ToolUsage,
+        TurnTokens,
+    )
+
+    class FlushedBuffer(io.StringIO):
+        def __init__(self) -> None:
+            super().__init__()
+            self.flushes = 0
+
+        @override
+        def flush(self) -> None:
+            self.flushes += 1
+            super().flush()
+
+    analytics = _make_analytics()
+    analytics.ok = False
+    analytics.tool_usage = [ToolUsage("probe", 2)]
+    analytics.file_access = [FileAccess(f"file-{i}", reads=3, writes=1) for i in range(11)]
+    analytics.bash_commands = [BashCommand("x" * 61, 2)] * 6
+    analytics.token_timeline = [TurnTokens(1, 100, 20, 50, 0)]
+    analytics.provider_health = [ProviderHealth("provider", "slug", 2, 1, 42, 80)]
+    analytics.guard_activity = [GuardActivity("guard", allow=1, deny=2, warn=3)]
+    analytics.tool_errors = [ToolError(f"tool-{i}", "bad", "y" * 61) for i in range(11)]
+    analytics.compaction_records = [CompactionRecord(2, True, 100, 50), CompactionRecord(3, False, error="broken")]
+    analytics.subagent_records = [SubagentRecord(True), SubagentRecord(False, "child failure")]
+    analytics.context_budget_events = [ContextBudgetEvent("warn", 72, "budget")]
+    analytics.compaction_warnings = [CompactionWarningRecord("stage2", False, 0.8, 0.7)]
+    analytics.circuit_breaker_events = [CircuitBreakerRecord("circuit open")]
+    analytics.model_msg_count, analytics.user_msg_count = 2, 1
+    analytics.scope_estimates = [ScopeEstimateRecord(2, "small", "low", 0.5, "chat", "t" * 81)]
+    analytics.redundant_reads = 1
+    stream = FlushedBuffer()
+    render_session(analytics, stream=stream)
+    text = stream.getvalue()
+    sections = [
+        "Session:",
+        "Tools:",
+        "Files:",
+        "Bash:",
+        "Tokens:",
+        "Provider:",
+        "Guards:",
+        "Tool errors:",
+        "Compaction:",
+        "Subagent:",
+        "Context budget:",
+        "Compaction pressure:",
+        "Circuit breaker:",
+        "Messages:",
+        "Scope estimates:",
+        "Efficiency:",
+    ]
+    assert [text.index(section) for section in sections] == sorted(text.index(section) for section in sections)
+    assert "❌ coder" in text and "READ 3x ⚠ WRITE 1x" in text
+    assert "file-9" in text and "file-10" not in text and "... and 1 more" in text
+    assert text.count("x" * 60 + "...") == 5
+    assert "tool-9" in text and "tool-10" not in text and "y" * 61 not in text
+    assert "stage2: 100 → 50" in text and "stage3: error — broken" in text
+    assert "1 ok, 1 failed" in text and "failed: child failure" in text
+    assert "ratio=80% threshold=70% (disabled)" in text
+    assert "task: " + "t" * 80 + "..." in text
+    assert stream.flushes == 1
+
+    empty_stream = FlushedBuffer()
+    render_session(_make_analytics(), stream=empty_stream)
+    empty = empty_stream.getvalue()
+    assert "Session: i41-run" in empty
+    assert all(section not in empty for section in sections[1:])
+    assert empty_stream.flushes == 1

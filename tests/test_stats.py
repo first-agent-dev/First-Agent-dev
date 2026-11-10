@@ -168,6 +168,32 @@ def test_a_recorded_verdict_outranks_the_clean_stop_inference(tmp_path: Path) ->
     assert result.stop_reason == "stopped_by_llm"  # the stage's own reason, not "unknown"
 
 
+def test_summary_verdict_respects_stops_and_legacy_inference(tmp_path: Path) -> None:
+    cases = [
+        ("iteration_cap", 1, False),
+        ("iteration_cap: per-turn cap", 0, True),
+        ("sandbox_deny", 0, False),
+        ("iteration_cap: per-turn cap", None, True),
+        (None, 1, False),
+        (None, 0, True),
+        (None, None, True),
+    ]
+    for index, (reason, code, expected_ok) in enumerate(cases):
+        events: list[dict[str, object]] = [{"kind": "run_started", "content": {"role": "coder"}}]
+        if reason is not None:
+            events.append({"kind": "run_stopped", "content": {"reason": reason}})
+        summary: dict[str, object] = {}
+        if code is not None:
+            summary["exit_code"] = code
+        events.append({"kind": "session_summary", "content": summary})
+        path = tmp_path / str(index) / "events.jsonl"
+        _write_events(path, events)
+        analytics = parse_session(path)
+        assert analytics is not None
+        assert analytics.ok is expected_ok, (reason, code)
+        assert analytics.stop_reason == (reason or "stopped_by_llm")
+
+
 # ── parse_session ─────────────────────────────────────────────────────────
 
 

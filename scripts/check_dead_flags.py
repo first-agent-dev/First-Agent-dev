@@ -106,6 +106,58 @@ def _count_field_usage(field_name: str, py_files: list[Path]) -> list[dict[str, 
     return refs
 
 
+def _called_boolean_method_reads(repo_root: Path, py_files: list[Path]) -> dict[str, list[dict[str, Any]]]:
+    """Count field reads in externally called bool decision methods, not serialization.
+
+    Definition-file declarations and ``as_dict`` do not prove a consumer exists.
+    Require an AST call on a flag-named receiver outside that file and a direct
+    ``self.field`` load in a bool-returning FeatureFlags method. This heuristic
+    does not infer receiver types, arbitrary dynamic dispatch or call reachability.
+    """
+    called: set[str] = set()
+    for py_file in py_files:
+        try:
+            tree = ast.parse(py_file.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, SyntaxError):
+            continue
+        called.update(
+            node.func.attr
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and (
+                (isinstance(node.func.value, ast.Name) and node.func.value.id in {"ff", "flags", "feature_flags"})
+                or (isinstance(node.func.value, ast.Attribute) and node.func.value.attr == "feature_flags")
+            )
+        )
+    definition = repo_root / _FEATURE_FLAGS_MODULE
+    try:
+        tree = ast.parse(definition.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, SyntaxError):
+        return {}
+    refs: dict[str, list[dict[str, Any]]] = {}
+    for cls in tree.body:
+        if not isinstance(cls, ast.ClassDef) or cls.name != "FeatureFlags":
+            continue
+        for method in cls.body:
+            if (
+                not isinstance(method, ast.FunctionDef)
+                or method.name not in called
+                or not isinstance(method.returns, ast.Name)
+                or method.returns.id != "bool"
+            ):
+                continue
+            for node in ast.walk(method):
+                if (
+                    isinstance(node, ast.Attribute)
+                    and isinstance(node.ctx, ast.Load)
+                    and isinstance(node.value, ast.Name)
+                    and node.value.id == "self"
+                ):
+                    refs.setdefault(node.attr, []).append({"file": str(definition), "line": node.lineno})
+    return refs
+
+
 def _find_regex_phantom_flags(
     text: str,
     py_file: Path,
@@ -188,11 +240,12 @@ def check_dead_flags(repo_root: Path) -> dict[str, Any]:
     """Main check: find dead flags and phantom flags."""
     declared = _get_declared_fields(repo_root)
     py_files = _collect_py_files(repo_root)
+    method_reads = _called_boolean_method_reads(repo_root, py_files)
 
     field_results: list[dict[str, Any]] = []
     dead_count = 0
     for name in declared:
-        refs = _count_field_usage(name, py_files)
+        refs = _count_field_usage(name, py_files) + method_reads.get(name, [])
         is_dead = len(refs) == 0
         if is_dead:
             dead_count += 1

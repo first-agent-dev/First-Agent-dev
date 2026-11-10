@@ -8,7 +8,6 @@ honestly as ``<unresolved:...>`` identifiers — never hallucinated edges.
 
 from __future__ import annotations
 
-import atexit
 import logging
 import time
 from collections.abc import Mapping
@@ -18,7 +17,7 @@ from typing import Any
 
 from fa.inner_loop.registry import DEFAULT_TOOL_CONTEXT_BYTES, ToolResult, ToolSpec
 from fa.inner_loop.tools.base import require_string
-from fa.inner_loop.tools.workspace_port import WorkspacePort, WorkspacePortError, index_db
+from fa.inner_loop.tools.workspace_port import WorkspacePort, WorkspacePortError, _register_discovery_cleanup, index_db
 from fa.memory._safe_walk import RootedFileReader
 
 logger = logging.getLogger(__name__)
@@ -109,7 +108,7 @@ def _parse_enum(
     return value, None
 
 
-def build_fs_reach_tool(  # noqa: C901 - managed/legacy builder contracts share one immutable ToolSpec surface
+def build_fs_reach_tool(
     workspace_root: Path,
     *,
     workspace_io: WorkspacePort | None = None,
@@ -139,10 +138,7 @@ def build_fs_reach_tool(  # noqa: C901 - managed/legacy builder contracts share 
     root = Path(workspace_root).resolve()
     rooted_reader = RootedFileReader(root) if strict_rooted_reads else None
     if rooted_reader is not None:
-        if cleanup is None:
-            atexit.register(rooted_reader.close)
-        else:
-            cleanup.callback(rooted_reader.close)
+        _register_discovery_cleanup(cleanup, rooted_reader.close)
     host_db = scratch_db if scratch_db is not None else root / ".fa" / "structural.db"
 
     def _resolve_index() -> _ReachHolder | None:
@@ -157,10 +153,7 @@ def build_fs_reach_tool(  # noqa: C901 - managed/legacy builder contracts share 
             managed_bounded=managed_bounded,
             rooted_reader=rooted_reader,
         )
-        if cleanup is None:
-            atexit.register(holder.close)
-        else:
-            cleanup.callback(holder.close, strict=True)
+        _register_discovery_cleanup(cleanup, holder.close, strict=True)
         return holder
 
     # A host root and a private cache path do not prove a view-bound index.

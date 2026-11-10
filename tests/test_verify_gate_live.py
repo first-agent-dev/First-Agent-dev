@@ -66,7 +66,7 @@ from fa.providers import ProviderChain, SecretStore
 from fa.providers.base import RequestInfo, ResponseInfo
 
 if TYPE_CHECKING:
-    from fa.inner_loop.plan_admission import PlanSnapshot
+    from fa.inner_loop.plan_admission import PlanRef, PlanSnapshot
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 _EVAL_FINAL_TEXT = "## Verification Summary\n\n### Verdict\n\nPASS\n"
@@ -1432,13 +1432,21 @@ def test_plan_preflight_descriptors_are_nofollow_nonblocking_and_closed(
 
 
 def test_plan_preflight_new_workspace_cannot_bypass_existing_owner(tmp_path: Path) -> None:
-    from fa.session.manager import SessionManager, SessionManagerError
+    from fa.session.manager import SessionManagerError
+    from tests.test_session_lifecycle import _manager
 
-    manager = SessionManager(state_root=tmp_path / "state", workspace_root=tmp_path / "workspaces")
+    manager = _manager(tmp_path)
     session = manager.provision_entrypoint_session(
         session_id="owner", workspace_override=tmp_path / "workspaces" / "owned"
     )
     before = session.manifest_path.read_bytes()
+    # CT103a: a managed reference is only selected here; registration and
+    # conflict adjudication still happen during lifecycle provisioning.
+    assert manager.resolve_workflow_workspace(session_id=None, workspace_override=session.workspace_path) == (
+        session.workspace_path
+    )
+    assert session.manifest_path.read_bytes() == before
+    manager.workspace_provisioner = None
     with pytest.raises(SessionManagerError) as failure:
         manager.resolve_workflow_workspace(session_id=None, workspace_override=session.workspace_path)
     assert failure.value.code == "workspace_already_owned"
@@ -1511,15 +1519,16 @@ def test_plan_preflight_allocated_workspace_mismatch_blocks_provider(
     """CLI fault supplement: change the real manifest after the snapshot read."""
     from fa import cli
     from fa.inner_loop.plan_admission import read_plan_snapshot
-    from fa.session.manager import SessionManager
+    from tests.test_session_lifecycle import _manager
 
     state, root = tmp_path / "state", tmp_path / "workspaces"
     first, second = root / "first", root / "second"
     first.mkdir(parents=True)
     second.mkdir()
     (first / "plan.md").write_text("Plan-ID: PLAN-first\n", encoding="utf-8")
-    manager = SessionManager(state_root=state, workspace_root=root)
+    manager = _manager(tmp_path)
     session = manager.provision_entrypoint_session(session_id="switch", workspace_override=first)
+    monkeypatch.setattr(cli, "_session_manager_for_args", lambda _args: manager)
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     monkeypatch.setenv("FA_STATE_ROOT", str(state))
     monkeypatch.setenv("FA_WORKSPACE_ROOT", str(root))
@@ -3212,11 +3221,17 @@ def test_ct94_nonpassing_validation_never_publishes(tmp_path: Path, monkeypatch:
     validated = workflow._validate_plan_admission(snapshot_from_bytes("draft.md", raw))
 
     class ForbiddenPublisher:
+        def __init__(self) -> None:
+            self.calls = 0
+
         def publish_candidate(self, *_args: Any, **_kwargs: Any) -> Any:
+            self.calls += 1
             raise AssertionError("non-passing validation reached the publisher")
 
+    publisher = ForbiddenPublisher()
     with pytest.raises(PlanPromotionError) as error:
-        workflow._promote_validated_plan(source, validated, publisher=ForbiddenPublisher())
+        workflow._promote_validated_plan(source, validated, publisher=publisher)
+    assert publisher.calls == 0
     assert error.value.rule == "prepare-failed" and error.value.replaced is False
     assert (tmp_path / _CT94_PATH).read_bytes() == source.utf8_bytes
     assert not (tmp_path / ".fa").exists()
@@ -3291,12 +3306,16 @@ def test_ct94_real_session_edits_fresh_candidate_before_validated_publication(
         def __init__(self) -> None:
             self.candidate: Any | None = None
 
-        def publish_candidate(self, pinned: Any, admitted: Any, *, deadline: float | None = None) -> Any:
+        def publish_candidate(
+            self, source: PlanSnapshot, candidate: PlanSnapshot, *, deadline: float | None = None
+        ) -> PlanRef:
             from fa.inner_loop.plan_admission import PlanRef
 
-            assert pinned.ref == source.ref
-            self.candidate = admitted
-            return PlanRef(pinned.ref.workspace_relative_path, pinned.ref.source_kind, admitted.ref.sha256)
+            assert source.ref == _ct94_source_ref
+            self.candidate = candidate
+            return PlanRef(source.ref.workspace_relative_path, source.ref.source_kind, candidate.ref.sha256)
+
+    _ct94_source_ref = source.ref
 
     publisher = RecordingPublisher()
     promoted = workflow._promote_validated_plan(source, validated, publisher=publisher)
@@ -3350,20 +3369,21 @@ def test_ct94_ordinary_dispatch_cannot_seed_a_candidate(tmp_path: Path) -> None:
 
 def test_ct94_missing_publisher_fails_closed_without_canonical_write(tmp_path: Path) -> None:
     """CT115 (E299): the refusal is named, and it happens before any repair."""
-    from types import SimpleNamespace
+    from dataclasses import replace
 
     from fa.inner_loop.plan_promotion import PlanPromotionError
 
     source = _ct94_source(tmp_path)
+    ctx = _context(tmp_path, run_id="ct94")
     with pytest.raises(PlanPromotionError) as error:
-        workflow._require_managed_publisher(SimpleNamespace(plan_publisher=None))
+        workflow._require_managed_publisher(ctx)
     assert error.value.rule == "managed-execution-absent" and error.value.replaced is False
     assert (tmp_path / _CT94_PATH).read_bytes() == source.utf8_bytes
     assert not (tmp_path / ".fa").exists()
     # Control: a run that has the authority passes through unchanged, so the
     # refusal above cannot be "refuse everything".
-    publisher = object()
-    assert workflow._require_managed_publisher(SimpleNamespace(plan_publisher=publisher)) is publisher
+    publisher = _CT91TestPlanPublisher(tmp_path)
+    assert workflow._require_managed_publisher(replace(ctx, plan_publisher=publisher)) is publisher
 
 
 def test_ct94_promotion_port_receives_only_the_pinned_destination(tmp_path: Path) -> None:
@@ -3378,9 +3398,11 @@ def test_ct94_promotion_port_receives_only_the_pinned_destination(tmp_path: Path
             self.source: Any | None = None
             self.candidate: Any | None = None
 
-        def publish_candidate(self, pinned: Any, buffer: Any, *, deadline: float | None = None) -> PlanRef:
-            self.source, self.candidate = pinned, buffer
-            return PlanRef(pinned.ref.workspace_relative_path, pinned.ref.source_kind, buffer.ref.sha256)
+        def publish_candidate(
+            self, source: PlanSnapshot, candidate: PlanSnapshot, *, deadline: float | None = None
+        ) -> PlanRef:
+            self.source, self.candidate = source, candidate
+            return PlanRef(source.ref.workspace_relative_path, source.ref.source_kind, candidate.ref.sha256)
 
     publisher = RecordingPublisher()
     promoted = workflow._promote_validated_plan(source, validated, publisher=publisher)
@@ -3396,14 +3418,16 @@ class _CT91TestPlanPublisher:
     def __init__(self, workspace: Path) -> None:
         self.workspace = workspace
 
-    def publish_candidate(self, pinned: Any, candidate: Any, *, deadline: float | None = None) -> Any:
+    def publish_candidate(
+        self, source: PlanSnapshot, candidate: PlanSnapshot, *, deadline: float | None = None
+    ) -> PlanRef:
         from fa.inner_loop.plan_admission import PlanRef, PlanRefError, read_plan_snapshot
 
-        canonical = self.workspace / pinned.ref.workspace_relative_path
+        canonical = self.workspace / source.ref.workspace_relative_path
         current = read_plan_snapshot(self.workspace, canonical)
-        if current.ref != pinned.ref:
+        if current.ref != source.ref:
             raise PlanRefError("source-changed")
-        if not pinned.ref.workspace_relative_path.startswith(
+        if not source.ref.workspace_relative_path.startswith(
             "worklogs/planning-topology-and-executable-contracts-loop/increments/"
         ):
             raise PlanRefError("scope-denied")
@@ -3431,7 +3455,7 @@ class _CT91TestPlanPublisher:
             raise UncertainPublishError("test-only fake publisher boundary") from error
         finally:
             os.close(directory)
-        return PlanRef(pinned.ref.workspace_relative_path, pinned.ref.source_kind, candidate.ref.sha256)
+        return PlanRef(source.ref.workspace_relative_path, source.ref.source_kind, candidate.ref.sha256)
 
 
 # Public admission root: only ProviderChain.request is replaced in normal-path cases.

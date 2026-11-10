@@ -42,6 +42,20 @@ def _make_workspace_with_f2(tmp_path: Path) -> None:
     dest.write_text(body, encoding="utf-8")
 
 
+def test_public_managed_tool_contracts_have_complete_exports() -> None:
+    """The real authoring rule checks both managed tool modules, not a copied rule."""
+    report = run_all(_REPO_ROOT, rules=RULE_ALLOWLIST)
+    managed_paths = {
+        "src/fa/inner_loop/tools/workflow_tool.py",
+        "src/fa/inner_loop/tools/workspace_port.py",
+    }
+    assert not [
+        diagnostic
+        for diagnostic in report.diagnostics
+        if diagnostic.code == "FA-AUTHORING-V2-EXPORTS-COMPLETENESS" and diagnostic.path in managed_paths
+    ]
+
+
 def test_authoring_check_catches_f2_via_default_allowlist(tmp_path: Path) -> None:
     """C2: fa authoring-check via default allowlist must catch F-2 fixture.
 

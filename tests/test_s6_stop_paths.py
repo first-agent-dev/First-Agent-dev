@@ -361,3 +361,40 @@ def test_stop_reason_is_recorded_in_observations(tmp_path: Path) -> None:
     stop_notes = [obs for obs in state.observations if "run stopped at" in obs]
     assert stop_notes, f"no stop observation recorded; observations={state.observations}"
     assert "halt with a reason" in stop_notes[0]
+
+
+@pytest.mark.parametrize(
+    ("point", "reason", "terminal"),
+    [
+        (LifecyclePoint.AFTER_TOOL_EXEC.value, "policy denial", True),
+        (LifecyclePoint.BETWEEN_ROUNDS.value, "LOOP_PREFIX", True),
+        (LifecyclePoint.BETWEEN_ROUNDS.value, "pause sentinel active", False),
+        ("iteration_cap", "iteration_cap reached", False),
+        ("other", "policy denial", False),
+    ],
+)
+def test_terminal_tool_stop_matrix(tmp_path: Path, point: str, reason: str, terminal: bool) -> None:
+    """C0: only terminal stop kinds emit a denial and append an observation."""
+    from fa.inner_loop.coder_loop import LOOP_GUARD_REASON_PREFIX, _handle_terminal_tool_stop
+    from fa.output import EventBus, OutputEvent
+
+    if reason == "LOOP_PREFIX":
+        reason = LOOP_GUARD_REASON_PREFIX + " repeated calls"
+    events: list[OutputEvent] = []
+
+    class Capture:
+        def on_event(self, event: OutputEvent) -> None:
+            events.append(event)
+
+    bus = EventBus()
+    bus.add(Capture())
+    state = _state(tmp_path, "stop-matrix")
+    before = list(state.observations)
+    assert _handle_terminal_tool_stop(StopInfo(point=point, reason=reason), state=state, output=bus) is terminal
+    if terminal:
+        assert state.observations == [*before, f"run stopped at {point}: {reason}"]
+        assert len(events) == 1 and events[0].type == "hook_deny"
+        assert events[0].data == {"point": point, "reason": reason}
+    else:
+        assert state.observations == before and not events
+    assert not _handle_terminal_tool_stop(None, state=state, output=bus)

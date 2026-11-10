@@ -26,6 +26,7 @@ from fa.execution.client import (
     ExecutionUncertainError,
     ManagedBashExecutor,
     ManagedProjectToolExecutor,
+    PlanPublication,
 )
 from fa.execution.profiles import ExecutionProfile
 from fa.execution.protocol import ERROR_CODES, DeadlineConnection, decode_request, encode_json, read_frame, write_frame
@@ -696,7 +697,7 @@ def candidate_saga(*, already_published: bool = False) -> tuple[Callable[[dict[s
     return handler, written
 
 
-def publish(client: ExecutionClient, *, deadline: float | None = None):
+def publish(client: ExecutionClient, *, deadline: float | None = None) -> PlanPublication:
     return client.publish_plan(
         SimpleNamespace(namespace=NS, workspace_id=VIEW.workspace_id),
         SOURCE,

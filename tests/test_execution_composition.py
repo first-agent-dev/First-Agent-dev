@@ -15,6 +15,7 @@ import logging
 import os
 import shlex
 import socket
+import subprocess
 import threading
 import time
 from collections.abc import Iterator
@@ -30,9 +31,11 @@ from fa import cli
 from fa.execution import composition
 from fa.execution.cell_worker import serve, serve_once
 from fa.execution.client import (
+    ExecutionClient,
     ExecutionRejectedError,
     ExecutionUnavailableError,
     ExecutionUncertainError,
+    PlanPublication,
     StagePublication,
 )
 from fa.execution.composition import (
@@ -40,7 +43,6 @@ from fa.execution.composition import (
     ClientWorkspaceProvisioner,
     ExecutionBinding,
     ManagedExecution,
-    PlanPublication,
     client_workspace_provisioner,
     managed_execution_for_run,
 )
@@ -59,6 +61,8 @@ from fa.execution.types import (
 from fa.inner_loop import workflow_controller
 from fa.inner_loop.plan_admission import PlanRef, read_plan_snapshot, snapshot_from_bytes
 from fa.inner_loop.plan_promotion import PlanPromotionError
+from fa.inner_loop.registry import ToolResult
+from fa.inner_loop.state import EventLog
 from fa.providers.base import ResponseInfo
 from fa.runtime.pty_pool import PtyPool
 from fa.session.manager import RunContext, SessionContext, SessionManagerError
@@ -226,7 +230,7 @@ def test_session_cli_refuses_missing_provisioner_before_workspace_lifecycle(
     lifecycle_calls: list[str] = []
 
     class _HostOnlyManager:
-        workspace_provisioner = None
+        workspace_provisioner: None = None
 
         def create_or_attach_session(self, **_kwargs: Any) -> Any:
             lifecycle_calls.append("create_or_attach")
@@ -302,7 +306,7 @@ def test_session_stage_refuses_missing_managed_execution_before_registry_or_prov
         run_id=run.run_id,
         run_log_dir=run.run_log_dir,
         session_db=None,
-        log=SimpleNamespace(path=run.run_log_dir / "events.jsonl"),
+        log=EventLog(run.run_log_dir / "events.jsonl", run_id=run.run_id),
         workspace=run.workspace_path,
         role="chat",
         plan_ref=None,
@@ -403,6 +407,7 @@ def test_a_host_side_write_before_the_second_publish_is_refused(site: Site, tmp_
                 read_plan_snapshot(site.source, Path(PLAN_RELATIVE)),
                 snapshot_from_bytes("draft.md", b"# Repaired again\n"),
             )
+        assert isinstance(error.value, (ExecutionUncertainError, ExecutionRejectedError))
         assert error.value.code == "CORRUPT_STATE"
         assert plan_path.read_bytes() == b"# Repaired plan\n"  # the first commit stands
 
@@ -536,7 +541,7 @@ def test_the_workflow_root_reaches_promotion(monkeypatch: pytest.MonkeyPatch, tm
         return 0, None
 
     monkeypatch.setattr(cli, "run_workflow", fake_run_workflow)
-    args = SimpleNamespace(
+    args = argparse.Namespace(
         task="ship it",
         task_planner=None,
         task_coder=None,
@@ -942,7 +947,7 @@ eval:
 
     monkeypatch.setattr(cli, "_session_manager_for_args", lambda _args: _WorkflowWorkspace())
     managed_instances: list[ManagedExecution] = []
-    original_managed_for_run = cli.managed_execution_for_run
+    original_managed_for_run = managed_execution_for_run
 
     def capture_managed(*args: Any, **kwargs: Any) -> ManagedExecution | None:
         managed = original_managed_for_run(*args, **kwargs)
@@ -2472,7 +2477,7 @@ def _watch_workflow_revision_diff(service: Any, provider_oracle: Any, mode: str)
         assert service.authority._bindings[workspace_id].current["revision_id"] == before_revision
         return result
 
-    service._diff_revisions = counted  # type: ignore[method-assign]
+    service._diff_revisions = counted
     return calls, effects
 
 
@@ -2612,7 +2617,7 @@ eval:
         lambda _args, run_id: (run_id, session, run, session_db),
     )
     managed_instances: list[ManagedExecution] = []
-    original_managed_for_run = cli.managed_execution_for_run
+    original_managed_for_run = managed_execution_for_run
 
     def track_managed_for_run(*args: Any, **kwargs: Any) -> ManagedExecution | None:
         managed = original_managed_for_run(*args, **kwargs)
@@ -2758,9 +2763,8 @@ eval:
     assert any(row["kind"] == "tool_result" and row["tool_name"] == "fs_read_file" for row in child_rows)
 
 
-def test_failed_stage_stop_is_not_retried_by_cleanup(tmp_path: Path) -> None:
+def test_failed_stage_stop_is_not_retried_by_cleanup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """An unproved STOP_VIEW is one attempt, not an invitation to retry in cleanup."""
-    from fa.execution.client import ExecutionClient
     from fa.inner_loop.coder_loop import SessionOutcome
     from fa.inner_loop.registry import ToolRegistry
 
@@ -2792,14 +2796,14 @@ def test_failed_stage_stop_is_not_retried_by_cleanup(tmp_path: Path) -> None:
         stop_calls += 1
         return False
 
-    managed = SimpleNamespace(
-        view_profile=native_profile(),
-        current_revision_id=revision_id,
-        binding=ExecutionBinding(NamespaceRef("session-1", "stage-run"), workspace_id),
+    managed = ManagedExecution(
         client=ExecutionClient(tmp_path / "supervisor.sock", server_uid=os.getuid(), rpc_timeout_ms=100),
-        open_view=lambda **_kwargs: view_grant,
-        stop_view=stop_view,
+        binding=ExecutionBinding(NamespaceRef("session-1", "stage-run"), workspace_id),
+        grant=GrantReply(Operation.ACQUIRE_WRITER, "6" * 64, None, 1, revision_id, None),
+        view_profile=native_profile(),
     )
+    monkeypatch.setattr(managed, "open_view", lambda **_kwargs: view_grant)
+    monkeypatch.setattr(managed, "stop_view", stop_view)
 
     with pytest.raises(ExecutionUnavailableError):
         cli._drive_stage_with_managed_workspace(
@@ -2950,7 +2954,7 @@ def _paths_to(value: str, holder: Any) -> set[tuple[str, ...]]:
     return found
 
 
-def test_the_writer_capability_lives_in_exactly_one_place() -> None:
+def test_the_writer_capability_lives_in_exactly_one_place(tmp_path: Path) -> None:
     """Q90, stated as what this design actually claims, and made checkable.
 
     Q90's letter - "``ExecutionClient`` alone caches and selects raw grants" - is not
@@ -2963,7 +2967,7 @@ def test_the_writer_capability_lives_in_exactly_one_place() -> None:
     capability = "7" * 64
     binding = ExecutionBinding(NamespaceRef("session-1", "run-1"), "ws-" + "1" * 32)
     managed = ManagedExecution(
-        _ScriptedAuthority(lost=set(), answer_the_replay=True),
+        ExecutionClient(tmp_path / "supervisor.sock", server_uid=os.getuid(), rpc_timeout_ms=100),
         binding,
         GrantReply(Operation.ACQUIRE_WRITER, capability, None, 1, "rev-" + "2" * 32),
     )
@@ -3028,7 +3032,7 @@ def test_an_unconfirmed_writer_is_reported_to_the_operator(monkeypatch: pytest.M
     monkeypatch.setattr(
         cli, "managed_execution_for_run", lambda *a, **k: (_ for _ in ()).throw(ExecutionUncertainError("op-1"))
     )
-    args = SimpleNamespace(
+    args = argparse.Namespace(
         task="ship it",
         task_planner=None,
         task_coder=None,
@@ -3421,14 +3425,14 @@ def test_r10_managed_chat_bash_refusal_never_falls_back_to_host(
 
     def trapped_fallback(*args: Any, **_kwargs: Any) -> Any:
         fallback_calls.append(args)
-        return run_bash_module.ToolResult.fail("mutant_host_fallback", "host fallback tripwire", retryable=False)
+        return ToolResult.fail("mutant_host_fallback", "host fallback tripwire", retryable=False)
 
     def trapped_subprocess(*args: Any, **_kwargs: Any) -> Any:
         host_process_calls.append(args)
         raise AssertionError("host subprocess tripwire reached")
 
     monkeypatch.setattr(run_bash_module, "_run_subprocess_fallback", trapped_fallback)
-    monkeypatch.setattr(run_bash_module.subprocess, "run", trapped_subprocess)
+    monkeypatch.setattr(subprocess, "run", trapped_subprocess)
     exec_requests: list[dict[str, Any]] = []
     exec_denials: list[str] = []
 

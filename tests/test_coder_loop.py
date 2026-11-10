@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 from collections import Counter
 from collections.abc import Mapping
+from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import wait as real_wait
 from pathlib import Path
 from threading import Lock
@@ -237,7 +238,7 @@ def test_drive_session_dispatches_tool_calls_then_completes(tmp_path: Path) -> N
 
 @pytest.mark.parametrize(
     "fault",
-    ["wait-after-completion", "executor-before-submit", "submit-after-enqueue"],
+    ["wait-after-completion", "executor-before-submit", "submit-after-enqueue", "first-submit-after-enqueue"],
 )
 def test_drive_session_settles_parallel_batch_without_replaying_effects(
     fault: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -308,19 +309,19 @@ def test_drive_session_settles_parallel_batch_without_replaying_effects(
 
         monkeypatch.setattr(loop_module, "ThreadPoolExecutor", fail_executor_creation)
     else:
-        original_submit = loop_module.ThreadPoolExecutor.submit
+        original_submit = ThreadPoolExecutor.submit
         submit_count = 0
 
         def submit_then_lose_future(executor: Any, fn: Any, /, *args: Any, **kwargs: Any) -> Any:
             nonlocal submit_count
             submit_count += 1
             future = original_submit(executor, fn, *args, **kwargs)
-            if submit_count == 2:
+            if submit_count == (1 if fault == "first-submit-after-enqueue" else 2):
                 future.result(timeout=5)
                 raise RuntimeError("injected lost Future after enqueue")
             return future
 
-        monkeypatch.setattr(loop_module.ThreadPoolExecutor, "submit", submit_then_lose_future)
+        monkeypatch.setattr(ThreadPoolExecutor, "submit", submit_then_lose_future)
 
     outcome = drive_session(
         "read two independent items",
@@ -332,9 +333,16 @@ def test_drive_session_settles_parallel_batch_without_replaying_effects(
 
     assert outcome.exit_code == 0
     assert outcome.stop_reason == "stopped_by_llm"
-    assert effects == Counter({"a": 1, "b": 1})
+    assert effects == (Counter({"a": 1}) if fault == "first-submit-after-enqueue" else Counter({"a": 1, "b": 1}))
     assert len(outcome.tool_results) == 2
-    if fault == "submit-after-enqueue":
+    if fault == "first-submit-after-enqueue":
+        unknown, unsubmitted = outcome.tool_results
+        assert unknown.error is not None and unknown.error.code == "exec_failed"
+        assert unknown.error.retryable is False
+        assert unsubmitted.error is not None and unsubmitted.error.code == "exec_failed"
+        assert unsubmitted.error.retryable is True
+        assert "before this call was submitted" in unsubmitted.error.message
+    elif fault == "submit-after-enqueue":
         assert outcome.tool_results[0].summary == "read a"
         assert outcome.tool_results[1].error is not None
         assert outcome.tool_results[1].error.code == "exec_failed"
@@ -362,6 +370,16 @@ def test_drive_session_hits_iteration_cap(tmp_path: Path) -> None:
     hooks = HookRegistry()
     hooks.register(SandboxHook(tmp_path))
     state = _make_state(tmp_path)
+    from fa.output import EventBus, OutputEvent
+
+    events: list[OutputEvent] = []
+
+    class Capture:
+        def on_event(self, event: OutputEvent) -> None:
+            events.append(event)
+
+    bus = EventBus()
+    bus.add(Capture())
 
     outcome = drive_session(
         "loop forever",
@@ -370,20 +388,40 @@ def test_drive_session_hits_iteration_cap(tmp_path: Path) -> None:
         hooks=hooks,
         state=state,
         max_turns=3,
+        output=bus,
     )
 
     assert outcome.exit_code == 1
     assert outcome.stop_reason == "iteration_cap"
     assert outcome.turns == 3
     assert len(provider.calls) == 3
+    stops = [row for row in state.require_log().read_all() if row.kind == "run_stopped"]
+    assert stops[-1].content["reason"] == "iteration_cap"
+    ends = [event for event in events if event.type == "session_end"]
+    assert len(ends) == 1 and ends[0].data["stop_reason"] == "iteration_cap"
+
+    from fa.stats import parse_session
+
+    analytics = parse_session(tmp_path / "events.jsonl")
+    assert analytics is not None
+    assert analytics.stop_reason == "iteration_cap"
+    assert analytics.ok is False
 
 
 # -- Provider chain failure modes -------------------------------------------
 
 
-def test_drive_session_chain_exhausted_returns_exit_two(tmp_path: Path) -> None:
+def test_drive_session_chain_exhausted_returns_exit_two(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     provider = FakeProvider([ProviderTransientError("503", status=503, kind="service_unavailable")])
     chain = _make_chain(provider)
+    requests: list[RequestInfo] = []
+    original_request = chain.request
+
+    def recording_request(request: RequestInfo) -> Any:
+        requests.append(request)
+        return original_request(request)
+
+    monkeypatch.setattr(chain, "request", recording_request)
     registry = _registry_with_dummy_tool()
     hooks = HookRegistry()
     hooks.register(SandboxHook(tmp_path))
@@ -400,6 +438,110 @@ def test_drive_session_chain_exhausted_returns_exit_two(tmp_path: Path) -> None:
     assert outcome.exit_code == 2
     assert outcome.stop_reason == "chain_exhausted"
     assert outcome.turns == 1
+    assert len(requests) == 3 and all(request is requests[0] for request in requests)
+
+
+def test_cooldown_retry_reuses_request_and_records_attempts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """C1/ADR-9: a failed chain cools down, retries the same turn and records both outcomes."""
+    from fa.output import EventBus, OutputEvent
+
+    provider = FakeProvider(
+        [
+            ProviderTransientError("temporary outage", status=503, kind="service_unavailable"),
+            _make_response(text="recovered", finish_reason="stop"),
+        ]
+    )
+    original = _make_chain(provider)
+    clock = [100_000.0]
+    chain = ProviderChain(
+        original.config, provider_factory=lambda _entry: provider, env={"TEST_KEY": "k"}, clock=lambda: clock[0]
+    )
+    sleeps: list[float] = []
+
+    def sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        clock[0] += seconds
+
+    monkeypatch.setattr("time.time", lambda: clock[0])
+    monkeypatch.setattr("time.sleep", sleep)
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    state = _make_state(tmp_path)
+    captured: list[OutputEvent] = []
+
+    class Capture:
+        def on_event(self, event: OutputEvent) -> None:
+            captured.append(event)
+
+    bus = EventBus()
+    bus.add(Capture())
+    outcome = drive_session(
+        "retry the task",
+        provider_chain=chain,
+        registry=_registry_with_dummy_tool(),
+        hooks=HookRegistry(),
+        state=state,
+        output=bus,
+        max_turns=1,
+    )
+    assert outcome.exit_code == 0 and outcome.stop_reason == "stopped_by_llm" and outcome.turns == 1
+    assert len(provider.calls) == 2 and provider.calls[0] == provider.calls[1]
+    assert sleeps == [300.0]
+    rows = state.require_log().read_all()
+    attempts = [row for row in rows if row.kind == "provider_attempt"]
+    assert [row.content["status"] for row in attempts] == [503, 200]
+    assert all(row.content["logical_call_id"] for row in attempts)
+    llm_rows = [row for row in rows if row.kind == "llm_call"]
+    assert len(llm_rows) == 1 and llm_rows[0].content["logical_call_id"] == attempts[1].content["logical_call_id"]
+    retries = [event for event in captured if event.type == "api_retry"]
+    assert len(retries) == 1 and retries[0].data["retry_after_s"] == 300
+    assert len([row for row in rows if row.kind == "session_summary"]) == 1
+
+
+def test_exhausted_chain_records_each_provider_attempt_once_in_stats(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """C1/ADR-9: three actual provider failures are three audit rows and three stats attempts."""
+    from fa.stats import parse_session
+
+    provider = FakeProvider(
+        [ProviderTransientError("temporary outage", status=503, kind="service_unavailable") for _ in range(3)]
+    )
+    original = _make_chain(provider)
+    clock = [100_000.0]
+    chain = ProviderChain(
+        original.config, provider_factory=lambda _entry: provider, env={"TEST_KEY": "k"}, clock=lambda: clock[0]
+    )
+
+    def sleep(seconds: float) -> None:
+        clock[0] += seconds
+
+    monkeypatch.setattr("time.time", lambda: clock[0])
+    monkeypatch.setattr("time.sleep", sleep)
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    state = _make_state(tmp_path)
+    outcome = drive_session(
+        "retry the task",
+        provider_chain=chain,
+        registry=_registry_with_dummy_tool(),
+        hooks=HookRegistry(),
+        state=state,
+        max_turns=1,
+    )
+    assert outcome.exit_code == 2 and outcome.stop_reason == "chain_exhausted"
+    assert len(provider.calls) == 3
+    rows = state.require_log().read_all()
+    attempts = [row for row in rows if row.kind == "provider_attempt"]
+    assert len(attempts) == 3
+    assert [row.content["status"] for row in attempts] == [503, 503, 503]
+    ids = [row.content["logical_call_id"] for row in attempts]
+    assert len(set(ids)) == 3
+    terminal_rows = [
+        row for row in rows if row.kind == "run_stopped" and row.content.get("reason") == "chain_exhausted"
+    ]
+    assert len(terminal_rows) == 1
+    analytics = parse_session(state.require_log().path)
+    assert analytics is not None and len(analytics.provider_health) == 1
+    assert analytics.provider_health[0].total == 3 and analytics.provider_health[0].ok == 0
 
 
 def test_drive_session_chain_retry_sleep_uses_real_cooldown_outside_pytest(
@@ -508,6 +650,90 @@ def test_drive_session_abnormal_stop_surfaces_finish_reason(tmp_path: Path) -> N
     assert outcome.final_text == "cut off"
 
 
+@pytest.mark.parametrize(
+    ("finish_reason", "exit_code", "stop_reason", "hint"),
+    [
+        ("stop", 0, "stopped_by_llm", None),
+        ("end_turn", 0, "stopped_by_llm", None),
+        ("", 0, "stopped_by_llm", None),
+        ("length", 1, "abnormal_stop:length", "Output truncated"),
+        ("content_filter", 1, "abnormal_stop:content_filter", "Output blocked"),
+        ("unexpected", 1, "abnormal_stop:unexpected", "Unexpected finish_reason"),
+    ],
+)
+def test_no_tool_response_terminal_decision_and_audit(
+    tmp_path: Path, finish_reason: str, exit_code: int, stop_reason: str, hint: str | None
+) -> None:
+    """C1: finish reason owns the outcome and abnormal audit/output after model_msg."""
+    from fa.output import EventBus, OutputEvent
+
+    provider = FakeProvider([_make_response(text="answer", finish_reason=finish_reason)])
+    state = _make_state(tmp_path)
+    events: list[OutputEvent] = []
+
+    class Capture:
+        def on_event(self, event: OutputEvent) -> None:
+            events.append(event)
+
+    bus = EventBus()
+    bus.add(Capture())
+    outcome = drive_session(
+        "test",
+        provider_chain=_make_chain(provider),
+        registry=_registry_with_dummy_tool(),
+        hooks=HookRegistry(),
+        state=state,
+        output=bus,
+    )
+    assert (outcome.exit_code, outcome.stop_reason, outcome.turns, outcome.final_text) == (
+        exit_code,
+        stop_reason,
+        1,
+        "answer",
+    )
+    assert len(provider.calls) == 1 and outcome.tool_results == ()
+    rows = state.require_log().read_all()
+    models = [row for row in rows if row.kind == "model_msg"]
+    assert len(models) == 1 and models[0].content["finish_reason"] == finish_reason
+    stops = [row for row in rows if row.kind == "run_stopped"]
+    warnings = [event for event in events if event.type == "loop_warn"]
+    if hint is None:
+        assert stops == [] and warnings == []
+    else:
+        assert len(stops) == 1 and stops[0].content["reason"] == stop_reason
+        assert rows.index(models[0]) < rows.index(stops[0])
+        assert len(warnings) == 1 and warnings[0].data["detector"] == "abnormal_stop"
+        assert hint in str(warnings[0].data["message"])
+    summary = [row for row in rows if row.kind == "session_summary"]
+    assert len(summary) == 1 and summary[0].content["exit_code"] == exit_code
+    assert summary[0].content["stop_reason"] == stop_reason
+
+
+def test_no_tool_abnormal_stop_retains_prior_tool_results(tmp_path: Path) -> None:
+    """C1: tool-bearing response is executed before a later abnormal terminal response."""
+    call = {"id": "call-1", "type": "function", "function": {"name": "echo", "arguments": '{"text":"hi"}'}}
+    provider = FakeProvider(
+        [
+            _make_response(finish_reason="tool_calls", tool_calls=(call,)),
+            _make_response(text="truncated", finish_reason="length"),
+        ]
+    )
+    state = _make_state(tmp_path)
+    outcome = drive_session(
+        "test",
+        provider_chain=_make_chain(provider),
+        registry=_registry_with_dummy_tool(),
+        hooks=HookRegistry(),
+        state=state,
+    )
+    assert (outcome.exit_code, outcome.stop_reason, outcome.turns) == (1, "abnormal_stop:length", 2)
+    assert len(provider.calls) == 2 and len(outcome.tool_results) == 1
+    assert outcome.tool_results[0].summary == "echo hi"
+    rows = state.require_log().read_all()
+    assert [row.tool_call_id for row in rows if row.kind == "tool_result"] == ["call-1"]
+    assert [row.content["finish_reason"] for row in rows if row.kind == "model_msg"] == ["tool_calls", "length"]
+
+
 # -- Tool-spec rendering into the request body ------------------------------
 
 
@@ -570,6 +796,8 @@ def test_drive_session_canonicalizes_missing_tool_call_id_for_pairing(tmp_path: 
     tool_messages = [m for m in follow_up.messages if m.get("role") == "tool"]
     assert assistant_messages[-1]["tool_calls"][0]["id"] == "tc-0000"
     assert tool_messages[-1]["tool_call_id"] == "tc-0000"
+    model_rows = [row for row in state.require_log().read_all() if row.kind == "model_msg"]
+    assert model_rows[0].content["tool_calls"] == [missing_id]  # audit keeps provider's raw ID shape
 
 
 def test_drive_session_handles_malformed_tool_arguments(tmp_path: Path) -> None:
@@ -731,7 +959,13 @@ def test_drive_session_preserves_custom_message_extras(tmp_path: Path) -> None:
         "type": "function",
         "function": {"name": "echo", "arguments": '{"text": "hi"}'},
     }
-    extras = {"message_extras": {"reasoning_details": "Preserved reasoning content here"}}
+    extras = {
+        "message_extras": {
+            "reasoning_details": "Preserved reasoning content here",
+            "content": "provider extra",
+            "tool_calls": [{"id": "stale"}],
+        }
+    }
     provider = FakeProvider(
         [
             ResponseInfo(
@@ -766,6 +1000,8 @@ def test_drive_session_preserves_custom_message_extras(tmp_path: Path) -> None:
     assistant_messages = [m for m in follow_up.messages if m.get("role") == "assistant"]
     assert len(assistant_messages) == 1
     assert assistant_messages[0]["reasoning_details"] == "Preserved reasoning content here"
+    assert assistant_messages[0]["content"] == "provider extra"
+    assert assistant_messages[0]["tool_calls"][0]["id"] == "tc-1"
 
 
 def test_tool_pairing_invariant_accepts_complete_openai_pairs() -> None:
@@ -897,6 +1133,57 @@ def test_drive_session_pads_truncated_tool_calls(tmp_path: Path) -> None:
     events_path = tmp_path / "events.jsonl"
     kinds = [json.loads(line)["kind"] for line in events_path.read_text().splitlines() if line.strip()]
     assert kinds.count("tool_result") == 3
+    rows = state.require_log().read_all()
+    call_ids = [row.tool_call_id for row in rows if row.kind == "tool_call"]
+    results = [row for row in rows if row.kind == "tool_result"]
+    assert call_ids == ["tc-0", "tc-1", "tc-2"]
+    assert [row.tool_call_id for row in results] == call_ids
+    assert results[-1].content["ok"] is False
+    error = results[-1].content["error"]
+    assert isinstance(error, dict)
+    assert error["code"] == "iteration_cap" and error["retryable"] is True
+
+
+def test_padding_preserves_stop_and_ignores_previous_turn_stop(tmp_path: Path) -> None:
+    """C0/S6-F4: padding retains the stop and never borrows a stale log reason."""
+    from fa.inner_loop.coder_loop import _pad_unexecuted_tool_results
+    from fa.inner_loop.loop import SessionRun, StopInfo
+    from fa.inner_loop.registry import ToolCall
+
+    state = _make_state(tmp_path)
+    log = state.require_log()
+    log.append(actor="runtime", kind="run_stopped", content={"reason": "OLD_GUARD"})
+    before = len(log.read_all())
+    call = ToolCall(name="echo", params={"text": "not executed"}, call_id="new-call")
+    stop = StopInfo(point="iteration_cap", reason="iteration_cap: test")
+    run = _pad_unexecuted_tool_results(
+        (call,),
+        SessionRun(results=(), stop=stop),
+        state=state,
+        log=log,
+        log_len_before=before,
+        limits=RuntimeLimits(max_iterations=1),
+    )
+    assert run.stop is stop
+    assert len(run) == 1 and run[0].error is not None
+    assert run[0].error.code == "iteration_cap" and run[0].error.retryable is True
+    assert "OLD_GUARD" not in run[0].error.message
+    rows = log.read_all()[before:]
+    assert [(row.kind, row.tool_call_id) for row in rows if row.kind in {"tool_call", "tool_result"}] == [
+        ("tool_call", "new-call"),
+        ("tool_result", "new-call"),
+    ]
+    after = len(log.read_all())
+    same = _pad_unexecuted_tool_results(
+        (call,),
+        run,
+        state=state,
+        log=log,
+        log_len_before=after,
+        limits=RuntimeLimits(max_iterations=1),
+    )
+    assert same is run
+    assert len(log.read_all()) == after
 
 
 # -- KeyboardInterrupt terminal path -----------------------------------------
@@ -1224,3 +1511,48 @@ def test_drive_session_logs_llm_call_rollup(tmp_path: Path) -> None:
     # cost_usd is deliberately absent (BACKLOG I-33 — no wired cost source
     # exists yet; a fake/None placeholder would be worse than omission).
     assert "cost_usd" not in row
+
+
+def test_tool_output_redacted_at_real_provider_edge(tmp_path: Path) -> None:
+    """C1/C3: encoded and raw secrets never cross the next provider request."""
+    import base64
+
+    from fa.observability.redaction import SecretRedactor
+    from fa.output import EventBus, OutputEvent
+
+    secret = "fw-SECRET-DEPLOY-VALUE-abcdef0123456789"
+    encoded = base64.b64encode(secret.encode()).decode()
+    call = {
+        "id": "redact-1",
+        "type": "function",
+        "function": {"name": "echo", "arguments": json.dumps({"text": secret + " " + encoded})},
+    }
+    provider = FakeProvider(
+        [_make_response(finish_reason="tool_calls", tool_calls=(call,)), _make_response(text="done")]
+    )
+    state = _make_state(tmp_path)
+    events: list[OutputEvent] = []
+
+    class Capture:
+        def on_event(self, event: OutputEvent) -> None:
+            events.append(event)
+
+    bus = EventBus()
+    bus.add(Capture())
+    drive_session(
+        "echo",
+        provider_chain=_make_chain(provider),
+        registry=_registry_with_dummy_tool(),
+        hooks=HookRegistry(),
+        state=state,
+        redactor=SecretRedactor({"KEY": secret}, ["KEY"]),
+        output=bus,
+    )
+    tool_messages = [m for m in provider.calls[1].messages if m.get("role") == "tool"]
+    assert len(tool_messages) == 1 and tool_messages[0]["tool_call_id"] == "redact-1"
+    content = str(tool_messages[0]["content"])
+    assert secret not in content and encoded not in content
+    assert "***REDACTED***" in content
+    tool_events = [event for event in events if event.type == "tool_call"]
+    assert len(tool_events) == 1 and tool_events[0].data["tool"] == "echo"
+    assert tool_events[0].data["ok"] is True

@@ -414,3 +414,38 @@ def test_log_kind_checker_is_wired_into_the_check_target() -> None:
     assert "check_log_kind_contract.py" in contracts_body, (
         f"_contracts bundle does not invoke check_log_kind_contract.py:\n{contracts_body}"
     )
+
+
+@pytest.mark.parametrize("site", [0, 1], ids=["after-tool", "loop-guard"])
+def test_checker_detects_each_terminal_hook_deny_site(tmp_path: Path, site: int) -> None:
+    """C0: either relocated terminal producer remains within the S6-F2 floor."""
+    root = _make_tree(tmp_path)
+    path = root / "src/fa/inner_loop/tool_turn.py"
+    original = path.read_text(encoding="utf-8")
+    needle = 'OutputEvent(type="hook_deny", data={"point": stop.point, "reason": stop.reason})'
+    assert original.count(needle) == 2
+    pieces = original.split(needle)
+    replacement = 'OutputEvent(type="session_start", data={"point": stop.point, "reason": stop.reason})'
+    mutated = (
+        pieces[0]
+        + (replacement if site == 0 else needle)
+        + pieces[1]
+        + (replacement if site == 1 else needle)
+        + pieces[2]
+    )
+    path.write_text(mutated, encoding="utf-8")
+    assert mutated.count(needle) == 1
+    result = _run_checker(root, PRODUCER_CHECKER)
+    assert result.returncode != 0 and "hook_deny" in result.stdout, result.stdout
+
+
+def test_scope_turn_emitter_is_visible_and_required(tmp_path: Path) -> None:
+    """C0: the relocated scope producer is inventoried and its removal is fatal."""
+    root = _make_tree(tmp_path)
+    _edit(
+        root,
+        "src/fa/inner_loop/scope_turn.py",
+        lambda s: s.replace('type="scope_expansion"', 'type="session_start"', 1),
+    )
+    result = _run_checker(root, PRODUCER_CHECKER)
+    assert result.returncode != 0 and "scope_expansion" in result.stdout, result.stdout

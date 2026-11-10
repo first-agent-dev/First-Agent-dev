@@ -3,7 +3,21 @@
 > Read [`knowledge/llms.txt`](../knowledge/llms.txt) §MUST READ FIRST.
 > Current local delivery is distinct from final I03/deployed acceptance.
 
-## Current state — I02 LOCAL SHIPPED / I03 IMPLEMENTATION IN PROGRESS, 2026-10-18 / E258
+## Current state — Q137 gate and coder-loop decomposition, 2026-11-09
+
+Active session branch `arena/786f6d8a-first-agent-dev`. Full gate remains BLOCKING: last immutable `just test` before later changes returned 37 failed / 7252 passed / 18 skipped / 4 xfailed / 11 errors (coverage 86.52%); no current-snapshot full-gate signoff. The most recent earlier full Pyrefly reported 0 errors; full mypy had 3 errors in 3 files. Managed-provisioner/readiness failures, Q135 F2–F4, Q136 Pylint and I03 live-host acceptance remain open. Do not bypass managed isolation or treat local mocks as live-host proof.
+
+The current [architecture map](planning-topology-and-executable-contracts-loop/notes/coder-loop-architecture-map-2026-11-09.md) §§17.6–18.4 records history/protocol, tool handoff, scope-turn and prompt-composer ownership; the [Q137 working inventory](planning-topology-and-executable-contracts-loop/notes/q137-working-entry-inventory-2026-11-09.md) retains exact targeted banks, mutations and historical gate IDs. Recent P1 payload/compaction tests: 98 and 159 passed; both contract checkers and targeted static checks passed. The file review register remains partial (109 D / 31 P / 32 unchecked; D is not signoff). Agent-legibility means cohesive task working sets and explicit ownership, **not any LOC target**.
+
+### Next
+
+1. Continue AL1–AL6 in the architecture map; trace context-pressure/compaction state, effect ordering and failure matrix before selecting the next substantial safe slice. Preserve existing semantics and use producer/EDGE kill-checks; do not declare victory from file size or C901.
+2. Resolve remaining gate findings with source-grounded scoped changes and re-run full gates when ready; existing legacy CLI cases encounter `managed_execution_unavailable` and must not be made green by disabling isolation.
+3. Keep I03 live ledger append L-RCPT-2/L-RCPT-6 and L-ENTRY-4 planned and unexecuted until actual live-host evidence exists. Continue the incomplete adversarial file review; consult its register.
+
+The following E258/E259 narrative is retained as historical I02/I03 context, not the current branch or current gate status.
+
+## Historical state — I02 LOCAL SHIPPED / I03 IMPLEMENTATION IN PROGRESS, 2026-10-18 / E258
 
 Branch `arena/86633f17-first-agent-dev` only. Retained I02 runtime/test proof snapshot
 `a32a72fc58db4b9a5b048a9b6475649bcf3e32b4`. E230/E231 finalized planning; E232 adds the first

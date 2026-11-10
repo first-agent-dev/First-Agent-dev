@@ -53,11 +53,13 @@ from pathlib import Path
 import pytest
 
 __all__ = [
+    "hardlinks_reason",
     "posix_modes_reason",
     "posix_paths_reason",
     "posix_shell_reason",
     "pty_backend_reason",
     "python3_executable_reason",
+    "requires_hardlinks",
     "requires_posix_modes",
     "requires_posix_paths",
     "requires_posix_shell",
@@ -189,6 +191,20 @@ def has_symlinks() -> bool:
 
 
 @functools.cache
+def has_hardlinks() -> bool:
+    """Probe actual hardlink creation and shared inode in the temp filesystem."""
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "target"
+            target.write_text("x", encoding="utf-8")
+            link = Path(tmp) / "link"
+            os.link(target, link)
+            return target.stat().st_ino == link.stat().st_ino and target.stat().st_nlink >= 2
+    except _PROBE_ERRORS:
+        return False
+
+
+@functools.cache
 def installs_hooks_as_symlinks() -> bool:
     """True when ``fa.hygiene.hooks.install`` links rather than copies.
 
@@ -293,6 +309,7 @@ posix_shell_reason = "needs a POSIX shell whose paths match the host (Git Bash r
 posix_modes_reason = "needs POSIX permission bits that survive chmod (NTFS reports 0o666/0o777)"
 posix_paths_reason = "needs POSIX path semantics (os.sep == '/')"
 symlinks_reason = "needs symlink creation (Windows requires Developer Mode or elevation)"
+hardlinks_reason = "needs hardlink creation in the temporary filesystem"
 symlink_hook_installs_reason = (
     "needs hook installs to use symlinks; install.py forces copy on win32 so the "
     "symlink-replacement path is unreachable there"
@@ -315,6 +332,7 @@ requires_posix_shell = pytest.mark.skipif(not has_posix_shell(), reason=posix_sh
 requires_posix_modes = pytest.mark.skipif(not has_posix_modes(), reason=posix_modes_reason)
 requires_posix_paths = pytest.mark.skipif(not has_posix_paths(), reason=posix_paths_reason)
 requires_symlinks = pytest.mark.skipif(not has_symlinks(), reason=symlinks_reason)
+requires_hardlinks = pytest.mark.skipif(not has_hardlinks(), reason=hardlinks_reason)
 requires_symlink_hook_installs = pytest.mark.skipif(
     not installs_hooks_as_symlinks(), reason=symlink_hook_installs_reason
 )

@@ -37,12 +37,12 @@ from fa.execution.protocol import decode_reply, encode_json
 from fa.execution.receipts import CommandReceipts, bounded_tail
 from fa.execution.supervisor import SupervisorError
 from fa.execution.types import ExecutionReceipt, NamespaceRef, Operation, ViewRef
+from tests.test_execution_admission import claim
 from tests.test_execution_backend import (
     CID,
     Backend,
     FakeWorkerStream,
     ObservedEngine,
-    claim,
     exec_request,
     native_profile,
 )

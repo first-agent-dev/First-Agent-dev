@@ -578,10 +578,10 @@ def _check_i01_case_artifacts(root: Path, index_text: str) -> None:
         raise CoverageError("I01 planner index must have exactly one row per planned case")
     for line in index_rows:
         cells = _split_table_row(line)
-        case_id = re.search(r"(I01-LIVE-\d{2})", cells[0] if cells else "")
+        case_match = re.search(r"(I01-LIVE-\d{2})", cells[0] if cells else "")
         if (
             len(cells) != 11
-            or case_id is None
+            or case_match is None
             or cells[9] != "NOT RUN"
             or cells[10] != "0"
             or not cells[5]

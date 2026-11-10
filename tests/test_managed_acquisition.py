@@ -14,6 +14,7 @@ from typing import Any, Literal, override
 
 import pytest
 
+import fa.inner_loop.managed_acquisition as acquisition
 from fa.inner_loop.admission_schema import (
     ADMISSION_RULES,
     ADMISSION_RULES_V2,
@@ -739,6 +740,20 @@ def test_artifact_metadata_parser_rejects_unsafe_yaml_and_noncanonical_metadata(
         assert rejected.value.rule == "invalid-metadata"
         diagnostic_input = content if isinstance(content, str) else content.decode("utf-8", errors="ignore")
         assert diagnostic_input[:30] not in str(rejected.value)
+
+
+def test_metadata_loader_disposes_on_success_and_duplicate_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    disposed: list[acquisition._UniqueKeyLoader] = []
+
+    def dispose(loader: acquisition._UniqueKeyLoader) -> None:
+        disposed.append(loader)
+
+    monkeypatch.setattr(acquisition._UniqueKeyLoader, "dispose", dispose)
+    parse_artifact_metadata(_ROADMAP_METADATA, kind="roadmap")
+    with pytest.raises(AcquisitionMetadataError):
+        parse_artifact_metadata(_ROADMAP_METADATA.replace(_ROADMAP_SLUG_LINE, "slug: a\nslug: b"), kind="roadmap")
+    assert len(disposed) == 2
+    assert disposed[0] is not disposed[1]
 
 
 def test_artifact_metadata_parser_rejects_yaml_aliases_and_oversized_frontmatter() -> None:

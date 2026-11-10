@@ -259,15 +259,46 @@ def test_ascii_envelope_roundtrips_combining_marks_emoji_and_escaped_text() -> N
     assert json.loads(encoded)["result"] == value
 
 
+def test_ascii_outline_above_old_limit_succeeds(tmp_path: Path) -> None:
+    root, scratch = _tree(tmp_path, "ascii-outline", "def alpha():\n    return 1\n")
+    (root / "giant.md").write_text("# " + "a" * 35000 + "\n", encoding="utf-8")
+    result = project_tools._dispatch(
+        "fs_search", {"path": "giant.md", "output_mode": "outline"}, root=root, scratch=scratch
+    )
+    assert result.error is None and result.result is not None and result.result["truncated"] is False
+    encoded = project_tools._envelope(result)
+    assert 30_000 < len(encoded.encode("ascii")) <= 61_440
+    assert json.loads(encoded)["result"] == result.result
+
+
 def test_unicode_outline_ascii_expansion_refuses_not_partial_success(tmp_path: Path) -> None:
     root, scratch = _tree(tmp_path, "unicode", "def alpha():\n    return 1\n")
     (root / "giant.md").write_text("# " + "я" * 20000 + "\n", encoding="utf-8")
     result = project_tools._dispatch(
         "fs_search", {"path": "giant.md", "output_mode": "outline"}, root=root, scratch=scratch
     )
-    assert result.error is None and result.result is not None and result.result["truncated"] is False
+    assert result.result is None
+    assert result.error is not None
+    assert result.error.code == "search_failed" and result.error.retryable is False
+    assert result.error.message == "managed discovery refused (output_budget)"
     decoded = json.loads(project_tools._envelope(result))
-    assert decoded["result"] is None and decoded["error"]["code"] == "project_tool_failed"
+    assert decoded["result"] is None and decoded["error"]["code"] == "search_failed"
+
+
+@pytest.mark.parametrize(("tool", "code"), [("fs_search", "search_failed"), ("fs_reach", "reach_failed")])
+def test_tool_result_ascii_budget_exact_and_one_over(tool: str, code: str) -> None:
+    empty = ToolResult.ok("s", result={"v": ""})
+    overhead = len(json.dumps(project_tools._payload(empty), ensure_ascii=True, separators=(",", ":")))
+    # The escaped character consumes six ASCII bytes, but only two UTF-8 bytes.
+    value = "я" * 1000 + "a" * (61_440 - overhead - 6000)
+    exact = ToolResult.ok("s", result={"v": value})
+    over = ToolResult.ok("s", result={"v": value + "a"})
+    assert len(json.dumps(project_tools._payload(exact), ensure_ascii=True, separators=(",", ":"))) == 61_440
+    assert project_tools._enforce_tool_result_budget(tool, exact) is exact
+    refused = project_tools._enforce_tool_result_budget(tool, over)
+    assert refused.result is None and refused.error is not None
+    assert refused.error.code == code and refused.error.retryable is False
+    assert refused.error.message == "managed discovery refused (output_budget)"
 
 
 @pytest.mark.xfail(strict=True, reason="Q106: existing 60 KiB envelope cannot transport the legacy outline")
@@ -452,6 +483,7 @@ def test_per_call_indexes_close_even_when_dispatch_fails(
 
         def reach_get(holder: Any) -> StructuralIndex:
             index = get_reach(holder)
+            assert isinstance(index, StructuralIndex)
             if index._anchor is not None and index._anchor not in retained:
                 retained.append(index._anchor)
             return index
@@ -559,7 +591,7 @@ def test_cell_search_builder_binds_strict_rooted_reads_and_host_default_stays_le
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     root, scratch = _tree(tmp_path, "strict-binding", "def alpha():\n    return 1\n")
-    original_builder = project_tools.build_fs_search_tool
+    original_builder = build_fs_search_tool
     strict_flags: list[object] = []
 
     def observe_builder(*args: Any, **kwargs: Any) -> Any:

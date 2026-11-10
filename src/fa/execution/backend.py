@@ -552,13 +552,13 @@ class CellBackend:
         if raw is None:
             raise SupervisorError("INPUT_POLICY")
         view = self._view_of(raw)
+        self._authority.authorize(peer, req, deadline=deadline)  # proof only, no work
         profile = self._authority.view_profile(view)
         if profile is None:
             raise SupervisorError("UNAPPROVED_PROFILE")
         if not profile.interactive:
             # A one-shot profile has no persistent PTY between commands.
             raise SupervisorError("INPUT_POLICY")
-        self._authority.authorize(peer, request, deadline=deadline)  # proof only, no work
         with self._bounded_mutex(deadline):
             episode = self._episodes.get(_EpisodeKey.build(peer, namespace, view, profile.profile_id))
         if episode is None:

@@ -14,7 +14,13 @@ from fa.inner_loop.tools.mutation_guard import (
     check_mutation_allowed,
     managed_version_dependencies,
 )
-from fa.inner_loop.tools.workspace_port import PortRead, WorkspacePortError
+from fa.inner_loop.tools.workspace_port import (
+    PORT_READ_MAX_BYTES,
+    PortProjectArtifactListing,
+    PortRead,
+    PortWrite,
+    WorkspacePortError,
+)
 
 REVISION = "rev-" + "a" * 32
 _CONTENT = "# Workspace map\n"
@@ -27,11 +33,21 @@ class _Port:
     def __init__(self, result: Any) -> None:
         self.result = result
 
-    def read_file(self, _path: str, *, max_bytes: int) -> Any:
-        assert max_bytes > 0
+    @property
+    def cache_dir(self) -> Path | None:
+        raise AssertionError("metadata lookup must not access a cache")
+
+    def read_file(self, path: str, *, offset_bytes: int = 0, max_bytes: int = PORT_READ_MAX_BYTES) -> Any:
+        assert path == "knowledge/llms.txt" and offset_bytes == 0 and max_bytes > 0
         if isinstance(self.result, Exception):
             raise self.result
-        return self.result
+        return self.result  # Intentionally includes malformed remote responses.
+
+    def list_project_artifacts(self, project_slug: str) -> PortProjectArtifactListing:
+        raise AssertionError("metadata lookup must not list artifacts")
+
+    def write_file(self, path: str, content: str, *, expected_sha256: str | None = None) -> PortWrite:
+        raise AssertionError("metadata lookup must not write")
 
 
 class _Blackboard:
@@ -73,17 +89,10 @@ def test_required_managed_metadata_failure_denies_blackboard_guarded_write(tmp_p
         managed_versions=versions,
     )
 
-    if versions is None:
-        assert denial is not None and denial.error is not None
-        assert denial.error.code == BLACKBOARD_UNAVAILABLE
-        assert board.entries == []
-    else:
-        assert denial is None
-        assert len(board.entries) == 1
-        assert board.entries[0].version_dependencies == {
-            "base_revision": REVISION,
-            "llms.txt": _SHA256[:12],
-        }
+    assert versions is None
+    assert denial is not None and denial.error is not None
+    assert denial.error.code == BLACKBOARD_UNAVAILABLE
+    assert board.entries == []
 
 
 def test_managed_metadata_read_refusal_is_not_replaced_by_host_fallback(
