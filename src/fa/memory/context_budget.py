@@ -130,6 +130,28 @@ class ContextBudget:
             "stage3_threshold": self.stage3_threshold,
         }
 
+    def hard_stop_row(self, current_tokens: int, *, message: str) -> dict[str, Any]:
+        """The ``context_budget_hard_stop`` payload for a session that is ending.
+
+        Every hard stop has to write the same keys. They did not: the two
+        stage-3 sites wrote the verdict's mapping (nine keys, including
+        ``ratio``) while the circuit-breaker site wrote four by hand, so
+        ``fa stats`` — which reads ``content["ratio"]`` with a ``0.0`` default —
+        reported the heaviest exit in the system as **0% context**, though
+        overflowing it is exactly what tripped the breaker (Q#5).
+
+        Deriving the row here rather than at the call sites keeps the numbers
+        tied to the object that computed the thresholds: ``ratio`` comes from
+        ``current_tokens``, and ``action``/``threshold``/the ladder are the ones
+        a decision at this usage would carry. The caller may replace
+        ``message`` — the breaker has its own wording, and the operator needs it
+        on the row that ends the run, not only in the neighbouring
+        ``compaction_circuit_breaker`` row.
+        """
+        decision = self.check(current_tokens)
+        decision["message"] = message
+        return decision
+
     def record_compaction_attempt(self, tokens_before: int, tokens_after: int) -> bool:
         """Record a compaction attempt and check for endless loops.
 

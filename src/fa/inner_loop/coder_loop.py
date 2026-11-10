@@ -1101,7 +1101,11 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                         )
                     else:
                         logger.warning("ContextBudget Gate Breach: Stage 3 reached! %s", decision["message"])
-                        log.append(actor="runtime", kind="context_budget_hard_stop", content=decision)
+                        log.append(
+                            actor="runtime",
+                            kind="context_budget_hard_stop",
+                            content=budget.hard_stop_row(usage, message=decision["message"]),
+                        )
                         # context_budget_hard_stop → console context_warn (critical)
                         _emit_context_warn(
                             verdict,
@@ -1354,15 +1358,17 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                                                 },
                                             )
                                         )
+                                    # Q#5: same nine keys as every other hard stop. The
+                                    # four-key payload reported 0% context in `fa stats`,
+                                    # though overflow is what tripped the breaker. The
+                                    # breaker's own wording stays on the row: it is the
+                                    # message that explains the exit.
                                     log.append(
                                         actor="runtime",
                                         kind="context_budget_hard_stop",
-                                        content={
-                                            "message": circuit_breaker_message,
-                                            "current_tokens": post_compaction_usage,
-                                            "limit_tokens": budget.limit_tokens,
-                                            "threshold": budget.stage3_threshold,
-                                        },
+                                        content=budget.hard_stop_row(
+                                            post_compaction_usage, message=circuit_breaker_message
+                                        ),
                                     )
                                     log.append(
                                         actor="runtime",
@@ -1413,7 +1419,11 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                             "ContextBudget Gate Breach: Stage 3 still exceeds budget! %s",
                             decision["message"],
                         )
-                        log.append(actor="runtime", kind="context_budget_hard_stop", content=decision)
+                        log.append(
+                            actor="runtime",
+                            kind="context_budget_hard_stop",
+                            content=budget.hard_stop_row(usage, message=decision["message"]),
+                        )
                         # NEW-1: emit context_warn for compaction-enabled hard-stop
                         # path — mirrors the non-compaction stage3 path so the
                         # operator always sees the context percentage before

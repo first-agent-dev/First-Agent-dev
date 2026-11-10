@@ -124,7 +124,7 @@ def run_case(
             return tokens_after
         return tokens
 
-    patches = [patch("fa.memory.context_budget.estimate_tokens", side_effect=fake_estimate)]
+    patches: list[Any] = [patch("fa.memory.context_budget.estimate_tokens", side_effect=fake_estimate)]
     if breaker:
         patches.append(patch.object(ContextBudget, "record_compaction_attempt", lambda *_a, **_k: False))
     for p in patches:
