@@ -517,6 +517,47 @@ def _request_with_cooldown_retries(
             time.sleep(wait_s)
 
 
+def _emit_context_warn(
+    decision: Mapping[str, object],
+    *,
+    output: EventBus | None,
+    turn: int,
+    max_turns: int,
+    pct: int,
+    action: str,
+    message: str | None = None,
+) -> None:
+    """Console mirror for a context-budget row (FIX-1).
+
+    Five sites emitted this event by hand and four of them shared the identical
+    ``data`` dict; the fifth (the circuit breaker) differed only in which message
+    it carried. That is the same shape that let the terminal-stop branch drift
+    from its neighbours: a copy that looks like the others but is not. Naming the
+    emit keeps every site's payload one dataclass away from the others, so a new
+    argument is a compile-time-shaped decision rather than a copy-paste risk.
+
+    ``decision`` is accepted for provenance — the caller just appended or
+    rejected the same mapping — and is deliberately not read here: the payload
+    is explicit, so a change in the decision's keys cannot silently change what
+    the operator sees.
+    """
+    del decision  # provenance only; see the docstring
+    if output is None:
+        return
+    output.emit(
+        OutputEvent(
+            type="context_warn",
+            turn=turn,
+            max_turns=max_turns,
+            data={
+                "pct": pct,
+                "action": action,
+                "message": message if message is not None else "",
+            },
+        )
+    )
+
+
 def _stop_reason_for(stop: StopInfo) -> str:
     """Short, stable code for a terminal tool stop (the detail stays in the row).
 
@@ -1034,19 +1075,14 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                 logger.warning("ContextBudget Gating Warning: %s", decision["message"])
                 log.append(actor="runtime", kind="context_budget_warn", content=decision)
                 # FIX-1: emit context_warn OutputEvent for console visibility
-                if output is not None:
-                    output.emit(
-                        OutputEvent(
-                            type="context_warn",
-                            turn=turn,
-                            max_turns=max_turns,
-                            data={
-                                "pct": round(last_budget_ratio * 100),
-                                "action": decision["action"],
-                                "message": decision.get("message", ""),
-                            },
-                        )
-                    )
+                _emit_context_warn(
+                    decision,
+                    output=output,
+                    turn=turn,
+                    max_turns=max_turns,
+                    pct=round(last_budget_ratio * 100),
+                    action=str(decision["action"]),
+                )
             elif decision["action"] in {"stage2", "stage3"}:
                 # S6: compaction_warning — single observation point for
                 # compaction-level pressure. Fires in BOTH enabled and
@@ -1089,36 +1125,26 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                         )
                         log.append(actor="runtime", kind="context_budget_warn", content=decision)
                         # FIX-1: emit context_warn for stage2 without compaction
-                        if output is not None:
-                            output.emit(
-                                OutputEvent(
-                                    type="context_warn",
-                                    turn=turn,
-                                    max_turns=max_turns,
-                                    data={
-                                        "pct": round(last_budget_ratio * 100),
-                                        "action": "stage2",
-                                        "message": decision.get("message", ""),
-                                    },
-                                )
-                            )
+                        _emit_context_warn(
+                            decision,
+                            output=output,
+                            turn=turn,
+                            max_turns=max_turns,
+                            pct=round(last_budget_ratio * 100),
+                            action="stage2",
+                        )
                     else:
                         logger.warning("ContextBudget Gate Breach: Stage 3 reached! %s", decision["message"])
                         log.append(actor="runtime", kind="context_budget_hard_stop", content=decision)
                         # context_budget_hard_stop → console context_warn (critical)
-                        if output is not None:
-                            output.emit(
-                                OutputEvent(
-                                    type="context_warn",
-                                    turn=turn,
-                                    max_turns=max_turns,
-                                    data={
-                                        "pct": round(last_budget_ratio * 100),
-                                        "action": "stage3",
-                                        "message": decision.get("message", ""),
-                                    },
-                                )
-                            )
+                        _emit_context_warn(
+                            decision,
+                            output=output,
+                            turn=turn,
+                            max_turns=max_turns,
+                            pct=round(last_budget_ratio * 100),
+                            action="stage3",
+                        )
                         log.append(
                             actor="runtime",
                             kind="run_stopped",
@@ -1328,17 +1354,14 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                                         # sees the context percentage before the
                                         # session dies, regardless of which
                                         # compaction sub-path triggers the stop.
-                                        output.emit(
-                                            OutputEvent(
-                                                type="context_warn",
-                                                turn=turn,
-                                                max_turns=max_turns,
-                                                data={
-                                                    "pct": round(last_budget_ratio * 100),
-                                                    "action": "stage3",
-                                                    "message": circuit_breaker_message,
-                                                },
-                                            )
+                                        _emit_context_warn(
+                                            decision,
+                                            output=output,
+                                            turn=turn,
+                                            max_turns=max_turns,
+                                            pct=round(last_budget_ratio * 100),
+                                            action="stage3",
+                                            message=circuit_breaker_message,
                                         )
                                         # S23: emit loop_warn for compaction circuit
                                         # breaker — actionable console guidance so
@@ -1411,19 +1434,14 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                         # path — mirrors the non-compaction stage3 path so the
                         # operator always sees the context percentage before
                         # the session dies, regardless of compaction setting.
-                        if output is not None:
-                            output.emit(
-                                OutputEvent(
-                                    type="context_warn",
-                                    turn=turn,
-                                    max_turns=max_turns,
-                                    data={
-                                        "pct": round(last_budget_ratio * 100),
-                                        "action": "stage3",
-                                        "message": decision.get("message", ""),
-                                    },
-                                )
-                            )
+                        _emit_context_warn(
+                            decision,
+                            output=output,
+                            turn=turn,
+                            max_turns=max_turns,
+                            pct=round(last_budget_ratio * 100),
+                            action="stage3",
+                        )
                         log.append(
                             actor="runtime",
                             kind="run_stopped",

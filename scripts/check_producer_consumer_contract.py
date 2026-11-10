@@ -15,6 +15,7 @@ Exit 1 if any gaps found. Exit 0 if all contracts satisfied.
 
 from __future__ import annotations
 
+import ast
 import re
 import sys
 from pathlib import Path
@@ -106,15 +107,71 @@ PRODUCER_FILES = [
 ]
 
 
+def _emit_helpers(source: str) -> tuple[dict[str, list[str]], list[tuple[int, int]]]:
+    """Module-level functions that build ``OutputEvent`` and emit it.
+
+    Returns ``{name: [event type, ...]}``. Both conditions are required: a
+    function that only constructs the event never reaches the console, and a
+    function that only calls ``emit`` gets its event from somewhere else.
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:  # the file did not parse; the caller's literal scan still runs
+        return {}, []
+    helpers: dict[str, list[str]] = {}
+    spans: list[tuple[int, int]] = []
+    for fn in tree.body:
+        if not isinstance(fn, ast.FunctionDef):
+            continue
+        types: list[str] = []
+        emits = False
+        writes_rows = False
+        for node in ast.walk(fn):
+            # A durable-row write disqualifies the function: it is a business
+            # step that happens to emit, not a console mirror. Without this,
+            # `_drive_session_inner` (dozens of emits) would qualify and its
+            # whole span would be masked as "one helper".
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "append":
+                writes_rows = True
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "OutputEvent":
+                for kw in node.keywords:
+                    if kw.arg == "type" and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+                        types.append(kw.value.value)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "emit":
+                emits = True
+        if types and emits and not writes_rows:
+            helpers[fn.name] = sorted(set(types))
+            spans.append((fn.lineno, fn.end_lineno or fn.lineno))
+    return helpers, spans
+
+
 def extract_producer_events() -> dict[str, list[str]]:
-    """Return {event_type: [file.py, ...]} for each emit call found."""
+    """Return {event_type: [file.py, ...]} for each emit site found.
+
+    A producer that moved behind a local emit-helper is counted once per CALL
+    SITE of that helper, not once for the helper's single literal. Otherwise
+    deduplicating five hand-written emits into one helper would read as "four
+    producers were deleted" — the exact false negative this file exists to
+    prevent, inverted.
+    """
     result: dict[str, list[str]] = {}
     for fpath in PRODUCER_FILES:
         full = REPO_ROOT / fpath
         if not full.exists():
             continue
         source = full.read_text(encoding="utf-8")
+        helper_types, helper_spans = _emit_helpers(source)
+        if helper_types:
+            for name, types in helper_types.items():
+                call_sites = len(re.findall(rf"\b{re.escape(name)}\(", source)) - 1  # minus the def
+                for et in types:
+                    result.setdefault(et, []).extend([fpath.split("/")[-1]] * max(call_sites, 1))
         for match in re.finditer(r'type="([a-z_]+)"', source):
+            # The literal inside a helper is not its own site — the helper's
+            # CALL SITES were counted above. Counting both would double.
+            lineno = source.count("\n", 0, match.start()) + 1
+            if any(start <= lineno <= end for start, end in helper_spans):
+                continue
             et = match.group(1)
             # Only count if it's inside an OutputEvent() or output.emit() context
             # Check surrounding 200 chars for OutputEvent or emit

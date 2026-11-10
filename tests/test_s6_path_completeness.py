@@ -9,7 +9,8 @@ config warning.
 
 Why these are pins, not features
 --------------------------------
-Source-verified: `coder_loop.py` already emits `context_warn` (5 sites),
+Source-verified: `coder_loop.py` already emits `context_warn` (6 sites, five
+budget paths plus the record-only warn),
 `compaction_*`, `hook_deny` (2 sites) and `api_retry` (4 sites);
 `state.py:380-385` logs `config_warning` and emits it — or queues it when no bus
 is attached yet. None of it had a paired producer+consumer assertion, so a
@@ -255,7 +256,12 @@ def test_provider_retry_and_compaction_have_producers() -> None:
     assert counts.get("api_retry", 0) >= 4, f"provider-retry producers regressed: {counts.get('api_retry')}"
     assert counts.get("compaction_start", 0) >= 1
     assert counts.get("compaction_end", 0) >= 1
-    assert counts.get("context_warn", 0) >= 5, f"context-budget producers regressed: {counts.get('context_warn')}"
+    # Six sites (warn, stage2-without-compaction, stage3-without-compaction,
+    # compaction-enabled stage3, circuit breaker, and the record-only warn that
+    # shares the helper). The floor was 5 while five hand-written emits existed;
+    # the S6-F5 slice's own lesson applies here too — a floor that equals the
+    # current count cannot detect the next deletion.
+    assert counts.get("context_warn", 0) >= 6, f"context-budget producers regressed: {counts.get('context_warn')}"
 
 
 # ---------------------------------------------------------------------------
@@ -292,6 +298,12 @@ def test_console_mirror_kinds_pair_per_site() -> None:
             continue
         nearest = _nearest_emit_distance(path, lineno)
         if nearest is None or nearest > _INLINE_PAIR_WINDOW:
+            # A mirror emitted through a named helper is paired by the helper's
+            # own emit, which lives elsewhere in the file by design. Hold the
+            # helper to the same promise instead of the caller's line number.
+            helper = _nearest_pairing_helper(path, lineno)
+            if helper is not None:
+                continue
             unpaired.append(f"{name}:{lineno} kind={kind!r} nearest_emit={nearest}")
 
     assert not unpaired, "CONSOLE_MIRROR_KINDS sites with no paired emit:\n  " + "\n  ".join(unpaired)
@@ -444,13 +456,32 @@ def _iteration_cap_stop_site(path: str) -> int | None:
     }
     if pairs.get("reason") != "iteration_cap":
         return None
-    if not (
-        isinstance(returned.value, ast.Call)
-        and isinstance(returned.value.func, ast.Name)
-        and returned.value.func.id == "finish"
-    ):
+    if not (isinstance(returned.value, ast.Call) and isinstance(returned.value.func, ast.Name)):
+        return None
+    # The exit may be the direct ``finish(...)`` or the named wrapper the driver
+    # funnels every terminal branch through. The exemption is only honest if the
+    # wrapper really calls ``finish`` — otherwise "mirrored through finish" is a
+    # claim about a name, not about behaviour.
+    if returned.value.func.id != "finish" and not _reaches_finish(driver, returned.value.func.id):
         return None
     return call.lineno
+
+
+def _reaches_finish(driver: ast.FunctionDef, wrapper_name: str) -> bool:
+    """True when ``wrapper_name`` (nested in the driver) returns ``finish(...)``."""
+    wrapper = next(
+        (node for node in ast.walk(driver) if isinstance(node, ast.FunctionDef) and node.name == wrapper_name),
+        None,
+    )
+    if wrapper is None:
+        return False
+    return any(
+        isinstance(node, ast.Return)
+        and isinstance(node.value, ast.Call)
+        and isinstance(node.value.func, ast.Name)
+        and node.value.func.id == "finish"
+        for node in ast.walk(wrapper)
+    )
 
 
 def _nearest_emit_distance(path: str, lineno: int) -> int | None:
@@ -464,17 +495,133 @@ def _nearest_emit_distance(path: str, lineno: int) -> int | None:
     return min(distances) if distances else None
 
 
+def _nearest_pairing_helper(path: str, lineno: int, window: int = 40) -> str | None:
+    """Name of a local emit-helper called within ``window`` lines of the append.
+
+    The pair still has to exist; this only decides *where* to look for it. The
+    helper must itself emit, so "call some function" is not enough.
+    """
+    tree = ast.parse(pathlib.Path(path).read_text(encoding="utf-8"))
+    helpers = _event_constructor_helpers(tree)
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in helpers
+            and abs(node.lineno - lineno) <= window
+        ):
+            return node.func.id
+    return None
+
+
 def _emit_counts_by_type() -> dict[str, int]:
-    """Count ``OutputEvent(type="X")`` constructions across production code."""
+    """Count producers per event type, resolving emits hidden behind a local helper.
+
+    Counting only ``OutputEvent(type="X")`` literals would report a producer as
+    deleted the moment its construction moved into a module-level helper — the
+    S3-F4 false negative this file already warns about for ``log.append``. So a
+    helper counts once for every *call site* that reaches it, weighted by how
+    many event types it can produce:
+
+    * one literal type -> n call sites = n producers (a fifth site is still a
+      measurable regression, which is what ``>= 5`` below is asserting);
+    * several types (a shared constructor) -> n call sites, because the helper
+      is the producer and its callers are the paths.
+
+    A helper with one call site is not counted separately from that call site,
+    so moving an emit cannot inflate the total.
+    """
     counts: dict[str, int] = {}
     for _path, tree in _iter_trees():
+        helpers = _event_constructor_helpers(tree)
         for node in ast.walk(tree):
-            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)):
+            if not isinstance(node, ast.Call):
                 continue
-            if node.func.id != "OutputEvent":
-                continue
-            for kw in node.keywords:
-                if kw.arg == "type":
-                    for literal in _string_literals(kw.value):
-                        counts[literal] = counts.get(literal, 0) + 1
+            if isinstance(node.func, ast.Name) and node.func.id == "OutputEvent":
+                for kw in node.keywords:
+                    if kw.arg == "type":
+                        for literal in _string_literals(kw.value):
+                            counts[literal] = counts.get(literal, 0) + 1
+            elif isinstance(node.func, ast.Name) and node.func.id in helpers:
+                for literal in helpers[node.func.id]:
+                    counts[literal] = counts.get(literal, 0) + 1
     return counts
+
+
+def _event_constructor_helpers(tree: ast.Module) -> dict[str, list[str]]:
+    """Module-level functions that construct ``OutputEvent`` and emit it.
+
+    Returns ``{function_name: [event types it can produce]}``. A helper is only
+    registered when it both builds the event and emits it — anything else would
+    let an unrelated wrapper inflate the count.
+    """
+    helpers: dict[str, list[str]] = {}
+    for fn in tree.body:
+        if not isinstance(fn, ast.FunctionDef):
+            continue
+        types: list[str] = []
+        emits = False
+        for node in ast.walk(fn):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "OutputEvent":
+                for kw in node.keywords:
+                    if kw.arg == "type":
+                        types.extend(_string_literals(kw.value))
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "emit":
+                emits = True
+        if types and emits:
+            helpers[fn.name] = sorted(set(types))
+    return helpers
+
+
+# ---------------------------------------------------------------------------
+# S6-F6 — the context_warn helper is a contract, not a code-shortening
+# ---------------------------------------------------------------------------
+
+
+def test_context_warn_helper_payload_and_none_guard() -> None:
+    """C1: the shared emit keeps every caller's payload, including its message.
+
+    Deduplicating five hand-written emits into one helper moves the payload out
+    of sight of the call sites, so the helper itself has to be pinned: a silent
+    change there now changes all five paths at once. Measured before writing
+    this: dropping ``message`` from the payload, ignoring ``action``, or
+    removing the ``output is None`` guard each survived the existing suite.
+
+    The circuit breaker is the call site that passes an explicit ``message``,
+    so it is the one that proves the argument is carried rather than defaulted.
+    """
+    from fa.inner_loop.coder_loop import _emit_context_warn
+    from fa.output import EventBus
+
+    class _Capture:
+        def __init__(self) -> None:
+            self.events: list[OutputEvent] = []
+
+        def on_event(self, event: OutputEvent) -> None:
+            self.events.append(event)
+
+    decision = {"action": "stage3", "ratio": 0.97, "message": "budget exhausted"}
+
+    # (1) explicit message wins over the decision's own text
+    bus = EventBus()
+    capture = _Capture()
+    bus.add(capture)
+    _emit_context_warn(
+        decision, output=bus, turn=3, max_turns=8, pct=97, action="stage3", message="circuit breaker: looping"
+    )
+    assert len(capture.events) == 1
+    event = capture.events[0]
+    assert event.type == "context_warn"
+    assert event.turn == 3 and event.max_turns == 8
+    assert event.data == {"pct": 97, "action": "stage3", "message": "circuit breaker: looping"}
+
+    # (2) without a message the payload carries an empty one, never a stale key
+    bus2 = EventBus()
+    capture2 = _Capture()
+    bus2.add(capture2)
+    _emit_context_warn(decision, output=bus2, turn=1, max_turns=8, pct=80, action="warn")
+    assert capture2.events[0].data == {"pct": 80, "action": "warn", "message": ""}
+
+    # (3) no bus is a no-op, not a crash (the driver runs without output in tests
+    # and in library use; the pre-helper sites all guarded on it)
+    _emit_context_warn(decision, output=None, turn=1, max_turns=8, pct=80, action="warn")
