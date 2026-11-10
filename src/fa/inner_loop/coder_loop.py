@@ -77,6 +77,7 @@ from pathlib import Path
 from typing import Any, Final
 
 from fa.inner_loop.artifacts import ArtifactStore
+from fa.inner_loop.budget_turn import classify_budget as classify_budget
 from fa.inner_loop.conversation_history import (
     _assert_tool_pairing_invariant as _assert_tool_pairing_invariant,
 )
@@ -1070,7 +1071,17 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
         if budget_enabled:
             usage = estimate_tokens(messages_payload, tool_payload)
             decision = budget.check(usage)
-            last_budget_ratio = decision.get("ratio", 0.0)
+            # The decision, named. Effects below are unchanged and still read
+            # `decision` / `last_budget_ratio`, so this hop adds no behaviour —
+            # it gives the next slice a value to check the effects against, and
+            # turns an unrecognised budget action into a loud error instead of a
+            # silent fall-through.
+            verdict = classify_budget(
+                decision,
+                stage2_threshold=budget.stage2_threshold,
+                stage3_threshold=budget.stage3_threshold,
+            )
+            last_budget_ratio = verdict.ratio
             if decision["action"] == "warn":
                 logger.warning("ContextBudget Gating Warning: %s", decision["message"])
                 log.append(actor="runtime", kind="context_budget_warn", content=decision)
@@ -1722,6 +1733,7 @@ __all__ = [
     "DEFAULT_MAX_TURNS",
     "LOOP_GUARD_REASON_PREFIX",
     "SessionOutcome",
+    "classify_budget",
     "drive_session",
     "should_inject_ceremony",
 ]
