@@ -1404,6 +1404,14 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                                 memory_summary = updated_summary
                                 usage = post_compaction_usage
                                 decision = budget.check(usage)
+                                # Q#4: the ratio must describe the state the next
+                                # decision runs on. The stage-2 branch above always
+                                # refreshed it; stage-3 did not, so a hard-stop or
+                                # circuit-breaker right after a successful
+                                # compaction printed the percentage measured BEFORE
+                                # it — a different number than the one the run died
+                                # on. Display-only: nothing read the stale value.
+                                last_budget_ratio = decision.get("ratio", 0.0)
                             else:
                                 logger.warning("No older history to compact for Stage 3")
                         except Exception as exc:  # noqa: BLE001 # graceful degradation

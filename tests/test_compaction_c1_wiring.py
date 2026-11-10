@@ -166,3 +166,83 @@ def test_compaction_recomposes_actual_provider_payload(tmp_path: Path, stage: in
         assert any(e.kind == "compaction_stage3_done" for e in rows)
         assert "compact-summary-marker" in payload
         assert "old-assistant-marker " * 100 not in payload
+
+
+def test_hard_stop_after_stage3_reports_post_compaction_ratio(tmp_path: Path) -> None:
+    """C1 (Q#4): the percentage shown describes the state the decision used.
+
+    Measured before the fix, on this exact path: stage-2 masking brought usage
+    to 99% and stage-3 compaction brought it to 92%, but the hard-stop that
+    fired afterwards printed ``pct=99`` and ``session_end`` reported
+    ``context_used_pct=99.0`` — the number from *before* the compaction, while
+    ``budget.check()`` had decided on 92%. The run told the operator a different
+    figure than the one it acted on.
+
+    Why the numbers differ per estimate call: ``estimate_tokens`` is the only
+    thing that knows how big the payload actually is, so the fake walks the real
+    three-stage ladder (initial -> after masking -> after summarisation). A
+    single return value cannot expose this defect: masking and summarisation
+    both reassign ``usage``, so a constant fake makes the stale and the fresh
+    ratio identical and the test passes either way.
+
+    Kill-check target: drop ``last_budget_ratio = decision.get("ratio", 0.0)``
+    after the stage-3 ``budget.check(usage)`` — both assertions below read 99.
+    """
+    log = EventLog(tmp_path / "events.jsonl", run_id="q4-ratio")
+    state = SessionState(workspace_root=tmp_path, run_id="q4-ratio", log=log)
+    for i in range(7):
+        call = {"id": f"tc-{i}", "type": "function", "function": {"name": "fs_read_file", "arguments": "{}"}}
+        text = "old-assistant-marker " * 18000 if i < 2 else f"step-{i}"
+        log.append(actor="model", kind="model_msg", content={"text": text, "tool_calls": [call]})
+        log.append(
+            actor="tool",
+            kind="tool_result",
+            content={"summary": "tool output", "result": {"stdout": "small-output"}, "ok": True},
+            tool_name="fs_read_file",
+            tool_call_id=f"tc-{i}",
+        )
+
+    chain = make_mock_chain(context_limit=100_000, compaction_threshold=80_000, family="anthropic")
+    chain.request.return_value = mock_success_response("done")
+    compactor = make_mock_chain(context_limit=100_000)
+    compactor.request.return_value = mock_success_response(
+        "## PREVIOUSLY\nc\n\n## PARKED\nNone\n\n## CURRENT\nx\n\n## NEXT ACTION\ny"
+    )
+
+    bus = EventBus()
+    capture = _Capture()
+    bus.add(capture)
+
+    # initial 95% -> stage3; after masking 99% -> still stage3; after
+    # summarisation 92% -> still >= the 90% stage-3 threshold, so the hard-stop
+    # fires on the post-compaction figure. Each value differs from the others on
+    # purpose: equal values would hide the defect.
+    estimate_values = iter([95_000, 99_000, 92_000, 92_000, 92_000])
+
+    with patch("fa.memory.context_budget.estimate_tokens", side_effect=lambda *a, **k: next(estimate_values, 92_000)):
+        result = drive_session(
+            "q4 ratio",
+            provider_chain=chain,
+            compactor_chain=compactor,
+            registry=ToolRegistry(),
+            hooks=HookRegistry(),
+            state=state,
+            max_turns=1,
+            output=bus,
+        )
+
+    assert result.exit_code == 1 and result.stop_reason == "context_budget_hard_stop"
+    assert compactor.request.call_count == 1, "precondition: stage-3 compaction really ran"
+
+    warns = [e for e in capture.events if e.type == "context_warn" and e.data.get("action") == "stage3"]
+    assert warns, f"no stage3 context_warn; types={[e.type for e in capture.events]}"
+    assert warns[-1].data["pct"] == 92, (
+        f"hard-stop printed pct={warns[-1].data['pct']} — that is the pre-compaction figure (99), "
+        "not the one the decision was taken on (92)"
+    )
+
+    ends = [e for e in capture.events if e.type == "session_end"]
+    assert ends and ends[-1].data["context_used_pct"] == 92.0, (
+        f"session_end reported context_used_pct={ends[-1].data.get('context_used_pct') if ends else None}, "
+        "expected the post-compaction ratio"
+    )
