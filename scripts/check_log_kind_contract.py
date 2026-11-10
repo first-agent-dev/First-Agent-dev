@@ -240,6 +240,11 @@ def check_console_mirror_dual_write(console_mirror_kinds: set[str]) -> list[str]
     # Files that contain output.emit calls
     producer_files = [
         REPO_ROOT / "src" / "fa" / "inner_loop" / "coder_loop.py",
+        # Emit sites split out of `coder_loop` by the budget/compaction slice.
+        # Unlisted, CHECK 3 reports a dual-write gap for ten kinds whose
+        # console lines are unchanged — a false alarm, not a missing mirror.
+        REPO_ROOT / "src" / "fa" / "inner_loop" / "budget_effects.py",
+        REPO_ROOT / "src" / "fa" / "inner_loop" / "compaction" / "compaction_turn.py",
         REPO_ROOT / "src" / "fa" / "inner_loop" / "tool_turn.py",
         REPO_ROOT / "src" / "fa" / "inner_loop" / "scope_turn.py",
         REPO_ROOT / "src" / "fa" / "inner_loop" / "tools" / "spawn_subagent.py",

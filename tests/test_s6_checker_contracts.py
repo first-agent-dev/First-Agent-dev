@@ -449,3 +449,63 @@ def test_scope_turn_emitter_is_visible_and_required(tmp_path: Path) -> None:
     )
     result = _run_checker(root, PRODUCER_CHECKER)
     assert result.returncode != 0 and "scope_expansion" in result.stdout, result.stdout
+
+
+# ---------------------------------------------------------------------------
+# Cross-module emit helpers (budget/compaction slice, 2026-11-10)
+# ---------------------------------------------------------------------------
+#
+# Splitting emit sites out of `coder_loop` silently blinded both checkers: the
+# files they scan were hard-coded, so ten console-mirrored kinds read as "no
+# producer" while the console output was byte-identical. The fix is an explicit
+# file list plus alias resolution; these two tests fail if either regresses.
+#
+# Measured before the fix: `check_log_kind_contract.py` reported 10 dual-write
+# gaps, `check_producer_consumer_contract.py` reported 5 lost emit sites.
+
+
+@pytest.mark.parametrize("helper_file", ["src/fa/inner_loop/budget_effects.py"])
+def test_log_kind_checker_sees_emit_sites_outside_coder_loop(tmp_path: Path, helper_file: str) -> None:
+    """C0: moving an emit into another module is not a lost console line."""
+    root = _make_tree(tmp_path)
+    result = _run_checker(root, LOG_KIND_CHECKER)
+
+    assert result.returncode == 0, f"a cross-module mirror read as missing.\n{result.stdout}"
+    assert "compaction_warning" not in result.stdout.split("CHECK 3")[-1], (
+        f"compaction_warning is still reported as a dual-write gap after it moved to {helper_file}\n{result.stdout}"
+    )
+
+
+def test_alias_resolver_counts_call_sites_not_definitions() -> None:
+    """C0: the alias resolver is the thing that can be wrong, so test it directly.
+
+    Measured: with resolution disabled the checker drops `context_warn` from 4
+    sites to 2 (the two in `budget_effects` that call the helper internally)
+    and reports "a producer was removed". The subprocess test above catches
+    that, but only indirectly — it also passes when resolution is broken in a
+    way that merely changes an unrelated count. This asserts the resolver's own
+    contract: an alias import contributes one producer per call site.
+    """
+    from scripts.check_producer_consumer_contract import _emits_reaching_this_file
+
+    source = (
+        "from fa.inner_loop.budget_effects import (\n"
+        "    emit_context_warn as _emit_context_warn,\n"
+        ")\n"
+        "\n"
+        "def f() -> None:\n"
+        "    _emit_context_warn(1)\n"
+        "    _emit_context_warn(2)\n"
+    )
+
+    assert _emits_reaching_this_file("src/fa/inner_loop/coder_loop.py", source) == {"context_warn": 2}
+
+    # A helper the alias does not name must not be billed to this callback:
+    # naive "every type in the module" counting inflated this from 4 to 7.
+    assert (
+        _emits_reaching_this_file(
+            "src/fa/inner_loop/coder_loop.py",
+            "from fa.inner_loop.budget_effects import record_budget_pressure as _rbp\n_rbp(1)\n",
+        )
+        == {}
+    )

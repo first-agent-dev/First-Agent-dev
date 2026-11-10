@@ -148,7 +148,21 @@ def test_prompt_composer_ast_invariants() -> None:
             isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == name for n in ast.walk(node)
         )
 
-    assert calls(driver, "_compose_request_payload") == 3  # initial, stage2, stage3
+    # The driver owns assembly for all three paths. Since the compaction slice
+    # the two compaction paths get the composer as a *callback* (the stage
+    # functions live in another module and cannot close over the driver's
+    # locals), so the invariant is "one call and two hand-offs", not "three
+    # calls". Counting references, not `Call` nodes, keeps the check honest:
+    # a stage that started assembling its own request would drop the reference
+    # and fail here.
+    assert calls(driver, "_compose_request_payload") == 1  # current turn
+    handled = sum(
+        isinstance(n, ast.keyword)
+        and n.arg == "compose_request"
+        and getattr(n.value, "id", None) == "_compose_request_payload"
+        for n in ast.walk(driver)
+    )
+    assert handled == 2  # stage 2, stage 3
     assert calls(closure, "compose_turn_request") == 1
     assert calls(owner, "build_prompt_parts_v2") == 1
     assert calls(owner, "to_anthropic_request_v2") == 1
