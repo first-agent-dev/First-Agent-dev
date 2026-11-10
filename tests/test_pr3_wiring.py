@@ -156,13 +156,36 @@ def test_prompt_composer_ast_invariants() -> None:
     # a stage that started assembling its own request would drop the reference
     # and fail here.
     assert calls(driver, "_compose_request_payload") == 1  # current turn
-    handled = sum(
+    # The budget ladder sits between the driver and the two compaction stages
+    # (2026-11-10): the driver hands the composer over once, and the ladder fans
+    # it out. So the invariant is stated where it belongs — *each* compaction
+    # stage is handed a composer, and no module assembles a request itself.
+    # Counting hand-offs inside the driver would read 1 and report a lost path;
+    # counting them in the ladder would count its own pass-through.
+    ladder_source = Path("src/fa/inner_loop/budget_ladder.py").read_text(encoding="utf-8")
+    ladder_tree = ast.parse(ladder_source)
+    handed = sum(
         isinstance(n, ast.keyword)
         and n.arg == "compose_request"
         and getattr(n.value, "id", None) == "_compose_request_payload"
         for n in ast.walk(driver)
     )
-    assert handled == 2  # stage 2, stage 3
+    assert handed == 1, f"the driver must hand its composer over exactly once, saw {handed}"
+    for stage in ("run_stage2_masking", "run_stage3_compaction"):
+        stage_calls = [
+            n
+            for n in ast.walk(ladder_tree)
+            if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == stage
+        ]
+        assert stage_calls, f"the ladder no longer calls {stage}"
+        for call in stage_calls:
+            assert any(
+                kw.arg == "compose_request" and getattr(kw.value, "id", None) == "compose_request"
+                for kw in call.keywords
+            ), f"{stage} is called without the driver's composer — it would assemble its own request"
+    # Anti-theater: no module outside the composer may build a request body.
+    assert calls(ladder_tree, "build_prompt_parts_v2") == 0
+    assert "to_openai_request_v2(" not in ladder_source
     assert calls(closure, "compose_turn_request") == 1
     assert calls(owner, "build_prompt_parts_v2") == 1
     assert calls(owner, "to_anthropic_request_v2") == 1
