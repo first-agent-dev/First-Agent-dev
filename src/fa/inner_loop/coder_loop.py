@@ -137,6 +137,7 @@ from fa.inner_loop.tool_turn import (
 from fa.inner_loop.tool_turn import (
     _redact as _redact,
 )
+from fa.inner_loop.turn_state import TurnState
 from fa.inner_loop.usage_ledger import UsageLedger
 from fa.observability.redaction import SecretRedactor
 from fa.output import EventBus, OutputEvent
@@ -656,7 +657,7 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
     )
 
     ledger = UsageLedger()
-    memory_summary, conversation_history = restore_conversation_history(log, initial_memory_summary)
+    turn_state = TurnState.from_restored(restore_conversation_history(log, initial_memory_summary))
 
     log.append(actor="user", kind="user_msg", content={"text": task})
     log.append(
@@ -666,9 +667,10 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
     )
 
     _session_start_mono = time.monotonic()
-    # LOGIC-5: track the last budget ratio so finish() can compute
-    # context_used_pct instead of hardcoding None.
-    last_budget_ratio: float = 0.0
+    # LOGIC-5: `turn_state.last_budget_ratio` is the number finish() reports as
+    # context_used_pct. It lives on TurnState rather than here because Q#4 was
+    # a stale value read by the exit, and a field with one owner is harder to
+    # read stale than a local reassigned in four places.
 
     # ── Output: session_start ──────────────────────────────────────────────
     if output is not None:
@@ -705,7 +707,7 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
     #   - This counter retries the entire turn (continue back to while loop)
     #   - max_chain_retries (FeatureFlags, default=0) controls this counter
     #   - transport_retries (ChainEntry, models.yaml) controls per-provider HTTP retries
-    chain_exhaustion_count = 0
+    # (initialised on turn_state: chain_exhaustion_count)
 
     def record_usage(response: ResponseInfo) -> None:
         # Waiver: internal invariant (log attached before loop starts).
@@ -745,7 +747,7 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                             "total_in": ledger.totals.get("input_tokens", 0),
                             "total_out": ledger.totals.get("output_tokens", 0),
                             "cache_hit_ratio": summary.get("cache_hit_ratio", 0.0),
-                            "context_used_pct": round(last_budget_ratio * 100, 1),
+                            "context_used_pct": round(turn_state.last_budget_ratio * 100, 1),
                         },
                     )
                 )
@@ -932,7 +934,7 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
             return finish_at(1, f"hook_deny:{LifecyclePoint.BEFORE_LLM_CALL.value}")
         if __debug__:
             try:
-                _assert_tool_pairing_invariant(conversation_history)
+                _assert_tool_pairing_invariant(turn_state.conversation_history)
             except AssertionError:
                 # A malformed *data* state (e.g. an interrupted prior stage whose
                 # tool_call has no persisted tool_result) is a request-shape error,
@@ -998,8 +1000,8 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
 
         try:
             _request_body, messages_payload, request_extras = _compose_request_payload(
-                active_summary=memory_summary,
-                observations=conversation_history,
+                active_summary=turn_state.memory_summary,
+                observations=turn_state.conversation_history,
             )
         except ProviderRequestShapeError as exc:
             # S13.4: a local conformance/composition failure (e.g. a dangling-tool
@@ -1025,7 +1027,7 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                 stage2_threshold=budget.stage2_threshold,
                 stage3_threshold=budget.stage3_threshold,
             )
-            last_budget_ratio = verdict.ratio
+            turn_state.last_budget_ratio = verdict.ratio
             if verdict.action == "warn":
                 logger.warning("ContextBudget Gating Warning: %s", verdict.message)
                 # Durable row + console mirror live in budget_effects: this
@@ -1102,8 +1104,8 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                     stage2 = run_stage2_masking(
                         turn=turn,
                         max_turns=max_turns,
-                        history=conversation_history,
-                        memory_summary=memory_summary,
+                        history=turn_state.conversation_history,
+                        memory_summary=turn_state.memory_summary,
                         usage=usage,
                         budget=budget,
                         log=log,
@@ -1114,14 +1116,13 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                         recent_turns_to_keep=4,
                     )
                     if stage2.applied:
-                        conversation_history = stage2.history
-                        messages_payload = stage2.messages_payload
-                        request_extras = stage2.request_extras
-                        usage = stage2.usage
                         # Re-classify: after masking the decision is a different one, and
                         # every later read goes through the verdict. Q#4 lives here.
                         verdict = stage2.verdict
-                        last_budget_ratio = verdict.ratio
+                        turn_state.adopt_compaction(history=stage2.history, ratio=verdict.ratio)
+                        messages_payload = stage2.messages_payload
+                        request_extras = stage2.request_extras
+                        usage = stage2.usage
                     # Guard on the verdict, not on the pre-masking decision: after
                     # stage-2 the decision has been re-derived, so reading the older
                     # name here would act on a stale value (Q#4's shape, one level up).
@@ -1132,8 +1133,8 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                         stage3 = run_stage3_compaction(
                             turn=turn,
                             max_turns=max_turns,
-                            history=conversation_history,
-                            memory_summary=memory_summary,
+                            history=turn_state.conversation_history,
+                            memory_summary=turn_state.memory_summary,
                             usage=usage,
                             budget=budget,
                             log=log,
@@ -1148,16 +1149,16 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                             # decided on, not the one before compaction. Without
                             # this the summary printed the pre-compaction ratio
                             # (measured: 99% where the run died at 92%).
-                            last_budget_ratio = stage3.verdict.ratio
+                            turn_state.last_budget_ratio = stage3.verdict.ratio
                             return finish_at(1, "context_budget_hard_stop", final_text=stage3.stop_message)
                         if stage3.applied:
-                            conversation_history = stage3.history
-                            memory_summary = stage3.memory_summary
+                            verdict = stage3.verdict
+                            turn_state.adopt_compaction(
+                                history=stage3.history, summary=stage3.memory_summary, ratio=verdict.ratio
+                            )
                             messages_payload = stage3.messages_payload
                             request_extras = stage3.request_extras
                             usage = stage3.usage
-                            verdict = stage3.verdict
-                            last_budget_ratio = verdict.ratio
 
         # Prompt-composer extras (``prompt_cache_key``, ``prompt_cache_retention``)
         # come from the request body builder. Per-provider fields (Mistral's
@@ -1212,16 +1213,16 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
             #   - _per_turn_chain_retries (inner while loop) — per-turn cooldown-wait retries
             # The session-level retry fires only after ALL entries are exhausted
             # AND the inner per-turn retries are spent.
-            chain_exhaustion_count += 1
+            turn_state.chain_exhaustion_count += 1
             if log is not None:
                 log.chain_exhaustion_count += 1
 
             max_chain_retries = state.feature_flags.max_chain_retries if state.feature_flags is not None else 0
-            if chain_exhaustion_count <= max_chain_retries:
+            if turn_state.chain_exhaustion_count <= max_chain_retries:
                 # Retry the entire provider chain — continue to next turn
                 logger.info(
                     "Provider chain exhausted, session-level retry (%d/%d)",
-                    chain_exhaustion_count,
+                    turn_state.chain_exhaustion_count,
                     max_chain_retries,
                 )
                 if output is not None:
@@ -1293,7 +1294,7 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                 )
             return finish_at(1, f"hook_deny:{LifecyclePoint.AFTER_LLM_CALL.value}")
 
-        tool_calls = record_model_response(response, conversation_history, log)
+        tool_calls = record_model_response(response, turn_state.conversation_history, log)
 
         if not tool_calls:
             return finish(
@@ -1355,7 +1356,7 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
             turn=turn,
             max_turns=max_turns,
             registry=registry,
-            conversation_history=conversation_history,
+            conversation_history=turn_state.conversation_history,
             redactor=redactor,
             artifact_store=artifact_store,
         )
