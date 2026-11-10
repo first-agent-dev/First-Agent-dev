@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import ast
 import pathlib
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -532,8 +533,16 @@ def _emit_counts_by_type() -> dict[str, int]:
     so moving an emit cannot inflate the total.
     """
     counts: dict[str, int] = {}
-    for _path, tree in _iter_trees():
-        helpers = _event_constructor_helpers(tree)
+    # name -> event types, across the whole package: effects now live in a helper
+    # module and the driver calls them through an alias, so a per-file name scan
+    # would miss every call site.
+    helpers: dict[str, list[str]] = {}
+    trees = _iter_trees()
+    for _path, tree in trees:
+        helpers.update(_event_constructor_helpers(tree))
+
+    for _path, tree in trees:
+        local = {**_event_constructor_helpers(tree), **_imported_helper_aliases(tree, helpers)}
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue
@@ -542,10 +551,47 @@ def _emit_counts_by_type() -> dict[str, int]:
                     if kw.arg == "type":
                         for literal in _string_literals(kw.value):
                             counts[literal] = counts.get(literal, 0) + 1
-            elif isinstance(node.func, ast.Name) and node.func.id in helpers:
-                for literal in helpers[node.func.id]:
+                continue
+            called = _called_helper_name(node, local, helpers)
+            if called is not None:
+                produced = local.get(called, helpers.get(called, []))
+                for literal in produced:
                     counts[literal] = counts.get(literal, 0) + 1
     return counts
+
+
+def _imported_helper_aliases(tree: ast.Module, helpers: dict[str, list[str]]) -> dict[str, list[str]]:
+    """Map ``import x as y`` aliases for emitter helpers onto their real names.
+
+    ``from fa.inner_loop.budget_effects import emit_context_warn as
+    _emit_context_warn`` makes every call site say ``_emit_context_warn``; a
+    bare-name scan finds the helper's definition and none of its callers, which
+    is what made the counter under-report after the effects moved out.
+    """
+    aliases: dict[str, list[str]] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ImportFrom):
+            continue
+        for alias in node.names:
+            if alias.asname and alias.name in helpers:
+                aliases[alias.asname] = helpers[alias.name]
+    return aliases
+
+
+def _called_helper_name(node: ast.Call, local: dict[str, list[str]], global_: dict[str, list[str]]) -> str | None:
+    """Resolve a call to a helper, including an ``import ... as alias`` in the file.
+
+    ``from fa.inner_loop.budget_effects import emit_context_warn as
+    _emit_context_warn`` makes the call site use ``_emit_context_warn`` while the
+    helper is defined as ``emit_context_warn``; matching bare names would see
+    neither.
+    """
+    func = node.func
+    if not isinstance(func, ast.Name):
+        return None
+    if func.id in local:
+        return func.id
+    return func.id if func.id in global_ else None
 
 
 def _event_constructor_helpers(tree: ast.Module) -> dict[str, list[str]]:
@@ -568,7 +614,14 @@ def _event_constructor_helpers(tree: ast.Module) -> dict[str, list[str]]:
                         types.extend(_string_literals(kw.value))
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "emit":
                 emits = True
-        if types and emits:
+        writes_rows = any(
+            isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "append"
+            for node in ast.walk(fn)
+        )
+        # A business step that also emits is not a console mirror. Without this
+        # the driver itself qualifies and its whole span is masked as one
+        # producer, which is how the counter first read 3 for six sites.
+        if types and emits and not writes_rows:
             helpers[fn.name] = sorted(set(types))
     return helpers
 
@@ -583,15 +636,20 @@ def test_context_warn_helper_payload_and_none_guard() -> None:
 
     Deduplicating five hand-written emits into one helper moves the payload out
     of sight of the call sites, so the helper itself has to be pinned: a silent
-    change there now changes all five paths at once. Measured before writing
+    change there now changes all five paths at once. It lives in
+    ``budget_effects`` since the S6-F6 effects slice moved it there. Measured before writing
     this: dropping ``message`` from the payload, ignoring ``action``, or
     removing the ``output is None`` guard each survived the existing suite.
 
     The circuit breaker is the call site that passes an explicit ``message``,
     so it is the one that proves the argument is carried rather than defaulted.
     """
-    from fa.inner_loop.coder_loop import _emit_context_warn
+    from fa.inner_loop.budget_effects import emit_context_warn as _emit_context_warn
+    from fa.inner_loop.budget_turn import BudgetVerdict, classify_budget
     from fa.output import EventBus
+
+    def _verdict(decision: dict[str, Any]) -> BudgetVerdict:
+        return classify_budget(decision, stage2_threshold=80_000, stage3_threshold=90_000)
 
     class _Capture:
         def __init__(self) -> None:
@@ -601,27 +659,33 @@ def test_context_warn_helper_payload_and_none_guard() -> None:
             self.events.append(event)
 
     decision = {"action": "stage3", "ratio": 0.97, "message": "budget exhausted"}
+    verdict = _verdict(decision)
 
-    # (1) explicit message wins over the decision's own text
+    # (1) explicit message wins over the verdict's own text
     bus = EventBus()
     capture = _Capture()
     bus.add(capture)
-    _emit_context_warn(
-        decision, output=bus, turn=3, max_turns=8, pct=97, action="stage3", message="circuit breaker: looping"
-    )
+    _emit_context_warn(verdict, output=bus, turn=3, max_turns=8, action="stage3", message="circuit breaker: looping")
     assert len(capture.events) == 1
     event = capture.events[0]
     assert event.type == "context_warn"
     assert event.turn == 3 and event.max_turns == 8
     assert event.data == {"pct": 97, "action": "stage3", "message": "circuit breaker: looping"}
 
-    # (2) without a message the payload carries an empty one, never a stale key
+    # (2) without a message the payload carries the verdict's own text
     bus2 = EventBus()
     capture2 = _Capture()
     bus2.add(capture2)
-    _emit_context_warn(decision, output=bus2, turn=1, max_turns=8, pct=80, action="warn")
-    assert capture2.events[0].data == {"pct": 80, "action": "warn", "message": ""}
+    _emit_context_warn(verdict, output=bus2, turn=1, max_turns=8, action="warn")
+    assert capture2.events[0].data == {"pct": 97, "action": "warn", "message": "budget exhausted"}
 
     # (3) no bus is a no-op, not a crash (the driver runs without output in tests
     # and in library use; the pre-helper sites all guarded on it)
-    _emit_context_warn(decision, output=None, turn=1, max_turns=8, pct=80, action="warn")
+    _emit_context_warn(verdict, output=None, turn=1, max_turns=8, action="warn")
+
+    # (4) pct is derived from the verdict, not passed in: Q#4 was a local
+    # variable drifting away from the decision, and this signature removes the
+    # possibility instead of testing for it.
+    import inspect
+
+    assert "pct" not in inspect.signature(_emit_context_warn).parameters

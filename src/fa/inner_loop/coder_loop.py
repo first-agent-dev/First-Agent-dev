@@ -77,6 +77,15 @@ from pathlib import Path
 from typing import Any, Final
 
 from fa.inner_loop.artifacts import ArtifactStore
+from fa.inner_loop.budget_effects import (
+    emit_context_warn as _emit_context_warn,
+)
+from fa.inner_loop.budget_effects import (
+    record_budget_pressure as _record_budget_pressure,
+)
+from fa.inner_loop.budget_effects import (
+    record_compaction_pressure as _record_compaction_pressure,
+)
 from fa.inner_loop.budget_turn import classify_budget as classify_budget
 from fa.inner_loop.conversation_history import (
     _assert_tool_pairing_invariant as _assert_tool_pairing_invariant,
@@ -516,47 +525,6 @@ def _request_with_cooldown_retries(
                         )
                     )
             time.sleep(wait_s)
-
-
-def _emit_context_warn(
-    decision: Mapping[str, object],
-    *,
-    output: EventBus | None,
-    turn: int,
-    max_turns: int,
-    pct: int,
-    action: str,
-    message: str | None = None,
-) -> None:
-    """Console mirror for a context-budget row (FIX-1).
-
-    Five sites emitted this event by hand and four of them shared the identical
-    ``data`` dict; the fifth (the circuit breaker) differed only in which message
-    it carried. That is the same shape that let the terminal-stop branch drift
-    from its neighbours: a copy that looks like the others but is not. Naming the
-    emit keeps every site's payload one dataclass away from the others, so a new
-    argument is a compile-time-shaped decision rather than a copy-paste risk.
-
-    ``decision`` is accepted for provenance — the caller just appended or
-    rejected the same mapping — and is deliberately not read here: the payload
-    is explicit, so a change in the decision's keys cannot silently change what
-    the operator sees.
-    """
-    del decision  # provenance only; see the docstring
-    if output is None:
-        return
-    output.emit(
-        OutputEvent(
-            type="context_warn",
-            turn=turn,
-            max_turns=max_turns,
-            data={
-                "pct": pct,
-                "action": action,
-                "message": message if message is not None else "",
-            },
-        )
-    )
 
 
 def _stop_reason_for(stop: StopInfo) -> str:
@@ -1082,17 +1050,18 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                 stage3_threshold=budget.stage3_threshold,
             )
             last_budget_ratio = verdict.ratio
-            if decision["action"] == "warn":
-                logger.warning("ContextBudget Gating Warning: %s", decision["message"])
-                log.append(actor="runtime", kind="context_budget_warn", content=decision)
-                # FIX-1: emit context_warn OutputEvent for console visibility
-                _emit_context_warn(
-                    decision,
-                    output=output,
+            if verdict.action == "warn":
+                logger.warning("ContextBudget Gating Warning: %s", verdict.message)
+                # Durable row + console mirror live in budget_effects: this
+                # verdict has no consequence for the session's fate, so it does
+                # not need to sit inside the block that can end the run.
+                _record_budget_pressure(
+                    verdict,
                     turn=turn,
                     max_turns=max_turns,
-                    pct=round(last_budget_ratio * 100),
-                    action=str(decision["action"]),
+                    log=log,
+                    output=output,
+                    compaction_enabled=False,
                 )
             elif decision["action"] in {"stage2", "stage3"}:
                 # S6: compaction_warning — single observation point for
@@ -1105,55 +1074,40 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                 # boolean flag is consulted.
                 compaction_enabled = compaction_threshold is not None
 
-                warning_data = {
-                    "action": decision["action"],
-                    "compaction_enabled": compaction_enabled,
-                    "ratio": last_budget_ratio,
-                    "threshold": budget.stage2_threshold if decision["action"] == "stage2" else budget.stage3_threshold,
-                }
-                log.append(
-                    actor="runtime",
-                    kind="compaction_warning",
-                    content=warning_data,
+                _record_compaction_pressure(
+                    verdict,
+                    turn=turn,
+                    max_turns=max_turns,
+                    log=log,
+                    output=output,
+                    compaction_enabled=compaction_enabled,
                 )
-                if output is not None:
-                    output.emit(
-                        OutputEvent(
-                            type="compaction_warning",
-                            turn=turn,
-                            max_turns=max_turns,
-                            data=warning_data,
-                        )
-                    )
 
                 logger.warning("compaction_enabled: %s, flags: %s", compaction_enabled, state.feature_flags)
 
                 if not compaction_enabled:
-                    if decision["action"] == "stage2":
+                    if verdict.action == "stage2":
                         logger.warning(
                             "ContextBudget Stage 2 reached but compaction is disabled: %s",
-                            decision["message"],
+                            verdict.message,
                         )
-                        log.append(actor="runtime", kind="context_budget_warn", content=decision)
-                        # FIX-1: emit context_warn for stage2 without compaction
-                        _emit_context_warn(
-                            decision,
-                            output=output,
+                        _record_budget_pressure(
+                            verdict,
                             turn=turn,
                             max_turns=max_turns,
-                            pct=round(last_budget_ratio * 100),
-                            action="stage2",
+                            log=log,
+                            output=output,
+                            compaction_enabled=False,
                         )
                     else:
                         logger.warning("ContextBudget Gate Breach: Stage 3 reached! %s", decision["message"])
                         log.append(actor="runtime", kind="context_budget_hard_stop", content=decision)
                         # context_budget_hard_stop → console context_warn (critical)
                         _emit_context_warn(
-                            decision,
+                            verdict,
                             output=output,
                             turn=turn,
                             max_turns=max_turns,
-                            pct=round(last_budget_ratio * 100),
                             action="stage3",
                         )
                         log.append(
@@ -1220,7 +1174,14 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                         conversation_history = masked_history
                         usage = post_mask_usage
                         decision = budget.check(usage)
-                        last_budget_ratio = decision.get("ratio", 0.0)
+                        # Re-classify: after masking the decision is a different
+                        # one, and every later read goes through the verdict.
+                        verdict = classify_budget(
+                            decision,
+                            stage2_threshold=budget.stage2_threshold,
+                            stage3_threshold=budget.stage3_threshold,
+                        )
+                        last_budget_ratio = verdict.ratio
                     except Exception as exc:  # noqa: BLE001 # graceful degradation
                         logger.warning("Stage 2 Compaction failed: %s, continuing with verbatim prompt", exc)
                         log.append(
@@ -1366,11 +1327,10 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                                         # session dies, regardless of which
                                         # compaction sub-path triggers the stop.
                                         _emit_context_warn(
-                                            decision,
+                                            verdict,
                                             output=output,
                                             turn=turn,
                                             max_turns=max_turns,
-                                            pct=round(last_budget_ratio * 100),
                                             action="stage3",
                                             message=circuit_breaker_message,
                                         )
@@ -1415,6 +1375,11 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                                 memory_summary = updated_summary
                                 usage = post_compaction_usage
                                 decision = budget.check(usage)
+                                verdict = classify_budget(
+                                    decision,
+                                    stage2_threshold=budget.stage2_threshold,
+                                    stage3_threshold=budget.stage3_threshold,
+                                )
                                 # Q#4: the ratio must describe the state the next
                                 # decision runs on. The stage-2 branch above always
                                 # refreshed it; stage-3 did not, so a hard-stop or
@@ -1422,7 +1387,7 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                                 # compaction printed the percentage measured BEFORE
                                 # it — a different number than the one the run died
                                 # on. Display-only: nothing read the stale value.
-                                last_budget_ratio = decision.get("ratio", 0.0)
+                                last_budget_ratio = verdict.ratio
                             else:
                                 logger.warning("No older history to compact for Stage 3")
                         except Exception as exc:  # noqa: BLE001 # graceful degradation
@@ -1454,11 +1419,10 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                         # operator always sees the context percentage before
                         # the session dies, regardless of compaction setting.
                         _emit_context_warn(
-                            decision,
+                            verdict,
                             output=output,
                             turn=turn,
                             max_turns=max_turns,
-                            pct=round(last_budget_ratio * 100),
                             action="stage3",
                         )
                         log.append(
