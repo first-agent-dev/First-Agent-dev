@@ -82,11 +82,26 @@ print("stdlib + SQLite FTS5 OK", ssl.OPENSSL_VERSION, sqlite3.sqlite_version)
 PY
 }
 
-is_usable_python() {
+# The smoke costs ~30 ms and the same interpreter is probed more than once per run
+# (venv, its base, cached toolchain). One verdict per path per run is enough, and it is
+# kept separately from REUSED_VENV, which only says the venv itself was validated.
+SMOKED_PYTHON=""
+REUSED_VENV=0
+
+# Version-only probe: one interpreter start, no imports beyond sys. Used to skip the
+# full runtime/FTS5 smoke when the version already disqualifies the candidate.
+is_expected_python() {
   local python="$1"
   [[ -x "$python" ]] || return 1
-  "$python" -c 'import sys; raise SystemExit(0 if sys.version_info[:3] == (3, 13, 16) else 1)' >/dev/null 2>&1 || return 1
-  runtime_smoke "$python" >/dev/null 2>&1
+  "$python" -c 'import sys; raise SystemExit(0 if sys.version_info[:3] == (3, 13, 16) else 1)' >/dev/null 2>&1
+}
+
+is_usable_python() {
+  local python="$1"
+  is_expected_python "$python" || return 1
+  [[ "$SMOKED_PYTHON" == "$python" ]] && return 0
+  runtime_smoke "$python" >/dev/null 2>&1 || return 1
+  SMOKED_PYTHON="$python"
 }
 
 is_pinned_uv() {
@@ -98,10 +113,16 @@ is_pinned_just() {
   [[ "$1" == "just $JUST_VERSION" ]]
 }
 
+# The tool executables are not re-versioned here: `just check` runs them under uv, and
+# a pytest --version costs more than the entire rest of this script.
 check_project_venv() {
   local venv_python="$PROJECT_ROOT/.venv/bin/python"
   [[ -x "$venv_python" ]] || fail "project .venv is missing; run without --check to restore it"
-  is_usable_python "$venv_python" || fail "project .venv must be CPython $EXPECTED_PYTHON with SSL/zlib/bz2 and SQLite FTS5"
+  # --check always probes. A normal run skips the probe when this interpreter already
+  # passed it while being selected (VENVPROBE=1), so one smoke per run is the maximum.
+  if [[ "${VENVPROBE:-0}" != "1" || "${SMOKED_PYTHON:-}" != "$venv_python" ]]; then
+    is_usable_python "$venv_python" || fail "project .venv must be CPython $EXPECTED_PYTHON with SSL/zlib/bz2 and SQLite FTS5 (run: just fix)"
+  fi
   local venv_bin="$PROJECT_ROOT/.venv/bin"
   local tool
   for tool in pytest ruff deptry pylint mypy pyrefly mutmut vulture pip-audit fa; do
@@ -109,12 +130,10 @@ check_project_venv() {
   done
   [[ -x "$venv_bin/uv" ]] || fail "gate launcher is missing: .venv/bin/uv; rerun without --check"
   [[ -x "$venv_bin/just" ]] || fail "gate launcher is missing: .venv/bin/just; rerun without --check"
+  # Launchers are probed by running them: a stale symlink is exactly what --check catches.
   is_pinned_uv "$("$venv_bin/uv" --version)" || fail "project .venv must expose uv $UV_VERSION"
   is_pinned_just "$("$venv_bin/just" --version)" || fail "project .venv must expose just $JUST_VERSION"
-  "$venv_bin/pytest" --version
-  "$venv_bin/ruff" --version
-  "$venv_bin/just" --version
-  runtime_smoke "$venv_python"
+  printf 'gate tools present: pytest ruff deptry pylint mypy pyrefly mutmut vulture pip-audit fa\n'
   printf 'ENVIRONMENT_CHECK_OK: CPython %s; pinned uv/just and just-check dev tools present\n' "$EXPECTED_PYTHON"
   printf 'Run gates with: source %s/.venv/bin/activate && just check\n' "$PROJECT_ROOT"
 }
@@ -183,6 +202,45 @@ make_target_if_available() {
   fi
 }
 
+# Archives are downloaded sequentially today: on a cold cache the six files take ~40 s
+# wall clock while the network is idle most of that time. Warm them in parallel, then run
+# the ordinary (verified, idempotent) fetch loop below for extraction and cache checks.
+prefetch_archives() {
+  local spec name repository commit digest archive
+  local waited=()
+  for spec in \
+    "cpython python/cpython $CPYTHON_COMMIT $CPYTHON_SHA256" \
+    "openssl python/cpython-source-deps $OPENSSL_COMMIT $OPENSSL_SHA256" \
+    "zlib python/cpython-source-deps $ZLIB_COMMIT $ZLIB_SHA256" \
+    "libffi python/cpython-source-deps $LIBFFI_COMMIT $LIBFFI_SHA256" \
+    "bzip2 python/cpython-source-deps $BZIP2_COMMIT $BZIP2_SHA256" \
+    "sqlite python/cpython-source-deps $SQLITE_COMMIT $SQLITE_SHA256"; do
+    read -r name repository commit digest <<<"$spec"
+    archive="$SRC/${name}-${commit}.tar.gz"
+    [[ -s "$archive" ]] && continue
+    # No `fail` here: a subshell cannot stop the parent, and fetch_source below decides
+    # what a failed or corrupt archive means (including its "preserved, inspect" rule).
+    (
+      temporary="$(mktemp "$SRC/.${name}.prefetch.XXXXXX")"
+      curl --fail --location --silent --show-error --retry 3 \
+        "https://codeload.github.com/${repository}/tar.gz/${commit}" \
+        --output "$temporary" || exit 0
+      if printf '%s  %s\n' "$digest" "$temporary" | sha256sum --check --status; then
+        mv -- "$temporary" "$archive" || rm -f -- "$temporary"
+      else
+        rm -f -- "$temporary"
+      fi
+    ) &
+    waited+=("$!")
+  done
+  # Bounded wait: one straggler cannot hold up a build that fetch_source would block on
+  # anyway, it just loses the overlap.
+  local pid
+  for pid in "${waited[@]}"; do
+    wait "$pid" 2>/dev/null || true
+  done
+}
+
 build_python() {
   local missing=()
   local command
@@ -193,6 +251,7 @@ build_python() {
     fail "cold build requires these commands: ${missing[*]}"
   fi
 
+  prefetch_archives
   fetch_source cpython python/cpython "$CPYTHON_COMMIT" "$CPYTHON_SHA256"
   local cpython_source="$FETCHED_SOURCE"
   fetch_source openssl python/cpython-source-deps "$OPENSSL_COMMIT" "$OPENSSL_SHA256"
@@ -270,7 +329,10 @@ select_python() {
   if [[ "$MODE" != "rebuild" && -x "$PROJECT_ROOT/.venv/bin/python" ]] && \
       is_usable_python "$PROJECT_ROOT/.venv/bin/python"; then
     PYTHON="$("$PROJECT_ROOT/.venv/bin/python" -c 'import sys; print(sys._base_executable)')"
-    if is_usable_python "$PYTHON"; then
+    # The base interpreter is the one the venv probe above just exercised when the venv
+    # is not itself a copy; re-running the smoke on an identical path is pure cost.
+    if [[ "$PYTHON" == "$PROJECT_ROOT/.venv/bin/python" ]] || is_usable_python "$PYTHON"; then
+      REUSED_VENV=1
       printf 'Reusing the validated project venv interpreter: %s\n' "$PYTHON"
       return 0
     fi
@@ -343,8 +405,13 @@ ensure_uv() {
   local temporary
   temporary="$(mktemp -d "$BUILD_ROOT/.uv-tools.XXXXXX")"
   printf 'Installing isolated uv %s under %s\n' "$UV_VERSION" "$tools_dir" >&2
-  "$PYTHON" -m venv "$temporary"
-  "$temporary/bin/python" -m pip install --disable-pip-version-check --only-binary=:all: "uv==$UV_VERSION" >&2
+  # uv ships as a py3-none wheel with its binary inside. Two extra interpreter starts
+  # (create a throwaway venv, then run pip from it) bought nothing: install straight
+  # into a staging directory that is validated and only then published.
+  if ! "$PYTHON" -m pip install --disable-pip-version-check --only-binary=:all: \
+      --target "$temporary" "uv==$UV_VERSION" >&2; then
+    fail "could not install uv $UV_VERSION with $PYTHON"
+  fi
   is_pinned_uv "$("$temporary/bin/uv" --version)" || fail "isolated uv bootstrap did not produce uv $UV_VERSION"
   if [[ -e "$tools_dir" ]]; then
     mv -- "$tools_dir" "$BUILD_ROOT/uv-tools-$UV_VERSION.previous.$(date +%Y%m%d%H%M%S)"
@@ -355,9 +422,11 @@ ensure_uv() {
 
 select_python
 UV_PATH="$(ensure_uv)"
-printf 'Syncing frozen dev environment with %s\n' "$UV_PATH"
 cd "$PROJECT_ROOT"
+printf 'Syncing frozen dev environment with %s\n' "$UV_PATH"
 UV_SYSTEM_CERTS=true "$UV_PATH" sync --frozen --extra dev --python "$PYTHON"
 ensure_gate_launchers
-check_project_venv
+# End-to-end verification always runs. VENVPROBE only tells it that the probe of this
+# very .venv interpreter already succeeded while selecting it in this same run.
+VENVPROBE="$REUSED_VENV" check_project_venv
 printf 'ENVIRONMENT_READY: CPython %s; frozen dev extra and pinned uv/just gate launchers installed\n' "$EXPECTED_PYTHON"

@@ -60,9 +60,18 @@ def _fake_checkout(tmp_path: Path) -> Path:
     script.chmod(0o755)
     subprocess.run(["git", "init", "-q", str(root)], check=True)
 
+    # Behaves like a provisioning interpreter: answers the version probe with exit 0,
+    # reports itself as the venv base executable, and swallows the runtime smoke script
+    # on stdin. Without the base-executable answer select_python would fall through to a
+    # real CPython build.
     _write_executable(
         bin_dir / "python",
-        '#!/usr/bin/env bash\nif [[ "$1" == "-m" ]]; then echo \'pytest 9.0.3\'; else cat >/dev/null; fi\n',
+        "#!/usr/bin/env bash\n"
+        'if [[ "$1" == "-m" ]]; then echo \'pytest 9.0.3\'; exit 0; fi\n'
+        'if [[ "$2" == *"_base_executable"* ]]; then\n'
+        '  echo "$(cd "$(dirname "$0")" && pwd)/python"; exit 0\n'
+        "fi\n"
+        "cat >/dev/null\n",
     )
     _write_executable(bin_dir / "uv", "#!/usr/bin/env bash\necho 'uv 0.13.7'\n")
     _write_executable(bin_dir / "just", "#!/usr/bin/env bash\necho 'just 1.57.0'\n")
@@ -94,3 +103,4 @@ def test_check_mode_fails_closed_when_just_or_uv_gate_launcher_is_missing(tmp_pa
     missing_uv = subprocess.run([str(script), "--check"], capture_output=True, text=True, check=False)
     assert missing_uv.returncode != 0
     assert "gate launcher is missing: .venv/bin/uv" in missing_uv.stderr
+
