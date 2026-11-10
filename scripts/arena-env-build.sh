@@ -180,6 +180,17 @@ readonly SQLITE_CFLAGS="-O2 -fPIC -DSQLITE_ENABLE_FTS5 -DSQLITE_ENABLE_FTS3 -DSQ
 readonly SYSTEM_OPENSSL="${SYSTEM_OPENSSL:-auto}"
 readonly RECONFIGURE="${RECONFIGURE:-0}"
 
+# Any stable OpenSSL 3.x is acceptable: the interpreter only needs SSL_* and the
+# hash/tls providers CPython's _ssl and _hashlib compile against, and 3.x keeps those
+# ABI-stable within the series. 4.x is deliberately opt-in — it is unreleased and may
+# change that ABI, so silently adopting it would be a reproducibility gamble.
+readonly OPENSSL_MIN_MAJOR=3
+readonly OPENSSL_MAX_MAJOR=3
+# Directories probed, in order, when the caller did not pin OPENSSL_INCLUDE_DIR.
+# Distro layouts and source installs both land here; /opt and /usr/local cover
+# images that ship a newer 3.x than the distro package.
+readonly OPENSSL_SEARCH_INCLUDES="/usr/local/include /usr/include /opt/openssl/include /opt/homebrew/include /opt/include"
+
 fetch_source() {
   local name="$1" repository="$2" commit="$3" digest="$4"
   local archive="$SRC/${name}-${commit}.tar.gz"
@@ -260,66 +271,148 @@ prefetch_archives() {
 # handshake with the same flags CPython will use. Anything weaker (version string,
 # presence of a .so) has repeatedly produced prefixes whose `ssl` module imports but
 # whose TLS is broken, so the probe mirrors configure: include + lib + rpath.
+# Candidate prefixes for a host OpenSSL, most specific first. pkg-config is
+# authoritative when present (it knows about multiarch and custom prefixes); the
+# fixed list covers slim images that ship headers without .pc files, and the
+# Debian multiarch lib dir is tried last because its headers live under /usr/include.
+openssl_candidates() {
+  if [[ -n "${OPENSSL_INCLUDE_DIR:-}" || -n "${OPENSSL_LIB_DIR:-}" ]]; then
+    printf '%s|%s\n' "${OPENSSL_INCLUDE_DIR:-/usr/include}" "${OPENSSL_LIB_DIR:-/usr/lib/x86_64-linux-gnu}"
+    return 0
+  fi
+  local seen=""
+  if command -v pkg-config >/dev/null 2>&1 && pkg-config --exists openssl 2>/dev/null; then
+    local inc lib
+    inc="$(pkg-config --variable=includedir openssl 2>/dev/null || true)"
+    lib="$(pkg-config --variable=libdir openssl 2>/dev/null || true)"
+    if [[ -n "$inc" && -n "$lib" ]]; then
+      printf '%s|%s\n' "$inc" "$lib"
+      seen="$inc|$lib"
+    fi
+  fi
+  local include lib_dir
+  for include in $OPENSSL_SEARCH_INCLUDES; do
+    [[ -f "$include/openssl/ssl.h" ]] || continue
+    # The prefix that owns the headers is the likeliest home of a matching library;
+    # the multiarch/lib dirs after it cover split installs.
+    for lib_dir in "${include%/include}/lib64" "${include%/include}/lib" /usr/lib/x86_64-linux-gnu /usr/lib64 /usr/lib; do
+      [[ -d "$lib_dir" ]] || continue
+      [[ "$seen" == "$include|$lib_dir" ]] && continue
+      printf '%s|%s\n' "$include" "$lib_dir"
+      seen="$include|$lib_dir"
+    done
+  done
+}
+
+# Compile, link AND run. Three separate facts are checked, in this order:
+#   1. the headers declare a supported major version (compile-time),
+#   2. the linker can actually resolve -lssl -lcrypto from the same prefix,
+#   3. the library that loads at runtime reports the same supported major version
+#      as the headers (a split include/lib install — new headers, old library — is
+#      exactly the case where `import ssl` succeeds and TLS misbehaves).
+# Prints "<runtime version>" on success; the caller stores it and reports it.
+# Success: prints the runtime version on stdout and returns 0.
+# Failure: prints the reason on stderr and returns non-zero. The reason must travel
+# on stderr because the caller runs this in a command substitution — assigning a
+# variable here would be lost in the subshell (and read as "unbound" under set -u).
 openssl_probe() {
-  local include="${OPENSSL_INCLUDE_DIR:-/usr/include}"
-  local lib="${OPENSSL_LIB_DIR:-$(cc -print-search-dirs 2>/dev/null | sed -n 's|^libraries: *=||p' | tr ':' ' ' | tr ' ' '\n' | grep -m1 -E '/usr/lib/x86_64-linux-gnu$|/usr/lib64$|/usr/lib$' || printf /usr/lib/x86_64-linux-gnu)}"
-  OPENSSL_LIB_DIR="$lib"
-  [[ -f "$include/openssl/ssl.h" ]] || return 1
+  local include="$1" lib="$2"
+  if [[ ! -f "$include/openssl/ssl.h" ]]; then
+    printf 'no openssl/ssl.h under %s\n' "$include" >&2
+    return 1
+  fi
   local probe_dir
   probe_dir="$(mktemp -d "$BUILD_ROOT/.openssl-probe.XXXXXX")" || return 1
   if ! cat >"$probe_dir/probe.c" <<'C'
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 int main(void) {
-  if (OPENSSL_VERSION_NUMBER < 0x30000000L) return 1;  /* our contracts assume 3.x */
-  SSL_library_init();
+  long compile_major = (long) (OPENSSL_VERSION_NUMBER >> 28);
+  long runtime_major = (long) (OpenSSL_version_num() >> 28);
+  if (compile_major < MIN_MAJOR || compile_major > MAX_MAJOR) {
+    printf("unsupported compile-time major %ld (headers: %s)\n", compile_major, OPENSSL_VERSION_TEXT);
+    return 1;
+  }
+  if (runtime_major < MIN_MAJOR || runtime_major > MAX_MAJOR) {
+    printf("unsupported runtime major %ld (library: %s)\n", runtime_major, OpenSSL_version(OPENSSL_VERSION));
+    return 2;
+  }
+  if (compile_major != runtime_major) {
+    printf("header/library major mismatch: headers %ld, library %ld\n", compile_major, runtime_major);
+    return 3;
+  }
   SSL_CTX *ctx = SSL_CTX_new(TLS_client_method());
-  if (ctx == NULL) return 2;
+  if (ctx == NULL) {
+    printf("cannot create a TLS client context\n");
+    return 4;
+  }
   SSL_CTX_free(ctx);
   printf("%s\n", OpenSSL_version(OPENSSL_VERSION));
   return 0;
 }
 C
   then rm -rf -- "$probe_dir"; return 1; fi
-  if ! cc "$probe_dir/probe.c" -I"$include" -L"$lib" -Wl,-rpath,"$lib" -lssl -lcrypto \
+  if ! cc -DMIN_MAJOR="$OPENSSL_MIN_MAJOR" -DMAX_MAJOR="$OPENSSL_MAX_MAJOR" \
+      "$probe_dir/probe.c" -I"$include" -L"$lib" -Wl,-rpath,"$lib" -lssl -lcrypto \
       -o "$probe_dir/probe" >"$probe_dir/build.log" 2>&1; then
+    printf 'compile/link failed against %s + %s (%s)\n' "$include" "$lib" \
+      "$(tr '\n' ' ' <"$probe_dir/build.log" | cut -c1-160)" >&2
     rm -rf -- "$probe_dir"
     return 1
   fi
   local reported
-  if ! reported="$(LD_LIBRARY_PATH="$lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" "$probe_dir/probe")"; then
+  if ! reported="$(LD_LIBRARY_PATH="$lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" "$probe_dir/probe" 2>&1)"; then
+    printf 'runtime check failed at %s (%s)\n' "$lib" "$reported" >&2
     rm -rf -- "$probe_dir"
     return 1
   fi
   rm -rf -- "$probe_dir"
-  SYSTEM_OPENSSL_VERSION="$reported"
-  return 0
+  printf '%s\n' "$reported"
 }
 
 # Decide ONCE, before any download or build, so prefetch and build agree.
-# auto   — probe the host, fall back to the pinned build on any doubt
-# require — host must work (fail loudly instead of silently spending 3 minutes)
-# never  — always build the pinned OpenSSL (previous behaviour)
+# auto    — first host candidate that passes the probe; pinned build otherwise
+# require — host must work (fail loudly instead of silently spending minutes)
+# never   — always build the pinned OpenSSL (previous behaviour)
 select_openssl() {
   USE_SYSTEM_OPENSSL=0
-  local include="${OPENSSL_INCLUDE_DIR:-/usr/include}"
-  local lib="${OPENSSL_LIB_DIR:-/usr/lib/x86_64-linux-gnu}"
   if [[ "$SYSTEM_OPENSSL" == "never" ]]; then
     printf 'OpenSSL: building pinned version (SYSTEM_OPENSSL=never)\n'
     return 0
   fi
-  if openssl_probe; then
-    USE_SYSTEM_OPENSSL=1
-    OPENSSL_INCLUDE_DIR="$include"
-    OPENSSL_LIB_DIR="${OPENSSL_LIB_DIR:-$lib}"
-    OPENSSL_PREFIX="$include"; OPENSSL_PREFIX="${OPENSSL_PREFIX%/include}"; OPENSSL_PREFIX="${OPENSSL_PREFIX:-/usr}"
-    printf 'OpenSSL: reusing host %s (%s) — pinned build skipped\n' "$SYSTEM_OPENSSL_VERSION" "$lib"
-    return 0
+  local candidate include lib reported="" reason tried=()
+  local reason_file
+  reason_file="$(mktemp "$BUILD_ROOT/.openssl-reason.XXXXXX")"
+  while IFS='|' read -r include lib; do
+    [[ -n "$include" ]] || continue
+    if reported="$(openssl_probe "$include" "$lib" 2>"$reason_file")"; then
+      USE_SYSTEM_OPENSSL=1
+      OPENSSL_INCLUDE_DIR="$include"
+      OPENSSL_LIB_DIR="$lib"
+      OPENSSL_PREFIX="$include"
+      OPENSSL_PREFIX="${OPENSSL_PREFIX%/include}"
+      OPENSSL_PREFIX="${OPENSSL_PREFIX:-/usr}"
+      SYSTEM_OPENSSL_VERSION="$reported"
+      printf 'OpenSSL: reusing host %s (headers %s, libs %s) — pinned build skipped\n' \
+        "$reported" "$include" "$lib"
+      return 0
+    fi
+    reason="$(cat "$reason_file" 2>/dev/null || true)"
+    tried+=("$include+$lib: ${reason:-not usable}")
+  done < <(openssl_candidates)
+  rm -f -- "$reason_file"
+
+  local detail
+  if ((${#tried[@]})); then
+    detail="$(printf '\n  - %s' "${tried[@]}")"
+  else
+    detail="none found (no openssl/ssl.h in: $OPENSSL_SEARCH_INCLUDES)"
   fi
   if [[ "$SYSTEM_OPENSSL" == "require" ]]; then
-    fail "SYSTEM_OPENSSL=require but the host OpenSSL at $include / $lib failed the compile+link+handshake probe"
+    fail "SYSTEM_OPENSSL=require but no usable host OpenSSL (need major $OPENSSL_MIN_MAJOR):$detail"
   fi
-  printf 'OpenSSL: host at %s did not pass the probe; building pinned version\n' "$include"
+  printf 'OpenSSL: no usable host OpenSSL (need major %s); building pinned version%s\n' \
+    "$OPENSSL_MIN_MAJOR" "$detail"
 }
 
 build_python() {
