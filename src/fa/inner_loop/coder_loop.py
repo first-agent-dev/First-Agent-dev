@@ -77,17 +77,8 @@ from pathlib import Path
 from typing import Any, Final
 
 from fa.inner_loop.artifacts import ArtifactStore
-from fa.inner_loop.budget_effects import (
-    emit_context_warn as _emit_context_warn,
-)
-from fa.inner_loop.budget_effects import (
-    record_budget_pressure as _record_budget_pressure,
-)
-from fa.inner_loop.budget_effects import (
-    record_compaction_pressure as _record_compaction_pressure,
-)
+from fa.inner_loop.budget_ladder import run_budget_ladder
 from fa.inner_loop.budget_turn import classify_budget as classify_budget
-from fa.inner_loop.compaction.compaction_turn import run_stage2_masking, run_stage3_compaction
 from fa.inner_loop.conversation_history import (
     _assert_tool_pairing_invariant as _assert_tool_pairing_invariant,
 )
@@ -1016,149 +1007,33 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
 
         if budget_enabled:
             usage = estimate_tokens(messages_payload, tool_payload)
-            decision = budget.check(usage)
-            # The decision, named. Effects below are unchanged and still read
-            # `decision` / `last_budget_ratio`, so this hop adds no behaviour —
-            # it gives the next slice a value to check the effects against, and
-            # turns an unrecognised budget action into a loud error instead of a
-            # silent fall-through.
-            verdict = classify_budget(
-                decision,
-                stage2_threshold=budget.stage2_threshold,
-                stage3_threshold=budget.stage3_threshold,
+            # The ladder owns the budget's consequences and writes its own rows;
+            # it reports a stop instead of taking one, because `finish_at` closes
+            # over this function's state and nowhere else may end the session.
+            budget_outcome = run_budget_ladder(
+                usage=usage,
+                budget=budget,
+                turn=turn,
+                max_turns=max_turns,
+                log=log,
+                output=output,
+                turn_state=turn_state,
+                tool_payload=tool_payload,
+                compose_request=_compose_request_payload,
+                compactor_chain=compactor_chain,
+                artifact_store=artifact_store,
+                compaction_threshold=compaction_threshold,
             )
-            turn_state.last_budget_ratio = verdict.ratio
-            if verdict.action == "warn":
-                logger.warning("ContextBudget Gating Warning: %s", verdict.message)
-                # Durable row + console mirror live in budget_effects: this
-                # verdict has no consequence for the session's fate, so it does
-                # not need to sit inside the block that can end the run.
-                _record_budget_pressure(
-                    verdict,
-                    turn=turn,
-                    max_turns=max_turns,
-                    log=log,
-                    output=output,
-                    compaction_enabled=False,
+            if budget_outcome.stop is not None:
+                return finish_at(
+                    budget_outcome.stop.exit_code,
+                    budget_outcome.stop.reason,
+                    final_text=budget_outcome.stop.final_text,
                 )
-            elif decision["action"] in {"stage2", "stage3"}:
-                # S6: compaction_warning — single observation point for
-                # compaction-level pressure. Fires in BOTH enabled and
-                # disabled cases so the operator can always see when the
-                # system detected pressure at compaction threshold,
-                # regardless of whether compaction is actually enabled.
-                # SSoT: threshold presence is the explicit compaction toggle;
-                # its numeric value tunes the Stage 2 threshold. No second
-                # boolean flag is consulted.
-                compaction_enabled = compaction_threshold is not None
-
-                _record_compaction_pressure(
-                    verdict,
-                    turn=turn,
-                    max_turns=max_turns,
-                    log=log,
-                    output=output,
-                    compaction_enabled=compaction_enabled,
-                )
-
-                logger.warning("compaction_enabled: %s, flags: %s", compaction_enabled, state.feature_flags)
-
-                if not compaction_enabled:
-                    if verdict.action == "stage2":
-                        logger.warning(
-                            "ContextBudget Stage 2 reached but compaction is disabled: %s",
-                            verdict.message,
-                        )
-                        _record_budget_pressure(
-                            verdict,
-                            turn=turn,
-                            max_turns=max_turns,
-                            log=log,
-                            output=output,
-                            compaction_enabled=False,
-                        )
-                    else:
-                        logger.warning("ContextBudget Gate Breach: Stage 3 reached! %s", decision["message"])
-                        log.append(
-                            actor="runtime",
-                            kind="context_budget_hard_stop",
-                            content=budget.hard_stop_row(usage, message=decision["message"]),
-                        )
-                        # context_budget_hard_stop → console context_warn (critical)
-                        _emit_context_warn(
-                            verdict,
-                            output=output,
-                            turn=turn,
-                            max_turns=max_turns,
-                            action="stage3",
-                        )
-                        log.append(
-                            actor="runtime",
-                            kind="run_stopped",
-                            content={"reason": "context_budget_hard_stop", "turns": turn},
-                        )
-                        return finish_at(1, "context_budget_hard_stop", final_text=decision["message"])
-                else:
-                    # Stage-2 masking lives in compaction_turn: it owns its own rows,
-                    # events and the one deliberate except that keeps the run alive.
-                    stage2 = run_stage2_masking(
-                        turn=turn,
-                        max_turns=max_turns,
-                        history=turn_state.conversation_history,
-                        memory_summary=turn_state.memory_summary,
-                        usage=usage,
-                        budget=budget,
-                        log=log,
-                        output=output,
-                        tool_payload=tool_payload,
-                        compose_request=_compose_request_payload,
-                        artifact_store=artifact_store,
-                        recent_turns_to_keep=4,
-                    )
-                    if stage2.applied:
-                        # Re-classify: after masking the decision is a different one, and
-                        # every later read goes through the verdict. Q#4 lives here.
-                        verdict = stage2.verdict
-                        turn_state.adopt_compaction(history=stage2.history, ratio=verdict.ratio)
-                        messages_payload = stage2.messages_payload
-                        request_extras = stage2.request_extras
-                        usage = stage2.usage
-                    # Guard on the verdict, not on the pre-masking decision: after
-                    # stage-2 the decision has been re-derived, so reading the older
-                    # name here would act on a stale value (Q#4's shape, one level up).
-                    if verdict.action == "stage3":
-                        # Stage-3 compaction, the anti-thrashing breaker and the exit
-                        # decision live in compaction_turn: they own rows and events, but
-                        # not how a session ends — they report it, and the driver performs it.
-                        stage3 = run_stage3_compaction(
-                            turn=turn,
-                            max_turns=max_turns,
-                            history=turn_state.conversation_history,
-                            memory_summary=turn_state.memory_summary,
-                            usage=usage,
-                            budget=budget,
-                            log=log,
-                            output=output,
-                            tool_payload=tool_payload,
-                            compose_request=_compose_request_payload,
-                            compactor_chain=compactor_chain,
-                        )
-                        if stage3.stopped:
-                            # Q#4, applied to the exit itself: the percentage the
-                            # session reports must describe the state the stop was
-                            # decided on, not the one before compaction. Without
-                            # this the summary printed the pre-compaction ratio
-                            # (measured: 99% where the run died at 92%).
-                            turn_state.last_budget_ratio = stage3.verdict.ratio
-                            return finish_at(1, "context_budget_hard_stop", final_text=stage3.stop_message)
-                        if stage3.applied:
-                            verdict = stage3.verdict
-                            turn_state.adopt_compaction(
-                                history=stage3.history, summary=stage3.memory_summary, ratio=verdict.ratio
-                            )
-                            messages_payload = stage3.messages_payload
-                            request_extras = stage3.request_extras
-                            usage = stage3.usage
+            usage = budget_outcome.usage
+            if budget_outcome.messages_payload is not None:
+                messages_payload = list(budget_outcome.messages_payload)
+                request_extras = dict(budget_outcome.request_extras or {})
 
         # Prompt-composer extras (``prompt_cache_key``, ``prompt_cache_retention``)
         # come from the request body builder. Per-provider fields (Mistral's

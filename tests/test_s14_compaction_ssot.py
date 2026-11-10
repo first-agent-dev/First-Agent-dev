@@ -16,7 +16,9 @@ from fa.providers.chain import ChainConfig
 
 def test_compaction_enablement_uses_threshold_presence() -> None:
     """The production decision must be derived from threshold presence."""
-    content = Path("src/fa/inner_loop/coder_loop.py").read_text(encoding="utf-8")
+    # The decision line moved with the budget ladder; the rule did not change:
+    # threshold presence IS the toggle, and it is derived in exactly one place.
+    content = Path("src/fa/inner_loop/budget_ladder.py").read_text(encoding="utf-8")
     assert "compaction_enabled = compaction_threshold is not None" in content
 
 

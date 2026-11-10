@@ -247,7 +247,7 @@ def test_driver_routes_non_terminal_pressure_through_this_module(tmp_path: Path)
     from unittest.mock import patch
 
     from fa.feature_flags import FeatureFlags
-    from fa.inner_loop import EventLog, SessionState, budget_effects, coder_loop
+    from fa.inner_loop import EventLog, SessionState, budget_effects, budget_ladder, coder_loop
     from fa.inner_loop.hooks import HookRegistry
     from fa.inner_loop.registry import ToolRegistry
     from tests.fixtures.session_wiring import make_mock_chain, mock_success_response
@@ -261,7 +261,8 @@ def test_driver_routes_non_terminal_pressure_through_this_module(tmp_path: Path)
             return real(verdict, **kwargs)
 
         monkeypatch = pytest.MonkeyPatch()
-        monkeypatch.setattr(coder_loop, "_record_budget_pressure", spy)
+        # The pressure row is produced by the ladder now; the driver delegates.
+        monkeypatch.setattr(budget_ladder, "_record_budget_pressure", spy)
         try:
             log = EventLog(tmp_path / f"{run_id}.jsonl", run_id=run_id)
             state = SessionState(

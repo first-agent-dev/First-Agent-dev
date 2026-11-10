@@ -282,7 +282,7 @@ def test_driver_routes_stage2_through_this_module(tmp_path: Path) -> None:
     from unittest.mock import patch
 
     from fa.feature_flags import FeatureFlags
-    from fa.inner_loop import EventLog, SessionState, coder_loop
+    from fa.inner_loop import EventLog, SessionState, budget_ladder, coder_loop
     from fa.inner_loop.hooks import HookRegistry
     from fa.inner_loop.registry import ToolRegistry
     from tests.fixtures.session_wiring import make_mock_chain, mock_success_response
@@ -332,7 +332,7 @@ def test_driver_routes_stage2_through_this_module(tmp_path: Path) -> None:
     chain.request.return_value = mock_success_response("done")
 
     with (
-        patch.object(coder_loop, "run_stage2_masking", side_effect=spy),
+        patch.object(budget_ladder, "run_stage2_masking", side_effect=spy),
         patch("fa.memory.context_budget.estimate_tokens", return_value=85_000),
     ):
         coder_loop.drive_session(

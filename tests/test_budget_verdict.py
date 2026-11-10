@@ -182,13 +182,15 @@ def test_driver_calls_the_verdict_on_the_real_budget_path(tmp_path: Path) -> Non
     default).
     """
     from fa.feature_flags import FeatureFlags
-    from fa.inner_loop import EventLog, SessionState, coder_loop
+    from fa.inner_loop import EventLog, SessionState, budget_ladder, coder_loop
     from fa.inner_loop.hooks import HookRegistry
     from fa.inner_loop.registry import ToolRegistry
     from tests.fixtures.session_wiring import make_mock_chain, mock_success_response
 
     seen: list[tuple[str, int, int]] = []
-    real = coder_loop.classify_budget
+    # The ladder took over the call; the driver only delegates. Spying on the
+    # driver here would now assert on a name that is no longer used.
+    real = budget_ladder.classify_budget
 
     def spy(decision: Mapping[str, Any], *, stage2_threshold: int, stage3_threshold: int) -> BudgetVerdict:
         verdict = real(decision, stage2_threshold=stage2_threshold, stage3_threshold=stage3_threshold)
@@ -196,7 +198,7 @@ def test_driver_calls_the_verdict_on_the_real_budget_path(tmp_path: Path) -> Non
         return verdict
 
     monkeypatch = pytest.MonkeyPatch()
-    monkeypatch.setattr(coder_loop, "classify_budget", spy)
+    monkeypatch.setattr(budget_ladder, "classify_budget", spy)
     try:
         log = EventLog(tmp_path / "events.jsonl", run_id="verdict-wired")
         state = SessionState(

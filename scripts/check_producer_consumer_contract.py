@@ -107,6 +107,11 @@ PRODUCER_FILES = [
     # "a producer was removed" while console output is byte-identical — the
     # kind of false alarm that trains people to lower the floor.
     "src/fa/inner_loop/budget_effects.py",
+    # `budget_ladder` took the stage-3-without-compaction exit out of the driver
+    # (2026-11-10) and calls `budget_effects.emit_context_warn` for it. The call
+    # moved; the count did not — unlisted, `context_warn` reads 3 and the
+    # checker reports a producer that was in fact relocated.
+    "src/fa/inner_loop/budget_ladder.py",
     "src/fa/inner_loop/compaction/compaction_turn.py",
     # `provider_turn` took `provider_attempt`/`llm_call`/`llm_response` out of
     # `coder_loop` (2026-11-10). Same reason as the two above: unlisted, the
