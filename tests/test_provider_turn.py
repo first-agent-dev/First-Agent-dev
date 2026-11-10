@@ -18,7 +18,7 @@ Three properties:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, cast, override
 
 import pytest
 
@@ -104,6 +104,7 @@ def test_rows_and_console_come_out_in_the_documented_order(tmp_path: Path) -> No
     timeline: list[str] = []
 
     class _Timeline(_Capture):
+        @override
         def emit(self, event: Any) -> None:
             timeline.append(f"console:{event.type}")
             super().emit(event)
