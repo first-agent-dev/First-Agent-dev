@@ -46,6 +46,7 @@ from typing import override
 
 import pytest
 
+from fa.inner_loop.coder_loop import LOOP_GUARD_REASON_PREFIX, SessionOutcome, _stop_reason_for
 from fa.inner_loop.hooks.base import Decision, GuardMiddleware, HookPayload, HookRegistry, LifecyclePoint
 from fa.inner_loop.loop import SessionRun, StopInfo, run_session
 from fa.inner_loop.registry import ToolCall, ToolRegistry, ToolResult, ToolSpec
@@ -398,3 +399,126 @@ def test_terminal_tool_stop_matrix(tmp_path: Path, point: str, reason: str, term
     else:
         assert state.observations == before and not events
     assert not _handle_terminal_tool_stop(None, state=state, output=bus)
+
+
+# ---------------------------------------------------------------------------
+# S6-F5 — a terminal stop reports itself, not a cap that never fired
+# ---------------------------------------------------------------------------
+#
+# Measured before the fix (real drive_session, real loop/registry/hooks): a
+# guard denial at AFTER_TOOL_EXEC produced ``stop_reason="iteration_cap"``,
+# ``tool_results=()`` (although the tool really ran and its result is in the
+# durable log) and *two* ``run_stopped`` rows — the guard's own row plus a
+# synthetic cap row from the shared tail. The CLI banner therefore printed
+# ``FAIL: iteration_cap`` for a run whose budget never ran out. These tests pin
+# the fixed contract from the outside, one assertion per defect.
+
+_TERMINAL_STOP_DOC = """Terminal-stop outcome contract (S6-F5).
+
+    Fixes four measured properties of the pre-fix path:
+    (a) executed tool results reached the log but not SessionOutcome.tool_results;
+    (b) stop_reason said "iteration_cap" although no cap fired;
+    (c) the log carried two run_stopped rows for one stop;
+    (d) stats.py picked the trailing synthetic row as the run's reason.
+    """
+
+
+def _drive_with_denial(tmp_path: Path, *, point: LifecyclePoint, reason: str) -> tuple[SessionOutcome, SessionState]:
+    from fa.inner_loop.coder_loop import drive_session
+    from tests.fixtures.session_wiring import make_mock_chain, mock_tool_call_response
+
+    chain = make_mock_chain(context_limit=150_000)
+    # Three responses available; a terminal stop must consume exactly one.
+    chain.request.side_effect = [
+        mock_tool_call_response("c1", "t.ok", {}),
+        mock_tool_call_response("c2", "t.ok", {}),
+        mock_tool_call_response("c3", "t.ok", {}),
+    ]
+    hooks = HookRegistry()
+    hooks.register(_DenyAt(point=point, reason=reason))
+    state = SessionState(workspace_root=tmp_path, run_id="terminal-outcome")
+    outcome = drive_session(
+        "do the thing",
+        provider_chain=chain,
+        registry=_registry(),
+        hooks=hooks,
+        state=state,
+        max_turns=3,
+    )
+    assert chain.request.call_count == 1, "the model was called again after a terminal stop"
+    return outcome, state
+
+
+def test_terminal_stop_keeps_the_results_it_executed(tmp_path: Path) -> None:
+    """(a) C1: the tool really ran, so its result must be in the outcome.
+
+    Kill-check target: `break` to the shared cap tail instead of returning
+    here — ``tool_results`` becomes empty while the log still has the row.
+    """
+    outcome, state = _drive_with_denial(tmp_path, point=LifecyclePoint.AFTER_TOOL_EXEC, reason="halt after tool")
+
+    assert state.log is not None
+    durable = [row for row in state.log.read_all() if row.kind == "tool_result"]
+    assert len(durable) == 1, "precondition: the tool result is durably recorded"
+
+    assert len(outcome.tool_results) == 1, (
+        f"the tool ran and was logged, but the outcome reports {len(outcome.tool_results)} results"
+    )
+    assert outcome.tool_results[0].error is None
+    assert outcome.tool_results[0].summary == "done"
+
+
+def test_terminal_stop_reports_its_own_reason(tmp_path: Path) -> None:
+    """(b) C1: the reason is the guard's, never a cap that never fired.
+
+    Kill-check target: keep the shared ``iteration_cap`` tail — this reads
+    ``iteration_cap`` although the turn budget was 3 and one turn ran.
+    """
+    outcome, _ = _drive_with_denial(tmp_path, point=LifecyclePoint.AFTER_TOOL_EXEC, reason="halt after tool")
+
+    assert outcome.stop_reason != "iteration_cap", "a guard denial must not be reported as a budget cap"
+    assert outcome.stop_reason == "hook_deny:AFTER_TOOL_EXEC"
+    assert outcome.exit_code == 1
+    assert outcome.turns == 1
+
+
+def test_terminal_stop_writes_exactly_one_run_stopped_row(tmp_path: Path) -> None:
+    """(c)+(d) C1: one stop, one row — and it is the guard's, which stats reads.
+
+    ``stats._parse_events`` takes the LAST ``run_stopped`` reason it sees, so a
+    synthetic trailing row silently became the reported reason of the run.
+    """
+    _, state = _drive_with_denial(tmp_path, point=LifecyclePoint.AFTER_TOOL_EXEC, reason="halt after tool")
+    assert state.log is not None
+    rows = [row for row in state.log.read_all() if row.kind == "run_stopped"]
+
+    assert len(rows) == 1, f"one stop must produce one row, got {[r.content.get('reason') for r in rows]}"
+    assert "halt after tool" in str(rows[0].content.get("reason", ""))
+    assert [row for row in state.log.read_all() if row.kind == "session_summary"], (
+        "the summary must still be written once"
+    )
+
+
+def test_loop_guard_trip_is_distinguishable_from_a_hook_denial(tmp_path: Path) -> None:
+    """C1: the LoopGuard path shares the branch but not the code.
+
+    The two reasons mean different things to an operator (a guard chain said no
+    vs. the model looped), so the exit code must not collapse them.
+    """
+    stop = StopInfo(point=LifecyclePoint.BETWEEN_ROUNDS.value, reason=LOOP_GUARD_REASON_PREFIX + "repeated calls")
+    assert _stop_reason_for(stop) == "loop_guard"
+
+    denial = StopInfo(point=LifecyclePoint.AFTER_TOOL_EXEC.value, reason="policy says stop")
+    assert _stop_reason_for(denial) == "hook_deny:AFTER_TOOL_EXEC"
+
+
+def test_stop_reason_codes_stay_within_the_documented_vocabulary() -> None:
+    """C0: the new codes do not invent a parallel vocabulary.
+
+    ``stats``/CLI/ledger classify on these strings; a new value must be a new
+    *documented* value, not an accident of one branch.
+    """
+    terminal = _stop_reason_for(StopInfo(point="AFTER_TOOL_EXEC", reason="denied"))
+    loop_guard = _stop_reason_for(StopInfo(point="BETWEEN_ROUNDS", reason=LOOP_GUARD_REASON_PREFIX + "x"))
+    assert terminal.startswith("hook_deny:")  # matches BEFORE/AFTER_LLM_CALL codes
+    assert loop_guard == "loop_guard"

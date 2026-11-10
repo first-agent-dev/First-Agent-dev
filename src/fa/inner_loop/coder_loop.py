@@ -99,7 +99,7 @@ from fa.inner_loop.injections import (
     is_observed,
     mode_for,
 )
-from fa.inner_loop.loop import run_session
+from fa.inner_loop.loop import StopInfo, run_session
 from fa.inner_loop.path_risk import (
     default_scope_risk_config,
     load_scope_risk_config,
@@ -286,10 +286,19 @@ class SessionOutcome:
       emitted a final message with no tool calls and a terminal
       ``finish_reason`` (the happy path).
     - ``exit_code == 1`` + ``stop_reason == "iteration_cap"``: the
-      ``max_turns`` cap fired before the LLM signalled completion.
+      ``max_turns`` cap fired before the LLM signalled completion. Only
+      this path — never a guard denial — carries this code.
     - ``exit_code == 1`` + ``stop_reason == "abnormal_stop:<reason>"``:
       the LLM stopped on ``length`` / ``content_filter`` without a
       tool call — terminal but abnormal.
+    - ``exit_code == 1`` + ``stop_reason == "hook_deny:<point>"``: a guard
+      denied at ``AFTER_TOOL_EXEC`` (or at a terminal ``BETWEEN_ROUNDS``
+      gate). The results that turn executed stay in ``tool_results``; the
+      point names which lifecycle gate stopped the run.
+    - ``exit_code == 1`` + ``stop_reason == "loop_guard"``: ``LoopGuard``
+      tripped (repeat / ping-pong breaker) and ended the session in-band.
+      Distinct from ``hook_deny`` because it means "the model was looping",
+      not "a policy said no".
     - ``exit_code == 2`` + ``stop_reason == "chain_exhausted"``: every
       provider in the chain failed; the chain raised
       :class:`fa.providers.errors.ProviderChainExhaustedError`.
@@ -506,6 +515,20 @@ def _request_with_cooldown_retries(
                         )
                     )
             time.sleep(wait_s)
+
+
+def _stop_reason_for(stop: StopInfo) -> str:
+    """Short, stable code for a terminal tool stop (the detail stays in the row).
+
+    The durable ``run_stopped`` row written by ``run_session`` already carries the
+    full reason; ``stop_reason`` is the code the CLI banner and the session
+    summary need. ``iteration_cap`` is deliberately *not* an option here: that
+    code means "the turn budget ran out", and reporting it for a guard denial is
+    the misleading banner S12.7 recorded.
+    """
+    if stop.reason.startswith(LOOP_GUARD_REASON_PREFIX):
+        return "loop_guard"
+    return f"hook_deny:{stop.point}"
 
 
 def _finish_no_tool_response(
@@ -1647,11 +1670,27 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
             acting_family=acting_family,
             limits=effective_limits,
         )
-        failed_tools.update(_failed_tool_names(tool_calls, turn_results.results))
         # S6-F4 / S12.7: only AFTER_TOOL_EXEC or a LoopGuard trip are
         # terminal; other BETWEEN_ROUNDS denials continue through padding.
+        # Checked BEFORE the early `failed_tools` update below, because a
+        # terminal stop must not run the padding/projection path — and because
+        # this branch now owns the whole exit (see `_finish_terminal_tool_stop`).
         if _handle_terminal_tool_stop(turn_results.stop, state=state, output=output):
-            break
+            # S6-F5: the results this turn really produced are part of the
+            # outcome, and the stop carries the guard's own reason. Falling
+            # through to the shared `iteration_cap` tail used to report a cap
+            # that never fired and drop executed results from `tool_results`.
+            assert turn_results.stop is not None  # noqa: S101 — _handle_* returned True
+            return finish(
+                SessionOutcome(
+                    exit_code=1,
+                    stop_reason=_stop_reason_for(turn_results.stop),
+                    turns=turn,
+                    final_text="",
+                    tool_results=(*collected_results, *turn_results.results),
+                )
+            )
+        failed_tools.update(_failed_tool_names(tool_calls, turn_results.results))
 
         turn_results = prepare_continuing_tool_results(
             tool_calls,
