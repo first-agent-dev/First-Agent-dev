@@ -167,7 +167,7 @@ def test_compaction_stage3_still_exceeds_emits_context_warn(tmp_path: Path) -> N
     # Patch estimate_tokens and budget to force stage3 after compaction
     with patch("fa.memory.context_budget.estimate_tokens", return_value=95000):
         with patch(
-            "fa.memory.context_budget.ContextBudget",
+            "fa.inner_loop.session_setup.ContextBudget",
             return_value=_budget_with_scripted_ladder(
                 [
                     {"action": "stage2", "ratio": 0.85, "message": "stage2 reached"},
@@ -243,7 +243,7 @@ def test_circuit_breaker_emits_compaction_end(tmp_path: Path) -> None:
     # stage3 compaction path executes.
     with patch("fa.memory.context_budget.estimate_tokens", return_value=95000):
         with patch(
-            "fa.memory.context_budget.ContextBudget",
+            "fa.inner_loop.session_setup.ContextBudget",
             return_value=_budget_with_scripted_ladder(
                 [
                     {"action": "stage2", "ratio": 0.85, "message": "stage2 reached"},
@@ -497,7 +497,7 @@ def test_circuit_breaker_emits_context_warn(tmp_path: Path) -> None:
     # Simulate: stage2 → compaction → circuit breaker (record_compaction_attempt returns False)
     with patch("fa.memory.context_budget.estimate_tokens", return_value=95000):
         with patch(
-            "fa.memory.context_budget.ContextBudget",
+            "fa.inner_loop.session_setup.ContextBudget",
             return_value=_budget_with_scripted_ladder(
                 [
                     {"action": "stage2", "ratio": 0.85, "message": "stage2 reached"},

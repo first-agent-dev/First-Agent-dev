@@ -32,6 +32,10 @@ from tests.fixtures.session_wiring import (
 
 MIN_CONTEXT_LIMIT = 32_000
 CODER_LOOP_PATH = Path("src/fa/inner_loop/coder_loop.py")
+# The floor and the clamp live with the rest of the session preconditions
+# (2026-11-10). The driver no longer states the constant; the path that builds
+# the budget does, and that is the file these source checks must read.
+SESSION_SETUP_PATH = Path("src/fa/inner_loop/session_setup.py")
 
 
 # ── Fixtures ─────────────────────────────────────────────────────────
@@ -215,7 +219,9 @@ def test_direct_context_limit_access_exists() -> None:
 
 
 def test_min_context_limit_constant_exists() -> None:
-    """Source code must define MIN_CONTEXT_LIMIT = 32_000."""
-    content = CODER_LOOP_PATH.read_text(encoding="utf-8")
+    """Source code must define MIN_CONTEXT_LIMIT = 32_000, in the clamp's owner."""
+    content = SESSION_SETUP_PATH.read_text(encoding="utf-8")
     assert "MIN_CONTEXT_LIMIT" in content, "MIN_CONTEXT_LIMIT constant not found"
     assert "32_000" in content or "32000" in content, "MIN_CONTEXT_LIMIT value not 32000"
+    # And the driver must not silently re-derive its own floor: one owner.
+    assert "MIN_CONTEXT_LIMIT" not in CODER_LOOP_PATH.read_text(encoding="utf-8")
