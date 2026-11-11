@@ -200,28 +200,91 @@ def _inline(text: str) -> str:
     return text
 
 
-def _table_block(rows: Sequence[str], limit: int) -> list[str]:
-    """Таблица: строка на запись, разделитель между шапкой и телом."""
+def _table_cells(rows: Sequence[str]) -> list[list[str]]:
+    """Разобрать строки markdown-таблицы в ячейки; строка-разделитель отбрасывается."""
     cells: list[list[str]] = []
     for row in rows:
         if _TABLE_SEP.match(row):
             continue
-        parts = [_inline(part.strip()) for part in row.strip().strip("|").split("|")]
-        cells.append(parts)
+        cells.append([_inline(part.strip()) for part in row.strip().strip("|").split("|")])
+    return cells
+
+
+def _table_rows(cells: Sequence[Sequence[str]], limit: int) -> list[str]:
+    """Таблица «как есть»: ячейки выровнены по колонкам, длинное — переносится.
+
+    Годится для узких таблиц: если хоть одна колонка уже своего содержимого,
+    перенос внутри ячейки читается хуже, чем карточки, поэтому выбор делает
+    :func:`_table_block`.
+    """
+    columns = max(len(row) for row in cells)
+    natural = [max(visible(row[i]) if i < len(row) else 0 for row in cells) for i in range(columns)]
+    joiners = 3 * (columns - 1)
+    available = limit - joiners
+    if sum(natural) <= available:
+        widths = natural
+    else:
+        share = available // columns
+        widths = [min(width, share) for width in natural]
+        while sum(widths) < available:  # отдать остаток самой длинной колонке
+            index = max(range(columns), key=lambda i: natural[i] - widths[i])
+            if widths[index] >= natural[index]:
+                break
+            widths[index] += 1
+    lines: list[str] = []
+    for number, row in enumerate(cells):
+        wrapped = [wrap(row[i] if i < len(row) else "", widths[i]) or [""] for i in range(columns)]
+        height = max(len(part) for part in wrapped)
+        for line_number in range(height):
+            pieces = [
+                (part[line_number] if line_number < len(part) else "").ljust(widths[i])
+                for i, part in enumerate(wrapped)
+            ]
+            lines.append(" · ".join(pieces).rstrip())
+        if number == 0:
+            lines.append(dim("·" * min(limit, len(lines[-1]) or limit)))
+    return lines
+
+
+def _table_cards(cells: Sequence[Sequence[str]], limit: int) -> list[str]:
+    """Таблица, которая не влезает в ширину: карточка на строку, поля списком."""
+    header = [str(cell).strip() for cell in cells[0]]
+    lines: list[str] = []
+    for number, row in enumerate(cells[1:], start=1):
+        title = next((cell for cell in row if cell.strip()), f"строка {number}")
+        lines.append("")
+        lines.append(bold(f"{number}. {title}"))
+        for index in range(1, len(row)):
+            value = row[index]
+            if not value.strip():
+                continue
+            label = header[index] if index < len(header) else ""
+            label = str(label).strip()
+            if len(label) > 32:  # длинная шапка сломала бы отступ
+                label = label[:31] + "…"
+            head = f"   {label}: " if label else "   "
+            lines.extend(wrap(value, limit, head, " " * len(head)))
+    return lines
+
+
+def _table_block(rows: Sequence[str], limit: int) -> list[str]:
+    """Таблица: узкую печатаем колонками, широкую — карточками.
+
+    Считать «сколько влезет» по числу колонок бесполезно: четыре колонки в
+    ширину терминала дают по ~27 символов и рвут слова. Поэтому пробуем
+    колонки, а если самой узкой колонке остаётся меньше трети её содержимого —
+    переключаемся на карточки, где текст идёт во всю ширину.
+    """
+    cells = _table_cells(rows)
     if not cells:
         return []
-    columns = min(len(cells[0]), 4)  # больше четырёх колонок в терминал не влезает
-    cell_budget = max(12, (limit - 3 * (columns - 1)) // max(1, columns))
-    widths = [min(max(visible(row[i]) if i < len(row) else 0 for row in cells), cell_budget) for i in range(columns)]
-    lines: list[str] = []
-    for number, cell_row in enumerate(cells):
-        line = " · ".join(
-            (cell_row[i] if i < len(cell_row) else "")[: widths[i]].ljust(widths[i]) for i in range(columns)
-        ).rstrip()
-        lines.append(line)
-        if number == 0:
-            lines.append(dim("·" * min(limit, len(line))))
-    return lines
+    columns = len(cells[0])
+    natural = [max(visible(row[i]) if i < len(row) else 0 for row in cells) for i in range(columns)]
+    share = (limit - 3 * (columns - 1)) // max(1, columns)
+    cramped = any(size > share * 1.5 for size in natural[1:]) or share < 18
+    if columns <= 1 or not cramped:
+        return _table_rows(cells, limit)
+    return _table_cards(cells, limit)
 
 
 class _Renderer:
