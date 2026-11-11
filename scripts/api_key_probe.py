@@ -21,13 +21,15 @@
     python scripts/api_key_probe.py -p coarena --prompt "привет, кто ты?"
     python scripts/api_key_probe.py -p coarena --questions questions.md
 
-Чтение ответов. Длинный ответ уходит в постраничный просмотр (``less`` на
-Linux/macOS, ``more`` на Windows), рассуждение по умолчанию скрыто, ответы
-печатаются в ширину терминала. В чате ``/q ответ`` — перечитать ответы,
-``/q рассуждение`` — показать рассуждение, ``/save`` — сохранить всё в файлы.
+Чтение ответов. Ответ печатается в ширину терминала с абзацами; длинный на
+Linux/macOS открывается в ``less``, на Windows — сразу в консоль (там ``more``
+перехватывает ввод). Рассуждение по умолчанию скрыто. В чате: ``/q`` —
+перечитать ответ, ``/q 2 расс`` — с рассуждением, ``/save`` — сохранить в файлы.
 ``--questions файл.md`` прогоняет вопросы из файла и раскладывает ответы по
 файлам, чтобы сверять с эталоном в редакторе: заголовок ``## вопрос`` отделяет
 вопросы, блок ``### Эталон`` внутри — образец для ручного сравнения.
+``--models`` показывает модели обоих шлюзов; id оттуда вписывается в
+``ONEAI_MODEL`` / ``COARENA_MODEL`` — «*» в списке отмечает выбранную.
 
 Про ключи: заполните две константы ниже (``ONEAI_KEY``, ``COARENA_KEY``) либо
 положите их в переменные окружения ``ONEAI_API_KEY`` / ``COARENA_API_KEY``.
@@ -84,7 +86,10 @@ ONEAI_KEY = ""  # ключ One AI API Key, начинается на sk-
 COARENA_KEY = ""  # ключ Coarena, начинается на coa_
 
 USER_AGENT = "first-agent-api-key-probe/1.0"
-DEFAULT_MODEL = "claude-sonnet-5-5"  # один и тот же id есть на обоих шлюзах
+# Модель для каждого адаптера. Id берётся из `--models` и вписывается сюда
+# как есть: стиль записи у шлюзов разный (claude-opus-5-5, gpt-6.1-sol).
+ONEAI_MODEL = "claude-sonnet-5-5"
+COARENA_MODEL = "claude-sonnet-5-5"
 DEFAULT_MAX_TOKENS = 8192  # Anthropic-формат требует max_tokens явно
 ANTHROPIC_VERSION = "2023-06-01"
 DEFAULT_OUT = "probe-out"  # каталог для --save без --out
@@ -905,6 +910,11 @@ def _key_from(platform: str) -> str:
     return value.strip("\"'").strip()
 
 
+def model_for(platform: str) -> str:
+    """Модель из переменной файла для этого адаптера."""
+    return COARENA_MODEL if platform == "coarena" else ONEAI_MODEL
+
+
 def _resolve_platform(requested: str | None) -> str:
     """Платформа из --platform, а без него — по тому, какой ключ заполнен."""
     if requested:
@@ -1105,10 +1115,10 @@ class ChatClient:
             mark = "*" if mid == self.settings.model else " "
             lines.append(f" {mark} {mid}{suffix}")
         if models and pattern:
-            lines.append(_dim(f"\n«*» — выбрана сейчас; -m/--model задаёт другую: --model {models[0]['id']}"))
+            lines.append(_dim("\n«*» — выбрана сейчас; впишите нужный id в переменную файла или задайте -m"))
         elif models:
             lines.append(_dim(f"\n«*» — выбрана сейчас: {self.settings.model}"))
-            lines.append(_dim("  другая: -m <id с «*» рядом>  или фрагмент: -m opus"))
+            lines.append(_dim("  чтобы сменить: впишите id в ONEAI_MODEL / COARENA_MODEL или задайте -m"))
         self.reader.show("\n".join(lines))
         return 0
 
@@ -1123,19 +1133,13 @@ class ChatClient:
                 print(_yellow(f"{spec['label']}: ключ не задан — пропущено ({spec['env_var']})"))
                 continue
             other = ChatClient(replace_settings(self.settings, platform=name, key=key))
-            other.settings.model = self._model_for(name)
+            other.settings.model = self.settings.model if name == self.settings.platform else model_for(name)
             if other.print_models(pattern) == 0:
                 shown += 1
         if not shown:
             print(_red("\nни один шлюз не отдал список — проверьте ключи и сеть"), file=sys.stderr)
             return 1
         return 0
-
-    def _model_for(self, platform: str) -> str:
-        """Модель для показа: на своём шлюзе — как задана, на другом — в его записи."""
-        if platform == self.settings.platform:
-            return self.settings.model
-        return counterpart(self.settings.model, platform)
 
     # -- проверка ключа -----------------------------------------------------
     def _probe(self, history: Sequence[Mapping[str, str]], max_tokens: int | None) -> tuple[Reply, float]:
@@ -1577,33 +1581,6 @@ class ChatClient:
         )
 
 
-def _to_other_style(model: str) -> str:
-    """Переписать id в стиль другого шлюза.
-
-    Не всякая цифра — часть версии: claude-opus-5-5 остаётся с дефисами, а
-    gpt-6.1-sol ↔ gpt-6-1-sol переключается. Признак версии — дефис/точка
-    между цифрами, за которыми идёт одиночная цифра и конец либо ещё версия,
-    а не имя модели. Смену стиля всё равно проверяйте по --models: подсказка
-    может ошибаться, точный список всегда прав.
-    """
-    return re.sub(r"(?<=\d)[.-](?=\d(?:\.\d)*(-|$))", "-", model.split(":")[0])
-
-
-def _to_oneai(model: str) -> str:
-    """Coarena-стиль (gpt-6-1-sol) → One AI-стиль (gpt-6.1-sol)."""
-    return _to_other_style(model).replace("gpt-6-1-", "gpt-6.1-")
-
-
-def _to_coarena(model: str) -> str:
-    """One AI-стиль (gpt-6.1-sol) → Coarena-стиль (gpt-6-1-sol); суффикс :free снимаем."""
-    return _to_other_style(model)
-
-
-def counterpart(model: str, target: str) -> str:
-    """Как тот же id записывается на другом шлюзе (для подсказки в --models)."""
-    return _to_oneai(model) if target == "oneai" else _to_coarena(model)
-
-
 def replace_settings(settings: Settings, **changes: Any) -> Settings:
     """Копия настроек с заменой полей (Settings — dataclass, но менять общий нельзя)."""
     values = {field_name: getattr(settings, field_name) for field_name in settings.__dataclass_fields__}
@@ -1724,8 +1701,8 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "-m",
         "--model",
-        default=DEFAULT_MODEL,
-        help=f"model id: точный (со стилем шлюза) или фрагмент названия (по умолчанию {DEFAULT_MODEL})",
+        default=None,
+        help="model id этого шлюза; по умолчанию берётся из ONEAI_MODEL / COARENA_MODEL в начале файла",
     )
     parser.add_argument(
         "--effort",
@@ -1791,46 +1768,6 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def _looks_like_id(name: str) -> bool:
-    """Id на обоих шлюзах всегда содержит дефис: claude-sonnet-5-5, gpt-6.1-sol.
-
-    Значит «opus», «sonnet» и «gpt-6.1» без дефиса — это фрагмент для поиска,
-    а не точный id; такой ввод разрешаем через список моделей.
-    """
-    return "-" in name
-
-
-def _resolve_model(platform: str, wanted: str, timeout: float) -> str:
-    """Разрешить -m: точный id как есть, фрагмент — по списку моделей шлюза."""
-    if _looks_like_id(wanted):
-        return wanted
-    key = _key_from(platform)
-    if not key:
-        return wanted
-    try:
-        models = _fetch_models(platform, key, timeout)
-    except (ApiError, BenchError):
-        return wanted
-    ids = [str(model.get("id", "")) for model in models]
-    if wanted in ids:
-        return wanted
-    matches = _filter_models(models, wanted)
-    if len(matches) == 1:
-        resolved = str(matches[0].get("id", wanted))
-        print(_dim(f"  -m {wanted} → {resolved}"), file=sys.stderr)
-        return resolved
-    if len(matches) > 1 and "-" not in wanted:
-        families = sorted({str(model.get("id", "")).split("-")[0] for model in matches})
-        raise BenchError(
-            f"«{wanted}» — это не модель, а семейство ({', '.join(families)}). "
-            f"Уточните -m, например: -m {matches[0].get('id')}"
-        )
-    if len(matches) > 1:
-        names = ", ".join(str(model.get("id", "")) for model in matches[:8])
-        raise BenchError(f"по «{wanted}» подходит несколько моделей: {names} … — уточните -m")
-    raise BenchError(f"по «{wanted}» на {PLATFORMS[platform]['label']} ничего не нашлось — см. --models")
-
-
 def _settings_from_args(args: argparse.Namespace) -> Settings:
     platform = _resolve_platform(args.platform)
     key = _key_from(platform)
@@ -1850,9 +1787,7 @@ def _settings_from_args(args: argparse.Namespace) -> Settings:
         raise BenchError("--max-tokens меньше 256: ответ обрежется на полуслове")
     if args.questions and args.prompt:
         raise BenchError("--questions и --prompt вместе не имеют смысла: выберите один режим")
-    model = str(args.model)
-    if not args.models and not args.list_models and not args.check:
-        model = _resolve_model(platform, model, float(args.timeout))
+    model = str(args.model or model_for(platform))
     return Settings(
         platform=platform,
         wire=str(args.wire),
