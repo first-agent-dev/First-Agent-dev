@@ -196,3 +196,77 @@ session-режима, то есть на хосте остаётся файл в
    не имеет managed-эквивалента записи кандидата, поэтому managed-режим сегодня
    может **только отказать** в исправлении плана — «repair» в managed не работает.
    Это меняет W1/W2 границу: возможно, это R25, а не S3P3.
+
+## 10. Проверка на живом supervisor (2026-11-11): три слоя, все три ломают managed-repair
+
+Пробы на реальном `SupervisorService` + `WorkspaceAuthority`, не на моках.
+Окружение: восстановленное дерево `a410caf`, CPython 3.13.16.
+
+### Слой 1 — planner пишет кандидата на хост (подтверждено §9.1)
+
+`build_registry_for_role("planner", workspace_io=<port>, planner_dispatch=ADMISSION_REPAIR)`
+→ `fs_write_file` → файл появился на хосте, порт получил **0** вызовов.
+`_builder_for_role` выбирает `fs_write_file_limited`, а он `workspace_io` не принимает.
+
+### Слой 2 — `client.open_view` не умеет открыть CANDIDATE вообще
+
+`client.open_view(access=READ, purpose=CANDIDATE, plan_ref=…)` всегда шлёт
+`candidate_scope: None`. Но codec (`protocol.py:511-515`) требует
+`(candidate_scope is not None) == (purpose == CANDIDATE)`, поэтому такой запрос
+**невозможен на проводе**: `InvalidRequestError`. То есть у client API нет способа
+открыть CANDIDATE-view, хотя authority его поддерживает (`write_candidate`).
+
+**Рабочий путь (проверен):** ручной `CREATE_VIEW` с
+`candidate_scope={"plan_ref": pr}` + `protocol_version=1` →
+`1) CREATE_VIEW(candidate+scope): OK`.
+
+### Слой 3 — `ClientWorkspacePort` отказывает писать в CANDIDATE-view
+
+```
+2) запись FAILED: WorkspacePortError denied
+3) канонический план на хосте: b'# Existing plan\n'   ← не изменён, это хорошо
+4) .fa/admission создан: False                          ← и это хорошо
+```
+
+Причина (`tool_port.py:161`): `ClientWorkspacePort.write_file` отказывает на
+`view.access is not Access.WRITE`. Но по матрице authority
+(`workspace.py:219`) `CANDIDATE: (Access.READ, …, True)`, то есть CANDIDATE —
+**read-view**, который пишет только в свой приватный буфер через `write_candidate`.
+
+**Вывод:** managed-запись кандидата в приватный буфер невозможна на трёх
+уровнях: нет выбора writer'а (слой 1), нет API открытия view (слой 2), нет
+порта записи (слой 3). Это не один дефект, а отсутствующее звено целиком.
+
+### Что это значит для плана
+
+Порядок из §9.5 («сначала дефект, потом оракул») сохраняется, но объём работы
+больше, чем «дать scoped writer порт». Нужны:
+
+1. **Порт записи кандидата** — отдельный, узкий: `write_candidate(path, content, expected_sha256)`,
+   который шлёт `WRITE_FILE` в CANDIDATE-view. Не расширять `write_file` до
+   «пиши в read-view», иначе PERF-портал потеряет различие access↔effect.
+2. **API открытия CANDIDATE-view** — `open_candidate_view(plan_ref)`, который
+   заполняет `candidate_scope`. `open_view` остаётся как есть (у него нет способа
+   выразить scope, и это корректно для его вызывающих).
+3. **Выбор writer'а для planner** — в managed-режиме scoped writer должен писать
+   через этот порт, а не по хосту; host-ветка только для `workspace_io is None`,
+   и в managed без порта — честный отказ.
+4. **Оракул** — только после 1–3. Плюс он должен доказывать, что канонический
+   `.fa/admission/**` на хосте **не создан** (проба 4 это уже показала как
+   ожидаемое) и что план не изменился до публикации (проба 3).
+
+### Что уже проверено и работает (не надо чинить)
+
+* authority: `write_candidate` / `read_candidate` есть и работают, `WRITE_FILE`
+  для CANDIDATE роутится в `write_candidate` (`service.py:767`).
+* codec: CANDIDATE + `candidate_scope` валиден (V1).
+* в CANDIDATE-view нельзя писать в канон: план на хосте остался прежним,
+  `.fa/admission` не создан.
+
+### Открытый вопрос, который надо решить до кода
+
+Есть ли у CANDIDATE-view **владелец-грант**? `ClientWorkspacePort` требует
+`grant.view_ref == view` и `Access.WRITE`. Для CANDIDATE grant — от `CREATE_VIEW`
+(READ-грант). Порт должен принимать именно такой грант и всё равно писать — то
+есть проверка «write ⇒ Access.WRITE» переносится с порта на authority. Это
+изменение инварианта порта, и его надо зафиксировать явно, а не протащить молча.
