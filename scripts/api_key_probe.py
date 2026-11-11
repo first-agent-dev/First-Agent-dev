@@ -1311,8 +1311,10 @@ class ChatClient:
         """
         prompts = [
             "Ответь 2-3 предложениями: что такое HTTP-заголовок Authorization и чем Bearer отличается от Basic?",
-            "Реши по шагам и дай короткий ответ: в корзине 3 красных и 5 синих шаров, "
-            "вынули два шара без возврата. Какова вероятность, что оба синие?",
+            (
+                "Реши по шагам и дай короткий ответ: в корзине 3 красных и 5 синих шаров, "
+                "вынули два шара без возврата. Какова вероятность, что оба синие?"
+            ),
         ]
         print(_dim(f"{self.label} · {self.settings.model} · {self.settings.wire} · effort={self.settings.effort}"))
         directory = Path(self.settings.out) if self.settings.out else None
