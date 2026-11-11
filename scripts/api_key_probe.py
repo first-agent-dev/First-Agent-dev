@@ -587,9 +587,6 @@ class ChatClient:
         отправить допустимый максимум и объяснить, почему цифра меньше.
         """
         if self.model_ceiling and limit > self.model_ceiling:
-            print(
-                yellow(f"  лимит {limit} больше потолка модели {self.model_ceiling} — отправляю {self.model_ceiling}")
-            )
             return self.model_ceiling
         return limit
 
@@ -605,6 +602,15 @@ class ChatClient:
             limit = model.get("max_tokens")
             if isinstance(limit, int) and limit > 0:
                 self.model_ceiling = limit
+                requested = self.settings.max_tokens
+                self.settings.max_tokens = self.apply_ceiling(requested)
+                if self.settings.max_tokens != requested:
+                    print(
+                        yellow(
+                            f"  потолок {self.settings.model} — {limit} выходных токенов; "
+                            f"лимит {requested} подрезан до {limit}"
+                        )
+                    )
             return
 
     def build_body(self, history: Sequence[Mapping[str, str]]) -> dict[str, Any]:
