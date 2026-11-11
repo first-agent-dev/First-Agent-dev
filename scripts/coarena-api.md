@@ -17,6 +17,31 @@
 Ключ `coa_…`, заголовок `Authorization: Bearer …`; для `messages` — `x-api-key`
 плюс `anthropic-version: 2023-06-01`. Оба сразу → 401 `conflicting_credentials`.
 
+## Модель ≠ формат запроса
+
+Coarena — агрегатор: за одним ключом стоят модели Anthropic, OpenAI, Google, xAI
+и других. Формат провода выбирается отдельно от модели, и оба формата работают
+с любой моделью:
+
+| | `chat/completions` | `messages` |
+|---|---|---|
+| Модель Claude | работает | работает |
+| Модель GPT/Gemini/Grok | работает | работает (тело уходит как есть) |
+| Усилие | `reasoning_effort: high` | `thinking.budget_tokens: N` |
+| Системный промпт | роль `system` в `messages` | поле `system` |
+| Лимит ответа | `max_completion_tokens` | `max_tokens` (обязателен) |
+| Рассуждение в стриме | `delta.reasoning_content` | блоки `thinking_delta` |
+
+Практическое следствие: SDK привязывается к формату, а не к вендору модели.
+`openai`-клиент с `base_url="https://coarena.ai/api/v1"` отвечает на Claude так
+же, как `anthropic`-клиент с тем же адресом.
+
+Что теряется при работе в OpenAI-формате с Claude: явный `budget_tokens`
+(усилие задаётся уровнем, бюджет считает шлюз), `output_config`,
+`stop_sequences`, tool-блоки Anthropic-вида, а рассуждение приходит
+нестандартным полем `reasoning_content`. Всё остальное — модель, лимиты,
+контекст, цены — одинаково.
+
 ## Лимиты
 
 - 30 запросов в минуту на ключ+аккаунт+модель, 2 параллельных, $5 в сутки.
