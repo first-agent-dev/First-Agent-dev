@@ -3816,3 +3816,103 @@ def test_the_port_does_not_invent_a_saga_when_create_view_was_lost(
             stop.set()
             runner.join(timeout=5)
             assert not runner.is_alive()
+
+
+@pytest.mark.parametrize("saga", ["pending-publication", "orphaned-candidate-view"])
+def test_a_second_run_on_a_workspace_the_first_left_unsettled_is_refused_not_stranded(
+    site: Site, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, saga: str
+) -> None:
+    """E509 step 6 — the cross-cutting oracle, as a *consequence* rather than a detail.
+
+    Every other Q114 oracle asserts an inner fact (a flag, a code, one call count).
+    This one asserts the thing an operator actually experiences: run A ends badly,
+    and then run B arrives at the same workspace. There are exactly two acceptable
+    endings - B works, or B is refused for a reason it can report. What must never
+    happen is the third: B succeeds while A's private bytes are still stranded, so
+    the workspace looks free, the buffer is unreachable forever, and nobody is told.
+
+    Two shapes of "left unsettled", because they fail differently:
+
+    * ``pending-publication`` — A owns a replayable saga whose outcome the journal
+      can still prove (a lost *reply*), so A settles it and its writer goes back. B
+      then succeeds; the workspace was never lost. The distinction matters: a
+      genuinely failed PUBLISH handler journals UNKNOWN, no replay can ever prove it
+      (``_completed``), and that case belongs to the fence arm, not this one.
+    * ``orphaned-candidate-view`` — A owns no handle (lost CREATE_VIEW, E512), so the
+      fence holds the workspace OWNED. B must be refused with WORKSPACE_BUSY rather
+      than walking in over the orphan.
+    """
+    plan_path = site.source / PLAN_RELATIVE
+    plan_path.parent.mkdir(parents=True, exist_ok=True)
+    plan_path.write_bytes(b"# Existing plan\n")
+    source = read_plan_snapshot(site.source, Path(PLAN_RELATIVE))
+    candidate = snapshot_from_bytes("draft.md", b"# Repaired plan\n")
+    service_path, yaml_path = _configs(tmp_path, _document(site))
+    run = _run(site.source)
+
+    with SupervisorService(read_config_file(service_path)) as service:
+        workspace_id = _registered(service)
+        seen: list[str] = []
+
+        seen: list[str] = []
+        original_request = ExecutionClient.request
+        lost_create: set[str] = set()
+        lost_publish: set[str] = set()
+
+        def losing_create(self: Any, operation: Any, *, request_id: str, **kwargs: Any) -> Any:
+            answer = original_request(self, operation, request_id=request_id, **kwargs)
+            if operation is Operation.CREATE_VIEW and not lost_create:
+                lost_create.add(request_id)
+                raise ExecutionUncertainError("op-" + request_id, code="EXECUTION_UNKNOWN")
+            return answer
+
+        def losing_publish(self: Any, operation: Any, *, request_id: str, **kwargs: Any) -> Any:
+            # The commit happens; only the reply is lost, so the journal proves it.
+            answer = original_request(self, operation, request_id=request_id, **kwargs)
+            seen.append(request_id)
+            if operation is Operation.PUBLISH and not lost_publish:
+                lost_publish.add(request_id)
+                raise ExecutionUncertainError("op-" + request_id, code="EXECUTION_UNKNOWN")
+            return answer
+
+        with _serving_supervisor(service):
+            # --- run A -----------------------------------------------------------
+            if saga == "orphaned-candidate-view":
+                monkeypatch.setattr(ExecutionClient, "request", losing_create)
+            else:
+                monkeypatch.setattr(ExecutionClient, "request", losing_publish)
+            first = managed_execution_for_run(run, config_path=yaml_path)
+            assert first is not None
+            with pytest.raises(ExecutionUncertainError):
+                first.publish_plan(source, candidate)
+
+            if saga == "pending-publication":
+                # A can still settle what it owns: the authority answers the replay.
+                assert first.publication_pending is True
+                first.reconcile_publication()
+                assert first.publication_pending is False
+                assert first.close() is True
+                expected_status = "AVAILABLE"
+                second_must_work = True
+            else:
+                # A owns nothing to replay, so the fence is the whole answer.
+                assert first.publication_pending is False
+                assert first.close() is False
+                expected_status = "OWNED"
+                second_must_work = False
+            assert _status(site, workspace_id)["status"] == expected_status
+
+            # --- run B on the same workspace ------------------------------------
+            if saga == "orphaned-candidate-view":
+                monkeypatch.setattr(ExecutionClient, "request", original_request)
+            second = managed_execution_for_run(_run(site.source), config_path=yaml_path)
+            if second_must_work:
+                assert second is not None
+                assert second.binding.workspace_id == workspace_id
+                assert second.close() is True
+                assert _status(site, workspace_id)["status"] == "AVAILABLE"
+            else:
+                # The refusal is the answer: no half-acquired writer, no silent
+                # takeover of the run that still owns the workspace.
+                assert second is None
+                assert _status(site, workspace_id)["status"] == "OWNED"
