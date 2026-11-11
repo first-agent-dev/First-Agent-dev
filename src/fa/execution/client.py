@@ -704,20 +704,34 @@ class ExecutionClient:
             # Nothing was committed and no id exists to ask about: the only honest
             # answer is that terminality is unknown, and the writer stays fenced.
             raise ExecutionUncertainError(None, code="TERMINALITY_UNKNOWN", pending_publication=pending)
-        result = self.request(
-            Operation.PUBLISH,
-            request_id=pending.publish_request_id,
-            namespace=namespace,
-            view=view,
-            grant=view_grant,
-            payload={"sealed_manifest_id": None, "expected_base_revision": view.base_revision},
-            deadline=deadline,
-        )
+        try:
+            result = self.request(
+                Operation.PUBLISH,
+                request_id=pending.publish_request_id,
+                namespace=namespace,
+                view=view,
+                grant=view_grant,
+                payload={"sealed_manifest_id": None, "expected_base_revision": view.base_revision},
+                deadline=deadline,
+            )
+        except ExecutionUncertainError:
+            # The journal may hold UNKNOWN for this id — a handler that really
+            # failed, not merely a reply that was lost — and `_completed` never
+            # turns UNKNOWN into DONE. That is not proof of anything, so the
+            # caller gets the same saga back and the workspace stays fenced.
+            raise ExecutionUncertainError(
+                "op-" + pending.publish_request_id,
+                code="DURABILITY_UNKNOWN",
+                pending_publication=pending,
+            ) from None
         expected_ref = {**_plan_ref_dict(pending.source.ref), "sha256": hashlib.sha256(raw).hexdigest()}
         if result["plan_ref"] != expected_ref:
             raise ExecutionUncertainError(
                 "op-" + pending.publish_request_id, code="DURABILITY_UNKNOWN", pending_publication=pending
             )
+        # The publication is proved, so the view is settled exactly as the
+        # uninterrupted path leaves it: PUBLISHED, and its pin revocable.
+        self._release_view(namespace, view, view_grant, deadline)
         return PlanPublication(
             PlanRef(**expected_ref),
             str(result["revision_id"]),

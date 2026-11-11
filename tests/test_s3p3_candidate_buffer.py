@@ -342,3 +342,88 @@ def test_an_empty_buffer_means_no_candidate_not_an_empty_plan(site: Site) -> Non
     # Explicitly NOT captured: a stale buffer must not inherit a previous stage's
     # bytes, which is why the caller clears the variable on the way in as well.
     assert STAGE_CANDIDATE_BYTES.get() == ("previous", "b" * 64)
+
+
+def test_an_unsettled_candidate_view_holds_the_writer_until_it_is_published(site: Site) -> None:
+    """Q138 option B: ownership, not access, decides whether the writer settles.
+
+    §2.1 scopes writer release to WRITE views, which is right for a read pin over
+    committed bytes. CANDIDATE is the one READ purpose that owns writer-private
+    bytes, and an unresolved publication over those bytes must keep the owner —
+    otherwise the next claim advances the generation and the buffer becomes
+    unreachable rather than merely leftover.
+
+    The negative half matters as much: the same view, once published, must stop
+    holding the writer, or every managed run would end in a permanent
+    `WORKSPACE_BUSY` instead of a leak.
+    """
+    from tests.test_execution_workspace import ACTOR as CANDIDATE_ACTOR
+    from tests.test_execution_workspace import PEER
+
+    site.source.mkdir(parents=True, exist_ok=True)
+    (site.source / "plan.md").write_text(PLAN_BODY)
+    with site.owner(view_profile=native_profile(), read_only_profile=read_only_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = site.claim(owner, ids)
+        plan_ref = read_plan_snapshot(site.source, Path("plan.md")).ref
+        grant = owner.create_view(
+            PEER,
+            CANDIDATE_ACTOR,
+            workspace_id=ids["workspace_id"],
+            capability=lease.capability,
+            purpose=ViewPurpose.CANDIDATE,
+            access=Access.READ,
+            candidate_scope=scope_for(plan_ref),
+            plan_ref=plan_ref,
+            formal_evidence=False,
+            deadline=until(),
+        )
+        assert grant.view_ref is not None
+        # The unsettled CANDIDATE view alone must refuse settlement.
+        # `create_view` rotates the grant, so the pre-view capability is stale and
+        # would be refused UNAUTHORIZED before the fence. Read the live grant back
+        # from the owner, which is the capability a real releaser would hold.
+        live = site.live_capability(owner, ids)
+        with pytest.raises(Exception) as failure:
+            owner.release_writer(PEER, CANDIDATE_ACTOR, capability=live, deadline=until())
+        assert getattr(failure.value, "code", None) == "WORKSPACE_BUSY"
+        assert site.metadata(ids)["status"] == "OWNED"
+
+def test_a_read_pin_over_committed_bytes_still_settles_the_writer(site: Site) -> None:
+    """The other half of Q138-B: §2.1's scope stays intact.
+
+    The fence above judges CANDIDATE by ownership. If it had instead judged every
+    READ view, an ordinary reader pin would fence the writer forever — so this
+    proves the rule did not widen beyond the one purpose that owns private bytes.
+    """
+    from tests.test_execution_workspace import ACTOR as CANDIDATE_ACTOR
+    from tests.test_execution_workspace import PEER
+
+    site.source.mkdir(parents=True, exist_ok=True)
+    (site.source / "plan.md").write_text(PLAN_BODY)
+    with site.owner(view_profile=native_profile(), read_only_profile=read_only_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = site.claim(owner, ids)
+        pinned = ok(
+            lambda: owner.pin_reader(
+                PEER,
+                CANDIDATE_ACTOR,
+                workspace_id=ids["workspace_id"],
+                revision_id=lease.revision_id,
+                plan_ref=None,
+                formal_evidence=False,
+                deadline=until(),
+            )
+        )
+        assert pinned.view_ref is not None
+        released = ok(
+            lambda: owner.release_unused_writer(
+                PEER,
+                CANDIDATE_ACTOR,
+                workspace_id=ids["workspace_id"],
+                capability=lease.capability,
+                deadline=until(),
+            )
+        )
+        assert released["released"] is True
+        assert site.metadata(ids)["status"] == "AVAILABLE"

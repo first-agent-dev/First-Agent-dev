@@ -101,6 +101,11 @@ def _document(
     }
 
 
+def _status(site: Site, workspace_id: str) -> dict[str, Any]:
+    """The workspace's own record, read the way the authority writes it."""
+    return json.loads((site.state / "workspaces" / workspace_id / "workspace.json").read_text())
+
+
 def _configs(tmp_path: Path, document: dict[str, Any]) -> tuple[Path, Path]:
     service_path = tmp_path / "execution.json"
     service_path.write_text(json.dumps(document), encoding="utf-8")
@@ -3512,3 +3517,129 @@ def test_r10_managed_chat_bash_refusal_never_falls_back_to_host(
     assert bash_results[0]["error"]["retryable"] is False
     assert len(exec_requests) == 1 and exec_denials == ["BACKEND_UNAVAILABLE"]
     assert not (site.source / "r10-host-marker").exists()
+
+
+@pytest.mark.parametrize("lost_reply", [False, True], ids=["handler-refused", "reply-lost"])
+def test_an_unresolved_candidate_publication_keeps_the_writer_and_reconciles(
+    site: Site, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, lost_reply: bool
+) -> None:
+    """Q138 option B / Q114 1-A: the run, not the caller, holds the pending proof.
+
+    The two failure shapes this covers are exactly the two the journal can answer
+    differently, and the difference is the whole reason the pending record exists:
+
+    * ``handler-refused`` — the authority's PUBLISH handler really failed. The
+      journal records ``UNKNOWN``, and by design (``_completed``) that id never
+      becomes ``DONE``. Replay therefore cannot prove publication; the honest
+      outcome is another uncertainty, and the run keeps the writer fenced.
+    * ``reply-lost`` — the commit happened and only the reply vanished. Replay of
+      the *same* id is answered from the journal and the completed-reply cache, so
+      reconciliation proves the publication without performing a second effect.
+
+    The invariant in both: while the outcome is unknown, `close()` must NOT release
+    the writer and the CANDIDATE view must NOT be dropped while the workspace goes
+    back to `AVAILABLE`.
+    """
+    plan_path = site.source / PLAN_RELATIVE
+    plan_path.parent.mkdir(parents=True, exist_ok=True)
+    plan_path.write_bytes(b"# Existing plan\n")
+    source = read_plan_snapshot(site.source, Path(PLAN_RELATIVE))
+    candidate = snapshot_from_bytes("draft.md", b"# Repaired plan\n")
+    service_path, yaml_path = _configs(tmp_path, _document(site))
+    with SupervisorService(read_config_file(service_path)) as service:
+        workspace_id = _registered(service)
+        stop = threading.Event()
+        runner = threading.Thread(target=service.serve_forever, args=(stop,), daemon=True)
+        runner.start()
+        original = service.authority.publish_candidate_plan
+        seen: list[str] = []
+        client_class = ExecutionClient
+
+        def sabotage(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            seen.append(str(kwargs.get("operation_id")))
+            if len(seen) <= 2:
+                # The handler itself fails. The journal records UNKNOWN, and by
+                # design that id never becomes DONE, so replay cannot prove
+                # anything and reconciliation must stay honest.
+                raise SupervisorError("DURABILITY_UNKNOWN")
+            return original(*args, **kwargs)
+
+        handler_calls: list[str] = []
+        real = service.authority.publish_candidate_plan
+
+        def counted(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            handler_calls.append(str(kwargs.get("operation_id")))
+            return real(*args, **kwargs)
+
+        if not lost_reply:
+            monkeypatch.setattr(service.authority, "publish_candidate_plan", sabotage)
+        else:
+            # The authority completes the publication; only the reply is lost on
+            # the way back, which is the one shape a same-id replay can settle
+            # because the journal and the completed-reply cache both survive it.
+            original_request = ExecutionClient.request
+            lost: set[str] = set()
+
+            def losing_request(self: Any, operation: Any, *, request_id: str, **kwargs: Any) -> Any:
+                if operation is Operation.PUBLISH:
+                    seen.append(request_id)
+                answer = original_request(self, operation, request_id=request_id, **kwargs)
+                if operation is Operation.PUBLISH and not lost:
+                    # The supervisor completed the operation; the reply is dropped
+                    # exactly once, as a timeout would drop it.
+                    lost.add(request_id)
+                    raise ExecutionUncertainError("op-" + request_id, code="EXECUTION_UNKNOWN")
+                return answer
+
+            monkeypatch.setattr(service.authority, "publish_candidate_plan", counted)
+            monkeypatch.setattr(client_class, "request", losing_request)
+        try:
+            run = _run(site.source)
+            managed = managed_execution_for_run(run, config_path=yaml_path)
+            assert managed is not None
+            publisher = BoundPlanPublisher(managed, managed.binding)
+            with pytest.raises(ExecutionUncertainError) as unresolved:
+                publisher.publish_candidate(source, candidate)
+            pending = unresolved.value.pending_publication
+            assert pending is not None
+            assert managed.publication_pending is True
+
+            # The writer is fenced: no release while the outcome is unknown.
+            assert managed.close() is False
+            assert _status(site, workspace_id)["status"] == "OWNED"
+
+            if lost_reply:
+                proof = managed.reconcile_publication()
+                assert proof.plan_ref.sha256 == candidate.ref.sha256
+                # The commit was the first attempt's, so `already_published` is the
+                # value that attempt would have reported: reconciliation proves the
+                # revision exists rather than claiming a second publication.
+                assert proof.already_published is False
+                assert proof.revision_id.startswith("rev-")
+                # Reconciliation replayed the minted id and the authority answered
+                # from its journal and reply cache: no second id was ever minted,
+                # so no second effect could be performed.
+                assert set(seen) == {pending.publish_request_id}
+                assert len(seen) == 2  # the lost attempt and the reconciliation
+                # ...and the authority performed the publication exactly once.
+                assert handler_calls == ["op-" + pending.publish_request_id]
+                assert managed.publication_pending is False
+                assert plan_path.read_bytes() == candidate.utf8_bytes
+                # Only now may the writer go back.
+                assert managed.close() is True
+                assert _status(site, workspace_id)["status"] == "AVAILABLE"
+            else:
+                # A failed handler is not proof either way: reconcile honestly
+                # raises again, with the same pending record, and stays fenced.
+                with pytest.raises(ExecutionUncertainError) as again:
+                    managed.reconcile_publication()
+                assert again.value.pending_publication is pending
+                assert managed.publication_pending is True
+                assert managed.close() is False
+                assert _status(site, workspace_id)["status"] == "OWNED"
+                # The canonical plan never moved: no half-commit is claimed.
+                assert plan_path.read_bytes() == b"# Existing plan\n"
+        finally:
+            stop.set()
+            runner.join(timeout=5)
+            assert not runner.is_alive()
