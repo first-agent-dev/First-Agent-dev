@@ -1033,6 +1033,21 @@ eval:
             publish_replies.append(reply)
             return reply
 
+        # S3P3 EDGE oracle: WHICH view carried the candidate write. Without this,
+        # a run that wrote the seed to the host `.fa` copy and published it passes
+        # every other assertion here, because the bytes and the reply look the same.
+        candidate_write_views: list[str] = []
+
+        original_write = service._write_file
+
+        def record_write(peer: Any, request: dict[str, Any], deadline: float) -> Any:
+            # The dispatcher looks the handler up by NAME on each call, so the
+            # replacement must be the bound attribute it resolves.
+            view = request.get("view_ref") or {}
+            candidate_write_views.append(str(view.get("purpose")))
+            return original_write(peer, request, deadline)
+
+        monkeypatch.setattr(service, "_write_file", record_write)
         monkeypatch.setattr(service.authority, "publish_candidate_plan", record_publish)
         with _serving_supervisor(service):
             exit_code = cli._cmd_workflow(args, secrets=SecretStore({"K": "sk-test-s3p3"}))
@@ -1046,6 +1061,13 @@ eval:
 
     assert exit_code == (2 if refuse_publication else 0)
     assert provider_calls and candidate_writes and len(candidate_writes) == 1
+    # Both writes travelled through the CANDIDATE view and neither through a project
+    # view onto the host seed. Two is the expected count and it is a property of the
+    # publication saga, not an accident: the planner stages bytes into the buffer,
+    # and `publish_plan` re-stages the validated snapshot into a FRESH candidate view
+    # before its PUBLISH CAS. Same purpose, two views -- which is precisely why the
+    # oracle records the purpose and not "one write happened".
+    assert candidate_write_views == ["CANDIDATE", "CANDIDATE"], candidate_write_views
     assert len(publish_attempts) == 1  # determinate refusal is not replayed
     assert len(publish_replies) == int(not refuse_publication)
     assert index_path.read_bytes() == index_before

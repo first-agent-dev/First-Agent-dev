@@ -688,6 +688,31 @@ that maps these cases to slices, contracts and run sheets is `../README.md`.
 | # | Date | Result | Run ID | Deployed SHA | Image digest | Profile | Config | Command | rc / effect | Evidence | Reviewer | Commentary |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 
+### I03-LIVE-28
+
+| Field | Value |
+| --- | --- |
+| Case ID | `I03-LIVE-28` |
+| Kind | surface |
+| Producer | `src/fa/execution/client.py::open_candidate_view` + `read_candidate_buffer`; `src/fa/inner_loop/tools/write_file.py::build_scoped_write_file_tool` (candidate branch); `src/fa/inner_loop/stage_candidate.py::capture_stage_candidate` |
+| Subject | Managed plan repair stages a candidate in the CANDIDATE buffer and publishes it, never through the host `.fa` seed (S3P3 / E508) |
+| Increment | I03 |
+| Slice (provisional mapping) | S3P3 |
+| CTs (provisional mapping) | CT93, CT94, CT116, CT118, CT120 (provisional mapping) |
+| Phase | P6 |
+| Register origin | E508 — S3P3 slice A, W1 step 5 — IMPLEMENTED / NOT LIVE-VERIFIED |
+| Register status | PLANNED / UNEXECUTED |
+| Local proof | `tests/test_s3p3_candidate_buffer.py` (13 passed, C0/C3 over the real authority) and `tests/test_execution_composition.py::test_workflow_root_publishes_candidate_through_real_local_authority` (real CLI + real supervisor; records the trajectory `WRITE_FILE` views and requires `["CANDIDATE", "CANDIDATE"]`) — local only |
+| Expected live observation | On the host with the installed service and a plan that fails admission structurally (so repair is dispatched): run one managed workflow with a planner → coder pipeline and observe (a) exactly two `WRITE_FILE` requests against a view whose purpose is `CANDIDATE` and none against a `PROJECT` view for the candidate address, (b) the seeded host `.fa/admission/<run>/candidate-*.md` unchanged by the planner and removed after the stage, (c) `CREATE_VIEW` carrying `candidate_scope.plan_ref` equal to the payload `plan_ref`, (d) the canonical plan's bytes become exactly the repaired bytes with the revision advanced once, and (e) `admission.json` recording the repair attempt with the candidate digest. Negative controls, each with the canonical plan byte-identical: replace the client payload with `candidate_scope: null` (codec refusal, no wire request), point the buffer label at any other path (`PATH_DENIED`), call `write_file` on the CANDIDATE view (`denied`, no canonical change), and send the second buffer write without the returned digest (`STALE_REVISION`). Also verify a second repair round validates the NEW candidate and not the previous round's bytes. |
+| Fixture / run sheet | fixture not assigned (SLICE6 STEP8, after STEP7 review); run sheet `#i03-live-28` |
+| Live result | NOT RUN |
+| Commentary | The local bank cannot substitute: it proves the substrate and the trajectory, while the host alone can show the installed supervisor, the operator's canonical checkout and a real provider-driven repair in one run. |
+
+#### Attempts - I03-LIVE-28
+
+| # | Date | Result | Run ID | Deployed SHA | Image digest | Profile | Config | Command | rc / effect | Evidence | Reviewer | Commentary |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+
 ### I03-LIVE-S01
 
 | Field | Value |

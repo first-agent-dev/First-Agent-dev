@@ -15,7 +15,12 @@ from fa.inner_loop.tools.mutation_guard import (
     managed_version_dependencies,
     record_mutation,
 )
-from fa.inner_loop.tools.workspace_port import WorkspacePort, WorkspacePortError, port_relative
+from fa.inner_loop.tools.workspace_port import (
+    CandidateWorkspacePort,
+    WorkspacePort,
+    WorkspacePortError,
+    port_relative,
+)
 from fa.inner_loop.workflow_artifacts import _private_artifact_directory, _replace_private_bytes
 
 logger = logging.getLogger(__name__)
@@ -185,15 +190,38 @@ def _port_failure(exc: WorkspacePortError) -> ToolResult:
     return ToolResult.fail(code, f"workspace refused the write: {exc.code}", retryable=retryable)
 
 
-def build_scoped_write_file_tool(workspace_root: Path, dispatch: PlannerDispatch) -> ToolSpec:
-    """Exact candidate capability; do not forward a checked path to the generic writer."""
+def build_scoped_write_file_tool(
+    workspace_root: Path,
+    dispatch: PlannerDispatch,
+    *,
+    candidate_io: CandidateWorkspacePort | None = None,
+) -> ToolSpec:
+    """Exact candidate capability; do not forward a checked path to the generic writer.
+
+    Two substrates, one model-facing contract. ``target`` is the controller's
+    staging address and stays the only path the model may name. Where a managed
+    candidate port is bound, the bytes go to the authority's staged buffer through
+    it (the wire's own label is the plan identity, which the port holds and the
+    tool never spells); without a port the historical host-path staging writer
+    runs unchanged. The model sees no difference, which is the point: the same
+    planner task works in both worlds.
+    """
     if not isinstance(dispatch, PlannerDispatch) or dispatch.kind == PlannerDispatchKind.ORDINARY_PLANNING:
         raise PlannerDispatchError
     target = dispatch.candidate_target
     if target is None:
         raise PlannerDispatchError
+    if candidate_io is not None and not all(
+        callable(getattr(candidate_io, name, None)) for name in ("write_candidate", "read_candidate", "candidate_label")
+    ):
+        # A structural check rather than `isinstance`: `CandidateWorkspacePort` is a
+        # typing Protocol, and a wrong substrate here must be refused at build time
+        # rather than discovered as an AttributeError inside a tool call.
+        raise PlannerDispatchError
     root = workspace_root.absolute()
     path = root / target
+    # Per-tool-instance CAS state; one tool instance is built per stage dispatch.
+    staged_digest: str | None = None
 
     def handler(params: Mapping[str, object]) -> ToolResult:
         if params.get("path") != target:
@@ -204,11 +232,41 @@ def build_scoped_write_file_tool(workspace_root: Path, dispatch: PlannerDispatch
         except (ValueError, UnicodeError):
             return ToolResult.fail("write_failed", "candidate content must be valid UTF-8 text")
 
-        def writer() -> None:
-            with _private_artifact_directory(path.parent) as directory_fd:
-                _replace_private_bytes(directory_fd, path.name, raw)
+        if candidate_io is not None:
+            # The buffer's CAS is not optional: `expected_sha256=None` means the
+            # authority expects ABSENCE (`workspace.py:2819`), so a second write in
+            # the same stage would be refused as STALE_REVISION while the historical
+            # host writer simply replaced the file. Two callers here -- the seed and
+            # each revision -- so the precondition is threaded: absent on the first
+            # write, then the digest the authority just reported. That keeps a
+            # planner's right to revise its own candidate and still refuses a write
+            # built on bytes someone else moved.
+            def staged_writer() -> None:
+                nonlocal staged_digest
+                written = candidate_io.write_candidate(content, expected_sha256=staged_digest)
+                staged_digest = written.sha256
 
-        return _write_with_guard(root, path, target, content, writer, retryable=False)
+            writer: Callable[[], None] = staged_writer
+        else:
+
+            def host_writer() -> None:
+                with _private_artifact_directory(path.parent) as directory_fd:
+                    _replace_private_bytes(directory_fd, path.name, raw)
+
+            writer = host_writer
+
+        # CT93/S3P3: the blackboard guard is deliberately NOT engaged for the
+        # candidate. The buffer is single-writer by construction (one view, one
+        # owner, one file) and its host label lives under `.fa`, which no revision
+        # contains (`workspace.py:228`), so there is no `file_version` a conflict
+        # could be detected against. `managed=True` here would add a view read and
+        # a check with no subject -- a refusal risk with no safety gained. What
+        # still fails closed is the absence of a substrate: `candidate_io=None` in
+        # a managed composition is refused by the caller, never written to host.
+        try:
+            return _write_with_guard(root, path, target, content, writer, retryable=False)
+        except WorkspacePortError as exc:
+            return _port_failure(exc)
 
     return ToolSpec(
         name="fs_write_file",

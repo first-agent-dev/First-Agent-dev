@@ -8830,3 +8830,69 @@ code without the ordered caller tests it named.
 `fs_search`/`fs_reach` refusing `workspace_io` and of `project_tools.py` having no
 production caller is stale as of this tree. The increment's W1 table still carries
 that wording; it should be read against E507's table above, not verbatim.
+
+### E508 — S3P3 slice A: the managed candidate buffer is reachable from a planner stage
+
+**What was true before.** A managed plan repair could not happen at all, for three
+independent reasons (E507's §10 trace): the planner's scoped writer wrote the host
+`.fa/admission` copy, `client.open_view` sent `candidate_scope: None` so a CANDIDATE
+view could not be opened through the client at all (refused by the codec before the
+wire), and `ClientWorkspacePort.write_file` refused every write on a READ view.
+
+**The one thing the research changed.** The third item is not a defect: a READ view
+has no write path by design (E259), and the buffer is a separate purpose-bound
+operation. So the fix is a narrow port, not a widened `write_file`. E259's own
+invariant settles the address question too: `CANDIDATE` = plan identity plus ONE
+staging buffer, **never canonical `.fa/admission`** -- and `.fa` is in
+`_PROTECTED_COMPONENTS`/`_BLOCKED_COMPONENTS`, i.e. in no revision at all, so
+"put the managed candidate in `.fa`" was never available.
+
+**What changed.** `CandidateWorkspacePort` (write/read/label, no `read_file`,
+no `list_project_artifacts`) with both transports implemented;
+`ExecutionClient.open_candidate_view` + `read_candidate_buffer`;
+`ManagedExecution.open_candidate_view`/`read_candidate`; the scoped planner writer
+takes `candidate_io` and threads the CAS (`None` first, then the returned digest,
+because `expected_sha256=None` means *expected absence* upstream and a second write
+in one stage was otherwise refused); the stage boundary opens the CANDIDATE view
+only for a stage whose dispatch carries a candidate, reads the buffer while that
+view is still open (`capture_stage_candidate`), and the controller consumes those
+bytes instead of the host seed (`_read_repair_candidate`).
+
+**Two contracts worth naming.** The buffer's mutation guard stays off
+(`managed=False`) *by decision*: the buffer is single-writer by construction and
+`.fa` is in no revision, so `managed_version_dependencies` would read `llms.txt`
+and check against stamps with no subject -- a refusal risk with no safety bought.
+Fail-closed moved to where the subject exists: a candidate-owning managed stage
+that cannot capture its buffer fails instead of validating the seed. And the model
+keeps the staging address (`.fa/admission/<run>/candidate-<uuid>.md`) while the
+port holds the wire label (the canonical plan path); `PlannerDispatch` still
+forbids `candidate_target == active_plan`, so `_planner_target_allowed` was not
+touched and neither were its 38 test references.
+
+**Two defects the tests caught during the work, both mine.** `_read_repair_candidate`
+originally read after the stage returned, i.e. after the view was settled -- the
+read had to move inside the view's lifetime and become data. And `finally` cleared
+the captured bytes before the controller consumed them; the reset moved to the
+consumer (`reset_stage_candidate`) *and* to the way in, which is what stopped a
+second repair round from validating the previous round's candidate.
+
+**Verification.** `tests/test_s3p3_candidate_buffer.py` **13 passed** (C0/C3 over
+the real authority: label, purpose gate, CAS, no canonical write, partial-read
+refusal, empty buffer). Ten affected banks **475 passed, 3 xfailed**.
+`test_verify_gate_live.py` + `test_execution_service.py` **85 failed / 518 passed
+with a FAILED set byte-identical to the pre-change baseline** (that tree's known
+red set). `ruff check`/`format` clean on changed files; mypy **3** (baseline);
+pyrefly 0; deptry over `src/ scripts/` clean; pylint 9.99 (baseline).
+**Six mutants, five killed**: CAS not threaded, substrate choice removed, purpose
+gate removed, partial read accepted, reader unconfigured -- and **one survivor that
+improved the suite**: dropping the CANDIDATE-view open still published the repaired
+plan through the host seed, so the end-to-end test gained a trajectory oracle
+(`candidate_write_views` must be `["CANDIDATE", "CANDIDATE"]` -- the planner's
+staging plus `publish_plan`'s own re-stage) and now kills it.
+
+**Not done here, named.** Slice B (one `WorkspaceFiles` protocol, the `edit_file`
+guard duplicate, the `mutation_gate` extraction) is untouched -- this slice fixed
+the defect and did not restructure the seam. `managed_candidate_reader` returns
+`None` for a stage that captured nothing, which keeps doubles working; a
+candidate-owning managed stage cannot reach that path because the capture fails it
+closed first. Live E2E is still the host's: `I03-LIVE` cases remain `NOT RUN`.

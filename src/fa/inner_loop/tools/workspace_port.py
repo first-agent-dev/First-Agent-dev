@@ -145,6 +145,28 @@ class WorkspacePort(Protocol):
     def write_file(self, path: str, content: str, *, expected_sha256: str | None = None) -> PortWrite: ...
 
 
+class CandidateWorkspacePort(Protocol):
+    """The staged-candidate buffer of one CANDIDATE view; nothing else.
+
+    Deliberately not a ``WorkspacePort``: the buffer is a purpose-bound operation
+    on a READ view (E259), while ``WorkspacePort.write_file`` is general-purpose
+    IO confined to ``Access.WRITE``. Keeping the two apart is what stops a READ
+    view from acquiring a write path to arbitrary project files, and it is why
+    this protocol has no ``read_file``/``list_project_artifacts``: a planner that
+    needs ordinary source reads already has the stage's project port.
+
+    The buffer's address is not an argument. Both implementations hold the label
+    the view pinned (``CT120``), so a caller cannot widen its own authority by
+    naming a path.
+    """
+
+    def write_candidate(self, content: str, *, expected_sha256: str | None = None) -> PortWrite: ...
+
+    def read_candidate(self, *, max_bytes: int = PORT_READ_MAX_BYTES) -> PortRead: ...
+
+    def candidate_label(self) -> str: ...
+
+
 def port_relative(raw: object) -> str:
     """Normalize a model-supplied path to a view-relative POSIX path.
 
@@ -204,6 +226,7 @@ __all__ = [
     "PORT_READ_MAX_BYTES",
     "PROJECT_ARTIFACT_KINDS",
     "PROJECT_ENTRY_KINDS",
+    "CandidateWorkspacePort",
     "PortDirectoryEntry",
     "PortProjectArtifactListing",
     "PortRead",

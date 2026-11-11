@@ -233,6 +233,7 @@ def build_planner_registry(
     managed_executor: BashExecutor | None = None,
     project_tool_executor: Any | None = None,
     planner_dispatch: PlannerDispatch | None = None,
+    candidate_io: Any | None = None,
 ) -> ToolRegistry:
     """Planner = planner profile (fs_search,read,write for research docs,blackboard_query) + observability."""
     if workspace_io is None and (managed_executor is not None or project_tool_executor is not None):
@@ -253,6 +254,7 @@ def build_planner_registry(
                 workspace_io=workspace_io,
                 managed_executor=managed_executor,
                 project_tool_executor=project_tool_executor,
+                candidate_io=candidate_io,
             )
     except (ToolSchemaPortabilityError, ToolWireNameError):
         # D12: both are correctness failures, not availability failures.

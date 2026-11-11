@@ -23,6 +23,7 @@ from uuid import uuid4
 
 from fa.config import DEFAULT_CONFIG_PATH, ExecutionConfigError, load_execution_config
 from fa.execution.client import (
+    CandidateRead,
     ExecutionClient,
     ExecutionRejectedError,
     ExecutionUnavailableError,
@@ -246,6 +247,25 @@ class ManagedExecution:
             grant=self.grant,
             deadline=deadline,
         )
+
+    def open_candidate_view(self, plan_ref: PlanRef, *, deadline: float | None = None) -> GrantReply:
+        """Open the run's staged-candidate view for ``plan_ref``.
+
+        The controller names the plan it is repairing and nothing else; the base
+        is the authority's to mint, exactly as in ``publish_plan``. Kept on the
+        composition so the controller never spells a wire payload itself.
+        """
+        self._require_handoff_resolved()
+        if not isinstance(plan_ref, PlanRef):
+            raise ExecutionContractError
+        return self.client.open_candidate_view(self.binding, plan_ref=plan_ref, grant=self.grant, deadline=deadline)
+
+    def read_candidate(self, plan_ref: PlanRef, *, deadline: float | None = None) -> CandidateRead:
+        """Read the run's staged candidate buffer without publishing it."""
+        self._require_handoff_resolved()
+        if not isinstance(plan_ref, PlanRef):
+            raise ExecutionContractError
+        return self.client.read_candidate_buffer(self.binding, plan_ref, grant=self.grant, deadline=deadline)
 
     def revision_changes(
         self,

@@ -86,6 +86,11 @@ from fa.inner_loop.registry import ToolRegistry
 from fa.inner_loop.routing import WITHHELD_WRITE_TOOLS, should_withhold_write_tools
 from fa.inner_loop.runtime_limits import RuntimeLimits, resolve_limits_for_role
 from fa.inner_loop.session_db import SessionDatabase, SessionDatabaseError
+from fa.inner_loop.stage_candidate import (
+    STAGE_CANDIDATE_BYTES,
+    STAGE_CANDIDATE_PORT,
+    capture_stage_candidate,
+)
 from fa.inner_loop.tools import (
     build_baseline_registry,
     build_chat_registry,
@@ -145,7 +150,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     # annotations only, so they are declared here rather than promoted to a
     # runtime import that would change startup behaviour.
     from fa.inner_loop.scope_estimator import OperatingPoint
-    from fa.inner_loop.tools.workspace_port import WorkspacePort
+    from fa.inner_loop.tools.workspace_port import CandidateWorkspacePort, WorkspacePort
     from fa.output import EventBus
     from fa.runtime import PtyPool
     from fa.runtime.bash_executor import BashExecutor
@@ -1777,6 +1782,49 @@ class _ManagedStageLease:
             logger.warning("managed stage view cleanup failed: %s", error)
 
 
+def _open_stage_candidate_view(
+    managed: ManagedExecution, plan_ref: PlanRef | None
+) -> tuple[GrantReply, ClientWorkspacePort]:
+    """Open the second view a candidate-owning planner stage needs.
+
+    The candidate is the one stage-local artifact that needs BOTH directions on
+    the same view: the tool writes the buffer, the controller reads it back. One
+    view serves both, and it is opened only for the stage that owns a candidate,
+    so every other stage keeps its single project view.
+    """
+    if plan_ref is None:
+        # A candidate cannot exist without a plan identity to label it (CT120).
+        raise ExecutionContractError
+    grant = managed.open_candidate_view(plan_ref)
+    if grant.view_ref is None:
+        raise ExecutionContractError
+    port = ClientWorkspacePort(
+        managed.client,
+        namespace=managed.binding.namespace,
+        view=grant.view_ref,
+        grant=grant,
+        plan_ref=plan_ref,
+    )
+    return grant, port
+
+
+def _close_stage_candidate_view(managed: ManagedExecution | None, grant: GrantReply, *, run_id: str) -> None:
+    """Settle the candidate view, never masking the stage's own failure.
+
+    An unproved end is a warning, not a new exception: by the time this runs the
+    stage has already produced its outcome (or its exception), and replacing that
+    with a cleanup failure would report the wrong cause. The authority still owns
+    a view this could not close, which is why the warning names it.
+    """
+    if managed is None:
+        return
+    try:
+        if not managed.stop_view(grant):
+            logger.warning("managed candidate view was not proved terminal (run=%s)", run_id)
+    except Exception as error:  # noqa: BLE001 - preserve the stage's original failure
+        logger.warning("managed candidate view cleanup failed (run=%s): %s", run_id, error)
+
+
 def _drive_stage_with_managed_workspace(
     *,
     managed: ManagedExecution | None,
@@ -1787,6 +1835,7 @@ def _drive_stage_with_managed_workspace(
     workspace: Path,
     role: str,  # noqa: ARG001 - read by the caller's build_registry closure, not here
     plan_ref: PlanRef | None,
+    wants_candidate: bool = False,
     build_registry: Callable[[WorkspacePort | None, BashExecutor | None, _ManagedStageLease | None], ToolRegistry],
     drive: Callable[[ToolRegistry], SessionOutcome],
 ) -> tuple[SessionOutcome, bool]:
@@ -1798,6 +1847,8 @@ def _drive_stage_with_managed_workspace(
     """
     lease: _ManagedStageLease | None = None
     view_grant: GrantReply | None = None
+    candidate_view_grant: GrantReply | None = None
+    candidate_port: ClientWorkspacePort | None = None
     view_settled = True
     release_confirmed = True
     try:
@@ -1862,8 +1913,22 @@ def _drive_stage_with_managed_workspace(
                 plan_ref=plan_ref,
                 allow_nested_handoff=owns_writer,
             )
+            if wants_candidate:
+                candidate_view_grant, candidate_port = _open_stage_candidate_view(managed, plan_ref)
 
+        if candidate_port is not None:
+            STAGE_CANDIDATE_PORT.set(candidate_port)
+            # Clear any bytes a PREVIOUS stage captured before this one runs: the
+            # controller reads them after the stage returns, so the reset has to
+            # happen on the way in, never on the way out.
+            STAGE_CANDIDATE_BYTES.set(None)
         outcome = drive(build_registry(workspace_io, managed_executor, lease))
+        if candidate_port is not None:
+            # The controller validates the candidate AFTER this call returns, so
+            # the bytes are read here -- the only place where the CANDIDATE view is
+            # still open -- and handed over as data. Reading later would need the
+            # view to outlive the stage, which the publication saga does not allow.
+            capture_stage_candidate(candidate_port)
         if lease is not None:
             lease.finish(accepted=outcome.exit_code == 0)
             view_settled = lease.writer_release_safe
@@ -1879,6 +1944,9 @@ def _drive_stage_with_managed_workspace(
                 logger.warning("managed stage view cleanup failed (run=%s): %s", run_id, error)
         raise
     finally:
+        STAGE_CANDIDATE_PORT.set(None)
+        if candidate_view_grant is not None:
+            _close_stage_candidate_view(managed, candidate_view_grant, run_id=run_id)
         if owns_writer:
             if view_settled and (lease is None or lease.writer_release_safe):
                 release_confirmed = _settle_writer_release(
@@ -1900,6 +1968,7 @@ def _run_cli_stage(
     workspace: Path,
     role: str,
     plan_ref: PlanRef | None,
+    wants_candidate: bool = False,
     build_registry: Callable[[WorkspacePort | None, BashExecutor | None, _ManagedStageLease | None], ToolRegistry],
     drive: Callable[[ToolRegistry], SessionOutcome],
 ) -> tuple[SessionOutcome | None, bool]:
@@ -1922,6 +1991,7 @@ def _run_cli_stage(
             workspace=workspace,
             role=role,
             plan_ref=plan_ref,
+            wants_candidate=wants_candidate,
             build_registry=build_registry,
             drive=drive,
         )
@@ -2277,6 +2347,7 @@ def _build_role_registry(
     workspace_io: WorkspacePort | None = None,
     managed_executor: BashExecutor | None = None,
     project_tool_executor: ManagedProjectToolExecutor | None = None,
+    candidate_io: CandidateWorkspacePort | None = None,
 ) -> ToolRegistry:
     """Select the role-appropriate tool registry.
 
@@ -2307,6 +2378,7 @@ def _build_role_registry(
                 workspace_io=workspace_io,
                 managed_executor=managed_executor,
                 project_tool_executor=project_tool_executor,
+                candidate_io=candidate_io,
             )
         if role == "eval":
             return build_eval_registry(
@@ -2497,6 +2569,7 @@ def _build_run_tool_registry(
     workspace_io: WorkspacePort | None = None,
     managed_executor: BashExecutor | None = None,
     project_tool_executor: ManagedProjectToolExecutor | None = None,
+    candidate_io: CandidateWorkspacePort | None = None,
 ) -> ToolRegistry:
     """Build the exact role tool corpus used by a live ``fa run``.
 
@@ -2539,6 +2612,7 @@ def _build_run_tool_registry(
             workspace_io=workspace_io,
             managed_executor=managed_executor,
             project_tool_executor=project_tool_executor,
+            candidate_io=candidate_io,
         )
     registry = _apply_escalation_gate(registry, role=role, scope_point=scope_point, gate_enabled=gate_enabled)
     registry.register(build_prepare_pr_tool(draft_store))
@@ -3273,6 +3347,10 @@ def _cmd_run(
             workspace_io=workspace_io,
             managed_executor=managed_executor,
             project_tool_executor=None if stage_lease is None else stage_lease.project_tool_executor,
+            # The stage boundary opens the CANDIDATE view before it builds this
+            # registry; reading the binding here means one owner for the view and
+            # no fourth parameter on a signature 48 tests already pin.
+            candidate_io=STAGE_CANDIDATE_PORT.get() if role == "planner" else None,
         )
         return _register_managed_subagent_tool(
             registry,
@@ -3338,6 +3416,9 @@ def _cmd_run(
         workspace=workspace,
         role=role,
         plan_ref=getattr(args, "_managed_plan_ref", None),
+        # Only a planner stage can own a candidate, and only when the controller
+        # dispatched one (repair/replan); the seed's own stage sets this too.
+        wants_candidate=bool(getattr(args, "_candidate_dispatch", False)),
         build_registry=build_registry,
         drive=drive_with_registry,
     )

@@ -31,8 +31,9 @@ from fa.execution.client import (
 )
 from fa.execution.protocol import MAX_TEXT_BYTES
 from fa.execution.supervisor import PeerIdentity, SupervisorError
-from fa.execution.types import Access, ExecutionContractError, GrantReply, NamespaceRef, Operation, ViewRef
+from fa.execution.types import Access, ExecutionContractError, GrantReply, NamespaceRef, Operation, ViewPurpose, ViewRef
 from fa.execution.workspace import WorkspaceAuthority
+from fa.inner_loop.plan_admission import PlanRef
 from fa.inner_loop.tools.workspace_port import (
     PORT_READ_MAX_BYTES,
     PortDirectoryEntry,
@@ -79,7 +80,16 @@ def _project_listing(result: dict[str, Any]) -> PortProjectArtifactListing:
 class AuthorityWorkspacePort:
     """Bind one admitted view and translate its refusals into port codes."""
 
-    __slots__ = ("_authority", "_cache_dir", "_capability", "_deadline_factory", "_namespace", "_peer", "_view_ref")
+    __slots__ = (
+        "_authority",
+        "_buffer_label",
+        "_cache_dir",
+        "_capability",
+        "_deadline_factory",
+        "_namespace",
+        "_peer",
+        "_view_ref",
+    )
 
     def __init__(
         self,
@@ -91,8 +101,11 @@ class AuthorityWorkspacePort:
         capability: str,
         deadline_factory: Callable[[], float],
         cache_dir: Path | None = None,
+        plan_ref: PlanRef | None = None,
     ) -> None:
         if not isinstance(authority, WorkspaceAuthority):
+            raise ExecutionContractError
+        if plan_ref is not None and not isinstance(plan_ref, PlanRef):
             raise ExecutionContractError
         if not isinstance(peer, PeerIdentity) or not isinstance(namespace, NamespaceRef):
             raise ExecutionContractError
@@ -109,6 +122,11 @@ class AuthorityWorkspacePort:
         self._capability = capability
         self._deadline_factory = deadline_factory
         self._cache_dir = cache_dir
+        # Same binding as the wire twin: the buffer's address is the plan
+        # identity the view pinned, never a label the caller supplies.
+        self._buffer_label: str | None = None
+        if view_ref.purpose is ViewPurpose.CANDIDATE and isinstance(plan_ref, PlanRef):
+            self._buffer_label = plan_ref.workspace_relative_path
 
     @property
     def cache_dir(self) -> Path | None:
@@ -179,6 +197,68 @@ class AuthorityWorkspacePort:
             raise WorkspacePortError(_code(error)) from None
         return PortWrite(sha256=result["sha256"], bytes=result["bytes"])
 
+    def candidate_label(self) -> str:
+        """The one label this view's candidate buffer answers to (in-process twin)."""
+        if self._view_ref.purpose is not ViewPurpose.CANDIDATE or self._view_ref.access is not Access.READ:
+            raise WorkspacePortError("denied")
+        if self._buffer_label is None:
+            raise WorkspacePortError("unavailable")
+        return self._buffer_label
+
+    def write_candidate(self, content: str, *, expected_sha256: str | None = None) -> PortWrite:
+        """Stage candidate bytes in process; same purpose gate as the wire twin."""
+        if self._view_ref.purpose is not ViewPurpose.CANDIDATE or self._view_ref.access is not Access.READ:
+            raise WorkspacePortError("denied")
+        label = self._buffer_label
+        if label is None:
+            raise WorkspacePortError("unavailable")
+        if not isinstance(content, str):
+            raise WorkspacePortError("invalid_request")
+        if expected_sha256 is not None and (
+            not isinstance(expected_sha256, str) or _SHA256.fullmatch(expected_sha256) is None
+        ):
+            raise WorkspacePortError("invalid_request")
+        try:
+            result = self._authority.write_candidate(
+                self._peer,
+                self._namespace,
+                view_ref=self._view_ref,
+                capability=self._capability,
+                path=label,
+                content=content,
+                expected_sha256=expected_sha256,
+                deadline=self._deadline_factory(),
+            )
+        except (SupervisorError, ExecutionContractError) as error:
+            raise WorkspacePortError(_code(error)) from None
+        return PortWrite(sha256=result["sha256"], bytes=result["bytes"])
+
+    def read_candidate(self, *, max_bytes: int = PORT_READ_MAX_BYTES) -> PortRead:
+        """Read the staged candidate buffer in process; same window contract."""
+        if self._view_ref.purpose is not ViewPurpose.CANDIDATE or self._view_ref.access is not Access.READ:
+            raise WorkspacePortError("denied")
+        label = self._buffer_label
+        if label is None:
+            raise WorkspacePortError("unavailable")
+        if type(max_bytes) is not int or max_bytes < 1:
+            raise WorkspacePortError("invalid_request")
+        if max_bytes > min(PORT_READ_MAX_BYTES, MAX_TEXT_BYTES):
+            raise WorkspacePortError("input_policy")
+        try:
+            result = self._authority.read_candidate(
+                self._peer,
+                self._namespace,
+                view_ref=self._view_ref,
+                capability=self._capability,
+                path=label,
+                offset_bytes=0,
+                max_bytes=max_bytes,
+                deadline=self._deadline_factory(),
+            )
+        except (SupervisorError, ExecutionContractError) as error:
+            raise WorkspacePortError(_code(error)) from None
+        return PortRead(content=result["content"], sha256=result["sha256"], eof=result["eof"])
+
 
 def _code(error: SupervisorError | ExecutionContractError) -> str:
     if isinstance(error, ExecutionContractError):
@@ -224,6 +304,7 @@ class ClientWorkspacePort:
 
     __slots__ = (
         "_active",
+        "_buffer_label",
         "_cache_dir",
         "_client",
         "_grant",
@@ -241,8 +322,11 @@ class ClientWorkspacePort:
         view: ViewRef,
         grant: GrantReply,
         cache_dir: Path | None = None,
+        plan_ref: PlanRef | None = None,
     ) -> None:
         if not isinstance(client, ExecutionClient):
+            raise ExecutionContractError
+        if plan_ref is not None and not isinstance(plan_ref, PlanRef):
             raise ExecutionContractError
         if not isinstance(namespace, NamespaceRef) or not isinstance(view, ViewRef):
             raise ExecutionContractError
@@ -258,6 +342,12 @@ class ClientWorkspacePort:
         self._grant: GrantReply | None = grant
         self._active = True
         self._cache_dir = cache_dir
+        # S3P3: the staged-candidate buffer is one file per CANDIDATE view, and
+        # its address is the plan identity the view already pinned (CT120). Held
+        # here so a caller never supplies the label it is authorised by.
+        self._buffer_label: str | None = None
+        if view.purpose is ViewPurpose.CANDIDATE and isinstance(plan_ref, PlanRef):
+            self._buffer_label = plan_ref.workspace_relative_path
 
     def suspend(self) -> None:
         """Disarm this binding before its managed view is published or handed off."""
@@ -377,5 +467,94 @@ class ClientWorkspacePort:
             raise WorkspacePortError(_client_code(error)) from None
         return PortWrite(sha256=str(result["sha256"]), bytes=int(result["bytes"]))
 
+    def candidate_label(self) -> str:
+        """The one label this view's candidate buffer answers to.
 
-__all__ = ["AuthorityWorkspacePort", "ClientWorkspacePort"]
+        A staging address, not a host path: the authority compares it against the
+        plan identity pinned into the view and refuses anything else
+        (``workspace.py:2755``). Exposed so the composition can hand the model the
+        same label the wire will demand, instead of inventing a second one.
+        """
+        view, _grant = self._require_active()
+        if view.purpose is not ViewPurpose.CANDIDATE or view.access is not Access.READ:
+            raise WorkspacePortError("denied")
+        if self._buffer_label is None:
+            raise WorkspacePortError("unavailable")
+        return self._buffer_label
+
+    def write_candidate(self, content: str, *, expected_sha256: str | None = None) -> PortWrite:
+        """Stage candidate bytes in this view's buffer.
+
+        Deliberately NOT ``write_file``: the buffer is a purpose-bound operation
+        on a READ view (E259), while ``write_file`` is general-purpose IO that
+        must stay confined to ``Access.WRITE``. Keeping them apart is what stops
+        the READ view from acquiring a write path to arbitrary project files.
+        """
+        view, grant = self._require_active()
+        if view.purpose is not ViewPurpose.CANDIDATE or view.access is not Access.READ:
+            raise WorkspacePortError("denied")
+        label = self._buffer_label
+        if label is None:
+            raise WorkspacePortError("unavailable")
+        if not isinstance(content, str):
+            raise WorkspacePortError("invalid_request")
+        if expected_sha256 is not None and (
+            not isinstance(expected_sha256, str) or _SHA256.fullmatch(expected_sha256) is None
+        ):
+            raise WorkspacePortError("invalid_request")
+        try:
+            result = self._client.request(
+                Operation.WRITE_FILE,
+                request_id=uuid4().hex,
+                namespace=self._namespace,
+                view=view,
+                grant=grant,
+                payload={"path": label, "content": content, "expected_sha256": expected_sha256},
+                deadline=None,
+            )
+        except (
+            ExecutionRejectedError,
+            ExecutionUnavailableError,
+            ExecutionUncertainError,
+            ExecutionContractError,
+        ) as error:
+            raise WorkspacePortError(_client_code(error)) from None
+        return PortWrite(sha256=str(result["sha256"]), bytes=int(result["bytes"]))
+
+    def read_candidate(self, *, max_bytes: int = PORT_READ_MAX_BYTES) -> PortRead:
+        """Read the staged candidate back through the same view it was written to.
+
+        This is the managed read-back: the controller validates the buffer rather
+        than a host copy, so the candidate never needs a canonical path to be
+        valid. One window starting at zero is enough for a plan (``MAX_PLAN_BYTES``
+        is far below the port cap) and the returned sha256 is over the WHOLE
+        buffer, which is what a later CAS needs.
+        """
+        view, grant = self._require_active()
+        if view.purpose is not ViewPurpose.CANDIDATE or view.access is not Access.READ:
+            raise WorkspacePortError("denied")
+        label = self._buffer_label
+        if label is None:
+            raise WorkspacePortError("unavailable")
+        if type(max_bytes) is not int or max_bytes < 1:
+            raise WorkspacePortError("invalid_request")
+        if max_bytes > min(PORT_READ_MAX_BYTES, MAX_TEXT_BYTES):
+            raise WorkspacePortError("input_policy")
+        try:
+            result = self._client.request(
+                Operation.READ_FILE,
+                request_id=uuid4().hex,
+                namespace=self._namespace,
+                view=view,
+                grant=grant,
+                payload={"path": label, "offset_bytes": 0, "max_bytes": max_bytes},
+                deadline=None,
+            )
+        except (
+            ExecutionRejectedError,
+            ExecutionUnavailableError,
+            ExecutionUncertainError,
+            ExecutionContractError,
+        ) as error:
+            raise WorkspacePortError(_client_code(error)) from None
+        return PortRead(content=str(result["content"]), sha256=str(result["sha256"]), eof=bool(result["eof"]))

@@ -22,7 +22,7 @@ from fa.inner_loop.tool_names import is_valid_wire_name
 from fa.inner_loop.tools.base import resolve_workspace_path
 
 if TYPE_CHECKING:
-    from fa.inner_loop.tools.workspace_port import WorkspacePort
+    from fa.inner_loop.tools.workspace_port import CandidateWorkspacePort, WorkspacePort
     from fa.runtime.bash_executor import BashExecutor
 
 logger = logging.getLogger(__name__)
@@ -318,6 +318,7 @@ def _build_tool_builders(
     workspace_io: WorkspacePort | None = None,
     managed_executor: BashExecutor | None = None,
     project_tool_executor: Any | None = None,
+    candidate_io: CandidateWorkspacePort | None = None,
 ) -> dict[str, Callable[[], ToolSpec]]:
     """Map tool name -> builder lambda, uses existing builders, graceful degradation.
 
@@ -418,7 +419,7 @@ def _build_tool_builders(
     if candidate_dispatch is not None:
         from fa.inner_loop.tools.write_file import build_scoped_write_file_tool
 
-        scoped = build_scoped_write_file_tool(root, candidate_dispatch)
+        scoped = build_scoped_write_file_tool(root, candidate_dispatch, candidate_io=candidate_io)
         builders["fs_write_file_limited"] = lambda: scoped
 
     return builders
@@ -444,6 +445,7 @@ def build_registry_for_role(
     workspace_io: WorkspacePort | None = None,
     managed_executor: BashExecutor | None = None,
     project_tool_executor: Any | None = None,
+    candidate_io: CandidateWorkspacePort | None = None,
 ) -> ToolRegistry:
     """Build ToolRegistry with only tools for given role, token efficient.
 
@@ -459,6 +461,11 @@ def build_registry_for_role(
         raise ValueError("managed executor requires a managed workspace port")
     if workspace_io is None and project_tool_executor is not None:
         raise ValueError("project-tool executor requires a managed workspace port")
+    # A staged-candidate buffer belongs to a CANDIDATE view, which exists only
+    # inside managed execution. Accepting one without a project port would let a
+    # host-mode run write through an authority it does not hold.
+    if candidate_io is not None and workspace_io is None:
+        raise ValueError("candidate buffer requires a managed workspace port")
     profile = PROFILES_RAW[role]
     wanted = profile.get("tools", [])
     builders = _build_tool_builders(
@@ -468,6 +475,7 @@ def build_registry_for_role(
         workspace_io=workspace_io,
         **({"managed_executor": managed_executor} if workspace_io is not None else {}),
         project_tool_executor=project_tool_executor,
+        candidate_io=candidate_io,
     )
 
     registry = ToolRegistry()

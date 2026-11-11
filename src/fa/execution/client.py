@@ -52,6 +52,7 @@ from fa.execution.types import (
     _positive_integer,
 )
 from fa.inner_loop.plan_admission import PlanRef, PlanSnapshot
+from fa.inner_loop.tools.workspace_port import PORT_READ_MAX_BYTES
 from fa.runtime.pty_pool import PtyResult
 
 
@@ -112,6 +113,18 @@ class PlanPublication:
     plan_ref: PlanRef
     revision_id: str
     already_published: bool
+
+
+@dataclass(frozen=True)
+class CandidateRead:
+    """The staged candidate buffer's bytes, as the authority holds them.
+
+    ``sha256`` is over the whole buffer, not over the window that was returned, so
+    a caller can use it as a CAS precondition without re-reading.
+    """
+
+    content: str
+    sha256: str
 
 
 @dataclass(frozen=True)
@@ -699,6 +712,102 @@ class ExecutionClient:
             deadline=deadline,
         )
         return _grant(Operation.CREATE_VIEW, created)
+
+    def open_candidate_view(
+        self,
+        binding: object,
+        *,
+        plan_ref: PlanRef,
+        grant: GrantReply,
+        base_revision: str | None = None,
+        deadline: float | None = None,
+    ) -> GrantReply:
+        """Open the one staged-candidate view for this plan identity.
+
+        A separate verb because ``open_view`` cannot express this view at all: its
+        payload hard-codes ``candidate_scope: None``, and the codec refuses a
+        CANDIDATE purpose without a scope (``protocol.py:511``), so every such
+        call was an ``InvalidRequestError`` before it reached the wire. Sending
+        the scope is not a widening -- ``CANDIDATE_SCOPE`` declares exactly one
+        ``plan_ref`` (CT120), which is the same identity this method takes as an
+        argument and the same one the authority compares the buffer label against.
+        """
+        namespace, workspace_id = _binding_identity(binding)
+        if not isinstance(plan_ref, PlanRef) or not isinstance(grant, GrantReply):
+            raise ExecutionContractError
+        if grant.operation not in {Operation.ACQUIRE_WRITER, Operation.HANDOFF}:
+            raise ExecutionContractError
+        wire = _plan_ref_dict(plan_ref)
+        created = self.request(
+            Operation.CREATE_VIEW,
+            request_id=uuid4().hex,
+            namespace=namespace,
+            view=None,
+            grant=grant,
+            payload={
+                "workspace_id": workspace_id,
+                # CANDIDATE may open on a null base: the authority names the base
+                # it mints, and PUBLISH CASes that one (protocol.py:330).
+                "base_revision": base_revision,
+                "access": Access.READ.value,
+                "purpose": ViewPurpose.CANDIDATE.value,
+                "candidate_scope": {"plan_ref": wire},
+                "plan_ref": wire,
+            },
+            deadline=deadline,
+        )
+        return _grant(Operation.CREATE_VIEW, created)
+
+    def read_candidate_buffer(
+        self,
+        binding: object,
+        plan_ref: PlanRef,
+        *,
+        grant: GrantReply,
+        deadline: float | None = None,
+    ) -> CandidateRead:
+        """Open the staged-candidate view, read its buffer and settle the view.
+
+        The read-back half of managed repair: the controller validates the bytes
+        the authority staged, not a host copy under ``.fa``. Publication is a
+        separate operation (``publish_plan``) and this method never commits, so a
+        candidate can be read, refused and discarded without the canonical plan
+        moving.
+
+        The view is opened for this single read and settled in ``finally``. A
+        read that succeeded but whose settle failed is reported as uncertain
+        rather than swallowed: an owned view left open blocks the next writer.
+        """
+        namespace, _workspace_id = _binding_identity(binding)
+        if not isinstance(plan_ref, PlanRef) or not isinstance(grant, GrantReply):
+            raise ExecutionContractError
+        view_grant = self.open_candidate_view(binding, plan_ref=plan_ref, grant=grant, deadline=deadline)
+        view = view_grant.view_ref
+        if view is None:
+            raise ExecutionContractError
+        try:
+            answer = self.request(
+                Operation.READ_FILE,
+                request_id=uuid4().hex,
+                namespace=namespace,
+                view=view,
+                grant=view_grant,
+                payload={
+                    "path": plan_ref.workspace_relative_path,
+                    "offset_bytes": 0,
+                    "max_bytes": PORT_READ_MAX_BYTES,
+                },
+                deadline=deadline,
+            )
+            if answer["eof"] is not True:
+                # A plan larger than one port window cannot be validated from a
+                # partial buffer, and truncating it silently would validate the
+                # wrong bytes.
+                raise ExecutionContractError
+            return CandidateRead(str(answer["content"]), str(answer["sha256"]))
+        finally:
+            if not self.stop_view(namespace, view=view, grant=view_grant, deadline=deadline):
+                raise ExecutionUncertainError("op-" + uuid4().hex, code="TERMINALITY_UNKNOWN")
 
     def stop_view(
         self, namespace: NamespaceRef, *, view: ViewRef, grant: GrantReply, deadline: float | None = None

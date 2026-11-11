@@ -32,6 +32,7 @@ from fa.inner_loop.plan_admission import (
     PlanSnapshot,
     _require_plan_for_coder,
     read_plan_snapshot,
+    snapshot_from_bytes,
 )
 from fa.inner_loop.plan_ids import (
     PlanDiagnostic,
@@ -62,6 +63,7 @@ from fa.inner_loop.slice_verification import (
     validate_kill_directives,
     verify_plan,
 )
+from fa.inner_loop.stage_candidate import reset_stage_candidate, stage_candidate_reader
 from fa.inner_loop.workflow_artifacts import (
     AdmissionIOError,
     EvalReport,
@@ -236,6 +238,11 @@ class WorkflowContext:
     managed_execution: ManagedExecution | None = None
     managed_revision_pair: _ManagedRevisionPair = field(default_factory=_ManagedRevisionPair)
     managed_plan_ref: PlanRef | None = None
+    # S3P3: the managed read-back of a staged candidate. Bound by the composition
+    # to a callable over the run's own managed execution, so the controller never
+    # holds a client and never opens a view itself. ``None`` in host mode, where
+    # `_run_admission_repair` reads the controller's own host copy instead.
+    managed_candidate_reader: Callable[[PlanRef], tuple[str, str] | None] | None = None
 
     def plan_text(self) -> str | None:
         """Use the immutable admitted snapshot, or read legacy optional input.
@@ -1259,6 +1266,13 @@ def _run_stage(
         "injection_modes": resolve_injection_modes(role, overrides=ctx.inject_overrides),
         "_managed_execution": ctx.managed_execution,
         "_managed_plan_ref": stage_plan_ref,
+        # S3P3: says "this stage owns a candidate", so the stage boundary opens
+        # the CANDIDATE view. Derived from the dispatch the controller already
+        # built, never from a role name: `_stage_planner_dispatch` returns an
+        # ORDINARY_PLANNING dispatch for every planner stage, and that stage owns
+        # no candidate -- granting it a buffer would be a capability nobody asked
+        # for, and (worse) it has no plan identity to label one with.
+        "_candidate_dispatch": dispatch is not None and dispatch.kind is not PlannerDispatchKind.ORDINARY_PLANNING,
     }
     if ctx.run_context is not None and ctx.session_context is not None:
         stage_kwargs.update(
@@ -2447,6 +2461,11 @@ def _run_admission_repair(
     source = ctx.admission.snapshot
     ctx.admission.candidate = None
     _check_admission_source(ctx)
+    # The captured bytes describe ONE stage. Clearing here -- before the stage is
+    # dispatched, not only when this round first runs -- is what keeps a second
+    # repair round from validating the previous round's candidate, which would
+    # silently promote bytes nobody wrote this time.
+    reset_stage_candidate()
     dispatch = seed_plan_candidate(ctx.workspace, source, run_id=ctx.run_id, kind=kind, draft=draft)
     if dispatch.candidate_target is None:
         raise PlannerDispatchError
@@ -2474,7 +2493,7 @@ def _run_admission_repair(
             raise PlanPromotionError("prepare-failed") from error
         if result.exit_code != 0:
             raise PlanPromotionError("prepare-failed")
-        candidate = read_plan_snapshot(ctx.workspace, target)
+        candidate = _read_repair_candidate(ctx, source, target)
         ctx.admission.candidate = candidate
     finally:
         # Remove only the exact controller-owned leaf, never follow a replacement alias.
@@ -2494,6 +2513,35 @@ def _run_admission_repair(
             _retain_rejected_draft(ctx, validation.snapshot)
             raise
     return validation, promoted
+
+
+def _read_repair_candidate(ctx: WorkflowContext, source: PlanSnapshot, target: Path) -> PlanSnapshot:
+    """Read the repaired candidate from the substrate that actually holds it.
+
+    Managed: the planner wrote the authority's staged buffer, so the bytes come
+    back through that view. Host mode: the planner wrote the controller's own
+    `.fa/admission` copy and it is read as a file, exactly as before.
+
+    The choice is made HERE, once, from what the composition bound. A managed run
+    (one with a reader) never falls back to the host path: the file under `.fa`
+    holds the *seed*, so reading it after the stage would validate bytes nobody
+    wrote and could publish an unchanged candidate as a repair.
+    """
+    label = source.ref.workspace_relative_path
+    reader = ctx.managed_candidate_reader
+    captured = None if reader is None else reader(source.ref)
+    if captured is None:
+        # No buffer bytes for this stage: it owns no candidate (host mode) or the
+        # double driving it binds no buffer. A candidate-owning managed stage
+        # cannot land here -- the composition root fails it closed instead.
+        return read_plan_snapshot(ctx.workspace, target)
+    content, digest = captured
+    snapshot = snapshot_from_bytes(label, content.encode("utf-8"))
+    if snapshot.ref.sha256 != digest:
+        # The buffer changed between the read and the digest the authority
+        # reported; validating either one now would be picking a favourite.
+        raise PlanPromotionError("hash-mismatch")
+    return snapshot
 
 
 def _retain_rejected_draft(ctx: WorkflowContext, snapshot: PlanSnapshot) -> None:
@@ -2793,6 +2841,10 @@ def run_workflow(
         plan_path=plan_path,
         plan_publisher=plan_publisher,
         managed_execution=managed_execution,
+        # The managed read-back is bound only where a managed execution exists.
+        # Host mode keeps its `.fa/admission` read; nothing here is a fallback,
+        # the two are different substrates and each run picks one at composition.
+        managed_candidate_reader=stage_candidate_reader,
         managed_plan_ref=None if snapshot is None else snapshot.ref,
         verify_gate_mode=_gate_mode(),
         admission=(
