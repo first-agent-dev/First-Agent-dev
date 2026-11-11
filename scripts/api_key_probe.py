@@ -1904,6 +1904,8 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
             "        ONEAI_API_KEY / COARENA_API_KEY\n"
             'примеры: --check · --list-models · --prompt "привет" · --pair\n'
             "         --questions probe-questions.md --out out   (сверка с эталоном)\n"
+            "         --questions cutoff-questions.md            (граница знаний)\n"
+            "         --prompt-file вопрос.txt · --dialog chat.md (история чата)\n"
             "         --wire anthropic"
         ),
     )
