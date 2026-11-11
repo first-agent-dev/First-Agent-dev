@@ -8933,3 +8933,39 @@ selection/clarification contract an earlier draft called undefined does exist at
 **Not done here, named.** No W2 implementation, no authority change, no test added.
 Mutation gate remains uninformative for these paths (`source_paths` at
 `pyproject.toml:316` excludes `execution/`), unchanged from E508.
+
+### E510 — Q119-A closed; mutation scope extended, and the gate itself was lying (2026-11-10)
+
+**Q119-A is done.** The missing nodeid exists and passes:
+`test_q119_wrapper_workspace_matrix_through_current_cli` covers owner reuse,
+explicit session mismatch, a disjoint new workspace, and refusal of an
+overlapping path, all through the CLI entry points the wrapper reaches. Two
+production mutants fail it (active selection → `Path.cwd()`; skipping
+`_resolve_wrapper_explicit_workspace`). W1's documented remainders are now closed
+Arena-locally.
+
+**The mutation extension worked, and measuring it found a bigger problem.**
+`src/fa/execution` is in `source_paths` now, so managed-execution changes reach
+`check-deep` instead of `nothing to do`. Two gate defects surfaced and are fixed:
+an explicit `--source` run dropped the configured `also_copy` (stage imported the
+editable checkout, every mutant "no test case"), and the targeted runner passed no
+copies at all.
+
+**The one that matters, and is NOT fixed.** The unchanged sandbox scope reports
+`killed=139 no_tests=526 survived=0`. The cause is in mutmut's own setup:
+`mutants/src` is inserted into `sys.path` only if it already exists
+(`mutmut/__main__.py:253–259`), and at that moment it does not, so the entry is a
+non-directory, Python ignores it, and `import fa` resolves to the repository.
+Mutants are never imported and land in `no_tests`.
+
+Consequence for the record: **every earlier `survived == 0` in this ledger means
+"the covered subset stayed green", not "changed-path mutants were checked".** Since
+that is exactly the failure mode E509 called out in the plan — absence of evidence
+presented as evidence of absence — it is recorded as Q139 rather than patched
+silently: the fix moves files the weekly advisory job depends on and needs a
+full-scope run (~2 h) to validate.
+
+**Not done here, named.** No production behaviour changed. Q138 and Q139 remain
+OPEN. Until Q139-A lands, mutation closeouts must quote
+`killed / (total − type_invalid − no_tests)`. R24–R26 remain OPEN/W2; W4 remains
+NOT RUN.

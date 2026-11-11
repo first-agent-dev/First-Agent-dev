@@ -3084,30 +3084,57 @@ Q135 F2–F4 and Q136 Pylint are unaffected and remain independent. No W1 implem
 
 ## Q138 — May the settlement predicate count an unsettled CANDIDATE view as blocking owner release?
 
-**Status: OPEN — operator decision required before R25/Q114 implementation (raised by E509, 2026-11-10).**
+**Status: OPEN — re-researched 2026-11-10; E509's premise was wrong and is corrected here. Research: `q138-candidate-settlement-research-2026-11-10.md`.**
 
-**Source-grounded behavior (E509, reproduced locally).** A probe replaced the determinate refusal in the S3P3 C1 test with `SupervisorError("DURABILITY_UNKNOWN")` — the same injection point as E407's original Q114 probe, before `publish_candidate_plan`'s commit body. After the run: the CANDIDATE view record was `purpose=CANDIDATE, access=READ, state=STOPPING` with its supervisor-private `candidate` bytes on disk, while `workspace.json` was `AVAILABLE`. With the original `INPUT_POLICY` the view is `REJECTED` and no `candidate` remains.
+**Reproduced behaviour (E509).** Replacing the determinate refusal in the S3P3 C1 test with `SupervisorError("DURABILITY_UNKNOWN")` — E407's exact injection point, before `publish_candidate_plan`'s commit body — leaves the CANDIDATE view at `purpose=CANDIDATE, access=READ, state=STOPPING` with its private `candidate` bytes on disk, while `workspace.json` reads `AVAILABLE`. With the original `INPUT_POLICY` the view is `REJECTED` and no `candidate` remains. Mechanism: `publish_plan` skips `_release_view` while uncertain (`client.py:594–599`), `ManagedExecution.close` fences only an unresolved HANDOFF (`composition.py:348–363`), and `_has_unsettled_views` skips every `READ` view (`workspace.py:1862`), CANDIDATE being `READ` (`:219`).
 
-Mechanism, verified line by line:
+**Correction to E509's framing.** E509 called `access != READ` a defect against §2.1. It is not. §2.1's release row is scoped to **WRITE** views by design (`i03-execution-workspace-spec-2026-10-15.md:168`), and that scope is correct for the `PROJECT`/`VERIFICATION` read pins the system actually creates: their bookkeeping must not fence the next writer, and their pins are revoked separately by `release_reader`. The real invariant is not "access is WRITE" but **"this view owns uncommitted writer-private state"**. CANDIDATE is the only READ view satisfying the second and not the first, because its READ access exists precisely to keep the ordinary `write_file` path off the buffer.
 
-1. `ExecutionClient.publish_plan` sets `uncertain=True` when PUBLISH is indeterminate and its `finally` skips `_release_view` (`src/fa/execution/client.py:594–599`) — correct and required by Q114.
-2. `ManagedExecution.close` sends a plain `RELEASE` with no pending-publication fence; only an unresolved HANDOFF is fenced (`src/fa/execution/composition.py:348–353, 355–363`).
-3. `WorkspaceAuthority._has_unsettled_views` treats a view as unsettled only when `ref["access"] != Access.READ.value` (`src/fa/execution/workspace.py:1862`). CANDIDATE is `Access.READ` (`workspace.py:219`), so `_settle_owner` (`:1822`) sets `status="AVAILABLE"`.
-4. The next writer claim advances `generation`, after which `_closed_candidate_reader`'s `binding.metadata["generation"] != view_ref.generation` check (`workspace.py:4023`) permanently rejects the orphan. The buffer is not merely leftover: it is unreachable and unreconcilable.
+Two facts bound the answer:
 
-This is the Q114 failure the operator's option 1/A explicitly forbids ("must not … release the writer before reconciliation"), now shown to reach the **managed** path that slice A made live, on an ordinary uncertainty rather than only on legacy direct `fa workflow`.
+- The scenario is not "data loss". After an indeterminate PUBLISH the PLAN may already be committed, and Q114 forbids asserting otherwise. What is lost is *attribution*: the next claim advances `generation`, after which `_closed_candidate_reader` rejects the old view forever (`workspace.py:4023`), so nothing can ask "did this publish".
+- Reconciliation is real but **not durable proof**. Same-request replay comes from a process-local, non-persistent reply cache (`supervisor.py:159–168`; a miss becomes `EXECUTION_UNKNOWN`, `:379–386`). It completes the ordinary in-process case; it cannot promise recovery — which is why Q114 puts process death in quarantine.
 
-**Why this is a question and not a patch.** `_has_unsettled_views` is the single shared settlement predicate for `release` and `handoff` (`workspace.py:1815–1841`) and governs legacy direct `fa workflow` too, which Q114's resolution says must not change in this scope. Changing it is an authority-contract decision, not local cleanup, and the plan alone does not authorize it.
+**Why this is a question and not a patch.** `_settled` (`workspace.py:1813`) is shared by `release_writer`, `release_unused_writer` **and `handoff`** (`:1736`, `:1747`, `:1774`), and the authority cannot distinguish a managed run from legacy direct `fa workflow`: both publish and release through the same client and `_settle_owner`. Any predicate change therefore changes legacy behaviour, which Q114 says must not happen in this scope. The blocker is a scope authorization, not a design problem.
 
-**Impact.** Without a fence, a single indeterminate candidate PUBLISH silently converts a fenced workspace into `AVAILABLE` plus a stranded private buffer, and the only recovery is out-of-band. With a fence but no reconciliation path, the workspace stays `OWNED` until process death — the Q114 quarantine answer, which is acceptable but must be an explicit tradeoff, not an accident.
+**Impact.** The writer is released while a writer-owned artifact is unsettled — the condition already refused for `SEALED` on a WRITE view (`workspace.py:1843–1846`). The result is an unrecoverable, unattributable private buffer and an unanswerable ownership question for the next publisher.
+
+**Options (revised; E509's option A is withdrawn as based on the wrong premise).**
+
+- **A — Handle + same-id replay, no authority change (recommended).** `ManagedExecution` keeps the pending publication (the four `op-` ids, view ref and grant, source and candidate) and `close()` refuses while pending — the existing `_pending_handoff` pattern (`composition.py:348–353`). Reconciliation re-sends the same ids; `publish_candidate_plan` accepts **any** `STOPPING` CANDIDATE view of the same generation (`:4000–4040`), with `_already_published`/`_settle_view` (`:4061`, `:4591`) making the repeat safe and the view releasable. No wire change, no authority change, legacy untouched.
+- **B — A plus a purpose-scoped fence.** Additionally require `state in {PUBLISHED, REJECTED}` for CANDIDATE in `_has_unsettled_views`. This is the only mechanism that can hold the owner when `close()` is never reached, but it also changes legacy direct `fa workflow`. Needs explicit scope sign-off.
+- **C — A, authority untouched, residual gap recorded.** A run that dies between the uncertain error and storing the handle is covered only by `OWNED → QUARANTINED` at next load (`:1358–1360`). Must be recorded as an accepted gap, not as Q114 closure.
+- **D — Leave as is and document.** Rejected on the research: it is the outcome Q114 explicitly refused, and the probe shows it is reachable and silent.
+
+**Open sub-question (needed for A to be executable).** `publish_plan` does not surface its request ids on the exception path in storable form: it raises with only the last id (`client.py:585`, `:594–599`), while the earlier `CREATE_VIEW`/`WRITE_FILE`/`STOP_VIEW` ids stay local (`:525–570`). A needs all four captured on the pending record, i.e. threading them out of `publish_plan` — an internal client-method signature change, not a wire change. Confirm this is in scope for R25, or fold it into B's sign-off.
+
+**Engineering recommendation (not resolved).** A, with C's residual gap recorded explicitly. The fence is not needed for process death (`_load` already quarantines `OWNED`) and is needed only for "reconciliation cannot run", which A cannot close by itself. B is preferable only if the operator authorizes the legacy-visible change.
+
+**Scope.** Resolving this does not close R25, authorize a new wire operation or second writer, change legacy direct `fa workflow` behavior unless option B is chosen, or provide host evidence. W1's remaining `Q119-A` item is unaffected.
+
+---
+
+## Q139 — How is the mutation gate made to examine the code it claims to cover?
+
+**Status: OPEN — operator decision required; raised 2026-11-10 by E510. Research: `mutation-scope-and-import-isolation-2026-11-10.md`.**
+
+**Context.** The operator authorized extending `[tool.mutmut].source_paths` to `src/fa/execution`, and that is committed (`f7da7e0`). Measuring the result exposed two defects in the gate that predate the change and that bound what any mutation claim means.
+
+**Confirmed defect 1 — scope blindness (fixed).** `run_targeted_mutmut._scope_to_changed` filtered every `execution/` file out and printed `nothing to do`, returning 0. A green result for an area never examined.
+
+**Confirmed defect 2 — imports lost on an explicit run (fixed).** In explicit mode `also_copy` came only from the CLI, and `run_targeted_mutmut` passed none, so a staged run had no `src/fa` copy and imported the editable checkout. mutmut then reported "no test case for any mutant" for every mutant. Both runners now carry the configured `also_copy`.
+
+**Confirmed defect 3 — staged layout, NOT fixed.** With both fixes, the unchanged sandbox scope reports `total=689 killed=139 type_invalid=24 no_tests=526 survived=0`. Cause, probed in the stage: `mutmut.setup_source_paths()` inserts `mutants/src` — for `p in (".","src","source")` — **if that path exists** (`mutmut/__main__.py:253–259`); at that moment `mutants/` does not exist yet, so a non-directory is inserted, Python ignores it, and `import fa` resolves to the repository. Mutants are then never imported and are bucketed as "no tests".
+
+**Impact.** Every prior mutation claim in this repository — including the W0 closeouts and the `survived == 0` results quoted in this file's E-series — means "the covered subset stayed green", not "changed-path mutants were checked". The `no_tests` bucket is the unexamined remainder. This is the same failure mode as defect 1: absence of evidence reported as evidence of absence.
 
 **Options.**
 
-- **A — Purpose-scoped fence (recommended).** In `_has_unsettled_views`, keep the `access != READ` rule for every purpose except `CANDIDATE`, and require `state in {"PUBLISHED","REJECTED"}` for a CANDIDATE view. Legacy direct `fa workflow` has no CANDIDATE views (the CANDIDATE purpose is opened only by `client.publish_plan`/`read_candidate_buffer`), so observed legacy behavior is unchanged; the managed path becomes fail-closed. Pairs with the `ManagedExecution` pending-publication handle (E509's step 1) and uses the existing journal replay (`_already_published`, `workspace.py:4061–4091`) for reconciliation, so no new wire operation, no second writer, no second view.
-- **B — Fence every view regardless of access.** Simplest predicate, but it changes legacy settlement for PROJECT/VERIFICATION reads and would strand workspaces that today settle; needs a separate legacy-behavior decision.
-- **C — Accept and document the orphan.** Record the stranded buffer as a bounded Q114 gap, keep `AVAILABLE`, and add retention/GC later. Cheapest, but it is the outcome Q114 explicitly rejected, and it makes the loss unrecoverable rather than merely retained.
-- **D — Reconcile before release without changing the predicate.** Capture the pending publication in `ManagedExecution.close()` and re-attempt it (same `op-` id, `_already_published`/journal) before sending `RELEASE`. Closes the ordinary case with no authority change, but still leaves the process-death case unfenced, and today's `close()` cannot distinguish "nothing pending" from "pending and lost".
+- **A — Fix the staged layout.** Make the package copy land where mutmut inserts it (or express `source_paths` in mutmut's root convention) so the trampolines are importable, then re-baseline the scope and re-quote the real kill rate. Correct, and it is a prerequisite for the `execution/` extension meaning anything. Cost: one full-scope run (~2 h) to validate.
+- **B — Keep the layout, stop claiming coverage.** Leave the machinery as is and require every mutation closeout to quote `killed / (total − type_invalid − no_tests)`. Cheaper, honest, but leaves most of the configured scope unexamined forever.
+- **C — Revert the `execution/` extension until A lands.** Avoids growing a weekly job whose results are mostly `no_tests`; loses the targeted gate's new reach in the meantime.
+- **D — Other.** Specify the acceptance rule.
 
-**Engineering recommendation (not resolved).** A, plus D's handle: the fence is what makes process death safe, and the handle is what makes the ordinary case recoverable instead of merely fenced. Both reuse existing seams; neither adds a wire operation. If the operator prefers to avoid any authority change in W2, then D alone must be paired with an explicit, recorded acceptance that process death after an indeterminate PUBLISH strands the buffer.
+**Engineering recommendation (not resolved).** A, then re-baseline, because B permanently caps what the gate can prove and C throws away reach the operator asked for. Until A lands, any W1/W2 closeout must use the ratio in B rather than `survived == 0`.
 
-**Scope.** Resolving this does not close R25, authorize a new wire operation or second writer, change legacy direct `fa workflow` behavior unless option B is chosen, or provide host evidence. W1's remaining `Q119-A` item is unaffected.
+**Scope.** This does not change the advisory policy of the weekly workflow, close any W-row, or authorize production edits. Q138 is unaffected.
