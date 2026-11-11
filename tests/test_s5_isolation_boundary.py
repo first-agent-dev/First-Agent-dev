@@ -561,3 +561,59 @@ def test_spawned_verifier_commands_are_allowed() -> None:
     for command in ("pytest -q", "mypy src/", "make test", "ls -la"):
         decision = _spawn_decision(command, workspace)
         assert decision.action == "allow", f"verifier command denied: {command} ({decision.reason})"
+
+
+# ---------------------------------------------------------------------------
+# R-8 — a failed task's artifacts are kept, and the id stays free
+# ---------------------------------------------------------------------------
+
+
+def test_preserve_keeps_the_bytes_and_frees_the_task_id(tmp_path: Path) -> None:
+    """C1: preservation is a rename, so nothing is lost and nothing is mixed.
+
+    Deleting on failure destroyed the only evidence of an incident; keeping the
+    directory *in place* would be worse, because `ensure_subagent_artifact_root`
+    creates with ``exist_ok=True`` and the next task with the same id would
+    inherit the debris (the V20 defect in reverse). The rename satisfies both:
+    the bytes survive under `<id>.failed-<stamp>` and the original id is empty
+    again for the next spawn.
+    """
+    state = SessionState(workspace_root=tmp_path, run_id="run-preserve")
+    workdir = state.create_subagent_workspace("task-keep")
+    (workdir / "stdout.log").write_text("traceback goes here\n", encoding="utf-8")
+
+    kept = state.preserve_subagent_workspace(workdir, stamp="20260101T000000Z")
+
+    assert kept == workdir.with_name("task-keep.failed-20260101T000000Z")
+    assert not workdir.exists(), "the live id must be free for the next spawn"
+    assert (kept / "stdout.log").read_text(encoding="utf-8") == "traceback goes here\n"
+
+    # The id is genuinely reusable and starts clean — this is the property the
+    # in-place variant would break.
+    again = state.create_subagent_workspace("task-keep")
+    assert again == workdir
+    assert list(again.iterdir()) == [], "a new spawn inherited the failed run's debris"
+
+
+def test_preserve_refuses_paths_outside_the_artifact_tree(tmp_path: Path) -> None:
+    """C3: the same containment guard as cleanup — it moves, it does not delete."""
+    state = SessionState(workspace_root=tmp_path, run_id="run-preserve-guard")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "main.py").write_text("keep me\n", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="subagent_preserve_refused"):
+        state.preserve_subagent_workspace(tmp_path / "src", stamp="20260101T000000Z")
+
+    assert (tmp_path / "src" / "main.py").exists()
+
+
+def test_preserve_is_a_no_op_when_the_runner_wrote_nothing(tmp_path: Path) -> None:
+    """A runner that failed before creating anything must not turn into an error."""
+    state = SessionState(workspace_root=tmp_path, run_id="run-preserve-missing")
+    absent = state.create_subagent_workspace("task-never-ran")
+    absent.rmdir()
+
+    kept = state.preserve_subagent_workspace(absent, stamp="20260101T000000Z")
+
+    assert kept == absent.resolve()
+    assert not kept.exists()

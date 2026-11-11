@@ -3008,3 +3008,116 @@ def test_a_failure_after_the_plan_replace_keeps_the_new_bytes_and_the_intent(
         with pytest.raises(SupervisorError) as unusable:
             site.register(owner)
         assert unusable.value.code == "CORRUPT_STATE"
+
+
+# ---------------------------------------------------------------------------
+# R-8 — abort owns its attempt, not the whole scratch and not a shared intent
+# ---------------------------------------------------------------------------
+
+
+def test_plan_abort_leaves_another_attempts_intent_alone(site: Site, monkeypatch: pytest.MonkeyPatch) -> None:
+    """producer-kill-check: sweep the scratch and clear any intent found (R-8).
+
+    A reconcile in flight is the concrete case: `_recover_intent` is the only
+    code that may finish a killed attempt, and `intent.json` is the single piece
+    of evidence it reads. An abort belonging to a *different* operation that
+    cleared it would leave the workspace with durable state that is neither the
+    old revision nor a finished one, and — because `_forward_gates` refuses only
+    while an intent exists — would let the next caller publish on top of it.
+
+    The foreign intent is planted at the one moment it can plausibly appear:
+    after this attempt wrote its own (`_write_intent`, the last durable step
+    before the replace) and before the replace. Planting it earlier is not the
+    same test — the attempt's own write would simply overwrite it, which the
+    first version of this test did, and which made the assertion pass for the
+    wrong reason.
+    """
+    plan_ref = _with_plan(site)
+    real_replace = os.replace
+    foreign: dict[str, Any] = {}
+
+    with site.owner(view_profile=native_profile(), read_only_profile=read_only_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        base_revision = _current(site, ids)["revision_id"]
+
+        def plant_then_refuse(source: Any, destination: Any = None, **kwargs: Any) -> None:
+            if isinstance(source, str) and source.endswith(".publish"):
+                foreign.update(
+                    {
+                        "schema_version": 1,
+                        "kind": "REVISION",
+                        "operation_id": "op-" + "2" * 32,
+                        "workspace_id": ids["workspace_id"],
+                        "generation": 0,
+                        "base_revision": base_revision,
+                        "next_revision": "rev-" + "3" * 32,
+                        "tree_sha256": "4" * 64,
+                        "phase": "PREPARED",
+                        "target_relative": None,
+                        "old_sha256": None,
+                        "new_sha256": None,
+                        "created_directories": [],
+                        "view_ref": None,
+                    }
+                )
+                (site.state / "workspaces" / ids["workspace_id"] / "intent.json").write_text(json.dumps(foreign))
+                raise OSError(5, "injected refusal after the intent exists")
+            real_replace(source, destination, **kwargs)
+
+        monkeypatch.setattr(os, "replace", plant_then_refuse)
+
+        with pytest.raises(SupervisorError) as refused:
+            _publish_plan(owner, plan_ref, grant=lease, ids=ids)
+        monkeypatch.undo()
+
+        assert refused.value.code == "DURABILITY_UNKNOWN"
+        # The refusal is still the fact the caller sees...
+        assert (site.source / PLAN_RELATIVE).read_text() == PLAN_OLD
+        # ...but recovery's evidence survives, so the next attempt stays refused.
+        assert _intent(site, ids) == foreign
+        with pytest.raises(SupervisorError) as busy:
+            _publish_plan(owner, plan_ref, grant=lease, ids=ids)
+        assert busy.value.code == "WORKSPACE_BUSY"
+
+
+def test_plan_abort_removes_only_its_own_staged_buffer(site: Site, monkeypatch: pytest.MonkeyPatch) -> None:
+    """producer-kill-check: sweep the whole scratch instead of the staged name.
+
+    `_plan_stage` writes `.plan.<uuid4>.publish`; only this attempt can have
+    chosen that name, so abort needs no ownership proof to remove it — but it
+    must not remove *other* names, which is what a full sweep would do. A
+    sibling temporary is planted beside it to make the difference observable:
+    the attempt's own buffer goes, the neighbour stays.
+    """
+    plan_ref = _with_plan(site)
+    real_stage = WorkspaceAuthority._plan_stage
+    real_replace = os.replace
+    neighbour = site.source / ".fa" / "publish-tmp" / ".plan.neighbour.publish"
+
+    with site.owner(view_profile=native_profile(), read_only_profile=read_only_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+
+        def stage_then_plant(self: WorkspaceAuthority, binding: Any, inputs: Any, scratch: int) -> None:
+            real_stage(self, binding, inputs, scratch)
+            neighbour.write_text("not mine to delete")
+
+        def refuse_at_replace(source: Any, destination: Any = None, **kwargs: Any) -> None:
+            if isinstance(source, str) and source.endswith(".publish"):
+                raise OSError(5, "injected refusal")
+            real_replace(source, destination, **kwargs)
+
+        monkeypatch.setattr(WorkspaceAuthority, "_plan_stage", stage_then_plant)
+        monkeypatch.setattr(os, "replace", refuse_at_replace)
+
+        with pytest.raises(SupervisorError) as refused:
+            _publish_plan(owner, plan_ref, grant=lease, ids=ids)
+        monkeypatch.undo()
+
+        assert refused.value.code == "DURABILITY_UNKNOWN"
+        staged = sorted(p.name for p in (site.source / ".fa" / "publish-tmp").iterdir() if p.name.endswith(".publish"))
+        assert staged == [neighbour.name], staged
+        assert neighbour.read_text() == "not mine to delete"
+        # Its own intent was the only one there, so it goes: the plan was never touched.
+        assert _intent(site, ids) is None

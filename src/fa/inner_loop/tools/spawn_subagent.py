@@ -9,6 +9,7 @@ ADR-14, ADR-15 Phase 3:
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -101,14 +102,32 @@ def _handle_subagent_runner_error(
     role: str,
     exc: Exception,
 ) -> ToolResult:
-    """Record, display, clean up, and return a structured runner failure."""
+    """Record, display, preserve the artifacts, and return a runner failure.
+
+    The failure path used to delete the task's artifact directory, so the only
+    remaining evidence was `str(exc)` — the subprocess output that explains an
+    incident was thrown away at exactly the moment it became interesting. It is
+    now moved aside instead (`preserve_subagent_workspace`) and its path is part
+    of both the durable row and the message the model sees, so an operator can
+    walk to the bytes. Nothing piles up under a live id: the directory is
+    renamed, so the next task with the same id starts empty.
+    """
     logger.error("Stateless subagent runner encountered unhandled error: %s", exc)
+    kept = _preserve_failed_artifacts(session, workdir)
     if session is not None and session.log is not None:
         try:
             session.log.append(
                 actor="tool",
                 kind="subagent_spawn_fail",
-                content={"task_id": task_id, "role": role, "error": str(exc)},
+                content={
+                    "task_id": task_id,
+                    "role": role,
+                    "error": str(exc),
+                    # Where the evidence went, or why there is none. Absent when
+                    # no session could preserve it, so the row never implies a
+                    # directory that was never created.
+                    **({"artifacts": str(kept)} if kept is not None else {}),
+                },
                 tool_name="fs_spawn_subagent",
             )
         except Exception as log_exc:  # noqa: BLE001 - best-effort observability logging
@@ -117,18 +136,36 @@ def _handle_subagent_runner_error(
         _emit_subagent_event(
             session,
             "subagent_end",
-            {"task_id": task_id, "role": role, "exit_code": -1, "ok": False, "error": str(exc)},
+            {
+                "task_id": task_id,
+                "role": role,
+                "exit_code": -1,
+                "ok": False,
+                "error": str(exc),
+                **({"artifacts": str(kept)} if kept is not None else {}),
+            },
         )
     except Exception as emit_exc:  # noqa: BLE001 - best-effort observability
         logger.warning("Failed to emit subagent failure event: %s", emit_exc)
-    if session is not None:
-        # Cleanup failure is surfaced by SessionState (V20) but must not mask
-        # the original runner error being reported here.
-        try:
-            session.cleanup_subagent_workspace(workdir)
-        except Exception as cleanup_exc:  # noqa: BLE001 - original error takes precedence
-            logger.warning("Subagent workspace cleanup failed: %s", cleanup_exc)
-    return ToolResult.fail("runner_failed", str(exc), retryable=False)
+    trail = f" Artifacts kept at {kept}." if kept is not None else ""
+    return ToolResult.fail("runner_failed", f"{exc}.{trail}".rstrip(), retryable=False)
+
+
+def _preserve_failed_artifacts(session: Any, workdir: Path) -> Path | None:
+    """Keep a failed task's artifacts; report where, or why they are not kept.
+
+    Preserving is best-effort by construction: the original runner error is the
+    fact the caller must see, so a refusal or an I/O failure here is logged and
+    never raised over it (same rule as the cleanup it replaces).
+    """
+    if session is None:
+        return None
+    try:
+        stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+        return Path(session.preserve_subagent_workspace(workdir, stamp=stamp))
+    except Exception as preserve_exc:  # noqa: BLE001 - original error takes precedence
+        logger.warning("Subagent workspace preservation failed: %s", preserve_exc)
+        return None
 
 
 def _handle_spawn_subagent(root: Path, params: Mapping[str, object]) -> ToolResult:

@@ -785,6 +785,42 @@ class SessionState:
         except Exception as exc:
             raise RuntimeError(f"subagent_cleanup_failed: could not remove {resolved} ({exc})") from exc
 
+    def preserve_subagent_workspace(self, path: Path, *, stamp: str) -> Path:
+        """Move a failed task's artifacts aside and return where they landed.
+
+        The failure path used to delete them, which left the incident
+        uninvestigable: the log kept `str(exc)` but not the subprocess output
+        that explains it. Keeping them *in place* is not an option either —
+        `ensure_subagent_artifact_root` uses ``exist_ok=True``, so the next task
+        with the same id would inherit the previous one's debris and two
+        subagents' output would mix in one artifact set (the V20 defect in
+        reverse).
+
+        So the directory is renamed inside the same artifact tree to
+        ``<task-id>.failed-<stamp>``: the id is free for the next spawn, the
+        bytes survive, and containment is unchanged. The rename is the only
+        operation, so it cannot half-succeed. A missing directory is not an
+        error — the runner may have failed before writing anything.
+        """
+        from fa.workspace.worktree_manager import SUBAGENT_ARTIFACT_DIRNAME
+
+        resolved = Path(path).resolve()
+        artifact_tree = (self.workspace_root / ".fa" / SUBAGENT_ARTIFACT_DIRNAME).resolve()
+        if resolved == artifact_tree or not resolved.is_relative_to(artifact_tree):
+            raise RuntimeError(
+                f"subagent_preserve_refused: {resolved} is not a subagent artifact directory under {artifact_tree}"
+            )
+        if not resolved.exists():
+            return resolved
+        kept = resolved.with_name(f"{resolved.name}.failed-{stamp}")
+        try:
+            resolved.rename(kept)
+        except FileNotFoundError:
+            return resolved
+        except Exception as exc:
+            raise RuntimeError(f"subagent_preserve_failed: could not move {resolved} ({exc})") from exc
+        return kept
+
     def record_tool_call(self, call: ToolCall) -> TraceEvent:
         assert self.log is not None  # noqa: S101
         self.turn += 1

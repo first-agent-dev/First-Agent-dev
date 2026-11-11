@@ -286,6 +286,24 @@ def _plan_ref_dict(plan_ref: PlanRef) -> dict[str, str]:
     }
 
 
+def _is_this_attempt(intent: Mapping[str, Any], inputs: _PlanInputs) -> bool:
+    """Whether a durable intent names the attempt that is aborting right now.
+
+    `operation_id` is derived from the caller's request and unique per publish,
+    and `base_revision` pins it to the bytes it was prepared against, so the
+    pair cannot collide with a *different* operation in this workspace. Kind and
+    target are checked because `intent.json` is shared by revisions, plans and
+    bootstraps: an abort must never clear an install's intent merely because the
+    same operation id was reused.
+    """
+    return bool(
+        intent["kind"] == "PLAN"
+        and intent["operation_id"] == inputs.operation_id
+        and intent["base_revision"] == inputs.base_revision
+        and intent["target_relative"] == inputs.plan_relative
+    )
+
+
 def _candidate_scope(
     purpose: ViewPurpose,
     access: Access,
@@ -4229,24 +4247,55 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                     pass
         os.fsync(scratch)
 
-    def _plan_abort(self, binding: _Binding, inputs: _PlanInputs) -> None:  # noqa: ARG002
-        """Discard this attempt's own staging and intent; the plan was never touched.
+    def _plan_abort(self, binding: _Binding, inputs: _PlanInputs) -> None:
+        """Discard only this attempt's own staging and its own intent.
 
-        `inputs` is not dead weight: it carries the exactly-scoped facts an
-        addressing abort would need (`temporary`, `operation_id`), and the sibling
-        `_install_abort` already discards that precisely instead of sweeping the
-        whole scratch. This arm sweeps instead, which is safe only because every
-        mutating path holds `_mutex` plus the journal's single-supervisor lock, so
-        no second attempt can have a live temporary here. Aligning the two abort
-        paths is tracked as its own slice (note §4.1, R-8) — deleting the parameter
-        would freeze the asymmetry instead of fixing it.
+        The scope is a claim about ownership, not a shortcut (R-8). `temporary`
+        is a name this attempt chose (`.plan.<uuid4>.publish`), so removing it
+        needs no proof: nobody else can have created that exact name. The intent
+        is *shared* state — one `intent.json` per workspace, overwritten by each
+        attempt — so it may only be cleared when it names this attempt's own
+        operation and base revision. A reconcile in flight would otherwise lose
+        the one piece of evidence forward recovery needs, and `_forward_gates`
+        refuses any new attempt while an intent exists, so a refusal that
+        deleted someone else's would leave the workspace serving again on a
+        state nobody finished. Leaving a foreign intent in place keeps the
+        workspace visibly refused instead: `WORKSPACE_BUSY` for the next
+        caller, recovery for the killed operation.
+
+        Cleanup failures are deliberately not raised over the refusal that
+        caused them (same rule as `_install_abort`): a surviving intent blocks
+        visibly, while a masked `STALE_REVISION`/`PATH_DENIED` would misreport
+        why nothing happened.
         """
         try:
-            self._sweep_temporaries(binding.source)
-            if self._read_intent(binding.fd) is not None:
+            self._discard_temporary(binding.source, inputs.temporary)
+            intent = self._read_intent(binding.fd)
+            if intent is not None and _is_this_attempt(intent, inputs):
                 self._clear_intent(binding.fd)
         except (OSError, SupervisorError):
             pass  # the original refusal is the fact the caller must see
+
+    def _discard_temporary(self, root: int, name: str) -> None:
+        """Unlink one staged plan buffer by the exact name this attempt chose.
+
+        Not `_discard_stage`, which removes a whole staged *directory* keyed by
+        operation id; a plan replacement stages a single sibling file, so the
+        name is the whole identity. `FileNotFoundError` is the normal path: the
+        replace consumed it, or `_plan_stage` never got that far.
+        """
+        directory = self._temporary_directory(root)
+        try:
+            try:
+                info = os.stat(name, dir_fd=directory, follow_symlinks=False)
+            except FileNotFoundError:
+                return
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
+                raise SupervisorError("PATH_DENIED")  # not the staging this attempt owns
+            os.unlink(name, dir_fd=directory)
+            os.fsync(directory)
+        finally:
+            os.close(directory)
 
     def _plan_finish(self, binding: _Binding, inputs: _PlanInputs, parent: int, deadline: float) -> dict[str, Any]:
         """Make the replace durable, then revision, pointer, proof, DONE.

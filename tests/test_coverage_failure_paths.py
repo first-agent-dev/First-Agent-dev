@@ -62,8 +62,13 @@ def test_profile_builder_optional_import_failure_is_observable(caplog: Any, tmp_
     assert any("fs_search" in record.message.lower() for record in caplog.records)
 
 
-def test_subagent_runner_exception_returns_failure_and_cleans_workspace(tmp_path: Path) -> None:
-    """C1: runner exception produces failure event and cleanup."""
+def test_subagent_runner_exception_returns_failure_and_preserves_workspace(tmp_path: Path) -> None:
+    """C1: runner exception produces a failure event and KEEPS the artifacts.
+
+    The artifact directory is moved aside rather than deleted: the subprocess
+    output is the only thing that explains an incident, and it used to be
+    discarded in the same breath as the error that pointed at it.
+    """
     from fa.inner_loop.context import reset_current_session, set_current_session
 
     log = EventLog(tmp_path / "events.jsonl", run_id="subagent-error")
@@ -76,10 +81,13 @@ def test_subagent_runner_exception_returns_failure_and_cleans_workspace(tmp_path
     token = set_current_session(state)
     workspace = tmp_path / "subagent-workspace"
     workspace.mkdir()
+    # A real path, not a MagicMock: the handler wraps the result in `Path`, and
+    # the point of the assertion is that the *rendered* path reaches the row.
+    kept = tmp_path / "subagent-workspace.failed-20260101T000000Z"
     try:
         tool = build_spawn_subagent_tool(tmp_path)
         with patch.object(state, "create_subagent_workspace", return_value=workspace) as create_workspace:
-            with patch.object(state, "cleanup_subagent_workspace") as cleanup_workspace:
+            with patch.object(state, "preserve_subagent_workspace", return_value=kept) as preserve_workspace:
                 with patch(
                     "fa.inner_loop.subagent_runner.SubagentRunner.run_stateless",
                     side_effect=RuntimeError("runner boom"),
@@ -91,10 +99,16 @@ def test_subagent_runner_exception_returns_failure_and_cleans_workspace(tmp_path
     assert result.error is not None
     assert result.error.code == "runner_failed"
     create_workspace.assert_called_once_with("failure-1")
-    cleanup_workspace.assert_called_once_with(workspace)
+    # Preserved, not removed — and with a stamp so two failures cannot collide.
+    preserve_workspace.assert_called_once()
+    assert preserve_workspace.call_args.args[0] == workspace
+    assert "stamp" in preserve_workspace.call_args.kwargs
     failure_events = [event for event in log.read_all() if event.kind == "subagent_spawn_fail"]
     assert len(failure_events) == 1
     assert "runner boom" in str(failure_events[0].content["error"])
+    # The durable row names where the evidence went, so an operator can walk to it.
+    assert failure_events[0].content["artifacts"] == str(kept)
+    assert str(kept) in str(result.error.message)
 
 
 def test_stats_aggregate_and_render_edge_paths(tmp_path: Path) -> None:
