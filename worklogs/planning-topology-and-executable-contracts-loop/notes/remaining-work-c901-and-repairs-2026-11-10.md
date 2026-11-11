@@ -588,3 +588,74 @@ L-RCPT-2/6, L-ENTRY-4 — NOT RUN. Без них нельзя утверждат
 - `mypy` не выше baseline этого окружения;
 - оба `check_*` гейта `rc=0`;
 - в коммит-сообщении — что измерялось, а не что «должно работать».
+
+## 7. Классификация остатка full gate (48) — по записям и замеру, без нового прогона банка
+
+Источники: `q137-working-entry-inventory-2026-11-09.md` (полные ID, 62 записи),
+`q137-full-gate-triage-2026-10-30.md` (история), и **замер только по 16
+подозреваемым файлам** вместо всего банка (≈70 с вместо ≈12 мин). Полный банк
+не перезапускался: последний прогон на `51c6735` дал **48** (37 failed + 11
+errors), 7448 passed — те же классы, что эталон `a2c2312`.
+
+### 7.1. Разбивка 48 по корневой причине
+
+| Класс | Сколько | Суть | Чинится в песочнице? |
+| --- | --- | --- | --- |
+| **A. Средовые — `managed_execution_unavailable`** | **39** (28 failed + 11 errors) | `_cmd_run` → `SessionManager._new_session` отказывает: «session-backed CLI runs require the configured managed workspace provisioner». Тест создаёт сессию без провижнера/препаратора — штатный отказ продукта, а не дефект | **да** (фикстура) |
+| **B. Средовые — `uv sync` тянет CPython с github** | **2** | `test_workspace_readiness_integration`, `test_controller_installed`-подобные: bootstrap-скрипт зовёт `uv sync --locked --extra dev`; uv резолвит `cpython-3.15.2` и падает `invalid peer certificate: UnknownIssuer` (хост github releases закрыт песочницей). Код возврата 75 `degraded_environment` | **нет** (нужен доступ к releases) |
+| **C. Средовые — `uv` не на PATH при прямом `pytest`** | подмножество B | При запуске без `.venv/bin` в PATH bootstrap отвечает `tool_missing`. Важно: **с `uv` на PATH диагностика меняется** на `sync_failed` — то есть это два разных сообщения одной среды | да (PATH) |
+| **D. Средовые — прочее окружение** | **0 подтверждённых** | `test_semgrep_pin`, `test_targeted_gates_smoke`, `test_verify_slice`, `test_controller_entry` в замере **зелёные** — их исторические падения из Q137 больше не воспроизводятся | — |
+| **E. Средовые — `test_verify_gate_live`** | **7** | Те же 7, что и на чистом `a7b32ff` (сверено stash-прогоном): `test_acquisition_unavailable_...[5 параметров]`, `test_plan_preflight_real_cli_uses_selected_workspace_not_cwd[2]` | частично да |
+| **F. Реальные дефекты** | **0** | Ни одного падения, которое указывало бы на логику продукта | — |
+| **xfail (strict)** | **4** | Все актуальны, XPASS нет — см. §7.3 | нет |
+
+**39 + 2 + 7 = 48.** То есть весь остаток — среда и живые проверки, требующие
+managed-провижнера, а не дефекты. Это объясняет, почему банк не двигался все
+срезы: он не мог сдвинуться, пока фикстуры создают «устаревшую» сессию.
+
+### 7.2. Класс A: одна фикстура, 39 тестов
+
+Все 29 failed + 11 errors идут из одного вызова `_cmd_run` в тестах, которые
+затем проверяют **артефакты прогона** (posture, корреляция, stats, глобальная
+история). Продукт ведёт себя правильно: `SessionManager._new_session`
+(`src/fa/session/manager.py:381`) без `workspace_provisioner`/`workspace_preparer`
+отказывает, потому что «session-backed CLI run требует managed провижнера».
+
+Раскладка по файлам: `s10b_cli_parity` 8, `s10a_cli_coverage` 7,
+`s10c_artifact_posture` 6, `s7_correlation` 5, `s9_stats_projection` 4,
+`s7_cli_run_paths` 3, `scope_hint_cache_key` 2, `readiness_announcement` 2,
+`iteration_cap` 1, `workflow_global_history` 1 = **39**.
+
+**Прецедент уже есть в репозитории:** Q137 чинил ровно это для
+`test_verify_gate_live` («fixed locally with managed fixture») и для
+`test_s10c_session_dir_is_private_at_creation...`. Это не новая политика, а
+применение существующей практики к оставшимся файлам.
+
+### 7.3. xfail — что устарело, а что нет
+
+| xfail | Статус | Почему актуален |
+| --- | --- | --- |
+| `test_execution_composition.py:415` — SLICE4 STEP2 cutover | актуален | хостовые стадии всё ещё пишут байты; XPASS нет, значит утверждение всё ещё верно |
+| `test_execution_project_tools.py:304` / `:315` — Q106 | актуален | конверт 60 KiB всё ещё не несёт legacy outline/reach; это ограничение дизайна, а не среда |
+| `test_s5_isolation_boundary.py:462` — Q19 (V24/V25) | актуален | containment требует OS-level writable mount; `strict=True` держит запись открытой |
+
+Ни один xfail не «устарел» в смысле «стал проходить»: при XPASS `strict=True`
+дал бы падение, а его нет. **Ни один не относится к среде** — удалять нечего.
+
+### 7.4. Что это меняет в плане
+
+Порядок, который вытекал из прошлых заметок (E2E → `stats._parse_events` →
+провайдер), **невозможен в песочнице как есть**: E2E и `stats` проверяются через
+`fa run`, а `fa run` здесь требует managed-провижнера. Значит:
+
+1. **Класс A (39)** — единственный, который можно закрыть локально, и он
+   закрывает почти весь банк. Один срез: общий managed-фикстур (прецедент Q137),
+   затем прогон 10 файлов (~30 с вместо 12 мин).
+2. **Класс B (2)** — честно остаётся красным здесь; фиксируется как
+   средовое ограничение с точной причиной (`uv` → CPython 3.15.2 → github
+   releases → сертификат), а не как «непонятный sync_failed».
+3. **Класс E (7)** — те же, что на чистом `a7b32ff`; не регресс, разбирать
+   после A.
+4. **Класс C** — снимается строкой `PATH="$PWD/.venv/bin:$PATH"` в рецепте
+   прогона; стоит записать в инструкцию, иначе следующий агент снова получит
+   `tool_missing` и будет искать не там.
