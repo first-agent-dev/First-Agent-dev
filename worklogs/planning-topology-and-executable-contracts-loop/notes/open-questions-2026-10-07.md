@@ -3079,3 +3079,35 @@ No code, tests, or increment were changed for Q136. Do not treat the 68 targeted
 - **C — Other.** Specify the exact baseline/environment findings to disposition and the acceptance rule; current-only failures remain blocking unless separately resolved or explicitly dispositioned.
 
 Q135 F2–F4 and Q136 Pylint are unaffected and remain independent. No W1 implementation was advanced by this triage record.
+
+---
+
+## Q138 — May the settlement predicate count an unsettled CANDIDATE view as blocking owner release?
+
+**Status: OPEN — operator decision required before R25/Q114 implementation (raised by E509, 2026-11-10).**
+
+**Source-grounded behavior (E509, reproduced locally).** A probe replaced the determinate refusal in the S3P3 C1 test with `SupervisorError("DURABILITY_UNKNOWN")` — the same injection point as E407's original Q114 probe, before `publish_candidate_plan`'s commit body. After the run: the CANDIDATE view record was `purpose=CANDIDATE, access=READ, state=STOPPING` with its supervisor-private `candidate` bytes on disk, while `workspace.json` was `AVAILABLE`. With the original `INPUT_POLICY` the view is `REJECTED` and no `candidate` remains.
+
+Mechanism, verified line by line:
+
+1. `ExecutionClient.publish_plan` sets `uncertain=True` when PUBLISH is indeterminate and its `finally` skips `_release_view` (`src/fa/execution/client.py:594–599`) — correct and required by Q114.
+2. `ManagedExecution.close` sends a plain `RELEASE` with no pending-publication fence; only an unresolved HANDOFF is fenced (`src/fa/execution/composition.py:348–353, 355–363`).
+3. `WorkspaceAuthority._has_unsettled_views` treats a view as unsettled only when `ref["access"] != Access.READ.value` (`src/fa/execution/workspace.py:1862`). CANDIDATE is `Access.READ` (`workspace.py:219`), so `_settle_owner` (`:1822`) sets `status="AVAILABLE"`.
+4. The next writer claim advances `generation`, after which `_closed_candidate_reader`'s `binding.metadata["generation"] != view_ref.generation` check (`workspace.py:4023`) permanently rejects the orphan. The buffer is not merely leftover: it is unreachable and unreconcilable.
+
+This is the Q114 failure the operator's option 1/A explicitly forbids ("must not … release the writer before reconciliation"), now shown to reach the **managed** path that slice A made live, on an ordinary uncertainty rather than only on legacy direct `fa workflow`.
+
+**Why this is a question and not a patch.** `_has_unsettled_views` is the single shared settlement predicate for `release` and `handoff` (`workspace.py:1815–1841`) and governs legacy direct `fa workflow` too, which Q114's resolution says must not change in this scope. Changing it is an authority-contract decision, not local cleanup, and the plan alone does not authorize it.
+
+**Impact.** Without a fence, a single indeterminate candidate PUBLISH silently converts a fenced workspace into `AVAILABLE` plus a stranded private buffer, and the only recovery is out-of-band. With a fence but no reconciliation path, the workspace stays `OWNED` until process death — the Q114 quarantine answer, which is acceptable but must be an explicit tradeoff, not an accident.
+
+**Options.**
+
+- **A — Purpose-scoped fence (recommended).** In `_has_unsettled_views`, keep the `access != READ` rule for every purpose except `CANDIDATE`, and require `state in {"PUBLISHED","REJECTED"}` for a CANDIDATE view. Legacy direct `fa workflow` has no CANDIDATE views (the CANDIDATE purpose is opened only by `client.publish_plan`/`read_candidate_buffer`), so observed legacy behavior is unchanged; the managed path becomes fail-closed. Pairs with the `ManagedExecution` pending-publication handle (E509's step 1) and uses the existing journal replay (`_already_published`, `workspace.py:4061–4091`) for reconciliation, so no new wire operation, no second writer, no second view.
+- **B — Fence every view regardless of access.** Simplest predicate, but it changes legacy settlement for PROJECT/VERIFICATION reads and would strand workspaces that today settle; needs a separate legacy-behavior decision.
+- **C — Accept and document the orphan.** Record the stranded buffer as a bounded Q114 gap, keep `AVAILABLE`, and add retention/GC later. Cheapest, but it is the outcome Q114 explicitly rejected, and it makes the loss unrecoverable rather than merely retained.
+- **D — Reconcile before release without changing the predicate.** Capture the pending publication in `ManagedExecution.close()` and re-attempt it (same `op-` id, `_already_published`/journal) before sending `RELEASE`. Closes the ordinary case with no authority change, but still leaves the process-death case unfenced, and today's `close()` cannot distinguish "nothing pending" from "pending and lost".
+
+**Engineering recommendation (not resolved).** A, plus D's handle: the fence is what makes process death safe, and the handle is what makes the ordinary case recoverable instead of merely fenced. Both reuse existing seams; neither adds a wire operation. If the operator prefers to avoid any authority change in W2, then D alone must be paired with an explicit, recorded acceptance that process death after an indeterminate PUBLISH strands the buffer.
+
+**Scope.** Resolving this does not close R25, authorize a new wire operation or second writer, change legacy direct `fa workflow` behavior unless option B is chosen, or provide host evidence. W1's remaining `Q119-A` item is unaffected.

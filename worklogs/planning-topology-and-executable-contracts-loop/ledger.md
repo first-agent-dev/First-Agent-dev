@@ -8896,3 +8896,40 @@ the defect and did not restructure the seam. `managed_candidate_reader` returns
 `None` for a stage that captured nothing, which keeps doubles working; a
 candidate-owning managed stage cannot reach that path because the capture fails it
 closed first. Live E2E is still the host's: `I03-LIVE` cases remain `NOT RUN`.
+
+### E509 — adversarial W2 review: Q114 reproduced as a data-loss class, Q138 raised (2026-11-10)
+
+**Scope.** Plan/source audit, two throwaway probes (reverted; `git status` clean), no
+product or test change, no Docker/host run. Full write-up in the increment's
+`### E509` section; the decision itself is Q138.
+
+**The one thing that matters.** Q114 was recorded from reading code. It now
+reproduces: inject `DURABILITY_UNKNOWN` where the S3P3 C1 test injects a
+determinate refusal, and after the run the CANDIDATE view is `STOPPING` with its
+private `candidate` bytes on disk while `workspace.json` is `AVAILABLE`. The next
+claim advances `generation`, so `_closed_candidate_reader` (`workspace.py:4023`)
+rejects the orphan forever: the buffer is not leftover, it is unrecoverable. Two
+lines do it — `close()` has no pending-publication fence (`composition.py:348–363`)
+and `_has_unsettled_views` skips every `READ` view (`workspace.py:1862`), CANDIDATE
+being `READ` (`:219`).
+
+**Not fixed here.** The predicate is shared with legacy release/handoff, which
+Q114 says not to change in this scope. Q138 asks the operator, with A
+(purpose-scoped fence) recommended, and names why D alone must then accept the
+process-death gap explicitly.
+
+**W1 remainder, verified.** Steps 1–4 and 6 of E505's order have their production
+callers and green banks (79 + 21 + 109 passed); step 5 is closed by E508.
+**Q119-A is the only open W1 item** — the documented nodeid and its named
+replacement both still do not exist under `tests/`.
+
+**Plan corrections.** R25/R26 line data is stale (six references; R24's are
+exact), the W2 order is inverted (Q138 → R25 → R24 → R26 → S5P1–S5P3), R26's
+handoff seam is the chat tool's, not `ParentStageLease`'s, and its production path
+is gated off entirely by `_requires_acquisition` (`workflow_tool.py:611`). The
+selection/clarification contract an earlier draft called undefined does exist at
+`i03-execution-workspace-spec-2026-10-15.md:1263–1315`.
+
+**Not done here, named.** No W2 implementation, no authority change, no test added.
+Mutation gate remains uninformative for these paths (`source_paths` at
+`pyproject.toml:316` excludes `execution/`), unchanged from E508.
