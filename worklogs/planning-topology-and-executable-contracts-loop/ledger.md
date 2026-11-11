@@ -8745,6 +8745,31 @@ The research-note RSS values (131,144 KiB search; 63,344 KiB reach; 268,532 KiB 
 
 **Confirmed findings.** Managed `fs_search`/`fs_reach` handlers refuse `workspace_io` (`src/fa/inner_loop/tools/fs_search.py:1055–1069`, `fs_reach.py:132–152`); `src/fa/execution/project_tools.py:33–56` has no production caller. `Operation.EXEC` currently transports shell `command` into cell `RUN` (`src/fa/execution/backend.py:334–343`), and the private cell codec lacks a typed project-tool action (`cell_protocol.py:29–35`). The tool loop can parallelize up to five read calls (`src/fa/inner_loop/loop.py:357–373`) but the cell admits one active RUN (`src/fa/execution/cell_worker.py:168–225`). Search trims only after building (`tools/fs_search.py:505–524`); source caps are per-file (`memory/search_index.py:56`, `memory/structural_index.py:58`); reach's 30,000-byte constant is not enforced; the helper's 60-KiB output check is post-build (`execution/project_tools.py:59–90`).
 
+> **AMENDED 2026-11-11 (see E507/E508). Three of the findings above no longer
+> describe the tree and must not be implemented again.**
+>
+> | E505 finding | Status now | Current evidence |
+> | --- | --- | --- |
+> | `fs_search`/`fs_reach` refuse `workspace_io` | **SUPERSEDED** — they dispatch a typed cell-local call | `fs_search.py:1377`, `fs_reach.py:163` → `dispatch_managed_project_tool`; `tests/test_execution_project_tools.py` 46 + 2 xfail |
+> | `execution/project_tools.py` has no production caller | **SUPERSEDED** — the cell helper is launched by the worker | `cell_worker.py:200` (`python -I -m fa.execution.project_tools`) |
+> | cell codec lacks a typed project-tool action | **SUPERSEDED** — `PROJECT_TOOL` exists | `cell_protocol.py:34`; `backend.py:418`; `cell_worker.py:142,199` |
+>
+> **Still true, keep them:** the loop still offers five parallel read slots
+> (`loop.py:71`) while one cell admits one active RUN; host-path search still
+> trims only after building (`fs_search.py:794`) — correct as *legacy host*
+> behaviour, unreachable on a managed call because that branch returns at
+> `:1377`; per-file source caps still live in `search_index.py:56` /
+> `structural_index.py:58`, with the aggregate Q97 ceilings added separately in
+> `memory/managed_discovery.py` and `memory/structural_index.py`; the per-view
+> serialization these findings asked for is real, implemented as the executor's
+> `threading.Lock` plus a per-call view/grant rebind check
+> (`execution/client.py:1140,1185`), and the tool advertises the
+> `managed-view-serial` tag accordingly.
+>
+> E505's *actionable* content — the ordered gate and the oracles that had to be
+> written — is unaffected by this amendment and remains the record of what W1
+> owed. Only its description of the starting state was stale.
+
 S3P3's “missing controller edge” wording is stale. The source edge exists from `_cmd_workflow` through `BoundPlanPublisher` and `_promote_validated_plan` to managed publication (`src/fa/cli.py:2043–2067`; `workflow_controller.py:2309–2340, 2483–2493`; `execution/composition.py:358–377`). Existing root tests stub `run_workflow`; success also fakes publication (`tests/test_execution_composition.py:456–520, 523–623`). W1 therefore adds a real local-authority C1 success/refusal test, not duplicate controller code; it does not close R25/W2. R28's exact host-bootstrap managed-Bash negative remains absent.
 
 **Plan delta.** The increment's W1 table and E505, spec §4.2 E505, and inventory now specify the ordered Q97 stop gate; a typed, backward-compatible project-tool payload under existing EXEC mapped to a closed non-PTY cell action (never a shell-text sentinel); same-view/profile/grant binding; pre-allocation work/output enforcement and Q111-A errors; controller-side search observations; per-view serialization; exact C0/C1 tests and producer/EDGE kills; the S3P3 test-only correction; and the R28 production-caller oracle. The R20 C1 test must migrate from unconditional refusal to cell-local success while preserving zero host Git/no canonical side effects. Q119-A's documented production matrix nodeid is absent in the current checkout; its current equivalent must be reconciled or recreated before W1 closes, without reopening E503's historical W0 closeout. Numeric budgets are deliberately not selected. Approved profile identity/config stays W3; actual host cgroup/CPU/RSS and deployed process evidence stays W4.
