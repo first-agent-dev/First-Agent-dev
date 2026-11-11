@@ -9008,3 +9008,35 @@ run died with SIGKILL (`mutants/scope-baseline.json`:
 `execution/`. Mutation closeouts must quote
 `killed / (total − type_invalid − no_tests)` and name the selection. R24–R26 remain
 OPEN/W2; W4 remains NOT RUN.
+
+### E512 — Q139 baseline deferred by the operator; lost-CREATE_VIEW measured and bounded (2026-11-11; Arena-local)
+
+**Operator decision.** The configured-scope mutation baseline is **deferred until
+after the post-e2e work**: this runner cannot complete it (the attempt died with
+SIGKILL) and spending more of this environment on it buys nothing. Consequence,
+stated so it cannot be quietly forgotten: `execution/` has **no measured mutation
+coverage**, and no closeout may claim any. When it is run, the figure to quote is
+`killed / (total − type_invalid − no_tests)` with the selection named.
+
+**Q138-B step 2, the case E509 named — measured, not reasoned.** A probe (reverted,
+tree clean) lost the `CREATE_VIEW` *reply* while the authority created the view:
+
+```
+pending_publication = None      publication_pending = False
+close()             = False     workspace.json      = OWNED
+```
+
+So the shape of the gap is now exact, and it is *not* the data-loss class Q114 was
+about. `publish_plan` only builds a `PendingCandidatePublication` once `view` and
+`view_grant` are known (`client.py:648`), so a lost create leaves **no handle** and
+the run cannot reconcile in-process. But the fence does its job: the orphaned
+CANDIDATE view is unsettled, `close()` is refused, and the workspace stays `OWNED` —
+quarantine, which is Q114's answer, and the buffer is *not* stranded under
+`AVAILABLE` the way E509 reproduced.
+
+The bounded gap that remains: recovery, not the run, must resolve that view. Closing
+it properly needs a handle for a view whose id the caller never learned — i.e. the
+request id becomes the only key, and the authority would have to answer "which view
+did `op-<create_request_id>` create". That is a new authority read, so it is a
+Q-class decision, not a silent edit. Recorded as the next question rather than
+implemented.
