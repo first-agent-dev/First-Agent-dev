@@ -624,6 +624,10 @@ def test_targeted_main_propagates_action_required_executor_rc(tmp_path: Path, mo
     monkeypatch.setattr("scripts.run_targeted_mutmut.gd.changed_python_files", lambda *_args, **_kwargs: [source])
     monkeypatch.setattr(targeted, "_scope_to_changed", lambda _changed: [source])
     monkeypatch.setattr(targeted, "request_from_configured_scope", lambda *_args, **_kwargs: sentinel)
+    # The fixture is a bare repo with no pyproject.toml, so the copies this test
+    # does not assert on are stubbed too; the point here is the exit-code
+    # propagation, not the config read (that is the T19 test below).
+    monkeypatch.setattr(targeted, "_configured_copies", lambda *_args, **_kwargs: ("src/fa",))
 
     def execute(request: SliceRequest) -> SliceResult:
         observed.append(request)

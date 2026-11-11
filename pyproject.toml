@@ -349,6 +349,31 @@ pytest_add_cli_args_test_selection = [
   "tests/test_s5_state_root_contract.py",
   "tests/test_s6_subagent_fidelity.py",
   "tests/test_subagent_runner.py",
+  # E510: the execution authority's own suites. Without these, every mutant under
+  # `src/fa/execution` would run against sandbox tests that cannot import it and
+  # "survive" vacuously — the exact failure this comment warns about.
+  "tests/test_execution_admission.py",
+  "tests/test_execution_client.py",
+  "tests/test_execution_client_port.py",
+  "tests/test_execution_client_stage.py",
+  "tests/test_execution_composition.py",
+  "tests/test_execution_dispatch.py",
+  "tests/test_execution_handoff.py",
+  "tests/test_execution_handoff_return.py",
+  "tests/test_execution_journal.py",
+  "tests/test_execution_plans.py",
+  "tests/test_execution_protocol.py",
+  "tests/test_execution_purposes.py",
+  "tests/test_execution_readers.py",
+  "tests/test_execution_receipts.py",
+  "tests/test_execution_reply_cache_budget.py",
+  "tests/test_execution_service.py",
+  "tests/test_execution_supervisor.py",
+  "tests/test_execution_termination.py",
+  "tests/test_execution_views.py",
+  "tests/test_execution_view_io.py",
+  "tests/test_execution_workspace.py",
+  "tests/test_s3p3_candidate_buffer.py",
   "tests/test_workspace_bootstrap.py",
 ]
 # Complete package copy supplies sibling imports while source_paths remains the
@@ -362,6 +387,7 @@ type_check_command = [
   "check",
   "src/fa/sandbox",
   "src/fa/session",
+  "src/fa/execution",
   "src/fa/inner_loop/state.py",
   "src/fa/inner_loop/subagent_envelope.py",
   "src/fa/inner_loop/subagent_runner.py",
@@ -449,6 +475,8 @@ ignore-signatures = true   # similar function signatures are not duplication
 paths = [
   "src/fa/sandbox",
   "src/fa/session",
+  # E510: mirrors [tool.mutmut] source_paths.
+  "src/fa/execution",
   "src/fa/inner_loop/state.py",
   "src/fa/inner_loop/subagent_envelope.py",
   "src/fa/inner_loop/subagent_runner.py",
