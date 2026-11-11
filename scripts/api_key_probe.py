@@ -19,7 +19,9 @@
     python scripts/api_key_probe.py --platform coarena --list-models
     python scripts/api_key_probe.py --platform oneai --wire anthropic
     python scripts/api_key_probe.py -p coarena --prompt "привет, кто ты?"
-    python scripts/api_key_probe.py -p coarena --questions questions.md
+    python scripts/api_key_probe.py -p coarena --prompt-file вопрос.txt
+    python scripts/api_key_probe.py -p coarena --questions
+    python scripts/api_key_probe.py -p coarena --dialog chat.md   (продолжить чат)
 
 Чтение ответов. Ответ печатается в ширину терминала с абзацами; длинный на
 Linux/macOS открывается в ``less``, на Windows — сразу в консоль (там ``more``
@@ -27,7 +29,15 @@ Linux/macOS открывается в ``less``, на Windows — сразу в �
 перечитать ответ, ``/q 2 расс`` — с рассуждением, ``/save`` — сохранить в файлы.
 ``--questions файл.md`` прогоняет вопросы из файла и раскладывает ответы по
 файлам, чтобы сверять с эталоном в редакторе: заголовок ``## вопрос`` отделяет
-вопросы, блок ``### Эталон`` внутри — образец для ручного сравнения.
+вопросы, блок ``### Эталон`` внутри — образец для ручного сравнения. После
+прогона печатается пауза (Enter), чтобы ответы не уехали вместе с приглашением,
+а затем открывается чат: ``/q 2`` перечитывает второй ответ, ``/q 2 расс`` — с
+рассуждением; ``/exit`` — выход. ``--pair`` ведёт себя так же.
+
+Длинный промпт удобнее держать файлом: ``--prompt-file вопрос.txt``, коротко
+``--prompt @вопрос.txt`` или прямо в чате строкой ``@вопрос.txt``. История чата
+пишется в файл: ``--dialog chat.md`` начинает с прошлых пар и дописывает новые,
+файл диалога — реплики ``> вопрос``, под ними ответ модели.
 ``--models`` показывает модели обоих шлюзов; id оттуда вписывается в
 ``ONEAI_MODEL`` / ``COARENA_MODEL`` — «*» в списке отмечает выбранную.
 
@@ -93,6 +103,8 @@ COARENA_MODEL = "claude-sonnet-5-5"
 DEFAULT_MAX_TOKENS = 8192  # Anthropic-формат требует max_tokens явно
 ANTHROPIC_VERSION = "2023-06-01"
 DEFAULT_OUT = "probe-out"  # каталог для --save без --out
+DEFAULT_QUESTIONS = "probe-questions.md"  # что прогоняет --questions без имени файла
+DIALOG_PREFIX = "> "  # реплика пользователя в файле диалога; остальное — ответы модели
 
 EFFORTS: tuple[str, ...] = ("off", "none", "minimal", "low", "medium", "high", "xhigh", "max")
 
@@ -872,6 +884,8 @@ class Settings:
     out: str = ""
     max_context_chars: int = 0
     width: int = 0
+    recall: str = ""  # файл вопросов этой сессии: /q читает ответы оттуда
+    dialog: str = ""  # --dialog: файл, в котором лежит история чата
 
 
 class Turn(TypedDict):
@@ -963,6 +977,7 @@ class ChatClient:
         self.question = ""
         self.reference = ""
         self.turns: list[Turn] = []
+        self.after: str = ""  # что предложить после пачки ответов: /q N
 
     # -- адреса и заголовки -------------------------------------------------
     @property
@@ -1195,33 +1210,38 @@ class ChatClient:
         return 0
 
     # -- одиночный вопрос ---------------------------------------------------
-    def ask_once(self, prompt: str) -> int:
+    def ask_once(self, prompt: str, shown: str | None = None) -> int:
         """Один вопрос без истории: удобно для сверки с эталоном."""
         print(_dim(f"{self.label} · {self.settings.model} · {self.settings.wire} · effort={self.settings.effort}"))
-        turn, code = self._ask(prompt, [{"role": "user", "content": prompt}])
+        turn, code = self._ask(prompt, [{"role": "user", "content": prompt}], shown=shown)
         if turn is not None:
             self._present(turn)
             self._autosave(turn)
         return code
 
-    def _ask(self, prompt: str, history: Sequence[Mapping[str, str]]) -> tuple[Turn | None, int]:
+    def _ask(
+        self,
+        prompt: str,
+        history: Sequence[Mapping[str, str]],
+        shown: str | None = None,
+    ) -> tuple[Turn | None, int]:
         """Запрос + запись хода в журнал; код возврата как у процесса."""
         try:
             reply, elapsed = self.send(history)
         except ApiError as exc:
             line = describe_error(exc)
             print(line, file=sys.stderr)
-            self._record(prompt, None, 0.0, line)
+            self._record(prompt, None, 0.0, line, shown=shown)
             return None, 1
         except BenchError as exc:
             print(_red(f"✗ {exc}"), file=sys.stderr)
-            self._record(prompt, None, 0.0, _red(f"✗ {exc}"))
+            self._record(prompt, None, 0.0, _red(f"✗ {exc}"), shown=shown)
             return None, 2
         except KeyboardInterrupt:
             self._clear_progress()
             print(_dim("\n  прервано; в журнал не попало"))
             return None, 130
-        return self._record(prompt, reply, elapsed), 0
+        return self._record(prompt, reply, elapsed, shown=shown), 0
 
     # -- сохранение ответов -------------------------------------------------
     def _save_turn(self, turn: Turn, directory: Path) -> list[str]:
@@ -1236,6 +1256,10 @@ class ChatClient:
             thoughts = directory / f"{number}-reasoning.md"
             thoughts.write_text(turn["reasoning"].strip() + "\n", encoding="utf-8")
             written.append(str(thoughts))
+        if turn["prompt"].strip():
+            prompt_path = directory / f"{number}-prompt.md"
+            prompt_path.write_text(turn["prompt"].strip() + "\n", encoding="utf-8")
+            written.append(str(prompt_path))
         if turn["reference"].strip():
             reference = directory / f"{number}-reference.md"
             reference.write_text(turn["reference"].strip() + "\n", encoding="utf-8")
@@ -1309,6 +1333,7 @@ class ChatClient:
         что она держит простую логику. Ответы идут в терминал, при --out ещё и
         в файлы: сравнивать «до/после» смены модели или effort удобнее по ним.
         """
+        self.after = "/q 1 — перечитать первый ответ · /q 2 расс — с рассуждением"
         prompts = [
             "Ответь 2-3 предложениями: что такое HTTP-заголовок Authorization и чем Bearer отличается от Basic?",
             (
@@ -1332,23 +1357,32 @@ class ChatClient:
                 print(_dim(f"   → {review[-1]}"))
         if directory is not None:
             self._write_index(directory)
+            self.settings.recall = str(directory)
             print(_dim(f"оглавление: {directory / 'index.md'}"))
+        elif self.after:
+            print(_dim(f"  ответы не сохранены на диск (добавьте --out {DEFAULT_OUT}, чтобы открыть их потом)"))
+            self.after = ""
+        self._wait()
         return 0
 
     # -- пакетный режим -----------------------------------------------------
     def run_questions(self) -> int:
         """Прогнать вопросы из файла и разложить ответы по файлам."""
-        path = Path(self.settings.questions)
+        path = _questions_path(self.settings.questions)
         try:
             raw = path.read_text(encoding="utf-8")
         except OSError as exc:
             print(_red(f"ошибка: не прочитать {path}: {exc}"), file=sys.stderr)
+            print(_dim(f"  файл по умолчанию — {DEFAULT_QUESTIONS} рядом со скриптом"), file=sys.stderr)
             return 2
         questions = split_questions(raw)
         if not questions:
             print(_red(f"ошибка: в {path} нет вопросов (нужен заголовок ## или ###)"), file=sys.stderr)
             return 2
         directory = Path(self.settings.out or f"{path.stem}-out")
+        if not self.settings.out:
+            directory = path.parent / directory
+        self.settings.recall = str(directory)
         if not self.settings.paged:
             print(_dim(f"{self.label} · {self.settings.model} · {self.settings.wire}"))
             print(_dim(f"вопросов: {len(questions)} · модели: нет истории, каждый вопрос отдельно"))
@@ -1358,17 +1392,20 @@ class ChatClient:
             print(_dim(f"\n[{number}/{len(questions)}] {head[: self.reader.width]}"))
             self.reference = reference
             self.question = question
-            turn, code = self._ask(question, [{"role": "user", "content": question}])
+            shown = _short_prompt(question)
+            turn, code = self._ask(question, [{"role": "user", "content": question}], shown=shown)
             if turn is None:
                 if code == 2:
                     return code
-                turn = self._record(question, None, 0.0, "ошибка шлюза")
+                turn = self._record(question, None, 0.0, "ошибка шлюза", shown=shown)
             turn["files"] = self._save_turn(turn, directory)
             review = directory / f"{turn['index']:02d}-review.md"
             print(_dim(f"   → {review}"))
         index = self._write_index(directory)
         print(_green(f"\nготово: {len(questions)} ответ(ов) в {directory}"))
         print(_dim(f"оглавление для сверки: {index}"))
+        self.after = "/q 1 — перечитать первый ответ · /q 2 расс — с рассуждением"
+        self._wait()
         return 0
 
     # -- вывод ответа -------------------------------------------------------
@@ -1396,6 +1433,26 @@ class ChatClient:
         lines.extend(_dim(line) for line in _wrap(turn["meta"].strip(), width, "  ", "  "))
         return lines
 
+    def _chat_next(self) -> bool:
+        """Будет ли после прогона чат: только когда есть с кем говорить."""
+        return bool(sys.stdin) and sys.stdin.isatty()
+
+    def _wait(self) -> None:
+        """Дать прочитать ответы, прежде чем окно терминала уедет.
+
+        Вопросов много, ответы длинные: без паузы конец прогона упирается в
+        строку приглашения, а в VS Code окно может прокрутиться. Enter — дальше.
+        """
+        if self._chat_next():
+            tail = "Enter — перейти в чат по этим ответам"
+        else:
+            tail = "Ctrl+C — выход"
+        print(_dim(f"  {self.after} · {tail}") if self.after else _dim(f"  {tail}"))
+        try:
+            input()
+        except (EOFError, KeyboardInterrupt):
+            print()
+
     def _present(self, turn: Turn) -> None:
         """Показать ответ: длинный — в пейджере, короткий — сразу в терминал."""
         lines = self._turn_lines(turn, reasoning=self.settings.reasoning)
@@ -1408,10 +1465,18 @@ class ChatClient:
         print()
         print("\n".join(lines))
 
-    def _record(self, prompt: str, reply: Reply | None, elapsed: float, error: str = "") -> Turn:
+    def _record(
+        self,
+        prompt: str,
+        reply: Reply | None,
+        elapsed: float,
+        error: str = "",
+        shown: str | None = None,
+    ) -> Turn:
+        """Записать ход. ``shown`` — короткая подпись вместо полного промпта."""
         turn: Turn = {
             "index": len(self.turns) + 1,
-            "prompt": prompt,
+            "prompt": shown if shown is not None else prompt,
             "text": reply.text if reply else "",
             "reasoning": reply.reasoning if reply else "",
             "meta": _meta(reply, elapsed) if reply else "",
@@ -1427,29 +1492,75 @@ class ChatClient:
         """REPL: каждый ход отправляет всю историю заново."""
         width = self.reader.width
         history: list[dict[str, str]] = []
+        self._load_dialog(history)
         print(_rule(width, f"{self.label} · чат"))
         print(_dim(f"  {self.settings.wire} · {self.settings.model} · effort={self.settings.effort}"))
-        hint = "  /help — команды · /q — перечитать ответ · /reset — история · /exit — выход"
+        if history:
+            path = self.settings.dialog or "?"
+            print(_dim(f"  контекст из {path}: {len(history) // 2} пар(ы) — уйдёт в первом же запросе"))
+        hint = "  /help — команды · @файл — промпт из файла · /q — перечитать ответ · /exit — выход"
         for line in _wrap_body(hint, width):
             print(_dim(line))
         while True:
             text = self._read_input()
             if text is None:
-                self._finish()
+                self._finish(history)
                 return 0
             if not text:
                 continue
             if text.startswith("/"):
                 if self._run_command(text, history):
-                    self._finish()
+                    self._finish(history)
                     return 0
                 continue
-            self._turn(text, history)
+            shown = None
+            if text.startswith("@"):
+                path = text[1:].strip()
+                try:
+                    text = read_prompt(path)
+                except BenchError as exc:
+                    print(_red(f"  ошибка: {exc}"))
+                    continue
+                shown = f"[{path}] {_short_prompt(text)}"
+                print(_dim(f"  промпт из {path}: {len(text)} символов"))
+            self._turn(text, history, shown=shown)
 
-    def _finish(self) -> None:
+    def _load_dialog(self, history: list[dict[str, str]]) -> None:
+        """Продолжить чат из файла: реплики ``> …`` и ответы между ними."""
+        if not self.settings.dialog:
+            return
+        try:
+            pairs = split_dialog(read_prompt(self.settings.dialog))
+        except BenchError as exc:
+            print(_yellow(f"  {exc} — начинаю с пустой истории"))
+            return
+        for question, answer in pairs:
+            history.append({"role": "user", "content": question})
+            history.append({"role": "assistant", "content": answer})
+            self._record(question, Reply(text=answer), 0.0, shown=_short_prompt(question))
+
+    def _write_dialog(self, history: Sequence[Mapping[str, str]], path: str) -> Path:
+        """Записать историю в файл диалога: ``> вопрос``, под ним ответ."""
+        lines: list[str] = []
+        for row in history:
+            content = str(row.get("content", "")).strip()
+            if row.get("role") == "user":
+                lines.append(f"{DIALOG_PREFIX}{content}")
+            else:
+                lines.extend(["", content, ""])
+        target = Path(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("\n".join(lines).strip() + "\n", encoding="utf-8")
+        return target
+
+    def _finish(self, history: Sequence[Mapping[str, str]] | None = None) -> None:
         """Итог сессии: где лежат ответы, как их сохранить."""
         if not self.turns:
             return
+        rows = list(history or [])
+        if rows and (self.settings.dialog or self.settings.save or self.settings.out):
+            target = self._write_dialog(rows, self.settings.dialog or DEFAULT_OUT + "/chat.md")
+            print(_dim(f"  диалог сохранён: {target} (продолжить: --dialog {target})"))
         hint = f"ответов за сессию: {len(self.turns)} · /save — записать в файлы · /q — перечитать"
         print()
         for line in _wrap(hint, self.reader.width, "  ", "  "):
@@ -1485,8 +1596,13 @@ class ChatClient:
             if argument:
                 self.settings.out = argument
             self.save_all()
+            if history:
+                target = self.settings.dialog or Path(self.settings.out or DEFAULT_OUT) / "chat.md"
+                print(_dim(f"  диалог: {self._write_dialog(history, str(target))}"))
         elif command == "/q":
             self._reread(argument)
+        elif command == "/dialog":
+            self._dialog_command(argument, history)
         elif not self._set_option(command, argument):
             print(_yellow(f"  неизвестная команда {command!r}; /help"))
         return False
@@ -1530,10 +1646,40 @@ class ChatClient:
             head = " ".join(str(row.get("content", "")).split())[:80]
             print(_dim(f"    {row.get('role')}: {head}"))
 
+    def _dialog_command(self, argument: str, history: list[dict[str, str]]) -> None:
+        """``/dialog`` — показать файл истории, ``/dialog файл`` — читать/писать туда."""
+        path = argument or self.settings.dialog
+        if not path:
+            print(_dim(f"  файл диалога не задан; при /save история уйдёт в {DEFAULT_OUT}/chat.md"))
+            print(_dim("  чтобы задать свой: /dialog chat.md  (или --dialog chat.md при запуске)"))
+            return
+        self.settings.dialog = path
+        if argument and not Path(path).exists():
+            print(_dim(f"  диалог будет сохранён в {path} при /save и на выходе"))
+            return
+        try:
+            pairs = split_dialog(read_prompt(path))
+        except BenchError as exc:
+            print(_red(f"  ошибка: {exc}"))
+            return
+        print(_dim(f"  {path}: {len(pairs)} пар(ы)"))
+        for number, (question, _answer) in enumerate(pairs, start=1):
+            print(_dim(f"    {number}. > {_short_prompt(question, 70)}"))
+
+    def _journal(self) -> list[tuple[str, str]]:
+        """Ответы прошлой сессии из файла вопросов (--questions/--pair): (вопрос, файл)."""
+        if not self.turns:
+            return []
+        return [(str(turn["prompt"]), ref) for turn in self.turns for ref in turn["files"] if ref.endswith("answer.md")]
+
     def _reread(self, argument: str) -> None:
         """Показать ответ ещё раз: /q, /q 2, /q рассуждение, /q 2 рассуждение."""
         if not self.turns:
-            print(_yellow("  ответов пока нет"))
+            if self.settings.recall:
+                print(_dim(f"  ответы этой сессии не в памяти; карточки в {self.settings.recall}:"))
+                print(_dim(f"    {Path(self.settings.recall) / 'index.md'}"))
+            else:
+                print(_yellow("  ответов пока нет"))
             return
         parts = argument.split()
         index = len(self.turns)
@@ -1549,14 +1695,14 @@ class ChatClient:
         else:
             print("\n".join(self._turn_lines(turn, reasoning=reasoning)))
 
-    def _turn(self, text: str, history: list[dict[str, str]]) -> None:
+    def _turn(self, text: str, history: list[dict[str, str]], shown: str | None = None) -> None:
         """Один ход: вопрос уходит вместе со всей прежней историей."""
         limit = self.settings.max_context_chars
         if limit and _history_chars(history) > limit:
             print(_yellow(f"  история длиннее {limit} симв. — очищаю, чтобы не упереться в контекст"))
             history.clear()
         history.append({"role": "user", "content": text})
-        turn, _code = self._ask(text, history)
+        turn, _code = self._ask(text, history, shown=shown)
         if turn is None:
             history.pop()
             return
@@ -1569,7 +1715,9 @@ class ChatClient:
     def _help(self) -> None:
         print(
             _dim(
+                "  > файл.txt       отправить содержимое файла как промпт (длинный текст)\n"
                 "  /q [N] [расс]    перечитать ответ N (последний по умолчанию), «расс» — с рассуждением\n"
+                "  /dialog [файл]   показать/задать файл истории чата (продолжить в другой раз)\n"
                 "  /ref [текст]     задать/показать эталон для сверки\n"
                 "  /save [каталог]  сохранить все ответы в файлы (01-review.md, 01-answer.md)\n"
                 "  /reasoning       показывать/скрывать рассуждение модели\n"
@@ -1622,6 +1770,74 @@ class _QuestionBlock(TypedDict):
 
     question: list[str]
     reference: list[str]
+
+
+def _questions_path(name: str) -> Path:
+    """Файл вопросов: как задан, а имя по умолчанию ищется и рядом со скриптом.
+
+    Скрипт часто запускают из другой папки (``C:/Scripts-test``), положив рядом
+    только сам файл: тогда ``--questions`` без имени должен найти заготовку.
+    """
+    path = Path(name)
+    if path.exists() or name != DEFAULT_QUESTIONS:
+        return path
+    beside = Path(__file__).resolve().parent / name
+    return beside if beside.exists() else path
+
+
+def read_prompt(path: str) -> str:
+    """Прочитать промпт из файла: ``@файл``, --prompt-file или просто путь.
+
+    Отдельная функция, чтобы одинаково работали короткий ``@вопрос.txt`` в чате
+    и ``--questions``. Пустой файл — ошибка, а не молчаливый пустой запрос.
+    """
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except OSError as exc:
+        raise BenchError(f"не прочитать {path}: {exc}") from exc
+    text = text.strip()
+    if not text:
+        raise BenchError(f"{path}: файл пустой")
+    return text
+
+
+def split_dialog(raw: str) -> list[tuple[str, str]]:
+    """Разобрать файл диалога на пары (вопрос, ответ).
+
+    Реплика пользователя начинается с ``> ``; всё до следующей такой строки —
+    ответ модели. Файл без префиксов считается одним вопросом, чтобы обычный
+    текстовый промпт тоже подходил.
+    """
+    raw = raw.replace("\r\n", "\n")
+    if not any(line.startswith(DIALOG_PREFIX) for line in raw.split("\n")):
+        text = raw.strip()
+        return [(text, "")] if text else []
+    pairs: list[tuple[str, str]] = []
+    question: list[str] | None = None
+    answer: list[str] = []
+
+    def flush() -> None:
+        nonlocal question, answer
+        if question is not None:
+            text = "\n".join(question).strip()
+            if text:
+                pairs.append((text, "\n".join(answer).strip()))
+        question, answer = None, []
+
+    for line in raw.split("\n"):
+        if line.startswith(DIALOG_PREFIX):
+            flush()
+            question = [line[len(DIALOG_PREFIX) :]]
+        elif question is not None:
+            answer.append(line)
+    flush()
+    return pairs
+
+
+def _short_prompt(text: str, limit: int = 300) -> str:
+    """Подпись промпта для журнала и оглавления: первая строка, а не весь текст."""
+    flat = " ".join(text.split())
+    return flat if len(flat) <= limit else flat[: limit - 1] + "…"
 
 
 def split_questions(raw: str) -> list[tuple[str, str]]:
@@ -1737,10 +1953,24 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument("--check", action="store_true", help="проверить ключ: список моделей + минимальный запрос")
     parser.add_argument("--prompt", default=None, help="отправить один вопрос и выйти")
     parser.add_argument(
-        "--questions",
+        "--prompt-file",
         default=None,
         metavar="ФАЙЛ",
-        help="прогнать вопросы из файла (заголовок ## … , блок ### Эталон) и сохранить ответы",
+        help="как --prompt, но текст вопроса берётся из файла (удобно для длинных промптов)",
+    )
+    parser.add_argument(
+        "--dialog",
+        default="",
+        metavar="ФАЙЛ",
+        help="файл истории чата: начать с него (реплики «> …») и дописывать в конец",
+    )
+    parser.add_argument(
+        "--questions",
+        nargs="?",
+        const=DEFAULT_QUESTIONS,
+        default=None,
+        metavar="ФАЙЛ",
+        help=f"прогнать вопросы из файла (по умолчанию {DEFAULT_QUESTIONS}); после — чат по ним",
     )
     parser.add_argument("--out", default="", metavar="КАТАЛОГ", help="куда писать ответы (по умолчанию <файл>-out)")
     parser.add_argument("--save", action="store_true", help="сохранять каждый ответ в файлы по ходу чата")
@@ -1791,8 +2021,11 @@ def _settings_from_args(args: argparse.Namespace) -> Settings:
         )
     if args.max_tokens is not None and args.max_tokens < 256:
         raise BenchError("--max-tokens меньше 256: ответ обрежется на полуслове")
-    if args.questions and args.prompt:
-        raise BenchError("--questions и --prompt вместе не имеют смысла: выберите один режим")
+    one_shot = [name for name in ("questions", "prompt", "prompt_file") if getattr(args, name)]
+    if len(one_shot) > 1:
+        raise BenchError(f"режимы {', '.join('--' + name.replace('_', '-') for name in one_shot)} взаимоисключающие")
+    if args.dialog and (args.questions or args.prompt or args.prompt_file or args.pair):
+        raise BenchError("--dialog продолжает чат после прогона; с --questions/--prompt его не задают")
     model = str(args.model or model_for(platform))
     return Settings(
         platform=platform,
@@ -1813,6 +2046,7 @@ def _settings_from_args(args: argparse.Namespace) -> Settings:
         questions=str(args.questions or ""),
         max_context_chars=int(args.max_context),
         width=int(args.width or 0),
+        dialog=str(args.dialog or ""),
     )
 
 
@@ -1831,11 +2065,29 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.check:
         return client.check()
     if args.pair:
-        return client.run_pair()
+        code = client.run_pair()
+        return client.repl() if code == 0 and client._chat_next() else code
     if args.questions:
-        return client.run_questions()
+        code = client.run_questions()
+        return client.repl() if code == 0 and client._chat_next() else code
+    if args.prompt_file is not None:
+        try:
+            prompt = read_prompt(str(args.prompt_file))
+        except BenchError as exc:
+            print(_red(f"ошибка: {exc}"), file=sys.stderr)
+            return 2
+        return client.ask_once(prompt, shown=f"[{args.prompt_file}] {_short_prompt(prompt)}")
     if args.prompt is not None:
-        return client.ask_once(str(args.prompt))
+        prompt = str(args.prompt)
+        shown = None
+        if prompt.startswith("@"):
+            try:
+                prompt = read_prompt(prompt[1:].strip())
+            except BenchError as exc:
+                print(_red(f"ошибка: {exc}"), file=sys.stderr)
+                return 2
+            shown = _short_prompt(prompt)
+        return client.ask_once(prompt, shown=shown)
     return client.repl()
 
 
