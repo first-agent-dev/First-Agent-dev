@@ -8763,3 +8763,45 @@ S3P3's “missing controller edge” wording is stale. The source edge exists fr
 **Implementation safeguards / test and DoD.** Managed-only bounded `scandir` preflight, rooted-read size/identity revalidation, SQLite page/cache limits, full-envelope byte serialization, deadline checks, and same-view serial scheduling are required. Legacy host behavior is unchanged. C0 must test exact/cap+1 fixtures across all counters, including escaped Unicode and deadline; C1 must exercise the actual typed non-PTY production caller through local `SupervisorService`/`WorkspaceAuthority`, prove zero host Git/no `.fa/fts.db`/no canonical effect, and show no partial result for every aggregate budget. Producer and caller-EDGE mutations specified by E505/E506 must be killed and restored before proceeding. Ledger-appends E2E against a live host remains planned separately; no host evidence is implied.
 
 **Verification performed.** Source review and in-memory synthetic probes only; no pytest, mutation, Docker, or live-host tests ran. `git diff --check`, document-link checks, and scoped assertions are to be run after this documentation slice. This entry closes no W1 row, wave, or host criterion.
+
+### E507 — W1 progress reconstruction after E506 (2026-11-11; non-standard, reduced tracing)
+
+**Why this entry is different.** The operator asked for an outline, not the
+row-by-row traceability used by E462–E506, because this record reconstructs
+work that was **already done** rather than closing a new row. It deliberately
+omits per-row nodeid/SHA/hash evidence. Nothing here is a new acceptance claim:
+every line below is a pointer to code and tests that exist in the tree.
+
+**The gap this closes.** Between E506 (2026-11-06) and this commit, ~20 commits
+landed without ledger entries — the commit `Recover latest managed execution and
+gate triage changes` plus the C901/repair detour. As a result the plan said W1
+was at its contract audit while the tree had already implemented most of E505's
+ordered gate. Anyone reading only E506 would have redone finished work.
+
+**W1 step status against E505/E506 (verified in the tree, not inferred):**
+
+| E505 step | Plan said | Tree has | Where |
+| --- | --- | --- | --- |
+| (1) Q97 pre-allocation bounds | OPEN | **implemented** | `memory/managed_discovery.py`: 8 192 walk entries, depth 64, 512-byte relative path, 2 048 candidates, 32 MiB aggregate source, 25 000 ms deadline; `memory/structural_index.py`: 2 000 000 AST nodes / 256 000 per file, 100 000 symbols, 250 000 edges / 25 000 per file, 4 KiB pages, 32 768 pages, 16 MiB cache |
+| (3) Q111-A explicit refusal | OPEN | **implemented** | `tests/test_managed_discovery_budget.py` (6) + `test_managed_discovery_refusal.py` (15), all passing |
+| (2) typed non-PTY `PROJECT_TOOL` | OPEN | **implemented** | `execution/cell_protocol.py:34` (`PROJECT_TOOL` variant, 61 440-byte envelope, 65 536-byte frame), `execution/backend.py:418`, `execution/cell_worker.py:142,199` |
+| (4) bind to admitted view + per-view serialization | OPEN | **implemented** | `cli.py:1845` builds `ManagedProjectToolExecutor` → `_ManagedStageLease` → `fs_search:1377` / `fs_reach:166` dispatch; `tests/test_execution_project_tools.py` 46 + 2 xfail, `test_managed_project_tool.py` 12, `test_execution_tool_index.py` 21 |
+| (5) S3P3 real local-authority publication oracle | OPEN | **not found** | `test_workspace_publication.py` is green (105) but proves the component, not a successful publish through the production caller; E505's requirement still stands |
+| (6) R28 managed-Bash host-bootstrap negative | OPEN | **DONE this commit** | `tests/test_r28_host_bootstrap_isolation.py`, 8 cases, 3 mutations killed |
+
+**R28 is now recorded as CLOSED-locally, not PASS-host.** The oracle runs against
+a live local `SupervisorService` (no `uv`, Docker or deployed image needed), so it
+is green in Arena. That is a local caller proof, exactly like the other W0 rows;
+it is **not** live-host evidence and does not substitute for W4. W1 as a wave
+remains OPEN on step (5) and on the requirement that R28's proof be confirmed on
+the deployed host.
+
+**What this entry explicitly does NOT claim:** R24–R26 (still OPEN/W2);
+production-profile identity or host cgroup/RSS numbers (W3/W4); any live I03 row;
+any closure of W1; that E505's other obligations are satisfied by the existence of
+code without the ordered caller tests it named.
+
+**Corrected plan drift for the next reader.** E505's description of
+`fs_search`/`fs_reach` refusing `workspace_io` and of `project_tools.py` having no
+production caller is stale as of this tree. The increment's W1 table still carries
+that wording; it should be read against E507's table above, not verbatim.
