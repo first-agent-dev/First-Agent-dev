@@ -65,6 +65,12 @@ ONEAI_MODEL = "claude-opus-5-5"
 # вернёт 400. Поэтому значение подрезается по известному потолку с предупреждением.
 MAX_TOKENS = 16384
 REASONING_EFFORT = "high"  # off | low | medium | high | max
+CACHE_MARK = "auto"  # кэш промпта: "auto" (5 мин) | "1h" | "off"
+# Кэш у Anthropic-моделей копит до 4 контрольных точек на запрос. Ставим их на:
+# system-промпт, на самый длинный вопрос истории (обычно вставленный файл) и на
+# последний ход. Первые байты запроса неизменны — значит префикс кэшируется, и
+# следующий ход платит за новую часть, а не за весь промпт.
+CACHE_TOKENS = 1024  # минимум Anthropic: блок короче не кэшируется
 SAVE_PATH = "chat.md"  # куда писать диалог при --save
 SAVE_EVERY_TURN = True  # переписывать файл после каждого ответа
 
@@ -455,6 +461,8 @@ class Reply:
         self.in_tokens = 0
         self.out_tokens = 0
         self.reasoning_tokens = 0
+        self.cached_tokens = 0  # вход, взятый из кэша промпта
+        self.cache_write_tokens = 0  # сколько записано в кэш этим запросом
         self.first_token = 0.0  # секунды от старта запроса до первого куска текста или мысли
 
     @property
@@ -488,6 +496,10 @@ def apply_usage(reply: Reply, usage: Any) -> None:
     details = usage.get("completion_tokens_details")
     if isinstance(details, Mapping):
         reply.reasoning_tokens = _int_of(details.get("reasoning_tokens"))
+    prompt_details = usage.get("prompt_tokens_details")
+    if isinstance(prompt_details, Mapping):
+        reply.cached_tokens = _int_of(prompt_details.get("cached_tokens"))
+        reply.cache_write_tokens = _int_of(prompt_details.get("cache_write_tokens"))
 
 
 def apply_chunk(reply: Reply, chunk: Mapping[str, Any]) -> None:
@@ -570,6 +582,7 @@ class ChatClient:
         self.models_url = spec["models_url"]
         self.turns: list[tuple[str, Reply | None, str]] = []  # вопрос, ответ, время
         self.model_ceiling = 0  # «вывод до N» из --models: выше модель не отдаст
+        self.cached_prev = 0  # сколько входных токенов прошлого запроса взято из кэша
 
     # -- запрос ----------------------------------------------------------
     def headers(self) -> dict[str, str]:
@@ -613,10 +626,41 @@ class ChatClient:
                     )
             return
 
+    @staticmethod
+    def _block(text: str, marked: bool) -> Any:
+        """Содержимое сообщения: строка либо блок с cache_control."""
+        if not marked:
+            return text
+        return [{"type": "text", "text": text, "cache_control": {"type": "ephemeral", "ttl": CACHE_MARK}}]
+
+    def cache_marks(self, history: Sequence[Mapping[str, str]]) -> set[int]:
+        """Индексы сообщений, где ставим контрольную точку кэша.
+
+        Anthropic кэширует префикс до отмеченного блока включительно. Поэтому
+        метки идут по возрастанию и не чаще четырёх: system + самый длинный
+        вопрос (вставленный файл) + последний ход.
+        """
+        if CACHE_MARK == "off" or not history:
+            return set()
+        # Последний ход отмечаем всегда: именно он станет общим префиксом для
+        # следующего запроса. Длинный вопрос (вставленный файл) отмечаем отдельно,
+        # чтобы он кэшировался, даже когда разговор ушёл дальше.
+        marks = {len(history) - 1}
+        longest = max(range(len(history)), key=lambda i: len(str(history[i]["content"])))
+        if longest != len(history) - 1 and len(str(history[longest]["content"])) >= CACHE_TOKENS * 2:
+            marks.add(longest)
+        return marks
+
     def build_body(self, history: Sequence[Mapping[str, str]]) -> dict[str, Any]:
-        """Тело запроса: лимит и усилие уходят всегда, чтобы не зависеть от умолчаний шлюза."""
-        rows = [{"role": "system", "content": self.settings.system}] if self.settings.system else []
-        rows.extend({"role": str(row["role"]), "content": str(row["content"])} for row in history)
+        """Тело запроса: лимит, усилие и контрольные точки кэша промпта."""
+        rows: list[dict[str, Any]] = []
+        if self.settings.system:
+            system = self.settings.system
+            rows.append({"role": "system", "content": self._block(system, CACHE_MARK != "off")})
+        marks = self.cache_marks(history)
+        for index, row in enumerate(history):
+            text = str(row["content"])
+            rows.append({"role": str(row["role"]), "content": self._block(text, index in marks)})
         body: dict[str, Any] = {
             "model": self.settings.model,
             "messages": rows,
@@ -675,6 +719,7 @@ class ChatClient:
         elapsed = time.monotonic() - started
         if not reply.text and not reply.reasoning:
             raise BenchError("шлюз вернул пустой ответ")
+        self.cached_prev += reply.cached_tokens
         return reply, elapsed
 
     # -- текст и мета ----------------------------------------------------
@@ -684,6 +729,11 @@ class ChatClient:
         if reply.truncated:
             parts.append(yellow("ОБРЕЗАНО по лимиту (finish_reason=length)"))
         parts.append(f"токены {reply.in_tokens}→{reply.out_tokens}")
+        if reply.cached_tokens:
+            share = 100 * reply.cached_tokens // max(1, reply.in_tokens)
+            parts.append(green(f"из входа {reply.cached_tokens} из кэша ({share}%)"))
+        elif CACHE_MARK != "off":
+            parts.append("кэш не сработал")
         if reply.reasoning_tokens:
             parts.append(f"из них рассуждение {reply.reasoning_tokens}")
         if reply.first_token:
@@ -915,6 +965,8 @@ class ChatClient:
         if not self.turns:
             return
         print(dim(f"\nходов за сессию: {len(self.turns)} · символов в истории: {_chars(history)}"))
+        if self.cached_prev:
+            print(dim(f"из кэша промпта взято {self.cached_prev} входных токенов"))
         saved = self.save()
         if saved:
             print(dim(f"диалог: {saved}"))
@@ -966,6 +1018,10 @@ class ChatClient:
         elif name == "/reset":
             history.clear()
             print(dim("  история очищена (журнал и файл остались)"))
+        elif name == "/cache" and argument in ("auto", "1h", "off"):
+            global CACHE_MARK
+            CACHE_MARK = argument
+            print(dim(f"  кэш промпта: {CACHE_MARK}" + (" (метки снимаются)" if argument == "off" else "")))
         elif name == "/status":
             self.status()
         else:
@@ -983,6 +1039,7 @@ class ChatClient:
         print(dim(f"  шлюз:   {self.label} ({settings.platform}), модель {settings.model}"))
         print(dim(f"  усилие: {settings.effort} · лимит ответа: {settings.max_tokens} токенов"))
         print(dim(f"  запись: {settings.save or 'выключена (--save файл.md)'}"))
+        print(dim(f"  кэш:    {CACHE_MARK} · попаданий в кэш за сессию: {self.cached_prev} токенов"))
         print(dim(f"  ходов:  {len(self.turns)}"))
 
     def help(self) -> None:
@@ -994,6 +1051,7 @@ class ChatClient:
             "/tokens <N> — лимит ответа (включая рассуждение)\n"
             "/q [N] [расс] — перечитать ответ, с «расс» — вместе с рассуждением\n"
             "/continue [N] — дописать оборванный ответ\n"
+            "/cache <auto|1h|off> — кэш промпта (Anthropic)\n"
             "/save [файл] — записать диалог в markdown\n"
             "/status — текущие настройки\n"
             "/reset — очистить историю\n"
@@ -1118,6 +1176,12 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         metavar="ФАЙЛ",
         help=f"писать диалог в markdown (по умолчанию {SAVE_PATH})",
     )
+    parser.add_argument(
+        "--cache",
+        default=CACHE_MARK,
+        choices=("auto", "1h", "off"),
+        help=f"кэш промпта (Anthropic): auto — 5 мин, 1h — час, off — без меток (по умолчанию {CACHE_MARK})",
+    )
     parser.add_argument("--system", default="", help="системный промпт")
     parser.add_argument("--no-color", action="store_true", help="без ANSI-цвета")
     return parser.parse_args(argv)
@@ -1125,8 +1189,9 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
-    global _COLOR
+    global _COLOR, CACHE_MARK
     _COLOR = not args.no_color
+    CACHE_MARK = str(args.cache)
     _utf8_stdio()
     if args.max_tokens < 256:
         return usage_error("--max-tokens меньше 256: ответ обрежется на полуслове")
