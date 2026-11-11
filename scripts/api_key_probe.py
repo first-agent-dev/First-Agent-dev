@@ -54,13 +54,28 @@ import urllib.request
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, TextIO, TypedDict
+from typing import Any, TypedDict
 
-# scripts/ не является установленным пакетом: тот же shim, что в остальных
-# gate-скриптах, чтобы импорт соседнего helper-модуля работал при прямом запуске.
-if __package__ in (None, ""):
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from scripts._console import force_utf8_stdio
+
+def force_utf8_stdio() -> None:
+    """Сделать stdout/stderr UTF-8, чтобы консоль не падала на «─», «✓», кириллице.
+
+    Своя копия вместо импорта: стенд должен запускаться одной копией файла —
+    из любой папки и без клона репозитория. Windows с русской локалью отдаёт
+    cp1251/cp866, и без этого печать обрывается UnicodeEncodeError.
+    Никогда не бросает: вердикт важнее оформления.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if not callable(reconfigure):
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (OSError, ValueError):
+            continue
+
+
+force_utf8_stdio()
 
 # ---------------------------------------------------------------------------
 # Ключи. Заполните нужную строку (вторая может остаться пустой).
@@ -585,8 +600,7 @@ def iter_sse(lines: Iterable[bytes]) -> Iterator[tuple[str, str]]:
         if line.startswith(":"):
             continue
         field, _, value = line.partition(":")
-        if value.startswith(" "):
-            value = value[1:]
+        value = value.removeprefix(" ")
         if field == "event":
             event = value
         elif field == "data":
@@ -1674,7 +1688,6 @@ def _settings_from_args(args: argparse.Namespace) -> Settings:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    force_utf8_stdio()
     args = _parse_args(argv)
     _set_color(not args.no_color)
     try:
@@ -1693,16 +1706,5 @@ def main(argv: Sequence[str] | None = None) -> int:
     return client.repl()
 
 
-def _stdout_guard(stream: TextIO) -> None:  # pragma: no cover - защита от cp866/cp1251
-    """Не дать консоли упасть на символах, которых нет в её кодировке."""
-    reconfigure = getattr(stream, "reconfigure", None)
-    if callable(reconfigure):
-        try:
-            reconfigure(errors="replace")
-        except (OSError, ValueError):
-            return
-
-
 if __name__ == "__main__":
-    _stdout_guard(sys.stdout)
     sys.exit(main())
