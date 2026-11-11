@@ -3116,25 +3116,26 @@ Two facts bound the answer:
 
 ## Q139 — How is the mutation gate made to examine the code it claims to cover?
 
-**Status: OPEN — operator decision required; raised 2026-11-10 by E510. Research: `mutation-scope-and-import-isolation-2026-11-10.md`.**
+**Status: ANSWERED — operator chose A on 2026-11-11; the deciding evidence was not the layout. `no_tests` turned out to be a test-selection fact, and the real defect was worse. See also `mutation-scope-and-import-isolation-2026-11-10.md` §3–§5.**
 
-**Context.** The operator authorized extending `[tool.mutmut].source_paths` to `src/fa/execution`, and that is committed (`f7da7e0`). Measuring the result exposed two defects in the gate that predate the change and that bound what any mutation claim means.
+**Context.** The operator authorized extending `[tool.mutmut].source_paths` to `src/fa/execution`, committed as `f7da7e0`. Measuring the result exposed defects in the gate that bound what any mutation claim means.
 
-**Confirmed defect 1 — scope blindness (fixed).** `run_targeted_mutmut._scope_to_changed` filtered every `execution/` file out and printed `nothing to do`, returning 0. A green result for an area never examined.
+**Defect 1 — scope blindness (fixed, `f7da7e0`).** `run_targeted_mutmut._scope_to_changed` filtered every `execution/` file out and printed `nothing to do`, returning 0: a green result for an area never examined.
 
-**Confirmed defect 2 — imports lost on an explicit run (fixed).** In explicit mode `also_copy` came only from the CLI, and `run_targeted_mutmut` passed none, so a staged run had no `src/fa` copy and imported the editable checkout. mutmut then reported "no test case for any mutant" for every mutant. Both runners now carry the configured `also_copy`.
+**Defect 2 — imports lost on an explicit run (fixed, `f7da7e0`).** In explicit mode `also_copy` came only from the CLI and `run_targeted_mutmut` passed none, so a staged run had no `src/fa` copy and imported the editable checkout; mutmut then reported "no test case for any mutant" for every mutant.
 
-**Confirmed defect 3 — staged layout, NOT fixed.** With both fixes, the unchanged sandbox scope reports `total=689 killed=139 type_invalid=24 no_tests=526 survived=0`. Cause, probed in the stage: `mutmut.setup_source_paths()` inserts `mutants/src` — for `p in (".","src","source")` — **if that path exists** (`mutmut/__main__.py:253–259`); at that moment `mutants/` does not exist yet, so a non-directory is inserted, Python ignores it, and `import fa` resolves to the repository. Mutants are then never imported and are bucketed as "no tests".
+**Correction — the earlier "staged layout" diagnosis (defect 3) was WRONG.** This entry previously asserted that `mutmut.setup_source_paths()` inserted a non-existent `mutants/src`, that Python ignored it, and that `import fa` therefore resolved to the repository. That is disproved by direct probe: `_run` does `makedirs` → `copy_src_dir` → `copy_also_copy_files` → `setup_source_paths()` (`mutmut/__main__.py:1016–1021`), so the copy exists before the insert, and in a stage directory `sys.path[0]` is the staged `mutants/src` with `fa` resolving there.
 
-**Impact.** Every prior mutation claim in this repository — including the W0 closeouts and the `survived == 0` results quoted in this file's E-series — means "the covered subset stayed green", not "changed-path mutants were checked". The `no_tests` bucket is the unexamined remainder. This is the same failure mode as defect 1: absence of evidence reported as evidence of absence.
+`no_tests` is the pytest **exit code 5** ("no tests ran"), per `status_by_exit_code` (`:77–91`: `1→killed`, `0→survived`, `5→no tests`, `33→no tests`, `36→timeout`). The `no_tests=526` figure came from a probe that configured **one test file against six mutated modules**, so most mutants genuinely had no test. It measures the selection, not the layout.
 
-**Options.**
+**Defect 3 (real) — the selector never listed any execution suite (fixed, `8cf42cd`).** Chasing the correction found the actual hole, and it sits exactly in the scope `f7da7e0` added: `pytest_add_cli_args_test_selection` named no `tests/test_execution_*` file. A mutant under `src/fa/execution` would have run against sandbox tests that cannot import it and "survived" vacuously — a full-scope green that proves nothing. `type_check_command` and `[tool.pytest-gremlins].paths` had also drifted from `source_paths`, so T19's positional invariant was red. All three are reconciled, T19 is green, and `tests/test_slice_mutmut.py` is 21 passed.
 
-- **A — Fix the staged layout.** Make the package copy land where mutmut inserts it (or express `source_paths` in mutmut's root convention) so the trampolines are importable, then re-baseline the scope and re-quote the real kill rate. Correct, and it is a prerequisite for the `execution/` extension meaning anything. Cost: one full-scope run (~2 h) to validate.
-- **B — Keep the layout, stop claiming coverage.** Leave the machinery as is and require every mutation closeout to quote `killed / (total − type_invalid − no_tests)`. Cheaper, honest, but leaves most of the configured scope unexamined forever.
-- **C — Revert the `execution/` extension until A lands.** Avoids growing a weekly job whose results are mostly `no_tests`; loses the targeted gate's new reach in the meantime.
-- **D — Other.** Specify the acceptance rule.
+**Operator decision (2026-11-11): A — fix the staged layout.** The operator accepted the cost with the reasoning that findings from unexamined places are hard to handle later but worth it. Recorded as taken; the staged-layout premise it was argued from did not survive the probe, and A's *intent* — the gate must actually examine the configured scope — is what `8cf42cd` implements.
 
-**Engineering recommendation (not resolved).** A, then re-baseline, because B permanently caps what the gate can prove and C throws away reach the operator asked for. Until A lands, any W1/W2 closeout must use the ratio in B rather than `survived == 0`.
+**Still open, and honestly so.** The scope is correct but **unmeasured**: a configured-scope run attempted 2026-11-11 died with `mutmut run returned -9` (SIGKILL) before producing counts, i.e. the runner's memory bound. `mutants/scope-baseline.json` records `"verdict": "infrastructure_failure"`. Until a run completes, no closeout may claim coverage for `execution/`; that is option B's discipline, applied to the only bucket we cannot yet quote.
 
-**Scope.** This does not change the advisory policy of the weekly workflow, close any W-row, or authorize production edits. Q138 is unaffected.
+**Impact.** Every prior mutation claim in this repository means "the mutants that had a test stayed green", not "changed-path mutants were checked". Any closeout must quote `killed / (total − type_invalid − no_tests)` and name the selection that produced the denominator.
+
+**Options as put.** A — fix the staged layout, re-baseline, re-quote the real kill rate. B — keep the layout, stop claiming coverage. C — revert the `execution/` extension until A lands. D — other. Operator chose A.
+
+**Scope.** No change to the weekly workflow's advisory policy and no W-row is closed. The gate's correctness is now pinned by T19; its *coverage* is unmeasured until a full run completes.

@@ -8969,3 +8969,42 @@ full-scope run (~2 h) to validate.
 OPEN. Until Q139-A lands, mutation closeouts must quote
 `killed / (total − type_invalid − no_tests)`. R24–R26 remain OPEN/W2; W4 remains
 NOT RUN.
+
+### E511 — Q138-B implemented; Q139 answered and its diagnosis corrected (2026-11-11; Arena-local)
+
+**Q138-B is in the tree and proved.** `publish_plan` mints all four request ids
+before their requests and attaches a typed `PendingCandidatePublication` to the
+uncertainty it raises; `reconcile_candidate_publication` replays exactly those ids.
+`ManagedExecution` holds the record and refuses to release the writer while it is
+unresolved. The authority fence judges `CANDIDATE` by **ownership** rather than
+`access` — the §2.1 scope is otherwise untouched, and the one exclusion is the view
+whose own publication is the transaction being committed, because `_forward_gates`
+is shared and a fence must not refuse the commit that lifts it.
+
+The oracle is the interesting part, because the journal distinguishes two shapes a
+naive test conflates. A lost **reply** is settled by replay: the handler runs once,
+the answer comes from the journal and reply cache, and the revision is proved
+without a second effect. A failed **handler** writes `UNKNOWN`, and `_completed`
+never turns `UNKNOWN` into `DONE`, so replay proves nothing and reconciliation
+honestly raises the same saga again with the run still fenced. Both are tests now.
+423 passed across composition/buffer/workspace/client/view.
+
+**Q139 answered (A) — with a corrected diagnosis.** The staged-layout theory in
+E510 was wrong and is retracted in `mutation-scope-and-import-isolation-2026-11-10.md`
+§3 and in Q139: `mutmut` copies `also_copy` **before** `setup_source_paths`, so
+`mutants/src` exists and imports correctly; `no_tests` is pytest exit code 5, a
+property of a probe that configured one test file against six modules.
+
+The real defect found while checking that is worse and sits in the scope `f7da7e0`
+added: `pytest_add_cli_args_test_selection` named **no** execution suite, so every
+mutant under `src/fa/execution` would have run against tests that cannot import it
+and survived vacuously. `type_check_command` and `[tool.pytest-gremlins].paths` had
+drifted from `source_paths` as well, leaving T19 red. Reconciled in `8cf42cd`;
+`tests/test_slice_mutmut.py`: 21 passed.
+
+**Not done here, named.** The scope is correct but unmeasured: the configured-scope
+run died with SIGKILL (`mutants/scope-baseline.json`:
+`"verdict": "infrastructure_failure"`), so no coverage claim may be made for
+`execution/`. Mutation closeouts must quote
+`killed / (total − type_invalid − no_tests)` and name the selection. R24–R26 remain
+OPEN/W2; W4 remains NOT RUN.
