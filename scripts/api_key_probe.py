@@ -1515,7 +1515,7 @@ class ChatClient:
                 continue
             shown = None
             if text.startswith("@"):
-                path = text[1:].strip()
+                path = _prompt_path(text[1:])
                 try:
                     text = read_prompt(path)
                 except BenchError as exc:
@@ -1783,6 +1783,18 @@ def _questions_path(name: str) -> Path:
         return path
     beside = Path(__file__).resolve().parent / name
     return beside if beside.exists() else path
+
+
+def _prompt_path(raw: str) -> str:
+    """Путь после ``@``: снимаем кавычки и пробелы, которые добавляет PowerShell.
+
+    ``@"C:/мои файлы/вопрос.txt"`` — обычный способ передать путь с пробелами,
+    поэтому кавычки вокруг пути не считаем частью имени файла.
+    """
+    path = raw.strip()
+    if len(path) >= 2 and path[0] == path[-1] and path[0] in "\"'":
+        path = path[1:-1]
+    return path.strip()
 
 
 def read_prompt(path: str) -> str:
@@ -2084,7 +2096,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         shown = None
         if prompt.startswith("@"):
             try:
-                prompt = read_prompt(prompt[1:].strip())
+                prompt = read_prompt(_prompt_path(prompt[1:]))
             except BenchError as exc:
                 print(_red(f"ошибка: {exc}"), file=sys.stderr)
                 return 2
