@@ -96,7 +96,6 @@ def _record_subagent_completion(session: Any, task_id: str, role: str, envelope:
 
 def _handle_subagent_runner_error(
     session: Any,
-    root: Path,
     workdir: Path,
     task_id: str,
     role: str,
@@ -251,7 +250,7 @@ def _handle_spawn_subagent(root: Path, params: Mapping[str, object]) -> ToolResu
         )
 
     except Exception as exc:  # noqa: BLE001 - safe sandbox boundary
-        return _handle_subagent_runner_error(session, root, workdir, task_id, role, exc)
+        return _handle_subagent_runner_error(session, workdir, task_id, role, exc)
 
 
 def build_spawn_subagent_tool(session_root: Path) -> ToolSpec:

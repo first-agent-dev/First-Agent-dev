@@ -1475,7 +1475,7 @@ class SearchIndex:
         text: str,
         needle: str,
         *,
-        output_mode: str,
+        output_mode: str,  # noqa: ARG004 - caller's mode; the scan is mode-independent by S12.7 §A6
     ) -> tuple[list[tuple[int, str]], int]:
         """Scan ``text`` for ``needle``; return (line_matches, total_count).
 

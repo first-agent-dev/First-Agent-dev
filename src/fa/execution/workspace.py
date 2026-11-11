@@ -4229,8 +4229,18 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                     pass
         os.fsync(scratch)
 
-    def _plan_abort(self, binding: _Binding, inputs: _PlanInputs) -> None:
-        """Discard this attempt's own staging and intent; the plan was never touched."""
+    def _plan_abort(self, binding: _Binding, inputs: _PlanInputs) -> None:  # noqa: ARG002
+        """Discard this attempt's own staging and intent; the plan was never touched.
+
+        `inputs` is not dead weight: it carries the exactly-scoped facts an
+        addressing abort would need (`temporary`, `operation_id`), and the sibling
+        `_install_abort` already discards that precisely instead of sweeping the
+        whole scratch. This arm sweeps instead, which is safe only because every
+        mutating path holds `_mutex` plus the journal's single-supervisor lock, so
+        no second attempt can have a live temporary here. Aligning the two abort
+        paths is tracked as its own slice (note §4.1, R-8) — deleting the parameter
+        would freeze the asymmetry instead of fixing it.
+        """
         try:
             self._sweep_temporaries(binding.source)
             if self._read_intent(binding.fd) is not None:

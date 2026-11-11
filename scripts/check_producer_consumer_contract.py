@@ -170,7 +170,7 @@ def _emit_helpers(source: str) -> tuple[dict[str, list[str]], list[tuple[int, in
     return helpers, spans
 
 
-def _emits_reaching_this_file(fpath: str, source: str) -> dict[str, int]:
+def _emits_reaching_this_file(source: str) -> dict[str, int]:
     """Event types produced by helpers that are *defined elsewhere*.
 
     Returns ``{event_type: call_sites}``. A helper that moved to its own module
@@ -232,7 +232,7 @@ def extract_producer_events() -> dict[str, list[str]]:
                 call_sites = len(re.findall(rf"\b{re.escape(name)}\(", source)) - 1  # minus the def
                 for et in types:
                     result.setdefault(et, []).extend([fpath.split("/")[-1]] * max(call_sites, 1))
-        for et, sites in _emits_reaching_this_file(fpath, source).items():
+        for et, sites in _emits_reaching_this_file(source).items():
             result.setdefault(et, []).extend([fpath.split("/")[-1]] * sites)
         for match in re.finditer(r'type="([a-z_]+)"', source):
             # The literal inside a helper is not its own site — the helper's

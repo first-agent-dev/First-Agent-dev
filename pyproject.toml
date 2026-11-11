@@ -107,6 +107,24 @@ extend-exclude = ["catch-corpus", "fp-corpus", "mutants"]
 
 [tool.ruff.lint]
 select = [
+  # ARG: dead parameters. Added after a measured sweep that found 7 in `src/`
+  # and 1 in `scripts/`; 4 survive, each with its reason recorded (inline, or
+  # in the docstring of the function it belongs to). An argument nobody reads
+  # is either a contract the caller dictates (`ToolHandler`, the `_handle_*`
+  # dispatcher) or a feature that was never wired to its consumer — both are
+  # decisions worth writing down, and neither is worth shipping silently.
+  # `tests/` is exempt: fakes must match the real signature, so a test's unused
+  # parameter is the point, not a defect.
+  # Explicit members only, for the same reason the TRY family is explicit:
+  #   ARG001/ARG002/ARG004 — unused function / method / static-method argument.
+  #   ARG003 (unused `self`) and ARG005 (unused lambda argument) are NOT
+  #   selected: `self` is protocol shape, and the measured ARG005 sites are
+  #   `lambda *a` / `lambda **kw` fakes standing in for real callbacks in
+  #   `scripts/verify_complexity_aware_execution.py` — deleting their
+  #   parameters would break the call they impersonate.
+  "ARG001",
+  "ARG002",
+  "ARG004",
   "B",
   # BLE: blind `except Exception` — top LLM-agent smell: defensive swallow
   # that hides real bugs for months. Every legitimate broad catch carries
@@ -158,8 +176,11 @@ max-complexity = 15
 
 [tool.ruff.lint.per-file-ignores]
 # Tests: `assert` IS the framework; fake tokens / subprocess fixtures /
-# tmp paths are test scaffolding, not production attack surface.
-"tests/**" = ["S"]
+# tmp paths are test scaffolding, not production attack surface. ARG is waived
+# for the mirror-image reason: a fake has to *have* the parameter it ignores
+# (`def handler(params)`, `lambda *a`), so its unused argument is fidelity to
+# the production signature — the one place where deleting it would be the bug.
+"tests/**" = ["S", "ARG"]
 # repo-management scripts intentionally spawn git/uv/etc. with hardcoded
 # argument vectors (not shell-injection surfaces). S603 (subprocess.run
 # without check=False/timeout paranoia) and S607 (start-process-with-partial-

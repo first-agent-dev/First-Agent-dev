@@ -494,9 +494,17 @@ class ConsoleRenderer:
     def _handle_expansion_exhausted(self, e: OutputEvent) -> None:
         # S10.9 / CT-H4: terminal K-budget denial — the run finishes with its
         # current tools and reports to the operator.
+        #
+        # The event has always carried `turn`/`max_turns`; while this line was
+        # static the payload never reached the operator, so a long run reported
+        # *that* it ran out without saying *where*. Read the same two fields the
+        # durable JSONL row records (`tool_turn.py`: content={"turn": ...}), so
+        # the console mirror and the log can be matched line-for-line.
         if self.detail == "minimal":
             return
-        self._write(f"  {self._c('31', '⛔')} escalation budget exhausted — finishing with current tools")
+        turn = e.turn or e.data.get("turn", "?")
+        where = f"at turn {turn}/{e.max_turns}" if e.max_turns else f"at turn {turn}"
+        self._write(f"  {self._c('31', '⛔')} escalation budget exhausted {where} — finishing with current tools")
 
 
 # ── QuietRenderer ─────────────────────────────────────────────────────────

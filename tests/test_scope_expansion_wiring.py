@@ -19,6 +19,8 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
+import pytest
+
 from fa.inner_loop import EventLog, SessionState
 from fa.inner_loop.coder_loop import drive_session
 from fa.inner_loop.hooks import HookRegistry
@@ -531,3 +533,69 @@ def test_scope_missing_skill_is_advisory_and_transition_survives(tmp_path: Path,
     assert chain.request.call_count == 1
     assert _expansion_events(state)[0].content["evidence"] == "read_high_arm"
     assert "L2 skill injection" in caplog.text
+
+
+def test_exhaustion_mirror_reaches_the_console_with_the_turn() -> None:
+    """End-to-end: producer → bus → renderer, in one real run.
+
+    The renderer unit test pins the *format*; this pins the *wiring*. The two
+    would diverge silently otherwise: the producer could stop putting `turn` on
+    the event (the JSONL row would still be right, since it writes `data`
+    independently) while the renderer kept a plausible-looking fallback — the
+    console would then print a number that no longer tracks the log.
+
+    Oracle: the rendered line names the same turn the durable row records,
+    read back from the real EventLog rather than recomputed from the mock.
+    """
+    import io
+    import sys
+
+    from fa.inner_loop.registry import ToolResult, ToolSpec
+    from fa.output import ConsoleRenderer, EventBus
+
+    def _deny(params: Any) -> ToolResult:
+        return ToolResult.fail("workflow_budget_exhausted", "budget spent")
+
+    with tempfile.TemporaryDirectory() as td:
+        state = _state_with_files(Path(td))
+        registry = ToolRegistry()
+        registry.register(
+            ToolSpec(
+                name="fs_read_file",
+                description="test stub",
+                input_schema={"type": "object", "properties": {}},
+                permission="read",
+                handler=_deny,
+            )
+        )
+        bus = EventBus()
+        bus.add(ConsoleRenderer(no_color=True))
+        chain = make_mock_chain(context_limit=100_000, compaction_threshold=None)
+        chain.request.side_effect = [
+            mock_tool_call_response("call-1", "fs_read_file", {"path": "x.py"}),
+            mock_success_response("done"),
+        ]
+        captured = io.StringIO()
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(sys, "stderr", captured)
+            drive_session(
+                "exhaust console",
+                provider_chain=chain,
+                registry=registry,
+                hooks=HookRegistry(),
+                state=state,
+                role="chat",
+                max_turns=2,
+                scope_mode="chat_direct",
+                output=bus,
+            )
+
+        log = state.log
+        assert log is not None
+        rows = [e for e in log.read_all() if e.kind == "expansion_exhausted"]
+        assert len(rows) == 1, "the durable row is the producer's own record"
+        logged_turn = rows[0].content["turn"]
+
+        mirror = [ln for ln in captured.getvalue().splitlines() if "escalation budget exhausted" in ln]
+        assert len(mirror) == 1, captured.getvalue()
+        assert f"turn {logged_turn}/" in mirror[0], (logged_turn, mirror[0])

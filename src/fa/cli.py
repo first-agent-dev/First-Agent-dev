@@ -1785,7 +1785,7 @@ def _drive_stage_with_managed_workspace(
     run_log_dir: Path,
     session_db: SessionDatabase | None,
     workspace: Path,
-    role: str,
+    role: str,  # noqa: ARG001 - read by the caller's build_registry closure, not here
     plan_ref: PlanRef | None,
     build_registry: Callable[[WorkspacePort | None, BashExecutor | None, _ManagedStageLease | None], ToolRegistry],
     drive: Callable[[ToolRegistry], SessionOutcome],

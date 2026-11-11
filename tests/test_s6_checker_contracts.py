@@ -498,13 +498,12 @@ def test_alias_resolver_counts_call_sites_not_definitions() -> None:
         "    _emit_context_warn(2)\n"
     )
 
-    assert _emits_reaching_this_file("src/fa/inner_loop/coder_loop.py", source) == {"context_warn": 2}
+    assert _emits_reaching_this_file(source) == {"context_warn": 2}
 
     # A helper the alias does not name must not be billed to this callback:
     # naive "every type in the module" counting inflated this from 4 to 7.
     assert (
         _emits_reaching_this_file(
-            "src/fa/inner_loop/coder_loop.py",
             "from fa.inner_loop.budget_effects import record_budget_pressure as _rbp\n_rbp(1)\n",
         )
         == {}

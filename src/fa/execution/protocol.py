@@ -565,7 +565,6 @@ def _publish_reply_compat(result: dict[str, Any]) -> dict[str, Any]:
 def _reply_version(
     record: dict[str, Any],
     *,
-    operation: Operation,
     request_id: str,
     protocol_version: int,
     allow_legacy_v1_rejection: bool,
@@ -648,7 +647,6 @@ def decode_reply(
     record = _loads(raw, max_bytes=max_bytes)
     _reply_version(
         record,
-        operation=operation,
         request_id=request_id,
         protocol_version=protocol_version,
         allow_legacy_v1_rejection=allow_legacy_v1_rejection,
