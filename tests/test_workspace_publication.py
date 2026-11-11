@@ -2568,8 +2568,10 @@ def test_publish_plan_replaces_the_canonical_file_and_commits_a_revision(
             buffer: bytes,
             operation_id: str,
             deadline: float,
+            *,
+            publishing: str,
         ) -> Any:
-            inputs = prepare(authority, binding, pinned_ref, buffer, operation_id, deadline)
+            inputs = prepare(authority, binding, pinned_ref, buffer, operation_id, deadline, publishing=publishing)
             captured["inputs"] = inputs
             return inputs
 
