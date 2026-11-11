@@ -316,6 +316,12 @@ exclude_lines = [
 source_paths = [
   "src/fa/sandbox",
   "src/fa/session",
+  # Execution authority/journals (E510): the substrate where a wrong guard is a
+  # wrong *durable* fact, not a wrong answer. Added because the targeted gate
+  # was structurally blind to every managed-execution defect: changed files
+  # under `execution/` fell outside every configured root, so `check-deep`
+  # reported "nothing to do" while claiming changed-path mutant coverage.
+  "src/fa/execution",
   "src/fa/inner_loop/state.py",
   "src/fa/inner_loop/subagent_envelope.py",
   "src/fa/inner_loop/subagent_runner.py",

@@ -354,3 +354,98 @@ def test_wrapper_product_command_uses_installed_controller_with_hostile_project_
         "--inject",
         "coder_slice_ceremony=enforce",
     ]
+
+
+def test_q119_wrapper_workspace_matrix_through_current_cli(tmp_path: Path) -> None:
+    """Q119-A: the wrapper's active workspace is resolved per command, fail-closed.
+
+    The installed-controller tests above prove isolation; this proves the
+    *workspace* half that Q119-A owes, through the same CLI entry points the
+    wrapper reaches. Four branches:
+
+    * owner reuse — an ordinary command with no explicit workspace adopts the
+      owner of the wrapper's active path, not the trusted CWD;
+    * explicit mismatch — naming a session that is not the owner is refused;
+    * disjoint path — a workspace the owner does not claim resolves as its own,
+      never as the active one;
+    * overlap — a path inside the owner's workspace is refused by the disjoint
+      preflight instead of silently repointing the command inside owned bytes.
+
+    Every assertion is about resolved identity, so making the trusted CWD win or
+    accepting an unowned path fails here.
+    """
+    from argparse import Namespace
+
+    from fa import cli
+    from fa.session.manager import SessionManager, SessionManagerError
+    from fa.session.provisioning import ProvisionedWorkspace, ProvisionMode
+    from fa.workspace_bootstrap import ReadyState, ReadyStatus
+
+    def ready(path: Path, _run_context: object) -> ReadyState:
+        return ReadyState(ReadyStatus.READY, None, "ready_fast_path", path / ".fa" / "ready.log", False, 0)
+
+    def provision(request: object) -> ProvisionedWorkspace:
+        if request.mode is ProvisionMode.PROVISION:
+            request.workspace_path.mkdir(parents=True, exist_ok=True)
+        return ProvisionedWorkspace(True, "ws-" + "0" * 32, "rev-" + "0" * 32, None)
+
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    # Approved root: the manager refuses any workspace that escapes it, so the
+    # fixtures live under it rather than beside it.
+    owned = (sessions / "owned-project").resolve()
+    owned.mkdir()
+    disjoint = (sessions / "brand-new-project").resolve()
+
+    manager = SessionManager(
+        state_root=tmp_path / "state",
+        workspace_root=sessions,
+        workspace_preparer=ready,
+        workspace_provisioner=provision,
+    )
+    session = manager.create_or_attach_session(session_id=None, workspace_override=owned)
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setenv("FA_WRAPPER_ACTIVE_WORKSPACE", str(owned))
+    monkeypatch.setenv("FA_WORKSPACE_ROOT", str(sessions))
+    # The CLI builds its own manager from fa_state_root(); without this the
+    # fixture's manifest lives in a state root the CLI never reads.
+    monkeypatch.setenv("FA_STATE_ROOT", str(tmp_path / "state"))
+    try:
+        # (1) Owner reuse: no explicit workspace/session -> the active owner wins.
+        reused = Namespace(workspace=None, session_id=None, config=None, _run_context=None)
+        cli._apply_wrapper_session_workspace(reused)
+        assert reused.workspace == owned
+        assert reused.session_id == session.session_id
+
+        # (2) Explicit mismatch: naming a different session than the owner is
+        # refused. This needs both an explicit workspace and an explicit session
+        # id, because an id alone deliberately stays authoritative.
+        mismatch = Namespace(workspace=str(owned), session_id="s-" + "b" * 32, config=None, _run_context=None)
+        with pytest.raises(SessionManagerError) as wrong:
+            cli._apply_wrapper_session_workspace(mismatch)
+        assert wrong.value.code == "workspace_session_mismatch"
+
+        # (3) Disjoint: a path the owner does not claim resolves as a new
+        # workspace, never as the active one.
+        fresh = Namespace(workspace=str(disjoint), session_id=None, config=None, _run_context=None)
+        cli._apply_wrapper_session_workspace(fresh)
+        assert fresh.workspace == disjoint
+        assert fresh.workspace != owned
+
+        # (4) Overlap: a descendant of the owner's path is not a "new" workspace,
+        # so the preflight fails closed rather than repointing the command inside
+        # owned bytes.
+        overlap = Namespace(workspace=str(owned / "nested"), session_id=None, config=None, _run_context=None)
+        with pytest.raises(SessionManagerError) as clash:
+            cli._apply_wrapper_session_workspace(overlap)
+        assert clash.value.code in {"workspace_overlap", "workspace_session_missing"}
+
+        # An explicit --session-id alone stays authoritative and does not adopt
+        # the active workspace behind the caller's back.
+        explicit = Namespace(workspace=None, session_id="s-" + "c" * 32, config=None, _run_context=None)
+        cli._apply_wrapper_session_workspace(explicit)
+        assert explicit.workspace is None
+        assert explicit.session_id == "s-" + "c" * 32
+    finally:
+        monkeypatch.undo()

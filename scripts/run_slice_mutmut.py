@@ -286,6 +286,7 @@ def request_from_configured_scope(
     repo_root: Path,
     *,
     source_override: tuple[str, ...] | None = None,
+    also_copy_override: tuple[str, ...] | None = None,
     tmp_root: Path | None = None,
     result_json: Path = DEFAULT_RESULT,
     diff_report: Path = DEFAULT_DIFF,
@@ -295,7 +296,11 @@ def request_from_configured_scope(
     config = _read_mutmut_config(repo_root)
     sources = source_override or _string_list(config, "source_paths", required=True)
     tests = _string_list(config, "pytest_add_cli_args_test_selection", required=True)
-    copies = _string_list(config, "also_copy", required=False)
+    # A source override narrows WHAT is mutated; it must not also narrow what the
+    # staged tree needs to import. Without the package copy, pytest in the stage
+    # resolves `fa` from the editable checkout, mutates nothing it imports, and
+    # reports "no test case for any mutant" for every mutant.
+    copies = also_copy_override if also_copy_override is not None else _string_list(config, "also_copy", required=False)
     return _validated_request(
         repo_root=repo_root,
         mode="configured" if source_override is None else "explicit",

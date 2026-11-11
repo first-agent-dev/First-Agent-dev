@@ -36,6 +36,23 @@ def _configured_source_roots(repo_root: Path = REPO_ROOT) -> tuple[str, ...]:
     return tuple(cast(list[str], raw))
 
 
+def _configured_copies(repo_root: Path = REPO_ROOT) -> tuple[str, ...]:
+    """The package copies a staged run needs, read from config rather than guessed.
+
+    Targeted runs narrow the *sources* they mutate; they must not narrow what the
+    staged tree imports, or pytest in the stage resolves ``fa`` from the editable
+    checkout and every mutant looks uncovered.
+    """
+    try:
+        data = tomllib.loads((repo_root / "pyproject.toml").read_text(encoding="utf-8"))
+        raw = data["tool"]["mutmut"].get("also_copy", [])
+    except (OSError, KeyError, tomllib.TOMLDecodeError) as exc:
+        raise InputError(f"cannot read configured mutation copies: {exc}") from exc
+    if not isinstance(raw, list) or not all(isinstance(item, str) for item in raw):
+        raise InputError("[tool.mutmut].also_copy must be a string array")
+    return tuple(cast(list[str], raw))
+
+
 def _scope_to_changed(
     changed: list[Path],
     *,
@@ -101,6 +118,7 @@ def main() -> int:
         request = request_from_configured_scope(
             REPO_ROOT,
             source_override=relative_sources,
+            also_copy_override=_configured_copies(REPO_ROOT),
             timeout_seconds=TARGETED_TIMEOUT_SECONDS,
         )
     except InputError as exc:
