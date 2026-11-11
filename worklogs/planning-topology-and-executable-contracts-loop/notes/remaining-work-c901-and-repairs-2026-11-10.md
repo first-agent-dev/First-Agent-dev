@@ -577,6 +577,50 @@ L-RCPT-2/6, L-ENTRY-4 — NOT RUN. Без них нельзя утверждат
 6. ~~**`R-8`** — `_plan_abort` адресно~~ — **сделано** (см. §4.0), вместе с
    сохранением артефактов упавшего сабагента.
 
+
+### 7.5. `R-10`: 4 × `EXPORTS-COMPLETENESS` — наш контракт, не среда
+
+`s10a` — 40-й срез падения из 48, единственный **без** `managed_execution_unavailable`,
+и единственный, который до деплоя обязателен: `assert 1 == 0`, `fa authoring check`
+давал **4 HARD-BLOCK** по правилу `FA-AUTHORING-V2-EXPORTS-COMPLETENESS`:
+
+| модуль | символ | откуда |
+| --- | --- | --- |
+| `inner_loop/coder_loop.py:112` | `handle_provider_failure` | re-export (`x as x`), использован дважды в самом модуле |
+| `inner_loop/session_setup.py:41` | `PinnedContentSource` | `Protocol`, параметр `prepare_session` |
+| `workspace/worktree_manager.py:38` | `WorktreeProbeError` | введён в `R-9` |
+| `workspace/worktree_manager.py:165` | `IsolatedWorktreeManager` | публичный по имени, docstring зовёт его из тестов |
+
+Правка — только списки `__all__`, 4 символа, без переименований и ослабления правила.
+`fa authoring check` → `exit 0, diagnostics 0`; `ruff` чисто; `mypy` по 3 файлам чист;
+тест `test_s10a_authoring_check_runs_on_a_real_workspace` зелёный.
+
+Почему не ловилось: имя теста попадало в «класс A» по файлу, а фильтр по
+`managed_execution_unavailable` его не видел. **Урок для следующих срезов: сортировать
+падения по тексту ассерта, а не по файлу** — иначе «среда» прикрывает контракт.
+
+**Открытый вопрос, не правка:** `IsolatedWorktreeManager` задокументирован как «никакой
+поддерживаемый продуктовый вызывающий его не использует», но остаётся публичным именем
+в `__all__`. Либо правило (public ⇒ `__all__`) и жизнь класса согласованы, либо классу
+место под `_`-именем с сохранением алиаса для тестов. Решает владелец продукта.
+
+### 7.6. Python 3.13: где пин есть, а где нет (замер, правка не делалась)
+
+| место | пин | как узнаёт интерпретатор |
+| --- | --- | --- |
+| `.python-version` | **отсутствует** | uv берёт первый подходящий по `requires-python` |
+| `pyproject.toml:10` | `requires-python = ">=3.13"` | открытый диапазон ⇒ **самый новый** подходящий |
+| `pyproject.toml:214` | mypy `python_version = "3.13"` | только линтер |
+| `pyproject.toml:468` | pyrefly `python-version = "3.13.0"` | только линтер |
+| `uv.lock` | `requires-python = ">=3.13"` | `resolution-markers` уже содержат `>= '3.15'` |
+| `workspace_bootstrap.py:76` | `_UV_SYNC_ARGV` без `--python` | **bootstrap**, из-за него `sync_failed` |
+| `_command_environment` | **вычищает** `UV_PYTHON` | герметичность без замены пином |
+| `scripts/fa-update.sh:884,891` | `uv sync --frozen` без `--python` | деплой-путь |
+| `Dockerfile:81-84` | `python3.13` символинки | образ — единственное место с пином |
+
+Итог: арена скачивала CPython **3.15.2** и падала на сертификате github releases.
+На хосте с сетью скачает и соберёт окружение 3.15 — потому что ничто не требует 3.13.
+
 ## 6. Критерий «срез закрыт»
 
 Для каждого шага — то же, что применялось до сих пор:

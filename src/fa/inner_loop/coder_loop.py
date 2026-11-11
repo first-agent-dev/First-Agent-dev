@@ -1178,5 +1178,6 @@ __all__ = [
     "SessionOutcome",
     "classify_budget",
     "drive_session",
+    "handle_provider_failure",
     "should_inject_ceremony",
 ]

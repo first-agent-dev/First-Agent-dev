@@ -112,4 +112,4 @@ def prepare_session(
     )
 
 
-__all__ = ["MIN_CONTEXT_LIMIT", "SessionSetup", "prepare_session"]
+__all__ = ["MIN_CONTEXT_LIMIT", "PinnedContentSource", "SessionSetup", "prepare_session"]
