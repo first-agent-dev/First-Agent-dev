@@ -18,8 +18,16 @@
     python scripts/api_key_probe.py --check
     python scripts/api_key_probe.py --platform coarena --list-models
     python scripts/api_key_probe.py --platform oneai --wire anthropic
-    python scripts/api_key_probe.py --platform coarena --effort high
     python scripts/api_key_probe.py -p coarena --prompt "привет, кто ты?"
+    python scripts/api_key_probe.py -p coarena --questions questions.md
+
+Чтение ответов. Длинный ответ уходит в постраничный просмотр (``less`` на
+Linux/macOS, ``more`` на Windows), рассуждение по умолчанию скрыто, ответы
+печатаются в ширину терминала. В чате ``/q ответ`` — перечитать ответы,
+``/q рассуждение`` — показать рассуждение, ``/save`` — сохранить всё в файлы.
+``--questions файл.md`` прогоняет вопросы из файла и раскладывает ответы по
+файлам, чтобы сверять с эталоном в редакторе: заголовок ``## вопрос`` отделяет
+вопросы, блок ``### Эталон`` внутри — образец для ручного сравнения.
 
 Про ключи: заполните две константы ниже (``ONEAI_KEY``, ``COARENA_KEY``) либо
 положите их в переменные окружения ``ONEAI_API_KEY`` / ``COARENA_API_KEY``.
@@ -37,6 +45,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import textwrap
 import time
@@ -63,6 +72,7 @@ USER_AGENT = "first-agent-api-key-probe/1.0"
 DEFAULT_MODEL = "claude-sonnet-5-5"  # один и тот же id есть на обоих шлюзах
 DEFAULT_MAX_TOKENS = 8192  # Anthropic-формат требует max_tokens явно
 ANTHROPIC_VERSION = "2023-06-01"
+DEFAULT_OUT = "probe-out"  # каталог для --save без --out
 
 EFFORTS: tuple[str, ...] = ("off", "none", "minimal", "low", "medium", "high", "xhigh", "max")
 
@@ -158,6 +168,75 @@ def _rule(width: int, title: str = "") -> str:
     head = f"── {title} "
     tail = "─" * max(0, min(width, 80) - len(head))
     return _dim(head + tail)
+
+
+# ---------------------------------------------------------------------------
+# Чтение длинного вывода: постраничный просмотр
+# ---------------------------------------------------------------------------
+class Reader:
+    """Печать ответов: порциями через ``less``/``more`` или сразу в терминал.
+
+    ``less`` берётся с ``-R`` (не ломать цвет), ``-F`` (короткий ответ печатается
+    сразу и просмотрщик закрывается), ``-X`` (не вытирать экран после выхода),
+    ``-S`` (не переносить длинные строки — блоки кода остаются читаемыми).
+    """
+
+    def __init__(self, *, pager: str = "auto", width: int | None = None) -> None:
+        self.width = width or _screen_width()
+        self.pager = pager or "auto"
+
+    def _pager_command(self) -> list[str] | None:
+        if self.pager == "never" or not sys.stdout.isatty():
+            return None
+        if self.pager == "less":
+            return ["less", "-R", "-F", "-X", "-S"]
+        if self.pager == "more":
+            return ["more"] if shutil.which("more") else None
+        if shutil.which("less"):
+            return ["less", "-R", "-F", "-X", "-S"]
+        return ["more"] if shutil.which("more") else None
+
+    def show(self, text: str) -> None:
+        """Показать текст целиком: через пейджер, если он есть, иначе в поток."""
+        command = self._pager_command()
+        if command is None:
+            print(text)
+            return
+        env = dict(os.environ)
+        env.setdefault("LESSSECURE", "1")
+        try:
+            # Waiver: команда фиксированная (less/more), текст идёт в stdin.
+            with subprocess.Popen(command, stdin=subprocess.PIPE, env=env) as proc:  # noqa: S603
+                proc.communicate(text.encode("utf-8", errors="replace"))
+        except OSError:
+            print(text)
+
+    def _window(self) -> int:
+        """Сколько строк стабильно влезает в терминал (с запасом на оболочку)."""
+        height = shutil.get_terminal_size((100, 30)).lines
+        return max(8, height - 6)
+
+    def needs_pager(self, lines: Sequence[str]) -> bool:
+        """Блок не влезает в экран и терминал интерактивный."""
+        return sys.stdout.isatty() and len(lines) > self._window()
+
+    def hold(self, lines: Sequence[str], header: Sequence[str]) -> None:
+        """Показать блок: короткий — сразу в терминал, длинный — в пейджер."""
+        text = "\n".join([*header, "", *lines])
+        if not self.needs_pager(lines):
+            print(text)
+            return
+        self.show(text)
+
+    def render(self, markdown: str) -> list[str]:
+        return render_markdown(markdown, width=self.width)
+
+
+def _header_lines(title: str, subtitle: str = "", width: int = 100) -> list[str]:
+    lines = [_rule(width, title)]
+    if subtitle:
+        lines.append(_dim(subtitle))
+    return lines
 
 
 # ---------------------------------------------------------------------------
@@ -752,6 +831,27 @@ class Settings:
     stream: bool
     timeout: float
     verbose: bool
+    reasoning: bool = False
+    save: bool = False
+    pager: str = "auto"
+    paged: bool = True
+    questions: str = ""
+    out: str = ""
+    max_context_chars: int = 0
+    width: int = 0
+
+
+class Turn(TypedDict):
+    """Один вопрос стенда и ответ модели на него."""
+
+    index: int
+    prompt: str
+    text: str
+    reasoning: str
+    meta: str
+    error: str
+    reference: str
+    files: list[str]
 
 
 def _mask(key: str) -> str:
@@ -821,6 +921,10 @@ class ChatClient:
         self.anthropic_url = spec["anthropic_base"] + "/v1/messages"
         self._tty = sys.stdout.isatty()
         self._progress_at = 0.0
+        self.reader = Reader(pager=settings.pager, width=settings.width or None)
+        self.question = ""
+        self.reference = ""
+        self.turns: list[Turn] = []
 
     # -- адреса и заголовки -------------------------------------------------
     @property
@@ -953,7 +1057,7 @@ class ChatClient:
         if not models:
             print(_yellow("шлюз вернул пустой список моделей"))
             return 1
-        print(_bold(f"{self.label}: {len(models)} моделей"))
+        lines = [_bold(f"{self.label}: {len(models)} моделей")]
         for model in models:
             mid = str(model.get("id") or "")
             extra: list[str] = []
@@ -966,19 +1070,21 @@ class ChatClient:
             if isinstance(endpoints, list) and endpoints:
                 extra.append("/".join(str(e) for e in endpoints))
             suffix = _dim("  " + " · ".join(extra)) if extra else ""
-            print(f"  {mid}{suffix}")
-        print(_dim(f"\nпо умолчанию в стенде: {self.settings.model}"))
+            lines.append(f"  {mid}{suffix}")
+        lines.append(_dim(f"\nпо умолчанию в стенде: {self.settings.model}"))
+        self.reader.show("\n".join(lines))
         return 0
 
     # -- проверка ключа -----------------------------------------------------
     def _probe(self, history: Sequence[Mapping[str, str]], max_tokens: int | None) -> tuple[Reply, float]:
-        """Минимальный запрос для --check: временно сузить лимит ответа."""
-        saved = self.settings.max_tokens
-        self.settings.max_tokens = max_tokens
+        """Минимальный запрос для --check: сузить лимит ответа на один запрос."""
+        settings = self.settings
+        saved = settings.max_tokens
+        settings.max_tokens = max_tokens
         try:
             return self.send(history)
         finally:
-            self.settings.max_tokens = saved
+            settings.max_tokens = saved
 
     def check(self) -> int:
         """Проверить ключ: список моделей, затем минимальный реальный запрос."""
@@ -1024,55 +1130,230 @@ class ChatClient:
 
     # -- одиночный вопрос ---------------------------------------------------
     def ask_once(self, prompt: str) -> int:
-        history = [{"role": "user", "content": prompt}]
+        """Один вопрос без истории: удобно для сверки с эталоном."""
         print(_dim(f"{self.label} · {self.settings.model} · {self.settings.wire} · effort={self.settings.effort}"))
+        turn, code = self._ask(prompt, [{"role": "user", "content": prompt}])
+        if turn is not None:
+            self._present(turn)
+            self._autosave(turn)
+        return code
+
+    def _ask(self, prompt: str, history: Sequence[Mapping[str, str]]) -> tuple[Turn | None, int]:
+        """Запрос + запись хода в журнал; код возврата как у процесса."""
         try:
             reply, elapsed = self.send(history)
         except ApiError as exc:
-            print(describe_error(exc), file=sys.stderr)
-            return 1
+            line = describe_error(exc)
+            print(line, file=sys.stderr)
+            self._record(prompt, None, 0.0, line)
+            return None, 1
         except BenchError as exc:
             print(_red(f"✗ {exc}"), file=sys.stderr)
+            self._record(prompt, None, 0.0, _red(f"✗ {exc}"))
+            return None, 2
+        except KeyboardInterrupt:
+            self._clear_progress()
+            print(_dim("\n  прервано; в журнал не попало"))
+            return None, 130
+        return self._record(prompt, reply, elapsed), 0
+
+    # -- сохранение ответов -------------------------------------------------
+    def _save_turn(self, turn: Turn, directory: Path) -> list[str]:
+        """Записать ответ, эталон и карточку сверки рядом друг с другом."""
+        directory.mkdir(parents=True, exist_ok=True)
+        number = f"{turn['index']:02d}"
+        written: list[str] = []
+        answer = directory / f"{number}-answer.md"
+        answer.write_text(turn["text"].strip() + "\n", encoding="utf-8")
+        written.append(str(answer))
+        if turn["reasoning"].strip():
+            thoughts = directory / f"{number}-reasoning.md"
+            thoughts.write_text(turn["reasoning"].strip() + "\n", encoding="utf-8")
+            written.append(str(thoughts))
+        if turn["reference"].strip():
+            reference = directory / f"{number}-reference.md"
+            reference.write_text(turn["reference"].strip() + "\n", encoding="utf-8")
+            written.append(str(reference))
+        card = [
+            f"# Вопрос {turn['index']}",
+            "",
+            "## Вопрос",
+            "",
+            turn["prompt"],
+            "",
+            "## Ответ модели",
+            "",
+            turn["text"].strip() or "_пусто_",
+            "",
+            "## Эталон",
+            "",
+            turn["reference"].strip() or "_эталон не задан_",
+            "",
+            "## Сверка",
+            "",
+            "- [ ] совпадает",
+            "- [ ] частично",
+            "- [ ] неверно",
+            "",
+            f"_{(turn['meta'] or turn['error']).strip()}_",
+            "",
+        ]
+        review = directory / f"{number}-review.md"
+        review.write_text("\n".join(card), encoding="utf-8")
+        written.append(str(review))
+        return written
+
+    def _autosave(self, turn: Turn) -> None:
+        if not self.settings.save:
+            return
+        directory = Path(self.settings.out or DEFAULT_OUT)
+        turn["files"] = self._save_turn(turn, directory)
+        review = directory / f"{turn['index']:02d}-review.md"
+        print(_dim(f"  сохранено: {review}"))
+
+    def _write_index(self, directory: Path) -> Path:
+        """Оглавление каталога: вопрос → карточка сверки и файл ответа."""
+        index = [f"# Ответы стенда · {self.label} · {self.settings.model}", ""]
+        for turn in self.turns:
+            number = f"{turn['index']:02d}"
+            head = " ".join(turn["prompt"].split())[:110]
+            index.append(f"- [{number}] {head} → `{number}-review.md`, `{number}-answer.md`")
+        index.append("")
+        index.append("_Сверка: откройте карточку в редакторе рядом с эталоном и отметьте пункт._")
+        path = directory / "index.md"
+        path.write_text("\n".join(index) + "\n", encoding="utf-8")
+        return path
+
+    def save_all(self) -> None:
+        """Сохранить все ходы в каталог --out (или ./probe-out)."""
+        if not self.turns:
+            print(_yellow("  пока нечего сохранять"))
+            return
+        directory = Path(self.settings.out or DEFAULT_OUT)
+        for turn in self.turns:
+            turn["files"] = self._save_turn(turn, directory)
+        index = self._write_index(directory)
+        print(_dim(f"  сохранено в {directory}: {len(self.turns)} ход(ов) + {index.name}"))
+
+    # -- пакетный режим -----------------------------------------------------
+    def run_questions(self) -> int:
+        """Прогнать вопросы из файла и разложить ответы по файлам."""
+        path = Path(self.settings.questions)
+        try:
+            raw = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            print(_red(f"ошибка: не прочитать {path}: {exc}"), file=sys.stderr)
             return 2
-        self._print_reply(reply, elapsed)
+        questions = split_questions(raw)
+        if not questions:
+            print(_red(f"ошибка: в {path} нет вопросов (нужен заголовок ## или ###)"), file=sys.stderr)
+            return 2
+        directory = Path(self.settings.out or f"{path.stem}-out")
+        if not self.settings.paged:
+            print(_dim(f"{self.label} · {self.settings.model} · {self.settings.wire}"))
+            print(_dim(f"вопросов: {len(questions)} · модели: нет истории, каждый вопрос отдельно"))
+            print(_dim(f"ответы: {directory}"))
+        for number, (question, reference) in enumerate(questions, start=1):
+            head = question.splitlines()[0]
+            print(_dim(f"\n[{number}/{len(questions)}] {head[: self.reader.width]}"))
+            self.reference = reference
+            self.question = question
+            turn, code = self._ask(question, [{"role": "user", "content": question}])
+            if turn is None:
+                if code == 2:
+                    return code
+                turn = self._record(question, None, 0.0, "ошибка шлюза")
+            turn["files"] = self._save_turn(turn, directory)
+            review = directory / f"{turn['index']:02d}-review.md"
+            print(_dim(f"   → {review}"))
+        index = self._write_index(directory)
+        print(_green(f"\nготово: {len(questions)} ответ(ов) в {directory}"))
+        print(_dim(f"оглавление для сверки: {index}"))
         return 0
 
     # -- вывод ответа -------------------------------------------------------
-    def _print_reply(self, reply: Reply, elapsed: float) -> None:
-        width = _screen_width()
-        if reply.reasoning.strip():
-            print()
-            print(_rule(width, "рассуждение"))
-            for line in render_markdown(reply.reasoning, width=width):
-                print(_dim(line))
+    def _turn_lines(self, turn: Turn, *, answer: bool = True, reasoning: bool = False) -> list[str]:
+        """Собрать блок для печати: заголовок, рассуждение, ответ, служебная строка."""
+        width = self.reader.width
+        label = f"вопрос {turn['index']}"
+        if self.settings.wire == "anthropic" or self.settings.platform:
+            label += f" · {self.settings.model} · {self.settings.wire}"
+        lines = _header_lines(label, width=width)
+        lines.append(_dim(turn["prompt"] if len(turn["prompt"]) <= width else turn["prompt"][: width - 1] + "…"))
+        if turn["error"]:
+            lines.append("")
+            lines.extend(turn["error"].splitlines())
+            return lines
+        if reasoning and turn["reasoning"].strip():
+            lines.append("")
+            lines.append(_dim("── рассуждение " + "─" * max(0, width - 16)))
+            lines.extend(_dim(line) for line in self.reader.render(turn["reasoning"]))
+        if answer:
+            lines.append("")
+            body = self.reader.render(turn["text"])
+            lines.extend(body or [_yellow("(модель вернула пустой текст)")])
+        lines.append("")
+        lines.extend(_dim(line) for line in _wrap(turn["meta"].strip(), width, "  ", "  "))
+        return lines
+
+    def _present(self, turn: Turn) -> None:
+        """Показать ответ: длинный — в пейджере, короткий — сразу в терминал."""
+        lines = self._turn_lines(turn, reasoning=self.settings.reasoning)
+        if self.settings.paged and self.reader.needs_pager(lines):
+            self.reader.hold(lines, [])
+            number = turn["index"]
+            hint = f"  вопрос {number} · /q {number} — перечитать · /q {number} расс — с рассуждением"
+            print(_dim(hint))
+            return
         print()
-        print(_rule(width, "ответ"))
-        print()
-        lines = render_markdown(reply.text, width=width)
-        for line in lines or [_yellow("(модель вернула пустой текст)")]:
-            print(line)
-        print()
-        print(_dim(_meta(reply, elapsed)))
+        print("\n".join(lines))
+
+    def _record(self, prompt: str, reply: Reply | None, elapsed: float, error: str = "") -> Turn:
+        turn: Turn = {
+            "index": len(self.turns) + 1,
+            "prompt": prompt,
+            "text": reply.text if reply else "",
+            "reasoning": reply.reasoning if reply else "",
+            "meta": _meta(reply, elapsed) if reply else "",
+            "error": error,
+            "reference": self.reference,
+            "files": [],
+        }
+        self.turns.append(turn)
+        return turn
 
     # -- чат ----------------------------------------------------------------
     def repl(self) -> int:
         """REPL: каждый ход отправляет всю историю заново."""
-        width = _screen_width()
+        width = self.reader.width
         history: list[dict[str, str]] = []
         print(_rule(width, f"{self.label} · чат"))
         print(_dim(f"  {self.settings.wire} · {self.settings.model} · effort={self.settings.effort}"))
-        print(_dim("  /help — команды, /reset — очистить историю, /exit — выход"))
+        hint = "  /help — команды · /q — перечитать ответ · /reset — история · /exit — выход"
+        for line in _wrap_body(hint, width):
+            print(_dim(line))
         while True:
             text = self._read_input()
             if text is None:
+                self._finish()
                 return 0
             if not text:
                 continue
-            if text.startswith("/") and self._run_command(text, history):
-                return 0
             if text.startswith("/"):
+                if self._run_command(text, history):
+                    self._finish()
+                    return 0
                 continue
             self._turn(text, history)
+
+    def _finish(self) -> None:
+        """Итог сессии: где лежат ответы, как их сохранить."""
+        if not self.turns:
+            return
+        hint = f"ответов за сессию: {len(self.turns)} · /save — записать в файлы · /q — перечитать"
+        print()
+        for line in _wrap(hint, self.reader.width, "  ", "  "):
+            print(_dim(line))
 
     @staticmethod
     def _read_input() -> str | None:
@@ -1091,7 +1372,7 @@ class ChatClient:
         """Выполнить /команду; True — пора выходить из чата."""
         command, _, argument = text.partition(" ")
         argument = argument.strip()
-        if command in {"/exit", "/quit", "/q"}:
+        if command in {"/exit", "/quit", "/bye"}:
             return True
         if command == "/reset":
             history.clear()
@@ -1099,49 +1380,160 @@ class ChatClient:
         elif command == "/help":
             self._help()
         elif command == "/history":
-            print(_dim(f"  ходов в истории: {len(history)}"))
-        elif command == "/models":
-            self.print_models()
-        elif command == "/model" and argument:
-            self.settings.model = argument
-            print(_dim(f"  модель: {self.settings.model}  (история сохранена)"))
-        elif command == "/effort" and argument in EFFORTS:
-            self.settings.effort = argument
-            print(_dim(f"  effort: {self.settings.effort}"))
-        else:
+            self._show_history(history)
+        elif command == "/save":
+            if argument:
+                self.settings.out = argument
+            self.save_all()
+        elif command == "/q":
+            self._reread(argument)
+        elif not self._set_option(command, argument):
             print(_yellow(f"  неизвестная команда {command!r}; /help"))
         return False
 
+    def _set_option(self, command: str, argument: str) -> bool:
+        """Команды-переключатели: /model, /effort, /reasoning, /pause, /width, /ref."""
+        settings = self.settings
+        if command == "/models":
+            self.print_models()
+        elif command == "/model" and argument:
+            settings.model = argument
+            print(_dim(f"  модель: {settings.model}  (история сохранена)"))
+        elif command == "/effort" and argument in EFFORTS:
+            settings.effort = argument
+            print(_dim(f"  effort: {settings.effort}"))
+        elif command == "/reasoning":
+            settings.reasoning = not settings.reasoning
+            print(_dim(f"  рассуждение: {'показывать' if settings.reasoning else 'скрыто'}"))
+        elif command == "/pause":
+            settings.paged = not settings.paged
+            print(_dim(f"  постраничный просмотр: {'вкл' if settings.paged else 'выкл'}"))
+        elif command == "/width" and argument.isdigit():
+            self.reader.width = max(40, min(int(argument), 200))
+            print(_dim(f"  ширина: {self.reader.width}"))
+        elif command == "/ref":
+            if argument:
+                self.reference = argument
+                if self.turns:
+                    self.turns[-1]["reference"] = argument
+                print(_dim("  эталон запомнен для текущего вопроса"))
+            else:
+                print(_dim("  эталон: " + (self.reference or "(не задан; /ref <текст>)")))
+        else:
+            return False
+        return True
+
+    def _show_history(self, history: Sequence[Mapping[str, str]]) -> None:
+        chars = sum(len(str(row.get("content", ""))) for row in history)
+        print(_dim(f"  ходов в истории: {len(history)} · символов: {chars}"))
+        for row in history:
+            head = " ".join(str(row.get("content", "")).split())[:80]
+            print(_dim(f"    {row.get('role')}: {head}"))
+
+    def _reread(self, argument: str) -> None:
+        """Показать ответ ещё раз: /q, /q 2, /q рассуждение, /q 2 рассуждение."""
+        if not self.turns:
+            print(_yellow("  ответов пока нет"))
+            return
+        parts = argument.split()
+        index = len(self.turns)
+        reasoning = self.settings.reasoning
+        for part in parts:
+            if part.isdigit():
+                index = max(1, min(int(part), len(self.turns)))
+            elif part.startswith("расс") or part == "r":
+                reasoning = True
+        turn = self.turns[index - 1]
+        if self.settings.paged:
+            self.reader.show("\n".join(self._turn_lines(turn, reasoning=reasoning)))
+        else:
+            print("\n".join(self._turn_lines(turn, reasoning=reasoning)))
+
     def _turn(self, text: str, history: list[dict[str, str]]) -> None:
         """Один ход: вопрос уходит вместе со всей прежней историей."""
+        limit = self.settings.max_context_chars
+        if limit and _history_chars(history) > limit:
+            print(_yellow(f"  история длиннее {limit} симв. — очищаю, чтобы не упереться в контекст"))
+            history.clear()
         history.append({"role": "user", "content": text})
-        try:
-            reply, elapsed = self.send(history)
-        except (ApiError, BenchError) as exc:
-            print(describe_error(exc) if isinstance(exc, ApiError) else _red(f"✗ {exc}"))
+        turn, _code = self._ask(text, history)
+        if turn is None:
             history.pop()
             return
-        except KeyboardInterrupt:
-            self._clear_progress()
-            print(_dim("\n  прервано; ход не сохранён в историю"))
-            history.pop()
-            return
-        self._print_reply(reply, elapsed)
+        self._present(turn)
+        self._autosave(turn)
         # Пустой текст нельзя класть в историю: Anthropic-формат отвергает пустой
         # content ассистента, и следующий ход упал бы в 400.
-        history.append({"role": "assistant", "content": reply.text or "(пустой ответ)"})
+        history.append({"role": "assistant", "content": turn["text"] or "(пустой ответ)"})
 
     def _help(self) -> None:
         print(
             _dim(
-                "  /reset         очистить историю\n"
-                "  /history       сколько ходов в истории\n"
-                "  /model <id>    сменить модель без потери истории\n"
-                "  /effort <lvl>  off | none | minimal | low | medium | high | xhigh | max\n"
-                "  /models        список моделей шлюза\n"
-                "  /exit          выход"
+                "  /q [N] [расс]    перечитать ответ N (последний по умолчанию), «расс» — с рассуждением\n"
+                "  /ref [текст]     задать/показать эталон для сверки\n"
+                "  /save [каталог]  сохранить все ответы в файлы (01-review.md, 01-answer.md)\n"
+                "  /reasoning       показывать/скрывать рассуждение модели\n"
+                "  /pause           включить/выключить постраничный просмотр\n"
+                "  /width N         ширина строки\n"
+                "  /reset           очистить историю\n"
+                "  /history         что лежит в истории\n"
+                "  /model <id>      сменить модель без потери истории\n"
+                "  /effort <lvl>    off | none | minimal | low | medium | high | xhigh | max\n"
+                "  /models          список моделей шлюза\n"
+                "  /exit            выход"
             )
         )
+
+
+def _history_chars(history: Sequence[Mapping[str, str]]) -> int:
+    return sum(len(str(row.get("content", ""))) for row in history)
+
+
+_QUESTION_HEADING = re.compile(r"^##\s+(?!#)(.+)$")
+_REFERENCE_WORDS = r"(эталон|reference|expected|ответ[- ]эталон|эталонный ответ)"
+_REFERENCE_HEADING = re.compile(rf"^#{{2,4}}\s+{_REFERENCE_WORDS}\s*$", re.IGNORECASE)
+_NUMBERED_QUESTION = re.compile(r"^\d{1,3}[.)]\s+(.+)$")
+
+
+class _QuestionBlock(TypedDict):
+    """Сырые строки одного вопроса и его эталона."""
+
+    question: list[str]
+    reference: list[str]
+
+
+def split_questions(raw: str) -> list[tuple[str, str]]:
+    """Разобрать файл вопросов: заголовок ``## …`` начинает вопрос, ``### Эталон`` — образец.
+
+    Всё до первого вопроса считается преамбулой и пропускается. Если заголовков
+    нет, вопросы берутся из нумерованного списка (``1. …``). Файл вообще без
+    разметки считается одним вопросом.
+    """
+    lines = raw.replace("\r\n", "\n").split("\n")
+    numbered = not any(_QUESTION_HEADING.match(line) for line in lines)
+    marker = _NUMBERED_QUESTION if numbered else _QUESTION_HEADING
+    blocks: list[_QuestionBlock] = []
+    in_reference = False
+    for line in lines:
+        opening = marker.match(line)
+        if opening:
+            blocks.append({"question": [opening.group(1)], "reference": []})
+            in_reference = False
+        elif _REFERENCE_HEADING.match(line.strip()):
+            in_reference = True
+        elif blocks and in_reference:
+            blocks[-1]["reference"].append(line)
+        elif blocks:
+            blocks[-1]["question"].append(line)
+
+    parsed = [("\n".join(block["question"]).strip(), "\n".join(block["reference"]).strip()) for block in blocks]
+    parsed = [(question, reference) for question, reference in parsed if question]
+    if parsed:
+        return parsed
+    plain = raw.strip()
+    if plain and not any(line.lstrip().startswith("#") for line in lines):
+        return [(plain, "")]
+    return []
 
 
 def _meta(reply: Reply, elapsed: float) -> str:
@@ -1207,6 +1599,34 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument("--list-models", action="store_true", help="показать модели шлюза и выйти")
     parser.add_argument("--check", action="store_true", help="проверить ключ: список моделей + минимальный запрос")
     parser.add_argument("--prompt", default=None, help="отправить один вопрос и выйти")
+    parser.add_argument(
+        "--questions",
+        default=None,
+        metavar="ФАЙЛ",
+        help="прогнать вопросы из файла (заголовок ## … , блок ### Эталон) и сохранить ответы",
+    )
+    parser.add_argument("--out", default="", metavar="КАТАЛОГ", help="куда писать ответы (по умолчанию <файл>-out)")
+    parser.add_argument("--save", action="store_true", help="сохранять каждый ответ в файлы по ходу чата")
+    parser.add_argument(
+        "--reasoning",
+        action="store_true",
+        help="показывать рассуждение модели в чате (по умолчанию оно скрыто: ответ читается чище)",
+    )
+    parser.add_argument(
+        "--pager",
+        choices=("auto", "less", "more", "never"),
+        default="auto",
+        help="чем листать длинный ответ: auto (less/more), less, more, never — печатать сразу",
+    )
+    parser.add_argument("--no-pager", action="store_true", help="то же, что --pager never")
+    parser.add_argument("--width", type=int, default=None, help="ширина строки (по умолчанию по терминалу)")
+    parser.add_argument(
+        "--max-context",
+        type=int,
+        default=0,
+        metavar="СИМВОЛОВ",
+        help="начинать историю заново, когда она длиннее N символов (0 — не чистить)",
+    )
     parser.add_argument("--verbose", action="store_true", help="печатать тело запроса и служебные заголовки")
     parser.add_argument("--no-color", action="store_true", help="без ANSI-цвета")
     return parser.parse_args(argv)
@@ -1229,6 +1649,8 @@ def _settings_from_args(args: argparse.Namespace) -> Settings:
         )
     if args.max_tokens is not None and args.max_tokens < 256:
         raise BenchError("--max-tokens меньше 256: ответ обрежется на полуслове")
+    if args.questions and args.prompt:
+        raise BenchError("--questions и --prompt вместе не имеют смысла: выберите один режим")
     return Settings(
         platform=platform,
         wire=str(args.wire),
@@ -1240,6 +1662,14 @@ def _settings_from_args(args: argparse.Namespace) -> Settings:
         stream=not args.no_stream,
         timeout=float(args.timeout),
         verbose=bool(args.verbose),
+        reasoning=bool(args.reasoning),
+        save=bool(args.save),
+        out=str(args.out),
+        pager="never" if args.no_pager else str(args.pager),
+        paged=not args.no_pager,
+        questions=str(args.questions or ""),
+        max_context_chars=int(args.max_context),
+        width=int(args.width or 0),
     )
 
 
@@ -1256,6 +1686,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return client.print_models()
     if args.check:
         return client.check()
+    if args.questions:
+        return client.run_questions()
     if args.prompt is not None:
         return client.ask_once(str(args.prompt))
     return client.repl()
