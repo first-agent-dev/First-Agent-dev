@@ -1686,7 +1686,9 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         epilog=(
             "ключи: ONEAI_KEY и COARENA_KEY в начале файла либо переменные окружения\n"
             "        ONEAI_API_KEY / COARENA_API_KEY\n"
-            'примеры: --check · --list-models · --prompt "привет" · --wire anthropic'
+            'примеры: --check · --list-models · --prompt "привет" · --pair\n'
+            "         --questions probe-questions.md --out out   (сверка с эталоном)\n"
+            "         --wire anthropic"
         ),
     )
     parser.add_argument(
