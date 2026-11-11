@@ -100,10 +100,16 @@ USER_AGENT = "first-agent-api-key-probe/1.0"
 # как есть: стиль записи у шлюзов разный (claude-opus-5-5, gpt-6.1-sol).
 ONEAI_MODEL = "claude-sonnet-5-5"
 COARENA_MODEL = "claude-sonnet-5-5"
-DEFAULT_MAX_TOKENS = 8192  # Anthropic-формат требует max_tokens явно
+# Лимит ответа по умолчанию. Шлётся всегда: у Coarena без него действует 8192,
+# и на Claude с effort=high рассуждение съедает почти весь бюджет — ответ
+# обрывается на полуслове (stop: length). Отдельная константа, чтобы это было
+# видно в начале файла и менялось одной строкой.
+DEFAULT_MAX_TOKENS = 32768
+MAX_TOKENS_CEILING = 1_000_000  # выше — почти наверняка опечатка в числе
 ANTHROPIC_VERSION = "2023-06-01"
 DEFAULT_OUT = "probe-out"  # каталог для --save без --out
 DEFAULT_QUESTIONS = "probe-questions.md"  # что прогоняет --questions без имени файла
+CONTINUE_PROMPT = "Продолжи ответ ровно с места обрыва: без вступления, без повторов и без пересказа задачи."
 DIALOG_PREFIX = "> "  # реплика пользователя в файле диалога; остальное — ответы модели
 
 EFFORTS: tuple[str, ...] = ("off", "none", "minimal", "low", "medium", "high", "xhigh", "max")
@@ -899,6 +905,7 @@ class Turn(TypedDict):
     error: str
     reference: str
     files: list[str]
+    truncated: bool
 
 
 def _mask(key: str) -> str:
@@ -977,6 +984,7 @@ class ChatClient:
         self.question = ""
         self.reference = ""
         self.turns: list[Turn] = []
+        self.snapshots: list[list[dict[str, str]]] = []  # история на момент каждого хода
         self.after: str = ""  # что предложить после пачки ответов: /q N
 
     # -- адреса и заголовки -------------------------------------------------
@@ -1011,10 +1019,9 @@ class ChatClient:
             body: dict[str, Any] = {"model": self.settings.model, "messages": self._history_rows(history)}
             if self.settings.effort != "off":
                 body["reasoning_effort"] = self.settings.effort
-            if self.settings.max_tokens:
-                body["max_completion_tokens" if self.settings.effort != "off" else "max_tokens"] = (
-                    self.settings.max_tokens
-                )
+            body["max_completion_tokens" if self.settings.effort != "off" else "max_tokens"] = (
+                self.settings.max_tokens or DEFAULT_MAX_TOKENS
+            )
             if self.settings.stream:
                 body["stream"] = True
                 body["stream_options"] = {"include_usage": True}
@@ -1123,6 +1130,9 @@ class ChatClient:
                 efforts = capabilities.get("efforts")
                 if isinstance(efforts, list) and efforts:
                     extra.append("effort: " + "/".join(str(e) for e in efforts))
+            limit = model.get("max_tokens") or model.get("max_completion_tokens")
+            if isinstance(limit, int) and limit > 0:
+                extra.append(f"вывод до {limit}")
             endpoints = model.get("supported_endpoint_types")
             if isinstance(endpoints, list) and endpoints:
                 extra.append("/".join(str(e) for e in endpoints))
@@ -1231,17 +1241,17 @@ class ChatClient:
         except ApiError as exc:
             line = describe_error(exc)
             print(line, file=sys.stderr)
-            self._record(prompt, None, 0.0, line, shown=shown)
+            self._record(prompt, None, 0.0, line, shown=shown, snapshot=history)
             return None, 1
         except BenchError as exc:
             print(_red(f"✗ {exc}"), file=sys.stderr)
-            self._record(prompt, None, 0.0, _red(f"✗ {exc}"), shown=shown)
+            self._record(prompt, None, 0.0, _red(f"✗ {exc}"), shown=shown, snapshot=history)
             return None, 2
         except KeyboardInterrupt:
             self._clear_progress()
             print(_dim("\n  прервано; в журнал не попало"))
             return None, 130
-        return self._record(prompt, reply, elapsed, shown=shown), 0
+        return self._record(prompt, reply, elapsed, shown=shown, snapshot=history), 0
 
     # -- сохранение ответов -------------------------------------------------
     def _save_turn(self, turn: Turn, directory: Path) -> list[str]:
@@ -1428,6 +1438,8 @@ class ChatClient:
         if answer:
             lines.append("")
             body = self.reader.render(turn["text"])
+            if turn["truncated"]:
+                lines.extend(self._truncated_lines(width))
             lines.extend(body or [_yellow("(модель вернула пустой текст)")])
         lines.append("")
         lines.extend(_dim(line) for line in _wrap(turn["meta"].strip(), width, "  ", "  "))
@@ -1453,6 +1465,15 @@ class ChatClient:
         except (EOFError, KeyboardInterrupt):
             print()
 
+    def _truncated_lines(self, width: int) -> list[str]:
+        """Что делать, если ответ упёрся в лимит: продолжить, а не начинать заново."""
+        hint = (
+            "ответ оборван лимитом --max-tokens; рассуждение съело его почти целиком. "
+            "Поднимите лимит или понизьте effort, затем /continue N — модель продолжит "
+            "с этого места без повторной отправки промпта."
+        )
+        return [_yellow(line) for line in _wrap(hint, width, "  ", "  ")]
+
     def _present(self, turn: Turn) -> None:
         """Показать ответ: длинный — в пейджере, короткий — сразу в терминал."""
         lines = self._turn_lines(turn, reasoning=self.settings.reasoning)
@@ -1472,6 +1493,7 @@ class ChatClient:
         elapsed: float,
         error: str = "",
         shown: str | None = None,
+        snapshot: Sequence[Mapping[str, str]] | None = None,
     ) -> Turn:
         """Записать ход. ``shown`` — короткая подпись вместо полного промпта."""
         turn: Turn = {
@@ -1483,8 +1505,10 @@ class ChatClient:
             "error": error,
             "reference": self.reference,
             "files": [],
+            "truncated": bool(reply and reply.stop_reason == "length"),
         }
         self.turns.append(turn)
+        self.snapshots.append([dict(row) for row in snapshot or []])
         return turn
 
     # -- чат ----------------------------------------------------------------
@@ -1599,6 +1623,8 @@ class ChatClient:
             if history:
                 target = self.settings.dialog or Path(self.settings.out or DEFAULT_OUT) / "chat.md"
                 print(_dim(f"  диалог: {self._write_dialog(history, str(target))}"))
+        elif command == "/continue":
+            self._continue_turn(argument, history)
         elif command == "/q":
             self._reread(argument)
         elif command == "/dialog":
@@ -1645,6 +1671,52 @@ class ChatClient:
         for row in history:
             head = " ".join(str(row.get("content", "")).split())[:80]
             print(_dim(f"    {row.get('role')}: {head}"))
+
+    def _continue_turn(self, argument: str, history: list[dict[str, str]]) -> None:
+        """``/continue [N]`` — дописать оборванный ответ N, не начиная заново.
+
+        История отправляется та же (она кончается ответом модели), плюс короткая
+        просьба продолжить: модель видит уже сказанное и дописывает с места
+        обрыва. Промпт при этом уходит повторно — зато не приходится пересказывать
+        задачу и терять рассуждение, которое уже оплачено.
+        """
+        if not self.turns:
+            print(_yellow("  нечего продолжать"))
+            return
+        number = len(self.turns)
+        for part in argument.split():
+            if part.isdigit():
+                number = max(1, min(int(part), len(self.turns)))
+        turn = self.turns[number - 1]
+        if turn["error"] or not turn["text"].strip():
+            print(_yellow("  в этом ходе нет текста, продолжать нечего"))
+            return
+        rows = [dict(row) for row in self.snapshots[number - 1]] if number <= len(self.snapshots) else []
+        if not rows or rows[-1]["role"] != "assistant":
+            print(_yellow("  этот ход пришёл без истории (прогон из файла) — продолжайте новым вопросом"))
+            return
+        rows.append({"role": "user", "content": CONTINUE_PROMPT})
+        before = len(turn["text"])
+        print(_dim("  продолжаю с места обрыва (промпт уходит повторно)"))
+        fresh, _code = self._ask(CONTINUE_PROMPT, rows, shown=f"/continue {number}")
+        if fresh is None:
+            return
+        self.turns.pop()  # продолжение — часть прошлого хода, а не новый
+        if self.snapshots:
+            self.snapshots.pop()
+        joined = turn["text"].rstrip("\n") + "\n\n" + fresh["text"].lstrip("\n")
+        turn["text"] = joined
+        turn["meta"] = fresh["meta"]
+        turn["truncated"] = fresh["truncated"]
+        self.snapshots[number - 1] = [*rows[:-1], {"role": "assistant", "content": joined}]
+        history.clear()
+        history.extend(dict(row) for row in self.snapshots[number - 1])
+        print("\n".join(self._turn_lines(turn, reasoning=self.settings.reasoning)))
+        print(_dim(f"  было {before} симв., стало {len(joined)}"))
+        if self.settings.save or self.settings.out:
+            directory = Path(self.settings.out or DEFAULT_OUT)
+            turn["files"] = self._save_turn(turn, directory)
+            print(_dim(f"  сохранено: {directory}"))
 
     def _dialog_command(self, argument: str, history: list[dict[str, str]]) -> None:
         """``/dialog`` — показать файл истории, ``/dialog файл`` — читать/писать туда."""
@@ -1711,11 +1783,14 @@ class ChatClient:
         # Пустой текст нельзя класть в историю: Anthropic-формат отвергает пустой
         # content ассистента, и следующий ход упал бы в 400.
         history.append({"role": "assistant", "content": turn["text"] or "(пустой ответ)"})
+        if self.snapshots:
+            self.snapshots[-1] = [dict(row) for row in history]
 
     def _help(self) -> None:
         print(
             _dim(
                 "  > файл.txt       отправить содержимое файла как промпт (длинный текст)\n"
+                "  /continue [N]    дописать оборванный ответ N (было «stop: length»)\n"
                 "  /q [N] [расс]    перечитать ответ N (последний по умолчанию), «расс» — с рассуждением\n"
                 "  /dialog [файл]   показать/задать файл истории чата (продолжить в другой раз)\n"
                 "  /ref [текст]     задать/показать эталон для сверки\n"
@@ -1888,6 +1963,8 @@ def split_questions(raw: str) -> list[tuple[str, str]]:
 
 def _meta(reply: Reply, elapsed: float) -> str:
     parts: list[str] = []
+    if reply.stop_reason == "length":
+        parts.append("ОБРЕЗАНО по лимиту ответа (--max-tokens)")
     if reply.model:
         parts.append(reply.model)
     if reply.stop_reason:
@@ -1951,7 +2028,7 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         "--max-tokens",
         type=int,
         default=None,
-        help=f"лимит ответа; по умолчанию не передаётся (anthropic: {DEFAULT_MAX_TOKENS})",
+        help=f"лимит ответа в токенах (по умолчанию {DEFAULT_MAX_TOKENS}); на effort=high берите не меньше 16384",
     )
     parser.add_argument("--no-stream", action="store_true", help="один JSON-ответ вместо SSE-потока")
     parser.add_argument("--timeout", type=float, default=300.0, help="таймаут одного запроса, с (по умолчанию 300)")
@@ -2035,6 +2112,8 @@ def _settings_from_args(args: argparse.Namespace) -> Settings:
         )
     if args.max_tokens is not None and args.max_tokens < 256:
         raise BenchError("--max-tokens меньше 256: ответ обрежется на полуслове")
+    if args.max_tokens is not None and args.max_tokens > MAX_TOKENS_CEILING:
+        raise BenchError(f"--max-tokens больше {MAX_TOKENS_CEILING}: похоже на опечатку")
     one_shot = [name for name in ("questions", "prompt", "prompt_file") if getattr(args, name)]
     if len(one_shot) > 1:
         raise BenchError(f"режимы {', '.join('--' + name.replace('_', '-') for name in one_shot)} взаимоисключающие")
