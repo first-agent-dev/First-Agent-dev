@@ -200,6 +200,11 @@ def _inline(text: str) -> str:
     return text
 
 
+def cell_header(cells: Sequence[Sequence[str]]) -> list[str]:
+    """Первая строка таблицы — шапка; в карточках она превращается в подписи."""
+    return [str(cell).strip() for cell in cells[0]] if cells else []
+
+
 def _table_cells(rows: Sequence[str]) -> list[list[str]]:
     """Разобрать строки markdown-таблицы в ячейки; строка-разделитель отбрасывается."""
     cells: list[list[str]] = []
@@ -246,24 +251,43 @@ def _table_rows(cells: Sequence[Sequence[str]], limit: int) -> list[str]:
     return lines
 
 
+def _card_label(header: Sequence[str], index: int, cap: int) -> str:
+    """Подпись поля из шапки таблицы: без лишней длины, иначе ломается отступ."""
+    label = str(header[index]).strip() if index < len(header) else ""
+    if len(label) > cap:
+        label = label[: cap - 1] + "…"
+    return label
+
+
 def _table_cards(cells: Sequence[Sequence[str]], limit: int) -> list[str]:
-    """Таблица, которая не влезает в ширину: карточка на строку, поля списком."""
-    header = [str(cell).strip() for cell in cells[0]]
+    """Широкая таблица — карточка на строку: заголовок, поля сеткой, разделитель.
+
+    Подписи выравниваются в колонку, значения начинаются на одном отступе от
+    края карточки — так поля читаются как список, а не как абзац с вставками.
+    """
+    header = cell_header(cells)
+    rows = list(cells[1:])
+    if not rows:
+        return []
+    natural = [str(header[index]).strip() if index < len(header) else "" for index in range(1, len(rows[0]))]
+    longest = min(28, max((len(label) for label in natural), default=0))
+    # «: » после подписи — часть отступа, иначе самая длинная ляжет вплотную к значению
+    pad = longest + 2 if longest else 0
+    labels = [_card_label(header, index, longest) for index in range(1, max(len(row) for row in rows))]
     lines: list[str] = []
-    for number, row in enumerate(cells[1:], start=1):
+    for number, row in enumerate(rows, start=1):
         title = next((cell for cell in row if cell.strip()), f"строка {number}")
         lines.append("")
-        lines.append(bold(f"{number}. {title}"))
+        lines.extend(wrap(bold(f"{number}. {title}"), limit - 2, "┃ ", "┃   "))
         for index in range(1, len(row)):
             value = row[index]
             if not value.strip():
                 continue
-            label = header[index] if index < len(header) else ""
-            label = str(label).strip()
-            if len(label) > 32:  # длинная шапка сломала бы отступ
-                label = label[:31] + "…"
-            head = f"   {label}: " if label else "   "
+            label = labels[index - 1] if index - 1 < len(labels) else ""
+            head = f"┃ {label.ljust(pad)}: " if label else "┃ "
             lines.extend(wrap(value, limit, head, " " * len(head)))
+        if number < len(rows):
+            lines.append(dim("┸" + "─" * min(limit - 2, 46)))
     return lines
 
 
