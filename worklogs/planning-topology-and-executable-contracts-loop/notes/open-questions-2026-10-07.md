@@ -3139,3 +3139,37 @@ Two facts bound the answer:
 **Options as put.** A — fix the staged layout, re-baseline, re-quote the real kill rate. B — keep the layout, stop claiming coverage. C — revert the `execution/` extension until A lands. D — other. Operator chose A.
 
 **Scope.** No change to the weekly workflow's advisory policy and no W-row is closed. The gate's correctness is now pinned by T19; its *coverage* is unmeasured until a full run completes.
+
+## Q140 — Where does a managed verify command run, and where does its scratch go?
+
+**Status: OPEN — operator decision required; raised 2026-11-11 by the W2 research note (`w2-remaining-steps-research-2026-11-11.md`). Blocks R24/S4P3's cutover, not its seam.**
+
+**Context.** R24 replaces the host `subprocess.run` in `slice_verification._run_one` with managed execution. E509 flagged this as "one ambiguity that would force a guess"; the research note resolved the mechanics and left two questions.
+
+**What is established by source and probe.** `ManagedBashExecutor` refuses any view that is not `Access.WRITE` (`client.py:1059`), and `ViewPurpose.VERIFICATION` is `Access.READ` *and* refuses writes outright (`workspace.py:217`, `:2747`). So verify cannot run in the purpose named for it. A `MUTATION` view — `Access.WRITE`, interactive-capable, plan-bound, confined to `_MUTATION_ROOTS = {"src", "scripts"}` — was probed end to end: it constructs the executor and reaches command dispatch, failing only on `BACKEND_UNAVAILABLE` because this sandbox has no Docker.
+
+**Options.**
+
+- **A — give VERIFICATION write-bearing scratch semantics.** Honest naming; widens a matrix that purpose tests pin, and duplicates MUTATION's capability.
+- **B — run verify on a MUTATION view.** Reuses an admitted purpose; the only open sub-question is where scratch lives.
+- **C — inject the executor into `run_commands` and change nothing else yet.** Not an alternative to A/B but a prerequisite for either.
+
+**Engineering recommendation.** Do C regardless — it is the seam R24 needs and a behavioural no-op. Then B, with scratch declared explicitly: either inside an approved mutation root, or as a temp directory outside the canonical tree (the command runs with `cwd=workspace` but its scratch is never projected). Prefer B over A because widening a pinned purpose matrix to duplicate an existing purpose is how a security matrix stops being reviewable.
+
+## Q141 — May a nested child's coder write project files under Q61?
+
+**Status: OPEN — operator decision required; raised 2026-11-11 by the W2 research note. Blocks R26's gate removal.**
+
+**Context.** `workflow_tool._requires_acquisition` refuses every coder-containing nested workflow with `acquisition_unavailable` (`:400–402`, `:611–616`), which makes the entire managed HANDOFF/return composition unreachable in production: only planner/eval-only nested workflows run. R26 is therefore not "build a handoff" — the handoff seam already exists and is exercised from the chat tool (`composition.py:134–160`, `workflow_tool.py:467, 498`) — but "remove the gate and prove it against a real authority".
+
+**The question.** R26's DoD says "no child project write on denial", which implies writes are permitted on success, but it never states that positively. Under Q61 the trusted controller remains the parent, so the safe reading is that a child coder writes into its own managed view and the parent publishes — but that is an inference from a negative, not a decision.
+
+**Options.**
+
+- **A — child coder writes project files through its own bound view (parent publishes).** Full nesting; needs child PlanRef acquisition to exist first, which is S5.
+- **B — nested coder remains plan-staging only.** Narrower; the gate becomes a permanent documented limit rather than temporary unavailability.
+- **C — child coder writes only inside an approved mutation root** (same confinement as R24's option B), leaving project-level edits to the parent.
+
+**Engineering recommendation.** A, sequenced after S5: the gate exists precisely because a nested coder would otherwise admit a session with no PlanRef, so removing it before S5 can produce a PlanRef would trade a clean refusal for a broken run. Whichever option is chosen, state it positively in the plan — "no write on denial" is not a policy.
+
+**Scope.** Neither question authorizes a wire change, a second writer, a model-visible grant, or any change to legacy direct `fa workflow`.
