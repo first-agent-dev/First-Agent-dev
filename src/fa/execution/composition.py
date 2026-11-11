@@ -29,6 +29,7 @@ from fa.execution.client import (
     ExecutionUnavailableError,
     ExecutionUncertainError,
     ManagedBashExecutor,
+    PendingCandidatePublication,
     PlanPublication,
     StagePublication,
 )
@@ -104,6 +105,10 @@ class ManagedExecution:
     read_only_profile: ExecutionProfile | None = None
     current_revision_id: str = field(init=False)
     _pending_handoff: _PendingHandoff | None = field(default=None, init=False, repr=False)
+    # Q138 option B: the run-scoped holder of an unresolved candidate publication.
+    # While this is set the writer is not releasable, and reconciliation is the
+    # only operation allowed to name it.
+    _pending_publication: PendingCandidatePublication | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         if (
@@ -130,6 +135,11 @@ class ManagedExecution:
     def handoff_pending(self) -> bool:
         """Whether the active owner namespace is unresolved after a HANDOFF attempt."""
         return self._pending_handoff is not None
+
+    @property
+    def publication_pending(self) -> bool:
+        """Whether a candidate publication is unresolved and still holds the writer."""
+        return self._pending_publication is not None
 
     def handoff_to(self, target: NamespaceRef, *, deadline: float | None = None) -> GrantReply:
         """Transfer this single managed grant to ``target`` without cloning its holder.
@@ -216,10 +226,50 @@ class ManagedExecution:
     def publish_plan(
         self, source: PlanSnapshot, candidate: PlanSnapshot, *, deadline: float | None = None
     ) -> PlanPublication:
+        """Publish through this run's grant and remember any unresolved outcome.
+
+        Q114 option 1/A: the run-scoped object that owns the writer also owns the
+        proof of an indeterminate publication. It is recorded here, before the
+        exception leaves, so ``close()`` cannot release the writer behind it.
+        """
         self._require_handoff_resolved()
-        publication = self.client.publish_plan(self.binding, source, candidate, grant=self.grant, deadline=deadline)
+        self._require_publication_resolved()
+        try:
+            publication = self.client.publish_plan(self.binding, source, candidate, grant=self.grant, deadline=deadline)
+        except ExecutionUncertainError as error:
+            pending = getattr(error, "pending_publication", None)
+            if pending is not None:
+                self._pending_publication = pending
+            raise
         self.current_revision_id = publication.revision_id
         return publication
+
+    def reconcile_publication(self, *, deadline: float | None = None) -> PlanPublication:
+        """Settle this run's unresolved candidate publication, or raise again.
+
+        Replays the same four request ids (never new ones) and, on a proved
+        publication, clears the pending record so the writer may be released. An
+        unresolved answer leaves the record in place: the workspace stays fenced
+        for recovery rather than being handed to the next writer.
+        """
+        self._require_handoff_resolved()
+        pending = self._pending_publication
+        if pending is None:
+            raise ExecutionContractError
+        publication = self.client.reconcile_candidate_publication(pending, deadline=deadline)
+        self.current_revision_id = publication.revision_id
+        self._pending_publication = None
+        return publication
+
+    def _require_publication_resolved(self) -> None:
+        pending = self._pending_publication
+        if pending is None:
+            return
+        raise ExecutionUncertainError(
+            "op-" + (pending.publish_request_id or pending.create_request_id),
+            code="DURABILITY_UNKNOWN",
+            pending_publication=pending,
+        )
 
     def open_view(
         self,
@@ -348,6 +398,15 @@ class ManagedExecution:
         if self._pending_handoff is not None:
             _logger.warning(
                 "managed execution: writer release withheld while HANDOFF is unresolved for %s",
+                self.binding.workspace_id,
+            )
+            return False
+        if self._pending_publication is not None:
+            # Releasing here would assert that a writer-owned publication is
+            # settled, which is the one thing this run cannot prove (Q114).
+            _logger.warning(
+                "managed execution: writer release withheld while a candidate publication is "
+                "unresolved for %s (reconcile before release)",
                 self.binding.workspace_id,
             )
             return False

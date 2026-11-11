@@ -1845,9 +1845,26 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
     # the writer: releasing it would strand an unpublishable candidate whose
     # capability dies with the grant.
     _SETTLED_VIEW_STATES = frozenset({"PUBLISHED", "REJECTED"})
+    # §2.1 scopes release to WRITE views because a READ view is normally a pin
+    # over committed bytes. CANDIDATE is the one READ purpose that owns
+    # uncommitted writer-private state (the staged buffer), so it is judged by
+    # ownership rather than by access: an unresolved CANDIDATE publication is
+    # exactly the "unfinished projection" the WRITE rule already refuses (Q138
+    # option B). Access is untouched — CANDIDATE stays READ so the ordinary
+    # `write_file` path can never reach its buffer.
+    _OWNING_READ_PURPOSES = frozenset({ViewPurpose.CANDIDATE})
 
     @classmethod
-    def _has_unsettled_views(cls, binding: _Binding, views: int) -> bool:
+    def _has_unsettled_views(
+        cls, binding: _Binding, views: int, *, publishing: str | None = None
+    ) -> bool:
+        """Whether any view still holds writer-owned work.
+
+        ``publishing`` names the one CANDIDATE view whose unsettled state is the
+        very transaction being proved: a forward commit inside that view cannot be
+        refused by the fence that commit is about to lift, and every other
+        unresolved view still refuses it (Q138 option B).
+        """
         for name in os.listdir(views):
             # Unknown scratch is not safe unused-owner settlement.
             if len(name) != 37 or not name.startswith("view-"):
@@ -1859,7 +1876,17 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                 ref = record["view_ref"]
                 if ref["workspace_id"] != binding.metadata["workspace_id"] or ref["view_id"] != name:
                     raise SupervisorError("CORRUPT_STATE")
-                if ref["access"] != Access.READ.value and record["state"] not in cls._SETTLED_VIEW_STATES:
+                unsettled = record["state"] not in cls._SETTLED_VIEW_STATES
+                if ref["access"] != Access.READ.value and unsettled:
+                    return True
+                if (
+                    ViewPurpose(ref["purpose"]) in cls._OWNING_READ_PURPOSES
+                    and unsettled
+                    and name != publishing
+                ):
+                    # The only READ purpose whose unsettled state still holds the
+                    # writer: its bytes are writer-private and unpublished. The
+                    # one exception is the publication being committed right now.
                     return True
             finally:
                 os.close(child)
@@ -3965,11 +3992,14 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
             if repeated is not None:
                 # Nothing is written, but the same gates still prove the workspace
                 # is settled and its bytes are the current revision: a repeat is a
-                # claim about state, so it owes the same evidence as a commit.
-                self._forward_gates(binding, deadline)
+                # claim about state, so it owes the same evidence as a commit. The
+                # view being settled is the one this transaction is reconciling.
+                self._forward_gates(binding, deadline, publishing=view_ref.view_id)
                 self._settle_view(pin.directory, pin.record)
                 return repeated
-            inputs = self._plan_prepare(binding, plan_ref, buffer, operation_id, deadline)
+            inputs = self._plan_prepare(
+                binding, plan_ref, buffer, operation_id, deadline, publishing=view_ref.view_id
+            )
             parent = self._project_parent(binding.source, inputs.plan_relative)
             scratch = -1
             try:
@@ -4093,7 +4123,14 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
         }
 
     def _plan_prepare(
-        self, binding: _Binding, plan_ref: PlanRef, buffer: bytes, operation_id: str, deadline: float
+        self,
+        binding: _Binding,
+        plan_ref: PlanRef,
+        buffer: bytes,
+        operation_id: str,
+        deadline: float,
+        *,
+        publishing: str,
     ) -> _PlanInputs:
         """Prove every precondition and compute the revision before any write."""
         path, parts = self._plan_parts(plan_ref)
@@ -4106,7 +4143,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
         new_sha256 = hashlib.sha256(buffer).hexdigest()
         if new_sha256 == plan_ref.sha256:
             raise SupervisorError("INPUT_POLICY")  # a replacement must replace something
-        self._forward_gates(binding, deadline)
+        self._forward_gates(binding, deadline, publishing=publishing)
         with self._revision(binding, binding.current["revision_id"], deadline) as (_, base, _child):
             base_entries = tuple(dict(entry) for entry in base["entries"])
         existing = {entry["path"]: entry for entry in base_entries}.get(path)
@@ -4351,12 +4388,15 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                 raise SupervisorError("INPUT_POLICY")
             digest.update(raw)
 
-    def _forward_gates(self, binding: _Binding, deadline: float) -> None:
+    def _forward_gates(self, binding: _Binding, deadline: float, *, publishing: str | None = None) -> None:
         """The preconditions every forward-only commit shares, after the grant."""
         views = os.open("views", _DIRECTORY, dir_fd=binding.fd)
         try:
             _private(views)
-            if self._has_unsettled_views(binding, views) or self._read_intent(binding.fd) is not None:
+            if (
+                self._has_unsettled_views(binding, views, publishing=publishing)
+                or self._read_intent(binding.fd) is not None
+            ):
                 raise SupervisorError("WORKSPACE_BUSY")
         finally:
             os.close(views)

@@ -64,10 +64,19 @@ class ExecutionUnavailableError(RuntimeError):
 
 
 class ExecutionUncertainError(RuntimeError):
-    def __init__(self, operation_id: str | None, *, code: str = "EXECUTION_UNKNOWN") -> None:
+    def __init__(
+        self,
+        operation_id: str | None,
+        *,
+        code: str = "EXECUTION_UNKNOWN",
+        pending_publication: PendingCandidatePublication | None = None,
+    ) -> None:
         super().__init__("execution_unknown")
         self.operation_id = operation_id
         self.code = code
+        # Set only by ``publish_plan``: the exact four ids and proof a caller needs
+        # to reconcile this publication instead of guessing or retrying blindly.
+        self.pending_publication = pending_publication
 
 
 class ExecutionTimedOutError(ExecutionUncertainError):
@@ -100,6 +109,32 @@ def _connect_authenticated(connection: socket.socket, path: Path, server_uid: in
     _, uid, _ = struct.unpack("3i", connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i")))
     if uid != server_uid:
         raise ExecutionUnavailableError
+
+
+@dataclass(frozen=True)
+class PendingCandidatePublication:
+    """The non-secret identity needed to replay one unresolved candidate PUBLISH.
+
+    Four request ids, because a lost reply can happen at any of the four steps and
+    the journal answers a repeat of *that* id rather than of the saga: re-sending
+    ``create_request_id`` recovers a minted view whose reply was lost, while
+    re-sending ``publish_request_id`` reconciles a commit that may already exist.
+    The capability is carried because replay must authenticate exactly as the
+    original attempt did; it is already held by the writer that owns this run.
+
+    ``stop_request_id`` is ``None`` only when the failure happened before STOP_VIEW
+    was sent, which is the one case where the view is not known to be terminal.
+    """
+
+    namespace: NamespaceRef
+    view_ref: ViewRef
+    view_grant: GrantReply
+    create_request_id: str
+    write_request_id: str
+    stop_request_id: str | None
+    publish_request_id: str
+    source: PlanSnapshot
+    candidate: PlanSnapshot
 
 
 @dataclass(frozen=True)
@@ -523,10 +558,16 @@ class ExecutionClient:
         view: ViewRef | None = None
         view_grant: GrantReply | None = None
         uncertain = False
+        # Each id is minted before its request so the pending record can name the
+        # exact request that may have been executed, not just the last one.
+        create_request_id = uuid4().hex
+        write_request_id: str | None = None
+        stop_request_id: str | None = None
+        publish_request_id: str | None = None
         try:
             created = self.request(
                 Operation.CREATE_VIEW,
-                request_id=uuid4().hex,
+                request_id=create_request_id,
                 namespace=namespace,
                 view=None,
                 grant=grant,
@@ -544,9 +585,10 @@ class ExecutionClient:
             )
             view = ViewRef.from_dict(created["view_ref"])
             view_grant = _grant(Operation.CREATE_VIEW, created)
+            write_request_id = uuid4().hex
             self.request(
                 Operation.WRITE_FILE,
-                request_id=uuid4().hex,
+                request_id=write_request_id,
                 namespace=namespace,
                 view=view,
                 grant=view_grant,
@@ -588,14 +630,99 @@ class ExecutionClient:
                 str(result["revision_id"]),
                 bool(result["already_published"]),
             )
-        except ExecutionUncertainError:
+        except ExecutionUncertainError as error:
             # The candidate view stays open: releasing it would assert that the
             # writer is settled, which is the one thing this client cannot prove.
             uncertain = True
+            if error.pending_publication is None and view is not None and view_grant is not None:
+                # Name the saga, not just the last id, so the caller can reconcile
+                # by replaying exactly these requests (Q138 option B).
+                error.pending_publication = PendingCandidatePublication(
+                    namespace,
+                    view,
+                    view_grant,
+                    create_request_id,
+                    write_request_id or "",
+                    stop_request_id,
+                    publish_request_id or "",
+                    source,
+                    candidate,
+                )
             raise
         finally:
             if view is not None and view_grant is not None and not uncertain:
                 self._release_view(namespace, view, view_grant, deadline)
+
+    def reconcile_candidate_publication(
+        self,
+        pending: PendingCandidatePublication,
+        *,
+        deadline: float | None = None,
+    ) -> PlanPublication:
+        """Settle one unresolved candidate publication by replaying its own requests.
+
+        This is a *reconciliation*, never a retry of an indeterminate decision: the
+        four request ids are the ones already minted, so the authority answers a
+        repeat from its journal and its completed-reply cache rather than performing
+        a second effect. Nothing here invents a view, a grant, or a new id.
+
+        Outcomes that are terminal:
+
+        * the publication is proved committed (or already was, ``already_published``)
+          and the candidate view is left ``PUBLISHED`` — releasable;
+        * the authority answers determinately that this view cannot publish, which
+          rejects the candidate view: it stays unpublished and the caller reports a
+          refusal, never a success.
+
+        An indeterminate answer here is **not** turned into another attempt: it is
+        raised with the same pending record, and Q114 keeps the workspace fenced.
+        """
+        if not isinstance(pending, PendingCandidatePublication):
+            raise ExecutionContractError
+        raw = pending.candidate.utf8_bytes
+        if hashlib.sha256(raw).hexdigest() != pending.candidate.ref.sha256:
+            raise ExecutionContractError
+        namespace, view, view_grant = pending.namespace, pending.view_ref, pending.view_grant
+        # The write is replayed only while no STOP was ever sent: a STOPPING view
+        # refuses WRITE_FILE, and its bytes are already the ones this publication
+        # staged. A repeat of the same request id is answered from the journal.
+        if pending.stop_request_id is None and pending.write_request_id:
+            self.request(
+                Operation.WRITE_FILE,
+                request_id=pending.write_request_id,
+                namespace=namespace,
+                view=view,
+                grant=view_grant,
+                payload={
+                    "path": pending.source.ref.workspace_relative_path,
+                    "content": raw.decode("utf-8"),
+                    "expected_sha256": None,
+                },
+                deadline=deadline,
+            )
+        if pending.stop_request_id is None or pending.publish_request_id is None:
+            # Nothing was committed and no id exists to ask about: the only honest
+            # answer is that terminality is unknown, and the writer stays fenced.
+            raise ExecutionUncertainError(None, code="TERMINALITY_UNKNOWN", pending_publication=pending)
+        result = self.request(
+            Operation.PUBLISH,
+            request_id=pending.publish_request_id,
+            namespace=namespace,
+            view=view,
+            grant=view_grant,
+            payload={"sealed_manifest_id": None, "expected_base_revision": view.base_revision},
+            deadline=deadline,
+        )
+        expected_ref = {**_plan_ref_dict(pending.source.ref), "sha256": hashlib.sha256(raw).hexdigest()}
+        if result["plan_ref"] != expected_ref:
+            raise ExecutionUncertainError(
+                "op-" + pending.publish_request_id, code="DURABILITY_UNKNOWN", pending_publication=pending
+            )
+        return PlanPublication(
+            PlanRef(**expected_ref),
+            str(result["revision_id"]),
+            bool(result["already_published"]),
+        )
 
     def publish_stage(
         self, namespace: NamespaceRef, *, view: ViewRef, grant: GrantReply, deadline: float | None = None
