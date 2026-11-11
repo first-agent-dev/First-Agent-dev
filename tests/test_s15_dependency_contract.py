@@ -22,6 +22,8 @@ def _run_script() -> subprocess.CompletedProcess[str]:
         capture_output=True,
         text=True,
         cwd=REPO_ROOT,
+        # Returns the process: each test asserts on its own expected exit code.
+        check=False,
     )
 
 

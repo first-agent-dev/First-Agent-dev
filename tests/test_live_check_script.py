@@ -42,7 +42,7 @@ def _code() -> str:
 
 def test_script_exists_and_is_syntax_clean() -> None:
     assert SCRIPT.is_file(), "run_live_check.sh missing"
-    proc = subprocess.run(["bash", "-n", str(SCRIPT)], capture_output=True, text=True)
+    proc = subprocess.run(["bash", "-n", str(SCRIPT)], capture_output=True, text=True, check=False)
     assert proc.returncode == 0, f"bash -n failed:\n{proc.stderr}"
 
 
@@ -342,7 +342,7 @@ def test_per_turn_model_text_via_detail_debug_not_timeline_redump() -> None:
 def test_adversarial_battery_is_green() -> None:
     """The committed stub-deployment battery (S0..S16) must pass with 0 defects."""
     assert BATTERY.is_file(), "adversarial_battery_live_check.sh missing"
-    proc = subprocess.run(["bash", str(BATTERY)], capture_output=True, text=True, timeout=180)
+    proc = subprocess.run(["bash", str(BATTERY)], capture_output=True, text=True, timeout=180, check=False)
     assert proc.returncode == 0, f"battery failed:\n{proc.stdout}\n{proc.stderr}"
     assert "0 missed" in proc.stdout
     assert "DEFECT-CONFIRMED" not in proc.stdout
@@ -365,6 +365,6 @@ def test_s127_bash_stderr_row_requires_nonzero_last_stage_exit() -> None:
 
 def test_usage_exit_code() -> None:
     """No/unknown subcommand exits 2 with usage (never runs anything)."""
-    proc = subprocess.run(["bash", str(SCRIPT)], capture_output=True, text=True, cwd=SCRIPT.parent.parent)
+    proc = subprocess.run(["bash", str(SCRIPT)], capture_output=True, text=True, cwd=SCRIPT.parent.parent, check=False)
     assert proc.returncode == 2
     assert "usage:" in proc.stderr

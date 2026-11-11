@@ -216,6 +216,7 @@ def _real_repo_available() -> bool:
             capture_output=True,
             text=True,
             timeout=10,
+            check=False,  # returncode IS the assertion: the failing run is the subject
         )
     except (OSError, subprocess.SubprocessError):
         return False

@@ -713,7 +713,7 @@ def test_pre_commit_preserves_first_failure_exit_code_when_no_files_changed(tmp_
 
     env = dict(os.environ)
     env["PATH"] = f"{fakebin}:{env['PATH']}"
-    result = subprocess.run(["bash", str(hook)], cwd=root, env=env, capture_output=True, text=True)
+    result = subprocess.run(["bash", str(hook)], cwd=root, env=env, capture_output=True, text=True, check=False)
 
     assert result.returncode == 7
 
@@ -753,7 +753,7 @@ exit 0
     env = dict(os.environ)
     env["PATH"] = f"{fakebin}:{env['PATH']}"
 
-    result = subprocess.run(["bash", str(hook)], cwd=root, env=env, capture_output=True, text=True)
+    result = subprocess.run(["bash", str(hook)], cwd=root, env=env, capture_output=True, text=True, check=False)
 
     assert result.returncode == 0, result.stderr
     staged = subprocess.run(
@@ -789,7 +789,7 @@ def test_pre_commit_refuses_whole_tree_fix_of_preexisting_unstaged_python(tmp_pa
     env = dict(os.environ)
     env["PATH"] = f"{fakebin}:{env['PATH']}"
 
-    result = subprocess.run(["bash", str(hook)], cwd=root, env=env, capture_output=True, text=True)
+    result = subprocess.run(["bash", str(hook)], cwd=root, env=env, capture_output=True, text=True, check=False)
 
     assert result.returncode == 9
     staged = subprocess.run(
@@ -824,7 +824,7 @@ def test_pre_commit_reports_but_never_stages_formatter_modified_untracked_python
     env = dict(os.environ)
     env["PATH"] = f"{fakebin}:{env['PATH']}"
 
-    result = subprocess.run(["bash", str(hook)], cwd=root, env=env, capture_output=True, text=True)
+    result = subprocess.run(["bash", str(hook)], cwd=root, env=env, capture_output=True, text=True, check=False)
 
     assert result.returncode == 1
     staged = subprocess.run(
@@ -880,7 +880,7 @@ exit 0
 
     env = dict(os.environ)
     env["PATH"] = f"{fakebin}:{env['PATH']}"
-    result = subprocess.run(["bash", str(hook)], cwd=root, env=env, capture_output=True, text=True)
+    result = subprocess.run(["bash", str(hook)], cwd=root, env=env, capture_output=True, text=True, check=False)
 
     log = log_path.read_text(encoding="utf-8")
     assert result.returncode == 9
@@ -916,7 +916,7 @@ exit 0
     env = dict(os.environ)
     env["FA_HOOK_FULL_CHECK"] = "1"
     env["PATH"] = f"{fakebin}:{env['PATH']}"
-    result = subprocess.run(["bash", str(hook)], cwd=root, env=env, capture_output=True, text=True)
+    result = subprocess.run(["bash", str(hook)], cwd=root, env=env, capture_output=True, text=True, check=False)
 
     assert result.returncode == 0
     log = log_path.read_text(encoding="utf-8")
@@ -974,7 +974,7 @@ exit 0
 
     env = dict(os.environ)
     env["PATH"] = f"{fakebin}:{env['PATH']}"
-    result = subprocess.run(["bash", str(hook)], cwd=root, env=env, capture_output=True, text=True)
+    result = subprocess.run(["bash", str(hook)], cwd=root, env=env, capture_output=True, text=True, check=False)
 
     log = log_path.read_text(encoding="utf-8")
     assert result.returncode == 0
@@ -1032,7 +1032,7 @@ exit 0
 
     env = dict(os.environ)
     env["PATH"] = f"{fakebin}:{env['PATH']}"
-    result = subprocess.run(["bash", str(hook)], cwd=root, env=env, capture_output=True, text=True)
+    result = subprocess.run(["bash", str(hook)], cwd=root, env=env, capture_output=True, text=True, check=False)
 
     log = log_path.read_text(encoding="utf-8")
     assert result.returncode == 8
@@ -1058,7 +1058,7 @@ def test_pre_push_runs_full_check_by_default(tmp_path: Path) -> None:
 
     env = dict(os.environ)
     env["PATH"] = f"{fakebin}:{env['PATH']}"
-    result = subprocess.run(["bash", str(hook)], cwd=root, env=env, capture_output=True, text=True)
+    result = subprocess.run(["bash", str(hook)], cwd=root, env=env, capture_output=True, text=True, check=False)
 
     assert result.returncode == 0
     assert "uv run --no-sync just check" in log_path.read_text(encoding="utf-8")
@@ -1081,7 +1081,7 @@ def test_pre_push_skip_env_bypasses_full_check(tmp_path: Path) -> None:
     env = dict(os.environ)
     env["FA_HOOK_SKIP_FULL_CHECK"] = "1"
     env["PATH"] = f"{fakebin}:{env['PATH']}"
-    result = subprocess.run(["bash", str(hook)], cwd=root, env=env, capture_output=True, text=True)
+    result = subprocess.run(["bash", str(hook)], cwd=root, env=env, capture_output=True, text=True, check=False)
 
     assert result.returncode == 0
     assert "skipping uv run --no-sync just check" in result.stderr

@@ -2610,6 +2610,7 @@ def test_admission_artifact_utf8_read_is_independent_of_process_locale(tmp_path:
         },
         capture_output=True,
         timeout=10,
+        check=False,  # the triple below IS the assertion
     )
     assert (child.returncode, child.stdout, child.stderr) == (0, b"", b"")
     assert json.loads(path.read_bytes())["attempts"][0]["route"] == "ADMITTED"

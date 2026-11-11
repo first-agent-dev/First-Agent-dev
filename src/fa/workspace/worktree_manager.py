@@ -35,6 +35,26 @@ class BranchAlreadyCheckedOutError(RuntimeError):
         self.details = details
 
 
+class WorktreeProbeError(RuntimeError):
+    """`git worktree list` failed, so branch occupancy could not be established.
+
+    Distinct from `BranchAlreadyCheckedOutError` on purpose: that one says the
+    branch *is* taken, this one says the question could not be answered. The
+    caller must refuse either way, but an operator reading the log needs to know
+    which — "create a different name" is the wrong advice for a broken probe.
+    """
+
+    def __init__(self, branch: str, returncode: int, stderr: str) -> None:
+        super().__init__(
+            f"Could not establish whether branch {branch!r} is checked out elsewhere: "
+            f"`git worktree list --porcelain` exited {returncode}. Refusing to create a "
+            f"worktree on an unproven branch. stderr:\n{stderr}"
+        )
+        self.branch = branch
+        self.returncode = returncode
+        self.stderr = stderr
+
+
 class CleanupFailedError(AssertionError, RuntimeError):
     """Cleanup failed after remove --force; path still exists (AssertionError-compatible)."""
 
@@ -167,13 +187,25 @@ class IsolatedWorktreeManager(WorktreeManager):
         self.worktrees_root.mkdir(parents=True, exist_ok=True)
 
     def _is_branch_checked_out_elsewhere(self, branch: str) -> tuple[bool, str]:
+        """Whether another worktree already holds `branch`, fail-closed.
+
+        This is a safety check: its answer decides whether a worktree may be
+        created at all. Reading `stdout` without looking at `returncode` turned
+        a *failure to check* into the answer "nobody holds this branch", so a
+        git error (locked index, unreadable repository, timeout) would let the
+        caller create a worktree on top of a branch that is already checked
+        out. Absent evidence is therefore reported as an error, never as False.
+        """
         result = subprocess.run(
             ["git", "worktree", "list", "--porcelain"],  # noqa: S607
             cwd=self.repo_root,
             capture_output=True,
             text=True,
             timeout=10,
+            check=False,  # the verdict is inspected below; a raised error would hide its stderr
         )
+        if result.returncode != 0:
+            raise WorktreeProbeError(branch, result.returncode, result.stderr)
         for line in result.stdout.splitlines():
             if not line.startswith("branch "):
                 continue
@@ -190,6 +222,7 @@ class IsolatedWorktreeManager(WorktreeManager):
                 capture_output=True,
                 text=True,
                 timeout=5,
+                check=False,  # a non-zero exit IS the answer: this candidate does not exist
             )
             if result.returncode == 0:
                 return candidate
@@ -213,15 +246,15 @@ class IsolatedWorktreeManager(WorktreeManager):
 
         cmd = ["git", "worktree", "add", str(worktree_path), "-b", branch, resolved_base]
         result = subprocess.run(  # noqa: S603 -- trusted binary per ADR-6
-            cmd, cwd=self.repo_root, capture_output=True, text=True, timeout=15
-        )
+            cmd, cwd=self.repo_root, capture_output=True, text=True, timeout=15, check=False
+        )  # check=False: the non-zero exit is classified below, with git's own stderr
 
         if result.returncode != 0:
             if "already exists" in result.stderr and "branch" in result.stderr:
                 cmd2 = ["git", "worktree", "add", str(worktree_path), branch]
                 result2 = subprocess.run(  # noqa: S603 -- trusted binary per ADR-6
-                    cmd2, cwd=self.repo_root, capture_output=True, text=True, timeout=10
-                )
+                    cmd2, cwd=self.repo_root, capture_output=True, text=True, timeout=10, check=False
+                )  # check=False: reported as a refusal below, not as an exception
                 if result2.returncode != 0:
                     raise RuntimeError(f"git worktree add failed: {result.stderr} | {result2.stderr}")
             else:
@@ -238,7 +271,13 @@ class IsolatedWorktreeManager(WorktreeManager):
             capture_output=True,
             text=True,
             timeout=10,
+            check=False,  # reported below: a failed listing must not read as "not registered"
         )
+        if list_result.returncode != 0:
+            raise RuntimeError(
+                f"could not verify that worktree {worktree_path} is registered: "
+                f"`git worktree list --porcelain` exited {list_result.returncode}. stderr:\n{list_result.stderr}"
+            )
         found = False
         for line in list_result.stdout.splitlines():
             if line.startswith("worktree "):
@@ -253,25 +292,59 @@ class IsolatedWorktreeManager(WorktreeManager):
 
     @override
     def cleanup(self, path: Path) -> None:
+        """Remove a worktree and leave git's bookkeeping consistent.
+
+        The filesystem is the verdict — `exists()` after the attempts below is
+        what decides success — but git's own status is still reported rather
+        than dropped: a `worktree remove` that failed on a live worktree, or a
+        `prune` that failed to run, is the state that makes the *next* creation
+        fail confusingly, and it would otherwise leave no trace at all.
+        """
         resolved = Path(path).resolve()
-        subprocess.run(  # noqa: S603 -- trusted binary per ADR-6
+        removed = subprocess.run(  # noqa: S603 -- trusted binary per ADR-6
             ["git", "worktree", "remove", "--force", str(resolved)],  # noqa: S607
             cwd=self.repo_root,
             capture_output=True,
             text=True,
             timeout=10,
+            check=False,  # the filesystem verdict below is authoritative
         )
         if resolved.exists():
             shutil.rmtree(resolved, ignore_errors=True)
         if resolved.exists():
-            raise CleanupFailedError(resolved, "after remove --force + rmtree")
-        subprocess.run(
+            raise CleanupFailedError(
+                resolved,
+                "after remove --force + rmtree"
+                + (
+                    ""
+                    if removed.returncode == 0
+                    else f"; `git worktree remove` exited {removed.returncode}: {removed.stderr.strip()}"
+                ),
+            )
+        if removed.returncode != 0:
+            # The bytes are gone but git's record is not: prune below is the
+            # repair path, and its own failure is what an operator must see.
+            logger.warning(
+                "worktree remove for %s exited %s (bytes removed anyway): %s",
+                resolved,
+                removed.returncode,
+                removed.stderr.strip(),
+            )
+        pruned = subprocess.run(
             ["git", "worktree", "prune"],  # noqa: S607
             cwd=self.repo_root,
             capture_output=True,
             text=True,
             timeout=5,
+            check=False,  # reported, not raised: cleanup already succeeded physically
         )
+        if pruned.returncode != 0:
+            logger.warning(
+                "git worktree prune exited %s after cleaning %s: %s",
+                pruned.returncode,
+                resolved,
+                pruned.stderr.strip(),
+            )
 
 
 class WorktreeManagerFactory:

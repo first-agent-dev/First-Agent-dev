@@ -138,6 +138,16 @@ select = [
   "F",
   "I",
   "N",
+  # PLW1510: `subprocess.run` without an explicit `check=`. Omitting it means
+  # `check=False` by default, so "I inspected returncode" and "I forgot" look
+  # identical on the page — and one measured site proved the difference matters:
+  # `worktree_manager._is_branch_checked_out_elsewhere` read `stdout` without
+  # looking at `returncode`, so a failed probe answered "nobody holds this
+  # branch" and a worktree could be created on top of a checked-out one. Every
+  # site now states which it is: `check=True` where git's failure IS the error,
+  # `check=False` + a comment where the exit code is data being classified.
+  # tests/ was already reviewed by the same sweep (20 sites, all fixtures).
+  "PLW1510",
   # PGH: blanket-suppression guard — `# noqa` without codes (PGH004) or
   # bare `# type: ignore` (PGH003) would silently disable ALL checks on a
   # line; force agents to name the exact rule they are waiving.

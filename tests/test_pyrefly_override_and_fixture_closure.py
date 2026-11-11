@@ -87,6 +87,7 @@ class TestFixtureTypeHonesty:
             capture_output=True,
             text=True,
             timeout=30,
+            check=False,  # returncode IS the assertion: the failing run is the subject
         )
         assert result.returncode == 0, f"Scalar payload branch test failed:\n{result.stdout}\n{result.stderr}"
 

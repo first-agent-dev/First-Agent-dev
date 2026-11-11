@@ -70,6 +70,7 @@ def _base_commit(root: Path) -> str:
             capture_output=True,
             text=True,
             timeout=5,
+            check=False,  # a non-zero exit is the documented "unknown" answer below
         )
         if res.returncode == 0:
             return res.stdout.strip()[:12]
