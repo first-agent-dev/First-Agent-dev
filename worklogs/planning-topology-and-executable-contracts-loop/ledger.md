@@ -9040,3 +9040,58 @@ request id becomes the only key, and the authority would have to answer "which v
 did `op-<create_request_id>` create". That is a new authority read, so it is a
 Q-class decision, not a silent edit. Recorded as the next question rather than
 implemented.
+
+### E513 — R25 reconcile bound to the publisher port (2026-11-11; Arena-local)
+
+**Scope.** E509 step 2. `BoundPlanPublisher.publish_candidate` now reconciles a
+recoverable ambiguity before classifying it. Two files: `execution/composition.py`
+(the port), `tests/test_execution_composition.py`. No wire operation, no new engine,
+no second writer, no model-visible grant.
+
+**Why it was needed.** Q114 option 1/A has two halves — own the pending proof, and
+*settle* it by exact-request replay. Q138-B delivered the first: the run holds a
+typed `PendingCandidatePublication` and `close()` refuses while it is unresolved.
+Nothing called `reconcile_publication`, so the ordinary recoverable case (bytes
+committed, reply lost) stayed in quarantine even though the journal could answer
+immediately. R25's DoD names the missing part directly: "one-shot uncertainty and no
+premature owner release/quarantine".
+
+**Mechanism.** One `try` around `publish_plan`; on `ExecutionUncertainError`, consult
+`publication_pending`. A run that owns a saga reconciles exactly once; a run that
+owns none is re-raised unchanged. That second arm is not a defensive nicety — it is
+the lost-`CREATE_VIEW` shape measured in E512, where no view id was ever learned and
+replay would be an assertion about an effect nobody observed.
+
+**Replay is not retry.** The same four request ids are sent, so the authority answers
+from its journal and completed-reply cache: measured as one handler execution and one
+commit, with no second id minted. On success the run adopts the revision the
+authority committed; the oracle pins that against `current.json`, because a merely
+*different* id (my first version) passes a "changed" assertion and then fails every
+later CAS with `STALE_REVISION`.
+
+**Oracle.** C1 over a real supervisor/UDS, three arms through the port — lost reply
+(settled, released, `AVAILABLE`), failed handler (fence kept, `OWNED`, plan unmoved),
+determinate refusal (no saga, clean release). Plus the EDGE arm above.
+
+**Kill-checks, all killed.** (1) Port reconcile removed → `reply-lost` red.
+(2) Guard inverted to reconcile unconditionally → the lost-`CREATE_VIEW` oracle red.
+(3) `reconcile_publication` left holding a foreign revision id → `reply-lost` red on
+the `current.json` pin.
+
+**Measured and discarded.** A fourth branch mapping `ExecutionRejectedError` on the
+replay to uncertainty was written, then probed: the journal answers a replay of an
+`UNKNOWN` id with `EXECUTION_UNKNOWN` *before* any refusal can surface, so the branch
+is unreachable by construction. Both the branch and its test were removed rather than
+shipped as dead code covering an imaginary path.
+
+**Verification.** 63 passed / 1 xfailed in `test_execution_composition.py`; 78 with
+`test_s3p3_candidate_buffer.py`; 308 with the workspace/publication/controller banks.
+ruff check clean, ruff format clean, mypy clean on the changed module.
+
+**Not claimed.** R25 is not closed. Its remaining named work is the managed
+production-caller path over the **real** `run_workflow` (the existing refusals and
+this reconcile are proved at the port, while the root tests still stub
+`run_workflow`), plus the live-host register row. `scripts/run_targeted_mutmut.py`
+cannot execute here — its staged run reads `~/.fa/config.yaml`, absent in the stage —
+so no mutation *score* is claimed for `execution/`; the three mutation kills above
+were applied by hand. Q139's baseline stays deferred per E512.
