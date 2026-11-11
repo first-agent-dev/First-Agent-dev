@@ -452,7 +452,31 @@ class BoundPlanPublisher:
     def publish_candidate(
         self, source: PlanSnapshot, candidate: PlanSnapshot, *, deadline: float | None = None
     ) -> PlanRef:
-        publication = self._managed.publish_plan(source, candidate, deadline=deadline)
+        """Publish once, and reconcile a recoverable ambiguity before classifying it.
+
+        Q114 option 1/A puts the proof of an unresolved publication on the run that
+        owns the writer, but owning it is only half the selection: the resolution
+        says to *reconcile* by exact-request replay "where the existing journal
+        permits, then release only after the candidate is proven
+        PUBLISHED/REJECTED". Without this hop the ordinary recoverable case - the
+        bytes committed, the reply lost - would sit in quarantine until an operator
+        intervened, even though the journal could answer immediately.
+
+        This is a reconciliation, not a retry: the same four request ids are
+        replayed, so the authority answers from its journal and completed-reply
+        cache. No second id is minted, no second view is opened, and no second
+        effect can occur. Exactly one attempt is made.
+
+        A run that owns **no** pending saga is not reconciled. That is the
+        lost-``CREATE_VIEW`` shape (E512): the view id was never learned, so there
+        is nothing to replay and the fence in ``close()`` stays the whole answer.
+        """
+        try:
+            publication = self._managed.publish_plan(source, candidate, deadline=deadline)
+        except ExecutionUncertainError:
+            if not self._managed.publication_pending:
+                raise  # no saga to replay; fail closed exactly as before
+            publication = self._managed.reconcile_publication(deadline=deadline)
         return publication.plan_ref
 
 

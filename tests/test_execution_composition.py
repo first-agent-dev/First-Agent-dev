@@ -3539,6 +3539,12 @@ def test_an_unresolved_candidate_publication_keeps_the_writer_and_reconciles(
     The invariant in both: while the outcome is unknown, `close()` must NOT release
     the writer and the CANDIDATE view must NOT be dropped while the workspace goes
     back to `AVAILABLE`.
+
+    R25 binds reconciliation to the port, so this test drives
+    ``ManagedExecution.publish_plan`` directly. That is deliberate: the port's own
+    behaviour (reconcile once, then classify) is a separate oracle below, and a
+    test that went through the port could no longer observe the unresolved state at
+    all -- precisely because the port now settles it.
     """
     plan_path = site.source / PLAN_RELATIVE
     plan_path.parent.mkdir(parents=True, exist_ok=True)
@@ -3597,9 +3603,8 @@ def test_an_unresolved_candidate_publication_keeps_the_writer_and_reconciles(
             run = _run(site.source)
             managed = managed_execution_for_run(run, config_path=yaml_path)
             assert managed is not None
-            publisher = BoundPlanPublisher(managed, managed.binding)
             with pytest.raises(ExecutionUncertainError) as unresolved:
-                publisher.publish_candidate(source, candidate)
+                managed.publish_plan(source, candidate)
             pending = unresolved.value.pending_publication
             assert pending is not None
             assert managed.publication_pending is True
@@ -3639,6 +3644,174 @@ def test_an_unresolved_candidate_publication_keeps_the_writer_and_reconciles(
                 assert _status(site, workspace_id)["status"] == "OWNED"
                 # The canonical plan never moved: no half-commit is claimed.
                 assert plan_path.read_bytes() == b"# Existing plan\n"
+        finally:
+            stop.set()
+            runner.join(timeout=5)
+            assert not runner.is_alive()
+
+
+@pytest.mark.parametrize("ambiguity", ["reply-lost", "handler-refused", "determinate-refusal"])
+def test_the_bound_publisher_reconciles_one_ambiguity_and_then_classifies(
+    site: Site, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, ambiguity: str
+) -> None:
+    """R25 DoD: bound publisher, one-shot uncertainty, no premature release.
+
+    The port is the only place that can decide the difference between "recoverable
+    now" and "quarantine", so all three shapes are driven through it and the
+    *observable* consequence is asserted, not the internal flag:
+
+    * ``reply-lost`` — the commit happened, the reply vanished. The port replays the
+      same ids, proves the revision, returns the promoted PlanRef, and the writer is
+      released only afterwards. The run never enters quarantine.
+    * ``handler-refused`` — the authority's PUBLISH handler failed, so the journal
+      holds UNKNOWN and no replay can prove anything. The port raises the
+      uncertainty, the writer stays fenced, and the workspace stays OWNED.
+    * ``determinate-refusal`` — the authority refuses before anything was staged.
+      That is the pre-existing R25 refusal, and it is the *good* case: no pending
+      saga exists, so nothing is replayed and the writer is released normally. The
+      canonical plan is untouched and no candidate view is left behind.
+
+    In every arm the canonical plan is only ever the old bytes or the candidate
+    bytes — never a partial state — and no second publication id is minted.
+    """
+    plan_path = site.source / PLAN_RELATIVE
+    plan_path.parent.mkdir(parents=True, exist_ok=True)
+    plan_path.write_bytes(b"# Existing plan\n")
+    original_bytes = plan_path.read_bytes()
+    source = read_plan_snapshot(site.source, Path(PLAN_RELATIVE))
+    candidate = snapshot_from_bytes("draft.md", b"# Repaired plan\n")
+    service_path, yaml_path = _configs(tmp_path, _document(site))
+    with SupervisorService(read_config_file(service_path)) as service:
+        workspace_id = _registered(service)
+        stop = threading.Event()
+        runner = threading.Thread(target=service.serve_forever, args=(stop,), daemon=True)
+        runner.start()
+        original = service.authority.publish_candidate_plan
+        seen: list[str] = []
+
+        def sabotage(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            seen.append(str(kwargs.get("operation_id")))
+            if ambiguity == "determinate-refusal":
+                raise SupervisorError("INPUT_POLICY")
+            if len(seen) <= 2:
+                raise SupervisorError("DURABILITY_UNKNOWN")
+            return original(*args, **kwargs)
+
+        lost: set[str] = set()
+        client_request = ExecutionClient.request
+        published_ids: list[str] = []
+
+        def counting_request(self: Any, operation: Any, *, request_id: str, **kwargs: Any) -> Any:
+            if operation is Operation.PUBLISH:
+                published_ids.append(request_id)
+            answer = client_request(self, operation, request_id=request_id, **kwargs)
+            if ambiguity == "reply-lost" and operation is Operation.PUBLISH and not lost:
+                lost.add(request_id)
+                raise ExecutionUncertainError("op-" + request_id, code="EXECUTION_UNKNOWN")
+            return answer
+
+        if ambiguity == "reply-lost":
+            monkeypatch.setattr(ExecutionClient, "request", counting_request)
+        else:
+            monkeypatch.setattr(service.authority, "publish_candidate_plan", sabotage)
+        try:
+            run = _run(site.source)
+            managed = managed_execution_for_run(run, config_path=yaml_path)
+            assert managed is not None
+            publisher = BoundPlanPublisher(managed, managed.binding)
+            if ambiguity == "reply-lost":
+                before = managed.current_revision_id
+                promoted = publisher.publish_candidate(source, candidate)
+                assert promoted.sha256 == candidate.ref.sha256
+                # The run must now sit on the revision the authority actually
+                # committed. "Changed" is not enough: a wrong-but-different id would
+                # make every later CAS fail with STALE_REVISION against the
+                # authority's own truth, so the value is pinned to the workspace
+                # record rather than to the port's return value (a PlanRef carries
+                # no revision id).
+                assert managed.current_revision_id != before
+                head = json.loads((site.state / "workspaces" / workspace_id / "current.json").read_text())[
+                    "revision_id"
+                ]
+                assert managed.current_revision_id == head
+                assert managed.publication_pending is False
+                assert plan_path.read_bytes() == candidate.utf8_bytes
+                # Exactly one id, replayed: the commit happened once.
+                assert len(set(published_ids)) == 1
+                assert managed.close() is True
+                assert _status(site, workspace_id)["status"] == "AVAILABLE"
+            elif ambiguity == "determinate-refusal":
+                with pytest.raises(ExecutionRejectedError):
+                    publisher.publish_candidate(source, candidate)
+                # A determinate refusal leaves no saga behind, so the writer is not
+                # fenced: the run ends clean and the workspace is reusable.
+                assert managed.publication_pending is False
+                assert managed.close() is True
+                assert _status(site, workspace_id)["status"] == "AVAILABLE"
+                assert plan_path.read_bytes() == original_bytes
+            else:
+                with pytest.raises(ExecutionUncertainError):
+                    publisher.publish_candidate(source, candidate)
+                # The port did attempt the reconciliation (it is not the pre-R25
+                # behaviour of leaving the ambiguity unexamined) ...
+                assert managed.publication_pending is True
+                # ... and the writer is fenced behind it.
+                assert managed.close() is False
+                assert _status(site, workspace_id)["status"] == "OWNED"
+                # No half-commit is ever claimed.
+                assert plan_path.read_bytes() == original_bytes
+        finally:
+            stop.set()
+            runner.join(timeout=5)
+            assert not runner.is_alive()
+
+
+def test_the_port_does_not_invent_a_saga_when_create_view_was_lost(
+    site: Site, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """EDGE / negative proof for R25: reconciliation needs a handle, not optimism.
+
+    A lost ``CREATE_VIEW`` reply leaves the authority holding a CANDIDATE view whose
+    id the caller never learned, so ``publish_plan`` cannot build a pending record
+    (E512, measured). The port must therefore NOT reach for reconciliation: there
+    are no ids to replay, and a run that guessed one would be asserting an effect
+    it never observed.
+
+    The failure is still fail-closed - the fence in ``close()`` keeps the workspace
+    OWNED - but that is the recovery path, not the run's.
+    """
+    plan_path = site.source / PLAN_RELATIVE
+    plan_path.parent.mkdir(parents=True, exist_ok=True)
+    plan_path.write_bytes(b"# Existing plan\n")
+    source = read_plan_snapshot(site.source, Path(PLAN_RELATIVE))
+    candidate = snapshot_from_bytes("draft.md", b"# Repaired plan\n")
+    service_path, yaml_path = _configs(tmp_path, _document(site))
+    with SupervisorService(read_config_file(service_path)) as service:
+        workspace_id = _registered(service)
+        stop = threading.Event()
+        runner = threading.Thread(target=service.serve_forever, args=(stop,), daemon=True)
+        runner.start()
+        original = ExecutionClient.request
+        lost: set[str] = set()
+
+        def losing(self: Any, operation: Any, *, request_id: str, **kwargs: Any) -> Any:
+            answer = original(self, operation, request_id=request_id, **kwargs)
+            if operation is Operation.CREATE_VIEW and not lost:
+                lost.add(request_id)
+                raise ExecutionUncertainError("op-" + request_id, code="EXECUTION_UNKNOWN")
+            return answer
+
+        monkeypatch.setattr(ExecutionClient, "request", losing)
+        try:
+            run = _run(site.source)
+            managed = managed_execution_for_run(run, config_path=yaml_path)
+            assert managed is not None
+            publisher = BoundPlanPublisher(managed, managed.binding)
+            with pytest.raises(ExecutionUncertainError):
+                publisher.publish_candidate(source, candidate)
+            assert managed.publication_pending is False  # nothing to replay
+            assert managed.close() is False  # fail-closed via the view fence
+            assert _status(site, workspace_id)["status"] == "OWNED"
         finally:
             stop.set()
             runner.join(timeout=5)
