@@ -60,7 +60,10 @@ ONEAI_KEY = ""  # или переменная окружения ONEAI_API_KEY
 COARENA_MODEL = "claude-fable-5-2"  # id из --models, вписывается как есть
 ONEAI_MODEL = "claude-opus-5-5"
 
-MAX_TOKENS = 32768  # лимит ответа в токенах, включая рассуждение
+# Лимит ответа в токенах, включая рассуждение. Потолок задаёт модель (см. --models:
+# «вывод до N», у Coarena это 16384) — выше значения модель не примет, и шлюз
+# вернёт 400. Поэтому значение подрезается по известному потолку с предупреждением.
+MAX_TOKENS = 16384
 REASONING_EFFORT = "high"  # off | low | medium | high | max
 SAVE_PATH = "chat.md"  # куда писать диалог при --save
 SAVE_EVERY_TURN = True  # переписывать файл после каждого ответа
@@ -566,6 +569,7 @@ class ChatClient:
         self.url = spec["base"] + "/chat/completions"
         self.models_url = spec["models_url"]
         self.turns: list[tuple[str, Reply | None, str]] = []  # вопрос, ответ, время
+        self.model_ceiling = 0  # «вывод до N» из --models: выше модель не отдаст
 
     # -- запрос ----------------------------------------------------------
     def headers(self) -> dict[str, str]:
@@ -576,6 +580,33 @@ class ChatClient:
             "User-Agent": USER_AGENT,
         }
 
+    def apply_ceiling(self, limit: int) -> int:
+        """Подрезать лимит по потолку модели и сказать об этом один раз.
+
+        Шлюз вернёт 400 на max_completion_tokens выше потолка, поэтому лучше
+        отправить допустимый максимум и объяснить, почему цифра меньше.
+        """
+        if self.model_ceiling and limit > self.model_ceiling:
+            print(
+                yellow(f"  лимит {limit} больше потолка модели {self.model_ceiling} — отправляю {self.model_ceiling}")
+            )
+            return self.model_ceiling
+        return limit
+
+    def learn_ceiling(self) -> None:
+        """Узнать потолок вывода из списка моделей; молча — если список недоступен."""
+        try:
+            models = self.fetch_models()
+        except (ApiError, BenchError):
+            return
+        for model in models:
+            if str(model.get("id")) != self.settings.model:
+                continue
+            limit = model.get("max_tokens")
+            if isinstance(limit, int) and limit > 0:
+                self.model_ceiling = limit
+            return
+
     def build_body(self, history: Sequence[Mapping[str, str]]) -> dict[str, Any]:
         """Тело запроса: лимит и усилие уходят всегда, чтобы не зависеть от умолчаний шлюза."""
         rows = [{"role": "system", "content": self.settings.system}] if self.settings.system else []
@@ -585,7 +616,7 @@ class ChatClient:
             "messages": rows,
             "stream": True,
             "stream_options": {"include_usage": True},
-            "max_completion_tokens": self.settings.max_tokens,
+            "max_completion_tokens": self.apply_ceiling(self.settings.max_tokens),
         }
         if self.settings.effort != "off":
             body["reasoning_effort"] = self.settings.effort
@@ -724,6 +755,7 @@ class ChatClient:
             suffix = dim("   " + " · ".join(extra)) if extra else ""
             print(f" {mark} {mid}{suffix}")
         print(dim(f"«*» — выбрана сейчас; сменить: -m <id> или /model <id> (сейчас {self.settings.model})"))
+        print(dim("«вывод до N» — максимум выходных токенов модели (текст + рассуждение), выше не отдаст"))
         return 0
 
     def check(self) -> int:
@@ -825,6 +857,8 @@ class ChatClient:
         """Чат: каждый ход несёт всю историю, поэтому модель помнит разговор."""
         history: list[dict[str, str]] = []
         limit = width()
+        if not self.model_ceiling:
+            self.learn_ceiling()
         print(rule(f"{self.label} · чат"))
         self.header_line()
         for line in wrap(
@@ -894,7 +928,10 @@ class ChatClient:
             self.print_models(argument)
         elif name == "/model" and argument:
             settings.model = argument
-            print(dim(f"  модель: {settings.model} (история сохранена)"))
+            self.model_ceiling = 0
+            self.learn_ceiling()
+            ceiling = f", потолок вывода {self.model_ceiling}" if self.model_ceiling else ""
+            print(dim(f"  модель: {settings.model} (история сохранена){ceiling}"))
         elif name == "/effort" and argument in EFFORTS:
             settings.effort = argument
             print(dim(f"  усилие: {settings.effort} (уйдёт в следующем запросе)"))
@@ -906,7 +943,12 @@ class ChatClient:
                 print(yellow("  больше миллиона: похоже на опечатку"))
             else:
                 settings.max_tokens = value
-                print(dim(f"  лимит ответа: {settings.max_tokens} токенов (включая рассуждение)"))
+                note = (
+                    f"; потолок модели {self.model_ceiling}"
+                    if self.model_ceiling and value > self.model_ceiling
+                    else ""
+                )
+                print(dim(f"  лимит ответа: {settings.max_tokens} токенов (включая рассуждение){note}"))
         elif name == "/q":
             self.reread(argument)
         elif name == "/continue":
@@ -1104,6 +1146,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         save=str(args.save),
     )
     client = ChatClient(settings)
+    client.learn_ceiling()
     if args.models is not None:
         return client.print_models(str(args.models))
     if args.check:
