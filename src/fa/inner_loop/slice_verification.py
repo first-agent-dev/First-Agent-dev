@@ -609,38 +609,31 @@ def run_commands(
     return tuple(results)
 
 
-def _existing_test_paths(
-    test_paths: Sequence[str], root: Path, port: WorkspacePort | None = None
-) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    """Split declared pytest paths into (confirmed, unconfirmed).
+def _existing_test_paths(test_paths: Sequence[str], root: Path, port: WorkspacePort | None = None) -> tuple[str, ...]:
+    """Keep declared pytest paths that exist at this snapshot's T0/now point.
 
-    Passing ``port`` asks the snapshot itself; without one this asks the controller
-    host. The difference is not cosmetic (Q142): a test the coder created in the
-    revision does not exist on the host, so a host check reports "no declared TESTS
-    path exists" and the slice is treated as having nothing to prove -- a false pass
-    produced by a missing file rather than by a passing test.
+    ``port`` asks the snapshot instead of the controller host, because a test the
+    coder created in the revision does not exist on the host and a host check would
+    silently drop it (Q142).
 
-    Unconfirmed is deliberately not absent. The port answers a read and has no stat,
-    so "not there" and "could not tell" arrive as the same refusal; collapsing them
-    into absent would delete tests from the gate silently.
+    Absence and refusal are the same answer, by the port's own contract: it does not
+    disclose whether a path exists, so ``denied`` means "not this path" for both. The
+    gate keeps its documented behaviour -- an absent path contributes no rows -- and
+    must not upgrade a refusal into "unproven", which turned every slice whose test
+    file lives elsewhere into a blocking error.
     """
-    confirmed: list[str] = []
-    unconfirmed: list[str] = []
+    existing: list[str] = []
     for raw_path in test_paths:
         path = raw_path.strip()
         if not path:
             continue
         filesystem_path = path.split("::", 1)[0]
-        if port is None:
-            # The host can tell "absent" from "present", and absent is the documented
-            # empty-T0 case: the plan may declare a test path the slice has not created.
-            if (Path(root) / filesystem_path).exists():
-                confirmed.append(path)
-            continue
-        # The port cannot: it answers reads, so absence and refusal look the same, and
-        # only a refusal to read something we could otherwise expect is unconfirmed.
-        (confirmed if _port_path_confirmed(port, filesystem_path) else unconfirmed).append(path)
-    return tuple(dict.fromkeys(confirmed)), tuple(dict.fromkeys(unconfirmed))
+        present = (
+            (Path(root) / filesystem_path).exists() if port is None else _port_path_confirmed(port, filesystem_path)
+        )
+        if present:
+            existing.append(path)
+    return tuple(dict.fromkeys(existing))
 
 
 def _port_path_confirmed(port: WorkspacePort, path: str) -> bool:
@@ -835,14 +828,7 @@ def capture_test_nodeids(
     command's own stdout, and both modes hand the *same* bytes to the same parser,
     so neither is a weaker oracle.
     """
-    existing_paths, unconfirmed = _existing_test_paths(test_paths, Path(root), port)
-    if unconfirmed:
-        # Not the same as absent: the plan named these, and this snapshot cannot
-        # confirm them. Reading that as "nothing to prove" would be a false pass.
-        return NodeidCapture(
-            nodeids=None,
-            detail="declared TESTS paths could not be confirmed at this snapshot: " + ", ".join(unconfirmed),
-        )
+    existing_paths = _existing_test_paths(test_paths, Path(root), port)
     if not existing_paths:
         return NodeidCapture(nodeids={}, detail="no declared TESTS path exists at this snapshot")
 

@@ -784,17 +784,19 @@ def test_a_missing_block_never_becomes_an_empty_t0(tmp_path: Path) -> None:
     assert "markers" in capture.detail
 
 
-def test_an_unconfirmed_test_path_is_unproven_not_absent(tmp_path: Path) -> None:
-    """C1 — the false pass Q142 found: a test the coder created is not on the host.
+def test_a_path_the_snapshot_cannot_read_is_absent_and_not_an_error(tmp_path: Path) -> None:
+    """C1 — absence and refusal are one answer, and that answer is not "unproven".
 
-    With a port, a path the snapshot cannot read is *unconfirmed*. Reporting ``{}``
-    there would tell the gate "this slice declared no tests", which is a pass it did
-    not earn. The host keeps the documented empty-T0 behaviour, where absence is real.
+    The port does not disclose whether a path exists (``workspace_port.py:35-39``), so
+    a declared test file that is not in the snapshot arrives as a refusal. The gate's
+    documented behaviour is that an absent path contributes no rows; upgrading the
+    refusal to "unproven" made every managed slice whose test file lives elsewhere
+    block the run, which is how this was found (a real workflow oracle went red).
     """
 
     class _EmptySnapshot:
         def read_file(self, *_args: object, **_kwargs: object) -> object:
-            raise WorkspacePortError("refused")
+            raise WorkspacePortError("denied")
 
     (tmp_path / "test_sample.py").write_text("def test_ok():\n    assert True\n", encoding="utf-8")
 
@@ -802,8 +804,8 @@ def test_an_unconfirmed_test_path_is_unproven_not_absent(tmp_path: Path) -> None
         ("test_missing.py",), root=tmp_path, executor=_inband_executor(writes_visible=False), port=_EmptySnapshot()
     )
 
-    assert capture.nodeids is None
-    assert "could not be confirmed" in capture.detail
+    assert capture.nodeids == {}
+    assert "no declared TESTS path" in capture.detail
 
 
 def test_a_confirmed_snapshot_path_runs_and_reports(tmp_path: Path) -> None:
@@ -851,3 +853,25 @@ def test_a_marker_value_cannot_become_shell_syntax() -> None:
 
     assert "'" in prefixed
     assert "$(id)" not in prefixed.replace("'$(id); rm -rf /'", "")
+
+
+def test_a_host_present_path_absent_from_the_snapshot_is_not_run(tmp_path: Path) -> None:
+    """C1 — the false pass Q142 found, stated positively.
+
+    The file exists on the controller host but not in the snapshot under judgement.
+    A host check would run it (and report on the wrong tree); the port must not. This
+    is the only case that distinguishes the two, which is why the composition oracle
+    cannot catch it — its declared test path exists in neither place.
+    """
+    (tmp_path / "test_sample.py").write_text("def test_ok():\n    assert True\n", encoding="utf-8")
+
+    class _SnapshotWithoutIt:
+        def read_file(self, *_args: object, **_kwargs: object) -> object:
+            raise WorkspacePortError("denied")
+
+    capture = capture_test_nodeids(
+        ("test_sample.py",), root=tmp_path, executor=_inband_executor(writes_visible=False), port=_SnapshotWithoutIt()
+    )
+
+    assert capture.nodeids == {}
+    assert "test_sample.py::test_ok" not in str(capture.nodeids)

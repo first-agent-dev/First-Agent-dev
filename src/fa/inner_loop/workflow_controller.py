@@ -406,10 +406,15 @@ def _pinned_verify_substrate(ctx: WorkflowContext) -> Iterator[_VerifySubstrate 
     if profile is None:
         raise ExecutionContractError  # A managed run has no host tree to fall back to.
     deadline = ctx.deadline_mono if ctx.deadline_mono is not None else time.monotonic() + 30.0
+    # The plan the stage ran against, not the one the run started with: a promoted
+    # candidate changes the plan's bytes, and the authority proves the pinned ref
+    # against THIS revision. Pinning the stale ref is refused as INPUT_POLICY, which
+    # is the authority correctly declining to hand out a view of a plan mismatch.
+    plan_ref = ctx.admission.snapshot.ref if ctx.admission is not None else ctx.managed_plan_ref
     grant = managed.client.pin_reader(
         managed.binding,
         revision_id=managed.current_revision_id,
-        plan_ref=ctx.managed_plan_ref,
+        plan_ref=plan_ref,
         deadline=deadline,
     )
     view = grant.view_ref
@@ -427,7 +432,7 @@ def _pinned_verify_substrate(ctx: WorkflowContext) -> Iterator[_VerifySubstrate 
         view=view,
         grant=grant,
         profile=profile,
-        plan_ref=ctx.managed_plan_ref,
+        plan_ref=plan_ref,
         controller_root=ctx.workspace,
     )
     port = ClientWorkspacePort(
@@ -436,7 +441,7 @@ def _pinned_verify_substrate(ctx: WorkflowContext) -> Iterator[_VerifySubstrate 
         view=view,
         grant=grant,
         cache_dir=ctx.workspace / ".fa" / "verify-read-cache",
-        plan_ref=ctx.managed_plan_ref,
+        plan_ref=plan_ref,
     )
     try:
         yield _VerifySubstrate(executor=ManagedVerifyCommandExecutor(reader, root=ctx.workspace), port=port)
