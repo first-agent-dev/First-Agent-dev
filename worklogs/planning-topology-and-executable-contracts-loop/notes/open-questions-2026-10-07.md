@@ -3219,3 +3219,57 @@ canonical source (`workspace.py:225`).
 
 **Impact if deferred:** R24 stays two-thirds done: a managed verify still cannot run
 on the authority, and the `executor` parameter has no production caller.
+
+### Q142 addendum — B is not implementable; the audit for it found four more items
+
+Re-checked the whole verification module instead of just wiring the recommendation.
+**B is falsified by the mount table, not by taste:**
+
+- a READ view mounts **exactly two things** — sealed source at `/workspace` (ro) and
+  the toolchain cache (`profiles.py:108–113`);
+- its `/scratch` is a **tmpfs inside the container** (`profiles.py:161–167`), with the
+  authority's own instruction in the comment: *"Do not retry with the supervisor-owned
+  host scratch bind if rejected"*;
+- so the host scratch directory `_ensure_inputs` creates for a READ view
+  (`workspace.py:5649`) is **not mounted** on that path at all. Nothing is written to it
+  by an exec, and there is nothing on the host to read back.
+
+B therefore needs a new v2 operation to expose scratch contents — the same escalation
+the spec reserves for R16 `DIFF_REVISIONS`. That is a product/spec change, not wiring.
+
+**The spec already answers the question** (`i03-execution-workspace-spec:1122`):
+*"reports/cache/temp are private scratch, not source revisions or controller
+artifacts"* — the controller is explicitly not meant to receive the artifact. Only the
+verdict crosses. That is A's shape, and `:1107` names the runner as a managed
+noninteractive operation.
+
+**A's bound, measured rather than assumed.** One JUnit report for 52 tests is
+15 826 bytes → **304 bytes/test**; the receipt carries the last 64 KiB
+(`protocol.py:26`). So A holds ≈ **215 tests per report**, and the largest test file in
+this repo declares 128. Overflow is loud, not silent: `cell_worker` sets
+`truncated=True` when a stream exceeds its limit, and the adapter turns that into
+`ERROR` (never PASS) — the same refusal already tested.
+
+**Four more items the audit found, none of them B's:**
+
+1. `_existing_test_paths` (`:555–565`) decides what to run from the **host** tree. In a
+   managed run that is a *silent false pass*: a test file the coder created in the
+   revision does not exist on the host, so the slice reads "no declared TESTS path
+   exists at this snapshot" and is treated as vacuous, not as unproven. Must read the
+   revision — `LIST_PROJECT_ARTIFACTS`/the manifest — under the same managed switch.
+2. The adapter currently drops `env` (`del env`), which would also drop the
+   recursion guard and kill-check marker (`FA_VERIFY_GATE_TEST_DEPTH`,
+   `FA_VERIFY_GATE_KILL_CHECK`, `FA_VERIFY_JUNIT_RUN_ID`). The cell environment is the
+   authority's to fix, so the honest mechanism is a command-prefix assignment
+   (`VAR=value command`), not a process environment.
+3. **The mutation overlay is its own increment, not R24 step 3**: it is a host
+   `copytree` + `mkdtemp` + `write_text` (`:1096`, `:1149`, `:1155`) plus a git base read.
+   The spec's destination for it is a *supervised derivative view* (`:1107–1112`,
+   "materialize a derivative with the same supervised view primitives"), i.e. a v2
+   write path — out of scope for verification and should be tracked separately.
+4. Baseline capture (`capture_test_nodeids`) is part of R24 too — it is the T0 half of
+   the same comparison, and it feeds on the same JUnit/`_existing_test_paths` mechanism,
+   so items 1–2 apply to it identically.
+
+**Revised recommendation: A**, with items 1–2 as part of the same step and item 3
+promoted to its own question/increment.
