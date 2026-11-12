@@ -22,8 +22,9 @@ from __future__ import annotations
 
 import pytest
 
+from fa.execution.publication import publish_view
 from fa.execution.supervisor import SupervisorError
-from fa.execution.types import Access, ViewPurpose
+from fa.execution.types import Access, GrantReply, ViewPurpose
 from fa.execution.workspace import WorkspaceAuthority
 from tests.test_execution_readers import ref
 from tests.test_execution_views import native_profile, read_only_profile
@@ -31,7 +32,7 @@ from tests.test_execution_workspace import ACTOR, PEER, Site, ok, until
 from tests.test_execution_workspace import site as site
 
 
-def _read_pin(owner: WorkspaceAuthority, ids: dict[str, str]) -> object:
+def _read_pin(owner: WorkspaceAuthority, ids: dict[str, str]) -> GrantReply:
     """Pin the current revision as the verification substrate does (READ/PROJECT)."""
     return owner.pin_reader(
         PEER,
@@ -56,7 +57,7 @@ def test_a_pinned_read_view_cannot_write_the_tree_it_verifies(site: Site) -> Non
         ids = ok(lambda: site.register(owner))
         lease = ok(lambda: site.claim(owner, ids))
         grant = ok(lambda: _read_pin(owner, ids))
-        assert grant.view_ref.access is Access.READ
+        assert ref(grant).access is Access.READ
 
         with pytest.raises(SupervisorError) as refused:
             owner.write_file(
@@ -89,18 +90,25 @@ def test_a_read_view_is_never_the_publishing_view(site: Site) -> None:
         grant = ok(lambda: _read_pin(owner, ids))
 
         with pytest.raises((SupervisorError, Exception)) as refused:
-            owner.publish_view(
+            publish_view(
+                owner,
                 PEER,
                 ACTOR,
                 view_ref=ref(grant),
                 capability=grant.capability,
-                plan_ref=None,
-                expected_revision=None,
+                sealed_manifest_id="manifest-" + "0" * 32,
+                expected_base_revision=ref(grant).base_revision,
                 operation_id="op-" + "0" * 32,
                 deadline=until(),
             )
 
+        # The refusal must come from the READ view, not from the call shape: a correctly
+        # shaped request naming the pinned READ view is still refused, so this cannot
+        # pass merely because an argument was wrong (that was the first version's hole).
         assert refused.value is not None
+        # The authority reports this as a closed request rejection; the point of the
+        # assertion is that a *shaped* request naming the READ view is refused at all.
+        assert str(refused.value) == "execution_request_rejected"
         del lease
 
 
@@ -117,7 +125,7 @@ def test_the_verification_substrate_pins_read_and_a_writer_pins_write(site: Site
 
         reader = ok(lambda: _read_pin(owner, ids))
 
-        assert reader.view_ref.access is Access.READ
-        assert reader.view_ref.purpose is ViewPurpose.PROJECT
+        assert ref(reader).access is Access.READ
+        assert ref(reader).purpose is ViewPurpose.PROJECT
         assert read_only_profile().interactive is False
         assert native_profile().interactive is True

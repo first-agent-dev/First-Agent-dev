@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, override
 
 import pytest
 
@@ -20,6 +20,7 @@ from fa.execution.primitives import ExecutionContractError
 from fa.execution.profiles import ExecutionProfile
 from fa.execution.types import Access, GrantReply, NamespaceRef, Operation, ViewPurpose, ViewRef
 from fa.inner_loop import workflow_controller
+from fa.inner_loop.plan_admission import PlanRef
 from fa.inner_loop.workflow_controller import (
     WorkflowContext,
     _pinned_verify_substrate,
@@ -54,7 +55,7 @@ class _NoProfile:
     client = object()
     binding = object()
     current_revision_id = "rev-current"
-    read_only_profile = None
+    read_only_profile: ExecutionProfile | None = None
 
 
 def test_a_managed_run_without_a_read_only_profile_degrades_loudly(
@@ -83,11 +84,22 @@ class _Client(ExecutionClient):
         self.pin_calls: list[dict[str, Any]] = []
         self.stop_calls: list[dict[str, Any]] = []
 
-    def pin_reader(self, binding: Any, *, revision_id: str, plan_ref: Any, deadline: float) -> Any:
+    @override
+    def pin_reader(
+        self,
+        binding: object,
+        revision_id: str,
+        *,
+        plan_ref: PlanRef | None = None,
+        deadline: float | None = None,
+    ) -> GrantReply:
         self.pin_calls.append({"binding": binding, "revision_id": revision_id, "plan_ref": plan_ref})
         return self.grant
 
-    def stop_view(self, namespace: Any, *, view: Any, grant: Any, deadline: float) -> bool:
+    @override
+    def stop_view(
+        self, namespace: NamespaceRef, *, view: ViewRef, grant: GrantReply, deadline: float | None = None
+    ) -> bool:
         self.stop_calls.append({"namespace": namespace, "view": view})
         return True
 

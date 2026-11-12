@@ -49,6 +49,49 @@ are authored here; candidate exercise details are proposals for planner/reviewer
 - **Planner disposition:** pending. This coder handoff does not amend the oracle, case ownership,
   fixture authorization, or live result.
 
+## I03-LIVE-28 — E508 / S3P3 staged candidate feeds `I03-LIVE-23` (merged by E515, Q143 option A)
+
+- **Contracts / producers:** E508; S3P3 slice A; CT93, CT94, CT116, CT118, CT120; `I03-LIVE-23`
+  (owning case) and `I03-LIVE-S06` (the join). Producers: `src/fa/execution/client.py::open_candidate_view`
+  and `read_candidate_buffer`; `src/fa/inner_loop/tools/write_file.py::build_scoped_write_file_tool`
+  (candidate branch); `src/fa/inner_loop/stage_candidate.py::capture_stage_candidate`.
+- **Why the case id is not in the register.** E508 drafted this subject as `I03-LIVE-28` in the master
+  sheet only. Register, index, producer-baseline and producer-coverage are frozen for this era
+  (`scripts/check_execution_e2e_coverage.py:659-670`; frozen counts asserted at
+  `tests/test_e2e_artifact_contract.py:340-350`, 125/89/35, and `test_register_only_reuses_s06_for_its_explicit_extension`
+  admits exactly one duplicate). Q90 D4 settled the policy: new producer keys are assigned to existing
+  cases, no new case ids. Q143 option A therefore makes this an **extension of `I03-LIVE-23`** rather
+  than a case of its own, and this handoff is the register-side home for the keys.
+- **Production path:** `_run_admission_repair` seeds a candidate for `ADMISSION_REPAIR` and `EVAL_REPLAN`
+  only (`plan_promotion.seed_plan_candidate` refuses `ORDINARY_PLANNING`), so a first plan is never a
+  candidate. The composition root opens the CANDIDATE view, the planner rewrites the buffer through the
+  scoped writer, `capture_stage_candidate` reads it once while the view is alive, and the controller
+  validates the captured bytes (label + digest) before handing them to `publish_plan`.
+- **The invariant this proves.** The seed under `.fa/admission/<run>/` holds the *last admitted bytes*.
+  Reading it after the stage would validate bytes nobody wrote and could promote an unchanged candidate
+  as a repair. That is why the read must happen inside the view's lifetime and why a partial capture is
+  a named refusal rather than "no candidate".
+- **Observable effect / artifact:** local proof is `tests/test_s3p3_candidate_buffer.py` (13 passed over
+  the real authority) and `tests/test_execution_composition.py::test_workflow_root_publishes_candidate_through_real_local_authority`
+  (real CLI + real supervisor; the recorded trajectory must be exactly `["CANDIDATE", "CANDIDATE"]`).
+  Both are local only.
+- **Live observation (to fold into the `I03-LIVE-23` run sheet at STEP8):** on the host with the installed
+  service and a structurally failing plan — two `WRITE_FILE` requests against a `CANDIDATE` view and none
+  against `PROJECT` for the candidate address; the seeded host candidate file unchanged by the planner
+  and removed after the stage; `CREATE_VIEW` carrying `candidate_scope.plan_ref` equal to the payload
+  `plan_ref`; the canonical bytes becoming exactly the repaired bytes with one revision advance;
+  `admission.json` recording the attempt with the candidate digest. Negative controls, canonical plan
+  byte-identical each time: `candidate_scope: null` (codec refusal, no wire request), a foreign buffer
+  label (`PATH_DENIED`), `write_file` on the CANDIDATE view (`denied`), a second write without the
+  returned digest (`STALE_REVISION`); and a second repair round must validate the new candidate, not the
+  previous round's bytes.
+- **Host-only assumptions / limitations:** no fixture or run sheet is assigned (SLICE6 STEP8, after STEP7
+  review). The local banks prove the substrate and the trajectory; only the host can show the installed
+  supervisor, the operator's canonical checkout and a real provider-driven repair in one run.
+  `I03-LIVE-23` remains `PLANNED / UNEXECUTED`.
+- **Planner disposition:** pending. E515 records the merge and this handoff; it does not promote a live
+  result, authorize a fixture, or amend case ownership.
+
 ## I03-LIVE-24 — CT99 / E274 pre-reservation authority check
 
 - **Contracts / producers:** CT99; `I03-LIVE-24`; `WorkspaceAuthority.authorize` and its
