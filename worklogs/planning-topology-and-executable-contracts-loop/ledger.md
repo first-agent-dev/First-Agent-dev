@@ -9095,3 +9095,65 @@ this reconcile are proved at the port, while the root tests still stub
 cannot execute here — its staged run reads `~/.fa/config.yaml`, absent in the stage —
 so no mutation *score* is claimed for `execution/`; the three mutation kills above
 were applied by hand. Q139's baseline stays deferred per E512.
+
+### E514 — W1 step (5) and R25's production caller were already built; R24 broke them (2026-11-11; Arena-local)
+
+**What I expected to build and did not.** E507 lists W1 step (5) as "not found: a
+successful publish through the production caller", and E513 lists R25's remaining
+work as "the managed production-caller path over the real `run_workflow`". Both
+were already satisfied by
+`tests/test_execution_composition.py::test_workflow_root_publishes_candidate_through_real_local_authority`,
+added in `0fcc93a`: it runs `cli._cmd_workflow` → real `run_workflow` →
+`_promote_validated_plan` → `BoundPlanPublisher` → a live local `SupervisorService`,
+and asserts the committed revision, the AVAILABLE release, two CANDIDATE-view
+writes and a determinate refusal that is not replayed. Neither E507 nor E513 knew
+it existed, so two records asked for work that was on disk.
+
+**What was actually wrong: R24 broke it.** My own step 3 (`0ee4b27`) took this
+oracle from 2 passed on `b82208b` to 1 failed. Two defects, both mine:
+
+1. `_pinned_verify_substrate` pinned `ctx.managed_plan_ref` — the plan the run
+   *started* with — instead of the plan the stage ran against. After promotion those
+   differ by bytes, and the authority refused `INPUT_POLICY` because the pinned ref
+   did not match the revision it was told to pin. That refusal is correct; the
+   controller was asking for a view of a plan mismatch. The controller already
+   computed the right expression for its own stage dispatch three lines above.
+2. The port-backed path resolver escalated "cannot read this path" into "unproven",
+   on the theory that absence and refusal are distinguishable. They are not: the port
+   documents that it does not disclose existence, so both arrive as `denied`
+   (`workspace_port.py:35-39`). Result: a blocking error for every slice whose
+   declared test file lives outside the snapshot, which is the ordinary case.
+
+A third defect surfaced only when the wider CLI/authoring bank ran: a public symbol
+missing from `__all__` (`FA-AUTHORING-V2-EXPORTS-COMPLETENESS`), and behind it
+`test_cli_ergonomics` blocking because a managed run with **no** read-only profile was
+made fatal. `read_only_profile_id` is optional and absent means "no READ class"
+(`service.py:129-131`), so that configuration is legitimate.
+
+**The fix, and why it is a warning rather than an error.** A managed run that cannot
+build the read substrate — no profile, or a determinate pin refusal — now falls back
+to the host gate **and says so**, which is exactly the pre-R24 behaviour. The
+distinction that matters is between *uncertainty* (retain, refuse, never guess) and a
+*configuration outcome* (report, then proceed as this code always did). Making it
+fatal was my invention, and it blocked real runs.
+
+**What this changes about the record.** W1 step (5) is **DONE-locally**, and R25's
+named production-caller work is **DONE-locally**. Neither is host evidence: W1 as a
+wave still waits on R28's deployed-host confirmation and W4 remains the only
+deployment wave. R25 stays open on its live-host register row, not on this code.
+
+**Verification.** The exact oracle: 2 passed. Verification+composition banks: 269
+passed / 1 xfailed. Differential sweep over the whole `execution|verify|workflow|
+slice|plan|cli` selection against a base-commit worktree: 22 failures on the base,
+the same 22 here, **none new** — every remaining red is pre-existing and unrelated.
+ruff check and mypy clean on both changed modules.
+
+**Kills.** Stale `plan_ref` → the oracle is red. Host path check under a managed port
+→ the new unit oracle is red (the composition oracle cannot catch this one: its
+declared test path exists in neither tree, so both checks agree).
+
+**Process lesson, recorded because it cost a commit.** Landing R24 step 3, I ran the
+verification banks and called it green. The regression it introduced lived in the
+composition oracle, which I did not run. A wave-wide differential sweep against a
+base worktree is cheap (four minutes) and would have caught all three defects at once;
+it should be the default before any commit that changes a shared code path.
