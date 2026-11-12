@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
-from fa.inner_loop.planner_dispatch import PlannerDispatch, PlannerDispatchError, PlannerDispatchKind
+from fa.inner_loop.planner_dispatch import PlannerDispatch, PlannerDispatchError
 from fa.inner_loop.registry import ToolRegistry, ToolResult, ToolSchemaPortabilityError, ToolSpec, ToolWireNameError
 from fa.inner_loop.tool_names import is_valid_wire_name
 from fa.inner_loop.tools.base import resolve_workspace_path
@@ -261,7 +261,7 @@ def _candidate_dispatch(dispatch: PlannerDispatch | None) -> PlannerDispatch | N
         return None
     if not isinstance(dispatch, PlannerDispatch):
         raise PlannerDispatchError
-    return None if dispatch.kind == PlannerDispatchKind.ORDINARY_PLANNING else dispatch
+    return dispatch if dispatch.owns_candidate else None
 
 
 def _build_limited_write(

@@ -1399,11 +1399,12 @@ def _run_stage(
         "_managed_plan_ref": stage_plan_ref,
         # S3P3: says "this stage owns a candidate", so the stage boundary opens
         # the CANDIDATE view. Derived from the dispatch the controller already
-        # built, never from a role name: `_stage_planner_dispatch` returns an
-        # ORDINARY_PLANNING dispatch for every planner stage, and that stage owns
-        # no candidate -- granting it a buffer would be a capability nobody asked
-        # for, and (worse) it has no plan identity to label one with.
-        "_candidate_dispatch": dispatch is not None and dispatch.kind is not PlannerDispatchKind.ORDINARY_PLANNING,
+        # built, never from a role name, and from the dispatch's own positive fact
+        # rather than "kind is not ordinary": an ordinary planner stage owns no
+        # candidate, and neither does an ACQUISITION stage -- granting either one a
+        # buffer would be a capability nobody asked for, and (worse) it has no plan
+        # identity to label one with (CT120).
+        "_candidate_dispatch": dispatch is not None and dispatch.owns_candidate,
     }
     if ctx.run_context is not None and ctx.session_context is not None:
         stage_kwargs.update(

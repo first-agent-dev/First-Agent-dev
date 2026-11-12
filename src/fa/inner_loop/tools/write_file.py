@@ -5,7 +5,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
-from fa.inner_loop.planner_dispatch import PlannerDispatch, PlannerDispatchError, PlannerDispatchKind
+from fa.inner_loop.planner_dispatch import PlannerDispatch, PlannerDispatchError
 from fa.inner_loop.registry import ToolResult, ToolSpec
 from fa.inner_loop.tools.base import require_string, resolve_workspace_path
 from fa.inner_loop.tools.mutation_guard import (
@@ -206,7 +206,7 @@ def build_scoped_write_file_tool(
     runs unchanged. The model sees no difference, which is the point: the same
     planner task works in both worlds.
     """
-    if not isinstance(dispatch, PlannerDispatch) or dispatch.kind == PlannerDispatchKind.ORDINARY_PLANNING:
+    if not isinstance(dispatch, PlannerDispatch) or not dispatch.owns_candidate:
         raise PlannerDispatchError
     target = dispatch.candidate_target
     if target is None:

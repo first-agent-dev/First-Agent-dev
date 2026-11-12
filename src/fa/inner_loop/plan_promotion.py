@@ -64,7 +64,9 @@ def seed_plan_candidate(
 ) -> PlannerDispatch:
     """Fresh no-clobber draft from exact captured bytes, never a second active plan."""
     _canonical_parts(source)  # Scope rejection must precede candidate allocation/provider.
-    if kind == PlannerDispatchKind.ORDINARY_PLANNING:
+    # Only a repairing/replanning stage owns a candidate: a first plan is not a
+    # rewrite of something already admitted (spec §7.0, S5P1 acquisition).
+    if kind not in (PlannerDispatchKind.ADMISSION_REPAIR, PlannerDispatchKind.EVAL_REPLAN):
         raise PlanPromotionError("scope-denied")
     target = f".fa/admission/{run_id}/candidate-{uuid4().hex}.md"
     dispatch = PlannerDispatch(kind, run_id, source.ref.workspace_relative_path, target)
