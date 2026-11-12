@@ -3273,3 +3273,51 @@ this repo declares 128. Overflow is loud, not silent: `cell_worker` sets
 
 **Revised recommendation: A**, with items 1–2 as part of the same step and item 3
 promoted to its own question/increment.
+
+## Q142 — RESOLVED: option A, plus the two fixes the audit found
+
+Landed as `5e453b5` (evidence in the receipt, path resolution, marker prefix) and
+`0ee4b27` (the caller and its single substrate). B was falsified, not deferred: a READ
+view mounts sealed source and the toolchain cache only (`profiles.py:108-113`) and its
+`/scratch` is a tmpfs inside the cell (`profiles.py:161-167`), so there is no
+controller-side artifact to read back and no mount to expose one through.
+
+**What the gate now does.** `_pinned_verify_substrate` pins one READ view of
+`managed.current_revision_id` per verification and hands the same substrate to both
+the T1 capture and `verify_plan`, so the comparison cannot be scoped to two different
+trees. An unmanaged run yields `None` — the host tree is what it already is. A managed
+run with no read-only profile raises rather than yielding `None`, because falling back
+to the controller's copy is precisely the defect R24 removes. T0 keeps the host
+substrate: it runs before the coder's view exists.
+
+**Evidence.** The report travels in the command's own stdout between markers and is
+parsed by the same function as the path-based mode (`_parse_junit_bytes`). Capacity is
+measured: 304 bytes/test against a 64 KiB receipt tail, ≈215 tests, largest test file
+here 128. Overflow is loud — the cell reports `truncated`, and the adapter turns that
+into `ERROR`, never `PASS`.
+
+**Two defects found by auditing the module, not the recommendation:**
+
+1. `_existing_test_paths` consulted the host, so a test the coder created in the
+   revision was invisible and the slice looked like it had nothing to prove — a false
+   pass from a missing file. Host absence stays the documented empty-T0; on a snapshot
+   an unconfirmable path is *unproven*.
+2. The adapter dropped `env`, which would have silently disabled the recursion guard
+   and kill-check marker on the managed substrate. Only harness-computed markers travel
+   now, `shlex`-quoted, as a command prefix.
+
+**Negative oracle** (`tests/test_verify_read_only_oracle.py`), proved against the real
+authority: a READ view lives in `_readers`, and the writable lookup consults
+`_projects`, so a write naming a pin is refused as `UNAUTHORIZED` before any policy
+runs. Mutation confirms what it does *not* cover: removing `_purpose_write_policy`'s
+purpose branch or relaxing `workspace.py:5374` does not kill it; admitting `_readers`
+into the writable lookup does. Those two are second-order fences.
+
+**Remaining, tracked separately (not R24):**
+
+- the **mutation overlay** is still host `copytree`/`mkdtemp`/`write_text`
+  (`slice_verification.py:1096,1149,1155`) plus a git base read. The spec's destination
+  is a supervised derivative view (`:1107-1112`), i.e. a v2 write path — its own
+  increment.
+- C1 end-to-end on a live supervisor is still impossible in this sandbox
+  (`BACKEND_UNAVAILABLE`: no Docker); only the client half is proved here.
