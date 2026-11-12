@@ -43,7 +43,7 @@ import uuid
 from collections.abc import Iterable, Iterator, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Final, override
+from typing import Final, Protocol, override
 from xml.etree import ElementTree
 
 from fa.inner_loop.junit_nodeid_plugin import JUNIT_NODEID_PROPERTY, JUNIT_RUN_ID_ENV, JUNIT_RUN_ID_PROPERTY
@@ -202,6 +202,26 @@ class NodeidCapture:
     detail: str = ""
 
 
+class VerifyCommandExecutor(Protocol):
+    """Where a verify command actually runs: the substrate seam R24 needs.
+
+    Verification used to be welded to ``subprocess.run`` against the host
+    workspace, which made "run this on the authority" impossible to express and
+    equally impossible to *test* without touching a host process. The seam is
+    deliberately narrower than "an executor": it receives exactly what a verify
+    command is (text, working directory, deadline, environment) and returns the
+    same three-outcome vocabulary the gate already speaks, so a managed substrate
+    cannot quietly claim a pass.
+
+    A default host executor keeps every existing caller byte-identical; the
+    managed caller passes its own and never falls back.
+    """
+
+    def run_verify_command(
+        self, command: str, *, cwd: Path, timeout_s: float, env: dict[str, str]
+    ) -> CommandResult: ...
+
+
 def _tail(raw: bytes, limit: int = TAIL_LIMIT) -> str:
     """Decode a captured stream and keep its last ``limit`` characters.
 
@@ -236,6 +256,16 @@ def _pin_uv_environment(env: MutableMapping[str, str], workspace: Path) -> None:
     """
     env["UV_PROJECT_ENVIRONMENT"] = str((workspace / ".venv").resolve())
     env["UV_NO_SYNC"] = "1"
+
+
+def build_env(workspace: Path) -> dict[str, str]:
+    """The assembled verify environment, public so a caller can pin it (not copy it).
+
+    Same object ``run_commands`` computes: a substrate that received a *different*
+    environment would make a command pass on one substrate and fail on the other
+    for reasons nobody can see.
+    """
+    return _build_env(workspace)
 
 
 def _build_env(workspace: Path) -> dict[str, str]:
@@ -327,6 +357,23 @@ def _empty_result() -> tuple[CommandResult, ...]:
     return ()
 
 
+class HostVerifyCommandExecutor:
+    """The default substrate: one shell command against the session workspace.
+
+    This is exactly the pre-existing behaviour, moved behind the port rather than
+    changed. It stays the default because an *unmanaged* run has no authority to
+    run anything else, and inventing one there would be the host fallback the
+    spec forbids in the other direction.
+    """
+
+    def run_verify_command(self, command: str, *, cwd: Path, timeout_s: float, env: dict[str, str]) -> CommandResult:
+        """Run one command and classify the outcome."""
+        return _run_one(command, cwd=cwd, timeout_s=timeout_s, env=env)
+
+
+_HOST_EXECUTOR = HostVerifyCommandExecutor()
+
+
 def _run_one(command: str, *, cwd: Path, timeout_s: float, env: dict[str, str]) -> CommandResult:
     """Run one command and classify the outcome."""
     started = time.monotonic()
@@ -364,6 +411,7 @@ def run_commands(
     timeout_s: float | None = None,
     deadline: float | None = None,
     env: dict[str, str] | None = None,
+    executor: VerifyCommandExecutor | None = None,
 ) -> tuple[CommandResult, ...]:
     """Run a slice's verify commands in order and report what each did.
 
@@ -380,6 +428,13 @@ def run_commands(
     rebuilding it here from a flag, because the overlay environment is already
     assembled by :func:`_overlay_env` and a second assembly could drift from
     it (CT61).
+
+    ``executor`` is the substrate seam (R24/Q140). ``None`` means the host shell,
+    which is what an unmanaged run has; a *managed* run passes the authority's
+    executor and never falls back to the host, because a fallback would silently
+    verify the wrong tree. The command, working directory, budget and environment
+    are passed through unchanged either way, so the two substrates are
+    interchangeable by construction rather than by promise.
     """
     ordered: Sequence[str] = tuple(commands)
     if not ordered:
@@ -389,12 +444,13 @@ def run_commands(
     command_env = _build_env(workspace) if env is None else env
     budget = _command_timeout(timeout_s)
 
+    runner = _HOST_EXECUTOR if executor is None else executor
     results: list[CommandResult] = []
     for command in ordered:
         if deadline is not None and time.monotonic() >= deadline:
             results.append(_deadline_result(command))
             continue
-        results.append(_run_one(command, cwd=cwd, timeout_s=budget, env=command_env))
+        results.append(runner.run_verify_command(command, cwd=cwd, timeout_s=budget, env=command_env))
     return tuple(results)
 
 

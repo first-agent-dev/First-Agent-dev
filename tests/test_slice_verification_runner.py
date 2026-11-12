@@ -25,6 +25,7 @@ from fa.inner_loop.slice_verification import (
     TAIL_LIMIT,
     CommandOutcome,
     CommandResult,
+    build_env,
     run_commands,
 )
 
@@ -415,3 +416,112 @@ def test_results_are_immutable(workspace: Path) -> None:
     assert isinstance(result, CommandResult)
     with pytest.raises((AttributeError, TypeError)):
         result.exit_code = 99  # type: ignore[misc]
+
+
+# ── R24/Q140: the substrate seam ──────────────────────────────────────────────
+
+
+class _RecordingExecutor:
+    """A substrate that records what it was asked to run and answers in the gate's vocabulary."""
+
+    def __init__(self, outcome: CommandOutcome = CommandOutcome.PASS, exit_code: int = 0) -> None:
+        self.calls: list[tuple[str, Path, float, dict[str, str]]] = []
+        self._outcome = outcome
+        self._exit_code = exit_code
+
+    def run_verify_command(self, command: str, *, cwd: Path, timeout_s: float, env: dict[str, str]) -> CommandResult:
+        self.calls.append((command, cwd, timeout_s, env))
+        return CommandResult(
+            command=command,
+            outcome=self._outcome,
+            exit_code=self._exit_code,
+            stdout_tail="managed",
+            stderr_tail="",
+            duration_s=0.0,
+        )
+
+
+def test_an_injected_executor_replaces_the_host_shell_entirely(workspace: Path) -> None:
+    """C1 — the seam, proved by absence: no host process runs when an executor is given.
+
+    R24's whole point is that a managed run must not verify the host tree. The
+    assertion that proves it is not "the executor was called" — that would pass
+    even if the host shell ran first — but that the host produced *nothing*: the
+    marker file a shell command would create never appears.
+    """
+    executor = _RecordingExecutor()
+    marker = workspace / "host-shell-ran"
+
+    (result,) = run_commands((f"touch {marker}; echo host",), workspace=workspace, executor=executor)
+
+    assert executor.calls and executor.calls[0][0] == f"touch {marker}; echo host"
+    assert result.stdout_tail == "managed"  # the executor's verdict, not the shell's
+    assert not marker.exists()  # the host shell never ran
+
+
+def test_the_executor_receives_the_same_command_cwd_budget_and_environment(workspace: Path) -> None:
+    """C1 — interchangeable substrates: the seam must not quietly rewrite its inputs.
+
+    If the managed path received a different cwd or a trimmed environment, a
+    verify command could pass on the authority and fail on the host (or worse,
+    pass in both for different reasons). The comparison is against the host run
+    itself, so it pins equivalence rather than a hard-coded expectation.
+    """
+    (host,) = run_commands(("true",), workspace=workspace)
+    executor = _RecordingExecutor()
+
+    run_commands(("true",), workspace=workspace, timeout_s=42.0, executor=executor)
+
+    command, cwd, timeout_s, env = executor.calls[0]
+    assert command == "true"
+    # CT49c: the working directory is the caller's path verbatim, not a resolved
+    # one -- resolving here would let a symlinked session workspace run commands
+    # in a tree the coder never saw.
+    assert cwd == Path(workspace)
+    assert timeout_s == 42.0
+    # The environment is the assembled one, not an empty dict and not the raw
+    # parent environment: both substrates receive the same scrubbed overlay.
+    assert env
+    assert env == build_env(workspace)  # the same assembled overlay the host path uses
+    assert host.outcome is CommandOutcome.PASS
+
+
+def test_an_executor_failure_is_reported_and_never_becomes_a_pass(workspace: Path) -> None:
+    """EDGE — the substrate's own ERROR stays an ERROR; a gate cannot out-vote its runner."""
+    executor = _RecordingExecutor(outcome=CommandOutcome.ERROR, exit_code=0)
+
+    (result,) = run_commands(("true",), workspace=workspace, executor=executor)
+
+    # exit_code 0 from a broken substrate must not be read as a pass.
+    assert result.outcome is CommandOutcome.ERROR
+
+
+def test_the_default_substrate_is_unchanged_when_no_executor_is_given(workspace: Path) -> None:
+    """C0 — negative proof for the seam: existing callers keep the host behaviour."""
+    (result,) = run_commands(("echo default-host",), workspace=workspace)
+
+    assert result.outcome is CommandOutcome.PASS
+    assert result.stdout_tail.strip() == "default-host"
+
+
+def test_a_symlinked_workspace_is_passed_through_unresolved(tmp_path: Path) -> None:
+    """CT49c at the seam: the executor must see the path the caller named.
+
+    Resolving here is not cosmetic. A session workspace reached through a symlink
+    (an operator's mounted path, a migrated home) resolves to a *different* host
+    path; a managed substrate authorized for the named path would then be asked to
+    run in one nobody admitted. The oracle needs a real symlink, because on an
+    ordinary tmp_path the two spellings are identical and a mutant that resolves
+    would survive.
+    """
+    real = tmp_path / "real"
+    real.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(real, target_is_directory=True)
+    executor = _RecordingExecutor()
+
+    run_commands(("true",), workspace=link, executor=executor)
+
+    _command, cwd, _timeout, _env = executor.calls[0]
+    assert cwd == link
+    assert cwd != real.resolve()  # the distinction the oracle exists to make
