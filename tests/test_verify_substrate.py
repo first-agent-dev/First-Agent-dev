@@ -9,6 +9,7 @@ managed substrate is missing.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -56,17 +57,22 @@ class _NoProfile:
     read_only_profile = None
 
 
-def test_a_managed_run_without_a_read_only_profile_refuses_instead_of_using_the_host(
-    tmp_path: Path,
+def test_a_managed_run_without_a_read_only_profile_degrades_loudly(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """C1 — the failure mode that matters: silence here means verifying the wrong tree.
+    """C1 — no READ class is a legitimate configuration, so it must not be fatal.
 
-    Returning ``None`` would make the gate read the controller's copy of a revision the
-    coder edited out of view and report a verdict about it. The run must stop instead.
+    ``read_only_profile_id`` is optional and absent means "no READ view class"
+    (``service.py:129-131``). Raising here turned every coder stage of such a run into
+    a blocking verification error; the honest behaviour is the pre-R24 one with a
+    warning, because the gate then judges the host copy rather than the revision.
     """
-    with pytest.raises(ExecutionContractError):
-        with _pinned_verify_substrate(_ctx(tmp_path, managed=_NoProfile())):
-            pass
+    with caplog.at_level(logging.WARNING):
+        with _pinned_verify_substrate(_ctx(tmp_path, managed=_NoProfile())) as substrate:
+            assert substrate is None
+
+    assert "no read-only profile" in caplog.text
+    assert "not the revision" in caplog.text
 
 
 class _Client(ExecutionClient):
@@ -146,18 +152,26 @@ def test_a_grant_for_anything_but_a_read_pin_is_refused(tmp_path: Path) -> None:
             pass
 
 
-def test_a_refused_pin_is_not_swallowed_into_host_verification(tmp_path: Path) -> None:
-    """C1 — the authority's refusal must reach the caller as a refusal."""
+def test_a_refused_pin_degrades_loudly_rather_than_blocking_the_stage(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """C1 — a determinate refusal is not uncertainty; it is a configuration outcome.
+
+    Treating it as fatal blocked every coder stage; swallowing it silently would
+    report a verdict about the host copy as if it were the revision. The middle --
+    a named warning and the host substrate -- is what a refusal may buy.
+    """
 
     class _Refusing:
         def pin_reader(self, *_args: Any, **_kwargs: Any) -> Any:
             raise ExecutionRejectedError("INPUT_POLICY", "op-1")
 
     managed = _Managed(_Refusing(), _profile())
+    with caplog.at_level(logging.WARNING):
+        with _pinned_verify_substrate(_ctx(tmp_path, managed=managed)) as substrate:
+            assert substrate is None
 
-    with pytest.raises(ExecutionRejectedError):
-        with _pinned_verify_substrate(_ctx(tmp_path, managed=managed)):
-            pass
+    assert "INPUT_POLICY" in caplog.text
 
 
 def test_the_pin_names_the_current_revision_and_the_plan(tmp_path: Path) -> None:

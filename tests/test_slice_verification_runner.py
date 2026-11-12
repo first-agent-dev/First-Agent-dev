@@ -22,6 +22,7 @@ from pathlib import Path
 
 import pytest
 
+import fa.inner_loop.slice_verification as slice_verification
 from fa.execution.client import (
     ExecutionRejectedError,
     ExecutionUnavailableError,
@@ -38,7 +39,6 @@ from fa.inner_loop.slice_verification import (
     ManagedVerifyCommandExecutor,
     _junit_block,
     _with_markers,
-    build_env,
     capture_test_nodeids,
     run_commands,
 )
@@ -498,7 +498,7 @@ def test_the_executor_receives_the_same_command_cwd_budget_and_environment(works
     # The environment is the assembled one, not an empty dict and not the raw
     # parent environment: both substrates receive the same scrubbed overlay.
     assert env
-    assert env == build_env(workspace)  # the same assembled overlay the host path uses
+    assert env == slice_verification._build_env(workspace)  # the same overlay the host path builds
     assert host.outcome is CommandOutcome.PASS
 
 

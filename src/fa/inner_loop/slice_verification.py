@@ -63,21 +63,28 @@ from fa.runtime.bash_executor import BashExecutor
 __all__ = [
     "DEFAULT_PROBE_TIMEOUT_SECONDS",
     "DEFAULT_VERIFY_TIMEOUT_SECONDS",
+    "EVIDENCE_TAIL_LIMIT",
+    "JUNIT_BLOCK_END",
+    "JUNIT_BLOCK_START",
     "KILL_CHECK_COMMAND",
     "KILL_CHECK_VERDICTS",
     "NODEID_CAPTURE_COMMAND",
+    "NODEID_CAPTURE_INBAND_COMMAND",
     "TAIL_LIMIT",
     "CommandOutcome",
     "CommandResult",
+    "HostVerifyCommandExecutor",
     "KillApplication",
     "KillCheck",
     "KillDirective",
     "KillOperator",
+    "ManagedVerifyCommandExecutor",
     "NodeidCapture",
     "OverlayError",
     "PlanVerification",
     "SliceVerdict",
     "SliceVerification",
+    "VerifyCommandExecutor",
     "apply_kill",
     "capture_test_nodeids",
     "mutation_overlay",
@@ -308,16 +315,6 @@ def _pin_uv_environment(env: MutableMapping[str, str], workspace: Path) -> None:
     """
     env["UV_PROJECT_ENVIRONMENT"] = str((workspace / ".venv").resolve())
     env["UV_NO_SYNC"] = "1"
-
-
-def build_env(workspace: Path) -> dict[str, str]:
-    """The assembled verify environment, public so a caller can pin it (not copy it).
-
-    Same object ``run_commands`` computes: a substrate that received a *different*
-    environment would make a command pass on one substrate and fail on the other
-    for reasons nobody can see.
-    """
-    return _build_env(workspace)
 
 
 def _build_env(workspace: Path) -> dict[str, str]:

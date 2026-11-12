@@ -24,7 +24,7 @@ from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Final, Literal
 
-from fa.execution.client import ReadOnlyManagedBashExecutor
+from fa.execution.client import ExecutionRejectedError, ReadOnlyManagedBashExecutor
 from fa.execution.primitives import ExecutionContractError
 from fa.execution.tool_port import ClientWorkspacePort
 from fa.execution.types import Access, Operation, ViewPurpose
@@ -404,19 +404,43 @@ def _pinned_verify_substrate(ctx: WorkflowContext) -> Iterator[_VerifySubstrate 
         return
     profile = managed.read_only_profile
     if profile is None:
-        raise ExecutionContractError  # A managed run has no host tree to fall back to.
+        # ``read_only_profile_id`` is optional in the service config and absent means
+        # "no READ class" (``service.py:129-131``), so a managed run can legitimately
+        # reach a coder stage without one. The gate then runs on the host, as it did
+        # before R24 -- but it says so, because the host copy is not the revision the
+        # coder edited and an unreported verdict about it would be a claim nobody made.
+        logger.warning(
+            "managed verification unavailable: no read-only profile configured (run=%s); "
+            "the verify gate judges the controller host tree, not the revision",
+            ctx.run_id,
+        )
+        yield None
+        return
     deadline = ctx.deadline_mono if ctx.deadline_mono is not None else time.monotonic() + 30.0
     # The plan the stage ran against, not the one the run started with: a promoted
     # candidate changes the plan's bytes, and the authority proves the pinned ref
     # against THIS revision. Pinning the stale ref is refused as INPUT_POLICY, which
     # is the authority correctly declining to hand out a view of a plan mismatch.
     plan_ref = ctx.admission.snapshot.ref if ctx.admission is not None else ctx.managed_plan_ref
-    grant = managed.client.pin_reader(
-        managed.binding,
-        revision_id=managed.current_revision_id,
-        plan_ref=plan_ref,
-        deadline=deadline,
-    )
+    try:
+        grant = managed.client.pin_reader(
+            managed.binding,
+            revision_id=managed.current_revision_id,
+            plan_ref=plan_ref,
+            deadline=deadline,
+        )
+    except ExecutionRejectedError as error:
+        # A determinate refusal (this build's own: INPUT_POLICY for a plan mismatch) is
+        # not an uncertain outcome. Degrade to the host substrate loudly, the same way
+        # an unconfigured profile does, rather than turning every coder stage of such a
+        # run into a blocking verification error.
+        logger.warning(
+            "managed verification unavailable: the authority refused the read pin [%s] (run=%s)",
+            error.code,
+            ctx.run_id,
+        )
+        yield None
+        return
     view = grant.view_ref
     if (
         grant.operation is not Operation.PIN_READER
