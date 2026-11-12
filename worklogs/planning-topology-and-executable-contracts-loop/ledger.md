@@ -9157,3 +9157,67 @@ verification banks and called it green. The regression it introduced lived in th
 composition oracle, which I did not run. A wave-wide differential sweep against a
 base worktree is cheap (four minutes) and would have caught all three defects at once;
 it should be the default before any commit that changes a shared code path.
+
+### E515 — Q143=A: the staged candidate is a leg of `I03-LIVE-23`; the e2e ledger is green again (2026-11-11; Arena-local)
+
+**The question that was actually asked.** The operator read E508's `I03-LIVE-28` and
+asked whether the candidate is "the rewritten version, or the first one before
+validation" — and said the intended logic was the former, while not being sure what
+shipped. The code answers it plainly, and the answer is narrower than either reading:
+
+1. **A first plan is never a candidate.** `seed_plan_candidate` refuses
+   `ORDINARY_PLANNING` outright (`plan_promotion.py:60-61`). Only `ADMISSION_REPAIR`
+   and `EVAL_REPLAN` produce one, and only after an admitted canonical plan exists.
+2. **The candidate is seeded with the already-admitted bytes**, not an empty file and
+   not a draft of the first plan. The planner's task says "revise only the owned
+   candidate"; it rewrites that file in full.
+3. **The refusal path is a separate artifact.** A candidate that fails admission is
+   retained once per run as `draft.md` (`retain_plan_draft`) for the operator to read;
+   it never becomes the candidate of the next round.
+
+So the operator's model — planner rewrites, controller re-validates — is what is
+built. What is *not* built is the outer half they also described: an initial
+planner acquisition that produces the first plan through a model-facing choice. That
+is S5P1, and it is the next task (Q144=B).
+
+**Why `I03-LIVE-28` should not have existed.** E508 wrote it into the master sheet
+alone. Register, index, `producer-baseline.json` and `producer-coverage.json` are
+frozen for this era — 125 mappings, exactly one admitted duplicate (S06) — and Q90 D4
+had already ruled that a new producer key attaches to an existing case rather than
+minting an id. Adding the row would have meant editing a frozen baseline to admit a
+36th case, which is the "planner work in a code step" that D4 named and refused.
+
+**The choice, and its reason.** Q143=A: merged into `I03-LIVE-23`. Not bookkeeping —
+the candidate buffer has no contract independent of its publisher. It exists so that
+`publish_plan` can receive repaired bytes while neither planner nor coder ever writes
+the canonical path. Two cases would split one invariant ("no bytes become canonical
+except through validation") into two results that could disagree, and a live run that
+satisfied one while violating the other would still show a green ledger. One case,
+two legs, one verdict.
+
+**What moved and what did not.** The case id is gone from the master sheet; the
+obligation is not. `implementation-handoffs.md` now carries the subject, the
+invariant, the producers, the trajectory oracle, the live observation to fold into
+the case-23 run sheet at STEP8, and the negative controls. `I03-LIVE-23`'s frozen row,
+identity and text are untouched, which is what the checker requires and what keeps
+the baseline meaningful.
+
+**The ledger is green for the first time this session.** `check_execution_e2e_coverage`
+passes and all 28 artifact oracles in `test_e2e_artifact_contract.py` pass. That
+matters for the goal rather than for tidiness: this ledger is the artifact a live host
+run is recorded against, and it was red.
+
+**My own debt, paid in the same commit.** Eleven pyrefly errors in the two R24 test
+modules I wrote: doubles that did not mirror the parent signature they override, an
+Optional revision taken from the grant instead of the view ref, and — the one that
+counts — an oracle calling `owner.publish_view`, a method the authority does not have.
+That last one means the oracle had never exercised its own subject; it was passing
+against an `AttributeError` swallowed by `pytest.raises(Exception)`. It now asserts
+the closed `execution_request_rejected`, and swapping the READ view for the WRITE lease
+turns it red.
+
+**Verification.** `check_execution_e2e_coverage` rc=0. `test_e2e_artifact_contract`
+28 passed (was 4 failed). Full suite: 52 failing at the base commit → **2**, both
+pre-existing (pyrefly's remaining 29 errors predate this branch; the readiness
+integration has its own bootstrap blocker). Kills: READ→WRITE view swap red; the
+previously documented `owner.publish_view` path removed.
