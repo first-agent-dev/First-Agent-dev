@@ -1746,6 +1746,7 @@ def _run_kill_check(
     root: Path,
     *,
     deadline: float | None = None,
+    executor: VerifyCommandExecutor | None = None,
 ) -> KillCheck:
     """Mutate one producer and run the slice's declared tests. (CT66, CT67, CT82, Q53(c))
 
@@ -1831,7 +1832,9 @@ def _run_kill_check(
                 )
                 kill_env = _gate_subprocess_env(Path(root), base_env=env, kill_check=True)
                 kill_env[JUNIT_RUN_ID_ENV] = run_id
-                (result,) = run_commands((command,), workspace=Path(root), deadline=deadline, env=kill_env)
+                (result,) = run_commands(
+                    (command,), workspace=Path(root), deadline=deadline, env=kill_env, executor=executor
+                )
                 report, report_detail = _parse_junit_report(report_path, run_id=run_id)
     except OverlayError as exc:
         return _errored(directive, f"overlay failed: {exc}", started)
@@ -2035,6 +2038,7 @@ def verify_slice(
     baseline: Mapping[str, bool] | None,
     now: Mapping[str, bool] | None,
     deadline: float | None = None,
+    executor: VerifyCommandExecutor | None = None,
 ) -> SliceVerification:
     """Run and compose one slice's verify, baseline and contract kill evidence. (CT65-CT69)
 
@@ -2087,11 +2091,12 @@ def verify_slice(
         workspace=root,
         deadline=deadline,
         env=_gate_subprocess_env(root),
+        executor=executor,
     )
     named_kills = tuple(
         (
             contract_id,
-            _run_kill_check(directives[contract_id], record.test_paths, root, deadline=deadline),
+            _run_kill_check(directives[contract_id], record.test_paths, root, deadline=deadline, executor=executor),
         )
         for contract_id in functional_ids
     )
@@ -2118,6 +2123,7 @@ def verify_plan(
     baseline_by_slice: Mapping[str, Mapping[str, bool] | None] | None = None,
     now_by_slice: Mapping[str, Mapping[str, bool] | None] | None = None,
     deadline: float | None = None,
+    executor: VerifyCommandExecutor | None = None,
 ) -> PlanVerification:
     """Run the plan-level commands once and preserve each slice's ownership (CT71/76).
 
@@ -2133,6 +2139,7 @@ def verify_plan(
         workspace=root,
         deadline=deadline,
         env=_gate_subprocess_env(root),
+        executor=executor,
     )
     slice_results = tuple(
         verify_slice(
@@ -2141,6 +2148,7 @@ def verify_plan(
             baseline=None if baseline_by_slice is None else baseline_by_slice.get(record.slice_id),
             now=None if now_by_slice is None else now_by_slice.get(record.slice_id),
             deadline=deadline,
+            executor=executor,
         )
         for record in plan_ids.slice_records
     )

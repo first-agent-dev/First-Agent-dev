@@ -18,11 +18,16 @@ import os
 import re
 import sys
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Final, Literal
 
+from fa.execution.client import ReadOnlyManagedBashExecutor
+from fa.execution.primitives import ExecutionContractError
+from fa.execution.tool_port import ClientWorkspacePort
+from fa.execution.types import Access, Operation, ViewPurpose
 from fa.inner_loop.admission_schema import ADMISSION_RULES
 from fa.inner_loop.coder_loop import SessionOutcome
 from fa.inner_loop.injections import INJECTION_MODES, INJECTION_SPECS, resolve_injection_modes
@@ -54,16 +59,19 @@ from fa.inner_loop.slice_verification import (
     TAIL_LIMIT,
     CommandOutcome,
     CommandResult,
+    ManagedVerifyCommandExecutor,
     NodeidCapture,
     PlanVerification,
     SliceVerdict,
     SliceVerification,
+    VerifyCommandExecutor,
     _gate_mode,
     capture_test_nodeids,
     validate_kill_directives,
     verify_plan,
 )
 from fa.inner_loop.stage_candidate import reset_stage_candidate, stage_candidate_reader
+from fa.inner_loop.tools.workspace_port import WorkspacePort
 from fa.inner_loop.workflow_artifacts import (
     AdmissionIOError,
     EvalReport,
@@ -361,19 +369,111 @@ def _nodeid_capture_payload(capture: NodeidCapture) -> dict[str, object]:
     return payload
 
 
+@dataclass(frozen=True, slots=True)
+class _VerifySubstrate:
+    """Where the verification gate runs, when it is not the controller host.
+
+    Two pieces travel together because they answer the same question from two sides:
+    ``executor`` runs the command on the pinned read-only view, and ``port`` answers
+    what the snapshot actually contains. Splitting them would let a run verify one
+    tree and inspect another, which is the defect R24 exists to remove.
+    """
+
+    executor: VerifyCommandExecutor
+    port: WorkspacePort | None
+
+
+@contextmanager
+def _pinned_verify_substrate(ctx: WorkflowContext) -> Iterator[_VerifySubstrate | None]:
+    """Pin one read-only view of the current revision, or yield ``None`` when unmanaged.
+
+    ``None`` is not a fallback to the host: an unmanaged run *is* the host tree, so
+    there is nothing to move. A managed run that cannot build the substrate raises,
+    because verifying the controller copy of a revision the coder edited out of view
+    would report a verdict about a tree nobody asked about.
+
+    The pin is the mechanism the spec names for read-only verification
+    (``i03-execution-workspace-spec:640,806``): a READ view over sealed source with a
+    private tmpfs scratch, whose writes cannot become a revision
+    (``workspace.py:5374``). It is stopped before this returns, so a verify never
+    outlives the stage that asked for it.
+    """
+    managed = ctx.managed_execution
+    if managed is None:
+        yield None
+        return
+    profile = managed.read_only_profile
+    if profile is None:
+        raise ExecutionContractError  # A managed run has no host tree to fall back to.
+    deadline = ctx.deadline_mono if ctx.deadline_mono is not None else time.monotonic() + 30.0
+    grant = managed.client.pin_reader(
+        managed.binding,
+        revision_id=managed.current_revision_id,
+        plan_ref=ctx.managed_plan_ref,
+        deadline=deadline,
+    )
+    view = grant.view_ref
+    if (
+        grant.operation is not Operation.PIN_READER
+        or view is None
+        or view.access is not Access.READ
+        or view.purpose is not ViewPurpose.PROJECT
+        or view.owner_run_id != managed.binding.namespace.run_id
+    ):
+        raise ExecutionContractError
+    reader = ReadOnlyManagedBashExecutor(
+        managed.client,
+        namespace=managed.binding.namespace,
+        view=view,
+        grant=grant,
+        profile=profile,
+        plan_ref=ctx.managed_plan_ref,
+        controller_root=ctx.workspace,
+    )
+    port = ClientWorkspacePort(
+        managed.client,
+        namespace=managed.binding.namespace,
+        view=view,
+        grant=grant,
+        cache_dir=ctx.workspace / ".fa" / "verify-read-cache",
+        plan_ref=ctx.managed_plan_ref,
+    )
+    try:
+        yield _VerifySubstrate(executor=ManagedVerifyCommandExecutor(reader, root=ctx.workspace), port=port)
+    finally:
+        # A pin that did not become terminal stays owned by this run; saying so is the
+        # honest outcome, and the next run on the workspace will be refused until it is
+        # settled rather than silently reading a view someone else may hold.
+        if not managed.client.stop_view(managed.binding.namespace, view=view, grant=grant, deadline=deadline):
+            logger.error("verify read-only view did not become terminal (run=%s view=%s)", ctx.run_id, view.view_id)
+
+
 def _capture_nodeids_by_slice(
     plan_ids: PlanIds,
     *,
     root: Path,
     deadline: float | None = None,
+    execution: _VerifySubstrate | None = None,
 ) -> BaselineCapture:
-    """Capture each slice's own TESTS set so regression evidence stays attributed."""
+    """Capture each slice's own TESTS set so regression evidence stays attributed.
+
+    ``execution`` is where the run happens (Q142). T0 runs before the coder's view
+    exists, so a managed run has no pinned view to give it and keeps the host
+    substrate; ``now`` runs on the read-only view, and the two must agree on what
+    "the tree" means or the comparison measures two different things.
+    """
     nodeids_by_slice: dict[str, Mapping[str, bool] | None] = {}
     captures: dict[str, NodeidCapture] = {}
     errors: list[str] = []
     for record in plan_ids.slice_records:
         try:
-            capture = capture_test_nodeids(record.test_paths, root=root, deadline=deadline)
+            capture = capture_test_nodeids(
+                record.test_paths,
+                root=root,
+                deadline=deadline,
+                executor=None if execution is None else execution.executor,
+                port=None if execution is None else execution.port,
+            )
         except Exception as error:  # Capture uncertainty is evidence; BaseException signals still propagate.
             logger.exception("workflow nodeid capture failed for slice %s", record.slice_id)
             detail = f"nodeid capture raised {type(error).__name__}: {error}"[:TAIL_LIMIT]
@@ -433,6 +533,8 @@ def capture_baseline(
     deadline: float | None = None,
 ) -> BaselineCapture:
     """Capture and write the one permitted T0 snapshot before coder dispatch (CT85/86)."""
+    # T0 predates the coder's publication, so it has no view to read: the host copy is
+    # the only tree that exists yet, and that is what the baseline is a snapshot of.
     captured = _capture_nodeids_by_slice(plan_ids, root=root, deadline=deadline)
     try:
         _write_json_exclusive(path, _baseline_payload(run_id=run_id, plan_ids=plan_ids, capture=captured))
@@ -1343,15 +1445,23 @@ def _run_stage(
     if role == "coder" and code == 0:
         plan_ids = plan_ids_for_stage or PlanIds()
         baseline = baseline_capture or BaselineCapture(nodeids_by_slice={})
-        now = _capture_nodeids_by_slice(plan_ids, root=ctx.workspace, deadline=ctx.deadline_mono)
+        # One substrate for the whole gate: the same pinned read view answers what the
+        # snapshot contains and where the commands run, so T1 and the comparison can
+        # never disagree about which tree they are talking about.
+        now: BaselineCapture | None = None
         try:
-            verification = verify_plan(
-                plan_ids,
-                root=ctx.workspace,
-                baseline_by_slice=baseline.nodeids_by_slice,
-                now_by_slice=now.nodeids_by_slice,
-                deadline=ctx.deadline_mono,
-            )
+            with _pinned_verify_substrate(ctx) as substrate:
+                now = _capture_nodeids_by_slice(
+                    plan_ids, root=ctx.workspace, deadline=ctx.deadline_mono, execution=substrate
+                )
+                verification = verify_plan(
+                    plan_ids,
+                    root=ctx.workspace,
+                    baseline_by_slice=baseline.nodeids_by_slice,
+                    now_by_slice=now.nodeids_by_slice,
+                    deadline=ctx.deadline_mono,
+                    executor=None if substrate is None else substrate.executor,
+                )
         except Exception as error:  # Uncertainty is a recorded ERROR, never a pass.
             logger.exception("workflow verification failed unexpectedly (run=%s)", ctx.run_id)
             verification = PlanVerification(
@@ -1364,7 +1474,7 @@ def _run_stage(
             for error in (
                 *((plan_read_error,) if plan_read_error else ()),
                 *baseline.errors,
-                *now.errors,
+                *(now.errors if now is not None else ()),
                 *_plan_integrity_errors(ctx),
             )
         )
