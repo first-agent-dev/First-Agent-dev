@@ -45,7 +45,13 @@ import pytest
 
 from fa.paths import tighten_fa_artifact_modes
 from tests._capabilities import requires_posix_modes, requires_symlinks
-from tests.test_cli import _FAKE_MODELS_YAML, _TEST_SECRETS, _ScriptedTransport, _stop_body
+from tests.test_cli import (
+    _FAKE_MODELS_YAML,
+    _TEST_SECRETS,
+    _install_test_managed_cli_dependencies,
+    _ScriptedTransport,
+    _stop_body,
+)
 from tests.test_s7_cli_run_paths import _run_args
 
 
@@ -86,6 +92,10 @@ def completed_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("FA_DEBUG_LLM_BODIES", "1")
     monkeypatch.delenv("FA_EGRESS_PROXY_URL", raising=False)
     monkeypatch.delenv("FA_PROXY_TOKEN_FILE", raising=False)
+    # A session-backed run requires an admitted managed provisioner and has no host-tree
+    # fallback (``session/manager.py:302-307``). This module inspects artifact permissions,
+    # so it takes the suite's narrow test-only authority seam.
+    _install_test_managed_cli_dependencies(monkeypatch, home=home, workspace_root=tmp_path.parent)
 
     config = tmp_path / "models.yaml"
     config.write_text(_FAKE_MODELS_YAML, encoding="utf-8")

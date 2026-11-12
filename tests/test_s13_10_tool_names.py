@@ -226,6 +226,8 @@ def test_composition_root_rejects_non_portable_name(monkeypatch: pytest.MonkeyPa
         planner_dispatch: PlannerDispatch | None = None,
         workspace_io: WorkspacePort | None = None,
         project_tool_executor: object = None,
+        managed_executor: object = None,
+        candidate_io: object = None,
     ) -> dict[str, Callable[[], ToolSpec]]:
         builders = dict(
             real(
@@ -234,6 +236,8 @@ def test_composition_root_rejects_non_portable_name(monkeypatch: pytest.MonkeyPa
                 planner_dispatch=planner_dispatch,
                 workspace_io=workspace_io,
                 project_tool_executor=project_tool_executor,
+                managed_executor=managed_executor,
+                candidate_io=candidate_io,
             )
         )
         builders["fs_read_file"] = lambda: ToolSpec(
@@ -271,6 +275,8 @@ def test_composition_root_accepts_a_non_fs_pr_prefixed_name(monkeypatch: pytest.
         planner_dispatch: PlannerDispatch | None = None,
         workspace_io: WorkspacePort | None = None,
         project_tool_executor: object = None,
+        managed_executor: object = None,
+        candidate_io: object = None,
     ) -> dict[str, Callable[[], ToolSpec]]:
         builders = dict(
             real(
@@ -279,6 +285,8 @@ def test_composition_root_accepts_a_non_fs_pr_prefixed_name(monkeypatch: pytest.
                 planner_dispatch=planner_dispatch,
                 workspace_io=workspace_io,
                 project_tool_executor=project_tool_executor,
+                managed_executor=managed_executor,
+                candidate_io=candidate_io,
             )
         )
         builders["fs_read_file"] = lambda: ToolSpec(

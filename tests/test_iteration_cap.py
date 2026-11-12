@@ -337,6 +337,7 @@ def test_cmd_run_applies_config_per_role_limit_end_to_end(tmp_path: Path, monkey
     from tests.test_cli import (
         _FAKE_MODELS_YAML,
         _TEST_SECRETS,
+        _install_test_managed_cli_dependencies,
         _ScriptedTransport,
         _stop_body,
         _tool_call,
@@ -364,6 +365,9 @@ def test_cmd_run_applies_config_per_role_limit_end_to_end(tmp_path: Path, monkey
     monkeypatch.setenv("FA_DEBUG_LLM_BODIES", "0")
     monkeypatch.delenv("FA_EGRESS_PROXY_URL", raising=False)
     monkeypatch.delenv("FA_PROXY_TOKEN_FILE", raising=False)
+    # Session-backed run => admitted managed provisioner, no host fallback
+    # (``session/manager.py:302-307``). This oracle proves limit -> loop behaviour.
+    _install_test_managed_cli_dependencies(monkeypatch, home=home, workspace_root=tmp_path.parent)
 
     (tmp_path / "a.txt").write_text("a\n", encoding="utf-8")
     config = tmp_path / "models.yaml"

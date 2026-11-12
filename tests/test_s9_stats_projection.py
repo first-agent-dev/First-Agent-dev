@@ -36,6 +36,7 @@ from fa.stats import parse_session_db
 from tests.test_cli import (
     _FAKE_MODELS_YAML,
     _TEST_SECRETS,
+    _install_test_managed_cli_dependencies,
     _ScriptedTransport,
     _stop_body,
 )
@@ -71,6 +72,9 @@ def _fa_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Pat
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("USERPROFILE", str(home))
+    # Session-backed run => admitted managed provisioner, no host fallback
+    # (``session/manager.py:302-307``). This module reads the run's projection.
+    _install_test_managed_cli_dependencies(monkeypatch, home=home, workspace_root=tmp_path.parent)
     return config, home
 
 

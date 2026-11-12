@@ -216,6 +216,11 @@ def _run_chat(task: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Ca
     monkeypatch.setenv("USERPROFILE", str(home))
     config = workspace / "models.yaml"
     config.write_text(_CHAT_MODELS_YAML, encoding="utf-8")
+    # Session-backed run => admitted managed provisioner, no host fallback
+    # (``session/manager.py:302-307``). This module asserts on prompt assembly.
+    from tests.test_cli import _install_test_managed_cli_dependencies
+
+    _install_test_managed_cli_dependencies(monkeypatch, home=home, workspace_root=tmp_path.parent)
 
     transport = _CapturingTransport()
     args = build_parser().parse_args(
