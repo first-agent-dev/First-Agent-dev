@@ -3173,3 +3173,49 @@ Two facts bound the answer:
 **Engineering recommendation.** A, sequenced after S5: the gate exists precisely because a nested coder would otherwise admit a session with no PlanRef, so removing it before S5 can produce a PlanRef would trade a clean refusal for a broken run. Whichever option is chosen, state it positively in the plan — "no write on denial" is not a policy.
 
 **Scope.** Neither question authorizes a wire change, a second writer, a model-visible grant, or any change to legacy direct `fa workflow`.
+
+## Q142 — How does a managed verify gate collect its JUnit evidence?
+
+**Status:** OPEN — blocks R24 step 3 (wiring the caller). Steps 1–2 are committed and unaffected.
+
+A managed run edits a revision the controller host never sees. R24 exists so the
+verify gate judges *that* tree instead of a stale host copy. The substrate seam
+(`238f75b`) and the read-only executor (`7e4dfcb`) are in place; passing the
+executor down from `WorkflowContext.managed_execution` is the remaining wiring.
+
+It cannot be wired yet, because the gate needs evidence to land **on the host**
+and reads it there:
+
+- `slice_verification.py:709` creates a host `TemporaryDirectory` for the JUnit XML;
+- `:715–725` runs `NODEID_CAPTURE_COMMAND` with `--junitxml=<that host path>`, then
+  `_parse_junit_report(report_path)`;
+- `:1673–1686` does the same per kill-check (`fa-kill-junit-`), and copies source
+  roots into a host overlay;
+- `:555–565` decides what to run from `(Path(root) / path).exists()` — a host check.
+
+Inside a cell that path does not exist, so every slice would record `ERROR`: a gate
+that can never pass. Small, enumerable surface — but each item is a contract choice.
+
+**Options**
+
+- **A. Collect JUnit XML in-band** (write to stdout inside the cell, parse from
+  `stdout_tail`). Cheapest wiring; but `TAIL_LIMIT` bounds the tail, and a truncated
+  report is exactly the "not evidence" case the executor already refuses. Also
+  redefines `stdout_tail` for every existing caller.
+- **B. Report into the cell's private `/scratch`, read back through the port.**
+  Evidence stays a real artifact inside the proven boundary. Costs a new port method
+  — `ClientWorkspacePort.read_file` reads the **source** projection only
+  (`workspace.py:2174–2194`), so `/scratch` is not reachable through it today — plus a
+  `/scratch` sizing decision (64 MiB tmpfs).
+- **D. Leave the gate on the host** and declare R24 to be "the seam only". Honest, but
+  a managed run then verifies a tree the coder never touched, which is the defect R24
+  was raised to remove.
+
+**Recommendation:** **B**, for the reason Q140 chose C — it keeps the evidence an
+artifact and keeps it inside the boundary the authority already proves. A is a
+protocol change wearing a convenience's clothes; D leaves the managed gate
+meaningless. **C (MUTATION view) stays withdrawn** — mutation roots *are* the
+canonical source (`workspace.py:225`).
+
+**Impact if deferred:** R24 stays two-thirds done: a managed verify still cannot run
+on the authority, and the `executor` parameter has no production caller.
