@@ -20,14 +20,22 @@ from pathlib import Path
 
 import pytest
 
+from fa.execution.client import (
+    ExecutionRejectedError,
+    ExecutionUnavailableError,
+    ExecutionUncertainError,
+)
+from fa.execution.primitives import ExecutionContractError
 from fa.inner_loop.slice_verification import (
     DEFAULT_VERIFY_TIMEOUT_SECONDS,
     TAIL_LIMIT,
     CommandOutcome,
     CommandResult,
+    ManagedVerifyCommandExecutor,
     build_env,
     run_commands,
 )
+from fa.runtime.pty_pool import PtyResult
 
 
 @pytest.fixture
@@ -525,3 +533,140 @@ def test_a_symlinked_workspace_is_passed_through_unresolved(tmp_path: Path) -> N
     _command, cwd, _timeout, _env = executor.calls[0]
     assert cwd == link
     assert cwd != real.resolve()  # the distinction the oracle exists to make
+
+
+# ── R24/Q140: verify on the authority, read-only ─────────────────────────────
+
+
+class _FakeManagedExecutor:
+    """Stands in for ``ReadOnlyManagedBashExecutor``: records the call, returns a result."""
+
+    interactive = False
+
+    def __init__(self, *, exit_code: int = 0, timed_out: bool = False, truncated: bool = False) -> None:
+        self.calls: list[dict[str, object]] = []
+        self._result = PtyResult(
+            stdout="managed stdout",
+            exit_code=exit_code,
+            truncated=truncated,
+            session_id="",
+            timed_out=timed_out,
+        )
+
+    def run(
+        self, command: str, timeout: int = 30, workdir: Path | None = None, session_id: str | None = None
+    ) -> PtyResult:
+        self.calls.append({"command": command, "timeout": timeout, "workdir": workdir, "session_id": session_id})
+        return self._result
+
+
+def test_managed_verify_never_opens_a_session(tmp_path: Path) -> None:
+    """C1 — an interactive session would keep state between verify commands.
+
+    ``admit`` requires ``profile.interactive == (session_id is not None)``, so a
+    session id here is not merely unnecessary: the author is a non-interactive
+    profile and any session id it sent would be refused.
+    """
+    executor = _FakeManagedExecutor()
+    managed = ManagedVerifyCommandExecutor(executor, root=tmp_path)
+
+    managed.run_verify_command("true", cwd=tmp_path, timeout_s=10.0, env={})
+
+    assert executor.calls[0]["session_id"] is None
+    assert executor.calls[0]["workdir"] == tmp_path
+    assert executor.calls[0]["timeout"] == 10
+
+
+def test_managed_verify_rounds_a_fractional_budget_up_never_down(tmp_path: Path) -> None:
+    """EDGE — ``ceil``, not ``int``: rounding a 0.4s budget down to 0 would refuse a valid run."""
+    executor = _FakeManagedExecutor()
+    managed = ManagedVerifyCommandExecutor(executor, root=tmp_path)
+
+    managed.run_verify_command("true", cwd=tmp_path, timeout_s=0.4, env={})
+    managed.run_verify_command("true", cwd=tmp_path, timeout_s=2.7, env={})
+
+    # 0.4 -> 1 (int would give 0, i.e. a refused run); 2.7 -> 3 (int would give 2,
+    # i.e. a command killed early for no reason).
+    assert [call["timeout"] for call in executor.calls] == [1, 3]
+
+
+def test_managed_verify_maps_exit_codes_without_inventing_a_pass(tmp_path: Path) -> None:
+    """C1 — the three-outcome vocabulary, on the managed substrate."""
+    managed = ManagedVerifyCommandExecutor(_FakeManagedExecutor(exit_code=0), root=tmp_path)
+    (passed,) = run_commands(("true",), workspace=tmp_path, executor=managed)
+    assert passed.outcome is CommandOutcome.PASS
+
+    managed = ManagedVerifyCommandExecutor(_FakeManagedExecutor(exit_code=7), root=tmp_path)
+    (failed,) = run_commands(("false",), workspace=tmp_path, executor=managed)
+    assert failed.outcome is CommandOutcome.FAIL
+    assert failed.exit_code == 7
+
+
+def test_a_managed_timeout_is_error_and_not_a_failure_verdict(tmp_path: Path) -> None:
+    """C1 — a killed command did not refuse the work; the budget ran out."""
+    managed = ManagedVerifyCommandExecutor(_FakeManagedExecutor(timed_out=True, exit_code=0), root=tmp_path)
+
+    (result,) = run_commands(("slow",), workspace=tmp_path, executor=managed)
+
+    assert result.outcome is CommandOutcome.ERROR
+    assert result.exit_code is None
+    assert "budget" in result.stderr_tail
+
+
+def test_truncated_managed_output_cannot_prove_a_pass(tmp_path: Path) -> None:
+    """EDGE — the failure may be in the part that was cut off."""
+    managed = ManagedVerifyCommandExecutor(_FakeManagedExecutor(truncated=True, exit_code=0), root=tmp_path)
+
+    (result,) = run_commands(("chatty",), workspace=tmp_path, executor=managed)
+
+    assert result.outcome is CommandOutcome.ERROR
+    assert "truncated" in result.stderr_tail
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        ExecutionRejectedError("PATH_DENIED", "op-1"),
+        ExecutionUnavailableError(),
+        ExecutionUncertainError("op-1"),
+        ExecutionContractError(),
+    ],
+)
+def test_every_execution_error_becomes_error_never_pass(tmp_path: Path, error: Exception) -> None:
+    """EDGE — an exception is not a verdict: ``ERROR``, and the reason is readable."""
+
+    class _Raising:
+        interactive = False
+
+        def run(self, *_args: object, **_kwargs: object) -> PtyResult:
+            raise error
+
+    managed = ManagedVerifyCommandExecutor(_Raising(), root=tmp_path)
+
+    (result,) = run_commands(("true",), workspace=tmp_path, executor=managed)
+
+    assert result.outcome is CommandOutcome.ERROR
+    assert result.exit_code is None
+    assert type(error).__name__ in result.stderr_tail
+
+
+def test_a_managed_executor_needs_an_absolute_controller_root(tmp_path: Path) -> None:
+    """C0 — a relative or traversing root could escape the admitted workspace."""
+    with pytest.raises(ExecutionContractError):
+        ManagedVerifyCommandExecutor(_FakeManagedExecutor(), root=Path("relative/path"))
+    with pytest.raises(ExecutionContractError):
+        ManagedVerifyCommandExecutor(_FakeManagedExecutor(), root=Path("/a/../b"))
+
+
+def test_managed_verify_leaves_no_host_trace(tmp_path: Path) -> None:
+    """C1 — negative proof: the same proof shape as the host seam, on the managed path.
+
+    The marker a host shell would create must not exist, because the whole point of
+    Q140 is that a verify command runs on the authority and not on this machine.
+    """
+    marker = tmp_path / "host-shell-ran"
+    managed = ManagedVerifyCommandExecutor(_FakeManagedExecutor(), root=tmp_path)
+
+    run_commands((f"touch {marker}",), workspace=tmp_path, executor=managed)
+
+    assert not marker.exists()

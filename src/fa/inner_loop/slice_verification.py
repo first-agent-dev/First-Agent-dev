@@ -32,6 +32,7 @@ import ast
 import contextlib
 import enum
 import logging
+import math
 import os
 import re
 import shlex
@@ -46,9 +47,17 @@ from pathlib import Path, PurePosixPath
 from typing import Final, Protocol, override
 from xml.etree import ElementTree
 
+from fa.execution.client import (
+    ExecutionRejectedError,
+    ExecutionTimedOutError,
+    ExecutionUnavailableError,
+    ExecutionUncertainError,
+)
+from fa.execution.primitives import ExecutionContractError
 from fa.inner_loop.junit_nodeid_plugin import JUNIT_NODEID_PROPERTY, JUNIT_RUN_ID_ENV, JUNIT_RUN_ID_PROPERTY
 from fa.inner_loop.plan_ids import FAIL, PlanDiagnostic, PlanIds, SliceRecord
 from fa.inner_loop.tools.bash_env import build_scrubbed_env
+from fa.runtime.bash_executor import BashExecutor
 
 __all__ = [
     "DEFAULT_PROBE_TIMEOUT_SECONDS",
@@ -372,6 +381,95 @@ class HostVerifyCommandExecutor:
 
 
 _HOST_EXECUTOR = HostVerifyCommandExecutor()
+
+
+class ManagedVerifyCommandExecutor:
+    """Verify on the authority's read-only view instead of the controller host.
+
+    Q140 option C: verification is read-only and already has a substrate that says
+    so. ``ReadOnlyManagedBashExecutor`` pins one READ view with a private tmpfs
+    ``/scratch`` -- the mechanism the spec names twice for exactly this ("read-only
+    verification may write only its private scratch", and a pin may drive read-only
+    cell exec). Building a second one here would be the "no host fallback, so
+    invent a parallel substrate" mistake in reverse.
+
+    No new trust boundary either: ``execution_trusted`` already hands a READ view its
+    own scratch, ``_seal_readonly_source`` strips write bits from the source copy, and
+    promotion refuses anything that is not ``Access.WRITE`` (``workspace.py:5374``),
+    so what a verify command writes cannot become a revision.
+
+    Failure is never a verdict. A timeout is ``ERROR`` (the command did not refuse the
+    work, the budget ran out), and every execution exception is ``ERROR`` too --
+    classification belongs to the substrate, not to the gate that is judging it.
+    """
+
+    def __init__(self, executor: BashExecutor, *, root: Path) -> None:
+        if not isinstance(root, Path) or not root.is_absolute() or ".." in root.parts:
+            raise ExecutionContractError
+        self._executor = executor
+        self._root = root
+
+    def run_verify_command(self, command: str, *, cwd: Path, timeout_s: float, env: dict[str, str]) -> CommandResult:
+        """Run one command inside the pinned view and translate the result.
+
+        ``env`` is accepted and deliberately unused: the authority fixes the cell
+        environment (``HOME``/``TMPDIR`` into ``/scratch``) and proving those inputs
+        is its job. Silently forwarding a host environment into a container would be
+        the drift this seam exists to make visible, so the port keeps its shape and
+        the substrate keeps its authority.
+        """
+        del env
+        started = time.monotonic()
+        try:
+            result = self._executor.run(
+                command,
+                timeout=max(1, math.ceil(timeout_s)),
+                workdir=cwd,
+                session_id=None,
+            )
+        except ExecutionTimedOutError:
+            return _timeout_result(command, elapsed_s=time.monotonic() - started, timeout_s=timeout_s)
+        except (ExecutionContractError, ExecutionRejectedError, ExecutionUnavailableError) as error:
+            return _managed_unavailable_result(
+                command, reason=f"{type(error).__name__}: {error}", elapsed_s=time.monotonic() - started
+            )
+        except ExecutionUncertainError as error:
+            # Uncertain means the work may have run. It is not a pass and it is not a
+            # refusal; the gate is told that it does not know.
+            return _managed_unavailable_result(
+                command,
+                reason=f"uncertain, {type(error).__name__}: {error}",
+                elapsed_s=time.monotonic() - started,
+            )
+        elapsed_s = time.monotonic() - started
+        if result.timed_out:
+            return _timeout_result(command, elapsed_s=elapsed_s, timeout_s=timeout_s)
+        if result.truncated:
+            # A truncated transcript cannot prove a command passed: the failure may be
+            # in the part that was cut off.
+            return _managed_unavailable_result(
+                command, reason="output was truncated; the result is not evidence", elapsed_s=elapsed_s
+            )
+        return CommandResult(
+            command=command,
+            outcome=CommandOutcome.PASS if result.exit_code == 0 else CommandOutcome.FAIL,
+            exit_code=result.exit_code,
+            stdout_tail=_tail(result.stdout.encode("utf-8", "replace")),
+            stderr_tail="",
+            duration_s=elapsed_s,
+        )
+
+
+def _managed_unavailable_result(command: str, *, reason: str, elapsed_s: float) -> CommandResult:
+    """A managed command that produced no usable verdict is ``ERROR``, never ``PASS``."""
+    return CommandResult(
+        command=command,
+        outcome=CommandOutcome.ERROR,
+        exit_code=None,
+        stdout_tail="",
+        stderr_tail=f"verify: managed execution produced no verdict: {reason}",
+        duration_s=elapsed_s,
+    )
 
 
 def _run_one(command: str, *, cwd: Path, timeout_s: float, env: dict[str, str]) -> CommandResult:
