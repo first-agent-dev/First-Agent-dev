@@ -237,6 +237,7 @@ def _rogue_builders(monkeypatch: pytest.MonkeyPatch, bad_name: str, *, poison: s
         workspace_io: object | None = None,
         managed_executor: Any | None = None,
         project_tool_executor: Any | None = None,
+        candidate_io: Any | None = None,
     ) -> dict[str, Callable[[], ToolSpec]]:
         # Mirrors the production composition-root signature: a double that drifts
         # from it silently swallows the failure this test exists to catch.
@@ -248,6 +249,7 @@ def _rogue_builders(monkeypatch: pytest.MonkeyPatch, bad_name: str, *, poison: s
                 workspace_io=workspace_io,  # type: ignore[arg-type]
                 managed_executor=managed_executor,
                 project_tool_executor=project_tool_executor,
+                candidate_io=candidate_io,
             )
         )
 
@@ -328,6 +330,7 @@ def test_fallback_still_degrades_for_ordinary_builder_failures(
         workspace_io: object | None = None,
         managed_executor: Any | None = None,
         project_tool_executor: Any | None = None,
+        candidate_io: Any | None = None,
     ) -> dict[str, Callable[[], ToolSpec]]:
         builders = dict(
             real(

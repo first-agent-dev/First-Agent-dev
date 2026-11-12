@@ -39,6 +39,7 @@ from tests._capabilities import requires_pty_backend
 from tests.test_cli import (
     _FAKE_MODELS_YAML,
     _TEST_SECRETS,
+    _install_test_managed_cli_dependencies,
     _make_run_args,
     _ScriptedTransport,
     _stop_body,
@@ -72,6 +73,11 @@ def cli_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("USERPROFILE", str(home))
+    # A session-backed run requires an admitted managed provisioner: the host path is
+    # not a fallback (``session/manager.py:302-307``). These oracles are about output
+    # and lifecycle, so they take the same narrow test-only authority seam the rest of
+    # the CLI suite uses, and do not claim to verify managed view IO.
+    _install_test_managed_cli_dependencies(monkeypatch, home=home, workspace_root=tmp_path.parent)
     return home
 
 

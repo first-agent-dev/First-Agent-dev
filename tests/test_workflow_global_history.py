@@ -210,6 +210,7 @@ def test_standalone_run_still_exports_its_own_row(tmp_path: Path, monkeypatch: p
     """
     from fa.cli import _cmd_run, build_parser
     from fa.inner_loop.global_history import default_global_history_path
+    from tests.test_cli import _install_test_managed_cli_dependencies
 
     state_root = tmp_path / "state"
     state_root.mkdir()
@@ -218,6 +219,11 @@ def test_standalone_run_still_exports_its_own_row(tmp_path: Path, monkeypatch: p
     monkeypatch.setenv("FA_STATE_ROOT", str(state_root))
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("USERPROFILE", str(home))
+    # A session-backed ``fa run`` requires an admitted managed provisioner and does
+    # not fall back to the host tree (``session/manager.py:302-307``). This oracle is
+    # about which rows reach global history, so it takes the narrow test-only
+    # authority seam; managed view IO is verified by its own tests.
+    _install_test_managed_cli_dependencies(monkeypatch, home=home, workspace_root=tmp_path.parent)
 
     workspace = tmp_path / "ws"
     workspace.mkdir()
