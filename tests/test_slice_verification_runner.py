@@ -15,6 +15,8 @@ absence of exceptions would verify nothing it exists to verify.
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -28,13 +30,19 @@ from fa.execution.client import (
 from fa.execution.primitives import ExecutionContractError
 from fa.inner_loop.slice_verification import (
     DEFAULT_VERIFY_TIMEOUT_SECONDS,
+    JUNIT_BLOCK_END,
+    JUNIT_BLOCK_START,
     TAIL_LIMIT,
     CommandOutcome,
     CommandResult,
     ManagedVerifyCommandExecutor,
+    _junit_block,
+    _with_markers,
     build_env,
+    capture_test_nodeids,
     run_commands,
 )
+from fa.inner_loop.tools.workspace_port import WorkspacePortError
 from fa.runtime.pty_pool import PtyResult
 
 
@@ -670,3 +678,176 @@ def test_managed_verify_leaves_no_host_trace(tmp_path: Path) -> None:
     run_commands((f"touch {marker}",), workspace=tmp_path, executor=managed)
 
     assert not marker.exists()
+
+
+# ── Q142 option A: the report travels in the receipt ─────────────────────────
+
+
+def _inband_executor(*, writes_visible: bool, prepared: dict[str, Path] | None = None) -> object:
+    """A substrate that answers the in-band command with a real JUnit report in stdout."""
+
+    class _InBand:
+        writes_are_visible = writes_visible
+
+        def run_verify_command(
+            self, command: str, *, cwd: Path, timeout_s: float, env: dict[str, str]
+        ) -> CommandResult:
+            del timeout_s, env
+            report = Path(command.rsplit("--junitxml=", 1)[1].split(" ", 1)[0].strip("'"))
+            report.parent.mkdir(parents=True, exist_ok=True)
+            subprocess.run(
+                command.replace("python -m pytest", f"{sys.executable} -m pytest"),
+                shell=True,
+                cwd=cwd,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            if prepared is not None:
+                prepared["report"] = report
+            body = report.read_text(encoding="utf-8") if report.exists() else ""
+            return CommandResult(
+                command=command,
+                outcome=CommandOutcome.PASS,
+                exit_code=0,
+                stdout_tail=f"{JUNIT_BLOCK_START}\n{body}\n{JUNIT_BLOCK_END}\n",
+                stderr_tail="",
+                duration_s=0.0,
+            )
+
+    return _InBand()
+
+
+def test_the_inband_block_round_trips_a_real_report(tmp_path: Path) -> None:
+    """C1 — the whole loop: a real pytest run, a real report, carried and parsed."""
+    (tmp_path / "test_sample.py").write_text("def test_ok():\n    assert True\n", encoding="utf-8")
+    executor = _inband_executor(writes_visible=False)
+
+    capture = capture_test_nodeids(("test_sample.py",), root=tmp_path, executor=executor)
+
+    assert capture.nodeids == {"test_sample.py::test_ok": True}
+
+
+def _sample_report(nodeid: str) -> str:
+    """A smallest-possible report the real parser accepts: proves the markers, not pytest."""
+    return (
+        '<testsuite name="pytest" tests="1" failures="0" errors="0" skipped="0">'
+        f'<testcase classname="x" name="y"><properties>'
+        f'<property name="fa_pytest_nodeid" value="{nodeid}"/>'
+        "</properties></testcase></testsuite>"
+    )
+
+
+def test_the_block_markers_survive_arbitrary_test_output(tmp_path: Path) -> None:
+    """EDGE — the report is found even when the run prints its own noise first."""
+    body = _sample_report("test_sample.py::test_ok")
+    tail = f"some test log\n{JUNIT_BLOCK_START}\n{body}\n{JUNIT_BLOCK_END}\nmore noise\n"
+
+    carried, detail = _junit_block(tail)
+
+    assert detail == ""
+    assert carried is not None
+    assert b"test_sample.py::test_ok" in carried
+
+
+@pytest.mark.parametrize(
+    ("tail", "expected"),
+    [
+        ("no markers at all", "expected one block"),
+        (f"{JUNIT_BLOCK_START}\n<testsuite/>\n", "expected one block"),
+        (f"{JUNIT_BLOCK_START}\n<testsuite/>\n{JUNIT_BLOCK_END}\n" * 2, "expected one block"),
+        (f"{JUNIT_BLOCK_START}\n{JUNIT_BLOCK_END}", "empty"),
+    ],
+)
+def test_a_malformed_inband_block_is_refused_not_guessed(tail: str, expected: str) -> None:
+    """EDGE — every unusable shape names its defect, and none of them becomes a report."""
+    carried, detail = _junit_block(tail)
+
+    assert carried is None
+    assert expected in detail
+
+
+def test_a_missing_block_never_becomes_an_empty_t0(tmp_path: Path) -> None:
+    """C1 — no report is ``None``, not ``{}``: silence must not read as "no tests failed"."""
+
+    class _NoBlock:
+        writes_are_visible = False
+
+        def run_verify_command(self, command: str, **_kwargs: object) -> CommandResult:
+            return CommandResult(command, CommandOutcome.PASS, 0, "plain log", "", 0.0)
+
+    (tmp_path / "test_sample.py").write_text("def test_ok():\n    assert True\n", encoding="utf-8")
+
+    capture = capture_test_nodeids(("test_sample.py",), root=tmp_path, executor=_NoBlock())
+
+    assert capture.nodeids is None
+    assert "markers" in capture.detail
+
+
+def test_an_unconfirmed_test_path_is_unproven_not_absent(tmp_path: Path) -> None:
+    """C1 — the false pass Q142 found: a test the coder created is not on the host.
+
+    With a port, a path the snapshot cannot read is *unconfirmed*. Reporting ``{}``
+    there would tell the gate "this slice declared no tests", which is a pass it did
+    not earn. The host keeps the documented empty-T0 behaviour, where absence is real.
+    """
+
+    class _EmptySnapshot:
+        def read_file(self, *_args: object, **_kwargs: object) -> object:
+            raise WorkspacePortError("refused")
+
+    (tmp_path / "test_sample.py").write_text("def test_ok():\n    assert True\n", encoding="utf-8")
+
+    capture = capture_test_nodeids(
+        ("test_missing.py",), root=tmp_path, executor=_inband_executor(writes_visible=False), port=_EmptySnapshot()
+    )
+
+    assert capture.nodeids is None
+    assert "could not be confirmed" in capture.detail
+
+
+def test_a_confirmed_snapshot_path_runs_and_reports(tmp_path: Path) -> None:
+    """C1 — the positive half: a path the snapshot can read is a path that gets run."""
+    (tmp_path / "test_sample.py").write_text("def test_ok():\n    assert True\n", encoding="utf-8")
+
+    class _Snapshot:
+        def read_file(self, path: str, **_kwargs: object) -> object:
+            if (tmp_path / path).is_file():
+                return object()
+            raise WorkspacePortError("refused")
+
+    capture = capture_test_nodeids(
+        ("test_sample.py",), root=tmp_path, executor=_inband_executor(writes_visible=False), port=_Snapshot()
+    )
+
+    assert capture.nodeids == {"test_sample.py::test_ok": True}
+
+
+def test_managed_markers_travel_as_a_command_prefix_never_as_environment() -> None:
+    """C1 — the recursion guard reaches the managed command, and only the markers do."""
+    prefixed = _with_markers("true", {"FA_VERIFY_GATE_TEST_DEPTH": "2", "PATH": "/host/bin", "HOME": "/home/x"})
+
+    assert prefixed.startswith("FA_VERIFY_GATE_TEST_DEPTH=2 ")
+    assert "PATH=" not in prefixed
+    assert "HOME=" not in prefixed
+    assert prefixed.endswith(" true")
+
+    # The same property through the executor, which is where a wholesale forward would
+    # actually go wrong: the cell would inherit a controller HOME and PATH.
+    executor = _FakeManagedExecutor()
+    managed = ManagedVerifyCommandExecutor(executor, root=Path("/tmp"))
+    managed.run_verify_command(
+        "true", cwd=Path("/tmp"), timeout_s=5.0, env={"FA_VERIFY_GATE_TEST_DEPTH": "2", "PATH": "/host/bin"}
+    )
+    sent = executor.calls[0]["command"]
+    assert isinstance(sent, str)
+    assert sent.startswith("FA_VERIFY_GATE_TEST_DEPTH=2 ")
+    assert "PATH=" not in sent
+
+
+def test_a_marker_value_cannot_become_shell_syntax() -> None:
+    """EDGE — quoted, so a value is a value even if it one day carries model text."""
+    prefixed = _with_markers("true", {"FA_VERIFY_JUNIT_RUN_ID": "$(id); rm -rf /"})
+
+    assert "'" in prefixed
+    assert "$(id)" not in prefixed.replace("'$(id); rm -rf /'", "")

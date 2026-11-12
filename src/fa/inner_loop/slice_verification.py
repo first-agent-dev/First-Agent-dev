@@ -57,6 +57,7 @@ from fa.execution.primitives import ExecutionContractError
 from fa.inner_loop.junit_nodeid_plugin import JUNIT_NODEID_PROPERTY, JUNIT_RUN_ID_ENV, JUNIT_RUN_ID_PROPERTY
 from fa.inner_loop.plan_ids import FAIL, PlanDiagnostic, PlanIds, SliceRecord
 from fa.inner_loop.tools.bash_env import build_scrubbed_env
+from fa.inner_loop.tools.workspace_port import WorkspacePort, WorkspacePortError
 from fa.runtime.bash_executor import BashExecutor
 
 __all__ = [
@@ -126,13 +127,49 @@ DEFAULT_PROBE_TIMEOUT_SECONDS = 30.0
 #: evict the diff the judge actually needs.
 TAIL_LIMIT = 4000
 
+#: When a harness-issued command must carry its own JUnit report back, the bound is
+#: the receipt's, not the log's: ``cell_worker`` keeps the last 64 KiB of each stream
+#: (``protocol.py:26``). Cutting at ``TAIL_LIMIT`` would truncate a 15 KiB report
+#: before it could be parsed, and a truncated report is refused, not guessed at.
+EVIDENCE_TAIL_LIMIT = 64 * 1024
+
+#: Delimiters around a report carried in the command's own stdout (Q142 option A).
+#: A managed run has no controller-side path to write to -- a READ view mounts sealed
+#: source and the toolchain cache only, and its /scratch is a tmpfs inside the cell
+#: (``profiles.py:108-167``) -- so the report has to travel in the receipt.
+_JUNIT_BLOCK_START: Final = "<<<FA-JUNIT-REPORT>>>"
+_JUNIT_BLOCK_END: Final = "<<<END-FA-JUNIT-REPORT>>>"
+
+#: Public names for the same two strings: a caller that composes or inspects an
+#: evidence command must not reach into private module state to do it.
+JUNIT_BLOCK_START = _JUNIT_BLOCK_START
+JUNIT_BLOCK_END = _JUNIT_BLOCK_END
+
 #: The JUnit adapter must carry pytest's authoritative Item.nodeid (CT68/CT69).
 #: Keep this command separate from planner-authored verify fences: these are
 #: harness-issued before/after snapshots, not commands the plan gets to rewrite.
 NODEID_CAPTURE_COMMAND = "python -m pytest {paths} -p fa.inner_loop.junit_nodeid_plugin --junitxml={report} -q"
 
+#: The in-band form of the same harness run (Q142 option A). pytest writes the report
+#: to a file and exposes no stdout mode, so the file goes to the cell's own scratch and
+#: is echoed into the receipt between markers. The echo runs after pytest, so a failing
+#: run still carries its report while the exit status stays pytest's own.
+NODEID_CAPTURE_INBAND_COMMAND = (
+    "python -m pytest {paths} -p fa.inner_loop.junit_nodeid_plugin --junitxml={report} -q; "
+    "__fa_rc=$?; printf '%s\\n' '" + _JUNIT_BLOCK_START + "'; cat {report}; "
+    "printf '%s\\n' '" + _JUNIT_BLOCK_END + "'; exit $__fa_rc"
+)
+
 _GATE_TEST_DEPTH_ENV: Final = "FA_VERIFY_GATE_TEST_DEPTH"
 _GATE_KILL_CHECK_ENV: Final = "FA_VERIFY_GATE_KILL_CHECK"
+
+#: The only environment a managed verify command takes with it (Q142). These are
+#: *harness-computed markers*, never inherited values: the recursion guard, the
+#: kill-check flag and the JUnit run id. The cell's own environment (HOME, TMPDIR,
+#: PATH) is the authority's to set, and forwarding the controller's would be exactly
+#: the drift the scrubber exists to prevent. They reach the command as a shell prefix
+#: assignment because a one-shot non-interactive exec has no environment field.
+_MANAGED_ENV_MARKERS: Final = frozenset({_GATE_TEST_DEPTH_ENV, _GATE_KILL_CHECK_ENV, JUNIT_RUN_ID_ENV})
 _GATE_MODES: Final = frozenset({"observe", "enforce"})
 
 #: Explicit source roots kill-checks may copy into a temporary overlay. Test
@@ -225,6 +262,12 @@ class VerifyCommandExecutor(Protocol):
     A default host executor keeps every existing caller byte-identical; the
     managed caller passes its own and never falls back.
     """
+
+    #: Whether a path the command writes is readable by the caller afterwards.
+    #: A host shell writes to this machine (``True``); a cell writes into a tmpfs its
+    #: own container owns, so the controller sees nothing (``False``) and evidence has
+    #: to travel in the receipt.
+    writes_are_visible: bool = True
 
     def run_verify_command(
         self, command: str, *, cwd: Path, timeout_s: float, env: dict[str, str]
@@ -403,6 +446,8 @@ class ManagedVerifyCommandExecutor:
     classification belongs to the substrate, not to the gate that is judging it.
     """
 
+    writes_are_visible = False
+
     def __init__(self, executor: BashExecutor, *, root: Path) -> None:
         if not isinstance(root, Path) or not root.is_absolute() or ".." in root.parts:
             raise ExecutionContractError
@@ -412,17 +457,16 @@ class ManagedVerifyCommandExecutor:
     def run_verify_command(self, command: str, *, cwd: Path, timeout_s: float, env: dict[str, str]) -> CommandResult:
         """Run one command inside the pinned view and translate the result.
 
-        ``env`` is accepted and deliberately unused: the authority fixes the cell
-        environment (``HOME``/``TMPDIR`` into ``/scratch``) and proving those inputs
-        is its job. Silently forwarding a host environment into a container would be
-        the drift this seam exists to make visible, so the port keeps its shape and
-        the substrate keeps its authority.
+        ``env`` is not forwarded wholesale: the authority fixes the cell environment
+        (``HOME``/``TMPDIR`` into ``/scratch``) and proving those inputs is its job.
+        Only the harness-computed markers travel, as a command prefix -- otherwise the
+        recursion guard and kill-check flag would silently do nothing on the managed
+        substrate, which is a correctness hole rather than a hygiene detail.
         """
-        del env
         started = time.monotonic()
         try:
             result = self._executor.run(
-                command,
+                _with_markers(command, env),
                 timeout=max(1, math.ceil(timeout_s)),
                 workdir=cwd,
                 session_id=None,
@@ -454,10 +498,23 @@ class ManagedVerifyCommandExecutor:
             command=command,
             outcome=CommandOutcome.PASS if result.exit_code == 0 else CommandOutcome.FAIL,
             exit_code=result.exit_code,
-            stdout_tail=_tail(result.stdout.encode("utf-8", "replace")),
+            # An evidence-carrying tail keeps the receipt's own bound: the report has
+            # to survive to the parser, and its truncation is reported by the cell.
+            stdout_tail=_tail(result.stdout.encode("utf-8", "replace"), limit=EVIDENCE_TAIL_LIMIT),
             stderr_tail="",
             duration_s=elapsed_s,
         )
+
+
+def _with_markers(command: str, env: Mapping[str, str]) -> str:
+    """Prefix a command with the harness markers it must run under.
+
+    Quoted with ``shlex.quote`` so a value can never become shell syntax: these are
+    harness constants today, and a quoting bug would still be a shell injection the day
+    one of them carries text the model can influence.
+    """
+    markers = [f"{name}={shlex.quote(env[name])}" for name in sorted(_MANAGED_ENV_MARKERS) if name in env]
+    return command if not markers else " ".join(markers) + " " + command
 
 
 def _managed_unavailable_result(command: str, *, reason: str, elapsed_s: float) -> CommandResult:
@@ -552,17 +609,52 @@ def run_commands(
     return tuple(results)
 
 
-def _existing_test_paths(test_paths: Sequence[str], root: Path) -> tuple[str, ...]:
-    """Keep declared pytest paths that exist at this snapshot's T0/now point."""
-    existing: list[str] = []
+def _existing_test_paths(
+    test_paths: Sequence[str], root: Path, port: WorkspacePort | None = None
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Split declared pytest paths into (confirmed, unconfirmed).
+
+    Passing ``port`` asks the snapshot itself; without one this asks the controller
+    host. The difference is not cosmetic (Q142): a test the coder created in the
+    revision does not exist on the host, so a host check reports "no declared TESTS
+    path exists" and the slice is treated as having nothing to prove -- a false pass
+    produced by a missing file rather than by a passing test.
+
+    Unconfirmed is deliberately not absent. The port answers a read and has no stat,
+    so "not there" and "could not tell" arrive as the same refusal; collapsing them
+    into absent would delete tests from the gate silently.
+    """
+    confirmed: list[str] = []
+    unconfirmed: list[str] = []
     for raw_path in test_paths:
         path = raw_path.strip()
         if not path:
             continue
         filesystem_path = path.split("::", 1)[0]
-        if (Path(root) / filesystem_path).exists():
-            existing.append(path)
-    return tuple(dict.fromkeys(existing))
+        if port is None:
+            # The host can tell "absent" from "present", and absent is the documented
+            # empty-T0 case: the plan may declare a test path the slice has not created.
+            if (Path(root) / filesystem_path).exists():
+                confirmed.append(path)
+            continue
+        # The port cannot: it answers reads, so absence and refusal look the same, and
+        # only a refusal to read something we could otherwise expect is unconfirmed.
+        (confirmed if _port_path_confirmed(port, filesystem_path) else unconfirmed).append(path)
+    return tuple(dict.fromkeys(confirmed)), tuple(dict.fromkeys(unconfirmed))
+
+
+def _port_path_confirmed(port: WorkspacePort, path: str) -> bool:
+    """Whether the snapshot can read something at this path.
+
+    A declared directory is accepted when the port reads a file inside it, because the
+    port has no directory listing; a bare directory therefore reads as unconfirmed and
+    the caller refuses rather than silently running nothing.
+    """
+    try:
+        port.read_file(path, max_bytes=1)
+    except (WorkspacePortError, ValueError):
+        return False
+    return True
 
 
 class _JUnitOutcome(enum.StrEnum):
@@ -649,6 +741,17 @@ def _parse_junit_report(path: Path, *, run_id: str | None = None) -> tuple[_JUni
         xml_bytes = path.read_bytes()
     except OSError as error:
         return None, f"JUnitXML report is missing or invalid: {error}"
+    return _parse_junit_bytes(xml_bytes, run_id=run_id)
+
+
+def _parse_junit_bytes(xml_bytes: bytes, *, run_id: str | None = None) -> tuple[_JUnitReport | None, str]:
+    """The same parser, over bytes the caller already holds.
+
+    Split out for Q142 option A: on a managed run the report arrives inside the exec
+    receipt, so there is no controller-side file to open. Every rejection below is
+    unchanged -- a report that crossed a boundary is not more trusted than one read
+    from a path.
+    """
     upper_xml = xml_bytes.replace(b"\x00", b"").upper()
     if b"<!DOCTYPE" in upper_xml or b"<!ENTITY" in upper_xml:
         return None, "JUnitXML report contains a forbidden DTD/entity declaration"
@@ -673,6 +776,28 @@ def _parse_junit_report(path: Path, *, run_id: str | None = None) -> tuple[_JUni
     return _JUnitReport(outcomes), ""
 
 
+def _junit_block(stdout: str) -> tuple[bytes | None, str]:
+    """Take the one report a managed command carried, or say why there is none.
+
+    The markers are what makes this safe: without them ``stdout`` is arbitrary test
+    output, and a byte that happens to look like XML would be a guess rather than
+    evidence. Exactly one block, both markers, in order -- duplicates and half-blocks
+    are refused instead of resolved by taking the first.
+    """
+    starts = stdout.count(_JUNIT_BLOCK_START)
+    ends = stdout.count(_JUNIT_BLOCK_END)
+    if starts != 1 or ends != 1:
+        return None, f"JUnit report markers: expected one block, found {starts} start / {ends} end"
+    start = stdout.index(_JUNIT_BLOCK_START) + len(_JUNIT_BLOCK_START)
+    end = stdout.index(_JUNIT_BLOCK_END)
+    if end < start:
+        return None, "JUnit report markers are out of order"
+    body = stdout[start:end].strip()
+    if not body:
+        return None, "JUnit report block is empty"
+    return body.encode("utf-8"), ""
+
+
 def _parse_nodeid_report(path: Path) -> tuple[dict[str, bool] | None, str]:
     """Baseline-compatible projection: failure/skip is false, unusable report is None."""
     report, detail = _parse_junit_report(path)
@@ -695,20 +820,38 @@ def capture_test_nodeids(
     *,
     root: Path,
     deadline: float | None = None,
+    executor: VerifyCommandExecutor | None = None,
+    port: WorkspacePort | None = None,
 ) -> NodeidCapture:
     """Run existing declared tests with the exact-nodeid JUnit plugin (CT68/69).
 
     Paths absent at this snapshot contribute no rows rather than becoming
     false tests. A started but unusable JUnit run returns ``nodeids=None`` so
     callers classify it as ``ERROR``; a valid report with zero tests is ``{}``.
+
+    ``executor`` and ``port`` move the two host assumptions onto the snapshot
+    (Q142): where the command runs, and what counts as an existing test path. A
+    substrate whose files the caller cannot see carries its report back inside the
+    command's own stdout, and both modes hand the *same* bytes to the same parser,
+    so neither is a weaker oracle.
     """
-    existing_paths = _existing_test_paths(test_paths, Path(root))
+    existing_paths, unconfirmed = _existing_test_paths(test_paths, Path(root), port)
+    if unconfirmed:
+        # Not the same as absent: the plan named these, and this snapshot cannot
+        # confirm them. Reading that as "nothing to prove" would be a false pass.
+        return NodeidCapture(
+            nodeids=None,
+            detail="declared TESTS paths could not be confirmed at this snapshot: " + ", ".join(unconfirmed),
+        )
     if not existing_paths:
         return NodeidCapture(nodeids={}, detail="no declared TESTS path exists at this snapshot")
 
+    # A cell writes into its own tmpfs scratch; the host writes where we can read.
+    in_band = executor is not None and not getattr(executor, "writes_are_visible", True)
     with tempfile.TemporaryDirectory(prefix="fa-verify-junit-") as temporary_directory:
         report = Path(temporary_directory) / "results.xml"
-        command = NODEID_CAPTURE_COMMAND.format(
+        template = NODEID_CAPTURE_INBAND_COMMAND if in_band else NODEID_CAPTURE_COMMAND
+        command = template.format(
             paths=shlex.join(existing_paths),
             report=shlex.quote(str(report)),
         )
@@ -717,6 +860,7 @@ def capture_test_nodeids(
             workspace=Path(root),
             deadline=deadline,
             env=_gate_subprocess_env(Path(root)),
+            executor=executor,
         )
         if result.outcome is CommandOutcome.ERROR:
             return NodeidCapture(
@@ -724,7 +868,13 @@ def capture_test_nodeids(
                 command_result=result,
                 detail=result.stderr_tail or "harness-issued JUnit run could not be completed",
             )
-        parsed, detail = _parse_junit_report(report)
+        if in_band:
+            carried, detail = _junit_block(result.stdout_tail)
+            if carried is None:
+                return NodeidCapture(nodeids=None, command_result=result, detail=detail)
+            parsed, detail = _parse_junit_bytes(carried)
+        else:
+            parsed, detail = _parse_junit_report(report)
         if parsed is None:
             return NodeidCapture(nodeids=None, command_result=result, detail=detail)
         # Preserve pytest's valid empty T0 (exit5), but never accept partial rows
