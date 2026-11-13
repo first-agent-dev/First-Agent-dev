@@ -25,7 +25,7 @@ import pytest
 
 from fa import cli
 from fa.execution import composition
-from fa.execution.client import ExecutionClient
+from fa.execution.client import ExecutionClient, ExecutionUnavailableError
 from fa.execution.composition import (
     ExecutionBinding,
     ManagedExecution,
@@ -191,7 +191,7 @@ def _wire_session_contexts(
         source_workspace=site.source,
         workspace_provisioner=lambda _req: ProvisionedWorkspace(True, "ws-" + "1" * 32, "rev-" + "2" * 32, None),
         workspace_preparer=lambda *_a: ReadyState(
-            ReadyStatus.READY, None, "ok", site.source / "ready.log", False, 1
+            ReadyStatus.READY, None, "ready_fast_path", site.source / "ready.log", False, 1
         ),
     )
     session = manager.provision_entrypoint_session(session_id=session_id, workspace_override=site.source)
@@ -208,9 +208,7 @@ def _wire_session_contexts(
         cli,
         "_resolve_cli_run_context",
         lambda args: (
-            orig_resolve_cli(args)
-            if getattr(args, "_run_context", None) is not None
-            else (session, run, session_db)
+            orig_resolve_cli(args) if getattr(args, "_run_context", None) is not None else (session, run, session_db)
         ),
     )
     monkeypatch.setattr(cli, "_resolve_workflow_lifecycle", lambda _args, rid: (rid, session, run, session_db))
@@ -319,6 +317,8 @@ def test_invoke_workflow_chat_acquisition_coder_eval_uses_pin_reader_and_release
             return _stop_reply("workflow done", tag)
         if role == "planner":
             if turn == 0:
+                return _tool_reply("plan-search", "fs_search", {"output_mode": "files"}, tag)
+            if turn == 1:
                 return _tool_reply("plan-1", "fs_read_file", {"path": _PLAN_RELATIVE}, tag)
             return _stop_reply(selection, tag)
         if role == "coder":
@@ -355,7 +355,8 @@ def test_invoke_workflow_chat_acquisition_coder_eval_uses_pin_reader_and_release
 
     assert exit_code == 0
     assert (site.source / "src" / "gap1.py").read_text(encoding="utf-8") == "GAP1 = 1\n"
-    assert stage_turns == {"chat": 2, "planner": 2, "coder": 2, "eval": 2}
+    assert stage_turns == {"chat": 2, "planner": 3, "coder": 2, "eval": 2}
+    assert any("project_tool" in payload for op, _, payload in ops if op is Operation.EXEC)
 
     pin_ops = [payload for op, _, payload in ops if op is Operation.PIN_READER]
     create_project_write_ops = [
@@ -368,8 +369,12 @@ def test_invoke_workflow_chat_acquisition_coder_eval_uses_pin_reader_and_release
     # ACQUISITION and eval pinned READ/PROJECT views; parent chat (suspend + final) and coder wrote PROJECT views.
     assert len(pin_ops) >= 2
     assert len(create_project_write_ops) == 3
-    assert len(exec_ops) == 1
-    assert exec_ops[0].get("session_id") is None
+    assert len(exec_ops) == 2
+    assert any("project_tool" in p and p.get("profile_id") == "reader" for p in exec_ops)
+    assert any(
+        p.get("command") == "printf eval-ok" and p.get("profile_id") == "reader" and p.get("session_id") is None
+        for p in exec_ops
+    )
     assert len(publish_ops) == 3
     assert len(managed_list) == 1
     assert site.metadata({"workspace_id": managed_list[0].binding.workspace_id})["status"] == "AVAILABLE"
@@ -706,9 +711,7 @@ def test_write_view_release_contract_enforces_stopping_and_terminality(site: Sit
         view, view_cap = _view(service, workspace_id, revision_id, writer_cap, request_id="2" * 32)
 
         # OPEN WRITE view cannot be released.
-        open_release = exchange(
-            service, Operation.RELEASE, {}, request_id="3" * 32, view_ref=view, capability=view_cap
-        )
+        open_release = exchange(service, Operation.RELEASE, {}, request_id="3" * 32, view_ref=view, capability=view_cap)
         assert _error(open_release) == "VIEW_CLOSED"
 
         # Real STOP_VIEW settling cleanly (no cells) -> STOPPING + terminal.json -> RELEASE -> REJECTED.
@@ -760,9 +763,12 @@ def test_writer_release_succeeds_after_rejected_write_view_on_fresh_workspace(si
         workspace_id = _registered(service)
         writer_cap, revision_id = _writer(service, workspace_id, request_id="1" * 32)
         view, view_cap = _view(service, workspace_id, revision_id, writer_cap, request_id="2" * 32)
-        assert exchange(service, Operation.STOP_VIEW, {}, request_id="3" * 32, view_ref=view, capability=view_cap)[
-            "status"
-        ] == "OK"
+        assert (
+            exchange(service, Operation.STOP_VIEW, {}, request_id="3" * 32, view_ref=view, capability=view_cap)[
+                "status"
+            ]
+            == "OK"
+        )
         assert exchange(service, Operation.RELEASE, {}, request_id="4" * 32, view_ref=view, capability=view_cap)[
             "result"
         ] == {"released": True}
@@ -775,26 +781,28 @@ def test_read_only_stage_and_candidate_seed_fail_closed(tmp_path: Path) -> None:
     """Gap #1 & #2 fail-closed guards: missing read_only_profile & non-stale candidate read error."""
     workspace = tmp_path / "project"
     workspace.mkdir()
-    managed = ManagedExecution(
-        client=ExecutionClient(tmp_path / "supervisor.sock", server_uid=os.getuid(), rpc_timeout_ms=100),
-        binding=ExecutionBinding(NamespaceRef("s1", "r1"), "ws-" + "1" * 32),
-        grant=GrantReply(Operation.ACQUIRE_WRITER, "a" * 64, None, 1, "rev-" + "2" * 32, None),
-        view_profile=native_profile(),
-        read_only_profile=None,
-    )
-    with pytest.raises(ExecutionContractError):
-        cli._drive_stage_with_managed_workspace(
-            managed=managed,
-            owns_writer=False,
-            run_id="r1",
-            run_log_dir=tmp_path / "logs",
-            session_db=None,
-            workspace=workspace,
-            role="eval",
-            plan_ref=None,
-            build_registry=lambda *_a: ToolRegistry(),
-            drive=lambda _r: SessionOutcome(0, "stop", 0, ""),
+    for bad_read_profile in (None, native_profile()):
+        managed = ManagedExecution(
+            client=ExecutionClient(tmp_path / "supervisor.sock", server_uid=os.getuid(), rpc_timeout_ms=100),
+            binding=ExecutionBinding(NamespaceRef("s1", "r1"), "ws-" + "1" * 32),
+            grant=GrantReply(Operation.ACQUIRE_WRITER, "a" * 64, None, 1, "rev-" + "2" * 32, None),
+            view_profile=native_profile(),
+            read_only_profile=None,
         )
+        managed.read_only_profile = bad_read_profile
+        with pytest.raises(ExecutionContractError):
+            cli._drive_stage_with_managed_workspace(
+                managed=managed,
+                owns_writer=False,
+                run_id="r1",
+                run_log_dir=tmp_path / "logs",
+                session_db=None,
+                workspace=workspace,
+                role="eval",
+                plan_ref=None,
+                build_registry=lambda *_a: ToolRegistry(),
+                drive=lambda _r: SessionOutcome(0, "stop", 0, ""),
+            )
 
     class _DeniedCandidate:
         def read_candidate(self, *, max_bytes: int = 1024 * 1024) -> PortRead:
@@ -820,3 +828,57 @@ def test_read_only_stage_and_candidate_seed_fail_closed(tmp_path: Path) -> None:
     assert result.error is not None
     assert result.error.code == "read_failed"
     assert "SEED_MUST_NOT_LEAK" not in (result.summary or "")
+
+    class _TruncatedCandidate:
+        def read_candidate(self, *, max_bytes: int = 1024 * 1024) -> PortRead:
+            del max_bytes
+            return PortRead("PARTIAL_MUST_NOT_LEAK", "0" * 64, False)
+
+    trunc_spec = build_read_file_tool(
+        workspace,
+        workspace_io=_DummyPort(),  # type: ignore[arg-type]
+        candidate_target=_PLAN_RELATIVE,
+        candidate_io=_TruncatedCandidate(),  # type: ignore[arg-type]
+    )
+    trunc_result = trunc_spec.handler({"path": _PLAN_RELATIVE})
+    assert trunc_result.error is not None
+    assert trunc_result.error.code == "read_failed"
+    assert "PARTIAL_MUST_NOT_LEAK" not in (trunc_result.summary or "")
+
+
+def test_read_only_stage_failed_stop_view_never_retries(
+    site: Site,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Adversary review fix: a failed STOP_VIEW on a read-only stage is never retried in except."""
+    _, service_path, _ = _setup_managed_site(site, tmp_path, monkeypatch)
+    with SupervisorService(read_config_file(service_path)) as service, _serving_supervisor(service):
+        _, run, _ = _wire_session_contexts(site, monkeypatch, session_id="s-ro-stop", run_id="r-ro-stop")
+        managed = managed_execution_for_run(run)
+        assert managed is not None
+        stop_calls: list[GrantReply] = []
+
+        def fail_once(grant: GrantReply, *, deadline: float | None = None) -> bool:
+            del deadline
+            stop_calls.append(grant)
+            return False
+
+        monkeypatch.setattr(managed, "stop_view", fail_once)
+        try:
+            with pytest.raises(ExecutionUnavailableError):
+                cli._drive_stage_with_managed_workspace(
+                    managed=managed,
+                    owns_writer=False,
+                    run_id="r-ro-stop",
+                    run_log_dir=tmp_path / "logs",
+                    session_db=None,
+                    workspace=site.source,
+                    role="eval",
+                    plan_ref=None,
+                    build_registry=lambda *_a: ToolRegistry(),
+                    drive=lambda _r: SessionOutcome(0, "stop", 0, ""),
+                )
+            assert len(stop_calls) == 1
+        finally:
+            assert managed.close()

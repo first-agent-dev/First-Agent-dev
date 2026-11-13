@@ -1149,9 +1149,10 @@ class ExecutionClient:
         follows the view's own access rather than guessing:
 
         * an EXECUTION view (WRITE) ends with ``STOP_VIEW``: irreversible closure,
-          then one terminality verdict. ``RELEASE`` is not sent for it — the
-          authority's release is the *reader pin* revocation
-          (``workspace.py:1863``) and refuses a view that never held a pin.
+          then one terminality verdict. ``stop_view`` itself never sends
+          ``RELEASE`` for a WRITE view because an accepted stage advances to
+          ``SEAL`` -> ``PUBLISH``; rejecting an un-published stopped WRITE view is
+          a separate call through :meth:`release_stopped_view`.
         * a READ view additionally holds that pin, so the proved view is then
           released; a release whose answer was lost is an unproved end, while a
           refused one only says there is no pin left to revoke.

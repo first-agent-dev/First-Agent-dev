@@ -168,9 +168,7 @@ logger = logging.getLogger(__name__)
 _STAGE_PROJECT_TOOL_EXECUTOR: ContextVar[ManagedProjectToolExecutor | None] = ContextVar(
     "_STAGE_PROJECT_TOOL_EXECUTOR", default=None
 )
-_STAGE_MANAGED_EXECUTION: ContextVar[ManagedExecution | None] = ContextVar(
-    "_STAGE_MANAGED_EXECUTION", default=None
-)
+_STAGE_MANAGED_EXECUTION: ContextVar[ManagedExecution | None] = ContextVar("_STAGE_MANAGED_EXECUTION", default=None)
 
 _RUN_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,128}$")
 
@@ -2036,7 +2034,9 @@ def _drive_stage_with_managed_workspace(
             view_settled = lease.writer_release_safe
         elif managed is not None and view_grant is not None:
             _suspend_stage_ports(workspace_io, managed_executor, managed_project_tool_executor)
-            if not managed.stop_view(view_grant):
+            stop_grant = view_grant
+            view_grant = None
+            if not managed.stop_view(stop_grant):
                 raise ExecutionUnavailableError
             view_settled = True
     except BaseException:
