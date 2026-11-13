@@ -246,3 +246,85 @@ def test_a_host_mode_admission_still_detects_a_changed_file(tmp_path: Path) -> N
     with _pytest.raises(PlanRefError) as refused:
         _check_admission_source(ctx)
     assert refused.value.rule == "source-changed"
+
+
+# ── C2: a refused admission has no downstream effect ─────────────────────────
+
+
+class _PoisonStage:
+    """A stage dispatcher that records any call and fails the assertion if used.
+
+    A refusal that still started a role would be a *different* refusal than the
+    one advertised: the caller would see `blocked_reason` and be told nothing ran,
+    while a model call had already been paid for.
+    """
+
+    def __init__(self) -> None:
+        self.roles: list[str] = []
+
+    def __call__(self, args: object, **kwargs: object) -> int:
+        self.roles.append(str(getattr(args, "role", "?")))
+        raise AssertionError(f"a refused admission dispatched role {args!r}")
+
+
+def _record(run_id: str) -> dict[str, Any]:
+    """The single admission record for this run (attempts live inside it)."""
+    path = workflow_artifact_paths(run_id).admission
+    assert path.exists(), f"a refused admission left no durable record: {path}"
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def test_a_refused_snapshot_admission_dispatches_no_role_and_makes_no_model_call(tmp_path: Path) -> None:
+    """The zero-effect proof, in both observable dimensions.
+
+    The stage dispatcher is the only path to a provider call, so proving it was
+    never invoked proves no coder turn happened. The ledger proves the refusal was
+    still *recorded* -- a silent refusal would be an outage, not a safeguard.
+    """
+    stage = _PoisonStage()
+    code, state = run_workflow(
+        roles=["coder"],
+        task="do the thing",
+        per_role_task={},
+        mode="linear",
+        max_repairs=0,
+        max_replans=0,
+        run_id="s5p1-zero-effect",
+        config=_config(tmp_path),
+        workspace=tmp_path,
+        max_turns=1,
+        output_mode="quiet",
+        run_stage_fn=stage,
+        admission_snapshot=_snapshot(),
+        plan_path=tmp_path / "worklogs/demo-project/increments/increment-01-foundation.md",
+    )
+
+    assert code == 2
+    assert stage.roles == [], "no role may be dispatched when admission is refused"
+    assert state is not None and state.status == "FAILED"
+    assert state.blocked_reason == "plan-ref/conflict"
+    assert len(_record("s5p1-zero-effect")["attempts"]) == 1
+
+
+def test_a_refused_admission_leaves_no_plan_bound_coder_state(tmp_path: Path) -> None:
+    """A refused run must not claim a plan identity it never validated."""
+    code, state = _run(
+        tmp_path,
+        run_id="s5p1-no-plan",
+        roles=["coder"],
+        admission_snapshot=snapshot_from_bytes(PLAN_RELATIVE, PLAN_BODY, source_kind="EXISTING_SELECTION"),
+        plan_path=tmp_path / "worklogs/demo-project/increments/increment-01-foundation.md",
+    )
+
+    assert code == 2 and state is not None
+    record = _record("s5p1-no-plan")
+    entries = record["attempts"]
+    assert len(entries) == 1
+    assert record["status"] == "BLOCKED"
+    assert entries[0]["validation"] == "INDETERMINATE"
+    # The closed schema vocabulary cannot hold a controller-shape rule, so the
+    # record carries `validator-error`. The exact reason survives in the flow
+    # state, which is what an operator reads.
+    assert entries[0]["diagnostics"][0]["rule"] == "validator-error"
+    assert entries[0]["source_sha256"] is None
+    assert entries[0]["promoted_sha256"] is None

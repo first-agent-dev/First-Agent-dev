@@ -2831,6 +2831,11 @@ def _admit_plan(
     return False
 
 
+# The `plan-ref` values the persisted admission schema accepts. Pulled from the
+# schema itself rather than copied, so the two cannot drift apart.
+_PERSISTED_PLAN_REF_RULES = frozenset(ADMISSION_RULES["plan-ref"])
+
+
 def _record_admission_attempt(
     paths: WorkflowArtifactPaths,
     *,
@@ -2850,10 +2855,19 @@ def _blocked_plan_request(
     *, run_id: str, task: str | None, rule: str, base_dir: Path | None, deadline: float | None
 ) -> tuple[int, FlowState | None]:
     paths = workflow_artifact_paths(run_id, base_dir=base_dir)
+    # I02 spec: the persisted validator/rule vocabulary is closed, and a rule
+    # outside it must be recorded as `validator-error` rather than silently
+    # dropped. This mattered in practice -- `conflict` and
+    # `admission-without-coder` are controller-shape refusals with no schema
+    # entry, and passing them through made `write_admission_record` reject the
+    # whole record, so a refused run left no durable trace at all. The exact
+    # reason still reaches the operator: it is carried in `blocked_reason` below,
+    # which is free text, while the closed field keeps a value the schema accepts.
+    recorded_rule = rule if rule in _PERSISTED_PLAN_REF_RULES else "validator-error"
     attempt: dict[str, object] = {
         "dispatch_kind": "EXPLICIT_INPUT",
         "validation": "INDETERMINATE",
-        "diagnostics": [{"validator": "plan-ref", "rule": rule, "severity": "ERROR", "line": None}],
+        "diagnostics": [{"validator": "plan-ref", "rule": recorded_rule, "severity": "ERROR", "line": None}],
         "source_sha256": None,
         "candidate_sha256": None,
         "promoted_sha256": None,
