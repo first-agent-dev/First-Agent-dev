@@ -4,6 +4,8 @@
 
 **Amendment 2026-11-09:** operator selected 60 KiB for the complete serialized managed discovery ToolResult, superseding E506’s 30,000-byte output bound. This can exceed the model context budget; normal projection may elide and store an artifact. This decision does not change the other Q97 limits or constitute host acceptance.
 
+**Q106 disposition (updated 2026-11-10):** Q106 large-result transport parity for legacy `outline`/`reach` payloads beyond the 60 KiB envelope (`tests/test_execution_project_tools.py::test_q106_large_outline_parity_remains_open` and `::test_q106_large_reach_parity_remains_open`) is explicitly **deferred to W4** (kept as strict `xfail`s through W1–W3; 60 KiB remains the binding W1–W3 bound).
+
 ## Selected limits
 
 | Resource | Exact managed-call bound | Enforcement / over-bound behavior |

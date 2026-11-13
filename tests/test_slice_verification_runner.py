@@ -19,6 +19,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -683,8 +684,8 @@ def test_managed_verify_leaves_no_host_trace(tmp_path: Path) -> None:
 # ── Q142 option A: the report travels in the receipt ─────────────────────────
 
 
-def _inband_executor(*, writes_visible: bool, prepared: dict[str, Path] | None = None) -> object:
-    """A substrate that answers the in-band command with a real JUnit report in stdout."""
+def _inband_executor(*, writes_visible: bool, prepared: dict[str, Any] | None = None) -> Any:
+    """A substrate that runs the actual in-band command inside a scratch $TMPDIR."""
 
     class _InBand:
         writes_are_visible = writes_visible
@@ -692,27 +693,31 @@ def _inband_executor(*, writes_visible: bool, prepared: dict[str, Path] | None =
         def run_verify_command(
             self, command: str, *, cwd: Path, timeout_s: float, env: dict[str, str]
         ) -> CommandResult:
-            del timeout_s, env
-            report = Path(command.rsplit("--junitxml=", 1)[1].split(" ", 1)[0].strip("'"))
-            report.parent.mkdir(parents=True, exist_ok=True)
-            subprocess.run(
+            del timeout_s
+            run_env = {**os.environ, **env}
+            scratch_root = cwd / ".scratch-tmp"
+            scratch_root.mkdir(exist_ok=True)
+            run_env["TMPDIR"] = str(scratch_root)
+            if prepared is not None:
+                prepared["command"] = command
+                prepared["tmpdir"] = scratch_root
+            proc = subprocess.run(
                 command.replace("python -m pytest", f"{sys.executable} -m pytest"),
                 shell=True,
                 cwd=cwd,
+                env=run_env,
                 check=False,
                 capture_output=True,
                 text=True,
             )
-            if prepared is not None:
-                prepared["report"] = report
-            body = report.read_text(encoding="utf-8") if report.exists() else ""
             return CommandResult(
                 command=command,
-                outcome=CommandOutcome.PASS,
-                exit_code=0,
-                stdout_tail=f"{JUNIT_BLOCK_START}\n{body}\n{JUNIT_BLOCK_END}\n",
-                stderr_tail="",
+                outcome=CommandOutcome.PASS if proc.returncode == 0 else CommandOutcome.FAIL,
+                exit_code=proc.returncode,
+                stdout_tail=proc.stdout[-65536:],
+                stderr_tail=proc.stderr,
                 duration_s=0.0,
+                inband_stdout=proc.stdout if len(proc.stdout.encode("utf-8")) > 65536 else None,
             )
 
     return _InBand()
@@ -875,3 +880,245 @@ def test_a_host_present_path_absent_from_the_snapshot_is_not_run(tmp_path: Path)
 
     assert capture.nodeids == {}
     assert "test_sample.py::test_ok" not in str(capture.nodeids)
+
+
+def test_inband_capture_uses_cell_tmpdir_and_drops_noisy_test_output(tmp_path: Path) -> None:
+    """EDGE (R24) — in-band capture writes only inside $TMPDIR and strips pre-report noise."""
+    (tmp_path / "test_noisy.py").write_text(
+        "def test_loud():\n    print('X' * 90000)\n    assert True\n",
+        encoding="utf-8",
+    )
+    recorded: dict[str, Any] = {}
+    executor = _inband_executor(writes_visible=False, prepared=recorded)
+
+    capture = capture_test_nodeids(("test_noisy.py",), root=tmp_path, executor=executor)
+
+    assert capture.nodeids == {"test_noisy.py::test_loud": True}
+    assert "/tmp/fa-verify-junit-" not in recorded["command"]
+    assert "${TMPDIR:-/tmp}" in recorded["command"]
+    assert list((recorded["tmpdir"]).iterdir()) == []
+
+
+def test_inband_command_preserves_full_non_truncated_evidence_above_tail_limit(tmp_path: Path) -> None:
+    """EDGE (R24) — stdout > 64 KiB with truncated=False keeps full evidence without expanding stdout_tail."""
+    from fa.inner_loop.slice_verification import EVIDENCE_TAIL_LIMIT
+    from fa.runtime.pty_pool import PtyResult
+
+    body = _sample_report("test_big.py::test_case")
+    padded = ("noise line\n" * 8000) + f"{JUNIT_BLOCK_START}\n{body}\n{JUNIT_BLOCK_END}\n" + ("after\n" * 100)
+    assert len(padded.encode("utf-8")) > EVIDENCE_TAIL_LIMIT
+
+    class _LargeCleanExecutor:
+        interactive = False
+
+        def run(
+            self, _command: str, timeout: int = 30, workdir: Path | None = None, session_id: str | None = None
+        ) -> PtyResult:
+            del timeout, workdir, session_id
+            return PtyResult(stdout=padded, exit_code=0, truncated=False, session_id="")
+
+        def send_ctrl_c(self, session_id: str) -> str:
+            del session_id
+            return ""
+
+        def close(self, session_id: str) -> None:
+            del session_id
+
+    managed = ManagedVerifyCommandExecutor(_LargeCleanExecutor(), root=tmp_path)
+    result = managed.run_verify_command("echo ok", cwd=tmp_path, timeout_s=5.0, env={})
+
+    assert result.outcome is CommandOutcome.PASS
+    assert len(result.stdout_tail.encode("utf-8")) <= EVIDENCE_TAIL_LIMIT
+    assert JUNIT_BLOCK_START in result.evidence_stdout
+    carried, detail = _junit_block(result.evidence_stdout)
+    assert detail == ""
+    assert carried is not None and b"test_big.py::test_case" in carried
+
+
+def _make_typed_port(files: dict[str, str], *, chunk_bytes: int = 1024 * 1024) -> Any:
+    import hashlib
+
+    from fa.inner_loop.tools.workspace_port import (
+        PORT_READ_MAX_BYTES,
+        PortProjectArtifactListing,
+        PortProjectNames,
+        PortRead,
+        PortWrite,
+        WorkspacePortError,
+    )
+
+    class _MemoryPort:
+        @property
+        def cache_dir(self) -> Path | None:
+            return None
+
+        def read_file(self, path: str, *, offset_bytes: int = 0, max_bytes: int = PORT_READ_MAX_BYTES) -> PortRead:
+            if path not in files:
+                raise WorkspacePortError("denied")
+            raw = files[path].encode("utf-8")
+            sha = hashlib.sha256(raw).hexdigest()
+            limit = min(max_bytes, chunk_bytes)
+            chunk = raw[offset_bytes : offset_bytes + limit]
+            return PortRead(
+                content=chunk.decode("utf-8"),
+                sha256=sha,
+                eof=offset_bytes + len(chunk) >= len(raw),
+            )
+
+        def list_project_names(self) -> PortProjectNames:
+            raise WorkspacePortError("denied")
+
+        def list_project_artifacts(self, project_slug: str) -> PortProjectArtifactListing:
+            del project_slug
+            raise WorkspacePortError("denied")
+
+        def write_file(self, path: str, content: str, *, expected_sha256: str | None = None) -> PortWrite:
+            del path, content, expected_sha256
+            raise WorkspacePortError("denied")
+
+    return _MemoryPort()
+
+
+def test_inband_kill_check_requires_port_and_runs_chunked_without_heredoc(tmp_path: Path) -> None:
+    """C1/EDGE (R24) — in-band kill-check reads only via port, chunks safely, and never emits heredocs."""
+    from fa.inner_loop.slice_verification import KillDirective, KillOperator, SliceVerdict, _run_kill_check
+
+    # The host workspace copy is intentionally stale/broken to prove the controller copy
+    # is never what gets read or mutated when writes_are_visible=False.
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "demo_inband.py").write_text("def double(x: int) -> int:\n    return -1\n", encoding="utf-8")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_demo_inband.py").write_text(
+        "from demo_inband import double, untouched\n"
+        "def test_double():\n    assert double(4) == 8\n"
+        "def test_untouched():\n    assert untouched() == 42\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "__init__.py").write_text("", encoding="utf-8")
+    (tmp_path / "scripts" / "demo_script_tool.py").write_text(
+        "def helper():\n    return 'script-ok'\n", encoding="utf-8"
+    )
+    (tmp_path / "tests" / "test_demo_script.py").write_text(
+        "from scripts.demo_script_tool import helper\ndef test_helper():\n    assert helper() == 'script-ok'\n",
+        encoding="utf-8",
+    )
+
+    cell_src = "def double(x: int) -> int:\n    return x * 2\n\ndef untouched() -> int:\n    return 42\n"
+
+    # Separate cell workspace holds the pinned revision tree, while `tmp_path`
+    # holds the stale host tree.
+    cell_root = tmp_path / "cell-tree"
+    (cell_root / "src").mkdir(parents=True)
+    (cell_root / "src" / "demo_inband.py").write_text(cell_src, encoding="utf-8")
+    (cell_root / "scripts").mkdir()
+    (cell_root / "scripts" / "__init__.py").write_text("", encoding="utf-8")
+    (cell_root / "scripts" / "demo_script_tool.py").write_text(
+        "def helper():\n    return 'script-ok'\n", encoding="utf-8"
+    )
+    (cell_root / "tests").mkdir()
+    (cell_root / "tests" / "test_demo_inband.py").write_text(
+        (tmp_path / "tests" / "test_demo_inband.py").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    (cell_root / "tests" / "test_demo_script.py").write_text(
+        (tmp_path / "tests" / "test_demo_script.py").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    (cell_root / "tests" / "test_unrelated.py").write_text(
+        "def test_ok():\n    assert True\n",
+        encoding="utf-8",
+    )
+
+    recorded_commands: list[str] = []
+
+    class _CellInBand:
+        writes_are_visible = False
+
+        def run_verify_command(
+            self, command: str, *, cwd: Path, timeout_s: float, env: dict[str, str]
+        ) -> CommandResult:
+            del cwd, timeout_s
+            recorded_commands.append(command)
+            run_env = {**os.environ, **env}
+            scratch = cell_root / ".scratch-tmp"
+            scratch.mkdir(exist_ok=True)
+            run_env["TMPDIR"] = str(scratch)
+            proc = subprocess.run(
+                command.replace("python -m pytest", f"{sys.executable} -m pytest"),
+                shell=True,
+                cwd=cell_root,
+                env=run_env,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            return CommandResult(
+                command=command,
+                outcome=CommandOutcome.PASS if proc.returncode == 0 else CommandOutcome.FAIL,
+                exit_code=proc.returncode,
+                stdout_tail=proc.stdout[-65536:],
+                stderr_tail=proc.stderr,
+                duration_s=0.0,
+                inband_stdout=proc.stdout if len(proc.stdout.encode("utf-8")) > 65536 else None,
+            )
+
+    executor = _CellInBand()
+    port = _make_typed_port(
+        {
+            "src/demo_inband.py": cell_src,
+            "scripts/demo_script_tool.py": "def helper():\n    return 'script-ok'\n",
+        },
+        chunk_bytes=20,
+    )
+
+    directive_src = KillDirective(
+        operator=KillOperator.NEUTRALISE, path="src/demo_inband.py", symbol="double", callee=None, line=1
+    )
+    directive_vacuous = KillDirective(
+        operator=KillOperator.NEUTRALISE, path="src/demo_inband.py", symbol="untouched", callee=None, line=4
+    )
+    directive_absent_port = KillDirective(
+        operator=KillOperator.NEUTRALISE, path="src/missing.py", symbol="nope", callee=None, line=1
+    )
+    directive_scripts = KillDirective(
+        operator=KillOperator.NEUTRALISE, path="scripts/demo_script_tool.py", symbol="helper", callee=None, line=1
+    )
+
+    # 1. Missing port fails closed rather than reading the controller host.
+    missing_port = _run_kill_check(
+        directive_src, ("tests/test_demo_inband.py",), tmp_path, executor=executor, port=None
+    )
+    assert missing_port.verdict is SliceVerdict.ERROR
+
+    # 2. Live src/ mutation runs inside cell scratch overlay without touching host tree or emitting heredocs.
+    proven_src = _run_kill_check(directive_src, ("tests/test_demo_inband.py",), tmp_path, executor=executor, port=port)
+    assert proven_src.verdict is SliceVerdict.PROVEN
+    assert "<<" not in recorded_commands[-1]
+    assert all(len(line.encode("utf-8")) <= 900 for line in recorded_commands[-1].splitlines())
+    assert "return -1" in (tmp_path / "src" / "demo_inband.py").read_text(encoding="utf-8")
+
+    # 3. Uncaught mutation under unrelated tests stays VACUOUS (never PASS/PROVEN).
+    vacuous_src = _run_kill_check(
+        directive_vacuous, ("tests/test_unrelated.py",), tmp_path, executor=executor, port=port
+    )
+    assert vacuous_src.verdict is SliceVerdict.VACUOUS
+
+    # 4. Denied path in port becomes PRODUCER_ABSENT even if present or missing on host.
+    absent = _run_kill_check(
+        directive_absent_port, ("tests/test_demo_inband.py",), tmp_path, executor=executor, port=port
+    )
+    assert absent.verdict is SliceVerdict.PRODUCER_ABSENT
+
+    # 5. scripts/ mutation exercises FA_MUTATION_OVERLAY_SCRIPTS_ROOT + overlay_pytest_plugin inside cell.
+    proven_scripts = _run_kill_check(
+        directive_scripts, ("tests/test_demo_script.py",), tmp_path, executor=executor, port=port
+    )
+    assert proven_scripts.verdict is SliceVerdict.PROVEN
+
+    # 6. scripts/ test that never imports the overlay module reports provenance ERROR, not VACUOUS.
+    err_scripts = _run_kill_check(
+        directive_scripts, ("tests/test_unrelated.py",), tmp_path, executor=executor, port=port
+    )
+    assert err_scripts.verdict is SliceVerdict.ERROR
+    assert slice_verification._OVERLAY_PROVENANCE_ERROR_MARKER in err_scripts.detail

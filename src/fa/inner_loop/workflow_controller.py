@@ -465,51 +465,28 @@ def _pinned_verify_substrate(ctx: WorkflowContext) -> Iterator[_VerifySubstrate 
         yield None
         return
     profile = managed.read_only_profile
-    if profile is None:
-        # ``read_only_profile_id`` is optional in the service config and absent means
-        # "no READ class" (``service.py:129-131``), so a managed run can legitimately
-        # reach a coder stage without one. The gate then runs on the host, as it did
-        # before R24 -- but it says so, because the host copy is not the revision the
-        # coder edited and an unreported verdict about it would be a claim nobody made.
-        logger.warning(
-            "managed verification unavailable: no read-only profile configured (run=%s); "
-            "the verify gate judges the controller host tree, not the revision",
-            ctx.run_id,
-        )
-        yield None
-        return
+    if profile is None or profile.interactive:
+        raise ExecutionContractError
     deadline = ctx.deadline_mono if ctx.deadline_mono is not None else time.monotonic() + 30.0
     # The plan the stage ran against, not the one the run started with: a promoted
     # candidate changes the plan's bytes, and the authority proves the pinned ref
-    # against THIS revision. Pinning the stale ref is refused as INPUT_POLICY, which
-    # is the authority correctly declining to hand out a view of a plan mismatch.
+    # against THIS revision.
     plan_ref = ctx.admission.snapshot.ref if ctx.admission is not None else ctx.managed_plan_ref
-    try:
-        grant = managed.client.pin_reader(
-            managed.binding,
-            revision_id=managed.current_revision_id,
-            plan_ref=plan_ref,
-            deadline=deadline,
-        )
-    except ExecutionRejectedError as error:
-        # A determinate refusal (this build's own: INPUT_POLICY for a plan mismatch) is
-        # not an uncertain outcome. Degrade to the host substrate loudly, the same way
-        # an unconfigured profile does, rather than turning every coder stage of such a
-        # run into a blocking verification error.
-        logger.warning(
-            "managed verification unavailable: the authority refused the read pin [%s] (run=%s)",
-            error.code,
-            ctx.run_id,
-        )
-        yield None
-        return
+    grant = managed.client.pin_reader(
+        managed.binding,
+        revision_id=managed.current_revision_id,
+        plan_ref=plan_ref,
+        deadline=deadline,
+    )
     view = grant.view_ref
     if (
         grant.operation is not Operation.PIN_READER
         or view is None
         or view.access is not Access.READ
         or view.purpose is not ViewPurpose.PROJECT
+        or view.workspace_id != managed.binding.workspace_id
         or view.owner_run_id != managed.binding.namespace.run_id
+        or grant.input_tree_sha256 is None
     ):
         raise ExecutionContractError
     reader = ReadOnlyManagedBashExecutor(
@@ -526,7 +503,7 @@ def _pinned_verify_substrate(ctx: WorkflowContext) -> Iterator[_VerifySubstrate 
         namespace=managed.binding.namespace,
         view=view,
         grant=grant,
-        cache_dir=ctx.workspace / ".fa" / "verify-read-cache",
+        cache_dir=ctx.artifact_paths.base_dir / "verify-read-cache",
         plan_ref=plan_ref,
     )
     try:
@@ -548,10 +525,9 @@ def _capture_nodeids_by_slice(
 ) -> BaselineCapture:
     """Capture each slice's own TESTS set so regression evidence stays attributed.
 
-    ``execution`` is where the run happens (Q142). T0 runs before the coder's view
-    exists, so a managed run has no pinned view to give it and keeps the host
-    substrate; ``now`` runs on the read-only view, and the two must agree on what
-    "the tree" means or the comparison measures two different things.
+    ``execution`` is where the run happens: unmanaged runs use the host tree, while
+    managed runs pin a READ view at the current revision so T0 and post-coder checks
+    never execute project code on the controller host or compare mismatched trees.
     """
     nodeids_by_slice: dict[str, Mapping[str, bool] | None] = {}
     captures: dict[str, NodeidCapture] = {}
@@ -622,11 +598,10 @@ def capture_baseline(
     root: Path,
     run_id: str,
     deadline: float | None = None,
+    execution: _VerifySubstrate | None = None,
 ) -> BaselineCapture:
     """Capture and write the one permitted T0 snapshot before coder dispatch (CT85/86)."""
-    # T0 predates the coder's publication, so it has no view to read: the host copy is
-    # the only tree that exists yet, and that is what the baseline is a snapshot of.
-    captured = _capture_nodeids_by_slice(plan_ids, root=root, deadline=deadline)
+    captured = _capture_nodeids_by_slice(plan_ids, root=root, deadline=deadline, execution=execution)
     try:
         _write_json_exclusive(path, _baseline_payload(run_id=run_id, plan_ids=plan_ids, capture=captured))
     except (OSError, ValueError, TypeError) as error:
@@ -638,6 +613,40 @@ def capture_baseline(
             errors=(*captured.errors, detail),
         )
     return captured
+
+
+def _capture_stage_baseline(ctx: WorkflowContext, plan_ids: PlanIds) -> BaselineCapture:
+    """Capture T0 through ``_pinned_verify_substrate`` so managed runs never test the host."""
+    try:
+        with _pinned_verify_substrate(ctx) as substrate:
+            return capture_baseline(
+                ctx.artifact_paths.verify_baseline,
+                plan_ids,
+                root=ctx.workspace,
+                run_id=ctx.run_id,
+                deadline=ctx.deadline_mono,
+                execution=substrate,
+            )
+    except Exception as error:  # noqa: BLE001 -- Managed pin/profile failures fail closed with zero host subprocesses.
+        logger.warning(
+            "workflow verification T0 substrate failed (run=%s): %s",
+            ctx.run_id,
+            type(error).__name__,
+        )
+        code = getattr(error, "code", None)
+        code_tag = f"[{code}] " if isinstance(code, str) and code else ""
+        failed = BaselineCapture(
+            nodeids_by_slice={record.slice_id: None for record in plan_ids.slice_records},
+            errors=(f"T0 verify substrate failed ({type(error).__name__}): {code_tag}{error}",),
+        )
+        try:
+            _write_json_exclusive(
+                ctx.artifact_paths.verify_baseline,
+                _baseline_payload(run_id=ctx.run_id, plan_ids=plan_ids, capture=failed),
+            )
+        except (OSError, ValueError, TypeError):
+            pass
+        return failed
 
 
 def load_verify_baseline(path: Path, plan_ids: PlanIds, *, run_id: str) -> BaselineCapture:
@@ -1545,13 +1554,7 @@ def _run_stage(
     if role == "coder":
         plan_ids_for_stage, plan_read_error = _stage_plan(ctx)
         baseline_capture = (
-            capture_baseline(
-                ctx.artifact_paths.verify_baseline,
-                plan_ids_for_stage,
-                root=ctx.workspace,
-                run_id=ctx.run_id,
-                deadline=ctx.deadline_mono,
-            )
+            _capture_stage_baseline(ctx, plan_ids_for_stage)
             if _needs_baseline(ctx, progress)
             else load_verify_baseline(ctx.artifact_paths.verify_baseline, plan_ids_for_stage, run_id=ctx.run_id)
         )
@@ -1598,6 +1601,7 @@ def _run_stage(
                     now_by_slice=now.nodeids_by_slice,
                     deadline=ctx.deadline_mono,
                     executor=None if substrate is None else substrate.executor,
+                    port=None if substrate is None else substrate.port,
                 )
         except Exception as error:  # Uncertainty is a recorded ERROR, never a pass.
             logger.exception("workflow verification failed unexpectedly (run=%s)", ctx.run_id)

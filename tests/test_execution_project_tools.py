@@ -301,7 +301,10 @@ def test_tool_result_ascii_budget_exact_and_one_over(tool: str, code: str) -> No
     assert refused.error.message == "managed discovery refused (output_budget)"
 
 
-@pytest.mark.xfail(strict=True, reason="Q106: existing 60 KiB envelope cannot transport the legacy outline")
+@pytest.mark.xfail(
+    strict=True,
+    reason="Q106 (deferred to W4): existing 60 KiB envelope cannot transport the legacy outline",
+)
 def test_q106_large_outline_parity_remains_open(tmp_path: Path) -> None:
     root, scratch = _tree(tmp_path, "outline-large", "def alpha():\n    return 1\n")
     (root / "giant.md").write_text("# " + "я" * 40000 + "\n", encoding="utf-8")
@@ -312,7 +315,10 @@ def test_q106_large_outline_parity_remains_open(tmp_path: Path) -> None:
     assert json.loads(project_tools._envelope(result))["result"] == result.result
 
 
-@pytest.mark.xfail(strict=True, reason="Q106: existing 60 KiB envelope cannot transport the legacy reach result")
+@pytest.mark.xfail(
+    strict=True,
+    reason="Q106 (deferred to W4): existing 60 KiB envelope cannot transport the legacy reach result",
+)
 def test_q106_large_reach_parity_remains_open(tmp_path: Path) -> None:
     root, scratch = _tree(tmp_path, "reach-large", "def alpha():\n    return 1\n")
     (root / "longname.py").write_text("def " + "a" * 80000 + "needle():\n    pass\n", encoding="utf-8")

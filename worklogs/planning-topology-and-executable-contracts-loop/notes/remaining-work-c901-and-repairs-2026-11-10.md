@@ -692,14 +692,16 @@ managed-провижнера, а не дефекты. Это объясняет,
 
 ### 7.3. xfail — что устарело, а что нет
 
-| xfail | Статус | Почему актуален |
+| xfail | Статус | Почему актуален / пересмотр |
 | --- | --- | --- |
-| `test_execution_composition.py:415` — SLICE4 STEP2 cutover | актуален | хостовые стадии всё ещё пишут байты; XPASS нет, значит утверждение всё ещё верно |
-| `test_execution_project_tools.py:304` / `:315` — Q106 | актуален | конверт 60 KiB всё ещё не несёт legacy outline/reach; это ограничение дизайна, а не среда |
+| `test_execution_composition.py:424` (`test_the_runs_own_second_publication_survives_a_host_side_write`) — SLICE4 STEP2 cutover | требует замены в W3 | в самом тесте на `:436` осталась прямая запись в `site.source` мимо authority (`_unchanged` честно бьёт `CORRUPT_STATE`); сам продакшн-cutover W1 уже завершён, так что тест нужно переписать на запись через managed `WRITE` view (или отделить от прямого host-write триггера) |
+| `test_execution_project_tools.py:304` / `:315` — Q106 | перенесён на **W4** | конверт 60 KiB не несёт legacy outline/reach; решение по расширению/пересмотру паритета официально отложено до волны **W4** (`reason="Q106 (deferred to W4): ..."`) |
 | `test_s5_isolation_boundary.py:462` — Q19 (V24/V25) | актуален | containment требует OS-level writable mount; `strict=True` держит запись открытой |
 
+Примечание к `§7`: после фиксации карты от `2026-11-10` были также закрыты `E520–E524` (`S5P1–S5P3`) и сквозные разрывы № 1–3 (`9c4f429`, `014c012`), а `uv run fa authoring-check` на `HEAD=014c012` даёт 4 `[HARD-BLOCK] FA-AUTHORING-V2-EXPORTS-COMPLETENESS` в `profiles.py:443,452` и `workflow_controller.py:2458,2477`, что подлежит закрытию до/в W3.
+
 Ни один xfail не «устарел» в смысле «стал проходить»: при XPASS `strict=True`
-дал бы падение, а его нет. **Ни один не относится к среде** — удалять нечего.
+дал бы падение, а его нет. **Ни один не относится к среде** — просто удалять нельзя без пересмотра контракта.
 
 ### 7.4. Что это меняет в плане
 

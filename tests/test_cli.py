@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import shutil
+import subprocess
 import sys
 import threading
 from collections.abc import Callable, Mapping
 from dataclasses import asdict
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
-from typing import Any, override
+from typing import Any, cast, override
 
 import pytest
 from _pytest.capture import CaptureFixture
@@ -18,18 +20,176 @@ from _pytest.capture import CaptureFixture
 import fa.cli as cli_module
 import fa.execution.composition as composition
 from fa.cli import _cmd_run, _cmd_stats, _prepare_managed_workspace, _session_manager_for_args, build_parser
+from fa.execution.client import ExecutionClient, ExecutionRejectedError
 from fa.execution.service import SupervisorService, read_config_file
+from fa.execution.types import (
+    Access,
+    ExecutionReceipt,
+    GrantReply,
+    JobState,
+    NamespaceRef,
+    Operation,
+    ViewPurpose,
+    ViewRef,
+)
+from fa.inner_loop.plan_admission import PlanRef, PlanSnapshot
 from fa.inner_loop.session_db import SessionDatabase
 from fa.providers import SecretStore
 from fa.providers.base import TransportResponse
 from fa.session.manager import RunContext
 from fa.workspace_bootstrap import ReadyState, ReadyStatus
 from tests._capabilities import requires_posix_shell, requires_pty_backend
-from tests.test_execution_views import native_profile
+from tests.test_execution_views import native_profile, read_only_profile
 
 # Injected via the _cmd_run(secrets=...) seam (ADR-12): tests supply keys through
 # the private store instead of os.environ, matching production's file-only model.
 _TEST_SECRETS = SecretStore({"TEST_FA_RUN_KEY": "sk-test-x"})
+
+
+class _TestCliManagedClient(ExecutionClient):
+    """Test-only ExecutionClient double supporting RELEASE + pinned READ verification."""
+
+    def __init__(
+        self,
+        *,
+        workspace: Path | None = None,
+        workspace_id: str,
+        revision_id: str,
+        profile_id: str,
+        image_digest: str,
+        refuse_release: bool = False,
+        on_publish: Callable[[Any, Any, Any, GrantReply], Any] | None = None,
+    ) -> None:
+        self.workspace = workspace
+        self.workspace_id = workspace_id
+        self.revision_id = revision_id
+        self.profile_id = profile_id
+        self.image_digest = image_digest
+        self.refuse_release = refuse_release
+        self.on_publish = on_publish
+        self.operations: list[Operation] = []
+        self._views: dict[str, tuple[ViewRef, str | None]] = {}
+
+    @override
+    def pin_reader(
+        self,
+        binding: object,
+        revision_id: str,
+        *,
+        plan_ref: PlanRef | None = None,
+        deadline: float | None = None,
+    ) -> GrantReply:
+        del deadline
+        self.operations.append(Operation.PIN_READER)
+        ns = cast(Any, binding).namespace
+        view = ViewRef(
+            self.workspace_id,
+            "view-" + "4" * 32,
+            revision_id,
+            ns.run_id,
+            1,
+            Access.READ,
+            ViewPurpose.PROJECT,
+        )
+        self._views[view.view_id] = (view, None if plan_ref is None else plan_ref.sha256)
+        return GrantReply(Operation.PIN_READER, "c" * 64, view, None, None, input_tree_sha256="a" * 64)
+
+    @override
+    def stop_view(
+        self,
+        namespace: NamespaceRef,
+        *,
+        view: ViewRef,
+        grant: GrantReply,
+        deadline: float | None = None,
+    ) -> bool:
+        del namespace, view, grant, deadline
+        self.operations.append(Operation.STOP_VIEW)
+        return True
+
+    @override
+    def request(self, operation: Operation, **kwargs: Any) -> dict[str, Any]:
+        self.operations.append(operation)
+        if operation is Operation.RELEASE:
+            if self.refuse_release:
+                raise ExecutionRejectedError("workspace-not-owned", None)
+            return {}
+        if operation is Operation.READ_FILE:
+            payload = kwargs.get("payload") or {}
+            rel = str(payload.get("path", ""))
+            root = self.workspace
+            if root is None:
+                raise ExecutionRejectedError("PATH_DENIED", "op-read")
+            target = (root / rel).resolve()
+            root_resolved = root.resolve()
+            if (target != root_resolved and root_resolved not in target.parents) or not target.is_file():
+                raise ExecutionRejectedError("PATH_DENIED", "op-read")
+            raw = target.read_bytes()
+            sha = hashlib.sha256(raw).hexdigest()
+            offset = int(payload.get("offset_bytes", 0))
+            max_bytes = int(payload.get("max_bytes", len(raw) or 1))
+            chunk = raw[offset : offset + max_bytes]
+            return {
+                "content": chunk.decode("utf-8", "replace"),
+                "sha256": sha,
+                "eof": offset + len(chunk) >= len(raw),
+            }
+        if operation is Operation.EXEC:
+            payload = kwargs.get("payload") or {}
+            view = kwargs.get("view")
+            namespace = kwargs.get("namespace")
+            assert isinstance(view, ViewRef) and isinstance(namespace, NamespaceRef)
+            cwd = self.workspace if self.workspace is not None else Path.cwd()
+            cmd = str(payload.get("command", ""))
+            proc = subprocess.run(
+                cmd.replace("python -m pytest", f"{sys.executable} -m pytest"),
+                shell=True,
+                cwd=cwd,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            _, plan_sha = self._views.get(view.view_id, (view, None))
+            receipt = ExecutionReceipt(
+                schema_version=1,
+                operation_id=str(payload["operation_id"]),
+                namespace=namespace,
+                workspace_id=view.workspace_id,
+                view_id=view.view_id,
+                owner_run_id=view.owner_run_id,
+                generation=view.generation,
+                revision_id=view.base_revision,
+                original_revision_id=view.base_revision,
+                input_tree_sha256="a" * 64,
+                plan_sha256=plan_sha,
+                profile_id=self.profile_id,
+                image_digest=self.image_digest,
+                state=JobState.EXITED,
+                exit_code=proc.returncode,
+                timed_out=False,
+                stdout_tail=(proc.stdout + proc.stderr)[-65536:],
+                stderr_tail="",
+                truncated=False,
+                duration_ms=1,
+                terminal_barrier=True,
+            )
+            return {"receipt": receipt.to_dict()}
+        raise AssertionError(f"unexpected operation in test client: {operation}")
+
+    @override
+    def publish_plan(
+        self,
+        binding: Any,
+        source: PlanSnapshot,
+        candidate: PlanSnapshot,
+        *,
+        grant: GrantReply,
+        deadline: float | None = None,
+    ) -> Any:
+        del deadline
+        if self.on_publish is None:
+            raise AssertionError("plan publication was not enabled for this test")
+        return self.on_publish(binding, source, candidate, grant)
 
 
 def _install_test_managed_cli_dependencies(
@@ -54,48 +214,34 @@ def _install_test_managed_cli_dependencies(
     """
     from fa.execution.client import PlanPublication
     from fa.execution.composition import ExecutionBinding, ManagedExecution
-    from fa.execution.types import GrantReply, NamespaceRef, Operation
-    from fa.inner_loop.plan_admission import PlanRef, PlanSnapshot
     from fa.session.manager import SessionManager
     from fa.session.provisioning import ProvisionedWorkspace, ProvisionMode
 
     workspace_id = "ws-" + "1" * 32
     revision_id = "rev-" + "2" * 32
+    ro_profile = read_only_profile()
 
     published_candidate_hashes: list[str] = []
 
-    class _Client:
-        def request(self, operation: Operation, **_kwargs: Any) -> dict[str, Any]:
-            if operation is not Operation.RELEASE:
-                raise AssertionError(f"unexpected operation in test client: {operation}")
-            return {}
-
-        def publish_plan(
-            self,
-            binding: ExecutionBinding,
-            source: PlanSnapshot,
-            candidate: PlanSnapshot,
-            *,
-            grant: GrantReply,
-            deadline: float | None = None,
-        ) -> PlanPublication:
-            del deadline
-            if not allow_noop_publication:
-                raise AssertionError("plan publication was not enabled for this test")
-            if (
-                binding.workspace_id != workspace_id
-                or grant.revision_id != revision_id
-                or source.ref.source_kind != candidate.ref.source_kind
-                or source.ref.sha256 != candidate.ref.sha256
-            ):
-                raise AssertionError("no-op publisher only accepts this run's unchanged canonical plan")
-            published_candidate_hashes.append(candidate.ref.sha256)
-            canonical_ref = PlanRef(
-                source.ref.workspace_relative_path,
-                source.ref.source_kind,
-                candidate.ref.sha256,
-            )
-            return PlanPublication(canonical_ref, revision_id, True)
+    def _on_publish(
+        binding: ExecutionBinding, source: PlanSnapshot, candidate: PlanSnapshot, grant: GrantReply
+    ) -> PlanPublication:
+        if not allow_noop_publication:
+            raise AssertionError("plan publication was not enabled for this test")
+        if (
+            binding.workspace_id != workspace_id
+            or grant.revision_id != revision_id
+            or source.ref.source_kind != candidate.ref.source_kind
+            or source.ref.sha256 != candidate.ref.sha256
+        ):
+            raise AssertionError("no-op publisher only accepts this run's unchanged canonical plan")
+        published_candidate_hashes.append(candidate.ref.sha256)
+        canonical_ref = PlanRef(
+            source.ref.workspace_relative_path,
+            source.ref.source_kind,
+            candidate.ref.sha256,
+        )
+        return PlanPublication(canonical_ref, revision_id, True)
 
     def ready(path: Path, _run_context: Any) -> ReadyState:
         return ReadyState(ReadyStatus.READY, None, "ready_fast_path", path / ".fa" / "ready.log", False, 0)
@@ -128,7 +274,16 @@ def _install_test_managed_cli_dependencies(
         if key not in executions:
             binding = ExecutionBinding(NamespaceRef(session_id, run_id), workspace_id)
             grant = GrantReply(Operation.ACQUIRE_WRITER, "3" * 64, None, 1, revision_id)
-            executions[key] = ManagedExecution(_Client(), binding, grant)  # type: ignore[arg-type]
+            run_ws = getattr(run, "workspace_path", None)
+            client = _TestCliManagedClient(
+                workspace=run_ws,
+                workspace_id=workspace_id,
+                revision_id=revision_id,
+                profile_id=ro_profile.profile_id,
+                image_digest=ro_profile.image_digest,
+                on_publish=_on_publish,
+            )
+            executions[key] = ManagedExecution(client, binding, grant, read_only_profile=ro_profile)
         return executions[key]
 
     monkeypatch.setattr(cli_module, "managed_execution_for_run", managed_for_run)

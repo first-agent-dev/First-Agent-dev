@@ -3454,3 +3454,45 @@ So B's implementation is smaller than A's, and the boundary it relies on is: a R
 view can never become a WRITE view, and the writer is a single fd held by the parent
 process for the whole run. The child's acquisition stage cannot write by construction,
 not by convention.
+
+---
+
+## Q106 — Legacy large-result parity vs 60 KiB managed discovery envelope (deferred to W4)
+
+**Status: DEFERRED TO W4 (2026-11-10; recorded alongside E525 / Plan Review).**
+Initially raised in E325–E332 (`Q106=A`) for legacy `fs_search(output_mode="outline")` and
+`fs_reach` payloads exceeding the bounded `EXEC`/JSON envelope, and subsequently superseded on
+the active bound by E506 + Amendment 2026-11-09 (`61,440` ASCII bytes / 60 KiB cap in
+`notes/q97-w1-resource-contract-2026-11-06.md`). During W1–W3, 60 KiB remains the binding
+ceiling under Q97/Q111-A; resolving legacy large-result parity (streaming/chunking/artifact-ref
+or keeping the hard 60 KiB cap) is **deferred to wave W4**, and the two strict `xfail`s in
+`tests/test_execution_project_tools.py:304,315` (`test_q106_large_outline_parity_remains_open`
+and `test_q106_large_reach_parity_remains_open`) carry `deferred to W4` explicitly.
+
+---
+
+## Summary index of Q140–Q151 resolutions recorded in separate notes / ledger (through `014c012`)
+
+- **Q140** (`notes/q140-r24-purpose-decision-2026-11-11.md`): **RESOLVED = B** (managed verify runs
+  through `ManagedVerifyCommandExecutor` / pinned READ view + private `/scratch` — no write access
+  to canonical `src/`/`scripts/`).
+- **Q141** (`notes/q141-nested-coder-writes-2026-11-11.md`): **RESOLVED = C** (nested child `coder`
+  must run under `ViewPurpose.MUTATION`, restricting edits to `_MUTATION_ROOTS = {"src", "scripts"}`;
+  not yet enforced in `cli._open_stage_view:1877` and blocked by `ViewPurpose.PROJECT` checks in
+  `ManagedProjectToolExecutor` / `WorkspaceAuthority.admit` — tracked in W2 / R26).
+- **Q142** (`#q142--resolved-option-a-plus-the-two-fixes-the-audit-found` above): **RESOLVED = A**
+  (in-band JUnit capture on managed verify path; host-`/tmp` JUnit path defect tracked in W2 / R24).
+- **Q143** (E515): **RESOLVED = A** (staged candidate belongs to `I03-LIVE-23`).
+- **Q144** (E515): **RESOLVED = B** (next implementation target after E515 was S5P1).
+- **Q145 / Q146** (E516–E518): typed `AcquisitionSubstrate` / `project_names` + `incomplete_names`
+  over one pinned READ view (`run_workflow` / `_pinned_acquisition_substrate`).
+- **Q147** (E518, `notes/q147-acquisition-internal-plan-snapshot-2026-11-12.md`): **RETRACTED**
+  (`PlanSnapshot` already flows internally via `snapshot_from_bytes` without a host path).
+- **Q148** (`#q148--how-does-a-chat-only-invoke_workflow-reach-the-acquisition-path-that-exists-in-the-controller` above):
+  **RESOLVED = B** (child pins its own READ view via `AcquisitionSubstrateRequest` inside its own run).
+- **Q149** (E520): **RESOLVED = B** (acquisition planner user prompt uses bounded current-turn
+  task context; full live chat-transcript copy remains `S5P4` / `Q66` in W2).
+- **Q150** (E520, E524): **RESOLVED = A** (child runs with `owner_run_id != run_id` emit
+  `admission.json` `schema_version = 2`; unmanaged/top-level callers retain v1).
+- **Q151** (E521): **RESOLVED = A** (`Incomplete` / `COLLISION` rules in `managed_acquisition`
+  and `ACQUISITION_SYSTEM_PROMPT`).

@@ -218,20 +218,26 @@ def _managed_with_a_refusing_release() -> tuple[Any, _RefusingRelease]:
     return ManagedExecution(client, binding, grant), client  # type: ignore[arg-type]
 
 
-class _SuccessfulRelease:
-    def __init__(self) -> None:
-        self.operations: list[object] = []
+def _managed_for_test(
+    run_id: str, session_id: str, *, refuse_release: bool = False, workspace: Path | None = None
+) -> tuple[ManagedExecution, Any]:
+    from tests.test_cli import _TestCliManagedClient
+    from tests.test_execution_views import read_only_profile
 
-    def request(self, operation: Any, **_: Any) -> dict[str, Any]:
-        self.operations.append(operation)
-        return {}
-
-
-def _managed_for_test(run_id: str, session_id: str, *, refuse_release: bool = False) -> tuple[ManagedExecution, Any]:
-    client = _RefusingRelease() if refuse_release else _SuccessfulRelease()
-    binding = ExecutionBinding(NamespaceRef(session_id, run_id), "ws-" + "1" * 32)
-    grant = GrantReply(Operation.ACQUIRE_WRITER, "2" * 64, None, 1, "rev-" + "3" * 32)
-    return ManagedExecution(client, binding, grant), client  # type: ignore[arg-type]
+    ro_profile = read_only_profile()
+    workspace_id = "ws-" + "1" * 32
+    revision_id = "rev-" + "3" * 32
+    client = _TestCliManagedClient(
+        workspace=workspace,
+        workspace_id=workspace_id,
+        revision_id=revision_id,
+        profile_id=ro_profile.profile_id,
+        image_digest=ro_profile.image_digest,
+        refuse_release=refuse_release,
+    )
+    binding = ExecutionBinding(NamespaceRef(session_id, run_id), workspace_id)
+    grant = GrantReply(Operation.ACQUIRE_WRITER, "2" * 64, None, 1, revision_id)
+    return ManagedExecution(client, binding, grant, read_only_profile=ro_profile), client
 
 
 def _workflow_with_a_managed_execution(
@@ -259,7 +265,7 @@ def _workflow_with_a_managed_execution(
     session = SessionContext(session_id, workspace, db_path, session_dir / "manifest.json")
     run_log_dir = home / ".fa" / "session-log" / run_id
     run = RunContext(run_id, session_id, workspace, db_path, run_log_dir)
-    managed, client = _managed_for_test(run_id, session_id, refuse_release=refuse_release)
+    managed, client = _managed_for_test(run_id, session_id, refuse_release=refuse_release, workspace=workspace)
 
     monkeypatch.setattr(fa_cli, "_resolve_workflow_lifecycle", lambda _a, rid: (rid, session, run, db))
     monkeypatch.setattr(fa_cli, "managed_execution_for_run", lambda *_a, **_k: managed)
