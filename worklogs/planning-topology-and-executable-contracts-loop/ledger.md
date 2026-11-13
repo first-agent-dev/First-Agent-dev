@@ -9351,3 +9351,65 @@ controller and composition boundary, and no live chat session can reach it. Boot
 also remains callerless: `prepare_bundle` → `install_project` are authority-gated and
 served, but no inner-loop path renders and installs a new project. Neither is a
 "render_bundle exists" close.
+
+### E518 — Q148=B: the acquisition caller exists, and a READ pin is not a capability (2026-11-10; Arena-local)
+
+**The decision and why it was expensive to guess.** `_pinned_acquisition_substrate`
+needs the run's own binding. `WorkflowInvocationContext.managed_execution` comes from
+the parent chat stage's writer grant, so under option A the child would have read
+through the parent's identity. The operator chose B — no sharing across the child
+boundary — which looked like it would require reworking the HANDOFF lifecycle.
+
+**It did not, and the reason is a measured property of the authority, not a design
+preference.** Probed on `WorkspaceAuthority` through the existing workspace harness:
+
+| probe | result |
+| --- | --- |
+| child `pin_reader(plan_ref=None)` after `handoff()` | allowed; `view_ref.owner_run_id` is the child |
+| child `pin_reader` with **no** handoff, parent holding the writer | allowed |
+| unrelated namespace (`run-z`) pinning the same workspace | allowed |
+
+`pin_reader(peer, namespace, …)` authorizes on the uid allowlist plus an approved
+read-only profile; it takes no capability and consults no active actor. So B is
+*smaller* than A: the child pins its own view directly, the HANDOFF lifecycle is
+untouched, and the security boundary is structural — a READ view cannot become a
+WRITE view, and the writer is a single fd held by the parent process for the run.
+
+**The one thing that must not be misread from "the child gets its own binding".**
+Views are authorized per peer uid, not per run: any run of the same user can pin any
+workspace. That is pre-existing, and it is *not* what R26's "no child-authority
+leakage" polices — R26 polices writes. Recorded because the opposite assumption is
+the natural one.
+
+**Implementation, shaped by the measurement.** `AcquisitionSubstrateRequest` is a
+marker rather than a port, so a caller cannot hand in a substrate built before the
+HANDOFF would have given the child its own namespace; `run_workflow` pins inside the
+run and refuses `acquisition-unavailable` (recorded as a blocked plan request) when
+no substrate is reachable. `acquisition_refusal` keeps `acquisition_unavailable` for
+the legacy path and `acquisition_requires_planner` for a coder-first managed request,
+and now returns `None` for the planner-first managed one.
+
+**One oracle rewritten, deliberately.** `test_managed_coder_behind_a_leading_planner_is_still_unavailable_not_admitted`
+asserted `acquisition_unavailable`, which was the correct contract while no caller
+existed — E516 recorded that absence explicitly. It now asserts the gate's own answer
+plus the legacy refusal. Deleting it would have removed the only record that the
+legacy refusal is intentional.
+
+**Two mutants survived until the tests were fixed, again.** M1 (marker not passed) and
+M2 (marker passed for every managed child) both survived because every existing test
+stopped at the gate or at the handoff binding and never reached the kwargs. Two tests
+now drive the full lease so the call reaches the workflow seam — the only place where
+"the request travels" is observable. Mutation then 4/4.
+
+**Verification.** 133 across invoke-workflow/lifecycle/substrate; 1160 across
+workflow/admission/plan/acquisition/handoff/managed; full suite **7091 passed / 3
+failed**, all three identical at `fb3afd5`. ruff/ruff format/mypy clean, pyrefly parity
+at 59.
+
+**Still absent, and now the only thing S5P1 lacks.** Bootstrap: `prepare_bundle` →
+`install_project` are authority-gated and served, but no inner-loop path renders a
+bundle, installs it, reads the installed plan back through a fresh pin, and admits the
+coder against *that* snapshot. `resolve_acquisition_choice` already returns
+`bootstrap=choice` instead of fabricating a plan, and `_bind_acquisition_admission`
+refuses it as `bootstrap-not-installed` — so the refusal is proven and the positive
+path is not built. S5P1 stays PARTIAL on this clause alone.
