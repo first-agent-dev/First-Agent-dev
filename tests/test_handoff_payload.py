@@ -363,3 +363,19 @@ def test_malformed_risk_config_degrades_to_goal_only() -> None:
     results = _run_tool(ctx, [{"task": "keep going"}], runner)
     assert results[0].error is None, f"build failure must not surface as tool error: {results[0].error}"
     assert runner_calls and runner_calls[0]["task"] == "keep going"
+
+
+def test_handoff_acquisition_flag_swaps_step3_and_preserves_default() -> None:
+    """D9: acquisition=True asks for target choice instead of assuming ordinary plan-writing."""
+    ordinary = build_handoff_task(goal="g", read_paths=["src/fa/a.py"], write_paths=[], search_paths=[])
+    acq = build_handoff_task(
+        goal="g",
+        read_paths=["src/fa/a.py"],
+        write_paths=[],
+        search_paths=[],
+        acquisition=True,
+    )
+    assert "3) Produce the plan and execute toward the goal from these files." in ordinary
+    assert "3) Produce the plan" not in acq
+    assert "NEEDS_CLARIFICATION" in acq
+    assert "Start here:" in acq

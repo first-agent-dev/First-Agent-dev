@@ -28,7 +28,7 @@ import logging
 import re
 import threading
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
@@ -226,6 +226,7 @@ def build_handoff_task(
     write_paths: list[str],
     search_paths: list[str],
     config: ScopeRiskConfig | None = None,
+    acquisition: bool = False,
 ) -> str:
     """Assemble the planner handoff task text (S10 / CT6, DP-9).
 
@@ -320,11 +321,17 @@ def build_handoff_task(
         lines.extend(f"  - {p}" for p in leads)
 
     lines.append("")
+    step3 = (
+        "  3) Choose an existing active increment, bootstrap a new project bundle, "
+        "or return NEEDS_CLARIFICATION per the acquisition protocol."
+        if acquisition
+        else "  3) Produce the plan and execute toward the goal from these files."
+    )
     lines.append(
         "Do exactly:\n"
         '  1) Start from the files under "Start here".\n'
         "  2) Use Observed and Candidate leads as your map; do not re-search them.\n"
-        "  3) Produce the plan and execute toward the goal from these files."
+        f"{step3}"
     )
     return "\n".join(lines)
 
@@ -351,7 +358,9 @@ def _check_budget(invocation_count: int, ctx: WorkflowInvocationContext) -> Tool
     return None
 
 
-def _resolve_handoff_task(*, task: str, candidate: str, ctx: WorkflowInvocationContext) -> str:
+def _resolve_handoff_task(
+    *, task: str, candidate: str, ctx: WorkflowInvocationContext, acquisition: bool = False
+) -> str:
     """Build the planner handoff task from LIVE session facts (S10 / CT6).
 
     A missing/raising provider degrades to the raw goal — the escalation must
@@ -377,6 +386,7 @@ def _resolve_handoff_task(*, task: str, candidate: str, ctx: WorkflowInvocationC
             write_paths=list(facts.get("write_paths") or ()),
             search_paths=list(facts.get("last_search_paths") or ()),
             config=facts.get("risk_config"),
+            acquisition=acquisition,
         )
     except Exception as exc:  # noqa: BLE001 - handoff is advisory; degrade to goal
         logger.warning("workflow handoff build failed: %s", exc)
@@ -665,6 +675,34 @@ def _prepare_invocation(
     )
 
 
+def _workflow_outcome_summary(
+    *,
+    candidate: str,
+    roles: Sequence[str],
+    exit_code: int,
+    status: str,
+    blocked_reason: str,
+    timed_out: bool,
+    managed: bool,
+) -> str:
+    if timed_out:
+        summary = f"workflow {candidate} ran out of time ({', '.join(roles)}); artifacts kept"
+    elif exit_code == 0:
+        summary = f"workflow {candidate} finished: status={status or 'unknown'}"
+    else:
+        summary = f"workflow {candidate} exited {exit_code}: status={status or 'unknown'}"
+    if blocked_reason:
+        summary += f"; blocked_reason={blocked_reason}"
+        if blocked_reason.startswith("plan-ref/clarification/"):
+            summary += (
+                "; complete or fix any incomplete worklogs/<slug>/roadmap.md "
+                "(valid frontmatter and active IN PROGRESS increment) or clarify with the user before retrying"
+            )
+    if managed:
+        summary += "; parent workspace refreshed at the returned revision"
+    return summary
+
+
 def build_invoke_workflow_tool(
     run_workflow_fn: Callable[..., tuple[int, FlowState | None]],
     ctx_provider: Callable[[], WorkflowInvocationContext | None],
@@ -744,16 +782,21 @@ def build_invoke_workflow_tool(
             else None
         )
 
-        # (f2) Planner handoff (S10 / CT6, DP-9): file-map + Do-exactly built
-        # from LIVE session facts; degrades to the raw goal when unavailable.
-        handoff_task = _resolve_handoff_task(task=task, candidate=candidate, ctx=ctx)
-
         managed = ctx.managed_execution if parent_namespace is not None else None
         parent_lease = ctx.parent_stage_lease if parent_namespace is not None else None
         # A coder-bearing managed child has no plan at entry; the run acquires one.
         # The request is a marker, not a port: the view must be pinned after this
         # child's own binding exists (i.e. after the HANDOFF), not before it.
         wants_acquisition = managed is not None and "coder" in roles
+
+        # (f2) Planner handoff (S10 / CT6, DP-9): file-map + Do-exactly built
+        # from LIVE session facts; degrades to the raw goal when unavailable.
+        handoff_task = _resolve_handoff_task(
+            task=task,
+            candidate=candidate,
+            ctx=ctx,
+            acquisition=wants_acquisition,
+        )
         workflow_kwargs: dict[str, object] = {
             "roles": roles,
             "task": handoff_task,
@@ -803,16 +846,18 @@ def build_invoke_workflow_tool(
         status = terminal_state.status if terminal_state is not None else ""
         route = terminal_state.last_route_decision if terminal_state is not None else ""
         reason = terminal_state.last_transition_reason if terminal_state is not None else ""
+        blocked_reason = getattr(terminal_state, "blocked_reason", "") if terminal_state is not None else ""
         timed_out = DEADLINE_REASON_MARKER in reason
 
-        if timed_out:
-            summary = f"workflow {candidate} ran out of time ({', '.join(roles)}); artifacts kept"
-        elif exit_code == 0:
-            summary = f"workflow {candidate} finished: status={status or 'unknown'}"
-        else:
-            summary = f"workflow {candidate} exited {exit_code}: status={status or 'unknown'}"
-        if managed is not None:
-            summary += "; parent workspace refreshed at the returned revision"
+        summary = _workflow_outcome_summary(
+            candidate=candidate,
+            roles=roles,
+            exit_code=exit_code,
+            status=status,
+            blocked_reason=blocked_reason,
+            timed_out=timed_out,
+            managed=managed is not None,
+        )
 
         return ToolResult.ok(
             summary,

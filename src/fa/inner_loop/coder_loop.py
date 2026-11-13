@@ -106,6 +106,7 @@ from fa.inner_loop.path_risk import (
     default_scope_risk_config,
     load_scope_risk_config,
 )
+from fa.inner_loop.planner_dispatch import PlannerDispatch
 from fa.inner_loop.prompt import (
     render_tool_specs,
 )
@@ -355,6 +356,7 @@ def drive_session(
     redactor: SecretRedactor | None = None,
     output: EventBus | None = None,
     pinned_buffer: Any = _DEFAULT_PINNED_BUFFER,
+    planner_dispatch: PlannerDispatch | None = None,
 ) -> SessionOutcome:
     """Drive an LLM-driven coder session to terminal state.
 
@@ -444,6 +446,7 @@ def drive_session(
             redactor=redactor,
             output=output,
             pinned_buffer=pinned_buffer,
+            planner_dispatch=planner_dispatch,
         )
     finally:
         reset_current_session(token)
@@ -610,6 +613,7 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
     redactor: SecretRedactor | None = None,
     output: EventBus | None = None,
     pinned_buffer: Any = _DEFAULT_PINNED_BUFFER,
+    planner_dispatch: PlannerDispatch | None = None,
 ) -> SessionOutcome:
     effective_limits = limits if limits is not None else RuntimeLimits.anchored_defaults()
     log = state.require_log()
@@ -930,10 +934,10 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
             pinned_text = system_prompt_extra
 
         # ── PromptComposer Sole Assembly Path (Phase 3 / PR 3) ──────────────
-        from fa.inner_loop.prompt import _ROLE_PROMPTS, CODER_SYSTEM_PROMPT
+        from fa.inner_loop.prompt import resolve_base_system_prompt
         from fa.inner_loop.prompt_composer import compose_turn_request
 
-        base_system = _ROLE_PROMPTS.get(role, CODER_SYSTEM_PROMPT)
+        base_system = resolve_base_system_prompt(role, planner_dispatch=planner_dispatch)
         pinned_text_for_turn = pinned_text
 
         def _compose_request_payload(

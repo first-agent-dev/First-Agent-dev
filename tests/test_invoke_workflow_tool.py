@@ -61,7 +61,7 @@ _RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 
 
 def _TerminalState(  # noqa: N802 - factory named for the value it produces
-    *, status: str = "DONE", route: str = "", reason: str = "done"
+    *, status: str = "DONE", route: str = "", reason: str = "done", blocked_reason: str = ""
 ) -> FlowState:
     """Build a REAL ``FlowState``, not a stand-in.
 
@@ -79,6 +79,7 @@ def _TerminalState(  # noqa: N802 - factory named for the value it produces
         active_plan_version=1,
         last_route_decision=route,
         last_transition_reason=reason,
+        blocked_reason=blocked_reason,
     )
 
 
@@ -1116,3 +1117,43 @@ def test_a_planner_only_managed_child_carries_no_acquisition_request(
 
     assert len(workflow.calls) == 1
     assert workflow.calls[0]["acquisition"] is None
+
+
+def test_managed_coder_child_uses_acquisition_handoff_step_when_facts_exist(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D9: a managed coder child's handoff task omits '3) Produce the plan' and uses acquisition step 3."""
+    ctx, _managed, _lease, _events = _managed_context(tmp_path, monkeypatch)
+    ctx = replace(ctx, session_facts_provider=lambda: {"read_paths": ["src/fa/a.py"]})
+    workflow = _RecordingWorkflow()
+    spec = _tool(workflow, ctx)
+
+    spec.handler({"task": "implement", "roles": "planner,coder,eval"})
+    acq_task = str(workflow.calls[0]["task"])
+    assert "3) Produce the plan" not in acq_task
+    assert "NEEDS_CLARIFICATION" in acq_task
+
+    spec.handler({"task": "review", "roles": "planner"})
+    ordinary_task = str(workflow.calls[1]["task"])
+    assert "3) Produce the plan" in ordinary_task
+
+
+def test_summary_surfaces_blocked_reason_and_incomplete_repair_hint_without_changing_ct4_keys(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Q151=A: chat sees blocked_reason & incomplete-schema guidance in summary while CT4 dict keys stay exact."""
+    ctx, _managed, _lease, _events = _managed_context(tmp_path, monkeypatch)
+    workflow = _RecordingWorkflow(
+        exit_code=2,
+        terminal_state=_TerminalState(
+            status="FAILED",
+            route="blocked",
+            reason="explicit plan admission blocked",
+            blocked_reason="plan-ref/clarification/missing-context",
+        ),
+    )
+    result = _call(_tool(workflow, ctx), task="fix incomplete", roles="planner,coder")
+
+    assert set(_payload(result)) == {"run_id", "exit_code", "status", "route", "timed_out", "parent_view_refreshed"}
+    assert "blocked_reason=plan-ref/clarification/missing-context" in result.summary
+    assert "worklogs/<slug>/roadmap.md" in result.summary

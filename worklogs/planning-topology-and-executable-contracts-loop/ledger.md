@@ -9624,3 +9624,81 @@ via `NEEDS_CLARIFICATION` so `chat` (`Access.WRITE` / `ViewPurpose.PROJECT`) can
 them without touching `workspace.py`, or whether `workspace.py` should switch install to
 per-file no-clobber; remaining sequence after D9 is **D14** → **D10–D12 (Q150=A)**.
 
+### E522 — D9 closed: acquisition system prompt, dynamic project/incomplete context, and chat clarification handoff (2026-11-10; Arena-local)
+
+**Operator resolution of Q151.** The operator approved **Q151 = A**: keep the
+`ACQUISITION` planner strictly read-only and leave `src/fa/execution/workspace.py`'s
+`renameat2(RENAME_NOREPLACE)` / `COLLISION` invariant intact; guide `ACQUISITION` to
+reject `Incomplete` and existing/roadmap-less `worklogs/<slug>/` directories with
+`NEEDS_CLARIFICATION` (`MISSING_CONTEXT`) instead of colliding via bootstrap, and
+surface the blocked reason back to `chat` (which holds `Access.WRITE` +
+`ViewPurpose.PROJECT` without a write allowlist) so `chat` or the operator can repair
+the schema before retrying `invoke_workflow`.
+
+**Changes.**
+
+- **Static system prompt (`src/fa/inner_loop/prompt.py`, `src/fa/inner_loop/coder_loop.py`,
+  `src/fa/cli.py`):**
+  - Added `ACQUISITION_SYSTEM_PROMPT` and `resolve_base_system_prompt(role, planner_dispatch=...)`
+    (Q149 = B). The prompt references strictly the 5 tools in `ACQUISITION_TOOLS`, states
+    the closed 3-variant strict JSON schema (`SELECT_EXISTING`, `BOOTSTRAP_NEW_PROJECT`,
+    `NEEDS_CLARIFICATION`) and closed clarification reasons, specifies `render_bundle` +
+    pre-coder admission rules (`## Intent` / `## Out of scope`, contiguous `## SLICE1: ...`,
+    Schema-4 fields with `kill: neutralise` / `kill: remove-call` on every `FUNCTIONAL`
+    contract, no leading `---` or bare metadata outside fences), and encodes the
+    Q151 = A `Incomplete` / `COLLISION` rule.
+  - Threaded `planner_dispatch` into `drive_session` / `_drive_session_inner` and
+    `_cmd_run` so `ACQUISITION` swaps `base_system` without adding dynamic text to the
+    cacheable prefix or increasing `_drive_session_inner`'s C901 complexity; `Q66`
+    remains deferred as decided.
+- **Dynamic user-turn context (`src/fa/inner_loop/workflow_controller.py`):**
+  - Extended `AcquisitionSubstrate` with backward-compatible `incomplete_names: tuple[str, ...] = ()`
+    and recorded `listed.incomplete` alongside `listed.projects` in
+    `_pinned_acquisition_substrate` from the single `port.list_project_names()` reply.
+  - Added `_acquisition_stage_task` and threaded `dispatch` into `_stage_task`, attaching
+    `Projects (SELECT_EXISTING)` and `Incomplete` (plus `fs_search` `COLLISION` guidance
+    for empty/roadmap-less directories) strictly on `PlannerDispatchKind.ACQUISITION`.
+- **Handoff & clarification return (`src/fa/inner_loop/tools/workflow_tool.py`):**
+  - Added `acquisition: bool = False` to `build_handoff_task` / `_resolve_handoff_task`
+    and passed `wants_acquisition` from `invoke_workflow`, replacing step 3
+    (`"3) Produce the plan..."`) with acquisition-protocol instructions on managed coder
+    handoffs while keeping all existing non-acquisition callers unchanged.
+  - Extracted `_workflow_outcome_summary` to append `blocked_reason` (and an incomplete-schema
+    repair hint on `plan-ref/clarification/*`) to `summary` without altering the CT4 key
+    set of `result`.
+
+**Tests and mutation kill-checks.**
+
+- `tests/test_prompt_registry_coherence.py`: verified `ACQUISITION_SYSTEM_PROMPT`
+  references only `ACQUISITION_TOOLS`, stays static/cacheable, parses all three JSON
+  examples via `parse_acquisition_choice`, and switches via `resolve_base_system_prompt`
+  only for `planner` + `ACQUISITION`.
+- `tests/test_handoff_payload.py` & `tests/test_invoke_workflow_tool.py`: verified
+  `acquisition=True` swaps step 3 while preserving the default, and
+  `invoke_workflow` surfaces `blocked_reason` and the incomplete-roadmap guidance in
+  `summary` while keeping the exact CT4 `result` keys.
+- `tests/test_s5p1_acquisition_substrate.py` & `tests/test_s5p1_acquisition_lifecycle.py`:
+  verified `_pinned_acquisition_substrate` captures both `project_names` and
+  `incomplete_names`; `_stage_task` delivers both lists solely on `ACQUISITION`; and
+  end-to-end `_cmd_run` → `drive_session` → `ProviderChain.request` sends
+  `ACQUISITION_SYSTEM_PROMPT` on `messages[0]`, preserves an identical `prompt_cache_key`
+  across distinct `project_names`/`incomplete_names`/`task`, keeps `PLANNER_SYSTEM_PROMPT`
+  for explicit-plan stages, and exits cleanly before `coder` on `NEEDS_CLARIFICATION`.
+- Targeted mutation testing: **7 / 7 non-equivalent mutants killed**
+  (`M1_D9_prompt_returns_planner`, `M2_D9_cli_no_dispatch_to_drive_session`,
+  `M3_D9_stage_task_skips_acquisition`, `M4_D9_substrate_drops_incomplete`,
+  `M5a_D9_handoff_always_ordinary_step3`, `M5b_D9_workflow_tool_drops_acquisition_flag`,
+  `M6_D9_workflow_summary_drops_blocked_reason`).
+
+**Verification.** **827 passed, 1 xfailed** (pre-existing STEP2 cutover) across S5P1,
+prompt-registry coherence, handoff payload, `invoke_workflow`, `coder_loop`, `cli`,
+Schema-4, chat role, scope-hint cache key, complexity ratchet, execution composition, and
+contract suites; `ruff check .`, `ruff format --check src tests`, `deptry src/ scripts/`,
+`just _contracts`, `./scripts/check_shell_syntax.sh`, `mypy` across all 9 clean touched
+`.py` files (plus pre-existing `attr-defined` on untouched line 132 of
+`test_s5p1_acquisition_substrate.py`), and `pyrefly check` across all 5 touched `src/`
+modules all pass with 0 errors; `pylint src/fa` rates `9.99/10` (0 diagnostics on
+touched modules; exit 8 from pre-existing `R0801`/`R0401`). Remaining defects: **D14**
+→ **D10–D12 (Q150=A)**.
+
+

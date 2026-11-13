@@ -774,3 +774,203 @@ def test_real_cmd_run_acquisition_dispatch_ships_only_read_only_tools_to_provide
     record = _record("acq-real-cmd-run")
     assert record["plan_ref"] is not None
     assert record["plan_ref"]["source_kind"] == "EXISTING_SELECTION"
+
+
+# ── D9 (Q149=B + Q145 + Q151=A): prompt delivery, dynamic context & prefix cache ──
+
+
+def test_stage_task_delivers_project_and_incomplete_names_only_for_acquisition(tmp_path: Path) -> None:
+    """C1 (D9 / Q145 + Q151=A): `_stage_task` injects `Projects` & `Incomplete` solely on ACQUISITION."""
+    tasks_by_role: list[tuple[str, str]] = []
+
+    class _TaskRecorder(_PlannerThen):
+        def __call__(self, args: argparse.Namespace, **kwargs: Any) -> int:
+            tasks_by_role.append((str(getattr(args, "role", "")), str(getattr(args, "task", ""))))
+            return super().__call__(args, **kwargs)
+
+    stage = _TaskRecorder(SELECTION, forbid_after_planner=False)
+    substrate = AcquisitionSubstrate(
+        port=_port(),
+        project_names=("demo-project", "other-project"),
+        incomplete_names=("broken-project",),
+    )
+    _run(
+        tmp_path,
+        run_id="acq-task-ctx",
+        stage=stage,
+        roles=["planner", "coder"],
+        mode="adaptive",
+        acquisition=substrate,
+    )
+    assert [r for r, _ in tasks_by_role] == ["planner", "coder", "eval"]
+    planner_task = tasks_by_role[0][1]
+    coder_task = tasks_by_role[1][1]
+    eval_task = tasks_by_role[2][1]
+    assert "do the thing" in planner_task
+    assert "Projects (SELECT_EXISTING): demo-project, other-project" in planner_task
+    assert "broken-project" in planner_task
+    assert "Acquisition context" not in coder_task
+    assert "Acquisition context" not in eval_task
+
+    # Contrast: an empty substrate still labels `(none)` cleanly on ACQUISITION, while
+    # an ordinary explicit-plan run never injects Acquisition context.
+    empty_tasks: list[str] = []
+
+    class _EmptyTaskRecorder(_PlannerThen):
+        def __call__(self, args: argparse.Namespace, **kwargs: Any) -> int:
+            if getattr(args, "role", None) == "planner":
+                empty_tasks.append(str(getattr(args, "task", "")))
+            return super().__call__(args, **kwargs)
+
+    _run(
+        tmp_path,
+        run_id="acq-task-empty",
+        stage=_EmptyTaskRecorder(CLARIFICATION, forbid_after_planner=True),
+        roles=["planner", "coder"],
+        acquisition=AcquisitionSubstrate(port=_port(), project_names=(), incomplete_names=()),
+    )
+    assert len(empty_tasks) == 1
+    assert "Projects (SELECT_EXISTING): (none)" in empty_tasks[0]
+    assert "Incomplete" in empty_tasks[0] and "(none)" in empty_tasks[0]
+
+
+def test_real_cmd_run_delivers_acquisition_prompt_preserves_cache_key_and_runs_clarification(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """C1 end-to-end (D9 / Q149=B + Q145 + Q151=A): real `_cmd_run` -> `drive_session` -> `ProviderChain.request`."""
+    from fa.cli import _cmd_run
+    from fa.inner_loop.prompt import ACQUISITION_SYSTEM_PROMPT, PLANNER_SYSTEM_PROMPT
+    from fa.providers import ProviderChain, SecretStore
+    from fa.providers.base import RequestInfo, ResponseInfo
+
+    role_yaml = (
+        "{role}:\n"
+        '  name: "m"\n'
+        '  family: "openai"\n'
+        "  chain:\n"
+        "    - provider: openrouter\n"
+        '      model: "t/m"\n'
+        '      base_url: "https://example.invalid/v1"\n'
+        "      api_key_env: K\n"
+    )
+    config = tmp_path / "models.yaml"
+    config.write_text("".join(role_yaml.format(role=r) for r in ("planner", "coder", "eval")), encoding="utf-8")
+    monkeypatch.setenv("FA_STATE_ROOT", str(tmp_path / "state"))
+    monkeypatch.delenv("FA_EGRESS_PROXY_URL", raising=False)
+    monkeypatch.delenv("FA_PROXY_TOKEN_FILE", raising=False)
+
+    captured: list[tuple[str, RequestInfo]] = []
+
+    def make_provider(reply_for_planner: str) -> Any:
+        def _req(
+            chain: ProviderChain, request: RequestInfo, *, logical_call_id: str | None = None
+        ) -> tuple[ResponseInfo, str, list[Any]]:
+            role = chain.config.role
+            captured.append((role, request))
+            reply = reply_for_planner if role == "planner" else "done"
+            return ResponseInfo(reply, 1, 1, "stop"), logical_call_id or "d9-c1", []
+
+        return _req
+
+    monkeypatch.setattr(ProviderChain, "request", make_provider(SELECTION))
+
+    # Run 1: acquisition with ("demo-project",) and ("broken-a",)
+    run_workflow(
+        roles=["planner", "coder"],
+        task="task alpha",
+        per_role_task={},
+        mode="adaptive",
+        max_repairs=0,
+        max_replans=0,
+        run_id="d9-run-1",
+        config=config,
+        workspace=tmp_path,
+        max_turns=1,
+        output_mode="quiet",
+        run_stage_fn=_cmd_run,
+        secrets=SecretStore({"K": "sk-test-live"}),
+        acquisition=AcquisitionSubstrate(
+            port=_port(),
+            project_names=("demo-project",),
+            incomplete_names=("broken-a",),
+        ),
+    )
+    acq_req_1 = captured[0][1]
+    assert captured[0][0] == "planner"
+    system_msgs_1 = [str(m.get("content", "")) for m in acq_req_1.messages if m.get("role") == "system"]
+    user_msgs_1 = [str(m.get("content", "")) for m in acq_req_1.messages if m.get("role") == "user"]
+    assert system_msgs_1[0] == ACQUISITION_SYSTEM_PROMPT
+    assert all("broken-a" not in msg for msg in system_msgs_1)
+    assert any("demo-project" in msg and "broken-a" in msg and "task alpha" in msg for msg in user_msgs_1)
+
+    # Run 2: different task & different project/incomplete lists -> identical cache key (Q149=B),
+    # and NEEDS_CLARIFICATION ends cleanly before coder with blocked_reason surfaced.
+    captured.clear()
+    clarify = json.dumps({"kind": "NEEDS_CLARIFICATION", "reason": "MISSING_CONTEXT"})
+    monkeypatch.setattr(ProviderChain, "request", make_provider(clarify))
+    code_2, state_2 = run_workflow(
+        roles=["planner", "coder"],
+        task="task beta",
+        per_role_task={},
+        mode="adaptive",
+        max_repairs=0,
+        max_replans=0,
+        run_id="d9-run-2",
+        config=config,
+        workspace=tmp_path,
+        max_turns=1,
+        output_mode="quiet",
+        run_stage_fn=_cmd_run,
+        secrets=SecretStore({"K": "sk-test-live"}),
+        acquisition=AcquisitionSubstrate(
+            port=_port(),
+            project_names=("second-project",),
+            incomplete_names=("broken-b",),
+        ),
+    )
+    assert code_2 != 0
+    assert state_2 is not None and state_2.blocked_reason == "plan-ref/clarification/missing-context"
+    assert [r for r, _ in captured] == ["planner"]
+    acq_req_2 = captured[0][1]
+    assert acq_req_2.extras["prompt_cache_key"] == acq_req_1.extras["prompt_cache_key"]
+    user_msgs_2 = [str(m.get("content", "")) for m in acq_req_2.messages if m.get("role") == "user"]
+    assert any("second-project" in msg and "broken-b" in msg and "task beta" in msg for msg in user_msgs_2)
+
+    # Contrast: ordinary explicit-plan planner stage keeps PLANNER_SYSTEM_PROMPT.
+    captured.clear()
+    plan = tmp_path / "worklogs/demo-project/increments/increment-01-foundation.md"
+    plan.parent.mkdir(parents=True)
+    plan.write_text(
+        "---\nIncrement-ID: RM-demo-project-I01\nRoadmap-ID: RM-demo-project\n"
+        "status: IN PROGRESS\nslices: 1\nshipped: —\n---\n"
+        "## SLICE1: Build\nSTEPS: prescriptive\nDEPS: —\nINTENT: do.\n"
+        "CONTRACTS:\n  CT1 [CONSTRAINT]: ok.\n"
+        "TESTS: tests/test_s5p1_acquisition_lifecycle.py\n"
+        "```verify\necho ok\n```\n"
+        "- [ ] STEP1: work (exit: exit_code == 0)\n",
+        encoding="utf-8",
+    )
+    run_workflow(
+        roles=["planner"],
+        task="plan ordinarily",
+        per_role_task={},
+        mode="linear",
+        max_repairs=0,
+        max_replans=0,
+        run_id="d9-ordinary",
+        config=config,
+        workspace=tmp_path,
+        max_turns=1,
+        output_mode="quiet",
+        run_stage_fn=_cmd_run,
+        secrets=SecretStore({"K": "sk-test-live"}),
+        plan_path=plan,
+    )
+    assert len(captured) == 1 and captured[0][0] == "planner"
+    ordinary_sys_0 = str(captured[0][1].messages[0].get("content", ""))
+    assert ordinary_sys_0 == PLANNER_SYSTEM_PROMPT
+    assert all(
+        "Acquisition context" not in str(m.get("content", ""))
+        for m in captured[0][1].messages
+        if m.get("role") == "user"
+    )

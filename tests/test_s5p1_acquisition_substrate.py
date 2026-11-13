@@ -57,10 +57,11 @@ REVISION = "rev-" + "c" * 32
 class _Client(ExecutionClient):
     """A real client whose transport answers with fixed replies; no socket at all."""
 
-    def __init__(self, *, grant: Any, names: tuple[str, ...] = ()) -> None:
+    def __init__(self, *, grant: Any, names: tuple[str, ...] = (), incomplete: tuple[str, ...] = ()) -> None:
         super().__init__(Path("/nonexistent/supervisor.sock"), server_uid=0, rpc_timeout_ms=1000)
         self._grant = grant
         self._names = names
+        self._incomplete = incomplete
         self.pins: list[dict[str, Any]] = []
         self.stops: list[str] = []
         self.operations: list[Operation] = []
@@ -83,7 +84,7 @@ class _Client(ExecutionClient):
                 "revision_id": self._grant.revision_id,
             }
         if operation is Operation.LIST_PROJECTS:
-            return {"projects": [{"project_slug": name} for name in self._names], "incomplete": []}
+            return {"projects": [{"project_slug": name} for name in self._names], "incomplete": list(self._incomplete)}
         if operation is Operation.STOP_VIEW:
             view = kwargs.get("view")
             self.stops.append("" if view is None else view.view_id)
@@ -160,13 +161,14 @@ def _ctx(tmp_path: Any, managed: Any) -> WorkflowContext:
 
 
 def test_the_substrate_pins_with_no_plan_and_returns_a_port(tmp_path: Any) -> None:
-    client = _Client(grant=_grant(), names=("demo-project",))
+    client = _Client(grant=_grant(), names=("demo-project",), incomplete=("broken-proj",))
     managed = _Managed(client)
 
     with _pinned_acquisition_substrate(_ctx(tmp_path, managed)) as substrate:
         assert substrate is not None
         assert isinstance(substrate.port, ClientWorkspacePort)
         assert substrate.project_names == ("demo-project",)
+        assert substrate.incomplete_names == ("broken-proj",)
 
     assert len(client.pins) == 1
     assert client.pins[0]["plan_ref"] is None, "acquisition runs before any plan exists"

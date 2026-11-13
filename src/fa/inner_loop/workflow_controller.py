@@ -1335,13 +1335,44 @@ def _announce_stage(ctx: WorkflowContext, role: str, progress: WorkflowProgress,
         print("fa workflow: eval transition storage error: append-failed", file=sys.stderr)
 
 
+def _acquisition_stage_task(ctx: WorkflowContext, stage_task: str | None) -> str | None:
+    """Attach pinned project/incomplete lists to the initial acquisition task (Q145, Q151=A)."""
+    substrate = ctx.acquisition
+    if substrate is None:
+        return stage_task
+    projects_line = ", ".join(substrate.project_names) if substrate.project_names else "(none)"
+    incomplete_line = ", ".join(substrate.incomplete_names) if substrate.incomplete_names else "(none)"
+    lines = [
+        "Acquisition context (pinned read-only view):",
+        f"- Projects (SELECT_EXISTING): {projects_line}",
+        (
+            "- Incomplete (do NOT select or bootstrap over these slugs; "
+            f"return NEEDS_CLARIFICATION with MISSING_CONTEXT if targeted): {incomplete_line}"
+        ),
+        (
+            "- Before BOOTSTRAP_NEW_PROJECT, check with fs_search that worklogs/<project_slug>/ "
+            "does not already exist (empty or roadmap-less directories are omitted from Projects "
+            "and Incomplete, and authority installation fails with COLLISION over any existing directory)."
+        ),
+    ]
+    block = "\n".join(lines)
+    return f"{stage_task}\n\n{block}" if stage_task else block
+
+
 def _stage_task(
-    ctx: WorkflowContext, role: str, verification: PlanVerification | None, repair_round: int
+    ctx: WorkflowContext,
+    role: str,
+    verification: PlanVerification | None,
+    repair_round: int,
+    *,
+    dispatch: PlannerDispatch | None = None,
 ) -> str | None:
     # S13: the judge is handed the contract and the evidence. Eval only --
     # the coder and planner already have the plan by other means, and a diff
     # of the coder's own work is not input to writing it.
     stage_task = ctx.task_for(role)
+    if dispatch is not None and dispatch.kind is PlannerDispatchKind.ACQUISITION:
+        return _acquisition_stage_task(ctx, stage_task)
     if role == "eval":
         evidence = _eval_evidence_block(ctx, verification=verification, repair_round=repair_round)
         if evidence:
@@ -1402,7 +1433,7 @@ def _run_stage(
     progress = _admission_progress(ctx, progress)
 
     _announce_stage(ctx, role, progress, transition_reason)
-    stage_task = _stage_task(ctx, role, prior_verification, progress.repair_round)
+    stage_task = _stage_task(ctx, role, prior_verification, progress.repair_round, dispatch=dispatch)
 
     stage_plan_ref = ctx.admission.snapshot.ref if ctx.admission is not None else ctx.managed_plan_ref
     stage_kwargs: dict[str, object] = {
@@ -2383,9 +2414,10 @@ class AcquisitionSubstrate:
     """What one acquisition planner may read, and the names it may choose from.
 
     Both halves come from the *same* pinned READ view: the port answers the reads the
-    planner performs with its own tools, and ``project_names`` is the Q146 list taken
-    from that view. Handing the planner a port it can read through but a name list
-    from somewhere else would let it select a project the view cannot resolve.
+    planner performs with its own tools, and ``project_names`` / ``incomplete_names``
+    are the Q146 lists taken from that view. Handing the planner a port it can read
+    through but a name list from somewhere else would let it select a project the
+    view cannot resolve.
     """
 
     # The protocol, not `ClientWorkspacePort`: the resolver and the planner's tools
@@ -2393,6 +2425,7 @@ class AcquisitionSubstrate:
     # double to impersonate a client it never uses.
     port: WorkspacePort
     project_names: tuple[str, ...]
+    incomplete_names: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -2459,12 +2492,15 @@ def _pinned_acquisition_substrate(ctx: WorkflowContext) -> Iterator[AcquisitionS
         cache_dir=ctx.workspace / ".fa" / "acquisition-read-cache",
     )
     names: tuple[str, ...] = ()
+    incomplete: tuple[str, ...] = ()
     try:
-        names = port.list_project_names().projects
+        listed = port.list_project_names()
+        names = listed.projects
+        incomplete = listed.incomplete
     except WorkspacePortError as error:
         logger.warning("managed acquisition: project list refused [%s] (run=%s)", error.code, ctx.run_id)
     try:
-        yield AcquisitionSubstrate(port=port, project_names=names)
+        yield AcquisitionSubstrate(port=port, project_names=names, incomplete_names=incomplete)
     finally:
         if not managed.client.stop_view(managed.binding.namespace, view=view, grant=grant, deadline=deadline):
             logger.error(

@@ -3412,6 +3412,7 @@ def _cmd_run(
             temperature=None,
             redactor=redactor,
             output=output_bus,
+            planner_dispatch=planner_dispatch,
         )
 
     _run_start_mono = time.monotonic()

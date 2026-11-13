@@ -478,3 +478,99 @@ def test_optional_tool_layer_still_degrades_on_ordinary_failures() -> None:
     registry = ToolRegistry()
     _register_optional_tool(registry, "fs_optional_tool", boom)
     assert "fs_optional_tool" not in registry.names()
+
+
+# ── D9 / Q149=B: acquisition system prompt coherence & cacheability ─────────
+
+
+def test_acquisition_prompt_only_mentions_registered_acquisition_tools() -> None:
+    """C1 (D9) — ACQUISITION_SYSTEM_PROMPT must never advertise mutators or missing tools."""
+    from fa.inner_loop.profiles import ACQUISITION_TOOLS
+    from fa.inner_loop.prompt import ACQUISITION_SYSTEM_PROMPT
+
+    mentioned = _mentioned_tools(ACQUISITION_SYSTEM_PROMPT)
+    orphaned = mentioned - set(ACQUISITION_TOOLS)
+    assert not orphaned, f"acquisition prompt references non-acquisition tools: {sorted(orphaned)}"
+    assert {"fs_read_file", "fs_search"}.issubset(mentioned)
+
+
+def test_acquisition_prompt_is_static_cacheable_and_examples_parse() -> None:
+    """C0/C1 (D9 / Q149=B + Q151=A) — static prefix, closed schema rules, valid JSON examples."""
+    import json
+
+    from fa.inner_loop.managed_acquisition import (
+        BootstrapNewProjectChoice,
+        NeedsClarificationChoice,
+        SelectExistingChoice,
+        parse_acquisition_choice,
+    )
+    from fa.inner_loop.prompt import ACQUISITION_SYSTEM_PROMPT
+
+    assert "Acquisition context (pinned read-only view):" not in ACQUISITION_SYSTEM_PROMPT
+    assert "demo-project" not in ACQUISITION_SYSTEM_PROMPT
+    for required in (
+        "SELECT_EXISTING",
+        "BOOTSTRAP_NEW_PROJECT",
+        "NEEDS_CLARIFICATION",
+        "AMBIGUOUS_PROJECT",
+        "UNKNOWN_INCREMENT",
+        "MISSING_CONTEXT",
+        "COLLISION",
+        "## Intent",
+        "## Out of scope",
+        "## SLICE1:",
+        "kill: neutralise",
+        "Incomplete",
+    ):
+        assert required in ACQUISITION_SYSTEM_PROMPT, f"missing protocol guidance: {required!r}"
+
+    # Extract each standalone JSON example in the prompt (including the 3-line bootstrap one)
+    # and assert it parses through the real `parse_acquisition_choice` boundary.
+    lines = ACQUISITION_SYSTEM_PROMPT.splitlines()
+    json_blocks: list[str] = []
+    idx = 0
+    while idx < len(lines):
+        if lines[idx].lstrip().startswith("{"):
+            buf = [lines[idx]]
+            while idx + 1 < len(lines) and not buf[-1].rstrip().endswith("}"):
+                idx += 1
+                buf.append(lines[idx])
+            json_blocks.append("".join(line.strip() for line in buf))
+        idx += 1
+    parsed = [parse_acquisition_choice(block) for block in json_blocks]
+    assert any(isinstance(item, SelectExistingChoice) for item in parsed)
+    assert any(isinstance(item, BootstrapNewProjectChoice) for item in parsed)
+    assert any(isinstance(item, NeedsClarificationChoice) for item in parsed)
+    for item in parsed:
+        if isinstance(item, BootstrapNewProjectChoice):
+            assert "## Intent" in item.roadmap_body
+            assert "## Out of scope" in item.roadmap_body
+            assert json.loads(json.dumps(item.roadmap_body)) == item.roadmap_body
+
+
+def test_resolve_base_system_prompt_switches_only_for_planner_acquisition() -> None:
+    """C0/C1 (D9 / Q149=B) — ACQUISITION selects ACQUISITION_SYSTEM_PROMPT without altering other dispatches/roles."""
+    from fa.inner_loop.planner_dispatch import PlannerDispatchKind
+    from fa.inner_loop.prompt import (
+        ACQUISITION_SYSTEM_PROMPT,
+        CODER_SYSTEM_PROMPT,
+        EVAL_SYSTEM_PROMPT,
+        PLANNER_SYSTEM_PROMPT,
+        build_system_message,
+        resolve_base_system_prompt,
+    )
+
+    candidate = ".fa/admission/r1/candidate-" + ("a" * 32) + ".md"
+    acq = PlannerDispatch(PlannerDispatchKind.ACQUISITION, "r1")
+    ordinary = PlannerDispatch(PlannerDispatchKind.ORDINARY_PLANNING, "r1")
+    repair = PlannerDispatch(PlannerDispatchKind.ADMISSION_REPAIR, "r1", candidate_target=candidate)
+    replan = PlannerDispatch(PlannerDispatchKind.EVAL_REPLAN, "r1", candidate_target=candidate)
+
+    assert resolve_base_system_prompt("planner", planner_dispatch=acq) == ACQUISITION_SYSTEM_PROMPT
+    assert build_system_message(role="planner", planner_dispatch=acq) == ACQUISITION_SYSTEM_PROMPT
+    assert resolve_base_system_prompt("planner", planner_dispatch=ordinary) == PLANNER_SYSTEM_PROMPT
+    assert resolve_base_system_prompt("planner", planner_dispatch=repair) == PLANNER_SYSTEM_PROMPT
+    assert resolve_base_system_prompt("planner", planner_dispatch=replan) == PLANNER_SYSTEM_PROMPT
+    assert resolve_base_system_prompt("planner", planner_dispatch=None) == PLANNER_SYSTEM_PROMPT
+    assert resolve_base_system_prompt("coder", planner_dispatch=acq) == CODER_SYSTEM_PROMPT
+    assert resolve_base_system_prompt("eval", planner_dispatch=acq) == EVAL_SYSTEM_PROMPT

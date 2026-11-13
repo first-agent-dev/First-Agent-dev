@@ -149,15 +149,27 @@ scoped candidate с общим кредитом и durable barrier.
 >   `ACQUISITION`. До провайдера в `_cmd_run` доходят строго 5 инструментов
 >   `ACQUISITION_TOOLS`.
 
-### D9 — модель не знает протокола выбора
+### D9 — модель не знает протокола выбора *(закрыт в E522)*
 
-`grep SELECT_EXISTING|BOOTSTRAP_NEW_PROJECT|NEEDS_CLARIFICATION` по `src/` и `knowledge/`:
-**ноль** совпадений вне `managed_acquisition.py`. `_stage_task` (`:1333`) дополняет задачу
-только для eval. `_decode_choice` требует ровно один JSON без обёртки и лишней прозы ⇒
-обычный текстовый план планировщика даёт `choice-malformed`. Положительный путь недостижим
-независимо от D6–D8. Носитель — **Q149** (согласован вариант **B**: статический
-`ACQUISITION_SYSTEM_PROMPT` + динамика и Q145 `project_names` в `_stage_task`; перед
-финализацией текста промпта ждём подтверждения по `incomplete` / Q151).
+> **Статус:** **закрыт (E522, по Q149=B + Q145 + Q151=A).**
+> - `src/fa/inner_loop/prompt.py`: введён статический `ACQUISITION_SYSTEM_PROMPT`
+>   (read-only инструменты из `ACQUISITION_TOOLS`, строгий однообъектный JSON-протокол
+>   `SELECT_EXISTING` / `BOOTSTRAP_NEW_PROJECT` / `NEEDS_CLARIFICATION`, требования
+>   `render_bundle` + `_validate_plan_admission` включая `## Intent` / `## Out of scope`
+>   и `kill:` на `FUNCTIONAL` контрактах, запрет на `BOOTSTRAP_NEW_PROJECT` по
+>   существующим/`incomplete`/пустым каталогам из-за `COLLISION`) и
+>   `resolve_base_system_prompt(role, planner_dispatch=...)`.
+> - `src/fa/inner_loop/coder_loop.py`, `src/fa/cli.py`: `planner_dispatch` проброшен
+>   в `drive_session` / `resolve_base_system_prompt` без изменения `cache_key` от
+>   динамических полей (`Q66` отложен, как решено).
+> - `src/fa/inner_loop/workflow_controller.py`: `AcquisitionSubstrate.incomplete_names`
+>   захватывается в `_pinned_acquisition_substrate` вместе с `project_names`;
+>   `_stage_task` через `_acquisition_stage_task` добавляет `Projects` и `Incomplete`
+>   строго на стадии `ACQUISITION`.
+> - `src/fa/inner_loop/tools/workflow_tool.py`: `build_handoff_task(..., acquisition=True)`
+>   исключает `"3) Produce the plan"` для managed-coder handoff; `_workflow_outcome_summary`
+>   выносит `blocked_reason` и подсказку по `worklogs/<slug>/roadmap.md` в `summary`,
+>   сохраняя точный набор ключей CT4 `result`.
 
 ### D10 — v1-писатель отвергает `dispatch_kind: ACQUISITION`
 
@@ -209,30 +221,27 @@ planner-first. Модель читает описание как политик�
 | D6 | adaptive не связывает acquisition; coder без плана; отказы не останавливают | **оркестрация** | исполнено + kill-проверка | **ЗАКРЫТ (E520)** |
 | D7 | ACQUISITION-вид не производится | проводка | C1 + мутация M1 | **ЗАКРЫТ (E521)** |
 | D8 | acquisition-реестр без вызова; writer у планировщика | проводка | C1 `_cmd_run` + M3–M5 | **ЗАКРЫТ (E521)** |
-| D9 | протокол выбора не доходит до модели | **контракт (Q149=B, Q145)** | grep = 0 вне модуля | открыт (следующий; ждёт `incomplete`/Q151) |
+| D9 | протокол выбора не доходит до модели | **контракт (Q149=B, Q145, Q151=A)** | C1 `_cmd_run` + M1–M6 (7/7) | **ЗАКРЫТ (E522)** |
 | D10 | v1 отвергает ACQUISITION-попытку; v2 недостижима | схема (**Q150=A**) | исполнено | открыт; провенанс |
 | D11 | попытка пишется как EXPLICIT_INPUT | схема (**Q150=A**) | исполнено | открыт; провенанс |
 | D12 | отказы → validator-error | схема (**Q150=A**) | код + E516 | открыт; диагностика |
 | D13 | `_scoped_stage_failed` без семантики | проводка | C1 + мутация M2 | **ЗАКРЫТ (E521)** |
-| D14 | описание инструмента устарело | док/контракт | код | открыт (после D9) |
+| D14 | описание инструмента устарело | док/контракт | код | открыт (следующий) |
 
 ## 3. Порядок закрытия (актуализирован по зависимостям)
 
 ```
-[D6 (E520)] ─► [D13 → D8 → D7 (E521)] ─► D9 (Q149=B, Q145; ждёт Q151 по incomplete) ─► D14 ─► D10–D12 (Q150=A)
+[D6 (E520)] ─► [D13 → D8 → D7 (E521)] ─► [D9 (E522)] ─► D14 ─► D10–D12 (Q150=A)
 ```
 
-- **D6 (E520) и D13 → D8 → D7 (E521) закрыты:** контроллер в обоих режимах производит
-  `PlannerDispatchKind.ACQUISITION`, отгружает модели только 5 read-only инструментов из
-  `ACQUISITION_TOOLS` (без `fs_write_file`, `pr_prepare`, `fs_spawn_subagent`), и не
-  срабатывает как scoped repair-стадия.
-- **D9** — следующий шаг по утверждённым решениям (**Q149=B** `ACQUISITION_SYSTEM_PROMPT`
-  + `_stage_task`; **Q145** `project_names`, `Q66` отложен); перед реализацией текста
-  промпта поднято уточнение **Q151** по `incomplete`/пустым директориям, т.к.
-  `workspace.py:3468` при `INSTALL_PROJECT` ставит no-clobber `COLLISION`, а `ACQUISITION`
-  является read-only.
-- **D14** — обновляется сразу после D9, когда положительный вызов `invoke_workflow`
-  полностью работоспособен.
+- **D6 (E520), D13 → D8 → D7 (E521) и D9 (E522) закрыты:** контроллер в обоих режимах
+  производит `PlannerDispatchKind.ACQUISITION`, отгружает строго 5 read-only инструментов
+  `ACQUISITION_TOOLS` и статический кэшируемый `ACQUISITION_SYSTEM_PROMPT` на `base_system`,
+  передаёт `Projects` и `Incomplete` в user-task, согласует `build_handoff_task` и
+  возвращает `blocked_reason` обратно в `chat` по Q151=A без изменений `workspace.py`.
+- **D14** — следующий минимальный шаг: обновить описание `invoke_workflow` в
+  `workflow_tool.py`, убрав устаревшее утверждение про `acquisition_unavailable` для
+  planner-first managed запросов.
 - **D10–D12 (Q150=A)** — финальный срез: включение v2 `admission.json` на managed-child
   пути (`owner_run_id != run_id`) с пробросом `ManagedAdmissionBinding`, `BundlePreparation`
   и `InstallReceipt` / `BoundPlanPublisher` (`operation_id`, `revision_id`), сохраняя v1
@@ -245,4 +254,6 @@ planner-first. Модель читает описание как политик�
 - R26 (вложенный coder) — Q141 открыт; сюда не входит.
 - Live-host поведение: Docker недоступен, `BACKEND_UNAVAILABLE` — как и раньше.
 - Мутации: D6 (5/5 неэквивалентных мутантов убиты, E520); D13+D8+D7 (6/6 неэквивалентных
-  мутантов M1–M5 убиты на `tests/test_s5p1_acquisition_{registry,lifecycle}.py`, E521).
+  мутантов M1–M5 убиты, E521); D9 (7/7 неэквивалентных мутантов M1–M6 убиты на банках
+  `prompt_registry_coherence` / `handoff_payload` / `invoke_workflow_tool` /
+  `s5p1_acquisition_{substrate,lifecycle}`, E522).
