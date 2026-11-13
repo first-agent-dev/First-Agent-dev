@@ -1157,3 +1157,20 @@ def test_summary_surfaces_blocked_reason_and_incomplete_repair_hint_without_chan
     assert set(_payload(result)) == {"run_id", "exit_code", "status", "route", "timed_out", "parent_view_refreshed"}
     assert "blocked_reason=plan-ref/clarification/missing-context" in result.summary
     assert "worklogs/<slug>/roadmap.md" in result.summary
+
+
+def test_invoke_workflow_tool_description_matches_live_acquisition_policy(tmp_path: Path) -> None:
+    """C1 (D14): the ToolSpec description agrees with `acquisition_refusal` (no stale denial)."""
+    spec = _tool(_RecordingWorkflow(), _ctx(tmp_path))
+    desc = spec.description
+    assert "currently return acquisition_unavailable" not in desc.replace("\n", " ")
+    assert "planner,coder,eval" in desc or "planner, coder, eval" in desc
+    assert "acquisition_requires_planner" in desc
+    assert "acquisition_unavailable" in desc
+    # Cross-check against live `acquisition_refusal` truth table:
+    assert acquisition_refusal(["planner", "coder", "eval"], managed=True) is None
+    missing_planner = acquisition_refusal(["coder", "eval"], managed=True)
+    assert missing_planner is not None and missing_planner[0] == "acquisition_requires_planner"
+    unmanaged = acquisition_refusal(["planner", "coder", "eval"], managed=False)
+    assert unmanaged is not None and unmanaged[0] == "acquisition_unavailable"
+    assert acquisition_refusal(["planner", "eval"], managed=False) is None

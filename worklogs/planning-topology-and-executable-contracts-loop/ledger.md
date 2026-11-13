@@ -9701,4 +9701,20 @@ modules all pass with 0 errors; `pylint src/fa` rates `9.99/10` (0 diagnostics o
 touched modules; exit 8 from pre-existing `R0801`/`R0401`). Remaining defects: **D14**
 → **D10–D12 (Q150=A)**.
 
+### E523 — D14 closed: align `invoke_workflow` tool description with live managed acquisition policy (2026-11-10; Arena-local)
+
+**Changes.** Updated `ToolSpec(name="invoke_workflow").description` in
+`src/fa/inner_loop/tools/workflow_tool.py` to remove the obsolete claim that all
+coder-containing requests return `acquisition_unavailable`. The description now matches
+`acquisition_refusal`: planner-led managed requests (`planner,coder,eval`) acquire
+their plan automatically, coder requests lacking a leading planner return
+`acquisition_requires_planner`, and unmanaged coder requests return
+`acquisition_unavailable` (while planner/eval-only delegation works in both modes).
+
+**Tests and checks.** Added `test_invoke_workflow_tool_description_matches_live_acquisition_policy`
+in `tests/test_invoke_workflow_tool.py` (1/1 revert mutant killed), verified all
+targeted tool/portability/coherence/S5P1 tests, `ruff`, `mypy`, `pyrefly`, `deptry`, and
+`just _contracts`. Remaining defects: **D10–D12 (Q150=A)**.
+
+
 

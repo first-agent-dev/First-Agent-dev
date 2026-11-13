@@ -875,8 +875,11 @@ def build_invoke_workflow_tool(
         name="invoke_workflow",
         description=(
             "Run a multi-role workflow pipeline (planner, coder, eval) on a task that is too "
-            "large to finish in this conversation. Coder-containing requests currently return "
-            "acquisition_unavailable; planner/eval-only delegation remains available. "
+            "large to finish in this conversation. In managed sessions, coder-bearing runs "
+            "acquire their plan automatically when led by planner (default 'planner,coder,eval'); "
+            "coder requests without a leading planner return acquisition_requires_planner, and "
+            "unmanaged coder requests return acquisition_unavailable "
+            "(planner/eval delegation works in both). "
             "Returns the child run id, exit code and "
             "terminal status; the pipeline's artifacts are written under that run id."
         ),

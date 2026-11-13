@@ -208,11 +208,15 @@ v2-словарь `selection/*`.
 > и пустом `sink` доходит до `_stage_acquisition_choice` (`choice-missing`), а при
 > ненулевом коде возвращает реальный `exit_code` стадии.
 
-### D14 — описание инструмента врёт модели
+### D14 — описание инструмента врёт модели *(закрыт в E523)*
 
-`INVOKE_WORKFLOW_SCHEMA`/`ToolSpec.description` (`workflow_tool.py:832`): «Coder-containing
-requests currently return `acquisition_unavailable`». После Q148=B это неверно для
-planner-first. Модель читает описание как политику — устаревший текст влияет на её выбор.
+> **Статус:** **закрыт (E523).** `ToolSpec(name="invoke_workflow").description` в
+> `src/fa/inner_loop/tools/workflow_tool.py` обновлён под актуальную политику
+> `acquisition_refusal`: managed-сессии с ведущим `planner` автоматически проходят
+> acquisition для `planner,coder,eval`, вызовы с `coder` без ведущего `planner`
+> получают `acquisition_requires_planner`, а unmanaged-вызовы с `coder` возвращают
+> `acquisition_unavailable`. Покрыт C1-тестом и kill-check'ом в
+> `tests/test_invoke_workflow_tool.py`.
 
 ## 2. Сводная таблица
 
@@ -226,22 +230,16 @@ planner-first. Модель читает описание как политик�
 | D11 | попытка пишется как EXPLICIT_INPUT | схема (**Q150=A**) | исполнено | открыт; провенанс |
 | D12 | отказы → validator-error | схема (**Q150=A**) | код + E516 | открыт; диагностика |
 | D13 | `_scoped_stage_failed` без семантики | проводка | C1 + мутация M2 | **ЗАКРЫТ (E521)** |
-| D14 | описание инструмента устарело | док/контракт | код | открыт (следующий) |
+| D14 | описание инструмента устарело | док/контракт | C1 + kill-check | **ЗАКРЫТ (E523)** |
 
 ## 3. Порядок закрытия (актуализирован по зависимостям)
 
 ```
-[D6 (E520)] ─► [D13 → D8 → D7 (E521)] ─► [D9 (E522)] ─► D14 ─► D10–D12 (Q150=A)
+[D6 (E520)] ─► [D13 → D8 → D7 (E521)] ─► [D9 (E522)] ─► [D14 (E523)] ─► D10–D12 (Q150=A)
 ```
 
-- **D6 (E520), D13 → D8 → D7 (E521) и D9 (E522) закрыты:** контроллер в обоих режимах
-  производит `PlannerDispatchKind.ACQUISITION`, отгружает строго 5 read-only инструментов
-  `ACQUISITION_TOOLS` и статический кэшируемый `ACQUISITION_SYSTEM_PROMPT` на `base_system`,
-  передаёт `Projects` и `Incomplete` в user-task, согласует `build_handoff_task` и
-  возвращает `blocked_reason` обратно в `chat` по Q151=A без изменений `workspace.py`.
-- **D14** — следующий минимальный шаг: обновить описание `invoke_workflow` в
-  `workflow_tool.py`, убрав устаревшее утверждение про `acquisition_unavailable` для
-  planner-first managed запросов.
+- **D6 (E520), D13 → D8 → D7 (E521), D9 (E522) и D14 (E523) закрыты:** контроллер,
+  реестр, промпт/динамика и описание `invoke_workflow` полностью согласованы.
 - **D10–D12 (Q150=A)** — финальный срез: включение v2 `admission.json` на managed-child
   пути (`owner_run_id != run_id`) с пробросом `ManagedAdmissionBinding`, `BundlePreparation`
   и `InstallReceipt` / `BoundPlanPublisher` (`operation_id`, `revision_id`), сохраняя v1
@@ -256,4 +254,5 @@ planner-first. Модель читает описание как политик�
 - Мутации: D6 (5/5 неэквивалентных мутантов убиты, E520); D13+D8+D7 (6/6 неэквивалентных
   мутантов M1–M5 убиты, E521); D9 (7/7 неэквивалентных мутантов M1–M6 убиты на банках
   `prompt_registry_coherence` / `handoff_payload` / `invoke_workflow_tool` /
-  `s5p1_acquisition_{substrate,lifecycle}`, E522).
+  `s5p1_acquisition_{substrate,lifecycle}`, E522); D14 (1/1 мутант описания инструмента
+  убит на `test_invoke_workflow_tool.py`, E523).
