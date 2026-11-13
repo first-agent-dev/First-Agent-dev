@@ -11,10 +11,10 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Hashable, Iterable, Mapping
+from collections.abc import Hashable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
-from typing import Any, Literal, TypeAlias, TypeGuard, override
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeGuard, override
 
 import yaml
 from yaml.nodes import MappingNode
@@ -22,10 +22,14 @@ from yaml.tokens import AliasToken, AnchorToken
 
 from fa.inner_loop.plan_admission import PlanSnapshot, snapshot_from_bytes
 
+if TYPE_CHECKING:
+    from fa.inner_loop.tools.workspace_port import WorkspacePort
+
 __all__ = [
     "AcquisitionChoice",
     "AcquisitionChoiceError",
     "AcquisitionMetadataError",
+    "AcquisitionOutcome",
     "BootstrapNewProjectChoice",
     "CanonicalIncrementArtifact",
     "IncrementMetadata",
@@ -36,6 +40,7 @@ __all__ = [
     "SelectExistingChoice",
     "parse_acquisition_choice",
     "parse_artifact_metadata",
+    "resolve_acquisition_choice",
     "resolve_existing_choice",
 ]
 
@@ -481,6 +486,90 @@ def resolve_existing_choice(
         return NeedsClarificationChoice("UNKNOWN_INCREMENT")
     snapshot = snapshot_from_bytes(artifact.relative_path, artifact.content, source_kind="EXISTING_SELECTION")
     return ResolvedExistingIncrement(snapshot=snapshot, roadmap=roadmap, increment=increment)
+
+
+@dataclass(frozen=True, slots=True)
+class AcquisitionOutcome:
+    """What the acquisition prelude hands back: one of exactly three things.
+
+    The three are mutually exclusive by construction rather than by convention:
+
+    * ``snapshot`` -- a validated plan this run may be admitted against;
+    * ``clarification`` -- a closed reason to return to chat with no coder;
+    * ``needs_bootstrap`` -- the choice asks for a new project, whose bundle must be
+      rendered and installed by the authority before any plan identity exists.
+
+    A bootstrap choice deliberately does **not** produce a snapshot here. The plan
+    it will be admitted against is the file the authority installs, read back
+    through a fresh pin; inventing one from the submitted prose would admit a
+    coder against text that is not in the workspace.
+    """
+
+    snapshot: PlanSnapshot | None = None
+    clarification: NeedsClarificationChoice | None = None
+    bootstrap: BootstrapNewProjectChoice | None = None
+    roadmap: RoadmapMetadata | None = None
+    increment: IncrementMetadata | None = None
+
+    def __post_init__(self) -> None:
+        # A shape violation here is OUR bug, not model input: every field is
+        # produced by `resolve_acquisition_choice` from an already-validated
+        # choice. `AcquisitionChoiceError` stays reserved for model-facing
+        # diagnostics so the two are never conflated in a log or a test.
+        filled = [
+            self.snapshot is not None,
+            self.clarification is not None,
+            self.bootstrap is not None,
+        ]
+        if sum(filled) != 1:
+            raise ValueError("an acquisition outcome carries exactly one answer")
+        if self.snapshot is not None and (self.roadmap is None or self.increment is None):
+            raise ValueError("a resolved snapshot carries its roadmap and increment")
+
+
+def resolve_acquisition_choice(
+    choice: AcquisitionChoice,
+    *,
+    inventory_view: WorkspacePort,
+    inventory_slugs: Sequence[str],
+) -> AcquisitionOutcome:
+    """Turn one typed planner choice into the prelude's closed outcome.
+
+    The controller side of §7: `SELECT_EXISTING` resolves against a pinned-view
+    inventory, `NEEDS_CLARIFICATION` passes through, and `BOOTSTRAP_NEW_PROJECT`
+    is reported as needing installation rather than resolved here.
+
+    ``inventory_slugs`` is what the pinned view named (``list_project_names``), so
+    the inventory is only read for projects that exist. Reading every name a model
+    could type would turn a malformed choice into an IO probe.
+    """
+    if isinstance(choice, NeedsClarificationChoice):
+        return AcquisitionOutcome(clarification=choice)
+    if isinstance(choice, BootstrapNewProjectChoice):
+        return AcquisitionOutcome(bootstrap=choice)
+    if not isinstance(choice, SelectExistingChoice):
+        raise AcquisitionChoiceError("outcome-shape", "unknown acquisition choice")
+
+    if choice.project_slug not in set(inventory_slugs):
+        # The project is not in the pinned revision. That is missing context, not
+        # an IO error and not a reason to read a path a model supplied.
+        return AcquisitionOutcome(clarification=NeedsClarificationChoice("MISSING_CONTEXT"))
+
+    # Local import: `managed_inventory` imports this module for its artifact types,
+    # so a module-level import here would close the cycle.
+    from fa.inner_loop.managed_inventory import inventory_project_artifacts
+
+    inventory = inventory_project_artifacts(inventory_view, choice.project_slug)
+    if inventory is None:
+        return AcquisitionOutcome(clarification=NeedsClarificationChoice("MISSING_CONTEXT"))
+    resolved = resolve_existing_choice(choice, (inventory,))
+    if isinstance(resolved, NeedsClarificationChoice):
+        return AcquisitionOutcome(clarification=resolved)
+    return AcquisitionOutcome(
+        snapshot=resolved.snapshot,
+        roadmap=resolved.roadmap,
+        increment=resolved.increment,
+    )
 
 
 def _parse_existing_choice(value: dict[str, object]) -> SelectExistingChoice:
