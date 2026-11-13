@@ -269,6 +269,7 @@ READONLY_OPERATIONS = frozenset(
         Operation.INSPECT,
         Operation.LIST_PROJECT_ARTIFACTS,
         Operation.DIFF_REVISIONS,
+        Operation.LIST_PROJECTS,
     }
 )
 
@@ -554,7 +555,10 @@ class SupervisorDispatcher:
 
                 limit = None
                 if request["protocol_version"] == PROTOCOL_V2:
-                    if request["op"] == Operation.LIST_PROJECT_ARTIFACTS.value:
+                    if request["op"] in {
+                        Operation.LIST_PROJECT_ARTIFACTS.value,
+                        Operation.LIST_PROJECTS.value,
+                    }:
                         limit = MAX_PROJECT_ARTIFACTS_REPLY_BYTES
                     elif request["op"] == Operation.DIFF_REVISIONS.value:
                         limit = MAX_REVISION_DIFF_REPLY_BYTES

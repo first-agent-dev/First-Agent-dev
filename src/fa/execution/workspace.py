@@ -39,6 +39,7 @@ from fa.execution.profiles import ExecutionProfile, _configured_id
 from fa.execution.protocol import (
     CANDIDATE_SCOPE,
     CONFIG_ID,
+    MAX_PROJECT_ENTRIES,
     MAX_REVISION_DIFF_ENTRIES,
     MAX_TEXT_BYTES,
     NAMESPACE,
@@ -1855,9 +1856,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
     _OWNING_READ_PURPOSES = frozenset({ViewPurpose.CANDIDATE})
 
     @classmethod
-    def _has_unsettled_views(
-        cls, binding: _Binding, views: int, *, publishing: str | None = None
-    ) -> bool:
+    def _has_unsettled_views(cls, binding: _Binding, views: int, *, publishing: str | None = None) -> bool:
         """Whether any view still holds writer-owned work.
 
         ``publishing`` names the one CANDIDATE view whose unsettled state is the
@@ -1879,11 +1878,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                 unsettled = record["state"] not in cls._SETTLED_VIEW_STATES
                 if ref["access"] != Access.READ.value and unsettled:
                     return True
-                if (
-                    ViewPurpose(ref["purpose"]) in cls._OWNING_READ_PURPOSES
-                    and unsettled
-                    and name != publishing
-                ):
+                if ViewPurpose(ref["purpose"]) in cls._OWNING_READ_PURPOSES and unsettled and name != publishing:
                     # The only READ purpose whose unsettled state still holds the
                     # writer: its bytes are writer-private and unpublished. The
                     # one exception is the publication being committed right now.
@@ -2307,6 +2302,70 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                 "increments_kind": increments_kind,
                 "entries": entries,
             }
+
+    def list_projects(
+        self,
+        peer: PeerIdentity,
+        namespace: NamespaceRef,
+        *,
+        view_ref: ViewRef,
+        capability: str,
+        deadline: float,
+    ) -> dict[str, Any]:
+        """Name the canonical projects this pinned revision contains.
+
+        A projection of the same immutable reader manifest ``list_project_artifacts``
+        already reads -- there is no second source of truth and no filesystem scan.
+        A project is a ``worklogs/<slug>/`` directory that holds a regular
+        ``roadmap.md``; a bare directory is reported as incomplete rather than
+        offered as selectable, because bootstrap refuses to install over an existing
+        directory (``COLLISION``) and a selectable entry the model cannot use would
+        be a trap.
+
+        Names only: no contents, no symlink targets, no recursion.
+        """
+        if (
+            not isinstance(view_ref, ViewRef)
+            or view_ref.access is not Access.READ
+            or view_ref.purpose is not ViewPurpose.PROJECT
+        ):
+            raise SupervisorError("INPUT_POLICY")
+        with self._reader_io(
+            peer,
+            namespace,
+            view_ref=view_ref,
+            capability=capability,
+            deadline=deadline,
+        ) as (_io, pin):
+            projects: list[dict[str, str]] = []
+            incomplete: list[str] = []
+            for path, entry in pin.entries.items():
+                _budget(deadline)
+                parts = path.split("/")
+                # Exactly worklogs/<slug>/roadmap.md: deeper paths are increments and
+                # notes, and a slug is one component, so there is nothing to recurse.
+                if len(parts) != 3 or parts[0] != "worklogs" or parts[2] != "roadmap.md":
+                    continue
+                slug = parts[1]
+                try:
+                    name_bytes = slug.encode("utf-8")
+                except UnicodeError:
+                    raise SupervisorError("INPUT_POLICY") from None
+                if _SLUG.fullmatch(slug) is None or not name_bytes or len(name_bytes) > 255:
+                    continue  # not a canonical project name; it is not our directory
+                if entry.get("type") == "file":
+                    projects.append({"project_slug": slug})
+                elif entry.get("type") in {"directory", "symlink"}:
+                    # The path exists but is not a readable roadmap: say so instead of
+                    # pretending the project is selectable.
+                    incomplete.append(slug)
+                else:
+                    raise SupervisorError("CORRUPT_STATE")
+            if len(projects) > MAX_PROJECT_ENTRIES or len(incomplete) > MAX_PROJECT_ENTRIES:
+                raise SupervisorError("INPUT_POLICY")
+            projects.sort(key=lambda item: item["project_slug"])
+            incomplete.sort()
+            return {"projects": projects, "incomplete": incomplete}
 
     def diff_revisions(
         self,
@@ -3997,9 +4056,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                 self._forward_gates(binding, deadline, publishing=view_ref.view_id)
                 self._settle_view(pin.directory, pin.record)
                 return repeated
-            inputs = self._plan_prepare(
-                binding, plan_ref, buffer, operation_id, deadline, publishing=view_ref.view_id
-            )
+            inputs = self._plan_prepare(binding, plan_ref, buffer, operation_id, deadline, publishing=view_ref.view_id)
             parent = self._project_parent(binding.source, inputs.plan_relative)
             scratch = -1
             try:
@@ -5493,7 +5550,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
             return None
 
         # View-scoped: the exact actor/view/access binding, nothing weaker.
-        if operation in {Operation.LIST_PROJECT_ARTIFACTS, Operation.DIFF_REVISIONS}:
+        if operation in {Operation.LIST_PROJECT_ARTIFACTS, Operation.DIFF_REVISIONS, Operation.LIST_PROJECTS}:
             if view.access is not Access.READ or view.purpose is not ViewPurpose.PROJECT:
                 raise SupervisorError("INPUT_POLICY")
             self._reader_proof(peer, namespace, view, capability)

@@ -390,6 +390,7 @@ def test_the_readonly_classification_covers_the_closed_enum() -> None:
             Operation.INSPECT,
             Operation.LIST_PROJECT_ARTIFACTS,
             Operation.DIFF_REVISIONS,
+            Operation.LIST_PROJECTS,
         }
     )
 

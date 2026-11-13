@@ -596,7 +596,7 @@ class SupervisorService:
                 "ready": self._authority.ready,
                 "protocol_version": PROTOCOL_V2,
                 "profile_set_sha256": self._profile_set_sha256,
-                "features": ["diff_revisions", "list_project_artifacts"],
+                "features": ["diff_revisions", "list_project_artifacts", "list_projects"],
             }
         return {
             "ready": self._authority.ready,
@@ -627,6 +627,33 @@ class SupervisorService:
         }
         try:
             encode_json(response, max_bytes=MAX_PROJECT_ARTIFACTS_REPLY_BYTES)
+        except ExecutionContractError:
+            raise SupervisorError("INPUT_POLICY") from None
+        return result
+
+    def _list_projects(self, peer: PeerIdentity, request: dict[str, Any], deadline: float) -> dict[str, Any]:
+        """Name the canonical projects of this pinned revision; no payload to trust."""
+        view = self._view(request)
+        if view.access is not Access.READ or view.purpose is not ViewPurpose.PROJECT:
+            raise SupervisorError("INPUT_POLICY")
+        result = self._authority.list_projects(
+            peer,
+            self._namespace(request),
+            view_ref=view,
+            capability=self._capability(request),
+            deadline=deadline,
+        )
+        try:
+            encode_json(
+                {
+                    "protocol_version": PROTOCOL_V2,
+                    "request_id": request["request_id"],
+                    "status": "OK",
+                    "result": result,
+                    "error": None,
+                },
+                max_bytes=MAX_PROJECT_ARTIFACTS_REPLY_BYTES,
+            )
         except ExecutionContractError:
             raise SupervisorError("INPUT_POLICY") from None
         return result
@@ -942,6 +969,7 @@ _ROUTE_NAMES: dict[Operation, str] = {
     Operation.PREPARE_BUNDLE: "_prepare_bundle",
     Operation.LIST_PROJECT_ARTIFACTS: "_list_project_artifacts",
     Operation.DIFF_REVISIONS: "_diff_revisions",
+    Operation.LIST_PROJECTS: "_list_projects",
     Operation.INSTALL_PROJECT: "_install_project",
     Operation.HANDOFF: "_handoff",
     Operation.RELEASE: "_release",

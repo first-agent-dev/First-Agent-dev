@@ -238,7 +238,7 @@ def test_v2_health_negotiates_project_artifact_and_revision_diff_features(site: 
                 view_profile_id=native_profile().profile_id,
                 read_only_profile_id=read_only_profile().profile_id,
             ),
-            "features": ["diff_revisions", "list_project_artifacts"],
+            "features": ["diff_revisions", "list_project_artifacts", "list_projects"],
         }
         assert service.authority.journal.lookup("op-" + RID, ACTOR) is None
 
@@ -276,6 +276,297 @@ def test_v2_listing_uses_the_authorized_read_manifest_without_reservation(site: 
             "entries": [{"name": "increment-01-plan.md", "kind": "file"}],
         }
         assert service.authority.journal.lookup("op-" + list_request_id, ACTOR) is None
+
+
+def test_v2_projects_names_only_canonical_projects_of_the_pinned_revision(site: Site) -> None:
+    """Q146=B: naming is a projection of the pinned manifest, and it separates
+    a real project from a bare directory that bootstrap would refuse to install.
+
+    Kills, in order: a projection that accepts a directory without a regular
+    roadmap, one that recurses below worklogs/<slug>/, one that leaks a file's
+    contents or a symlink's target into the reply, and one that ignores the sort.
+    """
+
+    def project(slug: str, *, roadmap: str | None = "roadmap") -> None:
+        root = site.source / "worklogs" / slug
+        (root / "increments").mkdir(parents=True)
+        if roadmap is not None:
+            (root / "roadmap.md").write_text(roadmap, encoding="utf-8")
+
+    project("zeta-project")
+    project("alpha-project")
+    # `-` sorts before `/`: by manifest *path* "worklogs/a-b" precedes "worklogs/a",
+    # but by *slug* "a" precedes "a-b". Naming these two forces the producer's own
+    # sort instead of inheriting the manifest's path order.
+    project("a")
+    project("a-b")
+    # A bare directory: `_install_destination` would rename onto a non-empty
+    # directory and refuse with COLLISION, so it must never look selectable.
+    (site.source / "worklogs/bare-directory").mkdir(parents=True)
+    # A *directory* named roadmap.md, holding a roadmap.md: registration accepts
+    # it, so the path `worklogs/dir-project/roadmap.md/roadmap.md` is reachable.
+    # Only the exact-depth guard keeps this one project from being named twice.
+    (site.source / "worklogs/dir-project/roadmap.md").mkdir(parents=True)
+    (site.source / "worklogs/dir-project/roadmap.md/roadmap.md").write_text("nested", encoding="utf-8")
+    # A non-canonical directory name is accepted by registration (dirs are just
+    # dirs) but is not a project slug: it must be neither named nor offered.
+    project("Not_A_Slug")
+    # A relative symlinked roadmap survives registration (an absolute one is
+    # refused outright), so this shape is reachable: it is a directory that
+    # exists but yields no readable roadmap, hence `incomplete`, not selectable.
+    (site.source / "worklogs/linked-project").mkdir(parents=True)
+    (site.source / "worklogs/linked-project/roadmap.md").symlink_to("../zeta-project/roadmap.md")
+    # Deep and non-worklogs paths must not be mistaken for project roots. A nested
+    # roadmap is named from its parent directory, so it would surface as a second
+    # "zeta-project" if the depth guard were dropped -- which the dedupe catches.
+    (site.source / "worklogs/zeta-project/notes").mkdir()
+    (site.source / "worklogs/zeta-project/notes/roadmap.md").write_text("nested", encoding="utf-8")
+    (site.source / "archive/archived-project").mkdir(parents=True)
+    (site.source / "archive/archived-project/roadmap.md").write_text("archived", encoding="utf-8")
+    # Contents must never travel: a secret in the roadmap stays on disk.
+    project("secret-project", roadmap="TOP-SECRET-ROADMAP-BODY")
+
+    with SupervisorService(_config(site)) as service:
+        workspace_id = _registered(service)
+        _, revision = _writer(service, workspace_id, request_id="2" * 32)
+        pinned = exchange(
+            service,
+            Operation.PIN_READER,
+            {"workspace_id": workspace_id, "revision_id": revision, "plan_ref": None},
+            request_id="3" * 32,
+        )
+        assert pinned["status"] == "OK", pinned
+        request_id = "4" * 32
+        listed = exchange(
+            service,
+            Operation.LIST_PROJECTS,
+            {},
+            request_id=request_id,
+            view_ref=pinned["result"]["view_ref"],
+            capability=pinned["result"]["capability"],
+            protocol_version=2,
+        )
+        assert listed["status"] == "OK", listed
+        assert listed["result"] == {
+            "projects": [
+                {"project_slug": "a"},
+                {"project_slug": "a-b"},
+                {"project_slug": "alpha-project"},
+                {"project_slug": "secret-project"},
+                {"project_slug": "zeta-project"},
+            ],
+            "incomplete": ["dir-project", "linked-project"],
+        }
+        # `roadmap.md` reached the view, but not as a regular file, so the name is
+        # reported as unusable rather than silently dropped or offered.
+        assert "linked-project" not in [entry["project_slug"] for entry in listed["result"]["projects"]]
+        # An empty `worklogs/<slug>/` has no manifest entry at all, so it is never
+        # named: the COLLISION trap of `_install_destination` cannot be entered by
+        # selecting something this reply invents.
+        assert "bare-directory" not in json.dumps(listed["result"])
+        # Sort is the producer's, not the filter's: the reply is ordered even
+        # though the manifest order is arbitrary.
+        slugs = [entry["project_slug"] for entry in listed["result"]["projects"]]
+        assert slugs == sorted(slugs)
+        # No roadmap body, no symlink target, no increment name.
+        assert "TOP-SECRET-ROADMAP-BODY" not in json.dumps(listed)
+        assert "increment" not in json.dumps(listed["result"])
+        # A read-only metadata operation never reserves durable state.
+        assert service.authority.journal.lookup("op-" + request_id, ACTOR) is None
+
+
+def test_v2_projects_caps_the_unusable_list_on_its_own(site: Site) -> None:
+    """A flood of directories that yield no roadmap must be refused even when the
+    selectable count is tiny, or `incomplete` becomes the unbounded channel."""
+    from fa.execution.protocol import MAX_PROJECT_ENTRIES
+
+    usable = site.source / "worklogs/only-usable"
+    usable.mkdir(parents=True)
+    (usable / "roadmap.md").write_text("roadmap", encoding="utf-8")
+    for index in range(MAX_PROJECT_ENTRIES + 1):
+        unusable = site.source / f"worklogs/unusable-{index:03d}"
+        unusable.mkdir(parents=True)
+        (unusable / "roadmap.md").mkdir()
+
+    with SupervisorService(_config(site)) as service:
+        workspace_id = _registered(service)
+        _, revision = _writer(service, workspace_id, request_id="2" * 32)
+        pinned = exchange(
+            service,
+            Operation.PIN_READER,
+            {"workspace_id": workspace_id, "revision_id": revision, "plan_ref": None},
+            request_id="3" * 32,
+        )
+        assert pinned["status"] == "OK", pinned
+        listed = exchange(
+            service,
+            Operation.LIST_PROJECTS,
+            {},
+            request_id="4" * 32,
+            view_ref=pinned["result"]["view_ref"],
+            capability=pinned["result"]["capability"],
+            protocol_version=2,
+        )
+        assert listed["status"] == "ERROR", listed
+        assert _error(listed) == "INPUT_POLICY"
+
+
+def test_v2_projects_reads_only_the_pinned_manifest_and_never_the_host_tree(site: Site) -> None:
+    """The list must come from the pinned view, not a walk of the live directory.
+
+    A project created *after* the pin is invisible to it even though it is on
+    disk; a project that the pin names is still listed after it is deleted from
+    disk. A host-reading implementation fails both halves.
+    """
+    pinned_project = site.source / "worklogs/pinned-project"
+    pinned_project.mkdir(parents=True)
+    (pinned_project / "roadmap.md").write_text("roadmap", encoding="utf-8")
+
+    with SupervisorService(_config(site)) as service:
+        workspace_id = _registered(service)
+        _, revision = _writer(service, workspace_id, request_id="2" * 32)
+        pinned = exchange(
+            service,
+            Operation.PIN_READER,
+            {"workspace_id": workspace_id, "revision_id": revision, "plan_ref": None},
+            request_id="3" * 32,
+        )
+        assert pinned["status"] == "OK", pinned
+
+        # Mutate the live tree only after the pin exists.
+        late = site.source / "worklogs/late-project"
+        late.mkdir(parents=True)
+        (late / "roadmap.md").write_text("roadmap", encoding="utf-8")
+        (pinned_project / "roadmap.md").unlink()
+
+        listed = exchange(
+            service,
+            Operation.LIST_PROJECTS,
+            {},
+            request_id="4" * 32,
+            view_ref=pinned["result"]["view_ref"],
+            capability=pinned["result"]["capability"],
+            protocol_version=2,
+        )
+        assert listed["status"] == "OK", listed
+        slugs = [entry["project_slug"] for entry in listed["result"]["projects"]]
+        assert "pinned-project" in slugs, "the pinned revision still names it"
+        assert "late-project" not in slugs, "a post-pin directory is not in this revision"
+
+
+def test_v2_projects_refuses_an_unbounded_list_instead_of_truncating(site: Site) -> None:
+    """The cap is a refusal, not a silent partial list: a truncated inventory
+    would make "no more projects" and "too many projects" indistinguishable."""
+    from fa.execution.protocol import MAX_PROJECT_ENTRIES
+
+    for index in range(MAX_PROJECT_ENTRIES + 1):
+        root = site.source / f"worklogs/project-{index:03d}"
+        root.mkdir(parents=True)
+        (root / "roadmap.md").write_text("roadmap", encoding="utf-8")
+
+    with SupervisorService(_config(site)) as service:
+        workspace_id = _registered(service)
+        _, revision = _writer(service, workspace_id, request_id="2" * 32)
+        pinned = exchange(
+            service,
+            Operation.PIN_READER,
+            {"workspace_id": workspace_id, "revision_id": revision, "plan_ref": None},
+            request_id="3" * 32,
+        )
+        assert pinned["status"] == "OK", pinned
+        listed = exchange(
+            service,
+            Operation.LIST_PROJECTS,
+            {},
+            request_id="4" * 32,
+            view_ref=pinned["result"]["view_ref"],
+            capability=pinned["result"]["capability"],
+            protocol_version=2,
+        )
+        assert listed["status"] == "ERROR", listed
+        assert _error(listed) == "INPUT_POLICY"
+
+
+def test_v2_projects_refuses_a_write_view_at_both_the_service_and_authority(site: Site) -> None:
+    """A WRITE view must not be able to enumerate projects.
+
+    The request schema admits any valid `VIEW`, so this rejection is reachable
+    over the real socket; the authority guard is checked directly too, because it
+    is the layer that would still hold if a future caller bypassed the service.
+    """
+    from fa.execution.types import ViewRef
+
+    with SupervisorService(_config(site)) as service:
+        workspace_id = _registered(service)
+        writer_capability, base_revision = _writer(service, workspace_id, request_id="2" * 32)
+        view, view_capability = _view(
+            service,
+            workspace_id,
+            base_revision,
+            writer_capability,
+            request_id="3" * 32,
+        )
+        assert view["access"] == "WRITE"
+        listed = exchange(
+            service,
+            Operation.LIST_PROJECTS,
+            {},
+            request_id="4" * 32,
+            view_ref=view,
+            capability=view_capability,
+            protocol_version=2,
+        )
+        assert listed["status"] == "ERROR", listed
+        assert _error(listed) == "INPUT_POLICY"
+        # Same view, called straight on the authority: still refused, so the
+        # service is not the only thing standing between a WRITE view and a list.
+        from fa.execution.supervisor import SupervisorError
+
+        with pytest.raises(SupervisorError) as refused:
+            service.authority.list_projects(
+                PEER,
+                ACTOR,
+                view_ref=ViewRef.from_dict(view),
+                capability=view_capability,
+                deadline=time.monotonic() + 30,
+            )
+        assert refused.value.code == "INPUT_POLICY"
+
+
+def test_v2_projects_is_unavailable_to_a_v1_peer_without_a_v1_fallback(site: Site) -> None:
+    """A v1-only peer must reject the operation outright. There is no v1 shape
+    for it and no degraded answer that a caller could mistake for a full list."""
+    from fa.execution.protocol import PROTOCOL_V1, decode_reply
+
+    with SupervisorService(_config(site)) as service:
+        workspace_id = _registered(service)
+        _, revision = _writer(service, workspace_id, request_id="2" * 32)
+        pinned = exchange(
+            service,
+            Operation.PIN_READER,
+            {"workspace_id": workspace_id, "revision_id": revision, "plan_ref": None},
+            request_id="3" * 32,
+        )
+        assert pinned["status"] == "OK", pinned
+        listed = exchange(
+            service,
+            Operation.LIST_PROJECTS,
+            {},
+            request_id="4" * 32,
+            view_ref=pinned["result"]["view_ref"],
+            capability=pinned["result"]["capability"],
+            protocol_version=PROTOCOL_V1,
+        )
+        assert listed["status"] == "ERROR", listed
+        assert listed["error"]["code"] == "INVALID_REQUEST"
+        # And the v1 codec itself refuses to model the reply at all.
+        with pytest.raises(ExecutionContractError):
+            decode_reply(
+                encode_json({"protocol_version": 1, "request_id": "4" * 32, "status": "OK", "result": {}}),
+                operation=Operation.LIST_PROJECTS,
+                request_id="4" * 32,
+                protocol_version=PROTOCOL_V1,
+            )
 
 
 def test_v2_diff_compares_sealed_manifests_through_a_pinned_read_view(site: Site) -> None:

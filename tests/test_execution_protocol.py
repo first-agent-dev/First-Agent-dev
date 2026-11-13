@@ -328,7 +328,17 @@ def test_a_writer_view_still_names_the_bytes_it_mutates(purpose: str) -> None:
 
 
 @pytest.mark.parametrize(
-    "op", [op for op in Operation if op not in {Operation.LIST_PROJECT_ARTIFACTS, Operation.DIFF_REVISIONS}]
+    "op",
+    [
+        op
+        for op in Operation
+        if op
+        not in {
+            Operation.LIST_PROJECT_ARTIFACTS,
+            Operation.DIFF_REVISIONS,
+            Operation.LIST_PROJECTS,
+        }
+    ],
 )
 def test_all_v1_operations_keep_their_complete_payloads_and_results(op: Operation) -> None:
     assert (
@@ -338,6 +348,7 @@ def test_all_v1_operations_keep_their_complete_payloads_and_results(op: Operatio
         - {
             Operation.LIST_PROJECT_ARTIFACTS,
             Operation.DIFF_REVISIONS,
+            Operation.LIST_PROJECTS,
         }
     )
     req, res = request(op), response(op)
@@ -376,7 +387,7 @@ def test_v2_health_and_project_listing_have_closed_versioned_shapes() -> None:
             "ready": True,
             "protocol_version": 2,
             "profile_set_sha256": SHA,
-            "features": ["diff_revisions", "list_project_artifacts"],
+            "features": ["diff_revisions", "list_project_artifacts", "list_projects"],
         },
         "error": None,
     }

@@ -408,6 +408,81 @@ class ExecutionClient:
             # mutation, but it cannot be treated as a complete inventory either.
             raise ExecutionUnavailableError from None
 
+    def list_projects(
+        self,
+        namespace: NamespaceRef,
+        *,
+        view: ViewRef,
+        grant: GrantReply,
+        deadline: float | None = None,
+    ) -> list[str]:
+        """Name the canonical projects of this pinned revision.
+
+        Same v2 negotiation as ``list_project_artifacts``: an older v1-only peer's
+        explicit rejection is ``unavailable``, never a v1 fallback or an empty list.
+        Returns the selectable slugs only; ``incomplete`` entries name a directory
+        that is not a project and are deliberately not offered.
+        """
+        if (
+            not isinstance(namespace, NamespaceRef)
+            or not isinstance(view, ViewRef)
+            or view.access is not Access.READ
+            or view.purpose is not ViewPurpose.PROJECT
+            or view.owner_run_id != namespace.run_id
+            or not isinstance(grant, GrantReply)
+            or grant.view_ref != view
+        ):
+            raise ExecutionContractError
+        try:
+            health = self.request(
+                Operation.HEALTH,
+                request_id=uuid4().hex,
+                namespace=None,
+                view=None,
+                grant=None,
+                payload={},
+                deadline=deadline,
+                protocol_version=PROTOCOL_V2,
+                allow_legacy_v1_rejection=True,
+            )
+        except ExecutionRejectedError as error:
+            if error.code == "INVALID_REQUEST":
+                raise ExecutionUnavailableError from None
+            raise
+        except ExecutionUncertainError:
+            raise ExecutionUnavailableError from None
+        features = health.get("features")
+        if (
+            health.get("ready") is not True
+            or health.get("protocol_version") != PROTOCOL_V2
+            or not isinstance(features, list)
+            or "list_projects" not in features
+            or features != sorted(set(features))
+        ):
+            raise ExecutionUnavailableError
+        try:
+            result = self.request(
+                Operation.LIST_PROJECTS,
+                request_id=uuid4().hex,
+                namespace=namespace,
+                view=view,
+                grant=grant,
+                payload={},
+                deadline=deadline,
+                protocol_version=PROTOCOL_V2,
+                allow_legacy_v1_rejection=True,
+            )
+        except ExecutionRejectedError as error:
+            if error.code == "INVALID_REQUEST":
+                raise ExecutionUnavailableError from None
+            raise
+        except ExecutionUncertainError:
+            raise ExecutionUnavailableError from None
+        projects = result.get("projects")
+        if not isinstance(projects, list):
+            raise ExecutionContractError
+        return [str(entry["project_slug"]) for entry in projects]
+
     def diff_revisions(
         self,
         namespace: NamespaceRef,
