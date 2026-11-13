@@ -9290,3 +9290,64 @@ Two of my own additions were real and fixed rather than waived: `resolve_acquisi
 was raising `AcquisitionChoiceError` — a closed model-facing (validator, rule) verdict —
 for its own shape violations, which both mislabelled a programming error as bad model
 input and failed the type. Shape violations now raise plain `ValueError`.
+
+### E517 — S5P1 STEP2: the acquisition path exists end to end inside one `run_workflow` (2026-11-10; Arena-local)
+
+**What "wire the real acquisition caller" turned out to mean.** One sentence in the
+step table; four separable mechanisms, all of them now in the controller:
+
+| piece | commit | what it settles |
+| --- | --- | --- |
+| snapshot admission | `590a369` | a plan can be admitted from validated bytes with `conflict` / `admission-without-coder` / `unreadable` refused, and `_check_admission_source` still refuses `source-changed` in **both** substrates |
+| choice → outcome | `37f4eef` | `SELECT_EXISTING` → snapshot, `NEEDS_CLARIFICATION` → pass-through, `BOOTSTRAP` → needs installation, never a fabricated snapshot |
+| zero-effect proof | `7f83265` | a refusal dispatches no role and still leaves a durable record — and writing this proof found the record being dropped entirely |
+| the seam | `44f5ac2` | the choice is read from the stage that produced it, on eval's existing channel |
+| binding | `8905d35` | planner → bound snapshot → coder, with `admission-without-planner` closing the shape that has none |
+| the pinned view | `e4e9561` | a real `pin_reader(None)` → port + Q146 names, stopped in `finally` |
+
+**The design constraint that changed the work.** `i03-execution-workspace-spec:1356`
+forbids running a planner outside the workflow and replaying it inside. My first
+instinct — run `roles=["planner"]`, read the choice, re-enter with the coder — is
+exactly that shape. Everything above is built the permitted way instead: one
+`run_workflow`, `PlannerDispatchKind.ACQUISITION`, the choice read from the stage's
+own `outcome_sink`, admission bound between planner and coder. A test pins
+`_run_linear`'s three-parameter signature so the forbidden shape cannot return as a
+convenience argument.
+
+`pin_reader(plan_ref=None)` is likewise not a gap: `ProtectedPlanContext.recheck`
+documents a null ref as the ordinary no-active-plan context, which is precisely a run
+that has not admitted a plan yet. No new purpose row was added to `_PURPOSE_MATRIX`.
+
+**Four times the tests were the thing that was wrong, not the code.**
+
+1. The first exclusivity oracle passed on the *metadata* rule, so a mutant allowing
+   two answers survived. Fixed by supplying complete metadata.
+2. Six of eight substrate mutants initially survived. Two oracles asserted an
+   exception the port also raises, so "refused" and "refused for the claimed reason"
+   were indistinguishable; they now count `ClientWorkspacePort` constructions.
+3. The operation and access clauses were unreachable through the real client. One
+   test now *measures* that (the client stamps `PIN_READER` on every pin), rather
+   than deleting the clauses or writing a fixture the product cannot produce; the
+   two reachability tests drive a misreporting client and the one forged grant shape
+   `GrantReply` permits to be built and then altered.
+4. `_resolve_admitted_plan` and then `_run_stage` each hit the complexity ceiling.
+   Both were extracted rather than silenced, and the sentinel the first extraction
+   used came back as a mypy error at the `StageResult` boundary — it returns an
+   explicit `(outcome, refused)` pair now.
+
+**Verification.** Full suite **7088 passed / 3 failed**, and all three fail
+identically at `fb3afd5`: `test_pyrefly_check_passes` (dirty baseline), the `s10a`
+long-run interference, and the readiness-integration bootstrap blocker. New banks:
+7 registry + 12 admission (incl. zero-effect pair) + 11 resolution + 10 seam + 7
+lifecycle + 8 substrate = **55**. Mutation: 4/4, 6/6, 5/5, 4/4, 5/5, 8/8 — every
+survivor was a real oracle gap and each fix is described above. pyrefly diffed
+against the base worktree rather than pass/fail: parity at 59.
+
+**What is still absent, stated the way the step table needs it.** Nothing calls
+`run_workflow(acquisition=…)` in production yet: `workflow_tool.acquisition_refusal`
+still returns `acquisition_unavailable` for a planner-first managed request, and
+`invoke_workflow` never builds a substrate. So the path exists and is proven at the
+controller and composition boundary, and no live chat session can reach it. Bootstrap
+also remains callerless: `prepare_bundle` → `install_project` are authority-gated and
+served, but no inner-loop path renders and installs a new project. Neither is a
+"render_bundle exists" close.
