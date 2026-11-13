@@ -22,8 +22,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-from fa.inner_loop.plan_admission import snapshot_from_bytes
-from fa.inner_loop.workflow_controller import run_workflow, workflow_artifact_paths
+from fa.inner_loop.plan_admission import PlanSnapshot, snapshot_from_bytes
+from fa.inner_loop.workflow_controller import WorkflowContext, run_workflow, workflow_artifact_paths
 from tests.test_plan_reference import _config, _SilentStage
 
 PLAN_RELATIVE = "worklogs/demo-project/increments/increment-01-foundation.md"
@@ -177,7 +177,7 @@ def test_a_non_snapshot_object_is_refused_by_type(tmp_path: Path) -> None:
 # ── C0: the source check is substrate-aware, and both branches still bite ──────
 
 
-def _admission_ctx(tmp_path: Path, *, snapshot, snapshot_backed: bool):
+def _admission_ctx(tmp_path: Path, *, snapshot: PlanSnapshot, snapshot_backed: bool) -> WorkflowContext:
     from dataclasses import replace
 
     from fa.inner_loop.workflow_controller import _WorkflowAdmission

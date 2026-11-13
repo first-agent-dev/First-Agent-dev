@@ -24,7 +24,6 @@ from typing import Any
 import pytest
 
 from fa.inner_loop.managed_acquisition import (
-    AcquisitionChoiceError,
     AcquisitionOutcome,
     BootstrapNewProjectChoice,
     NeedsClarificationChoice,
@@ -245,5 +244,5 @@ def test_a_selection_reads_only_the_project_it_was_told_about() -> None:
 
 
 def test_an_unknown_choice_type_is_a_closed_refusal() -> None:
-    with pytest.raises(AcquisitionChoiceError):
+    with pytest.raises(ValueError):
         resolve_acquisition_choice(object(), inventory_view=_port(), inventory_slugs=())  # type: ignore[arg-type]

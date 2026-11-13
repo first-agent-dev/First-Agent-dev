@@ -548,7 +548,9 @@ def resolve_acquisition_choice(
     if isinstance(choice, BootstrapNewProjectChoice):
         return AcquisitionOutcome(bootstrap=choice)
     if not isinstance(choice, SelectExistingChoice):
-        raise AcquisitionChoiceError("outcome-shape", "unknown acquisition choice")
+        # Same reasoning as the shape checks above: this is a programming error in
+        # a caller we control, not a model diagnostic.
+        raise ValueError("not an acquisition choice")
 
     if choice.project_slug not in set(inventory_slugs):
         # The project is not in the pinned revision. That is missing context, not
