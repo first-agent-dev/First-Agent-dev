@@ -9413,3 +9413,60 @@ coder against *that* snapshot. `resolve_acquisition_choice` already returns
 `bootstrap=choice` instead of fabricating a plan, and `_bind_acquisition_admission`
 refuses it as `bootstrap-not-installed` — so the refusal is proven and the positive
 path is not built. S5P1 stays PARTIAL on this clause alone.
+
+### E519 — bootstrap is no longer callerless: render → install → fresh pin → admit (2026-11-10; Arena-local)
+
+**The clause this closes.** E518 ended with two absences: no production caller for
+`run_workflow(acquisition=…)`, and bootstrap "callerless — `prepare_bundle` →
+`install_project` are authority-gated and served, but no inner-loop path renders and
+installs a new project." The second one is now a caller.
+
+**Why the order cannot be rearranged.** The plan a bootstrap run is admitted against
+is the file the *authority installs*, not the prose the model submitted:
+`resolve_acquisition_choice` already refuses to fabricate a snapshot from a bootstrap
+choice for exactly this reason. So `_install_bootstrap_project` follows the authority's
+own sequence, and each step is load-bearing:
+
+| step | what breaks if it is moved or dropped |
+| --- | --- |
+| `prepare_bundle(expected_base_revision=…)` | a bundle prepared against another generation becomes installable on a tree it never saw (`STALE_REVISION` is the authority's own guard) |
+| `install_project` | nothing is in the workspace, so any snapshot would be fabricated |
+| **fresh** `pin_reader(revision_id=receipt.revision_id)` | the acquisition view was pinned before the install; it is stale by definition, and the installed file is absent through it |
+| `snapshot_from_bytes(installed, source_kind="BOOTSTRAP")` | admitting the submitted prose means the coder is bound to text that is not in the workspace |
+
+**Three refusals, because they are three different operator facts.**
+`bootstrap-unavailable` (no managed execution — nothing was attempted),
+`bootstrap-refused` (the authority rejected prepare/install: `COLLISION`,
+`INPUT_POLICY`, `STALE_REVISION`), `bootstrap-unreadable` (the tree the authority
+proved does not contain the path the controller asked for). None of them falls back to
+the host tree, and each is recorded under its own rule through `_refusal_exit_code`.
+
+**The gap this exposed in the first test bank, and how it was closed.** The controller
+test started with a doubled client that *made up* prepare/install answers. Under it,
+five of ten mutations survived — including "pin the stale revision" and "admit the
+submitted prose" — because a double that fabricates the install cannot notice which
+revision was pinned afterwards. The bank now runs the controller against a **real**
+`WorkspaceAuthority`; only the wire is doubled, and the double forwards prepare/install
+to `publication`, so the tree the read-back sees is the tree the authority actually
+installed. Re-run: **9 killed / 9 meaningful** (the tenth pair were equivalent
+mutants — `pass` in a branch that cannot be reached with a valid grant/payload).
+
+The seam had to be faithful in one further respect: the real client types authority
+rejections as `ExecutionRejectedError`, so the double maps `SupervisorError` the same
+way. Without that, a refused install propagated as a raw exception and the
+`bootstrap-refused` branch was never exercised — a test that proves the branch exists
+without proving the controller reaches it.
+
+**Verification.** `tests/test_s5p1_bootstrap.py` **8 passed** (5 authority-level, 3
+controller-level: ordering + bytes, COLLISION refusal, no-managed-execution guard);
+40 passed across the five S5P1 banks. Full suite **7663 passed / 10 failed**, and all
+ten fail identically on a stashed worktree at `4e1a2ec` (managed-session availability,
+`s10a` long-run interference, readiness bootstrap blocker, pyrefly dirty baseline) —
+no regression. ruff/format clean; mypy and pyrefly diffed against that stashed baseline
+rather than pass/fail: parity at 59, my new file at zero.
+
+**What is still absent.** Bootstrap is reachable from `_bind_acquisition_admission` but
+still not from a live chat session: `workflow_tool.acquisition_refusal` returns
+`acquisition_unavailable` and `invoke_workflow` builds no substrate. That — plus the
+`ACQUISITION` branch of `_stage_planner_dispatch` and the substrate call in `cli.py` —
+is the remainder of W2's S5P1, and R26 stays gated until S5 closes.
