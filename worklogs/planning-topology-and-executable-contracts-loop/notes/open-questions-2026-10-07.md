@@ -3324,30 +3324,26 @@ into the writable lookup does. Those two are second-order fences.
 
 ## Q147 — how does a validated `PlanSnapshot` reach admission without a host plan path?
 
-**Status: OPEN — operator decision required; raised 2026-11-12. Blocks S5P1 STEP2 (the
-managed acquisition caller). Blocks 1–4 of S5P1 are committed and unaffected.**
+**Status: RETRACTED the same day — asked on a misreading; no decision required.**
 
-**Context.** S5P1 STEP2 says to "supply the validated `PlanSnapshot` internally" to the
-existing admission machine and "do not fabricate a host `Path`". The mechanism is not
-stated, and the re-check half is not addressed: `_check_admission_source`
-(`workflow_controller.py:2578–2584`) re-reads `ctx.workspace` and is what decides
-`source-changed`, so in a managed run it would judge the admission of one tree by reading
-another — the same defect class R24 removed for the verify gate. `run_workflow` accepts
-no plan input other than `plan_path: Path | None`.
+The mechanism is already specified in I02 and already implemented in
+`workflow_controller.py`. `PlanSnapshot(ref, utf8_bytes, text, ids)` is self-sufficient:
+`snapshot_from_bytes(relative_path, raw, *, source_kind)` builds a complete snapshot from
+bytes with no filesystem access, and `read_plan_snapshot` is a wrapper that reads bytes and
+calls it (`plan_admission.py:133–160`). `_read_repair_candidate`
+(`workflow_controller.py:2658–2681`) is that exact pattern already shipped for managed
+repair — bytes from the authority's staged buffer via `ctx.managed_candidate_reader`, then
+`snapshot_from_bytes`, then a digest comparison. `_WorkflowAdmission.snapshot` is typed
+`PlanSnapshot`, and `_check_admission_source` returns early when no admission exists, so
+the host re-read is only the host branch of an existing split, not a competing authority.
+`i02-explicit-admission-spec-2026-10-15.md:88–92` fixes the order and already expects the
+snapshot to be the authority; `admission_schema.py:143` reserves `EXISTING_SELECTION` and
+`BOOTSTRAP` precisely for this internal producer.
 
-**The question.** By which mechanism does the snapshot reach admission, and against what
-does admission re-verify it? A adds a public parameter; B moves the fact onto the context
-the plan appears to exclude; C reintroduces the prohibited host path.
+My error: I reasoned from `run_workflow`'s public signature ("only `plan_path: Path | None`")
+to a conclusion about the whole mechanism, while the controller's internal snapshot builder
+was a different surface I had already seen and read past.
 
-**Options.** A — keyword-only `admission_snapshot: PlanSnapshot | None = None`, with
-`_check_admission_source` preferring the snapshot's own digest/provenance when present
-(recommended: smallest change, one admission machine, legacy unchanged by construction).
-B — carry it on `WorkflowContext`. C — write it to the host and pass a real path
-(rejected: fabricated host path, restores the stale-copy defect). D — stop and re-scope.
-
-**Recommendation: A**, with the preference explicit and fail-closed. Full analysis,
-including the three measured code facts and the impact, is in
+**Consequence:** no public signature change, no new parameter. S5P1 STEP2 is implementable on
+existing seams. Full retraction, with the five source facts, is in
 `q147-acquisition-internal-plan-snapshot-2026-11-12.md`.
-
-**Impact if deferred.** S5P1 cannot finish; `list_project_names` has no production
-caller; Q141's gate cannot be revisited.

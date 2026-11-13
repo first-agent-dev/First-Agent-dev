@@ -1,120 +1,91 @@
-# Q147 — how does a validated `PlanSnapshot` reach admission without a host plan path?
+# Q147 — retracted: the mechanism was already specified and already implemented
 
-**Status: OPEN — blocked S5P1 STEP2; raised 2026-11-12.**
+**Status: RETRACTED (2026-11-12). Operator was right; the escalation was wrong.**
 
-## Context
+I raised Q147 claiming that "how a validated `PlanSnapshot` reaches the admission
+machine" was an unstated contract choice requiring a public-interface decision. It is
+not. Both halves already exist in I01/I02, and one of them is the *existing* mechanism
+in `workflow_controller.py` today, not something to be added.
 
-S5P1 STEP2 is "complete the real managed acquisition caller". Its own text is
-prescriptive about the seam and explicit about the constraint that makes it hard:
+## What I missed
 
-> Inside existing `run_workflow`, validate a private child/owner/view-bound
-> `ManagedAdmissionEntry` ... and dispatch the configured planner exactly once. Its
-> registry is read/search/final-choice only; negotiate Q108 and use LIST plus reads
-> through the same immutable `READ/PROJECT` pin.
+**1. The snapshot is already self-contained; a path is not its identity.**
 
-and
+`PlanSnapshot(ref, utf8_bytes, text, ids)` carries the plan's own bytes. `PlanRef` is
+`(workspace_relative_path, source_kind, sha256)` — a *label plus digest*, not a location
+that must be readable later. `snapshot_from_bytes(relative_path, raw, *, source_kind)`
+(`plan_admission.py:160`) constructs a complete snapshot from bytes with no filesystem
+access at all. `read_plan_snapshot(workspace, plan_path)` is a thin wrapper that reads
+bytes and then calls exactly that function (`:133–145`).
 
-> **Admission invariant:** current `workflow_controller.py:2731–2736` requires
-> `plan_path` and reads from the host workspace. Defer that entry check only for the
-> private read-only acquisition prelude, then **supply the validated `PlanSnapshot`
-> internally** to the existing admission/repair machine ... Do not fabricate a host
-> `Path`, accept model-supplied paths, or weaken plan-before-coder.
+So "supply the validated `PlanSnapshot` internally" needs no new mechanism: the bytes
+come from the pin (which `inventory_project_artifacts` + `resolve_existing_choice`
+already produce, with `source_kind="EXISTING_SELECTION"` at `managed_acquisition.py:482`),
+and `snapshot_from_bytes` turns them into the snapshot. The spec said "internally"; I
+read that as "via a new parameter" when it means "from bytes the controller already has".
 
-Blocks 1–4 of S5P1 are done: the stage kind exists (`62e49be`), the wire can name
-projects (`d268d29`), the two refusals are split (`060cfaa`), and the port can carry
-names to acquisition (`40c1cb1`, `34460b2`). What remains is the caller that would
-use them.
+**2. The controller already builds admission snapshots from bytes rather than from paths.**
 
-## What I measured in the code
+`_read_repair_candidate` (`workflow_controller.py:2658–2681`) is this exact pattern,
+already shipped for managed repair: it takes bytes from the authority's staged buffer
+through `ctx.managed_candidate_reader`, calls `snapshot_from_bytes(label, content)`, and
+compares the resulting digest against the digest the authority reported. When no buffer
+is bound it falls back to `read_plan_snapshot` — and the docstring states why the managed
+run must not use the host path. That is the precedent, and S5P1's acquisition prelude is
+the same shape with a different source.
 
-1. **`run_workflow` has no plan input other than a host `Path`.** Signature takes
-   `plan_path: Path | None`; admission needs `snapshot` (`workflow_controller.py:2988`)
-   and gets it only from `read_plan_snapshot(workspace, plan_path)` (`:2924–2930`).
-   There is no parameter for an already-validated snapshot.
+**3. `_check_admission_source` is not a blocker, because admission is constructed *from*
+the snapshot.**
 
-2. **Admission re-reads the host, twice.** `_check_admission_source` (`:2578–2584`)
-   does `read_plan_snapshot(ctx.workspace, Path(source.ref.workspace_relative_path))`
-   and compares `sha256`; it is called from both the coder gate (`:1255`) and the
-   stage-integrity path (`:1188`). In a managed run, the revision the coder will edit
-   lives in the authority's view, not in `ctx.workspace`, so this read is not evidence
-   about the tree under admission. This is the same class of defect R24 removed for the
-   verify gate: judging one tree by reading another.
+My fear was that the host re-read (`:2578–2584`) would judge one tree by reading another.
+But `_check_admission_source` returns early when `ctx.admission is None` (both call sites:
+`_plan_integrity_errors`, `:1185`; the coder gate, `:2728`). Admission is only ever built
+as `_WorkflowAdmission(snapshot, ...)` (`:2988–2990`, field declared at `:180`), and in a
+managed run that snapshot comes from the bound reader. The host re-read is the *host-mode*
+branch of an already-branched mechanism — the same shape as `_read_repair_candidate`'s
+`captured is None` fallback. It is not a second source of truth needing a new public knob;
+it is the existing split, and the acquisition path joins the managed side of it.
 
-3. **The controller has a pin-based port, but not where admission needs it.** A
-   `ClientWorkspacePort` over a pinned `READ/PROJECT` view is constructed for the
-   verify substrate (`:462–470`) and torn down after. It is not available to
-   `run_workflow`'s admission, and none of `_check_admission_source`'s call sites
-   has one.
+**4. The spec sequence already gates this correctly.**
 
-4. **The pieces for the alternative exist.** `inventory_project_artifacts(port, slug)`
-   and `resolve_existing_choice(...)` already produce a `PlanSnapshot` from bytes read
-   through a port (`managed_inventory.py`, `managed_acquisition.py`), and the port can
-   now name the candidates it should be asked about (`list_project_names`). So the
-   bytes for a validated snapshot are obtainable through the pin today. What does not
-   exist is a way for that snapshot to *reach admission* and for admission to *re-check
-   it against the pin* instead of against `ctx.workspace`.
+`i02-explicit-admission-spec-2026-10-15.md:88–92` fixes the order: "pure request check →
+explicit snapshot read → create durable ACQUIRING admission … → optional configured
+ordinary planner → recheck source hash → shared pre-coder validation/repair → durable
+ADMITTED attempt → T0 → coder." For acquisition the "explicit snapshot read" step is the
+pin-backed read instead of a host read; every later step is unchanged, including
+"recheck source hash". Nothing in that sequence requires a new parameter, and the spec
+already anticipated the snapshot being the authority.
 
-## The question
+**5. The reserved vocabulary confirms it was designed.**
 
-How should the validated `PlanSnapshot` reach the existing admission machine, and
-against what should admission re-verify its content?
+`admission_schema.py:143` admits `source_kind ∈ {EXPLICIT, EXISTING_SELECTION, BOOTSTRAP}`.
+`EXISTING_SELECTION` and `BOOTSTRAP` are not reachable by the CLI path: they exist for
+exactly the internal acquisition producer. The "internal" channel was designed into the
+schema, and I proposed a parameter to carry what the schema already names.
 
-The plan says "supply the validated `PlanSnapshot` internally" but does not say by
-which mechanism, and the re-check half is not addressed at all — yet `_check_admission_source`
-is the thing that decides `source-changed`, so leaving it on the host read would let
-admission accept a snapshot it can no longer substantiate, or refuse a correct one
-because the host copy is stale or absent.
+## Why the escalation was wrong, not just inconvenient
 
-**This is a contract choice, not an implementation detail:** option A adds a new
-public `run_workflow` parameter, which is a public API change to a function the CLI,
-the tool layer, and integration tests all call.
+I had the evidence and read past it: I saw `_read_repair_candidate` construct a snapshot
+from bytes, and I saw `_WorkflowAdmission.snapshot: PlanSnapshot` — a field typed to the
+snapshot, not to a path. I then reasoned from `run_workflow`'s signature alone ("only
+`plan_path: Path | None`") to a conclusion about the *whole* mechanism. The signature is
+the public caller's input; the controller's internal builder is a different surface, and I
+checked one and inferred about the other.
 
-## Options
+## Consequence for S5P1 STEP2
 
-- **A — add a keyword-only internal parameter, e.g. `admission_snapshot: PlanSnapshot | None`
-  (default `None`, so every existing call site is byte-identical), and make
-  `_check_admission_source` prefer a snapshot-backed substantive check over the host
-  read when it is present.** Simplest mechanism that satisfies the target behavior;
-  keeps one admission machine; no host `Path` is fabricated. Cost: a new public
-  parameter on `run_workflow` (the SPEC says "no public ... context field" for STEP2 —
-  whether a keyword-only parameter with `None` default counts is exactly what needs
-  deciding), plus a second verification route inside `_check_admission_source`.
-- **B — keep `run_workflow`'s signature and carry the snapshot on `WorkflowContext`**,
-  built by the caller before the call. Avoids the signature change but moves the fact
-  out of the function's contract, and the SPEC's phrase "no public ... context field"
-  reads as excluding this.
-- **C — write the validated snapshot into the host workspace first and pass a real
-  `plan_path`.** Rejected on sight: it fabricates the host path the SPEC forbids and
-  reintroduces exactly the stale-host-copy defect R24/S5P1 exist to remove.
-- **D — stop before the caller and re-scope S5P1 STEP2 into a design round.** Honest
-  but leaves four finished blocks with no consumer; the naming seam stays advisory.
+No Q147 decision is needed and no public signature change is proposed. The caller is
+implementable on existing seams:
 
-## Engineering recommendation
+- the prelude reads candidates through the pinned `READ/PROJECT` port
+  (`list_project_names` + `inventory_project_artifacts`, blocks 2–4 of S5P1);
+- `resolve_existing_choice` / bootstrap produce the `PlanSnapshot` with its
+  `source_kind`, exactly as `managed_acquisition.py` already does;
+- admission is built from that snapshot the way `_read_repair_candidate` and
+  `_WorkflowAdmission` already do, and the existing `_check_admission_source` split keeps
+  the host re-read on the host branch only.
 
-**A**, with the re-check preference made explicit and narrow:
-
-1. `admission_snapshot` is keyword-only and defaults to `None`; when it is `None`,
-   every code path is exactly today's, so legacy `fa workflow` and integration callers
-   are unaffected and the existing 44 schema tests keep their meaning.
-2. When it is present, `_check_admission_source` verifies the *snapshot's own* digest
-   and provenance (the bytes it was built from, `source_kind`, and the pin it came
-   from) instead of re-reading `ctx.workspace`; a snapshot whose digest does not match
-   its recorded bytes stays `source-changed`, refused, before any coder stage.
-3. `plan_path` remains required for the public path. The prelude is deferred only for
-   the internal caller, and the snapshot must be present before `T0`/coder — plan-before-coder
-   is not weakened, it changes *where the authoritative copy comes from*.
-
-This is the smallest change that makes the managed caller possible without inventing a
-second admission machine, and it keeps the failure closed: a missing or mismatched
-snapshot refuses, it never falls back to the host tree.
-
-I did not implement any of it. Choosing between A and B is a decision about a public
-interface, and C is a contract violation — the plan left the mechanism unstated, so this
-is the stop-and-ask point rather than a place to pick the convenient option.
-
-## Impact if deferred
-
-S5P1's last four blocks (caller, `render_bundle` authority-side, zero-coder-on-denial
-E2E, spec §7 fixtures/v1 compatibility) cannot start. `list_project_names` remains a
-seam with a proven owner but no production caller, and Q141's gate cannot be revisited,
-because the gate's removal depends on a coder acquisition path existing.
+The remaining work is wiring, not a new contract. If a genuine gap appears while wiring
+it — for instance if the bootstrap receipt must be read back through the pin before
+admission rather than after — that is a narrower question and can be raised on its own
+evidence rather than on my misreading.
