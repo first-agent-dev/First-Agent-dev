@@ -263,6 +263,14 @@ class WorkflowContext:
     # holds a client and never opens a view itself. ``None`` in host mode, where
     # `_run_admission_repair` reads the controller's own host copy instead.
     managed_candidate_reader: Callable[[PlanRef], tuple[str, str] | None] | None = None
+    # S5P1: the run's replan budget. Admission is bound *after* the acquisition
+    # planner has already run, so the binder cannot read it off a request object it
+    # never received; without this the bound admission would claim a limit of zero
+    # and a repair leg would be refused for a plan that allows repairs.
+    replans_allowed: int = 0
+    # S5P1: bound only for an acquisition run -- the pinned view plus the names it
+    # named. None means this run must already have its plan, as every other run does.
+    acquisition: AcquisitionSubstrate | None = None
 
     def plan_text(self) -> str | None:
         """Use the immutable admitted snapshot, or read legacy optional input.
@@ -1574,7 +1582,16 @@ def _run_stage(
             logger.warning("workflow eval-report: %s (run=%s)", _warning, ctx.run_id)
             print(f"fa workflow: {_warning}", file=sys.stderr)
         _write_stage_eval_report(ctx, report)
-    return StageResult(role=role, exit_code=code, eval_report=report, verification=verification)
+    acquisition_outcome, acquisition_refused = _stage_acquisition_choice(ctx, role, code, sink)
+    if acquisition_refused:
+        return StageResult(role=role, exit_code=2)
+    return StageResult(
+        role=role,
+        exit_code=code,
+        eval_report=report,
+        verification=verification,
+        acquisition=acquisition_outcome,
+    )
 
 
 def _deadline_exceeded(ctx: WorkflowContext) -> bool:
@@ -2330,6 +2347,25 @@ class AcquisitionSubstrate:
     project_names: tuple[str, ...]
 
 
+def _stage_acquisition_choice(
+    ctx: WorkflowContext, role: str, code: int, sink: list[SessionOutcome]
+) -> tuple[AcquisitionOutcome | None, bool]:
+    """Read the acquisition choice on the one stage entitled to make it.
+
+    Extracted from ``_run_stage``: that function is at its complexity ceiling, and
+    this is a self-contained decision with its own failure contract. A malformed or
+    absent choice is a closed refusal reported on stderr, never an exception
+    escaping a stage dispatcher.
+    """
+    if role != "planner" or code != 0 or ctx.acquisition is None:
+        return None, False
+    try:
+        return _read_acquisition_choice(sink, ctx.acquisition), False
+    except AcquisitionChoiceError as error:
+        print(f"fa workflow: acquisition choice refused: {error.rule}", file=sys.stderr)
+        return None, True
+
+
 def _read_acquisition_choice(sink: list[SessionOutcome], substrate: AcquisitionSubstrate) -> AcquisitionOutcome:
     """Turn the acquisition planner's final message into the prelude's outcome.
 
@@ -2349,6 +2385,65 @@ def _read_acquisition_choice(sink: list[SessionOutcome], substrate: AcquisitionS
         inventory_view=substrate.port,
         inventory_slugs=substrate.project_names,
     )
+
+
+def _bind_acquisition_admission(
+    ctx: WorkflowContext, outcome: AcquisitionOutcome
+) -> tuple[WorkflowContext, int | None]:
+    """Bind the admitted plan after the acquisition planner, or stop the run.
+
+    Returns ``(context, None)`` when the run may continue, or ``(context, code)``
+    when it may not. The context is immutable, so a binding returns a *new* one
+    rather than mutating the run: a frozen context that could be edited mid-run
+    would be a second source of truth for what the coder is bound to.
+
+    The three non-snapshot outcomes are distinct operator facts, not one generic
+    failure: a clarification needs another question, a bootstrap needs the
+    authority to render and install a project, and an unusable choice needs a
+    retry -- so each is recorded under its own rule.
+    """
+    if outcome.snapshot is None:
+        if outcome.bootstrap is not None:
+            rule = "bootstrap-not-installed"
+        elif outcome.clarification is not None:
+            rule = f"clarification/{outcome.clarification.reason.lower().replace('_', '-')}"
+        else:  # pragma: no cover - AcquisitionOutcome forbids the shape
+            rule = "acquisition-unresolved"
+        return ctx, _blocked_plan_request(
+            run_id=ctx.run_id,
+            task=ctx.base_task,
+            rule=rule,
+            base_dir=ctx.artifact_paths.base_dir,
+            deadline=ctx.deadline_mono,
+        )[0]
+
+    snapshot = outcome.snapshot
+    # A coder-bearing run always has a planner (the role list was validated at
+    # entry), so the shared planner budget is allowed from here on.
+    bound = replace(
+        ctx,
+        admission=_WorkflowAdmission(
+            snapshot,
+            True,
+            ctx.replans_allowed,
+            snapshot_backed=True,
+        ),
+        managed_plan_ref=snapshot.ref,
+        plan_path=ctx.plan_path or ctx.workspace / snapshot.ref.workspace_relative_path,
+    )
+    try:
+        _record_admission_attempt(
+            ctx.artifact_paths,
+            run_id=ctx.run_id,
+            plan_ref=snapshot.ref,
+            attempt=None,
+            status="ACQUIRING",
+            deadline=ctx.deadline_mono,
+        )
+    except (OSError, ValueError) as error:
+        _admission_storage_failure(bound, error)
+        return bound, _admission_exit_code(bound)
+    return bound, None
 
 
 def _run_linear(ctx: WorkflowContext, roles: list[str], run_stage_fn: Callable[..., int]) -> int:
@@ -2374,6 +2469,10 @@ def _run_linear(ctx: WorkflowContext, roles: list[str], run_stage_fn: Callable[.
         if result.exit_code != 0:
             _write_stage_failure_state(ctx, role, result.exit_code, progress=progress)
             return result.exit_code
+        if result.acquisition is not None:
+            ctx, blocked = _bind_acquisition_admission(ctx, result.acquisition)
+            if blocked is not None:
+                return blocked
         if role == "coder":
             verification = result.verification
         if result.eval_report is not None:
@@ -2954,6 +3053,7 @@ def _resolve_admitted_plan(
     workspace: Path,
     plan_path: Path | None,
     admission_snapshot: PlanSnapshot | None,
+    acquisition: AcquisitionSubstrate | None,
 ) -> tuple[PlanSnapshot | None, Path | None]:
     """Resolve the one plan this run is bound to, from exactly one substrate.
 
@@ -2976,7 +3076,17 @@ def _resolve_admitted_plan(
             # caller's stated authority instead of reporting the mismatch.
             raise PlanRefError("admission-without-coder")
         return admission_snapshot, plan_path
-    _require_plan_for_coder(roles, plan_path)
+    # An acquisition run is the one shape where a coder-bearing request has no
+    # plan at entry: the plan cannot exist until the planner the same run
+    # dispatches has chosen one. Guarded by `acquisition is not None` so every
+    # other caller keeps the plain presence check.
+    if acquisition is None:
+        _require_plan_for_coder(roles, plan_path)
+    elif roles[:1] != ["planner"]:
+        # A plan acquired inside the run can only be owned by a planner that runs
+        # first; a coder before the planner would have nothing to code against, and
+        # claiming otherwise would be an admission without an owner.
+        raise PlanRefError("admission-without-planner")
     if plan_path is None:
         return None, None
     if not isinstance(plan_path, Path):
@@ -3010,6 +3120,7 @@ def run_workflow(
     plan_publisher: CandidatePlanPublisher | None = None,
     managed_execution: ManagedExecution | None = None,
     admission_snapshot: PlanSnapshot | None = None,
+    acquisition: AcquisitionSubstrate | None = None,
 ) -> tuple[int, FlowState | None]:
     """Run the workflow pipeline. Callable from CLI and from tools.
 
@@ -3049,6 +3160,7 @@ def run_workflow(
             workspace=workspace,
             plan_path=plan_path,
             admission_snapshot=admission_snapshot,
+            acquisition=acquisition,
         )
     except PlanRefError as error:
         return _blocked_plan_request(
@@ -3105,6 +3217,8 @@ def run_workflow(
         # Host mode keeps its `.fa/admission` read; nothing here is a fallback,
         # the two are different substrates and each run picks one at composition.
         managed_candidate_reader=stage_candidate_reader,
+        replans_allowed=max_replans,
+        acquisition=acquisition,
         managed_plan_ref=None if snapshot is None else snapshot.ref,
         verify_gate_mode=_gate_mode(),
         admission=(
