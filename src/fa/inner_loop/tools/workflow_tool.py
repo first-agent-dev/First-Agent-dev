@@ -841,6 +841,7 @@ __all__ = [
     "INVOKE_WORKFLOW_SCHEMA",
     "ParentStageLease",
     "WorkflowInvocationContext",
+    "acquisition_refusal",
     "build_handoff_task",
     "build_invoke_workflow_tool",
     "child_run_id",

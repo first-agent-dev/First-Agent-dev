@@ -26,7 +26,7 @@ import pytest
 from fa.execution.protocol import MAX_TEXT_BYTES
 from fa.execution.supervisor import SupervisorError
 from fa.execution.tool_port import AuthorityWorkspacePort
-from fa.execution.types import GrantReply
+from fa.execution.types import Access, GrantReply
 from fa.execution.workspace import WorkspaceAuthority
 from fa.inner_loop.registry import ToolResult, ToolSpec
 from fa.inner_loop.tools import build_baseline_registry
@@ -35,15 +35,16 @@ from fa.inner_loop.tools.read_file import build_read_file_tool
 from fa.inner_loop.tools.workspace_port import (
     PORT_READ_MAX_BYTES,
     PortProjectArtifactListing,
+    PortProjectNames,
     PortRead,
     PortWrite,
     WorkspacePortError,
     port_relative,
 )
 from fa.inner_loop.tools.write_file import build_write_file_tool
-from tests.test_execution_readers import ref
+from tests.test_execution_readers import pin, ref
 from tests.test_execution_views import create as create_view
-from tests.test_execution_views import native_profile
+from tests.test_execution_views import native_profile, read_only_profile
 from tests.test_execution_views import source as view_source
 from tests.test_execution_workspace import PEER, Site, ok, until
 from tests.test_execution_workspace import site as site
@@ -143,6 +144,81 @@ def test_a_capability_without_a_grant_denies_writes(site: Site) -> None:
         # and a live-but-foreign one as unauthorized; both are closed refusals.
         assert denied.value.code in {"denied", "invalid_request"}
         assert not (view_source(site, grant) / "blocked.txt").exists()
+
+
+@pytest.mark.parametrize(
+    ("projects", "incomplete"),
+    [
+        (("b", "a"), ()),  # order is a property of the type
+        (("a", "a"), ()),  # no duplicates
+        (("a",), ("a",)),  # a name cannot be both
+        (("a/b",), ()),  # no separators
+        (("..",), ()),  # no traversal
+        (tuple(f"p{index:02d}" for index in range(65)), ()),  # bounded
+        (("",), ()),  # no empty name
+    ],
+)
+def test_the_project_names_type_rejects_anything_it_did_not_promise(
+    projects: tuple[str, ...], incomplete: tuple[str, ...]
+) -> None:
+    """C0: the port's own type is where reply order and uniqueness are decided.
+
+    Checking here, rather than trusting the reply, is what stops a future
+    transport from handing the model an unsorted or duplicated candidate list.
+    """
+    with pytest.raises(WorkspacePortError) as refused:
+        PortProjectNames(projects=projects, incomplete=incomplete)
+    assert refused.value.code == "invalid_request"
+
+
+def test_the_project_names_type_accepts_the_sorted_disjoint_shape() -> None:
+    """The positive half: the refusals above must not be refusals of everything."""
+    names = PortProjectNames(projects=("alpha", "beta"), incomplete=("linked",))
+    assert names.projects == ("alpha", "beta")
+    assert names.incomplete == ("linked",)
+    assert PortProjectNames((), ()).projects == ()
+
+
+def test_the_port_names_projects_from_the_pinned_view_only(site: Site) -> None:
+    """S5P1/§7: acquisition can name candidates without the host tree.
+
+    A READ PROJECT view is the only shape allowed to ask. The reply separates
+    selectable projects from directories that are not usable, because bootstrap
+    refuses to install over an existing directory: offering one would be a trap.
+    """
+    with site.owner(view_profile=native_profile(), read_only_profile=read_only_profile()) as owner:
+        # A real project, a bare directory and an unusable roadmap, all committed
+        # before the reader pins the revision.
+        project = site.source / "worklogs/demo-project"
+        (project / "increments").mkdir(parents=True)
+        (project / "roadmap.md").write_text("roadmap", encoding="utf-8")
+        (site.source / "worklogs/bare-directory").mkdir(parents=True)
+        (site.source / "worklogs/linked-project").mkdir(parents=True)
+        (site.source / "worklogs/linked-project/roadmap.md").symlink_to("../demo-project/roadmap.md")
+
+        ids = ok(lambda: site.register(owner))
+        grant = ok(lambda: pin(owner, ids))
+        assert ref(grant).access is Access.READ
+        port = _port(owner, grant)
+
+        names = port.list_project_names()
+        assert names.projects == ("demo-project",)
+        # The symlinked roadmap exists but yields no usable project; the bare
+        # directory has no manifest entry at all.
+        assert names.incomplete == ("linked-project",)
+        assert "bare-directory" not in names.projects + names.incomplete
+
+
+def test_a_write_view_cannot_name_projects(site: Site) -> None:
+    """Naming is a READ-view operation; a writer view is refused before any IO."""
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        grant = _project_view(owner, ids)  # deliberately WRITE
+        assert ref(grant).access is not Access.READ
+        port = _port(owner, grant)
+        with pytest.raises(WorkspacePortError) as refused:
+            port.list_project_names()
+        assert refused.value.code == "denied"
 
 
 def test_tools_built_with_the_port_read_write_and_edit_through_it(site: Site) -> None:

@@ -415,7 +415,7 @@ class ExecutionClient:
         view: ViewRef,
         grant: GrantReply,
         deadline: float | None = None,
-    ) -> list[str]:
+    ) -> dict[str, Any]:
         """Name the canonical projects of this pinned revision.
 
         Same v2 negotiation as ``list_project_artifacts``: an older v1-only peer's
@@ -479,9 +479,13 @@ class ExecutionClient:
         except ExecutionUncertainError:
             raise ExecutionUnavailableError from None
         projects = result.get("projects")
-        if not isinstance(projects, list):
+        incomplete = result.get("incomplete")
+        if not isinstance(projects, list) or not isinstance(incomplete, list):
             raise ExecutionContractError
-        return [str(entry["project_slug"]) for entry in projects]
+        return {
+            "projects": [str(entry["project_slug"]) for entry in projects],
+            "incomplete": [str(name) for name in incomplete],
+        }
 
     def diff_revisions(
         self,

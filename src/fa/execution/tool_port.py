@@ -38,6 +38,7 @@ from fa.inner_loop.tools.workspace_port import (
     PORT_READ_MAX_BYTES,
     PortDirectoryEntry,
     PortProjectArtifactListing,
+    PortProjectNames,
     PortRead,
     PortWrite,
     WorkspacePortError,
@@ -59,6 +60,33 @@ _DENIED = frozenset(
 _STALE = frozenset({"STALE_REVISION"})
 _INPUT = frozenset({"INPUT_POLICY", "INVALID_REQUEST", "TOO_LARGE", "NOT_TEXT"})
 _SHA256 = re.compile(r"[0-9a-f]{64}")
+
+
+def _project_names(projects: Any, incomplete: Any) -> PortProjectNames:
+    """Build the port's names type from an already-projected reply.
+
+    Two callers hand this two different, equally legitimate projections: the
+    authority returns wire rows (``{"project_slug": ...}``), the client returns
+    plain strings. Accept exactly those two shapes and refuse everything else --
+    coercing an unexpected shape would put a reply-derived string into the
+    model's candidate list.
+    """
+    try:
+
+        def names(raw: Any, *, rows: bool) -> tuple[str, ...]:
+            if type(raw) is not list:
+                raise WorkspacePortError("invalid_request")
+            if rows:
+                return tuple(item["project_slug"] for item in raw)
+            return tuple(raw)
+
+        projects_rows = type(projects) is list and bool(projects) and type(projects[0]) is dict
+        return PortProjectNames(
+            projects=names(projects, rows=projects_rows),
+            incomplete=names(incomplete, rows=False),
+        )
+    except (KeyError, TypeError, WorkspacePortError):
+        raise WorkspacePortError("invalid_request") from None
 
 
 def _project_listing(result: dict[str, Any]) -> PortProjectArtifactListing:
@@ -158,6 +186,21 @@ class AuthorityWorkspacePort:
         except (SupervisorError, ExecutionContractError) as error:
             raise WorkspacePortError(_code(error)) from None
         return PortRead(content=result["content"], sha256=result["sha256"], eof=result["eof"])
+
+    def list_project_names(self) -> PortProjectNames:
+        if self._view_ref.access is not Access.READ or self._view_ref.purpose.value != "PROJECT":
+            raise WorkspacePortError("denied")
+        try:
+            result = self._authority.list_projects(
+                self._peer,
+                self._namespace,
+                view_ref=self._view_ref,
+                capability=self._capability,
+                deadline=self._deadline_factory(),
+            )
+        except (SupervisorError, ExecutionContractError) as error:
+            raise WorkspacePortError(_code(error)) from None
+        return _project_names(result.get("projects"), result.get("incomplete"))
 
     def list_project_artifacts(self, project_slug: str) -> PortProjectArtifactListing:
         if self._view_ref.access is not Access.READ or self._view_ref.purpose.value != "PROJECT":
@@ -415,6 +458,21 @@ class ClientWorkspacePort:
         ) as error:
             raise WorkspacePortError(_client_code(error)) from None
         return PortRead(content=str(result["content"]), sha256=str(result["sha256"]), eof=bool(result["eof"]))
+
+    def list_project_names(self) -> PortProjectNames:
+        view, grant = self._require_active()
+        if view.access is not Access.READ or view.purpose.value != "PROJECT":
+            raise WorkspacePortError("denied")
+        try:
+            result = self._client.list_projects(self._namespace, view=view, grant=grant)
+        except (
+            ExecutionRejectedError,
+            ExecutionUnavailableError,
+            ExecutionUncertainError,
+            ExecutionContractError,
+        ) as error:
+            raise WorkspacePortError(_client_code(error)) from None
+        return _project_names(result.get("projects"), result.get("incomplete"))
 
     def list_project_artifacts(self, project_slug: str) -> PortProjectArtifactListing:
         view, grant = self._require_active()

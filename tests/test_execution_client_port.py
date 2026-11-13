@@ -352,6 +352,61 @@ def test_v2_listing_reports_symlink_kind_without_target_and_inventory_refuses_ca
         assert unsafe.value.rule == "unsafe-entry"
 
 
+def test_v2_project_names_come_back_through_the_real_wire(site: Site, tmp_path: Path) -> None:
+    """S5P1/§7: the naming op round-trips over a live supervisor and the real port.
+
+    `_served` is a real `SupervisorService` on a real socket, so this is the
+    end-to-end edge of the operation this block added: authority -> service ->
+    frame budget -> client -> port type.
+    """
+    _create_inventory_project(site.source)
+    with _served(site, tmp_path) as managed:
+        assert managed.grant.revision_id is not None
+        read_grant = managed.client.pin_reader(managed.binding, managed.grant.revision_id)
+        port = _port(managed.client, managed.binding.namespace, read_grant)
+
+        names = port.list_project_names()
+        assert names.projects == ("demo-project",)
+        assert names.incomplete == ()
+
+        # And the raw client surface agrees, so a later caller is not forced
+        # through the port to get the same answer.
+        reply = managed.client.list_projects(managed.binding.namespace, view=read_grant.view_ref, grant=read_grant)
+        assert reply == {"projects": ["demo-project"], "incomplete": []}
+
+
+def test_v2_project_names_refuse_a_write_view_without_spending_an_rpc(site: Site, tmp_path: Path) -> None:
+    """A writer view cannot ask, and the refusal is local: no frame is written."""
+    _create_inventory_project(site.source)
+    with _served(site, tmp_path) as managed:
+        write_grant = managed.open_view(
+            access=Access.WRITE,
+            purpose=ViewPurpose.PROJECT,
+            base_revision=managed.grant.revision_id,
+        )
+        service_path, _ = _configs(tmp_path, _document(site))
+        config = read_config_file(service_path)
+        client = _CountingClient(config.socket_path, server_uid=next(iter(config.controller_uids)), rpc_timeout_ms=5000)
+        port = _port(client, managed.binding.namespace, write_grant)
+        with pytest.raises(WorkspacePortError) as refused:
+            port.list_project_names()
+        assert refused.value.code == "denied"
+        assert client.sent == []
+
+        # The authority refuses it too, so the port is not the only guard.
+        with pytest.raises(ExecutionRejectedError) as authority_denied:
+            managed.client.request(
+                Operation.LIST_PROJECTS,
+                request_id="7" * 32,
+                namespace=managed.binding.namespace,
+                view=write_grant.view_ref,
+                grant=write_grant,
+                payload={},
+                protocol_version=2,
+            )
+        assert authority_denied.value.code == "INPUT_POLICY"
+
+
 def test_v2_listing_rejects_write_views_and_cross_namespace_authority(site: Site, tmp_path: Path) -> None:
     with _served(site, tmp_path) as managed:
         write_grant = managed.open_view(

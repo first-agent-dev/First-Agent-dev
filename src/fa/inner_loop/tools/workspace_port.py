@@ -124,6 +124,40 @@ class PortProjectArtifactListing:
             raise WorkspacePortError("invalid_request")
 
 
+@dataclass(frozen=True, slots=True)
+class PortProjectNames:
+    """The canonical project names one pinned revision contains; names only.
+
+    ``incomplete`` names directories that exist where a project would be but do
+    not yield a usable roadmap. They are reported separately and are *not* part
+    of ``projects``: an entry a model can select but bootstrap then refuses as
+    ``COLLISION`` is a trap, and Q145 established that the bare-directory shape
+    is reachable.
+
+    Both tuples are sorted and duplicate-free at construction, so reply order is
+    a property of this type rather than of whichever transport produced it.
+    """
+
+    projects: tuple[str, ...]
+    incomplete: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        for name in ("projects", "incomplete"):
+            values = getattr(self, name)
+            if (
+                type(values) is not tuple
+                or len(values) > PORT_PROJECT_LIST_MAX_ENTRIES
+                or any(not isinstance(value, str) for value in values)
+                or tuple(values) != tuple(sorted(set(values)))
+            ):
+                raise WorkspacePortError("invalid_request")
+            for value in values:
+                if value in {"", ".", ".."} or "/" in value or "\\" in value or "\x00" in value:
+                    raise WorkspacePortError("invalid_request")
+        if set(self.projects) & set(self.incomplete):
+            raise WorkspacePortError("invalid_request")
+
+
 class WorkspacePort(Protocol):
     """The workspace view operations the tools need; nothing else is exposed.
 
@@ -139,6 +173,8 @@ class WorkspacePort(Protocol):
     def cache_dir(self) -> Path | None: ...
 
     def read_file(self, path: str, *, offset_bytes: int = 0, max_bytes: int = PORT_READ_MAX_BYTES) -> PortRead: ...
+
+    def list_project_names(self) -> PortProjectNames: ...
 
     def list_project_artifacts(self, project_slug: str) -> PortProjectArtifactListing: ...
 
@@ -229,6 +265,7 @@ __all__ = [
     "CandidateWorkspacePort",
     "PortDirectoryEntry",
     "PortProjectArtifactListing",
+    "PortProjectNames",
     "PortRead",
     "PortWrite",
     "WorkspacePort",
