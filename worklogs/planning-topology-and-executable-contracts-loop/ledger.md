@@ -9544,3 +9544,83 @@ open in dependency order: D9 (Q149 prompt/protocol delivery), D7 (`ACQUISITION`
 dispatch kind), D13 (`_scoped_stage_failed`), D8 (`build_acquisition_registry`),
 D10–D12 (v2 `ACQUISITION` provenance/schema), and D14 (`workflow_tool` description).
 
+### E521 — D13, D8, and D7 closed: acquisition stage dispatch, read-only registry wiring, and non-repair semantics (2026-11-10; Arena-local)
+
+**Operator decisions recorded from research.** Before coding, research resolved the
+open policy choices in `notes/planner-defect-map-2026-11-10.md`: **Q149 = B**
+(separate static `ACQUISITION_SYSTEM_PROMPT` on `base_system` + dynamic stage details
+in `_stage_task`, deferring `Q66` live chat-transcript copy for now), **Q150 = A**
+(write v2 `admission.json` on managed-child paths where `owner_run_id != run_id` and
+retain v1 for unmanaged callers without `ManagedExecution`), and **Q145** (`project_names`
+from `port.list_project_names().projects`, plus operator request to inspect whether
+`incomplete` directories can be filled simply).
+
+**Changes (dependency order D13 → D8 → D7).**
+
+- **D13 (`src/fa/inner_loop/workflow_controller.py`):** `_scoped_stage_failed` now
+  returns `False` for `dispatch is None or not dispatch.owns_candidate`, so
+  `PlannerDispatchKind.ACQUISITION` stages do not trip candidate-repair failure guards;
+  an empty `outcome_sink` at `exit_code == 0` reaches `_stage_acquisition_choice`
+  (`choice-missing`) and non-zero stage codes propagate unchanged, while
+  `ADMISSION_REPAIR` / `EVAL_REPLAN` keep failing closed on missing sink or
+  `fs_write_file`/`pr_prepare` tool errors.
+- **D8 (`src/fa/inner_loop/tools/__init__.py`, `src/fa/inner_loop/profiles.py`,
+  `src/fa/cli.py`):**
+  - `build_planner_registry` routes `PlannerDispatchKind.ACQUISITION` directly to
+    `build_acquisition_registry(...)` (rejecting non-`None` `candidate_io` with
+    `PlannerDispatchError` and omitting `_register_extra_tools` / legacy `fs_run_bash`
+    fallback);
+  - `build_registry_for_role` refuses `PlannerDispatchKind.ACQUISITION` with
+    `PlannerDispatchError` so callers cannot obtain a profile-based planner writer;
+  - `cli._build_run_tool_registry` withholds `pr_prepare` and
+    `cli._register_managed_subagent_tool` withholds `fs_spawn_subagent` when
+    `planner_dispatch.kind is PlannerDispatchKind.ACQUISITION`, leaving strictly the 5
+    read-only `ACQUISITION_TOOLS` on the wire.
+- **D7 (`src/fa/inner_loop/workflow_controller.py`):** `_stage_planner_dispatch` now
+  emits `PlannerDispatch(PlannerDispatchKind.ACQUISITION, ctx.run_id)` when
+  `role == "planner"`, `dispatch is None`, `ctx.acquisition is not None`,
+  `ctx.admission is None`, and `active is None`. Explicit-plan runs, post-admission
+  stages, and `ADMISSION_REPAIR`/`EVAL_REPLAN` retain their existing dispatch kinds.
+
+**Tests and mutation kill-checks.**
+
+- `tests/test_s5p1_acquisition_registry.py`: added C1 tests covering
+  `build_planner_registry(..., planner_dispatch=ACQUISITION)` (host and managed),
+  `candidate_io` / `build_registry_for_role` refusals, `cli._build_run_tool_registry`
+  (`pr_prepare` + mutators withheld vs ordinary contrast), and
+  `cli._register_managed_subagent_tool` (`fs_spawn_subagent` withheld vs ordinary
+  contrast); tightened `_StubPort` annotations to match `WorkspacePort`.
+- `tests/test_s5p1_acquisition_lifecycle.py`: added C1 tests covering D7 dispatch kind
+  in both `linear` and `adaptive` modes (plus ordinary explicit-plan contrast), D13
+  empty-sink (`selection/choice-missing`) and non-zero exit propagation (plus
+  `ADMISSION_REPAIR`/`EVAL_REPLAN` contrast), and end-to-end `_cmd_run` →
+  `ProviderChain.request` proving only the 5 `ACQUISITION_TOOLS` ship to the model on
+  the initial acquisition turn before coder admission.
+- Targeted mutation testing across the new branches: **6 / 6 non-equivalent mutants
+  killed** (`M1_D7_no_acquisition_dispatch`, `M2_D13_scoped_stage_failed_old_guard`,
+  `M3_D8_planner_registry_no_acq_branch`, `M4a_D8_cli_unconditional_pr_prepare`,
+  `M4b_D8_cli_subagent_in_acquisition`, `M5_D8_profiles_allow_acq_bypass`).
+
+**Verification.** `tests/test_s5p1_*.py` **88 passed**; controller, complexity-ratchet,
+CLI, subagent, composition, and tool banks **689 passed, 1 xfailed** (pre-existing
+STEP2 cutover); `tests/test_verify_gate_live.py` **564 passed / 8 failed** (identical
+to the `5193b1c`/`4f5bd1f` baseline). `ruff check .`, `ruff format --check src tests`,
+`deptry src/ scripts/`, `just _contracts`, `mypy` across all 6 touched `.py` files, and
+`pyrefly check` across all 4 touched `src/` modules all pass with 0 errors;
+`pylint src/fa` rates `9.99/10` (0 diagnostics on modified modules; exit 8 from
+pre-existing `R0801`/`R0401`).
+
+**Findings on `incomplete` directories & next steps.** Source inspection of
+`src/fa/execution/workspace.py` (`_list_projects:2338–2362`,
+`install_project:3467–3480`, `_install_stage:3689`) confirmed two authority-side facts
+relevant to **D9**: (1) `list_projects` only populates `incomplete` when
+`worklogs/<slug>/roadmap.md` is a directory/symlink — empty `worklogs/<slug>/` dirs are
+omitted from both `projects` and `incomplete`; and (2) `install_project` enforces
+no-clobber via `os.stat(project_slug)` + `renameat2(RENAME_NOREPLACE)`, raising
+`COLLISION` on any pre-existing `worklogs/<slug>/`, while the acquisition planner is
+read-only (`ACQUISITION_TOOLS`). Raised **Q151** before locking D9's
+`ACQUISITION_SYSTEM_PROMPT` text on whether `incomplete`/empty slugs should route back
+via `NEEDS_CLARIFICATION` so `chat` (`Access.WRITE` / `ViewPurpose.PROJECT`) can populate
+them without touching `workspace.py`, or whether `workspace.py` should switch install to
+per-file no-clobber; remaining sequence after D9 is **D14** → **D10–D12 (Q150=A)**.
+

@@ -1192,6 +1192,8 @@ def _stage_planner_dispatch(
         path = ctx.plan_path
         active = (path.relative_to(ctx.workspace.resolve()) if path.is_absolute() else path).as_posix()
     if dispatch is None:
+        if ctx.acquisition is not None and ctx.admission is None and active is None:
+            return PlannerDispatch(PlannerDispatchKind.ACQUISITION, ctx.run_id)
         return PlannerDispatch(PlannerDispatchKind.ORDINARY_PLANNING, ctx.run_id, active)
     if not isinstance(dispatch, PlannerDispatch) or dispatch.run_id != ctx.run_id or dispatch.active_plan != active:
         raise PlannerDispatchError
@@ -1297,7 +1299,10 @@ def _load_eval_independence(ctx: WorkflowContext) -> Mapping[str, object] | None
 
 
 def _scoped_stage_failed(dispatch: PlannerDispatch | None, sink: list[SessionOutcome]) -> bool:
-    if dispatch is None or dispatch.kind == PlannerDispatchKind.ORDINARY_PLANNING:
+    # Only candidate-owning stages (ADMISSION_REPAIR, EVAL_REPLAN) have a staged
+    # buffer whose write/pr_prepare fault invalidates the attempt. ACQUISITION
+    # runs before admission and must reach `_stage_acquisition_choice` when exit_code == 0.
+    if dispatch is None or not dispatch.owns_candidate:
         return False
     return (
         not sink or sink[-1].exit_code != 0 or bool({"fs_write_file", "pr_prepare"}.intersection(sink[-1].failed_tools))

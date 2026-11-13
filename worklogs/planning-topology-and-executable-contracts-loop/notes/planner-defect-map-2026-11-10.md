@@ -126,22 +126,28 @@ scoped candidate с общим кредитом и durable barrier.
 (`_run_linear` и `_run_initial_roles`+adaptive), и связывание admission реализовано в одном.
 Ровно тот риск, от которого предостерегает «one workflow machine, no second engine».
 
-### D7 — `PlannerDispatchKind.ACQUISITION` не производится *(подтверждён исполнением)*
+### D7 — `PlannerDispatchKind.ACQUISITION` не производится *(закрыт в E521)*
 
-`grep PlannerDispatchKind.ACQUISITION src/ --include=*.py` → 2 совпадения: валидация
-(`planner_dispatch.py:74`) и docstring (`workflow_controller.py:2372`). Ни одного производителя.
-`_stage_planner_dispatch` (`:1183`) при `dispatch is None` всегда возвращает `ORDINARY_PLANNING`.
+> **Статус:** **закрыт (E521).** `_stage_planner_dispatch`
+> (`src/fa/inner_loop/workflow_controller.py`) при `role == "planner"`, `dispatch is None`,
+> `ctx.acquisition is not None`, `ctx.admission is None` и `active is None` теперь
+> производит `PlannerDispatch(PlannerDispatchKind.ACQUISITION, ctx.run_id)`. Обычный
+> явный план, пост-admission этапы и `ADMISSION_REPAIR`/`EVAL_REPLAN` сохраняют прежние
+> виды.
 
-Следствие: спека §7.0 («initial `_run_stage` uses `PlannerDispatchKind.ACQUISITION`») не
-выполняется; kind, его инварианты и 12 тестов существуют, но в прогон не попадают.
+### D8 — `build_acquisition_registry` без производственного вызова *(закрыт в E521)*
 
-### D8 — `build_acquisition_registry` без производственного вызова
-
-Определён в `profiles.py:441`, вызывающих в `src/` — ноль. Стадия планировщика ходит
-`build_registry_for_role("planner")` с обычным профилем: `fs_write_file`
-(allowlist `knowledge/research/`, `.fa/`) + `pr_prepare` регистрируется безусловно
-(`cli.py:2637`). Спека требует фильтровать `pr_prepare` для ACQUISITION — «иначе read-only
-профиль молча получает writer».
+> **Статус:** **закрыт (E521).**
+> - `build_planner_registry` (`src/fa/inner_loop/tools/__init__.py`) при
+>   `PlannerDispatchKind.ACQUISITION` делегирует напрямую в `build_acquisition_registry`
+>   (отвергая ненулевой `candidate_io` через `PlannerDispatchError` и не добавляя
+>   `fs_chronicle_search`/`fs_usage`/`fs_run_bash`);
+> - `build_registry_for_role` (`src/fa/inner_loop/profiles.py`) отвергает `ACQUISITION`
+>   через `PlannerDispatchError`, закрывая профильный обход;
+> - `cli._build_run_tool_registry` (`src/fa/cli.py`) не регистрирует `pr_prepare`, а
+>   `cli._register_managed_subagent_tool` не регистрирует `fs_spawn_subagent` для
+>   `ACQUISITION`. До провайдера в `_cmd_run` доходят строго 5 инструментов
+>   `ACQUISITION_TOOLS`.
 
 ### D9 — модель не знает протокола выбора
 
@@ -149,7 +155,9 @@ scoped candidate с общим кредитом и durable barrier.
 **ноль** совпадений вне `managed_acquisition.py`. `_stage_task` (`:1333`) дополняет задачу
 только для eval. `_decode_choice` требует ровно один JSON без обёртки и лишней прозы ⇒
 обычный текстовый план планировщика даёт `choice-malformed`. Положительный путь недостижим
-независимо от D6–D8. Носитель — **Q149** (не решён ни одним документом).
+независимо от D6–D8. Носитель — **Q149** (согласован вариант **B**: статический
+`ACQUISITION_SYSTEM_PROMPT` + динамика и Q145 `project_names` в `_stage_task`; перед
+финализацией текста промпта ждём подтверждения по `incomplete` / Q151).
 
 ### D10 — v1-писатель отвергает `dispatch_kind: ACQUISITION`
 
@@ -159,9 +167,10 @@ scoped candidate с общим кредитом и durable barrier.
 ни в одну, и `route="ADMITTED"` требует `promoted`, которого нет. v2, где
 `_validate_v2_acquisition` расписана целиком, **недостижима**: `ManagedAdmissionBinding`
 не строится ни в одной производственной ветке, а v2-попытке нужны
-`input_revision/output_revision/bundle_sha256`.
+`input_revision/output_revision/bundle_sha256` (согласовано в **Q150 = A**: v2 для
+managed-child при `owner_run_id != run_id`, v1 для unmanaged).
 
-Сейчас незаметен только потому, что D7 не даёт kind'у дойти до записи.
+Сейчас незаметен только потому, что до D10–D12 контроллер ещё не переключён на v2.
 
 ### D11 — провенанс стирается: попытка пишется как `EXPLICIT_INPUT`
 
@@ -178,11 +187,14 @@ acquisition `candidate=False` ⇒ история говорит «план по�
 `blocked_reason`. Уже ловили для refusals в E516; для acquisition спека требует
 v2-словарь `selection/*`.
 
-### D13 — `_scoped_stage_failed` без семантики для нового kind
+### D13 — `_scoped_stage_failed` без семантики для нового kind *(закрыт в E521)*
 
-`:1299` возвращает `False` только для `ORDINARY_PLANNING`; всё остальное считается scoped
-repair-стадией и проверяется на `fs_write_file`/`pr_prepare`. Если D7 починить и ничего не
-сделать здесь, acquisition-планировщик молча переедет в правила repair-стадии.
+> **Статус:** **закрыт (E521).** `_scoped_stage_failed`
+> (`src/fa/inner_loop/workflow_controller.py`) теперь проверяет
+> `if dispatch is None or not dispatch.owns_candidate: return False`, поэтому
+> `ACQUISITION` не перехватывается правилами scoped repair-стадии, при `exit_code == 0`
+> и пустом `sink` доходит до `_stage_acquisition_choice` (`choice-missing`), а при
+> ненулевом коде возвращает реальный `exit_code` стадии.
 
 ### D14 — описание инструмента врёт модели
 
@@ -195,33 +207,36 @@ planner-first. Модель читает описание как политик�
 | id | дефект | класс | доказательство | статус / блокирует |
 | --- | --- | --- | --- | --- |
 | D6 | adaptive не связывает acquisition; coder без плана; отказы не останавливают | **оркестрация** | исполнено + kill-проверка | **ЗАКРЫТ (E520)** |
-| D7 | ACQUISITION-вид не производится | проводка | исполнено | открыт; §7.0, D10/D11/D13 |
-| D8 | acquisition-реестр без вызова; writer у планировщика | проводка | grep = 0 | открыт; §7.0 read-only |
-| D9 | протокол выбора не доходит до модели | **контракт (Q149)** | grep = 0 вне модуля | открыт; положительный путь |
-| D10 | v1 отвергает ACQUISITION-попытку; v2 недостижима | схема | исполнено | открыт; провенанс |
-| D11 | попытка пишется как EXPLICIT_INPUT | схема | исполнено | открыт; провенанс |
-| D12 | отказы → validator-error | схема | код + E516 | открыт; диагностика |
-| D13 | `_scoped_stage_failed` без семантики | проводка | код | открыт; тихая смена правил |
-| D14 | описание инструмента устарело | док/контракт | код | открыт; поведение модели |
+| D7 | ACQUISITION-вид не производится | проводка | C1 + мутация M1 | **ЗАКРЫТ (E521)** |
+| D8 | acquisition-реестр без вызова; writer у планировщика | проводка | C1 `_cmd_run` + M3–M5 | **ЗАКРЫТ (E521)** |
+| D9 | протокол выбора не доходит до модели | **контракт (Q149=B, Q145)** | grep = 0 вне модуля | открыт (следующий; ждёт `incomplete`/Q151) |
+| D10 | v1 отвергает ACQUISITION-попытку; v2 недостижима | схема (**Q150=A**) | исполнено | открыт; провенанс |
+| D11 | попытка пишется как EXPLICIT_INPUT | схема (**Q150=A**) | исполнено | открыт; провенанс |
+| D12 | отказы → validator-error | схема (**Q150=A**) | код + E516 | открыт; диагностика |
+| D13 | `_scoped_stage_failed` без семантики | проводка | C1 + мутация M2 | **ЗАКРЫТ (E521)** |
+| D14 | описание инструмента устарело | док/контракт | код | открыт (после D9) |
 
-## 3. Порядок закрытия (предложение)
-
-Зависимости, не предпочтения:
+## 3. Порядок закрытия (актуализирован по зависимостям)
 
 ```
-[D6 закрыт E520] ─┬─► (adaptive и linear сведены на _run_role_loop)
-                  │
-D9 ───────────────┴─► D7 ──► D13 ──► D8 ──► D10/D11/D12
-      носитель        kind  правила реестр  провенанс
+[D6 (E520)] ─► [D13 → D8 → D7 (E521)] ─► D9 (Q149=B, Q145; ждёт Q151 по incomplete) ─► D14 ─► D10–D12 (Q150=A)
 ```
 
-- **D6 закрыт в E520**: adaptive и linear идут через единый `_run_role_loop`; связывание
-  admission, остановка при отказе и запрет повторного acquisition-выбора на repair/replan
-  покрыты тестами в обоих режимах (5/5 неэквивалентных мутантов убиты).
-- **D9** — следующий и единственный, где нужно ваше решение (Q149), и он стоит до D7:
-  kind без носителя ничего не меняет.
-- **D10–D12** — последними и одним решением: это выбор «прогон пишет v2» против «acquisition
-  вообще не пишет попытку», и он определяет схему, а не наоборот.
+- **D6 (E520) и D13 → D8 → D7 (E521) закрыты:** контроллер в обоих режимах производит
+  `PlannerDispatchKind.ACQUISITION`, отгружает модели только 5 read-only инструментов из
+  `ACQUISITION_TOOLS` (без `fs_write_file`, `pr_prepare`, `fs_spawn_subagent`), и не
+  срабатывает как scoped repair-стадия.
+- **D9** — следующий шаг по утверждённым решениям (**Q149=B** `ACQUISITION_SYSTEM_PROMPT`
+  + `_stage_task`; **Q145** `project_names`, `Q66` отложен); перед реализацией текста
+  промпта поднято уточнение **Q151** по `incomplete`/пустым директориям, т.к.
+  `workspace.py:3468` при `INSTALL_PROJECT` ставит no-clobber `COLLISION`, а `ACQUISITION`
+  является read-only.
+- **D14** — обновляется сразу после D9, когда положительный вызов `invoke_workflow`
+  полностью работоспособен.
+- **D10–D12 (Q150=A)** — финальный срез: включение v2 `admission.json` на managed-child
+  пути (`owner_run_id != run_id`) с пробросом `ManagedAdmissionBinding`, `BundlePreparation`
+  и `InstallReceipt` / `BoundPlanPublisher` (`operation_id`, `revision_id`), сохраняя v1
+  для unmanaged вызовов без `ManagedExecution`.
 
 ## 4. Что этот аудит **не** покрывает
 
@@ -229,5 +244,5 @@ D9 ───────────────┴─► D7 ──► D13 ─�
   в пробах срабатывал (`verify gate mode=observe blocking=True`).
 - R26 (вложенный coder) — Q141 открыт; сюда не входит.
 - Live-host поведение: Docker недоступен, `BACKEND_UNAVAILABLE` — как и раньше.
-- Мутации по D6: после фикса в E520 проверены 5 неэквивалентных мутантов по
-  `tests/test_s5p1_acquisition_lifecycle.py` (5/5 убиты; 1 эквивалентный).
+- Мутации: D6 (5/5 неэквивалентных мутантов убиты, E520); D13+D8+D7 (6/6 неэквивалентных
+  мутантов M1–M5 убиты на `tests/test_s5p1_acquisition_{registry,lifecycle}.py`, E521).

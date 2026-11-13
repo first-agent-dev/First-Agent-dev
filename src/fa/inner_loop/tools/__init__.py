@@ -13,7 +13,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from fa.inner_loop.planner_dispatch import PlannerDispatch, PlannerDispatchError
+from fa.inner_loop.planner_dispatch import PlannerDispatch, PlannerDispatchError, PlannerDispatchKind
 from fa.inner_loop.registry import ToolRegistry, ToolSchemaPortabilityError, ToolSpec, ToolWireNameError
 from fa.inner_loop.runtime_limits import DEFAULT_BASH_TIMEOUT_SECONDS
 from fa.inner_loop.tool_names import is_valid_wire_name
@@ -238,6 +238,17 @@ def build_planner_registry(
     """Planner = planner profile (fs_search,read,write for research docs,blackboard_query) + observability."""
     if workspace_io is None and (managed_executor is not None or project_tool_executor is not None):
         raise ValueError("managed executors require a managed workspace port")
+    if planner_dispatch is not None and planner_dispatch.kind is PlannerDispatchKind.ACQUISITION:
+        if candidate_io is not None:
+            raise PlannerDispatchError
+        from fa.inner_loop.profiles import build_acquisition_registry
+
+        return build_acquisition_registry(
+            workspace_root,
+            bash_timeout=bash_timeout_seconds,
+            workspace_io=workspace_io,
+            project_tool_executor=project_tool_executor,
+        )
     try:
         from fa.inner_loop.profiles import build_registry_for_role
 

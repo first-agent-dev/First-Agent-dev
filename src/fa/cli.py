@@ -78,7 +78,7 @@ from fa.inner_loop.injections import (
     resolve_injection_modes,
 )
 from fa.inner_loop.plan_admission import PlanRef, PlanRefError, _require_plan_for_coder, read_plan_snapshot
-from fa.inner_loop.planner_dispatch import PlannerDispatch
+from fa.inner_loop.planner_dispatch import PlannerDispatch, PlannerDispatchKind
 from fa.inner_loop.pr_draft import PrDraftStore
 from fa.inner_loop.prompt import render_tool_specs
 from fa.inner_loop.recovery.attempt_history import AttemptHistory
@@ -2615,7 +2615,10 @@ def _build_run_tool_registry(
             candidate_io=candidate_io,
         )
     registry = _apply_escalation_gate(registry, role=role, scope_point=scope_point, gate_enabled=gate_enabled)
-    registry.register(build_prepare_pr_tool(draft_store))
+    # Spec §7.0: ACQUISITION is read/search-only; never grant pr_prepare to an
+    # acquisition planner even when the post-profile wrapper ordinarily adds it.
+    if planner_dispatch is None or planner_dispatch.kind is not PlannerDispatchKind.ACQUISITION:
+        registry.register(build_prepare_pr_tool(draft_store))
     if role == "chat":
         if workflow_ctx is None:
             logger.warning(
@@ -2639,6 +2642,7 @@ def _register_managed_subagent_tool(
     chat_compactor: ProviderChain | None,
     limits: RuntimeLimits,
     redactor: SecretRedactor | None,
+    planner_dispatch: PlannerDispatch | None = None,
 ) -> ToolRegistry:
     """Add the managed child only at the managed production caller edge.
 
@@ -2646,7 +2650,11 @@ def _register_managed_subagent_tool(
     registries intentionally omit the legacy host-subprocess builder; this is
     the sole supported registration path for chat/planner/coder children.
     """
-    if workspace_io is None or role not in {"chat", "planner", "coder"}:
+    if (
+        workspace_io is None
+        or role not in {"chat", "planner", "coder"}
+        or (planner_dispatch is not None and planner_dispatch.kind is PlannerDispatchKind.ACQUISITION)
+    ):
         return registry
     if stage_lease is None:
         raise RuntimeError("managed subagent registration requires the active managed stage lease")
@@ -3364,6 +3372,7 @@ def _cmd_run(
             chat_compactor=compactor_chain,
             limits=limits,
             redactor=redactor,
+            planner_dispatch=planner_dispatch,
         )
 
     def drive_with_registry(registry: ToolRegistry) -> SessionOutcome:

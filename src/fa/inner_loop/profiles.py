@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
-from fa.inner_loop.planner_dispatch import PlannerDispatch, PlannerDispatchError
+from fa.inner_loop.planner_dispatch import PlannerDispatch, PlannerDispatchError, PlannerDispatchKind
 from fa.inner_loop.registry import ToolRegistry, ToolResult, ToolSchemaPortabilityError, ToolSpec, ToolWireNameError
 from fa.inner_loop.tool_names import is_valid_wire_name
 from fa.inner_loop.tools.base import resolve_workspace_path
@@ -507,7 +507,7 @@ def build_registry_for_role(
     if role not in PROFILES_RAW:
         raise ValueError(f"Unknown role {role}, known: {list(PROFILES_RAW.keys())}")
 
-    if planner_dispatch is not None and role != "planner":
+    if planner_dispatch is not None and (role != "planner" or planner_dispatch.kind is PlannerDispatchKind.ACQUISITION):
         raise PlannerDispatchError
     if workspace_io is None and managed_executor is not None:
         raise ValueError("managed executor requires a managed workspace port")

@@ -565,3 +565,212 @@ def test_an_acquisition_substrate_cannot_admit_a_coder_without_a_lead_planner(tm
     assert code == 2
     assert stage.roles == [], "no role may run when the acquisition shape is invalid"
     assert state is not None and state.blocked_reason == "plan-ref/admission-without-planner"
+
+
+# ── D7 + D13 + D8: real controller dispatch kind, non-repair outcome & CLI edge ──
+
+
+@pytest.mark.parametrize("mode", ["linear", "adaptive"])
+def test_initial_acquisition_stage_receives_acquisition_dispatch_kind(tmp_path: Path, mode: str) -> None:
+    """C1 (D7): `_stage_planner_dispatch` emits PlannerDispatchKind.ACQUISITION before admission."""
+    seen: list[PlannerDispatch | None] = []
+
+    class _DispatchRecorder(_PlannerThen):
+        def __call__(self, args: argparse.Namespace, **kwargs: Any) -> int:
+            if getattr(args, "role", None) == "planner":
+                seen.append(kwargs.get("planner_dispatch"))
+            return super().__call__(args, **kwargs)
+
+    stage = _DispatchRecorder(SELECTION, forbid_after_planner=False)
+    run_id = f"acq-dispatch-{mode}"
+    _run(
+        tmp_path,
+        run_id=run_id,
+        stage=stage,
+        roles=["planner", "coder"],
+        mode=mode,
+        acquisition=_substrate(),
+    )
+    assert len(seen) == 1
+    dispatch = seen[0]
+    assert dispatch == PlannerDispatch(PlannerDispatchKind.ACQUISITION, run_id)
+    assert dispatch is not None and dispatch.owns_candidate is False
+
+
+def test_ordinary_explicit_plan_planner_still_receives_ordinary_planning_dispatch(tmp_path: Path) -> None:
+    """Contrast for D7: non-acquisition planner runs must retain ORDINARY_PLANNING."""
+    plan = tmp_path / "worklogs/demo-project/increments/increment-01-foundation.md"
+    plan.parent.mkdir(parents=True)
+    plan.write_text(
+        "---\nIncrement-ID: RM-demo-project-I01\nRoadmap-ID: RM-demo-project\n"
+        "status: IN PROGRESS\nslices: 1\nshipped: —\n---\n"
+        "## SLICE1: Build\nCONTRACTS:\n  CT1 [CONSTRAINT]: ok.\n"
+        "TESTS: tests/test_s5p1_acquisition_lifecycle.py\nSTEP1 TODO: work\n",
+        encoding="utf-8",
+    )
+    seen: list[PlannerDispatch | None] = []
+
+    def stage(args: argparse.Namespace, **kwargs: Any) -> int:
+        if getattr(args, "role", None) == "planner":
+            seen.append(kwargs.get("planner_dispatch"))
+        return 0
+
+    _run(tmp_path, run_id="ord-dispatch", stage=stage, roles=["planner", "coder"], plan_path=plan)
+    assert seen == [
+        PlannerDispatch(
+            PlannerDispatchKind.ORDINARY_PLANNING,
+            "ord-dispatch",
+            active_plan="worklogs/demo-project/increments/increment-01-foundation.md",
+        )
+    ]
+
+
+def test_acquisition_missing_or_nonzero_outcome_bypasses_scoped_repair_failure(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """C1 (D13): ACQUISITION never trips `_scoped_stage_failed`, reaching `_stage_acquisition_choice`."""
+
+    class _EmptySinkStage:
+        def __init__(self, exit_code: int, *, failed_tools: tuple[str, ...] = ()) -> None:
+            self.exit_code = exit_code
+            self.failed_tools = failed_tools
+            self.roles: list[str] = []
+
+        def __call__(self, args: argparse.Namespace, **kwargs: Any) -> int:
+            role = str(getattr(args, "role", "?"))
+            self.roles.append(role)
+            if role != "planner":
+                raise AssertionError(f"unexpected role {role!r}")
+            sink = kwargs.get("outcome_sink")
+            if self.failed_tools and isinstance(sink, list):
+                sink.append(
+                    SessionOutcome(
+                        exit_code=self.exit_code,
+                        stop_reason="stopped_by_llm",
+                        turns=1,
+                        final_text="",
+                        failed_tools=self.failed_tools,
+                    )
+                )
+            return self.exit_code
+
+    # Case 1: code=0 with an empty sink reaches `_stage_acquisition_choice` → `choice-missing`, not silent exit.
+    empty_stage = _EmptySinkStage(0)
+    code_missing, _ = _run(
+        tmp_path,
+        run_id="acq-empty-sink",
+        stage=empty_stage,
+        roles=["planner", "coder"],
+        acquisition=_substrate(),
+    )
+    assert code_missing == 2
+    assert empty_stage.roles == ["planner"]
+    assert "acquisition choice refused: choice-missing" in capsys.readouterr().err
+
+    # Case 2: non-zero stage exit code is preserved directly, and a stray pr_prepare failure label
+    # does not mask the stage's real exit code (3 != 2).
+    err_stage = _EmptySinkStage(3, failed_tools=("pr_prepare",))
+    code_err, _ = _run(
+        tmp_path,
+        run_id="acq-exit-3",
+        stage=err_stage,
+        roles=["planner", "coder"],
+        acquisition=_substrate(),
+    )
+    assert code_err == 3
+    assert err_stage.roles == ["planner"]
+
+
+def test_scoped_stage_failed_still_blocks_candidate_owning_repair_stages() -> None:
+    """Contrast for D13: candidate-owning stages keep failing closed on missing sink / mutator faults."""
+    from fa.inner_loop.workflow_controller import _scoped_stage_failed
+
+    candidate = ".fa/admission/d13-run/candidate-" + ("a" * 32) + ".md"
+    repair = PlannerDispatch(PlannerDispatchKind.ADMISSION_REPAIR, "d13-run", candidate_target=candidate)
+    replan = PlannerDispatch(PlannerDispatchKind.EVAL_REPLAN, "d13-run", candidate_target=candidate)
+    acq = PlannerDispatch(PlannerDispatchKind.ACQUISITION, "d13-run")
+
+    assert _scoped_stage_failed(acq, []) is False
+    assert (
+        _scoped_stage_failed(acq, [SessionOutcome(0, "stopped_by_llm", 1, "{}", failed_tools=("pr_prepare",))]) is False
+    )
+    assert _scoped_stage_failed(repair, []) is True
+    assert (
+        _scoped_stage_failed(repair, [SessionOutcome(0, "stopped_by_llm", 1, "done", failed_tools=("fs_write_file",))])
+        is True
+    )
+    assert (
+        _scoped_stage_failed(replan, [SessionOutcome(0, "stopped_by_llm", 1, "done", failed_tools=("pr_prepare",))])
+        is True
+    )
+
+
+def test_real_cmd_run_acquisition_dispatch_ships_only_read_only_tools_to_provider(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """C1 end-to-end (D7+D8+D13): real `run_workflow(..., run_stage_fn=_cmd_run)` up to `ProviderChain.request`."""
+    from fa.cli import _cmd_run
+    from fa.inner_loop.profiles import ACQUISITION_TOOLS
+    from fa.providers import ProviderChain, SecretStore
+    from fa.providers.base import RequestInfo, ResponseInfo
+
+    role_yaml = (
+        "{role}:\n"
+        '  name: "m"\n'
+        '  family: "openai"\n'
+        "  chain:\n"
+        "    - provider: openrouter\n"
+        '      model: "t/m"\n'
+        '      base_url: "https://example.invalid/v1"\n'
+        "      api_key_env: K\n"
+    )
+    config = tmp_path / "models.yaml"
+    config.write_text("".join(role_yaml.format(role=r) for r in ("planner", "coder", "eval")), encoding="utf-8")
+    monkeypatch.setenv("FA_STATE_ROOT", str(tmp_path / "state"))
+    monkeypatch.delenv("FA_EGRESS_PROXY_URL", raising=False)
+    monkeypatch.delenv("FA_PROXY_TOKEN_FILE", raising=False)
+
+    requests: list[tuple[str, RequestInfo]] = []
+
+    def provider_request(
+        chain: ProviderChain, request: RequestInfo, *, logical_call_id: str | None = None
+    ) -> tuple[ResponseInfo, str, list[Any]]:
+        role = chain.config.role
+        requests.append((role, request))
+        reply = SELECTION if role == "planner" else "done"
+        return ResponseInfo(reply, 1, 1, "stop"), logical_call_id or "acq-c1", []
+
+    monkeypatch.setattr(ProviderChain, "request", provider_request)
+
+    code, state = run_workflow(
+        roles=["planner", "coder"],
+        task="implement demo",
+        per_role_task={},
+        mode="adaptive",
+        max_repairs=0,
+        max_replans=0,
+        run_id="acq-real-cmd-run",
+        config=config,
+        workspace=tmp_path,
+        max_turns=1,
+        output_mode="quiet",
+        run_stage_fn=_cmd_run,
+        secrets=SecretStore({"K": "sk-test-live"}),
+        acquisition=_substrate(),
+    )
+
+    assert len(requests) >= 2
+    planner_role, planner_req = requests[0]
+    assert planner_role == "planner"
+    shipped_tools = {item["function"]["name"] for item in planner_req.tools}
+    assert shipped_tools == set(ACQUISITION_TOOLS)
+    assert "fs_write_file" not in shipped_tools
+    assert "pr_prepare" not in shipped_tools
+    assert "fs_run_bash" not in shipped_tools
+    assert "fs_spawn_subagent" not in shipped_tools
+    assert requests[1][0] == "coder"
+    assert state is not None
+    assert code != 2 or not state.blocked_reason.startswith("plan-ref/")
+    record = _record("acq-real-cmd-run")
+    assert record["plan_ref"] is not None
+    assert record["plan_ref"]["source_kind"] == "EXISTING_SELECTION"
