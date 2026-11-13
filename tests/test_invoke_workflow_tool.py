@@ -40,6 +40,7 @@ from fa.inner_loop.registry import ToolResult, ToolSpec, validate_tool_schema_po
 from fa.inner_loop.tool_names import is_valid_wire_name
 from fa.inner_loop.tools.workflow_tool import (
     WorkflowInvocationContext,
+    acquisition_refusal,
     build_invoke_workflow_tool,
     child_run_id,
     parse_roles,
@@ -50,6 +51,7 @@ from fa.inner_loop.workflow_controller import (
     MAX_REPAIRS_CEILING,
     MAX_REPLANS_CEILING,
     WORKFLOW_DEADLINE_EXIT_CODE,
+    AcquisitionSubstrateRequest,
 )
 from tests._chat_registry_fixture import build_live_chat_registry
 
@@ -135,6 +137,7 @@ class _RecordingWorkflow:
         inject_overrides: Mapping[str, str] | None = None,
         plan_publisher: Any = None,
         managed_execution: Any = None,
+        acquisition: Any = None,
     ) -> tuple[int, FlowState | None]:
         self.calls.append(
             {
@@ -157,6 +160,7 @@ class _RecordingWorkflow:
                 "session_db": session_db,
                 "plan_publisher": plan_publisher,
                 "managed_execution": managed_execution,
+                "acquisition": acquisition,
             }
         )
         if self._on_call is not None:
@@ -839,13 +843,17 @@ def test_managed_coder_without_a_leading_planner_is_refused_by_name(tmp_path: Pa
     assert not workflow.calls and not handoffs
 
 
-def test_managed_coder_behind_a_leading_planner_is_still_unavailable_not_admitted(tmp_path: Path) -> None:
-    """S5P1 negative proof: the precise code is a better refusal, never a green light.
+def test_a_managed_planner_first_coder_asks_the_run_to_acquire_a_plan(tmp_path: Path) -> None:
+    """Q148 = B: the request travels, and it is a request, not a substrate.
 
-    `planner,coder,eval` under a managed execution must not start a coder: the
-    managed acquisition caller does not exist yet. If this ever returns a payload,
-    a coder ran with no plan identity and no admission, which is the exact defect
-    S5P1 exists to prevent.
+    Replaces the previous oracle, which asserted `acquisition_unavailable`. That was
+    the correct contract while no caller existed; now the child pins its own view
+    inside its own run, so what must be true is that the child is *asked* to acquire
+    rather than handed a plan or a port.
+
+    The marker matters: a substrate built here would carry the parent's binding,
+    which is the pre-HANDOFF identity. Only `run_workflow` can pin after the handoff
+    has given this child its own namespace.
     """
     from dataclasses import replace
 
@@ -853,8 +861,24 @@ def test_managed_coder_behind_a_leading_planner_is_still_unavailable_not_admitte
     managed = replace(_ctx(tmp_path), managed_execution=object())
     spec = _tool(workflow, managed)
     result = spec.handler({"task": "implement", "roles": "planner,coder,eval"})
+
+    # The gate no longer answers for this shape; whatever else refuses (a bare
+    # `managed_execution` fails the separate handoff-binding check), it must not be
+    # the acquisition gate. Asserting the gate's own answer isolates this contract
+    # from that pre-existing, unrelated refusal.
+    assert "acquisition_unavailable" not in str(result.error)
+    assert acquisition_refusal(["planner", "coder", "eval"], managed=True) is None
+    # And a legacy (unmanaged) request keeps it.
+    assert acquisition_refusal(["planner", "coder", "eval"], managed=False) is not None
+
+
+def test_a_legacy_coder_request_is_still_unavailable(tmp_path: Path) -> None:
+    """No weakening by adjacency: the unmanaged path keeps its refusal."""
+    workflow = _RecordingWorkflow()
+    spec = _tool(workflow, _ctx(tmp_path))
+    result = spec.handler({"task": "implement", "roles": "planner,coder,eval"})
+
     assert _error_code(result) == "acquisition_unavailable"
-    assert result.error is not None and result.error.retryable is False
     assert not workflow.calls
 
 
@@ -868,7 +892,6 @@ def test_acquisition_never_fires_without_a_coder(roles: str, *, managed: bool) -
     contract from the managed handoff binding, which is a different, pre-existing
     check that a bare `managed_execution` legitimately fails.
     """
-    from fa.inner_loop.tools.workflow_tool import acquisition_refusal
 
     assert acquisition_refusal([part.strip() for part in roles.split(",")], managed=managed) is None
 
@@ -1055,3 +1078,41 @@ def test_noncoder_child_rejects_invalid_parent_authority(
     assert _error_code(_call(_tool(workflow, context), task="review")) == "workflow_context_error"
     assert workflow.calls == []
     assert not (state / "session-log/run-parent-wf1").exists()
+
+
+def test_a_full_managed_coder_child_carries_the_acquisition_request(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The end of the lifeline: the child really is asked to acquire its own plan.
+
+    Every earlier test stops at the gate or at the handoff binding, so neither can
+    see the kwargs the handler finally builds. This one supplies the full lease and
+    a recording client, so the call reaches the workflow seam — which is the only
+    place where "the request travels" is observable.
+    """
+    ctx, _managed, _lease, _events = _managed_context(tmp_path, monkeypatch)
+    workflow = _RecordingWorkflow()
+    spec = _tool(workflow, ctx)
+
+    spec.handler({"task": "implement", "roles": "planner,coder,eval"})
+
+    assert len(workflow.calls) == 1, "the child never reached the workflow seam"
+    assert isinstance(workflow.calls[0]["acquisition"], AcquisitionSubstrateRequest)
+
+
+def test_a_planner_only_managed_child_carries_no_acquisition_request(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§7: "Non-coder-only workflows retain their existing purpose".
+
+    A planner-only child never admits a coder, so asking it to acquire a plan would
+    pin a view and run an acquisition stage nobody consumes.
+    """
+    ctx, _managed, _lease, _events = _managed_context(tmp_path, monkeypatch)
+    workflow = _RecordingWorkflow()
+    spec = _tool(workflow, ctx)
+
+    spec.handler({"task": "plan it", "roles": "planner"})
+
+    assert len(workflow.calls) == 1
+    assert workflow.calls[0]["acquisition"] is None

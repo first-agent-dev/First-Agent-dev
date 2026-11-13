@@ -3350,8 +3350,12 @@ existing seams. Full retraction, with the five source facts, is in
 
 ## Q148 — how does a chat-only `invoke_workflow` reach the acquisition path that exists in the controller?
 
-**Status: OPEN — needs a product/composition decision. Blocking the only part of S5P1
-STEP2 that remains.**
+**Status: ANSWERED 2026-11-10 by the operator — option B.** The child gets its own READ
+binding for acquisition; the parent's writer is not shared across the suspension. This is
+the stricter reading of R26 ("no child-authority leakage") and it means the HANDOFF
+lifecycle is this step's next task. Option A's analysis is kept below because it is why the
+question was worth asking, and because B has to answer the two things A would have avoided:
+who pins the view, and whether a READ pin may coexist with the parent's suspended writer.
 
 ### What is already true (measured, not inferred)
 
@@ -3419,3 +3423,34 @@ Whichever is chosen, the following is **not** solved by either option and stays 
 bootstrap (`prepare_bundle` → `install_project` is authority-gated and served, but no
 inner-loop path renders and installs a new project; there is no install caller and no
 read-back-and-admit sequence).
+
+### Q148 — what option B actually costs, measured on the real authority
+
+Before building anything I measured the two things B leaves open, on
+`WorkspaceAuthority` through the existing `tests/test_execution_workspace.Site` harness:
+
+| probe | result |
+| --- | --- |
+| parent acquires the writer, then `handoff()` to a child | `active_actor` becomes the child; the parent's writer fd stays in the parent process; the capability rotates |
+| child `pin_reader(plan_ref=None)` **after** the handoff | **allowed**, `view_ref.owner_run_id == child run id`, `PROJECT`/`READ` |
+| parent `pin_reader` with its **old** capability after the handoff | allowed, because `pin_reader` takes no capability at all |
+| child `pin_reader` **without** any handoff, writer still held by the parent | **allowed** |
+| an unrelated namespace (`run-z`) `pin_reader` on the same workspace | **allowed** |
+
+Two conclusions, and they matter more than the choice itself:
+
+1. **A READ pin does not need the parent's binding, and does not need the HANDOFF.**
+   `pin_reader(peer, namespace, …)` authorizes on the uid allowlist plus an approved
+   read-only profile; it never consults the active actor or any capability. So under B
+   the child builds its own substrate directly — no writer sharing, no handoff needed
+   for the view itself.
+2. **`VIEWS` are authorized per peer uid, not per run.** Any run of the same user can
+   pin any workspace. That is a pre-existing property of this authority, not something
+   B introduces, and it is *not* what R26's "no child-authority leakage" polices: R26
+   polices **writes**. Recording it because a reviewer reading "the child gets its own
+   binding" could otherwise assume the binding is what stops the child writing.
+
+So B's implementation is smaller than A's, and the boundary it relies on is: a READ
+view can never become a WRITE view, and the writer is a single fd held by the parent
+process for the whole run. The child's acquisition stage cannot write by construction,
+not by convention.

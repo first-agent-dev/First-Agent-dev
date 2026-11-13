@@ -389,6 +389,7 @@ def test_an_unsettled_candidate_view_holds_the_writer_until_it_is_published(site
         assert getattr(failure.value, "code", None) == "WORKSPACE_BUSY"
         assert site.metadata(ids)["status"] == "OWNED"
 
+
 def test_a_read_pin_over_committed_bytes_still_settles_the_writer(site: Site) -> None:
     """The other half of Q138-B: §2.1's scope stays intact.
 

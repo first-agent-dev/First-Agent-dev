@@ -48,6 +48,7 @@ from fa.inner_loop.workflow_controller import (
     MAX_REPAIRS_CEILING,
     MAX_REPLANS_CEILING,
     WORKFLOW_MODES,
+    AcquisitionSubstrateRequest,
     WorkflowRequestError,
     _validate_workflow_request,
 )
@@ -435,7 +436,9 @@ def acquisition_refusal(roles: list[str], *, managed: bool) -> tuple[str, str] |
     if managed:
         if not roles or roles[0] != "planner":
             return "acquisition_requires_planner", _ACQUISITION_REQUIRES_PLANNER
-        return "acquisition_unavailable", _ACQUISITION_UNAVAILABLE
+        # Q148 = B: the child pins its OWN read-only view inside its own run, so a
+        # planner-first managed request is no longer refused for being unacquisitioned.
+        return None
     return "acquisition_unavailable", _ACQUISITION_UNAVAILABLE
 
 
@@ -747,6 +750,10 @@ def build_invoke_workflow_tool(
 
         managed = ctx.managed_execution if parent_namespace is not None else None
         parent_lease = ctx.parent_stage_lease if parent_namespace is not None else None
+        # A coder-bearing managed child has no plan at entry; the run acquires one.
+        # The request is a marker, not a port: the view must be pinned after this
+        # child's own binding exists (i.e. after the HANDOFF), not before it.
+        wants_acquisition = managed is not None and "coder" in roles
         workflow_kwargs: dict[str, object] = {
             "roles": roles,
             "task": handoff_task,
@@ -769,6 +776,8 @@ def build_invoke_workflow_tool(
             # PLAN S5c / Q9: inherit the chat session's --inject.
             "inject_overrides": ctx.inject_overrides,
         }
+        if wants_acquisition:
+            workflow_kwargs["acquisition"] = AcquisitionSubstrateRequest()
         exit_code, terminal_state, workflow_error, lifecycle_error = _execute_child_with_managed_lifecycle(
             run_workflow_fn,
             workflow_kwargs=workflow_kwargs,

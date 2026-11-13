@@ -2350,6 +2350,16 @@ class AcquisitionSubstrate:
     project_names: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class AcquisitionSubstrateRequest:
+    """Ask `run_workflow` to pin its own acquisition view for this run.
+
+    A marker rather than a port: the caller cannot supply one, because a substrate
+    built before the child's HANDOFF would carry the parent's binding. The view must
+    be pinned inside the run, after that run's own binding exists.
+    """
+
+
 @contextmanager
 def _pinned_acquisition_substrate(ctx: WorkflowContext) -> Iterator[AcquisitionSubstrate | None]:
     """Pin one READ view of the current revision for the acquisition planner.
@@ -3190,9 +3200,105 @@ def run_workflow(
     plan_publisher: CandidatePlanPublisher | None = None,
     managed_execution: ManagedExecution | None = None,
     admission_snapshot: PlanSnapshot | None = None,
-    acquisition: AcquisitionSubstrate | None = None,
+    acquisition: AcquisitionSubstrate | AcquisitionSubstrateRequest | None = None,
 ) -> tuple[int, FlowState | None]:
-    """Run the workflow pipeline. Callable from CLI and from tools.
+    """Run the workflow pipeline, pinning an acquisition view when asked.
+
+    ``acquisition=None`` is the whole public contract of every other caller; the
+    tool-side entry passes ``acquisition=AcquisitionSubstrateRequest()`` and this
+    function then owns the view's lifetime.
+    """
+
+    def _bound(substrate: AcquisitionSubstrate | None) -> tuple[int, FlowState | None]:
+        return _run_workflow_bound(
+            roles=roles,
+            task=task,
+            per_role_task=per_role_task,
+            mode=mode,
+            max_repairs=max_repairs,
+            max_replans=max_replans,
+            run_id=run_id,
+            config=config,
+            workspace=workspace,
+            max_turns=max_turns,
+            output_mode=output_mode,
+            run_stage_fn=run_stage_fn,
+            transport=transport,
+            secrets=secrets,
+            session_context=session_context,
+            run_context=run_context,
+            session_db=session_db,
+            deadline_mono=deadline_mono,
+            inject_overrides=inject_overrides,
+            plan_path=plan_path,
+            plan_publisher=plan_publisher,
+            managed_execution=managed_execution,
+            admission_snapshot=admission_snapshot,
+            acquisition=substrate,
+        )
+
+    if isinstance(acquisition, AcquisitionSubstrateRequest):
+        # Pin here, inside the run, so `ctx.managed_execution` is this run's own
+        # binding -- the child's after a HANDOFF, never the parent's before it.
+        ctx = WorkflowContext(
+            run_id=run_id,
+            base_task=task,
+            per_role_task=per_role_task,
+            artifact_paths=workflow_artifact_paths(
+                run_id, base_dir=run_context.run_log_dir if run_context is not None else None
+            ),
+            config=config,
+            workspace=workspace,
+            max_turns=max_turns,
+            output_mode=output_mode,
+            managed_execution=managed_execution,
+            deadline_mono=deadline_mono,
+        )
+        with _pinned_acquisition_substrate(ctx) as substrate:
+            if substrate is None:
+                # No view means no acquisition: refuse before any stage, and let the
+                # refusal be recorded like every other unreachable-plan case.
+                return _blocked_plan_request(
+                    run_id=run_id,
+                    task=task,
+                    rule="acquisition-unavailable",
+                    base_dir=ctx.artifact_paths.base_dir,
+                    deadline=deadline_mono,
+                )
+            return _bound(substrate)
+    if acquisition is None or isinstance(acquisition, AcquisitionSubstrate):
+        return _bound(acquisition)
+    raise PlanRefError("unreadable")
+
+
+def _run_workflow_bound(
+    *,
+    roles: list[str],
+    task: str | None,
+    per_role_task: Mapping[str, str | None],
+    mode: str,
+    max_repairs: int | None,
+    max_replans: int | None,
+    run_id: str,
+    config: Path,
+    workspace: Path,
+    max_turns: int,
+    output_mode: str,
+    run_stage_fn: Callable[..., int],
+    transport: Transport | None,
+    secrets: Mapping[str, str] | None,
+    session_context: SessionContext | None,
+    run_context: RunContext | None,
+    session_db: SessionDatabase | None,
+    deadline_mono: float | None,
+    inject_overrides: Mapping[str, str] | None,
+    plan_path: Path | None,
+    plan_publisher: CandidatePlanPublisher | None,
+    managed_execution: ManagedExecution | None,
+    admission_snapshot: PlanSnapshot | None,
+    acquisition: AcquisitionSubstrate | None,
+) -> tuple[int, FlowState | None]:
+    """The workflow body, with a resolved acquisition substrate.
 
     Returns ``(exit_code, terminal_state)`` where ``terminal_state`` may be
     ``None`` if the artifact was missing or corrupt.
