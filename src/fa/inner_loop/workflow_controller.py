@@ -244,6 +244,14 @@ class _ManagedRevisionPair:
     target_revision_id: str | None = None
 
 
+@dataclass(slots=True)
+class _InitialPlannerContextSlot:
+    """One-shot parent context consumed only by the initial planner dispatch (S5P4/CT109)."""
+
+    text: str = ""
+    consumed: bool = False
+
+
 @dataclass(frozen=True)
 class WorkflowContext:
     """Invariant per-run configuration shared by every workflow stage."""
@@ -308,6 +316,9 @@ class WorkflowContext:
     # Q150=A: present solely on managed-child runs (owner_run_id != run_id) to
     # select v2 admission.json without altering unmanaged v1 callers.
     admission_binding: ManagedAdmissionBinding | None = None
+    # S5P4 / CT109 / Q66: bounded, credential-redacted snapshot of parent chat
+    # messages consumed ONLY by the initial planner dispatch.
+    initial_planner_slot: _InitialPlannerContextSlot = field(default_factory=_InitialPlannerContextSlot)
 
     def plan_text(self) -> str | None:
         """Use the immutable admitted snapshot, or read legacy optional input.
@@ -1441,6 +1452,27 @@ def _capture_managed_revision_boundary(ctx: WorkflowContext, role: str, *, after
     pair.target_revision_id = None
 
 
+def _consume_initial_planner_context(
+    ctx: WorkflowContext,
+    *,
+    role: str,
+    progress: WorkflowProgress,
+    dispatch: PlannerDispatch | None,
+) -> str:
+    """Release the one-shot parent chat snapshot strictly to the initial planner."""
+    if (
+        role != "planner"
+        or progress.repair_round != 0
+        or progress.replan_round != 0
+        or (dispatch is not None and dispatch.owns_candidate)
+        or not ctx.initial_planner_slot.text
+        or ctx.initial_planner_slot.consumed
+    ):
+        return ""
+    ctx.initial_planner_slot.consumed = True
+    return ctx.initial_planner_slot.text
+
+
 def _run_stage(
     ctx: WorkflowContext,
     role: str,
@@ -1482,6 +1514,8 @@ def _run_stage(
     stage_task = _stage_task(ctx, role, prior_verification, progress.repair_round, dispatch=dispatch)
 
     stage_plan_ref = ctx.admission.snapshot.ref if ctx.admission is not None else ctx.managed_plan_ref
+    initial_planner_context = _consume_initial_planner_context(ctx, role=role, progress=progress, dispatch=dispatch)
+
     stage_kwargs: dict[str, object] = {
         "task_pos": None,
         "task": stage_task,
@@ -1505,6 +1539,7 @@ def _run_stage(
         "injection_modes": resolve_injection_modes(role, overrides=ctx.inject_overrides),
         "_managed_execution": ctx.managed_execution,
         "_managed_plan_ref": stage_plan_ref,
+        **({"_initial_planner_context": initial_planner_context} if initial_planner_context else {}),
         # S3P3: says "this stage owns a candidate", so the stage boundary opens
         # the CANDIDATE view. Derived from the dispatch the controller already
         # built, never from a role name, and from the dispatch's own positive fact
@@ -3990,6 +4025,7 @@ def run_workflow(
     managed_execution: ManagedExecution | None = None,
     admission_snapshot: PlanSnapshot | None = None,
     acquisition: AcquisitionSubstrate | AcquisitionSubstrateRequest | None = None,
+    initial_planner_context: str = "",
 ) -> tuple[int, FlowState | None]:
     """Run the workflow pipeline, pinning an acquisition view when asked.
 
@@ -4029,6 +4065,7 @@ def run_workflow(
             admission_snapshot=admission_snapshot,
             acquisition=substrate,
             admission_binding=binding,
+            initial_planner_context=initial_planner_context,
         )
 
     admission_binding = _managed_admission_binding(managed_execution, run_id=run_id)
@@ -4133,6 +4170,7 @@ def _run_workflow_bound(
     admission_snapshot: PlanSnapshot | None,
     acquisition: AcquisitionSubstrate | None,
     admission_binding: ManagedAdmissionBinding | None = None,
+    initial_planner_context: str = "",
 ) -> tuple[int, FlowState | None]:
     """The workflow body, with a resolved acquisition substrate.
 
@@ -4240,6 +4278,7 @@ def _run_workflow_bound(
         admission_binding=effective_binding,
         managed_plan_ref=None if snapshot is None else snapshot.ref,
         verify_gate_mode=_gate_mode(),
+        initial_planner_slot=_InitialPlannerContextSlot(text=initial_planner_context),
         admission=(
             _WorkflowAdmission(
                 snapshot,

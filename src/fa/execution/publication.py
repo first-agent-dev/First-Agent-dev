@@ -33,8 +33,9 @@ from markdown_it import MarkdownIt
 from fa.execution.primitives import ExecutionContractError
 from fa.execution.protocol import CONFIG_ID, _check
 from fa.execution.supervisor import PeerIdentity, SupervisorError
-from fa.execution.types import NamespaceRef, ViewRef
+from fa.execution.types import NamespaceRef, ViewPurpose, ViewRef
 from fa.execution.workspace import (
+    _MUTATION_ROOTS,
     WorkspaceAuthority,
     _budget,
     _canonical,
@@ -150,7 +151,12 @@ def seal_view(
     if inputs.record["state"] == "SEALED":
         return _replay_seal(inputs.directory, str(inputs.record["sealed_manifest_id"]), inputs)
     manifest = _build_manifest(inputs)
-    _validate_sealed_tree(manifest, plan_path=inputs.plan_path, base_entries=inputs.base_entries)
+    _validate_sealed_tree(
+        manifest,
+        plan_path=inputs.plan_path,
+        base_entries=inputs.base_entries,
+        purpose=inputs.view_ref.purpose,
+    )
     sealed_manifest_id = "seal-" + uuid4().hex
     _write_manifest(inputs.directory, manifest, deadline)
     _budget(deadline)
@@ -168,7 +174,12 @@ def seal_view(
 def _replay_seal(directory: int, sealed_manifest_id: str, inputs: _SealInputs) -> SealResult:
     """A retried seal answers from durable bytes, or refuses loudly (R8)."""
     stored = _read_json(directory, MANIFEST_NAME, _SEALED_MANIFEST, _MAX_MANIFEST_BYTES)
-    _validate_sealed_tree(stored, plan_path=inputs.plan_path, base_entries=inputs.base_entries)
+    _validate_sealed_tree(
+        stored,
+        plan_path=inputs.plan_path,
+        base_entries=inputs.base_entries,
+        purpose=inputs.view_ref.purpose,
+    )
     # The bytes are frozen after the barrier, so a reseal must observe the same
     # digest; anything else means the view or its manifest moved underneath us.
     if stored["tree_sha256"] != inputs.tree_sha256:
@@ -218,13 +229,15 @@ def _validate_sealed_tree(
     *,
     plan_path: str | None,
     base_entries: Sequence[Mapping[str, Any]],
+    purpose: ViewPurpose | None = None,
 ) -> None:
     """The one seal validator; every rule a later publisher may rely on.
 
     Order matters for useful diagnostics: shape, then path domain, then
     per-entry facts, then the base comparison, then the protected plan boundary,
-    and only then the digest — so a forged manifest is rejected for what it is,
-    never because its self-declared hash happened to disagree first.
+    then mutation-root confinement, and only then the digest — so a forged
+    manifest is rejected for what it is, never because its self-declared hash
+    happened to disagree first.
     """
     try:
         _check(_SEALED_MANIFEST, manifest)
@@ -238,8 +251,23 @@ def _validate_sealed_tree(
     for entry in entries:
         _validate_against_base(entry, base.get(entry["path"]))
     _validate_plan_boundary(entries, base, plan_path)
+    if purpose is ViewPurpose.MUTATION:
+        _validate_mutation_roots(entries, base)
     if _tree_hash(entries) != manifest["tree_sha256"]:
         raise SupervisorError("CORRUPT_STATE")
+
+
+def _validate_mutation_roots(entries: Sequence[Mapping[str, Any]], base: Mapping[str, Mapping[str, Any]]) -> None:
+    """Q141=C: a MUTATION view's sealed tree may alter only ``_MUTATION_ROOTS``."""
+    for entry in entries:
+        root = entry["path"].split("/", 1)[0]
+        if root in _MUTATION_ROOTS:
+            continue
+        prior = base.get(entry["path"])
+        if entry["deleted"] or prior is None:
+            raise SupervisorError("PATH_DENIED")
+        if any(entry[key] != prior[key] for key in ("type", "mode", "size", "sha256", "link_target")):
+            raise SupervisorError("PATH_DENIED")
 
 
 def _validate_paths(entries: Sequence[Mapping[str, Any]]) -> None:

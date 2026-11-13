@@ -689,3 +689,91 @@ def test_cell_search_rooted_refusal_has_no_fallback_partial_result_or_external_b
     assert "external bytes" not in json.dumps(result.result)
     assert list(scratch.iterdir()) == []
     assert not (root / ".fa").exists()
+
+
+def test_managed_project_tool_executor_accepts_project_and_mutation_and_forbids_purpose_switch(
+    tmp_path: Path,
+) -> None:
+    """Q141=C: ManagedProjectToolExecutor allows PROJECT and MUTATION views, never cross-purpose rebind."""
+    from fa.execution.client import ExecutionClient, ManagedProjectToolExecutor
+    from fa.execution.types import (
+        Access,
+        ExecutionContractError,
+        GrantReply,
+        NamespaceRef,
+        Operation,
+        ViewPurpose,
+        ViewRef,
+    )
+    from tests.test_execution_views import native_profile
+
+    client = ExecutionClient(tmp_path / "supervisor.sock", server_uid=0, rpc_timeout_ms=100)
+    ns = NamespaceRef("s-pt", "r-pt")
+    profile = native_profile()
+
+    def _make_view(
+        purpose: ViewPurpose, access: Access = Access.WRITE, vid: str = "view-" + "1" * 32
+    ) -> tuple[ViewRef, GrantReply]:
+        vref = ViewRef("ws-" + "a" * 32, vid, "rev-" + "b" * 32, ns.run_id, 1, access, purpose)
+        op = Operation.CREATE_VIEW if access is Access.WRITE else Operation.PIN_READER
+        grant = GrantReply(op, "c" * 64, vref, None, None, input_tree_sha256="d" * 64)
+        return vref, grant
+
+    proj_view, proj_grant = _make_view(ViewPurpose.PROJECT, vid="view-" + "1" * 32)
+    mut_view, mut_grant = _make_view(ViewPurpose.MUTATION, vid="view-" + "2" * 32)
+
+    proj_exec = ManagedProjectToolExecutor(
+        client,
+        namespace=ns,
+        view=proj_view,
+        grant=proj_grant,
+        profile=profile,
+        input_tree_sha256="d" * 64,
+        plan_sha256=None,
+        original_revision_id="rev-" + "b" * 32,
+    )
+    mut_exec = ManagedProjectToolExecutor(
+        client,
+        namespace=ns,
+        view=mut_view,
+        grant=mut_grant,
+        profile=profile,
+        input_tree_sha256="d" * 64,
+        plan_sha256="e" * 64,
+        original_revision_id="rev-" + "b" * 32,
+    )
+    mut_exec2_view, mut_exec2_grant = _make_view(ViewPurpose.MUTATION, vid="view-" + "3" * 32)
+    mut_exec.suspend()
+    mut_exec.rebind(
+        namespace=ns,
+        view=mut_exec2_view,
+        grant=mut_exec2_grant,
+        original_revision_id="rev-" + "b" * 32,
+    )
+
+    with pytest.raises(ExecutionContractError):
+        proj_exec.suspend()
+        proj_exec.rebind(
+            namespace=ns,
+            view=mut_view,
+            grant=mut_grant,
+            original_revision_id="rev-" + "b" * 32,
+        )
+
+    for forbidden_purpose, forbidden_access in (
+        (ViewPurpose.VERIFICATION, Access.READ),
+        (ViewPurpose.CANDIDATE, Access.READ),
+        (ViewPurpose.PROVISIONING, Access.WRITE),
+    ):
+        bad_view, bad_grant = _make_view(forbidden_purpose, access=forbidden_access, vid="view-" + "4" * 32)
+        with pytest.raises(ExecutionContractError):
+            ManagedProjectToolExecutor(
+                client,
+                namespace=ns,
+                view=bad_view,
+                grant=bad_grant,
+                profile=profile,
+                input_tree_sha256="d" * 64,
+                plan_sha256=None,
+                original_revision_id="rev-" + "b" * 32,
+            )

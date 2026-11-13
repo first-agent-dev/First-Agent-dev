@@ -15,6 +15,7 @@ import stat
 import struct
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -118,23 +119,21 @@ class PendingCandidatePublication:
     Four request ids, because a lost reply can happen at any of the four steps and
     the journal answers a repeat of *that* id rather than of the saga: re-sending
     ``create_request_id`` recovers a minted view whose reply was lost, while
-    re-sending ``publish_request_id`` reconciles a commit that may already exist.
-    The capability is carried because replay must authenticate exactly as the
-    original attempt did; it is already held by the writer that owns this run.
-
-    ``stop_request_id`` is ``None`` only when the failure happened before STOP_VIEW
-    was sent, which is the one case where the view is not known to be terminal.
+    re-sending ``write_request_id``, ``stop_request_id``, or ``publish_request_id``
+    reconciles an in-flight saga step without minting duplicate effects.
     """
 
     namespace: NamespaceRef
-    view_ref: ViewRef
-    view_grant: GrantReply
+    view_ref: ViewRef | None
+    view_grant: GrantReply | None
     create_request_id: str
-    write_request_id: str
+    write_request_id: str | None
     stop_request_id: str | None
-    publish_request_id: str
+    publish_request_id: str | None
     source: PlanSnapshot
     candidate: PlanSnapshot
+    workspace_id: str | None = None
+    owner_grant: GrantReply | None = None
 
 
 @dataclass(frozen=True)
@@ -735,27 +734,107 @@ class ExecutionClient:
                 operation_id=op_id if isinstance(op_id, str) and op_id else ("op-" + publish_request_id),
             )
         except ExecutionUncertainError as error:
-            # The candidate view stays open: releasing it would assert that the
-            # writer is settled, which is the one thing this client cannot prove.
+            # The candidate view (or its create request) stays open: releasing it
+            # would assert that the writer is settled, which is the one thing
+            # this client cannot prove. Retain the pending saga even when
+            # CREATE_VIEW lost its reply (E512) so exact-id replay can recover it,
+            # unless the authority explicitly answered CORRUPT_STATE before any
+            # view handle existed (replay would mask CORRUPT_STATE as UNKNOWN).
             uncertain = True
-            if error.pending_publication is None and view is not None and view_grant is not None:
+            if error.pending_publication is None and (view is not None or error.code != "CORRUPT_STATE"):
                 # Name the saga, not just the last id, so the caller can reconcile
-                # by replaying exactly these requests (Q138 option B).
+                # by replaying the exact already-sent requests (Q138 option B / E512).
                 error.pending_publication = PendingCandidatePublication(
                     namespace,
                     view,
                     view_grant,
                     create_request_id,
-                    write_request_id or "",
+                    write_request_id,
                     stop_request_id,
-                    publish_request_id or "",
+                    publish_request_id,
                     source,
                     candidate,
+                    workspace_id=workspace_id,
+                    owner_grant=grant,
                 )
             raise
         finally:
             if view is not None and view_grant is not None and not uncertain:
                 self._release_view(namespace, view, view_grant, deadline)
+
+    @staticmethod
+    def _candidate_pending_snapshot(
+        pending: PendingCandidatePublication,
+        *,
+        view: ViewRef | None,
+        view_grant: GrantReply | None,
+        write_request_id: str | None,
+        stop_request_id: str | None,
+        publish_request_id: str | None,
+    ) -> PendingCandidatePublication:
+        if (
+            view == pending.view_ref
+            and view_grant == pending.view_grant
+            and write_request_id == (pending.write_request_id or None)
+            and stop_request_id == (pending.stop_request_id or None)
+            and publish_request_id == (pending.publish_request_id or None)
+        ):
+            return pending
+        return PendingCandidatePublication(
+            pending.namespace,
+            view,
+            view_grant,
+            pending.create_request_id,
+            write_request_id,
+            stop_request_id,
+            publish_request_id,
+            pending.source,
+            pending.candidate,
+            workspace_id=pending.workspace_id,
+            owner_grant=pending.owner_grant,
+        )
+
+    def _run_candidate_saga_request(
+        self,
+        operation: Operation,
+        *,
+        request_id: str,
+        namespace: NamespaceRef,
+        view: ViewRef | None,
+        grant: GrantReply,
+        payload: dict[str, Any],
+        deadline: float | None,
+        uncertain_code: str,
+        snapshot: Callable[[], PendingCandidatePublication],
+    ) -> dict[str, Any]:
+        try:
+            return self.request(
+                operation,
+                request_id=request_id,
+                namespace=namespace,
+                view=view,
+                grant=grant,
+                payload=payload,
+                deadline=deadline,
+            )
+        except ExecutionUncertainError:
+            raise ExecutionUncertainError(
+                "op-" + request_id,
+                code=uncertain_code,
+                pending_publication=snapshot(),
+            ) from None
+        except ExecutionRejectedError:
+            snap = snapshot()
+            if snap.view_ref is not None and snap.view_grant is not None:
+                try:
+                    self._release_view(namespace, snap.view_ref, snap.view_grant, deadline, strict=True)
+                except (ExecutionUncertainError, ExecutionUnavailableError):
+                    raise ExecutionUncertainError(
+                        "op-" + request_id,
+                        code="DURABILITY_UNKNOWN",
+                        pending_publication=snap,
+                    ) from None
+            raise
 
     def reconcile_candidate_publication(
         self,
@@ -766,34 +845,64 @@ class ExecutionClient:
         """Settle one unresolved candidate publication by replaying its own requests.
 
         This is a *reconciliation*, never a retry of an indeterminate decision: the
-        four request ids are the ones already minted, so the authority answers a
-        repeat from its journal and its completed-reply cache rather than performing
-        a second effect. Nothing here invents a view, a grant, or a new id.
-
-        Outcomes that are terminal:
-
-        * the publication is proved committed (or already was, ``already_published``)
-          and the candidate view is left ``PUBLISHED`` — releasable;
-        * the authority answers determinately that this view cannot publish, which
-          rejects the candidate view: it stays unpublished and the caller reports a
-          refusal, never a success.
-
-        An indeterminate answer here is **not** turned into another attempt: it is
-        raised with the same pending record, and Q114 keeps the workspace fenced.
+        already-minted request ids (starting from ``create_request_id`` when a
+        ``CREATE_VIEW`` reply vanished under E512) are re-sent so the authority
+        answers from its journal and completed-reply cache rather than performing
+        a second effect. Any stage that had not yet sent a request when the loss
+        occurred advances cleanly once its predecessor is proved.
         """
         if not isinstance(pending, PendingCandidatePublication):
             raise ExecutionContractError
         raw = pending.candidate.utf8_bytes
         if hashlib.sha256(raw).hexdigest() != pending.candidate.ref.sha256:
             raise ExecutionContractError
-        namespace, view, view_grant = pending.namespace, pending.view_ref, pending.view_grant
-        # The write is replayed only while no STOP was ever sent: a STOPPING view
-        # refuses WRITE_FILE, and its bytes are already the ones this publication
-        # staged. A repeat of the same request id is answered from the journal.
-        if pending.stop_request_id is None and pending.write_request_id:
-            self.request(
+        namespace = pending.namespace
+        plan_ref = _plan_ref_dict(pending.source.ref)
+        view = pending.view_ref
+        view_grant = pending.view_grant
+        write_request_id = pending.write_request_id or None
+        stop_request_id = pending.stop_request_id or None
+        publish_request_id = pending.publish_request_id or None
+
+        def _snap() -> PendingCandidatePublication:
+            return self._candidate_pending_snapshot(
+                pending,
+                view=view,
+                view_grant=view_grant,
+                write_request_id=write_request_id,
+                stop_request_id=stop_request_id,
+                publish_request_id=publish_request_id,
+            )
+
+        if view is None or view_grant is None:
+            if pending.owner_grant is None or pending.workspace_id is None:
+                raise ExecutionContractError
+            created = self._run_candidate_saga_request(
+                Operation.CREATE_VIEW,
+                request_id=pending.create_request_id,
+                namespace=namespace,
+                view=None,
+                grant=pending.owner_grant,
+                payload={
+                    "workspace_id": pending.workspace_id,
+                    "base_revision": None,
+                    "access": "READ",
+                    "purpose": "CANDIDATE",
+                    "candidate_scope": {"plan_ref": plan_ref},
+                    "plan_ref": plan_ref,
+                },
+                deadline=deadline,
+                uncertain_code="EXECUTION_UNKNOWN",
+                snapshot=_snap,
+            )
+            view = ViewRef.from_dict(created["view_ref"])
+            view_grant = _grant(Operation.CREATE_VIEW, created)
+
+        if stop_request_id is None:
+            write_request_id = write_request_id or uuid4().hex
+            self._run_candidate_saga_request(
                 Operation.WRITE_FILE,
-                request_id=pending.write_request_id,
+                request_id=write_request_id,
                 namespace=namespace,
                 view=view,
                 grant=view_grant,
@@ -803,45 +912,52 @@ class ExecutionClient:
                     "expected_sha256": None,
                 },
                 deadline=deadline,
+                uncertain_code="EXECUTION_UNKNOWN",
+                snapshot=_snap,
             )
-        if pending.stop_request_id is None or pending.publish_request_id is None:
-            # Nothing was committed and no id exists to ask about: the only honest
-            # answer is that terminality is unknown, and the writer stays fenced.
-            raise ExecutionUncertainError(None, code="TERMINALITY_UNKNOWN", pending_publication=pending)
-        try:
-            result = self.request(
-                Operation.PUBLISH,
-                request_id=pending.publish_request_id,
+
+        if publish_request_id is None:
+            stop_request_id = stop_request_id or uuid4().hex
+            stopped = self._run_candidate_saga_request(
+                Operation.STOP_VIEW,
+                request_id=stop_request_id,
                 namespace=namespace,
                 view=view,
                 grant=view_grant,
-                payload={"sealed_manifest_id": None, "expected_base_revision": view.base_revision},
+                payload={},
                 deadline=deadline,
+                uncertain_code="TERMINALITY_UNKNOWN",
+                snapshot=_snap,
             )
-        except ExecutionUncertainError:
-            # The journal may hold UNKNOWN for this id — a handler that really
-            # failed, not merely a reply that was lost — and `_completed` never
-            # turns UNKNOWN into DONE. That is not proof of anything, so the
-            # caller gets the same saga back and the workspace stays fenced.
-            raise ExecutionUncertainError(
-                "op-" + pending.publish_request_id,
-                code="DURABILITY_UNKNOWN",
-                pending_publication=pending,
-            ) from None
-        expected_ref = {**_plan_ref_dict(pending.source.ref), "sha256": hashlib.sha256(raw).hexdigest()}
+            if stopped["terminal"] is not True:
+                raise ExecutionUncertainError(
+                    "op-" + stop_request_id, code="TERMINALITY_UNKNOWN", pending_publication=_snap()
+                )
+
+        publish_request_id = publish_request_id or uuid4().hex
+        result = self._run_candidate_saga_request(
+            Operation.PUBLISH,
+            request_id=publish_request_id,
+            namespace=namespace,
+            view=view,
+            grant=view_grant,
+            payload={"sealed_manifest_id": None, "expected_base_revision": view.base_revision},
+            deadline=deadline,
+            uncertain_code="DURABILITY_UNKNOWN",
+            snapshot=_snap,
+        )
+        expected_ref = {**plan_ref, "sha256": hashlib.sha256(raw).hexdigest()}
         if result["plan_ref"] != expected_ref:
             raise ExecutionUncertainError(
-                "op-" + pending.publish_request_id, code="DURABILITY_UNKNOWN", pending_publication=pending
+                "op-" + publish_request_id, code="DURABILITY_UNKNOWN", pending_publication=_snap()
             )
-        # The publication is proved, so the view is settled exactly as the
-        # uninterrupted path leaves it: PUBLISHED, and its pin revocable.
         self._release_view(namespace, view, view_grant, deadline)
         op_id = result.get("operation_id")
         return PlanPublication(
             PlanRef(**expected_ref),
             str(result["revision_id"]),
             bool(result["already_published"]),
-            operation_id=op_id if isinstance(op_id, str) and op_id else ("op-" + pending.publish_request_id),
+            operation_id=op_id if isinstance(op_id, str) and op_id else ("op-" + publish_request_id),
         )
 
     def publish_stage(
@@ -1573,7 +1689,7 @@ class ManagedProjectToolExecutor:
         if (
             not isinstance(client, ExecutionClient)
             or not isinstance(namespace, NamespaceRef)
-            or view.purpose is not ViewPurpose.PROJECT
+            or view.purpose not in {ViewPurpose.PROJECT, ViewPurpose.MUTATION}
             or view.owner_run_id != namespace.run_id
             or not isinstance(grant, GrantReply)
             or grant.operation is not expected_grant
@@ -1597,6 +1713,7 @@ class ManagedProjectToolExecutor:
         self._client = client
         self._namespace = namespace
         self._workspace_id = view.workspace_id
+        self._purpose = view.purpose
         self._view: ViewRef | None = view
         self._grant: GrantReply | None = grant
         self._profile = profile
@@ -1627,12 +1744,13 @@ class ManagedProjectToolExecutor:
         grant: GrantReply,
         original_revision_id: str | None,
     ) -> None:
-        """Rebind only to a fresh WRITE/PROJECT view in the same admitted workspace."""
+        """Rebind only to a fresh WRITE/PROJECT or WRITE/MUTATION view in the same admitted workspace."""
         if (
             not isinstance(namespace, NamespaceRef)
             or namespace != self._namespace
             or not isinstance(view, ViewRef)
-            or view.purpose is not ViewPurpose.PROJECT
+            or view.purpose is not self._purpose
+            or view.purpose not in {ViewPurpose.PROJECT, ViewPurpose.MUTATION}
             or view.access is not Access.WRITE
             or view.workspace_id != self._workspace_id
             or view.view_id == self._last_view_id

@@ -5675,7 +5675,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                 or payload["profile_id"] != profile.profile_id
                 or payload["timeout_ms"] > profile.max_command_ms
                 or (not is_project_tool and profile.interactive != (payload["session_id"] is not None))
-                or (is_project_tool and ref.purpose is not ViewPurpose.PROJECT)
+                or (is_project_tool and ref.purpose not in {ViewPurpose.PROJECT, ViewPurpose.MUTATION})
             ):
                 raise SupervisorError("UNAPPROVED_PROFILE")
             self._execution_claim(req, namespace, ref, deadline=deadline)

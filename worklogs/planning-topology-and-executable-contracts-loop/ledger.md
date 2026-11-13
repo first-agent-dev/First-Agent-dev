@@ -9809,3 +9809,33 @@ now closed.
 - CLI/workflow/runner/tool suite: **193 passed, 2 xfailed** (`Q106 -> W4` in `test_execution_project_tools`).
 - Targeted mutation / negative kills: **5 / 5 killed** (`CT110` `ManagedVerifyCommandExecutor.run_verify_command` skip -> 12 failed; `CT111` `_pytest_report_status_error` bypass -> 6 failed; `EDGE_PROFILE` fallback -> 1 failed; `EDGE_GRANT` pin check bypass -> 1 failed; `T0_HOST_FALLBACK` -> 4 failed).
 - `ruff check` (`0` errors across all 7 touched code/test files), `pyrefly check` (`0` errors across 6 touched code/test files), `scripts/check_doc_links.py`, `scripts/check_kill_directive_ownership.py`, `fa.inner_loop.plan_ids.precheck`, and `scripts/check_execution_e2e_coverage.py` all pass.
+
+### E527 — W2 closure: residual `E512`, `R26` / `Q141=C` (`ViewPurpose.MUTATION`), child-return lease hardening, `S5P4` / `CT109` / `Q66`, and `CT96`/`CT108`/`CT109` kills (`SLICE5 STEP1–STEP6`, 2026-11-10)
+
+**Scope.** Closed the remaining Arena-local W2 queue across `src/fa/execution/{client,composition,docker,publication,supervisor,workspace}.py`, `src/fa/inner_loop/{coder_loop,workflow_controller,tools/workflow_tool}.py`, and `src/fa/cli.py`, bringing **W2** (`R24` via `E526`, plus `E512`, `R26`/`Q141=C`, and `S5P4`/`CT109`/`Q66`) to Arena-local closeout (`SLICE5 STEP1–STEP6`).
+
+**Implemented repairs:**
+- **Residual `E512` (`src/fa/execution/{client,composition}.py`):** `PendingCandidatePublication` + exact-id replay across `CREATE_VIEW -> WRITE_FILE -> STOP_VIEW -> PUBLISH` recovers lost replies without creating duplicate views or orphaned `OWNED` locks; `ManagedExecution.reconcile_publication` clears `_pending_publication` when an authority replay returns a determinate `ExecutionRejectedError` so settled refusals release `AVAILABLE` instead of permanently fencing (`test_execution_composition.py`, incl. `test_reconcile_publication_determinate_refusal_clears_pending_fence`).
+- **`R26` / `Q141=C` `ViewPurpose.MUTATION` & child-return lease hardening (`src/fa/cli.py`, `src/fa/execution/{client,docker,publication,supervisor,workspace}.py`, `src/fa/inner_loop/tools/workflow_tool.py`):**
+  - `cli._open_stage_view` selects `ViewPurpose.MUTATION` for nested `coder` (`parent_run_id is not None`).
+  - `ManagedProjectToolExecutor.__init__`/`rebind`, `WorkspaceAuthority.admit`, `SupervisorDispatcher._authorize_request`/`serve_connection`, and `DockerCells._binding` allow `PROJECT` and `MUTATION` for `project_tool` while rejecting cross-purpose rebinds (`ExecutionContractError`).
+  - `publication._validate_sealed_tree` enforces `_validate_mutation_roots` for `ViewPurpose.MUTATION`, blocking deletes/writes/metadata changes outside `_MUTATION_ROOTS` (`src/`/`scripts/`) with `PATH_DENIED` (`permission_denied` in `fs_write_file`).
+  - `workflow_tool._reconcile_child_pending_state`, `_return_managed_child_to_parent`, `_execute_child_with_managed_lifecycle`, and `cli._ManagedStageLease.abort()` reconcile/abort suspended parent leases cleanly when child HANDOFF/return or `publication_pending` fails, suppressing premature `RELEASE` and preventing unhandled `ExecutionUnavailableError` on outer stage exit.
+- **`S5P4` / `CT109` / `Q66` (`src/fa/cli.py`, `src/fa/inner_loop/{coder_loop,workflow_controller,tools/workflow_tool}.py`):**
+  - `_snapshot_parent_for_initial_planner` snapshots bounded current-turn parent messages (`<=12` entries preserving 1st `user`, redact-before-truncate `<=600` chars/entry, `len(suffix)==25` `<=4000` chars total), applies `SecretRedactor` + `extra_redactor` (`secrets` CLI store) + `_CREDENTIAL_REDACTION_PATTERNS` (`PEM` blocks, `sk-`, `ghp_`, `github_pat_`, `AIza`, `AKIA`, `Bearer`, `api_key=`, `password=`), and marks tool outputs as `[parent tool output (untrusted data)]`.
+  - Delivered via `WorkflowInvocationContext.initial_planner_context` -> `workflow_controller._InitialPlannerContextSlot` / `_consume_initial_planner_context` -> `cli._cmd_run` -> `coder_loop.drive_session(..., initial_user_context=...)` exclusively as initial planner user task (absent from `system`, `EventLog`, `ADMISSION_REPAIR`, `EVAL_REPLAN`, `coder`, `eval`, and direct `fa workflow`).
+
+**Verification & kills:**
+- Combined targeted suite (**25 test modules** across `test_execution_{composition,docker,purposes,project_tools,handoff_return}`, `test_managed_stage_lease`, `test_invoke_workflow_tool`, `test_managed_workflow_e2e`, `test_cli`, `test_coder_loop`, `test_s8_workflow_controller`, `test_managed_acquisition`, `test_s5p1_*`, `test_admission_v2_provenance`, `test_plan_candidate_retention`, `test_e2e_artifact_contract`, `test_delivery_law_conformance`): **`772 passed, 3 xfailed`** (`tests/test_execution_composition.py:424` SLICE4 STEP2 host-write cutover pin + 2 deferred `Q106` W4 `xfail`s), including real local `SupervisorService` + `WorkspaceAuthority` + `MuxWorker` + `CellWorker` + `local_cell_peer` E2E proofs (`test_parent_initial_planner_snapshot_is_one_shot_and_redacts_secrets`, `test_nested_v1_peer_and_stale_listing_fail_closed_before_coder`, `test_nested_coder_mutation_confinement_blocks_plan_and_fa_writes_while_allowing_src` verifying `verification.json` `attempts[-1]` `mode=enforce`, `blocking=False`), 3 boundary/redaction unit tests in `test_cli.py`, and `test_invoke_workflow_tool.py` (`127 passed`).
+- **Targeted kills (10 / 10 killed, byte-exact source restored):**
+  - `CT96` (`workflow_tool.py::_execute_child_with_managed_lifecycle` bypassed -> `47 failed, 91 passed`),
+  - `CT108` (`workflow_tool.py::_child_run_context` bypassed -> `18 failed, 109 passed`),
+  - `CT109` (`cli.py::_snapshot_parent_for_initial_planner` bypassed -> `1 failed`),
+  - `EDGE_CT109_coder_loop_drop_initial_user_context` (`1 failed`),
+  - `EDGE_CT109_bypass_snapshot_redaction` (`1 failed`),
+  - `EDGE_Q141_nested_coder_project_instead_of_mutation` (`1 failed`),
+  - `EDGE_Q141_supervisor_project_tool_reject_mutation` (`1 failed`),
+  - `EDGE_docker_project_tool_mutation` (`1 failed`),
+  - `EDGE_publication_mutation_roots_guard` (`1 failed`),
+  - `EDGE_E512_reconcile_rejected_clears_pending` (`1 failed`).
+- `ruff check` across all 17 modified files (`All checks passed`), `pyrefly check` across all 10 modified `src/fa/` modules (`0 errors`), `scripts/check_kill_directive_ownership.py`, `uv run python -m fa.inner_loop.plan_ids --check`, `scripts/check_doc_links.py`, and `scripts/check_execution_e2e_coverage.py` all pass. Remaining W3 blockers (`authoring-check`, full-repo `pyrefly` baseline, `tests/integration/`, `test_execution_composition.py:424`, legacy test triage, `Q108` coverage mapping, `Q139` mutmut, `fa-entrypoint.sh`) and W4 host/live acceptance (`Q106`) stay explicitly OPEN.

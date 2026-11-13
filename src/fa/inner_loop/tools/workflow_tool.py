@@ -33,7 +33,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
-from fa.execution.client import ExecutionRejectedError
+from fa.execution.client import ExecutionRejectedError, ExecutionUncertainError
 from fa.execution.composition import BoundPlanPublisher, ExecutionBinding, ManagedExecution
 from fa.execution.types import NamespaceRef
 from fa.inner_loop.expansion import TIER_HIGH, TIER_SAFE
@@ -144,6 +144,9 @@ class WorkflowInvocationContext:
     # via resolve_injection_modes, so role gating still applies and an
     # inherited coder-only injection stays off for a planner stage.
     inject_overrides: Mapping[str, str] = field(default_factory=dict)
+    # S5P4 / CT109 / Q66: internal bounded, credential-redacted snapshot of
+    # current-turn parent messages fed ONLY to the initial planner user task.
+    initial_planner_context: str = ""
 
 
 def child_run_id(parent: str, n: int) -> str:
@@ -536,6 +539,21 @@ def _begin_managed_child(
     return None
 
 
+def _reconcile_child_pending_state(managed: ManagedExecution, *, deadline: float) -> tuple[bool, str | None]:
+    """Resolve pending child publication before returning writer ownership."""
+    if getattr(managed, "handoff_pending", False):
+        return False, "child handoff remains unresolved"
+    if not getattr(managed, "publication_pending", False):
+        return False, None
+    try:
+        managed.reconcile_publication(deadline=deadline)
+    except ExecutionRejectedError:
+        return True, None
+    except Exception as error:  # noqa: BLE001 - fail closed when candidate saga stays uncertain
+        return False, f"child candidate publication remains unresolved: {type(error).__name__}"
+    return False, None
+
+
 def _return_managed_child_to_parent(
     *,
     managed: ManagedExecution,
@@ -543,9 +561,19 @@ def _return_managed_child_to_parent(
     parent_stage_lease: ParentStageLease,
     deadline: float,
 ) -> str | None:
-    """Reverse HANDOFF, then reopen/rebind the parent at the returned revision."""
+    """Reconcile any pending child state, reverse HANDOFF, then reopen parent."""
+    rejected_pending_pub, pending_error = _reconcile_child_pending_state(managed, deadline=deadline)
+    if pending_error is not None:
+        return pending_error
     try:
         managed.handoff_to(parent_namespace, deadline=deadline)
+    except ExecutionUncertainError as error:
+        if not getattr(managed, "handoff_pending", False):
+            return f"return HANDOFF failed: {type(error).__name__}"
+        try:
+            managed.reconcile_handoff(deadline=deadline)
+        except Exception as reconcile_error:  # noqa: BLE001 - unresolved child authority is fail-closed
+            return f"return HANDOFF failed: {type(reconcile_error).__name__}"
     except Exception as error:  # noqa: BLE001 - unresolved child authority is fail-closed
         return f"return HANDOFF failed: {type(error).__name__}"
     if managed.binding.namespace != parent_namespace:
@@ -554,6 +582,8 @@ def _return_managed_child_to_parent(
         parent_stage_lease.resume(deadline=deadline)
     except Exception as error:  # noqa: BLE001 - never continue with suspended adapters
         return f"parent view refresh failed: {type(error).__name__}"
+    if rejected_pending_pub:
+        return "child candidate publication was rejected on reconcile"
     return None
 
 
@@ -821,6 +851,8 @@ def build_invoke_workflow_tool(
         }
         if wants_acquisition:
             workflow_kwargs["acquisition"] = AcquisitionSubstrateRequest()
+        if ctx.initial_planner_context:
+            workflow_kwargs["initial_planner_context"] = ctx.initial_planner_context
         exit_code, terminal_state, workflow_error, lifecycle_error = _execute_child_with_managed_lifecycle(
             run_workflow_fn,
             workflow_kwargs=workflow_kwargs,

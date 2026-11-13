@@ -2092,3 +2092,127 @@ def test_managed_cli_completion_projects_only_standalone_and_preserves_outcome(
         assert sink[0].stop_reason == "stopped_by_llm"
     if mode == "export-failure":
         assert len(export_attempts) == 1
+
+
+def test_snapshot_parent_for_initial_planner_empty_cases(tmp_path: Path) -> None:
+    from fa.cli import _snapshot_parent_for_initial_planner
+    from fa.inner_loop.state import EventLog, SessionState
+
+    assert _snapshot_parent_for_initial_planner(None) == ""
+    assert _snapshot_parent_for_initial_planner([None]) == ""
+    bare_state = SessionState(workspace_root=tmp_path, log=None)
+    assert _snapshot_parent_for_initial_planner([bare_state]) == ""
+
+    empty_log = EventLog(tmp_path / "events.jsonl", run_id="r-empty")
+    empty_state = SessionState(workspace_root=tmp_path, run_id="r-empty", log=empty_log)
+    assert _snapshot_parent_for_initial_planner([empty_state]) == ""
+
+
+def test_snapshot_parent_for_initial_planner_bounds_messages_entries_and_total_chars(tmp_path: Path) -> None:
+    from fa.cli import (
+        _PARENT_SNAPSHOT_MAX_CHARS,
+        _PARENT_SNAPSHOT_MAX_ENTRY_CHARS,
+        _snapshot_parent_for_initial_planner,
+    )
+    from fa.inner_loop.state import EventLog, SessionState
+
+    # 1. >12 messages preserves first user message, inserts omission marker, keeps tail 11, caps single entry at 600.
+    log1 = EventLog(tmp_path / "events1.jsonl", run_id="r-bounds-1")
+    log1.append(actor="user", kind="user_msg", content={"text": "GOAL-00 first user prompt"})
+    for idx in range(1, 16):
+        if idx == 10:
+            log1.append(actor="user", kind="user_msg", content={"text": f"LONG-{idx:02d} " + ("x" * 700)})
+        else:
+            log1.append(actor="user", kind="user_msg", content={"text": f"TURN-{idx:02d} body"})
+    state1 = SessionState(workspace_root=tmp_path, run_id="r-bounds-1", log=log1)
+    snap1 = _snapshot_parent_for_initial_planner([state1])
+
+    assert "GOAL-00 first user prompt" in snap1
+    assert "... [earlier parent turns omitted] ..." in snap1
+    for dropped in ("TURN-01", "TURN-02", "TURN-03", "TURN-04"):
+        assert dropped not in snap1
+    for kept in ("TURN-05", "LONG-10", "TURN-15"):
+        assert kept in snap1
+    long_line = next(line for line in snap1.splitlines() if "LONG-10" in line)
+    assert long_line.endswith("...[truncated]")
+    # Label prefix + max entry chars (600) stays strictly bounded.
+    assert len(long_line.removeprefix("[parent user] ")) <= _PARENT_SNAPSHOT_MAX_ENTRY_CHARS
+
+    # 2. Total snapshot length capped at 4000 chars with truncation footer.
+    log2 = EventLog(tmp_path / "events2.jsonl", run_id="r-bounds-2")
+    for idx in range(12):
+        log2.append(actor="user", kind="user_msg", content={"text": f"MSG-{idx:02d}-" + ("z" * 480)})
+    state2 = SessionState(workspace_root=tmp_path, run_id="r-bounds-2", log=log2)
+    snap2 = _snapshot_parent_for_initial_planner([state2])
+
+    assert len(snap2) <= _PARENT_SNAPSHOT_MAX_CHARS
+    assert snap2.endswith("... [snapshot truncated]")
+
+
+def test_snapshot_parent_for_initial_planner_redacts_secrets_and_marks_untrusted_tools(tmp_path: Path) -> None:
+    from fa.cli import _snapshot_parent_for_initial_planner
+    from fa.inner_loop.state import EventLog, SessionState
+    from fa.observability.redaction import SecretRedactor
+
+    env_secret = "LIVE_ENV_SECRET_42_XYZ"
+    extra_secret = "CUSTOM_RUNTIME_SECRET_99_XYZ"
+    redactor = SecretRedactor({}, (), extra_values=(env_secret,), allow_empty=True)
+    log = EventLog(tmp_path / "events-red.jsonl", run_id="r-red", redactor=redactor)
+
+    pem_secret = "-----BEGIN RSA PRIVATE KEY-----\n" + ("MIIE" * 180) + "\n-----END RSA PRIVATE KEY-----"
+    log.append(
+        actor="harness",
+        kind="compaction_stage3_done",
+        content={"summary": f"Summary with {env_secret} and Bearer tok_compacted_123456"},
+    )
+    log.append(
+        actor="user",
+        kind="user_msg",
+        content={
+            "text": (
+                f"Check sk-abcdef1234567890 and ghp_1234567890abcdef12 and github_pat_1234567890abcdef1234 "
+                f"plus {pem_secret}"
+            )
+        },
+    )
+    log.append(
+        actor="model",
+        kind="model_msg",
+        content={
+            "text": "Inspecting AIzaSyDummyKey1234567890abcd and AKIAIOSFODNN7EXAMPLE",
+            "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "fs_read_file", "arguments": "{}"}}],
+        },
+    )
+    log.append(
+        actor="tool",
+        kind="tool_result",
+        tool_name="fs_read_file",
+        tool_call_id="c1",
+        content={
+            "summary": "read config",
+            "result": {"stdout": f'api_key=MY_INLINE_KEY_7890 password="supersecretpass" {extra_secret}'},
+        },
+    )
+    state = SessionState(workspace_root=tmp_path, run_id="r-red", log=log)
+    snap = _snapshot_parent_for_initial_planner([state], secrets={"CUSTOM": extra_secret})
+
+    assert "[parent compacted summary]" in snap
+    assert "[parent user]" in snap
+    assert "[parent assistant (tools: fs_read_file)]" in snap
+    assert "[parent tool output (untrusted data)]" in snap
+    assert "***REDACTED***" in snap
+    for leaked in (
+        env_secret,
+        extra_secret,
+        "tok_compacted_123456",
+        "sk-abcdef1234567890",
+        "ghp_1234567890abcdef12",
+        "github_pat_1234567890abcdef1234",
+        "AIzaSyDummyKey1234567890abcd",
+        "AKIAIOSFODNN7EXAMPLE",
+        "BEGIN RSA PRIVATE KEY",
+        "MIIEMIIE",
+        "MY_INLINE_KEY_7890",
+        "supersecretpass",
+    ):
+        assert leaked not in snap, f"secret fragment leaked: {leaked!r}"

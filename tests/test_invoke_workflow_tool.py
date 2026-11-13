@@ -139,6 +139,7 @@ class _RecordingWorkflow:
         plan_publisher: Any = None,
         managed_execution: Any = None,
         acquisition: Any = None,
+        initial_planner_context: str = "",
     ) -> tuple[int, FlowState | None]:
         self.calls.append(
             {
@@ -162,6 +163,7 @@ class _RecordingWorkflow:
                 "plan_publisher": plan_publisher,
                 "managed_execution": managed_execution,
                 "acquisition": acquisition,
+                "initial_planner_context": initial_planner_context,
             }
         )
         if self._on_call is not None:
@@ -1174,3 +1176,337 @@ def test_invoke_workflow_tool_description_matches_live_acquisition_policy(tmp_pa
     unmanaged = acquisition_refusal(["planner", "coder", "eval"], managed=False)
     assert unmanaged is not None and unmanaged[0] == "acquisition_unavailable"
     assert acquisition_refusal(["planner", "eval"], managed=False) is None
+
+
+def test_invoke_workflow_forwards_initial_planner_context_when_present(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CT109: non-empty initial_planner_context travels only as an explicit kwarg when provided."""
+    ctx, _managed, _lease, _events = _managed_context(tmp_path, monkeypatch)
+    ctx_with_snapshot = replace(ctx, initial_planner_context="[parent user] SNAPSHOT_SENTINEL", max_invocations=4)
+    current_ctx = ctx_with_snapshot
+    workflow = _RecordingWorkflow()
+    spec = build_invoke_workflow_tool(workflow, lambda: current_ctx)
+    res1 = spec.handler({"task": "plan it", "roles": "planner"})
+    assert res1.error is None, res1.error
+    assert workflow.calls[0]["initial_planner_context"] == "[parent user] SNAPSHOT_SENTINEL"
+
+    current_ctx = replace(ctx, initial_planner_context="", max_invocations=4)
+    res2 = spec.handler({"task": "plan again", "roles": "planner"})
+    assert res2.error is None, res2.error
+    assert workflow.calls[1]["initial_planner_context"] == ""
+
+
+def test_child_return_reconciles_pending_publication_before_handoff_and_resumes_parent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """E512 + R26: unresolved child candidate publication reconciles cleanly before return HANDOFF."""
+    ctx, managed, lease, events = _managed_context(tmp_path, monkeypatch)
+    pending_cleared = False
+
+    def leave_pending() -> None:
+        monkeypatch.setattr(type(managed), "publication_pending", property(lambda _self: not pending_cleared))
+        events.append("child_left_pub_pending")
+
+    def fake_reconcile(*, deadline: float | None = None) -> object:
+        nonlocal pending_cleared
+        del deadline
+        pending_cleared = True
+        events.append("reconcile_publication")
+        return object()
+
+    monkeypatch.setattr(managed, "reconcile_publication", fake_reconcile)
+    workflow = _RecordingWorkflow(on_call=leave_pending)
+    result = _call(_tool(workflow, ctx), task="review", roles="planner")
+
+    assert result.error is None
+    assert events == ["suspend", "handoff", "child_left_pub_pending", "reconcile_publication", "handoff", "resume"]
+    assert managed.binding.namespace == NamespaceRef("parent-session", "run-parent")
+    assert lease.state == "active"
+
+
+def test_child_return_on_rejected_reconcile_publication_restores_parent_but_fails_tool_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R26: rejected child candidate reconcile still returns ownership to parent, then fails tool call."""
+    ctx, managed, lease, events = _managed_context(tmp_path, monkeypatch)
+    pending_cleared = False
+
+    def leave_pending() -> None:
+        monkeypatch.setattr(type(managed), "publication_pending", property(lambda _self: not pending_cleared))
+
+    def reject_reconcile(*, deadline: float | None = None) -> object:
+        nonlocal pending_cleared
+        del deadline
+        pending_cleared = True
+        events.append("reconcile_rejected")
+        raise ExecutionRejectedError("STALE_REVISION", "op-pub")
+
+    monkeypatch.setattr(managed, "reconcile_publication", reject_reconcile)
+    workflow = _RecordingWorkflow(on_call=leave_pending)
+    result = _call(_tool(workflow, ctx), task="review", roles="planner")
+
+    assert _error_code(result) == "workflow_return_unconfirmed"
+    assert result.error is not None and "rejected on reconcile" in result.error.message
+    assert events == ["suspend", "handoff", "reconcile_rejected", "handoff", "resume"]
+    assert managed.binding.namespace == NamespaceRef("parent-session", "run-parent")
+    assert lease.state == "active"
+
+
+def test_child_return_reconciles_uncertain_return_handoff_and_resumes_parent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R26: uncertain reply on child->parent HANDOFF calls reconcile_handoff and restores parent."""
+    ctx, managed, lease, events = _managed_context(
+        tmp_path,
+        monkeypatch,
+        client_failure=(2, ExecutionUncertainError("op-return-lost", code="DURABILITY_UNKNOWN")),
+    )
+    workflow = _RecordingWorkflow(on_call=lambda: events.append("dispatch"))
+    result = _call(_tool(workflow, ctx), task="review", roles="planner")
+
+    assert result.error is None
+    assert events == ["suspend", "handoff", "dispatch", "handoff", "handoff", "resume"]
+    assert not managed.handoff_pending
+    assert managed.binding.namespace == NamespaceRef("parent-session", "run-parent")
+    assert lease.state == "active"
+
+
+def test_child_return_blocks_when_child_leaves_handoff_pending(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """R26: if child finished with handoff_pending=True, return refuses without sending HANDOFF or resume."""
+    ctx, managed, lease, events = _managed_context(tmp_path, monkeypatch)
+
+    def leave_handoff_pending() -> None:
+        monkeypatch.setattr(type(managed), "handoff_pending", property(lambda _self: True))
+        events.append("child_left_handoff_pending")
+
+    workflow = _RecordingWorkflow(on_call=leave_handoff_pending)
+    result = _call(_tool(workflow, ctx), task="review", roles="planner")
+
+    assert _error_code(result) == "workflow_return_unconfirmed"
+    assert events == ["suspend", "handoff", "child_left_handoff_pending"]
+    assert lease.state == "suspended"
+
+
+def test_invoke_workflow_real_supervisor_handoff_mutation_confinement_and_fault_suppression(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SLICE5 STEP2 C1: build_invoke_workflow_tool -> real SupervisorService -> MUTATION child -> return -> RELEASE."""
+    from dataclasses import asdict
+
+    from fa import cli
+    from fa.execution import composition
+    from fa.execution.client import (
+        ExecutionUnavailableError,
+        ManagedBashExecutor,
+        ManagedProjectToolExecutor,
+    )
+    from fa.execution.composition import managed_execution_for_run
+    from fa.execution.service import SupervisorService, read_config_file
+    from fa.execution.tool_port import ClientWorkspacePort
+    from fa.execution.types import Access, ViewPurpose
+    from fa.inner_loop.plan_admission import read_plan_snapshot
+    from fa.inner_loop.session_db import SessionDatabase
+    from fa.session.manager import SessionManager
+    from fa.session.provisioning import ProvisionedWorkspace
+    from fa.workspace_bootstrap import ReadyState, ReadyStatus
+    from tests.test_execution_composition import (
+        _configs,
+        _document,
+        _serving_supervisor,
+        native_profile,
+        read_only_profile,
+    )
+    from tests.test_execution_workspace import Site
+
+    roots = tmp_path / "projects"
+    source = roots / "project"
+    state = tmp_path / "protected"
+    source.mkdir(parents=True)
+    state.mkdir(parents=True)
+    (source / "src").mkdir()
+    (source / "src" / "keep.py").write_text("KEEP = 1\n", encoding="utf-8")
+    (source / "plan.md").write_text("# canonical plan\n", encoding="utf-8")
+    (source / "untracked.txt").write_text("untracked", encoding="utf-8")
+    roots.chmod(0o755)
+
+    monkeypatch.setenv("FA_STATE_ROOT", str(tmp_path / "fa-state"))
+    monkeypatch.setenv("FA_WORKSPACE_ROOT", str(roots))
+
+    site_obj = Site(state, roots, source)
+    doc = _document(site_obj)
+    view_prof = native_profile()
+    ro_prof = read_only_profile()
+    doc["profiles"] = [asdict(view_prof), asdict(ro_prof)]
+    doc["view_profile_id"] = view_prof.profile_id
+    doc["read_only_profile_id"] = ro_prof.profile_id
+    service_path, service_config = _configs(tmp_path, doc)
+    monkeypatch.setattr(composition, "DEFAULT_CONFIG_PATH", service_config)
+
+    real_manager = SessionManager(
+        state_root=tmp_path / "fa-state",
+        workspace_root=roots,
+        source_workspace=source,
+        workspace_provisioner=lambda _req: ProvisionedWorkspace(True, "ws-" + "1" * 32, "rev-" + "2" * 32, None),
+        workspace_preparer=lambda *_a: ReadyState(
+            ReadyStatus.READY, None, "ready_fast_path", source / "ready.log", False, 1
+        ),
+    )
+    session = real_manager.provision_entrypoint_session(session_id="parent-c1", workspace_override=source)
+    parent = real_manager.begin_run(session, requested_run_id="run-parent-c1")
+    parent2 = real_manager.begin_run(session, requested_run_id="run-parent-c2")
+    session_db = SessionDatabase.open_existing(session.session_db_path, session_id=session.session_id)
+    plan_ref = read_plan_snapshot(source, Path("plan.md")).ref
+
+    with SupervisorService(read_config_file(service_path)) as service, _serving_supervisor(service):
+        parent_ns = NamespaceRef(session.session_id, parent.run_id)
+        managed = managed_execution_for_run(parent)
+        assert managed is not None
+        client = managed.client
+        view_grant = managed.open_view(
+            access=Access.WRITE, purpose=ViewPurpose.PROJECT, base_revision=managed.current_revision_id
+        )
+        assert view_grant.view_ref is not None and view_grant.input_tree_sha256 is not None
+        port = ClientWorkspacePort(client, namespace=parent_ns, view=view_grant.view_ref, grant=view_grant)
+        bash_exec = ManagedBashExecutor(
+            client,
+            namespace=parent_ns,
+            view=view_grant.view_ref,
+            grant=view_grant,
+            profile=view_prof,
+            input_tree_sha256=view_grant.input_tree_sha256,
+            plan_sha256=None,
+            original_revision_id=managed.current_revision_id,
+            controller_root=source,
+        )
+        pt_exec = ManagedProjectToolExecutor(
+            client,
+            namespace=parent_ns,
+            view=view_grant.view_ref,
+            grant=view_grant,
+            profile=view_prof,
+            input_tree_sha256=view_grant.input_tree_sha256,
+            plan_sha256=None,
+            original_revision_id=managed.current_revision_id,
+        )
+        lease = cli._ManagedStageLease(
+            managed=managed,
+            namespace=parent_ns,
+            view_grant=view_grant,
+            workspace_io=port,
+            managed_executor=bash_exec,
+            project_tool_executor=pt_exec,
+            plan_ref=None,
+            allow_nested_handoff=True,
+        )
+
+        def real_child_workflow(**kwargs: Any) -> tuple[int, FlowState | None]:
+            child_managed: ManagedExecution = kwargs["managed_execution"]
+            assert child_managed.binding.namespace.parent_run_id == parent.run_id
+            mut = child_managed.open_view(
+                access=Access.WRITE,
+                purpose=ViewPurpose.MUTATION,
+                base_revision=child_managed.current_revision_id,
+                plan_ref=plan_ref,
+            )
+            assert mut.view_ref is not None
+            child_port = ClientWorkspacePort(
+                child_managed.client,
+                namespace=child_managed.binding.namespace,
+                view=mut.view_ref,
+                grant=mut,
+            )
+            with pytest.raises(Exception) as denied_plan:
+                child_port.write_file("plan.md", "# tampered\n")
+            assert "denied" in str(denied_plan.value).lower() or "path_denied" in str(denied_plan.value).lower()
+            child_port.write_file("src/child_ok.py", "CHILD_OK = True\n")
+            child_managed.publish_stage(mut)
+            return 0, _TerminalState()
+
+        ctx = WorkflowInvocationContext(
+            parent_run_id=parent.run_id,
+            config=tmp_path / "models.yaml",
+            workspace=source,
+            max_turns=2,
+            run_stage_fn=lambda ns, **kw: 0,
+            workflow_timeout_seconds=120,
+            session_context=session,
+            run_context=parent,
+            session_db=session_db,
+            managed_execution=managed,
+            parent_stage_lease=lease,
+        )
+        spec = build_invoke_workflow_tool(real_child_workflow, lambda: ctx)
+        res = spec.handler({"task": "implement", "roles": "planner,coder,eval"})
+        assert res.error is None, res.error
+        assert lease.state == "active"
+        assert managed.binding.namespace == parent_ns
+        assert (source / "src" / "child_ok.py").read_text(encoding="utf-8") == "CHILD_OK = True\n"
+        assert (source / "plan.md").read_text(encoding="utf-8") == "# canonical plan\n"
+        lease.finish(accepted=True)
+        assert lease.writer_release_safe
+        assert managed.close()
+        meta_reply = site_obj.metadata({"workspace_id": managed.binding.workspace_id})
+        assert meta_reply["status"] == "AVAILABLE"
+
+        # Second check: uncertain return HANDOFF suppresses RELEASE.
+        parent2_ns = NamespaceRef(session.session_id, parent2.run_id)
+        managed2 = managed_execution_for_run(parent2)
+        assert managed2 is not None
+        client2 = managed2.client
+        view2 = managed2.open_view(
+            access=Access.WRITE, purpose=ViewPurpose.PROJECT, base_revision=managed2.current_revision_id
+        )
+        assert view2.view_ref is not None and view2.input_tree_sha256 is not None
+        lease2 = cli._ManagedStageLease(
+            managed=managed2,
+            namespace=parent2_ns,
+            view_grant=view2,
+            workspace_io=ClientWorkspacePort(client2, namespace=parent2_ns, view=view2.view_ref, grant=view2),
+            managed_executor=ManagedBashExecutor(
+                client2,
+                namespace=parent2_ns,
+                view=view2.view_ref,
+                grant=view2,
+                profile=view_prof,
+                input_tree_sha256=view2.input_tree_sha256,
+                plan_sha256=None,
+                original_revision_id=managed2.current_revision_id,
+                controller_root=source,
+            ),
+            project_tool_executor=ManagedProjectToolExecutor(
+                client2,
+                namespace=parent2_ns,
+                view=view2.view_ref,
+                grant=view2,
+                profile=view_prof,
+                input_tree_sha256=view2.input_tree_sha256,
+                plan_sha256=None,
+                original_revision_id=managed2.current_revision_id,
+            ),
+            plan_ref=None,
+            allow_nested_handoff=True,
+        )
+        orig_req = managed2.client.request
+
+        def drop_return_handoff(operation: Operation, **kwargs: Any) -> dict[str, Any]:
+            if operation is Operation.HANDOFF and kwargs["namespace"] != parent2_ns:
+                raise ExecutionUncertainError("op-" + str(kwargs["request_id"]))
+            return orig_req(operation, **kwargs)
+
+        monkeypatch.setattr(managed2.client, "request", drop_return_handoff)
+        ctx2 = replace(
+            ctx,
+            parent_run_id=parent2.run_id,
+            run_context=parent2,
+            managed_execution=managed2,
+            parent_stage_lease=lease2,
+        )
+        spec2 = build_invoke_workflow_tool(lambda **_kw: (0, _TerminalState()), lambda: ctx2)
+        res2 = spec2.handler({"task": "lost return", "roles": "planner"})
+        assert _error_code(res2) == "workflow_return_unconfirmed"
+        assert lease2.state == "suspended"
+        with pytest.raises(ExecutionUnavailableError):
+            lease2.finish(accepted=True)
+        assert not lease2.writer_release_safe
+        assert managed2.close() is False

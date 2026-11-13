@@ -146,7 +146,8 @@ def _setup_managed_site(
     models = _write_models_config(site.source)
     document = _document(site)
     if local_cell_peer is not None:
-        _, reader_profile, _ = _configure_local_cell_backend(local_cell_peer, tmp_path, document)
+        writer_profile, reader_profile, _ = _configure_local_cell_backend(local_cell_peer, tmp_path, document)
+        install_environment_artifact(Path(document["approved_cache"]), site.source, profile=writer_profile)
         install_environment_artifact(Path(document["approved_cache"]), site.source, profile=reader_profile)
     else:
         cell_profile = native_profile()
@@ -364,11 +365,18 @@ def test_invoke_workflow_chat_acquisition_coder_eval_uses_pin_reader_and_release
         for op, req, payload in ops
         if op is Operation.CREATE_VIEW and payload.get("access") == "WRITE" and payload.get("purpose") == "PROJECT"
     ]
+    create_mutation_write_ops = [
+        (req, payload)
+        for op, req, payload in ops
+        if op is Operation.CREATE_VIEW and payload.get("access") == "WRITE" and payload.get("purpose") == "MUTATION"
+    ]
     exec_ops = [payload for op, _, payload in ops if op is Operation.EXEC]
     publish_ops = [req for op, req, _ in ops if op is Operation.PUBLISH]
-    # ACQUISITION and eval pinned READ/PROJECT views; parent chat (suspend + final) and coder wrote PROJECT views.
+    # ACQUISITION and eval pinned READ/PROJECT views; parent chat (suspend + final) wrote PROJECT views;
+    # Q141=C confined the nested coder stage to a WRITE/MUTATION view.
     assert len(pin_ops) >= 2
-    assert len(create_project_write_ops) == 3
+    assert len(create_project_write_ops) == 2
+    assert len(create_mutation_write_ops) == 1
     assert len(exec_ops) == 2
     assert any("project_tool" in p and p.get("profile_id") == "reader" for p in exec_ops)
     assert any(
@@ -882,3 +890,511 @@ def test_read_only_stage_failed_stop_view_never_retries(
             assert len(stop_calls) == 1
         finally:
             assert managed.close()
+
+
+def _wire_mutation_cell_project_tools_and_eval_cell(
+    *,
+    local_cell_peer: Endpoint,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    document: dict[str, Any],
+    reader_profile: Any,
+) -> None:
+    """Attach project_tools dispatch on the MUTATION cell bind mount and queue the eval one-shot cell."""
+    import subprocess
+    from types import SimpleNamespace
+
+    from fa.execution import cell_worker, project_tools
+    from fa.execution.cell_worker import serve_once
+    from fa.runtime.pty_pool import PtyPool
+    from tests.test_execution_backend import UPGRADE, CountingWorker, MuxWorker
+    from tests.test_execution_docker import Reply
+
+    class _ProjectToolProcess:
+        def __init__(self, args: list[str]) -> None:
+            self.args = list(args)
+
+    def _start_project_tool(args: list[str], **_kwargs: Any) -> _ProjectToolProcess:
+        return _ProjectToolProcess(args)
+
+    def _run_project_helper(process: _ProjectToolProcess, *, timeout_ms: int) -> tuple[bytes, bytes, int, bool, bool]:
+        assert timeout_ms > 0
+        parsed = project_tools._parse(process.args[-1])
+        assert parsed is not None
+        creates = [
+            item for item in local_cell_peer.seen if item["method"] == "POST" and "/containers/create?" in item["path"]
+        ]
+        mounts = creates[-1]["body"]["HostConfig"]["Mounts"]
+        view_source = Path(next(m["Source"] for m in mounts if m["Target"] == "/workspace"))
+        scratch = tmp_path / "project-tool-scratch"
+        scratch.mkdir(exist_ok=True)
+        result = project_tools._dispatch(parsed[0], parsed[1], root=view_source, scratch=scratch)
+        return (project_tools._envelope(result) + "\n").encode("utf-8"), b"", 0, False, False
+
+    monkeypatch.setattr(
+        cell_worker,
+        "subprocess",
+        SimpleNamespace(Popen=_start_project_tool, DEVNULL=subprocess.DEVNULL, PIPE=subprocess.PIPE),
+    )
+    monkeypatch.setattr(cell_worker, "_capture_project_tool", _run_project_helper)
+
+    cell2_cid = "c" * 64
+    cgroup2 = Path(document["cgroup_root"]) / reader_profile.cgroup_parent / cell2_cid
+    cgroup2.mkdir(parents=True, exist_ok=True)
+    (cgroup2 / "cgroup.events").write_text("populated 0\nfrozen 0\n", encoding="utf-8")
+    eval_worker_exit: list[int] = []
+    eval_worker_root = tmp_path / "local-cell-workspace"
+    eval_worker = CountingWorker(
+        PtyPool(base_cwd=eval_worker_root),
+        workspace=eval_worker_root,
+        max_command_ms=reader_profile.max_command_ms,
+        one_shot=True,
+    )
+
+    def _eval_attach(connection: Any) -> None:
+        eval_worker_exit.append(serve_once(eval_worker, MuxWorker(connection)))
+
+    def _eval_inspect(status: str) -> Reply:
+        def _payload(_seen: dict[str, Any]) -> dict[str, Any]:
+            creates = [
+                item
+                for item in local_cell_peer.seen
+                if item["method"] == "POST" and "/containers/create?" in item["path"]
+            ]
+            body = creates[-1]["body"] if creates else {}
+            labels = body.get("Labels", {})
+            op_id = labels.get("fa.execution.operation_id", "op-" + "0" * 32)
+            return {
+                "Id": cell2_cid,
+                "Name": "/fa-job-" + op_id.removeprefix("op-"),
+                "Image": reader_profile.image_digest,
+                "Config": {"Image": reader_profile.image, "Labels": labels},
+                "State": {
+                    "Status": status,
+                    "Running": status == "running",
+                    "Paused": False,
+                    "Restarting": False,
+                    "Dead": False,
+                    "OOMKilled": False,
+                    "Pid": 124 if status == "running" else 0,
+                    "ExitCode": 0 if status == "running" else (eval_worker_exit[0] if eval_worker_exit else 0),
+                },
+            }
+
+        return Reply(200, _payload)
+
+    local_cell_peer.replies.extend(
+        [
+            Reply(201, {"Id": cell2_cid, "Warnings": []}),
+            Reply(204),
+            _eval_inspect("running"),
+            Reply(raw=UPGRADE, upgraded=_eval_attach),
+            _eval_inspect("exited"),
+            _eval_inspect("exited"),
+        ]
+    )
+
+
+def _confinement_coder_reply(turn: int, tag: str) -> tuple[ResponseInfo, str, list[Any]]:
+    actions: list[tuple[str, str, dict[str, Any]]] = [
+        ("cd-plan", "fs_write_file", {"path": _PLAN_RELATIVE, "content": "# TAMPERED\n"}),
+        ("cd-fa", "fs_write_file", {"path": ".fa/evil.txt", "content": "EVIL\n"}),
+        ("cd-search", "fs_search", {"output_mode": "files"}),
+        ("cd-src", "fs_write_file", {"path": "src/confined.py", "content": "CONFINED = True\n"}),
+        ("cd-scripts", "fs_write_file", {"path": "scripts/confined.sh", "content": "#!/bin/sh\necho ok\n"}),
+    ]
+    if turn < len(actions):
+        call_id, name, args = actions[turn]
+        return _tool_reply(call_id, name, args, tag)
+    return _stop_reply("confined mutations written", tag)
+
+
+def test_nested_coder_mutation_confinement_blocks_plan_and_fa_writes_while_allowing_src(
+    site: Site,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    local_cell_peer: Endpoint,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """R26 / Q141=C / SLICE5 STEP2+STEP5 C1: nested coder runs in MUTATION, adaptive+enforce blocks plan/.fa writes."""
+    from tests.test_execution_workspace import install_environment_artifact
+
+    _install_bundle(site.source, include_tests=True)
+    monkeypatch.setenv("FA_STATE_ROOT", str(tmp_path / "fa-state"))
+    monkeypatch.setenv("FA_WORKSPACE_ROOT", str(site.roots))
+    models = _write_models_config(site.source)
+    document = _document(site)
+    writer_profile, reader_profile, _ = _configure_local_cell_backend(
+        local_cell_peer, tmp_path, document, interactive_worker=True, project_tool_calls=1
+    )
+    install_environment_artifact(Path(document["approved_cache"]), site.source, profile=writer_profile)
+    install_environment_artifact(Path(document["approved_cache"]), site.source, profile=reader_profile)
+    _wire_mutation_cell_project_tools_and_eval_cell(
+        local_cell_peer=local_cell_peer,
+        tmp_path=tmp_path,
+        monkeypatch=monkeypatch,
+        document=document,
+        reader_profile=reader_profile,
+    )
+
+    service_path, service_config = _configs(tmp_path, document)
+    monkeypatch.setattr(composition, "DEFAULT_CONFIG_PATH", service_config)
+    _wire_session_contexts(site, monkeypatch, session_id="s-q141", run_id="run-chat-q141")
+    _watch_managed_child_host_execution(monkeypatch)
+
+    # Enable workflow.verify_gate.mode=enforce for this E2E confinement proof.
+    from fa import feature_flags
+
+    ff_config = tmp_path / "feature-flags.yaml"
+    ff_config.write_text("feature_flags:\n  workflow:\n    verify_gate:\n      mode: enforce\n", encoding="utf-8")
+    monkeypatch.setattr(feature_flags, "DEFAULT_CONFIG_PATH", ff_config)
+
+    # Pin baseline plan bytes and install an adaptive-ready plan with verifiable command.
+    plan_text = (site.source / _PLAN_RELATIVE).read_text(encoding="utf-8")
+    plan_text_verified = plan_text + "\n```verify\npython3 -c 'import sys; sys.exit(0)'\n```\n"
+    (site.source / _PLAN_RELATIVE).write_text(plan_text_verified, encoding="utf-8")
+    plan_before = (site.source / _PLAN_RELATIVE).read_bytes()
+
+    stage_turns: dict[str, int] = {"chat": 0, "planner": 0, "coder": 0, "eval": 0}
+    eval_pass = (
+        "## Verification Summary\n\n### Step results\n- SLICE1: PASS\n\n"
+        "### Verdict\nPASS\n\n### Route decision\ncomplete\n"
+    )
+    selection = json.dumps({"kind": "SELECT_EXISTING", "project_slug": _SLUG, "increment_id": "I01"})
+    tool_results_seen: list[str] = []
+
+    def fake_request(
+        _chain: Any, request: Any, *, logical_call_id: str | None = None
+    ) -> tuple[ResponseInfo, str, list[Any]]:
+        tools = _tool_names(request)
+        system = _system_text(request)
+        tag = logical_call_id or "q141"
+        tool_results_seen.extend(str(msg.get("content", "")) for msg in request.messages if msg.get("role") == "tool")
+        role = (
+            "chat"
+            if "invoke_workflow" in tools
+            else "eval"
+            if "you are the first-agent evaluator" in system.lower()
+            else "coder"
+            if "fs_run_bash" in tools
+            else "planner"
+        )
+        turn = stage_turns[role]
+        stage_turns[role] = turn + 1
+
+        if role == "chat":
+            return (
+                _tool_reply(
+                    "ch-q141",
+                    "invoke_workflow",
+                    {"task": "confined mutation test", "roles": "planner,coder,eval", "mode": "adaptive"},
+                    tag,
+                )
+                if turn == 0
+                else _stop_reply("nested adaptive workflow finished", tag)
+            )
+        if role == "planner":
+            return _stop_reply(selection, tag)
+        if role == "coder":
+            return _confinement_coder_reply(turn, tag)
+        return _stop_reply(eval_pass, tag)
+
+    monkeypatch.setattr(ProviderChain, "request", fake_request)
+    managed_list = _track_managed(monkeypatch)
+    args = cli.build_parser().parse_args(
+        [
+            "run",
+            "--role",
+            "chat",
+            "--task",
+            "run nested coder confinement",
+            "--workspace",
+            str(site.source),
+            "--config",
+            str(models),
+            "--max-turns",
+            "8",
+        ]
+    )
+
+    with SupervisorService(read_config_file(service_path)) as service:
+        ops = _spy_operations(service)
+        with _serving_supervisor(service):
+            exit_code = cli._cmd_run(args, secrets=SecretStore({"K": "sk-test-live"}))
+
+    assert exit_code == 0
+    assert (site.source / _PLAN_RELATIVE).read_bytes() == plan_before
+    assert not (site.source / ".fa" / "evil.txt").exists()
+    assert (site.source / "src" / "confined.py").read_text(encoding="utf-8") == "CONFINED = True\n"
+    assert (site.source / "scripts" / "confined.sh").read_text(encoding="utf-8") == "#!/bin/sh\necho ok\n"
+    assert any("workspace refused the write: denied" in item for item in tool_results_seen)
+    mutation_views = [
+        payload
+        for op, _, payload in ops
+        if op is Operation.CREATE_VIEW and payload.get("access") == "WRITE" and payload.get("purpose") == "MUTATION"
+    ]
+    assert len(mutation_views) == 1
+    assert any("project_tool" in payload for op, _, payload in ops if op is Operation.EXEC)
+    assert not any("execution_rejected" in item or "project_tool_failed" in item for item in tool_results_seen)
+    assert any(_PLAN_RELATIVE in item for item in tool_results_seen if "ERROR[" not in item)
+    verify_artifact = tmp_path / "fa-state" / "session-log" / "run-chat-q141-wf1" / "verification.json"
+    assert verify_artifact.is_file()
+    verify_doc = json.loads(verify_artifact.read_text(encoding="utf-8"))
+    assert verify_doc["attempts"][-1]["mode"] == "enforce"
+    assert verify_doc["attempts"][-1]["blocking"] is False
+    assert "verify gate mode=enforce blocking=False" in capsys.readouterr().err
+    assert site.metadata({"workspace_id": managed_list[0].binding.workspace_id})["status"] == "AVAILABLE"
+
+
+def _ct109_classify(tools: set[str], system: str, candidate_target: str | None) -> str:
+    if "invoke_workflow" in tools:
+        return "chat"
+    if "you are the first-agent evaluator" in system.lower():
+        return "eval"
+    if "fs_run_bash" in tools:
+        return "coder"
+    return "planner_candidate" if candidate_target is not None else "planner_initial"
+
+
+def _ct109_chat_reply(turn: int, tag: str) -> tuple[ResponseInfo, str, list[Any]]:
+    if turn == 0:
+        return _tool_reply("ch-read", "fs_read_file", {"path": "notes.txt"}, tag)
+    if turn == 1:
+        return _tool_reply(
+            "ch-wf",
+            "invoke_workflow",
+            {
+                "task": "repair and build ct109 feature",
+                "roles": "planner,coder,eval",
+                "mode": "adaptive",
+                "max_repairs": 1,
+                "max_replans": 2,
+            },
+            tag,
+        )
+    return _stop_reply("ct109 finished", tag)
+
+
+def _ct109_candidate_reply(
+    rnd: int, candidate_target: str, repaired_plan: str, tag: str
+) -> tuple[ResponseInfo, str, list[Any]]:
+    if rnd == 1:
+        return _tool_reply("rep-w", "fs_write_file", {"path": candidate_target, "content": repaired_plan}, tag)
+    if rnd == 2:
+        return _stop_reply("repaired plan candidate", tag)
+    if rnd == 3:
+        return _tool_reply(
+            "replan-w",
+            "fs_write_file",
+            {"path": candidate_target, "content": repaired_plan + "\n# replan revision\n"},
+            tag,
+        )
+    return _stop_reply("replanned candidate", tag)
+
+
+def _make_ct109_provider(
+    repaired_plan: str,
+    observed_requests: list[tuple[str, list[dict[str, Any]]]],
+) -> Any:
+    """Build deterministic chat->planner(init)->repair->coder->replan->coder->eval responder for CT109."""
+    stage_turns: dict[str, int] = {"chat": 0, "planner": 0, "coder": 0, "eval": 0}
+    state = {"candidate_round": 0, "replan_eval_count": 0}
+    selection = json.dumps({"kind": "SELECT_EXISTING", "project_slug": _SLUG, "increment_id": "I01"})
+    eval_replan = (
+        "## Verification Summary\n\n### Step results\n- SLICE1: FAIL\n\n"
+        "### Verdict\nREPLAN_REQUIRED\n\n### Route decision\nreturn_to_planner\n"
+    )
+    eval_pass = (
+        "## Verification Summary\n\n### Step results\n- SLICE1: PASS\n\n"
+        "### Verdict\nPASS\n\n### Route decision\ncomplete\n"
+    )
+
+    def fake_request(
+        _chain: Any, request: Any, *, logical_call_id: str | None = None
+    ) -> tuple[ResponseInfo, str, list[Any]]:
+        candidate_target = _candidate_target_from_tools(request)
+        role = _ct109_classify(_tool_names(request), _system_text(request), candidate_target)
+        tag = logical_call_id or "ct109"
+        observed_requests.append((role, list(request.messages)))
+        base_role = "planner" if role.startswith("planner") else role
+        turn = stage_turns[base_role]
+        stage_turns[base_role] = turn + 1
+
+        if role == "chat":
+            return _ct109_chat_reply(turn, tag)
+        if role == "planner_initial":
+            return _stop_reply(selection, tag)
+        if role == "planner_candidate":
+            assert candidate_target is not None
+            state["candidate_round"] += 1
+            return _ct109_candidate_reply(state["candidate_round"], candidate_target, repaired_plan, tag)
+        if role == "coder":
+            if turn in {0, 2}:
+                return _tool_reply(f"cd-{turn}", "fs_write_file", {"path": "src/ct109.py", "content": "OK = 1\n"}, tag)
+            return _stop_reply("coded ct109", tag)
+        state["replan_eval_count"] += 1
+        return _stop_reply(eval_replan if state["replan_eval_count"] == 1 else eval_pass, tag)
+
+    return fake_request, state
+
+
+def test_parent_initial_planner_snapshot_is_one_shot_and_redacts_secrets(
+    site: Site,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """S5P4 / CT109 / Q66: initial planner receives bounded redacted parent snapshot once; repair/replan never leak."""
+    files = _install_bundle(site.source, include_tests=False)
+    repaired_plan = files[_PLAN_RELATIVE].decode("utf-8") + "TESTS: tests/test_managed_workflow_e2e.py\n"
+    models, service_path, _ = _setup_managed_site(site, tmp_path, monkeypatch)
+    _wire_session_contexts(site, monkeypatch, session_id="s-ct109", run_id="run-chat-ct109")
+    _watch_managed_child_host_execution(monkeypatch)
+    (site.source / "notes.txt").write_text("tool_note: api_key=SUPER_INLINE_KEY_VALUE_123\n", encoding="utf-8")
+
+    parent_only_sentinel = "PARENT-ONLY-GOAL-MARKER-7741"
+    configured_secret = "LIVE-CRED-SENTINEL-XY99"
+    sk_secret = "sk-abcdefghijklmnop123456"
+    bearer_secret = "tok_secret_987654321"
+
+    observed_requests: list[tuple[str, list[dict[str, Any]]]] = []
+    fake_request, ct109_state = _make_ct109_provider(repaired_plan, observed_requests)
+    monkeypatch.setattr(ProviderChain, "request", fake_request)
+    _track_managed(monkeypatch)
+    args = cli.build_parser().parse_args(
+        [
+            "run",
+            "--role",
+            "chat",
+            "--task",
+            f"Help with {parent_only_sentinel} using {configured_secret}, {sk_secret} and Bearer {bearer_secret}",
+            "--workspace",
+            str(site.source),
+            "--config",
+            str(models),
+            "--max-turns",
+            "8",
+        ]
+    )
+
+    with SupervisorService(read_config_file(service_path)) as service, _serving_supervisor(service):
+        exit_code = cli._cmd_run(
+            args,
+            secrets=SecretStore({"K": "sk-test-live", "SENTINEL_CRED": configured_secret}),
+        )
+
+    assert exit_code == 0
+    initial_planner_msgs = [msgs for role, msgs in observed_requests if role == "planner_initial"]
+    assert len(initial_planner_msgs) == 1
+    first_msgs = initial_planner_msgs[0]
+    first_user_text = "\n".join(str(m.get("content", "")) for m in first_msgs if m.get("role") == "user")
+    first_system_text = "\n".join(str(m.get("content", "")) for m in first_msgs if m.get("role") == "system")
+    first_all_text = "\n".join(str(m.get("content", "")) for m in first_msgs)
+
+    assert parent_only_sentinel in first_user_text
+    assert parent_only_sentinel not in first_system_text
+    assert "[parent tool output (untrusted data)]" in first_user_text
+    for leaked in (configured_secret, sk_secret, bearer_secret, "SUPER_INLINE_KEY_VALUE_123"):
+        assert leaked not in first_all_text
+    assert "***REDACTED***" in first_all_text
+
+    follow_up_roles = [msgs for role, msgs in observed_requests if role in {"planner_candidate", "coder", "eval"}]
+    assert any(role == "planner_candidate" for role, _ in observed_requests)
+    assert ct109_state["replan_eval_count"] == 2
+    for msgs in follow_up_roles:
+        combined = "\n".join(str(m.get("content", "")) for m in msgs)
+        assert parent_only_sentinel not in combined
+
+    child_events = (tmp_path / "fa-state" / "session-log" / "run-chat-ct109-wf1" / "events.jsonl").read_text(
+        encoding="utf-8"
+    )
+    assert parent_only_sentinel not in child_events
+    for leaked in (configured_secret, sk_secret, bearer_secret, "SUPER_INLINE_KEY_VALUE_123"):
+        assert leaked not in child_events
+
+
+def test_nested_v1_peer_and_stale_listing_fail_closed_before_coder(
+    site: Site,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SLICE5 STEP5: v1-only peer and unknown/stale selection fail closed before coder with parent refreshed."""
+    _install_bundle(site.source, include_tests=True)
+    models, service_path, _ = _setup_managed_site(site, tmp_path, monkeypatch)
+    _wire_session_contexts(site, monkeypatch, session_id="s-neg5", run_id="run-chat-neg5")
+    _watch_managed_child_host_execution(monkeypatch)
+
+    coder_calls = 0
+    chat_turns = 0
+    tool_errors: list[str] = []
+
+    def fake_request(
+        _chain: Any, request: Any, *, logical_call_id: str | None = None
+    ) -> tuple[ResponseInfo, str, list[Any]]:
+        nonlocal coder_calls, chat_turns
+        tools = _tool_names(request)
+        tag = logical_call_id or "neg5"
+        for msg in request.messages:
+            if msg.get("role") == "tool":
+                tool_errors.append(str(msg.get("content", "")))
+        if "invoke_workflow" in tools:
+            chat_turns += 1
+            if chat_turns == 1:
+                return _tool_reply(
+                    "ch-neg",
+                    "invoke_workflow",
+                    {"task": "try stale listing", "roles": "planner,coder,eval"},
+                    tag,
+                )
+            return _stop_reply("handled child acquisition refusal", tag)
+        if "fs_run_bash" in tools:
+            coder_calls += 1
+            return _stop_reply("should not run", tag)
+        return _stop_reply(
+            json.dumps({"kind": "SELECT_EXISTING", "project_slug": "missing-stale-project", "increment_id": "I01"}),
+            tag,
+        )
+
+    monkeypatch.setattr(ProviderChain, "request", fake_request)
+    managed_list = _track_managed(monkeypatch)
+    args = cli.build_parser().parse_args(
+        [
+            "run",
+            "--role",
+            "chat",
+            "--task",
+            "reject stale selection",
+            "--workspace",
+            str(site.source),
+            "--config",
+            str(models),
+            "--max-turns",
+            "4",
+        ]
+    )
+
+    with SupervisorService(read_config_file(service_path)) as service, _serving_supervisor(service):
+        exit_code = cli._cmd_run(args, secrets=SecretStore({"K": "sk-test-live"}))
+
+    assert exit_code == 0
+    assert coder_calls == 0
+    assert site.metadata({"workspace_id": managed_list[0].binding.workspace_id})["status"] == "AVAILABLE"
+    assert any('"status": "FAILED"' in item for item in tool_errors)
+
+    # Also prove v1-only peer (protocol_version=1 without v2 operations) fails closed before coder.
+    chat_turns = 0
+    coder_calls = 0
+    _wire_session_contexts(site, monkeypatch, session_id="s-v1only", run_id="run-chat-v1only")
+    orig_client_request = ExecutionClient.request
+
+    def v1_only_health(self: ExecutionClient, operation: Operation, **kwargs: Any) -> dict[str, Any]:
+        if operation is Operation.HEALTH and kwargs.get("protocol_version") == 2:
+            return {"ready": True, "protocol_version": 1, "profile_set_sha256": "0" * 64}
+        return orig_client_request(self, operation, **kwargs)
+
+    with SupervisorService(read_config_file(service_path)) as service, _serving_supervisor(service):
+        monkeypatch.setattr(ExecutionClient, "request", v1_only_health)
+        exit_code_v1 = cli._cmd_run(args, secrets=SecretStore({"K": "sk-test-live"}))
+
+    assert exit_code_v1 == 0
+    assert coder_calls == 0
+    assert site.metadata({"workspace_id": managed_list[-1].binding.workspace_id})["status"] == "AVAILABLE"

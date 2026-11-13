@@ -616,3 +616,157 @@ def test_forged_ref_purpose_never_reaches_the_effect_policy(site: Site) -> None:
         )
         assert not (views_root(owner, grant) / "candidate").exists()
         assert list((site.state / "pending").iterdir()) == []
+
+
+def test_mutation_admit_permits_project_tool_and_rejects_verification(site: Site) -> None:
+    """Q141=C: project tools admit on ViewPurpose.MUTATION and fail closed on VERIFICATION."""
+    from uuid import uuid4
+
+    from tests.test_execution_admission import claim as claim_operation
+    from tests.test_execution_admission import request as exec_request
+
+    (site.source / "plan.md").write_text("# plan\n")
+    plan_ref = read_plan_snapshot(site.source, Path("plan.md")).ref
+    approved = site.state.parent / "approved-cache"
+    approved.mkdir(mode=0o755, exist_ok=True)
+    with WorkspaceAuthority(
+        site.state,
+        approved_roots={"projects": site.roots},
+        controller_uids=frozenset({PEER.uid}),
+        lock_timeout_ms=1000,
+        view_profile=native_profile(),
+        read_only_profile=read_only_profile(),
+        approved_cache=approved,
+    ) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        mut_grant = create(owner, ids, lease, purpose=ViewPurpose.MUTATION, access=Access.WRITE, plan_ref=plan_ref)
+        mut_req = exec_request(mut_grant)
+        mut_req["payload"] = {
+            "operation_id": "op-" + mut_req["request_id"],
+            "profile_id": native_profile().profile_id,
+            "project_tool": {"tool": "fs_search", "params": {"query": "x"}},
+            "timeout_ms": 500,
+        }
+        claim_operation(owner, mut_req)
+        with ok(lambda: owner.admit(PEER, mut_req, deadline=until())) as scope:
+            assert scope is not None
+
+        ver_grant = create(owner, ids, lease, purpose=ViewPurpose.VERIFICATION, access=Access.READ, plan_ref=plan_ref)
+        ver_req = exec_request(ver_grant)
+        ver_req["payload"] = {
+            "operation_id": "op-" + ver_req["request_id"],
+            "profile_id": read_only_profile().profile_id,
+            "project_tool": {"tool": "fs_search", "params": {"query": "x"}},
+            "timeout_ms": 500,
+        }
+        claim_operation(owner, ver_req)
+        denied("UNAPPROVED_PROFILE", lambda: owner.admit(PEER, ver_req, deadline=until()))
+        _ = uuid4  # silence unused if removed
+
+
+def test_mutation_seal_rejects_out_of_root_changes_and_allows_root_only_publish(site: Site) -> None:
+    """Q141=C: even if a shell writes outside _MUTATION_ROOTS in a MUTATION view, SEAL refuses PATH_DENIED."""
+    from uuid import uuid4
+
+    from fa.execution.service import SupervisorService
+    from fa.execution.types import Operation
+    from tests.test_execution_service import _config as _service_config
+    from tests.test_execution_service import _error, _registered, _writer, exchange
+
+    (site.source / "plan.md").write_text("# plan\n")
+    (site.source / "src").mkdir(exist_ok=True)
+    (site.source / "src" / "keep.py").write_text("KEEP = 1\n")
+    plan_ref = read_plan_snapshot(site.source, Path("plan.md")).ref
+
+    with SupervisorService(_service_config(site)) as service:
+        workspace_id = _registered(service)
+        writer_cap, revision_id = _writer(service, workspace_id, request_id=uuid4().hex)
+
+        def _open_mutation() -> tuple[dict[str, Any], str]:
+            reply = exchange(
+                service,
+                Operation.CREATE_VIEW,
+                {
+                    "workspace_id": workspace_id,
+                    "base_revision": revision_id,
+                    "access": Access.WRITE.value,
+                    "purpose": ViewPurpose.MUTATION.value,
+                    "candidate_scope": None,
+                    "plan_ref": {
+                        "workspace_relative_path": plan_ref.workspace_relative_path,
+                        "source_kind": plan_ref.source_kind,
+                        "sha256": plan_ref.sha256,
+                    },
+                },
+                request_id=uuid4().hex,
+                capability=writer_cap,
+            )
+            assert reply["status"] == "OK", reply
+            return reply["result"]["view_ref"], reply["result"]["capability"]
+
+        bad_view, bad_cap = _open_mutation()
+        assert (
+            exchange(
+                service,
+                Operation.WRITE_FILE,
+                {"path": "src/good.py", "content": "GOOD = 1\n", "expected_sha256": None},
+                request_id=uuid4().hex,
+                view_ref=bad_view,
+                capability=bad_cap,
+            )["status"]
+            == "OK"
+        )
+        # Simulate an indirect shell write bypassing WRITE_FILE path check inside the MUTATION view.
+        bad_source = site.state / "workspaces" / workspace_id / "views" / bad_view["view_id"] / "source"
+        (bad_source / "escape.txt").write_text("not in src or scripts\n")
+        assert (
+            exchange(service, Operation.STOP_VIEW, {}, request_id=uuid4().hex, view_ref=bad_view, capability=bad_cap)[
+                "status"
+            ]
+            == "OK"
+        )
+        seal_refused = exchange(
+            service, Operation.SEAL, {}, request_id=uuid4().hex, view_ref=bad_view, capability=bad_cap
+        )
+        assert _error(seal_refused) == "PATH_DENIED"
+        assert not (site.source / "src" / "good.py").exists()
+        assert not (site.source / "escape.txt").exists()
+
+        # Settle rejected view cleanly so second MUTATION view with src/-only changes seals & publishes.
+        assert (
+            exchange(service, Operation.RELEASE, {}, request_id=uuid4().hex, view_ref=bad_view, capability=bad_cap)[
+                "status"
+            ]
+            == "OK"
+        )
+        ok_view, ok_cap = _open_mutation()
+        assert (
+            exchange(
+                service,
+                Operation.WRITE_FILE,
+                {"path": "src/good.py", "content": "GOOD = 1\n", "expected_sha256": None},
+                request_id=uuid4().hex,
+                view_ref=ok_view,
+                capability=ok_cap,
+            )["status"]
+            == "OK"
+        )
+        stopped_ok = exchange(
+            service, Operation.STOP_VIEW, {}, request_id=uuid4().hex, view_ref=ok_view, capability=ok_cap
+        )
+        assert stopped_ok["status"] == "OK", stopped_ok
+        sealed = exchange(service, Operation.SEAL, {}, request_id=uuid4().hex, view_ref=ok_view, capability=ok_cap)
+        assert sealed["status"] == "OK", sealed
+        published = exchange(
+            service,
+            Operation.PUBLISH,
+            {"sealed_manifest_id": sealed["result"]["sealed_manifest_id"], "expected_base_revision": revision_id},
+            request_id=uuid4().hex,
+            view_ref=ok_view,
+            capability=ok_cap,
+        )
+        assert published["status"] == "OK", published
+        assert (site.source / "src" / "good.py").read_bytes() == b"GOOD = 1\n"
+        assert (site.source / "plan.md").read_text() == "# plan\n"
+        assert (site.source / "untracked.txt").read_bytes() == b"untracked"

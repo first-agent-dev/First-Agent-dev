@@ -247,16 +247,26 @@ class ManagedExecution:
     def reconcile_publication(self, *, deadline: float | None = None) -> PlanPublication:
         """Settle this run's unresolved candidate publication, or raise again.
 
-        Replays the same four request ids (never new ones) and, on a proved
-        publication, clears the pending record so the writer may be released. An
-        unresolved answer leaves the record in place: the workspace stays fenced
-        for recovery rather than being handed to the next writer.
+        Replays the already-minted request ids (never inventing a duplicate view)
+        and, on a proved publication or a clean determinate refusal whose view
+        settled, clears the pending record so the writer may be released. An
+        unresolved answer leaves the updated record in place: the workspace stays
+        fenced for recovery rather than being handed to the next writer.
         """
         self._require_handoff_resolved()
         pending = self._pending_publication
         if pending is None:
             raise ExecutionContractError
-        publication = self.client.reconcile_candidate_publication(pending, deadline=deadline)
+        try:
+            publication = self.client.reconcile_candidate_publication(pending, deadline=deadline)
+        except ExecutionUncertainError as error:
+            updated = getattr(error, "pending_publication", None)
+            if isinstance(updated, PendingCandidatePublication):
+                self._pending_publication = updated
+            raise
+        except ExecutionRejectedError:
+            self._pending_publication = None
+            raise
         self.current_revision_id = publication.revision_id
         self._pending_publication = None
         return publication
@@ -502,9 +512,11 @@ class BoundPlanPublisher:
         cache. No second id is minted, no second view is opened, and no second
         effect can occur. Exactly one attempt is made.
 
-        A run that owns **no** pending saga is not reconciled. That is the
-        lost-``CREATE_VIEW`` shape (E512): the view id was never learned, so there
-        is nothing to replay and the fence in ``close()`` stays the whole answer.
+        A run that owns **no** pending saga is not reconciled. If ``publish_plan``
+        raised without attaching a pending handle, nothing is guessed. When the
+        lost reply happened on ``CREATE_VIEW``, the run retains the minted
+        ``create_request_id`` and replays that exact id once to recover the view
+        without creating a second one (E512 closure).
         """
         try:
             publication = self._managed.publish_plan(source, candidate, deadline=deadline)

@@ -351,6 +351,7 @@ def drive_session(
     # which is what every existing caller gets.
     injection_modes: InjectionModes | None = None,
     initial_memory_summary: str = "",
+    initial_user_context: str = "",
     temperature: float | None = None,
     max_tokens: int = DEFAULT_MAX_TOKENS,
     redactor: SecretRedactor | None = None,
@@ -441,6 +442,7 @@ def drive_session(
             scope_mode=scope_mode,
             injection_modes=injection_modes,
             initial_memory_summary=initial_memory_summary,
+            initial_user_context=initial_user_context,
             temperature=temperature,
             max_tokens=max_tokens,
             redactor=redactor,
@@ -608,6 +610,7 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
     scope_mode: str = "",
     injection_modes: InjectionModes | None = None,
     initial_memory_summary: str = "",
+    initial_user_context: str = "",
     temperature: float | None = None,
     max_tokens: int = DEFAULT_MAX_TOKENS,
     redactor: SecretRedactor | None = None,
@@ -940,12 +943,15 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
         base_system = resolve_base_system_prompt(role, planner_dispatch=planner_dispatch)
         pinned_text_for_turn = pinned_text
 
+        request_task = f"{task}\n\n{initial_user_context}".strip() if initial_user_context else task
+
         def _compose_request_payload(
             *,
             active_summary: str,
             observations: list[dict[str, Any]],
             base_system_value: str = base_system,
             pinned_text_value: str = pinned_text_for_turn,
+            task_value: str = request_task,
             # S7 / CT10 -> S10 / CT2: bound as default args (B023 late-binding
             # pattern). The observation context is reassigned each turn by the
             # scope expansion boundary above, so a bare closure read would
@@ -965,7 +971,7 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                 pinned_text=pinned_text_value,
                 tool_defs=tool_defs_for_prompt,
                 role=role,
-                task=task,
+                task=task_value,
                 active_summary=active_summary,
                 observations=observations,
                 turn_context=turn_context_value,

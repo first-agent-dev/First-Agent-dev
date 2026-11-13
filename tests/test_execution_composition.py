@@ -3769,53 +3769,147 @@ def test_the_bound_publisher_reconciles_one_ambiguity_and_then_classifies(
 def test_the_port_does_not_invent_a_saga_when_create_view_was_lost(
     site: Site, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """EDGE / negative proof for R25: reconciliation needs a handle, not optimism.
+    """EDGE / E512 closure: lost CREATE_VIEW reply reconciles via exact id; unknown CREATE_VIEW stays fenced.
 
-    A lost ``CREATE_VIEW`` reply leaves the authority holding a CANDIDATE view whose
-    id the caller never learned, so ``publish_plan`` cannot build a pending record
-    (E512, measured). The port must therefore NOT reach for reconciliation: there
-    are no ids to replay, and a run that guessed one would be asserting an effect
-    it never observed.
-
-    The failure is still fail-closed - the fence in ``close()`` keeps the workspace
-    OWNED - but that is the recovery path, not the run's.
+    Two real outcomes on ``CREATE_VIEW`` uncertainty:
+    1. Only the reply was lost while the authority recorded the view under
+       ``op-<create_request_id>``: ``BoundPlanPublisher`` replays that exact
+       ``create_request_id`` once (never minting a second view), recovers the
+       view handle, completes publication, and releases the workspace cleanly.
+    2. ``CREATE_VIEW`` itself failed/unknown (so the exact-id replay also returns
+       ``ExecutionUncertainError``): no second ``create_request_id`` is minted,
+       the pending handle remains held, ``close()`` refuses, and the workspace
+       stays ``OWNED`` (and quarantines on restart).
     """
     plan_path = site.source / PLAN_RELATIVE
     plan_path.parent.mkdir(parents=True, exist_ok=True)
     plan_path.write_bytes(b"# Existing plan\n")
+    original_bytes = plan_path.read_bytes()
     source = read_plan_snapshot(site.source, Path(PLAN_RELATIVE))
     candidate = snapshot_from_bytes("draft.md", b"# Repaired plan\n")
     service_path, yaml_path = _configs(tmp_path, _document(site))
+
+    # --- 1. Lost CREATE_VIEW reply recovers cleanly via exact-id replay ---
     with SupervisorService(read_config_file(service_path)) as service:
         workspace_id = _registered(service)
         stop = threading.Event()
         runner = threading.Thread(target=service.serve_forever, args=(stop,), daemon=True)
         runner.start()
         original = ExecutionClient.request
+        create_ids: list[str] = []
         lost: set[str] = set()
 
-        def losing(self: Any, operation: Any, *, request_id: str, **kwargs: Any) -> Any:
+        def losing_reply_once(self: Any, operation: Any, *, request_id: str, **kwargs: Any) -> Any:
+            if operation is Operation.CREATE_VIEW:
+                create_ids.append(request_id)
             answer = original(self, operation, request_id=request_id, **kwargs)
             if operation is Operation.CREATE_VIEW and not lost:
                 lost.add(request_id)
                 raise ExecutionUncertainError("op-" + request_id, code="EXECUTION_UNKNOWN")
             return answer
 
-        monkeypatch.setattr(ExecutionClient, "request", losing)
+        monkeypatch.setattr(ExecutionClient, "request", losing_reply_once)
         try:
             run = _run(site.source)
             managed = managed_execution_for_run(run, config_path=yaml_path)
             assert managed is not None
             publisher = BoundPlanPublisher(managed, managed.binding)
-            with pytest.raises(ExecutionUncertainError):
-                publisher.publish_candidate(source, candidate)
-            assert managed.publication_pending is False  # nothing to replay
-            assert managed.close() is False  # fail-closed via the view fence
-            assert _status(site, workspace_id)["status"] == "OWNED"
+            promoted = publisher.publish_candidate(source, candidate)
+            assert promoted.sha256 == candidate.ref.sha256
+            assert len(create_ids) == 2 and len(set(create_ids)) == 1
+            assert plan_path.read_bytes() == candidate.utf8_bytes
+            assert managed.publication_pending is False
+            assert managed.close() is True
+            assert _status(site, workspace_id)["status"] == "AVAILABLE"
         finally:
+            monkeypatch.setattr(ExecutionClient, "request", original)
             stop.set()
             runner.join(timeout=5)
             assert not runner.is_alive()
+
+    # Reset plan for arm 2 and prove unknown CREATE_VIEW fails closed without inventing a second view.
+    with SupervisorService(read_config_file(service_path)) as service:
+        stop = threading.Event()
+        runner = threading.Thread(target=service.serve_forever, args=(stop,), daemon=True)
+        runner.start()
+        original = ExecutionClient.request
+        create_ids_fail: list[str] = []
+
+        def persistent_create_unknown(self: Any, operation: Any, *, request_id: str, **kwargs: Any) -> Any:
+            if operation is Operation.CREATE_VIEW:
+                create_ids_fail.append(request_id)
+                raise ExecutionUncertainError("op-" + request_id, code="EXECUTION_UNKNOWN")
+            return original(self, operation, request_id=request_id, **kwargs)
+
+        monkeypatch.setattr(ExecutionClient, "request", persistent_create_unknown)
+        try:
+            source2 = read_plan_snapshot(site.source, Path(PLAN_RELATIVE))
+            candidate2 = snapshot_from_bytes("draft.md", b"# Second candidate\n")
+            run2 = RunContext("run-2", "session-1", site.source, site.source / ".db", site.source / "logs")
+            managed2 = managed_execution_for_run(run2, config_path=yaml_path)
+            assert managed2 is not None
+            publisher2 = BoundPlanPublisher(managed2, managed2.binding)
+            with pytest.raises(ExecutionUncertainError):
+                publisher2.publish_candidate(source2, candidate2)
+            assert len(create_ids_fail) == 2 and len(set(create_ids_fail)) == 1
+            assert managed2.publication_pending is True
+            assert managed2.close() is False
+            assert _status(site, workspace_id)["status"] == "OWNED"
+            assert plan_path.read_bytes() != candidate2.utf8_bytes
+            assert plan_path.read_bytes() == candidate.utf8_bytes or plan_path.read_bytes() == original_bytes
+        finally:
+            monkeypatch.setattr(ExecutionClient, "request", original)
+            stop.set()
+            runner.join(timeout=5)
+            assert not runner.is_alive()
+
+    # Process death before reconciliation leaves the orphaned OWNED workspace QUARANTINED.
+    with SupervisorService(read_config_file(service_path)):
+        assert _status(site, workspace_id)["status"] == "QUARANTINED"
+
+
+@pytest.mark.parametrize("lost_op", [Operation.WRITE_FILE, Operation.STOP_VIEW])
+def test_bound_plan_publisher_reconciles_lost_write_and_stop_view_without_duplicate_view(
+    site: Site, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, lost_op: Operation
+) -> None:
+    """E512: lost WRITE_FILE or STOP_VIEW reply recovers the same single CANDIDATE view and commits cleanly."""
+    plan_path = site.source / PLAN_RELATIVE
+    plan_path.parent.mkdir(parents=True, exist_ok=True)
+    plan_path.write_bytes(b"# Existing plan\n")
+    source = read_plan_snapshot(site.source, Path(PLAN_RELATIVE))
+    candidate = snapshot_from_bytes("draft.md", b"# Repaired plan\n")
+    service_path, yaml_path = _configs(tmp_path, _document(site))
+
+    with SupervisorService(read_config_file(service_path)) as service:
+        workspace_id = _registered(service)
+        original = ExecutionClient.request
+        lost_ids: set[str] = set()
+        create_ids: list[str] = []
+        target_ids: list[str] = []
+
+        def lose_once(self: Any, operation: Any, *, request_id: str, **kwargs: Any) -> Any:
+            if operation is Operation.CREATE_VIEW:
+                create_ids.append(request_id)
+            if operation is lost_op:
+                target_ids.append(request_id)
+            answer = original(self, operation, request_id=request_id, **kwargs)
+            if operation is lost_op and not lost_ids:
+                lost_ids.add(request_id)
+                raise ExecutionUncertainError("op-" + request_id, code="EXECUTION_UNKNOWN")
+            return answer
+
+        monkeypatch.setattr(ExecutionClient, "request", lose_once)
+        with _serving_supervisor(service):
+            managed = managed_execution_for_run(_run(site.source), config_path=yaml_path)
+            assert managed is not None
+            publisher = BoundPlanPublisher(managed, managed.binding)
+            promoted = publisher.publish_candidate(source, candidate)
+            assert promoted.sha256 == candidate.ref.sha256
+            assert len(create_ids) == 1
+            assert len(target_ids) == 2 and len(set(target_ids)) == 1
+            assert managed.publication_pending is False
+            assert managed.close() is True
+            assert _status(site, workspace_id)["status"] == "AVAILABLE"
 
 
 @pytest.mark.parametrize("saga", ["pending-publication", "orphaned-candidate-view"])
@@ -3835,12 +3929,13 @@ def test_a_second_run_on_a_workspace_the_first_left_unsettled_is_refused_not_str
 
     * ``pending-publication`` — A owns a replayable saga whose outcome the journal
       can still prove (a lost *reply*), so A settles it and its writer goes back. B
-      then succeeds; the workspace was never lost. The distinction matters: a
-      genuinely failed PUBLISH handler journals UNKNOWN, no replay can ever prove it
-      (``_completed``), and that case belongs to the fence arm, not this one.
-    * ``orphaned-candidate-view`` — A owns no handle (lost CREATE_VIEW, E512), so the
-      fence holds the workspace OWNED. B must be refused with WORKSPACE_BUSY rather
-      than walking in over the orphan.
+      then succeeds; the workspace was never lost.
+    * ``orphaned-candidate-view`` — A did not reconcile after a lost ``CREATE_VIEW``
+      reply, so A holds the unresolved saga fence (``publication_pending is True``
+      and ``close() is False``) and the workspace stays ``OWNED`` so B is refused
+      with ``WORKSPACE_BUSY``. Once A calls ``reconcile_publication()`` with
+      recovered transport, the exact ``create_request_id`` settles the same view,
+      ``close()`` releases to ``AVAILABLE``, and a subsequent run succeeds cleanly.
     """
     plan_path = site.source / PLAN_RELATIVE
     plan_path.parent.mkdir(parents=True, exist_ok=True)
@@ -3893,8 +3988,8 @@ def test_a_second_run_on_a_workspace_the_first_left_unsettled_is_refused_not_str
                 expected_status = "AVAILABLE"
                 second_must_work = True
             else:
-                # A owns nothing to replay, so the fence is the whole answer.
-                assert first.publication_pending is False
+                # Before A reconciles, the fence holds the workspace OWNED and B is refused.
+                assert first.publication_pending is True
                 assert first.close() is False
                 expected_status = "OWNED"
                 second_must_work = False
@@ -3914,6 +4009,15 @@ def test_a_second_run_on_a_workspace_the_first_left_unsettled_is_refused_not_str
                 # takeover of the run that still owns the workspace.
                 assert second is None
                 assert _status(site, workspace_id)["status"] == "OWNED"
+                # Reconciling A via its retained create_request_id now settles the
+                # orphaned CANDIDATE view and releases the workspace cleanly.
+                first.reconcile_publication()
+                assert first.publication_pending is False
+                assert first.close() is True
+                assert _status(site, workspace_id)["status"] == "AVAILABLE"
+                run3 = RunContext("run-3", "session-1", site.source, site.source / ".db", site.source / "logs")
+                third = managed_execution_for_run(run3, config_path=yaml_path)
+                assert third is not None and third.close() is True
 
 
 def test_bound_plan_publisher_receipt_carries_real_operation_id(
@@ -3981,3 +4085,56 @@ def test_bound_plan_publisher_reconcile_preserves_operation_id(
             assert receipt.operation_id == "op-" + lost_publish[0]
             assert re.fullmatch(r"op-[0-9a-f]{32}", receipt.operation_id or "") is not None
             assert managed.close() is True
+
+
+def test_reconcile_publication_determinate_refusal_clears_pending_fence(
+    site: Site, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """E512: a determinate ExecutionRejectedError during reconciliation clears publication_pending and releases."""
+    import hashlib
+
+    from fa.inner_loop.plan_admission import PlanSnapshot
+    from fa.inner_loop.plan_ids import extract_plan_ids
+
+    plan_path = site.source / PLAN_RELATIVE
+    plan_path.parent.mkdir(parents=True, exist_ok=True)
+    plan_path.write_bytes(b"# Existing plan\n")
+    source = read_plan_snapshot(site.source, Path(PLAN_RELATIVE))
+    bad_bytes = b"   \n"
+    bad_candidate = PlanSnapshot(
+        ref=PlanRef(PLAN_RELATIVE, "draft", hashlib.sha256(bad_bytes).hexdigest()),
+        utf8_bytes=bad_bytes,
+        text="   \n",
+        ids=extract_plan_ids(""),
+    )
+    service_path, yaml_path = _configs(tmp_path, _document(site))
+    run = _run(site.source)
+
+    with SupervisorService(read_config_file(service_path)) as service:
+        workspace_id = _registered(service)
+        original_request = ExecutionClient.request
+        drop_next_stop = [True]
+
+        def lose_first_stop(self: Any, operation: Any, *, request_id: str, **kwargs: Any) -> Any:
+            answer = original_request(self, operation, request_id=request_id, **kwargs)
+            if operation is Operation.STOP_VIEW and drop_next_stop[0]:
+                drop_next_stop[0] = False
+                raise ExecutionUncertainError("op-" + request_id, code="EXECUTION_UNKNOWN")
+            return answer
+
+        with _serving_supervisor(service):
+            monkeypatch.setattr(ExecutionClient, "request", lose_first_stop)
+            managed = managed_execution_for_run(run, config_path=yaml_path)
+            assert managed is not None
+
+            with pytest.raises(ExecutionUncertainError):
+                managed.publish_plan(source, bad_candidate)
+            assert managed.publication_pending is True
+
+            # Reconciling replays STOP_VIEW -> PUBLISH, hits real authority INPUT_POLICY refusal,
+            # settles the candidate view cleanly, clears the pending fence, and releases AVAILABLE.
+            with pytest.raises(ExecutionRejectedError):
+                managed.reconcile_publication()
+            assert managed.publication_pending is False
+            assert managed.close() is True
+            assert _status(site, workspace_id)["status"] == "AVAILABLE"
