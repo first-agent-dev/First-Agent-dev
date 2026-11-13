@@ -455,9 +455,9 @@ def test_parent_lease_rejects_resume_until_writer_is_returned(lease_site: Site, 
 
 
 def test_stage_exception_stops_active_view_before_releasing_writer(
-    lease_site: Site, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    lease_site: Site, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """A failed parent stage aborts its current view before the run-owned writer."""
+    """A failed parent stage stops and rejects its WRITE view before releasing the writer."""
     with _served(lease_site, tmp_path) as managed:
         recording = _RecordingClient(managed.client)
         managed.client = recording
@@ -489,9 +489,14 @@ def test_stage_exception_stops_active_view_before_releasing_writer(
         lease = captured[2]
         assert lease.state == "closed"
         assert lease.writer_release_safe
-        assert recording.sent.count(Operation.STOP_VIEW) == 1
-        assert recording.sent.count(Operation.PUBLISH) == 0
-        assert recording.sent.count(Operation.RELEASE) == 1
+        assert recording.sent == [
+            Operation.CREATE_VIEW,
+            Operation.STOP_VIEW,
+            Operation.RELEASE,
+            Operation.RELEASE,
+        ]
+        assert "was not confirmed" not in capsys.readouterr().err
+        assert lease_site.metadata({"workspace_id": managed.binding.workspace_id})["status"] == "AVAILABLE"
 
 
 def test_uncertain_view_creation_retains_writer_and_does_not_call_registry(

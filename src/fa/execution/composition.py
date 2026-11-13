@@ -368,6 +368,18 @@ class ManagedExecution:
         self.current_revision_id = publication.revision_id
         return publication
 
+    def pin_reader(
+        self,
+        *,
+        revision_id: str | None = None,
+        plan_ref: PlanRef | None = None,
+        deadline: float | None = None,
+    ) -> GrantReply:
+        """Pin an immutable READ/PROJECT view at ``revision_id`` or current revision."""
+        self._require_handoff_resolved()
+        target_revision = self.current_revision_id if revision_id is None else revision_id
+        return self.client.pin_reader(self.binding, target_revision, plan_ref=plan_ref, deadline=deadline)
+
     def stop_view(self, grant: GrantReply, *, deadline: float | None = None) -> bool:
         """End the view ``grant`` opened; ``False`` when its end was not proved.
 
@@ -383,6 +395,29 @@ class ManagedExecution:
             return True
         _logger.warning(
             "managed execution: view %s was not confirmed closed for %s",
+            view.view_id,
+            self.binding.workspace_id,
+        )
+        return False
+
+    def reject_view(self, grant: GrantReply, *, deadline: float | None = None) -> bool:
+        """Stop ``grant`` and settle an un-published WRITE view as REJECTED.
+
+        Stopping a WRITE view alone leaves it in ``STOPPING``, which still holds the
+        writer against ``RELEASE`` and ``HANDOFF``. Calling this instead of bare
+        ``stop_view`` when discarding a failed or aborted stage view completes the
+        settlement through view-scoped ``RELEASE`` -> ``REJECTED``.
+        """
+        stopped = self.stop_view(grant) if deadline is None else self.stop_view(grant, deadline=deadline)
+        if not stopped:
+            return False
+        view = grant.view_ref
+        if view is None or view.access is Access.READ:
+            return True
+        if self.client.release_stopped_view(self.binding.namespace, view=view, grant=grant, deadline=deadline):
+            return True
+        _logger.warning(
+            "managed execution: stopped WRITE view %s was not confirmed rejected for %s",
             view.view_id,
             self.binding.workspace_id,
         )
@@ -617,7 +652,8 @@ def _settle_readiness_execution(
         executor.suspend()
     if view_grant is not None:
         try:
-            if not managed.stop_view(view_grant, deadline=time.monotonic() + 15):
+            stopper = getattr(managed, "reject_view", managed.stop_view)
+            if not stopper(view_grant, deadline=time.monotonic() + 15):
                 return False
         except Exception:  # noqa: BLE001 — an unproved view end forbids writer release.
             return False

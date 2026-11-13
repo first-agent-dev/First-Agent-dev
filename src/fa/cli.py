@@ -21,6 +21,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable, Mapping
+from contextvars import ContextVar
 from dataclasses import asdict, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -36,6 +37,7 @@ from fa.execution.client import (
     ExecutionUncertainError,
     ManagedBashExecutor,
     ManagedProjectToolExecutor,
+    ReadOnlyManagedBashExecutor,
 )
 from fa.execution.composition import (
     BoundPlanPublisher,
@@ -149,6 +151,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     # of the CLI's import path deliberately); these names are needed for
     # annotations only, so they are declared here rather than promoted to a
     # runtime import that would change startup behaviour.
+    from fa.execution.profiles import ExecutionProfile
     from fa.inner_loop.scope_estimator import OperatingPoint
     from fa.inner_loop.tools.workspace_port import CandidateWorkspacePort, WorkspacePort
     from fa.output import EventBus
@@ -161,6 +164,13 @@ from fa.verifier import load_contracts_from_dir
 from fa.workspace_bootstrap import ReadyState, ReadyStatus
 
 logger = logging.getLogger(__name__)
+
+_STAGE_PROJECT_TOOL_EXECUTOR: ContextVar[ManagedProjectToolExecutor | None] = ContextVar(
+    "_STAGE_PROJECT_TOOL_EXECUTOR", default=None
+)
+_STAGE_MANAGED_EXECUTION: ContextVar[ManagedExecution | None] = ContextVar(
+    "_STAGE_MANAGED_EXECUTION", default=None
+)
 
 _RUN_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,128}$")
 
@@ -1735,7 +1745,7 @@ class _ManagedStageLease:
             self._state = "broken"
             if grant is not None:
                 try:
-                    self.managed.stop_view(grant)
+                    self.managed.reject_view(grant)
                 except Exception as error:  # noqa: BLE001 - keep the original resume failure
                     logger.warning("managed parent view cleanup failed: %s", error)
             raise
@@ -1755,7 +1765,7 @@ class _ManagedStageLease:
         try:
             if accepted:
                 self.managed.publish_stage(grant)
-            elif not self.managed.stop_view(grant):
+            elif not self.managed.reject_view(grant):
                 raise ExecutionUnavailableError
         except BaseException:
             self._state = "broken"
@@ -1763,7 +1773,7 @@ class _ManagedStageLease:
         self._state = "closed"
 
     def abort(self) -> None:
-        """Best-effort stop of an active view after stage failure; never retries."""
+        """Best-effort stop and rejection of an active WRITE view after failure; never retries."""
         if self._state != "active" or self._view_grant is None:
             return
         grant = self._view_grant
@@ -1773,7 +1783,7 @@ class _ManagedStageLease:
         self.project_tool_executor.suspend()
         self._view_grant = None
         try:
-            if self.managed.stop_view(grant):
+            if self.managed.reject_view(grant):
                 self._state = "closed"
             else:
                 self._state = "broken"
@@ -1825,6 +1835,124 @@ def _close_stage_candidate_view(managed: ManagedExecution | None, grant: GrantRe
         logger.warning("managed candidate view cleanup failed (run=%s): %s", run_id, error)
 
 
+def _suspend_stage_ports(
+    workspace_io: WorkspacePort | None,
+    managed_executor: BashExecutor | None,
+    project_tool_executor: ManagedProjectToolExecutor | None,
+) -> None:
+    if isinstance(workspace_io, ClientWorkspacePort):
+        workspace_io.suspend()
+    if isinstance(managed_executor, (ManagedBashExecutor, ReadOnlyManagedBashExecutor)):
+        managed_executor.suspend()
+    if project_tool_executor is not None:
+        project_tool_executor.suspend()
+
+
+def _open_stage_view(
+    managed: ManagedExecution,
+    *,
+    read_only_stage: bool,
+    base_revision: str,
+    plan_ref: PlanRef | None,
+) -> tuple[GrantReply, ExecutionProfile]:
+    if read_only_stage:
+        read_profile = managed.read_only_profile
+        if read_profile is None or read_profile.interactive:
+            raise ExecutionContractError
+        grant = managed.pin_reader(revision_id=base_revision, plan_ref=plan_ref)
+        if (
+            grant.operation is not Operation.PIN_READER
+            or grant.view_ref is None
+            or grant.view_ref.access is not Access.READ
+            or grant.view_ref.purpose is not ViewPurpose.PROJECT
+            or grant.view_ref.workspace_id != managed.binding.workspace_id
+            or grant.view_ref.owner_run_id != managed.binding.namespace.run_id
+            or grant.input_tree_sha256 is None
+        ):
+            raise ExecutionContractError
+        return grant, read_profile
+    profile = managed.view_profile
+    if profile is None or not profile.interactive:
+        raise ExecutionContractError
+    grant = managed.open_view(
+        access=Access.WRITE,
+        purpose=ViewPurpose.PROJECT,
+        base_revision=base_revision,
+        plan_ref=plan_ref,
+    )
+    if grant.operation is not Operation.CREATE_VIEW or grant.view_ref is None or grant.input_tree_sha256 is None:
+        raise ExecutionContractError
+    return grant, profile
+
+
+def _build_stage_ports(
+    managed: ManagedExecution,
+    *,
+    view_grant: GrantReply,
+    profile: ExecutionProfile,
+    read_only_stage: bool,
+    base_revision: str,
+    plan_ref: PlanRef | None,
+    run_log_dir: Path,
+    workspace: Path,
+    owns_writer: bool,
+) -> tuple[ClientWorkspacePort, BashExecutor, ManagedProjectToolExecutor, _ManagedStageLease | None]:
+    view_ref = view_grant.view_ref
+    if view_ref is None or view_grant.input_tree_sha256 is None:
+        raise ExecutionContractError
+    workspace_io = ClientWorkspacePort(
+        managed.client,
+        namespace=managed.binding.namespace,
+        view=view_ref,
+        grant=view_grant,
+        cache_dir=run_log_dir / "managed-view-cache",
+    )
+    plan_sha = None if plan_ref is None else plan_ref.sha256
+    project_executor = ManagedProjectToolExecutor(
+        managed.client,
+        namespace=managed.binding.namespace,
+        view=view_ref,
+        grant=view_grant,
+        profile=profile,
+        input_tree_sha256=view_grant.input_tree_sha256,
+        plan_sha256=plan_sha,
+        original_revision_id=base_revision,
+    )
+    if read_only_stage:
+        read_executor = ReadOnlyManagedBashExecutor(
+            managed.client,
+            namespace=managed.binding.namespace,
+            view=view_ref,
+            grant=view_grant,
+            profile=profile,
+            plan_ref=plan_ref,
+            controller_root=workspace,
+        )
+        return workspace_io, read_executor, project_executor, None
+    write_executor = ManagedBashExecutor(
+        managed.client,
+        namespace=managed.binding.namespace,
+        view=view_ref,
+        grant=view_grant,
+        profile=profile,
+        input_tree_sha256=view_grant.input_tree_sha256,
+        plan_sha256=plan_sha,
+        original_revision_id=base_revision,
+        controller_root=workspace,
+    )
+    lease = _ManagedStageLease(
+        managed=managed,
+        namespace=managed.binding.namespace,
+        view_grant=view_grant,
+        workspace_io=workspace_io,
+        managed_executor=write_executor,
+        project_tool_executor=project_executor,
+        plan_ref=plan_ref,
+        allow_nested_handoff=owns_writer,
+    )
+    return workspace_io, write_executor, project_executor, lease
+
+
 def _drive_stage_with_managed_workspace(
     *,
     managed: ManagedExecution | None,
@@ -1833,9 +1961,10 @@ def _drive_stage_with_managed_workspace(
     run_log_dir: Path,
     session_db: SessionDatabase | None,
     workspace: Path,
-    role: str,  # noqa: ARG001 - read by the caller's build_registry closure, not here
+    role: str,
     plan_ref: PlanRef | None,
     wants_candidate: bool = False,
+    planner_dispatch: PlannerDispatch | None = None,
     build_registry: Callable[[WorkspacePort | None, BashExecutor | None, _ManagedStageLease | None], ToolRegistry],
     drive: Callable[[ToolRegistry], SessionOutcome],
 ) -> tuple[SessionOutcome, bool]:
@@ -1844,75 +1973,48 @@ def _drive_stage_with_managed_workspace(
     A workflow supplies its existing writer and keeps ownership after this stage;
     a direct ``fa run`` may own a writer for this invocation. In either case the
     stage gets a fresh view over the most recent authority-reported revision.
+    Read-only and candidate-only stages (``eval``, ``ACQUISITION``,
+    ``ADMISSION_REPAIR``, ``EVAL_REPLAN``) pin an immutable ``PIN_READER`` view
+    and settle by ``STOP_VIEW`` + reader ``RELEASE`` without ``PUBLISH``.
     """
     lease: _ManagedStageLease | None = None
     view_grant: GrantReply | None = None
     candidate_view_grant: GrantReply | None = None
     candidate_port: ClientWorkspacePort | None = None
+    workspace_io: WorkspacePort | None = None
+    managed_executor: BashExecutor | None = None
+    managed_project_tool_executor: ManagedProjectToolExecutor | None = None
     view_settled = True
     release_confirmed = True
+    read_only_stage = (role == "eval") or (
+        planner_dispatch is not None and planner_dispatch.kind is not PlannerDispatchKind.ORDINARY_PLANNING
+    )
+    managed_token = _STAGE_MANAGED_EXECUTION.set(managed)
+    executor_token = _STAGE_PROJECT_TOOL_EXECUTOR.set(None)
     try:
-        workspace_io: WorkspacePort | None = None
-        managed_executor: BashExecutor | None = None
-        managed_project_tool_executor: ManagedProjectToolExecutor | None = None
         if managed is not None:
-            profile = managed.view_profile
-            if profile is None or not profile.interactive:
-                raise ExecutionContractError
             base_revision = managed.current_revision_id
-            # If the CREATE_VIEW reply is uncertain there is no grant we can
+            # If the view-open reply is uncertain there is no grant we can
             # safely stop, so retain the writer rather than releasing it blindly.
             view_settled = False
-            view_grant = managed.open_view(
-                access=Access.WRITE,
-                purpose=ViewPurpose.PROJECT,
+            view_grant, stage_profile = _open_stage_view(
+                managed,
+                read_only_stage=read_only_stage,
                 base_revision=base_revision,
                 plan_ref=plan_ref,
             )
-            if (
-                view_grant.operation is not Operation.CREATE_VIEW
-                or view_grant.view_ref is None
-                or view_grant.input_tree_sha256 is None
-            ):
-                raise ExecutionContractError
-            workspace_io = ClientWorkspacePort(
-                managed.client,
-                namespace=managed.binding.namespace,
-                view=view_grant.view_ref,
-                grant=view_grant,
-                cache_dir=run_log_dir / "managed-view-cache",
-            )
-            managed_executor = ManagedBashExecutor(
-                managed.client,
-                namespace=managed.binding.namespace,
-                view=view_grant.view_ref,
-                grant=view_grant,
-                profile=profile,
-                input_tree_sha256=view_grant.input_tree_sha256,
-                plan_sha256=None if plan_ref is None else plan_ref.sha256,
-                original_revision_id=base_revision,
-                controller_root=workspace,
-            )
-            managed_project_tool_executor = ManagedProjectToolExecutor(
-                managed.client,
-                namespace=managed.binding.namespace,
-                view=view_grant.view_ref,
-                grant=view_grant,
-                profile=profile,
-                input_tree_sha256=view_grant.input_tree_sha256,
-                plan_sha256=None if plan_ref is None else plan_ref.sha256,
-                original_revision_id=base_revision,
-            )
-            lease = _ManagedStageLease(
-                managed=managed,
-                namespace=managed.binding.namespace,
+            workspace_io, managed_executor, managed_project_tool_executor, lease = _build_stage_ports(
+                managed,
                 view_grant=view_grant,
-                workspace_io=workspace_io,
-                managed_executor=managed_executor,
-                project_tool_executor=managed_project_tool_executor,
+                profile=stage_profile,
+                read_only_stage=read_only_stage,
+                base_revision=base_revision,
                 plan_ref=plan_ref,
-                allow_nested_handoff=owns_writer,
+                run_log_dir=run_log_dir,
+                workspace=workspace,
+                owns_writer=owns_writer,
             )
+            _STAGE_PROJECT_TOOL_EXECUTOR.set(managed_project_tool_executor)
             if wants_candidate:
                 candidate_view_grant, candidate_port = _open_stage_candidate_view(managed, plan_ref)
 
@@ -1932,18 +2034,28 @@ def _drive_stage_with_managed_workspace(
         if lease is not None:
             lease.finish(accepted=outcome.exit_code == 0)
             view_settled = lease.writer_release_safe
+        elif managed is not None and view_grant is not None:
+            _suspend_stage_ports(workspace_io, managed_executor, managed_project_tool_executor)
+            if not managed.stop_view(view_grant):
+                raise ExecutionUnavailableError
+            view_settled = True
     except BaseException:
         if lease is not None:
             lease.abort()
             view_settled = lease.writer_release_safe
         elif managed is not None and view_grant is not None:
+            _suspend_stage_ports(workspace_io, managed_executor, managed_project_tool_executor)
+            is_read_view = view_grant.view_ref is not None and view_grant.view_ref.access is Access.READ
+            stopper = managed.stop_view if is_read_view else managed.reject_view
             try:
-                view_settled = managed.stop_view(view_grant)
+                view_settled = stopper(view_grant)
             except Exception as error:  # noqa: BLE001 - preserve the stage's original failure
                 view_settled = False
                 logger.warning("managed stage view cleanup failed (run=%s): %s", run_id, error)
         raise
     finally:
+        _STAGE_PROJECT_TOOL_EXECUTOR.reset(executor_token)
+        _STAGE_MANAGED_EXECUTION.reset(managed_token)
         STAGE_CANDIDATE_PORT.set(None)
         if candidate_view_grant is not None:
             _close_stage_candidate_view(managed, candidate_view_grant, run_id=run_id)
@@ -1969,6 +2081,7 @@ def _run_cli_stage(
     role: str,
     plan_ref: PlanRef | None,
     wants_candidate: bool = False,
+    planner_dispatch: PlannerDispatch | None = None,
     build_registry: Callable[[WorkspacePort | None, BashExecutor | None, _ManagedStageLease | None], ToolRegistry],
     drive: Callable[[ToolRegistry], SessionOutcome],
 ) -> tuple[SessionOutcome | None, bool]:
@@ -1992,6 +2105,7 @@ def _run_cli_stage(
             role=role,
             plan_ref=plan_ref,
             wants_candidate=wants_candidate,
+            planner_dispatch=planner_dispatch,
             build_registry=build_registry,
             drive=drive,
         )
@@ -2198,6 +2312,8 @@ def _validate_run_args(args: argparse.Namespace, *, planner_dispatch: PlannerDis
     """
     if not _valid_planner_dispatch(planner_dispatch, getattr(args, "role", None), getattr(args, "run_id", None)):
         return "fa run: invalid planner dispatch"
+    if not _valid_candidate_seed(getattr(args, "_candidate_seed", None), planner_dispatch):
+        return "fa run: invalid candidate seed"
     resolved = _resolve_task(getattr(args, "task_pos", None), getattr(args, "task", None))
     if resolved is None:
         return "fa run: provide a task — positional (fa run \"...\"), --task, or '-' for stdin"
@@ -2348,6 +2464,7 @@ def _build_role_registry(
     managed_executor: BashExecutor | None = None,
     project_tool_executor: ManagedProjectToolExecutor | None = None,
     candidate_io: CandidateWorkspacePort | None = None,
+    candidate_seed_text: str | None = None,
 ) -> ToolRegistry:
     """Select the role-appropriate tool registry.
 
@@ -2379,6 +2496,7 @@ def _build_role_registry(
                 managed_executor=managed_executor,
                 project_tool_executor=project_tool_executor,
                 candidate_io=candidate_io,
+                candidate_seed_text=candidate_seed_text,
             )
         if role == "eval":
             return build_eval_registry(
@@ -2570,6 +2688,7 @@ def _build_run_tool_registry(
     managed_executor: BashExecutor | None = None,
     project_tool_executor: ManagedProjectToolExecutor | None = None,
     candidate_io: CandidateWorkspacePort | None = None,
+    candidate_seed_text: str | None = None,
 ) -> ToolRegistry:
     """Build the exact role tool corpus used by a live ``fa run``.
 
@@ -2613,6 +2732,7 @@ def _build_run_tool_registry(
             managed_executor=managed_executor,
             project_tool_executor=project_tool_executor,
             candidate_io=candidate_io,
+            candidate_seed_text=candidate_seed_text,
         )
     registry = _apply_escalation_gate(registry, role=role, scope_point=scope_point, gate_enabled=gate_enabled)
     # Spec §7.0: ACQUISITION is read/search-only; never grant pr_prepare to an
@@ -2643,6 +2763,8 @@ def _register_managed_subagent_tool(
     limits: RuntimeLimits,
     redactor: SecretRedactor | None,
     planner_dispatch: PlannerDispatch | None = None,
+    managed: ManagedExecution | None = None,
+    plan_ref: PlanRef | None = None,
 ) -> ToolRegistry:
     """Add the managed child only at the managed production caller edge.
 
@@ -2656,19 +2778,21 @@ def _register_managed_subagent_tool(
         or (planner_dispatch is not None and planner_dispatch.kind is PlannerDispatchKind.ACQUISITION)
     ):
         return registry
-    if stage_lease is None:
+    active_managed = managed if stage_lease is None else stage_lease.managed
+    active_plan_ref = plan_ref if stage_lease is None else stage_lease.plan_ref
+    if active_managed is None:
         raise RuntimeError("managed subagent registration requires the active managed stage lease")
     registry.register(
         build_managed_subagent_tool(
             workspace_root=workspace_root,
             run_log_dir=run_log_dir,
-            managed=stage_lease.managed,
+            managed=active_managed,
             parent_state=parent_state,
             parent_role=role,
             chat_chain=chat_chain,
             chat_compactor=chat_compactor,
             limits=limits,
-            plan_ref=stage_lease.plan_ref,
+            plan_ref=active_plan_ref,
             redactor=redactor,
         )
     )
@@ -3019,6 +3143,20 @@ def _valid_planner_dispatch(dispatch: PlannerDispatch | None, role: object, run_
     )
 
 
+def _valid_candidate_seed(seed: object, dispatch: PlannerDispatch | None) -> bool:
+    if seed is None:
+        return True
+    return (
+        dispatch is not None
+        and dispatch.owns_candidate
+        and dispatch.candidate_target is not None
+        and isinstance(seed, tuple)
+        and len(seed) == 2
+        and seed[0] == dispatch.candidate_target
+        and isinstance(seed[1], str)
+    )
+
+
 def _finish_cli_run(
     *,
     outcome: SessionOutcome,
@@ -3327,6 +3465,13 @@ def _cmd_run(
                 managed_workspace=workspace_io is not None,
             )
         )
+        candidate_io = STAGE_CANDIDATE_PORT.get() if role == "planner" else None
+        candidate_seed = getattr(args, "_candidate_seed", None)
+        candidate_seed_text = (
+            candidate_seed[1]
+            if candidate_io is not None and isinstance(candidate_seed, tuple) and len(candidate_seed) == 2
+            else None
+        )
         registry = _build_run_tool_registry(
             role,
             workspace,
@@ -3354,11 +3499,14 @@ def _cmd_run(
             ),
             workspace_io=workspace_io,
             managed_executor=managed_executor,
-            project_tool_executor=None if stage_lease is None else stage_lease.project_tool_executor,
+            project_tool_executor=(
+                _STAGE_PROJECT_TOOL_EXECUTOR.get() if stage_lease is None else stage_lease.project_tool_executor
+            ),
             # The stage boundary opens the CANDIDATE view before it builds this
             # registry; reading the binding here means one owner for the view and
             # no fourth parameter on a signature 48 tests already pin.
-            candidate_io=STAGE_CANDIDATE_PORT.get() if role == "planner" else None,
+            candidate_io=candidate_io,
+            candidate_seed_text=candidate_seed_text,
         )
         return _register_managed_subagent_tool(
             registry,
@@ -3373,6 +3521,8 @@ def _cmd_run(
             limits=limits,
             redactor=redactor,
             planner_dispatch=planner_dispatch,
+            managed=_STAGE_MANAGED_EXECUTION.get() if stage_lease is None else stage_lease.managed,
+            plan_ref=getattr(args, "_managed_plan_ref", None) if stage_lease is None else stage_lease.plan_ref,
         )
 
     def drive_with_registry(registry: ToolRegistry) -> SessionOutcome:
@@ -3429,6 +3579,7 @@ def _cmd_run(
         # Only a planner stage can own a candidate, and only when the controller
         # dispatched one (repair/replan); the seed's own stage sets this too.
         wants_candidate=bool(getattr(args, "_candidate_dispatch", False)),
+        planner_dispatch=planner_dispatch,
         build_registry=build_registry,
         drive=drive_with_registry,
     )

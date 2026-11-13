@@ -234,12 +234,13 @@ def build_planner_registry(
     project_tool_executor: Any | None = None,
     planner_dispatch: PlannerDispatch | None = None,
     candidate_io: Any | None = None,
+    candidate_seed_text: str | None = None,
 ) -> ToolRegistry:
     """Planner = planner profile (fs_search,read,write for research docs,blackboard_query) + observability."""
     if workspace_io is None and (managed_executor is not None or project_tool_executor is not None):
         raise ValueError("managed executors require a managed workspace port")
     if planner_dispatch is not None and planner_dispatch.kind is PlannerDispatchKind.ACQUISITION:
-        if candidate_io is not None:
+        if candidate_io is not None or candidate_seed_text is not None:
             raise PlannerDispatchError
         from fa.inner_loop.profiles import build_acquisition_registry
 
@@ -266,6 +267,7 @@ def build_planner_registry(
                 managed_executor=managed_executor,
                 project_tool_executor=project_tool_executor,
                 candidate_io=candidate_io,
+                candidate_seed_text=candidate_seed_text,
             )
     except (ToolSchemaPortabilityError, ToolWireNameError):
         # D12: both are correctness failures, not availability failures.

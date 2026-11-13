@@ -1442,6 +1442,7 @@ def _run_stage(
     run_stage_fn: Callable[..., int],
     prior_verification: PlanVerification | None = None,
     planner_dispatch: PlannerDispatch | None = None,
+    candidate_seed_text: str | None = None,
 ) -> StageResult:
     """Dispatch one role session and, for ``eval``, persist its report.
 
@@ -1503,6 +1504,14 @@ def _run_stage(
         # buffer would be a capability nobody asked for, and (worse) it has no plan
         # identity to label one with (CT120).
         "_candidate_dispatch": dispatch is not None and dispatch.owns_candidate,
+        **(
+            {"_candidate_seed": (dispatch.candidate_target, candidate_seed_text)}
+            if dispatch is not None
+            and dispatch.owns_candidate
+            and dispatch.candidate_target is not None
+            and candidate_seed_text is not None
+            else {}
+        ),
     }
     if ctx.run_context is not None and ctx.session_context is not None:
         stage_kwargs.update(
@@ -3365,6 +3374,7 @@ def _run_admission_repair_with_receipt(
     if dispatch.candidate_target is None:
         raise PlannerDispatchError
     target = Path(dispatch.candidate_target)
+    seed_text = (source.utf8_bytes if draft is None else draft.utf8_bytes).decode("utf-8")
     try:
         role_tasks = dict(ctx.per_role_task)
         role_tasks["planner"] = (
@@ -3383,6 +3393,7 @@ def _run_admission_repair_with_receipt(
                 transition_reason=f"{kind.value} candidate revision",
                 run_stage_fn=run_stage_fn,
                 planner_dispatch=dispatch,
+                candidate_seed_text=seed_text,
             )
         except Exception as error:
             raise PlanPromotionError("prepare-failed") from error

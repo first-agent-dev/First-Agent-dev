@@ -2427,31 +2427,77 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
         capability: str,
         deadline: float,
     ) -> dict[str, bool]:
-        """Revoke unused-for-execution READ retention; never assert cell terminality or GC."""
+        """Revoke unused READ retention, or settle a stopped WRITE view as REJECTED."""
         with self._transaction(peer, deadline):
+            view = self._proof_only(peer, namespace, view_ref, capability)
+            if isinstance(view, _ProjectView):
+                return self._release_project_view(peer, namespace, view, view_ref=view_ref, deadline=deadline)
             revoked = False
             try:
-                pin = self._proof_only(peer, namespace, view_ref, capability)
-                if not isinstance(pin, _ReaderPin):
-                    raise SupervisorError("UNAUTHORIZED")
-                if pin.record["operation_ids"]:
+                if view.record["operation_ids"]:
                     raise SupervisorError("WORKSPACE_BUSY")
                 self._gate(view_ref).closed = True
                 self._wait_drained(view_ref, deadline)
-                pin.capability = None
+                view.capability = None
                 revoked = True
-                pin.record = {**pin.record, "state": "REJECTED"}
-                _replace_private_bytes(pin.directory, "view.json", encode_json(pin.record))
-                if _read_json(pin.directory, "view.json", _VIEW_RECORD, 1024**2) != pin.record:
+                view.record = {**view.record, "state": "REJECTED"}
+                _replace_private_bytes(view.directory, "view.json", encode_json(view.record))
+                if _read_json(view.directory, "view.json", _VIEW_RECORD, 1024**2) != view.record:
                     raise SupervisorError("DURABILITY_UNKNOWN")
                 _budget(deadline)
-                pin.close()
+                view.close()
                 return {"released": True}
             except (OSError, SupervisorError):
                 if revoked:
                     self._healthy = False
                     raise SupervisorError("DURABILITY_UNKNOWN") from None
                 raise
+
+    def _release_project_view(
+        self,
+        peer: PeerIdentity,
+        namespace: NamespaceRef,
+        view: _ProjectView,
+        *,
+        view_ref: ViewRef,
+        deadline: float,
+    ) -> dict[str, bool]:
+        """Settle a proved-terminal STOPPING WRITE view as REJECTED without publishing."""
+        state = view.record["state"]
+        if state == "UNKNOWN":
+            raise SupervisorError("TERMINALITY_UNKNOWN")
+        if state != "STOPPING" or not self._gate(view_ref).closed:
+            raise SupervisorError("VIEW_CLOSED")
+        if _terminal_record(view.directory) is None:
+            raise SupervisorError("TERMINALITY_UNKNOWN")
+        binding = self._binding(view_ref.workspace_id)
+        self._recheck(binding)
+        if (
+            binding.metadata["status"] != "OWNED"
+            or binding.metadata["generation"] != view_ref.generation
+            or binding.metadata["active_actor"] != namespace.to_dict()
+            or binding.principal != peer.principal
+        ):
+            raise SupervisorError("STALE_GENERATION")
+        if self._gate(view_ref).active or self._read_intent(binding.fd) is not None:
+            raise SupervisorError("WORKSPACE_BUSY")
+        rejected = {**view.record, "state": "REJECTED"}
+        revoked = False
+        try:
+            view.capability = None
+            revoked = True
+            _replace_private_bytes(view.directory, "view.json", encode_json(rejected))
+            if _read_json(view.directory, "view.json", _VIEW_RECORD, 1024**2) != rejected:
+                raise SupervisorError("DURABILITY_UNKNOWN")
+            view.record = rejected
+            _budget(deadline)
+            view.close()
+            return {"released": True}
+        except (OSError, SupervisorError):
+            if revoked:
+                self._healthy = False
+                raise SupervisorError("DURABILITY_UNKNOWN") from None
+            raise
 
     def _writer_proof(
         self, peer: PeerIdentity, namespace: NamespaceRef, workspace_id: str, capability: str

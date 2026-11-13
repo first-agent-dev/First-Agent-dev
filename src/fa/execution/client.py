@@ -1181,6 +1181,33 @@ class ExecutionClient:
             return False
         return True
 
+    def release_stopped_view(
+        self, namespace: NamespaceRef, *, view: ViewRef, grant: GrantReply, deadline: float | None = None
+    ) -> bool:
+        """Settle a stopped WRITE view as REJECTED via view-scoped RELEASE.
+
+        Called only after ``STOP_VIEW`` proved ``terminal=True``. Indeterminate or
+        refused settlement returns ``False`` so the caller keeps the writer fenced
+        rather than assuming the view settled.
+        """
+        if not isinstance(namespace, NamespaceRef) or not isinstance(view, ViewRef):
+            raise ExecutionContractError
+        if not isinstance(grant, GrantReply) or grant.view_ref != view:
+            raise ExecutionContractError
+        try:
+            reply = self.request(
+                Operation.RELEASE,
+                request_id=uuid4().hex,
+                namespace=namespace,
+                view=view,
+                grant=grant,
+                payload={},
+                deadline=deadline,
+            )
+        except (ExecutionUncertainError, ExecutionUnavailableError, ExecutionRejectedError):
+            return False
+        return reply.get("released") is True
+
     def _release_view(
         self,
         namespace: NamespaceRef,

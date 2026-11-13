@@ -319,6 +319,7 @@ def _build_tool_builders(
     managed_executor: BashExecutor | None = None,
     project_tool_executor: Any | None = None,
     candidate_io: CandidateWorkspacePort | None = None,
+    candidate_seed_text: str | None = None,
 ) -> dict[str, Callable[[], ToolSpec]]:
     """Map tool name -> builder lambda, uses existing builders, graceful degradation.
 
@@ -328,12 +329,22 @@ def _build_tool_builders(
     """
     builders: dict[str, Callable[[], ToolSpec]] = {}
     root = Path(workspace_root).resolve()
+    candidate_dispatch = _candidate_dispatch(planner_dispatch)
+    candidate_target = None if candidate_dispatch is None else candidate_dispatch.candidate_target
+    if candidate_seed_text is not None and (workspace_io is None or candidate_io is None or candidate_target is None):
+        raise PlannerDispatchError
 
     # Lazy imports to avoid circular and missing deps
     try:
         from fa.inner_loop.tools.read_file import build_read_file_tool
 
-        builders["fs_read_file"] = lambda: build_read_file_tool(root, workspace_io=workspace_io)
+        builders["fs_read_file"] = lambda: build_read_file_tool(
+            root,
+            workspace_io=workspace_io,
+            candidate_io=candidate_io,
+            candidate_target=candidate_target,
+            candidate_seed_text=candidate_seed_text,
+        )
     except Exception as exc:  # noqa: BLE001
         logger.warning(f"Failed to setup builder fs_read_file: {exc}")
 
@@ -488,25 +499,18 @@ def _builder_for_role(
     return builders.get(tool_name)
 
 
-def build_registry_for_role(
+def _validate_registry_inputs(
     role: str,
-    workspace_root: Path,
     *,
-    bash_timeout: int = 30,
-    planner_dispatch: PlannerDispatch | None = None,
-    workspace_io: WorkspacePort | None = None,
-    managed_executor: BashExecutor | None = None,
-    project_tool_executor: Any | None = None,
-    candidate_io: CandidateWorkspacePort | None = None,
-) -> ToolRegistry:
-    """Build ToolRegistry with only tools for given role, token efficient.
-
-    Researcher: 4 tools ~600 tokens vs full 11 tools ~3000 tokens (-60%).
-    Uses TOOL_BUILDERS mapping, failure-observable WARNING if tool missing, not crash.
-    """
+    planner_dispatch: PlannerDispatch | None,
+    workspace_io: WorkspacePort | None,
+    managed_executor: BashExecutor | None,
+    project_tool_executor: Any | None,
+    candidate_io: CandidateWorkspacePort | None,
+    candidate_seed_text: str | None,
+) -> None:
     if role not in PROFILES_RAW:
         raise ValueError(f"Unknown role {role}, known: {list(PROFILES_RAW.keys())}")
-
     if planner_dispatch is not None and (role != "planner" or planner_dispatch.kind is PlannerDispatchKind.ACQUISITION):
         raise PlannerDispatchError
     if workspace_io is None and managed_executor is not None:
@@ -518,6 +522,36 @@ def build_registry_for_role(
     # host-mode run write through an authority it does not hold.
     if candidate_io is not None and workspace_io is None:
         raise ValueError("candidate buffer requires a managed workspace port")
+    if candidate_seed_text is not None and candidate_io is None:
+        raise ValueError("candidate seed requires a managed candidate port")
+
+
+def build_registry_for_role(
+    role: str,
+    workspace_root: Path,
+    *,
+    bash_timeout: int = 30,
+    planner_dispatch: PlannerDispatch | None = None,
+    workspace_io: WorkspacePort | None = None,
+    managed_executor: BashExecutor | None = None,
+    project_tool_executor: Any | None = None,
+    candidate_io: CandidateWorkspacePort | None = None,
+    candidate_seed_text: str | None = None,
+) -> ToolRegistry:
+    """Build ToolRegistry with only tools for given role, token efficient.
+
+    Researcher: 4 tools ~600 tokens vs full 11 tools ~3000 tokens (-60%).
+    Uses TOOL_BUILDERS mapping, failure-observable WARNING if tool missing, not crash.
+    """
+    _validate_registry_inputs(
+        role,
+        planner_dispatch=planner_dispatch,
+        workspace_io=workspace_io,
+        managed_executor=managed_executor,
+        project_tool_executor=project_tool_executor,
+        candidate_io=candidate_io,
+        candidate_seed_text=candidate_seed_text,
+    )
     profile = PROFILES_RAW[role]
     wanted = profile.get("tools", [])
     builders = _build_tool_builders(
@@ -528,6 +562,7 @@ def build_registry_for_role(
         **({"managed_executor": managed_executor} if workspace_io is not None else {}),
         project_tool_executor=project_tool_executor,
         candidate_io=candidate_io,
+        candidate_seed_text=candidate_seed_text,
     )
 
     registry = ToolRegistry()
