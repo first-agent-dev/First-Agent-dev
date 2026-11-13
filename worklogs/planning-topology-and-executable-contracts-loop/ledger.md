@@ -9221,3 +9221,72 @@ turns it red.
 pre-existing (pyrefly's remaining 29 errors predate this branch; the readiness
 integration has its own bootstrap blocker). Kills: READ→WRITE view swap red; the
 previously documented `owner.publish_view` path removed.
+
+### E516 — S5P1 STEP2: plan admission from an acquisition snapshot, and a refusal that left no trace (2026-11-10; Arena-local)
+
+**What STEP2 asked for and what it took.** The step's remaining clause was "wire
+real acquisition caller". That is one sentence covering four separable things, and
+the first three are now landed and pushed:
+
+1. `build_acquisition_registry` — a positive five-tool read/search list
+   (`fs_read_file`, `fs_search`, `fs_reach`, `fs_blackboard_query`,
+   `fs_exploration_metrics`), assembled through the same `_build_tool_builders` as
+   every other profile. It exists as a positive list because the planner profile
+   *does* carry `fs_write_file`; a builder that filtered names for "write" would
+   have looked correct and inherited the next mutator added.
+2. `run_workflow(..., admission_snapshot=...)` — the plan as bytes the caller
+   already validated, with three closed refusals: `conflict` (two plan sources),
+   `admission-without-coder` (a bound plan that bounds nothing), `unreadable`
+   (not a snapshot). `_check_admission_source` is now substrate-aware and *both*
+   branches still refuse `source-changed` — a host file edited after pinning, and a
+   snapshot whose recorded bytes no longer match its own digest.
+3. `resolve_acquisition_choice` — `SELECT_EXISTING` → snapshot, `NEEDS_CLARIFICATION`
+   → pass-through, `BOOTSTRAP_NEW_PROJECT` → an answer that says it needs
+   installation, deliberately **not** a snapshot. Admitting a coder against prose
+   that is not in the workspace is the failure this series exists to prevent.
+
+**The defect found while writing the zero-effect proof, which is the actual result
+of this entry.** `conflict` and `admission-without-coder` are rules I introduced;
+neither is in the closed `plan-ref` vocabulary, so `write_admission_record` rejected
+the whole record and a refused run left **no durable trace at all** — one stderr
+line, nothing on disk. The I02 spec already answers this ("unrecognized validator
+diagnostics map to plan-ref/validator-error ... without persisting exception text"),
+so it is a fix, not a question: the record keeps `validator-error`, and the precise
+reason survives in `blocked_reason`, which is free text. The mapping constant is
+built from `ADMISSION_RULES["plan-ref"]` so the write boundary cannot drift from
+the schema.
+
+The zero-effect proof itself is now two observations, not one assertion: the stage
+dispatcher — the only path to a provider call — is a poison object that raises if
+invoked and is never invoked, and the record exists saying `BLOCKED` with one
+attempt, no digests, nothing promoted. The second half is what catches the defect
+above, which is why the first version of the test failed instead of passing.
+
+**What is deliberately still open.** The production caller that calls
+`parse_acquisition_choice` → `resolve_acquisition_choice` → `run_workflow` from
+`invoke_workflow` is not wired; `acquisition_refusal` still returns
+`acquisition_unavailable` for a planner-first managed request. Bootstrap rendering is
+available on the authority side (`prepare_bundle` → `install_project`, both
+authority-gated, both already served by the supervisor dispatcher) but no inner-loop
+caller uses it yet. The step-table's "controller-rendered bundle" clause therefore
+stays open with the substrate in place and the caller absent — stated that way
+because "render_bundle exists" would be a misleading close.
+
+**Verification.** New banks: 7 (registry) + 12 (admission, incl. the zero-effect
+pair) + 11 (resolution) = 30 passed. Selection `acquisition|plan|workflow|admission`
+= 861 passed. Full suite 7063 passed / 3 failed, and all three fail identically at
+`fb3afd5`: `test_pyrefly_check_passes` (a dirty baseline of 59 errors, see below),
+`test_s10a_authoring_check_runs_on_a_real_workspace` (known long-run interference),
+`test_clean_candidate_real_readiness_commit_and_local_publication` (bootstrap
+blocker). Mutation: 4/4 (registry) + 6/6 (admission) + 5/5 (resolution) + 4/4
+(zero-effect, including a revert to the exact defect and a mutant that silently
+drops the record).
+
+**A gate whose baseline is dirty, and how it was used anyway.** `pyrefly` reports 59
+errors before this branch starts, so its test was already red and passing it was never
+available. Instead the error *sets* were diffed between a base worktree and this tree:
+60 vs 59 after the first fix (an unannotated test helper), and parity at 59 after.
+Two of my own additions were real and fixed rather than waived: `resolve_acquisition_choice`
+was raising `AcquisitionChoiceError` — a closed model-facing (validator, rule) verdict —
+for its own shape violations, which both mislabelled a programming error as bad model
+input and failed the type. Shape violations now raise plain `ValueError`.
