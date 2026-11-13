@@ -805,6 +805,84 @@ class TestInjectOverrideInheritance:
         assert forwarded[CODER_SLICE_CEREMONY.name] == MODE_ENFORCE
 
 
+@pytest.mark.parametrize("roles", ["coder", "eval,coder", "coder,planner,eval", "eval,coder,planner"])
+def test_managed_coder_without_a_leading_planner_is_refused_by_name(tmp_path: Path, roles: str) -> None:
+    """S5P1/§7: "must include its initial planner" is a contract, not a default.
+
+    `coder,planner,eval` is the discriminating case: a planner *is* present, so a
+    predicate that only asks "is there a planner anywhere" would admit it. The
+    planner must be first, because stage order is the execution order and a planner
+    sequenced after the coder owns no plan the coder could write against.
+
+    The budget is left at 2 and the gate is hit three times: a refusal that spent
+    the escalation budget would come back as `workflow_budget_exhausted` on the
+    third call, so this is also the credit-freedom oracle.
+    """
+    from dataclasses import replace
+
+    workflow = _RecordingWorkflow()
+    handoffs: list[bool] = []
+
+    def facts() -> dict[str, Any]:
+        handoffs.append(True)
+        return {}
+
+    managed = replace(_ctx(tmp_path), session_facts_provider=facts, managed_execution=object())
+    spec = _tool(workflow, managed)
+    for _ in range(3):
+        result = spec.handler({"task": "implement", "roles": roles})
+        assert _error_code(result) == "acquisition_requires_planner"
+        assert result.result is None and result.error is not None
+        # A refusal the caller cannot fix by retrying the same call.
+        assert result.error.retryable is False
+    # Before child allocation, handoff construction and any controller call.
+    assert not workflow.calls and not handoffs
+
+
+def test_managed_coder_behind_a_leading_planner_is_still_unavailable_not_admitted(tmp_path: Path) -> None:
+    """S5P1 negative proof: the precise code is a better refusal, never a green light.
+
+    `planner,coder,eval` under a managed execution must not start a coder: the
+    managed acquisition caller does not exist yet. If this ever returns a payload,
+    a coder ran with no plan identity and no admission, which is the exact defect
+    S5P1 exists to prevent.
+    """
+    from dataclasses import replace
+
+    workflow = _RecordingWorkflow()
+    managed = replace(_ctx(tmp_path), managed_execution=object())
+    spec = _tool(workflow, managed)
+    result = spec.handler({"task": "implement", "roles": "planner,coder,eval"})
+    assert _error_code(result) == "acquisition_unavailable"
+    assert result.error is not None and result.error.retryable is False
+    assert not workflow.calls
+
+
+@pytest.mark.parametrize("roles", ["planner", "planner,eval", "eval,planner", "eval", "researcher", "code-reviewer"])
+@pytest.mark.parametrize("managed", [False, True])
+def test_acquisition_never_fires_without_a_coder(roles: str, *, managed: bool) -> None:
+    """§7: "Non-coder-only workflows retain their existing purpose".
+
+    The gate's own answer must be None for every coder-free sequence in both
+    modes. Asserting on the predicate rather than a full invocation isolates this
+    contract from the managed handoff binding, which is a different, pre-existing
+    check that a bare `managed_execution` legitimately fails.
+    """
+    from fa.inner_loop.tools.workflow_tool import acquisition_refusal
+
+    assert acquisition_refusal([part.strip() for part in roles.split(",")], managed=managed) is None
+
+
+def test_non_coder_workflows_still_delegate_in_the_legacy_context(tmp_path: Path) -> None:
+    """The legacy path keeps working end to end, so the gate stays narrow."""
+    workflow = _RecordingWorkflow()
+    spec = _tool(workflow, replace(_ctx(tmp_path), max_invocations=8))
+    for roles in ("planner", "planner,eval", "eval"):
+        payload = _payload(spec.handler({"task": "plan", "roles": roles}))
+        assert payload["run_id"].startswith("run-parent-wf"), roles
+    assert len(workflow.calls) == 3
+
+
 @pytest.mark.parametrize("roles", [None, "coder", "planner,coder,eval", "eval,coder", " coder "])
 def test_acquisition_unavailable_before_child_or_handoff(tmp_path: Path, roles: str | None) -> None:
     """Q70/CT95: no child ID, handoff, credit or controller call for unsupported acquisition."""

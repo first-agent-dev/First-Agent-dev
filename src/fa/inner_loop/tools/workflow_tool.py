@@ -402,6 +402,43 @@ def _requires_acquisition(roles: list[str]) -> bool:
     return "coder" in roles
 
 
+_ACQUISITION_UNAVAILABLE = (
+    "nested coder workflows need I03 managed plan acquisition; use an explicit-plan CLI/library workflow instead"
+)
+_ACQUISITION_REQUIRES_PLANNER = (
+    "a coder-bearing managed workflow must include its initial planner, "
+    "and as the first role; no outer plan reference exists to acquire one"
+)
+
+
+def acquisition_refusal(roles: list[str], *, managed: bool) -> tuple[str, str] | None:
+    """S5P1: say *why* a coder-bearing request cannot proceed, or None if it may.
+
+    Two distinct contracts, not one refusal with a guess attached (§7):
+
+    * a managed request that would run a coder with no plan to code against is
+      refused as ``acquisition_requires_planner`` -- before child/provider, so a
+      guessed default target never reaches an admission record;
+    * a legacy request keeps its existing purpose: I03 managed acquisition is not
+      wired into that path, so it is ``acquisition_unavailable`` as before.
+
+    The controller supplies a plan through its own admission. Holding a managed
+    execution or a plan reference is therefore *not* an admission ticket here: it
+    only makes the refusal more precise. Wire admission lands with the managed
+    caller (S5P2), and until then an unusable approval must not look like one.
+
+    The planner must come first. A planner sequenced after the coder cannot own
+    the plan the coder would write against, and stages run in the stated order.
+    """
+    if not _requires_acquisition(roles):
+        return None
+    if managed:
+        if not roles or roles[0] != "planner":
+            return "acquisition_requires_planner", _ACQUISITION_REQUIRES_PLANNER
+        return "acquisition_unavailable", _ACQUISITION_UNAVAILABLE
+    return "acquisition_unavailable", _ACQUISITION_UNAVAILABLE
+
+
 def _child_run_context(ctx: WorkflowInvocationContext, candidate: str) -> RunContext | None:
     """Allocate through existing session authority; never reuse/clone the parent run."""
     if ctx.run_context is None and ctx.session_context is None:
@@ -608,12 +645,10 @@ def _prepare_invocation(
             f"`mode` {mode!r} is not one of {list(WORKFLOW_MODES)}",
             retryable=True,
         )
-    if _requires_acquisition(roles):
-        return ToolResult.fail(
-            "acquisition_unavailable",
-            "nested coder workflows need I03 managed plan acquisition; "
-            "use an explicit-plan CLI/library workflow instead",
-        )
+    refusal = acquisition_refusal(roles, managed=ctx.managed_execution is not None)
+    if refusal is not None:
+        code, message = refusal
+        return ToolResult.fail(code, message)
     candidate = child_run_id(ctx.parent_run_id, invocation_count + 1)
     if not _RUN_ID_RE.match(candidate):
         return ToolResult.fail("invalid_child_run_id", f"derived child run id {candidate!r} is invalid")
