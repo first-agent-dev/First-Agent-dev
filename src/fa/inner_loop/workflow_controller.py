@@ -32,6 +32,12 @@ from fa.execution.types import Access, Operation, ViewPurpose
 from fa.inner_loop.admission_schema import ADMISSION_RULES
 from fa.inner_loop.coder_loop import SessionOutcome
 from fa.inner_loop.injections import INJECTION_MODES, INJECTION_SPECS, resolve_injection_modes
+from fa.inner_loop.managed_acquisition import (
+    AcquisitionChoiceError,
+    AcquisitionOutcome,
+    parse_acquisition_choice,
+    resolve_acquisition_choice,
+)
 from fa.inner_loop.plan_admission import (
     PlanRef,
     PlanRefError,
@@ -309,6 +315,11 @@ class StageResult:
     exit_code: int
     eval_report: EvalReport | None = None
     verification: PlanVerification | None = None
+    # S5P1 §7.0: the typed choice an ACQUISITION planner returned. Set on exactly
+    # one stage of one run, and only when an acquisition substrate was bound, so
+    # the controller can bind admission between planner and coder instead of
+    # running a second planner outside the workflow.
+    acquisition: AcquisitionOutcome | None = None
 
 
 # ── Helper functions ───────────────────────────────────────────────────────
@@ -2303,6 +2314,41 @@ def _run_adaptive(
             route=route,
             reason=reason,
         )
+
+
+@dataclass(frozen=True)
+class AcquisitionSubstrate:
+    """What one acquisition planner may read, and the names it may choose from.
+
+    Both halves come from the *same* pinned READ view: the port answers the reads the
+    planner performs with its own tools, and ``project_names`` is the Q146 list taken
+    from that view. Handing the planner a port it can read through but a name list
+    from somewhere else would let it select a project the view cannot resolve.
+    """
+
+    port: ClientWorkspacePort
+    project_names: tuple[str, ...]
+
+
+def _read_acquisition_choice(sink: list[SessionOutcome], substrate: AcquisitionSubstrate) -> AcquisitionOutcome:
+    """Turn the acquisition planner's final message into the prelude's outcome.
+
+    The channel is the one eval already uses (``_run_stage`` passes ``outcome_sink``
+    for every role and ``_cmd_run`` appends the terminal outcome), so the choice
+    arrives on a production path rather than a test-only hook.
+
+    Absence is an error, not an empty choice: a planner that stopped without one
+    settled message has not selected anything, and defaulting here would submit a
+    plan nobody chose.
+    """
+    if not sink:
+        raise AcquisitionChoiceError("selection", "choice-missing")
+    choice = parse_acquisition_choice(sink[-1].final_text or "")
+    return resolve_acquisition_choice(
+        choice,
+        inventory_view=substrate.port,
+        inventory_slugs=substrate.project_names,
+    )
 
 
 def _run_linear(ctx: WorkflowContext, roles: list[str], run_stage_fn: Callable[..., int]) -> int:
