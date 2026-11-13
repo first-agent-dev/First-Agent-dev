@@ -9,6 +9,7 @@ supervisor-owned CANDIDATE buffer and commits them through Operation.PUBLISH.
 from __future__ import annotations
 
 import os
+import re
 import time
 from pathlib import Path
 from typing import Protocol
@@ -19,14 +20,16 @@ from fa.inner_loop.planner_dispatch import PlannerDispatch, PlannerDispatchKind
 from fa.inner_loop.workflow_artifacts import _private_artifact_directory
 
 _CANONICAL_PARENT = ("worklogs", "planning-topology-and-executable-contracts-loop", "increments")
+_PROJECT_SLUG_RE = re.compile(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*")
 
 
 class PlanPromotionError(ValueError):
     """Static closed reason and irreversible-boundary state; no paths or bodies."""
 
-    def __init__(self, rule: str, *, replaced: bool = False) -> None:
+    def __init__(self, rule: str, *, replaced: bool = False, operation_id: str | None = None) -> None:
         self.rule = rule
         self.replaced = replaced
+        self.operation_id = operation_id
         super().__init__(f"plan promotion failed: {rule}")
 
 
@@ -40,7 +43,20 @@ class CandidatePlanPublisher(Protocol):
 
 def _canonical_parts(snapshot: PlanSnapshot) -> tuple[str, ...]:
     parts = tuple(snapshot.ref.workspace_relative_path.split("/"))
-    if len(parts) < 4 or parts[:3] != _CANONICAL_PARENT or any(p in {"", ".", ".."} or "\x00" in p for p in parts):
+    if any(p in {"", ".", ".."} or "\x00" in p for p in parts):
+        raise PlanPromotionError("scope-denied")
+    if snapshot.ref.source_kind in {"EXISTING_SELECTION", "BOOTSTRAP"}:
+        if (
+            len(parts) != 4
+            or parts[0] != "worklogs"
+            or _PROJECT_SLUG_RE.fullmatch(parts[1]) is None
+            or parts[2] != "increments"
+            or parts[3].startswith(".")
+            or not parts[3].endswith(".md")
+        ):
+            raise PlanPromotionError("scope-denied")
+        return parts
+    if len(parts) < 4 or parts[:3] != _CANONICAL_PARENT:
         raise PlanPromotionError("scope-denied")
     return parts
 

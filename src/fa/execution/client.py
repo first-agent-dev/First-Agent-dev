@@ -148,6 +148,7 @@ class PlanPublication:
     plan_ref: PlanRef
     revision_id: str
     already_published: bool
+    operation_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -726,10 +727,12 @@ class ExecutionClient:
             if result["plan_ref"] != expected_ref:
                 uncertain = True
                 raise ExecutionUncertainError("op-" + publish_request_id, code="DURABILITY_UNKNOWN")
+            op_id = result.get("operation_id")
             return PlanPublication(
                 PlanRef(**expected_ref),
                 str(result["revision_id"]),
                 bool(result["already_published"]),
+                operation_id=op_id if isinstance(op_id, str) and op_id else ("op-" + publish_request_id),
             )
         except ExecutionUncertainError as error:
             # The candidate view stays open: releasing it would assert that the
@@ -833,10 +836,12 @@ class ExecutionClient:
         # The publication is proved, so the view is settled exactly as the
         # uninterrupted path leaves it: PUBLISHED, and its pin revocable.
         self._release_view(namespace, view, view_grant, deadline)
+        op_id = result.get("operation_id")
         return PlanPublication(
             PlanRef(**expected_ref),
             str(result["revision_id"]),
             bool(result["already_published"]),
+            operation_id=op_id if isinstance(op_id, str) and op_id else ("op-" + pending.publish_request_id),
         )
 
     def publish_stage(

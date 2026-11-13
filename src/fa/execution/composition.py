@@ -449,10 +449,10 @@ class BoundPlanPublisher:
         self._managed = managed
         self._binding = binding
 
-    def publish_candidate(
+    def publish_candidate_receipt(
         self, source: PlanSnapshot, candidate: PlanSnapshot, *, deadline: float | None = None
-    ) -> PlanRef:
-        """Publish once, and reconcile a recoverable ambiguity before classifying it.
+    ) -> PlanPublication:
+        """Publish once, reconcile an ambiguous reply, and return the full receipt.
 
         Q114 option 1/A puts the proof of an unresolved publication on the run that
         owns the writer, but owning it is only half the selection: the resolution
@@ -477,7 +477,13 @@ class BoundPlanPublisher:
             if not self._managed.publication_pending:
                 raise  # no saga to replay; fail closed exactly as before
             publication = self._managed.reconcile_publication(deadline=deadline)
-        return publication.plan_ref
+        return publication
+
+    def publish_candidate(
+        self, source: PlanSnapshot, candidate: PlanSnapshot, *, deadline: float | None = None
+    ) -> PlanRef:
+        """Publish through the managed authority and return only the promoted ``PlanRef``."""
+        return self.publish_candidate_receipt(source, candidate, deadline=deadline).plan_ref
 
 
 def _control(

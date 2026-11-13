@@ -22,14 +22,21 @@ import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field, replace
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Final, Literal
+from typing import TYPE_CHECKING, Any, Final, Literal, Protocol, runtime_checkable
 
-from fa.execution.client import ExecutionRejectedError, ReadOnlyManagedBashExecutor
+from fa.execution.client import (
+    ExecutionRejectedError,
+    ExecutionUnavailableError,
+    ExecutionUncertainError,
+    ReadOnlyManagedBashExecutor,
+)
 from fa.execution.primitives import ExecutionContractError
+from fa.execution.publication import render_bundle
 from fa.execution.tool_port import ClientWorkspacePort
 from fa.execution.types import Access, Operation, ViewPurpose
-from fa.inner_loop.admission_schema import ADMISSION_RULES
+from fa.inner_loop.admission_schema import ADMISSION_RULES, ADMISSION_RULES_V2
 from fa.inner_loop.coder_loop import SessionOutcome
 from fa.inner_loop.injections import INJECTION_MODES, INJECTION_SPECS, resolve_injection_modes
 from fa.inner_loop.managed_acquisition import (
@@ -85,6 +92,7 @@ from fa.inner_loop.workflow_artifacts import (
     EvalReport,
     FlowState,
     FlowStatus,
+    ManagedAdmissionBinding,
     RouteDecision,
     _admission_lock,
     _private_artifact_directory,
@@ -181,6 +189,29 @@ class WorkflowArtifactPaths:
         return self.base_dir / "admission.json"
 
 
+@dataclass(frozen=True, slots=True)
+class _BootstrapReceipt:
+    """Committed authority receipt from ``prepare_bundle`` + ``install_project``."""
+
+    bundle_sha256: str
+    input_revision: str
+    output_revision: str
+    operation_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class _BootstrapFailure:
+    """Closed v2 failure details preserved alongside legacy ``PlanRefError``."""
+
+    validator: str
+    rule: str
+    severity: str
+    validation: str
+    operation_id: str | None = None
+    candidate_sha256: str | None = None
+    bundle_sha256: str | None = None
+
+
 @dataclass(slots=True)
 class _WorkflowAdmission:
     """Run-local canonical authority and the shared planner-attempt counter."""
@@ -201,6 +232,8 @@ class _WorkflowAdmission:
     # the legacy host path is also absent for a planner-only run, which has no
     # admission at all. Declared last so the three positional fields keep theirs.
     snapshot_backed: bool = False
+    from_acquisition: bool = False
+    bootstrap_receipt: _BootstrapReceipt | None = None
 
 
 @dataclass(slots=True)
@@ -272,6 +305,9 @@ class WorkflowContext:
     # S5P1: bound only for an acquisition run -- the pinned view plus the names it
     # named. None means this run must already have its plan, as every other run does.
     acquisition: AcquisitionSubstrate | None = None
+    # Q150=A: present solely on managed-child runs (owner_run_id != run_id) to
+    # select v2 admission.json without altering unmanaged v1 callers.
+    admission_binding: ManagedAdmissionBinding | None = None
 
     def plan_text(self) -> str | None:
         """Use the immutable admitted snapshot, or read legacy optional input.
@@ -2465,10 +2501,10 @@ def _pinned_acquisition_substrate(ctx: WorkflowContext) -> Iterator[AcquisitionS
             plan_ref=None,
             deadline=deadline,
         )
-    except ExecutionRejectedError as error:
+    except (ExecutionRejectedError, ExecutionUnavailableError, ExecutionUncertainError) as error:
         logger.warning(
             "managed acquisition unavailable: the authority refused the read pin [%s] (run=%s)",
-            error.code,
+            getattr(error, "code", type(error).__name__),
             ctx.run_id,
         )
         yield None
@@ -2535,6 +2571,18 @@ def _stage_acquisition_choice(
         return _read_acquisition_choice(sink, ctx.acquisition), False
     except AcquisitionChoiceError as error:
         print(f"fa workflow: acquisition choice refused: {error.rule}", file=sys.stderr)
+        severity = "FAIL" if error.validator == "bootstrap" else "ERROR"
+        outcome = "DIAGNOSTICS" if error.validator == "bootstrap" else "INDETERMINATE"
+        _blocked_plan_request(
+            run_id=ctx.run_id,
+            task=ctx.base_task,
+            rule=error.rule,
+            base_dir=ctx.artifact_paths.base_dir,
+            deadline=ctx.deadline_mono,
+            managed_binding=ctx.admission_binding,
+            attempt_kind="ACQUISITION" if ctx.admission_binding is not None else "EXPLICIT_INPUT",
+            v2_diagnostic=(error.validator, error.rule, severity, outcome, None),
+        )
         return None, True
 
 
@@ -2559,15 +2607,158 @@ def _read_acquisition_choice(sink: list[SessionOutcome], substrate: AcquisitionS
     )
 
 
-def _refusal_exit_code(ctx: WorkflowContext, refusal: PlanRefError) -> int:
+def _refusal_exit_code(
+    ctx: WorkflowContext,
+    refusal: PlanRefError,
+    *,
+    failure_detail: _BootstrapFailure | None = None,
+) -> int:
     """Record a bootstrap refusal the same way every other closed refusal is."""
+    v2_diag = (
+        (
+            failure_detail.validator,
+            failure_detail.rule,
+            failure_detail.severity,
+            failure_detail.validation,
+            failure_detail.operation_id,
+        )
+        if failure_detail is not None
+        else None
+    )
     return _blocked_plan_request(
         run_id=ctx.run_id,
         task=ctx.base_task,
         rule=refusal.rule,
         base_dir=ctx.artifact_paths.base_dir,
         deadline=ctx.deadline_mono,
+        managed_binding=ctx.admission_binding,
+        attempt_kind="ACQUISITION" if ctx.admission_binding is not None else "EXPLICIT_INPUT",
+        v2_diagnostic=v2_diag,
+        candidate_sha256=None if failure_detail is None else failure_detail.candidate_sha256,
+        bundle_sha256=None if failure_detail is None else failure_detail.bundle_sha256,
     )[0]
+
+
+def _rendered_increment_sha256(choice: BootstrapNewProjectChoice) -> str | None:
+    """Compute the rendered increment digest to preserve post-prepare bootstrap evidence."""
+    try:
+        files = render_bundle(
+            choice.project_slug,
+            choice.increment_slug,
+            choice.roadmap_body,
+            choice.increment_body,
+            created=datetime.now(UTC).date().isoformat(),
+        )
+    except Exception:  # noqa: BLE001 - schema stays closed even if local render cannot repeat server rules
+        return None
+    path = f"worklogs/{choice.project_slug}/increments/increment-01-{choice.increment_slug}.md"
+    payload = files.get(path)
+    return None if payload is None else hashlib.sha256(payload).hexdigest()
+
+
+_BOOTSTRAP_REJECTED_DIAGNOSTICS: dict[str, tuple[str, str, str, str]] = {
+    "COLLISION": ("bootstrap", "collision", "FAIL", "DIAGNOSTICS"),
+    "INPUT_POLICY": ("bootstrap", "invalid-grammar", "FAIL", "DIAGNOSTICS"),
+    "STALE_REVISION": ("workspace", "stale-revision", "ERROR", "INDETERMINATE"),
+    "STALE_GENERATION": ("workspace", "stale-generation", "ERROR", "INDETERMINATE"),
+    "WORKSPACE_BUSY": ("workspace", "busy", "ERROR", "INDETERMINATE"),
+    "QUARANTINED": ("workspace", "quarantined", "ERROR", "INDETERMINATE"),
+}
+
+
+def _valid_v2_operation_id(raw: object) -> str | None:
+    if isinstance(raw, str) and _V2_OP_ID_RE.fullmatch(raw) is not None:
+        return raw
+    return None
+
+
+def _classify_bootstrap_exception(error: Exception, *, phase: str) -> _BootstrapFailure:
+    if isinstance(error, ExecutionUncertainError):
+        op_id = _valid_v2_operation_id(getattr(error, "operation_id", None)) if phase == "install" else None
+        if getattr(error, "code", None) == "TERMINALITY_UNKNOWN":
+            return _BootstrapFailure("workspace", "terminality-unknown", "ERROR", "INDETERMINATE", op_id)
+        return _BootstrapFailure("bootstrap", "durability-unknown", "ERROR", "INDETERMINATE", op_id)
+    if isinstance(error, ExecutionUnavailableError):
+        return _BootstrapFailure("workspace", "backend-unavailable", "ERROR", "INDETERMINATE")
+    code = str(getattr(error, "code", ""))
+    mapped = _BOOTSTRAP_REJECTED_DIAGNOSTICS.get(code)
+    if mapped is not None:
+        return _BootstrapFailure(*mapped)
+    fallback = "prepare-failed" if phase == "prepare" else "install-failed"
+    return _BootstrapFailure("bootstrap", fallback, "FAIL", "DIAGNOSTICS")
+
+
+def _install_bootstrap_project_with_detail(
+    ctx: WorkflowContext, choice: BootstrapNewProjectChoice
+) -> tuple[WorkflowContext, PlanRefError | None, _BootstrapFailure | None]:
+    """Render, install and read back a new project; preserve structured v2 detail."""
+    managed = ctx.managed_execution
+    if managed is None:
+        return (
+            ctx,
+            PlanRefError("bootstrap-unavailable"),
+            _BootstrapFailure("bootstrap", "unavailable", "ERROR", "INDETERMINATE"),
+        )
+    deadline = ctx.deadline_mono if ctx.deadline_mono is not None else time.monotonic() + 30.0
+    input_revision = managed.current_revision_id
+    try:
+        prepared = managed.client.prepare_bundle(
+            managed.binding,
+            grant=managed.grant,
+            project_slug=choice.project_slug,
+            increment_slug=choice.increment_slug,
+            roadmap_text=choice.roadmap_body,
+            increment_text=choice.increment_body,
+            expected_base_revision=input_revision,
+            deadline=deadline,
+        )
+    except (ExecutionRejectedError, ExecutionUncertainError, ExecutionUnavailableError) as error:
+        logger.warning(
+            "bootstrap prepare failed [%s] (run=%s)", getattr(error, "code", type(error).__name__), ctx.run_id
+        )
+        return ctx, PlanRefError("bootstrap-refused"), _classify_bootstrap_exception(error, phase="prepare")
+    try:
+        receipt = managed.client.install_project(
+            managed.binding,
+            grant=managed.grant,
+            validated_bundle_id=prepared.validated_bundle_id,
+            project_slug=choice.project_slug,
+            deadline=deadline,
+        )
+    except (ExecutionRejectedError, ExecutionUncertainError, ExecutionUnavailableError) as error:
+        logger.warning(
+            "bootstrap install failed [%s] (run=%s)", getattr(error, "code", type(error).__name__), ctx.run_id
+        )
+        detail = _classify_bootstrap_exception(error, phase="install")
+        cand_sha = _rendered_increment_sha256(choice)
+        if cand_sha is not None:
+            detail = replace(detail, candidate_sha256=cand_sha, bundle_sha256=prepared.bundle_sha256)
+        elif detail.operation_id is not None:
+            detail = replace(detail, operation_id=None)
+        return ctx, PlanRefError("bootstrap-refused"), detail
+    # The install committed a NEW revision; the plan lives in that one, not in the
+    # revision the acquisition view was pinned to.
+    managed.current_revision_id = receipt.revision_id
+    bootstrap_receipt = _BootstrapReceipt(
+        bundle_sha256=prepared.bundle_sha256,
+        input_revision=input_revision,
+        output_revision=receipt.revision_id,
+        operation_id=receipt.operation_id,
+    )
+    bound, refusal = _admit_installed_plan(ctx, choice, bootstrap_receipt=bootstrap_receipt)
+    if refusal is not None:
+        cand_sha = _rendered_increment_sha256(choice)
+        detail = _BootstrapFailure(
+            "bootstrap",
+            "install-failed",
+            "ERROR",
+            "INDETERMINATE",
+            operation_id=_valid_v2_operation_id(receipt.operation_id) if cand_sha is not None else None,
+            candidate_sha256=cand_sha,
+            bundle_sha256=prepared.bundle_sha256 if cand_sha is not None else None,
+        )
+        return bound, refusal, detail
+    return bound, None, None
 
 
 def _install_bootstrap_project(
@@ -2586,41 +2777,15 @@ def _install_bootstrap_project(
     OWNER-gated authority operations, and the plan is admitted from bytes the
     pinned view returns afterwards.
     """
-    managed = ctx.managed_execution
-    if managed is None:
-        return ctx, PlanRefError("bootstrap-unavailable")
-    deadline = ctx.deadline_mono if ctx.deadline_mono is not None else time.monotonic() + 30.0
-    try:
-        prepared = managed.client.prepare_bundle(
-            managed.binding,
-            grant=managed.grant,
-            project_slug=choice.project_slug,
-            increment_slug=choice.increment_slug,
-            roadmap_text=choice.roadmap_body,
-            increment_text=choice.increment_body,
-            expected_base_revision=managed.current_revision_id,
-            deadline=deadline,
-        )
-        receipt = managed.client.install_project(
-            managed.binding,
-            grant=managed.grant,
-            validated_bundle_id=prepared.validated_bundle_id,
-            project_slug=choice.project_slug,
-            deadline=deadline,
-        )
-    except ExecutionRejectedError as error:
-        # Determinate refusals: COLLISION means the project already exists, and
-        # INPUT_POLICY means the prose failed the authority's own validation.
-        logger.warning("bootstrap refused by the authority [%s] (run=%s)", error.code, ctx.run_id)
-        return ctx, PlanRefError("bootstrap-refused")
-    # The install committed a NEW revision; the plan lives in that one, not in the
-    # revision the acquisition view was pinned to.
-    managed.current_revision_id = receipt.revision_id
-    return _admit_installed_plan(ctx, choice)
+    bound, refusal, _detail = _install_bootstrap_project_with_detail(ctx, choice)
+    return bound, refusal
 
 
 def _admit_installed_plan(
-    ctx: WorkflowContext, choice: BootstrapNewProjectChoice
+    ctx: WorkflowContext,
+    choice: BootstrapNewProjectChoice,
+    *,
+    bootstrap_receipt: _BootstrapReceipt | None = None,
 ) -> tuple[WorkflowContext, PlanRefError | None]:
     """Read the installed increment through a fresh pin and bind it as the plan."""
     managed = ctx.managed_execution
@@ -2639,7 +2804,14 @@ def _admit_installed_plan(
         snapshot = snapshot_from_bytes(path, read.content.encode("utf-8"), source_kind="BOOTSTRAP")
     bound = replace(
         ctx,
-        admission=_WorkflowAdmission(snapshot, True, ctx.replans_allowed, snapshot_backed=True),
+        admission=_WorkflowAdmission(
+            snapshot,
+            True,
+            ctx.replans_allowed,
+            snapshot_backed=True,
+            from_acquisition=True,
+            bootstrap_receipt=bootstrap_receipt,
+        ),
         managed_plan_ref=snapshot.ref,
         plan_path=ctx.plan_path or ctx.workspace / snapshot.ref.workspace_relative_path,
         acquisition=None,
@@ -2652,11 +2824,19 @@ def _admit_installed_plan(
             attempt=None,
             status="ACQUIRING",
             deadline=ctx.deadline_mono,
+            managed_binding=bound.admission_binding,
         )
     except (OSError, ValueError) as error:
         _admission_storage_failure(bound, error)
         return bound, None
     return bound, None
+
+
+_CLARIFICATION_V2_RULES: dict[str, str] = {
+    "AMBIGUOUS_PROJECT": "ambiguous-project",
+    "UNKNOWN_INCREMENT": "unknown-increment",
+    "MISSING_CONTEXT": "needs-clarification",
+}
 
 
 def _bind_acquisition_admission(
@@ -2678,18 +2858,26 @@ def _bind_acquisition_admission(
         if outcome.bootstrap is not None:
             # §7.1 bootstrap: render → install → fresh pin → read back → admit. The
             # snapshot is the INSTALLED plan, never the prose that requested it.
-            installed, refusal = _install_bootstrap_project(ctx, outcome.bootstrap)
-            return installed, None if refusal is None else _refusal_exit_code(installed, refusal)
+            installed, refusal, failure_detail = _install_bootstrap_project_with_detail(ctx, outcome.bootstrap)
+            return installed, (
+                None if refusal is None else _refusal_exit_code(installed, refusal, failure_detail=failure_detail)
+            )
         if outcome.clarification is not None:
             rule = f"clarification/{outcome.clarification.reason.lower().replace('_', '-')}"
+            v2_rule = _CLARIFICATION_V2_RULES.get(outcome.clarification.reason, "needs-clarification")
+            v2_diag: tuple[str, str, str, str, str | None] = ("selection", v2_rule, "ERROR", "INDETERMINATE", None)
         else:  # pragma: no cover - AcquisitionOutcome forbids the shape
             rule = "acquisition-unresolved"
+            v2_diag = ("selection", "needs-clarification", "ERROR", "INDETERMINATE", None)
         return ctx, _blocked_plan_request(
             run_id=ctx.run_id,
             task=ctx.base_task,
             rule=rule,
             base_dir=ctx.artifact_paths.base_dir,
             deadline=ctx.deadline_mono,
+            managed_binding=ctx.admission_binding,
+            attempt_kind="ACQUISITION" if ctx.admission_binding is not None else "EXPLICIT_INPUT",
+            v2_diagnostic=v2_diag,
         )[0]
 
     snapshot = outcome.snapshot
@@ -2702,6 +2890,7 @@ def _bind_acquisition_admission(
             True,
             ctx.replans_allowed,
             snapshot_backed=True,
+            from_acquisition=True,
         ),
         managed_plan_ref=snapshot.ref,
         plan_path=ctx.plan_path or ctx.workspace / snapshot.ref.workspace_relative_path,
@@ -2715,6 +2904,7 @@ def _bind_acquisition_admission(
             attempt=None,
             status="ACQUIRING",
             deadline=ctx.deadline_mono,
+            managed_binding=bound.admission_binding,
         )
     except (OSError, ValueError) as error:
         _admission_storage_failure(bound, error)
@@ -2870,6 +3060,111 @@ def _require_managed_publisher(ctx: WorkflowContext) -> CandidatePlanPublisher:
     return publisher
 
 
+_V2_RUN_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}")
+_V2_WORKSPACE_ID_RE = re.compile(r"ws-[0-9a-f]{32}")
+_V2_REVISION_ID_RE = re.compile(r"rev-[0-9a-f]{32}")
+_V2_OP_ID_RE = re.compile(r"op-[0-9a-f]{32}")
+
+
+def _managed_admission_binding(managed: ManagedExecution | None, *, run_id: str) -> ManagedAdmissionBinding | None:
+    """Build immutable v2 binding strictly for managed-child runs (Q150 = A).
+
+    Returns ``None`` for unmanaged runs, top-level runs where ``owner_run_id == run_id``,
+    and partial test doubles that omit authority identity fields, keeping v1 exact.
+    """
+    if managed is None:
+        return None
+    workspace_id = getattr(getattr(managed, "binding", None), "workspace_id", None)
+    owner_run_id = getattr(managed, "root_owner_run_id", None)
+    generation = getattr(getattr(managed, "grant", None), "generation", None)
+    base_revision = getattr(managed, "current_revision_id", None)
+    if (
+        not isinstance(workspace_id, str)
+        or _V2_WORKSPACE_ID_RE.fullmatch(workspace_id) is None
+        or not isinstance(owner_run_id, str)
+        or _V2_RUN_ID_RE.fullmatch(owner_run_id) is None
+        or owner_run_id == run_id
+        or type(generation) is not int
+        or generation < 1
+        or not isinstance(base_revision, str)
+        or _V2_REVISION_ID_RE.fullmatch(base_revision) is None
+    ):
+        return None
+    return ManagedAdmissionBinding(
+        workspace_id=workspace_id,
+        owner_run_id=owner_run_id,
+        generation=generation,
+        base_revision=base_revision,
+    )
+
+
+def _current_managed_revision(ctx: WorkflowContext) -> str | None:
+    if ctx.admission_binding is None or ctx.managed_execution is None:
+        return None
+    rev = getattr(ctx.managed_execution, "current_revision_id", None)
+    if isinstance(rev, str) and _V2_REVISION_ID_RE.fullmatch(rev) is not None:
+        return rev
+    return ctx.admission_binding.base_revision
+
+
+@dataclass(frozen=True, slots=True)
+class _PromotionReceipt:
+    """Promoted plan snapshot plus authority revision/operation receipt when available."""
+
+    snapshot: PlanSnapshot
+    revision_id: str | None = None
+    operation_id: str | None = None
+
+
+@runtime_checkable
+class _ReceiptCandidatePublisher(Protocol):
+    def publish_candidate_receipt(
+        self, source: PlanSnapshot, candidate: PlanSnapshot, *, deadline: float | None = None
+    ) -> Any: ...
+
+
+def _promote_validated_plan_receipt(
+    source: PlanSnapshot,
+    validated: _PlanAdmissionValidation,
+    *,
+    publisher: CandidatePlanPublisher,
+    deadline: float | None = None,
+) -> _PromotionReceipt:
+    """Publish validated bytes through the injected candidate port and retain receipts."""
+    if validated.outcome != "PASS":
+        raise PlanPromotionError("prepare-failed")
+    try:
+        if isinstance(publisher, _ReceiptCandidatePublisher):
+            publication = publisher.publish_candidate_receipt(source, validated.snapshot, deadline=deadline)
+            ref = publication.plan_ref
+            rev_id = getattr(publication, "revision_id", None)
+            op_id = _valid_v2_operation_id(getattr(publication, "operation_id", None))
+        else:
+            ref = publisher.publish_candidate(source, validated.snapshot, deadline=deadline)
+            rev_id = None
+            op_id = None
+    except PlanPromotionError:
+        raise
+    except Exception as error:  # sanitize transport/backend details into the admission schema's closed vocabulary
+        code = getattr(error, "code", None)
+        uncertain = code in {"DURABILITY_UNKNOWN", "CORRUPT_STATE", "EXECUTION_UNKNOWN", "TERMINALITY_UNKNOWN"}
+        rule = "durability-unknown" if uncertain else "prepare-failed"
+        op_id = _valid_v2_operation_id(getattr(error, "operation_id", None)) if uncertain else None
+        raise PlanPromotionError(rule, replaced=uncertain, operation_id=op_id) from error
+    expected = PlanRef(
+        source.ref.workspace_relative_path,
+        source.ref.source_kind,
+        validated.snapshot.ref.sha256,
+    )
+    if ref != expected:
+        raise PlanPromotionError("hash-mismatch", replaced=True)
+    return _PromotionReceipt(
+        snapshot=replace(validated.snapshot, ref=ref),
+        revision_id=rev_id if isinstance(rev_id, str) else None,
+        operation_id=op_id,
+    )
+
+
 def _promote_validated_plan(
     source: PlanSnapshot,
     validated: _PlanAdmissionValidation,
@@ -2883,25 +3178,12 @@ def _promote_validated_plan(
     the port it proved it has (``_require_managed_publisher``), so a missing
     authority is refused before any repair is dispatched.
     """
-    if validated.outcome != "PASS":
-        raise PlanPromotionError("prepare-failed")
-    try:
-        ref = publisher.publish_candidate(source, validated.snapshot, deadline=deadline)
-    except PlanPromotionError:
-        raise
-    except Exception as error:  # sanitize transport/backend details into the admission schema's closed vocabulary
-        code = getattr(error, "code", None)
-        uncertain = code in {"DURABILITY_UNKNOWN", "CORRUPT_STATE", "EXECUTION_UNKNOWN", "TERMINALITY_UNKNOWN"}
-        rule = "durability-unknown" if uncertain else "prepare-failed"
-        raise PlanPromotionError(rule, replaced=uncertain) from error
-    expected = PlanRef(
-        source.ref.workspace_relative_path,
-        source.ref.source_kind,
-        validated.snapshot.ref.sha256,
-    )
-    if ref != expected:
-        raise PlanPromotionError("hash-mismatch", replaced=True)
-    return replace(validated.snapshot, ref=ref)
+    return _promote_validated_plan_receipt(
+        source,
+        validated,
+        publisher=publisher,
+        deadline=deadline,
+    ).snapshot
 
 
 def _admission_progress(ctx: WorkflowContext, progress: WorkflowProgress) -> WorkflowProgress:
@@ -2952,6 +3234,17 @@ def _admission_storage_failure(ctx: WorkflowContext, error: OSError | ValueError
     _admission_failed(ctx, f"artifact-io/{rule}")
 
 
+def _v2_attempt_diagnostics(
+    diagnostics: tuple[_AdmissionDiagnostic, ...], *, kind: str, route: str, ref: PlanRef | None
+) -> list[dict[str, Any]]:
+    if kind == "ACQUISITION" and ref is not None and ref.source_kind == "EXISTING_SELECTION" and route == "RETRY":
+        # v2 EXISTING_SELECTION RETRY accepts only FAIL diagnostics in the pre-coder set.
+        filtered = [item for item in diagnostics if item.severity == "FAIL"]
+        if filtered:
+            return [asdict(item) for item in filtered]
+    return [asdict(item) for item in diagnostics]
+
+
 def _admission_attempt(
     ctx: WorkflowContext,
     validation: _PlanAdmissionValidation,
@@ -2960,25 +3253,52 @@ def _admission_attempt(
     route: str,
     candidate: bool = False,
     promoted: PlanSnapshot | None = None,
+    input_revision: str | None = None,
+    output_revision: str | None = None,
+    operation_id: str | None = None,
+    bundle_sha256: str | None = None,
+    plan_ref_override: PlanRef | None = None,
+    clear_plan_ref: bool = False,
 ) -> None:
     state = ctx.admission
     if state is None:
         raise RuntimeError("admission authority absent")
+    plan_ref = None if clear_plan_ref else (plan_ref_override or (promoted or state.snapshot).ref)
+    diagnostics = (
+        _v2_attempt_diagnostics(validation.diagnostics, kind=kind, route=route, ref=plan_ref)
+        if ctx.admission_binding is not None
+        else [asdict(item) for item in validation.diagnostics]
+    )
+    attempt: dict[str, object] = {
+        "dispatch_kind": kind,
+        "validation": validation.outcome,
+        "diagnostics": diagnostics,
+        "source_sha256": None if bundle_sha256 is not None else state.snapshot.ref.sha256,
+        "candidate_sha256": validation.snapshot.ref.sha256 if candidate else None,
+        "promoted_sha256": promoted.ref.sha256 if promoted is not None else None,
+        "route": route,
+    }
+    if ctx.admission_binding is not None:
+        resolved_in = input_revision or _current_managed_revision(ctx) or ctx.admission_binding.base_revision
+        resolved_out = (
+            output_revision if clear_plan_ref or operation_id is not None else (output_revision or resolved_in)
+        )
+        attempt.update(
+            {
+                "input_revision": resolved_in,
+                "output_revision": resolved_out,
+                "operation_id": operation_id,
+                "bundle_sha256": bundle_sha256,
+            }
+        )
     _record_admission_attempt(
         ctx.artifact_paths,
         run_id=ctx.run_id,
-        plan_ref=(promoted or state.snapshot).ref,
-        attempt={
-            "dispatch_kind": kind,
-            "validation": validation.outcome,
-            "diagnostics": [asdict(item) for item in validation.diagnostics],
-            "source_sha256": state.snapshot.ref.sha256,
-            "candidate_sha256": validation.snapshot.ref.sha256 if candidate else None,
-            "promoted_sha256": promoted.ref.sha256 if promoted is not None else None,
-            "route": route,
-        },
+        plan_ref=plan_ref,
+        attempt=attempt,
         status={"RETRY": "ACQUIRING", "ADMITTED": "ADMITTED", "BLOCKED": "BLOCKED"}[route],
         deadline=ctx.deadline_mono,
+        managed_binding=ctx.admission_binding,
     )
 
 
@@ -3008,7 +3328,18 @@ def _check_admission_source(ctx: WorkflowContext) -> None:
         raise PlanRefError("source-changed")
 
 
-def _run_admission_repair(
+@dataclass(frozen=True, slots=True)
+class _RepairPromotionOutcome:
+    """Repair validation plus authority publication receipts when promoted."""
+
+    validation: _PlanAdmissionValidation
+    promoted: PlanSnapshot | None
+    input_revision: str | None = None
+    output_revision: str | None = None
+    operation_id: str | None = None
+
+
+def _run_admission_repair_with_receipt(
     ctx: WorkflowContext,
     progress: WorkflowProgress,
     run_stage_fn: Callable[..., int],
@@ -3018,7 +3349,7 @@ def _run_admission_repair(
     publisher: CandidatePlanPublisher,
     diagnostics: tuple[_AdmissionDiagnostic, ...] = (),
     reason: str = "",
-) -> tuple[_PlanAdmissionValidation, PlanSnapshot | None]:
+) -> _RepairPromotionOutcome:
     """One reserved planner attempt; own its target through cleanup, then use only bytes."""
     if ctx.admission is None:
         raise RuntimeError("admission authority absent")
@@ -3067,16 +3398,49 @@ def _run_admission_repair(
             os.unlink(target.name, dir_fd=parent)
             os.fsync(parent)
     validation = _validate_plan_admission(candidate)
-    promoted: PlanSnapshot | None = None
-    if validation.outcome == "PASS":
-        try:
-            promoted = _promote_validated_plan(source, validation, publisher=publisher, deadline=ctx.deadline_mono)
-        except PlanPromotionError:
-            # CT119: the candidate was already unlinked above, so the only copy of
-            # the bytes the authority refused is the snapshot in memory.
-            _retain_rejected_draft(ctx, validation.snapshot)
-            raise
-    return validation, promoted
+    if validation.outcome != "PASS":
+        return _RepairPromotionOutcome(
+            validation=validation, promoted=None, input_revision=_current_managed_revision(ctx)
+        )
+    in_rev = _current_managed_revision(ctx)
+    try:
+        receipt = _promote_validated_plan_receipt(source, validation, publisher=publisher, deadline=ctx.deadline_mono)
+    except PlanPromotionError:
+        # CT119: the candidate was already unlinked above, so the only copy of
+        # the bytes the authority refused is the snapshot in memory.
+        _retain_rejected_draft(ctx, validation.snapshot)
+        raise
+    return _RepairPromotionOutcome(
+        validation=validation,
+        promoted=receipt.snapshot,
+        input_revision=in_rev,
+        output_revision=receipt.revision_id,
+        operation_id=receipt.operation_id,
+    )
+
+
+def _run_admission_repair(
+    ctx: WorkflowContext,
+    progress: WorkflowProgress,
+    run_stage_fn: Callable[..., int],
+    *,
+    kind: PlannerDispatchKind,
+    draft: PlanSnapshot,
+    publisher: CandidatePlanPublisher,
+    diagnostics: tuple[_AdmissionDiagnostic, ...] = (),
+    reason: str = "",
+) -> tuple[_PlanAdmissionValidation, PlanSnapshot | None]:
+    outcome = _run_admission_repair_with_receipt(
+        ctx,
+        progress,
+        run_stage_fn,
+        kind=kind,
+        draft=draft,
+        publisher=publisher,
+        diagnostics=diagnostics,
+        reason=reason,
+    )
+    return outcome.validation, outcome.promoted
 
 
 def _read_repair_candidate(ctx: WorkflowContext, source: PlanSnapshot, target: Path) -> PlanSnapshot:
@@ -3121,21 +3485,192 @@ def _admission_error(
     error: PlanRefError | PlanPromotionError | PlannerDispatchError,
     *,
     kind: str = "EXPLICIT_INPUT",
+    input_revision: str | None = None,
 ) -> None:
     if ctx.admission is None:
         raise RuntimeError("admission authority absent")
     validator = "plan-ref" if isinstance(error, PlanRefError) else "promotion"
     rule = "scope-denied" if isinstance(error, PlannerDispatchError) else error.rule
+    effective_kind = (
+        "ACQUISITION"
+        if ctx.admission_binding is not None and ctx.admission.from_acquisition and kind == "EXPLICIT_INPUT"
+        else kind
+    )
     candidate = ctx.admission.candidate if kind != "EXPLICIT_INPUT" else None
+    op_id = (
+        _valid_v2_operation_id(getattr(error, "operation_id", None)) if isinstance(error, PlanPromotionError) else None
+    )
+    bootstrap_receipt = ctx.admission.bootstrap_receipt if ctx.admission_binding is not None else None
+    if effective_kind == "ACQUISITION" and bootstrap_receipt is not None:
+        # Bootstrap rejections must satisfy _validate_v2_bootstrap (ref=None, validator=bootstrap).
+        validation = _PlanAdmissionValidation(
+            ctx.admission.snapshot, "INDETERMINATE", (_AdmissionDiagnostic("bootstrap", "hash-mismatch", "ERROR"),)
+        )
+        try:
+            _admission_attempt(
+                ctx,
+                validation,
+                kind="ACQUISITION",
+                route="BLOCKED",
+                candidate=True,
+                input_revision=bootstrap_receipt.input_revision,
+                bundle_sha256=bootstrap_receipt.bundle_sha256,
+                clear_plan_ref=True,
+            )
+        except (OSError, ValueError) as failure:
+            _admission_storage_failure(ctx, failure)
+            return
+        ctx.admission.bootstrap_receipt = None
+        _admission_failed(ctx, f"{validator}/{rule}")
+        return
     validation = _PlanAdmissionValidation(
         candidate or ctx.admission.snapshot, "INDETERMINATE", (_AdmissionDiagnostic(validator, rule, "ERROR"),)
     )
     try:
-        _admission_attempt(ctx, validation, kind=kind, route="BLOCKED", candidate=candidate is not None)
+        _admission_attempt(
+            ctx,
+            validation,
+            kind=effective_kind,
+            route="BLOCKED",
+            candidate=candidate is not None,
+            input_revision=input_revision,
+            operation_id=op_id,
+        )
     except (OSError, ValueError) as failure:
         _admission_storage_failure(ctx, failure)
         return
     _admission_failed(ctx, f"{validator}/{rule}")
+
+
+def _admit_bootstrap_attempt(
+    ctx: WorkflowContext,
+    validated: _PlanAdmissionValidation,
+    receipt: _BootstrapReceipt,
+) -> bool:
+    """Persist the v2 ACQUISITION attempt for an installed BOOTSTRAP increment."""
+    state = ctx.admission
+    if state is None:  # pragma: no cover
+        raise RuntimeError("admission authority absent")
+    if validated.outcome == "PASS":
+        _admission_attempt(
+            ctx,
+            _PlanAdmissionValidation(state.snapshot, "PASS", ()),
+            kind="ACQUISITION",
+            route="ADMITTED",
+            candidate=True,
+            promoted=state.snapshot,
+            input_revision=receipt.input_revision,
+            output_revision=receipt.output_revision,
+            operation_id=receipt.operation_id,
+            bundle_sha256=receipt.bundle_sha256,
+        )
+        state.bootstrap_receipt = None
+        state.admitted = True
+        return True
+    severity = "FAIL" if validated.outcome == "DIAGNOSTICS" else "ERROR"
+    rejected = _PlanAdmissionValidation(
+        state.snapshot,
+        validated.outcome,
+        (_AdmissionDiagnostic("bootstrap", "invalid-body", severity),),
+    )
+    _admission_attempt(
+        ctx,
+        rejected,
+        kind="ACQUISITION",
+        route="BLOCKED",
+        candidate=True,
+        input_revision=receipt.input_revision,
+        bundle_sha256=receipt.bundle_sha256,
+        clear_plan_ref=True,
+    )
+    state.bootstrap_receipt = None
+    _admission_failed(ctx, "bootstrap/invalid-body")
+    return False
+
+
+def _record_budget_blocked_acquisition(
+    ctx: WorkflowContext,
+    validated: _PlanAdmissionValidation,
+    *,
+    input_revision: str | None,
+) -> None:
+    """In v2, an EXISTING_SELECTION with FAIL diagnostics emits RETRY then BLOCKED ADMISSION_REPAIR."""
+    _admission_attempt(
+        ctx,
+        validated,
+        kind="ACQUISITION",
+        route="RETRY",
+        input_revision=input_revision,
+    )
+    _admission_attempt(
+        ctx,
+        validated,
+        kind="ADMISSION_REPAIR",
+        route="BLOCKED",
+        input_revision=input_revision,
+    )
+    _admission_failed(ctx, "validation-or-planner-budget")
+
+
+def _record_replan_barrier(ctx: WorkflowContext, state: _WorkflowAdmission) -> None:
+    """Q67(a): keep canonical ADMITTED on eval replan entry without an invented RETRY."""
+    _record_admission_attempt(
+        ctx.artifact_paths,
+        run_id=ctx.run_id,
+        plan_ref=state.snapshot.ref,
+        attempt=None,
+        status="ADMITTED",
+        deadline=ctx.deadline_mono,
+        managed_binding=ctx.admission_binding,
+    )
+    state.admitted = False
+
+
+def _record_nonreplan_route(
+    ctx: WorkflowContext,
+    state: _WorkflowAdmission,
+    validated: _PlanAdmissionValidation,
+    *,
+    kind: PlannerDispatchKind,
+    candidate: bool,
+    can_retry: bool,
+    promoted: PlanSnapshot | None,
+    input_revision: str | None,
+    output_revision: str | None,
+    operation_id: str | None,
+) -> bool | None:
+    """Record one non-replan admission attempt; return bool to terminate gate or None to retry."""
+    initial_kind = "ACQUISITION" if (ctx.admission_binding is not None and state.from_acquisition) else "EXPLICIT_INPUT"
+    if not candidate and initial_kind == "ACQUISITION" and validated.outcome == "DIAGNOSTICS" and not can_retry:
+        _record_budget_blocked_acquisition(ctx, validated, input_revision=input_revision)
+        return False
+    route = (
+        "ADMITTED"
+        if validated.outcome == "PASS"
+        else "RETRY"
+        if validated.outcome == "DIAGNOSTICS" and can_retry
+        else "BLOCKED"
+    )
+    _admission_attempt(
+        ctx,
+        validated,
+        kind=kind.value if candidate else initial_kind,
+        route=route,
+        candidate=candidate,
+        promoted=promoted,
+        input_revision=input_revision,
+        output_revision=output_revision,
+        operation_id=operation_id,
+    )
+    if route == "ADMITTED":
+        state.plan_version += int(kind == PlannerDispatchKind.EVAL_REPLAN)
+        state.snapshot = promoted or validated.snapshot
+        state.admitted = True
+        return True
+    if route == "BLOCKED":
+        _admission_failed(ctx, "validation-or-planner-budget")
+        return False
+    return None
 
 
 def _admit_plan(
@@ -3156,63 +3691,57 @@ def _admit_plan(
         _admission_failed(ctx, state.failure)
         return False
     attempt_kind = "EXPLICIT_INPUT"
+    repair_input_rev = _current_managed_revision(ctx)
+    repair_output_rev: str | None = None
+    repair_op_id: str | None = None
     try:
         _check_admission_source(ctx)
         if state.admitted and not replan:
             return True
         kind = PlannerDispatchKind.EVAL_REPLAN if replan else PlannerDispatchKind.ADMISSION_REPAIR
         validated = _validate_plan_admission(state.snapshot)
+        if not replan and ctx.admission_binding is not None and state.bootstrap_receipt is not None:
+            return _admit_bootstrap_attempt(ctx, validated, state.bootstrap_receipt)
         promoted = None
         candidate = False
-        if replan and validated.outcome != "PASS":
-            replan = False
+        replan = replan and validated.outcome == "PASS"
         if replan:
-            # Q67(a): canonical remains ADMITTED; no invented pre-dispatch FAIL/RETRY.
-            _record_admission_attempt(
-                ctx.artifact_paths,
-                run_id=ctx.run_id,
-                plan_ref=state.snapshot.ref,
-                attempt=None,
-                status="ADMITTED",
-                deadline=ctx.deadline_mono,
-            )
-            state.admitted = False
+            _record_replan_barrier(ctx, state)
         while True:
             can_retry = (
                 state.planner_allowed and state.planner_calls < state.planner_limit and not _deadline_exceeded(ctx)
             )
             if not replan:
-                route = (
-                    "ADMITTED"
-                    if validated.outcome == "PASS"
-                    else "RETRY"
-                    if validated.outcome == "DIAGNOSTICS" and can_retry
-                    else "BLOCKED"
+                decision = _record_nonreplan_route(
+                    ctx,
+                    state,
+                    validated,
+                    kind=kind,
+                    candidate=candidate,
+                    can_retry=can_retry,
+                    promoted=promoted,
+                    input_revision=repair_input_rev,
+                    output_revision=repair_output_rev,
+                    operation_id=repair_op_id,
                 )
+                if decision is not None:
+                    return decision
+            elif not can_retry:
                 _admission_attempt(
                     ctx,
                     validated,
-                    kind=kind.value if candidate else "EXPLICIT_INPUT",
-                    route=route,
-                    candidate=candidate,
-                    promoted=promoted,
+                    kind=kind.value if ctx.admission_binding is not None else "EXPLICIT_INPUT",
+                    route="BLOCKED",
+                    candidate=candidate if ctx.admission_binding is not None else False,
+                    input_revision=repair_input_rev,
                 )
-                if route == "ADMITTED":
-                    state.plan_version += int(kind == PlannerDispatchKind.EVAL_REPLAN)
-                    state.snapshot = promoted or validated.snapshot
-                    state.admitted = True
-                    return True
-                if route == "BLOCKED":
-                    _admission_failed(ctx, "validation-or-planner-budget")
-                    return False
-            elif not can_retry:
-                _admission_attempt(ctx, validated, kind="EXPLICIT_INPUT", route="BLOCKED")
                 _admission_failed(ctx, "planner-budget" if state.planner_allowed else "planner-unavailable")
                 return False
             attempt_kind = kind.value
             publisher = _require_managed_publisher(ctx)  # CT115: before the attempt is reserved.
             state.planner_calls += 1  # Reserve even when seeding/provider/writer/publication fails.
-            validated, promoted = _run_admission_repair(
+            repair_input_rev = _current_managed_revision(ctx)
+            repair_outcome = _run_admission_repair_with_receipt(
                 ctx,
                 progress,
                 run_stage_fn,
@@ -3222,11 +3751,16 @@ def _admit_plan(
                 diagnostics=validated.diagnostics,
                 reason=reason,
             )
+            validated = repair_outcome.validation
+            promoted = repair_outcome.promoted
+            repair_input_rev = repair_outcome.input_revision or repair_input_rev
+            repair_output_rev = repair_outcome.output_revision
+            repair_op_id = repair_outcome.operation_id
             candidate = True
             replan = False
     except (PlanRefError, PlanPromotionError, PlannerDispatchError) as error:
         if state.block_exit_code != WORKFLOW_DEADLINE_EXIT_CODE:
-            _admission_error(ctx, error, kind=attempt_kind)
+            _admission_error(ctx, error, kind=attempt_kind, input_revision=repair_input_rev)
     except (OSError, ValueError) as error:
         _admission_storage_failure(ctx, error)
     return False
@@ -3235,6 +3769,30 @@ def _admit_plan(
 # The `plan-ref` values the persisted admission schema accepts. Pulled from the
 # schema itself rather than copied, so the two cannot drift apart.
 _PERSISTED_PLAN_REF_RULES = frozenset(ADMISSION_RULES["plan-ref"])
+
+_V2_BLOCKED_RULE_MAP: dict[str, tuple[str, str, str, str]] = {
+    "acquisition-unavailable": ("workspace", "backend-unavailable", "ERROR", "INDETERMINATE"),
+    "bootstrap-unavailable": ("bootstrap", "unavailable", "ERROR", "INDETERMINATE"),
+    "bootstrap-refused": ("bootstrap", "install-failed", "FAIL", "DIAGNOSTICS"),
+    "bootstrap-unreadable": ("bootstrap", "install-failed", "ERROR", "INDETERMINATE"),
+}
+
+
+def _v2_blocked_diagnostic(
+    rule: str, override: tuple[str, str, str, str, str | None] | None
+) -> tuple[str, str, str, str, str | None]:
+    if override is not None:
+        v_name, v_rule, sev, outcome, op_id = override
+        if v_name in ADMISSION_RULES_V2 and v_rule in ADMISSION_RULES_V2[v_name]:
+            return v_name, v_rule, sev, outcome, op_id
+    if rule in ADMISSION_RULES_V2["selection"]:
+        return ("selection", rule, "ERROR", "INDETERMINATE", None)
+    mapped = _V2_BLOCKED_RULE_MAP.get(rule)
+    if mapped is not None:
+        return (*mapped, None)
+    if rule in ADMISSION_RULES_V2["plan-ref"]:
+        return ("plan-ref", rule, "ERROR", "INDETERMINATE", None)
+    return ("plan-ref", "validator-error", "ERROR", "INDETERMINATE", None)
 
 
 def _record_admission_attempt(
@@ -3245,39 +3803,79 @@ def _record_admission_attempt(
     attempt: Mapping[str, object] | None,
     status: str,
     deadline: float | None,
+    managed_binding: ManagedAdmissionBinding | None = None,
 ) -> None:
     """Durable controller barrier; a failed write is never a persisted attempt."""
     write_admission_record(
-        paths.admission, run_id=run_id, plan_ref=plan_ref, attempt=attempt, status=status, deadline=deadline
+        paths.admission,
+        run_id=run_id,
+        plan_ref=plan_ref,
+        attempt=attempt,
+        status=status,
+        managed_binding=managed_binding,
+        deadline=deadline,
     )
 
 
 def _blocked_plan_request(
-    *, run_id: str, task: str | None, rule: str, base_dir: Path | None, deadline: float | None
+    *,
+    run_id: str,
+    task: str | None,
+    rule: str,
+    base_dir: Path | None,
+    deadline: float | None,
+    managed_binding: ManagedAdmissionBinding | None = None,
+    attempt_kind: str = "EXPLICIT_INPUT",
+    v2_diagnostic: tuple[str, str, str, str, str | None] | None = None,
+    candidate_sha256: str | None = None,
+    bundle_sha256: str | None = None,
 ) -> tuple[int, FlowState | None]:
     paths = workflow_artifact_paths(run_id, base_dir=base_dir)
-    # I02 spec: the persisted validator/rule vocabulary is closed, and a rule
-    # outside it must be recorded as `validator-error` rather than silently
-    # dropped. This mattered in practice -- `conflict` and
-    # `admission-without-coder` are controller-shape refusals with no schema
-    # entry, and passing them through made `write_admission_record` reject the
-    # whole record, so a refused run left no durable trace at all. The exact
-    # reason still reaches the operator: it is carried in `blocked_reason` below,
-    # which is free text, while the closed field keeps a value the schema accepts.
-    recorded_rule = rule if rule in _PERSISTED_PLAN_REF_RULES else "validator-error"
-    attempt: dict[str, object] = {
-        "dispatch_kind": "EXPLICIT_INPUT",
-        "validation": "INDETERMINATE",
-        "diagnostics": [{"validator": "plan-ref", "rule": recorded_rule, "severity": "ERROR", "line": None}],
-        "source_sha256": None,
-        "candidate_sha256": None,
-        "promoted_sha256": None,
-        "route": "BLOCKED",
-    }
+    if managed_binding is not None:
+        v_name, v_rule, severity, validation, op_id = _v2_blocked_diagnostic(rule, v2_diagnostic)
+        both_hashes = candidate_sha256 is not None and bundle_sha256 is not None
+        attempt: dict[str, object] = {
+            "dispatch_kind": attempt_kind,
+            "validation": validation,
+            "diagnostics": [{"validator": v_name, "rule": v_rule, "severity": severity, "line": None}],
+            "source_sha256": None,
+            "candidate_sha256": candidate_sha256 if both_hashes else None,
+            "promoted_sha256": None,
+            "route": "BLOCKED",
+            "input_revision": managed_binding.base_revision,
+            "output_revision": None,
+            "operation_id": op_id if (both_hashes or attempt_kind != "ACQUISITION") else None,
+            "bundle_sha256": bundle_sha256 if both_hashes else None,
+        }
+    else:
+        # I02 spec: the persisted validator/rule vocabulary is closed, and a rule
+        # outside it must be recorded as `validator-error` rather than silently
+        # dropped. This mattered in practice -- `conflict` and
+        # `admission-without-coder` are controller-shape refusals with no schema
+        # entry, and passing them through made `write_admission_record` reject the
+        # whole record, so a refused run left no durable trace at all. The exact
+        # reason still reaches the operator: it is carried in `blocked_reason` below,
+        # which is free text, while the closed field keeps a value the schema accepts.
+        recorded_rule = rule if rule in _PERSISTED_PLAN_REF_RULES else "validator-error"
+        attempt = {
+            "dispatch_kind": "EXPLICIT_INPUT",
+            "validation": "INDETERMINATE",
+            "diagnostics": [{"validator": "plan-ref", "rule": recorded_rule, "severity": "ERROR", "line": None}],
+            "source_sha256": None,
+            "candidate_sha256": None,
+            "promoted_sha256": None,
+            "route": "BLOCKED",
+        }
     print(f"fa workflow: invalid plan reference: {rule}", file=sys.stderr)
     try:
         _record_admission_attempt(
-            paths, run_id=run_id, plan_ref=None, attempt=attempt, status="BLOCKED", deadline=deadline
+            paths,
+            run_id=run_id,
+            plan_ref=None,
+            attempt=attempt,
+            status="BLOCKED",
+            deadline=deadline,
+            managed_binding=managed_binding,
         )
     except (OSError, ValueError) as error:
         reason = error.rule if isinstance(error, AdmissionIOError) else "append-failed"
@@ -3385,7 +3983,11 @@ def run_workflow(
     function then owns the view's lifetime.
     """
 
-    def _bound(substrate: AcquisitionSubstrate | None) -> tuple[int, FlowState | None]:
+    def _bound(
+        substrate: AcquisitionSubstrate | None,
+        *,
+        binding: ManagedAdmissionBinding | None,
+    ) -> tuple[int, FlowState | None]:
         return _run_workflow_bound(
             roles=roles,
             task=task,
@@ -3411,8 +4013,10 @@ def run_workflow(
             managed_execution=managed_execution,
             admission_snapshot=admission_snapshot,
             acquisition=substrate,
+            admission_binding=binding,
         )
 
+    admission_binding = _managed_admission_binding(managed_execution, run_id=run_id)
     if isinstance(acquisition, AcquisitionSubstrateRequest):
         # Pin here, inside the run, so `ctx.managed_execution` is this run's own
         # binding -- the child's after a HANDOFF, never the parent's before it.
@@ -3429,6 +4033,7 @@ def run_workflow(
             output_mode=output_mode,
             managed_execution=managed_execution,
             deadline_mono=deadline_mono,
+            admission_binding=admission_binding,
         )
         with _pinned_acquisition_substrate(ctx) as substrate:
             if substrate is None:
@@ -3440,11 +4045,50 @@ def run_workflow(
                     rule="acquisition-unavailable",
                     base_dir=ctx.artifact_paths.base_dir,
                     deadline=deadline_mono,
+                    managed_binding=admission_binding,
+                    attempt_kind="ACQUISITION" if admission_binding is not None else "EXPLICIT_INPUT",
+                    v2_diagnostic=("workspace", "backend-unavailable", "ERROR", "INDETERMINATE", None),
                 )
-            return _bound(substrate)
+            return _bound(substrate, binding=admission_binding)
     if acquisition is None or isinstance(acquisition, AcquisitionSubstrate):
-        return _bound(acquisition)
+        return _bound(acquisition, binding=admission_binding)
     raise PlanRefError("unreadable")
+
+
+def _initialize_admission_record(ctx: WorkflowContext) -> bool:
+    """Write the initial ACQUIRING admission barrier before stage dispatch."""
+    if ctx.admission is not None:
+        try:
+            _record_admission_attempt(
+                ctx.artifact_paths,
+                run_id=ctx.run_id,
+                plan_ref=ctx.admission.snapshot.ref,
+                attempt=None,
+                status="ACQUIRING",
+                deadline=ctx.deadline_mono,
+                managed_binding=ctx.admission_binding,
+            )
+            return True
+        except (OSError, ValueError) as error:
+            _admission_storage_failure(ctx, error)
+            return False
+    if ctx.acquisition is not None and ctx.admission_binding is not None:
+        try:
+            _record_admission_attempt(
+                ctx.artifact_paths,
+                run_id=ctx.run_id,
+                plan_ref=None,
+                attempt=None,
+                status="ACQUIRING",
+                deadline=ctx.deadline_mono,
+                managed_binding=ctx.admission_binding,
+            )
+            return True
+        except (OSError, ValueError) as error:
+            rule = error.rule if isinstance(error, AdmissionIOError) else "append-failed"
+            print(f"fa workflow: admission storage error: {rule}", file=sys.stderr)
+            return False
+    return True
 
 
 def _run_workflow_bound(
@@ -3473,6 +4117,7 @@ def _run_workflow_bound(
     managed_execution: ManagedExecution | None,
     admission_snapshot: PlanSnapshot | None,
     acquisition: AcquisitionSubstrate | None,
+    admission_binding: ManagedAdmissionBinding | None = None,
 ) -> tuple[int, FlowState | None]:
     """The workflow body, with a resolved acquisition substrate.
 
@@ -3506,6 +4151,11 @@ def _run_workflow_bound(
     roles = _ensure_eval_after_coder(list(request.roles))
     max_repairs, max_replans = request.max_repairs, request.max_replans
 
+    effective_binding = (
+        admission_binding
+        if admission_binding is not None
+        else _managed_admission_binding(managed_execution, run_id=run_id)
+    )
     try:
         snapshot, plan_path = _resolve_admitted_plan(
             roles=roles,
@@ -3521,6 +4171,7 @@ def _run_workflow_bound(
             rule=error.rule,
             base_dir=run_context.run_log_dir if run_context is not None else None,
             deadline=deadline_mono,
+            managed_binding=effective_binding,
         )
 
     artifact_paths = workflow_artifact_paths(
@@ -3571,6 +4222,7 @@ def _run_workflow_bound(
         managed_candidate_reader=stage_candidate_reader,
         replans_allowed=max_replans,
         acquisition=acquisition,
+        admission_binding=effective_binding,
         managed_plan_ref=None if snapshot is None else snapshot.ref,
         verify_gate_mode=_gate_mode(),
         admission=(
@@ -3588,19 +4240,8 @@ def _run_workflow_bound(
         if _deadline_exceeded(ctx):
             _write_deadline_state(ctx, roles[0], progress=WorkflowProgress())
             return WORKFLOW_DEADLINE_EXIT_CODE, read_back_terminal_state(artifact_paths.flow_state, run_id)
-        if ctx.admission is not None:
-            try:
-                _record_admission_attempt(
-                    artifact_paths,
-                    run_id=run_id,
-                    plan_ref=ctx.admission.snapshot.ref,
-                    attempt=None,
-                    status="ACQUIRING",
-                    deadline=deadline_mono,
-                )
-            except (OSError, ValueError) as error:
-                _admission_storage_failure(ctx, error)
-                return _admission_exit_code(ctx), read_back_terminal_state(artifact_paths.flow_state, run_id)
+        if not _initialize_admission_record(ctx):
+            return _admission_exit_code(ctx), read_back_terminal_state(artifact_paths.flow_state, run_id)
         label = _render_mode_label(mode, max_repairs=max_repairs, max_replans=max_replans)
         print(f"fa workflow: run_id={run_id} mode={label} roles={'→'.join(roles)}", file=sys.stderr)
         if mode == "adaptive":

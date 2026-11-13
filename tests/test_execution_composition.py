@@ -3853,8 +3853,6 @@ def test_a_second_run_on_a_workspace_the_first_left_unsettled_is_refused_not_str
     with SupervisorService(read_config_file(service_path)) as service:
         workspace_id = _registered(service)
         seen: list[str] = []
-
-        seen: list[str] = []
         original_request = ExecutionClient.request
         lost_create: set[str] = set()
         lost_publish: set[str] = set()
@@ -3916,3 +3914,70 @@ def test_a_second_run_on_a_workspace_the_first_left_unsettled_is_refused_not_str
                 # takeover of the run that still owns the workspace.
                 assert second is None
                 assert _status(site, workspace_id)["status"] == "OWNED"
+
+
+def test_bound_plan_publisher_receipt_carries_real_operation_id(
+    site: Site, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D10/D11: BoundPlanPublisher.publish_candidate_receipt exposes revision_id and operation_id."""
+    import re
+
+    plan_path = site.source / PLAN_RELATIVE
+    plan_path.parent.mkdir(parents=True, exist_ok=True)
+    plan_path.write_bytes(b"# Existing plan\n")
+    source = read_plan_snapshot(site.source, Path(PLAN_RELATIVE))
+    candidate = snapshot_from_bytes("draft.md", b"# Promoted plan\n")
+    service_path, yaml_path = _configs(tmp_path, _document(site))
+    run = _run(site.source)
+
+    with SupervisorService(read_config_file(service_path)) as service:
+        _registered(service)
+        with _serving_supervisor(service):
+            managed = managed_execution_for_run(run, config_path=yaml_path)
+            assert managed is not None
+            publisher = BoundPlanPublisher(managed, managed.binding)
+            receipt = publisher.publish_candidate_receipt(source, candidate)
+            assert isinstance(receipt, PlanPublication)
+            assert receipt.plan_ref.sha256 == candidate.ref.sha256
+            assert receipt.revision_id == managed.current_revision_id
+            assert receipt.operation_id is not None
+            assert re.fullmatch(r"op-[0-9a-f]{32}", receipt.operation_id) is not None
+            assert managed.close() is True
+
+
+def test_bound_plan_publisher_reconcile_preserves_operation_id(
+    site: Site, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reconciliation after a lost PUBLISH reply still surfaces the exact op-<32hex> receipt."""
+    import re
+
+    plan_path = site.source / PLAN_RELATIVE
+    plan_path.parent.mkdir(parents=True, exist_ok=True)
+    plan_path.write_bytes(b"# Existing plan\n")
+    source = read_plan_snapshot(site.source, Path(PLAN_RELATIVE))
+    candidate = snapshot_from_bytes("draft.md", b"# Reconciled plan\n")
+    service_path, yaml_path = _configs(tmp_path, _document(site))
+    run = _run(site.source)
+
+    with SupervisorService(read_config_file(service_path)) as service:
+        _registered(service)
+        original_request = ExecutionClient.request
+        lost_publish: list[str] = []
+
+        def lose_first_publish(self: Any, operation: Any, *, request_id: str, **kwargs: Any) -> Any:
+            answer = original_request(self, operation, request_id=request_id, **kwargs)
+            if operation is Operation.PUBLISH and not lost_publish:
+                lost_publish.append(request_id)
+                raise ExecutionUncertainError("op-" + request_id, code="EXECUTION_UNKNOWN")
+            return answer
+
+        with _serving_supervisor(service):
+            monkeypatch.setattr(ExecutionClient, "request", lose_first_publish)
+            managed = managed_execution_for_run(run, config_path=yaml_path)
+            assert managed is not None
+            publisher = BoundPlanPublisher(managed, managed.binding)
+            receipt = publisher.publish_candidate_receipt(source, candidate)
+            assert receipt.plan_ref.sha256 == candidate.ref.sha256
+            assert receipt.operation_id == "op-" + lost_publish[0]
+            assert re.fullmatch(r"op-[0-9a-f]{32}", receipt.operation_id or "") is not None
+            assert managed.close() is True

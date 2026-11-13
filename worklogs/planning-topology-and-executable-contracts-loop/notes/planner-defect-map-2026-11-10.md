@@ -171,33 +171,47 @@ scoped candidate с общим кредитом и durable barrier.
 >   выносит `blocked_reason` и подсказку по `worklogs/<slug>/roadmap.md` в `summary`,
 >   сохраняя точный набор ключей CT4 `result`.
 
-### D10 — v1-писатель отвергает `dispatch_kind: ACQUISITION`
+### D10 — v1-писатель отвергает `dispatch_kind: ACQUISITION` *(закрыт в E524, Q150=A)*
 
-**Исполнено:** `write_admission_record(..., attempt={dispatch_kind:"ACQUISITION", …})` →
-`AdmissionIOError(corrupt-record)`. В `_record_attempt_hashes` (`admission_schema.py:178-195`)
-ветки есть для `EXPLICIT_INPUT` и `{ADMISSION_REPAIR, EVAL_REPLAN}`; `ACQUISITION` не попадает
-ни в одну, и `route="ADMITTED"` требует `promoted`, которого нет. v2, где
-`_validate_v2_acquisition` расписана целиком, **недостижима**: `ManagedAdmissionBinding`
-не строится ни в одной производственной ветке, а v2-попытке нужны
-`input_revision/output_revision/bundle_sha256` (согласовано в **Q150 = A**: v2 для
-managed-child при `owner_run_id != run_id`, v1 для unmanaged).
+> **Статус:** **закрыт (E524).** Реализован перехватчик `ManagedAdmissionBinding`
+> (`_managed_admission_binding` в `src/fa/inner_loop/workflow_controller.py`), строго
+> активирующий `schema_version = 2` только для managed-child запусков с полным
+> `ManagedExecution` (`owner_run_id != run_id`, `ws-<32hex>`, `generation >= 1`,
+> `rev-<32hex>`), оставляя top-level запуски (`owner_run_id == run_id`) и unmanaged/mock
+> вызовы на `schema_version = 1`.
+> - `ExecutionClient.publish_plan` и `reconcile_candidate_publication`
+>   (`src/fa/execution/client.py`) возвращают реальный `PlanPublication.operation_id`;
+>   `BoundPlanPublisher.publish_candidate_receipt` (`src/fa/execution/composition.py`)
+>   передаёт полный `PlanPublication` с ревизией и `operation_id`;
+>   `PlanPromotionError` (`src/fa/inner_loop/plan_promotion.py`) сохраняет `operation_id`
+>   при неопределённой публикации (`durability-unknown`, `output_revision = None`).
+> - `_initialize_admission_record` пишет стартовый барьер `status = "ACQUIRING"`,
+>   `plan_ref = None`, `attempts = []` до выбора; `_admit_bootstrap_attempt` и
+>   `_install_bootstrap_project_with_detail` пробрасывают `bundle_sha256`,
+>   `candidate_sha256`, `input_revision`/`output_revision` и `operation_id`.
 
-Сейчас незаметен только потому, что до D10–D12 контроллер ещё не переключён на v2.
+### D11 — провенанс стирается: попытка пишется как `EXPLICIT_INPUT` *(закрыт в E524, Q150=A)*
 
-### D11 — провенанс стирается: попытка пишется как `EXPLICIT_INPUT`
+> **Статус:** **закрыт (E524).**
+> - На управляемых дочерних запусках v2 (`ctx.admission_binding is not None`) первый
+>   допуск и `RETRY`/`BLOCKED` после acquisition пишутся с `dispatch_kind = "ACQUISITION"`
+>   (при `max_repairs = 0` на FAIL-диагностиках `EXISTING_SELECTION` эмиттится цепочка
+>   `#1 ACQUISITION/RETRY` → `#2 ADMISSION_REPAIR/BLOCKED`), а `EVAL_REPLAN` при
+>   исчерпании бюджета пишет `dispatch_kind = "EVAL_REPLAN"`, `route = "BLOCKED"`.
+> - `_v2_attempt_diagnostics` отфильтровывает не-`FAIL` предупреждения в pre-coder
+>   `EXISTING_SELECTION RETRY`, а `_canonical_parts` (`src/fa/inner_loop/plan_promotion.py`)
+>   разрешает `ADMISSION_REPAIR`/`EVAL_REPLAN` для приобретённых путей
+>   `worklogs/<slug>/increments/<name>.md` (отклоняя `.md`/`.hidden.md`), сохраняя
+>   строгий `_CANONICAL_PARENT` для `EXPLICIT` (CT94).
 
-`_admit_plan:3122`: `kind=kind.value if candidate else "EXPLICIT_INPUT"`. Для плана из
-acquisition `candidate=False` ⇒ история говорит «план подан извне», хотя его выбрал
-планировщик. Расхождение со спекой («Initial managed choice uses ACQUISITION») и потеря
-различимости, на которую ссылается вся аргументация admission. **Исполнено:** в linear-пробе
-`plan_ref.source_kind == EXISTING_SELECTION`, но `dispatch_kind` попытки — `EXPLICIT_INPUT`.
+### D12 — отказы acquisition теряют точную причину *(закрыт в E524, Q150=A)*
 
-### D12 — отказы acquisition теряют точную причину
-
-`_PERSISTED_PLAN_REF_RULES` — словарь v1 `plan-ref`. Всё вне него (`clarification/*`,
-`bootstrap-*`) пишется как `validator-error`; точная причина остаётся лишь в свободном
-`blocked_reason`. Уже ловили для refusals в E516; для acquisition спека требует
-v2-словарь `selection/*`.
+> **Статус:** **закрыт (E524).** `_stage_acquisition_choice`, `_pinned_acquisition_substrate`,
+> `_bind_acquisition_admission`, `_refusal_exit_code`, `_classify_bootstrap_exception` и
+> `_blocked_plan_request` (`_v2_blocked_diagnostic`) проецируют отказы выбора, уточнения,
+> пина, `prepare_bundle` и `install_project` в закрытый v2-словарь `ADMISSION_RULES_V2`
+> (`selection/*`, `bootstrap/*`, `workspace/*`) с сохранением `bundle_sha256`/
+> `candidate_sha256` и `operation_id` на post-prepare/uncertain отказах.
 
 ### D13 — `_scoped_stage_failed` без семантики для нового kind *(закрыт в E521)*
 
@@ -226,24 +240,22 @@ v2-словарь `selection/*`.
 | D7 | ACQUISITION-вид не производится | проводка | C1 + мутация M1 | **ЗАКРЫТ (E521)** |
 | D8 | acquisition-реестр без вызова; writer у планировщика | проводка | C1 `_cmd_run` + M3–M5 | **ЗАКРЫТ (E521)** |
 | D9 | протокол выбора не доходит до модели | **контракт (Q149=B, Q145, Q151=A)** | C1 `_cmd_run` + M1–M6 (7/7) | **ЗАКРЫТ (E522)** |
-| D10 | v1 отвергает ACQUISITION-попытку; v2 недостижима | схема (**Q150=A**) | исполнено | открыт; провенанс |
-| D11 | попытка пишется как EXPLICIT_INPUT | схема (**Q150=A**) | исполнено | открыт; провенанс |
-| D12 | отказы → validator-error | схема (**Q150=A**) | код + E516 | открыт; диагностика |
+| D10 | v1 отвергает ACQUISITION-попытку; v2 недостижима | схема (**Q150=A**) | C1 `SupervisorService` + `validate_admission_record` + M1–M2, M5 | **ЗАКРЫТ (E524)** |
+| D11 | попытка пишется как EXPLICIT_INPUT | схема (**Q150=A**) | C1 `EVAL_REPLAN`/`REPAIR` + M3–M4, M6, M8 | **ЗАКРЫТ (E524)** |
+| D12 | отказы → validator-error | схема (**Q150=A**) | C1 отказы + `pin_reader` + M7, M9 | **ЗАКРЫТ (E524)** |
 | D13 | `_scoped_stage_failed` без семантики | проводка | C1 + мутация M2 | **ЗАКРЫТ (E521)** |
 | D14 | описание инструмента устарело | док/контракт | C1 + kill-check | **ЗАКРЫТ (E523)** |
 
 ## 3. Порядок закрытия (актуализирован по зависимостям)
 
 ```
-[D6 (E520)] ─► [D13 → D8 → D7 (E521)] ─► [D9 (E522)] ─► [D14 (E523)] ─► D10–D12 (Q150=A)
+[D6 (E520)] ─► [D13 → D8 → D7 (E521)] ─► [D9 (E522)] ─► [D14 (E523)] ─► [D10–D12 (E524, Q150=A)]
 ```
 
-- **D6 (E520), D13 → D8 → D7 (E521), D9 (E522) и D14 (E523) закрыты:** контроллер,
-  реестр, промпт/динамика и описание `invoke_workflow` полностью согласованы.
-- **D10–D12 (Q150=A)** — финальный срез: включение v2 `admission.json` на managed-child
-  пути (`owner_run_id != run_id`) с пробросом `ManagedAdmissionBinding`, `BundlePreparation`
-  и `InstallReceipt` / `BoundPlanPublisher` (`operation_id`, `revision_id`), сохраняя v1
-  для unmanaged вызовов без `ManagedExecution`.
+- Все дефекты **D6–D14** закрыты: контроллер (`linear` + `adaptive`), `ACQUISITION`-реестр,
+  статический/динамический промпт, описание `invoke_workflow` и `schema_version = 2`
+  провенанс на managed-child пути (`owner_run_id != run_id`) полностью согласованы при
+  сохранении `schema_version = 1` для unmanaged/top-level вызовов.
 
 ## 4. Что этот аудит **не** покрывает
 
@@ -255,4 +267,5 @@ v2-словарь `selection/*`.
   мутантов M1–M5 убиты, E521); D9 (7/7 неэквивалентных мутантов M1–M6 убиты на банках
   `prompt_registry_coherence` / `handoff_payload` / `invoke_workflow_tool` /
   `s5p1_acquisition_{substrate,lifecycle}`, E522); D14 (1/1 мутант описания инструмента
-  убит на `test_invoke_workflow_tool.py`, E523).
+  убит на `test_invoke_workflow_tool.py`, E523); D10–D12 (9/9 целевых мутантов M1–M9 убиты
+  на `test_admission_v2_provenance.py` + `test_execution_composition.py`, E524).

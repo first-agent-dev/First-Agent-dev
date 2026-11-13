@@ -9716,5 +9716,68 @@ in `tests/test_invoke_workflow_tool.py` (1/1 revert mutant killed), verified all
 targeted tool/portability/coherence/S5P1 tests, `ruff`, `mypy`, `pyrefly`, `deptry`, and
 `just _contracts`. Remaining defects: **D10–D12 (Q150=A)**.
 
+### E524 — D10–D12 closed: managed-child `schema_version = 2` admission provenance, authority receipts, and closed refusals (Q150 = A) (2026-11-10; Arena-local)
 
+**Changes.** Closed the remaining schema/provenance defects (D10, D11, D12) in
+`Q150 = A` mode (v2 for managed-child runs with `owner_run_id != run_id` and complete
+`ManagedExecution` identity; v1 unchanged for top-level/unmanaged/mock runs):
+- **Authority operation receipts & scope (`src/fa/execution/client.py`, `composition.py`, `src/fa/inner_loop/plan_promotion.py`):**
+  - Added `PlanPublication.operation_id` (populated from `PUBLISH`/reconciliation reply
+    or fallback `"op-" + publish_request_id` when empty/missing) and exposed
+    `BoundPlanPublisher.publish_candidate_receipt` while keeping `publish_candidate`
+    unchanged for existing callers.
+  - Added `PlanPromotionError.operation_id` and updated `_canonical_parts` so
+    `EXISTING_SELECTION`/`BOOTSTRAP` increments under `worklogs/<slug>/increments/<name>.md`
+    (with `_PROJECT_SLUG_RE` and rejecting hidden/empty `.md` names) are repairable
+    and replannable while preserving strict `_CANONICAL_PARENT` enforcement for `EXPLICIT`
+    inputs (CT94).
+- **Controller v2 provenance & closed diagnostics (`src/fa/inner_loop/workflow_controller.py`):**
+  - Added `_managed_admission_binding`, `_initialize_admission_record` (initial
+    `ACQUIRING` barrier with `plan_ref = None`), `_admit_bootstrap_attempt` (distinct
+    `bundle_sha256` and installed increment hash, `input_revision` -> `output_revision`,
+    `operation_id`), `_promote_validated_plan_receipt`, `_run_admission_repair_with_receipt`,
+    and `_record_budget_blocked_acquisition`.
+  - Retained `dispatch_kind = "ACQUISITION"` across v2 initial admission, `FAIL`-only
+    `EXISTING_SELECTION RETRY` (`_v2_attempt_diagnostics`), and `RETRY -> ADMISSION_REPAIR BLOCKED`
+    when repair budget is zero; retained `EVAL_REPLAN` across both successful
+    revisions and exhausted-budget/uncertain `BLOCKED` stops.
+  - Mapped `AcquisitionChoiceError`, `NEEDS_CLARIFICATION`, `_pinned_acquisition_substrate`
+    failures (catching `ExecutionUnavailableError` and `ExecutionUncertainError` alongside
+    `ExecutionRejectedError`), and `prepare_bundle`/`install_project` failures into
+    `ADMISSION_RULES_V2` (`selection/*`, `bootstrap/*`, `workspace/*`), preserving
+    `candidate_sha256` + `bundle_sha256` and `operation_id` on post-prepare/uncertain
+    bootstrap failures without breaching `ADMISSION_RULES` v1.
+
+**Tests, adversarial review, and mutation kill-checks.**
+- Added 2 C1 authority receipt tests in `tests/test_execution_composition.py` and
+  27 unit/C1/e2e provenance/receipt/refusal tests in `tests/test_admission_v2_provenance.py`
+  covering `Q150 = A` top-level v1 vs child v2 `ACQUIRING`, `EXISTING_SELECTION` FAIL-only
+  `RETRY` + `ADMISSION_REPAIR`, zero-budget `RETRY -> BLOCKED`, `BOOTSTRAP` admitted &
+  post-prepare authority failures, `D12` choice/clarification refusals, `EVAL_REPLAN`
+  revision/operation-id chains and budget exhaustion, uncertain promotion
+  `durability-unknown`, multi-project `plan_promotion` scope, `source-changed`,
+  `pin_reader` unavailability, and real `build_invoke_workflow_tool` child handoff.
+- Adversarial diff review uncovered and fixed three real issues: catching
+  `ExecutionUnavailableError`/`ExecutionUncertainError` in `_pinned_acquisition_substrate`,
+  rejecting dotfile/stemless `.md` increment filenames in `_canonical_parts`, and guarding
+  against empty-string `operation_id` in `PlanPublication`.
+- Targeted mutation testing: **9 / 9 mutants killed** (`M1_owner_run_id_v1_gate`,
+  `M2_client_operation_id_publish_plan`, `M3_plan_promotion_multi_project_scope`,
+  `M4_uncertain_operation_id_propagation`, `M5_bootstrap_bundle_sha256_evidence`,
+  `M6_existing_selection_fail_only_retry_diags`, `M7_acquisition_choice_error_v2_kind`,
+  `M8_eval_replan_budget_blocked_kind`, `M9_pin_reader_unavailable_uncertain`).
+
+**Verification.** **687 passed, 1 xfailed** (pre-existing STEP2 cutover) across
+`test_admission_v2_provenance`, `test_execution_composition`, `test_execution_admission`,
+`test_execution_service`, `test_managed_acquisition`, `test_s5p1_*`, `test_invoke_workflow_tool`,
+`test_plan_candidate_retention`, `test_s8_workflow_controller`, `test_s3p3_candidate_buffer`,
+`test_coder_loop`, `test_cli`, `test_prompt_registry_coherence`, `test_handoff_payload`,
+`test_planner_emits_schema4`, and `test_s10b_complexity_ratchet` (plus baseline-exact
+`642 passed, 8 failed` with `test_verify_gate_live` / `test_*admission*`).
+`ruff format --check src tests` (601 files), `ruff check .`, `deptry src/ scripts/`,
+`just _contracts`, `./scripts/check_shell_syntax.sh`, `mypy --follow-imports=silent` on
+all changed `src/` + new test files, `pyrefly check` on all 6 touched Python files, and
+`git diff --check` all pass with 0 errors; `pylint src/fa` rates `9.99/10` (0 diagnostics
+on touched modules). All D6–D14 defects in `notes/planner-defect-map-2026-11-10.md` are
+now closed.
 
