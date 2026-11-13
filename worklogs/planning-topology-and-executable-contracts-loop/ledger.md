@@ -9470,3 +9470,77 @@ still not from a live chat session: `workflow_tool.acquisition_refusal` returns
 `acquisition_unavailable` and `invoke_workflow` builds no substrate. That — plus the
 `ACQUISITION` branch of `_stage_planner_dispatch` and the substrate call in `cli.py` —
 is the remainder of W2's S5P1, and R26 stays gated until S5 closes.
+
+### E520 — D6 closed: single shared stage loop binds acquisition admission in both modes without re-acquiring on repair/replan (2026-11-10; Arena-local)
+
+**The defect that survived S5P1.** The `notes/planner-defect-map-2026-11-10.md` audit on
+`5193b1c` showed that every `tests/test_s5p1_*.py` controller test ran with
+`mode="linear"`, while the default `adaptive` path never bound acquisition admission:
+
+- of the three stage loops in `src/fa/inner_loop/workflow_controller.py`, only
+  `_run_linear` consumed `result.acquisition` via `_bind_acquisition_admission`;
+  `_run_initial_roles`, `_dispatch_adaptive_round`, and `_run_adaptive` dropped it;
+- in `adaptive`, `ctx.admission` remained `None`, so `_admit_plan` short-circuited
+  `True` as if it were an internal fixture, `coder` received `_managed_plan_ref=None`,
+  no `admission` record or planner budget existed, and acquisition refusals
+  (`clarification`, `bootstrap-*`) failed to stop the run before `coder`/`eval`;
+- even with binding wired up, leaving `ctx.acquisition` live across binding would
+  cause a subsequent scoped `planner` call (`ADMISSION_REPAIR` under Q57 or
+  `EVAL_REPLAN` under Q67a) to be read by `_stage_acquisition_choice` as a second
+  acquisition choice and fail with `choice-malformed`.
+
+**The unified loop and single-choice guard.**
+
+- Added `_StageLoopResult` and `_run_role_loop(...)` in
+  `src/fa/inner_loop/workflow_controller.py` as the single stage execution loop used by
+  `_run_linear`, `_run_adaptive`, `_dispatch_adaptive_round`, and `_run_initial_roles`
+  (which still returns the legacy 4-tuple for direct callers in
+  `tests/test_verify_gate_live.py`).
+- Returned the bound `ctx` out of `_run_role_loop` and threaded it through
+  `_run_adaptive_repair` and `_run_adaptive_replan` so downstream repair/replan rounds
+  see the admitted context and cleared acquisition state.
+- Enforced §7.0 single-acquisition consumption in two places: both
+  `_bind_acquisition_admission` and `_admit_installed_plan` clear `acquisition=None`,
+  and `_stage_acquisition_choice(..., dispatch=dispatch)` also returns `(None, False)`
+  whenever `ctx.admission is not None` or `dispatch.owns_candidate`.
+
+**Tests and mutations.** In `tests/test_s5p1_acquisition_lifecycle.py`:
+
+- parametrized the 5 core lifecycle contracts (`selection`, `selected_plan`,
+  `clarification`, `bootstrap`, `bootstrap_refusal`) over `["linear", "adaptive"]`;
+- added `test_adaptive_repair_round_preserves_the_acquired_plan_and_never_reacquires`,
+  `test_eval_replan_after_selection_is_not_misread_as_a_second_acquisition` (supplying
+  a `TESTS:` line in the fixture so `precheck` does not trigger pre-coder
+  `ADMISSION_REPAIR` and spend `max_replans=1` before `coder`), and
+  `test_q57_admission_repair_after_selection_runs_in_both_modes_without_reacquiring`
+  (`["linear", "adaptive"]`);
+- probed the original D6 reproducer on a clean `FA_STATE_ROOT`: both `linear` and
+  `adaptive` now produce `coder.plan_ref=ЕСТЬ` and `admission=ЕСТЬ`;
+- mutation check on `workflow_controller.py`: **5 / 5 non-equivalent mutants killed**
+  (M1 dropping updated `ctx` from `_run_adaptive`'s initial loop, M2 skipping
+  `_bind_acquisition_admission`, M3 dropping bound `ctx` inside `_run_role_loop`, M4
+  removing both `acquisition=None` and the re-read guards, M6 ignoring `blocked` from
+  `_bind_acquisition_admission`). M5 (`_dispatch_adaptive_round` returning its input
+  `ctx`) is equivalent under current reachability because acquisition binding occurs
+  before any eval route can fire.
+
+**Verification.** `tests/test_s5p1_*.py` **77 passed**; controller, complexity-ratchet,
+CLI, no-eval-terminal, and tool banks **287 passed**; `test_execution_composition.py` +
+`test_s10c_*.py` **97 passed, 1 xfailed** (pre-existing STEP2 cutover);
+`test_verify_gate_live.py` **564 passed / 8 failed** (identical to the `5193b1c`
+baseline: pre-existing `test_real_workflow_writes_verification_and_supplies_it_to_eval`
+plus 7 `managed_execution_unavailable` failures from E519). `ruff check .` (including
+`C901 <= 15`), `ruff format --check src tests` + edited worklog files, `deptry src/
+scripts/`, `just _contracts`, `mypy src/fa/inner_loop/workflow_controller.py
+tests/test_s5p1_acquisition_lifecycle.py`, and `pyrefly check
+src/fa/inner_loop/workflow_controller.py` all pass with 0 errors; `pylint src/fa`
+rates `9.99/10` (0 diagnostics on `workflow_controller.py`; exit 8 from pre-existing
+`R0801`/`R0401`). Note: `just _lint` fails on 3 pre-existing `notes/*-2026-11-10.md` files
+unrelated to this change.
+
+**What remains open.** Closing D6 unblocks testing and enforcement in the default
+`adaptive` mode; the remaining defects in `notes/planner-defect-map-2026-11-10.md` stay
+open in dependency order: D9 (Q149 prompt/protocol delivery), D7 (`ACQUISITION`
+dispatch kind), D13 (`_scoped_stage_failed`), D8 (`build_acquisition_registry`),
+D10–D12 (v2 `ACQUISITION` provenance/schema), and D14 (`workflow_tool` description).
+

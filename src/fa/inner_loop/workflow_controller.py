@@ -19,7 +19,7 @@ import os
 import re
 import sys
 import time
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
@@ -1583,7 +1583,7 @@ def _run_stage(
             logger.warning("workflow eval-report: %s (run=%s)", _warning, ctx.run_id)
             print(f"fa workflow: {_warning}", file=sys.stderr)
         _write_stage_eval_report(ctx, report)
-    acquisition_outcome, acquisition_refused = _stage_acquisition_choice(ctx, role, code, sink)
+    acquisition_outcome, acquisition_refused = _stage_acquisition_choice(ctx, role, code, sink, dispatch=dispatch)
     if acquisition_refused:
         return StageResult(role=role, exit_code=2)
     return StageResult(
@@ -1985,36 +1985,78 @@ def _ensure_eval_after_coder(roles: list[str]) -> list[str]:
 # ── Pipeline modes ─────────────────────────────────────────────────────────
 
 
+@dataclass(frozen=True, slots=True)
+class _StageLoopResult:
+    """Outcome of running a sequence of workflow stages through the shared loop."""
+
+    ctx: WorkflowContext
+    exit_code: int
+    n_stages: int
+    last_role: str
+    eval_report: EvalReport | None
+    verification: PlanVerification | None
+
+
+def _run_role_loop(
+    ctx: WorkflowContext,
+    roles: Sequence[str],
+    run_stage_fn: Callable[..., int],
+    *,
+    progress: WorkflowProgress,
+    n_stages: int = 0,
+    eval_report: EvalReport | None = None,
+    verification: PlanVerification | None = None,
+    fresh_first: bool = True,
+    reason_prefix: str | None = None,
+) -> _StageLoopResult:
+    """Run one stage sequence through the single shared acquisition/failure loop.
+
+    All pipeline executions — linear pass, adaptive initial pass, and adaptive
+    repair/replan rounds — funnel through this loop so acquisition admission
+    binding, fail-fast state persistence, and coder→eval evidence handoff live
+    in one place (Q57 / S5P1 §7.0).
+    """
+    last_role = roles[0] if roles else "workflow"
+    total = len(roles)
+    for index, role in enumerate(roles):
+        n_stages += 1
+        last_role = role
+        if reason_prefix is None:
+            print(f"\nfa workflow ─ stage {index + 1}/{total}: {role}", file=sys.stderr)
+            transition_reason = f"dispatching stage {index + 1}/{total}"
+        else:
+            transition_reason = f"{reason_prefix}: canonical {role}"
+        result = _run_stage(
+            ctx,
+            role,
+            fresh=fresh_first and index == 0,
+            progress=progress,
+            transition_reason=transition_reason,
+            run_stage_fn=run_stage_fn,
+            prior_verification=verification,
+        )
+        if result.exit_code != 0:
+            _write_stage_failure_state(ctx, role, result.exit_code, progress=progress)
+            return _StageLoopResult(ctx, result.exit_code, n_stages, last_role, eval_report, verification)
+        if result.acquisition is not None:
+            ctx, blocked = _bind_acquisition_admission(ctx, result.acquisition)
+            if blocked is not None:
+                return _StageLoopResult(ctx, blocked, n_stages, last_role, eval_report, verification)
+        if role == "coder":
+            verification = result.verification
+        if result.eval_report is not None:
+            eval_report = result.eval_report
+    return _StageLoopResult(ctx, 0, n_stages, last_role, eval_report, verification)
+
+
 def _run_initial_roles(
     ctx: WorkflowContext,
     roles: list[str],
     run_stage_fn: Callable[..., int],
 ) -> tuple[int, int, EvalReport | None, PlanVerification | None]:
     """Run the configured initial role sequence, carrying facts from coder to eval."""
-    progress = WorkflowProgress()
-    eval_report: EvalReport | None = None
-    verification: PlanVerification | None = None
-    n_stages = 0
-    for index, role in enumerate(roles):
-        n_stages += 1
-        print(f"\nfa workflow ─ stage {index + 1}/{len(roles)}: {role}", file=sys.stderr)
-        result = _run_stage(
-            ctx,
-            role,
-            fresh=index == 0,
-            progress=progress,
-            transition_reason=f"dispatching stage {index + 1}/{len(roles)}",
-            run_stage_fn=run_stage_fn,
-            prior_verification=verification,
-        )
-        if result.exit_code != 0:
-            _write_stage_failure_state(ctx, role, result.exit_code, progress=progress)
-            return result.exit_code, n_stages, eval_report, verification
-        if role == "coder":
-            verification = result.verification
-        if result.eval_report is not None:
-            eval_report = result.eval_report
-    return 0, n_stages, eval_report, verification
+    loop = _run_role_loop(ctx, roles, run_stage_fn, progress=WorkflowProgress())
+    return loop.exit_code, loop.n_stages, loop.eval_report, loop.verification
 
 
 def _finish_adaptive(
@@ -2058,27 +2100,20 @@ def _dispatch_adaptive_round(
     eval_report: EvalReport,
     verification: PlanVerification | None,
     reason_prefix: str,
-) -> tuple[int, int, EvalReport, PlanVerification | None]:
+) -> tuple[WorkflowContext, int, int, EvalReport, PlanVerification | None]:
     """Run one canonical coder/eval or planner/coder/eval adaptive round."""
-    for role in stage_roles:
-        result = _run_stage(
-            ctx,
-            role,
-            fresh=False,
-            progress=progress,
-            transition_reason=f"{reason_prefix}: canonical {role}",
-            run_stage_fn=run_stage_fn,
-            prior_verification=verification,
-        )
-        n_stages += 1
-        if result.exit_code != 0:
-            _write_stage_failure_state(ctx, role, result.exit_code, progress=progress)
-            return result.exit_code, n_stages, eval_report, verification
-        if role == "coder":
-            verification = result.verification
-        if result.eval_report is not None:
-            eval_report = result.eval_report
-    return 0, n_stages, eval_report, verification
+    loop = _run_role_loop(
+        ctx,
+        stage_roles,
+        run_stage_fn,
+        progress=progress,
+        n_stages=n_stages,
+        eval_report=eval_report,
+        verification=verification,
+        fresh_first=False,
+        reason_prefix=reason_prefix,
+    )
+    return loop.ctx, loop.exit_code, loop.n_stages, loop.eval_report or eval_report, loop.verification
 
 
 def _run_adaptive_repair(
@@ -2092,7 +2127,7 @@ def _run_adaptive_repair(
     eval_report: EvalReport,
     verification: PlanVerification | None,
     route: RouteDecision,
-) -> tuple[bool, int, int, WorkflowProgress, EvalReport, PlanVerification | None]:
+) -> tuple[bool, int, WorkflowContext, int, WorkflowProgress, EvalReport, PlanVerification | None]:
     """Use one bounded repair round, or terminate when the existing cap is spent."""
     if progress.repair_round >= max_repairs:
         if verification is not None and verification.blocking and eval_report.route_decision == "complete":
@@ -2110,7 +2145,7 @@ def _run_adaptive_repair(
             route=route,
             reason=reason,
         )
-        return False, 0, n_stages, progress, eval_report, verification
+        return False, 0, ctx, n_stages, progress, eval_report, verification
 
     progress = WorkflowProgress(
         plan_version=progress.plan_version,
@@ -2121,7 +2156,7 @@ def _run_adaptive_repair(
         f"\nfa workflow ─ repair round {progress.repair_round}/{max_repairs} (adaptive route return_to_coder)",
         file=sys.stderr,
     )
-    code, n_stages, eval_report, verification = _dispatch_adaptive_round(
+    ctx, code, n_stages, eval_report, verification = _dispatch_adaptive_round(
         ctx,
         _canonical_loop_roles(roles, include_planner=False),
         run_stage_fn,
@@ -2131,7 +2166,7 @@ def _run_adaptive_repair(
         verification=verification,
         reason_prefix=f"repair round {progress.repair_round}: after return_to_coder",
     )
-    return code == 0, code, n_stages, progress, eval_report, verification
+    return code == 0, code, ctx, n_stages, progress, eval_report, verification
 
 
 def _run_adaptive_replan(
@@ -2145,7 +2180,7 @@ def _run_adaptive_replan(
     eval_report: EvalReport,
     verification: PlanVerification | None,
     route: RouteDecision,
-) -> tuple[bool, int, int, WorkflowProgress, EvalReport, PlanVerification | None]:
+) -> tuple[bool, int, WorkflowContext, int, WorkflowProgress, EvalReport, PlanVerification | None]:
     """Use one bounded planner round, or terminate if it cannot be honored."""
     if ctx.admission is not None:
         if not _admit_plan(
@@ -2155,9 +2190,9 @@ def _run_adaptive_replan(
             replan=True,
             reason=f"Eval requested {eval_report.route_decision}: {eval_report.summary}",
         ):
-            return False, _admission_exit_code(ctx), n_stages, progress, eval_report, verification
+            return False, _admission_exit_code(ctx), ctx, n_stages, progress, eval_report, verification
         progress = replace(progress, plan_version=progress.plan_version + 1, replan_round=ctx.admission.planner_calls)
-        code, n_stages, eval_report, verification = _dispatch_adaptive_round(
+        ctx, code, n_stages, eval_report, verification = _dispatch_adaptive_round(
             ctx,
             _canonical_loop_roles(roles, include_planner=False),
             run_stage_fn,
@@ -2167,7 +2202,7 @@ def _run_adaptive_replan(
             verification=verification,
             reason_prefix="admitted eval replan",
         )
-        return code == 0, code, n_stages, progress, eval_report, verification
+        return code == 0, code, ctx, n_stages, progress, eval_report, verification
     if "planner" not in roles:
         reason = (
             f"eval routed return_to_planner but no planner role is configured (roles={','.join(roles)}); cannot replan"
@@ -2180,7 +2215,7 @@ def _run_adaptive_replan(
             route=route,
             reason=reason,
         )
-        return False, 0, n_stages, progress, eval_report, verification
+        return False, 0, ctx, n_stages, progress, eval_report, verification
     if progress.replan_round >= max_replans:
         reason = f"replan budget exhausted ({progress.replan_round}/{max_replans}); last route return_to_planner"
         _finish_adaptive(
@@ -2191,7 +2226,7 @@ def _run_adaptive_replan(
             route=route,
             reason=reason,
         )
-        return False, 0, n_stages, progress, eval_report, verification
+        return False, 0, ctx, n_stages, progress, eval_report, verification
 
     progress = WorkflowProgress(
         plan_version=progress.plan_version + 1,
@@ -2202,7 +2237,7 @@ def _run_adaptive_replan(
         f"\nfa workflow ─ replan round {progress.replan_round}/{max_replans} (plan version {progress.plan_version})",
         file=sys.stderr,
     )
-    code, n_stages, eval_report, verification = _dispatch_adaptive_round(
+    ctx, code, n_stages, eval_report, verification = _dispatch_adaptive_round(
         ctx,
         _canonical_loop_roles(roles, include_planner=True),
         run_stage_fn,
@@ -2212,7 +2247,7 @@ def _run_adaptive_replan(
         verification=verification,
         reason_prefix=f"replan round {progress.replan_round}: after return_to_planner",
     )
-    return code == 0, code, n_stages, progress, eval_report, verification
+    return code == 0, code, ctx, n_stages, progress, eval_report, verification
 
 
 def _run_adaptive(
@@ -2223,9 +2258,13 @@ def _run_adaptive(
     run_stage_fn: Callable[..., int],
 ) -> int:
     """Run normalized roles, evaluate every coder attempt, then route on eval plus gate facts."""
-    code, n_stages, eval_report, verification = _run_initial_roles(ctx, roles, run_stage_fn)
-    if code != 0:
-        return code
+    loop = _run_role_loop(ctx, roles, run_stage_fn, progress=WorkflowProgress())
+    if loop.exit_code != 0:
+        return loop.exit_code
+    ctx = loop.ctx
+    n_stages = loop.n_stages
+    eval_report = loop.eval_report
+    verification = loop.verification
 
     progress = WorkflowProgress()
     eval_requested = "eval" in roles
@@ -2282,7 +2321,7 @@ def _run_adaptive(
                 reason=f"workflow blocked after eval: {detail}",
             )
         if route == "return_to_coder":
-            keep_going, code, n_stages, progress, eval_report, verification = _run_adaptive_repair(
+            keep_going, code, ctx, n_stages, progress, eval_report, verification = _run_adaptive_repair(
                 ctx,
                 roles,
                 max_repairs,
@@ -2297,7 +2336,7 @@ def _run_adaptive(
                 return code
             continue
         if route == "return_to_planner":
-            keep_going, code, n_stages, progress, eval_report, verification = _run_adaptive_replan(
+            keep_going, code, ctx, n_stages, progress, eval_report, verification = _run_adaptive_replan(
                 ctx,
                 roles,
                 max_replans,
@@ -2429,7 +2468,12 @@ def _pinned_acquisition_substrate(ctx: WorkflowContext) -> Iterator[AcquisitionS
 
 
 def _stage_acquisition_choice(
-    ctx: WorkflowContext, role: str, code: int, sink: list[SessionOutcome]
+    ctx: WorkflowContext,
+    role: str,
+    code: int,
+    sink: list[SessionOutcome],
+    *,
+    dispatch: PlannerDispatch | None = None,
 ) -> tuple[AcquisitionOutcome | None, bool]:
     """Read the acquisition choice on the one stage entitled to make it.
 
@@ -2438,7 +2482,13 @@ def _stage_acquisition_choice(
     absent choice is a closed refusal reported on stderr, never an exception
     escaping a stage dispatcher.
     """
-    if role != "planner" or code != 0 or ctx.acquisition is None:
+    if (
+        role != "planner"
+        or code != 0
+        or ctx.acquisition is None
+        or ctx.admission is not None
+        or (dispatch is not None and dispatch.owns_candidate)
+    ):
         return None, False
     try:
         return _read_acquisition_choice(sink, ctx.acquisition), False
@@ -2551,6 +2601,7 @@ def _admit_installed_plan(
         admission=_WorkflowAdmission(snapshot, True, ctx.replans_allowed, snapshot_backed=True),
         managed_plan_ref=snapshot.ref,
         plan_path=ctx.plan_path or ctx.workspace / snapshot.ref.workspace_relative_path,
+        acquisition=None,
     )
     try:
         _record_admission_attempt(
@@ -2613,6 +2664,7 @@ def _bind_acquisition_admission(
         ),
         managed_plan_ref=snapshot.ref,
         plan_path=ctx.plan_path or ctx.workspace / snapshot.ref.workspace_relative_path,
+        acquisition=None,
     )
     try:
         _record_admission_attempt(
@@ -2631,35 +2683,15 @@ def _bind_acquisition_admission(
 
 def _run_linear(ctx: WorkflowContext, roles: list[str], run_stage_fn: Callable[..., int]) -> int:
     """Run every role once, evaluating after coder and enforcing verifier facts afterward."""
-    eval_report: EvalReport | None = None
-    verification: PlanVerification | None = None
     progress = WorkflowProgress()
-    n_stages = 0
-    last_role = roles[0]
-    for index, role in enumerate(roles):
-        n_stages += 1
-        last_role = role
-        print(f"\nfa workflow ─ stage {index + 1}/{len(roles)}: {role}", file=sys.stderr)
-        result = _run_stage(
-            ctx,
-            role,
-            fresh=index == 0,
-            progress=progress,
-            transition_reason=f"dispatching stage {index + 1}/{len(roles)}",
-            run_stage_fn=run_stage_fn,
-            prior_verification=verification,
-        )
-        if result.exit_code != 0:
-            _write_stage_failure_state(ctx, role, result.exit_code, progress=progress)
-            return result.exit_code
-        if result.acquisition is not None:
-            ctx, blocked = _bind_acquisition_admission(ctx, result.acquisition)
-            if blocked is not None:
-                return blocked
-        if role == "coder":
-            verification = result.verification
-        if result.eval_report is not None:
-            eval_report = result.eval_report
+    loop = _run_role_loop(ctx, roles, run_stage_fn, progress=progress)
+    if loop.exit_code != 0:
+        return loop.exit_code
+    ctx = loop.ctx
+    n_stages = loop.n_stages
+    last_role = loop.last_role
+    eval_report = loop.eval_report
+    verification = loop.verification
 
     route = _effective_controller_route(
         eval_report,
