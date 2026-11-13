@@ -425,6 +425,58 @@ def _build_tool_builders(
     return builders
 
 
+# The acquisition planner chooses a target; it never edits one. This is a positive
+# list, not "the planner profile minus its writer": if a future planner profile
+# gains a new mutator, acquisition must not inherit it by accident. `pr_prepare`,
+# `fs_write_file`, `fs_edit_file`, `fs_run_bash` and EXEC are absent by construction.
+ACQUISITION_TOOLS: tuple[str, ...] = (
+    "fs_read_file",
+    "fs_search",
+    "fs_reach",
+    "fs_blackboard_query",
+    "fs_exploration_metrics",
+)
+
+
+def build_acquisition_registry(
+    workspace_root: Path,
+    *,
+    bash_timeout: int = 30,
+    workspace_io: WorkspacePort | None = None,
+    project_tool_executor: Any | None = None,
+) -> ToolRegistry:
+    """Build the read/search-only registry the acquisition planner runs with.
+
+    A separate constructor rather than a flag on :func:`build_registry_for_role`
+    because the difference is not a setting: a role profile is a *suggestion*
+    list, while this list is the boundary. Sharing one function would put an
+    acquisition branch inside every role's assembly path.
+    """
+    if workspace_io is None and project_tool_executor is not None:
+        raise ValueError("project-tool executor requires a managed workspace port")
+    builders = _build_tool_builders(
+        workspace_root,
+        bash_timeout=bash_timeout,
+        planner_dispatch=None,
+        workspace_io=workspace_io,
+        project_tool_executor=project_tool_executor,
+        candidate_io=None,
+    )
+    registry = ToolRegistry()
+    for tool_name in ACQUISITION_TOOLS:
+        builder = builders.get(tool_name)
+        if builder is None:
+            if workspace_io is not None:
+                raise RuntimeError(f"managed tool unavailable: {tool_name}")
+            logger.warning("Acquisition tool %s has no builder, skipping", tool_name)
+            continue
+        spec = builder()
+        if not is_valid_wire_name(spec.name):
+            raise ToolWireNameError(spec.name)
+        registry.register(spec)
+    return registry
+
+
 def _builder_for_role(
     builders: Mapping[str, Callable[[], ToolSpec]], *, role: str, tool_name: str, managed: bool
 ) -> Callable[[], ToolSpec] | None:
