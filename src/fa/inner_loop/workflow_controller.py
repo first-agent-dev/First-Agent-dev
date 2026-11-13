@@ -78,7 +78,7 @@ from fa.inner_loop.slice_verification import (
     verify_plan,
 )
 from fa.inner_loop.stage_candidate import reset_stage_candidate, stage_candidate_reader
-from fa.inner_loop.tools.workspace_port import WorkspacePort
+from fa.inner_loop.tools.workspace_port import WorkspacePort, WorkspacePortError
 from fa.inner_loop.workflow_artifacts import (
     AdmissionIOError,
     EvalReport,
@@ -2343,8 +2343,78 @@ class AcquisitionSubstrate:
     from somewhere else would let it select a project the view cannot resolve.
     """
 
-    port: ClientWorkspacePort
+    # The protocol, not `ClientWorkspacePort`: the resolver and the planner's tools
+    # need only these five operations, and a narrower type would force every test
+    # double to impersonate a client it never uses.
+    port: WorkspacePort
     project_names: tuple[str, ...]
+
+
+@contextmanager
+def _pinned_acquisition_substrate(ctx: WorkflowContext) -> Iterator[AcquisitionSubstrate | None]:
+    """Pin one READ view of the current revision for the acquisition planner.
+
+    ``plan_ref`` is deliberately ``None``: acquisition runs *before* any plan is
+    admitted, and ``ProtectedPlanContext.recheck`` treats a null ref as the ordinary
+    no-active-plan context rather than formal evidence. Passing a plan here would be
+    a claim about a target nobody has selected yet -- the same reasoning that makes
+    ``PlannerDispatchKind.ACQUISITION`` refuse an ``active_plan``.
+
+    ``None`` means "no substrate available" and the caller refuses the run with a
+    rule, never a host fallback: the host tree is not the revision the authority
+    will later admit a plan from, so choosing against it would admit a coder to a
+    plan the pinned view cannot resolve.
+    """
+    managed = ctx.managed_execution
+    if managed is None:
+        yield None
+        return
+    deadline = ctx.deadline_mono if ctx.deadline_mono is not None else time.monotonic() + 30.0
+    try:
+        grant = managed.client.pin_reader(
+            managed.binding,
+            revision_id=managed.current_revision_id,
+            plan_ref=None,
+            deadline=deadline,
+        )
+    except ExecutionRejectedError as error:
+        logger.warning(
+            "managed acquisition unavailable: the authority refused the read pin [%s] (run=%s)",
+            error.code,
+            ctx.run_id,
+        )
+        yield None
+        return
+    view = grant.view_ref
+    if (
+        grant.operation is not Operation.PIN_READER
+        or view is None
+        or view.access is not Access.READ
+        or view.purpose is not ViewPurpose.PROJECT
+        or view.owner_run_id != managed.binding.namespace.run_id
+    ):
+        # A grant that is not the one asked for is a contract violation, not a
+        # degraded case: continuing would read a view this run does not own.
+        raise ExecutionContractError
+    port = ClientWorkspacePort(
+        managed.client,
+        namespace=managed.binding.namespace,
+        view=view,
+        grant=grant,
+        cache_dir=ctx.workspace / ".fa" / "acquisition-read-cache",
+    )
+    names: tuple[str, ...] = ()
+    try:
+        names = port.list_project_names().projects
+    except WorkspacePortError as error:
+        logger.warning("managed acquisition: project list refused [%s] (run=%s)", error.code, ctx.run_id)
+    try:
+        yield AcquisitionSubstrate(port=port, project_names=names)
+    finally:
+        if not managed.client.stop_view(managed.binding.namespace, view=view, grant=grant, deadline=deadline):
+            logger.error(
+                "acquisition read-only view did not become terminal (run=%s view=%s)", ctx.run_id, view.view_id
+            )
 
 
 def _stage_acquisition_choice(

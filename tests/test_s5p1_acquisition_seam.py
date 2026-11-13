@@ -35,7 +35,7 @@ from fa.inner_loop.workflow_controller import (
     _run_linear as linear,
 )
 
-from .test_s5p1_acquisition_resolution import _port, _rendered_files
+from .test_s5p1_acquisition_resolution import _Port, _port, _rendered_files
 
 SELECTION_JSON = json.dumps({"kind": "SELECT_EXISTING", "project_slug": "demo-project", "increment_id": "I01"})
 CLARIFICATION_JSON = json.dumps({"kind": "NEEDS_CLARIFICATION", "reason": "AMBIGUOUS_PROJECT"})
@@ -45,7 +45,7 @@ def _outcome(text: str) -> SessionOutcome:
     return SessionOutcome(exit_code=0, stop_reason="stopped_by_llm", turns=1, final_text=text)
 
 
-def _substrate(port=None) -> AcquisitionSubstrate:  # type: ignore[no-untyped-def]
+def _substrate(port: _Port | None = None) -> AcquisitionSubstrate:
     return AcquisitionSubstrate(port=port or _port(), project_names=("demo-project",))
 
 
