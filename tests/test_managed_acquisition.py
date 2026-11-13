@@ -41,6 +41,7 @@ from fa.inner_loop.plan_admission import PlanRef
 from fa.inner_loop.tools.workspace_port import (
     PortDirectoryEntry,
     PortProjectArtifactListing,
+    PortProjectNames,
     PortRead,
     WorkspacePortError,
 )
@@ -527,6 +528,12 @@ class _InventoryPort:
         self.files = files
         self.list_calls: list[str] = []
         self.read_calls: list[str] = []
+        self.name_calls: list[bool] = []
+        self.names = PortProjectNames(("demo-project",), ())
+
+    def list_project_names(self) -> PortProjectNames:
+        self.name_calls.append(True)
+        return self.names
 
     def list_project_artifacts(self, project_slug: str) -> PortProjectArtifactListing:
         self.list_calls.append(project_slug)
@@ -590,6 +597,47 @@ def test_inventory_reads_only_canonical_artifacts_then_resolves_the_exact_plan()
     assert isinstance(resolved, ResolvedExistingIncrement)
     assert resolved.snapshot.ref.workspace_relative_path == inventory.increments[0].relative_path
     assert resolved.snapshot.ref.source_kind == "EXISTING_SELECTION"
+
+
+def test_naming_candidates_and_resolving_them_agree_on_the_same_view() -> None:
+    """S5P1 STEP1: the naming seam and the inventory seam must not disagree.
+
+    A model that picks from `list_project_names()` and then resolves that name
+    against `inventory_project_artifacts()` must land on the same project. If the
+    two disagreed, the naming would be advisory decoration over a different
+    answer, and a clarification would fire on a name the port itself offered.
+    """
+    files = _rendered_inventory_files()
+    port = _inventory_port(files)
+
+    names = port.list_project_names()
+    assert names.projects == ("demo-project",)
+    assert names.incomplete == ()
+
+    for offered in names.projects:
+        inventory = inventory_project_artifacts(port, offered)
+        assert inventory is not None, offered
+        resolved = resolve_existing_choice(SelectExistingChoice(offered, "I01"), (inventory,))
+        assert isinstance(resolved, ResolvedExistingIncrement), offered
+
+
+def test_an_unusable_directory_is_never_named_as_a_selectable_project() -> None:
+    """Q145: naming a directory bootstrap would refuse is a trap, not a choice.
+
+    The `incomplete` half is carried for the operator's benefit only; nothing that
+    consults the selectable list can pick it, so the model cannot be led into the
+    `COLLISION` path of `_install_destination`.
+    """
+    port = _inventory_port(_rendered_inventory_files())
+    port.names = PortProjectNames(("demo-project",), ("bare-directory", "linked-project"))
+
+    names = port.list_project_names()
+    assert "bare-directory" not in names.projects
+    assert "linked-project" not in names.projects
+    # And the inventory seam agrees: it cannot resolve a project it was never
+    # given an artifact for, so an incomplete name cannot become a selection.
+    port.listing = PortProjectArtifactListing("missing", "missing", "missing", ())
+    assert inventory_project_artifacts(port, "bare-directory") is None
 
 
 def test_inventory_missing_project_or_roadmap_returns_no_partial_inventory() -> None:
