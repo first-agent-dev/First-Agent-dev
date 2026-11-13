@@ -3321,3 +3321,33 @@ into the writable lookup does. Those two are second-order fences.
   increment.
 - C1 end-to-end on a live supervisor is still impossible in this sandbox
   (`BACKEND_UNAVAILABLE`: no Docker); only the client half is proved here.
+
+## Q147 — how does a validated `PlanSnapshot` reach admission without a host plan path?
+
+**Status: OPEN — operator decision required; raised 2026-11-12. Blocks S5P1 STEP2 (the
+managed acquisition caller). Blocks 1–4 of S5P1 are committed and unaffected.**
+
+**Context.** S5P1 STEP2 says to "supply the validated `PlanSnapshot` internally" to the
+existing admission machine and "do not fabricate a host `Path`". The mechanism is not
+stated, and the re-check half is not addressed: `_check_admission_source`
+(`workflow_controller.py:2578–2584`) re-reads `ctx.workspace` and is what decides
+`source-changed`, so in a managed run it would judge the admission of one tree by reading
+another — the same defect class R24 removed for the verify gate. `run_workflow` accepts
+no plan input other than `plan_path: Path | None`.
+
+**The question.** By which mechanism does the snapshot reach admission, and against what
+does admission re-verify it? A adds a public parameter; B moves the fact onto the context
+the plan appears to exclude; C reintroduces the prohibited host path.
+
+**Options.** A — keyword-only `admission_snapshot: PlanSnapshot | None = None`, with
+`_check_admission_source` preferring the snapshot's own digest/provenance when present
+(recommended: smallest change, one admission machine, legacy unchanged by construction).
+B — carry it on `WorkflowContext`. C — write it to the host and pass a real path
+(rejected: fabricated host path, restores the stale-copy defect). D — stop and re-scope.
+
+**Recommendation: A**, with the preference explicit and fail-closed. Full analysis,
+including the three measured code facts and the impact, is in
+`q147-acquisition-internal-plan-snapshot-2026-11-12.md`.
+
+**Impact if deferred.** S5P1 cannot finish; `list_project_names` has no production
+caller; Q141's gate cannot be revisited.
