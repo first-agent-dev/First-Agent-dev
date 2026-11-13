@@ -12,6 +12,7 @@ The stage dispatcher (``_cmd_run``) is passed as a callable parameter
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import os
@@ -188,6 +189,11 @@ class _WorkflowAdmission:
     baseline: Literal["NOT_CAPTURED", "CAPTURED", "FAILED"] = "NOT_CAPTURED"
     admitted: bool = False
     failure: str | None = None
+    # True when the snapshot arrived as bytes from a pinned view (acquisition), so
+    # there is no host copy to re-read. A positive fact, not "plan_path is None":
+    # the legacy host path is also absent for a planner-only run, which has no
+    # admission at all. Declared last so the three positional fields keep theirs.
+    snapshot_backed: bool = False
 
 
 @dataclass(slots=True)
@@ -2576,9 +2582,26 @@ def _admission_attempt(
 
 
 def _check_admission_source(ctx: WorkflowContext) -> None:
+    """Re-verify the admitted plan against the substrate that actually holds it.
+
+    Two substrates, one rule: the digest recorded at admission must still describe
+    the bytes this run is bound to.
+
+    * host mode -- the plan is a file under the workspace, so re-read it and
+      compare. This is the original behaviour and stays byte-for-byte.
+    * snapshot mode -- the plan arrived as bytes from a pinned view, so there is
+      no host copy and reading one would judge a different tree (the defect R24
+      removed for the verify gate). The bytes are in the admission record's own
+      snapshot, and re-hashing them is the check that they were not replaced
+      after validation.
+    """
     if ctx.admission is None:
         raise RuntimeError("admission authority absent")
     source = ctx.admission.snapshot
+    if ctx.admission.snapshot_backed:
+        if hashlib.sha256(source.utf8_bytes).hexdigest() != source.ref.sha256:
+            raise PlanRefError("source-changed")
+        return
     actual = read_plan_snapshot(ctx.workspace, Path(source.ref.workspace_relative_path))
     if actual.ref.sha256 != source.ref.sha256:
         raise PlanRefError("source-changed")
@@ -2865,6 +2888,43 @@ def _blocked_plan_request(
     return 2, state
 
 
+def _resolve_admitted_plan(
+    *,
+    roles: list[str],
+    workspace: Path,
+    plan_path: Path | None,
+    admission_snapshot: PlanSnapshot | None,
+) -> tuple[PlanSnapshot | None, Path | None]:
+    """Resolve the one plan this run is bound to, from exactly one substrate.
+
+    Two inputs, never both. Acquisition supplies bytes it already read through a
+    pinned view (S5P1 STEP2); the CLI supplies a host path. Accepting both would
+    make this function pick a favourite between two plans at the one place where
+    the choice decides what a coder is bound to.
+
+    Extracted from ``run_workflow`` because that function is already at its
+    complexity ceiling and this is a self-contained closed decision.
+    """
+    if admission_snapshot is not None:
+        if plan_path is not None:
+            raise PlanRefError("conflict")
+        if not isinstance(admission_snapshot, PlanSnapshot):
+            raise PlanRefError("unreadable")
+        if "coder" not in roles:
+            # A snapshot bounds what a coder may write against. With no coder it
+            # constrains nothing, so accepting it would silently discard the
+            # caller's stated authority instead of reporting the mismatch.
+            raise PlanRefError("admission-without-coder")
+        return admission_snapshot, plan_path
+    _require_plan_for_coder(roles, plan_path)
+    if plan_path is None:
+        return None, None
+    if not isinstance(plan_path, Path):
+        raise PlanRefError("unreadable")
+    snapshot = read_plan_snapshot(workspace, plan_path)
+    return snapshot, workspace / snapshot.ref.workspace_relative_path
+
+
 def run_workflow(
     *,
     roles: list[str],
@@ -2889,6 +2949,7 @@ def run_workflow(
     plan_path: Path | None = None,
     plan_publisher: CandidatePlanPublisher | None = None,
     managed_execution: ManagedExecution | None = None,
+    admission_snapshot: PlanSnapshot | None = None,
 ) -> tuple[int, FlowState | None]:
     """Run the workflow pipeline. Callable from CLI and from tools.
 
@@ -2922,14 +2983,13 @@ def run_workflow(
     roles = _ensure_eval_after_coder(list(request.roles))
     max_repairs, max_replans = request.max_repairs, request.max_replans
 
-    snapshot: PlanSnapshot | None = None
     try:
-        _require_plan_for_coder(roles, plan_path)
-        if plan_path is not None:
-            if not isinstance(plan_path, Path):
-                raise PlanRefError("unreadable")
-            snapshot = read_plan_snapshot(workspace, plan_path)
-            plan_path = workspace / snapshot.ref.workspace_relative_path
+        snapshot, plan_path = _resolve_admitted_plan(
+            roles=roles,
+            workspace=workspace,
+            plan_path=plan_path,
+            admission_snapshot=admission_snapshot,
+        )
     except PlanRefError as error:
         return _blocked_plan_request(
             run_id=run_id,
@@ -2988,7 +3048,12 @@ def run_workflow(
         managed_plan_ref=None if snapshot is None else snapshot.ref,
         verify_gate_mode=_gate_mode(),
         admission=(
-            _WorkflowAdmission(snapshot, "planner" in roles, max_replans)
+            _WorkflowAdmission(
+                snapshot,
+                "planner" in roles,
+                max_replans,
+                snapshot_backed=admission_snapshot is not None,
+            )
             if snapshot is not None and "coder" in roles
             else None
         ),
