@@ -162,16 +162,22 @@ def test_a_clarification_stops_the_run_before_the_coder(tmp_path: Path) -> None:
     assert state is not None and "clarification" in state.blocked_reason
 
 
-def test_a_bootstrap_request_stops_the_run_before_the_coder(tmp_path: Path) -> None:
+def test_a_bootstrap_request_without_a_managed_authority_stops_before_the_coder(tmp_path: Path) -> None:
+    """Bootstrap needs the authority: rendering and installing are its operations.
+
+    `_substrate()` is a port only, so this run has no `managed_execution` and there is
+    nothing that could install a project. The refusal must name that, and must happen
+    before the coder — a coder admitted here would be coding against prose the
+    workspace never received.
+    """
     stage = _PlannerThen(BOOTSTRAP, forbid_after_planner=True)
-    code, _state = _run(
+    code, state = _run(
         tmp_path, run_id="acq-bootstrap", stage=stage, roles=["planner", "coder"], acquisition=_substrate()
     )
 
-    assert code != 0
+    assert code == 2
     assert "coder" not in stage.roles
-    record = _record("acq-bootstrap")
-    assert record["status"] == "BLOCKED"
+    assert state is not None and state.blocked_reason == "plan-ref/bootstrap-unavailable"
 
 
 def test_an_unparseable_choice_stops_the_run_before_the_coder(tmp_path: Path) -> None:

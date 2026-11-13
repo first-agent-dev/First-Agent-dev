@@ -163,6 +163,28 @@ class CandidateRead:
 
 
 @dataclass(frozen=True)
+class BundlePreparation:
+    """A rendered bundle stored by the authority, before anything is installed.
+
+    The bundle is a *pre-install* object bound to the generation and base it was
+    prepared against, so it cannot be reused against a different revision.
+    """
+
+    validated_bundle_id: str
+    bundle_sha256: str
+
+
+@dataclass(frozen=True)
+class InstallReceipt:
+    """The committed result of installing a bundle into the canonical tree."""
+
+    workspace_id: str
+    revision_id: str
+    tree_sha256: str
+    operation_id: str
+
+
+@dataclass(frozen=True)
 class StagePublication:
     """One execution view committed to the canonical tree.
 
@@ -885,6 +907,90 @@ class ExecutionClient:
             str(published["revision_id"]),
             str(published["tree_sha256"]),
             str(published["operation_id"]),
+        )
+
+    def prepare_bundle(
+        self,
+        binding: object,
+        *,
+        grant: GrantReply,
+        project_slug: str,
+        increment_slug: str,
+        roadmap_text: str,
+        increment_text: str,
+        expected_base_revision: str,
+        deadline: float | None = None,
+    ) -> BundlePreparation:
+        """Render and store one bundle under this run's OWNER grant.
+
+        The prose is the caller's; every piece of metadata is the authority's
+        (`publication.render_bundle`). `expected_base_revision` binds the bundle to
+        the generation it was prepared against so it cannot be installed later, on
+        top of a tree it never saw.
+        """
+        namespace, _workspace_id = _binding_identity(binding)
+        if not isinstance(grant, GrantReply) or grant.operation not in {
+            Operation.ACQUIRE_WRITER,
+            Operation.HANDOFF,
+        }:
+            raise ExecutionContractError  # Only an OWNER grant may render a project.
+        _hex_id(expected_base_revision, "rev-")
+        result = self.request(
+            Operation.PREPARE_BUNDLE,
+            request_id=uuid4().hex,
+            namespace=namespace,
+            view=None,
+            grant=grant,
+            payload={
+                "project_slug": project_slug,
+                "increment_slug": increment_slug,
+                "roadmap_text": roadmap_text,
+                "increment_text": increment_text,
+                "expected_base_revision": expected_base_revision,
+            },
+            deadline=deadline,
+        )
+        return BundlePreparation(str(result["validated_bundle_id"]), str(result["bundle_sha256"]))
+
+    def install_project(
+        self,
+        binding: object,
+        *,
+        grant: GrantReply,
+        validated_bundle_id: str,
+        project_slug: str,
+        deadline: float | None = None,
+    ) -> InstallReceipt:
+        """Install one prepared bundle; the authority owns the whole irreversible step.
+
+        One call, one commit: the caller cannot install half a project or leave a
+        bundle consumed, and the receipt exists only after the canonical tree is
+        proved.
+        """
+        namespace, _workspace_id = _binding_identity(binding)
+        if not isinstance(grant, GrantReply) or grant.operation not in {
+            Operation.ACQUIRE_WRITER,
+            Operation.HANDOFF,
+        }:
+            raise ExecutionContractError  # An install is an OWNER write, never a view write.
+        _hex_id(validated_bundle_id, "bundle-")
+        result = self.request(
+            Operation.INSTALL_PROJECT,
+            request_id=uuid4().hex,
+            namespace=namespace,
+            view=None,
+            grant=grant,
+            payload={
+                "validated_bundle_id": validated_bundle_id,
+                "project_slug": project_slug,
+            },
+            deadline=deadline,
+        )
+        return InstallReceipt(
+            str(result["workspace_id"]),
+            str(result["revision_id"]),
+            str(result["tree_sha256"]),
+            str(result["operation_id"]),
         )
 
     def open_view(

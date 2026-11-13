@@ -35,6 +35,7 @@ from fa.inner_loop.injections import INJECTION_MODES, INJECTION_SPECS, resolve_i
 from fa.inner_loop.managed_acquisition import (
     AcquisitionChoiceError,
     AcquisitionOutcome,
+    BootstrapNewProjectChoice,
     parse_acquisition_choice,
     resolve_acquisition_choice,
 )
@@ -2467,6 +2468,105 @@ def _read_acquisition_choice(sink: list[SessionOutcome], substrate: AcquisitionS
     )
 
 
+def _refusal_exit_code(ctx: WorkflowContext, refusal: PlanRefError) -> int:
+    """Record a bootstrap refusal the same way every other closed refusal is."""
+    return _blocked_plan_request(
+        run_id=ctx.run_id,
+        task=ctx.base_task,
+        rule=refusal.rule,
+        base_dir=ctx.artifact_paths.base_dir,
+        deadline=ctx.deadline_mono,
+    )[0]
+
+
+def _install_bootstrap_project(
+    ctx: WorkflowContext, choice: BootstrapNewProjectChoice
+) -> tuple[WorkflowContext, PlanRefError | None]:
+    """Render, install and read back a new project; return the context and a refusal.
+
+    The order is the authority's, not a preference (§7.1): render into a bundle,
+    install the bundle as one irreversible commit, and only then read the installed
+    increment back through a **fresh pin of the new revision**. Admitting the prose
+    the model sent would admit a coder against text that is not in the workspace,
+    which is why `resolve_acquisition_choice` refuses to fabricate a snapshot for a
+    bootstrap choice in the first place.
+
+    Nothing here is a second writer: `prepare_bundle` and `install_project` are
+    OWNER-gated authority operations, and the plan is admitted from bytes the
+    pinned view returns afterwards.
+    """
+    managed = ctx.managed_execution
+    if managed is None:
+        return ctx, PlanRefError("bootstrap-unavailable")
+    deadline = ctx.deadline_mono if ctx.deadline_mono is not None else time.monotonic() + 30.0
+    try:
+        prepared = managed.client.prepare_bundle(
+            managed.binding,
+            grant=managed.grant,
+            project_slug=choice.project_slug,
+            increment_slug=choice.increment_slug,
+            roadmap_text=choice.roadmap_body,
+            increment_text=choice.increment_body,
+            expected_base_revision=managed.current_revision_id,
+            deadline=deadline,
+        )
+        receipt = managed.client.install_project(
+            managed.binding,
+            grant=managed.grant,
+            validated_bundle_id=prepared.validated_bundle_id,
+            project_slug=choice.project_slug,
+            deadline=deadline,
+        )
+    except ExecutionRejectedError as error:
+        # Determinate refusals: COLLISION means the project already exists, and
+        # INPUT_POLICY means the prose failed the authority's own validation.
+        logger.warning("bootstrap refused by the authority [%s] (run=%s)", error.code, ctx.run_id)
+        return ctx, PlanRefError("bootstrap-refused")
+    # The install committed a NEW revision; the plan lives in that one, not in the
+    # revision the acquisition view was pinned to.
+    managed.current_revision_id = receipt.revision_id
+    return _admit_installed_plan(ctx, choice)
+
+
+def _admit_installed_plan(
+    ctx: WorkflowContext, choice: BootstrapNewProjectChoice
+) -> tuple[WorkflowContext, PlanRefError | None]:
+    """Read the installed increment through a fresh pin and bind it as the plan."""
+    managed = ctx.managed_execution
+    if managed is None:  # pragma: no cover - the caller proved this already
+        return ctx, PlanRefError("bootstrap-unavailable")
+    with _pinned_acquisition_substrate(ctx) as substrate:
+        if substrate is None:
+            return ctx, PlanRefError("bootstrap-unreadable")
+        path = f"worklogs/{choice.project_slug}/increments/increment-01-{choice.increment_slug}.md"
+        try:
+            read = substrate.port.read_file(path)
+        except WorkspacePortError:
+            # The tree the authority proved does not contain the file this
+            # controller asked for: a mismatch to report, never a host fallback.
+            return ctx, PlanRefError("bootstrap-unreadable")
+        snapshot = snapshot_from_bytes(path, read.content.encode("utf-8"), source_kind="BOOTSTRAP")
+    bound = replace(
+        ctx,
+        admission=_WorkflowAdmission(snapshot, True, ctx.replans_allowed, snapshot_backed=True),
+        managed_plan_ref=snapshot.ref,
+        plan_path=ctx.plan_path or ctx.workspace / snapshot.ref.workspace_relative_path,
+    )
+    try:
+        _record_admission_attempt(
+            ctx.artifact_paths,
+            run_id=ctx.run_id,
+            plan_ref=snapshot.ref,
+            attempt=None,
+            status="ACQUIRING",
+            deadline=ctx.deadline_mono,
+        )
+    except (OSError, ValueError) as error:
+        _admission_storage_failure(bound, error)
+        return bound, None
+    return bound, None
+
+
 def _bind_acquisition_admission(
     ctx: WorkflowContext, outcome: AcquisitionOutcome
 ) -> tuple[WorkflowContext, int | None]:
@@ -2484,8 +2584,11 @@ def _bind_acquisition_admission(
     """
     if outcome.snapshot is None:
         if outcome.bootstrap is not None:
-            rule = "bootstrap-not-installed"
-        elif outcome.clarification is not None:
+            # §7.1 bootstrap: render → install → fresh pin → read back → admit. The
+            # snapshot is the INSTALLED plan, never the prose that requested it.
+            installed, refusal = _install_bootstrap_project(ctx, outcome.bootstrap)
+            return installed, None if refusal is None else _refusal_exit_code(installed, refusal)
+        if outcome.clarification is not None:
             rule = f"clarification/{outcome.clarification.reason.lower().replace('_', '-')}"
         else:  # pragma: no cover - AcquisitionOutcome forbids the shape
             rule = "acquisition-unresolved"
