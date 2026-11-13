@@ -3347,3 +3347,75 @@ was a different surface I had already seen and read past.
 **Consequence:** no public signature change, no new parameter. S5P1 STEP2 is implementable on
 existing seams. Full retraction, with the five source facts, is in
 `q147-acquisition-internal-plan-snapshot-2026-11-12.md`.
+
+## Q148 — how does a chat-only `invoke_workflow` reach the acquisition path that exists in the controller?
+
+**Status: OPEN — needs a product/composition decision. Blocking the only part of S5P1
+STEP2 that remains.**
+
+### What is already true (measured, not inferred)
+
+The controller path is complete and proven at the composition boundary (`e4e9561`,
+E517): `run_workflow(acquisition=AcquisitionSubstrate(...))` admits a plan selected by an
+in-run `PlannerDispatchKind.ACQUISITION` planner, with `admission-without-planner`,
+clarification, bootstrap and unparseable-choice all refused before the coder runs;
+`_pinned_acquisition_substrate` builds that substrate from a real `pin_reader(plan_ref=None)`
+view and stops it in `finally`. 55 tests, mutation 4/4 + 6/6 + 5/5 + 4/4 + 5/5 + 8/8.
+
+What does not exist: a caller. `workflow_tool.acquisition_refusal` still returns
+`acquisition_unavailable` for a planner-first managed request, and `invoke_workflow` never
+builds a substrate, because it has no access to one.
+
+### The blocker, stated exactly
+
+`_pinned_acquisition_substrate` needs `ctx.managed_execution` — the run's `ExecutionClient`
+plus its `ExecutionBinding`. In `workflow_tool`, `WorkflowInvocationContext.managed_execution`
+is populated from `parent_stage_lease.managed` (`cli.py:2491`), i.e. **the parent chat
+stage's own writer grant**, deliberately, because `workspace.py` makes a second acquisition
+of the same workspace `WORKSPACE_BUSY` by construction.
+
+So the question is not "can we pass it" but which of two very different things the child
+acquisition view is allowed to be:
+
+**A — the child pins a READ view through the parent's client binding.** `pin_reader` takes
+`peer`/`namespace` and mints a new `ViewRef` owned by `namespace.run_id`; it does not
+acquire a writer. `_pinned_acquisition_substrate` already validates
+`view.owner_run_id == managed.binding.namespace.run_id`, so it would accept a view owned by
+the *parent* run and then read it on behalf of a *child* run — the same run identity used
+for the child's admission record. That is either exactly right (§7's "parent remains the
+trusted controller") or a real ownership leak across the child boundary. R26 exists
+precisely to police child authority, so a reviewer cannot accept this by inspection.
+
+**B — the child gets its own READ binding for acquisition**, and the parent's writer is not
+shared across the suspension. This matches R26's "child PlanRef/acquisition ... without
+child-authority leakage", but needs a composition change in the HANDOFF lifecycle
+(`_begin_managed_child` / `_return_managed_child_to_parent`) and a decision about whether a
+READ-only acquisition binding may coexist with the parent's suspended writer grant —
+`WORKSPACE_BUSY` currently says no second *acquisition*, and whether a pure READ pin counts
+is a supervisor policy question, not a controller one.
+
+### Why this is escalated rather than chosen
+
+Both options are defensible, they differ in what R26 must then prove, and the difference is
+visible only on a live supervisor (`BACKEND_UNAVAILABLE` in this sandbox: no Docker). Picking
+one now would also fix the shape of `acquisition_refusal`'s removal and of the Q146 view
+lifecycle across a HANDOFF — three contracts decided by one convenience edit.
+
+### Senior recommendation: **A**, scoped narrowly
+
+Reasoning: §7 and Q61 keep the trusted parent as the controller, and the acquisition view is
+read-only observation, which is the one capability that does not need to be duplicated to be
+safe. Concretely: the child's acquisition stage would pin READ through the parent binding,
+the resulting view stays owned by the **child run id** (so `_pinned_acquisition_substrate`'s
+owner check keeps its meaning and R26's "no child-authority leakage" is about writes, which
+stay parent-bound and suspended), and `acquisition_refusal` drops the managed branch while the
+legacy branch keeps `acquisition_unavailable`.
+
+If the operator prefers B, the HANDOFF lifecycle becomes this step's next task and the
+controller code above is unchanged — which is the useful property of having built it as a
+substrate rather than a thread through `invoke_workflow`.
+
+Whichever is chosen, the following is **not** solved by either option and stays open:
+bootstrap (`prepare_bundle` → `install_project` is authority-gated and served, but no
+inner-loop path renders and installs a new project; there is no install caller and no
+read-back-and-admit sequence).
