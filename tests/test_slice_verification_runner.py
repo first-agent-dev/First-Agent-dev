@@ -19,7 +19,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, override
 
 import pytest
 
@@ -43,7 +43,7 @@ from fa.inner_loop.slice_verification import (
     capture_test_nodeids,
     run_commands,
 )
-from fa.inner_loop.tools.workspace_port import WorkspacePortError
+from fa.inner_loop.tools.workspace_port import WorkspacePort, WorkspacePortError
 from fa.runtime.pty_pool import PtyResult
 
 
@@ -441,6 +441,8 @@ def test_results_are_immutable(workspace: Path) -> None:
 class _RecordingExecutor:
     """A substrate that records what it was asked to run and answers in the gate's vocabulary."""
 
+    writes_are_visible = True
+
     def __init__(self, outcome: CommandOutcome = CommandOutcome.PASS, exit_code: int = 0) -> None:
         self.calls: list[tuple[str, Path, float, dict[str, str]]] = []
         self._outcome = outcome
@@ -563,10 +565,19 @@ class _FakeManagedExecutor:
         )
 
     def run(
-        self, command: str, timeout: int = 30, workdir: Path | None = None, session_id: str | None = None
+        self, command: str, timeout: int = 30, workdir: Path | None = None, session_id: str | None = "main"
     ) -> PtyResult:
         self.calls.append({"command": command, "timeout": timeout, "workdir": workdir, "session_id": session_id})
         return self._result
+
+    def send_ctrl_c(self, session_id: str) -> str:
+        raise AssertionError(f"unexpected Ctrl-C for {session_id!r}")
+
+    def close(self, session_id: str) -> None:
+        raise AssertionError(f"unexpected close for {session_id!r}")
+
+    def list_sessions(self) -> list[str]:
+        return []
 
 
 def test_managed_verify_never_opens_a_session(tmp_path: Path) -> None:
@@ -644,10 +655,12 @@ def test_truncated_managed_output_cannot_prove_a_pass(tmp_path: Path) -> None:
 def test_every_execution_error_becomes_error_never_pass(tmp_path: Path, error: Exception) -> None:
     """EDGE — an exception is not a verdict: ``ERROR``, and the reason is readable."""
 
-    class _Raising:
-        interactive = False
-
-        def run(self, *_args: object, **_kwargs: object) -> PtyResult:
+    class _Raising(_FakeManagedExecutor):
+        @override
+        def run(
+            self, command: str, timeout: int = 30, workdir: Path | None = None, session_id: str | None = "main"
+        ) -> PtyResult:
+            del command, timeout, workdir, session_id
             raise error
 
     managed = ManagedVerifyCommandExecutor(_Raising(), root=tmp_path)
@@ -799,14 +812,10 @@ def test_a_path_the_snapshot_cannot_read_is_absent_and_not_an_error(tmp_path: Pa
     block the run, which is how this was found (a real workflow oracle went red).
     """
 
-    class _EmptySnapshot:
-        def read_file(self, *_args: object, **_kwargs: object) -> object:
-            raise WorkspacePortError("denied")
-
     (tmp_path / "test_sample.py").write_text("def test_ok():\n    assert True\n", encoding="utf-8")
 
     capture = capture_test_nodeids(
-        ("test_missing.py",), root=tmp_path, executor=_inband_executor(writes_visible=False), port=_EmptySnapshot()
+        ("test_missing.py",), root=tmp_path, executor=_inband_executor(writes_visible=False), port=_make_typed_port({})
     )
 
     assert capture.nodeids == {}
@@ -815,16 +824,14 @@ def test_a_path_the_snapshot_cannot_read_is_absent_and_not_an_error(tmp_path: Pa
 
 def test_a_confirmed_snapshot_path_runs_and_reports(tmp_path: Path) -> None:
     """C1 — the positive half: a path the snapshot can read is a path that gets run."""
-    (tmp_path / "test_sample.py").write_text("def test_ok():\n    assert True\n", encoding="utf-8")
-
-    class _Snapshot:
-        def read_file(self, path: str, **_kwargs: object) -> object:
-            if (tmp_path / path).is_file():
-                return object()
-            raise WorkspacePortError("refused")
+    source = "def test_ok():\n    assert True\n"
+    (tmp_path / "test_sample.py").write_text(source, encoding="utf-8")
 
     capture = capture_test_nodeids(
-        ("test_sample.py",), root=tmp_path, executor=_inband_executor(writes_visible=False), port=_Snapshot()
+        ("test_sample.py",),
+        root=tmp_path,
+        executor=_inband_executor(writes_visible=False),
+        port=_make_typed_port({"test_sample.py": source}),
     )
 
     assert capture.nodeids == {"test_sample.py::test_ok": True}
@@ -870,12 +877,8 @@ def test_a_host_present_path_absent_from_the_snapshot_is_not_run(tmp_path: Path)
     """
     (tmp_path / "test_sample.py").write_text("def test_ok():\n    assert True\n", encoding="utf-8")
 
-    class _SnapshotWithoutIt:
-        def read_file(self, *_args: object, **_kwargs: object) -> object:
-            raise WorkspacePortError("denied")
-
     capture = capture_test_nodeids(
-        ("test_sample.py",), root=tmp_path, executor=_inband_executor(writes_visible=False), port=_SnapshotWithoutIt()
+        ("test_sample.py",), root=tmp_path, executor=_inband_executor(writes_visible=False), port=_make_typed_port({})
     )
 
     assert capture.nodeids == {}
@@ -912,9 +915,9 @@ def test_inband_command_preserves_full_non_truncated_evidence_above_tail_limit(t
         interactive = False
 
         def run(
-            self, _command: str, timeout: int = 30, workdir: Path | None = None, session_id: str | None = None
+            self, command: str, timeout: int = 30, workdir: Path | None = None, session_id: str | None = "main"
         ) -> PtyResult:
-            del timeout, workdir, session_id
+            del command, timeout, workdir, session_id
             return PtyResult(stdout=padded, exit_code=0, truncated=False, session_id="")
 
         def send_ctrl_c(self, session_id: str) -> str:
@@ -923,6 +926,9 @@ def test_inband_command_preserves_full_non_truncated_evidence_above_tail_limit(t
 
         def close(self, session_id: str) -> None:
             del session_id
+
+        def list_sessions(self) -> list[str]:
+            return []
 
     managed = ManagedVerifyCommandExecutor(_LargeCleanExecutor(), root=tmp_path)
     result = managed.run_verify_command("echo ok", cwd=tmp_path, timeout_s=5.0, env={})
@@ -935,7 +941,7 @@ def test_inband_command_preserves_full_non_truncated_evidence_above_tail_limit(t
     assert carried is not None and b"test_big.py::test_case" in carried
 
 
-def _make_typed_port(files: dict[str, str], *, chunk_bytes: int = 1024 * 1024) -> Any:
+def _make_typed_port(files: dict[str, str], *, chunk_bytes: int = 1024 * 1024) -> WorkspacePort:
     import hashlib
 
     from fa.inner_loop.tools.workspace_port import (

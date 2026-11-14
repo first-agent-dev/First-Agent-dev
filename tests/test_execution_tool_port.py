@@ -277,6 +277,9 @@ class RacingPort:
     def write_file(self, path: str, content: str, *, expected_sha256: str | None = None) -> PortWrite:
         return self.inner.write_file(path, content, expected_sha256=expected_sha256)
 
+    def list_project_names(self) -> PortProjectNames:
+        return self.inner.list_project_names()
+
     def list_project_artifacts(self, project_slug: str) -> PortProjectArtifactListing:
         raise AssertionError(f"edit_file must not list project artifacts: {project_slug}")
 

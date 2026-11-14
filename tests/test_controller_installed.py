@@ -378,13 +378,13 @@ def test_q119_wrapper_workspace_matrix_through_current_cli(tmp_path: Path) -> No
 
     from fa import cli
     from fa.session.manager import SessionManager, SessionManagerError
-    from fa.session.provisioning import ProvisionedWorkspace, ProvisionMode
+    from fa.session.provisioning import ProvisionedWorkspace, ProvisionMode, ProvisionRequest
     from fa.workspace_bootstrap import ReadyState, ReadyStatus
 
     def ready(path: Path, _run_context: object) -> ReadyState:
         return ReadyState(ReadyStatus.READY, None, "ready_fast_path", path / ".fa" / "ready.log", False, 0)
 
-    def provision(request: object) -> ProvisionedWorkspace:
+    def provision(request: ProvisionRequest) -> ProvisionedWorkspace:
         if request.mode is ProvisionMode.PROVISION:
             request.workspace_path.mkdir(parents=True, exist_ok=True)
         return ProvisionedWorkspace(True, "ws-" + "0" * 32, "rev-" + "0" * 32, None)

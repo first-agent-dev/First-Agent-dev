@@ -17,6 +17,7 @@ from fa.inner_loop.tools.mutation_guard import (
 from fa.inner_loop.tools.workspace_port import (
     PORT_READ_MAX_BYTES,
     PortProjectArtifactListing,
+    PortProjectNames,
     PortRead,
     PortWrite,
     WorkspacePortError,
@@ -42,6 +43,9 @@ class _Port:
         if isinstance(self.result, Exception):
             raise self.result
         return self.result  # Intentionally includes malformed remote responses.
+
+    def list_project_names(self) -> PortProjectNames:
+        raise AssertionError("metadata lookup must not list project names")
 
     def list_project_artifacts(self, project_slug: str) -> PortProjectArtifactListing:
         raise AssertionError("metadata lookup must not list artifacts")

@@ -371,7 +371,9 @@ def test_v2_project_names_come_back_through_the_real_wire(site: Site, tmp_path: 
 
         # And the raw client surface agrees, so a later caller is not forced
         # through the port to get the same answer.
-        reply = managed.client.list_projects(managed.binding.namespace, view=read_grant.view_ref, grant=read_grant)
+        view_ref = read_grant.view_ref
+        assert view_ref is not None
+        reply = managed.client.list_projects(managed.binding.namespace, view=view_ref, grant=read_grant)
         assert reply == {"projects": ["demo-project"], "incomplete": []}
 
 

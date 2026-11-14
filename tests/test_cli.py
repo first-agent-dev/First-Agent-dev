@@ -108,6 +108,23 @@ class _TestCliManagedClient(ExecutionClient):
         return True
 
     @override
+    def handoff(
+        self,
+        binding: object,
+        target: NamespaceRef,
+        *,
+        grant: GrantReply,
+        expected_revision_id: str,
+        request_id: str,
+        deadline: float | None = None,
+    ) -> GrantReply:
+        del binding, target, request_id, deadline
+        self.operations.append(Operation.HANDOFF)
+        if grant.generation is None:
+            raise AssertionError("managed handoff requires a generated owner grant")
+        return GrantReply(Operation.HANDOFF, "5" * 64, None, grant.generation, expected_revision_id)
+
+    @override
     def request(self, operation: Operation, **kwargs: Any) -> dict[str, Any]:
         self.operations.append(operation)
         if operation is Operation.RELEASE:

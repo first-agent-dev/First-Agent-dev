@@ -25,6 +25,7 @@ from fa.inner_loop.tools.read_file import build_read_file_tool
 from fa.inner_loop.tools.workspace_port import (
     PORT_READ_MAX_BYTES,
     PortProjectArtifactListing,
+    PortProjectNames,
     PortRead,
     PortWrite,
     WorkspacePortError,
@@ -47,6 +48,9 @@ class _CachePort:
 
     def write_file(self, path: str, content: str, *, expected_sha256: str | None = None) -> PortWrite:
         raise AssertionError("unexpected write")
+
+    def list_project_names(self) -> PortProjectNames:
+        raise AssertionError("unexpected project-name listing")
 
     def list_project_artifacts(self, project_slug: str) -> PortProjectArtifactListing:
         raise AssertionError(f"unexpected project listing for {project_slug!r}")

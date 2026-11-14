@@ -101,8 +101,9 @@ UNPARSED_KINDS: frozenset[LogKind] = frozenset(
 )
 
 # ── Parsed kinds ────────────────────────────────────────────────────────────
-# The LogKinds ``_parse_events`` dispatches on, DERIVED as the complement of
-# ``UNPARSED_KINDS`` over ``LogKind`` rather than restated as a literal.
+# The LogKinds handled by ``_parse_events`` through its event dispatch helpers,
+# DERIVED as the complement of ``UNPARSED_KINDS`` over ``LogKind`` rather than
+# restated as a literal.
 #
 # Why derived (F3, 2026-08-01). S9.4's commit is titled "derived kind
 # contract", and it did derive the *test* from the module — but it left the
@@ -131,10 +132,11 @@ UNPARSED_KINDS: frozenset[LogKind] = frozenset(
 # duplication had already caused a real defect — a CI gate that had been red
 # and unread for several slices.
 #
-# What holds the line instead of the literal: ``_parse_events`` is AST-walked
-# and asserted equal to this set (``test_s9_parsed_kinds_matches_dispatch``),
-# so deleting an ``elif`` branch still fails. That test — not the literal —
-# was always the real guard.
+# What holds the line instead of the literal: the ``_dispatch_stats_*``
+# handlers called by ``_parse_events`` are AST-walked and asserted equal to this
+# set (``test_s9_parsed_kinds_matches_dispatch``), so deleting a kind branch
+# from an extracted helper still fails. That test — not the literal — was
+# always the real guard.
 PARSED_KINDS: frozenset[LogKind] = frozenset(get_args(LogKind)) - UNPARSED_KINDS
 
 # ── Data model ─────────────────────────────────────────────────────────────
@@ -372,304 +374,348 @@ def parse_session_db(
     return _parse_events(events, run_id)
 
 
-def _parse_events(events: tuple[TraceEvent, ...], fallback_run_id: str) -> SessionAnalytics | None:  # noqa: C901 — event dispatch
+@dataclass
+class _StatsAccumulator:
+    """Per-parse mutable state shared by the event-specific handlers."""
+
+    run_id: str
+    start_ts: str
+    role: str = ""
+    stop_reason: str = "unknown"
+    ok: bool = True
+    has_session_summary: bool = False
+    has_recorded_verdict: bool = False
+
+    tool_counter: Counter[str] = field(default_factory=Counter)
+    reads: Counter[str] = field(default_factory=Counter)
+    writes: Counter[str] = field(default_factory=Counter)
+    bash_counter: Counter[str] = field(default_factory=Counter)
+    turn_tokens: list[TurnTokens] = field(default_factory=list)
+    current_turn: int = 0
+    provider_data: defaultdict[tuple[str, str], list[dict[str, Any]]] = field(
+        default_factory=lambda: defaultdict(list)
+    )
+    guard_data: defaultdict[str, dict[str, int]] = field(
+        default_factory=lambda: defaultdict(lambda: {"allow": 0, "deny": 0, "warn": 0})
+    )
+    total_in: int = 0
+    total_out: int = 0
+    cache_hit_ratio: float = 0.0
+    n_turns: int = 0
+    tool_errors: list[ToolError] = field(default_factory=list)
+    compaction_records: list[CompactionRecord] = field(default_factory=list)
+    subagent_records: list[SubagentRecord] = field(default_factory=list)
+    context_budget_events: list[ContextBudgetEvent] = field(default_factory=list)
+    compaction_warnings: list[CompactionWarningRecord] = field(default_factory=list)
+    circuit_breaker_events: list[CircuitBreakerRecord] = field(default_factory=list)
+    compaction_starts: list[CompactionStartRecord] = field(default_factory=list)
+    model_msg_count: int = 0
+    user_msg_count: int = 0
+    scope_estimates: list[ScopeEstimateRecord] = field(default_factory=list)
+
+
+def _dispatch_stats_activity(
+    state: _StatsAccumulator,
+    event: TraceEvent,
+    content: dict[str, Any],
+) -> bool:
+    """Accumulate run, tool, token, provider and guard activity."""
+    kind = event.kind
+    if kind == "run_started":
+        state.role = str(content.get("role", ""))
+    elif kind == "tool_call":
+        tool_name = event.tool_name
+        state.tool_counter[tool_name] += 1
+        params = content.get("params", {})
+        if isinstance(params, dict):
+            if tool_name == "fs_read_file" and "path" in params:
+                state.reads[str(params["path"])] += 1
+            elif tool_name == "fs_write_file" and "path" in params:
+                state.writes[str(params["path"])] += 1
+            elif tool_name == "fs_run_bash" and "command" in params:
+                state.bash_counter[str(params["command"])] += 1
+    elif kind == "usage":
+        state.current_turn += 1
+        state.turn_tokens.append(
+            TurnTokens(
+                turn=state.current_turn,
+                in_tokens=int(content.get("input_tokens", 0)),
+                out_tokens=int(content.get("output_tokens", 0)),
+                cache_read=int(content.get("cache_read_input_tokens", 0)),
+                cache_creation=int(content.get("cache_creation_input_tokens", 0)),
+            )
+        )
+    elif kind == "provider_attempt":
+        key = (str(content.get("provider", "")), str(content.get("slug", "")))
+        state.provider_data[key].append(
+            {
+                "status": int(content.get("status", 0)),
+                "ms": int(content.get("ms", 0)),
+                "error": content.get("error"),
+            }
+        )
+    elif kind == "hook_decision":
+        hook_name = str(content.get("middleware", "unknown"))
+        decision = str(content.get("decision", ""))
+        if "allow" in decision.lower():
+            state.guard_data[hook_name]["allow"] += 1
+        elif "deny" in decision.lower():
+            state.guard_data[hook_name]["deny"] += 1
+    elif kind == "loop_guard_warn":
+        state.guard_data["LoopGuard"]["warn"] += 1
+    else:
+        return False
+    return True
+
+
+def _dispatch_stats_results_and_compaction(
+    state: _StatsAccumulator,
+    event: TraceEvent,
+    content: dict[str, Any],
+) -> bool:
+    """Accumulate tool outcomes and stage-two/three compaction results."""
+    kind = event.kind
+    if kind == "tool_result":
+        tool_name = event.tool_name
+        state.ok = bool(content.get("ok", True))
+        if not state.ok:
+            error = content.get("error")
+            if isinstance(error, dict):
+                state.tool_errors.append(
+                    ToolError(
+                        tool=tool_name,
+                        code=str(error.get("code", "")),
+                        message=str(error.get("message", "")),
+                    )
+                )
+    elif kind == "compaction_stage2_done":
+        state.compaction_records.append(
+            CompactionRecord(
+                stage=2,
+                ok=True,
+                tokens_before=int(content.get("tokens_before", 0)),
+                tokens_after=int(content.get("tokens_after", 0)),
+            )
+        )
+    elif kind == "compaction_stage2_error":
+        state.compaction_records.append(
+            CompactionRecord(stage=2, ok=False, error=str(content.get("error", "")))
+        )
+    elif kind == "compaction_stage3_done":
+        state.compaction_records.append(
+            CompactionRecord(
+                stage=3,
+                ok=True,
+                tokens_before=int(content.get("tokens_before", 0)),
+                tokens_after=int(content.get("tokens_after", 0)),
+            )
+        )
+    elif kind == "compaction_stage3_error":
+        state.compaction_records.append(
+            CompactionRecord(stage=3, ok=False, error=str(content.get("error", "")))
+        )
+    else:
+        return False
+    return True
+
+
+def _dispatch_stats_subagents_and_budget(
+    state: _StatsAccumulator,
+    event: TraceEvent,
+    content: dict[str, Any],
+) -> bool:
+    """Accumulate subagent outcomes and context-budget events."""
+    kind = event.kind
+    if kind == "subagent_spawn_done":
+        state.subagent_records.append(SubagentRecord(ok=True))
+    elif kind == "subagent_spawn_fail":
+        state.subagent_records.append(SubagentRecord(ok=False, error=str(content.get("error", ""))))
+    elif kind == "context_budget_warn":
+        state.context_budget_events.append(
+            ContextBudgetEvent(
+                action=str(content.get("action", "warn")),
+                pct=float(content.get("ratio", 0.0)) * 100,
+                message=str(content.get("message", "")),
+            )
+        )
+    elif kind == "context_budget_hard_stop":
+        state.context_budget_events.append(
+            ContextBudgetEvent(
+                action="hard_stop",
+                pct=float(content.get("ratio", 0.0)) * 100,
+                message=str(content.get("message", "")),
+            )
+        )
+    else:
+        return False
+    return True
+
+
+def _dispatch_stats_extended_observability(
+    state: _StatsAccumulator,
+    event: TraceEvent,
+    content: dict[str, Any],
+) -> bool:
+    """Accumulate compaction-pressure, circuit-breaker and message events."""
+    kind = event.kind
+    if kind == "compaction_warning":
+        state.compaction_warnings.append(
+            CompactionWarningRecord(
+                action=str(content.get("action", "")),
+                compaction_enabled=bool(content.get("compaction_enabled", False)),
+                ratio=float(content.get("ratio", 0.0)),
+                threshold=float(content.get("threshold", 0.0)),
+            )
+        )
+    elif kind == "compaction_circuit_breaker":
+        state.circuit_breaker_events.append(
+            CircuitBreakerRecord(message=str(content.get("message", "")))
+        )
+    elif kind == "compaction_stage2_start":
+        state.compaction_starts.append(
+            CompactionStartRecord(
+                stage=2,
+                tokens_before=int(content.get("tokens_before", 0)),
+                threshold=float(content.get("threshold", 0.0)),
+            )
+        )
+    elif kind == "compaction_stage3_start":
+        state.compaction_starts.append(
+            CompactionStartRecord(
+                stage=3,
+                tokens_before=int(content.get("tokens_before", 0)),
+                threshold=float(content.get("threshold", 0.0)),
+            )
+        )
+    elif kind == "model_msg":
+        state.model_msg_count += 1
+    elif kind == "user_msg":
+        state.user_msg_count += 1
+    else:
+        return False
+    return True
+
+
+def _dispatch_stats_summary_and_stop(
+    state: _StatsAccumulator,
+    event: TraceEvent,
+    content: dict[str, Any],
+) -> bool:
+    """Accumulate summary, scope and stop events in input order."""
+    kind = event.kind
+    if kind == "session_summary":
+        state.total_in = int(content.get("input_tokens", 0))
+        state.total_out = int(content.get("output_tokens", 0))
+        state.cache_hit_ratio = float(content.get("cache_hit_ratio", 0.0))
+        state.n_turns = int(content.get("n_turns", 0))
+        state.has_session_summary = True
+        # Q98: the summary records the stage's own verdict. Prefer it over the
+        # inference below, which reported a stage that exited non-zero as
+        # ``ok`` purely because it wrote a summary and no ``run_stopped``.
+        # Logs written before the keys existed keep the old inference exactly.
+        recorded_code = content.get("exit_code")
+        if isinstance(recorded_code, int):
+            state.has_recorded_verdict = True
+            if state.stop_reason == "unknown":
+                state.ok = recorded_code == 0
+            elif recorded_code != 0:
+                state.ok = False
+        if state.stop_reason == "unknown":
+            recorded_reason = content.get("stop_reason")
+            if isinstance(recorded_reason, str) and recorded_reason:
+                state.stop_reason = recorded_reason
+    elif kind == "scope_estimate":
+        state.scope_estimates.append(
+            ScopeEstimateRecord(
+                difficulty=int(content.get("difficulty", 0)),
+                scope=str(content.get("scope", "")),
+                risk=str(content.get("risk", "")),
+                confidence=float(content.get("confidence", 0.0)),
+                recommended_mode=str(content.get("recommended_mode", "")),
+                task_preview=str(content.get("task_preview", "")),
+            )
+        )
+    elif kind == "run_stopped":
+        reason = str(content.get("reason", ""))
+        if reason:
+            # S14b.2 (operator principle Q-S14b2-3): every stop condition
+            # is EXPLICIT in the report (stop_reason always recorded —
+            # never silently "unknown"/"clean"), while only real failures
+            # flip ok. Budget-governed iteration-cap truncation is not a
+            # failure, but it is never hidden.
+            state.stop_reason = reason
+            if not reason.startswith("iteration_cap"):
+                state.ok = False  # guard denial / abnormal stop
+    else:
+        return False
+    return True
+
+
+def _dispatch_stats_event(
+    state: _StatsAccumulator,
+    event: TraceEvent,
+    content: dict[str, Any],
+) -> bool:
+    """Dispatch one event to its sole owning accumulator; ignore unknown kinds."""
+    return (
+        _dispatch_stats_activity(state, event, content)
+        or _dispatch_stats_results_and_compaction(state, event, content)
+        or _dispatch_stats_subagents_and_budget(state, event, content)
+        or _dispatch_stats_extended_observability(state, event, content)
+        or _dispatch_stats_summary_and_stop(state, event, content)
+    )
+
+
+def _parse_events(events: tuple[TraceEvent, ...], fallback_run_id: str) -> SessionAnalytics | None:
     if not events:
         return None
 
-    # Extract metadata from run_started
-    run_id = events[0].run_id or fallback_run_id
-    role = ""
-    start_ts = events[0].ts if events else ""
-    stop_reason = "unknown"
-    ok = True
-    has_session_summary = False
-    has_recorded_verdict = False
-
-    # Tool counts
-    tool_counter: Counter[str] = Counter()
-    # File access
-    reads: Counter[str] = Counter()
-    writes: Counter[str] = Counter()
-    # Bash commands
-    bash_counter: Counter[str] = Counter()
-    # Token timeline
-    turn_tokens: list[TurnTokens] = []
-    current_turn = 0
-    # Provider attempts
-    provider_data: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
-    # Guard activity
-    guard_data: dict[str, dict[str, int]] = defaultdict(lambda: {"allow": 0, "deny": 0, "warn": 0})
-    # Totals from session_summary
-    total_in = 0
-    total_out = 0
-    cache_hit_ratio = 0.0
-    n_turns = 0
-    # PR #53 observability accumulators
-    tool_errors: list[ToolError] = []
-    compaction_records: list[CompactionRecord] = []
-    subagent_records: list[SubagentRecord] = []
-    context_budget_events: list[ContextBudgetEvent] = []
-    # S19: extended observability accumulators
-    compaction_warnings: list[CompactionWarningRecord] = []
-    circuit_breaker_events: list[CircuitBreakerRecord] = []
-    compaction_starts: list[CompactionStartRecord] = []
-    model_msg_count: int = 0
-    user_msg_count: int = 0
-    # S3.5: scope estimation records
-    scope_estimates: list[ScopeEstimateRecord] = []
-
+    state = _StatsAccumulator(
+        run_id=events[0].run_id or fallback_run_id,
+        start_ts=events[0].ts if events else "",
+    )
     for event in events:
-        kind = event.kind
         # TraceEvent.content is Mapping[str, object] (open schema per ADR-7 §7).
         # Values are always JSON primitives (int/float/str) after json.loads
         # round-trip; annotate as Any so int()/float() satisfy strict checkers.
         content: dict[str, Any] = dict(event.content) if event.content else {}
-
-        if kind == "run_started":
-            role = str(content.get("role", ""))
-
-        elif kind == "tool_call":
-            tool_name = event.tool_name
-            tool_counter[tool_name] += 1
-            params = content.get("params", {})
-            if isinstance(params, dict):
-                if tool_name == "fs_read_file" and "path" in params:
-                    reads[str(params["path"])] += 1
-                elif tool_name == "fs_write_file" and "path" in params:
-                    writes[str(params["path"])] += 1
-                elif tool_name == "fs_run_bash" and "command" in params:
-                    bash_counter[str(params["command"])] += 1
-
-        elif kind == "usage":
-            current_turn += 1
-            turn_tokens.append(
-                TurnTokens(
-                    turn=current_turn,
-                    in_tokens=int(content.get("input_tokens", 0)),
-                    out_tokens=int(content.get("output_tokens", 0)),
-                    cache_read=int(content.get("cache_read_input_tokens", 0)),
-                    cache_creation=int(content.get("cache_creation_input_tokens", 0)),
-                )
-            )
-
-        elif kind == "provider_attempt":
-            key = (str(content.get("provider", "")), str(content.get("slug", "")))
-            provider_data[key].append(
-                {
-                    "status": int(content.get("status", 0)),
-                    "ms": int(content.get("ms", 0)),
-                    "error": content.get("error"),
-                }
-            )
-
-        elif kind == "hook_decision":
-            hook_name = str(content.get("middleware", "unknown"))
-            decision = str(content.get("decision", ""))
-            if "allow" in decision.lower():
-                guard_data[hook_name]["allow"] += 1
-            elif "deny" in decision.lower():
-                guard_data[hook_name]["deny"] += 1
-
-        elif kind == "loop_guard_warn":
-            guard_data["LoopGuard"]["warn"] += 1
-
-        # ── PR #53 observability: tool_result errors ──────────────────
-        elif kind == "tool_result":
-            tool_name = event.tool_name
-            ok = bool(content.get("ok", True))
-            if not ok:
-                error = content.get("error")
-                if isinstance(error, dict):
-                    tool_errors.append(
-                        ToolError(
-                            tool=tool_name,
-                            code=str(error.get("code", "")),
-                            message=str(error.get("message", "")),
-                        )
-                    )
-
-        # ── PR #53 observability: compaction events ───────────────────
-        elif kind == "compaction_stage2_done":
-            compaction_records.append(
-                CompactionRecord(
-                    stage=2,
-                    ok=True,
-                    tokens_before=int(content.get("tokens_before", 0)),
-                    tokens_after=int(content.get("tokens_after", 0)),
-                )
-            )
-        elif kind == "compaction_stage2_error":
-            compaction_records.append(
-                CompactionRecord(
-                    stage=2,
-                    ok=False,
-                    error=str(content.get("error", "")),
-                )
-            )
-        elif kind == "compaction_stage3_done":
-            compaction_records.append(
-                CompactionRecord(
-                    stage=3,
-                    ok=True,
-                    tokens_before=int(content.get("tokens_before", 0)),
-                    tokens_after=int(content.get("tokens_after", 0)),
-                )
-            )
-        elif kind == "compaction_stage3_error":
-            compaction_records.append(
-                CompactionRecord(
-                    stage=3,
-                    ok=False,
-                    error=str(content.get("error", "")),
-                )
-            )
-
-        # ── PR #53 observability: subagent events ─────────────────────
-        elif kind == "subagent_spawn_done":
-            subagent_records.append(SubagentRecord(ok=True))
-        elif kind == "subagent_spawn_fail":
-            subagent_records.append(SubagentRecord(ok=False, error=str(content.get("error", ""))))
-
-        # ── PR #53 observability: context budget events ───────────────
-        elif kind == "context_budget_warn":
-            context_budget_events.append(
-                ContextBudgetEvent(
-                    action=str(content.get("action", "warn")),
-                    pct=float(content.get("ratio", 0.0)) * 100,
-                    message=str(content.get("message", "")),
-                )
-            )
-        elif kind == "context_budget_hard_stop":
-            context_budget_events.append(
-                ContextBudgetEvent(
-                    action="hard_stop",
-                    pct=float(content.get("ratio", 0.0)) * 100,
-                    message=str(content.get("message", "")),
-                )
-            )
-
-        # ── S19: compaction warning / circuit breaker / compaction starts ──
-        elif kind == "compaction_warning":
-            compaction_warnings.append(
-                CompactionWarningRecord(
-                    action=str(content.get("action", "")),
-                    compaction_enabled=bool(content.get("compaction_enabled", False)),
-                    ratio=float(content.get("ratio", 0.0)),
-                    threshold=float(content.get("threshold", 0.0)),
-                )
-            )
-
-        elif kind == "compaction_circuit_breaker":
-            circuit_breaker_events.append(
-                CircuitBreakerRecord(
-                    message=str(content.get("message", "")),
-                )
-            )
-
-        elif kind == "compaction_stage2_start":
-            compaction_starts.append(
-                CompactionStartRecord(
-                    stage=2,
-                    tokens_before=int(content.get("tokens_before", 0)),
-                    threshold=float(content.get("threshold", 0.0)),
-                )
-            )
-
-        elif kind == "compaction_stage3_start":
-            compaction_starts.append(
-                CompactionStartRecord(
-                    stage=3,
-                    tokens_before=int(content.get("tokens_before", 0)),
-                    threshold=float(content.get("threshold", 0.0)),
-                )
-            )
-
-        # ── S19: model_msg / user_msg counting ────────────────────────
-        elif kind == "model_msg":
-            model_msg_count += 1
-
-        elif kind == "user_msg":
-            user_msg_count += 1
-
-        elif kind == "session_summary":
-            total_in = int(content.get("input_tokens", 0))
-            total_out = int(content.get("output_tokens", 0))
-            cache_hit_ratio = float(content.get("cache_hit_ratio", 0.0))
-            n_turns = int(content.get("n_turns", 0))
-            has_session_summary = True
-            # Q98: the summary records the stage's own verdict. Prefer it over the
-            # inference below, which reported a stage that exited non-zero as
-            # ``ok`` purely because it wrote a summary and no ``run_stopped``.
-            # Logs written before the keys existed keep the old inference exactly.
-            recorded_code = content.get("exit_code")
-            if isinstance(recorded_code, int):
-                has_recorded_verdict = True
-                if stop_reason == "unknown":
-                    ok = recorded_code == 0
-                elif recorded_code != 0:
-                    ok = False
-            if stop_reason == "unknown":
-                recorded_reason = content.get("stop_reason")
-                if isinstance(recorded_reason, str) and recorded_reason:
-                    stop_reason = recorded_reason
-
-        # ── S3.5: scope estimation events ─────────────────────────────
-        elif kind == "scope_estimate":
-            scope_estimates.append(
-                ScopeEstimateRecord(
-                    difficulty=int(content.get("difficulty", 0)),
-                    scope=str(content.get("scope", "")),
-                    risk=str(content.get("risk", "")),
-                    confidence=float(content.get("confidence", 0.0)),
-                    recommended_mode=str(content.get("recommended_mode", "")),
-                    task_preview=str(content.get("task_preview", "")),
-                )
-            )
-
-        elif kind == "run_stopped":
-            reason = str(content.get("reason", ""))
-            if reason:
-                # S14b.2 (operator principle Q-S14b2-3): every stop condition
-                # is EXPLICIT in the report (stop_reason always recorded —
-                # never silently "unknown"/"clean"), while only real failures
-                # flip ok. Budget-governed iteration-cap truncation is not a
-                # failure, but it is never hidden.
-                stop_reason = reason
-                if not reason.startswith("iteration_cap"):
-                    ok = False  # guard denial / abnormal stop
+        _dispatch_stats_event(state, event, content)
 
     # Infer clean stop: session_summary present + no run_stopped event and no
     # recorded verdict (a pre-Q98 log) means drive_session exited via finish()
     # with stop_reason="stopped_by_llm".
-    if has_session_summary and stop_reason == "unknown":
-        stop_reason = "stopped_by_llm"
-        if not has_recorded_verdict:
-            ok = True
+    if state.has_session_summary and state.stop_reason == "unknown":
+        state.stop_reason = "stopped_by_llm"
+        if not state.has_recorded_verdict:
+            state.ok = True
 
     # Build typed results
     tool_usage = sorted(
-        [ToolUsage(name=n, count=c) for n, c in tool_counter.items()],
-        key=lambda t: -t.count,
+        [ToolUsage(name=name, count=count) for name, count in state.tool_counter.items()],
+        key=lambda tool: -tool.count,
     )
 
-    all_paths: set[str] = set(reads) | set(writes)
+    all_paths: set[str] = set(state.reads) | set(state.writes)
     file_access = sorted(
-        [FileAccess(path=p, reads=reads.get(p, 0), writes=writes.get(p, 0)) for p in all_paths],
-        key=lambda f: -(f.reads + f.writes),
+        [
+            FileAccess(path=path, reads=state.reads.get(path, 0), writes=state.writes.get(path, 0))
+            for path in all_paths
+        ],
+        key=lambda file: -(file.reads + file.writes),
     )
 
     bash_cmds = sorted(
-        [BashCommand(command=c, count=n) for c, n in bash_counter.items()],
-        key=lambda b: -b.count,
+        [BashCommand(command=command, count=count) for command, count in state.bash_counter.items()],
+        key=lambda bash: -bash.count,
     )
 
     provider_health: list[ProviderHealth] = []
-    for (prov, slug), attempts in provider_data.items():
-        ok_count = sum(1 for a in attempts if a["status"] == 200)
-        ms_list = [a["ms"] for a in attempts if a["ms"] > 0]
+    for (provider, slug), attempts in state.provider_data.items():
+        ok_count = sum(1 for attempt in attempts if attempt["status"] == 200)
+        ms_list = [attempt["ms"] for attempt in attempts if attempt["ms"] > 0]
         provider_health.append(
             ProviderHealth(
-                provider=prov,
+                provider=provider,
                 slug=slug,
                 total=len(attempts),
                 ok=ok_count,
@@ -679,40 +725,41 @@ def _parse_events(events: tuple[TraceEvent, ...], fallback_run_id: str) -> Sessi
         )
 
     guard_list = [
-        GuardActivity(hook=h, allow=d["allow"], deny=d["deny"], warn=d["warn"]) for h, d in guard_data.items()
+        GuardActivity(hook=hook, allow=data["allow"], deny=data["deny"], warn=data["warn"])
+        for hook, data in state.guard_data.items()
     ]
 
-    redundant = sum(c - 1 for c in reads.values() if c > 1)
-    repeated = sum(c - 1 for c in bash_counter.values() if c > 1)
+    redundant = sum(count - 1 for count in state.reads.values() if count > 1)
+    repeated = sum(count - 1 for count in state.bash_counter.values() if count > 1)
 
     return SessionAnalytics(
-        run_id=run_id,
-        role=role,
-        start_ts=start_ts,
-        stop_reason=stop_reason,
-        ok=ok,
-        turns=n_turns or current_turn,
+        run_id=state.run_id,
+        role=state.role,
+        start_ts=state.start_ts,
+        stop_reason=state.stop_reason,
+        ok=state.ok,
+        turns=state.n_turns or state.current_turn,
         tool_usage=tool_usage,
         file_access=file_access,
         bash_commands=bash_cmds,
-        token_timeline=turn_tokens,
+        token_timeline=state.turn_tokens,
         provider_health=provider_health,
         guard_activity=guard_list,
-        total_in=total_in,
-        total_out=total_out,
-        cache_hit_ratio=cache_hit_ratio,
+        total_in=state.total_in,
+        total_out=state.total_out,
+        cache_hit_ratio=state.cache_hit_ratio,
         redundant_reads=redundant,
         repeated_commands=repeated,
-        tool_errors=tool_errors,
-        compaction_records=compaction_records,
-        subagent_records=subagent_records,
-        context_budget_events=context_budget_events,
-        compaction_warnings=compaction_warnings,
-        circuit_breaker_events=circuit_breaker_events,
-        compaction_starts=compaction_starts,
-        model_msg_count=model_msg_count,
-        user_msg_count=user_msg_count,
-        scope_estimates=scope_estimates,
+        tool_errors=state.tool_errors,
+        compaction_records=state.compaction_records,
+        subagent_records=state.subagent_records,
+        context_budget_events=state.context_budget_events,
+        compaction_warnings=state.compaction_warnings,
+        circuit_breaker_events=state.circuit_breaker_events,
+        compaction_starts=state.compaction_starts,
+        model_msg_count=state.model_msg_count,
+        user_msg_count=state.user_msg_count,
+        scope_estimates=state.scope_estimates,
     )
 
 

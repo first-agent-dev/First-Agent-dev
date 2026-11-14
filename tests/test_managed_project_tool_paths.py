@@ -8,7 +8,13 @@ from typing import Any
 
 from fa.inner_loop.tools.fs_reach import build_fs_reach_tool
 from fa.inner_loop.tools.fs_search import build_fs_search_tool
-from fa.inner_loop.tools.workspace_port import PORT_READ_MAX_BYTES, PortProjectArtifactListing, PortRead, PortWrite
+from fa.inner_loop.tools.workspace_port import (
+    PORT_READ_MAX_BYTES,
+    PortProjectArtifactListing,
+    PortProjectNames,
+    PortRead,
+    PortWrite,
+)
 
 
 class _UnusedWorkspacePort:
@@ -21,6 +27,9 @@ class _UnusedWorkspacePort:
 
     def write_file(self, path: str, content: str, *, expected_sha256: str | None = None) -> PortWrite:
         raise AssertionError("managed discovery must not write through the workspace port")
+
+    def list_project_names(self) -> PortProjectNames:
+        raise AssertionError("managed discovery must not list through the workspace port")
 
     def list_project_artifacts(self, project_slug: str) -> PortProjectArtifactListing:
         raise AssertionError("managed discovery must not list through the workspace port")

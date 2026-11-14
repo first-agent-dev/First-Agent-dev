@@ -648,13 +648,15 @@ L-RCPT-2/6, L-ENTRY-4 — NOT RUN. Без них нельзя утверждат
 - оба `check_*` гейта `rc=0`;
 - в коммит-сообщении — что измерялось, а не что «должно работать».
 
-## 7. Классификация остатка full gate (48) — по записям и замеру, без нового прогона банка
+## 7. Историческая классификация остатка full gate (48) — snapshot `51c6735`, без нового прогона полного банка
 
 Источники: `q137-working-entry-inventory-2026-11-09.md` (полные ID, 62 записи),
 `q137-full-gate-triage-2026-10-30.md` (история), и **замер только по 16
 подозреваемым файлам** вместо всего банка (≈70 с вместо ≈12 мин). Полный банк
-не перезапускался: последний прогон на `51c6735` дал **48** (37 failed + 11
-errors), 7448 passed — те же классы, что эталон `a2c2312`.
+не перезапускался на этом snapshot: прогон `51c6735` дал **48** (37 failed + 11
+errors), 7448 passed — те же классы, что эталон `a2c2312`. Это историческая
+классификация, не текущий счёт красных тестов; последующая локальная сверка
+приведена в §7 «Текущая сверка после E528» ниже.
 
 ### 7.1. Разбивка 48 по корневой причине
 
@@ -664,21 +666,21 @@ errors), 7448 passed — те же классы, что эталон `a2c2312`.
 | **B. Средовые — `uv sync` тянет CPython с github** | **2** | `test_workspace_readiness_integration`, `test_controller_installed`-подобные: bootstrap-скрипт зовёт `uv sync --locked --extra dev`; uv резолвит `cpython-3.15.2` и падает `invalid peer certificate: UnknownIssuer` (хост github releases закрыт песочницей). Код возврата 75 `degraded_environment` | **нет** (нужен доступ к releases) |
 | **C. Средовые — `uv` не на PATH при прямом `pytest`** | подмножество B | При запуске без `.venv/bin` в PATH bootstrap отвечает `tool_missing`. Важно: **с `uv` на PATH диагностика меняется** на `sync_failed` — то есть это два разных сообщения одной среды | да (PATH) |
 | **D. Средовые — прочее окружение** | **0 подтверждённых** | `test_semgrep_pin`, `test_targeted_gates_smoke`, `test_verify_slice`, `test_controller_entry` в замере **зелёные** — их исторические падения из Q137 больше не воспроизводятся | — |
-| **E. Средовые — `test_verify_gate_live`** | **7** | Те же 7, что и на чистом `a7b32ff` (сверено stash-прогоном): `test_acquisition_unavailable_...[5 параметров]`, `test_plan_preflight_real_cli_uses_selected_workspace_not_cwd[2]` | частично да |
-| **F. Реальные дефекты** | **0** | Ни одного падения, которое указывало бы на логику продукта | — |
-| **xfail (strict)** | **4** | Все актуальны, XPASS нет — см. §7.3 | нет |
+| **E. Средовые — `test_verify_gate_live`** | **7** | Исторические 5 acquisition-параметров + 2 selected-workspace cases; на текущем checkout они проходят в combined live-gate прогонах (§7 «Текущая сверка после E528») | историческая причина исправлена локальным fixture repair |
+| **F. Реальные дефекты** | **0 подтверждённых в том snapshot** | Ни одного падения, которое указывало бы на логику продукта в классифицированном прогоне | — |
+| **xfail (strict)** | **4 на snapshot** | Включало прежний host-write xfail, позднее заменённый managed-stage C1; оставшиеся ограничения уточнены в §7.3 и §7.5 | историческая цифра |
 
-**39 + 2 + 7 = 48.** То есть весь остаток — среда и живые проверки, требующие
-managed-провижнера, а не дефекты. Это объясняет, почему банк не двигался все
-срезы: он не мог сдвинуться, пока фикстуры создают «устаревшую» сессию.
+**39 + 2 + 7 = 48** — разбиение только старого snapshot. Оно не означает,
+что все три группы сейчас красные или что весь остаток устранён.
 
 ### 7.2. Класс A: одна фикстура, 39 тестов
 
-Все 29 failed + 11 errors идут из одного вызова `_cmd_run` в тестах, которые
-затем проверяют **артефакты прогона** (posture, корреляция, stats, глобальная
-история). Продукт ведёт себя правильно: `SessionManager._new_session`
-(`src/fa/session/manager.py:381`) без `workspace_provisioner`/`workspace_preparer`
-отказывает, потому что «session-backed CLI run требует managed провижнера».
+В историческом snapshot 28 failed + 11 errors шли из одного вызова `_cmd_run`
+в тестах, которые затем проверяли **артефакты прогона** (posture, корреляция,
+stats, глобальная история). Продукт ведёт себя правильно:
+`SessionManager._new_session` (`src/fa/session/manager.py:381`) без
+`workspace_provisioner`/`workspace_preparer` отказывает, потому что
+«session-backed CLI run требует managed провижнера».
 
 Раскладка по файлам: `s10b_cli_parity` 8, `s10a_cli_coverage` 7,
 `s10c_artifact_posture` 6, `s7_correlation` 5, `s9_stats_projection` 4,
@@ -690,33 +692,107 @@ managed-провижнера, а не дефекты. Это объясняет,
 `test_s10c_session_dir_is_private_at_creation...`. Это не новая политика, а
 применение существующей практики к оставшимся файлам.
 
-### 7.3. xfail — что устарело, а что нет
+### 7.3. xfail — snapshot и текущая замена
 
-| xfail | Статус | Почему актуален / пересмотр |
+| xfail / seam | Статус текущего checkout | Почему |
 | --- | --- | --- |
-| `test_execution_composition.py:424` (`test_the_runs_own_second_publication_survives_a_host_side_write`) — SLICE4 STEP2 cutover | требует замены в W3 | в самом тесте на `:436` осталась прямая запись в `site.source` мимо authority (`_unchanged` честно бьёт `CORRUPT_STATE`); сам продакшн-cutover W1 уже завершён, так что тест нужно переписать на запись через managed `WRITE` view (или отделить от прямого host-write триггера) |
-| `test_execution_project_tools.py:304` / `:315` — Q106 | перенесён на **W4** | конверт 60 KiB не несёт legacy outline/reach; решение по расширению/пересмотру паритета официально отложено до волны **W4** (`reason="Q106 (deferred to W4): ..."`) |
-| `test_s5_isolation_boundary.py:462` — Q19 (V24/V25) | актуален | containment требует OS-level writable mount; `strict=True` держит запись открытой |
+| Исторический `test_the_runs_own_second_publication_survives_a_host_side_write` strict-xfail (SLICE4 STEP2) | **Заменён** managed-stage positive C1 | Host-side write остаётся отдельным refusal control; успешная стадия теперь пишет через managed `WRITE`/`MUTATION` view, публикует revision и делает вторую plan publication. См. E528 ниже. |
+| `tests/test_execution_project_tools.py` Q106 large-outline/reach | **Открыт до W4** | 60 KiB envelope не несёт legacy outline/reach; parity disposition отложен до W4. |
+| `tests/test_s5_isolation_boundary.py` Q19 (V24/V25) | **Открыт для live-host доказательства** | Containment требует OS-level writable mount; strict xfail удерживает эту границу. |
 
-Примечание к `§7`: после фиксации карты от `2026-11-10` были также закрыты `E520–E524` (`S5P1–S5P3`) и сквозные разрывы № 1–3 (`9c4f429`, `014c012`), а `uv run fa authoring-check` на `HEAD=014c012` даёт 4 `[HARD-BLOCK] FA-AUTHORING-V2-EXPORTS-COMPLETENESS` в `profiles.py:443,452` и `workflow_controller.py:2458,2477`, что подлежит закрытию до/в W3.
+Счётчик **4 strict xfails** относился к прежнему snapshot и включал host-write
+case; не переносить его на текущий общий bank. В E527-targeted suites было
+`3 xfailed`: два Q106 и один Q19. Это не означает, что host/live acceptance
+выполнен.
 
-Ни один xfail не «устарел» в смысле «стал проходить»: при XPASS `strict=True`
-дал бы падение, а его нет. **Ни один не относится к среде** — просто удалять нельзя без пересмотра контракта.
+Примечание к старой карте: после `HEAD=014c012` закрыты `E520–E524`,
+сквозные разрывы № 1–3 (`9c4f429`, `014c012`) и четыре
+`FA-AUTHORING-V2-EXPORTS-COMPLETENESS` exports. На текущем worktree
+`fa authoring-check` — 0 diagnostics, а `pyrefly check` — 0 errors. Это
+последующие результаты, не часть исторического замера `51c6735`.
 
-### 7.4. Что это меняет в плане
+### 7.4. Что меняется в плане
 
-Порядок, который вытекал из прошлых заметок (E2E → `stats._parse_events` →
-провайдер), **невозможен в песочнице как есть**: E2E и `stats` проверяются через
-`fa run`, а `fa run` здесь требует managed-провижнера. Значит:
+Предыдущий порядок из «E2E → `stats._parse_events` → провайдер» и вывод
+«класс E разбирать после A» были планом/диагнозом старого snapshot, а не
+текущей очередью. §7.5 фиксирует последующую W3-сверку: A и E зелёные в
+выбранных локальных прогонах; class-B readiness cases в этом checkpoint не
+повторялись; W3 остаётся OPEN. Отдельный `stats._parse_events` C901-срез уже
+выполнен как E529 с локальной совместимостью, AST/EDGE proofs и точными
+mutation counts; wrapper survivor-diff report не завершён, что отражено в
+§7.6 и [рабочей заметке](c901-green-fixture-and-stats-slice-2026-11-10.md).
+Это не W3 gate и не W3 closure.
 
-1. **Класс A (39)** — единственный, который можно закрыть локально, и он
-   закрывает почти весь банк. Один срез: общий managed-фикстур (прецедент Q137),
-   затем прогон 10 файлов (~30 с вместо 12 мин).
-2. **Класс B (2)** — честно остаётся красным здесь; фиксируется как
-   средовое ограничение с точной причиной (`uv` → CPython 3.15.2 → github
-   releases → сертификат), а не как «непонятный sync_failed».
-3. **Класс E (7)** — те же, что на чистом `a7b32ff`; не регресс, разбирать
-   после A.
-4. **Класс C** — снимается строкой `PATH="$PWD/.venv/bin:$PATH"` в рецепте
-   прогона; стоит записать в инструкцию, иначе следующий агент снова получит
-   `tool_missing` и будет искать не там.
+### 7.5. W3-сверка после E528 — локальные результаты, не W3 closeout
+
+На checkout `5053cb3` + текущем worktree десять файлов из class-A map
+выполнены целиком: **179 passed in 25.91s**. Эти файлы содержат прежние 39
+failed/error nodeids; `179` — размер полного file-level прогона, не число
+уникальных repaired tests. Они используют `_install_test_managed_cli_dependencies`
+из `tests/test_cli.py`: настоящий `SessionManager`/SQLite и session lifecycle,
+test-only READY preparer/provisioner, test managed-execution/stage adapter и
+scripted provider. Это снимает setup refusal и позволяет проверить реальные
+CLI lifecycle, DB/event projection, correlation, artifact posture, stats,
+readiness, iteration-cap и global-history assertions. Adapter не симулирует
+managed authority/view IO. В этом worktree 10 class-A тестовых файлов не имеют
+прямых изменений; details и ограничения — в
+[`c901-green-fixture-and-stats-slice-2026-11-10.md`](c901-green-fixture-and-stats-slice-2026-11-10.md).
+
+Самостоятельный combined run
+`uv run pytest tests/test_verify_gate_live.py tests/test_s10a_cli_coverage.py -q`
+дал **634 passed in 298.73s**, без skip/xfail в выводе. Это независимо
+перезапускает объединённый набор; `test_s10a_cli_coverage.py` перекрывается с
+class-A run, поэтому результаты нельзя складывать как уникальные тесты.
+Целевой regression bank `tests/test_execution_composition.py`
+`tests/test_controller_installed.py` дал **92 passed**: старый host-write
+xfail заменён C1 через managed stage write → `publish_stage` → следующую
+publication. Отдельно прошли acquisition/provenance **49**, CLI/invoke
+workflow **179**, entrypoint/PYTHONPATH **2**; full Pyrefly 0 errors и
+`fa authoring-check` 0 diagnostics.
+
+Эти результаты не меняют W3 status. STEP9 всё ещё OPEN: в checkout отсутствует
+`tests/integration/`; Q108 NEW→S08 mapping, Q139 calibration, S6P5/7/8/9/10,
+approved Q97 profile check, `just check-deep`, independent review/run sheet и
+host candidate `fa update` не завершены. STEP9A остаётся заблокированным до
+закрытия STEP9 и не реализуется в этом slice. Исторические два class-B
+`uv sync` failures не reran: считать их не подтверждённо зелёными и не
+подтверждённо текущими красными. W4, host effects и Docker acceptance не
+заявляются.
+
+### 7.6. E529 — отдельный C901-срез `stats._parse_events` (локальный, не W3 DoD)
+
+В `src/fa/stats.py` один parse-owned accumulator и пять dispatch handlers
+разделяют прежний 45-point event chain без изменения event order, unknown-kind
+ignore, public API/dataclasses/JSON shape, DB/JSONL source behavior, sorting и
+summary/stop/verdict precedence. `tests/test_s19_stats_parsers.py` по AST
+собирает сравнения всех helpers; множество и liveness остаются ровно 24.
+
+Итоговые локальные проверки:
+
+- stats/parser/S9 projection + S10a/S10b CLI compatibility bank — **154 passed**;
+- `tests/test_slice_mutmut.py` — **21 passed** (source/test selection pin);
+- Ruff + C901 scan — exit 0; targeted Pyrefly on `src/fa/stats.py`,
+  `tests/test_s19_stats_parsers.py`, and `tests/test_slice_mutmut.py` — **0 errors**;
+- producer BODY, parsed-kind branch deletion и dispatcher-call EDGE negative
+  proofs каждый дали ожидаемый **pytest exit 1** по точному owning assertion;
+  после каждого `src/fa/stats.py` byte-exactly восстановлен, общий
+  post-proof SHA-256 `178e489ad4ed4d5e3cdb408f581d5ce95df59f7661325080bdb570df73ef8826`.
+- targeted mutmut за весь `src/fa/stats.py`, с тремя stats-owning файлами:
+  **1408 total = 320 killed + 500 survived + 588 type-invalid**;
+  `no_tests/skipped/suspicious/timeout/interrupted/segfault/not_checked = 0`.
+  Экспортированные counters и 1088 `mutmut results` строк согласованы
+  официальным classifier. Первая широкая selection попытка падала только на
+  S10a `authoring-check` full-checkout assumption в partial mutmut overlay;
+  selection ограничена прямыми stats-owned suites, а S10a/S10b прошли отдельно
+  в compatibility bank.
+
+**Оговорка по mutation artifacts:** сам mutmut run обработал все 1408
+mutants и оставил законченные counters/results, но `run_slice_mutmut.py` shell
+call достиг 1800-second timeout при пост-run генерации подробного survivor diff
+(`mutmut show` по survivor records; остановлен около mutant 54). Поэтому у
+wrapper нет успешного exit code/final `stats-c901-result.json`. Считать 320
+реальными kills можно по завершённому export + официальному classifier; 500
+survivors не классифицированы индивидуально и не объявляются принятыми или
+убитыми. Это открытая мутационная housekeeping-работа, не основание менять
+поведение и не STEP9/W3 closeout. Полная трасса и ограничения записаны в
+[`c901-green-fixture-and-stats-slice-2026-11-10.md`](c901-green-fixture-and-stats-slice-2026-11-10.md).

@@ -227,40 +227,47 @@ def test_unparsed_kinds_complete() -> None:
 
 
 def _dispatched_kinds_from_source() -> set[str]:
-    """AST-extract the kinds ``_parse_events`` compares against.
+    """AST-extract kinds compared by the parser's dedicated dispatch helpers.
 
     Deliberately AST rather than a regex over source: S9 planning produced a
     confident, entirely fictional finding because a ``[a-z_]+`` character
     class silently dropped every kind containing a digit. Parsing the code the
     interpreter parses is the only honest way to ask "what does this dispatch
-    on".
+    on". The helpers are selected by their shared production seam prefix, so
+    splitting a handler further does not require a second handwritten kind list.
     """
     tree = ast.parse(Path("src/fa/stats.py").read_text(encoding="utf-8"))
-    fn = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "_parse_events")
+    dispatchers = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name.startswith("_dispatch_stats_")
+    ]
     kinds: set[str] = set()
-    for node in ast.walk(fn):
-        if isinstance(node, ast.Compare) and isinstance(node.left, ast.Name) and node.left.id == "kind":
-            for op, comparator in zip(node.ops, node.comparators, strict=True):
-                if (
-                    isinstance(op, ast.Eq)
-                    and isinstance(comparator, ast.Constant)
-                    and isinstance(comparator.value, str)
-                ):
-                    kinds.add(comparator.value)
+    for dispatcher in dispatchers:
+        for node in ast.walk(dispatcher):
+            if isinstance(node, ast.Compare) and isinstance(node.left, ast.Name) and node.left.id == "kind":
+                for op, comparator in zip(node.ops, node.comparators, strict=True):
+                    if (
+                        isinstance(op, ast.Eq)
+                        and isinstance(comparator, ast.Constant)
+                        and isinstance(comparator.value, str)
+                    ):
+                        kinds.add(comparator.value)
     return kinds
 
 
 def test_s9_parsed_kinds_matches_dispatch() -> None:
     """C1 (S9.4 / CT4): ``PARSED_KINDS`` equals what ``_parse_events`` dispatches on.
 
-    This is the test the old hardcoded list could not be. Removing an
-    ``elif kind == "..."`` branch used to leave the contract test green,
-    because the test's own literal still claimed the kind was parsed. Now the
-    claim is derived from the parser itself, so deletion is detected.
+    This is the test the old hardcoded list could not be. Removing a
+    ``kind == "..."`` branch from any parser dispatch helper used to leave
+    the contract test green if the test kept its own literal. The claim is
+    still derived from the production comparisons, across the extracted
+    helpers, so branch deletion is detected after the complexity split.
 
     Oracle: AST-derived set == the module's declared frozenset.
-    Kill-check target: delete any ``elif kind == "<name>"`` branch in
-    ``_parse_events`` — verified during S9 execution, not assumed.
+    Kill-check target: delete any parsed-kind branch in a
+    ``_dispatch_stats_*`` helper — the liveness/equality assertion fails.
     """
     dispatched = _dispatched_kinds_from_source()
 

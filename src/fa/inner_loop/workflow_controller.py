@@ -4379,6 +4379,8 @@ __all__ = [
     "WORKFLOW_MODES",
     "WORKFLOW_STAGE_ROLES",
     "WORKFLOW_STATUS_TO_STOP_REASON",
+    "AcquisitionSubstrate",
+    "AcquisitionSubstrateRequest",
     "BaselineCapture",
     "StageResult",
     "WorkflowArtifactPaths",

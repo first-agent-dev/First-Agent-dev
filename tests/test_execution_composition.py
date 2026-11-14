@@ -389,11 +389,10 @@ def _managed_publisher(site: Site, tmp_path: Path) -> Iterator[tuple[ManagedExec
 def test_a_host_side_write_before_the_second_publish_is_refused(site: Site, tmp_path: Path) -> None:
     """C1 (CT121): the authority refuses to commit onto bytes it does not hold.
 
-    Today a host-side stage can still write the project tree under the run's own
-    writer. The authority notices at the next commit — `_unchanged` sees a tree that
-    is not the current revision — and refuses. This is the behaviour the strict
-    `xfail` below is aimed at: the refusal is honest, but the write should never be
-    possible in the first place (SLICE4 STEP2).
+    An out-of-band host write can change the canonical tree while the run owns its
+    writer. At the next commit, `_unchanged` detects that the tree is not the current
+    revision and refuses; the managed WRITE-view control below proves the supported
+    stage path can instead publish its bytes and continue.
     """
     with _managed_publisher(site, tmp_path) as (managed, plan_path):
         publisher = BoundPlanPublisher(managed, managed.binding)
@@ -417,28 +416,53 @@ def test_a_host_side_write_before_the_second_publish_is_refused(site: Site, tmp_
         assert plan_path.read_bytes() == b"# Repaired plan\n"  # the first commit stands
 
 
-@pytest.mark.xfail(strict=True, reason="SLICE4 STEP2 cutover: host-side stages must stop writing bytes")
-def test_the_runs_own_second_publication_survives_a_host_side_write(site: Site, tmp_path: Path) -> None:
-    """The limitation, pinned instead of hidden (Q96 = A).
+def test_the_runs_own_second_publication_survives_a_managed_stage_write(site: Site, tmp_path: Path) -> None:
+    """C1: WRITE-view bytes advance the same run's revision before a second plan publish.
 
-    This asserts what the run's held writer *should* buy it — the authority keeps
-    serving this run while host-side stages stop touching the tree. It fails today,
-    which is why it is a strict `xfail`: the step that makes host stages respect the
-    writer must delete this mark, and the mark cannot rot silently.
+    A raw host-side write is correctly rejected by the authority as corrupt state;
+    this test instead exercises the managed composition the stage must use.
     """
-    with _managed_publisher(site, tmp_path) as (managed, _plan_path):
+    from fa.execution.tool_port import ClientWorkspacePort
+
+    # The parent directory is part of the admitted starting revision; only the file
+    # mutation itself is performed through the managed WRITE view.
+    (site.source / "src").mkdir(exist_ok=True)
+    with _managed_publisher(site, tmp_path) as (managed, plan_path):
         publisher = BoundPlanPublisher(managed, managed.binding)
-        publisher.publish_candidate(
+        first = publisher.publish_candidate(
             read_plan_snapshot(site.source, Path(PLAN_RELATIVE)),
             snapshot_from_bytes("draft.md", b"# Repaired plan\n"),
         )
-        (site.source / "src").mkdir(exist_ok=True)
-        (site.source / "src" / "host_side.py").write_text("x = 1\n", encoding="utf-8")
-        promoted = publisher.publish_candidate(
-            read_plan_snapshot(site.source, Path(PLAN_RELATIVE)),
-            snapshot_from_bytes("draft.md", b"# Repaired again\n"),
+        assert plan_path.read_bytes() == b"# Repaired plan\n"
+
+        stage_grant = managed.open_view(
+            access=Access.WRITE,
+            purpose=ViewPurpose.MUTATION,
+            base_revision=managed.current_revision_id,
+            plan_ref=first,
         )
-        assert promoted.sha256 == snapshot_from_bytes("draft.md", b"# Repaired again\n").ref.sha256
+        view = stage_grant.view_ref
+        assert view is not None
+        port = ClientWorkspacePort(
+            managed.client,
+            namespace=managed.binding.namespace,
+            view=view,
+            grant=stage_grant,
+        )
+        written = port.write_file("src/managed_stage.py", "x = 1\n")
+        assert written.bytes == len("x = 1\n")
+        port.suspend()
+
+        stage_publication = managed.publish_stage(stage_grant)
+        assert managed.current_revision_id == stage_publication.revision_id
+        assert (site.source / "src" / "managed_stage.py").read_text(encoding="utf-8") == "x = 1\n"
+
+        next_candidate = snapshot_from_bytes("draft.md", b"# Repaired again\n")
+        second = publisher.publish_candidate(read_plan_snapshot(site.source, Path(PLAN_RELATIVE)), next_candidate)
+        assert first.sha256 != second.sha256
+        assert second.sha256 == next_candidate.ref.sha256
+        assert plan_path.read_bytes() == next_candidate.utf8_bytes
+        assert managed.close() is True
 
 
 def test_the_guards_not_a_dead_socket_decide_which_runs_are_managed(site: Site, tmp_path: Path) -> None:
@@ -3624,10 +3648,12 @@ def test_an_unresolved_candidate_publication_keeps_the_writer_and_reconciles(
                 # Reconciliation replayed the minted id and the authority answered
                 # from its journal and reply cache: no second id was ever minted,
                 # so no second effect could be performed.
-                assert set(seen) == {pending.publish_request_id}
+                publish_request_id = pending.publish_request_id
+                assert isinstance(publish_request_id, str)
+                assert set(seen) == {publish_request_id}
                 assert len(seen) == 2  # the lost attempt and the reconciliation
                 # ...and the authority performed the publication exactly once.
-                assert handler_calls == ["op-" + pending.publish_request_id]
+                assert handler_calls == ["op-" + publish_request_id]
                 assert managed.publication_pending is False
                 assert plan_path.read_bytes() == candidate.utf8_bytes
                 # Only now may the writer go back.

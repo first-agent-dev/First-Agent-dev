@@ -649,8 +649,15 @@ def test_permanent_mutation_configuration_includes_readiness_and_type_filter() -
     mutmut = data["tool"]["mutmut"]
     gremlins = data["tool"]["pytest-gremlins"]
     source_paths = mutmut["source_paths"]
+    selected_tests = set(mutmut["pytest_add_cli_args_test_selection"])
+    assert "src/fa/stats.py" in source_paths
     assert source_paths[-1] == "src/fa/workspace_bootstrap.py"
-    assert mutmut["pytest_add_cli_args_test_selection"][-1] == "tests/test_workspace_bootstrap.py"
+    assert "tests/test_workspace_bootstrap.py" in selected_tests
+    assert {
+        "tests/test_stats.py",
+        "tests/test_s19_stats_parsers.py",
+        "tests/test_s9_stats_projection.py",
+    } <= selected_tests
     assert mutmut["also_copy"] == ["src/fa", "scripts"]
     command = mutmut["type_check_command"]
     assert command[:2] == ["pyrefly", "check"]

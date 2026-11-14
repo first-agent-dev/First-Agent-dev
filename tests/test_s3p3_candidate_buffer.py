@@ -405,12 +405,14 @@ def test_a_read_pin_over_committed_bytes_still_settles_the_writer(site: Site) ->
     with site.owner(view_profile=native_profile(), read_only_profile=read_only_profile()) as owner:
         ids = ok(lambda: site.register(owner))
         lease = site.claim(owner, ids)
+        revision_id = lease.revision_id
+        assert isinstance(revision_id, str)
         pinned = ok(
             lambda: owner.pin_reader(
                 PEER,
                 CANDIDATE_ACTOR,
                 workspace_id=ids["workspace_id"],
-                revision_id=lease.revision_id,
+                revision_id=revision_id,
                 plan_ref=None,
                 formal_evidence=False,
                 deadline=until(),

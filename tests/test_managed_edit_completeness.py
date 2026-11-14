@@ -10,7 +10,7 @@ import pytest
 
 from fa.execution.protocol import MAX_TEXT_BYTES
 from fa.inner_loop.tools.edit_file import build_edit_file_tool
-from fa.inner_loop.tools.workspace_port import PortProjectArtifactListing, PortRead, PortWrite
+from fa.inner_loop.tools.workspace_port import PortProjectArtifactListing, PortProjectNames, PortRead, PortWrite
 from tests.test_execution_tool_port import _port, _project_view
 from tests.test_execution_views import native_profile
 from tests.test_execution_views import source as view_source
@@ -59,6 +59,9 @@ def test_unconfirmed_eof_never_reaches_write(tmp_path: Path, invalid_eof: object
         def write_file(self, path: str, content: str, *, expected_sha256: str | None = None) -> PortWrite:
             self.writes += 1
             return PortWrite("1" * 64, len(content.encode()))
+
+        def list_project_names(self) -> PortProjectNames:
+            raise AssertionError("unexpected project-name listing during edit")
 
         def list_project_artifacts(self, project_slug: str) -> PortProjectArtifactListing:
             raise AssertionError(f"unexpected project listing during edit: {project_slug!r}")

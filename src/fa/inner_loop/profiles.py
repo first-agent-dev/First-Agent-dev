@@ -644,10 +644,12 @@ def get_profile(role: str) -> RoleProfile:
 
 
 __all__ = [
+    "ACQUISITION_TOOLS",
     "PROFILES",
     "PROFILES_RAW",
     "TYPED_PROFILES",
     "RoleProfile",
+    "build_acquisition_registry",
     "build_registry_for_role",
     "estimate_tokens",
     "get_profile",

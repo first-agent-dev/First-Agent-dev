@@ -374,6 +374,14 @@ pytest_add_cli_args_test_selection = [
   "tests/test_execution_view_io.py",
   "tests/test_execution_workspace.py",
   "tests/test_s3p3_candidate_buffer.py",
+  # S9/S19 stats parser + DB projection contract. `src/fa/stats.py` is in
+  # source_paths; omitting these owning suites would let its mutants run
+  # against unrelated banks and falsely appear to survive/finish. S10a/b CLI
+  # compatibility banks run separately; the full S10a file includes a
+  # checkout-root authoring test that cannot run in mutmut's partial overlay.
+  "tests/test_stats.py",
+  "tests/test_s19_stats_parsers.py",
+  "tests/test_s9_stats_projection.py",
   "tests/test_workspace_bootstrap.py",
 ]
 # Complete package copy supplies sibling imports while source_paths remains the

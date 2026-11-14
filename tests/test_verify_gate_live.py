@@ -15,6 +15,7 @@ private depth marker.
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import shlex
@@ -151,7 +152,7 @@ CONTRACTS:
   CT72 [FUNCTIONAL]: a blocking or missing enforce result reconciles after eval and prevents PASS.
     kill: neutralise src/fa/inner_loop/workflow_controller.py::_effective_controller_route
   CT73 [FUNCTIONAL]: every successful coder stage is followed by an eval stage.
-    kill: remove-call src/fa/inner_loop/workflow_controller.py::run_workflow -> _ensure_eval_after_coder
+    kill: remove-call src/fa/inner_loop/workflow_controller.py::_run_workflow_bound -> _ensure_eval_after_coder
   CT75 [FUNCTIONAL]: the composition root dispatches real roles through drive_session.
     kill: remove-call src/fa/inner_loop/workflow_controller.py::_run_stage -> run_stage_fn
   CT76 [FUNCTIONAL]: commands remain attributed to the slice that declares them.
@@ -163,7 +164,7 @@ CONTRACTS:
   CT77 [FUNCTIONAL]: the eval request carries the actual verifier evidence.
     kill: remove-call src/fa/inner_loop/workflow_controller.py::_eval_evidence_block -> _verification_evidence_lines
   CT86 [FUNCTIONAL]: the baseline is captured before coder dispatch.
-    kill: remove-call src/fa/inner_loop/workflow_controller.py::_run_stage -> capture_baseline
+    kill: remove-call src/fa/inner_loop/workflow_controller.py::_capture_stage_baseline -> capture_baseline
 TESTS: {test_path}
 ```verify
 python -c "print('slice-one')"
@@ -1243,25 +1244,29 @@ def test_plan_preflight_real_cli_uses_selected_workspace_not_cwd(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, resumed: bool
 ) -> None:
     """C2 positive control: real factories/session/provider loop; only provider mocked."""
+    import fa.cli as cli_module
     from fa.cli import _cmd_workflow, build_parser
-    from fa.session.manager import SessionManager
+    from tests.test_cli import _install_test_managed_cli_dependencies
 
-    state, workspace, cwd = tmp_path / "state", tmp_path / "workspaces" / "selected", tmp_path / "cwd"
+    home = tmp_path / "home"
+    state, workspace, cwd = home / ".fa", tmp_path / "workspaces" / "selected", tmp_path / "cwd"
     workspace.mkdir(parents=True)
     cwd.mkdir()
     (workspace / "plan.md").write_text("Plan-ID: PLAN-selected\n", encoding="utf-8")
     # A same-named invalid CWD file must neither authorize nor veto selection.
     (cwd / "plan.md").write_bytes(b"\xff")
-    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
     monkeypatch.setenv("FA_STATE_ROOT", str(state))
     monkeypatch.setenv("FA_WORKSPACE_ROOT", str(workspace.parent))
+    _install_test_managed_cli_dependencies(monkeypatch, home=home, workspace_root=workspace.parent)
     monkeypatch.delenv("FA_EGRESS_PROXY_URL", raising=False)
     monkeypatch.delenv("FA_PROXY_TOKEN_FILE", raising=False)
     monkeypatch.chdir(cwd)
     config = tmp_path / "models.yaml"
     config.write_text(_ROLE_YAML.format(role="planner"), encoding="utf-8")
     if resumed:
-        manager = SessionManager(state_root=state, workspace_root=workspace.parent)
+        manager = cli_module._session_manager_for_args(argparse.Namespace(workspace=workspace))
         manager.provision_entrypoint_session(session_id="selected-session", workspace_override=workspace)
     calls: list[str] = []
 
@@ -4054,24 +4059,63 @@ def test_acquisition_unavailable_live_chat_and_noncoder_child_binding(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, roles: str | None
 ) -> None:
     """C1/Q70: real CLI, parent authority, registry, handler and child stages; provider IO only."""
+    import fa.cli as cli_module
     from fa.cli import _cmd_run, build_parser
     from fa.inner_loop.global_history import GlobalHistoryStore, default_global_history_path
     from fa.inner_loop.session_db import SessionDatabase
-    from fa.session.manager import SessionManager
+    from tests.test_cli import _install_test_managed_cli_dependencies
 
-    state = tmp_path / "state"
+    home = tmp_path / "home"
+    state = home / ".fa"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
     monkeypatch.setenv("FA_STATE_ROOT", str(state))
     monkeypatch.delenv("FA_EGRESS_PROXY_URL", raising=False)
     monkeypatch.delenv("FA_PROXY_TOKEN_FILE", raising=False)
-    source = tmp_path / "source"
-    source.mkdir()
-    (source / "README.md").write_text("review this note")
-    manager = SessionManager(state_root=state, workspace_root=tmp_path / "workspaces", source_workspace=source)
-    session = manager.create_or_attach_session(session_id=None, workspace_override=None)
+    workspace_root = tmp_path / "workspaces"
+    workspace = workspace_root / "review"
+    workspace.mkdir(parents=True)
+    (workspace / "README.md").write_text("review this note")
+    _install_test_managed_cli_dependencies(monkeypatch, home=home, workspace_root=workspace_root)
+    manager = cli_module._session_manager_for_args(argparse.Namespace(workspace=workspace))
+    session = manager.create_or_attach_session(session_id=None, workspace_override=workspace)
     parent = manager.begin_run(session, requested_run_id="ct95-parent")
     db = SessionDatabase.open_existing(session.session_db_path, session_id=session.session_id)
     config = session.workspace_path / "models.yaml"
     config.write_text("".join(_ROLE_YAML.format(role=r) for r in ("chat", "planner", "coder", "eval")))
+
+    class _FixtureParentStageLease:
+        """Test-only handoff lease; it models ownership, not managed view IO."""
+
+        is_handoff_enabled = True
+        project_tool_executor: Any | None = None
+        plan_ref: Any | None = None
+
+        def __init__(self, managed: Any) -> None:
+            self.managed = managed
+            self.active = True
+
+        def suspend(self, *, deadline: float | None = None) -> str:
+            del deadline
+            assert self.active
+            self.active = False
+            return self.managed.current_revision_id
+
+        def resume(self, *, deadline: float | None = None) -> None:
+            del deadline
+            assert not self.active
+            self.active = True
+
+    def drive_test_stage(**kwargs: Any) -> tuple[Any, bool]:
+        parent_lease = None
+        if kwargs["run_id"] == parent.run_id and kwargs["role"] == "chat" and roles not in {None, "coder"}:
+            managed = kwargs["managed"]
+            assert managed is not None
+            parent_lease = _FixtureParentStageLease(managed)
+        registry = kwargs["build_registry"](None, None, parent_lease)
+        return kwargs["drive"](registry), True
+
+    monkeypatch.setattr(cli_module, "_drive_stage_with_managed_workspace", drive_test_stage)
     phases: list[str] = []
     chat_turn = 0
 
