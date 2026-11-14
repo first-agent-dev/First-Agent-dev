@@ -322,11 +322,11 @@ python3_executable_reason = (
 stable_tmpdir_reason = "needs a temp dir that is not an 8.3 short path (C:\\Users\\836D~1\\...)"
 
 # --- Marker constants -----------------------------------------------------
-# Module-level constants rather than custom marks: `--strict-markers` is on and
-# `pyproject.toml` has no `markers` list, so a custom mark would need config
-# and would fail obscurely if misspelled. A constant is plain Python, caught by
-# mypy, and matches the existing house style
-# (tests/test_deploy_scripts.py:177 uses the same pattern).
+# Capability predicates remain module-level constants rather than per-capability
+# custom marks. `pyproject.toml` reserves its strict marker list for suite-level
+# `execution_host`/`live_e2e` selection; these per-test capability reasons stay
+# ordinary `skipif` values, matching the existing house style
+# (tests/test_deploy_scripts.py:177).
 
 requires_posix_shell = pytest.mark.skipif(not has_posix_shell(), reason=posix_shell_reason)
 requires_posix_modes = pytest.mark.skipif(not has_posix_modes(), reason=posix_modes_reason)

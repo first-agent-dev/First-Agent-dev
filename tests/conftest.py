@@ -7,6 +7,8 @@ fixtures").
 
 from __future__ import annotations
 
+import os
+
 import pytest
 
 
@@ -64,3 +66,20 @@ def _isolate_fa_session_log_root(
             monkeypatch.delenv("FA_STATE_ROOT", raising=False)
 
     monkeypatch.setattr(monkeypatch, "setenv", _setenv, raising=False)
+
+
+def pytest_collection_finish(session: pytest.Session) -> None:
+    """Fail closed when a required execution-host run selects no host tests.
+
+    The default pytest expression excludes host-only suites. A caller setting
+    ``FA_REQUIRE_EXECUTION_HOST=1`` must also explicitly select the registered
+    marker; otherwise a misspelled path/filter could look like a green live run.
+    """
+    if os.environ.get("FA_REQUIRE_EXECUTION_HOST") != "1":
+        return
+    if any(item.get_closest_marker("execution_host") is not None for item in session.items):
+        return
+    raise pytest.UsageError(
+        "FA_REQUIRE_EXECUTION_HOST=1 but no execution_host test was selected; "
+        "use `-m execution_host` and verify that the integration suites were collected."
+    )
