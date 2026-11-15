@@ -234,10 +234,12 @@ def _new_c901_markers(
     return _marker_inventory(sources) - Counter(legacy)
 
 
+@pytest.mark.skipif(
+    os.environ.get("GITHUB_ACTIONS", "").lower() == "true" and not os.environ.get("C901_DIFF_BASE"),
+    reason="temporary: re-enable the CI diff scan with the separately authorized workflow update",
+)
 def test_no_new_c901_noqa_in_python_diff() -> None:
     """C0: scan the local/branch diff; CI wiring is temporarily deferred."""
-    if os.environ.get("GITHUB_ACTIONS", "").lower() == "true" and not os.environ.get("C901_DIFF_BASE"):
-        pytest.skip("temporary: re-enable the CI diff scan with the separately authorized workflow update")
     sources = _changed_python_sources(REPO_ROOT)
     unexpected = _new_c901_markers(sources)
     assert not unexpected, (

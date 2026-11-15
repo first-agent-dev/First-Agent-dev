@@ -10479,3 +10479,11 @@ change are recorded below.
 - `git diff --check` — exit **0**.
 - Whitespace scan of the new readiness note — exit **0**. A full-file scan found one trailing-whitespace line in the increment plan at worktree line 2676; the baseline has the same pre-existing line at 2674, outside this diff, so it was left untouched. `git diff --check` confirms no changed line has whitespace errors.
 - No pytest, full `just` gate, mutation run, `fa update`, or host/live test was run for this plan-only change. Evidence and case statuses above remain unchanged.
+
+### E545 — Restore authoring-check compliance for the CI-deferred C901 guard (2026-11-10; local)
+
+The first W3-local verification rerun found that `tests/test_c901_diff_guard.py::test_no_new_c901_noqa_in_python_diff` used an imperative `pytest.skip(...)` when GitHub Actions lacked `C901_DIFF_BASE`. `fa authoring-check` correctly raised `FA-AUTHORING-V4-PYTEST-SKIP` as a hard block. Replaced that call with `@pytest.mark.skipif(...)` using the identical condition and reason. The local diff test remains active; a full-base C901 scan remains active when `C901_DIFF_BASE` is present. No GitHub workflow, authorization boundary, or C901 policy changed.
+
+**Verification.** The affected `tests/test_c901_diff_guard.py`, `tests/test_authoring_rules_tests.py`, and `tests/test_s12_marker_hygiene.py` suites pass **62 tests**. `fa authoring-check` reports **0 diagnostics**; Pyrefly reports **0 errors**; Ruff check/format and `git diff --check` pass. With `GITHUB_ACTIONS=true` and the branch-base SHA `9ba095dba7ea862fcbac3371e552e49ae4cb7533`, the C901 diff test passes (**1 passed**). With `GITHUB_ACTIONS=true` and no base SHA, it produces the intended **1 skipped** result; that skip is not a PASS. Separate focused composition/marker/preflight/artifact tests reported **127 passed**, and `check_execution_e2e_coverage.py` reported mapping integrity OK.
+
+**Boundary.** This corrects one local authoring-check finding only. STEP7 independent review is not performed; STEP8 fixtures are not started; STEP9/W3 remain open. No Docker/cgroup host preflight, clean-readiness completion, `fa update`, W4 suite, live PASS, full `just` gate, or Q139 run is claimed. I01/I03 case results remain `NOT RUN`.
