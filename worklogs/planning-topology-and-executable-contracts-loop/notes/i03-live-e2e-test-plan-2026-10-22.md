@@ -7,6 +7,8 @@ case contracts, fixtures, driver and negative-control sensitivity must be author
 locally in W3 before deployment. W4 executes that frozen package only; it does not develop it on the host.
 Dates this plan: 2026-10-22, after E265 (SLICE2 STEP4 part B-1); wave boundaries corrected 2026-11-03 and 2026-11-10.
 
+**Operator execution policy (E544, 2026-11-10).** Arena is for high-ROI development checks on changed seams; integrated system acceptance belongs to the user's approved host after the MVP reaches `main` and the single reviewed `fa update`. W3 still prepares/reviews the suite, production-caller oracles, local acceptance tests, fixtures, and safety controls needed for that host run. A repository-wide green `just test`/`just check`/`just check-deep`, full 18-path mutation sweep, installed-controller wheel build, ShellCheck-only cases, and configured-scope Q139 are best-effort, not MVP-merge/predeploy gates; do not build another runner or Arena workaround to force them. Keep exact failures, skips, deferrals, timeouts and absent evidence visible; none is PASS. W4's approved-host deployment, frozen-image system suite, required live-row verdicts, cleanup and independent review remain required host evidence. This policy changes effort/timing, not the evidence standard or deploy safety controls.
+
 **Current acceptance-scope ruling (2026-10-23):** final I03 acceptance requires live-host E2E for all
 changes in I01–I03 of this project. The I03 inventory has 27 surfaces/8 joins; Q88 selected explicit
 I01-origin IDs and the package now maps all 42 I01 CTs plus seven in-scope deferred obligations to
@@ -84,7 +86,7 @@ proxies the project already paid for once (E259: duplicated producers masking ea
 | Phase | W3 preparation (Arena-local only) | W4 host deployment + live execution | Dependency / rows |
 | :--- | :--- | :--- | :--- |
 | **P0 harness** | implement markers, preflight, fixture contracts, external driver, evidence sink and cleanup checks; unit-test simulated host-present and missing-host refusal paths | require the actual approved host/image preflight before any case; missing opt-in or prerequisites fail | none |
-| **P1 images/entry** | build/test the installed wheel and entrypoint contract locally; freeze image build inputs and expected identity | perform the one approved `fa update`, verify source SHA/image digest/config/health/smoke, then freeze the running image; verify isolated entry, profile rendering and PTY deadlines | LIVE-01, 02, 05, 15, 16 |
+| **P1 images/entry** | where the existing Arena toolchain makes it straightforward, test the installed wheel/entrypoint contract as a high-ROI best-effort check; freeze image build inputs and expected identity, recording any unrun/failed local check honestly | perform the one approved `fa update`, verify source SHA/image digest/config/health/smoke, then freeze the running image; verify isolated entry, profile rendering and PTY deadlines | LIVE-01, 02, 05, 15, 16 |
 | **P2 backend/cell** | test create/start/attach/RUN, one-shot+interactive semantics, cancel/force-stop and no-replay using local deterministic backends and mutation/fault controls | prove behavior against the approved Docker daemon, cgroups and real cells | LIVE-10, 11, 12, 13, 18 |
 | **P3 authority/views** | test registration, R0, pinned readers, rooted IO and same-view read-your-writes against the real local authority/UDS | verify actual deployed filesystem, mount and kernel behavior | LIVE-03, 14, 17 |
 | **P4 tools through the real port** | complete caller tests for E264/E265 on admitted views; local composition only, not stub-only | verify the same tool behavior in approved deployed cells | joins S02, S05, S07 |
@@ -269,17 +271,15 @@ directory; reopen the DB before comparing so the test proves durable state rathe
 ## 7. What this plan deliberately does not do
 
 - It does not promote any row, invent a verdict, or claim that unit proof transfers to the host.
-- It does not authorize the W4 host build/deploy until all Arena-local W0–W3 gates, tests,
-  sensitivity checks, independent review and runbook preparation close. W3 has no host-deployment
-  prerequisite; W4 is the only wave for approved-host deployment and live-test/evidence acceptance.
+- It does not authorize the W4 host build/deploy until the core Arena-local W0–W3 implementation, package/suite contracts, required targeted checks, independent review and runbook preparation close under E544. Broad green-baseline checks and full mutation sweeps remain best-effort and do not block MVP merge or test deployment. W3 has no host-deployment prerequisite; W4 is the only wave for approved-host deployment and live-test/evidence acceptance.
 - It does not add a second harness: use `pytest`, the registered markers and this in-repo external
   driver. The complete harness/fixture/test package must be reviewable and dry-run locally before W3
   closes; the approved-host image build/deploy starts W4.
 
 ## 8. W4 image-build/deploy prerequisite (frozen runbook requirement)
 
-After all Arena-local W0–W3 gates and independent review pass, W4's deployment run sheet invokes this
-approved build/deploy command on the user's Linux/Docker host:
+After the core Arena-local W0–W3 package/safety/review prerequisites pass, W4's deployment run sheet invokes this
+approved build/deploy command on the user's Linux/Docker host. Best-effort full-suite, ShellCheck, wheel, and mutation-baseline results may remain red/unrun and must be recorded; they are not deployment blockers under E544:
 
 ```sh
 AUTO_STASH=0 SKIP_TESTS=1 SKIP_UV_SYNC=1 PRUNE=0 fa update

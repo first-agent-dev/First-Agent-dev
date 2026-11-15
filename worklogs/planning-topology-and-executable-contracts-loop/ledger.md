@@ -10419,3 +10419,63 @@ CI deferral, not a permanent removal of the guard.
 history plus the PR-base/push-before environment and remove the temporary CI
 skip. Until then, no commit in this delivery should modify `.github/workflows/`;
 the existing Gitleaks workflow and CI-only policy stay as they are on remote.
+
+### E544 — Operator policy: high-ROI Arena checks, integrated host acceptance (2026-11-10; plan-only)
+
+**Decision.** Develop in Arena and run high-ROI checks on changed production
+seams. Focused caller/contract tests and targeted producer/EDGE kill proofs
+remain appropriate when practical; do not spend days on low-ROI baseline
+retries, environment shims, or a separate runner. Full repository-wide
+`just test`, `just check`, and `just check-deep`, the full 18-path mutation
+sweep, local installed-controller wheel build, ShellCheck-only cases, and the
+configured-scope Q139 baseline are best-effort, not prerequisites for MVP
+feature work, merge to `main`, the personal test deployment, or I03 close.
+Do not weaken configured checks or describe red, skipped, deferred, timed-out,
+or unrun work as PASS.
+
+The MVP must reach `main` before the integrated personal test deployment. The
+full system acceptance remains on the user's approved host through the planned
+single `AUTO_STASH=0 SKIP_TESTS=1 SKIP_UV_SYNC=1 PRUNE=0 fa update`, followed
+by independent source/image/config/health/CLI-smoke verification, image freeze,
+and the reviewed W4 host suite. The actual clean-readiness path and all required
+I01–I03 live rows remain host-stage evidence; local collection, simulated
+preflight, and Arena tests do not establish those results. Existing host safety,
+rollback, cleanup, frozen-image, and no-unreviewed-test-code controls are
+unchanged. Local wheel-build checks are best-effort, but any wheel/package
+identity required by the reviewed W4 suite must still be verified in that host
+suite.
+
+Q139 is best-effort after W4 suite/evidence capture. If worthwhile and the
+existing environment can complete it, preserve exact selection, tool versions,
+counters, `killed / (total − type_invalid − no_tests)` denominator, and
+actionable-status disposition. If it is unrun or infrastructure-failed, keep
+Q139 `DEFERRED`/unmeasured and make no full-scope mutation-coverage claim; this
+does not block MVP deployment or I03 close. This amends only the blocking/timing
+effect of E531, not the technical evidence standard.
+
+**Evidence and status boundary.** Q136 remains OPEN with its recorded Pylint
+exit 8/R0801/R0401 findings; no waiver or Pylint PASS is implied. Q137 remains
+OPEN. The latest full `just check` record cited in the readiness note is E540,
+exit 8 (7,796 passed, 18 skipped, 8 deselected, 3 xfailed; 86.80% coverage,
+with the recorded Pylint and coverage-floor failures); E541's 54 targeted
+passes do not close it. The configured-scope Q139 attempt ended in SIGKILL /
+infrastructure failure and leaves `src/fa/execution` unmeasured. The readiness
+note records 12 ShellCheck-only skips (tool absent), 8 host nodes collected but
+not executed, I01 **3/3 NOT RUN**, and I03 **35/35 NOT RUN** (27 surfaces + 8
+joins). No `fa update`, approved-host readiness, or live suite was run for this
+policy amendment; none of those statuses changes.
+
+**Applied (documents only).** Reconciled the active STEP9/STEP10 and W3/W4
+requirements in `increments/increment-03-execution-workspace-foundation.md`,
+`notes/i03-live-e2e-test-plan-2026-10-22.md`, and
+`notes/i03-predeployment-and-live-e2e-readiness-2026-11-10.md`; clarified the
+Q136/Q137/Q152 dispositions in `notes/open-questions-2026-10-07.md`. No source
+code or test files were changed. Verification results for this documentation
+change are recorded below.
+
+**Verification (documentation only).**
+
+- `uv run --frozen python scripts/check_doc_links.py` — exit **0**; 362 Markdown files checked, no broken internal links.
+- `git diff --check` — exit **0**.
+- Whitespace scan of the new readiness note — exit **0**. A full-file scan found one trailing-whitespace line in the increment plan at worktree line 2676; the baseline has the same pre-existing line at 2674, outside this diff, so it was left untouched. `git diff --check` confirms no changed line has whitespace errors.
+- No pytest, full `just` gate, mutation run, `fa update`, or host/live test was run for this plan-only change. Evidence and case statuses above remain unchanged.

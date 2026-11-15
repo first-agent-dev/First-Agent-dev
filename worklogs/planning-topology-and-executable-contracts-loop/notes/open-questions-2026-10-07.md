@@ -3051,7 +3051,7 @@ Q135 remains BLOCKING overall. F2–F4 and every dependent production cutover st
 
 ## Q136 — How should the independent project Pylint gate findings be resolved?
 
-**Status: BLOCKING for the project Pylint gate; independent of Q135/F1.** The configured gate is `pylint src/fa` (`justfile::_lint`), with only R0801 duplicate-code and R0401 cyclic-import enabled. This entry records a workspace gate failure, not a finding that the F1 batch change caused it.
+**Status: OPEN — the project Pylint gate remains red; not a predeploy blocker under E544.** This is independent of Q135/F1. The configured gate is `pylint src/fa` (`justfile::_lint`), with only R0801 duplicate-code and R0401 cyclic-import enabled. This entry records a workspace gate failure, not a finding that the F1 batch change caused it.
 
 **Evidence.** `./.venv/bin/pylint src/fa` exited **8** (rating 9.99/10): two R0801 pairs and 17 R0401 import cycles. The duplicate pairs are the similar `rebind` validation in `execution/client.py` vs `execution/tool_port.py`, and exception/error mapping in `execution/backend.py` vs `execution/termination.py`. The reported cycles include `execution.composition -> execution.types -> session.manager -> execution.composition`, the broader composition/service/workspace/termination graph, and `memory.managed_discovery -> memory.search_index` (the latter imports `MAX_SEARCH_FILE_BYTES` while `search_index` locally imports managed-discovery helpers). These source files were already modified/untracked outside the F1 slice. The changed `src/fa/inner_loop/loop.py` alone passes Pylint at **10.00/10**, exit 0. Project policy explicitly excludes `tests/` from Pylint; the related pytest suites passed 68 tests. Pylint's graph findings do not alone prove a runtime import failure, and the two R0801 pairs may encode intentionally distinct contracts.
 
@@ -3064,13 +3064,15 @@ Q135 remains BLOCKING overall. F2–F4 and every dependent production cutover st
 - **C — Defer to a dedicated execution/managed-discovery review.** Make no unrelated source edits now, retain the failing gate as BLOCKING, and do not claim `just lint`/Pylint PASS until the owners and cycle policy are resolved.
 - **D — Other.** Specify exact module owners, allowed dependency direction, caller-level oracle, and waiver policy before code changes.
 
-No code, tests, or increment were changed for Q136. Do not treat the 68 targeted test passes or the F1-only Pylint pass as closure of this independent gate.
+No code, tests, or increment were changed for Q136. Do not treat the 68 targeted test passes or the F1-only Pylint pass as closure of this independent gate. Under E544, keep the R0801/R0401 findings visible and fix them only when a source-grounded, high-ROI change is available; neither a waiver nor a Pylint PASS is implied. They do not block the personal test deployment.
 
 ## Q137 — Full pytest/Pyrefly gate findings and baseline disposition (2026-10-30)
 
-**Status: BLOCKING.** W0 remains closed; W1 implementation remains paused. Operator selected **A — strict gate closure, best effort**. The original 88-failure/11-error gate and intermediate Pyrefly counts are historical; the latest immutable full `just test` before subsequent refactors was 37 failed / 7252 passed / 18 skipped / 4 xfailed / 11 errors (exit 1), not a test of the current source snapshot. Prior full Pyrefly reported 0 errors, and prior full mypy 3 errors in 3 files; neither full check has been rerun after the latest refactors. See [working inventory](q137-working-entry-inventory-2026-11-09.md) for exact IDs, fixes, targeted evidence and limitations, and [full gate triage](q137-full-gate-triage-2026-10-30.md) for earlier history. Live-host acceptance and managed-provisioner/readiness failures remain open; no direct-review deferral is acceptance.
+**Status: OPEN — full-gate findings remain; not a prerequisite for MVP test deployment (E544).** W0 remains closed; the W1-pause statement below is historical. The prior operator selection **A — strict gate closure, best effort** remains the quality goal, but E544 supersedes its use as a hard W3/predeployment gate. The original 88-failure/11-error gate and intermediate Pyrefly counts are historical; the latest immutable full `just test` before subsequent refactors was 37 failed / 7252 passed / 18 skipped / 4 xfailed / 11 errors (exit 1), not a test of the current source snapshot. Prior full Pyrefly reported 0 errors, and prior full mypy 3 errors in 3 files; neither full check has been rerun after the latest refactors. See [working inventory](q137-working-entry-inventory-2026-11-09.md) for exact IDs, fixes, targeted evidence and limitations, and [full gate triage](q137-full-gate-triage-2026-10-30.md) for earlier history. Live-host acceptance and managed-provisioner/readiness failures remain open; no direct-review deferral is acceptance.
 
-**Impact.** The required gates are red, so W1 cannot be advanced or called ready. Current failure groups include managed-provisioner/profile preconditions, static/contract drift, assertions, test-only Pyrefly diagnostics, and the separate baseline TLS failure. Fail-closed behavior must be preserved; no fallback, blanket waiver, suppression, or weakened test is authorized by this evidence.
+**Impact (historical strict-gate framing).** The recorded gates were red; the listed findings remain unresolved unless later evidence says otherwise. Current failure groups include managed-provisioner/profile preconditions, static/contract drift, assertions, test-only Pyrefly diagnostics, and the separate baseline TLS failure. Fail-closed behavior must be preserved; no fallback, blanket waiver, suppression, or weakened test is authorized by this evidence.
+
+**Current operational disposition (E544, 2026-11-10).** A repository-wide green baseline is not required before authoring/running feature acceptance tests, merging the MVP to `main`, or making the planned personal test deployment. Run high-ROI checks on changed seams and record their real result; do not spend days building environment shims or a second runner. Full `just test`/`just check`/`just check-deep` remain diagnostics and may stay red or unrun; targeted findings remain visible and are fixed when their source-grounded value justifies the work. Host-dependent checks run during the later `fa update` + E2E stage. No failed, skipped, deferred, or unrun check becomes PASS.
 
 **Options.**
 
@@ -3079,6 +3081,8 @@ No code, tests, or increment were changed for Q136. Do not treat the 68 targeted
 - **C — Other.** Specify the exact baseline/environment findings to disposition and the acceptance rule; current-only failures remain blocking unless separately resolved or explicitly dispositioned.
 
 Q135 F2–F4 and Q136 Pylint are unaffected and remain independent. No W1 implementation was advanced by this triage record.
+
+**E544 scope clarification (2026-11-10).** Options A–C above preserve the earlier strict-gate triage; they do not make a repository-wide green baseline a prerequisite for MVP development, merge to `main`, personal `fa update` test deployment, or I03 close. Q137 remains OPEN, and its existing red/partial evidence stays red/partial; only high-ROI, source-grounded repairs are taken up on Arena. The actual clean-readiness and integrated system acceptance remain W4 host evidence and are not reported PASS until observed.
 
 ---
 
@@ -3471,7 +3475,7 @@ and `test_q106_large_reach_parity_remains_open`) carry `deferred to W4` explicit
 
 ---
 
-## Summary index of Q140–Q152 resolutions recorded in notes / ledger (through `E531`)
+## Summary index of Q140–Q152 resolutions recorded in notes / ledger (E531 snapshot; Q152 current policy refined by E544)
 
 - **Q140** (`notes/q140-r24-purpose-decision-2026-11-11.md`): **RESOLVED = B** (managed verify runs
   through `ManagedVerifyCommandExecutor` / pinned READ view + private `/scratch` — no write access
@@ -3496,8 +3500,7 @@ and `test_q106_large_reach_parity_remains_open`) carry `deferred to W4` explicit
   `admission.json` `schema_version = 2`; unmanaged/top-level callers retain v1).
 - **Q151** (E521): **RESOLVED = A** (`Incomplete` / `COLLISION` rules in `managed_acquisition`
   and `ACQUISITION_SYSTEM_PROMPT`).
-- **Q152** (E531): **RESOLVED = B** (defer full configured-scope Q139 baseline until after
-  W4 suite execution/evidence capture; retain it as a required gate before final I03 sign-off).
+- **Q152** (E531): **RESOLVED = B** (historically deferred full configured-scope Q139 until after W4 suite/evidence capture and retained a sign-off gate); **E544 supersedes that mandatory effect**: the run is best-effort, and if unrun/infra-failed it remains `DEFERRED`/unmeasured without blocking MVP merge, test deployment, or I03 close.
 
 ## Q152 — When and how must the configured-scope Q139 baseline run?
 
@@ -3569,6 +3572,18 @@ record its exact selection, tool versions, complete counts, and Q139's
 the full configured-scope baseline. Infrastructure failure or any unreviewed
 actionable mutant status keeps I03 open. If remediation changes source or the
 candidate image, affected W3/W4 evidence must be rerun against the new candidate.
+
+### Operator policy refinement — E544 (2026-11-10)
+
+E544 supersedes the hard-gate/mandatory-closeout effect of this historical
+resolution for the personal MVP test deployment. If resource and time make it
+worthwhile, attempt the configured-scope run after W4 live-suite capture using
+the existing command above; no custom runner or Arena workaround is approved.
+If it is not run or it fails from infrastructure limits, keep Q139
+`DEFERRED`/unmeasured and make no full-scope mutation-coverage claim, but do not
+block continued development, MVP merge, the test deployment, or I03 close on that basis. Any run that
+does complete still requires exact selection, counters, denominator, and honest
+actionable-status disposition.
 
 ---
 
