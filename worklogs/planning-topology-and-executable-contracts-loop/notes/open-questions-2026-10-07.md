@@ -3471,7 +3471,7 @@ and `test_q106_large_reach_parity_remains_open`) carry `deferred to W4` explicit
 
 ---
 
-## Summary index of Q140–Q151 resolutions recorded in separate notes / ledger (through `014c012`)
+## Summary index of Q140–Q152 resolutions recorded in notes / ledger (through `E531`)
 
 - **Q140** (`notes/q140-r24-purpose-decision-2026-11-11.md`): **RESOLVED = B** (managed verify runs
   through `ManagedVerifyCommandExecutor` / pinned READ view + private `/scratch` — no write access
@@ -3496,3 +3496,225 @@ and `test_q106_large_reach_parity_remains_open`) carry `deferred to W4` explicit
   `admission.json` `schema_version = 2`; unmanaged/top-level callers retain v1).
 - **Q151** (E521): **RESOLVED = A** (`Incomplete` / `COLLISION` rules in `managed_acquisition`
   and `ACQUISITION_SYSTEM_PROMPT`).
+- **Q152** (E531): **RESOLVED = B** (defer full configured-scope Q139 baseline until after
+  W4 suite execution/evidence capture; retain it as a required gate before final I03 sign-off).
+
+## Q152 — When and how must the configured-scope Q139 baseline run?
+
+**Status: RESOLVED — operator selected B on 2026-11-10; the explicit sequencing amendment is recorded in E531.**
+
+### Source-grounded conflict
+
+- I03 STEP9 item 4 requires Q139 mutation calibration before the W3 host update.
+  E530 orders STEP9 → STEP9A → STEP9B → new local slice DoDs → STEP10/W3 host
+  update → W4 live E2E/evidence review.
+- E512 says the configured-scope Q139 baseline is deferred until "after the
+  post-e2e work" because the prior run ended in SIGKILL. If that means after W4,
+  the deferral conflicts with both STEP9's pre-W3 exit and E530's deployment order.
+- The STEP9 text names `just mutmut-check` / `run_targeted_mutmut.py`, but the
+  current `justfile` has no `mutmut-check` recipe. `run_targeted_mutmut.py`
+  mutates only changed production files. The source-supported full configured-scope
+  entry point is `scripts/run_slice_mutmut.py --configured-scope`.
+- The recorded Q139 and E512 decisions are dated 2026-11-11, one day after the
+  current date recorded for this work (2026-11-10). Their effective status and the
+  intended post-E2E boundary therefore require confirmation, not inference.
+- The configured-scope attempt is recorded as an infrastructure failure
+  (`mutants/scope-baseline.json`); `src/fa/execution` remains unmeasured. No
+  mutation-coverage claim can be inferred from that failure.
+
+### Options
+
+- **A — preserve the current STEP9/W3 gate (senior recommendation).** Confirm or
+  re-authorize the full configured-scope baseline before W3, using a runner with
+  enough memory to complete it. Record the exact command, selection, and
+  `killed / (total − type_invalid − no_tests)` denominator; do not reuse the
+  failed run as evidence. Correct the stale STEP9 command reference and the
+  deferral record only after approval.
+- **B — preserve the post-E2E deferral.** Confirm that E512 is effective and
+  authorize an explicit amendment to the STEP9/E530 dependency order. Until that
+  amendment exists, STEP9 cannot close and no W3 host update is permitted; this
+  does not silently waive Q139.
+- **C — approve a different bounded Q139 criterion.** Specify the exact source
+  scope, selection, denominator, and permitted claims. Partial measurements must
+  not be described as a full configured-scope baseline.
+- **D — other, with explicit scope and sequencing.**
+
+**Recommendation (before the operator reply).** Choose A if the existing W3
+safety gate is to remain intact. The current runner's SIGKILL is not a reason to
+mark the gate green or to retry unchanged; obtain adequate execution capacity
+first. This recommendation was superseded by the operator's explicit choice of B.
+
+### Resolution — operator selected B (2026-11-10; E531)
+
+The operator confirmed E512's post-E2E deferral and authorized an explicit
+STEP9/E530 schedule amendment. In this I03 schedule, "post-E2E" means after the
+reviewed W4 suite has executed and its live evidence is captured, but before the
+final independent evidence review and I03 closure.
+
+STEP9's pre-W3 exit may record the configured-scope Q139 baseline as
+`DEFERRED` (never `PASS`) once every other STEP9 criterion is met. STEP9A and
+STEP9B remain gated on STEP9. The full configured-scope run remains mandatory
+before I03 closure; until it completes, no full-scope mutation-coverage claim
+is allowed for `src/fa/execution`. E531 records the amended order and the
+fail-closed treatment of an incomplete/actionable run.
+
+The operator's direct 2026-11-10 selection confirms E512's intent despite the
+source record's later-dated heading; historical dates are not rewritten.
+
+**Amended closeout rule:** after W4 execution/evidence capture, run
+`uv run --frozen python scripts/run_slice_mutmut.py --configured-scope` and
+record its exact selection, tool versions, complete counts, and Q139's
+`killed / (total − type_invalid − no_tests)` denominator. Do not substitute
+`run_targeted_mutmut.py` or `just check-deep`; those are changed-path checks, not
+the full configured-scope baseline. Infrastructure failure or any unreviewed
+actionable mutant status keeps I03 open. If remediation changes source or the
+candidate image, affected W3/W4 evidence must be rerun against the new candidate.
+
+---
+
+## Q153 — Which Python-selection contract must clean workspace bootstrap use?
+
+**Status: POLICY DECIDED — keep `requires-python >=3.13` with no interpreter pin; W3 / Q137 readiness acceptance remains OPEN.** This is separate from Q136's Pylint findings and from Q97's approved execution-profile memory check. Q139 remains deferred by Q152/E531 and is not part of this question.
+
+### Source-grounded current behavior
+
+- `pyproject.toml` and `uv.lock` both accept `requires-python >=3.13`; there is
+  no repository `.python-version`. The current lock has resolution markers for
+  Python `>=3.15`.
+- `src/fa/workspace_bootstrap.py::_UV_SYNC_ARGV` invokes
+  `uv sync --locked --extra dev` without `--python`. `_command_environment`
+  removes inherited `VIRTUAL_ENV`, `CONDA_PREFIX`, `UV_PROJECT_ENVIRONMENT`,
+  `UV_PYTHON`, and `PYTHONHOME`, then pins only
+  `UV_PROJECT_ENVIRONMENT=<target-workspace>/.venv`.
+- `_ensure_locked` skips the sync only when the target already has a valid
+  environment and passes `_fast_ready`; a fresh target proceeds to real `uv
+  sync`. `_run_process` converts nonzero sync into `sync_failed`; CLI returns
+  `degraded_environment` / exit 75, and readiness is not published.
+- `tests/test_workspace_readiness_integration.py` copies the checkout while
+  excluding `.venv`, creates a fresh managed clone, and demands `ready_repaired`
+  before doing the commit/push portion. It launches `scripts/bootstrap/workspace.py`
+  with `sys.executable`, but never forwards that executable as `uv sync --python`;
+  this is a fresh-provisioning test, not reuse of the repository virtualenv.
+- The system PATH Python is 3.11.2; the repository `.venv` and the externally
+  built Arena prefix provide CPython 3.13.16. Prior captured diagnostics (not
+  reproduced in E534) report uv selecting CPython 3.15.2 under `>=3.13` and
+  failing the GitHub-release download with `invalid peer certificate:
+  UnknownIssuer`; separate `UV_NATIVE_TLS` / `UV_SYSTEM_CERTS` runs were also
+  reported as `sync_failed`.
+- E534 reran the exact clean-copy readiness node with the 3.13.16 venv/prefix
+  exposed on `PATH`. The target began without `.venv`; after `uv sync`, the
+  target `.venv/bin/python` reported **3.13**. Bootstrap then failed at
+  `pre-commit install-hooks` (`precommit_prewarm_failed`, child rc 3 / outer
+  exit 75). Follow-up showed the custom CPython's default CA paths point to a
+  temporary build prefix: Python initially could not validate GitHub, but
+  `SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt` made the GitHub request
+  succeed and allowed pre-commit to clone the hook repos and install Python/npm
+  environments. Pre-commit then failed while preparing the Gitleaks Go hook:
+  `pre_commit.languages.golang` attempted `https://go.dev/dl/?mode=json`, whose
+  host is outside this runner's allowed outbound-host set; the traceback ends
+  in `URLError: [SSL: UNEXPECTED_EOF_WHILE_READING]`. No system Go executable is
+  installed. The exact clean-copy node was retried with the system CA bundle and
+  still returned `precommit_prewarm_failed`; it did not reach `ready_repaired`,
+  commit, or local publication. No TLS verification was disabled. No native
+  Python 3.15 runtime was available, so the full >=3.15 checker/test matrix is
+  not yet verified.
+- The post-correction full `just check` rerun took 25:59 and remains RED: 7,794
+  passed, 1 failed, 18 skipped, 7 deselected, 3 xfailed (86.78%). The one pytest
+  failure is this readiness node; the separate lint failure is Pylint R0801 /
+  R0401 (exit 8). Lock, Ruff/format, deptry, mypy, Pyrefly, authoring-check,
+  contracts, and shell syntax passed. Twelve ShellCheck tests skipped because
+  ShellCheck is absent; six runtime-server-extra tests are deferred. See ledger
+  E534 for full command environment and exact gate evidence.
+- Operator clarification (E535): Arena-only CA/egress limits are not product
+  findings and must not drive project workarounds. Preserve the strict clean-copy
+  oracle; Q137 remains pending target-host `ready_repaired` evidence and is not
+  waived or marked PASS. The Arena runner has no Docker CLI, so target Docker
+  behavior remains unverified here.
+
+### Why this is not a newly reopened test
+
+The exact nodeid was already marked `OPEN` in
+`notes/q137-working-entry-inventory-2026-11-09.md`; E534's rerun does not reopen
+or newly introduce it. E534 changes the test's evidence surface (explicitly
+asserting an absent source/target `.venv`, probing the resulting target Python,
+and including a bounded structured log tail on failure) and updates `just
+doctor` to honor the open Python floor. It does not change
+`workspace_bootstrap.py`, `pyproject.toml`, `uv.lock`, or
+`scripts/bootstrap/workspace.py`. Git history for those paths is grafted at the
+imported base commit, so the exact older change that introduced the hermetic
+environment cannot be reconstructed from this checkout. Existing source and
+unit tests establish that the pop-and-target-environment behavior is
+intentional and load-bearing; do not remove it incidentally.
+
+The historical ledger separates two different outcomes; neither is a readiness
+PASS. In E351, this same readiness integration was reported as
+`precommit_prewarm_failed`. In the implementation, pre-commit is invoked only
+after `uv sync` exits successfully, so that run proves the sync stage succeeded
+and the later hook stage failed; the readiness integration as a whole still
+failed. Its recorded invocation exposed
+`PATH=.venv/bin:$BUILD_ROOT/prefix/bin:$PATH` and `UV_SYSTEM_CERTS=true`.
+Later ledger entries report `sync_failed` even on a stashed clean tree. The most
+plausible source-grounded explanation for the stage difference is that the
+E351 runner could expose a compatible built CPython through `PATH`; its recorded
+`$BUILD_ROOT/prefix/bin` is where the environment builder puts that interpreter.
+The exact interpreter selected in E351 was not logged, so that part remains an
+inference, not a fact. In the separate captured `sync_failed` diagnostics, uv
+selected CPython 3.15.2 under `>=3.13` and then failed to download it; the latest
+focused run does not preserve fresh uv stderr, so do not assume 3.15.2 was
+selected again on that exact run.
+
+`tests/test_workspace_readiness_integration.py` starts from a copied checkout
+that excludes `.venv`, then requires `ready_repaired` before commit/publication.
+That is materially different from ordinary repo commands under an already-built
+`.venv` (CPython 3.13.16). `scripts/arena-env-build.sh` has a separate, explicit
+contract: it validates/builds exactly CPython 3.13.16 and runs root-project
+`uv sync --frozen --extra dev --python "$PYTHON"` with
+`UV_SYSTEM_CERTS=true`. E398 records that command succeeding for the root
+`.venv`; E351's separate clean-target run proves its `uv sync` stage succeeded
+before failing later at pre-commit, with the external toolchain prefix on PATH.
+Neither run proves end-to-end `ready_repaired`. A search of the tracked ledger
+entries for the exact readiness nodeid found no recorded overall PASS; it found
+earlier failures at both the later pre-commit stage and the current sync stage.
+
+### Decision criteria and options
+
+| Option | Contract change? | Preserves fresh-workspace proof? | Can pass in the current runner as observed? | Gate effect |
+| --- | --- | --- | --- | --- |
+| **A. Keep the open `>=3.13` policy and environment isolation; run on a runner where uv can discover an installed compatible Python or reach its trusted download source.** | No product-policy change; runner/toolchain requirement only. | Yes: the target remains a clean, separately provisioned workspace `.venv`. | System PATH alone is insufficient; with the 3.13.16 builder interpreter on PATH, target `uv sync` succeeded, but readiness still fails at pre-commit because fetching GitHub hook repos ends in an SSL EOF. | Can satisfy Q137 only after a successful exact test run on the declared runner; no skip or xfail. |
+| **B. Pin the supported bootstrap Python minor/release in project policy, and align bootstrap/lock/CI/Docker/update paths.** | Yes: narrows or otherwise changes the effective Python selection contract; requires owner approval and compatibility evidence. | Yes, if the test uses the same explicit selection and still creates the target `.venv`. | Only if that interpreter is available locally or its download is trusted; pinning alone does not fix TLS. | Can satisfy Q137 only after the real clean-workspace test and the aligned gates pass. |
+| **C. Select the bootstrap process's interpreter explicitly while still creating a separate target `.venv`.** | Yes: defines whether the caller runtime is authoritative; must specify behavior when it does not satisfy `requires-python`. | Potentially; must prove target isolation and incompatible-runtime refusal with tests before adoption. | Possibly, but not established by current evidence; the current runtime is the repository `.venv`, not a system installation recognized by uv. | Not a fix until the contract is approved and C0/C1 tests plus producer/EDGE mutation checks pass. |
+| **D. Defer as an environment blocker, keeping Q137 red; do not skip/xfail or claim readiness.** | No runtime change, no acceptance waiver. | The oracle stays intact. | Yes, operationally, but the test remains failing. | W3 cannot close on this evidence. |
+
+### Required selection criteria
+
+1. Preserve the invariant that bootstrap modifies only the target workspace's
+   `.venv`; never allow an inherited `VIRTUAL_ENV` or
+   `UV_PROJECT_ENVIRONMENT` to redirect writes into the caller's environment.
+2. Preserve the owner-selected policy: any version in `>=3.13`, without a
+   project interpreter pin. `sys.executable` launches the bootstrap wrapper but
+   does not constrain nested `uv sync`; the test must probe the resulting target
+   `.venv`. Do not infer that `pyrefly`'s `python-version = 3.13` or the Docker
+   image's `python3.13` symlink pins workspace bootstrap; they are separate
+   consumers.
+3. Keep the fresh-clone integration oracle real. A mocked `uv`, copied root
+   `.venv`, skip, or xfail cannot satisfy Q137's strict gate.
+4. Require an actual clean-workspace run with the selected interpreter policy,
+   followed by the existing ready marker, hook, commit, and local publication
+   assertions. Capture the bounded/redacted bootstrap log so a future failure
+   distinguishes interpreter discovery, download/TLS, dependency sync, and
+   pre-commit failures without printing secrets.
+5. Retain fail-closed semantics: nonzero `uv sync` means `sync_failed`, no
+   `ready_repaired` marker, and no commit/push assertions are credited.
+
+### Decision provenance / impact
+
+`notes/remaining-work-c901-and-repairs-2026-11-10.md` §7.6 records the
+product-owner's no-pin selection: retain `requires-python >=3.13`; do not add
+`.python-version`, `UV_PYTHON`, or `--python`; do not regenerate `uv.lock` to
+narrow the range. Treat that policy selection as effective; preserve the source
+date as recorded rather than silently changing its provenance. This answers the
+Python-selection policy only. Q137 remains a strict gate: the fresh-copy test
+must return `ready_repaired` before commit/local publication, and its current
+`precommit_prewarm_failed` result is not waived. No STEP9 closure, host
+readiness, or W3 acceptance is claimed; see E534 in the ledger for the latest
+local verification and boundaries.

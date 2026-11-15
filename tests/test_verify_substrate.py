@@ -13,6 +13,7 @@ import os
 import socket
 import sys
 import threading
+from collections.abc import Callable, Sequence
 from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any, override
@@ -31,7 +32,14 @@ from fa.execution.types import Access, GrantReply, NamespaceRef, Operation, View
 from fa.inner_loop import slice_verification, workflow_controller
 from fa.inner_loop.plan_admission import PlanRef
 from fa.inner_loop.plan_ids import extract_plan_ids
-from fa.inner_loop.slice_verification import SliceVerdict, verify_plan
+from fa.inner_loop.slice_verification import (
+    CommandResult,
+    NodeidCapture,
+    SliceVerdict,
+    VerifyCommandExecutor,
+    verify_plan,
+)
+from fa.inner_loop.tools.workspace_port import WorkspacePort
 from fa.inner_loop.workflow_controller import (
     WorkflowContext,
     _capture_stage_baseline,
@@ -103,7 +111,7 @@ def test_a_managed_run_without_a_non_interactive_read_only_profile_refuses_host_
             pass
 
     host_calls: list[object] = []
-    monkeypatch.setattr(slice_verification, "run_commands", lambda *a, **k: host_calls.append((a, k)) or ())
+    monkeypatch.setattr(slice_verification, "run_commands", _record_host_calls(host_calls))
     plan_ids = extract_plan_ids(_PLAN_TEXT)
     ctx = _ctx(tmp_path, managed=_NoProfile())
     baseline = _capture_stage_baseline(ctx, plan_ids)
@@ -115,10 +123,18 @@ def test_a_managed_run_without_a_non_interactive_read_only_profile_refuses_host_
     assert payload["slices"] == {"SLICE1": {"nodeids": None, "test_paths": ["tests/test_demo_calc.py"]}}
 
 
+def _record_host_calls(host_calls: list[object]) -> Callable[..., tuple[CommandResult, ...]]:
+    def run_commands(*args: Any, **kwargs: Any) -> tuple[CommandResult, ...]:
+        host_calls.append((args, kwargs))
+        return ()
+
+    return run_commands
+
+
 class _Client(ExecutionClient):
     """A real client subclass: the executors prove ``isinstance`` before trusting a pin."""
 
-    def __init__(self, *, grant: Any) -> None:
+    def __init__(self, *, grant: GrantReply) -> None:
         self.grant = grant
         self.pin_calls: list[dict[str, Any]] = []
         self.stop_calls: list[dict[str, Any]] = []
@@ -223,7 +239,7 @@ def test_a_refused_pin_raises_and_capture_stage_baseline_records_error_without_h
             pass
 
     host_calls: list[object] = []
-    monkeypatch.setattr(slice_verification, "run_commands", lambda *a, **k: host_calls.append((a, k)) or ())
+    monkeypatch.setattr(slice_verification, "run_commands", _record_host_calls(host_calls))
     plan_ids = extract_plan_ids(_PLAN_TEXT)
     ctx = _ctx(tmp_path, managed=managed)
     baseline = _capture_stage_baseline(ctx, plan_ids)
@@ -259,11 +275,18 @@ def test_capture_stage_baseline_uses_pinned_substrate_when_managed_and_host_when
 ) -> None:
     """C1 — unmanaged T0 runs with executor=None; managed T0 pins a READ view and stops it."""
     seen: list[tuple[object, object]] = []
-    real = workflow_controller.capture_test_nodeids
+    real = slice_verification.capture_test_nodeids
 
-    def spy(*_args: object, **kwargs: object) -> object:
-        seen.append((kwargs.get("executor"), kwargs.get("port")))
-        return real(*_args, **kwargs)  # type: ignore[arg-type]
+    def spy(
+        test_paths: Sequence[str],
+        *,
+        root: Path,
+        deadline: float | None = None,
+        executor: VerifyCommandExecutor | None = None,
+        port: WorkspacePort | None = None,
+    ) -> NodeidCapture:
+        seen.append((executor, port))
+        return real(test_paths, root=root, deadline=deadline, executor=executor, port=port)
 
     monkeypatch.setattr(workflow_controller, "capture_test_nodeids", spy)
     plan_ids = extract_plan_ids(_PLAN_TEXT)

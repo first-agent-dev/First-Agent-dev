@@ -10,6 +10,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 
 def _write_executable(path: Path, text: str) -> None:
     path.write_text(text, encoding="utf-8")
@@ -211,6 +213,65 @@ def test_just_bootstrap_aliases_converge_and_doctor_is_read_only() -> None:
     assert "uv run" not in doctor
     assert "\n_install-hooks:" not in text
     assert "\n_hooks-status:" not in text
+
+
+@pytest.mark.skipif(os.name == "nt", reason="the just doctor recipe is a Bash preflight")
+@pytest.mark.parametrize(("version", "expected_rc"), [("3.15", 0), ("3.12", 1)])
+def test_just_doctor_enforces_python_floor_without_minor_pin(tmp_path: Path, version: str, expected_rc: int) -> None:
+    """The preflight accepts newer Python minors while retaining the >=3.13 floor."""
+    just = shutil.which("just")
+    if just is None:
+        project_just = Path(__file__).resolve().parents[1] / ".venv" / "bin" / "just"
+        just = str(project_just) if project_just.is_file() else None
+    assert just is not None, "just is required by the workspace check toolchain"
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    shutil.copy2(Path(__file__).resolve().parents[1] / "justfile", repo / "justfile")
+    (repo / "uv.lock").write_text("version = 1", encoding="utf-8")
+    python = repo / ".venv" / "bin" / "python"
+    python.parent.mkdir(parents=True)
+    _write_executable(python, "#!/bin/sh\nexit 0\n")
+
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    (tools / "just").symlink_to(Path(just).resolve())
+    _write_executable(
+        tools / "uv",
+        """#!/bin/sh
+if [ "$1" = "--version" ]; then echo 'uv test'; exit 0; fi
+if [ "$1" = "lock" ] && [ "$2" = "--check" ]; then exit 0; fi
+exit 2
+""",
+    )
+    _write_executable(
+        tools / "python3",
+        """#!/bin/sh
+if [ "$1" = "-c" ]; then echo "$FA_TEST_PYTHON_VERSION"; exit 0; fi
+exit 0
+""",
+    )
+
+    env = os.environ.copy()
+    env.pop("CI", None)
+    env["FA_TEST_PYTHON_VERSION"] = version
+    env["PATH"] = os.pathsep.join((str(tools), "/usr/local/bin", "/usr/bin", "/bin"))
+    result = subprocess.run(
+        [str(Path(just).resolve()), "--justfile", str(repo / "justfile"), "doctor"],
+        cwd=repo,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+
+    assert result.returncode == expected_rc, result.stdout + result.stderr
+    if version == "3.15":
+        assert "python (3.15," in result.stdout
+        assert "doctor: OK" in result.stdout
+    else:
+        assert "python >=3.13 required (found 3.12" in result.stderr
 
 
 def test_s4_marker_migration_and_vscode_convenience_contract() -> None:

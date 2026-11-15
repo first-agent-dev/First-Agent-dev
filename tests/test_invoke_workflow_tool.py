@@ -1310,13 +1310,8 @@ def test_invoke_workflow_real_supervisor_handoff_mutation_confinement_and_fault_
     from fa.session.manager import SessionManager
     from fa.session.provisioning import ProvisionedWorkspace
     from fa.workspace_bootstrap import ReadyState, ReadyStatus
-    from tests.test_execution_composition import (
-        _configs,
-        _document,
-        _serving_supervisor,
-        native_profile,
-        read_only_profile,
-    )
+    from tests.test_execution_composition import _configs, _document, _serving_supervisor
+    from tests.test_execution_views import native_profile, read_only_profile
     from tests.test_execution_workspace import Site
 
     roots = tmp_path / "projects"

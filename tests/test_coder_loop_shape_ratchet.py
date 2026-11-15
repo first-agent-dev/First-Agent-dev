@@ -21,10 +21,9 @@ away. So the ratchet measures the properties that actually have to fall.
 **Why a ratchet and not a target.** The end state (see the plan) is ~300-350
 lines: setup, one ``while``, five phase calls, and the decisions about exit.
 Getting there is six slices. A test asserting the end state would be red for
-the duration and would be deleted by whoever gets tired of it — the failure
-mode ``test_s10b_complexity_ratchet`` was written to prevent. So, like that
-file: **these numbers may only go down**, and they go down in the same commit
-that earns it.
+the duration and would be deleted by whoever gets tired of it. The repository's
+C901 diff guard prevents new suppressions; this module separately keeps its
+shape measurements moving down in the same commit that earns each reduction.
 
 **Why the dependencies, not the line count, is the primary metric.** A
 function can be 400 lines and obvious. What makes this one hard to enter is

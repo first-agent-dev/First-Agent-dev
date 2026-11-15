@@ -140,3 +140,18 @@ governance are precisely the right counters. Gaps were (2), (4), (5).
 | 5a | Hallucinated package names / slopsquatting | uv lock (existence only) | R-4 review flag |
 | 6a | Style drift / merge-conflict churn | ruff autofix-first via `just fix` | covered |
 | 6b | Type errors at integration seams | mypy strict + pyrefly advisory | covered |
+
+## 2026-11-10 operator correction — repository secret scanning
+
+The 4d row above records the former hook-and-CI setup and is historical, not
+current coverage. At operator request, repository secret scanning has been
+removed from local hooks and CI with no replacement; secrets-in-code is an
+uncovered repository-level gap. ADR-12 runtime secret isolation and its tests
+remain separate mechanisms and do not scan repository history.
+
+## 2026-11-10 operator correction — repository secret scanning is CI-only
+
+The preceding disposition is superseded by the operator's clarification.
+Repository scanning remains in the blocking, full-history Gitleaks GitHub
+Actions job; the Go-backed local pre-commit hook is removed. ADR-12 runtime
+controls remain separate from repository scanning.

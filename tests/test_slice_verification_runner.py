@@ -43,7 +43,7 @@ from fa.inner_loop.slice_verification import (
     capture_test_nodeids,
     run_commands,
 )
-from fa.inner_loop.tools.workspace_port import WorkspacePort, WorkspacePortError
+from fa.inner_loop.tools.workspace_port import WorkspacePort
 from fa.runtime.pty_pool import PtyResult
 
 

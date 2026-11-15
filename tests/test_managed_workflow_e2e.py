@@ -31,10 +31,9 @@ from fa.execution.composition import (
     ManagedExecution,
     managed_execution_for_run,
 )
-from fa.execution.protocol import Operation
 from fa.execution.publication import render_bundle
 from fa.execution.service import SupervisorService, read_config_file
-from fa.execution.types import ExecutionContractError, GrantReply, NamespaceRef
+from fa.execution.types import ExecutionContractError, GrantReply, NamespaceRef, Operation
 from fa.inner_loop.coder_loop import SessionOutcome
 from fa.inner_loop.registry import ToolRegistry
 from fa.inner_loop.session_db import SessionDatabase
@@ -48,18 +47,17 @@ from fa.session.manager import RunContext, SessionContext, SessionManager
 from fa.session.provisioning import ProvisionedWorkspace
 from fa.workspace_bootstrap import ReadyState, ReadyStatus
 from tests.test_execution_composition import (
-    Endpoint,
     _configs,
     _configure_local_cell_backend,
     _document,
     _serving_supervisor,
     _watch_managed_child_host_execution,
     local_cell_peer,
-    native_profile,
-    read_only_profile,
 )
+from tests.test_execution_docker import Endpoint
 from tests.test_execution_service import _config as _service_config
 from tests.test_execution_service import _error, _plant_cell, _registered, _view, _writer, exchange
+from tests.test_execution_views import native_profile, read_only_profile
 from tests.test_execution_workspace import Site, install_environment_artifact, site
 
 __all__ = ["local_cell_peer", "site"]

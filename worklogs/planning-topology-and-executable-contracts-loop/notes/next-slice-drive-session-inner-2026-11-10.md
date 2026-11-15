@@ -41,7 +41,7 @@
 ```python
 @dataclass(frozen=True)
 class BudgetVerdict:
-    action: str          # "ok" | "warn" | "stage2" | "stage3"
+    action: str  # "ok" | "warn" | "stage2" | "stage3"
     ratio: float
     usage: int
     compaction_enabled: bool

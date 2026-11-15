@@ -2161,7 +2161,7 @@ def _bundle_root(site: Site, ids: dict[str, str], bundle: BundleResult) -> Path:
 
 def test_install_creates_the_project_commits_it_and_returns_the_wire_receipt(site: Site) -> None:
     """producer-kill-check: install writes the tree but never commits a revision."""
-    import fastjsonschema
+    import fastjsonschema  # type: ignore[import-untyped]
 
     from fa.execution.protocol import RESULTS
     from fa.execution.types import Operation

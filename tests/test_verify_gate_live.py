@@ -23,7 +23,7 @@ import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
@@ -4099,7 +4099,7 @@ def test_acquisition_unavailable_live_chat_and_noncoder_child_binding(
             del deadline
             assert self.active
             self.active = False
-            return self.managed.current_revision_id
+            return cast(str, self.managed.current_revision_id)
 
         def resume(self, *, deadline: float | None = None) -> None:
             del deadline

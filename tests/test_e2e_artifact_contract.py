@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-import fastjsonschema
+import fastjsonschema  # type: ignore[import-untyped]
 import pytest
 
 from scripts import check_execution_e2e_coverage as coverage_checker
@@ -475,15 +475,44 @@ def test_coverage_mapping_covers_every_frozen_baseline_id() -> None:
     baseline = _producer_baseline_document()
     mapping = _producer_coverage_document()
     baseline_ids = {record["baseline_id"] for record in baseline["records"]}
-    mapping_ids = {record["baseline_id"] for record in mapping["records"]}
+    frozen_mapping_ids = {
+        record["baseline_id"] for record in mapping["records"] if not record["baseline_id"].startswith("NEW:")
+    }
 
-    assert baseline_ids == mapping_ids
-    assert len(mapping_ids) == len(mapping["records"]) == 125
+    assert baseline_ids == frozen_mapping_ids
+    assert len(baseline_ids) == len(baseline["records"]) == 125
+    assert len(mapping["records"]) == 126
     assert all(record["coverage_case_ids"] for record in mapping["records"])
     assert all(record["current_producer_keys"] for record in mapping["records"])
     assert mapping["counts"]["frozen_producer_keys"] == 125
     assert all(record["successor_case_ids"] == [] for record in mapping["records"])
     assert any("successor_case_ids" in rule for rule in mapping["mapping_policy"])
+
+
+def test_q108_new_producer_is_registered_and_explicitly_shared_with_s08() -> None:
+    baseline = _producer_baseline_document()
+    mapping = _producer_coverage_document()
+    producer_key = "managed_inventory.inventory_project_artifacts"
+    new_mapping = next(record for record in mapping["records"] if record["baseline_id"].startswith("NEW:"))
+    register_rows = [row for row in coverage_checker._parse_register(REGISTER) if row["producer_key"] == producer_key]
+
+    assert new_mapping == {
+        "baseline_id": "NEW:Q108-B-managed-inventory",
+        "producer_key": None,
+        "current_producer_keys": [producer_key],
+        "case_id": "I03-LIVE-S08",
+        "coverage_case_ids": ["I03-LIVE-S08"],
+        "successor_case_ids": [],
+        "mapping_kind": "new-producer",
+    }
+    assert mapping["shared_case_ids"] == ["I03-LIVE-S06", "I03-LIVE-S08"]
+    assert len(baseline["records"]) == mapping["counts"]["frozen_producer_keys"] == 125
+    assert len(register_rows) == 1
+    assert register_rows[0]["kind"] == "producer"
+    assert "Q108-B" in register_rows[0]["section"]
+    oracle = register_rows[0]["values"][1]
+    assert all(term in oracle for term in ("invoke_workflow", "LIST_PROJECT_ARTIFACTS", "READ_FILE", "before coder"))
+    assert coverage_checker.check_producer_coverage(REPO_ROOT)["unique_producers"] == 126
 
 
 def test_coverage_checker_compares_every_unique_producer_case(tmp_path: Path) -> None:
@@ -571,7 +600,7 @@ def test_checker_requires_explicit_successor_for_a_renamed_producer(tmp_path: Pa
     item["coverage_case_ids"] = ["I02-LIVE-001", "I03-LIVE-S08"]
     mapping["shared_case_ids"] = ["I03-LIVE-S06", "I03-LIVE-S08"]
     coverage_path.write_text(json.dumps(mapping), encoding="utf-8")
-    assert coverage_checker.check_producer_coverage(tmp_path)["unique_producers"] == 125
+    assert coverage_checker.check_producer_coverage(tmp_path)["unique_producers"] == 126
 
 
 def test_checker_entrypoint_calls_producer_coverage_and_reports_counts(
@@ -582,7 +611,7 @@ def test_checker_entrypoint_calls_producer_coverage_and_reports_counts(
     def count_coverage(root: Path) -> dict[str, int]:
         calls.append(root)
         return {
-            "unique_producers": 125,
+            "unique_producers": 126,
             "legacy_cases": 89,
             "i03_cases": 35,
             "exact_duplicate_keys": 2,
@@ -596,12 +625,12 @@ def test_checker_entrypoint_calls_producer_coverage_and_reports_counts(
     assert coverage_checker.main(["--root", str(root)]) == 0
     assert calls == [root]
     output = capsys.readouterr().out
-    assert "125 I02-origin/I03 producers" in output
+    assert "126 I02-origin/I03 producers" in output
     assert "I01 42 CTs/7 deferred obligations across 3 cases" in output
     assert "no live PASS inferred" in output
 
 
-def test_coverage_checker_cli_executes_and_reports_frozen_counts() -> None:
+def test_coverage_checker_cli_executes_and_reports_new_producer_count() -> None:
     completed = subprocess.run(
         [sys.executable, str(REPO_ROOT / "scripts" / "check_execution_e2e_coverage.py")],
         cwd=REPO_ROOT,
@@ -611,7 +640,7 @@ def test_coverage_checker_cli_executes_and_reports_frozen_counts() -> None:
     )
     assert completed.returncode == 0, completed.stderr
     assert "I01 42 CTs/7 deferred obligations across 3 cases" in completed.stdout
-    assert "125 I02-origin/I03 producers" in completed.stdout
+    assert "126 I02-origin/I03 producers" in completed.stdout
     assert "no live PASS inferred" in completed.stdout
 
 

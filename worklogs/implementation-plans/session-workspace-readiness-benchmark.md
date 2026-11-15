@@ -16,9 +16,17 @@ HOME_CACHE_CAP=1536M
 UV_CACHE_CAP=2G
 ```
 
+> **Current disposition (2026-11-10):** Gitleaks remains a blocking,
+> full-history GitHub Actions job with `.gitleaks.toml`; only the Go-backed
+> local hook is removed. No Go SDK or local scanner is a current readiness
+> prerequisite. Cache measurements remain historical evidence of the prior
+> hook and do not define current readiness.
+
 Keep both caches ephemeral. Increase only `/home/fa/.cache` from 500 MiB to
-1536 MiB. Do not add a persistent uv or pre-commit bind, do not bake hook
-environments, and do not weaken or remove gitleaks or any other hook.
+1536 MiB. At the time of this 2026-08-13 decision, do not add a persistent uv
+or pre-commit bind or bake hook environments; the then-existing Gitleaks hook
+was retained. The local-hook retention clause is superseded by the 2026-11-10
+operator disposition above; the CI scan and allowlist remain in use.
 
 The decision is deliberately conservative: cold readiness completed in a
 controlled proxy, warm readiness is fast, and the completed HOME-cache peak fits

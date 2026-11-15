@@ -24,6 +24,71 @@ def test_pytest_registers_and_excludes_host_only_suites_by_default() -> None:
     assert marker_expression == "not execution_host and not live_e2e"
 
 
+def test_clean_readiness_integration_is_only_selected_in_the_explicit_host_lane() -> None:
+    test_path = "tests/test_workspace_readiness_integration.py"
+    node_id = f"{test_path}::test_clean_candidate_real_readiness_commit_and_local_publication"
+    command = [sys.executable, "-m", "pytest", "--collect-only", "-q", test_path]
+    env = os.environ.copy()
+    env.pop("FA_REQUIRE_EXECUTION_HOST", None)
+
+    default_run = subprocess.run(
+        command,
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        check=False,
+        text=True,
+        timeout=30,
+    )
+    assert default_run.returncode == int(pytest.ExitCode.NO_TESTS_COLLECTED), default_run.stdout + default_run.stderr
+    assert node_id not in default_run.stdout
+    assert "1 deselected" in default_run.stdout
+
+    host_env = env.copy()
+    host_env["FA_REQUIRE_EXECUTION_HOST"] = "1"
+    explicit_run = subprocess.run(
+        [*command, "-m", "execution_host"],
+        cwd=REPO_ROOT,
+        env=host_env,
+        capture_output=True,
+        check=False,
+        text=True,
+        timeout=30,
+    )
+    assert explicit_run.returncode == int(pytest.ExitCode.OK), explicit_run.stdout + explicit_run.stderr
+    assert node_id in explicit_run.stdout
+    assert "1 test collected" in explicit_run.stdout
+
+
+def test_clean_readiness_host_run_refuses_missing_opt_in_before_bootstrap() -> None:
+    test_path = "tests/test_workspace_readiness_integration.py"
+    env = os.environ.copy()
+    env.pop("FA_REQUIRE_EXECUTION_HOST", None)
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-q",
+            test_path,
+            "-m",
+            "execution_host",
+        ],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        check=False,
+        text=True,
+        timeout=30,
+    )
+
+    output = completed.stdout + completed.stderr
+    assert completed.returncode == int(pytest.ExitCode.TESTS_FAILED), output
+    assert "execution_host_preflight:explicit_host_opt_in_required" in output
+    assert "precommit_prewarm_failed" not in output
+    assert "1 failed" in output
+
+
 def test_required_host_run_refuses_empty_execution_host_selection() -> None:
     env = os.environ.copy()
     env["FA_REQUIRE_EXECUTION_HOST"] = "1"

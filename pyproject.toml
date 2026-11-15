@@ -231,8 +231,9 @@ addopts = [
   "-ra",
   "--strict-config",
   "--strict-markers",
-  # Host-only suites are opt-in; the explicit W3/W4 command replaces this
-  # expression with `-m execution_host` and sets FA_REQUIRE_EXECUTION_HOST=1.
+  # Host-only suites are opt-in; the explicit W4 command includes tests/integration and
+  # tests/test_workspace_readiness_integration.py, selects `execution_host or live_e2e`,
+  # and sets FA_REQUIRE_EXECUTION_HOST=1.
   "-m",
   "not execution_host and not live_e2e",
 ]

@@ -2,10 +2,10 @@
 
 **Status:** PLAN ONLY. No case below has been executed, no row in
 [e2e-live-verification-register.md](e2e-live-verification-register.md) is promoted, and nothing here
-is evidence of live behaviour. This is the execution/evidence plan for the final **W4 live-only** wave;
+is evidence of live behaviour. This is the execution/evidence plan for the final **W4 approved-host deployment and live-acceptance** wave;
 case contracts, fixtures, driver and negative-control sensitivity must be authored, reviewed and dry-run
 locally in W3 before deployment. W4 executes that frozen package only; it does not develop it on the host.
-Dates this plan: 2026-10-22, after E265 (SLICE2 STEP4 part B-1), wave boundary clarified 2026-11-03.
+Dates this plan: 2026-10-22, after E265 (SLICE2 STEP4 part B-1); wave boundaries corrected 2026-11-03 and 2026-11-10.
 
 **Current acceptance-scope ruling (2026-10-23):** final I03 acceptance requires live-host E2E for all
 changes in I01–I03 of this project. The I03 inventory has 27 surfaces/8 joins; Q88 selected explicit
@@ -16,10 +16,12 @@ three planned I01 cases. All remain `NOT RUN`; this is not live evidence. The ca
 **Purpose.** The register defines what the approved-host fixture must arrange and observe; it is not
 permission to author tests during deployment. W0–W3 implement and validate the case contracts, markers,
 fixtures, external driver, producer coverage and local negative controls on Arena in dependency order.
-After those local W3 gates close, W3's approved `fa update` builds and starts the candidate image on the
-user's host; this deployment/build is a prerequisite, not live acceptance. When W4 starts, the exact
-suite and commands are frozen, reviewed, and locally dry-run. A host-side missing prerequisite is
-BLOCKED, not an invitation to improvise test code against the deployed system.
+W3 closes only on those Arena-local gates and has no host deploy/update prerequisite. W4 begins after W3
+closes; its first approved-host action is the single `fa update` build/deploy and identity/health/smoke
+check. Once the candidate image is verified, freeze it before running the reviewed suite; do not rebuild
+or update again during suite execution. The exact suite and commands are reviewed and locally dry-run
+before W3 closes. A host-side missing prerequisite is BLOCKED, not an invitation to improvise test code
+against the deployed system.
 
 **Non-negotiable framing (inherited rules).**
 - Deployment is Linux/Docker/Ubuntu/Python only; no added Go runtime. Cases run against the actual
@@ -45,6 +47,7 @@ Three layers, deliberately separate, because each fails differently:
 | :--- | :--- | :--- | :--- |
 | `tests/integration/conftest.py` | authored/unit-tested in W3; probes host only in W4 | fail-closed preflight + session-scoped fixtures (approved image, daemon, sessions root, evidence sink) | no |
 | `tests/integration/live/test_*.py` | authored/reviewed/dry-run in W3; execute against approved host only in W4 | each case maps to exactly one register row or join | no |
+| `tests/test_workspace_readiness_integration.py` | local marker/selection/opt-in contract in W3; real clean-copy run only in W4 | explicit `execution_host` case; requires opt-in and real Docker/cgroup preflight before `uv sync` or hook installation | no |
 | `scripts/e2e_live.py` | authored, contract-tested and dry-run in W3; invoked in W4 | external observer; captures evidence and writes immutable run manifest | no |
 
 Rules that make the layer honest:
@@ -54,10 +57,11 @@ Rules that make the layer honest:
    `-m execution_host`; with `--strict-markers` on, an unregistered marker is a hard error, so
    registration is step 1, not a detail. Two markers: `execution_host` (needs Docker + approved
    image) and `live_e2e` (needs Docker + approved image + real provider credentials — the S08 cases).
-2. **Skip is not pass, and a skip must say why.** The fixture skips at *collection* only when
-   `FA_REQUIRE_EXECUTION_HOST` is unset; when it is set (`FA_REQUIRE_EXECUTION_HOST=1`), a missing
-   daemon/image is a **failure**, not a skip. This is the single guard that stops a green-looking run
-   on a host that never had Docker.
+2. **Host selection is not acceptance, and missing prerequisites fail closed.** The default pytest
+   expression deselects host-marked cases; that is not a PASS. When an `execution_host` case is
+   explicitly selected, `FA_REQUIRE_EXECUTION_HOST=1` is required; missing opt-in, daemon, cgroup
+   prerequisite, or pinned image is a **failure**, not a skip. This prevents a green-looking host run
+   when the required environment was never present.
 3. **Assertions read persisted evidence, never in-process objects.** For anything that claims "the
    deployed controller did X", the oracle is: the on-disk run artifact
    (`/srv/first-agent/state/session-log/<run_id>/…`), the Docker API response the driver captured, the
@@ -77,25 +81,31 @@ Rules that make the layer honest:
 Cases cannot be written before their subject exists; writing them early produces the near-miss
 proxies the project already paid for once (E259: duplicated producers masking each other). Order:
 
-| Phase | W3 preparation (local gates first; image deploy prerequisite last) | W4 live execution | Dependency / rows |
+| Phase | W3 preparation (Arena-local only) | W4 host deployment + live execution | Dependency / rows |
 | :--- | :--- | :--- | :--- |
-| **P0 harness** | implement markers, preflight, fixture contracts, external driver, evidence sink and cleanup checks; unit-test simulated host-present and `FA_REQUIRE_EXECUTION_HOST=1` missing-host refusal paths | verify the actual running host/image preflight before any case | none |
-| **P1 images/entry** | build/test the installed wheel and entrypoint contract locally; freeze image build inputs and expected identity | verify the already-running approved image digest, isolated entry, profile rendering and PTY deadlines; do not rebuild | LIVE-01, 02, 05, 15, 16 |
+| **P0 harness** | implement markers, preflight, fixture contracts, external driver, evidence sink and cleanup checks; unit-test simulated host-present and missing-host refusal paths | require the actual approved host/image preflight before any case; missing opt-in or prerequisites fail | none |
+| **P1 images/entry** | build/test the installed wheel and entrypoint contract locally; freeze image build inputs and expected identity | perform the one approved `fa update`, verify source SHA/image digest/config/health/smoke, then freeze the running image; verify isolated entry, profile rendering and PTY deadlines | LIVE-01, 02, 05, 15, 16 |
 | **P2 backend/cell** | test create/start/attach/RUN, one-shot+interactive semantics, cancel/force-stop and no-replay using local deterministic backends and mutation/fault controls | prove behavior against the approved Docker daemon, cgroups and real cells | LIVE-10, 11, 12, 13, 18 |
 | **P3 authority/views** | test registration, R0, pinned readers, rooted IO and same-view read-your-writes against the real local authority/UDS | verify actual deployed filesystem, mount and kernel behavior | LIVE-03, 14, 17 |
 | **P4 tools through the real port** | complete caller tests for E264/E265 on admitted views; local composition only, not stub-only | verify the same tool behavior in approved deployed cells | joins S02, S05, S07 |
 | **P5 journal/recovery/seal** | run deterministic kill/fault-injection at each durable boundary, seal/drain and forward-recovery matrix locally | verify actual crash/restart, filesystem durability and containment under approved host conditions | LIVE-06, 07, 08, 09; joins S01, S03, S04, S06 |
 | **P6 composed service** | implement and pass local SessionManager/provisioner/CLI and controller-attested HANDOFF composition; mock only provider I/O; validate controlled-provider case definitions | execute approved real-provider cases and deployed handoff/ledger observations | LIVE-04, LIVE-27; joins S07, S08 |
 
-**W3→W4 boundary.** P0–P6 case code, fixtures, mutation-sensitivity checks, command vectors, and
-evidence schemas are reviewed and dry-run locally before deployment. The cases remain blocked on their
-product dependencies in W0–W2 until those callers exist; do not write success assertions against
-recording fakes. After all Arena-local W0–W3 implementation, test, coverage and review gates pass,
-W3 performs the separate approved `fa update` build/deploy prerequisite and verifies its SHA/digest/
-config/health. W3 remains OPEN until that prerequisite succeeds; it does not run or close live cases.
-W4 runs only the approved frozen package against that already-running image and does not update/rebuild. A missing Docker
-host is simulated only in W3 dry-run tests; with `FA_REQUIRE_EXECUTION_HOST=1`, an actually missing
-W4 host/image must fail before any row can be reported PASS.
+**W3→W4 boundary (operator correction, 2026-11-10).** P0–P6 case code, fixtures,
+mutation-sensitivity checks, command vectors, and evidence schemas are reviewed and dry-run locally
+before W3 closes. W3 contains only Arena-local implementation, test, coverage and review gates; it has
+no Docker/live-host deployment prerequisite. After W3 closes, W4 starts with the single approved
+`fa update` build/deploy on the target Linux/Docker host and verifies SHA/digest/config/health/smoke.
+The approved image is then frozen for the reviewed W4 suite: do not rebuild or run `fa update` again
+while executing cases. The clean-workspace readiness case in
+`tests/test_workspace_readiness_integration.py` is explicitly `execution_host`: W3 verifies its marker,
+default deselection, explicit selection and fail-closed opt-in contract locally; only W4 may execute its
+real `uv sync`/`pre-commit install-hooks`/`ready_repaired` path after the existing Docker/cgroup
+preflight. The cases remain blocked on their product dependencies in W0–W2 until those callers exist;
+do not write success assertions against recording fakes. Default marker deselection is not acceptance;
+with `FA_REQUIRE_EXECUTION_HOST=1`, missing opt-in, host, cgroup, or image prerequisites fail before
+any readiness side effect or row can be reported PASS. Local fakes and collection do not count as host
+evidence.
 
 ---
 
@@ -245,8 +255,7 @@ directory; reopen the DB before comparing so the test proves durable state rathe
 
 ## 6. Cost, flakiness and evidence policy
 
-- Budget: P1 ≈ 10 min for W4 verification of the running image (image construction/start is the W3
-  `fa update` deployment prerequisite, not W4 work), P2 ≈ 15 min, P3 ≈ 10 min, P4 ≈ 10 min,
+- Budget: P1 ≈ 10 min for W4 image deployment/verification and freeze, P2 ≈ 15 min, P3 ≈ 10 min, P4 ≈ 10 min,
   P5 ≈ 20 min (kill/restart cycles), P6 ≈ 20 min with a real provider. Per-case timeout 120 s except the kill matrix (300 s) and provider cases (600 s).
 - **No retries for evidence.** A flaky case is a defect in the case or the product; re-running until
   green converts an unknown into a false PASS.
@@ -260,16 +269,16 @@ directory; reopen the DB before comparing so the test proves durable state rathe
 ## 7. What this plan deliberately does not do
 
 - It does not promote any row, invent a verdict, or claim that unit proof transfers to the host.
-- It does not authorize the W3 host build/deploy prerequisite until all Arena-local W0–W3 gates,
-  tests, sensitivity checks, independent review and runbook preparation close. That approved build/deploy
-  is not live I03 acceptance; W4 is the only live-test/evidence wave.
+- It does not authorize the W4 host build/deploy until all Arena-local W0–W3 gates, tests,
+  sensitivity checks, independent review and runbook preparation close. W3 has no host-deployment
+  prerequisite; W4 is the only wave for approved-host deployment and live-test/evidence acceptance.
 - It does not add a second harness: use `pytest`, the registered markers and this in-repo external
-  driver. The complete harness/fixture/test package must be reviewable and dry-run locally before W3's
-  image build/deploy step.
+  driver. The complete harness/fixture/test package must be reviewable and dry-run locally before W3
+  closes; the approved-host image build/deploy starts W4.
 
-## 8. W3 image-build/deploy prerequisite (frozen runbook requirement)
+## 8. W4 image-build/deploy prerequisite (frozen runbook requirement)
 
-After all Arena-local W0–W3 gates and independent review pass, W3's deployment run sheet invokes this
+After all Arena-local W0–W3 gates and independent review pass, W4's deployment run sheet invokes this
 approved build/deploy command on the user's Linux/Docker host:
 
 ```sh
@@ -282,8 +291,9 @@ and obtain maintenance approval. This is grounded in `scripts/fa-update.sh`: `gi
 state unless auto-stash is enabled (466–480), then fetches and fast-forwards `origin/main` (483–495).
 On a changed candidate, `evaluate_changes()` marks the build required and `build_and_deploy()` runs
 `docker compose build` then `docker compose up` (557–561, 672–694); it waits for health and runs container
-smoke checks. This host-side image build/start is intentionally the W3 deployment prerequisite, not an
-accidental W4 test/build. `PRUNE=0` retains the previous image/config for reviewed rollback (986–990).
+smoke checks. This host-side image build/start is the first W4 action, after W3's Arena-local closure;
+it is not a W3 prerequisite or a live-case result. `PRUNE=0` retains the previous image/config for
+reviewed rollback (986–990).
 
 `SKIP_TESTS=1` returns from updater step 7 before its fixed `/sessions/deploy-smoke-test` deletion
 (875–877), host `uv sync` (879–897), and repository-wide host pytest (909–920). It skips only that
@@ -292,20 +302,25 @@ script initializes `TEST_RC=0` before returning (861–865), so its printed `Tes
 evidence. The environment assignments apply to this `fa update` process only. Updater health/import
 smoke checks are deployment readiness evidence, not live I03 PASS evidence.
 
-W3 closes this deployment prerequisite only if the update/build exits 0 and independent checks show the
+The W4 deployment step succeeds only if the update/build exits 0 and independent checks show the
 approved source SHA, running image digest and config/profile match the candidate, and the agent
-container reports Docker health `healthy` (not `no-healthcheck`). Require the in-container `fa --version` and core-import smoke checks to visibly pass; `fa-update.sh` reports these as
-warnings rather than failing its own exit, so exit 0 alone is insufficient. Record proxy/selfcheck
-warnings, but do not infer a working REAL-provider path from them; W4 must prove that path. If build,
-health, required smoke or identity fails, stop: W3 remains OPEN and W4 must not start. A nonzero update
-does not prove that deployment did not occur; capture printed HEAD/health/test status and use the reviewed
-recovery procedure—no blind retry. W3 runs no live producer cases and records no live PASS.
+container reports Docker health `healthy` (not `no-healthcheck`). Require the in-container `fa --version`
+and core-import smoke checks to visibly pass; `fa-update.sh` reports these as warnings rather than
+failing its own exit, so exit 0 alone is insufficient. Record proxy/selfcheck warnings, but do not infer
+a working REAL-provider path from them; the frozen W4 suite must prove that path. If build, health,
+required smoke or identity fails, stop the W4 suite and use the reviewed recovery procedure; W3 remains
+closed on its already-passed Arena-local criteria. A nonzero update does not prove that deployment did
+not occur; capture printed HEAD/health/test status—no blind retry. No host deployment or live producer
+case runs in W3, and W3 records no live PASS.
 
-W4 begins only after the candidate image is already running and identified. Do not invoke `fa update`
-or rebuild in W4. Run the frozen W3-reviewed suite against the running image/managed cells: product
-operations and workloads execute there; the approved external driver is a bounded TCB observer that
-collects host Docker/kernel/cgroup/process/DB/event-ledger evidence. Do not run repository-wide/default
-project pytest or unreviewed project conftest on the controller. The only approved host test code is the
-explicitly approved, frozen `tests/integration` package and external driver, excluded from default
-collection; no fixture authoring or production mutation is permitted on host. Docker/host live testing
-is W4-only.
+W4 starts after W3 closes. The approved `fa update` above is W4's single deployment/build action; once
+its running image is verified, freeze it, then run the frozen W3-reviewed suite against the running
+image/managed cells: product operations and workloads execute there; the approved external driver is a
+bounded TCB observer that collects host Docker/kernel/cgroup/process/DB/event-ledger evidence. Do not
+run repository-wide/default project pytest or unreviewed project conftest on the controller. The
+approved host test code is the reviewed/frozen `tests/integration` package, the explicit
+`tests/test_workspace_readiness_integration.py` host node, and the external driver, all excluded from
+default pytest selection; the readiness node requires `FA_REQUIRE_EXECUTION_HOST=1` and the real
+Docker/cgroup preflight before copying/bootstrap/`uv sync`/`pre-commit install-hooks` side effects. No
+fixture authoring or production mutation is permitted on host. Do not invoke `fa update` or rebuild
+after the image is frozen. Docker/host live testing is W4-only.

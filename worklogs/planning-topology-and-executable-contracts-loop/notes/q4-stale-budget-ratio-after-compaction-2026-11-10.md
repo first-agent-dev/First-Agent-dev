@@ -22,7 +22,7 @@
 conversation_history = masked_history
 usage = post_mask_usage
 decision = budget.check(usage)
-last_budget_ratio = decision.get("ratio", 0.0)     # ← есть
+last_budget_ratio = decision.get("ratio", 0.0)  # ← есть
 ```
 
 Ветка Stage-3:
@@ -31,7 +31,7 @@ last_budget_ratio = decision.get("ratio", 0.0)     # ← есть
 conversation_history = protected_window
 memory_summary = updated_summary
 usage = post_compaction_usage
-decision = budget.check(usage)                      # ← decision свежий
+decision = budget.check(usage)  # ← decision свежий
 # last_budget_ratio НЕ обновляется                        ← ratio старый
 ```
 

@@ -392,9 +392,7 @@ class _StatsAccumulator:
     bash_counter: Counter[str] = field(default_factory=Counter)
     turn_tokens: list[TurnTokens] = field(default_factory=list)
     current_turn: int = 0
-    provider_data: defaultdict[tuple[str, str], list[dict[str, Any]]] = field(
-        default_factory=lambda: defaultdict(list)
-    )
+    provider_data: defaultdict[tuple[str, str], list[dict[str, Any]]] = field(default_factory=lambda: defaultdict(list))
     guard_data: defaultdict[str, dict[str, int]] = field(
         default_factory=lambda: defaultdict(lambda: {"allow": 0, "deny": 0, "warn": 0})
     )
@@ -498,9 +496,7 @@ def _dispatch_stats_results_and_compaction(
             )
         )
     elif kind == "compaction_stage2_error":
-        state.compaction_records.append(
-            CompactionRecord(stage=2, ok=False, error=str(content.get("error", "")))
-        )
+        state.compaction_records.append(CompactionRecord(stage=2, ok=False, error=str(content.get("error", ""))))
     elif kind == "compaction_stage3_done":
         state.compaction_records.append(
             CompactionRecord(
@@ -511,9 +507,7 @@ def _dispatch_stats_results_and_compaction(
             )
         )
     elif kind == "compaction_stage3_error":
-        state.compaction_records.append(
-            CompactionRecord(stage=3, ok=False, error=str(content.get("error", "")))
-        )
+        state.compaction_records.append(CompactionRecord(stage=3, ok=False, error=str(content.get("error", ""))))
     else:
         return False
     return True
@@ -568,9 +562,7 @@ def _dispatch_stats_extended_observability(
             )
         )
     elif kind == "compaction_circuit_breaker":
-        state.circuit_breaker_events.append(
-            CircuitBreakerRecord(message=str(content.get("message", "")))
-        )
+        state.circuit_breaker_events.append(CircuitBreakerRecord(message=str(content.get("message", ""))))
     elif kind == "compaction_stage2_start":
         state.compaction_starts.append(
             CompactionStartRecord(
@@ -697,10 +689,7 @@ def _parse_events(events: tuple[TraceEvent, ...], fallback_run_id: str) -> Sessi
 
     all_paths: set[str] = set(state.reads) | set(state.writes)
     file_access = sorted(
-        [
-            FileAccess(path=path, reads=state.reads.get(path, 0), writes=state.writes.get(path, 0))
-            for path in all_paths
-        ],
+        [FileAccess(path=path, reads=state.reads.get(path, 0), writes=state.writes.get(path, 0)) for path in all_paths],
         key=lambda file: -(file.reads + file.writes),
     )
 

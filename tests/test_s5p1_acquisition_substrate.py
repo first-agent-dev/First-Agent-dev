@@ -129,7 +129,7 @@ def _spy_on_port_builds(monkeypatch: pytest.MonkeyPatch) -> list[tuple[Any, ...]
     import fa.inner_loop.workflow_controller as controller
 
     built: list[tuple[Any, ...]] = []
-    real = controller.ClientWorkspacePort
+    real = ClientWorkspacePort
 
     def _counting(*args: Any, **kwargs: Any) -> Any:
         built.append(args)

@@ -2,7 +2,7 @@
 # pre-push — run the repo-native CI gate before an agent pushes a branch.
 #
 # The pre-commit hook runs ~90% of checks (ruff, format, deptry, pylint-gap,
-# mypy strict, pyrefly, shell-syntax, gitleaks, markdownlint, doc-links,
+# mypy strict, pyrefly, shell-syntax, markdownlint, doc-links,
 # whitespace, uv-lock) in under a minute. This pre-push hook is the final
 # blocking layer: it runs `uv run --no-sync just check-deep`, which includes the full
 # non-mutational `just check` chain PLUS targeted-mutmut and targeted-semgrep

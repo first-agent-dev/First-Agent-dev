@@ -20,9 +20,10 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from fa.inner_loop.plan_admission import PlanSnapshot, snapshot_from_bytes
+from fa.inner_loop.plan_ids import extract_plan_ids
 from fa.inner_loop.workflow_controller import WorkflowContext, run_workflow, workflow_artifact_paths
 from tests.test_plan_reference import _config, _SilentStage
 
@@ -35,7 +36,7 @@ Implement the foundation.
 """
 
 
-def _snapshot():
+def _snapshot() -> PlanSnapshot:
     return snapshot_from_bytes(PLAN_RELATIVE, PLAN_BODY, source_kind="EXISTING_SELECTION")
 
 
@@ -188,7 +189,7 @@ def _admission_ctx(tmp_path: Path, *, snapshot: PlanSnapshot, snapshot_backed: b
     )
 
 
-def _base_ctx(tmp_path: Path):
+def _base_ctx(tmp_path: Path) -> WorkflowContext:
     from tests.test_plan_reference import _ctx
 
     return _ctx(tmp_path, None)
@@ -213,7 +214,7 @@ def test_a_snapshot_whose_bytes_no_longer_match_its_digest_is_source_changed(tmp
     """
     import pytest as _pytest
 
-    from fa.inner_loop.plan_admission import PlanRef, PlanRefError, PlanSnapshot, extract_plan_ids
+    from fa.inner_loop.plan_admission import PlanRef, PlanRefError, PlanSnapshot
     from fa.inner_loop.workflow_controller import _check_admission_source
 
     good = _snapshot()
@@ -271,7 +272,7 @@ def _record(run_id: str) -> dict[str, Any]:
     """The single admission record for this run (attempts live inside it)."""
     path = workflow_artifact_paths(run_id).admission
     assert path.exists(), f"a refused admission left no durable record: {path}"
-    return json.loads(path.read_text(encoding="utf-8"))
+    return cast(dict[str, Any], json.loads(path.read_text(encoding="utf-8")))
 
 
 def test_a_refused_snapshot_admission_dispatches_no_role_and_makes_no_model_call(tmp_path: Path) -> None:

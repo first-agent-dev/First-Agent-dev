@@ -152,11 +152,12 @@ def test_profile_registry_propagates_schema_contract_failure(
         managed_executor: Any | None = None,
         project_tool_executor: Any | None = None,
         candidate_io: Any | None = None,
+        candidate_seed_text: str | None = None,
     ) -> dict[str, Callable[[], ToolSpec]]:
         # Mirror the production composition-root signature; a drifting double
         # turns the guard under test into a TypeError from the fallback path.
         del bash_timeout, planner_dispatch, workspace_io, managed_executor, project_tool_executor
-        del candidate_io
+        del candidate_io, candidate_seed_text
         return {"fs_run_bash": lambda: _nonportable_spec("fs_run_bash")}
 
     monkeypatch.setattr(profile_module, "_build_tool_builders", broken_builders)

@@ -75,8 +75,9 @@ nonlocal-записи            0   (достигнуто)
 ```python
 budget_outcome = run_budget_ladder(...)
 if budget_outcome.stop is not None:
-    return finish_at(budget_outcome.stop.exit_code, budget_outcome.stop.reason,
-                     final_text=budget_outcome.stop.final_text)
+    return finish_at(
+        budget_outcome.stop.exit_code, budget_outcome.stop.reason, final_text=budget_outcome.stop.final_text
+    )
 ```
 
 `BudgetStop(exit_code, reason, final_text)`; `finish_at` остался у владельца
@@ -258,9 +259,9 @@ failed attempt». Abort обязан снять ровно то, что созд
 staged-байты и `intent.json`. Что он делает фактически:
 
 ```python
-self._sweep_temporaries(binding.source)          # ← весь scratch, не только свой temp
+self._sweep_temporaries(binding.source)  # ← весь scratch, не только свой temp
 if self._read_intent(binding.fd) is not None:
-    self._clear_intent(binding.fd)               # ← intent без проверки «чей»
+    self._clear_intent(binding.fd)  # ← intent без проверки «чей»
 ```
 
 Три факта, установленные чтением:
@@ -750,10 +751,12 @@ publication. Отдельно прошли acquisition/provenance **49**, CLI/in
 workflow **179**, entrypoint/PYTHONPATH **2**; full Pyrefly 0 errors и
 `fa authoring-check` 0 diagnostics.
 
-Эти результаты не меняют W3 status. STEP9 всё ещё OPEN: в checkout отсутствует
-`tests/integration/`; Q108 NEW→S08 mapping, Q139 calibration, S6P5/7/8/9/10,
-approved Q97 profile check, `just check-deep`, independent review/run sheet и
-host candidate `fa update` не завершены. STEP9A остаётся заблокированным до
+Эти результаты не меняют W3 status. На момент этого E528-среза STEP9 был OPEN
+и в checkout отсутствовал `tests/integration/`; E532 позднее добавил suite, его
+7 host-marked cases собираются, но не выполнялись. STEP9 остаётся OPEN: Q108
+NEW→S08 mapping позднее завершён только на уровне artifacts; Q139 calibration,
+S6P5/7/8/9/10, approved Q97 profile check, `just check-deep`, independent
+review/run sheet и host candidate `fa update` не завершены. STEP9A остаётся заблокированным до
 закрытия STEP9 и не реализуется в этом slice. Исторические два class-B
 `uv sync` failures не reran: считать их не подтверждённо зелёными и не
 подтверждённо текущими красными. W4, host effects и Docker acceptance не

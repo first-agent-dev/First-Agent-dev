@@ -55,10 +55,16 @@ doctor:
             bad "no python3 interpreter found on PATH"
         else
             py_ver=$("$py" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
-            if [[ "$py_ver" == "3.13" || "$py_ver" == "3.14" ]]; then
-                ok "python ($py_ver, $(command -v "$py"))"
+            if [[ "$py_ver" =~ ^([0-9]+)\.([0-9]+)$ ]]; then
+                py_major=${BASH_REMATCH[1]}
+                py_minor=${BASH_REMATCH[2]}
+                if (( py_major > 3 || (py_major == 3 && py_minor >= 13) )); then
+                    ok "python ($py_ver, $(command -v "$py"))"
+                else
+                    bad "python >=3.13 required (found $py_ver at $(command -v "$py"))"
+                fi
             else
-                bad "python >=3.13 required (found $py_ver at $(command -v "$py"))"
+                bad "could not determine Python version (found '$py_ver' at $(command -v "$py"))"
             fi
         fi
     fi

@@ -11,10 +11,10 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Hashable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Hashable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
-from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeGuard, override
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeGuard, cast, override
 
 import yaml
 from yaml.nodes import MappingNode
@@ -267,7 +267,8 @@ def _load_flat_metadata(yaml_text: str) -> dict[str, object]:
         try:
             parsed = loader.get_single_data()
         finally:
-            loader.dispose()
+            # PyYAML exposes this cleanup method without a typed signature.
+            cast(Callable[[], None], loader.dispose)()
     except AcquisitionMetadataError:
         raise
     except (yaml.YAMLError, RecursionError, ValueError):

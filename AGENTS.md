@@ -273,7 +273,7 @@ readiness engine, and emits `FA_AGENT_READY=1` only after READY.
   handles formatting (import order, `__all__` sorting, quoting, line
   wrapping). The pre-commit hook also applies these safe fixes.
 - **pre-commit (per commit):** runs ruff/format/deptry/pylint-gap/mypy/
-  pyrefly/shell-syntax/gitleaks/markdownlint/doc-links/uv-lock/whitespace.
+  pyrefly/shell-syntax/markdownlint/doc-links/uv-lock/whitespace.
   Budget: ~60 seconds on the operator's i5-1235U (much faster on warm cache).
 - **pre-push (per push):** runs `just check-deep` which is `just check`
   plus targeted-mutmut and targeted-semgrep on changed files. pip-audit

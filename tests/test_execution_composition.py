@@ -23,7 +23,7 @@ from contextlib import contextmanager, redirect_stderr
 from dataclasses import asdict, replace
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -103,7 +103,10 @@ def _document(
 
 def _status(site: Site, workspace_id: str) -> dict[str, Any]:
     """The workspace's own record, read the way the authority writes it."""
-    return json.loads((site.state / "workspaces" / workspace_id / "workspace.json").read_text())
+    return cast(
+        dict[str, Any],
+        json.loads((site.state / "workspaces" / workspace_id / "workspace.json").read_text()),
+    )
 
 
 def _configs(tmp_path: Path, document: dict[str, Any]) -> tuple[Path, Path]:

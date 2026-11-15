@@ -9885,3 +9885,537 @@ The `run_slice_mutmut.py` wrapper command itself exceeded the shell's **1,800 s*
 **STEP9B scope.** STEP9B is documentation/plan authoring, not production implementation. It must create one or more executable, repository-grounded new slice plans; cover the planner-authored invariant/acceptance-first loop, coder-proposed seams with explicit planner/owner agreement, vertical observable delivery, production composition, risk/owner decisions, evidence and local/host acceptance; and explicitly resolve how the I03 extension's documents relate to STEP9A's new-plan schema and the current increment grammar, accounting for the existing `src/fa/inner_loop/plan_ids.py::_SLICE_CEILING = 7` parser limit without silently bypassing it. It must define the MVP's host E2E witness and identify the exact final W4 package/index/coverage updates needed before suite freeze, without rewriting the frozen producer baseline; this witness is not currently registered in the frozen suite. Unratified research recommendations require explicit owner approval or remain blocking questions; they are never silently promoted to policy.
 
 **Boundary.** This entry changes I03 scope/order only. It closes no STEP, slice, W3/W4 gate, live row, or deployment duty and supplies no implementation evidence. The exact slice IDs and source-grounded plan details are STEP9B deliverables.
+
+### E531 — Q152 resolved B: Q139 configured-scope baseline deferred until after W4 execution (2026-11-10; operator-directed order amendment)
+
+**Operator decision.** The operator selected Q152 option B: preserve E512's post-E2E
+Q139 deferral and explicitly amend the STEP9/E530 dependency order. The direct
+2026-11-10 reply confirms E512's intent despite its later-dated source heading;
+no historical timestamp is rewritten. For this I03 schedule, "post-E2E" is after
+execution of the reviewed W4 suite and capture of its live evidence, but before
+final independent evidence review and I03 closure.
+
+**Amended order.** STEP9 may close before W3 only after every other STEP9 exit
+criterion passes and Q139 is recorded as **`DEFERRED`**, never `PASS`. STEP9A and
+STEP9B remain gated by STEP9, and all E530 local-slice, W3, and W4 prerequisites
+remain unchanged. After W4 suite execution/evidence capture, run the full
+configured-scope Q139 baseline before final sign-off and I03 closure. This is a
+schedule deferral, not a waiver: until the run completes, `src/fa/execution` has
+no measured full-scope mutation coverage and no such claim is allowed.
+
+**Executable gate.** The source-supported full-scope command is
+`uv run --frozen python scripts/run_slice_mutmut.py --configured-scope`.
+`run_targeted_mutmut.py` and `just check-deep` remain changed-path checks and do
+not satisfy Q139; no `just mutmut-check` recipe exists. Preserve the exact source
+and test selection, tool versions, complete counts, and the Q139 denominator
+`killed / (total − type_invalid − no_tests)` (compute it from the counters rather
+than substituting the runner's `mutation_score_non_type_invalid` field). Triage
+actionable statuses through the existing mutation-clearing process; an
+infrastructure failure or an unreviewed actionable status keeps I03 open. If
+triage changes source or the candidate image, rerun affected W3/W4 evidence on
+the new candidate.
+
+**Verification boundary.** No Q139 run, `fa update`, host acceptance, or W4
+execution occurred in E531. The prior SIGKILL remains an infrastructure failure,
+not a baseline. This amendment closes Q152 only; it closes no STEP, wave, live
+row, or I03 acceptance criterion.
+
+### E532 — Replace the broken S10b census with a whole-diff C901 suppression guard; continue W3 local gates (2026-11-10; Arena-local)
+
+**C901 guard.** Removed `tests/test_s10b_complexity_ratchet.py`; it had failed on
+its brittle waiver census and was not repaired, re-counted, or given a lower
+threshold. Added `tests/test_c901_diff_guard.py`, which tokenizes every changed
+Python file in the committed merge-base diff, staged and unstaged diffs, and
+untracked paths; detects explicit `C901` and bare `noqa` directives while
+ignoring strings and explanatory prose; and fails closed if Git cannot resolve
+history or read the changed files. Its 11 exact legacy entries (9 under
+`src/fa`, 2 in tests) are occurrence-counted, so duplicating an allowlisted line
+still fails. It makes no complexity claim and changes no legacy function.
+Updated the coder-loop shape-test commentary and configured full-history checkout
+for the CI sanity-check. The job supplies `C901_DIFF_BASE` from the PR base SHA or
+push `before` SHA; the guard fails closed on an invalid/unresolvable event base and
+the synthetic multi-commit-push regression proves it scans beyond only `HEAD^`.
+
+**Local verification.** The final guard bank passed **12 tests**; the combined
+prompt/quality/S10a/S10b-CLI/guard bank passed **155 tests**; host-preflight,
+host-marker and guard bank passed **37 tests**. `ruff check .`, `ruff format
+--check .`, `mypy` (**600 files**), `pyrefly` (**0 errors**), `fa authoring-check`
+(**0 diagnostics**), `deptry`, contract checks, shell syntax, and the I03
+coverage checker passed. The `execution_host` integration suite collects **7
+cases**. The full `uv run --frozen just check` run, before the final additional
+push-base regression test, was **not green**: its test run reported **7,791
+passed, 1 failed, 18 skipped, 7 deselected, 3 xfailed** (86.81% coverage); the
+failure is `test_clean_candidate_real_readiness_commit_and_local_publication`,
+where workspace bootstrap returned 75, `degraded_environment: sync_failed`. A
+focused rerun reproduced that same failure in 7.32 seconds. The lint recipe also
+returns 8 from the existing Pylint R0801 duplicate-code and R0401 cyclic-import
+gap (9.99/10); Ruff, dependency checks, and format checks pass. No host-marked
+case was executed.
+
+**Boundary / remaining W3 work.** The prior environment's Python/`uv sync`
+readiness limitation remains unresolved; do not alter the integration oracle or
+claim readiness from this run. Approved Q97 profile evidence, S6P5/S6P7/S6P8,
+remaining STEP9 criteria, STEP9A and STEP9B are still open. No `fa update`, host
+acceptance, Q139 run, W4 execution, STEP closure, or live PASS is claimed.
+
+### E533 — Readiness bootstrap failure: separate source facts from runner history (2026-11-10; research only)
+
+**Traceability and scope.** W3 / Q137 / SLICE6 STEP9 and new research question
+Q153. Q136 is the independent Pylint R0801/R0401 issue. Read the production seam,
+integration oracle, environment builder, Q137 inventory, and historical ledger;
+no runtime/test edit and no readiness rerun was performed for this entry.
+
+**Current source facts.** `pyproject.toml`/`uv.lock` accept `requires-python >=3.13`
+and there is no `.python-version`. `workspace_bootstrap.py::_UV_SYNC_ARGV` has
+no `--python`; `_command_environment` clears inherited `VIRTUAL_ENV` and
+`UV_PYTHON`, and sets `UV_PROJECT_ENVIRONMENT` only to the target workspace's
+`.venv`. That isolates the target but does not select a Python interpreter.
+`_ensure_locked` can use `ready_fast_path` only for an already-valid target;
+a fresh candidate runs `uv sync`, and only after sync succeeds does it run
+`pre-commit install-hooks`. A nonzero sync becomes `sync_failed` /
+`degraded_environment` / exit 75, with no readiness success credited. The
+integration test copies the repository while excluding `.venv`, then requires
+`ready_repaired` before it reaches its Git commit/local-publication assertions.
+
+**What earlier evidence actually means.** The exact nodeid was already `OPEN`
+in the 2026-11-09 Q137 inventory; ledger runs before E532 include the same
+readiness failure on a stashed clean tree, and E532's full run plus focused
+rerun again returned `sync_failed`. An earlier full run recorded
+`precommit_prewarm_failed` (E351). Because the production sequence invokes
+pre-commit only after successful `uv sync`, that run proves the sync stage
+succeeded in that runner; the end-to-end readiness test still failed and it is
+not an overall PASS. Its recorded environment had
+`PATH=.venv/bin:$BUILD_ROOT/prefix/bin:$PATH` and `UV_SYSTEM_CERTS=true`. It is
+plausible that the external toolchain prefix made CPython 3.13.16 discoverable,
+but the exact interpreter selected for the candidate was not logged.
+Separately, E398's successful
+`uv sync --frozen --extra dev --python .../python3.13` rebuilt the repository
+root `.venv`; that is not the fresh-clone bootstrap test. The tracked ledger
+search found no overall PASS for this exact readiness nodeid.
+
+A different captured failure diagnostic reports uv selecting CPython 3.15.2
+under the open `>=3.13` range and failing its GitHub-release download with
+`invalid peer certificate: UnknownIssuer`. The latest focused run preserved
+only the sanitized `sync_failed` outcome; no fresh child stderr/interpreter
+selection is available. The current recorded ordinary PATH Python is 3.11.2,
+while the repository `.venv` is 3.13.16 and uv's `--only-installed` listing
+contained only 3.11.2. Thus missing compatible interpreter/network is the
+best-supported explanation for the later `sync_failed`, not a freshly proven
+TLS diagnosis for that exact run.
+
+**Change / invariant verdict.** No diff is present in the bootstrap, readiness
+test, Python requirement/lock, or environment-builder files in this worktree;
+the imported Git history is grafted at its base, so it cannot establish when
+these source invariants first appeared. Evidence supports no newly changed
+readiness invariant here. The existing intentional invariant is isolation:
+never reuse inherited environment selection to redirect bootstrap writes away
+from the target `.venv`. The operational mismatch is that the workspace
+bootstrap has an open Python range and no interpreter selector, while the
+separate `scripts/arena-env-build.sh` uses `EXPECTED_PYTHON=3.13.16`, an explicit
+`--python "$PYTHON"`, `UV_SYSTEM_CERTS=true`, and an externally built/pinned
+interpreter. Q153 records policy options/selection criteria; no pin/fallback,
+skip, or xfail is authorized by this research.
+
+**Disposition.** The test was not reopened: it was already OPEN and has never
+been closed by a recorded overall PASS. Current `sync_failed` is a repeated
+failure stage, whereas E351 got through sync and failed later at pre-commit.
+W3/STEP9 and Q137 remain OPEN. No host acceptance, `fa update`, readiness PASS,
+or STEP closure is claimed. No production code or test suite ran for E533;
+`.venv/bin/python scripts/check_doc_links.py` reported 361 Markdown files and
+exit 0, and `git diff --check` exited 0. Other W3 verification results remain
+exactly as reported in E532. [Q153]
+
+### E534 — Python-floor guard and clean-readiness diagnostic follow-up (2026-11-10; Arena-local)
+
+**Scope and policy.** Q153 / Q137 / W3 STEP9. The owner-selected policy remains
+`requires-python >=3.13`; no `.python-version`, `UV_PYTHON`, `--python`, or lock
+rewrite is introduced. `just doctor` previously enumerated only Python 3.13 and
+3.14; its local preflight now parses numeric major/minor versions and accepts
+`>=3.13`. Added a real-`just` recipe test with controlled version executables:
+3.15 is accepted and 3.12 is rejected. This is a guard-logic test, not execution
+on a CPython 3.15 runtime.
+
+**Fresh-workspace oracle.** The clean candidate integration now explicitly
+asserts that both copied source and provisioned target begin without `.venv`,
+probes the interpreter actually created by the inner `uv sync`, requires that
+project interpreter to be `>=3.13`, and attaches only a bounded structured
+bootstrap-log tail plus the target-Python probe to failures. With
+`PATH=.venv/bin:$BUILD_ROOT/prefix/bin:$PATH` and `UV_SYSTEM_CERTS=true`, the
+real clean-copy run created a target environment whose Python reports **3.13**;
+by the bootstrap sequence, `uv sync` completed before the test reached
+`pre-commit install-hooks`. The test then failed with
+`precommit_prewarm_failed` (hook child exit 3; bootstrap exit 75). It did not
+report `ready_repaired`; the hook assertions, commit, and local publication were
+not reached. Follow-up isolated the pre-commit failure more precisely: the
+Arena CPython 3.13.16 build has default CA paths pointing into a temporary build
+prefix, so Python's first direct GitHub request failed certificate validation.
+With `SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt`, the GitHub request
+returned HTTP 200 and pre-commit cloned the GitHub hook repos and installed its
+Python/npm environments. It then failed while preparing Gitleaks: pre-commit's
+Go language installer attempted `https://go.dev/dl/?mode=json` and raised
+`URLError: [SSL: UNEXPECTED_EOF_WHILE_READING]`. `go.dev` is outside this runner's
+allowed outbound-host set, and no system Go executable is installed. Re-running
+the exact clean-copy node with the system CA bundle still ended at
+`precommit_prewarm_failed` (child rc 3 / bootstrap exit 75). No TLS verification
+was disabled. The test still did not report `ready_repaired` or reach hook,
+commit, or local-publication assertions; this remains a failure, not a readiness
+PASS, and does not establish which Python a different runner will select.
+
+**Local verification.** The ordinary Arena builder completed frozen dev sync and
+rechecked CPython **3.13.16**, `uv 0.13.7`, `just 1.57.0`, and 76 packages. The
+focused `tests/test_workspace_bootstrap_aliases.py` bank passed **12**; the
+readiness/caller group passed **5**; the real local-supervisor nested
+workflow/handoff group passed **3**; `tests/test_workspace_bootstrap.py` passed
+**115**; the artifact/Docker bank passed **114**. `fa authoring-check` initially
+caught the new test's explicit `pytest.skip`; that call was removed in favor of
+a hard toolchain assertion, after which the independent authoring check reported
+**0 diagnostics**. Ruff check/format and `git diff --check` passed.
+
+The first full `just check` (23:33) preceded removal of the test-level
+`pytest.skip`. A full rerun after that correction, with the Arena CPython 3.13.16
+prefix on `PATH`, `UV_SYSTEM_CERTS=true`, and the system CA bundle exposed via
+`SSL_CERT_FILE`, took **25:59** and exited **8**. Lock-check, Ruff/format,
+deptry, mypy (600 source files), Pyrefly (0 errors), authoring-check (0
+diagnostics), contracts, and shell syntax passed. `_lint` remains blocked by
+Pylint R0801 (duplicate-code) and R0401 (cyclic-import), exit **8**. The pytest
+gate exited **1** with **7,794 passed, 1 failed, 18 skipped, 7 deselected, 3
+xfailed**, **86.78%** coverage; the sole failure is the clean-readiness
+integration above. Its separate exact rerun with `SSL_CERT_FILE` still failed
+at `precommit_prewarm_failed` after reaching the Gitleaks Go installer; it did
+not report `ready_repaired` or reach commit/local publication. Twelve
+ShellCheck-dependent tests skipped because ShellCheck is not installed; six
+runtime-server-extra tests remain intentionally deferred. The repository check
+is still **RED**, not accepted.
+
+**Acceptance boundary / next step.** A real CPython 3.15 runtime was not
+available in Arena, so compatibility of the full checker/test suite on 3.15 is
+not claimed; only the version-floor logic was exercised with a synthetic
+3.15-reporting executable. `workspace_bootstrap._command_environment` remains
+unchanged: it removes inherited environment selectors and sets only the target
+`UV_PROJECT_ENVIRONMENT`; it intentionally does not choose Python. Q137, W3
+STEP9, and clean readiness remain OPEN. No `just check-deep`, full mutation
+scope, `FA_REQUIRE_EXECUTION_HOST=1` integration suite, Docker/live deployment,
+W4 witness, or Q139 run occurred. Q139 stays deferred until after W4
+execution/live-evidence capture per Q152/E531; none of these omissions is a
+PASS. [Q153]
+
+### E535 — Target-runtime non-regression audit after Arena-only runner clarification (2026-11-10; Arena-local)
+
+**Operator scope correction.** The Arena outbound-host restriction and the
+Arena-built CPython's stale default CA path are runner constraints, not evidence
+of a product defect in Ubuntu/Docker. Do not change bootstrap, pre-commit,
+Gitleaks, Docker, or Python-selection policy to make this runner pass. The
+Arena clean-copy result remains a failed local attempt, not a readiness PASS;
+Q137 stays pending actual target-host evidence. If the deployed host exposes a
+product failure, diagnose and fix that host behavior without retroactively
+weakening this oracle.
+
+**Diff and oracle audit.** The current continuation's worktree changes are the
+approved `just doctor` floor check, stricter readiness diagnostics/preconditions,
+and evidence updates. The recipe accepts the owner-selected unpinned `>=3.13`
+range; its synthetic-version test exercises 3.15 acceptance and 3.12 rejection
+without claiming a real 3.15 run. The clean-readiness integration still excludes
+source `.venv`, requires the provisioned target to start without `.venv`, performs
+real `uv sync` and `pre-commit install-hooks` against a fresh test
+`PRE_COMMIT_HOME`, probes the resulting interpreter for `>=3.13`, then strictly
+requires `ready_repaired`, installed hooks, a real test commit, and publication
+to a temporary bare Git remote. It does not use Arena-specific CA settings, a Go
+mirror, a mocked hook, a copied venv, a shared pre-commit cache, or a success
+skip/xfail. On POSIX it now fails rather than skips if required `uv`, `git`, or
+`bash` tools are absent; the Windows skip remains because this integration
+requires POSIX shell/local Git transport.
+
+No worktree or base-to-HEAD diff was found in
+`src/fa/workspace_bootstrap.py`, `scripts/bootstrap/workspace.py`,
+`.pre-commit-config.yaml`, `uv.lock`, `Dockerfile.fa`, or
+`docker-compose.fa.yml`. The upstream Gitleaks hook and production readiness
+engine remain unchanged. No Arena `SSL_CERT_FILE`, network mirror, Go shim, or
+system-dependency fallback was added to the product.
+
+**Branch-level Arena/host separation.** The branch does contain the
+Arena-specific `scripts/arena-env-build.sh`/`knowledge/arena-env-build.md`
+changes (local pinned CPython/uv/just build and verified system-OpenSSL reuse)
+and a shared `pyproject.toml` test-marker update. The Arena builder is not
+called by `Dockerfile.fa`; the image independently builds its Ubuntu runtime
+with `uv python install` and its own controller venv. The shared pytest config
+excludes `execution_host`/`live_e2e` from the default suite on every platform,
+so those tests must be explicitly selected on the approved host. This contract
+was exercised: `FA_REQUIRE_EXECUTION_HOST=1 .venv/bin/python -m pytest
+--collect-only -q tests/integration -m execution_host` selected **7** actual
+host-marked test nodes, despite the default exclusion. The local simulated
+preflight plus marker bank (`tests/test_execution_host_preflight.py`,
+`tests/test_execution_host_markers.py`) passed **25 tests**, including the
+empty-selection failure oracle; these simulate facts and are not live host
+acceptance. The integration fixture additionally requires the opt-in and real
+Linux/UID/cgroup-v2/Docker API/config/cache/image preflight; missing
+prerequisites fail instead of skip. This is an explicit host-test lane, not a
+claim that the host tests ran here.
+
+**Target configuration and verification.** Source inspection confirms
+`Dockerfile.fa` targets Ubuntu 24.04 and installs `ca-certificates`, Git, `just`,
+uv, and CPython 3.13. Compose assigns `PRE_COMMIT_HOME` under the writable
+`/home/fa/.cache` tmpfs, mounted with `exec` and uid/gid 1000 permissions. The
+image does not preinstall Go; in the target environment pre-commit may use a
+system Go or its normal upstream toolchain download. The Arena runner has no
+Docker CLI, so no Docker build, Compose mount/runtime, or host acceptance was
+performed. The source-level container/readiness/isolation bank
+(`test_container_build_invariants.py`, `test_workspace_bootstrap_aliases.py`,
+`test_workspace_bootstrap.py`, `test_r28_host_bootstrap_isolation.py`) passed
+**169 tests** after the oracle review; the follow-up `fa authoring-check`
+reported **0 diagnostics**, Ruff/format passed for the changed tests, and the
+Markdown link scan passed all **361** files. This is static/local evidence, not
+live Ubuntu/Docker acceptance.
+
+**Disposition.** The `go.dev` fetch failure is ignored as an Arena-specific
+execution limitation for project design; it is not converted into a product
+waiver or a readiness PASS. Keep the strict clean-copy oracle and the approved
+Python floor. Q137/W3 STEP9 remain OPEN pending the required evidence and other
+gates; host deployment, W4 witness, and Q139 remain unrun/deferred as recorded
+in E534. [Q153]
+
+### E536 — Gitleaks Go toolchain pin and acceptance-boundary correction (2026-11-10; local)
+
+**Operator correction.** The prior E535 disposition that treated the dynamic
+`go.dev` lookup as an Arena-only limitation is superseded: the project must not
+use a floating Go-version discovery request. The operator also clarified that
+W3 closes on Arena-local evidence; checks that require the approved live host
+belong to a separately tracked W4 E2E item, not an unclosed W3 checkbox or an
+implied host PASS. The increment's wave table still needs its explicit
+reconciliation in the following planning slice.
+
+**Source and mechanism.** The pinned upstream Gitleaks `v8.30.1` pre-commit
+metadata declares the `golang` backend; its `go.mod` requires Go `1.24.11`.
+Pre-commit `4.6.0`'s Go backend calls `https://go.dev/dl/?mode=json` only when
+its selected language version is the implicit default and no system Go is
+available. `.pre-commit-config.yaml` now pins that hook's `language_version` to
+`1.27.3`, avoiding the floating metadata lookup while retaining the upstream
+Gitleaks hook, its CI-matched `v8.30.1` release, and fail-closed prewarm. The
+pinned-version path still downloads the SDK from `dl.google.com`; no claim is
+made that this external fetch or full clean readiness succeeded in Arena.
+No bootstrap, TLS, Docker, secret-scan, or skip/fallback behavior was changed.
+
+`tests/test_hygiene_hooks_install.py` adds a C0 config contract that reads the
+real hook block and patches the Go resolver's `urlopen` to reject any metadata
+network call. The owning test bank passed **46 tests**; targeted MyPy passed
+with the source tree on `MYPYPATH`; Ruff/format, `pre-commit validate-config`,
+`git diff --check`, and the edited guardrail-reference link check passed. The
+negative proof changed the configured version to `default`; the exact pin
+assertion failed with pytest exit **1** before any network call, then the file
+was restored exactly. An initial targeted MyPy invocation resolved installed
+untyped package copies; rerunning with `MYPYPATH=src` and a dynamic import
+passed.
+
+**Boundary.** This closes only the source-level floating-version defect; it is
+not a pre-commit environment install, `ready_repaired`, local publication,
+Docker build, target-host acceptance, STEP9, or Q137 closeout. The full
+pinned-SDK fetch and any Docker/cgroup/live witnesses remain host-only W4
+verification under the operator's updated wave rule; no W4 evidence exists.
+[Q137]
+
+### E537 — Clean readiness moved to fail-closed W4 lane; W3 remains Arena-local (2026-11-10; local contract evidence)
+
+**Operator direction and traceability.** Followed the next I03 dependency-order task: reconcile the clean-workspace readiness integration with the user-defined W3/W4 boundary. The active increment wave table and STEP9/STEP10 instructions had still assigned host `fa update` and host-suite execution before W3 closed, and the live E2E plan still described the deployment as a W3 prerequisite. This entry supersedes those active-plan assignments only; it does not rewrite historical run results or change any step, wave, Q137, or live-row status.
+
+**Readiness test seam.** `tests/test_workspace_readiness_integration.py::test_clean_candidate_real_readiness_commit_and_local_publication` is now marked `execution_host`; the POSIX/tool `skipif` decorators were removed. Its first runtime action is `_require_execution_host_preflight()`, which reuses `tests.integration._host.require_execution_host_opt_in` and `load_and_probe_execution_host`. Missing `FA_REQUIRE_EXECUTION_HOST=1` or real Linux/UID/cgroup-v2/Docker/config/cache/image prerequisites fails before missing-tool checks, scratch creation/copy, `uv sync`, or hook installation. The actual C2/C3 clean-copy path still requires the existing `ready_repaired`, installed hooks, real commit, and local publication assertions; no bootstrap behavior, scanner, TLS, or fallback was changed.
+
+`tests/test_execution_host_markers.py` now exercises actual pytest selection: the default one-file selection must report exactly one deselected node (pytest exit 5 because no test remains in that isolated file); explicit `-m execution_host` with the opt-in set collects the named readiness node; explicit execution with the opt-in removed fails with `execution_host_preflight:explicit_host_opt_in_required`, before the bootstrap path. The W4 combined host collection selects **8 nodes**: the seven existing `tests/integration/` cases plus the readiness case. Collection is not execution or host evidence. The initial selection assertion incorrectly expected exit 0 for an all-deselected single-file collect; the observed exit 5 is pytest's `NO_TESTS_COLLECTED`, so the test was corrected to assert that exact exit plus `1 deselected`.
+
+**Mutation / EDGE proof.** Temporarily removed `@pytest.mark.execution_host` from the readiness test and ran `tests/test_execution_host_markers.py::test_clean_readiness_integration_is_only_selected_in_the_explicit_host_lane`; it failed (pytest exit 1) because the default collection now included the host node. The marker was restored. This is the requested selection/configuration EDGE kill-check; it is not a new product-producer claim.
+
+**Plan reconciliation.** `increments/increment-03-execution-workspace-foundation.md` now states W3 is Arena-local only and has no deploy/update or live-host prerequisite. W4 starts after W3 local closure with the single approved `fa update`, verifies SHA/digest/config/profile/health/CLI smoke, freezes the running image, then runs the reviewed host suite, including the readiness node. STEP9's local exit requires marker/selection/preflight contracts, not `ready_repaired`; STEP10 separates local checks/source mutations from the W4 host deploy and real readiness. The 2026-10-22 live E2E test plan now uses the same boundary and explicitly includes the clean-readiness node in the W4 approved host package. `pyproject.toml` documents the combined W4 selection paths. No checkbox, live row, or readiness verdict was changed.
+
+**Verification (Arena-local only).** `tests/test_execution_host_markers.py tests/test_execution_host_preflight.py -q`: **27 passed** (including the 23-case simulated preflight bank). `FA_REQUIRE_EXECUTION_HOST=1 pytest --collect-only -q tests/integration tests/test_workspace_readiness_integration.py -m 'execution_host or live_e2e'`: **8 tests collected**. Default isolated collection reports `no tests collected (1 deselected)`, exit **5**, as expected; explicit selected execution without opt-in returns **1** with the exact opt-in error. Ruff, format, targeted MyPy (`MYPYPATH=src`), `pre-commit validate-config`, `git diff --check`, and the all-document link scan (**361 files**) passed.
+
+**Boundary / disposition.** No approved-host run, real `load_and_probe_execution_host` success, `uv sync`, `pre-commit install-hooks`, SDK fetch from `dl.google.com`, `ready_repaired`, commit/publication, Docker build, `fa update`, W4 live suite, `just check`, or Q139 run occurred. The Go pin still avoids floating `go.dev` metadata discovery; this entry does not prove the pinned SDK fetch. Q137 remains OPEN, and neither W3 nor W4 closes here. W3 no longer waits for W4 host evidence; W4 remains unrun. [Q137]
+
+### E538 — Use plan-approved system Go for Gitleaks; remove SDK bootstrap (2026-11-10; local config/test evidence)
+
+**Operator correction.** E536's explicit Go `1.27.3` pin was an unsupported
+choice made in this work, not an I03 requirement. It suppressed only the
+`go.dev` version-metadata lookup and still caused pre-commit to download a Go
+archive from `dl.google.com`; the added resolver test did not inspect that
+second request. The pin and that metadata-only test are superseded. Retain the
+upstream Gitleaks hook and secret-scanning contract.
+
+**Plan source and mechanism.** The upstream Gitleaks `v8.30.1` hook declares
+`id: gitleaks` with the `golang` backend. In pre-commit `4.6.0`, the explicit
+`language_version: system` path skips `_install_go` and runs `go install` using
+the system toolchain; if `go` is absent, prewarm fails closed rather than
+fetching a replacement SDK. The active I03 host prerequisite names trusted Go
+`1.24.11` plus pinned Gitleaks/pre-commit dependencies/cache (increment STEP10
+and host-prerequisite section; E2E verification register row 1493). STEP10's
+W3 clause checks only the local config contract; actual system-Go availability
+is a W4 approved-host readiness prerequisite, not a W3 host gate. This is the
+plan's system-toolchain prerequisite, not authorization for a separate
+`1.27.3` download. Normal Gitleaks module dependency preparation remains part
+of the pinned hook prewarm. No Docker/system-binary alternative was introduced.
+The CI Gitleaks action and its `8.30.1` version remain intact.
+
+**Applied.** `.pre-commit-config.yaml` now sets `language_version: system` for
+the existing `v8.30.1` Gitleaks hook. The new C0 assertion checks that exact
+revision and system-Go selector; the guardrail reference, STEP10, host
+prerequisites and E2E register now distinguish system Go from SDK bootstrap.
+The old test that only blocked `urlopen` in `_infer_go_version` was removed.
+
+**Verification (Arena-local only).** The owning hygiene-hook bank passed
+**46 tests**. The negative control changed the configured selector to `default`;
+the new assertion failed as intended (pytest exit **1**), the config was
+restored, and the focused contract passed. Targeted MyPy (`MYPYPATH=src`), Ruff
+check/format, `pre-commit validate-config`, `git diff --check`, and the complete
+Markdown link scan (**361 files**) passed. No Gitleaks prewarm/build or scan,
+real readiness, `fa update`, approved-host suite, or W4 evidence was run. Q137
+and both W3/W4 statuses remain open.
+
+### E539 — Remove Go-backed local Gitleaks hook; retain CI secret scan (2026-11-10; local config/test evidence)
+
+**Provenance trace.** The Gitleaks choice came from
+`knowledge/research/ci-qa-tooling-adversarial-2026-06.md` R-4, which recommended
+Gitleaks as a zero-license, pre-commit-native secret scanner. The
+`knowledge/prompts/ci-qa-implementation-session-start.md` implementation
+prompt made that local hook an exact task and separately requested a CI scan,
+citing ADR-11 R-6 because pre-commit is bypassable. ADR-11-I6 itself states
+that CI is authoritative and pre-commit is convenience; it does **not** mandate
+Gitleaks by name. Available Git snapshots show both the hook and CI job already
+present in the 2026-10-06 snapshot (`b02b890`) and the current branch base
+(`9ba095d`); no earlier adoption commit is present in this branch history. The
+written R-4 recommendation and its implementation prompt are the traceable
+origin of the local Gitleaks requirement.
+
+**Operator decision.** Remove the Go-backed Gitleaks pre-commit hook
+completely. It is local convenience only, and its upstream `golang` backend
+caused the Go SDK requirement in this stdlib-Python project. Keep the existing
+full-history Gitleaks CI job pinned at `8.30.1`; it has no `continue-on-error`
+and remains the project scan. Preserve `.gitleaks.toml` and its structural
+secret-isolation tests. Do not substitute Docker or a separately installed
+Gitleaks binary. The local early-feedback seat is intentionally dropped; the CI
+security gate remains.
+
+**Applied.** Removed the Gitleaks repository/hook block from
+`.pre-commit-config.yaml` and the Go 1.24.11 prerequisites from active I03
+readiness text. Updated the CI action's version comment, the guardrail reference,
+the active CI/QA implementation prompt, and the E2E readiness row. Appended a
+dated disposition to the source research note rather than rewriting its
+historical R-4 recommendation. `tests/test_hygiene_hooks_install.py` now asserts
+there is no Gitleaks pre-commit hook and that the non-advisory full-history CI
+action remains pinned to `8.30.1`.
+
+**Verification / boundary.** Targeted test and static-check results are recorded
+below after the final suite run. No Go toolchain, Docker alternative, or local
+Gitleaks binary was installed. The CI Gitleaks scan itself and live readiness
+were not executed locally; no W3/W4 host result is inferred. Historical E536–
+E538 and earlier blocked-readiness observations remain append-only historical
+facts, superseded for current configuration by this entry. [Q137]
+
+### E540 — Remove Gitleaks from local hooks, CI, and readiness (2026-11-10; operator-directed)
+
+**Provenance and correction.** The specific tool recommendation originated in
+R-4 of `knowledge/research/ci-qa-tooling-adversarial-2026-06.md`, then became
+an exact local-hook and CI implementation task in
+`knowledge/prompts/ci-qa-implementation-session-start.md`. ADR-11-I6 requires
+CI authority in general; it does not mandate Gitleaks or secret scanning by
+name. Available branch history has both integrations in imported snapshot
+`b02b890` (2026-10-06) and base `9ba095d` (2026-11-09); it does not show the
+earlier adoption commit. The operator explicitly requested complete removal,
+not the interim CI-only disposition in E539; this entry supersedes E536, E538,
+and E539 without rewriting their history.
+
+**Applied.** Removed the pre-commit repository/hook, the blocking CI job and
+its license/version configuration, and `.gitleaks.toml`. Removed tool-specific
+active readiness requirements and updated the guardrail, feature, live-run,
+and implementation guidance. The structural ADR-12 secret-isolation test
+remains, now asserting policy from `.env.fa.template` and `scripts/backup-fa.sh`;
+it does not scan repository history. No replacement scanner was introduced.
+
+**Verification (local).** The targeted hygiene-hook and secret-isolation tests
+passed (**53 passed**); targeted MyPy, Ruff check/format, `pre-commit
+validate-config`, workflow/config YAML parsing and removal assertions,
+`git diff --check`, and the Markdown link scan (**361 files**) passed. The full
+`PATH="$PWD/.venv/bin:$PATH" .venv/bin/just check` run exited **8**: lint
+reported Pylint R0801/R0401 findings; the CLI coverage floor reported
+`_build_role_registry` at 89.2% (<100%), `_cmd_stats` at 50.0% (<80%), and
+`_validate_run_args` at 93.5% (<100%). Pytest completed **7,796 passed, 18
+skipped, 8 deselected, 3 xfailed**, with 86.80% total coverage. The full gate ran
+over a broad dirty worktree; these failures are not attributed to this
+config/documentation change, and no floors were weakened. No Gitleaks scan,
+approved-host readiness, or W3/W4 acceptance is claimed. [Q137]
+
+### E541 — Operator correction: retain Gitleaks in CI only (2026-11-10; local config/test evidence)
+
+**Operator correction.** E540's complete-removal disposition is superseded by
+the operator's clarification: Gitleaks is required only as a GitHub Actions
+workflow. Keep the blocking full-history scan pinned to `8.30.1`; retain
+`.gitleaks.toml` and its structural secret-isolation test. Do not restore the
+Go-backed local pre-commit hook or make Go an application, runtime, or readiness
+prerequisite. E540 remains unchanged as an append-only record of the superseded
+removal direction.
+
+**Applied.** Restored the CI-only policy in active security/governance and
+readiness documentation. The pre-commit hook remains removed; the existing
+workflow job, `.gitleaks.toml`, and structural secret-isolation assertions are
+retained. Added `test_gitleaks_is_blocking_ci_only_and_scans_full_history` to
+pin the no-local-hook / blocking full-history CI contract. The workflow file
+also contains independent fetch-depth and C901-base changes from the dirty
+worktree; those were preserved and not included as part of this correction.
+
+**Verification (local).** `tests/test_hygiene_hooks_install.py` plus
+`tests/test_secret_isolation_invariants.py`: **54 passed**. Ruff check/format,
+`MYPYPATH=src` MyPy for the changed test module, `pre-commit validate-config`,
+Gitleaks TOML/workflow parsing, the Markdown link scan (**361 files**), and
+`git diff --check` passed. The Gitleaks scanner itself and approved-host
+readiness were not run; no Go SDK was installed or required.
+
+**Publication boundary.** The branch was reset to `9dac532` before this
+correction; the remote remains unchanged. The prior push was rejected because
+the GitHub App lacks `workflows` permission. GitHub connector lookup returned
+`unsupported`; no same-credential retry or permission bypass was attempted.
+Independent dirty worktree changes remain unstaged and outside this correction.
+
+### E542 — W3 workflow-touch and push-rejection audit (2026-11-10; local Git evidence)
+
+**Correction to E541.** The `fetch-depth: 0` and `C901_DIFF_BASE` changes in
+`.github/workflows/advisory.yml` are not independent user changes. They are our
+own earlier W3 work, recorded in E532, and remain part of the W3 delivery.
+
+**Why W3 touched the workflow.** E532 replaced the brittle S10b suppression
+census with `tests/test_c901_diff_guard.py`. That test compares all changed
+Python paths to the PR base or push-before SHA and fails closed if Git cannot
+resolve that base. The `sanity-check` job therefore fetches full history and
+passes `${{ github.event.pull_request.base.sha || github.event.before }}` as
+`C901_DIFF_BASE`; the synthetic multi-commit-push case verifies the guard does
+not inspect only `HEAD^`. This was intentional C901 CI wiring, not a change to
+GitHub permissions or an attempt to modify the secret-scanning policy.
+
+**Why the push was rejected.** Local metadata dates `47cfbf8` to 2026-11-14
+22:06 UTC. That commit deleted the Gitleaks job from `advisory.yml` (along with
+its config), and GitHub rejected the push with `refusing to allow a GitHub App
+to create or update workflow '.github/workflows/advisory.yml' without
+'workflows' permission`. W3 commits `5053cb3`, `d6cb196`, and `9dac532` change
+no `.github/workflows/` paths; the remote branch remains at `9dac532`. Thus
+previous successful pushes did not carry workflow edits. The C901 workflow
+hunks were still uncommitted at the time and would also require the App's
+`workflows` permission if included in a push.
+
+**Diagnosis / boundary.** The evidence is a path-permission rejection, not a
+YAML syntax error, branch conflict, changed repository setting, or failure of
+the workflow's runtime `permissions: contents: read`. That YAML permission is
+for `GITHUB_TOKEN` inside a run; it does not grant the GitHub App permission to
+push workflow files. The Gitleaks job is now present again in the worktree. Do
+not weaken workflow runtime permissions or retry the same credential; obtain
+correct App authorization before pushing the W3 workflow hunk or any other
+change under `.github/workflows/`.
+
+### E543 — Temporarily defer C901 GitHub workflow wiring for delivery (2026-11-10; operator-directed)
+
+**Decision.** Prioritize delivering the current W3 changes on the existing App
+permission. Temporarily restore `.github/workflows/advisory.yml` byte-for-byte
+to the remote version, removing the W3 `fetch-depth: 0` and `C901_DIFF_BASE`
+hunks and the related comment-only edits. Keep the C901 guard and its local
+repo-diff test active; only skip that single repo-diff test in GitHub Actions
+when the explicit base SHA is unavailable. The helper, parser, multi-commit
+push regression, and other C901 unit tests remain active. This is a temporary
+CI deferral, not a permanent removal of the guard.
+
+**Re-enable later.** In a separate workflow-authorized change, restore full
+history plus the PR-base/push-before environment and remove the temporary CI
+skip. Until then, no commit in this delivery should modify `.github/workflows/`;
+the existing Gitleaks workflow and CI-only policy stay as they are on remote.

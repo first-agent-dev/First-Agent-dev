@@ -706,3 +706,31 @@ GitHub's built-in LLM code review preview is already enabled in this repository.
 | GitHub LLM review GA | Feature exits preview | Verify it still works; no custom integration needed |
 | Windows dev reports `just` issues | Windows IDE user reports friction | Debug `just` binary path or fall back to `make` |
 | `uv.lock` drift | Agent forgets to run `uv lock` after dependency change | Add `uv lock --check` to `just check` or CI sanity job |
+
+## 2026-11-10 operator disposition — remove Gitleaks entirely
+
+The source of the Gitleaks requirement is R-4 above, which recommended a
+pre-commit hook. `knowledge/prompts/ci-qa-implementation-session-start.md`
+turned that recommendation into an exact implementation task and later
+requested CI scanning because hooks are bypassable. ADR-11-I6 supports CI
+authority in general; it does not require Gitleaks or secret scanning by name.
+The checked branch history already contains the hook and CI job in imported
+snapshot `b02b890` (2026-10-06) and base `9ba095d` (2026-11-09); the earlier
+adoption commit is not available in this branch history.
+
+Per operator request (2026-11-10), remove the local hook, CI job, allowlist
+configuration, scanner-specific test, and active documentation/readiness
+requirements. Do not substitute another scanner or local binary. The project
+has no automated repository secret scanning after this change; unrelated
+ADR-12 secret-isolation and runtime controls remain unchanged. Historical
+findings above record the earlier recommendation, not current requirements.
+
+## 2026-11-10 operator correction — retain Gitleaks in CI only
+
+The preceding disposition to remove the CI scan and allowlist is superseded by
+the operator's clarification. Keep the blocking full-history Gitleaks GitHub
+Actions job pinned to version 8.30.1 and retain `.gitleaks.toml`. Remove only
+the Go-backed local pre-commit hook; do not add a local Gitleaks command,
+binary, Go SDK, or readiness prerequisite. The historical R-4 recommendation
+and its former local-hook rationale remain background, not the current local
+hook policy.
