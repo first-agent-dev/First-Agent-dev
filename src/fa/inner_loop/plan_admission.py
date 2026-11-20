@@ -14,8 +14,18 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from fa.inner_loop.plan_ids import PlanIds, extract_plan_ids
+from fa.inner_loop.plan_v2 import PlanGraph, PlanV2Error, parse_plan
 
 MAX_PLAN_BYTES = 1024 * 1024
+
+#: The grammar an admitted snapshot was read with. This is the *route's*
+#: decision, never the document's: nothing here sniffs a marker to pick a
+#: parser, because a plan that could choose its own grammar could choose a
+#: weaker one (INV-01). ``PLAN-V1`` is the frozen legacy grammar; ``PLAN-V2``
+#: is the ``AI-NATIVE-PLAN-V2`` contract in ``plan_v2``.
+PLAN_V1 = "PLAN-V1"
+PLAN_V2 = "PLAN-V2"
+ADMISSION_FORMATS = frozenset({PLAN_V1, PLAN_V2})
 
 
 class PlanRefError(ValueError):
@@ -35,10 +45,22 @@ class PlanRef:
 
 @dataclass(frozen=True, slots=True)
 class PlanSnapshot:
+    """One captured plan buffer plus the grammar it was admitted under.
+
+    ``ids`` is the legacy V1 extraction and is deliberately empty for a
+    ``PLAN-V2`` snapshot: running the V1 extractor over V2 bytes would produce
+    a mixed artifact that the V1 rules then judge (the defect INV-01 names).
+    ``graph`` is the parsed V2 answer, ``format_error`` its closed refusal
+    rule, so a caller can report a refusal without catching an exception.
+    """
+
     ref: PlanRef
     utf8_bytes: bytes
     text: str
     ids: PlanIds
+    format: str = PLAN_V1
+    graph: PlanGraph | None = None
+    format_error: str | None = None
 
 
 def _require_plan_for_coder(roles: list[str], plan_path: Path | None) -> None:
@@ -157,12 +179,45 @@ def _decode_plan_bytes(raw: bytes) -> str:
     return text
 
 
-def snapshot_from_bytes(relative_path: str, raw: bytes, *, source_kind: str = "EXPLICIT") -> PlanSnapshot:
-    """Capture/parse one immutable buffer; publication never recopies a mutable draft."""
+def snapshot_from_bytes(
+    relative_path: str,
+    raw: bytes,
+    *,
+    source_kind: str = "EXPLICIT",
+    format: str = PLAN_V1,
+    roadmap: str = "",
+) -> PlanSnapshot:
+    """Capture/parse one immutable buffer; publication never recopies a mutable draft.
+
+    ``format`` comes from the caller's route, and only the caller's route. A
+    ``PLAN-V2`` snapshot requires the roadmap text because the V2 contract is a
+    roadmap/increment pair; the pair is parsed once here so admission can
+    report a closed rule instead of an exception, and no partial result ever
+    escapes (``graph`` is ``None`` whenever ``format_error`` is set).
+    """
+    if format not in ADMISSION_FORMATS:
+        raise PlanRefError("format-unknown")
     text = _decode_plan_bytes(raw)
+    ref = PlanRef(relative_path, source_kind, hashlib.sha256(raw).hexdigest())
+    if format == PLAN_V1:
+        return PlanSnapshot(ref=ref, utf8_bytes=raw, text=text, ids=extract_plan_ids(text))
+    graph, rule = _v2_graph(roadmap, text)
     return PlanSnapshot(
-        ref=PlanRef(relative_path, source_kind, hashlib.sha256(raw).hexdigest()),
+        ref=ref,
         utf8_bytes=raw,
         text=text,
-        ids=extract_plan_ids(text),
+        ids=PlanIds(),
+        format=PLAN_V2,
+        graph=graph,
+        format_error=rule,
     )
+
+
+def _v2_graph(roadmap: object, increment: str) -> tuple[PlanGraph | None, str | None]:
+    """Parse the V2 roadmap/increment pair into a closed (graph, rule) pair."""
+    if not isinstance(roadmap, str) or not roadmap.strip():
+        return None, "roadmap-missing"
+    try:
+        return parse_plan(roadmap=roadmap, increment=increment), None
+    except PlanV2Error as error:
+        return None, error.rule

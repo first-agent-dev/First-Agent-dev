@@ -11161,3 +11161,80 @@ a future reviewer will otherwise read "detection only" as an oversight rather th
 SLICE3 negative controls split into file-tool-refused and shell-detected, register row flipped to RESOLVED,
 D-V2-6 added to the ratified decisions table. `check_doc_links.py` 368 OK, `fa authoring-check` 0 diagnostics.
 No product code touched.
+
+### E570 — SLICE1 increment 1: the admission cutover exists and is kill-checked (2026-11-20)
+
+Operator authorized starting implementation from the updated plan (2026-11-20) after the adversarial review;
+**STEP9B stays unticked** because its own independent-review gate is not formally recorded yet.
+
+**Landed.** `plan_admission.snapshot_from_bytes` takes the grammar from the caller (`PLAN_V1` default,
+`PLAN_V2` when the route says so) and parses the V2 roadmap/increment pair once into
+`PlanSnapshot.graph`, carrying any refusal as the closed `format_error` rule instead of an exception;
+`PlanSnapshot.format` makes the decision explicit and `ids` stays empty on the V2 path so the V1 extractor
+never reads V2 bytes. `WorkflowContext.plan_format` carries the decision into
+`_admit_installed_plan`, which reads `roadmap.md` through the same pinned substrate as the increment and
+refuses a missing roadmap as `bootstrap-unreadable`. `_validate_plan_admission` dispatches: a `PLAN-V2`
+snapshot goes to `_validate_v2_admission` and **never** reaches `precheck`, `validate_kill_directives` or
+the `zero-slices` branch. `_admit_plan`'s legacy fail-open (`admission is None ⇒ True`) now applies only to
+`PLAN-V1`; a V2 run fails closed.
+
+**Evidence.** `tests/test_ai_native_plan_v2.py` 45 → 51 tests, five new admission selectors plus a
+hand-built-snapshot control. The same V2 bytes admit `PASS` on the V2 route and are refused on the V1 route
+with a V1 diagnostic (`precheck/step-without-exit`) — that contrast is the proof that the route, not the
+document, picks the grammar. **Six targeted mutants, 6/6 killed**: dispatch bypassed, admission fail-open
+restored, route format ignored, roadmap not required, `graph-missing` passing, `format-error` ignored; both
+modules byte-restored (`sha256sum -c` OK).
+
+**Regression banks.** 656 passed (plan ids, admission provenance, S5.1 admission, invoke tool, execution
+client ×2, plan reference, S10c, plan_v2, acceptance bundle, kill attribution); 680 passed
+(execution composition, managed workflow E2E, S8 controller, verify gate live). `ruff check`/`format`,
+`mypy` on both modules, `pyrefly` (0 errors), `fa authoring-check` (0 diagnostics).
+
+**Not done, and why.** SLICE1 step 5 — retiring `fa workflow` and leaving one composition reachable by a
+human — is **not** in this increment. It cannot be a deletion alone: the user's decision keeps a manual
+path, so the retirement needs a human front for `invoke_workflow` (argument surface, tool-result to exit
+code mapping, transport/registry wiring) plus the rewrite of the ~10 test modules that currently drive
+`fa workflow`. Doing it as a bare deletion would silently remove operator capability — the exact
+"deferred, not dropped" failure this plan's review flagged. It is the next increment, tracked as CT-1.5.
+
+**Known structural note.** The `PLAN-V2` branch has no production caller until SLICE2's renderer sets
+`ctx.plan_format`; this is recorded in the plan rather than hidden, because a mechanism without a caller is
+what E564 already cost this project.
+
+### E570 — SLICE1 increment 1: the admission cutover exists and is kill-checked (2026-11-20)
+
+Operator authorized starting implementation from the updated plan (2026-11-20) after the adversarial review;
+**STEP9B stays unticked** because its own independent-review gate is not formally recorded yet.
+
+**Landed.** `plan_admission.snapshot_from_bytes` takes the grammar from the caller (`PLAN_V1` default,
+`PLAN_V2` when the route says so) and parses the V2 roadmap/increment pair once into `PlanSnapshot.graph`,
+carrying any refusal as the closed `format_error` rule instead of an exception; `PlanSnapshot.format` makes
+the decision explicit and `ids` stays empty on the V2 path so the V1 extractor never reads V2 bytes.
+`WorkflowContext.plan_format` carries the decision into `_admit_installed_plan`, which reads `roadmap.md`
+through the same pinned substrate as the increment and refuses a missing roadmap as `bootstrap-unreadable`.
+`_validate_plan_admission` dispatches: a `PLAN-V2` snapshot goes to `_validate_v2_admission` and **never**
+reaches `precheck`, `validate_kill_directives` or the `zero-slices` branch. `_admit_plan`'s legacy fail-open
+(`admission is None ⇒ True`) now applies only to `PLAN-V1`; a V2 run fails closed.
+
+**Evidence.** `tests/test_ai_native_plan_v2.py` 45 → 51 tests: five admission selectors plus a
+hand-built-snapshot control. The same V2 bytes admit `PASS` on the V2 route and are refused on the V1 route
+with a V1 diagnostic (`precheck/step-without-exit`) — that contrast is the proof that the route, not the
+document, picks the grammar. **Six targeted mutants, 6/6 killed**: dispatch bypassed, admission fail-open
+restored, route format ignored, roadmap not required, `graph-missing` passing, `format-error` ignored; both
+modules byte-restored (`sha256sum -c` OK).
+
+**Regression banks.** 656 passed (plan ids, admission provenance, S5.1 admission, invoke tool, execution
+client ×2, plan reference, S10c, plan_v2, acceptance bundle, kill attribution); 680 passed (execution
+composition, managed workflow E2E, S8 controller, verify gate live). `ruff check`/`format`, `mypy` on both
+modules, `pyrefly` (0 errors), `fa authoring-check` (0 diagnostics).
+
+**Not done, and why.** SLICE1 step 5 — retiring `fa workflow` and leaving one composition reachable by a
+human — is **not** in this increment. It cannot be a deletion alone: the decision keeps a manual path, so the
+retirement needs a human front for `invoke_workflow` (argument surface, tool-result to exit-code mapping,
+transport/registry wiring) plus the rewrite of the ~10 test modules that currently drive `fa workflow`.
+A bare deletion would silently remove operator capability — the "deferred, not dropped" failure this plan's
+review flagged. It is the next increment, tracked as CT-1.5.
+
+**Known structural note.** The `PLAN-V2` branch has no production caller until SLICE2's renderer sets
+`ctx.plan_format`; recorded in the plan rather than hidden, because a mechanism without a caller is what
+E564 already cost this project.

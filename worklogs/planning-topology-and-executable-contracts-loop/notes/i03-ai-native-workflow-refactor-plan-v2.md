@@ -197,6 +197,15 @@ uv run pytest tests/test_ai_native_plan_v2.py tests/test_plan_ids.py tests/test_
 5. Retire the legacy manual entry point per D-V2-2: `cli.py:848–956` parser and `_cmd_workflow` (`src/fa/cli.py:2200`) stops being a plan-running surface; the human path calls the same `invoke_workflow` composition the chat tool uses. Keep one implementation, not two.
 6. Run the commands below (exit 0, no unreviewed skips), `uv run fa authoring-check`, `uv run ruff check` on the touched files, `uv run pyrefly check`, and `git diff --check`.
 
+**Where the route switch is flipped (recorded 2026-11-20, after the first implementation increment).** The
+format is carried by `WorkflowContext.plan_format` (default `PLAN-V1`, so every existing caller is unchanged)
+and is set by the component that *renders* the artifact — the V2 bootstrap renderer in SLICE2. Until SLICE2
+lands, the `PLAN-V2` branch has **no production caller**: it is reachable from tests and from any route that
+sets the field, and the plan says so rather than implying a cutover that has not happened. That is deliberate:
+the alternative, flipping to V2 by looking at the document, is exactly the content sniffing INV-01 forbids.
+Consequence for sequencing: SLICE2 is no longer "the bootstrap slice", it is the slice that makes the cutover
+real, and it starts before any further admission work.
+
 **Failure/negative controls:** version marker cannot override runtime pin; project cannot load a grammar copy from its own root; malformed references never yield a partial admitted snapshot; no legacy fallback; no coder/provider call on rejection. The V1 negative and valid V2 positive use production admission, not only parser helpers. **Producer kill-check:** remove the V2 admission producer at `_validate_plan_admission`/its caller choke point and show the C1 admission test fails. **EDGE kill-check:** bypass the real admission→initial coder dispatch in `_run_stage`/workflow composition; assert coder is not reached or the live witness fails. Re-ground exact current call site before mutation; do not target a dead helper. **Local DoD:** all selectors pass without unreviewed skip; canonical schema, skills, parser and conformance fixtures agree; authoring/typing checks on changed files pass; no V1 fallback; test gate rejects before provider/coder. No deployment claim.
 
 ### SLICE2: Explicit chat slug and staged trusted bootstrap

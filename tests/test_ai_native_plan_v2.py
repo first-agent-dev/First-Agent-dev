@@ -3,9 +3,20 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from types import SimpleNamespace
 
 import pytest
 
+from fa.inner_loop import workflow_controller
+from fa.inner_loop.plan_admission import (
+    PLAN_V1,
+    PLAN_V2,
+    PlanIds,
+    PlanRef,
+    PlanRefError,
+    PlanSnapshot,
+    snapshot_from_bytes,
+)
 from fa.inner_loop.plan_v2 import (
     DISPOSITION_REASONS,
     MAX_DISPOSITIONS,
@@ -357,3 +368,117 @@ def plan_graph(*, invariants: str = "", scenario: str = "", slice_body: str = ""
         roadmap=ROADMAP_DOCUMENT,
         increment=plan_document(invariants=invariants, scenario=scenario, slice_body=slice_body),
     )
+
+
+# --- SLICE1: the admission cutover (format, graph, and closed rules) ---------
+
+
+def test_admission_format_comes_from_route_never_from_document_bytes() -> None:
+    """The route picks the grammar; identical bytes must admit differently.
+
+    The same V2 increment is captured twice: once by a route that declares
+    ``PLAN-V2`` and once by the frozen V1 route. If the bytes decided the
+    grammar, both snapshots would be identical — they are not, and the V1 one
+    shows the concrete harm: the V1 extractor reads the V2 headings as V1
+    slices and the V1 rules then judge them.
+    """
+    increment = _increment()
+    path = "worklogs/demo/increments/increment-01-demo.md"
+
+    v2 = snapshot_from_bytes(path, increment.encode("utf-8"), format=PLAN_V2, roadmap=_ROADMAP)
+    assert v2.format == PLAN_V2
+    assert v2.format_error is None
+    assert isinstance(v2.graph, PlanGraph)
+    assert v2.ids == PlanIds()  # the V1 extractor never ran on V2 bytes
+    assert workflow_controller._validate_plan_admission(v2).outcome == "PASS"
+
+    v1 = snapshot_from_bytes(path, increment.encode("utf-8"))
+    assert v1.format == PLAN_V1
+    assert v1.ids.slices == ("SLICE1",)  # V1 headings matched inside a V2 document
+    v1_validation = workflow_controller._validate_plan_admission(v1)
+    assert v1_validation.outcome != "PASS"
+    assert {item.validator for item in v1_validation.diagnostics} == {"precheck"}
+
+    with pytest.raises(PlanRefError) as refused:
+        snapshot_from_bytes(path, increment.encode("utf-8"), format="PLAN-V3")
+    assert refused.value.rule == "format-unknown"
+
+
+def test_v2_admission_surfaces_closed_rule_codes_not_exceptions() -> None:
+    """A malformed V2 document is a diagnostic, never an exception or a repair prompt."""
+    broken = _increment().replace("Plan-Format: AI-NATIVE-PLAN-V2\n", "")
+    snapshot = snapshot_from_bytes(
+        "worklogs/demo/increments/increment-01-demo.md",
+        broken.encode("utf-8"),
+        format=PLAN_V2,
+        roadmap=_ROADMAP,
+    )
+
+    assert snapshot.graph is None  # no partial graph escapes
+    assert snapshot.format_error == "plan-format-marker-increment"
+    validation = workflow_controller._validate_plan_admission(snapshot)
+    assert validation.outcome == "INDETERMINATE"
+    assert [(item.validator, item.rule, item.severity) for item in validation.diagnostics] == [
+        ("plan-v2", "plan-format-marker-increment", "ERROR")
+    ]
+
+
+def test_v2_document_is_never_judged_by_v1_validators() -> None:
+    """The V1-only requirements must not reach a V2 plan's verdict."""
+    increment = _increment()
+    assert "TESTS:" not in increment and "INTENT:" not in increment
+
+    snapshot = snapshot_from_bytes(
+        "worklogs/demo/increments/increment-01-demo.md",
+        increment.encode("utf-8"),
+        format=PLAN_V2,
+        roadmap=_ROADMAP,
+    )
+    validation = workflow_controller._validate_plan_admission(snapshot)
+
+    assert validation.outcome == "PASS"
+    assert validation.diagnostics == ()
+    assert snapshot.ids.slice_records == ()  # nothing for the V1 rules to judge
+    # ...while the same document on the V1 route is judged and refused.
+    v1 = workflow_controller._validate_plan_admission(
+        snapshot_from_bytes("worklogs/demo/increments/increment-01-demo.md", increment.encode("utf-8"))
+    )
+    assert v1.outcome != "PASS"
+
+
+def test_v2_snapshot_without_a_roadmap_is_refused_not_downgraded() -> None:
+    """The pair is required; a missing roadmap never falls back to a single-document parse."""
+    snapshot = snapshot_from_bytes(
+        "worklogs/demo/increments/increment-01-demo.md",
+        _increment().encode("utf-8"),
+        format=PLAN_V2,
+    )
+
+    assert snapshot.graph is None
+    assert snapshot.format_error == "roadmap-missing"
+    assert workflow_controller._validate_plan_admission(snapshot).outcome == "INDETERMINATE"
+
+
+def test_coder_never_dispatches_without_bound_admission_on_a_v2_route() -> None:
+    """The legacy fail-open for stage fixtures does not extend to a PLAN-V2 run."""
+    legacy = SimpleNamespace(admission=None, plan_format=PLAN_V1)
+    v2 = SimpleNamespace(admission=None, plan_format=PLAN_V2)
+
+    assert workflow_controller._admit_plan(legacy, None, None) is True  # unchanged legacy behaviour
+    assert workflow_controller._admit_plan(v2, None, None) is False
+
+
+def test_a_hand_built_v2_snapshot_without_a_graph_never_passes() -> None:
+    """The dataclass is public, so admission cannot trust it to be well formed."""
+    forged = PlanSnapshot(
+        ref=PlanRef("worklogs/demo/increments/increment-01-demo.md", "BOOTSTRAP", "0" * 64),
+        utf8_bytes=_increment().encode("utf-8"),
+        text=_increment(),
+        ids=PlanIds(),
+        format=PLAN_V2,
+    )
+
+    validation = workflow_controller._validate_plan_admission(forged)
+
+    assert validation.outcome == "INDETERMINATE"
+    assert [item.rule for item in validation.diagnostics] == ["graph-missing"]

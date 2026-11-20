@@ -47,6 +47,8 @@ from fa.inner_loop.managed_acquisition import (
     resolve_acquisition_choice,
 )
 from fa.inner_loop.plan_admission import (
+    PLAN_V1,
+    PLAN_V2,
     PlanRef,
     PlanRefError,
     PlanSnapshot,
@@ -292,6 +294,11 @@ class WorkflowContext:
     # observe/enforce if the operator edits config while a stage is in flight.
     verify_gate_mode: str = "observe"
     admission: _WorkflowAdmission | None = None
+    #: The grammar this run admits its plan under, chosen by the route that
+    #: renders the artifact (never by the document). ``PLAN-V1`` is the frozen
+    #: legacy default so every existing caller is unchanged; the V2 bootstrap
+    #: route sets ``PLAN-V2`` once it renders the V2 manifest.
+    plan_format: str = PLAN_V1
     # Managed candidate promotion is supplied only by the execution composition.
     # None is a fail-closed boundary; the controller has no host-path writer fallback.
     plan_publisher: CandidatePlanPublisher | None = None
@@ -2850,11 +2857,25 @@ def _admit_installed_plan(
         path = f"worklogs/{choice.project_slug}/increments/increment-01-{choice.increment_slug}.md"
         try:
             read = substrate.port.read_file(path)
+            # The V2 contract is a roadmap/increment pair, so both documents come
+            # from the same pinned read. A missing roadmap on a V2 route is a
+            # mismatch between what was installed and what is being admitted.
+            roadmap = (
+                substrate.port.read_file(f"worklogs/{choice.project_slug}/roadmap.md")
+                if ctx.plan_format == PLAN_V2
+                else None
+            )
         except WorkspacePortError:
             # The tree the authority proved does not contain the file this
             # controller asked for: a mismatch to report, never a host fallback.
             return ctx, PlanRefError("bootstrap-unreadable")
-        snapshot = snapshot_from_bytes(path, read.content.encode("utf-8"), source_kind="BOOTSTRAP")
+        snapshot = snapshot_from_bytes(
+            path,
+            read.content.encode("utf-8"),
+            source_kind="BOOTSTRAP",
+            format=ctx.plan_format,
+            roadmap="" if roadmap is None else roadmap.content,
+        )
     bound = replace(
         ctx,
         admission=_WorkflowAdmission(
@@ -3056,7 +3077,14 @@ def _admission_diagnostics(validator: str, diagnostics: tuple[PlanDiagnostic, ..
 
 
 def _validate_plan_admission(snapshot: PlanSnapshot) -> _PlanAdmissionValidation:
-    """Both validators consume the same captured text/IDs; no filesystem authority."""
+    """Admit one snapshot under the grammar it was captured with.
+
+    A ``PLAN-V2`` snapshot never reaches the V1 validators: they read ``ids``
+    and slice records the V1 extractor would have produced from V2 bytes, and
+    judging a correct V2 plan by V1 rules is the mixed state INV-01 forbids.
+    """
+    if snapshot.format != PLAN_V1:
+        return _validate_v2_admission(snapshot)
     diagnostics: tuple[_AdmissionDiagnostic, ...] = ()
     try:
         diagnostics += _admission_diagnostics(
@@ -3095,6 +3123,29 @@ def _validate_plan_admission(snapshot: PlanSnapshot) -> _PlanAdmissionValidation
             ),
         )
     return _PlanAdmissionValidation(snapshot, "PASS", diagnostics)
+
+
+def _validate_v2_admission(snapshot: PlanSnapshot) -> _PlanAdmissionValidation:
+    """Admit a V2 snapshot from its already-parsed graph or its closed rule.
+
+    ``snapshot_from_bytes`` parsed the pair once, so admission here is a
+    projection and not a second parse: no repair, no fallback, and a snapshot
+    that somehow carries neither a graph nor a rule fails closed rather than
+    passing by default.
+    """
+    if snapshot.format != PLAN_V2:
+        return _PlanAdmissionValidation(
+            snapshot, "INDETERMINATE", (_AdmissionDiagnostic("plan-v2", "format-mismatch", "ERROR"),)
+        )
+    if snapshot.format_error is not None:
+        return _PlanAdmissionValidation(
+            snapshot, "INDETERMINATE", (_AdmissionDiagnostic("plan-v2", snapshot.format_error, "ERROR"),)
+        )
+    if snapshot.graph is None:
+        return _PlanAdmissionValidation(
+            snapshot, "INDETERMINATE", (_AdmissionDiagnostic("plan-v2", "graph-missing", "ERROR"),)
+        )
+    return _PlanAdmissionValidation(snapshot, "PASS", ())
 
 
 def _require_managed_publisher(ctx: WorkflowContext) -> CandidatePlanPublisher:
@@ -3738,8 +3789,11 @@ def _admit_plan(
 ) -> bool:
     """Mandatory public pre-coder gate; shared bounded repair/replan state belongs to this run."""
     state = ctx.admission
-    if state is None:  # Internal legacy stage fixtures; public coder entry always binds authority.
-        return True
+    if state is None:
+        # Internal legacy stage fixtures; public coder entry always binds
+        # authority. A PLAN-V2 run has no such fixtures and no legacy excuse:
+        # an unbound admission is a defect, so it fails closed (CT-1.4).
+        return ctx.plan_format != PLAN_V2
     if state.failure is not None:
         if state.block_exit_code == WORKFLOW_DEADLINE_EXIT_CODE:
             return False
