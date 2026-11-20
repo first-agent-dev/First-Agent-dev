@@ -140,9 +140,11 @@ are authored here; candidate exercise details are proposals for planner/reviewer
 ## I03-LIVE-27 — Q85 / CT113 / E283 controller-attested workspace handoff
 
 - **Contracts / producers:** Q85 (answered by E282); CT113; SLICE2 STEP6; `I03-LIVE-27`;
-  L-HAND-1 and L-HAND-2. The local authority+route leg is implemented (E283). The distinct
-  controller leg is still pending under CT108 / SLICE5 STEP2; the integrated outer-chat join is
-  I03-LIVE-S08. These are linked obligations, not one claimed implementation.
+  L-HAND-1 and L-HAND-2. The local authority+route leg is implemented (E283). The controller
+  handoff/return path is also implemented and locally composed under CT108 / SLICE5 STEP2
+  (S5P2, E527); the nested outer-chat/acquisition join is locally covered under S5P1/S5P5
+  (E527) and remains a distinct deployed-host obligation associated with I03-LIVE-S08. These
+  local and host obligations must not be collapsed into one acceptance claim.
 - **Verified source references:** `src/fa/execution/primitives.py::Operation.HANDOFF`;
   `src/fa/execution/service.py::SupervisorService._handoff`;
   `src/fa/execution/workspace.py::WorkspaceAuthority.handoff`, `_handoff_owner`, `_settled`;
@@ -159,15 +161,14 @@ are authored here; candidate exercise details are proposals for planner/reviewer
   revision do not change. Q85 deliberately makes the parent link controller-attested: the controller
   must allocate the child via `_child_run_context` / the existing `SessionManager.begin_run`; the
   authority does not look up or attest target-run existence.
-- **Pending controller seam (source-verified, not implemented):** `ExecutionClient.request` is a
-  generic one-shot RPC and does not resend after an uncertain send, but there is no controller call
-  to `Operation.HANDOFF` and no `ExecutionClient.handoff` convenience method. The current workflow
-  handler refuses acquisition-dependent nested roles before child dispatch; it has no parent
-  mutator drain/suspension or server-acknowledged grant-transfer path. SLICE5 STEP2 must later drain
-  and settle parent writes, allocate once, call the existing wire operation once, validate the returned
-  grant, and dispatch only after acknowledgement. A refusal or uncertain reply means no child dispatch
-  and no retry with a new request id. The parent/child controller proof is not supplied by this local
-  authority handoff or by I03-LIVE-27 alone.
+- **Controller handoff path (implemented; Arena-local proof recorded, host proof open):** the
+  `invoke_workflow` child lifecycle suspends the parent stage lease, allocates the child run, performs
+  the managed HANDOFF, validates/uses the returned grant, dispatches, and reconciles the return path.
+  W2 records S5P2 local closure in E527, including real local `SupervisorService` /
+  `WorkspaceAuthority` composition in `tests/test_invoke_workflow_tool.py` and
+  `tests/test_managed_workflow_e2e.py`. The deployed service/controller-UID, installed entrypoint,
+  host filesystem and kernel-observed settlement witness remain unexecuted. A refusal or uncertain
+  reply remains fail-closed; no new request id may be used to retry an uncertain handoff.
 - **Observable effect / artifact:** Local CT113 tests observe the same-generation grant transfer,
   changed active actor, unchanged owner/status/revision, old-capability denial, cached same-request
   replay, and byte-identical refusal state for unsettled views/intent and invalid namespaces. The
@@ -187,15 +188,16 @@ are authored here; candidate exercise details are proposals for planner/reviewer
   component behavior only: it does not allocate the target through a real `begin_run`, run a deployed
   service as the controller UID, or supply a kernel-observed live-cell settlement.
 - **Host-only assumptions / limitations:** I03-LIVE-27 is **PLANNED / UNEXECUTED** and its live result
-  remains **NOT RUN**. L-HAND-1/2 are planned host evidence, not local status promotions. This entry
-  does not prove the pending SLICE5 controller path, the I03-LIVE-S08 nested workflow, installed
-  origins, Docker/cgroup behavior, or deployment readiness. No fixture exists and STEP7 review must
-  precede any fixture/helper implementation.
+  remains **NOT RUN**. L-HAND-1/2 are planned host evidence, not local status promotions. Local E527
+  evidence does not prove the deployed controller/installed entrypoint, I03-LIVE-S08 host join,
+  installed origins, Docker/cgroup behavior, or deployment readiness. No fixture exists and STEP7
+  review must precede any fixture/helper implementation.
 - **Evidence references:** `../README.md` and `live-verification.md` (`I03-LIVE-27`);
   `../../notes/i03-live-e2e-test-plan-2026-10-22.md` (L-HAND-1/2);
   `../../notes/e2e-live-verification-register.md` (E282/E283);
   `../../increments/increment-03-execution-workspace-foundation.md` (CT113, SLICE2 STEP6,
-  CT108/SLICE5 STEP2, E287); `tests/test_execution_handoff.py`.
+  CT108/SLICE5 STEP2, E287/E527); `tests/test_execution_handoff.py`,
+  `tests/test_invoke_workflow_tool.py`, `tests/test_managed_workflow_e2e.py`.
 - **Planner disposition:** pending. This coder handoff records source facts and evidence limits only;
   it does not amend the planner-owned oracle, case ownership, fixture authorization, host result, or
   live status.
@@ -244,11 +246,21 @@ are authored here; candidate exercise details are proposals for planner/reviewer
 - **Deferred live exercise:** `../../notes/i03-live-e2e-test-plan-2026-10-22.md`, §4.2 proposes fresh/resumed readiness refusal, explicit override, and successful managed auto-run cases. The host oracle reads the authoritative SQLite `session.db`: `session_meta` run bindings plus `event_log` rows, with before/after snapshots reopened from disk. It verifies no provision/run append on refusal or override and one run binding plus durable run events on the successful control.
 - **Host-only assumptions / limitations:** proposal only; no fixture, deployed command, live ID assignment, or host evidence is authorized or present. Execute after merge to `main` and the planned user-host `fa update`, with an approved image/state root and controlled readiness cause. Record actual evidence only in the planner-approved register; Docker/cgroup and backend acceptance are not inferred from local tests.
 
-## Q146/B — `LIST_PROJECTS` project naming over protocol v2 (PROPOSAL ONLY)
+## Q146/B — `LIST_PROJECTS` project naming over protocol v2 (local producer/consumer present; mapping decision accepted, mapping/oracle and host witness open)
 
-- **Source and contract:** `src/fa/execution/{primitives,protocol,service,supervisor,client,workspace}.py` add one read-only v2 operation, `LIST_PROJECTS`. It is a projection of the immutable reader manifest `list_project_artifacts` already reads: for every `worklogs/<slug>/roadmap.md` at exactly that depth, a regular `roadmap.md` yields `{project_slug}`; a `directory`/`symlink` at that path yields the slug under `incomplete`. No contents, no symlink targets, no recursion, no filesystem scan.
+- **Source and contract:** the read-only v2 `LIST_PROJECTS` operation is implemented across `src/fa/execution/{primitives,protocol,service,supervisor,client,workspace}.py`. It is a projection of the immutable reader manifest `list_project_artifacts` already reads: for every `worklogs/<slug>/roadmap.md` at exactly that depth, a regular `roadmap.md` yields `{project_slug}`; a `directory`/`symlink` at that path yields the slug under `incomplete`. No contents, no symlink targets, no recursion, no filesystem scan.
+- **Production acquisition consumer (source-confirmed):** `workflow_controller.py:2581–2587` calls `port.list_project_names()` and places `listed.projects` / `listed.incomplete` into `AcquisitionSubstrate`; `src/fa/execution/tool_port.py:462–475` delegates the managed call through `ExecutionClient.list_projects(...)`, which dispatches `Operation.LIST_PROJECTS`. E521 records Q145's selected source for project names; this production use does not by itself close the separate Q146 contract disposition or host acceptance.
+- **E2E mapping boundary:** `producer-coverage.json`'s `NEW:Q108-B-managed-inventory` row maps only `managed_inventory.inventory_project_artifacts` to `I03-LIVE-S08`. It does not explicitly map `WorkspaceAuthority.list_projects` / protocol `LIST_PROJECTS` / `WorkspacePort.list_project_names`. Decision is settled: a separate explicit `NEW:` producer mapping is required. Remaining work is to add that row and update the S08 oracle; sharing S08 is acceptable only if the oracle explicitly checks `projects`/`incomplete` semantics (including relevant incomplete cases) as well as inventory/read. Host acceptance remains `NOT RUN`.
 - **Local evidence:** CPython 3.13.16, `7001 passed, 3 failed`. The three failures are pre-existing and reproduced on the unmodified tree: `test_pyrefly_import_topology` (29 errors at baseline) and the network-degraded `test_workspace_readiness_integration` (`sync_failed` from `uv sync` in this sandbox). Targeted: `tests/test_execution_protocol.py`, `test_execution_service.py`, `test_execution_supervisor.py`, `test_execution_client.py`, `test_execution_workspace.py` → 500 passed. Ruff and mypy clean on touched files. Mutation testing: **10/10 producers killed** over six oracles in `tests/test_execution_service.py` (depth guard, roadmap-must-be-file, producer sort, list cap, `incomplete` cap, symlink classification, manifest-only source, READ+PROJECT guard, slug form, selectable/unusable split).
 - **Reply semantics worth a live confirmation:** an empty `worklogs/<slug>/` produces no manifest entry, so it is never named — the `COLLISION` refusal of `_install_destination` is unreachable by selecting a name this reply invents. A relative symlinked `roadmap.md` registers successfully (an absolute one is refused), so it appears under `incomplete` rather than being dropped silently.
 - **Deferred live exercise:** on an approved host, pin a READ PROJECT view over a workspace holding at least one real project, one bare `worklogs/<slug>/` directory, and one directory whose `roadmap.md` is a symlink. Expect `projects` to name only the real one and `incomplete` to name the symlinked one; expect the bare directory in neither array. Confirm a peer that advertises protocol v1 receives `INVALID_REQUEST` on this operation and that the caller surfaces unavailable rather than an empty list. Record the deployed SHA, profile set digest, view ref, reply body and reviewer in the planner-approved register.
 - **Host-only assumptions / limitations:** proposal only; no fixture, deployed command, live ID assignment or host evidence is authorized or present. Local evidence is not live-host acceptance and does not prove the deployed supervisor's feature advertisement.
-- **Planner disposition:** pending. Not yet consumed by the acquisition caller (S5P1 block 3); this does not amend an existing `I03-LIVE-*` oracle.
+- **Implementation status:** the selected producer-coverage row and the required S08 oracle expansion are not yet applied; this handoff does not assign host/live acceptance. Complete both before fixtures.
+
+## AI-native workflow V2 — fresh-project host witness (PLANNED; not registered/frozen/run)
+
+- **Plan authority:** [`../../notes/i03-ai-native-workflow-refactor-plan-v2.md`](../../notes/i03-ai-native-workflow-refactor-plan-v2.md), SLICE5. This section records an obligation only; it does not amend the live register, case index, producer baseline/coverage, authorize a fixture, or claim implementation.
+- **Target production path to re-ground at implementation:** chat tool registration in `src/fa/cli.py::_build_run_tool_registry` → `src/fa/inner_loop/tools/workflow_tool.py::build_invoke_workflow_tool` → managed child `run_workflow` → acquisition/bootstrap/admission/seal → coder → pinned managed verifier and harness-owned V2 ticks. Existing V1 source does not yet prove this V2 behavior.
+- **Host witness:** with the approved, frozen image, drive a fresh unique slug through actual chat `invoke_workflow`; capture V2 schema marker/runtime version, authoritative workspace revision, fixed scaffold, controller-minted AcceptanceBundle and closure digest, coder read-only projection, verifier's same pinned revision, status ticks, final structured result and reviewed evidence. Run bounded negative controls for collision/no-overwrite, legacy/mixed schema rejection, missing/stale custody or selector ambiguity, write/drift refusal and a determinate provider/verifier failure; assert no false success and authoritative no-effect where refusal precedes install.
+- **Producer mapping/package gate:** before W4 suite freeze, re-ground every actual V2 producer/caller and assign distinct `NEW:` producer keys through the explicit mapping protocol. Reuse `I03-LIVE-S08` only if the reviewed oracle asserts the fresh-project V2 effects/refusals as well as its existing join; `LIST_PROJECTS` remains a distinct key and may share S08 only with explicit `projects`/`incomplete` plus inventory/read assertions. Update the planner-owned live run sheet, `e2e/README.md` index, exact host fixture/package, producer coverage, and producer baseline only by reviewed baseline revision; run coverage/artifact checkers. Preserve frozen rows and counts absent that authorization.
+- **Prerequisites and disposition:** STEP9/STEP9A, all linked-plan slices' Arena-local DoD, W3 closure, approved-host update/image identity/health/smoke and explicit host opt-in. Missing image/host/cgroup/opt-in prerequisites fail before effects; never skip. Run with the reviewed frozen suite only after W3 and do not update/rebuild during suite execution. Current status: NOT REGISTERED, NOT FROZEN, NOT RUN; local component/plan checks cannot change this disposition.
