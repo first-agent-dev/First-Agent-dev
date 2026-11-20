@@ -11334,3 +11334,61 @@ publication), 235 passed (execution composition, managed workflow E2E, invoke to
 passed (verify gate live, S10c exit contract, CLI). **Two flip mutants, 2/2 killed** (flip removed; flip
 applied as V1) — the flip is load-bearing, not decorative. Targeted mutants from E572 still hold. `ruff`,
 `mypy`, `pyrefly` (0), `authoring-check` (0).
+
+## E574 — CT-2.1: creation is a caller decision, enforced on both sides (2026-11-20)
+
+**Fact.** `project_action`/`project_slug` are now the caller's, and the route they describe is enforced by the
+controller rather than requested from the planner. `_prepare_invocation` refuses the ambiguous shapes before a
+child run exists (`invalid_project_action`, `invalid_project_slug`, both retryable): unknown action, slug
+without `CREATE_NEW`, missing slug with it, and anything that is not lowercase kebab-case (≤ 48 chars). The
+slug rides `AcquisitionSubstrateRequest` → `AcquisitionSubstrate.project_slug` → `WorkflowContext.project_hint`.
+
+**Why the substrate carries it.** The first cut put the hint on the run body's `acquisition` argument, but
+`run_workflow` converts the request into a pinned `AcquisitionSubstrate` before `_run_body` runs, so the hint was
+always `None` — the refusal branch was dead and a real managed run proved it (`project-route-mismatch` fired
+on an authorized call). The `AcquisitionSubstrate` field is the single carrier; the request object never reaches
+the body.
+
+**Refusal order is the contract.** Capability (`bootstrap-unavailable`) → route (`project-route-mismatch`) →
+grammar (`bootstrap-invalid-body`) → prepare → install. A body is only validated when a project may exist, and
+"fix the body" must never be the advice when the call never allowed creation. The mirror case (create route
+answered by an existing selection) refuses in `_bind_acquisition_admission`, where the whole
+`AcquisitionOutcome` is visible; the first cut put it inside the bootstrap branch, where it could not fire.
+
+**One rule, both directions.** `selection/project-route-mismatch` was added to the closed V2 vocabulary
+(`admission_schema.py`, spec note §"Keep all v1 rule tables") instead of collapsing both causes into
+`needs-clarification`. The fact is symmetric — the planner's project route contradicted the caller's — and one
+name keeps the operator's next action unambiguous. `_v2_blocked_diagnostic` resolves it through the
+vocabulary, so a blocked run records it rather than `plan-ref/validator-error`.
+
+**Slug authority.** When both sides name a project, the caller's name is installed and the planner's is logged
+(`_with_project_hint`). Substituting the body would let a model rename a project the operator already named.
+
+**Prompt coherence.** `_acquisition_stage_task` now states the route ("creation is NOT authorized" /
+"creation IS authorized … slug is fixed by the caller: <slug>") and the collision pre-check only appears on the
+creating route; the static acquisition prompt no longer offers bootstrap unconditionally. The model is never
+invited to take a path the controller will refuse.
+
+**Migration cost, measured.** Five `test_admission_v2_provenance.py` bootstrap runs needed an explicit
+`project_slug` — that is the point of the increment (creation was previously implicit in a planner reply). The
+`invoke_workflow` E2E now passes `project_action=CREATE_NEW, project_slug=child-proj` through the real tool. No
+test was weakened: the D12 malformed-bootstrap case and the dedicated invalid-body test both now run on an
+authorized route, so they still prove `bootstrap/invalid-body` rather than the new route rule.
+
+**Evidence.** `tests/test_ai_native_bootstrap.py::test_chat_slug_and_explicit_route_are_required_for_new_project`
+(three real managed runs: select-route refusal with an unmoved revision and no directory; create-route refusal
+against a real existing project; install under the caller's slug with the planner's slug absent) plus the
+route-text test and four tool-contract tests. **8/8 mutants killed** — route flag forced `True`, installer guard
+disabled, slug override removed, snapshot guard removed, substrate carriage dropped, action check removed,
+slug-alone allowed, slug dropped from the prepared invocation. Banks: 241 passed (invoke tool, plan_v2, managed
+E2E, S5.1 bootstrap, prompt registry, tool names), 50 passed (acquisition lifecycle, prompt coherence),
+29 passed (provenance), 147 passed (S5.1 + acquisition + bootstrap + managed acquisition). Full suite:
+8087 passed / 3 failed, all three pre-existing in this clone (`test_pyrefly_import_topology` fails at HEAD;
+`test_authoring_wiring` + `test_s10a_cli_coverage` were caused by an unexported `PROJECT_ACTIONS` and are fixed
+by making it private). `ruff`, `mypy`, `authoring-check` (0 diagnostics), `check_doc_links` clean.
+
+**Open (documented, not ticked).** (a) The planner's bootstrap JSON still carries `project_slug`; the contract
+requires it to omit it, and the parser to refuse a payload containing one — that needs the
+proposal/resolved split in `managed_acquisition.py`. Until then a planner slug is overridden, not refused.
+(b) CT-2.2's collision proof (`project_exists`, not retryable) against a real authority is not written yet.
+CT-2.1 therefore remains **open**.

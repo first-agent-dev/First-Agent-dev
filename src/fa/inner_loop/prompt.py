@@ -1225,8 +1225,10 @@ Choose exactly one of these three closed schemas:
 - `project_slug`: lowercase kebab-case (`[a-z][a-z0-9]*(?:-[a-z0-9]+)*`), <= 48 chars, must be in `Projects`.
 - `increment_id`: `I` followed by two or more digits (e.g. `I01`, `I02`).
 
-2. Bootstrap a brand-new project and increment bundle (only when no existing
-   project fits and `worklogs/<project_slug>/` does not exist yet):
+2. Bootstrap a brand-new project and increment bundle — ONLY when the
+   `Acquisition context` states that project creation is authorized for this call
+   (the caller's route decides that, not you), no existing project fits, and
+   `worklogs/<project_slug>/` does not exist yet:
 {"kind":"BOOTSTRAP_NEW_PROJECT","project_slug":"auth-service",
  "increment_slug":"token-refresh",
  "roadmap_body":"## Intent\\n\\n...\\n\\n## Out of scope\\n\\n...\\n",

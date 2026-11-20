@@ -1323,7 +1323,8 @@ Managed admission **v2 implementation contract**, selected under delegated Q60 e
   `invalid-grammar`, `too-large`, `collision`, `prepare-failed`, `install-failed`,
   `durability-unknown`, `hash-mismatch`. Add validator `selection` with `choice-malformed`,
   `choice-missing`, `unknown-project`, `unknown-increment`, `ambiguous-project`,
-  `ambiguous-increment`, `status-not-active`, `needs-clarification`. Add validator `workspace`
+  `ambiguous-increment`, `project-route-mismatch` (CT-2.1: the planner's project route
+  contradicted the caller's), `status-not-active`, `needs-clarification`. Add validator `workspace`
   with `busy`, `stale-generation`, `stale-revision`, `quarantined`, `backend-unavailable`,
   `terminality-unknown`. Unknown pairs still fail; no arbitrary message/source/path field.
 - Clarification is a BLOCKED admission/route with selection/needs-clarification, not an invented

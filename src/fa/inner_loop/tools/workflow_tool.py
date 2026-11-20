@@ -69,6 +69,11 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 _RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 _RUN_ID_MAX_LEN = 128
 
+_PROJECT_ACTIONS = frozenset({"AUTO_SELECT_EXISTING", "CREATE_NEW"})
+#: The same grammar the authority enforces (`_install_prepare` -> `_SLUG`), kept
+#: here so a bad slug is refused before a child run is allocated at all.
+_PROJECT_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,46}[a-z0-9]$")
+
 DEFAULT_WORKFLOW_ROLES = "planner,coder,eval"
 DEFAULT_WORKFLOW_MODE = "linear"
 DEFAULT_TOOL_MAX_REPAIRS = 2
@@ -215,6 +220,20 @@ INVOKE_WORKFLOW_SCHEMA: dict[str, object] = {
             "minimum": 0,
             "maximum": MAX_REPLANS_CEILING,
             "description": "Cap on planner re-entry rounds in adaptive mode.",
+        },
+        "project_action": {
+            "type": "string",
+            "enum": ["AUTO_SELECT_EXISTING", "CREATE_NEW"],
+            "description": (
+                "Explicit project route (CT-2.1). Omitted or AUTO_SELECT_EXISTING keeps the "
+                "existing-project selection flow and can never create a project. CREATE_NEW "
+                "requires project_slug and a planner-led run."
+            ),
+        },
+        "project_slug": {
+            "type": "string",
+            "maxLength": 48,
+            "description": "Validated lowercase kebab-case project slug; only meaningful with CREATE_NEW.",
         },
     },
     "required": ["task"],
@@ -665,6 +684,7 @@ class _PreparedInvocation:
     max_repairs: int
     max_replans: int
     candidate: str
+    project_slug: str | None = None
 
 
 def _prepare_invocation(
@@ -688,6 +708,29 @@ def _prepare_invocation(
             f"`mode` {mode!r} is not one of {list(WORKFLOW_MODES)}",
             retryable=True,
         )
+    action = _as_str(params, "project_action", "AUTO_SELECT_EXISTING")
+    if action not in _PROJECT_ACTIONS:
+        return ToolResult.fail(
+            "invalid_project_action",
+            f"`project_action` {action!r} is not one of {sorted(_PROJECT_ACTIONS)}",
+            retryable=True,
+        )
+    slug = _as_str(params, "project_slug", "")
+    if action == "CREATE_NEW":
+        if not _PROJECT_SLUG_RE.fullmatch(slug or ""):
+            return ToolResult.fail(
+                "invalid_project_slug",
+                "`project_slug` is required with CREATE_NEW and must be lowercase kebab-case, at most 48 characters",
+                retryable=True,
+            )
+    elif slug:
+        # A slug without a create-new action is ambiguous: the operator named a
+        # project while asking to select one. Refusing is cheaper than guessing.
+        return ToolResult.fail(
+            "invalid_project_slug",
+            "`project_slug` is only valid with `project_action=CREATE_NEW`",
+            retryable=True,
+        )
     refusal = acquisition_refusal(roles, managed=ctx.managed_execution is not None)
     if refusal is not None:
         code, message = refusal
@@ -699,6 +742,7 @@ def _prepare_invocation(
         task=task,
         roles=roles,
         mode=mode,
+        project_slug=slug if action == "CREATE_NEW" else None,
         max_repairs=_clamp(_as_int(params, "max_repairs", DEFAULT_TOOL_MAX_REPAIRS), low=0, high=MAX_REPAIRS_CEILING),
         max_replans=_clamp(_as_int(params, "max_replans", DEFAULT_TOOL_MAX_REPLANS), low=0, high=MAX_REPLANS_CEILING),
         candidate=candidate,
@@ -850,7 +894,7 @@ def build_invoke_workflow_tool(
             "inject_overrides": ctx.inject_overrides,
         }
         if wants_acquisition:
-            workflow_kwargs["acquisition"] = AcquisitionSubstrateRequest()
+            workflow_kwargs["acquisition"] = AcquisitionSubstrateRequest(project_slug=prepared.project_slug)
         if ctx.initial_planner_context:
             workflow_kwargs["initial_planner_context"] = ctx.initial_planner_context
         exit_code, terminal_state, workflow_error, lifecycle_error = _execute_child_with_managed_lifecycle(

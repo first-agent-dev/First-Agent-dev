@@ -92,6 +92,7 @@ ADMISSION_RULES_V2: dict[str, frozenset[str]] = {
             "unknown-increment",
             "ambiguous-project",
             "ambiguous-increment",
+            "project-route-mismatch",
             "status-not-active",
             "needs-clarification",
         }

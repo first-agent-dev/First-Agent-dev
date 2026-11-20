@@ -466,7 +466,7 @@ def test_the_controller_installs_then_reads_back_and_admits(site: Any, tmp_path:
         client = _BootstrapClient(owner, ids, writer.to_wire_capability(), namespace=ACTOR)
         ctx = _controller(tmp_path, client, grant=writer)
 
-        bound, refusal = _install_bootstrap_project(ctx, _choice())
+        bound, refusal = _install_bootstrap_project(ctx, _choice(), creation_authorized=True)
 
         assert refusal is None, refusal
         # prepare is bound to the generation the run was reading, not to the install.
@@ -514,12 +514,12 @@ def test_an_authority_refusal_stops_the_run_under_its_own_rule(site: Any, tmp_pa
         client = _BootstrapClient(owner, ids, writer.to_wire_capability(), namespace=ACTOR)
         # First install succeeds, so the project directory now exists.
         ctx = _controller(tmp_path, client, grant=writer)
-        _first, first_refusal = _install_bootstrap_project(ctx, _choice())
+        _first, first_refusal = _install_bootstrap_project(ctx, _choice(), creation_authorized=True)
         assert first_refusal is None
 
         # The same slug again is a COLLISION at prepare/install time.
         second_ctx = _controller(tmp_path, client, grant=writer, revision_id=client.installs[0]["revision_id"])
-        _second, refusal = _install_bootstrap_project(second_ctx, _choice())
+        _second, refusal = _install_bootstrap_project(second_ctx, _choice(), creation_authorized=True)
 
     assert refusal is not None
     assert refusal.rule == "bootstrap-refused", refusal
@@ -542,7 +542,7 @@ def test_a_missing_managed_client_is_reported_before_any_authority_call(tmp_path
         output_mode="quiet",
         managed_execution=None,
     )
-    _same, refusal = _install_bootstrap_project(ctx, _choice())
+    _same, refusal = _install_bootstrap_project(ctx, _choice(), creation_authorized=True)
 
     assert refusal is not None
     assert refusal.rule == "bootstrap-unavailable"

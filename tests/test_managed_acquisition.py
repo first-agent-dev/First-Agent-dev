@@ -828,6 +828,7 @@ def test_v1_and_v2_diagnostic_vocabularies_are_separate() -> None:
             "unknown-increment",
             "ambiguous-project",
             "ambiguous-increment",
+            "project-route-mismatch",
             "status-not-active",
             "needs-clarification",
         }

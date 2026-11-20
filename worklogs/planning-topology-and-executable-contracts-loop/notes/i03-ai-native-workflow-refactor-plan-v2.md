@@ -248,8 +248,34 @@ the recorded `bootstrap`/`invalid-body` diagnostic and no operation id. The rout
 admission rules finally have a production caller. Only one test encoded the old order
 (`test_v2_bootstrap_invalid_body_...`), and it is rewritten to assert refusal-before-install; the earlier
 "eight tests" claim was a measurement artefact from converting the shared V1 fixtures (E573 records the
-correction). Remaining SLICE2 work: the tool's `project_action`/`project_slug` contract (CT-2.1/2.2), the
-closure materialization inside the installed revision and the seal mint (D-V2-5).
+correction).
+
+**SLICE2 increment 3 — CT-2.1 route authority (2026-11-20).** Creation is now a *caller* decision, enforced
+on both sides of the prelude. `invoke_workflow` accepts `project_action` (`AUTO_SELECT_EXISTING` default |
+`CREATE_NEW`) and `project_slug`; the pair is validated before any child run exists (`invalid_project_action`
+/ `invalid_project_slug`, both retryable) — a slug without `CREATE_NEW`, an unknown action, a bad grammar or a
+missing slug all refuse at `_prepare_invocation`. The slug travels as `AcquisitionSubstrateRequest.project_slug`,
+is carried by the pinned `AcquisitionSubstrate` (the request object never reaches the run body), lands in
+`WorkflowContext.project_hint`, and decides one fact: **whether this run may install a new project at all**.
+A `BOOTSTRAP_NEW_PROJECT` reply on a select-only route is refused by the installer
+(`_install_bootstrap_project_with_detail(creation_authorized=...)`) *before* the body is parsed, because a body
+is only worth validating when a project may exist; an existing-project selection on a create route is refused
+by `_bind_acquisition_admission`. Both directions record the new closed-vocabulary rule
+`selection/project-route-mismatch` (`admission_schema.py`, spec §"Keep all v1 rule tables"). When both sides
+name a project, `_with_project_hint` installs under the caller's slug and only logs the planner's, so the name
+is never a model claim. The acquisition task text and the static prompt now state the route the controller
+enforces, so the planner is never invited to take a path that will be refused
+(`test_the_acquisition_task_states_the_route_the_controller_enforces`). Evidence:
+`tests/test_ai_native_bootstrap.py::test_chat_slug_and_explicit_route_are_required_for_new_project` (three real
+managed runs: refusal, mirror refusal, caller-slug install), 8/8 mutants killed (route flag, installer guard,
+slug override, snapshot guard, substrate carriage, and the four tool-validation branches).
+
+**Still open on SLICE2 — CT-2.1 remainder:** the planner's bootstrap JSON still carries `project_slug`; the
+contract requires it to *omit* the slug and for the parser to treat a bootstrap payload containing one as
+`choice-malformed`, which needs a proposal/resolved split in `managed_acquisition.py` (`BootstrapProposal`
+without a name → `BootstrapNewProjectChoice` with the caller's). Until that lands, a planner slug is overridden
+rather than refused. Also open: CT-2.2's collision proof (`project_exists`, not retryable) against a real
+authority, the closure materialization inside the installed revision and the seal mint (D-V2-5).
 
 **Bounded planning ASK/Q items:** Q-V2-BOOT-1 is **resolved** (D-V2-5, audit `notes/q-v2-boot1-install-seal-audit-2026-11-20.md`): the closure is installed inside the revision, the seal is minted from installed bytes + plan bytes + receipt revision into private metadata, and the pointer/recovery rules are E1–E9. SLICE2 therefore implements that chain rather than choosing one; the only open item on this slice is Q-V2-MODEA-1 (shell-side read-only policy), which does not block install. Route fields/error mapping above are this plan's selected bounded interface, not coder choices. The initial increment slug is harness-fixed `initial-plan`; planner cannot supply it. No interactive approval is required for routine implementation seams.
 

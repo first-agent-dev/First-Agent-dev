@@ -300,6 +300,9 @@ class WorkflowContext:
     #: legacy default so every existing caller is unchanged; the V2 bootstrap
     #: route sets ``PLAN-V2`` once it renders the V2 manifest.
     plan_format: str = PLAN_V1
+    #: Chat-supplied project slug for a create-new run (CT-2.1). ``None`` keeps
+    #: the planner's own choice, which is the only behaviour the legacy route had.
+    project_hint: str | None = None
     # Managed candidate promotion is supplied only by the execution composition.
     # None is a fail-closed boundary; the controller has no host-path writer fallback.
     plan_publisher: CandidatePlanPublisher | None = None
@@ -1413,12 +1416,29 @@ def _acquisition_stage_task(ctx: WorkflowContext, stage_task: str | None) -> str
             "- Incomplete (do NOT select or bootstrap over these slugs; "
             f"return NEEDS_CLARIFICATION with MISSING_CONTEXT if targeted): {incomplete_line}"
         ),
-        (
-            "- Before BOOTSTRAP_NEW_PROJECT, check with fs_search that worklogs/<project_slug>/ "
-            "does not already exist (empty or roadmap-less directories are omitted from Projects "
-            "and Incomplete, and authority installation fails with COLLISION over any existing directory)."
-        ),
     ]
+    # CT-2.1: the route the planner is *allowed* to take is stated, because it is
+    # enforced. Offering creation to a run that may only select produces a well-formed
+    # bootstrap the controller must then refuse -- the model is not being tested on
+    # guessing an unstated permission.
+    if substrate.project_slug is None:
+        lines += [
+            "- Project creation is NOT authorized for this call: return SELECT_EXISTING or NEEDS_CLARIFICATION.",
+            "- If no existing project fits the goal, return NEEDS_CLARIFICATION with reason AMBIGUOUS_PROJECT.",
+        ]
+    else:
+        lines += [
+            (
+                "- Project creation IS authorized for this call and the project slug is fixed by the "
+                f"caller: {substrate.project_slug}. Return BOOTSTRAP_NEW_PROJECT with exactly that "
+                "project_slug; do not select an existing project."
+            ),
+            (
+                "- Before BOOTSTRAP_NEW_PROJECT, check with fs_search that worklogs/<project_slug>/ "
+                "does not already exist (empty or roadmap-less directories are omitted from Projects "
+                "and Incomplete, and authority installation fails with COLLISION over any existing directory)."
+            ),
+        ]
     block = "\n".join(lines)
     return f"{stage_task}\n\n{block}" if stage_task else block
 
@@ -2518,6 +2538,12 @@ class AcquisitionSubstrate:
     port: WorkspacePort
     project_names: tuple[str, ...]
     incomplete_names: tuple[str, ...] = ()
+    # The caller's create authorization (CT-2.1), carried with the pinned view
+    # because it belongs to this run's acquisition contract: ``None`` means the
+    # route may only select, so a bootstrap reply is refused rather than installed.
+    # It is not read here -- the prelude never names a project -- it is the one
+    # caller-owned fact the binding step needs after the planner has spoken.
+    project_slug: str | None = None
 
 
 @dataclass(frozen=True)
@@ -2527,7 +2553,15 @@ class AcquisitionSubstrateRequest:
     A marker rather than a port: the caller cannot supply one, because a substrate
     built before the child's HANDOFF would carry the parent's binding. The view must
     be pinned inside the run, after that run's own binding exists.
+
+    ``project_slug`` is the one thing the caller *may* decide (CT-2.1): a chat
+    session knows the project name before the planner runs, and letting the model
+    restate it would make the slug a model claim rather than an operator input.
+    The run refuses a choice that is not a new-project bootstrap when this is set,
+    because "create this exact project" cannot be satisfied by selecting another.
     """
+
+    project_slug: str | None = None
 
 
 @contextmanager
@@ -2750,15 +2784,30 @@ def _classify_bootstrap_exception(error: Exception, *, phase: str) -> _Bootstrap
 
 
 def _install_bootstrap_project_with_detail(
-    ctx: WorkflowContext, choice: BootstrapNewProjectChoice
+    ctx: WorkflowContext, choice: BootstrapNewProjectChoice, *, creation_authorized: bool
 ) -> tuple[WorkflowContext, PlanRefError | None, _BootstrapFailure | None]:
-    """Render, install and read back a new project; preserve structured v2 detail."""
+    """Render, install and read back a new project; preserve structured v2 detail.
+
+    ``creation_authorized`` is the caller's route decision (CT-2.1), not the
+    planner's. It is checked after the capability check -- an unmanaged run cannot
+    install anything whatever it was asked for -- and before the grammar check,
+    because a body is only worth validating if a project may exist at all. Telling
+    an operator "fix the body" when the route never allowed creation would send
+    them one step in the wrong direction.
+    """
     managed = ctx.managed_execution
     if managed is None:
         return (
             ctx,
             PlanRefError("bootstrap-unavailable"),
             _BootstrapFailure("bootstrap", "unavailable", "ERROR", "INDETERMINATE"),
+        )
+    if not creation_authorized:
+        logger.warning("bootstrap refused: the caller did not authorize creation (run=%s)", ctx.run_id)
+        return (
+            ctx,
+            PlanRefError("project-route-mismatch"),
+            _BootstrapFailure("selection", "project-route-mismatch", "ERROR", "INDETERMINATE"),
         )
     if ctx.plan_format == PLAN_V2:
         # The pair is validated BEFORE the irreversible install: a V2 body that
@@ -2842,7 +2891,7 @@ def _install_bootstrap_project_with_detail(
 
 
 def _install_bootstrap_project(
-    ctx: WorkflowContext, choice: BootstrapNewProjectChoice
+    ctx: WorkflowContext, choice: BootstrapNewProjectChoice, *, creation_authorized: bool
 ) -> tuple[WorkflowContext, PlanRefError | None]:
     """Render, install and read back a new project; return the context and a refusal.
 
@@ -2857,7 +2906,9 @@ def _install_bootstrap_project(
     OWNER-gated authority operations, and the plan is admitted from bytes the
     pinned view returns afterwards.
     """
-    bound, refusal, _detail = _install_bootstrap_project_with_detail(ctx, choice)
+    bound, refusal, _detail = _install_bootstrap_project_with_detail(
+        ctx, choice, creation_authorized=creation_authorized
+    )
     return bound, refusal
 
 
@@ -2933,6 +2984,22 @@ _CLARIFICATION_V2_RULES: dict[str, str] = {
 }
 
 
+def _with_project_hint(choice: BootstrapNewProjectChoice, hint: str | None) -> BootstrapNewProjectChoice:
+    """Install the project under the slug the caller named, not the planner's guess.
+
+    CT-2.1: the slug is caller authority (``invoke_workflow.project_slug``), while
+    the planner owns the *content* of the plan. Substituting the body would let a
+    model rename a project the operator already named in chat; substituting the
+    slug would write the operator's project under a name they did not choose. So
+    the body stays and only the name is replaced -- deterministically, not as a
+    retry, because a rename is not a correctness failure of the planner.
+    """
+    if hint is None or choice.project_slug == hint:
+        return choice
+    logger.warning("bootstrap slug overridden by the caller: planner=%r caller=%r", choice.project_slug, hint)
+    return replace(choice, project_slug=hint)
+
+
 def _bind_acquisition_admission(
     ctx: WorkflowContext, outcome: AcquisitionOutcome
 ) -> tuple[WorkflowContext, int | None]:
@@ -2957,7 +3024,10 @@ def _bind_acquisition_admission(
             # route decides the grammar here, before any bytes exist, which is what
             # keeps the decision out of the document (INV-01).
             ctx = replace(ctx, plan_format=PLAN_V2)
-            installed, refusal, failure_detail = _install_bootstrap_project_with_detail(ctx, outcome.bootstrap)
+            bootstrap = _with_project_hint(outcome.bootstrap, ctx.project_hint)
+            installed, refusal, failure_detail = _install_bootstrap_project_with_detail(
+                ctx, bootstrap, creation_authorized=ctx.project_hint is not None
+            )
             return installed, (
                 None if refusal is None else _refusal_exit_code(installed, refusal, failure_detail=failure_detail)
             )
@@ -2980,6 +3050,25 @@ def _bind_acquisition_admission(
         )[0]
 
     snapshot = outcome.snapshot
+    if ctx.project_hint is not None:
+        # The caller asked for a NEW project by name; the planner answered by
+        # selecting an EXISTING one. Continuing would bind the run to a repository
+        # the operator did not ask for, so this is a refusal rather than a retry:
+        # no plan was authored, and re-planning under the same request would only
+        # ask the model to guess again which project the caller meant. The mirror
+        # case -- a bootstrap on a select-only route -- is refused by the installer
+        # under the same rule, so both directions name one fact: the planner's
+        # project route contradicted the caller's.
+        return ctx, _blocked_plan_request(
+            run_id=ctx.run_id,
+            task=ctx.base_task,
+            rule="project-route-mismatch",
+            base_dir=ctx.artifact_paths.base_dir,
+            deadline=ctx.deadline_mono,
+            managed_binding=ctx.admission_binding,
+            attempt_kind="ACQUISITION" if ctx.admission_binding is not None else "EXPLICIT_INPUT",
+            v2_diagnostic=("selection", "project-route-mismatch", "ERROR", "INDETERMINATE", None),
+        )[0]
     # A coder-bearing run always has a planner (the role list was validated at
     # entry), so the shared planner budget is allowed from here on.
     bound = replace(
@@ -4185,7 +4274,10 @@ def run_workflow(
                     attempt_kind="ACQUISITION" if admission_binding is not None else "EXPLICIT_INPUT",
                     v2_diagnostic=("workspace", "backend-unavailable", "ERROR", "INDETERMINATE", None),
                 )
-            return _bound(substrate, binding=admission_binding)
+            return _bound(
+                replace(substrate, project_slug=acquisition.project_slug),
+                binding=admission_binding,
+            )
     if acquisition is None or isinstance(acquisition, AcquisitionSubstrate):
         return _bound(acquisition, binding=admission_binding)
     raise PlanRefError("unreadable")
@@ -4293,6 +4385,7 @@ def _run_workflow_bound(
         if admission_binding is not None
         else _managed_admission_binding(managed_execution, run_id=run_id)
     )
+    project_hint = acquisition.project_slug if acquisition is not None else None
     try:
         snapshot, plan_path = _resolve_admitted_plan(
             roles=roles,
@@ -4350,6 +4443,7 @@ def _run_workflow_bound(
         session_db=session_db,
         deadline_mono=deadline_mono,
         inject_overrides=dict(inject_overrides or {}),
+        project_hint=project_hint,
         plan_path=plan_path,
         plan_publisher=plan_publisher,
         managed_execution=managed_execution,

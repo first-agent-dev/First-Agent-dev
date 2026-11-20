@@ -526,7 +526,7 @@ def test_v2_bootstrap_admitted_emits_distinct_bundle_and_plan_hashes_with_instal
             run_context=child_ctx,
             plan_publisher=publisher,
             managed_execution=managed,
-            acquisition=AcquisitionSubstrateRequest(),
+            acquisition=AcquisitionSubstrateRequest(project_slug="new-project"),
         )
         assert code == 0 and state is not None and state.status == "DONE"
         record = _read_admission(child_ctx.run_log_dir, child_ctx.run_id)
@@ -586,7 +586,7 @@ def test_v2_bootstrap_invalid_body_blocks_with_candidate_and_bundle_evidence_and
             run_context=child_ctx,
             plan_publisher=publisher,
             managed_execution=managed,
-            acquisition=AcquisitionSubstrateRequest(),
+            acquisition=AcquisitionSubstrateRequest(project_slug="bad-project"),
         )
         assert code == 2 and state is not None and state.status == "FAILED"
         record = _read_admission(child_ctx.run_log_dir, child_ctx.run_id)
@@ -707,7 +707,7 @@ def test_v2_bootstrap_authority_failures_emit_valid_v2_records(
             run_context=child_ctx,
             plan_publisher=publisher,
             managed_execution=managed,
-            acquisition=AcquisitionSubstrateRequest(),
+            acquisition=AcquisitionSubstrateRequest(project_slug="demo-bad"),
         )
         assert code == 2 and state is not None and state.status == "FAILED"
         record = _read_admission(child_ctx.run_log_dir, child_ctx.run_id)
@@ -794,7 +794,7 @@ def test_d12_acquisition_choice_errors_and_clarifications_persist_blocked_v2_rec
             run_context=child_ctx,
             plan_publisher=publisher,
             managed_execution=managed,
-            acquisition=AcquisitionSubstrateRequest(),
+            acquisition=AcquisitionSubstrateRequest(project_slug="demo-fail"),
         )
         assert code == 2 and state is not None and state.status == "FAILED"
         if expect_refusal_stderr:
@@ -962,7 +962,17 @@ def test_invoke_workflow_handoff_child_writes_validated_v2_bootstrap_admission(
                     parent_stage_lease=lease,
                 ),
             )
-            result = tool.handler({"task": "bootstrap child", "roles": "planner,coder", "mode": "linear"})
+            result = tool.handler(
+                {
+                    "task": "bootstrap child",
+                    "roles": "planner,coder",
+                    "mode": "linear",
+                    # CT-2.1: creation is a caller route decision. The planner's JSON
+                    # still carries the name for now; the caller's slug is what installs.
+                    "project_action": "CREATE_NEW",
+                    "project_slug": "child-proj",
+                }
+            )
             assert result.error is None, result.error
             assert isinstance(result.result, dict)
             child_run_id = result.result["run_id"]
