@@ -70,6 +70,7 @@ from fa.inner_loop.plan_promotion import (
     retain_plan_draft,
     seed_plan_candidate,
 )
+from fa.inner_loop.plan_v2 import PlanV2Error, parse_plan
 from fa.inner_loop.planner_dispatch import PlannerDispatch, PlannerDispatchError, PlannerDispatchKind
 from fa.inner_loop.prompt import ADVERSARIAL_EVAL_STANCE_PREAMBLE
 from fa.inner_loop.slice_verification import (
@@ -2759,6 +2760,22 @@ def _install_bootstrap_project_with_detail(
             PlanRefError("bootstrap-unavailable"),
             _BootstrapFailure("bootstrap", "unavailable", "ERROR", "INDETERMINATE"),
         )
+    if ctx.plan_format == PLAN_V2:
+        # The pair is validated BEFORE the irreversible install: a V2 body that
+        # does not parse must never become a project, because the rollback for an
+        # installed-then-refused bootstrap is recovery, not undo. The check runs
+        # on the same bodies the renderer will wrap (front matter and fixed
+        # headings are grammar-neutral), and `tests/test_ai_native_bootstrap.py`
+        # proves the *rendered* files parse identically.
+        try:
+            parse_plan(roadmap=choice.roadmap_body, increment=choice.increment_body)
+        except PlanV2Error as error:
+            logger.warning("bootstrap content refused [%s] (run=%s)", error.rule, ctx.run_id)
+            return (
+                ctx,
+                PlanRefError(f"bootstrap-v2-{error.rule}"),
+                _BootstrapFailure("bootstrap", "content-invalid", "FAIL", "DIAGNOSTICS"),
+            )
     deadline = ctx.deadline_mono if ctx.deadline_mono is not None else time.monotonic() + 30.0
     input_revision = managed.current_revision_id
     try:

@@ -11266,3 +11266,41 @@ still the production controller. The bounded follow-up is: move the call sites o
 **Honest limitation.** The manual front uses the unmanaged context (no parent stage lease), so a
 planner-led child gets exactly what any unmanaged caller gets; managed composition remains the chat
 harness inside `fa run`. A live manual end-to-end run is therefore not claimed.
+
+### E572 — SLICE2 increment 1: a V2 bootstrap pair is validated before the install (2026-11-20)
+
+**Landed.** `_install_bootstrap_project_with_detail` now refuses an unparseable `PLAN-V2` pair **before**
+`prepare_bundle` and therefore before the irreversible install: the refusal is `PlanRefError("bootstrap-v2-<rule>")`
+plus `_BootstrapFailure("bootstrap", "content-invalid", "FAIL", "DIAGNOSTICS")`, with no operation id because
+no operation exists. The check is route-scoped (`ctx.plan_format == PLAN_V2`), so the frozen legacy bootstrap
+keeps its exact order.
+
+**Why before the install is the point.** An installed-but-refused bootstrap can only be finished forward
+(`_recover_bootstrap`), never undone — so a body that does not parse must not become a project in the first
+place. This is the one place where V2 validation is strictly stronger than the V1 route it replaces.
+
+**Evidence.** New `tests/test_ai_native_bootstrap.py` (3 tests): (a) an unparseable V2 body refuses while a
+stub authority raises on *any* attribute access — proving nothing reached prepare/install; (b) the same call
+on a `PLAN-V1` route does reach the authority, proving the guard is route-scoped and not a global change;
+(c) `render_bundle` output carries the marker in both files, parses, and admits `PASS` through
+`_validate_plan_admission`, which closes the body-vs-rendered equivalence the controller relies on.
+**Three mutants, 3/3 killed** (pre-install check removed, refusal misclassified as `install-failed`, parse
+error swallowed); `workflow_controller.py` byte-restored (`sha256sum -c` OK). Banks: 40 passed (admission
+provenance, S5.1 bootstrap, new bank), 254 passed (acquisition, publication, plan_v2), 82 passed (execution
+composition, managed workflow E2E). `ruff`, `mypy`, `pyrefly` (0), `authoring-check` (0).
+
+**Tried and reverted — with the exact blocker.** The obvious next line, `ctx = replace(ctx, plan_format=PLAN_V2)`
+for every `BOOTSTRAP_NEW_PROJECT` choice, was implemented and run: **8 tests in
+`test_admission_v2_provenance.py` fail**, and their failures are not fixture noise. They encode "install an
+invalid bootstrap, then repair it" (the D11 repair/publish-uncertainty and eval-replan chains), which
+pre-install validation deliberately makes impossible for a bootstrap. Converting the fixtures is feasible —
+with V2 bodies (marker + INVARIANTS + SLICE/CONTRACTS/ACCEPTANCE/STEP-EXIT-CHECKS, acceptance selector under
+`worklogs/new-project/acceptance/tests/`) the bank went **21 passed / 8 failed** instead of 13/16 — but the
+remaining eight are the repair/replan tests, and they must be **re-targeted to the candidate route** rather
+than re-bodied, because that is where bounded repair still exists under V2. The flip is therefore one line
+plus this migration, and the line stays out until the migration lands: leaving it in would either ship eight
+red tests or delete real coverage.
+
+**Consequence recorded, not hidden.** The V2 branch still has no production caller; E570 said the same about
+admission and this entry says it again about the bootstrap route, because the two are the same gap: the flip.
+It is now the *only* thing between the landed mechanism and a real V2 new-project run.
