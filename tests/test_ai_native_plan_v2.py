@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+from fa import cli
 from fa.inner_loop import workflow_controller
 from fa.inner_loop.plan_admission import (
     PLAN_V1,
@@ -25,6 +28,8 @@ from fa.inner_loop.plan_v2 import (
     parse_plan,
     resolve_selectors,
 )
+from fa.inner_loop.registry import ToolResult, ToolSpec
+from fa.inner_loop.runtime_limits import RuntimeLimits
 
 _ROADMAP = """---
 Roadmap-ID: RM-demo
@@ -482,3 +487,115 @@ def test_a_hand_built_v2_snapshot_without_a_graph_never_passes() -> None:
 
     assert validation.outcome == "INDETERMINATE"
     assert [item.rule for item in validation.diagnostics] == ["graph-missing"]
+
+
+# --- CT-1.5: one workflow entry point, callable by a human -------------------
+
+
+@dataclass
+class _Recorder:
+    """Captures what the CLI front asks the tool to do."""
+
+    params: dict[str, object] | None = None
+    ctx_provider: object | None = None
+    result: ToolResult | None = None
+
+    def build(self, run_workflow_fn: object, ctx_provider: object) -> ToolSpec:
+        self.ctx_provider = ctx_provider
+
+        def handler(params: Mapping[str, object]) -> ToolResult:
+            self.params = dict(params)
+            return self.result or ToolResult.ok("done", result={"exit_code": 0, "status": "DONE"})
+
+        return ToolSpec(
+            name="invoke_workflow",
+            description="recorder",
+            input_schema={"type": "object", "properties": {}},
+            permission="workspace",
+            handler=handler,
+        )
+
+
+def _invoke_args(**overrides: object) -> SimpleNamespace:
+    values: dict[str, object] = {
+        "task": "ship the sealed project",
+        "task_flag": None,
+        "roles": "planner,coder,eval",
+        "mode": "linear",
+        "run_id": "wf-manual-test",
+        "max_turns": 3,
+        "config": Path("config/models.yaml"),
+        "workspace": Path("/tmp/workspace"),
+        "session_id": None,
+        "project_action": "CREATE_NEW",
+        "project_slug": "demo-project",
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
+def test_invoke_workflow_cli_calls_the_same_tool_the_chat_registers(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The human front is the tool, not a second pipeline: same builder, same params."""
+    recorder = _Recorder()
+    monkeypatch.setattr(cli, "build_invoke_workflow_tool", recorder.build)
+    monkeypatch.setattr(cli, "_resolve_workflow_lifecycle", lambda args, run_id: (run_id, None, None, None))
+    monkeypatch.setattr(cli, "load_runtime_limits_from_path", lambda: SimpleNamespace(limits=RuntimeLimits()))
+
+    exit_code = cli._cmd_invoke_workflow(_invoke_args())
+
+    assert exit_code == 0
+    assert recorder.params == {
+        "task": "ship the sealed project",
+        "roles": "planner,coder,eval",
+        "mode": "linear",
+        "project_action": "CREATE_NEW",
+        "project_slug": "demo-project",
+    }
+    # The provider the CLI hands the tool is the same closure shape the chat
+    # registry uses, so the child run is assembled by the same code.
+    assert callable(recorder.ctx_provider)
+
+
+def test_invoke_workflow_cli_maps_a_tool_refusal_to_a_failed_exit(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A tool refusal is an operator-visible failure, never a silent success."""
+    recorder = _Recorder()
+    recorder.result = ToolResult.fail("invalid_project_slug", "slug must be lowercase kebab-case")
+    monkeypatch.setattr(cli, "build_invoke_workflow_tool", recorder.build)
+    monkeypatch.setattr(cli, "_resolve_workflow_lifecycle", lambda args, run_id: (run_id, None, None, None))
+    monkeypatch.setattr(cli, "load_runtime_limits_from_path", lambda: SimpleNamespace(limits=RuntimeLimits()))
+
+    assert cli._cmd_invoke_workflow(_invoke_args()) == 2
+
+
+def test_invoke_workflow_cli_requires_a_task_before_any_lifecycle(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """No task, no run: the refusal happens before a session or a tool is built."""
+    built: list[object] = []
+    monkeypatch.setattr(cli, "build_invoke_workflow_tool", lambda *a: built.append(a))
+
+    assert cli._cmd_invoke_workflow(_invoke_args(task=None)) == 2
+    assert built == []
+    assert "provide a task" in capsys.readouterr().err
+
+
+def test_the_retired_manual_route_points_at_the_single_entry_point() -> None:
+    """The legacy parser stays for its call sites but tells the operator where to go."""
+    parser = cli.build_parser()
+    actions = [action for action in parser._actions if getattr(action, "choices", None) is not None]
+    subparsers = next(action for action in actions if "invoke-workflow" in action.choices)
+    workflow_help = subparsers.choices["workflow"].description
+
+    assert "invoke-workflow" in workflow_help
+    assert "DEPRECATED" in workflow_help
+
+
+def test_invoke_workflow_cli_returns_the_child_exit_code(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An ok tool result still carries the child's own exit code; the operator sees it."""
+    recorder = _Recorder()
+    recorder.result = ToolResult.ok("child finished", result={"exit_code": 3, "status": "DONE"})
+    monkeypatch.setattr(cli, "build_invoke_workflow_tool", recorder.build)
+    monkeypatch.setattr(cli, "_resolve_workflow_lifecycle", lambda args, run_id: (run_id, None, None, None))
+    monkeypatch.setattr(cli, "load_runtime_limits_from_path", lambda: SimpleNamespace(limits=RuntimeLimits()))
+
+    assert cli._cmd_invoke_workflow(_invoke_args()) == 3

@@ -854,7 +854,10 @@ def build_parser() -> argparse.ArgumentParser:
             "Stops on the first non-zero stage exit (fail-fast). With "
             "--mode adaptive, adds bounded coder→eval repair rounds and, when a "
             "planner role is present, planner→coder→eval replan rounds, driven "
-            "by the machine-readable eval route."
+            "by the machine-readable eval route.\n\n"
+            "DEPRECATED (D-V2-2): the manual pipeline route is superseded by "
+            "`fa invoke-workflow`, which calls the same invoke_workflow tool a chat "
+            "session calls. This command stays only until its call sites move."
         ),
         epilog=render_command_help_ru("workflow"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -954,6 +957,46 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     workflow_parser.set_defaults(func=_cmd_workflow)
+
+    # D-V2-2 / CT-1.5: the human front for the single workflow entry point. It
+    # builds the same `invoke_workflow` ToolSpec the chat harness registers and
+    # calls its handler, so the operator path cannot drift from the agent path:
+    # every guard the tool owns (re-entrancy, budget, request validation,
+    # lifecycle settlement) applies to both by construction.
+    invoke_parser = subparsers.add_parser(
+        "invoke-workflow",
+        help="Run the same invoke_workflow tool the chat agent calls.",
+        description=(
+            "Call the invoke_workflow tool directly. This is the human front for the one "
+            "workflow entry point: same tool, same argument contract, same lifecycle as a "
+            "chat session. `fa workflow` is the retired manual pipeline route."
+        ),
+    )
+    invoke_parser.add_argument("task", nargs="?", default=None, help="Task text for the pipeline.")
+    invoke_parser.add_argument(
+        "--task", dest="task_flag", default=None, help="Task text (alternative to the positional)."
+    )
+    invoke_parser.add_argument(
+        "--roles", default="planner,coder,eval", help="Comma-separated stage roles for the child pipeline."
+    )
+    invoke_parser.add_argument("--mode", default="linear", choices=sorted(_WORKFLOW_MODES), help="Child pipeline mode.")
+    invoke_parser.add_argument("--run-id", default=None, help="Parent run id for this invocation.")
+    invoke_parser.add_argument("--max-turns", type=int, default=DEFAULT_MAX_TURNS, help="Per-stage turn cap.")
+    invoke_parser.add_argument(
+        "--config", type=Path, default=DEFAULT_MODELS_YAML_PATH, help="Provider/models config path."
+    )
+    invoke_parser.add_argument(
+        "--workspace", type=Path, default=Path.cwd(), help="Workspace the child run writes into."
+    )
+    invoke_parser.add_argument("--session-id", default=None, help="Bind the invocation to an existing session.")
+    invoke_parser.add_argument(
+        "--project-action",
+        default=None,
+        choices=["AUTO_SELECT_EXISTING", "CREATE_NEW"],
+        help="Explicit project route for a new-project task.",
+    )
+    invoke_parser.add_argument("--project-slug", default=None, help="Validated project slug for CREATE_NEW.")
+    invoke_parser.set_defaults(func=_cmd_invoke_workflow)
 
     # PLAN S5d / G9: read-only introspection for the injection control
     # surface. Starts no session and writes nothing -- it answers "what would
@@ -2349,6 +2392,75 @@ def _cmd_workflow(
     if not release_confirmed and exit_code == 0:
         return WORKFLOW_RELEASE_EXIT_CODE
     return exit_code
+
+
+def _cmd_invoke_workflow(
+    args: argparse.Namespace,
+    *,
+    transport: Transport | None = None,
+    secrets: Mapping[str, str] | None = None,
+) -> int:
+    """Call the ``invoke_workflow`` tool the chat harness registers (CT-1.5).
+
+    This function deliberately does **not** run the pipeline itself. It builds
+    the same :class:`ToolSpec` that ``_build_run_tool_registry`` builds for a
+    chat session and calls its handler, so the operator path and the agent path
+    are one composition rather than two that must be kept in step. Anything the
+    tool refuses — re-entrancy, escalation budget, an invalid request, an
+    unsettled child — is refused here for the same reason and with the same
+    code.
+
+    The context is deliberately the unmanaged shape: a manual invocation has no
+    parent stage lease, so a planner-led child gets exactly what any unmanaged
+    caller gets. Managed composition stays where it is proven — the chat
+    harness inside ``fa run``.
+    """
+    task = _resolve_task(getattr(args, "task", None), getattr(args, "task_flag", None))
+    if task is None or not task.strip():
+        print("fa invoke-workflow: provide a task — positional or --task", file=sys.stderr)
+        return 2
+    try:
+        _apply_wrapper_session_workspace(args)
+    except SessionManagerError as exc:
+        print(f"fa invoke-workflow: active workspace selection failed [{exc.code}]: {exc}", file=sys.stderr)
+        return 2
+
+    run_id = args.run_id or f"wf-{int(time.time())}-{_slugify_task(task)}"
+    try:
+        run_id, session_context, run_context, session_db = _resolve_workflow_lifecycle(args, run_id)
+    except (SessionManagerError, RuntimeError) as exc:
+        code = getattr(exc, "code", "session")
+        print(f"fa invoke-workflow: session error [{code}]", file=sys.stderr)
+        return 2
+
+    limits = load_runtime_limits_from_path().limits
+    provider = _make_workflow_ctx_provider(
+        parent_run_id=run_id,
+        config=args.config,
+        workspace=args.workspace,
+        max_turns=args.max_turns,
+        limits=limits,
+        session_context=session_context,
+        run_context=run_context,
+        session_db=session_db,
+        transport=transport,
+        secrets=secrets,
+    )
+    tool = build_invoke_workflow_tool(run_workflow, provider)
+    params: dict[str, object] = {"task": task, "roles": args.roles, "mode": args.mode}
+    if getattr(args, "project_action", None) is not None:
+        params["project_action"] = args.project_action
+    if getattr(args, "project_slug", None) is not None:
+        params["project_slug"] = args.project_slug
+
+    result = tool.handler(params)
+    if result.error is not None:
+        print(f"fa invoke-workflow: {result.error.code}: {result.error.message}", file=sys.stderr)
+        return 2
+    print(result.summary)
+    payload = result.result if isinstance(result.result, Mapping) else {}
+    exit_code = payload.get("exit_code", 0)
+    return exit_code if isinstance(exit_code, int) else 0
 
 
 def _validate_run_args(args: argparse.Namespace, *, planner_dispatch: PlannerDispatch | None = None) -> str | None:

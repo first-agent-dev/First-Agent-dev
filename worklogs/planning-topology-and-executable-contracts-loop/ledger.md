@@ -11238,3 +11238,31 @@ review flagged. It is the next increment, tracked as CT-1.5.
 **Known structural note.** The `PLAN-V2` branch has no production caller until SLICE2's renderer sets
 `ctx.plan_format`; recorded in the plan rather than hidden, because a mechanism without a caller is what
 E564 already cost this project.
+
+### E571 — CT-1.5: `fa invoke-workflow` is the human front for the same tool (2026-11-20)
+
+**Landed.** New `fa invoke-workflow` subcommand that builds the same `invoke_workflow` `ToolSpec` the chat
+harness registers (`build_invoke_workflow_tool(run_workflow, _make_workflow_ctx_provider(...))`) and calls
+its handler. It runs no pipeline of its own: task/roles/mode/project fields go through the tool's own
+validation and lifecycle, a `ToolResult` failure prints the stable code and returns 2, and an ok result
+returns the child's own exit code. The `fa workflow` help text now states DEPRECATED and points at the new
+front.
+
+**Evidence.** `tests/test_ai_native_plan_v2.py` 51 → 56: the CLI uses the chat's builder (recorder on
+`build_invoke_workflow_tool`), project fields reach the tool unmodified, a tool refusal maps to exit 2, a
+missing task refuses *before* any lifecycle, an ok result returns the child exit code, and the retired
+route's help names the single entry point. **Five mutants, 5/5 killed**: task check removed, tool failure
+treated as success, project slug renamed, exit code ignored, hand-rolled tool instead of the chat builder;
+`cli.py` byte-restored (`sha256sum -c` OK). 273 passed across the CLI/parity/exit-contract/workflow
+allowlist/plan-reference/inject banks; `ruff`, `mypy src/fa/cli.py`, `pyrefly` (0), `authoring-check` (0).
+
+**Deliberately not done — and stated as work, not as done.** `fa workflow` itself is not removed: 57 call
+sites across nine test modules drive it, and each one asserts behaviour of the controller (exit contracts,
+role allowlists, plan references) that does not disappear with the command. Removing the surface before
+those call sites move would either delete real coverage or force a rushed rewrite of tests whose subject is
+still the production controller. The bounded follow-up is: move the call sites onto `run_workflow`/
+`_cmd_invoke_workflow`, delete the plan-running surface, and add the refusal test.
+
+**Honest limitation.** The manual front uses the unmanaged context (no parent stage lease), so a
+planner-led child gets exactly what any unmanaged caller gets; managed composition remains the chat
+harness inside `fa run`. A live manual end-to-end run is therefore not claimed.

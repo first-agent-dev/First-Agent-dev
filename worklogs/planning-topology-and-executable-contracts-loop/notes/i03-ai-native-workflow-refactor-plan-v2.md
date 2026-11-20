@@ -182,7 +182,7 @@ STEP9 and STEP9A are increment prerequisites to all five. STEP9B completes only 
 | CT-1.2 | FUNCTIONAL / INV-05 | Controller projects every `plan_v2` refusal as a stable bounded diagnostic code (`PlanV2Error.rule`), never as a raw exception or a repair prompt with prose; a passing graph reports `PASS` with the same parity as V1. | TEST-1.2 → `tests/test_ai_native_plan_v2.py::test_v2_admission_surfaces_closed_rule_codes_not_exceptions` |
 | CT-1.3 | CONSTRAINT / INV-01 | A `PLAN-V2` document is never judged by V1 rules: absent `TESTS:`/`INTENT:` lines, V1 slice tokens or V1 kill syntax produce **no** V1 diagnostic, and the V1 `zero-slices` refusal cannot fire on a V2 graph. | TEST-1.3 → `tests/test_ai_native_plan_v2.py::test_v2_document_is_never_judged_by_v1_validators` |
 | CT-1.4 | PRESERVATION / INV-04 | No production route dispatches a coder with `ctx.admission is None` (today `_admit_plan` returns `True` in that case, `workflow_controller.py:3740–3742`, on the strength of a comment); the control proves the public coder entry always binds authority, and that a V1 document on the new-project route is refused before provider/coder. | TEST-1.4 → `tests/test_ai_native_plan_v2.py::test_coder_never_dispatches_without_bound_admission_and_v1_is_refused_first` |
-| CT-1.5 | PRESERVATION / INV-13 | Exactly one production entry point exists: the legacy manual `fa workflow` plan-running surface is retired and a caller reaching for it gets a stable refusal, while the human and chat paths both go through the same `invoke_workflow` composition. | TEST-1.5 → `tests/test_ai_native_plan_v2.py::test_legacy_manual_workflow_route_is_retired_with_one_composition_left` |
+| CT-1.5 | PRESERVATION / INV-13 | **Partially landed 2026-11-20.** `fa invoke-workflow` exists and calls the *same* `ToolSpec` a chat session registers (`build_invoke_workflow_tool` + `_make_workflow_ctx_provider`), so the operator path and the agent path are one composition: task/roles/mode/project fields go through the tool's own validation, a tool refusal maps to exit 2, and an ok result returns the child's exit code. `fa workflow` still runs (its help now states DEPRECATED and points at the new front) because 57 call sites across nine test modules drive it; **retiring it is a bounded follow-up**, not a silent defer: the remaining work is moving those call sites and deleting the plan-running surface with a refusal test. | TEST-1.5 → `tests/test_ai_native_plan_v2.py::test_invoke_workflow_cli_calls_the_same_tool_the_chat_registers` |
 
 ```verify
 uv run pytest tests/test_ai_native_plan_v2.py tests/test_plan_ids.py tests/test_admission_v2_provenance.py tests/test_skill_grammar_emit.py tests/test_cli.py -q
@@ -205,6 +205,15 @@ sets the field, and the plan says so rather than implying a cutover that has not
 the alternative, flipping to V2 by looking at the document, is exactly the content sniffing INV-01 forbids.
 Consequence for sequencing: SLICE2 is no longer "the bootstrap slice", it is the slice that makes the cutover
 real, and it starts before any further admission work.
+
+**CT-1.5 state (2026-11-20).** The single entry point is real and human-callable; the legacy surface is
+deprecated but not yet removed. Evidence for the front: `tests/test_ai_native_plan_v2.py` proves the CLI
+builds the chat's own tool (a recorder on `build_invoke_workflow_tool`), that project fields reach the tool
+unmodified, that a tool refusal becomes exit 2, that a missing task refuses before any lifecycle, and that an
+ok result returns the child exit code — five mutants, 5/5 killed. What is *not* proven is a live end-to-end
+manual run: the CLI context is the unmanaged shape by design (no parent stage lease), so a planner-led child
+gets exactly what an unmanaged caller gets, and managed composition stays where it is proven (the chat
+harness inside `fa run`).
 
 **Failure/negative controls:** version marker cannot override runtime pin; project cannot load a grammar copy from its own root; malformed references never yield a partial admitted snapshot; no legacy fallback; no coder/provider call on rejection. The V1 negative and valid V2 positive use production admission, not only parser helpers. **Producer kill-check:** remove the V2 admission producer at `_validate_plan_admission`/its caller choke point and show the C1 admission test fails. **EDGE kill-check:** bypass the real admission→initial coder dispatch in `_run_stage`/workflow composition; assert coder is not reached or the live witness fails. Re-ground exact current call site before mutation; do not target a dead helper. **Local DoD:** all selectors pass without unreviewed skip; canonical schema, skills, parser and conformance fixtures agree; authoring/typing checks on changed files pass; no V1 fallback; test gate rejects before provider/coder. No deployment claim.
 
