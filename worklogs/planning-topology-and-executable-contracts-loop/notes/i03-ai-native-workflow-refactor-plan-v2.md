@@ -241,13 +241,15 @@ uv run pytest tests/test_ai_native_bootstrap.py tests/test_invoke_workflow_tool.
 
 **Failure/negative controls:** child planner emits a different slug; hostile slug; collision with complete and incomplete project; prepare refusal; install pre-rename failure; post-rename uncertainty; post-install validation/seal failure; return/HANDOFF reconciliation failure. In every refusal, inspect the authoritative workspace revision/tree and caller result, not only mocked DTO. Preserve no-replace install and forward recovery semantics. **Producer kill-check:** remove the real controller's bootstrap transition/materialization call and the success composition test fails to produce the new project. **EDGE kill-check:** remove `invoke_workflow`'s call into the child workflow or chat registry binding and C1/C2 test fails; parser-only tests do not count. **Local DoD:** real local authority + real managed caller success and refusal tests, no coder before seal, no side effects on pre-install refusal, uncertain post-install state remains blocked/recoverable, stable structured tool result; targeted typing/format/authoring checks pass. No host acceptance claim.
 
-**SLICE2 increment 1 (2026-11-20).** A `PLAN-V2` bootstrap pair is validated *before* `prepare_bundle` and
-therefore before the irreversible install; the refusal is `bootstrap-v2-<rule>` with `content-invalid`
-evidence and no operation id. The route flip (every `BOOTSTRAP_NEW_PROJECT` ⇒ `PLAN-V2`) is written,
-measured and **not landed**: it turns eight `test_admission_v2_provenance.py` tests red because they encode
-"install an invalid bootstrap, then repair", a path pre-install validation removes for new projects. Those
-tests must move to the candidate route first. SLICE2's remaining work is that migration plus the tool's
-`project_action`/`project_slug` contract (CT-2.1/2.2) and the closure+seal mint (D-V2-5).
+**SLICE2 increments 1–2 (2026-11-20).** A `PLAN-V2` bootstrap pair is validated **before** `prepare_bundle`
+and therefore before the irreversible install; the refusal is `PlanRefError("bootstrap-invalid-body")` with
+the recorded `bootstrap`/`invalid-body` diagnostic and no operation id. The route flip has **landed**:
+`BOOTSTRAP_NEW_PROJECT` sets `ctx.plan_format = PLAN_V2` before any bytes exist, so the V2 parser and the V2
+admission rules finally have a production caller. Only one test encoded the old order
+(`test_v2_bootstrap_invalid_body_...`), and it is rewritten to assert refusal-before-install; the earlier
+"eight tests" claim was a measurement artefact from converting the shared V1 fixtures (E573 records the
+correction). Remaining SLICE2 work: the tool's `project_action`/`project_slug` contract (CT-2.1/2.2), the
+closure materialization inside the installed revision and the seal mint (D-V2-5).
 
 **Bounded planning ASK/Q items:** Q-V2-BOOT-1 is **resolved** (D-V2-5, audit `notes/q-v2-boot1-install-seal-audit-2026-11-20.md`): the closure is installed inside the revision, the seal is minted from installed bytes + plan bytes + receipt revision into private metadata, and the pointer/recovery rules are E1–E9. SLICE2 therefore implements that chain rather than choosing one; the only open item on this slice is Q-V2-MODEA-1 (shell-side read-only policy), which does not block install. Route fields/error mapping above are this plan's selected bounded interface, not coder choices. The initial increment slug is harness-fixed `initial-plan`; planner cannot supply it. No interactive approval is required for routine implementation seams.
 

@@ -2770,11 +2770,14 @@ def _install_bootstrap_project_with_detail(
         try:
             parse_plan(roadmap=choice.roadmap_body, increment=choice.increment_body)
         except PlanV2Error as error:
+            # One meaning, one rule: the admission record's closed vocabulary
+            # already names this event `bootstrap/invalid-body`, and the grammar's
+            # own rule goes to the log so the operator can still tell *why*.
             logger.warning("bootstrap content refused [%s] (run=%s)", error.rule, ctx.run_id)
             return (
                 ctx,
-                PlanRefError(f"bootstrap-v2-{error.rule}"),
-                _BootstrapFailure("bootstrap", "content-invalid", "FAIL", "DIAGNOSTICS"),
+                PlanRefError("bootstrap-invalid-body"),
+                _BootstrapFailure("bootstrap", "invalid-body", "FAIL", "DIAGNOSTICS"),
             )
     deadline = ctx.deadline_mono if ctx.deadline_mono is not None else time.monotonic() + 30.0
     input_revision = managed.current_revision_id
@@ -2949,6 +2952,11 @@ def _bind_acquisition_admission(
         if outcome.bootstrap is not None:
             # §7.1 bootstrap: render → install → fresh pin → read back → admit. The
             # snapshot is the INSTALLED plan, never the prose that requested it.
+            #
+            # D-V2-1: a NEW project is authored under PLAN-V2 by construction. The
+            # route decides the grammar here, before any bytes exist, which is what
+            # keeps the decision out of the document (INV-01).
+            ctx = replace(ctx, plan_format=PLAN_V2)
             installed, refusal, failure_detail = _install_bootstrap_project_with_detail(ctx, outcome.bootstrap)
             return installed, (
                 None if refusal is None else _refusal_exit_code(installed, refusal, failure_detail=failure_detail)

@@ -11304,3 +11304,33 @@ red tests or delete real coverage.
 **Consequence recorded, not hidden.** The V2 branch still has no production caller; E570 said the same about
 admission and this entry says it again about the bootstrap route, because the two are the same gap: the flip.
 It is now the *only* thing between the landed mechanism and a real V2 new-project run.
+
+### E573 — the route flip landed: a new project is authored under PLAN-V2 (2026-11-20)
+
+**Landed.** `_bind_acquisition_admission` flips the run to `PLAN-V2` for a `BOOTSTRAP_NEW_PROJECT` choice,
+before any bytes exist. Combined with E572's pre-install validation, the V2 path now has what it lacked
+through two previous increments: a **production caller**. A new project is parsed by `plan_v2`, admitted by
+`_validate_v2_admission`, and its `PLAN-V1` validators are never consulted.
+
+**The migration was one test, not eight — and the earlier claim was wrong.** E572 recorded that eight
+`test_admission_v2_provenance.py` tests "encode install-an-invalid-bootstrap-then-repair" and must move to the
+candidate route. That was a **measurement artefact**: I had converted the *shared* `_VALID_ROADMAP`/
+`_VALID_INCREMENT` constants, which also feed the existing-project fixtures, so V2 bodies leaked into the V1
+route and broke six unrelated D11 tests. Doing it correctly — bootstrap-only `_V2_*` constants while the
+existing-project fixtures stay V1 — leaves **28 of 29 tests untouched**, and only
+`test_v2_bootstrap_invalid_body_blocks_with_candidate_and_bundle_evidence_and_no_ref` genuinely encoded the
+old order. It is rewritten to assert the new one: refusal before render/install, with no candidate, no
+bundle, no operation id, and no project directory on disk.
+
+**Also corrected in the code path.** The refusal first used a newly invented `content-invalid` rule; the
+admission record's closed vocabulary already names this event `bootstrap/invalid-body` (`admission_schema.py`),
+and a duplicate meaning is a defect. The recorded diagnostic is now `bootstrap`/`invalid-body`, the legacy
+`PlanRefError` is `bootstrap-invalid-body`, and the grammar's own rule stays in the log so the operator can
+still tell why.
+
+**Evidence.** `test_admission_v2_provenance.py` 29 passed with the flip on (including the rewritten
+pre-install refusal). Banks: 265 passed (S5.1 bootstrap, acquisition, new bootstrap bank, plan_v2,
+publication), 235 passed (execution composition, managed workflow E2E, invoke tool, S8 controller), 634
+passed (verify gate live, S10c exit contract, CLI). **Two flip mutants, 2/2 killed** (flip removed; flip
+applied as V1) — the flip is load-bearing, not decorative. Targeted mutants from E572 still hold. `ruff`,
+`mypy`, `pyrefly` (0), `authoring-check` (0).

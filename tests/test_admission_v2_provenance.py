@@ -61,6 +61,36 @@ _VALID_INCREMENT = (
     "TESTS: tests/test_admission_v2_provenance.py\n"
 )
 _INVALID_INCREMENT = "## SLICE1: Foundation\nCONTRACTS:\n  CT1 [CONSTRAINT]: initial boundary holds.\n"
+
+# D-V2-1: a NEW project is authored under PLAN-V2, so the bootstrap fixtures are
+# real V2 documents. The existing-project fixtures above stay V1 on purpose: that
+# route is the frozen legacy one, and CTRL-V1 admission still owns it.
+_V2_ROADMAP = (
+    "Plan-Format: AI-NATIVE-PLAN-V2\n\n"
+    "## Intent\n\nBuild the demo slice cleanly.\n\n"
+    "## Out of scope\n\nEverything outside SLICE1.\n"
+)
+_V2_INCREMENT = (
+    "Plan-Format: AI-NATIVE-PLAN-V2\n\n"
+    "## INVARIANTS\n"
+    "### INV-1\n"
+    "KIND: HARD\n"
+    "TEXT: the initial boundary holds.\n"
+    "EVIDENCE: TEST_REQUIRED\n\n"
+    "## SLICE1: Foundation\n"
+    "STEPS: prescriptive\n"
+    "CONTRACTS:\n"
+    "  CT-1.1 [CONSTRAINT] INV: INV-1: the initial boundary holds\n"
+    "ACCEPTANCE:\n"
+    "  TEST-ID: TEST-1.1 | CT: CT-1.1 | SELECTOR: "
+    "worklogs/demo-project/acceptance/tests/test_foundation.py::test_foundation\n"
+    "STEP-EXIT-CHECKS:\n"
+    "  CHECK-ID: CHECK-1 | STEP: STEP1 | TEST-ID[]: TEST-1.1\n"
+    "- [ ] STEP1: hold the boundary. EXIT-CHECK: CHECK-1\n"
+)
+# Invalid for the same reason a V2 document is ever invalid on this route: the
+# marker is what makes it a V2 plan at all.
+_V2_INVALID_INCREMENT = _V2_INCREMENT.replace("Plan-Format: AI-NATIVE-PLAN-V2\n\n", "", 1)
 _KILL_INCREMENT = _VALID_INCREMENT.replace(
     "TESTS:",
     "  CT2 [FUNCTIONAL]: bounded repair must validate the directive.\n"
@@ -466,8 +496,8 @@ def test_v2_bootstrap_admitted_emits_distinct_bundle_and_plan_hashes_with_instal
                 "kind": "BOOTSTRAP_NEW_PROJECT",
                 "project_slug": "new-project",
                 "increment_slug": "foundation",
-                "roadmap_body": _VALID_ROADMAP,
-                "increment_body": _VALID_INCREMENT,
+                "roadmap_body": _V2_ROADMAP,
+                "increment_body": _V2_INCREMENT,
             }
         )
 
@@ -517,15 +547,20 @@ def test_v2_bootstrap_admitted_emits_distinct_bundle_and_plan_hashes_with_instal
 def test_v2_bootstrap_invalid_body_blocks_with_candidate_and_bundle_evidence_and_no_ref(
     site: Site, tmp_path: Path
 ) -> None:
-    """Installed bootstrap increment missing TESTS is blocked under bootstrap/invalid-body with v2 evidence."""
+    """A PLAN-V2 body that does not parse is refused BEFORE the install.
+
+    This used to assert the opposite order — install, then block — because the
+    V1 route had no pre-install grammar. Under D-V2-1 a new project is V2, so the
+    pair is parsed while nothing exists yet: no bundle, no operation, no project.
+    """
     with _managed_child_env(site, tmp_path) as (managed, publisher, child_ctx, yaml_path):
         choice = json.dumps(
             {
                 "kind": "BOOTSTRAP_NEW_PROJECT",
                 "project_slug": "bad-project",
                 "increment_slug": "foundation",
-                "roadmap_body": _VALID_ROADMAP,
-                "increment_body": _INVALID_INCREMENT,
+                "roadmap_body": _V2_ROADMAP,
+                "increment_body": _V2_INVALID_INCREMENT,
             }
         )
 
@@ -560,8 +595,12 @@ def test_v2_bootstrap_invalid_body_blocks_with_candidate_and_bundle_evidence_and
         attempt = record["attempts"][0]
         assert attempt["diagnostics"][0]["validator"] == "bootstrap"
         assert attempt["diagnostics"][0]["rule"] == "invalid-body"
-        assert attempt["candidate_sha256"] is not None and attempt["bundle_sha256"] is not None
+        # Nothing was rendered into a bundle and nothing was installed, so there
+        # is no candidate, no bundle and no operation to report.
+        assert attempt["candidate_sha256"] is None and attempt["bundle_sha256"] is None
+        assert attempt["operation_id"] is None
         assert attempt["promoted_sha256"] is None and attempt["output_revision"] is None
+        assert not (site.source / "worklogs" / "bad-project").exists()
 
 
 @pytest.mark.parametrize(
@@ -641,8 +680,8 @@ def test_v2_bootstrap_authority_failures_emit_valid_v2_records(
                 "kind": "BOOTSTRAP_NEW_PROJECT",
                 "project_slug": "demo-fail",
                 "increment_slug": "foundation",
-                "roadmap_body": _VALID_ROADMAP,
-                "increment_body": _VALID_INCREMENT,
+                "roadmap_body": _V2_ROADMAP,
+                "increment_body": _V2_INCREMENT,
             }
         )
 
@@ -893,8 +932,8 @@ def test_invoke_workflow_handoff_child_writes_validated_v2_bootstrap_admission(
                     "kind": "BOOTSTRAP_NEW_PROJECT",
                     "project_slug": "child-proj",
                     "increment_slug": "foundation",
-                    "roadmap_body": _VALID_ROADMAP,
-                    "increment_body": _VALID_INCREMENT,
+                    "roadmap_body": _V2_ROADMAP,
+                    "increment_body": _V2_INCREMENT,
                 }
             )
 

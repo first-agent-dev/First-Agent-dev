@@ -79,9 +79,9 @@ def test_v2_bootstrap_pair_is_validated_before_the_irreversible_install() -> Non
     )
 
     assert refusal is not None
-    assert refusal.rule == "bootstrap-v2-unknown-top-level-section"
+    assert refusal.rule == "bootstrap-invalid-body"
     assert detail is not None
-    assert (detail.validator, detail.rule, detail.severity) == ("bootstrap", "content-invalid", "FAIL")
+    assert (detail.validator, detail.rule, detail.severity) == ("bootstrap", "invalid-body", "FAIL")
     assert detail.operation_id is None  # nothing was installed, so there is no operation
     assert ctx.run_id == "run-bootstrap-v2"  # unchanged: nothing was bound
 
