@@ -93,6 +93,8 @@ __all__ = [
     "capture_test_nodeids",
     "mutation_overlay",
     "parse_kill_directives",
+    "parse_node_outcomes",
+    "parse_nodeid_report",
     "run_commands",
     "validate_kill_directives",
     "verify_plan",
@@ -803,6 +805,32 @@ def _junit_block(stdout: str) -> tuple[bytes | None, str]:
     if not body:
         return None, "JUnit report block is empty"
     return body.encode("utf-8"), ""
+
+
+def parse_nodeid_report(report_bytes: bytes) -> tuple[dict[str, bool] | None, str]:
+    """Public projection of one JUnit report to ``nodeid -> passed``.
+
+    Exposed so a second caller (the sealed acceptance collection) hands its bytes
+    to the *same* parser instead of growing a weaker one: a report that crossed a
+    boundary is not more trusted than one read from a path (Q142).
+    """
+    report, detail = _parse_junit_bytes(report_bytes)
+    if report is None:
+        return None, detail
+    return {nodeid: outcome is _JUnitOutcome.PASSED for nodeid, outcome in report.outcomes.items()}, ""
+
+
+def parse_node_outcomes(report_bytes: bytes) -> tuple[dict[str, str] | None, str]:
+    """Project a report to ``nodeid -> passed|failed|skipped``.
+
+    The boolean projection cannot express a skip, and a skip that reads as a
+    failure is exactly how a dead test becomes a "proven" kill. Attribution needs
+    the three states, so it gets its own projection over the same parser.
+    """
+    report, detail = _parse_junit_bytes(report_bytes)
+    if report is None:
+        return None, detail
+    return {nodeid: outcome.value for nodeid, outcome in report.outcomes.items()}, ""
 
 
 def _parse_nodeid_report(path: Path) -> tuple[dict[str, bool] | None, str]:

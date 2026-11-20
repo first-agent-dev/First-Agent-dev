@@ -3758,3 +3758,395 @@ The product `worklogs/<slug>/ledger.md` remains unchanged by STEP progress. The 
 ### Impact and stop line
 
 Q154's target ambiguity is resolved, but implementation and live registration remain gated: do not add tests or fixtures until STEP9A closes its authority contract and S6P7's independent review precedes S6P8 fixture/helper work. Do not add an S08 mapping or producer-baseline row based on this resolution alone; the required mapping/oracle review remains separate. Q154 changes no live result, frozen producer baseline, or host acceptance status. Q146/LIST_PROJECTS mapping and its S08 oracle remain governed by E547.
+
+---
+
+## Q155 — What counts as the local clearance of STEP9's “approved Q97 profile” exit item?
+
+**Status: RESOLVED (operator, 2026-11-20) — the standard profile set below is adopted as the project's
+pre-deploy configuration standard; no host value is inferred from it.** Deploy-script scan (requested by
+the operator): `scripts/setup-fa-desktop.sh`, `fa-post-setup.sh`, `fa-update.sh`, `fa-clean-rebuild.sh`,
+`fa-entrypoint.sh` contain **no** execution-profile or cell-resource variables (only power-profile
+handling and a cache probe); the service config is an operator-supplied JSON read by
+`service.read_config_file` (`supervisor.py:605`), which is why no approved value existed in the checkout.
+The operator host (i5-1235u, 2P+8E) is not a constraint on a 1-CPU/64-pid cell. STEP9 item 4 is therefore
+cleared locally: adopted standard ≥ Q97 floor by construction, fail-closed validator, exact refusal-code
+negative proof. Host/deployment facts remain operator inputs verified at W4 preflight. Every other STEP9 local
+exit item now reproduces on the current tree (E556). This question is only about the Q97 profile
+sub-item, not about Q139 (deferred by Q152/E531/E544), not about the clean-readiness host lane
+(E537), and not about any live-host/`fa update` prerequisite, which STEP9's own exit excludes.
+
+### Source-grounded current behavior
+
+- STEP9 item 4 requires the operator to “confirm the approved profile has `memory_bytes ≥
+  1,342,177,280` before W3”, and its `exit:` names “approved Q97 profile” among the gates that must
+  pass. `notes/q97-w1-resource-contract-2026-11-06.md:20` defines the floor as 640 MiB call reserve
+  plus 640 MiB cell/worker headroom.
+- The only enforceable local mechanism is
+  `tests/integration/_host.py::_static_host_config`: it requires `view_profile_id` +
+  `read_only_profile_id`, the correct interactive/non-interactive polarity, and raises
+  `ExecutionHostPreflightError("approved_profile_memory_below_q97_floor")` when
+  `min(view.memory_bytes, read_only.memory_bytes) < MIN_APPROVED_PROFILE_MEMORY_BYTES`.
+  `tests/test_execution_host_preflight.py:190` asserts exactly that refusal code, so the negative
+  proof exists and is fail-closed.
+- There is no approved Q97 `~/.fa/config.yaml` in this checkout: no profile IDs, digests or
+  `memory_bytes` values for a real deployment. The S6P5 pre-approval sheet
+  (`notes/i03-s6p5-host-run-sheet-preapproval-2026-11-10.md` §1) records the approved config,
+  the selected profiles, the image digests and the cgroup roots as **UNKNOWN — operator approval**,
+  and forbids manufacturing them from Arena's simulated profile IDs or `registry.invalid` digests.
+  That sheet is the only place the actual floor verification can be recorded.
+- `pyproject.toml`/tests contain no approved production profile values; test profiles are explicitly
+  not approval inputs.
+
+### Options
+
+- **A — Local mechanism is the local clearance (recommended).** STEP9 is defined as Arena-local
+  (“no W3 host update or live-host prerequisite”). Record: floor validator present, polarity +
+  missing-profile refusals present, negative proof at the exact refusal code, and the actual approved
+  profile values remain an operator/W4 input tracked in the S6P5 sheet. Tick STEP9 with an explicit
+  “no host profile value claimed” statement. W4 keeps the real floor verification as a prerequisite
+  before the approved `fa update` and suite.
+- **B — Operator supplies redacted profile facts now.** You provide the two selected profile IDs,
+  their `memory_bytes` and digests (hashes only, no secrets); I record them in the S6P5 sheet as the
+  pre-deploy approval and tick STEP9 against that record. Costs one round-trip and mixes a host fact
+  into a local step.
+- **C — STEP9 stays unticked until W4 host facts exist.** Most literal reading of the exit text, but
+  it contradicts STEP9's own “no live-host prerequisite” clause and the E537/E544 local/host
+  separation, so it would block STEP9A (and the whole confirmed order) indefinitely.
+
+### Impact and stop line
+
+Under A, STEP9 closes on reproduced local evidence and W4 still cannot run without the operator's
+approved profile ≥ floor. Under B, an approval record enters the sheet before STEP9 closes. Under C,
+the confirmed order stalls. Any option keeps the rule that simulated/test profiles and
+`registry.invalid` digests never count as approval, and that no host value is inferred locally.
+
+---
+
+## Q156 — Who performs the STEP7 (S6P7) independent review, and where does it sit in the confirmed order?
+
+**Status: RESOLVED = A-variant (operator clarification, 2026-11-20): review by a different agent, fixtures
+stay in scope, verification best-effort.** The operator first selected the W4-only option, then
+clarified the intent: the S6P7 review is delegated to **another agent** (not the implementer), and the
+STEP8 fixtures are required for meaningful W4 E2E and will be written. Recorded resolution:
+(1) the implementer never signs as reviewer and no machine-approved marker is produced; (2) the
+implementer prepares a self-contained review packet (scope, exact sources and nodeids, checklist,
+refusal/cleanup questions, verdict template) and a different agent executes it; (3) only after that
+verdict is recorded may the STEP8 fixture package be authored, so the plan's STEP7→STEP8 order holds;
+(4) verification is best-effort with the means available in this environment (E544) — no host, Docker
+or cgroup claim follows from a local or external-agent review; (5) if no second agent reviews before
+W4, S6P8 stays un-authored and I03 must state that no reviewed fixture package exists. The earlier
+"W4-only" selection is superseded by this clarification.
+
+**Historical status (superseded): OPEN — operator decision required before W3 closure (not before STEP9/9A/9B).** STEP9's own
+exit does not include S6P7; the W3 wave row does (“review prerequisites”). The plan forbids the
+implementer from self-signing: S6P7 needs “a different, named STEP7 reviewer”, and Q154 restates that
+this review precedes S6P8 fixture/helper work.
+
+### Source-grounded current behavior
+
+- I03 SLICE6 STEP7 (`increment-03-execution-workspace-foundation.md`, STEP7 line) requires a named
+  reviewer + date + notes over source, import closure, readiness/descendant/fencing/recovery, nested
+  cases, I01 plan-authoring/parser/admission obligations, maintenance prerequisites, secret handling
+  and the stop path; exit is “named reviewer/date/notes recorded; no machine-approved marker; final
+  broad review still required after material changes”.
+- STEP8 (fixtures under `e2e/I03/fixtures/`) is gated on STEP7: “only after STEP7”. That directory is
+  still absent, so no fixture work has started and none may start before the review.
+- The pre-approval sheet (§2.2) states the same: obtain a different, named reviewer, record date and
+  findings, and only then implement STEP8 fixtures and the external driver. Existing
+  `tests/integration/` cases are substrate, not the reviewed host package.
+- The confirmed order for this engagement is STEP9 → STEP9A → STEP9B → new V2 slices → STEP10 → W4.
+  S6P7 is not in that chain, yet W3 cannot close without it, and STEP7's own exit says a material
+  change invalidates the review — STEP9A/9B and the new slices are all material changes.
+- In this engagement the only party that is not the implementer is the operator (you). No other named
+  reviewer exists in the repository record.
+
+### Options
+
+- **A — One review after STEP10 (recommended).** Close STEP9, run STEP9A, STEP9B and the new-slice
+  local DoDs, then you perform a single S6P7 review over the final state; S6P8 fixtures and the host
+  package follow, and STEP10 acceptance/W4 use that reviewed package. This respects “final broad
+  review after material changes” and avoids reviewing code that will change under STEP9A/9B.
+- **B — Review now, before STEP9A.** Faster feedback on the existing substrate, but the review would
+  be invalidated by STEP9A/9B/slice changes and must be repeated, and STEP8 fixtures still cannot
+  start before the final review.
+- **C — Defer S6P7 to W4's independent sign-off only.** Cheapest, but it collapses the review-before-
+  fixtures gate that STEP7/STEP8 and Q154 depend on, and turns the fixture package un-reviewed.
+
+### Impact and stop line
+
+All options keep two rules: I never record myself as the independent reviewer, and no STEP8 fixture or
+host command exists before the approved review. Under A, STEP9/9A/9B and slice-local DoDs proceed now
+and the W3 “review prerequisite” is satisfied once, at the end, before STEP10 acceptance.
+
+### Update 2026-11-20 — what the “UNKNOWN” values actually are, and the proposed standard
+
+The operator asked why the approved profile values are “illusory” instead of being ordinary defaults
+for this kind of variable. Source answer: `ExecutionProfile` (`src/fa/execution/profiles.py:30`) is the
+immutable cell definition rendered into the Docker create spec, with fields `profile_id, image, uid,
+gid, nano_cpus, memory_bytes, pids_limit, max_command_ms, interactive, cgroup_parent, seccomp_json`.
+They split into two classes that must not be conflated:
+
+- **Host/deployment facts — cannot be repository defaults.** `image` (digest-pinned, a fact of the
+  built image), `uid`/`gid`, `cgroup_parent` (a real host cgroup path), `seccomp_json` (called a
+  host-review input in the code; `unconfined` is refused), plus `ServiceConfig.controller_uids`,
+  `docker_socket`/`docker_daemon_uid`/`docker_api_version`/`docker_timeout_ms` and `approved_cache`.
+  `ServiceConfig` states the design stance explicitly: “Operator-supplied deployment facts; every
+  field is explicit, no defaults” (`src/fa/execution/service.py:125`), which is why nothing is
+  auto-filled and why no approved values exist in a checkout.
+- **Plain engineering numbers — must be our standard, not an operator secret.** `memory_bytes`,
+  `nano_cpus`, `pids_limit`, `max_command_ms`, the profile IDs and the `interactive` polarity. Today
+  the only occurrences of concrete values are in the test substrate
+  (`tests/test_execution_host_preflight.py`: `MIN_APPROVED_PROFILE_MEMORY_BYTES`, 1 CPU, pids 64,
+  30 000 ms), i.e. a de-facto standard that was never declared as one.
+
+**Proposed standard profile set (project-level, versioned with the docs):**
+
+| Field | `fa-write` (interactive) | `fa-read` (non-interactive) | Basis |
+| :--- | :--- | :--- | :--- |
+| `profile_id` | `fa-write` | `fa-read` | matches the existing load-bearing `view_profile_id`/`read_only_profile_id` roles |
+| `memory_bytes` | 1,342,177,280 | 1,342,177,280 | exactly the Q97 floor: 640 MiB call reserve + 640 MiB cell headroom |
+| `nano_cpus` | 1,000,000,000 | 1,000,000,000 | 1 CPU, the value the preflight substrate already assumes |
+| `pids_limit` | 64 | 64 | same substrate; enough for pytest+helpers, no fork-bomb surface |
+| `max_command_ms` | 30,000 | 30,000 | above Q97's 25 s nested deadline, so a managed call can finish inside one command |
+| `interactive` | true | false | required by `_static_host_config` polarity |
+| `image`, `uid`, `gid`, `cgroup_parent`, `seccomp_json` | deployment facts | deployment facts | never defaulted; validated at host preflight |
+
+**Consequence if adopted.** STEP9 item 4 becomes locally verifiable without manufacturing host
+evidence: the standard set meets or exceeds the Q97 floor by construction, the fail-closed validator
+rejects anything below it, and the negative proof pins the exact refusal code. W4 still verifies the
+real host config is not below the floor before the approved `fa update`/suite, and the profile-set
+digest (`profile_set_sha256`) still binds whatever the host actually configures. No code default is
+introduced: the standard is a documented configuration input, preserving `ServiceConfig`'s
+“no defaults” rule.
+
+---
+
+## Q157 — Q-V2-ACC-2: must every hard INV/ready CT have an executable assertion, or is a typed NON_EXECUTABLE disposition allowed?
+
+**Status: RESOLVED = B-narrow (operator selection, 2026-11-20).** Executable evidence is the default for
+every hard `INV`/ready `CT`; a typed `NON_EXECUTABLE` disposition is legal only through the ratified
+shape below, never as free text, silent omission or a new reviewer gate. Ratified shape (implemented
+in `src/fa/inner_loop/plan_v2.py`, E560): the `### INV-<n>` entry keeps `KIND: HARD | SOFT` and
+`EVIDENCE: TEST_REQUIRED | NON_EXECUTABLE`, and `NON_EXECUTABLE` additionally requires exactly one each
+`DISPOSITION-REASON`, `DISPOSITION-EVIDENCE` (≤256 chars, a reference — not the proof itself) and
+`DISPOSITION-OWNER`; the reason vocabulary is closed to `HOST_READINESS`, `DEPLOYMENT_IDENTITY`,
+`OWNER_APPROVAL`, `DURABILITY_POWER_LOSS`; the owner vocabulary is closed to `W4` and `operator`; and
+one plan may carry at most 16 such dispositions. Dispositioned obligations are never counted as proven
+locally and never reach a `PASS`.
+
+**Historical status line (superseded): OPEN — blocks the STEP9A grammar/admission work (SLICE1/SLICE3).**
+Raised from the V2 plan's own gate (`i03-ai-native-workflow-refactor-plan-v2.md:234, 325`): Q-V2-ACC-2
+“must resolve before the affected contract is admitted: either require an executable assertion for
+every hard INV/ready CT, or permit only a typed `NON_EXECUTABLE` disposition with reason and
+authoritative evidence under an already-ratified disposition rule. It cannot become a free-text
+exception or silently introduce a new reviewer gate.”
+
+### Source-grounded context
+
+- The sealed closure's whole value is that a `TEST-ID` resolves to exactly one collected nodeid and an
+  assertion failure is the only proof (STEP9A items 1–4). A contract with no executable assertion can
+  never be proven by this mechanism, so it must be either forbidden or explicitly typed.
+- Some obligations in this repo are genuinely not executable inside the harness: approved-host
+  readiness (`ready_repaired`, hook installation), deployment identity (image digest/config/health),
+  owner/operator approvals, and durable power-loss properties. Forcing fake executable tests for them
+  would manufacture green, which the plan forbids everywhere.
+- A ratified, machine-checked disposition shape already exists: the deferred-obligation mechanism in
+  `scripts/check_execution_e2e_coverage.py` (`_check_i01_deferred`, baseline `deferred_obligations` +
+  `excluded_deferred_obligations`, source-heading staleness checks, and a mapped-count assertion). It is
+  typed, evidenced, bounded and fails the checker when it drifts — i.e. exactly “an already-ratified
+  disposition rule” rather than a new reviewer gate.
+- Q-V2-ACC-1 (audited 2026-11-20, `notes/q-v2-acc1-acceptance-closure-audit-2026-11-20.md`) establishes
+  the closure contents, the sealed `pytest.ini`, the harness-built `-c/--rootdir/no:cacheprovider`
+  argv, and the budgets (512 files, 16 MiB aggregate, 4 MiB per file, 4096-char paths, depth 64). ACC-2
+  only decides which obligations may exist without a nodeid.
+
+### Options
+
+- **A — every hard `INV`/ready `CT` needs an executable assertion (no exceptions).** Strongest oracle
+  and no disposition vocabulary to abuse. Cost: host/owner obligations cannot be admitted at all before
+  W4, so the MVP plan would have to exclude them from the sealed plan and carry them in the deploy docs
+  instead, losing the explicit link between a host obligation and its acceptance.
+- **B-narrow (recommended) — executable by default; typed `NON_EXECUTABLE` only through the existing
+  deferred-obligation shape.** Every hard `INV`/ready `CT` requires a `TEST-ID`→nodeid unless it carries
+  a typed disposition record {reason code, authoritative evidence reference, owning lane (W4/operator),
+  exact obligation text hash}. The set is allowlisted per plan (bounded count, checked by the closure
+  validator and the coverage checker); free text, missing evidence, or an off-allowlist reason fails
+  admission. This keeps custody meaningful, avoids fake green, and reuses a ratified mechanism.
+- **C — B-wide: any `CT` (not only host/owner ones) may be `NON_EXECUTABLE` with a reason.** Simplest
+  to satisfy, weakest custody: it lets a planner avoid writing a hard test, which is precisely the
+  failure mode STEP9A exists to prevent.
+
+### Impact and stop line
+
+Under A, no host/owner obligation can appear in a sealed plan before W4. Under B-narrow, those
+obligations stay in the plan but can never be counted as proven locally, and the count is machine-checked.
+Under C, the “no vacuous acceptance” invariant (INV-10 and STEP9A item 3) is weakened for every contract.
+Whatever is chosen, no free-text exception, no silent omission, no new reviewer gate, and no `PASS` may
+be inferred for a dispositioned obligation.
+
+---
+
+## Q158 — may a plan with zero acceptance selectors exist, and how is it sealed?
+
+**Status: RESOLVED best-effort (coder decision, fail-closed; 2026-11-20).** A seal that selects nothing
+is refused (`no-sealed-selectors` in `mint_seal`, `src/fa/inner_loop/acceptance_bundle.py`): it cannot be
+serialized (the loader refuses an empty selector table), and it proves nothing, so minting one would be a
+vacuous green. Separately, a slice whose contracts are all satisfied without a `TEST-ID` — today that is a
+`SOFT` invariant's contract, or a `HARD` one carrying a Q157 B-narrow disposition — therefore **cannot be
+sealed**, and the STEP9A gate has no "no seal needed" branch. The V2 workflow (STEP9B) must decide how such
+a slice is admitted: either it is refused outright, or it is admitted under a typed, machine-checked
+"no acceptance obligations" record. Until that decision exists, nothing silently skips the seal.
+
+**Why this is a coder decision and not a blocker.** The plan leaves room only in one direction: every
+refusal above is the fail-closed one, and the plan's own rule is "missing/stale seal fails closed". Choosing
+the permissive reading (skip sealing when there are no selectors) would have created exactly the silent
+bypass STEP9A item 1 forbids, so the permissive option needs the planner, not the coder.
+
+### Source-grounded context
+
+- `plan_v2` admission (`_admit_evidence`, `src/fa/inner_loop/plan_v2.py`) refuses a `HARD` invariant's
+  contract without either a `TEST-ID` or a Q157 disposition, so the only admitted zero-acceptance plans are
+  `SOFT`-contract plans and disposition-only plans.
+- `load_seal` refuses an empty selector table (`seal-malformed`), so before E562 a minted empty seal was
+  not loadable — a real inconsistency inside slice 3, found while writing the slice-4 bank.
+- The plan's STEP9A text requires a seal before coder-stage and treats an absent seal as a failure, but does
+  not say whether a plan with no acceptance obligations may be sealed, skipped or refused.
+
+### Options for STEP9B
+
+- **A (current) — refuse to seal; the workflow must refuse or type the slice.** Fail-closed, no bypass,
+  cost: a docs-only slice needs an explicit typed record before it can pass the gate.
+- **B — a typed `NO-ACCEPTANCE` record** {reason, count of contracts, owning lane} admitted by the same
+  closed vocabulary as Q157, so the "nothing was sealed" case is still machine-visible.
+- **C — seal an empty closure anyway** (drop the `no-sealed-selectors` refusal). Rejected as written: it
+  produces a green seal over nothing.
+
+### Impact and stop line
+
+Under A nothing changes for plans that do have acceptance rows, which is every plan this session can mint.
+Under B the V2 workflow gains one more typed obligation; under C the seal stops meaning "these tests prove
+these contracts". STEP9A items 1–4 remain implementable and testable without resolving this, and no `PASS`
+is inferred for an unsealed plan in any option.
+
+---
+
+## Q159 — may the coder edit sealed acceptance tests with an explicit rationale, and what does the harness do about it?
+
+**Status: RESOLVED = C (operator selection, 2026-11-20) — the coder may propose a test change, never apply
+one.** Ratified shape: the coder writes a *proposal* — a bounded patch artifact outside the sealed tree plus
+the existing `DefectReport` (seal, `TEST-ID`, nodeid, assertion) — and the planner applies it through
+`acceptance_defect.correct(...)`, which mints the superseding seal for a new revision and returns the
+affected tests/kill targets to re-prove. The sealed tree gains no new writer, so custody stays "prevented"
+rather than "declared and audited", while the prose round trip shrinks to a diff. Prompts remain the first
+gate: the coder is accountable for quality, works by invariants, and prefers the proposal path over
+weakening an assertion. B (coder writes `acceptance/` directly with a rationale record) was rejected for
+MVP because it hands the implementer write access to the oracle with detection only — exactly the hole
+mode A exists to close.
+
+**Historical status line (superseded): OPEN — needs the operator's choice.** Operator
+recollection (2026-11-20) was that a variant was discussed in which the coder *may* correct tests while
+stating the reason, with the harness monitoring that behaviour fail-closed. The source audit below says
+that variant is **not** in any ratified document and not in the code; the only sanctioned path today is
+coder → `TEST-DEFECT` → planner correction (STEP9A item 2, implemented in `acceptance_defect.py`).
+
+### Source audit (2026-11-20)
+
+- Ratified text: STEP9A item 1 requires the authority to "reject added/changed/deleted accepted bytes at
+  seal/publication" and gives the coder only a read-only view (mode A). Item 2 gives the planner the two
+  branches (uphold / correct with a new sealed revision). I03 increment, STEP9A, verbatim.
+- Ratified policy: runtime `IntentGuard` test-edit protection was **deliberately retired** (Q130,
+  `notes/intent-guard-runtime-retirement-2026-11-06.md`): "Runtime test-edit protection is intentionally
+  removed… Any new plan-bound test-edit policy is deferred until after I03 and is not authorized here."
+  So a coder-edit-with-rationale mechanism would be the *post-I03 policy* that decision anticipated, not
+  an existing behaviour.
+- Code: no such mechanism exists. `src/fa/hygiene/pr_intent.py` validates declared `TEST-EDITS` only in
+  the **commit-msg hook** (human/commit time, `tests/test_test_edit_protection.py`); nothing binds a
+  coder's edit to a rationale at workflow time, and nothing re-seals after one.
+- What does exist and would carry the mechanism: `verify_sealed_root` detects any added/changed/deleted
+  sealed byte and fails closed before verification or a kill oracle runs; `acceptance_defect` already
+  models a report bound to a seal and a revision, the uphold/correct decision, the supersedes chain and
+  the affected-test/kill re-run set. "Declared edit" is therefore mostly a *record shape plus one
+  authority transition*, not a new subsystem.
+
+### The actual fork
+
+Blocking writes (current) versus allowing declared edits are not the only options: the middle path keeps
+the coder able to write but makes every write a **declared revision event** instead of a silent one.
+
+### Options
+
+- **A — planner-only (ratified today).** The coder never writes acceptance bytes; corrections go through
+  `TEST-DEFECT` and the planner re-seals. Strongest custody: weakening a test requires the planner's
+  signature. Cost: a round trip per genuinely wrong test, and the failure mode where a coder that cannot
+  express the problem stalls.
+- **B — declared self-service edit + automatic re-seal.** The coder may edit a sealed test only through a
+  tool action that names {seal, `TEST-ID`, nodeid, bounded rationale, diff digest}; the harness refuses
+  any closure change without a matching declaration (fail closed), mints a superseding seal for the new
+  revision and re-runs the affected gates. Custody becomes *declared and audited* rather than
+  *prevented*: a coder can still weaken a test with a plausible rationale, but it is visible, versioned
+  and re-proven.
+- **C — declared edit as a proposal.** The coder may write a proposed patch (a proposal artifact, not the
+  sealed tree); the planner applies it and mints the new seal, so nothing runs against unconfirmed bytes.
+  Keeps the planner's signature while removing the prose round trip.
+
+### Impact and stop line
+
+Under A nothing changes and Q159 closes as "already ratified". Under B or C the STEP9A invariant
+"the coder cannot change accepted bytes" is **amended**, so it is a replan of that clause, not a
+coder-side implementation choice; B additionally grants the coder write access to the oracle tree (with
+detection), which is the exact hole mode A exists to close. Under C the write stays outside the sealed
+tree and only the planner's seal can make a change real. In all three, prompts remain the first gate
+(the coder is accountable for quality and works by invariants) and mechanical controls are the backstop,
+not the primary mechanism.
+
+---
+
+## Q-V2-MODEA-1 — mode A has two interfaces; only one of them is protected today
+
+**Status: RESOLVED = B (operator selection, 2026-11-20) — prevention for file tools, detection for shell.**
+Ratified as D-V2-6. `RootedViewIO.protected_paths` carries every sealed semantic path (roadmap, ledger,
+`open-questions.md`, increment, `worklogs/<slug>/acceptance/`) so file tools refuse those writes and their
+ancestors; the shell interface is deliberately not blocked, because blocking it would change an approved
+security profile and every W4 digest that pins it. The property that is actually defended is that no
+verification result can come from bytes that differ from the seal: every verification entry point — including
+incremental and repair-time checks — proves the closure digest first, so a shell write surfaces as
+`seal-byte-drift` and the run fails closed with no verdict.
+
+Honest consequence, to be kept in the plan and in the review record: a coder can corrupt its own oracle
+mid-run and waste the run; it can never obtain a passing verdict from the corrupted bytes. Options A
+(read-only submount) and C (both) were rejected only on the profile-change cost, not on strength.
+
+**Historical status line (superseded): OPEN — decides the wording of SLICE3 CT-3.3.**
+
+### Source facts (2026-11-20)
+
+- The **file-tool interface is protected**: `RootedViewIO` takes `protected_paths` and refuses writes to those
+  paths *and their ancestors* (`src/fa/execution/view_io.py:119–158`). Both production constructors already
+  pass a non-empty tuple — but only `plan_ref.workspace_relative_path`, i.e. the plan file
+  (`workspace.py:2194`, `2814`). Nothing protects `worklogs/<slug>/acceptance/`.
+- The **shell interface is not protected**: for a writable view the container mounts the whole source at
+  `/workspace` read-write (`profiles.py:108–113`), so `run_bash` can write the acceptance closure. Mounts are
+  per-root, not per-subdirectory, and the mount set is part of the approved profile that W4 host evidence
+  pins by image/config digest.
+- The **detection interface is complete**: `verify_sealed_root` covers added, changed and deleted bytes
+  (`acceptance_bundle.py:456–471`) and is already wired to fail before verification runs.
+
+### Options
+
+- **A — prevention via a read-only submount** of `worklogs/<slug>/acceptance/` layered over `/workspace` in the
+  managed coder profile. Shell writes to the closure fail with `EROFS`/`EACCES`. Cost: the approved profile
+  changes, so its identity (and every host-evidence digest that pins it) changes with it; nested mount
+  semantics and the rename-of-mountpoint edge need an explicit test.
+- **B — detection only**: keep the profile, extend `protected_paths` to every sealed semantic path, and treat
+  any shell write as digest drift that fails closed before verification. Cost: a coder can corrupt its own
+  oracle mid-run and waste the run; it can never obtain a passing result from corrupted bytes.
+- **C — both.** Prevention where the interface allows it, detection as the invariant that does not depend on
+  the profile at all.
+
+The honest statement either way: file tools are *prevented*, shell is *prevented or detected*, and no
+verification result can be produced from a closure that does not match the seal.
+
+**Impact:** CT-3.3 currently promises "read-only through shell and file tools". Under B that sentence must
+become "read-only through file tools; shell writes fail closed at verification". Under A/C it stays, but the
+profile change must be recorded as a security-boundary revision with its own host-evidence consequence.

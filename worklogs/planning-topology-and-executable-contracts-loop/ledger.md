@@ -10606,3 +10606,558 @@ The operator selected that the **chat role supplies the project slug as a field 
 **Disposition.** The implementation plan must preserve the selected boundary: chat provides the slug, trusted harness creates/materializes structure, planner supplies semantic content, controller validates/seals, and coder sees only admitted sealed state. The remaining open details are (a) how the API distinguishes create-new from existing selection (recommend `project_slug` as explicit create-new request, collision refused, existing acquisition stays separate); (b) the initial increment filename; (c) private versus canonical provisional staging and post-install seal recovery; (d) exact V2 test directory/support closure and validator errors; and (e) host tick witness. The existing test files `test_invoke_workflow_tool.py`, `test_managed_workflow_e2e.py`, `test_s5p1_bootstrap.py`, `test_workspace_publication.py`, and `test_admission_v2_provenance.py` are component/current-flow sources to extend; the latter's “v2” is internal admission-record version, not the new plan grammar.
 
 **Applied (documents only).** Updated the 2026-11-15 research, roadmap, increment and ledger with the chat-supplied slug decision and full source audit. No implementation, schema/parser, test, fixture, coverage mapping, deployment or host acceptance changed.
+
+### E556 — STEP9 Arena-local bank reproduced on a fresh env; full-suite red is one sandbox-only guard; Q155/Q156 opened (2026-11-20; local evidence only)
+
+**Environment.** After the Arena sandbox reset (no `.venv`, system `python3` 3.11.2, no `uv`), `bash scripts/arena-env-build.sh` rebuilt the recipe: CPython 3.13.16, pinned uv 0.13.7 / just 1.57.0, frozen dev extra. Final line: `ENVIRONMENT_READY: CPython 3.13.16; frozen dev extra and pinned uv/just gate launchers installed`; gate tools present `pytest ruff deptry pylint mypy pyrefly mutmut vulture pip-audit fa`. Branch `arena/51e929de-first-agent-dev` at `b0358ea`, tree clean at start; no commit or push.
+
+**STEP9 exit-item reproduction (all commands via the rebuilt `.venv`):**
+- Item 1 — `uv run fa authoring-check`: exit 0, `diagnostics: 0 exit_code: 0` (kernel/rule-pack/allowlist hashes printed, `dispatched_count 3`). Reproduces E528/E545.
+- Item 2 — `uv run pyrefly check`: exit 0, `0 errors (195 suppressed, 81 warnings not shown)`. Legacy triage banks: ten former class-A files as full files **179 passed in 24.34s**; `tests/test_verify_gate_live.py tests/test_s10a_cli_coverage.py` **634 passed in 217.78s**; `tests/test_s12_capabilities.py tests/test_safe_walk.py tests/test_managed_discovery_budget.py` **49 passed in 0.44s**; `tests/test_cli.py tests/test_invoke_workflow_tool.py` **179 passed in 8.60s**; `tests/test_controller_entry.py tests/test_fa_entrypoint.py` **52 passed in 11.10s**. Counts are per selection and not additive; the last selection is a superset of E528's "two managed-entrypoint/PYTHONPATH tests".
+- Item 3 — `tests/integration/` present. Strict-marker `--collect-only -q --strict-markers tests/integration/ tests/test_workspace_readiness_integration.py -m execution_host` collects **8** nodeids across the five integration files plus the readiness case. `tests/test_execution_composition.py` **71 passed in 25.10s**; `tests/test_controller_installed.py` **21 passed in 18.88s** (71 + 21 = E528's 92-test managed multi-publication bank). No host case was executed; `FA_REQUIRE_EXECUTION_HOST` opt-in/preflight fail-closed behavior is covered locally only.
+- Item 4 — producer mapping: `producer-baseline.json` still freezes **125** unique producers from 127 source rows (89 legacy + 35 native I03, 1 shared S06 extension row); `producer-coverage.json` carries **127** records (125 + `NEW:Q108-B-managed-inventory` + the E547 `LIST_PROJECTS` mapping) with `shared_case_ids = [I03-LIVE-S06, I03-LIVE-S08]`. `uv run python scripts/check_execution_e2e_coverage.py`: exit 0, `E2E artifact coverage OK (planned mappings only; no live PASS inferred): I01 42 CTs/7 deferred obligations across 3 cases; 127 I02-origin/I03 producers across 89 I02-origin and 35 I03 cases; 2 exact duplicate keys collapsed.` **Q97 profile floor:** the only local mechanism is `tests/integration/_host.py::_static_host_config`, which requires both selected profiles, the correct interactive/non-interactive polarity, and raises `approved_profile_memory_below_q97_floor` below the floor; `tests/test_execution_host_preflight.py:190` asserts that exact refusal code. No approved profile/config identity exists in this checkout (S6P5 sheet §1 records it `UNKNOWN`), so no *approval* is evidenced — see Q155.
+- Item 5 — `tests/test_e2e_artifact_contract.py tests/test_execution_host_markers.py`: **39 passed in 12.81s**, covering the artifact schema/index plus the clean-readiness default-deselection, explicit-selection, fail-closed and pre-approval-sheet shape contracts.
+- Q139 remains `DEFERRED`/unmeasured: `run_slice_mutmut.py --configured-scope` was not run; no full-scope mutation-coverage claim is made (Q152/E531/E544).
+
+**Full `just check` (best-effort under E544), 18:54 wall:** lock-check, lint (ruff+format+deptry+pylint-gap), mypy strict, pyrefly, authoring-check, contracts and shell-syntax all pass; vulture advisory. Test gate: **1 failed, 7811 passed, 18 skipped, 8 deselected, 3 xfailed, 2 warnings, coverage 86.77%** (floor 80%). The sole failure is `tests/test_c901_diff_guard.py::test_no_new_c901_noqa_in_python_diff` with `AssertionError: could not resolve a merge base for the C901 diff scan (tried 'origin/main', 'main', 'HEAD^')`; the other 11 tests in that file pass. Cause is the Arena clone shape, not the change set: `git rev-list --count HEAD` is **1**, `origin/main`/`main` share no ancestor with it, and `HEAD^` does not resolve, so `_resolve_diff_base` fails closed by design. The working tree contains only two Markdown files (`notes/open-questions-2026-10-07.md` modified, the new Q-V2 audit note), so the guard's subject — new `# noqa: C901` lines in a Python diff — is empty; every existing C901 waiver is pre-existing in `HEAD`. No guard was weakened and no workaround was added (E535 policy). 12 ShellCheck skips (`shellcheck not installed`) and 6 deferred runtime-server-extra skips remain; the historical clean-readiness `sync_failed` and Pylint R0801/R0401 reds from E532 are not present in this run.
+
+**Documentation.** Added the source audit `notes/q-v2-status-and-boot-source-audit-2026-11-20.md` (Q-V2-BOOT-1: the authority already stages N files and installs/recoveries forward; the gaps are a V2 renderer plus recording `validated_bundle_id`/`bundle_sha256` in the durable BOOTSTRAP intent and receipt; Q-V2-STATUS-1: no sealed-byte mutation is possible, the append/CAS/lock mechanics already exist, and the only real choice is custody placement). Added Q155 (what counts as local clearance of STEP9's "approved Q97 profile") and Q156 (who performs S6P7 and where it sits in the confirmed order) to `notes/open-questions-2026-10-07.md`.
+
+**Boundary.** STEP9 is **not ticked**. No status changed in the closure table, no fixture, no host command, no `fa update`, no Docker/cgroup run, no clean-readiness host execution, no W4 evidence, no slice authorized. STEP9A remains blocked until STEP9 closes, which depends on Q155 (STEP9 exit boundary) and, for W3 closure, Q156 (independent review placement).
+
+### E557 — Operator decisions on the review lane and the profile-standard direction (2026-11-20; documents only)
+
+**Q156 = C (operator).** The S6P7 independent review is performed only as the W4 independent sign-off,
+after the reviewed suite runs and live evidence is captured. Recorded consequences, not re-litigated:
+no pre-fixture review; `e2e/I03/fixtures/` is not authored (S6P8 exit is not ticked and I03 closure
+must state that no reviewed fixture package exists); the W4 suite is the existing host-marked set
+(5 files / 8 nodeids), the relocated clean-readiness node and the V2 host witness; the implementer
+never signs as reviewer. Q154's “S6P7 precedes S6P8” ordering is superseded for this engagement by the
+operator selection, and Q154's substance (progress record target = controller-owned record + read-only
+projection, not project `ledger.md`) is unchanged.
+
+**Q155 direction (operator challenge, not yet closed).** The operator rejected the “UNKNOWN approved
+profile values” framing and directed that the numeric profile values be treated as a project standard.
+Source split recorded in Q155: host/deployment facts (`image` digest, `uid`/`gid`, `cgroup_parent`,
+`seccomp_json`, controller UIDs, Docker socket/daemon/API, approved cache) can never be repository
+defaults — `ServiceConfig` is explicitly “every field is explicit, no defaults”
+(`src/fa/execution/service.py:125`); the numeric limits (`memory_bytes`, `nano_cpus`, `pids_limit`,
+`max_command_ms`) and the profile IDs/polarity are engineering values that were only ever expressed in
+the test substrate. Proposed standard: `fa-write`/`fa-read`, `memory_bytes = 1,342,177,280` (the Q97
+floor), `nano_cpus = 1_000_000_000`, `pids_limit = 64`, `max_command_ms = 30_000` (above Q97's 25 s
+nested deadline), `interactive` true/false respectively. Adopting it makes STEP9 item 4 locally
+verifiable without manufacturing host evidence, keeps `profile_set_sha256` binding the host's real
+config, and introduces no code default.
+
+**Boundary.** Documents only. STEP9 is still not ticked; STEP9A is still blocked; no fixture, host
+command, `fa update`, Docker/cgroup run, readiness host execution, slice authorization or status-table
+change occurred. No code, test or script was modified; the working tree contains only Markdown.
+
+### E558 — Q155/Q156 resolved; STEP9 ticked on reproduced local evidence (2026-11-20; documents only)
+
+**Q155 = RESOLVED (operator).** The operator rejected the “UNKNOWN approved profile values” framing; the
+standard profile set is adopted as the project's pre-deploy configuration standard: `fa-write`
+(interactive) and `fa-read` (non-interactive), `memory_bytes = 1,342,177,280` (= the Q97 floor),
+`nano_cpus = 1_000_000_000` (1 CPU), `pids_limit = 64`, `max_command_ms = 30,000` (above Q97's 25 s
+nested deadline). Deployment-script scan requested by the operator and performed: no execution-profile
+or cell-resource variables exist in `scripts/setup-fa-desktop.sh`, `fa-post-setup.sh`, `fa-update.sh`,
+`fa-clean-rebuild.sh` or `fa-entrypoint.sh` (only power-profile handling and a cache probe); the service
+config is an operator-supplied JSON read by `service.read_config_file` (`supervisor.py:605`), so no
+approved value could exist in the checkout. Host/deployment facts (image digest, uid/gid, cgroup parent,
+seccomp, controller UIDs, Docker socket/daemon/API, approved cache) remain operator inputs and are
+verified fail-closed at W4 preflight; the operator host (i5-1235u, 2P+8E) does not constrain a 1-CPU /
+64-pid cell. No code default is introduced — `ServiceConfig` keeps “every field is explicit, no
+defaults”.
+
+**Q156 = RESOLVED = A-variant (operator clarification).** The S6P7 review is delegated to a **different
+agent** than the implementer, and STEP8 fixtures are required for meaningful W4 E2E and will be written.
+Order preserved: the implementer prepares a self-contained review packet (scope, sources and nodeids,
+checklist, refusal/cleanup questions, verdict template); a different agent executes it; only after the
+verdict is recorded may the fixture package be authored. Verification is best-effort with available
+means (E544); no host/Docker/cgroup claim follows from any local or external-agent review, and the
+implementer never signs as reviewer. The operator's earlier “W4-only” selection is superseded.
+
+**STEP9 = LOCAL-CLOSED, box ticked.** `increment-03…md` SLICE6 STEP9 is now `[x]` with an E556/E558
+progress note, and the closure-table row **S6P9** moved `PARTIAL → LOCAL-CLOSED (E556)`; row **S6P5**
+now records that only the pre-approval draft exists plus the adopted standard profile, with the final
+host sheet still blocked on real deployment facts. The tick rests on reproduced evidence, not inference:
+all four exit families pass on the rebuilt recipe env, coverage checker green with the frozen baseline
+untouched (125 unique producers; 127 coverage records including Q108-B and E547 `LIST_PROJECTS`), 8
+strict-marker host nodes collect, and Q139 is recorded `DEFERRED`. Skips in the full run are the known
+12 ShellCheck/6 runtime-server-extra entries; no frozen key was rewritten; no skip was added.
+
+**Boundary.** W3 remains OPEN (S6P5 final sheet, S6P7 external review, S6P8 fixtures, S6P10 local
+package). No host command, `fa update`, Docker/cgroup run, clean-readiness host execution, live row,
+fixture, or slice authorization occurred; no product code, test or script changed; the working tree
+contains only Markdown. Next ordered step: prepare the S6P7 review packet, then STEP9A's
+new-plan-only custody/attribution gate.
+
+### E559 — Q-V2-ACC-1 audited; sealed acceptance-closure inventory implemented with 6 killed mutants; Q-V2-ACC-2 escalated as Q157 (2026-11-20)
+
+**Q-V2-ACC-1 answer (`notes/q-v2-acc1-acceptance-closure-audit-2026-11-20.md`).** Source proof of the
+current oracle path: the kill/nodeid command is `python -m pytest {paths} -p
+fa.inner_loop.junit_nodeid_plugin --junitxml={report} -q` (`slice_verification.py:162`) with no `-c`,
+`--rootdir` or `no:cacheprovider`, and it runs with `cwd = _workspace_cwd(workspace)`
+(`slice_verification.py:317, 612, 622`). Repository pytest config lives in the coder-editable
+`pyproject.toml` (`addopts` with `--strict-config`/`--strict-markers`/`-m` deselection, `testpaths`,
+`markers`, `filterwarnings`); there is no root `conftest.py`, and `tests/conftest.py` is not an ancestor
+of `worklogs/<slug>/acceptance/`. So sealing test bytes alone was not custody. Selected closure: the
+acceptance tree (`tests/**`, `support/**`, root `conftest.py`, a sealed `pytest.ini`, `manifest.json`)
+plus identity-pinned external inputs (harness-built argv, the in-image `junit_nodeid_plugin`,
+interpreter/`uv.lock` identity, the existing provenance probe) — no new runner, no new authority
+operation.
+
+**Implemented (first STEP9A slice, `Q-V2-ACC-1` only):** new
+`src/fa/inner_loop/acceptance_closure.py` — a read-only inventory/policy module: `collect_acceptance_closure`
+walks the acceptance root with `O_NOFOLLOW`, refuses symlinks, special files, hidden components, nested
+`conftest.py` and unreadable bytes, enforces the Q97-adjacent budgets (512 files, 4 MiB per file, 16 MiB
+aggregate, 4096-char paths, depth 64) and the authority's fixed `0o644` mode, and returns per-file
+digests plus a canonical closure digest; `parse_pytest_ini`/`validate_pytest_ini` allowlist the sealed
+ini keys and refuse any `addopts` token that could redirect discovery (`-p`, `-c`, `-o`, `--rootdir`,
+`--basetemp`) or inject paths; `pytest_argv` emits the harness-owned invocation with `-c <sealed>/
+pytest.ini --rootdir <sealed> -p fa.inner_loop.junit_nodeid_plugin -p no:cacheprovider
+--junitxml=<run-scoped report> -q`; `shell_command` is the only shell-quoting boundary. Closed error
+codes; every violation is `AcceptanceClosureError(code)` with no path or exception body exposed.
+
+**Verification.** New `tests/test_ai_native_acceptance_closure.py`: **28 passed** (positive inventory and
+digest stability, digest sensitivity, missing/empty closure, nested conftest, symlink, hidden component,
+per-file budget, file-count budget, aggregate budget, depth budget, ini parser and allowlist positives,
+8 refusal cases, ini-in-collect refusals, exact argv contract including `-c` before `--rootdir` and no
+`pyproject.toml`, empty-target/path/`.hidden`/report refusals, shell round-trip, digest order
+independence). `ruff check`/`ruff format --check`, `mypy` (strict, 1 file), `pyrefly` (0 errors) and
+`fa authoring-check` (0 diagnostics) pass. Targeted mutation, each restored to sha256
+`1bf731bbc218aa48f1332c587c8612772e9e579bea64209e1cfaf3251b7b5065` and re-verified: drop file-count cap
+→ killed; drop `no:cacheprovider` → killed; drop `--rootdir` pin → killed; drop the unknown-ini-key check
+→ killed; add `--basetemp=` to the allowed prefixes → killed; skip ini validation inside
+`collect_acceptance_closure` → killed **after** adding the missing ini-in-collect refusal test (first
+run survived, which proved the oracle gap rather than a passing suite). One redundant guard
+(`not token.startswith("-p")`) was found dead by the surviving mutant and removed instead of being kept
+as decoration.
+
+**Q-V2-ACC-2 escalated as Q157** in `notes/open-questions-2026-10-07.md`: option A (executable
+assertion for every hard INV/ready CT), B-narrow (recommended: executable by default, typed
+`NON_EXECUTABLE` only through the existing machine-checked deferred-obligation shape with reason,
+authoritative evidence, owning lane and a bounded allowlist) or C (any CT may be dispositioned). It
+blocks the next STEP9A slice (new-schema grammar/admission), because the grammar must know whether
+`NON_EXECUTABLE` is a legal typed obligation. No grammar, seal, bundle, host or fixture work was done.
+
+**Boundary.** STEP9A remains OPEN and unticked. No seal, no AcceptanceBundle, no mode-A projection, no
+selector→nodeid capture, no TEST-DEFECT flow, no exact-attribution runner change and no host claim. The
+new module is not yet wired into any production path, so no behavior changed for existing plans; the
+existing V1 verification command is untouched.
+
+### E560 — Q-V2-ACC-2 resolved (B-narrow); V2 plan grammar and admission rules implemented with 8 killed mutants (2026-11-20)
+
+**Q157 = Q-V2-ACC-2 = RESOLVED = B-narrow (operator).** Executable evidence is the default for every
+hard `INV`/ready `CT`. A typed `NON_EXECUTABLE` disposition is legal only with one each
+`DISPOSITION-REASON` (closed vocabulary: `HOST_READINESS`, `DEPLOYMENT_IDENTITY`, `OWNER_APPROVAL`,
+`DURABILITY_POWER_LOSS`), `DISPOSITION-EVIDENCE` (≤256 chars) and `DISPOSITION-OWNER` (`W4` or
+`operator`), capped at 16 per plan; free text, silent omission and new reviewer gates remain refused,
+and a dispositioned obligation is never counted as proven.
+
+**Implemented (second STEP9A slice, grammar/admission only):** new `src/fa/inner_loop/plan_v2.py` —
+`parse_plan(roadmap=…, increment=…)` parses the V2 grammar from the linked plan (`Plan-Format:
+AI-NATIVE-PLAN-V2` exactly once per document; `## INVARIANTS` with `KIND`/`TEXT`/`EVIDENCE`;
+optional `## SCENARIOS` with `PATH`/`TRIGGER`/`OUTCOME`/`CT-ID[]`; per-slice `STEPS: prescriptive |
+outcome`, `CONTRACTS:` `CT-<s>.<n> [CLASS] INV: INV-<n>: …`, `ACCEPTANCE:` `TEST-ID | CT |
+SELECTOR`, `KILL-TARGETS:` `TARGET-ID | CT | TEST-ID`, `STEP-EXIT-CHECKS:` `CHECK-ID | STEP |
+TEST-ID[]`, and `- [ ] STEP<n>: … EXIT-CHECK: CHECK-<n>`). Fenced examples are masked, front matter is
+skipped, only a title and the marker may sit outside typed sections, and every refusal is a closed
+rule. Admission proves: unique contract/test/scenario/check/step ids, one primary `INV` per `CT`
+(grammar-enforced), no dangling `INV`/`CT`/`SCN`/kill-target/exit-check edges, unique selector
+ownership, kill-target attribution to exactly the owning `CT`, one `CHECK` per `STEP` (no reuse, no
+unmapped), exit-check tests inside the same slice, and the hard-contract evidence rule.
+`resolve_selectors(graph, collected)` binds each selector to exactly one collected nodeid and fails
+closed on uncollected/ambiguous/foreign matches, including parametrized ids.
+
+**Verification.** New `tests/test_ai_native_plan_v2.py`: **45 passed** alongside the closure bank
+(**73 passed** combined). `ruff check` and `ruff format --check` pass for both files after replacing
+long literals with named constants; `mypy` strict clean (the earlier `assert` shortcuts were replaced
+by real closed refusals after Ruff flagged S101, and `# type: ignore` was removed by introducing a
+typed `_Section` record); `pyrefly` 0 errors; `fa authoring-check` 0 diagnostics (all public symbols
+exported). Targeted mutation, each restored to sha256
+`082f1fa25b7fe20458eec206ec5a603e0ef51afa39a7df28f7d5df087913ac8c` and re-verified: allow an
+unratified disposition reason → killed; drop selector-ownership uniqueness → killed; drop the
+hard-contract evidence rule → killed; drop duplicate-section refusal → killed; drop the exit-check
+mapping proof → killed; allow an ambiguous selector resolution → killed; accept a duplicated format
+marker → killed (2 tests); drop the disposition cap → killed. Two test-side defects found while
+building the bank were fixed rather than papered over: an expectation that treated a section-level
+stray line as an unknown field (the precise rule is the section entry error) and a mutation target
+that no longer matched the fixture after the labelled `CHECK-ID:` row shape.
+
+**Boundary.** STEP9A remains OPEN and unticked. Nothing is wired into production: no seal, no
+`AcceptanceBundle`, no mode-A projection, no collection run, no `TEST-DEFECT` flow, no
+exact-attribution runner change, no host or fixture work. The existing V1 grammar, admission and
+verification paths are untouched, so no current plan's behavior changed.
+
+### E561 — STEP9A slice 3: the controller-minted acceptance seal, with 22 killed mutants (2026-11-20)
+
+**Seam reused, not invented.** The Q-V2-ACC-1 audit already fixed the shape: the closure inventory
+(`acceptance_closure.collect_acceptance_closure`) plus the authority's existing prepared-bundle path
+(`store_bundle(files=..., base_revision=...)`, which takes a `Mapping[str, bytes]` and refuses a bundle
+prepared against another revision). Slice 3 adds only what was missing between them: a record that
+binds the closure to a plan and a revision and to resolved nodeids, and that can be verified after the
+fact.
+
+**New `src/fa/inner_loop/acceptance_bundle.py`** — `AcceptanceBundle` (plan digest, `revision_id`,
+`sealed_root`, closure, selector table, visibility mode, identity pins, `supersedes_sha256`,
+`seal_sha256`), `mint_seal(...)`, `seal_bytes`, `load_seal`, `write_seal`, `verify_sealed_root`,
+`seal_payload`, `verify_plan`, `verify_revision`. Decisions that matter:
+
+- The record is canonical JSON (`sort_keys`, no whitespace, ASCII) and `seal_sha256` is the digest of
+  the record **without itself** — no self-reference, and any edited field is detectable without
+  re-reading the tree. A well-formed-but-hostile record is still type-checked after the digest passes.
+- The seal file (`acceptance.seal.json`) lives **beside** `worklogs/<slug>/acceptance/`, not inside it,
+  so the sealed tree stays exactly the closure inventory and `collect_acceptance_closure` remains the
+  single oracle for "what bytes". The acceptance-tree name and the `worklogs/<slug>/acceptance` prefix
+  are both enforced, so a selector or nodeid from another worklog cannot be bound.
+- Only visibility mode A exists; asking for `B` returns `visibility-mode-unsupported` instead of
+  silently behaving like A, and the payload the coder may read is the same payload the verifier runs.
+- `selector→nodeid` resolution is delegated to `plan_v2.resolve_selectors` (already proven at 45 tests);
+  the seal adds only the check that the resolved selector names a file *inside* this closure. Checks
+  that `resolve_selectors` already guarantees were deliberately **not** re-implemented — a second copy
+  would be dead code, not defence, and dead branches cannot be mutation-killed.
+
+**`acceptance_closure.py` gained one public reader** (`read_closure_payload`): re-reads the tree and
+refuses missing/extra/changed bytes against a recorded inventory, so the bytes handed to the authority
+are the bytes the record describes. New file sha256
+`856ba78630eb342fb85f4a254edec6a026faab20b94725b7db0608841c43b111`; the seal module is
+`ea40e5d571f5fbe4cfff15a8d86752fc1254d609eaa5bd09578ecd91b0e4256a`.
+
+**Verification.** New `tests/test_ai_native_acceptance_bundle.py` (80 tests) + 5 new closure-reader
+tests (33 in that bank); 266 passed together with the plan-grammar, artifact and host-marker banks;
+`ruff check`/`format`, `mypy` (606 files), `pyrefly` (0 errors), `fa authoring-check` (0 diagnostics),
+doc links (367 files) and the E2E coverage checker all clean. Targeted mutation: **22 mutants, 22
+killed, 0 survived** — seal-digest verification, mode-B acceptance, revision staleness, plan binding,
+missing/extra/drifted bytes, closure-digest contradiction, seal overwrite, selector-outside-closure,
+supersedes shape, identity label/digest/duplicate, unknown schema, duplicate file and duplicate
+`TEST-ID` rows, and the three payload-reader refusals. Three mutants survived the first round
+(supersedes shape, identity duplicate, duplicate file path) and each was killed by a new test rather
+than by deleting the check; the module was restored byte-identically afterwards.
+
+**Boundary.** STEP9A is still OPEN and unticked. Nothing calls these two modules yet: no controller
+mints a seal, no coder sees a read-only projection, no verifier executes the pinned digest, no
+TEST-DEFECT revision flow, no exact-attribution runner change. "The nodeid report came from a
+collection run against the sealed bytes" is currently a caller obligation stated in the docstring, not
+an enforced property — slice 4 must enforce it by running collection with the sealed root and the
+harness argv.
+
+### E562 — STEP9A slice 4: the sealed collection and the pinned verifier run, with 16 killed mutants (2026-11-20)
+
+**The gap this closes.** After E561 the seal could describe the oracle, but nothing forced the nodeid
+report to come from the sealed bytes: `capture_test_nodeids` runs an argv built from the caller's paths
+and the *workspace* configuration, so a collection against the coder's mutable copy was indistinguishable
+from one against the seal. Step 4 makes that impossible from inside the module surface.
+
+**New `src/fa/inner_loop/acceptance_collection.py`** — `sealed_test_paths`, `sealed_collection_argv`,
+`collect_sealed_nodeids`, `run_sealed_acceptance`, `SealedCollection`, `SealedRun`:
+
+- Targets come from the **closure record**, not from plan text: sealed modules under `tests/` whose name is
+  `test_*.py`. A sealed helper in `support/` or a non-test module in `tests/` is never a pytest target.
+- The argv is the harness-built one from slice 1 (`python -m pytest <targets> -c <sealed>/pytest.ini
+  --rootdir <sealed> -p fa.inner_loop.junit_nodeid_plugin -p no:cacheprovider --junitxml=<report> -q`), so
+  the workspace `pyproject.toml` cannot influence it. Asserted token by token in the bank.
+- `collect_sealed_nodeids` re-verifies the tree against the record **before** any command runs, then runs
+  one command through the existing `run_commands` seam and parses the report with the existing JUnit
+  parser — exposed as public `parse_nodeid_report` in `slice_verification.py` so both callers hand bytes to
+  the same parser instead of growing a weaker one (Q142's own rule).
+- pytest reports nodeids relative to `--rootdir` (the sealed root) while the plan's selectors are
+  workspace-relative, so the reader re-prefixes them and **refuses** any nodeid whose file the closure does
+  not hold. That single check is what makes "collected from the sealed bytes" a property of the module
+  rather than a promise in a docstring.
+- `run_sealed_acceptance` refuses before running when the plan bytes or the revision moved, and after the
+  run when any sealed selector's nodeid did not execute (`sealed-test-missing`): an oracle that never ran
+  cannot have proven the contract it is mapped to.
+- A substrate whose writes are not visible afterwards (the managed cell) is refused as
+  `substrate-unsupported` instead of silently running the unpinned command; in-band collection is not
+  implemented in this slice and is recorded as such.
+
+**One inconsistency in slice 3 found and fixed.** `mint_seal` could produce an empty selector table while
+`load_seal` refused one, i.e. an unloadable seal. Minting now refuses `no-sealed-selectors`; the resulting
+policy question (may a plan with zero acceptance obligations exist at all, and if so how is it admitted)
+is recorded as **Q158** with the fail-closed default, the alternatives and the STEP9B decision point.
+
+**Verification.** New `tests/test_ai_native_acceptance_collection.py` (26 tests) over a fake substrate that
+writes the JUnit report itself; 224 passed together with the plan/bundle/closure/artifact/host-marker
+banks; `tests/test_verify_gate_live.py` + `tests/test_s10a_cli_coverage.py` +
+`tests/test_slice_verification_runner.py` = **702 passed** after the `slice_verification.py` change;
+`ruff`, `mypy` (608 files), `pyrefly` (0), `fa authoring-check` (0), doc links (367), E2E coverage checker
+all clean. Targeted mutation: **16 mutants, 16 killed** — managed-substrate bypass, dropped seal
+re-verification, error-outcome and bad-exit acceptance, missing/invalid/empty report acceptance, dropped
+closure-membership check, raw (un-prefixed) nodeids, dropped `sealed-test-missing`, dropped plan/revision
+pins, dropped `tests/` and `test_*` target filters, and the nodeid→passed projection in the shared parser.
+
+**Harness incident, recorded because it changed no product code.** The first mutation sweep reused one
+backup path for two modules and a mutant that targeted `slice_verification.py` overwrote it with the
+`acceptance_collection.py` backup. The file was restored from git (`git checkout --`, verified at 2409
+lines) and the single 14-line public-parser addition re-applied; the two remaining mutants were then run
+with per-iteration restoration and a `sha256sum -c` check before and after. No product behaviour changed,
+and the final diff on that file is +14 lines.
+
+**Boundary.** STEP9A is still OPEN and unticked. The pinned run is callable and tested but has **no
+caller**: the controller does not mint seals, the coder is not yet given a read-only mode-A projection, and
+`verify_slice` still runs the planner's `verify` fences. Wiring is deliberately deferred because the
+consumer is the V2 workflow, which STEP9B has not yet specified or had reviewed. Slice 5 (TEST-DEFECT
+revisions) and slice 6 (exact attribution over sealed nodeids) remain.
+
+**E562 addendum — exact source identities and the extra mutant.** Current hashes:
+`acceptance_collection.py` `cb4ec2cb1bfed5dce97b4f38d441df5131a3d67d6ea8e8acfdc80122cdef84e5`;
+`acceptance_bundle.py` `102b2d88283e97e05e7f0a2570329ff7d8b54241281904cc62961283356bb85e` (E561's value
+plus the `no-sealed-selectors` refusal); `slice_verification.py`
+`6c88b87b10840eba5aab8fd8832b9c402e53f23bc0212a9b5542b3c5c37e8bf3` (+14 lines: the public parser).
+The new refusal has its own kill: removing it fails
+`test_a_bundle_without_selectors_is_never_minted` (1 failed, 105 passed). Doc links and
+`fa authoring-check` re-run after the Q158 append: 367 files, 0 diagnostics.
+
+### E563 — STEP9A slice 5: the TEST-DEFECT lifecycle, with 13 killed mutants (2026-11-20)
+
+**What the plan required and what exists now.** A coder who believes a sealed test is wrong may not
+edit it; the planner answers against the pinned invariant and hands the work back. New
+`src/fa/inner_loop/acceptance_defect.py` (`597570344128f9f32a2b0bce3c06dc2c81f1a68c93ec4ac6918d0c23e4092491`):
+
+- `report_defect(bundle, graph, ...)` turns a claim into a `DefectReport` only when the seal actually
+  holds that `TEST-ID`, the nodeid is the one the seal resolved, and the named `INV` owns the contract
+  the test belongs to; the claim text is bounded (2 KiB, no NUL). Anything else is refused as
+  `defect-unknown-test` / `defect-test-not-sealed` / `defect-nodeid-mismatch` /
+  `defect-invariant-mismatch` / `defect-text-invalid` — a stale or invented claim never reaches the
+  planner.
+- `uphold(report, rationale=...)` records `UPHELD`: the bytes stay identical, nothing is re-sealed and
+  nothing re-runs, so the affected sets are empty by construction.
+- `correct(...)` records `CORRECTED` and mints a **new** seal that supersedes the reported one. Three
+  refusals keep it a *test* correction: the plan bytes must be the ones the report was made against
+  (`defect-requires-replan` — changing the invariant or expected semantics is owner/replan work), the
+  revision must actually differ (`defect-revision-unchanged` — one immutable revision cannot hold two
+  acceptance closures), and the closure digest must change (`defect-no-change` — re-sealing identical
+  bytes would only manufacture a new hash). A report made against a different seal is refused as
+  `defect-superseded`.
+- Evidence retention is content addressing: `seal_path` / `write_revision_seal` store each revision at
+  `worklogs/<slug>/seals/<seal_sha256>.json` through the slice-3 writer, so the earlier revision keeps
+  its own file and its own evidence, and a new revision cannot overwrite it (its name differs; the same
+  name re-written is refused as `defect-seal-exists`).
+- `affected_scope(graph, test_id)` returns the re-prove set: the tests of the same contract (they can
+  encode the same expectation) and every kill target bound to any of them. Targets of other contracts are
+  untouched because their oracle bytes did not change meaning.
+
+**Verification.** New `tests/test_ai_native_acceptance_defect.py` (38 tests) reusing the sealed-tree and
+fake-substrate fixtures now exported by the collection bank; 262 passed together with the plan, bundle,
+closure, collection, artifact and host-marker banks; `ruff`, `mypy` (610 files), `pyrefly` (0),
+`fa authoring-check` (0), doc links (367), E2E coverage checker all clean. Targeted mutation: **13
+mutants, 13 killed** — accepting an unsealed test, a wrong nodeid or a wrong invariant, relaxing the text
+bound, correcting against another seal, allowing a plan change, a same-revision re-seal, or an identical
+closure, forgetting the supersedes link, narrowing the affected set to one test, dropping the affected
+kill targets, silently replacing the revision seal, and addressing seals by a fixed name.
+
+**Two test-side defects found while building the bank (fixed, not papered over).** The "corrected" fixture
+initially rewrote the sealed test with *identical* bytes, so the only case that fired was
+`defect-no-change`; and the "other seal" fixture minted a byte-identical seal (same tree, same plan, same
+revision) so it could not differ from the reported one. Both fixtures now change real bytes/revision, and
+the assertion that the two seals differ is part of the test.
+
+**Boundary.** STEP9A is still OPEN and unticked. As with slices 3–4 there is **no caller**: nothing in the
+controller receives a coder report, nothing routes it to a planner, and no gate re-runs after a
+correction. Slice 6 (exact kill attribution over sealed nodeids) is the last mechanism; the wiring and the
+V2 workflow remain STEP9B's subject.
+
+### E564 — STEP9A slice 6: exact kill attribution over sealed nodeids, with 14 killed mutants (2026-11-20)
+
+**What was wrong with "the test dropped after the mutation".** The existing gate is slice-scoped: one
+`KILL_CHECK_COMMAND` per directive, verdicts `PROVEN`/`VACUOUS`/`PRODUCER_ABSENT`/`ERROR` for a whole
+test file. A broken import, a skipped test, an empty run and a genuine assertion failure were therefore
+indistinguishable at the point where a kill is credited. STEP9A item 3 requires attribution to one
+contract, one `TEST-ID` and one nodeid in the sealed revision, with a passing pre-mutation baseline.
+
+**New `src/fa/inner_loop/kill_attribution.py`**
+(`07ef2e581a5beb79bff6ca61a438d920f876f578ea82f7a0dcbb4d60ac5aedc4`):
+
+- `bindings(bundle, graph)` binds every declared target to its contract, `TEST-ID`, sealed nodeid, the
+  sealed test file's digest, the seal digest, the revision and the closure digest. Checks that plan
+  admission already guarantees (the contract exists in the slice, the target's contract owns its test,
+  target ids are unique) are deliberately **not** re-implemented — the grammar refuses those plans, so a
+  second copy would be dead code. What admission cannot know is which tests the seal selected, so
+  `kill-target-unsealed` is the one real refusal here.
+- `oracle_argv` runs exactly one nodeid with the sealed `-c`/`--rootdir`/`no:cacheprovider`
+  configuration; `run_node_oracle` re-verifies the acceptance tree first, so a drifted (or
+  overlay-contaminated) acceptance directory never produces an oracle run.
+- `attribute(binding, baseline=..., mutated=...)` is pure and total: `PROVEN` only when the baseline
+  passed **and** the same single nodeid failed by assertion under the mutation; `PASSED` under mutation is
+  `VACUOUS`; a failed/skipped/missing/errored baseline, or a mutated run that was skipped, missing or
+  errored, is `ERROR`. A report that is not exactly that one nodeid (`oracle-report-not-exact`) is
+  `ERROR`, so nothing unassigned can ever prove a target and there is no slice-wide fallback.
+
+**A skip that looked like a failure — found and fixed in the shared parser.** The existing projection
+`parse_nodeid_report` maps skip to `False`, i.e. a skipped oracle would have read as `FAILED` and so as
+`PROVEN`. `slice_verification.py` now also exposes `parse_node_outcomes` (`nodeid -> passed|failed|
+skipped`) over the same parser, and attribution uses the three-state form. `slice_verification.py` is now
+at `0a2f71a396aca1a0197cc3e39282128474eebbcca0144ab0a6dbea6247fb7594` (+28 lines total for the two
+public projections; no existing behaviour changed, 702-test regression bank green).
+
+**Verification.** New `tests/test_ai_native_kill_attribution.py` (32 tests) over the shared sealed-tree and
+fake-substrate fixtures; 294 passed together with the plan, closure, bundle, collection, defect, artifact
+and host-marker banks; `ruff`, `mypy` (612 files), `pyrefly` (0), `fa authoring-check` (0), doc links
+(367), E2E coverage checker clean. Targeted mutation: **14 mutants, 14 killed** — allowing a failed
+baseline, swapping `PROVEN`/`VACUOUS`, accepting a multi-row or foreign-row report, turning a skip into a
+failure, dropping the sealed-tree check, dropping the error outcome, dropping the input checks, forgetting
+the sealed test digest, running the whole file instead of one nodeid, and collapsing the three-state
+projection to a constant. One survivor in the first round (an "empty but present" report branch) was
+removed rather than tested: an empty file is simply an unparsable report, and both paths were non-kill.
+
+**STEP9A status after six slices: mechanisms complete, wiring outstanding.** seal + closure inventory,
+collection and pinned run, TEST-DEFECT revisions with content-addressed evidence retention, and exact
+attribution all exist and are individually proven. Still missing before STEP9A can close, and deliberately
+not fabricated here:
+
+1. **No production caller.** Nothing mints a seal in the controller, nothing hands the coder a read-only
+   mode-A projection, `verify_slice` still runs the planner's `verify` fences, and no gate blocks on a
+   missing/stale seal in `observe`/`enforce`. That wiring belongs to the V2 workflow, which STEP9B has not
+   yet specified or had reviewed.
+2. **Read-only enforcement is recorded, not enforced.** The seal says mode `A` and refuses `B`, but the
+   authority-side projection (files delivered read-only to the coder's shell and file tools) is not built.
+3. **Durable-effect claims are review, not machinery.** "Assert the authoritative effect or its absence"
+   is a property of an acceptance test's content; nothing mechanical here can decide it, so it stays a
+   reviewer obligation under Q156/A.
+
+### E565 — STEP9B finalisation: three operator decisions ratified; the coder test-edit variant escalated as Q159 (2026-11-20)
+
+**Decisions recorded in the linked V2 plan** (`notes/i03-ai-native-workflow-refactor-plan-v2.md`, new
+subsection "Ratified operator decisions, 2026-11-20", plus the Q-V2-STATUS-1 row flipped to RESOLVED):
+
+- **D-V2-1 — V2 is the only forward grammar.** `plan_v2.py` (from STEP9A slice 2) is the V2 parser; V1
+  stays only as a lightweight legacy module serving today's stages and carries a **named removal step**.
+  SLICE1's parser task is re-targeted accordingly, and `PlanSnapshot` carries the V2 graph alongside the
+  legacy `PlanIds` only while that module exists.
+- **D-V2-2 — full cutover, `invoke_workflow` as the single entry point.** The legacy manual
+  `fa workflow --plan` route is retired rather than kept in parallel; the same composition is callable by
+  an agent (chat tool) and by a human (CLI), with **no** second workflow implementation and a negative
+  control proving the retired route cannot run a V1 plan.
+- **D-V2-3 — status ticks are a projection** (Q-V2-STATUS-1 = A): one authority-owned status record keyed
+  to the sealed revision plus a rendered view; never inside `acceptance/`, never an admission input, never
+  a re-seal per tick. Rationale recorded: a single agent must read slice/step state in one pass instead of
+  filtering a multi-thousand-line ledger, and tick state must not be able to influence validation.
+
+**Escalated, not implemented: Q159 (coder may edit sealed tests with a rationale).** Source audit found
+the operator's remembered variant is in **no** ratified document and in no code: STEP9A item 1 requires
+rejecting changed accepted bytes and gives the coder mode-A read-only access; the runtime `IntentGuard`
+test-edit protection was deliberately retired (Q130) with a new plan-bound test-edit policy explicitly
+deferred to post-I03; the only surviving test-edit rule is the commit-msg `TEST-EDITS` declaration in
+`hygiene/pr_intent.py`. Q159 records the three concrete options (planner-only, declared edit + automatic
+re-seal, declared edit as a proposal), their custody trade-offs, and the stop line: choosing either
+declared variant **amends** a STEP9A invariant and is therefore a replan, not an implementation choice.
+
+**Not touched this entry.** No product code changed; Q-V2-BOOT-1 (install receipt → revision-bound seal
+chain) remains the next source audit before SLICE2 can cross the irreversible install boundary.
+
+### E566 — Q159 = C ratified; Q-V2-BOOT-1 audited: route A holds with two corrections and one open shape (2026-11-20)
+
+**Q159 resolved = C (operator).** The coder may *propose* a test change (bounded patch artifact outside the
+sealed tree plus the existing `DefectReport`), the planner applies it through `acceptance_defect.correct`
+and the new seal supersedes the old one. Recorded as **D-V2-4** in the linked V2 plan, and as a coder duty
+in §6; the SLICE3 note states it is a second *input* to `correct()`, not a second mechanism. B (direct
+coder writes with a rationale record) was rejected for MVP: detection instead of prevention hands the
+implementer the oracle, which is the hole mode A exists to close.
+
+**Q-V2-BOOT-1 audit** (`notes/q-v2-boot1-install-seal-audit-2026-11-20.md`, source-grounded, no code
+changed). Facts: `_install_prepare` computes the exact future tree before any write; `_install_finish`
+returns `{revision_id, tree_sha256, operation_id}`; `_recover_bootstrap` is derivation-based and requires
+`digest == intent["tree_sha256"]`, so a recovered install converges on the same pair; `_TREE` records **no
+parent**, so no ancestry query exists; `write_seal` is `O_EXCL` and never replaces; load-time integrity
+only checks each revision's own copy, so canonical drift is invisible.
+
+Corrections required for the selected route: **C1** — the seal must live in authority-private metadata
+(beside `current.json`), never as a raw file inside the revision-tracked tree, otherwise the tree and the
+manifest of the revision the seal names silently diverge at the artifact that proves custody; **C2** —
+`verify_revision` is an admission-time pin (against the receipt revision), while standing custody is
+content-based (`verify_plan` + `verify_sealed_root`), because the coder's legitimate writes advance the
+current revision and no ancestry check exists to keep a revision pin valid.
+
+Edge cases closed by A+C1+C2: crash before rename, crash after rename before revision, crash after
+revision before seal, torn seal write (hard error, never a silent re-mint), concurrent install collision,
+post-seal tampering, ordinary coder writes, backup restore without the seal. **Open: E7 (replan →
+supersede)** — `write_seal`'s `O_EXCL` gives route A no defined supersede behaviour; the operator is
+choosing the storage shape (per-seal immutable files + private pointer / single mutable slot / seal inside
+its own revision). The earlier option C (`INSTALLED_UNSEALED` record) is recorded as fixing none of
+C1/C2/E7.
+
+### E567 — Q-V2-BOOT-1 closed = A′ (D-V2-5); STEP9B decision set complete (2026-11-20)
+
+**Q-V2-BOOT-1 = A′** (operator selected storage shape A′-1 after the edge-case audit). Ratified as
+**D-V2-5** in the linked V2 plan and detailed in `notes/q-v2-boot1-install-seal-audit-2026-11-20.md`:
+the acceptance closure ships inside the installed revision; the seal is minted from installed bytes + plan
+bytes + receipt revision; seals are immutable per-seal files in authority-private metadata with one
+atomically replaced pointer (so `write_seal`'s `O_EXCL` guarantee survives and `supersedes_sha256` stays
+walkable across replans); coder admission verifies pointer + loadable seal + `verify_plan` +
+`verify_sealed_root` + `verify_revision` against the receipt revision; standing custody is content-based
+because no revision ancestry is recorded and the coder's own writes advance the current revision; recovery
+mints only when the pointer is absent and hard-fails on an unloadable seal. Rejected in the audit: a fifth
+`INSTALLED_UNSEALED` intent kind (adds a recovery matrix and fixes none of the two corrections), a mutable
+seal slot (loses the supersession chain), and seal-as-its-own-revision (needs a second publish and puts the
+custody artifact inside the coder's reach).
+
+**STEP9B decision set is now complete**: D-V2-1 (V2-only grammar, light legacy V1 with removal step),
+D-V2-2 (full cutover, `invoke_workflow` single entry point), D-V2-3 (ticks as projection), D-V2-4 (coder
+proposes test changes), D-V2-5 (install→seal chain). Recorded in the increment as a decision list only;
+**STEP9B stays unticked** because its own review gate and the E564 STEP9A wiring gap are still open.
+
+**Correction owned in this entry:** a first edit of the Q-V2-BOOT-1 register row dropped the row's `Ref`
+cell and broke the table; repaired in the same turn (row restored, D-V2-5 added) and verified by
+`check_doc_links.py` (368 files) and `fa authoring-check` (0 diagnostics).
+
+### E568 — adversarial review of the remaining STEP9B slices: 9 confirmed defects, plan rewritten (2026-11-20)
+
+Reviewed with the plan read against source, not against itself. Confirmed defects, each with the evidence
+used to rewrite the affected section:
+
+1. **Parser location contradicted D-V2-1.** SLICE1 told the implementer to write the PLAN-V2 parser into
+   `plan_ids.py` while `plan_v2.py` already implements it (861 lines, 45 tests, 22 killed mutants). Rewritten
+   to *bind* `parse_plan` (`plan_v2.py:610`) and freeze `plan_ids.py` with a removal step.
+2. **V1 validators would judge V2 documents.** `snapshot_from_bytes` always runs V1 `extract_plan_ids`
+   (`plan_admission.py:160–169`), whose slice regex matches PLAN-V2 headings (`plan_ids.py:65`), and
+   `_validate_plan_admission` (`workflow_controller.py:3058–3100`) runs `precheck`, `validate_kill_directives`
+   and a `zero-slices` refusal unconditionally — the mixed grammar state INV-01 forbids. New CT-1.3.
+3. **Format dispatch was unspecified** (content sniffing is the obvious wrong implementation). `PlanSnapshot`
+   has no format field (`plan_admission.py:37–41`); CT-1.1 now requires route-selected format.
+4. **Mode A was overclaimed.** Only the plan file is protected (`workspace.py:2194`, `2814`), the closure is
+   not, and writable views mount the source read-write (`profiles.py:108–113`). CT-3.3 rewritten around the
+   real seam; the shell half escalated as Q-V2-MODEA-1.
+5. **The verifier still executes planner-authored shell** (`slice_verification.py:552`) while §2 forbids
+   planner command text from driving promotion. CT-3.6 now retires the fence on the PLAN-V2 route.
+6. **Lifecycle paragraph still offered the rejected recovery** (`INSTALLED_UNSEALED` / immutable payload),
+   contradicting D-V2-5. Replaced by the A′ pointer/derivation rules.
+7. **Seams table row still promised the immutable-payload fallback.** Replaced with the shipped-in-revision
+   chain and its recovery evidence.
+8. **Stale artifact status.** `tests/test_ai_native_plan_v2.py` and `tests/test_ai_native_acceptance_bundle.py`
+   were labelled "new" although both exist (45 and 80 tests). Re-targeted to *extend*.
+9. **D-V2-2 had no owner.** Nothing assigned the `fa workflow` retirement (`cli.py:848–956`, `_cmd_workflow`
+   `:2200`) or its negative control. New INV-13 and CT-1.5.
+
+Also corrected: the "two V2s" terminology trap (PLAN-V2 grammar vs the existing admission-record v2 exercised
+by `tests/test_admission_v2_provenance.py`), a fail-open in `_admit_plan` (`:3740–3742`, `admission is None ⇒
+return True`, guarded today only by a comment) now covered by CT-1.4, and three line citations that had
+drifted. Suspicions recorded, not fixed: CT-1.1's "receipt version cannot select grammar" may be partly
+covered by the existing record-schema bank (duplicate-ownership risk), and the retired `fa workflow` surface
+may carry operator habits the CLI help must explain.
+
+Verification: `check_doc_links.py` 368 files OK, `fa authoring-check` 0 diagnostics,
+`check_execution_e2e_coverage.py` OK, `git diff --check` clean. No product code touched; STEP9B remains
+unticked.
+
+### E569 — Q-V2-MODEA-1 = B: mode A is prevention for file tools, detection for shell (2026-11-20)
+
+**Decision (D-V2-6).** `RootedViewIO.protected_paths` (`view_io.py:119–158`) carries every sealed semantic
+path — roadmap, ledger, `open-questions.md`, increment and `worklogs/<slug>/acceptance/` — so the file-tool
+interface *prevents* writes to them and their ancestors. The shell interface is **not** blocked: doing so
+would add a read-only submount to the managed coder profile (`profiles.py:108–113`), changing an approved
+security profile and every W4 host-evidence digest that pins it.
+
+**What defends the property instead.** No verification result may come from bytes that differ from the seal:
+every verification entry point, including incremental and repair-time checks, proves the closure digest
+before producing a verdict, so a shell write surfaces as `seal-byte-drift` and the run fails closed. Recorded
+honestly in INV-07 and CT-3.3: *prevented where the interface allows it, detected everywhere else* — a coder
+can corrupt its own oracle and waste the run, but cannot obtain a PASS from corrupted bytes.
+
+**Rejected on cost, not on strength:** a read-only submount (A) or both (C). The reasoning is recorded because
+a future reviewer will otherwise read "detection only" as an oversight rather than a trade.
+
+**Plan edits:** INV-07 rewritten, CT-3.3 rewritten to the two-interface contract with a both-halves test,
+SLICE3 negative controls split into file-tool-refused and shell-detected, register row flipped to RESOLVED,
+D-V2-6 added to the ratified decisions table. `check_doc_links.py` 368 OK, `fa authoring-check` 0 diagnostics.
+No product code touched.
