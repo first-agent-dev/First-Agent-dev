@@ -969,7 +969,7 @@ def build_parser() -> argparse.ArgumentParser:
         description=(
             "Call the invoke_workflow tool directly. This is the human front for the one "
             "workflow entry point: same tool, same argument contract, same lifecycle as a "
-            "chat session. `fa workflow` is the retired manual pipeline route."
+            "chat session. `fa workflow` is the deprecated manual route; this command is its replacement."
         ),
     )
     invoke_parser.add_argument("task", nargs="?", default=None, help="Task text for the pipeline.")
