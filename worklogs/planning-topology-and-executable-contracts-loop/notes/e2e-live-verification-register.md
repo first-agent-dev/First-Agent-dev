@@ -1193,6 +1193,16 @@ new case ID or assign a live result.
 | :--- | :--- |
 | managed_inventory.inventory_project_artifacts | Through a real managed outer-chat → `invoke_workflow` coder-bearing child, select a canonical existing project. Prove Q108-B `LIST_PROJECT_ARTIFACTS` and every roadmap/increment `READ_FILE` use that child's exact pinned READ/PROJECT view and grant; only the resulting parsed snapshot is admitted before coder dispatch. Missing, unsafe, non-regular, oversized, or uncertain inventory/read must stop before coder/eval, never fall back to controller/canonical host reads, and leave release/fencing truthful. |
 
+## Q146/B LIST_PROJECTS producer — future I03 fixture coverage, UNVERIFIED DEPLOYED
+
+This is a distinct current producer added after the frozen 125-key baseline. Its explicit `NEW:`
+coverage mapping shares the existing `I03-LIVE-S08` nested-workflow case; it creates no new case ID
+and assigns no live result.
+
+| New helper producer | Future deployed fixture / observable oracle |
+| :--- | :--- |
+| WorkspaceAuthority.list_projects | Extend the shared S08 witness through a real managed outer-chat → `invoke_workflow` coder-bearing child. Query `LIST_PROJECTS` through that child's exact pinned READ/PROJECT view and grant. Arrange a real project with a regular roadmap, a roadmap path that is a directory, a relative-symlinked roadmap, and a bare/empty `worklogs/<slug>/`. Assert only the real project is in `projects`, the directory/symlink slugs are in `incomplete`, and the bare/empty slug is in neither; names only, no roadmap/link contents, recursion, or host scan. With a v1-only or unavailable listing peer, assert `acquisition-unavailable` before the child planner/coder, not a fabricated empty inventory; the read view reaches terminal stop and no host fallback occurs. In the same S08 child pin, retain Q108-B's `LIST_PROJECT_ARTIFACTS` and every roadmap/increment `READ_FILE`; only the parsed snapshot reaches admission before coder, while missing, unsafe, non-regular, oversized, or uncertain inventory/read stops before coder/eval without controller/canonical-host fallback and with truthful release/fencing. |
+
 ## E250 — I03 complete source/seam inventory, 2026-10-18 — PLANNED / UNEXECUTED
 
 Source audit at `1f20d94`, relative to retained I02 `a32a72f`: the prior register ended at E229
@@ -1718,3 +1728,10 @@ prose are that section's snapshot and are not rewritten. What is current now:
 - **No row may be marked executed from a local bank.** The mutation totals quoted per section (E267 9/9,
   E272 7/7, E273 10/10, E274 7/7, E276 17/17) are producer-kill evidence for the *local* component; they
   are not host evidence and are not a live PASS.
+
+## Reviewed successor oracles (STEP3; planned, NOT RUN)
+
+The original inventory rows above and the frozen 125-key baseline are historical source lineage, not current execution instructions. The following same-ID revisions supersede only their host fixture/oracle; they do not assert live acceptance.
+
+- `I02-LIVE-005` — A verify fence invokes a missing binary through the shell; separately force genuine shell-launch OSError. — Missing child binary: FAIL with exit_code=127; shell-launch OSError: ERROR with exit_code=None. Inspect persisted verification result, not message text alone. — PLANNED / NOT RUN
+- `I02-LIVE-011` — Submit malformed kill directive with one bounded admission repair; separately exhaust planner budget with the same invalid plan. — Successful validated repair records RETRY then ADMITTED before first coder dispatch; exhausted budget records RETRY then BLOCKED and dispatches no coder. Inspect durable admission attempts and coder event order. — PLANNED / NOT RUN

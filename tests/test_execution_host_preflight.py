@@ -34,7 +34,11 @@ _REQUIRED = frozenset({"cpu", "memory", "pids"})
 _SECCOMP = '{"defaultAction":"SCMP_ACT_ERRNO","syscalls":[]}'
 
 
-def _profiles(*, write_memory: int = MIN_APPROVED_PROFILE_MEMORY_BYTES) -> tuple[ExecutionProfile, ExecutionProfile]:
+def _profiles(
+    *,
+    write_memory: int = MIN_APPROVED_PROFILE_MEMORY_BYTES,
+    read_memory: int = MIN_APPROVED_PROFILE_MEMORY_BYTES,
+) -> tuple[ExecutionProfile, ExecutionProfile]:
     return (
         ExecutionProfile(
             profile_id="approved-write",
@@ -55,7 +59,7 @@ def _profiles(*, write_memory: int = MIN_APPROVED_PROFILE_MEMORY_BYTES) -> tuple
             uid=10001,
             gid=10001,
             nano_cpus=1_000_000_000,
-            memory_bytes=MIN_APPROVED_PROFILE_MEMORY_BYTES,
+            memory_bytes=read_memory,
             pids_limit=64,
             max_command_ms=30_000,
             interactive=False,
@@ -65,8 +69,13 @@ def _profiles(*, write_memory: int = MIN_APPROVED_PROFILE_MEMORY_BYTES) -> tuple
     )
 
 
-def _service_config(tmp_path: Path, *, write_memory: int = MIN_APPROVED_PROFILE_MEMORY_BYTES) -> ServiceConfig:
-    write_profile, read_profile = _profiles(write_memory=write_memory)
+def _service_config(
+    tmp_path: Path,
+    *,
+    write_memory: int = MIN_APPROVED_PROFILE_MEMORY_BYTES,
+    read_memory: int = MIN_APPROVED_PROFILE_MEMORY_BYTES,
+) -> ServiceConfig:
+    write_profile, read_profile = _profiles(write_memory=write_memory, read_memory=read_memory)
     return ServiceConfig(
         state_root=tmp_path / "service-state",
         socket_path=tmp_path / "service.sock",
@@ -163,8 +172,17 @@ def test_profile_parent_must_have_controllers_available_and_enabled(tmp_path: Pa
     assert refused.value.code == "profile_cgroup_parent_unavailable"
 
 
-def test_q97_memory_floor_is_enforced_for_both_selected_profiles(tmp_path: Path) -> None:
-    config = _service_config(tmp_path, write_memory=MIN_APPROVED_PROFILE_MEMORY_BYTES - 1)
+@pytest.mark.parametrize(
+    ("write_memory", "read_memory"),
+    [
+        pytest.param(MIN_APPROVED_PROFILE_MEMORY_BYTES - 1, MIN_APPROVED_PROFILE_MEMORY_BYTES, id="write-profile"),
+        pytest.param(MIN_APPROVED_PROFILE_MEMORY_BYTES, MIN_APPROVED_PROFILE_MEMORY_BYTES - 1, id="read-only-profile"),
+    ],
+)
+def test_q97_memory_floor_is_enforced_for_each_selected_profile(
+    tmp_path: Path, write_memory: int, read_memory: int
+) -> None:
+    config = _service_config(tmp_path, write_memory=write_memory, read_memory=read_memory)
 
     with pytest.raises(ExecutionHostPreflightError) as refused:
         validate_host_preflight(config, _facts(config))

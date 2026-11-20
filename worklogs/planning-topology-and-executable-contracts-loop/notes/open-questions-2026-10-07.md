@@ -3733,3 +3733,28 @@ must return `ready_repaired` before commit/local publication, and its current
 `precommit_prewarm_failed` result is not waived. No STEP9 closure, host
 readiness, or W3 acceptance is claimed; see E534 in the ledger for the latest
 local verification and boundaries.
+
+## Q154 — Which ledger append should the new live E2E test prove?
+
+**Status: RESOLVED = B (operator selection in this turn).** “Ledger append” means an accepted V2 STEP transition appended to the controller-owned authority progress record, with the planned deterministic read-only Markdown projection. It does **not** mean writing progress into the project's `ledger.md` or appending a planner-owned I03 host-attempt row. This resolves the target only; it does not close `Q-V2-STATUS-1`, authorize implementation, or register a live case.
+
+### Source-grounded context
+
+- The current artifact schema §5 describes project `ledger.md` as append-only typed evidence. `src/fa/execution/publication.py::render_bundle` currently creates only its fixed heading; no production producer that appends V2 progress to that project ledger was found. `SubagentRunner._append_to_worklog` writes `worklog.md`, not the project `ledger.md`.
+- The I03 live-verification sheet separately defines append-only host-attempt rows. Its artifact tests check row/schema shape and status ownership; they do not exercise a production append writer.
+- The linked V2 plan's `Q-V2-STATUS-1`, SLICE4 CT-4.2 and SLICE5 CT-5.3 specify a controller-owned progress record plus deterministic read-only projection outside the sealed workspace revision and AcceptanceBundle. Progress must not mutate the project revision, PlanRef or bundle identity. The plan does not specify an append to project `ledger.md`; `Q-V2-STATUS-1` remains open pending STEP9A review/source proof.
+- S6P7 requires independent review before fixture/helper work; S6P8 is downstream of that review.
+
+### Planned E2E acceptance under the selected target
+
+The linked V2 plan remains the source of truth for selectors and slice DoDs. Reuse its planned acceptance tests rather than inventing a parallel host case:
+
+- **Local C1 — TEST-4.2:** `tests/test_ai_native_roles_and_progress.py::test_step_progress_is_authority_owned_and_projects_without_mutating_sealed_inputs`. Drive the real local workflow/controller composition. Assert an accepted STEP transition appends an authoritative progress record, the sequence-bound Markdown projection reflects that record, and the operation leaves the workspace revision, PlanRef, and AcceptanceBundle identity unchanged. Include unauthorized/stale-identity refusal and no false progress advancement. Exact retry/CAS behavior must match the STEP9A-reviewed authority contract.
+- **Installed-host C1/C3 — TEST-5.3:** `tests/integration/test_ai_native_workflow_host.py::test_installed_host_proves_v2_progress_projection_and_fresh_project_lifecycle`. Enter through the real installed chat `invoke_workflow` caller on the frozen image; assert the authoritative record sequence and deterministic projection for accepted transitions, one bounded refusal without false advancement, and unchanged workspace revision/PlanRef/AcceptanceBundle identity. Capture image SHA/digest/profile/config, workspace ID, full PlanRef, bundle digest, progress sequence and projection digest. Do not use `FlowState`, a local fake, or a change to the project's `ledger.md` as the authority oracle.
+- **Mutation after C1:** remove the authority progress-transition producer and require TEST-4.2/TEST-5.3's accepted-transition assertion to fail; remove the actual lifecycle/caller binding into that producer and require the composition/host test to lose the effect and fail. Setup, collection, skip, timeout, crash, or zero executed tests are errors/non-kills, never proof. The host mutation is a test-build sensitivity check only, never an edit to an approved running deployment.
+
+The product `worklogs/<slug>/ledger.md` remains unchanged by STEP progress. The progress record's exact append/replay/CAS semantics are still gated by `Q-V2-STATUS-1` and STEP9A review. These planned selectors are not yet implemented, registered in the frozen I03 package, or run on a host.
+
+### Impact and stop line
+
+Q154's target ambiguity is resolved, but implementation and live registration remain gated: do not add tests or fixtures until STEP9A closes its authority contract and S6P7's independent review precedes S6P8 fixture/helper work. Do not add an S08 mapping or producer-baseline row based on this resolution alone; the required mapping/oracle review remains separate. Q154 changes no live result, frozen producer baseline, or host acceptance status. Q146/LIST_PROJECTS mapping and its S08 oracle remain governed by E547.

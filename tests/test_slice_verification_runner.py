@@ -322,6 +322,19 @@ def test_result_arity_and_order_hold_for_any_command_count(workspace: Path, coun
 # ── Mutation-driven oracles (C4 follow-up to the SLICE1 sweep) ──────────────
 
 
+def test_a_missing_binary_after_shell_launch_is_fail_with_exit_127(workspace: Path) -> None:
+    """CT46: a missing child command is not failure to start the shell itself."""
+    command = "fa-deliberately-absent-ct46-executable"
+
+    (result,) = run_commands((command,), workspace=workspace)
+
+    assert result.command == command
+    assert result.outcome is CommandOutcome.FAIL
+    assert result.exit_code == 127
+    assert "not found" in result.stderr_tail
+    assert "could not start" not in result.stderr_tail
+
+
 def test_a_command_that_cannot_be_launched_is_error_not_fail(tmp_path: Path) -> None:
     """CT45/CT46 -- producer: ``_spawn_failure_result``.
 

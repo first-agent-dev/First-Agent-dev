@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -263,3 +263,46 @@ def test_the_adapter_refuses_a_partial_configuration(tmp_path: Path, site: Site)
             OwnedCellTermination(owner.journal, cells=None, profile=native_profile(), cgroup_root=Path("relative"))
         with pytest.raises(ExecutionContractError):
             OwnedCellTermination(object(), cells=None, profile=native_profile())  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("first_observation", [None, False, 1], ids=["unknown", "populated", "truthy-not-true"])
+def test_ct104_stop_barrier_needs_observed_empty_before_receipt_and_seal(
+    site: Site, first_observation: bool | int | None
+) -> None:
+    """C1 local authority: STOP request alone is not terminality (kernel half remains W4)."""
+    from fa.execution.supervisor import TerminalVerdict, ViewStopper
+    from tests.test_execution_admission import setup
+
+    class ObservedCells:
+        def __init__(self) -> None:
+            self.observation: bool | int | None = first_observation
+            self.stops = 0
+            self.observed = 0
+
+        def stop_cells(self, namespace: NamespaceRef, view_ref: ViewRef, *, deadline: float) -> None:
+            assert namespace == ACTOR and view_ref == view
+            self.stops += 1
+
+        def cells_terminal(self, namespace: NamespaceRef, view_ref: ViewRef) -> bool | None:
+            assert namespace == ACTOR and view_ref == view
+            self.observed += 1
+            return cast(bool | None, self.observation)  # deliberate malformed backend reply (1)
+
+    with setup(site) as (owner, grant):
+        view = ref(grant)
+        cells = ObservedCells()
+        stopper = ViewStopper(owner, cells=cells, poll_interval_s=0.01)
+        deadline = time.monotonic() + (0.02 if first_observation is False else 1.0)
+        result = stopper.stop_view(PEER, ACTOR, view_ref=view, capability=grant.capability, deadline=deadline)
+        assert result.terminal is False
+        assert result.verdict is (TerminalVerdict.POPULATED if first_observation is False else TerminalVerdict.UNKNOWN)
+        assert cells.stops == 1 and cells.observed >= 1
+        assert owner.terminal_receipt(PEER, ACTOR, view_ref=view, capability=grant.capability) is None
+        with pytest.raises(SupervisorError) as denied:
+            owner.prepare_seal(PEER, ACTOR, view_ref=view, capability=grant.capability, deadline=until())
+        assert denied.value.code == "TERMINALITY_UNKNOWN"
+
+        cells.observation = True
+        confirmed = stopper.stop_view(PEER, ACTOR, view_ref=view, capability=grant.capability, deadline=until())
+        assert confirmed.terminal is True and confirmed.verdict is TerminalVerdict.TERMINAL
+        assert owner.terminal_receipt(PEER, ACTOR, view_ref=view, capability=grant.capability) is not None

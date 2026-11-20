@@ -27,7 +27,7 @@ from typing import Any, override
 
 import pytest
 
-from fa.execution.client import ExecutionClient
+from fa.execution.client import ExecutionClient, ExecutionUnavailableError
 from fa.execution.primitives import ExecutionContractError
 from fa.execution.tool_port import ClientWorkspacePort
 from fa.execution.types import (
@@ -57,11 +57,19 @@ REVISION = "rev-" + "c" * 32
 class _Client(ExecutionClient):
     """A real client whose transport answers with fixed replies; no socket at all."""
 
-    def __init__(self, *, grant: Any, names: tuple[str, ...] = (), incomplete: tuple[str, ...] = ()) -> None:
+    def __init__(
+        self,
+        *,
+        grant: Any,
+        names: tuple[str, ...] = (),
+        incomplete: tuple[str, ...] = (),
+        listing_unavailable: bool = False,
+    ) -> None:
         super().__init__(Path("/nonexistent/supervisor.sock"), server_uid=0, rpc_timeout_ms=1000)
         self._grant = grant
         self._names = names
         self._incomplete = incomplete
+        self._listing_unavailable = listing_unavailable
         self.pins: list[dict[str, Any]] = []
         self.stops: list[str] = []
         self.operations: list[Operation] = []
@@ -84,6 +92,8 @@ class _Client(ExecutionClient):
                 "revision_id": self._grant.revision_id,
             }
         if operation is Operation.LIST_PROJECTS:
+            if self._listing_unavailable:
+                raise ExecutionUnavailableError
             return {"projects": [{"project_slug": name} for name in self._names], "incomplete": list(self._incomplete)}
         if operation is Operation.STOP_VIEW:
             view = kwargs.get("view")
@@ -173,6 +183,33 @@ def test_the_substrate_pins_with_no_plan_and_returns_a_port(tmp_path: Any) -> No
     assert len(client.pins) == 1
     assert client.pins[0]["plan_ref"] is None, "acquisition runs before any plan exists"
     assert client.pins[0]["revision_id"] == REVISION
+
+
+def test_an_unavailable_project_listing_is_not_an_empty_inventory_and_stops_the_view(tmp_path: Any) -> None:
+    client = _Client(grant=_grant(), listing_unavailable=True)
+
+    with _pinned_acquisition_substrate(_ctx(tmp_path, _Managed(client))) as substrate:
+        assert substrate is None
+
+    assert client.operations == [
+        Operation.PIN_READER,
+        Operation.HEALTH,
+        Operation.LIST_PROJECTS,
+        Operation.STOP_VIEW,
+        Operation.RELEASE,
+    ]
+    assert client.stops == [VIEW]
+
+
+def test_a_successful_empty_listing_is_a_valid_empty_substrate_and_stops_the_view(tmp_path: Any) -> None:
+    client = _Client(grant=_grant())
+
+    with _pinned_acquisition_substrate(_ctx(tmp_path, _Managed(client))) as substrate:
+        assert substrate is not None
+        assert substrate.project_names == ()
+        assert substrate.incomplete_names == ()
+
+    assert client.stops == [VIEW]
 
 
 def test_the_view_is_stopped_even_when_the_body_raises(tmp_path: Any) -> None:

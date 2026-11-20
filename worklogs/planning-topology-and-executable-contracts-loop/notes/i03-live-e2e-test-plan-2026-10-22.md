@@ -48,9 +48,9 @@ Three layers, deliberately separate, because each fails differently:
 | Layer | Location | Purpose | Runs in CI? |
 | :--- | :--- | :--- | :--- |
 | `tests/integration/conftest.py` | authored/unit-tested in W3; probes host only in W4 | fail-closed preflight + session-scoped fixtures (approved image, daemon, sessions root, evidence sink) | no |
-| `tests/integration/live/test_*.py` | authored/reviewed/dry-run in W3; execute against approved host only in W4 | each case maps to exactly one register row or join | no |
+| `tests/integration/live/test_*.py` **(PLANNED; directory absent at 2026-11-10 review)** | author only after STEP7 independent review, then dry-run/collect locally in W3; execute against approved host only in W4 | each node maps explicitly to one register row or join, with shared evidence referenced by each producer | no |
 | `tests/test_workspace_readiness_integration.py` | local marker/selection/opt-in contract in W3; real clean-copy run only in W4 | explicit `execution_host` case; requires opt-in and real Docker/cgroup preflight before `uv sync` or hook installation | no |
-| `scripts/e2e_live.py` | authored, contract-tested and dry-run in W3; invoked in W4 | external observer; captures evidence and writes immutable run manifest | no |
+| `scripts/e2e_live.py` **(PLANNED; absent at 2026-11-10 review)** | author only after STEP7 independent review, then contract-test/dry-run in W3; invoke in W4 | external observer; captures evidence and writes append-only per-attempt manifest | no |
 
 Rules that make the layer honest:
 
@@ -69,7 +69,7 @@ Rules that make the layer honest:
    (`/srv/first-agent/state/session-log/<run_id>/…`), the Docker API response the driver captured, the
    kernel's own view (`/sys/fs/cgroup/…`), or a sentinel file written by a shim the image executed.
    In-process objects are acceptable only for `unit`-level cases that stay in `tests/`.
-4. **One evidence directory per run**, `notes/evidence/i03-e2e/<run-id>/`, containing: image digest,
+4. **One evidence directory per run**, `notes/evidence/i03-e2e/<attempt-id>/`, keyed by unique attempt ID (not a reused workflow run ID), containing: image digest,
    wheel SHA, daemon version, kernel/cgroup facts, the pytest JUnit XML, the driver manifest, and any
    captured frames/sentinels. Evidence is append-only; a later run adds a directory, never rewrites.
 5. **Cleanup is part of the oracle.** Every case ends with the same assertion: zero containers
@@ -171,22 +171,34 @@ receipt issuer. None of it has met a daemon. These cases are P3/P4 work and may 
 image, the socket and the `cgroup` mount are arranged (§1), and like every case above each one needs its
 negative control in the same file.
 
-The journal is the durable ledger of this system: one append-only record per operation id, `complete` is the
-only writer of a result, and the record — not the reply — is what survives a kill. So the receipt cases assert
-on the **on-host journal files** as well as on the wire reply, and every case names the record it expects.
+**Requested ledger-append scope recommendation (2026-11-10; planning only).** Reuse two separate existing
+runtime-ledger proposals: `L-RCPT-2`/`L-RCPT-6` for supervisor operation records, and `L-ENTRY-4` for the
+managed run binding plus session event rows. They have different authorities and durability contracts, so
+they must not share one count/oracle. The generated project `worklogs/<slug>/ledger.md` is a scaffold with no
+production append path; it is not a live-host target. If runtime appends to that artifact are intended, first
+raise a separate product-contract question rather than infer new behavior from this request. These cases
+remain proposals: this note assigns no row, fixture, host attempt, or result.
+
+The supervisor journal is a per-operation record store, not a physically append-only event stream: it keeps
+one private `op-<request_id>.json` per operation ID and replaces that file as state transitions are committed.
+`complete` is the only writer of a non-null result. The durable record—not the reply—is the recovery oracle.
+Therefore receipt cases inspect the **on-host journal files** as well as the wire reply: one record per
+operation ID, stable completed EXEC bytes during inspect/replay, and the defined restart outcome. Normal
+state transitions may rewrite the same operation file; the acceptance claim is not that its bytes never
+change during the operation lifecycle.
 
 | Case | Arrange | Observe (wire **and** ledger) | Negative control |
 | :--- | :--- | :--- | :--- |
 | **L-RCPT-1** `exec` receipt is true of the host | admitted PROJECT view, real image, real `docker` socket, real `/sys/fs/cgroup` mount; one `printf` and one `false` | `EXITED` with the container's own exit code for both; `terminal_barrier: true` only alongside `cgroup.events` reading `populated 0` for that CID; `duration_ms > 0`; tails ≤ 64 KiB; identity fields equal the view record's tree/plan and the approved profile's digest | point `cgroup_root` at a directory whose `cgroup.events` says `populated 1` → the case must see a refusal (`EXECUTION_UNKNOWN`), never `EXITED` |
-| **L-RCPT-2** `inspect` replays, the ledger does not rewrite | a completed `exec` (L-RCPT-1), then `inspect` twice | both replies are byte-identical to the stored receipt; the **EXEC** record file's hash is unchanged; the two INSPECT operations each appended exactly one record ending `DONE`; the daemon log shows no `GET /containers/<cid>/json` between the two inspects | delete the container between the two inspects → the replay still answers, which is what proves no daemon contact |
+| **L-RCPT-2** `inspect` replays, the completed record does not rewrite | a completed `exec` (L-RCPT-1), then `inspect` twice | both replies are byte-identical to the stored receipt; the **EXEC** record file's hash is unchanged; each INSPECT operation has exactly one per-operation record ending `DONE`; the daemon log shows no `GET /containers/<cid>/json` between the two inspects | delete the container between the two inspects → the replay still answers, which is what proves no daemon contact |
 | **L-RCPT-3** `cancel` before create / during create / during RUN | the three S04 timings, real SIGKILL, daemon access log on | receipt is `CANCELLED` under `op-<cancel request_id>`, never `EXITED`; `exit_code` only when an `exited` was observed; the target record shows `cancel_requested: true` **in the snapshot the driver takes when the kill request arrives**; `populated 0` read after the stop returns | move the intent write after the kill (test build) → the snapshot at kill time shows `cancel_requested: false`, which the case must catch |
 | **L-RCPT-4** a spent budget is final | a command that outlives its `timeout_ms` | `TIMED_OUT`, `exit_code: null`, `terminal_barrier: false`; **zero** post-reply `GET /containers/<cid>/json` in the daemon log; the ledger record ends `DONE` with exactly that receipt | re-enable the post-command observation (test build) → one extra GET appears, which fails the case |
 | **L-RCPT-5** one-shot vs interactive | the same command under a one-shot profile and an interactive one | one-shot requires `populated 0`; interactive returns `EXITED` with `terminal_barrier: false` while the shell lives, and `stop_view` then reports `terminal: true` with the same CID's cgroup empty | create the interactive view *after* the command → the case must fail to arrange (BLOCKED), never PASS on a later cgroup read |
-| **L-RCPT-6** ledger append survives a kill | `kill -9` the supervisor after the command reply but before `complete`; restart | exactly one record per operation id after restart (no duplicates, no second RUN in the daemon log); `inspect` answers `UNKNOWN` or the stored receipt, never a fresh `EXITED` with a new exit code | kill *after* `complete` → `inspect` must replay the stored receipt; if both timings look the same, the case is not observing the boundary and must be rewritten |
+| **L-RCPT-6** per-operation record survives a kill | Externally synchronize `kill -9` after the worker/handler result reaches the supervisor but before `OperationJournal.complete`; restart. Separately kill after `complete` but before the caller-facing reply. | exactly one record per operation ID after restart (no duplicates, no second RUN in the daemon log); after the pre-`complete` kill, `inspect` answers `UNKNOWN` or the stored receipt, never a fresh `EXITED` with a new exit code; after the post-`complete` kill, `inspect` replays the stored receipt | If the driver cannot prove which side of `complete` the kill landed on, mark BLOCKED; if both timing outcomes look the same, the case is not observing the boundary and must be rewritten |
 
 `pty_control` (E280) adds the control plane. Its cases are small but each one has a failure mode that only a
-live shell shows, and two of them are ledger-append cases: INTERRUPT/CLOSE are mutating operations and must
-append exactly one record, while LIST is read-only and must append none.
+live shell shows, and two of them are operation-record cases: INTERRUPT/CLOSE are mutating operations and
+must create exactly one per-operation record, while LIST is read-only and must create none.
 
 | Case | Arrange | Observe (wire **and** ledger) | Negative control |
 | :--- | :--- | :--- | :--- |
@@ -194,9 +206,10 @@ append exactly one record, while LIST is read-only and must append none.
 | **L-PTY-2** INTERRUPT is an ACK, not terminality | a live interactive session with exported state | a real Ctrl-C reaches the pane; the reply carries `{sessions, message}`; a following command still runs in the **same** container id with its environment intact; `cgroup.events` for that CID is still `populated > 0`; the ledger has one DONE record for the interrupt | close the session first (test build) → the interrupt must be refused (`EXECUTION_UNKNOWN`), and the shell must still answer `LIST` |
 | **L-PTY-3** an unknown session never costs the shell | one live shell, an INTERRUPT for a name that was never created | the supervisor refuses `EXECUTION_UNKNOWN`; the daemon log shows **no** attach write for that request; the very next command still succeeds in the same cell; the ledger record for that interrupt ends `UNKNOWN`, never `DONE` | let the raw frame reach the worker (test build) → the cell's attach dies and the following command must fail, which is exactly what the case forbids in production |
 
-Two of these cases (`L-RCPT-2`, `L-RCPT-6`) are the ledger-append cases the session's instruction asked for:
-they assert that the journal gains exactly one record per operation, that a completed command's record is never
-rewritten, and that the replay is served from the record rather than from the daemon.
+The operation-journal portion of the requested coverage is already represented by `L-RCPT-2` and
+`L-RCPT-6`: one durable record per operation ID, no rewrite of a completed EXEC record during inspect, and
+replay from the stored record rather than from the daemon. `L-ENTRY-4` is a separate proposal for the
+session database's run binding and event-row appends; do not merge its SQL oracle with the supervisor journal.
 
 `handoff` (Q85 ruling, E282/CT113) adds one case, and it is the only case in this suite whose arrange step
 needs two real runs. It is P6 work: it cannot be written before SLICE2 STEP6 exists and the controller cutover
@@ -230,7 +243,7 @@ directory; reopen the DB before comparing so the test proves durable state rathe
 | **L-ENTRY-1** managed cell-readiness failure refuses auto-run | Fresh session ID, `FA_AUTO_RUN=1`, no command override; admit the managed new-root provisioning run, then force cell-local readiness to fail; invoke the installed entrypoint | Structured status is `FAILED`; independent host trace shows no host project clone/checkout/configure/readiness command and no `fa run`; no new `.active` publication; a provisional manifest/DB and exactly one run reservation may exist, with the failed run ID durably non-reusable; no workflow `event_log` append. Cleanup may remove only unregistered session-owned state and must not delete supervisor-registered bytes | Rebuilt test image with the refusal branch disabled must expose `fa run` or a forbidden host-side project command; independently verify the tombstone cannot be reserved again. If either observer cannot see its mutant, the oracle is invalid |
 | **L-ENTRY-2** resumed workspace survives cell-readiness refusal | Pre-existing active session/workspace with a user sentinel, DB and one prior run binding; managed cell-local readiness fails during auto-run | Refusal is recorded; workspace/sentinel and existing active pointer remain unchanged; no `fa run` or workflow event append. At most one new provisioning reservation may be added and must remain a non-reusable tombstone; all prior bindings/events remain unchanged | A test build that removes the refusal gate must expose `fa run`; independently attempt reservation reuse and require rejection. A resumed DB delta is valid only for the reserved tombstone |
 | **L-ENTRY-3** explicit override remains diagnostic-only | Fresh managed clone, readiness failure, `FA_AUTO_RUN=1`, explicit harmless command override | Override `execve`, exit, and output are observed; trace has no `SessionManager provision` or `fa run`; no new manifest/session DB, run binding, or event append. The existing shell behavior may publish `.active`; do not use its presence as proof of a logical run | Rebuilt test image that removes the no-override provision guard must expose `SessionManager provision` in the process trace or leave a durable provision side effect; the test must fail even if the explicit command itself exits zero |
-| **L-ENTRY-4** successful managed auto-run appends once | Valid readiness; one fresh ID; a deterministic approved provider/profile that completes a minimal task; invoke managed auto-run once | Trace shows exactly one `SessionManager provision` and one `fa run`; exactly one session manifest/DB and one new `run_binding:<run_id>`; `event_log` has a nonempty set of rows for that run, unique `event_id`s, all bound to the expected session/run; rows survive process exit/reopen; a second read/replay observation adds no rows and does not start another run | Disable/replace the production append/binding edge in a test build; the independent SQL snapshot must miss the expected binding/event rows and fail. Do not mutate the approved deployment |
+| **L-ENTRY-4** successful managed auto-run appends once | Valid readiness; one fresh ID; a deterministic approved provider/profile that completes a minimal task; invoke managed auto-run once | Trace shows exactly one `SessionManager provision` and one `fa run`; exactly one session manifest/DB. Snapshot all new `run_binding:<run_id>` keys separately from `event_log` rows: under the current source path, expect three distinct session-bound bindings—entrypoint provision/readiness, the CLI attach/readiness admission, and the task execution admission. Exactly one new run ID is event-bearing: its binding matches the expected session/run and its rows have unique `event_id`s, including exactly one `user_msg` and one `run_started`; the setup/readiness bindings carry no task events. Rows survive process exit and DB reopen; a read-only post-reopen observation leaves both the event-row and binding-key snapshots unchanged and starts no second run. If the admission topology changes, update this expected count from a source trace before running the case | In separate test builds, remove the `EventLog`→`SessionDatabase` append and the `SessionManager.begin_run`→`reserve_run_binding` edge; the independent SQL snapshot must miss the expected task rows or execution binding and fail. Do not mutate the approved deployment |
 | **L-ENTRY-5** unavailable managed backend prevents host project effects | Fresh and resumed managed auto-run cases, `FA_AUTO_RUN=1`, no command override; test absent execution config and, separately, valid config with an unavailable supervisor before entrypoint start | Structured failure; independent process trace shows no host project clone/checkout/configure/readiness command and no `fa run` or new `.active` publication. With absent config, fail before lifecycle state. If the configured-but-unavailable case has already reserved a run, allow only a provisional non-active manifest/DB plus one durable non-reusable tombstone; no workflow `event_log` append. Resumed workspace/manifest/prior DB rows remain unchanged apart from that reservation. Never delete supervisor-registered bytes | Rebuilt test image with the backend gate/injection removed must expose the first forbidden host project command or `fa run`; independently verify tombstone non-reuse. If the observer cannot distinguish host commands from managed EXEC or cannot see the mutant, mark BLOCKED, not PASS |
 | **L-ENTRY-6** prewarmed immutable environment is immediately usable | Fresh self-repo session and resumed prepared session with a functioning managed EXEC backend. Self-repo uses an exact lock/runtime/profile/image artifact; empty clean seed uses the separate operator-prewarmed First-Agent baseline artifact; if the created root has its own `pyproject.toml`/`uv.lock`, require an exact-match artifact instead. | In the same admitted provisioning run, managed readiness reports `status=ready`, `reason_code=ready_managed_artifact`, `repaired=false`; `pytest --version && mutmut --version` succeeds inside its PROVISIONING view; artifact manifest/fingerprint and cache bytes remain unchanged. There is no per-session environment build, `uv sync`, host `.venv` fallback, or provider/LLM call before readiness. Preserve the accepted one-second immediate-tool target as a separately timed command observation. | Remove/mismatch the selected artifact in a rebuilt test image: readiness must fail closed as `managed_artifact_probe_failed` (with only Q118-bounded provisional state after admission), without a session build or host fallback; the mutation must miss the ready/tool oracle. If traces cannot distinguish artifact reuse from a build or identify provider calls, mark BLOCKED, not PASS |
 
@@ -275,6 +288,32 @@ directory; reopen the DB before comparing so the test proves durable state rathe
 - It does not add a second harness: use `pytest`, the registered markers and this in-repo external
   driver. The complete harness/fixture/test package must be reviewable and dry-run locally before W3
   closes; the approved-host image build/deploy starts W4.
+
+### 2026-11-10 review correction: a collected host lane is not the final live suite
+
+`tests/integration/` currently has five case files and **seven** host-marked nodes;
+`tests/test_workspace_readiness_integration.py` adds one. Their eight-node
+selection is only a local marker/preflight contract and does **not** implement
+all 3 I01 and 35 I03 master rows. The `tests/integration/live/` case package,
+`e2e/I03/fixtures/` and `scripts/e2e_live.py` named here remain proposed.
+Do not turn 8 collected nodes into 38 PASS rows. Before W3 close the independent
+STEP7 reviewer must approve the case-to-nodeid/command/evidence matrix and
+negative controls; only then implement STEP8 fixtures/observer and prove local
+fail-closed selection, owner-scoped cleanup, append-only attempt identity and
+zero-execution/missing-prerequisite failure. Repeat review after the V2 witness
+is added to the final suite. If any required row lacks a runnable mapped node
+or explicit shared producer evidence, the suite is not frozen and W4 is NO-GO.
+
+Freeze a manifest containing: approved source SHA, exact host command vector,
+case ID(s), nodeid, image/config/profile digest checks, workspace/session/run
+identity, authoritative observer path, expected artifacts, negative-control
+mutation in an isolated disposable image (never production), owner cleanup and
+stop/rollback condition. The host runner must compare actual collected nodeids
+to this manifest before side effects; missing, extra/unreviewed, skipped,
+xfail, setup/collection error, or zero selected nodes is not PASS. Run each
+attempt in a fresh unique evidence directory, preserve failures for review,
+and do not rewrite the original attempt on retry. Do not stage fixture edits
+on the host after image freeze.
 
 ## 8. W4 image-build/deploy prerequisite (frozen runbook requirement)
 

@@ -1315,20 +1315,21 @@ def test_nested_v1_peer_and_stale_listing_fail_closed_before_coder(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """SLICE5 STEP5: v1-only peer and unknown/stale selection fail closed before coder with parent refreshed."""
+    """SLICE5 STEP5: unavailable v1 listing is not an empty inventory; stale selection also fails before coder."""
     _install_bundle(site.source, include_tests=True)
     models, service_path, _ = _setup_managed_site(site, tmp_path, monkeypatch)
     _wire_session_contexts(site, monkeypatch, session_id="s-neg5", run_id="run-chat-neg5")
     _watch_managed_child_host_execution(monkeypatch)
 
     coder_calls = 0
+    child_planner_calls = 0
     chat_turns = 0
     tool_errors: list[str] = []
 
     def fake_request(
         _chain: Any, request: Any, *, logical_call_id: str | None = None
     ) -> tuple[ResponseInfo, str, list[Any]]:
-        nonlocal coder_calls, chat_turns
+        nonlocal coder_calls, child_planner_calls, chat_turns
         tools = _tool_names(request)
         tag = logical_call_id or "neg5"
         for msg in request.messages:
@@ -1347,6 +1348,7 @@ def test_nested_v1_peer_and_stale_listing_fail_closed_before_coder(
         if "fs_run_bash" in tools:
             coder_calls += 1
             return _stop_reply("should not run", tag)
+        child_planner_calls += 1
         return _stop_reply(
             json.dumps({"kind": "SELECT_EXISTING", "project_slug": "missing-stale-project", "increment_id": "I01"}),
             tag,
@@ -1375,17 +1377,24 @@ def test_nested_v1_peer_and_stale_listing_fail_closed_before_coder(
 
     assert exit_code == 0
     assert coder_calls == 0
+    assert child_planner_calls == 1
     assert site.metadata({"workspace_id": managed_list[0].binding.workspace_id})["status"] == "AVAILABLE"
     assert any('"status": "FAILED"' in item for item in tool_errors)
 
-    # Also prove v1-only peer (protocol_version=1 without v2 operations) fails closed before coder.
+    # A v1-only peer makes the pinned listing unavailable. That is not an empty
+    # inventory: acquisition must stop before invoking the child's planner.
     chat_turns = 0
     coder_calls = 0
+    child_planner_calls = 0
+    v1_health_calls = 0
+    tool_error_start = len(tool_errors)
     _wire_session_contexts(site, monkeypatch, session_id="s-v1only", run_id="run-chat-v1only")
     orig_client_request = ExecutionClient.request
 
     def v1_only_health(self: ExecutionClient, operation: Operation, **kwargs: Any) -> dict[str, Any]:
+        nonlocal v1_health_calls
         if operation is Operation.HEALTH and kwargs.get("protocol_version") == 2:
+            v1_health_calls += 1
             return {"ready": True, "protocol_version": 1, "profile_set_sha256": "0" * 64}
         return orig_client_request(self, operation, **kwargs)
 
@@ -1394,5 +1403,9 @@ def test_nested_v1_peer_and_stale_listing_fail_closed_before_coder(
         exit_code_v1 = cli._cmd_run(args, secrets=SecretStore({"K": "sk-test-live"}))
 
     assert exit_code_v1 == 0
+    assert v1_health_calls >= 1
+    assert child_planner_calls == 0
     assert coder_calls == 0
+    v1_tool_results = tool_errors[tool_error_start:]
+    assert any("blocked_reason=plan-ref/acquisition-unavailable" in item for item in v1_tool_results)
     assert site.metadata({"workspace_id": managed_list[-1].binding.workspace_id})["status"] == "AVAILABLE"

@@ -61,6 +61,13 @@ _VALID_INCREMENT = (
     "TESTS: tests/test_admission_v2_provenance.py\n"
 )
 _INVALID_INCREMENT = "## SLICE1: Foundation\nCONTRACTS:\n  CT1 [CONSTRAINT]: initial boundary holds.\n"
+_KILL_INCREMENT = _VALID_INCREMENT.replace(
+    "TESTS:",
+    "  CT2 [FUNCTIONAL]: bounded repair must validate the directive.\n"
+    "    kill: neutralise src/fa/inner_loop/slice_verification.py::_run_one\nTESTS:",
+)
+_MALFORMED_KILL_INCREMENT = _KILL_INCREMENT.replace("::_run_one", " missing_symbol")
+_REPAIRED_KILL_INCREMENT = _KILL_INCREMENT
 
 
 def _service_document(site: Site) -> dict[str, Any]:
@@ -262,6 +269,79 @@ def test_q150a_top_level_managed_run_keeps_v1_while_child_emits_acquiring_then_v
             finally:
                 managed.handoff_to(NamespaceRef("session-1", "parent-run-1"))
                 managed.close()
+
+
+@pytest.mark.parametrize("repair_allowed", [True, False])
+def test_ct52_malformed_kill_directive_requires_bounded_repair_before_coder(
+    site: Site, tmp_path: Path, repair_allowed: bool
+) -> None:
+    """C1: CT52 diagnostic reaches admission; only a validated repair can admit coder."""
+    _write_project_files(site.source, "demo-project", _MALFORMED_KILL_INCREMENT)
+    repaired_files = render_bundle(
+        "demo-project", "foundation", _VALID_ROADMAP, _REPAIRED_KILL_INCREMENT, created="2026-11-05"
+    )
+    repaired_body = repaired_files["worklogs/demo-project/increments/increment-01-foundation.md"].decode("utf-8")
+    stages: list[str] = []
+    with _managed_child_env(site, tmp_path) as (managed, publisher, child_ctx, yaml_path):
+        initial_revision = managed.current_revision_id
+        selection = json.dumps({"kind": "SELECT_EXISTING", "project_slug": "demo-project", "increment_id": "I01"})
+
+        def stage_fn(args: argparse.Namespace, **kwargs: Any) -> int:
+            role = str(getattr(args, "role", ""))
+            dispatch: PlannerDispatch | None = kwargs.get("planner_dispatch")
+            sink = kwargs.get("outcome_sink")
+            if role == "planner":
+                assert dispatch is not None
+                stages.append(dispatch.kind.value)
+                if dispatch.kind == PlannerDispatchKind.ADMISSION_REPAIR:
+                    assert repair_allowed and dispatch.candidate_target is not None
+                    (site.source / dispatch.candidate_target).write_text(repaired_body, encoding="utf-8")
+                    if isinstance(sink, list):
+                        sink.append(SessionOutcome(0, "stopped_by_llm", 1, "corrected"))
+                elif isinstance(sink, list):
+                    sink.append(SessionOutcome(0, "stopped_by_llm", 1, selection))
+            elif role == "eval":
+                return _eval_pass_stage(sink)
+            elif role == "coder":
+                stages.append("coder")
+                assert repair_allowed
+                assert _read_admission(child_ctx.run_log_dir, child_ctx.run_id)["status"] == "ADMITTED"
+            return 0
+
+        code, state = run_workflow(
+            roles=["planner", "coder"],
+            task="repair directive",
+            per_role_task={},
+            mode="adaptive",
+            max_repairs=0,
+            max_replans=1 if repair_allowed else 0,
+            run_id=child_ctx.run_id,
+            config=yaml_path,
+            workspace=site.source,
+            max_turns=2,
+            output_mode="quiet",
+            run_stage_fn=stage_fn,
+            run_context=child_ctx,
+            plan_publisher=publisher,
+            managed_execution=managed,
+            acquisition=AcquisitionSubstrateRequest(),
+        )
+        record = _read_admission(child_ctx.run_log_dir, child_ctx.run_id)
+        assert validate_admission_record(record, run_id=child_ctx.run_id) == record
+        assert record["attempts"][0]["route"] == "RETRY"
+        assert any(d["rule"] == "kill-directive-malformed" for d in record["attempts"][0]["diagnostics"])
+        if repair_allowed:
+            assert code == 0 and state is not None and state.status == "DONE"
+            assert stages == ["ACQUISITION", "ADMISSION_REPAIR", "coder"]
+            assert record["status"] == "ADMITTED"
+            assert record["attempts"][-1]["route"] == "ADMITTED"
+            assert record["attempts"][-1]["output_revision"] != initial_revision
+        else:
+            assert code != 0 and state is not None and state.status == "FAILED"
+            assert stages == ["ACQUISITION"]
+            assert record["status"] == "BLOCKED"
+            assert record["attempts"][-1]["route"] == "BLOCKED"
+            assert record["attempts"][-1]["output_revision"] == initial_revision
 
 
 def test_v2_existing_selection_repair_records_fail_only_retry_and_published_receipts(

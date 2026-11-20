@@ -2575,16 +2575,21 @@ def _pinned_acquisition_substrate(ctx: WorkflowContext) -> Iterator[AcquisitionS
         grant=grant,
         cache_dir=ctx.workspace / ".fa" / "acquisition-read-cache",
     )
-    names: tuple[str, ...] = ()
-    incomplete: tuple[str, ...] = ()
     try:
-        listed = port.list_project_names()
-        names = listed.projects
-        incomplete = listed.incomplete
-    except WorkspacePortError as error:
-        logger.warning("managed acquisition: project list refused [%s] (run=%s)", error.code, ctx.run_id)
-    try:
-        yield AcquisitionSubstrate(port=port, project_names=names, incomplete_names=incomplete)
+        try:
+            listed = port.list_project_names()
+        except WorkspacePortError as error:
+            # A failed listing is not evidence that the pinned workspace is empty.
+            # Refuse acquisition before the planner can select/bootstrap from a
+            # fabricated empty inventory; the pinned view is still stopped below.
+            logger.warning("managed acquisition: project list refused [%s] (run=%s)", error.code, ctx.run_id)
+            yield None
+            return
+        yield AcquisitionSubstrate(
+            port=port,
+            project_names=listed.projects,
+            incomplete_names=listed.incomplete,
+        )
     finally:
         if not managed.client.stop_view(managed.binding.namespace, view=view, grant=grant, deadline=deadline):
             logger.error(

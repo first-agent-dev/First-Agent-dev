@@ -114,3 +114,52 @@ def test_required_host_run_refuses_empty_execution_host_selection() -> None:
     assert completed.returncode == int(pytest.ExitCode.USAGE_ERROR), completed.stdout + completed.stderr
     assert "FA_REQUIRE_EXECUTION_HOST=1" in completed.stdout + completed.stderr
     assert "no execution_host test was selected" in completed.stdout + completed.stderr
+
+
+def test_current_host_substrate_collects_all_eight_nodes_without_running_them() -> None:
+    """S4P4/S6P5: strict host collection is inventory, never host acceptance."""
+    paths = [
+        "tests/integration/test_execution_boundary.py",
+        "tests/integration/test_execution_closure.py",
+        "tests/integration/test_nested_workflow.py",
+        "tests/integration/test_publication_recovery.py",
+        "tests/integration/test_workspace_views.py",
+        "tests/test_workspace_readiness_integration.py",
+    ]
+    env = os.environ.copy()
+    env["FA_REQUIRE_EXECUTION_HOST"] = "1"
+    completed = subprocess.run(
+        [sys.executable, "-m", "pytest", "--collect-only", "-q", "--strict-markers", *paths, "-m", "execution_host"],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        check=False,
+        text=True,
+        timeout=45,
+    )
+    assert completed.returncode == int(pytest.ExitCode.OK), completed.stdout + completed.stderr
+    nodeids = [line for line in completed.stdout.splitlines() if line.startswith("tests/") and "::" in line]
+    assert len(nodeids) == len(set(nodeids)) == 8, completed.stdout
+    assert {path.split("::", 1)[0] for path in nodeids} == set(paths)
+    assert sum("test_stopping_a_view_kills_its_background_descendant" in node for node in nodeids) == 1
+    assert "8 tests collected" in completed.stdout
+    assert "passed" not in completed.stdout
+
+
+def test_preapproval_host_sheet_cannot_be_mistaken_for_an_approved_suite() -> None:
+    sheet = (
+        REPO_ROOT
+        / "worklogs/planning-topology-and-executable-contracts-loop/notes"
+        / "i03-s6p5-host-run-sheet-preapproval-2026-11-10.md"
+    ).read_text(encoding="utf-8")
+    assert "BLOCKED / DRAFT; NOT AUTHORIZED FOR EXECUTION" in sheet
+    assert "UNKNOWN" in sheet and "W4 TO CAPTURE" in sheet
+    assert "1,342,177,280" in sheet and "view_profile_id" in sheet and "read_only_profile_id" in sheet
+    assert "AUTO_STASH=0 SKIP_TESTS=1 SKIP_UV_SYNC=1 PRUNE=0" in sheet
+    assert "FA_REQUIRE_EXECUTION_HOST=1" in sheet and "--collect-only" in sheet
+    assert "L-RCPT-2/6" in sheet and "L-ENTRY-4" in sheet
+    assert "three distinct admitted `RunContext` bindings" in sheet
+    assert "only the execution run has task `event_log` rows" in sheet
+    assert "different, named" in sheet and "STEP7" in sheet and "STEP8" in sheet
+    assert "tests/integration/live/" in sheet and "absent" in sheet
+    assert "Do not run any host command from this draft" in sheet

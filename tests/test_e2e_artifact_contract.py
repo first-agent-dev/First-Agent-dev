@@ -481,7 +481,11 @@ def test_coverage_mapping_covers_every_frozen_baseline_id() -> None:
 
     assert baseline_ids == frozen_mapping_ids
     assert len(baseline_ids) == len(baseline["records"]) == 125
-    assert len(mapping["records"]) == 126
+    assert len(mapping["records"]) == 127
+    assert {record["baseline_id"] for record in mapping["records"] if record["baseline_id"].startswith("NEW:")} == {
+        "NEW:Q108-B-managed-inventory",
+        "NEW:Q146-B-list-projects",
+    }
     assert all(record["coverage_case_ids"] for record in mapping["records"])
     assert all(record["current_producer_keys"] for record in mapping["records"])
     assert mapping["counts"]["frozen_producer_keys"] == 125
@@ -489,30 +493,68 @@ def test_coverage_mapping_covers_every_frozen_baseline_id() -> None:
     assert any("successor_case_ids" in rule for rule in mapping["mapping_policy"])
 
 
-def test_q108_new_producer_is_registered_and_explicitly_shared_with_s08() -> None:
+def test_new_producers_are_registered_and_explicitly_shared_with_s08() -> None:
     baseline = _producer_baseline_document()
     mapping = _producer_coverage_document()
-    producer_key = "managed_inventory.inventory_project_artifacts"
-    new_mapping = next(record for record in mapping["records"] if record["baseline_id"].startswith("NEW:"))
-    register_rows = [row for row in coverage_checker._parse_register(REGISTER) if row["producer_key"] == producer_key]
+    q108_key = "managed_inventory.inventory_project_artifacts"
+    q146_key = "WorkspaceAuthority.list_projects"
+    new_mappings = {
+        record["baseline_id"]: record for record in mapping["records"] if record["baseline_id"].startswith("NEW:")
+    }
+    register_rows = coverage_checker._parse_register(REGISTER)
+    q108_rows = [row for row in register_rows if row["producer_key"] == q108_key]
+    q146_rows = [row for row in register_rows if row["producer_key"] == q146_key]
+    s08_rows = [row for row in register_rows if row["producer_key"] == "I03-LIVE-S08" and row["kind"] == "join"]
 
-    assert new_mapping == {
-        "baseline_id": "NEW:Q108-B-managed-inventory",
-        "producer_key": None,
-        "current_producer_keys": [producer_key],
-        "case_id": "I03-LIVE-S08",
-        "coverage_case_ids": ["I03-LIVE-S08"],
-        "successor_case_ids": [],
-        "mapping_kind": "new-producer",
+    assert new_mappings == {
+        "NEW:Q108-B-managed-inventory": {
+            "baseline_id": "NEW:Q108-B-managed-inventory",
+            "producer_key": None,
+            "current_producer_keys": [q108_key],
+            "case_id": "I03-LIVE-S08",
+            "coverage_case_ids": ["I03-LIVE-S08"],
+            "successor_case_ids": [],
+            "mapping_kind": "new-producer",
+        },
+        "NEW:Q146-B-list-projects": {
+            "baseline_id": "NEW:Q146-B-list-projects",
+            "producer_key": None,
+            "current_producer_keys": [q146_key],
+            "case_id": "I03-LIVE-S08",
+            "coverage_case_ids": ["I03-LIVE-S08"],
+            "successor_case_ids": [],
+            "mapping_kind": "new-producer",
+        },
     }
     assert mapping["shared_case_ids"] == ["I03-LIVE-S06", "I03-LIVE-S08"]
     assert len(baseline["records"]) == mapping["counts"]["frozen_producer_keys"] == 125
-    assert len(register_rows) == 1
-    assert register_rows[0]["kind"] == "producer"
-    assert "Q108-B" in register_rows[0]["section"]
-    oracle = register_rows[0]["values"][1]
-    assert all(term in oracle for term in ("invoke_workflow", "LIST_PROJECT_ARTIFACTS", "READ_FILE", "before coder"))
-    assert coverage_checker.check_producer_coverage(REPO_ROOT)["unique_producers"] == 126
+    assert len(q108_rows) == len(q146_rows) == len(s08_rows) == 1
+    assert q108_rows[0]["kind"] == q146_rows[0]["kind"] == "producer"
+    assert "Q108-B" in q108_rows[0]["section"]
+    assert "Q146/B" in q146_rows[0]["section"]
+    q108_oracle = q108_rows[0]["values"][1]
+    q146_oracle = q146_rows[0]["values"][1]
+    s08_oracle = s08_rows[0]["values"][2]
+    assert all(
+        term in q108_oracle for term in ("invoke_workflow", "LIST_PROJECT_ARTIFACTS", "READ_FILE", "before coder")
+    )
+    assert all(
+        term in q146_oracle
+        for term in (
+            "LIST_PROJECTS",
+            "projects",
+            "incomplete",
+            "acquisition-unavailable",
+            "LIST_PROJECT_ARTIFACTS",
+            "READ_FILE",
+            "same S08 child pin",
+            "before coder",
+        )
+    )
+    # The main S08 source row is frozen in the 125-key baseline; Q146's NEW row
+    # explicitly extends that shared case rather than rewriting the retained row.
+    assert all(term in s08_oracle for term in ("CONTINUE_EXISTING", "Q66", "Q59", "Q56/Q73", "Q74"))
+    assert coverage_checker.check_producer_coverage(REPO_ROOT)["unique_producers"] == 127
 
 
 def test_coverage_checker_compares_every_unique_producer_case(tmp_path: Path) -> None:
@@ -600,7 +642,7 @@ def test_checker_requires_explicit_successor_for_a_renamed_producer(tmp_path: Pa
     item["coverage_case_ids"] = ["I02-LIVE-001", "I03-LIVE-S08"]
     mapping["shared_case_ids"] = ["I03-LIVE-S06", "I03-LIVE-S08"]
     coverage_path.write_text(json.dumps(mapping), encoding="utf-8")
-    assert coverage_checker.check_producer_coverage(tmp_path)["unique_producers"] == 126
+    assert coverage_checker.check_producer_coverage(tmp_path)["unique_producers"] == 127
 
 
 def test_checker_entrypoint_calls_producer_coverage_and_reports_counts(
@@ -611,7 +653,7 @@ def test_checker_entrypoint_calls_producer_coverage_and_reports_counts(
     def count_coverage(root: Path) -> dict[str, int]:
         calls.append(root)
         return {
-            "unique_producers": 126,
+            "unique_producers": 127,
             "legacy_cases": 89,
             "i03_cases": 35,
             "exact_duplicate_keys": 2,
@@ -625,7 +667,7 @@ def test_checker_entrypoint_calls_producer_coverage_and_reports_counts(
     assert coverage_checker.main(["--root", str(root)]) == 0
     assert calls == [root]
     output = capsys.readouterr().out
-    assert "126 I02-origin/I03 producers" in output
+    assert "127 I02-origin/I03 producers" in output
     assert "I01 42 CTs/7 deferred obligations across 3 cases" in output
     assert "no live PASS inferred" in output
 
@@ -640,7 +682,7 @@ def test_coverage_checker_cli_executes_and_reports_new_producer_count() -> None:
     )
     assert completed.returncode == 0, completed.stderr
     assert "I01 42 CTs/7 deferred obligations across 3 cases" in completed.stdout
-    assert "126 I02-origin/I03 producers" in completed.stdout
+    assert "127 I02-origin/I03 producers" in completed.stdout
     assert "no live PASS inferred" in completed.stdout
 
 
@@ -700,3 +742,38 @@ def test_i03_implementation_handoffs_are_source_grounded_and_proposals_labeled(
             assert link in section, link
         assert "PLANNED / UNEXECUTED" in section
         assert "NOT RUN" in section
+
+
+@pytest.mark.parametrize("authority", ["mapping", "index", "register"])
+def test_reviewed_oracle_revisions_fail_closed_on_missing_authority(tmp_path: Path, authority: str) -> None:
+    for relative in COVERAGE_SOURCE_PATHS:
+        target = tmp_path / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(REPO_ROOT / relative, target)
+    mapping_path = tmp_path / coverage_checker.COVERAGE_REL
+    mapping = json.loads(mapping_path.read_text(encoding="utf-8"))
+    if authority == "mapping":
+        mapping["oracle_revisions"].pop()
+        mapping_path.write_text(json.dumps(mapping), encoding="utf-8")
+    else:
+        path = tmp_path / (coverage_checker.INDEX_REL if authority == "index" else coverage_checker.REGISTER_REL)
+        text = path.read_text(encoding="utf-8")
+        revision = mapping["oracle_revisions"][0]
+        line = f"- `{revision['case_id']}` — {revision['fixture']} — {revision['oracle']} — PLANNED / NOT RUN"
+        assert text.count(line) == 1
+        path.write_text(text.replace(line, ""), encoding="utf-8")
+    with pytest.raises(coverage_checker.CoverageError, match="reviewed oracle revision"):
+        coverage_checker.check_producer_coverage(tmp_path)
+
+
+def test_reviewed_oracle_rejects_legacy_shell_error_claim(tmp_path: Path) -> None:
+    for relative in COVERAGE_SOURCE_PATHS:
+        target = tmp_path / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(REPO_ROOT / relative, target)
+    mapping_path = tmp_path / coverage_checker.COVERAGE_REL
+    mapping = json.loads(mapping_path.read_text(encoding="utf-8"))
+    mapping["oracle_revisions"][0]["oracle"] = "ERROR with exit_code=None for a missing child binary"
+    mapping_path.write_text(json.dumps(mapping), encoding="utf-8")
+    with pytest.raises(coverage_checker.CoverageError, match="reviewed oracle"):
+        coverage_checker.check_producer_coverage(tmp_path)

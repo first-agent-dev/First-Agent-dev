@@ -1718,11 +1718,15 @@ def test_fa_run_session_manager_creates_and_attaches_with_fresh_run_ids(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """C2 producer proof: real ``_cmd_run`` uses SessionManager + one session DB.
+    """C1/C2: real CLI/loop/manager use SQLite for setup and execution runs.
 
-    Matrix: default new session → explicit attach. Kill-check: removing the
-    SessionManager call from ``_cmd_run`` must make the manifest/DB assertions
-    fail. Provider I/O is deterministic and mocked at Transport only.
+    Matrix: new-session CLI run → explicit attach. Each ``_cmd_run`` admits one
+    managed setup/readiness RunContext and one task RunContext; only the task
+    context appends loop events. The SQL database is authoritative: JSONL is
+    never used to discover runs or satisfy event assertions. Provider I/O is
+    deterministic at the Transport seam. Producer/EDGE kill-checks remove the
+    ``user_msg``/``run_started`` producers, CLI DB injection, EventLog SQL
+    append/insert, and SessionManager run-binding reservation/edge.
     """
     config = tmp_path / "models.yaml"
     config.write_text(_FAKE_MODELS_YAML, encoding="utf-8")
@@ -1739,30 +1743,90 @@ def test_fa_run_session_manager_creates_and_attaches_with_fresh_run_ids(
 
     manifests = sorted((home / ".fa" / "sessions").glob("*/manifest.json"))
     assert len(manifests) == 1
-    session_id = json.loads(manifests[0].read_text(encoding="utf-8"))["session_id"]
-    run_dirs = sorted(
-        d for d in (home / ".fa" / "session-log").iterdir() if d.is_dir() and (d / "events.jsonl").is_file()
-    )
-    assert len(run_dirs) == 1
-    first_run_id = run_dirs[0].name
+    manifest = json.loads(manifests[0].read_text(encoding="utf-8"))
+    session_id = str(manifest["session_id"])
+    db_path = Path(str(manifest["session_db_path"]))
+    db = SessionDatabase.open_existing(db_path, session_id=session_id)
+
+    bindings_after_first = set(db.list_run_ids())
+    assert len(bindings_after_first) == 2  # setup/readiness + task execution
+    rows_after_first = db.read_event_rows()
+    first_event_run_ids = {str(row["run_id"]) for row in rows_after_first}
+    assert len(first_event_run_ids) == 1
+    first_run_id = next(iter(first_event_run_ids))
+    first_rows = db.read_event_rows(run_id=first_run_id)
+    assert first_rows == rows_after_first
+    assert first_run_id in bindings_after_first
+    first_setup_ids = bindings_after_first - {first_run_id}
+    assert len(first_setup_ids) == 1
+    first_setup_id = next(iter(first_setup_ids))
+    assert db.read_event_rows(run_id=first_setup_id) == ()
+
+    for run_id in bindings_after_first:
+        binding = db.get_run_binding(run_id)
+        assert binding is not None
+        assert binding["run_id"] == run_id
+        assert binding["session_id"] == session_id
 
     second_args = _make_run_args(workspace=tmp_path, config=config, run_id="")
     second_args.session_id = session_id
     second_args.resume = False
+    bindings_before_second = set(db.list_run_ids())
+    rows_before_second = db.read_event_rows()
+    count_before_second = db.event_count()
+    assert bindings_before_second == bindings_after_first
+    assert rows_before_second == rows_after_first
     assert _cmd_run(second_args, transport=_ScriptedTransport([_stop_body("second")]), secrets=_TEST_SECRETS) == 0
 
-    run_dirs = sorted(
-        d for d in (home / ".fa" / "session-log").iterdir() if d.is_dir() and (d / "events.jsonl").is_file()
-    )
-    assert len(run_dirs) == 2
-    second_run_id = next(d.name for d in run_dirs if d.name != first_run_id)
-    assert second_run_id != first_run_id
-
-    db_path = home / ".fa" / "sessions" / session_id / "session.db"
+    # A fresh authority handle after the second CLI run observes committed SQLite state.
     db = SessionDatabase.open_existing(db_path, session_id=session_id)
-    assert db.read_event_rows(run_id=first_run_id)
-    assert db.read_event_rows(run_id=second_run_id)
-    assert all(row["session_id"] == session_id for row in db.read_event_rows())
+    bindings_after_second = set(db.list_run_ids())
+    assert len(bindings_after_second) == 4
+    new_binding_ids = bindings_after_second - bindings_before_second
+    assert len(new_binding_ids) == 2  # attach/readiness + task execution
+
+    all_rows = db.read_event_rows()
+    event_run_ids = {str(row["run_id"]) for row in all_rows}
+    second_event_run_ids = event_run_ids - {first_run_id}
+    assert len(second_event_run_ids) == 1
+    second_run_id = next(iter(second_event_run_ids))
+    assert event_run_ids == {first_run_id, second_run_id}
+    assert second_run_id in new_binding_ids
+    second_setup_ids = new_binding_ids - {second_run_id}
+    assert len(second_setup_ids) == 1
+    second_setup_id = next(iter(second_setup_ids))
+    assert db.read_event_rows(run_id=second_setup_id) == ()
+
+    first_rows_after = db.read_event_rows(run_id=first_run_id)
+    second_rows = db.read_event_rows(run_id=second_run_id)
+    assert first_rows_after == first_rows, "a later run must not rewrite prior run events"
+    for run_id, rows in ((first_run_id, first_rows_after), (second_run_id, second_rows)):
+        assert rows
+        assert all(row["session_id"] == session_id and row["run_id"] == run_id for row in rows)
+        event_ids = [row["event_id"] for row in rows]
+        assert len(event_ids) == len(set(event_ids))
+        kinds = [row["kind"] for row in rows]
+        assert kinds.count("user_msg") == 1
+        assert kinds.count("run_started") == 1
+
+    for run_id in bindings_after_second:
+        binding = db.get_run_binding(run_id)
+        assert binding is not None
+        assert binding["run_id"] == run_id
+        assert binding["session_id"] == session_id
+
+    all_event_ids = [row["event_id"] for row in all_rows]
+    assert len(all_event_ids) == len(set(all_event_ids))
+    assert all(row["session_id"] == session_id for row in all_rows)
+    assert all(row["run_id"] in bindings_after_second for row in all_rows)
+    assert len(all_rows) > len(rows_before_second)
+    count_after_second = db.event_count()
+    assert count_after_second == len(all_rows) > count_before_second
+
+    # Read-only SQL observations leave both authorities unchanged and start no run.
+    assert db.read_event_rows() == all_rows
+    assert set(db.list_run_ids()) == bindings_after_second
+    assert db.event_count() == count_after_second
 
 
 def test_managed_readiness_failure_leaves_tombstone_before_provider_or_workflow_events(

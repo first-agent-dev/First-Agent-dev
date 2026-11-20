@@ -1,6 +1,7 @@
 # W3 design draft: planner-owned acceptance custody and exact kill attribution
 
-**Date:** 2026-11-10  
+**Date:** 2026-11-10
+
 **Status:** DESIGN DIRECTION RATIFIED — operator selected artifact C and the Hollow-Facade, sealed-oracle, and honest pre-code-gate controls on 2026-11-10. Detailed implementation and production evidence remain open; this is not yet an ADR or implementation evidence.
 
 **Operator amendment (2026-11-15; timing/scope and ID clarification).** The new plan schema and acceptance-custody path are to be introduced and exercised within I03, through the linked new-format refactor-slice plan and a fresh-project workflow proof. The existing I03 parent plan is not migrated or used as a new-schema conformance fixture. The delivered new production workflow must reject the old plan schema and must not retain a compatibility parser or fallback. The new semantic IDs are `INV + CT + TEST`, with optional formal `SCN` scenario analysis linking to `CT-ID[]` (TESTs are derived through CT→TEST); one invariant may link to multiple contracts, each CT has exactly one primary INV, each `TEST-ID` belongs to exactly one `CT-ID`, each TEST-ID resolves to exactly one collected nodeid, and one contract may have multiple tests. The exact kill-attribution relation remains `kill target → one CT → one TEST-ID/nodeid`. This supersedes the earlier “post-I03” timing wording only; it does not change artifact C, visibility mode A, the isolated immutable-payload fallback, exact kill attribution, or the evidence boundaries below.
