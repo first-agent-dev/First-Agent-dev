@@ -7,6 +7,7 @@ import json
 import os
 import stat
 import subprocess
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -49,7 +50,7 @@ def expected_identity(source: Path) -> dict[str, Any]:
     }
 
 
-def fake_docker(source: Path, calls: list[list[str]]):
+def fake_docker(source: Path, calls: list[list[str]]) -> Callable[..., subprocess.CompletedProcess[str]]:
     def run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
         calls.append(argv)
         assert kwargs["check"] is False

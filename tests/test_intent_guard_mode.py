@@ -61,7 +61,7 @@ def test_run_hook_registry_never_registers_intent_guard(tmp_path: Path) -> None:
         run_log_dir=tmp_path,
         output_bus_ref=[],
     )
-    registered = [hook for chain in hooks._chains.values() for hook in chain]  # type: ignore[attr-defined]
+    registered = [hook for chain in hooks._chains.values() for hook in chain]
 
     assert not any(isinstance(hook, IntentGuard) for hook in registered)
 

@@ -14,6 +14,9 @@ tool layer keeps no dependency on the execution subsystem.
 
 from __future__ import annotations
 
+import atexit
+from collections.abc import Callable
+from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Protocol
@@ -121,6 +124,40 @@ class PortProjectArtifactListing:
             raise WorkspacePortError("invalid_request")
 
 
+@dataclass(frozen=True, slots=True)
+class PortProjectNames:
+    """The canonical project names one pinned revision contains; names only.
+
+    ``incomplete`` names directories that exist where a project would be but do
+    not yield a usable roadmap. They are reported separately and are *not* part
+    of ``projects``: an entry a model can select but bootstrap then refuses as
+    ``COLLISION`` is a trap, and Q145 established that the bare-directory shape
+    is reachable.
+
+    Both tuples are sorted and duplicate-free at construction, so reply order is
+    a property of this type rather than of whichever transport produced it.
+    """
+
+    projects: tuple[str, ...]
+    incomplete: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        for name in ("projects", "incomplete"):
+            values = getattr(self, name)
+            if (
+                type(values) is not tuple
+                or len(values) > PORT_PROJECT_LIST_MAX_ENTRIES
+                or any(not isinstance(value, str) for value in values)
+                or tuple(values) != tuple(sorted(set(values)))
+            ):
+                raise WorkspacePortError("invalid_request")
+            for value in values:
+                if value in {"", ".", ".."} or "/" in value or "\\" in value or "\x00" in value:
+                    raise WorkspacePortError("invalid_request")
+        if set(self.projects) & set(self.incomplete):
+            raise WorkspacePortError("invalid_request")
+
+
 class WorkspacePort(Protocol):
     """The workspace view operations the tools need; nothing else is exposed.
 
@@ -137,9 +174,33 @@ class WorkspacePort(Protocol):
 
     def read_file(self, path: str, *, offset_bytes: int = 0, max_bytes: int = PORT_READ_MAX_BYTES) -> PortRead: ...
 
+    def list_project_names(self) -> PortProjectNames: ...
+
     def list_project_artifacts(self, project_slug: str) -> PortProjectArtifactListing: ...
 
     def write_file(self, path: str, content: str, *, expected_sha256: str | None = None) -> PortWrite: ...
+
+
+class CandidateWorkspacePort(Protocol):
+    """The staged-candidate buffer of one CANDIDATE view; nothing else.
+
+    Deliberately not a ``WorkspacePort``: the buffer is a purpose-bound operation
+    on a READ view (E259), while ``WorkspacePort.write_file`` is general-purpose
+    IO confined to ``Access.WRITE``. Keeping the two apart is what stops a READ
+    view from acquiring a write path to arbitrary project files, and it is why
+    this protocol has no ``read_file``/``list_project_artifacts``: a planner that
+    needs ordinary source reads already has the stage's project port.
+
+    The buffer's address is not an argument. Both implementations hold the label
+    the view pinned (``CT120``), so a caller cannot widen its own authority by
+    naming a path.
+    """
+
+    def write_candidate(self, content: str, *, expected_sha256: str | None = None) -> PortWrite: ...
+
+    def read_candidate(self, *, max_bytes: int = PORT_READ_MAX_BYTES) -> PortRead: ...
+
+    def candidate_label(self) -> str: ...
 
 
 def port_relative(raw: object) -> str:
@@ -186,11 +247,25 @@ def index_db(port: WorkspacePort | None, root: Path, filename: str, fallback: Pa
     return candidate
 
 
+def _register_discovery_cleanup(cleanup: ExitStack | None, close: Callable[..., None], *, strict: bool = False) -> None:
+    """Keep legacy shutdown best-effort; explicit tool scopes close indexes strictly."""
+    if cleanup is None:
+        atexit.register(close)
+    elif strict:
+        cleanup.callback(close, strict=True)
+    else:
+        cleanup.callback(close)
+
+
 __all__ = [
     "PORT_PROJECT_LIST_MAX_ENTRIES",
     "PORT_READ_MAX_BYTES",
+    "PROJECT_ARTIFACT_KINDS",
+    "PROJECT_ENTRY_KINDS",
+    "CandidateWorkspacePort",
     "PortDirectoryEntry",
     "PortProjectArtifactListing",
+    "PortProjectNames",
     "PortRead",
     "PortWrite",
     "WorkspacePort",

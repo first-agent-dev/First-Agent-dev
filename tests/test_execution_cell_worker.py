@@ -20,6 +20,7 @@ from fa.execution.cell_protocol import decode_cell_reply, decode_cell_request, e
 from fa.execution.cell_worker import CellWorker, serve
 from fa.execution.protocol import (
     MAX_PROJECT_TOOL_ENVELOPE_BYTES,
+    MAX_PROJECT_TOOL_REPLY_FRAME_BYTES,
     MAX_PROJECT_TOOL_REQUEST_BYTES,
     MAX_PROJECT_TOOL_TIMEOUT_MS,
     MAX_TAIL_BYTES,
@@ -154,7 +155,7 @@ def test_project_tool_uses_fixed_helper_argv_without_pty(worker: CellWorker, mon
         )
 
     monkeypatch.setattr(PtyPool, "acquire", forbidden_pty)
-    monkeypatch.setattr(cell_worker.subprocess, "Popen", launch)
+    monkeypatch.setattr(subprocess, "Popen", launch)
     result = worker.handle(project_message())
     assert result == {
         "stdout": envelope,
@@ -166,6 +167,126 @@ def test_project_tool_uses_fixed_helper_argv_without_pty(worker: CellWorker, mon
     assert len(calls) == 1
 
 
+@pytest.mark.parametrize("tool", ["fs_search", "fs_reach"])
+@pytest.mark.parametrize("interactive", [False, True])
+@pytest.mark.parametrize("over", [False, True])
+def test_project_tool_double_escaped_frame_boundary_is_explicit(
+    worker: CellWorker, monkeypatch: pytest.MonkeyPatch, tool: str, interactive: bool, over: bool
+) -> None:
+    from io import BytesIO
+
+    from fa.execution.cell_worker import _StdioConnection, serve_once
+    from fa.execution.project_tools import _envelope
+    from fa.inner_loop.registry import ToolResult
+
+    def envelope(filler: int) -> str:
+        return _envelope(ToolResult.ok("ok", result={"text": '"' * 16_000 + "x" * filler}))
+
+    def frame_size(stdout: str) -> int:
+        return 4 + len(
+            encode_json(
+                {
+                    "version": 1,
+                    "request_id": "1" * 32,
+                    "result": {
+                        "stdout": stdout,
+                        "exit_code": 0,
+                        "truncated": False,
+                        "session_id": None,
+                        "timed_out": False,
+                    },
+                    "error": None,
+                }
+            )
+        )
+
+    filler = MAX_PROJECT_TOOL_REPLY_FRAME_BYTES - frame_size(envelope(0))
+    assert filler > 0
+    output = envelope(filler + int(over))
+    assert len(output.encode("ascii")) <= MAX_PROJECT_TOOL_ENVELOPE_BYTES
+    assert frame_size(output) == MAX_PROJECT_TOOL_REPLY_FRAME_BYTES + int(over)
+    real_popen = subprocess.Popen
+
+    def launch(argv: list[str], **kwargs: Any) -> subprocess.Popen[bytes]:
+        return real_popen([sys.executable, "-c", "import sys; print(sys.argv[1])", output], **kwargs)
+
+    monkeypatch.setattr(subprocess, "Popen", launch)
+    raw = project_message(tool=tool)
+    if interactive:
+        left, right = socket.socketpair()
+        thread = threading.Thread(target=serve, args=(worker, right))
+        thread.start()
+        try:
+            left.settimeout(5)
+            write_frame(left, raw)
+            response_raw = read_frame(left, max_bytes=MAX_PROJECT_TOOL_REPLY_FRAME_BYTES - 4)
+            write_frame(left, message("STOP", {}, "2" * 32))
+            read_frame(left)
+        finally:
+            left.close()
+            thread.join(timeout=5)
+            right.close()
+        assert not thread.is_alive()
+    else:
+        destination = BytesIO()
+        assert serve_once(worker, _StdioConnection(BytesIO(len(raw).to_bytes(4, "big") + raw), destination)) == 0
+        assert len(destination.getvalue()) <= MAX_PROJECT_TOOL_REPLY_FRAME_BYTES
+        response_raw = read_frame(_StdioConnection(BytesIO(destination.getvalue()), BytesIO()))
+    assert len(response_raw) + 4 <= MAX_PROJECT_TOOL_REPLY_FRAME_BYTES
+    result = decode_cell_reply(response_raw, request_id="1" * 32, action="PROJECT_TOOL", session_id=None)
+    assert result is not None and result["exit_code"] == 0 and result["truncated"] is False
+    returned = json.loads(result["stdout"])
+    if over:
+        assert returned["result"] is None and returned["artifacts"] == []
+        assert returned["error"] == {
+            "code": "search_failed" if tool == "fs_search" else "reach_failed",
+            "message": "managed discovery refused (output_budget)",
+            "retryable": False,
+        }
+    else:
+        assert result["stdout"] == output and returned["error"] is None
+
+
+def test_near_60_kib_plain_project_envelope_is_not_refused() -> None:
+    from io import BytesIO
+
+    from fa.execution.cell_worker import _StdioConnection
+    from fa.execution.project_tools import _envelope
+    from fa.inner_loop.registry import ToolResult
+
+    envelope = _envelope(ToolResult.ok("ok", result={"text": "x" * 61_000}))
+    assert 61_000 < len(envelope) <= MAX_PROJECT_TOOL_ENVELOPE_BYTES
+    result = {"stdout": envelope, "exit_code": 0, "truncated": False, "session_id": None, "timed_out": False}
+    output = BytesIO()
+    cell_worker._reply(_StdioConnection(BytesIO(), output), "1" * 32, result, project_tool="fs_search")
+    raw = read_frame(_StdioConnection(BytesIO(output.getvalue()), BytesIO()))
+    decoded = decode_cell_reply(raw, request_id="1" * 32, action="PROJECT_TOOL", session_id=None)
+    assert len(output.getvalue()) <= MAX_PROJECT_TOOL_REPLY_FRAME_BYTES
+    assert decoded == result
+
+
+@pytest.mark.parametrize("failure", ["nonzero", "timeout", "truncated"])
+def test_oversized_project_frame_preserves_worker_failure_flags(failure: str) -> None:
+    from io import BytesIO
+
+    from fa.execution.cell_worker import _StdioConnection
+
+    result = {
+        "stdout": '"' * MAX_PROJECT_TOOL_ENVELOPE_BYTES,
+        "exit_code": 7 if failure == "nonzero" else 0,
+        "truncated": failure == "truncated",
+        "session_id": None,
+        "timed_out": failure == "timeout",
+    }
+    output = BytesIO()
+    cell_worker._reply(_StdioConnection(BytesIO(), output), "1" * 32, result, project_tool="fs_search")
+    assert len(output.getvalue()) <= MAX_PROJECT_TOOL_REPLY_FRAME_BYTES
+    raw = read_frame(_StdioConnection(BytesIO(output.getvalue()), BytesIO()))
+    decoded = decode_cell_reply(raw, request_id="1" * 32, action="PROJECT_TOOL", session_id=None)
+    assert decoded is not None
+    assert decoded == {**result, "stdout": ""}
+
+
 def test_project_tool_child_output_overrun_is_truncated_non_success(
     worker: CellWorker, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -175,7 +296,7 @@ def test_project_tool_child_output_overrun_is_truncated_non_success(
         script = "import sys;sys.stdout.write('x' * " + str(MAX_PROJECT_TOOL_ENVELOPE_BYTES + 20) + " + '\\n')"
         return real_popen([sys.executable, "-c", script], **kwargs)
 
-    monkeypatch.setattr(cell_worker.subprocess, "Popen", launch)
+    monkeypatch.setattr(subprocess, "Popen", launch)
     result = worker.handle(project_message())
     assert result["truncated"] is True
     assert result["exit_code"] != 0
@@ -195,7 +316,7 @@ def test_project_tool_timeout_kills_and_reaps_its_child_group(
     def launch(argv: list[str], **kwargs: Any) -> subprocess.Popen[bytes]:
         return real_popen([sys.executable, "-c", helper], **kwargs)
 
-    monkeypatch.setattr(cell_worker.subprocess, "Popen", launch)
+    monkeypatch.setattr(subprocess, "Popen", launch)
     result = worker.handle(project_message(timeout_ms=100))
     assert result["timed_out"] is True
     assert result["exit_code"] < 0

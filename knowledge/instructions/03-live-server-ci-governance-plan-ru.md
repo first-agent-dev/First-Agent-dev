@@ -1,7 +1,7 @@
 ---
 title: План live-сервера: CI, безопасность, harness и GitHub governance
 status: ready-for-live-execution
-last-reviewed: 2026-07-21
+last-reviewed: 2026-11-10
 language: ru
 ---
 
@@ -102,7 +102,7 @@ environment issue или product/checker defect и сохранить полны
 uv run just check
 ```
 
-6. Отдельные jobs запускают `pip-audit`, `gitleaks` и container smoke checks.
+6. Отдельные blocking jobs запускают `pip-audit`, full-history Gitleaks (только GitHub Actions, с `.gitleaks.toml`) и container smoke checks. Локального Go-backed Gitleaks hook нет; Go не требуется для проекта или readiness.
 7. Semgrep и mutation остаются schedule/manual advisory jobs, пока политика не
    изменит их статус.
 
@@ -214,7 +214,7 @@ read-only rootfs и иметь writable только разрешённые moun
 ```bash
 uv run pip-audit
 
-gitleaks detect --no-banner --redact --source .
+# Gitleaks запускается только в blocking GitHub Actions job; локальный hook не нужен.
 
 # Если Semgrep установлен локально:
 semgrep --config=p/python --config=p/owasp-top-ten
@@ -321,8 +321,9 @@ Settings → Actions → General
 - maintainer emergency override остаётся возможным и аудируемым;
 - required checks используют правильные имена jobs, без старых duplicate names;
 - workflow permissions минимальны (`contents: read` для CI jobs);
-- Dependabot/secret scanning или выбранные эквиваленты включены согласно
-  security policy.
+- Dependabot включён согласно security policy; blocking full-history Gitleaks
+  job в GitHub Actions включён. Локального Go-backed hook нет; Go не является
+  prerequisite для readiness.
 
 Создать тестовый PR из feature-ветки и убедиться, что merge заблокирован при
 падении required check. Не нажимать merge в ходе проверки.
@@ -439,7 +440,7 @@ git diff --cached --check
 - `FA_AGENT_READY=1`;
 - локальных check logs;
 - Docker smoke evidence;
-- pip-audit/gitleaks/Semgrep/mutation disposition;
+- pip-audit/Gitleaks CI/Semgrep/mutation disposition;
 - harness session-path evidence;
 - GitHub Actions run URLs;
 - ручной governance checklist с владельцем и датой;

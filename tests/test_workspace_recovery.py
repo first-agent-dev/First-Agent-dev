@@ -39,9 +39,10 @@ import pytest
 
 import fa.execution.workspace as workspace_module
 from fa.execution.supervisor import SupervisorError
+from fa.execution.view_io import _rename_directory
 from fa.execution.workspace import WorkspaceAuthority
 from tests.test_execution_readers import ref
-from tests.test_execution_views import native_profile
+from tests.test_execution_views import native_profile, read_only_profile
 from tests.test_execution_workspace import ACTOR, PEER, Site, ok, until
 from tests.test_execution_workspace import site as site
 from tests.test_workspace_publication import (
@@ -140,7 +141,7 @@ def test_recovery_completes_a_projection_the_pointer_already_committed(
                 raise OSError(5, "injected projection crash")
             real_replace(source, destination, **kwargs)
 
-        monkeypatch.setattr(workspace_module.os, "replace", exploding)
+        monkeypatch.setattr(os, "replace", exploding)
         with pytest.raises(SupervisorError) as failed:
             _publish(owner, grant, sealed)
         monkeypatch.undo()
@@ -409,7 +410,7 @@ def test_recovery_refuses_a_projection_with_bytes_the_revision_does_not_own(
 def test_recovery_completes_a_replaced_plan_forward(site: Site, monkeypatch: pytest.MonkeyPatch) -> None:
     """producer-kill-check: roll a replaced plan back, or leave it without a revision."""
     plan_ref = _with_plan(site)
-    with site.owner(view_profile=native_profile()) as owner:
+    with site.owner(view_profile=native_profile(), read_only_profile=read_only_profile()) as owner:
         ids = ok(lambda: site.register(owner))
         lease = ok(lambda: site.claim(owner, ids))
         base_revision = _current(site, ids)["revision_id"]
@@ -444,7 +445,7 @@ def test_recovery_clears_a_plan_intent_when_the_old_bytes_are_still_there(
     """producer-kill-check: treat an early plan kill as a completed replacement."""
     plan_ref = _with_plan(site)
     real_replace = os.replace
-    with site.owner(view_profile=native_profile()) as owner:
+    with site.owner(view_profile=native_profile(), read_only_profile=read_only_profile()) as owner:
         ids = ok(lambda: site.register(owner))
         lease = ok(lambda: site.claim(owner, ids))
         base_revision = _current(site, ids)["revision_id"]
@@ -456,7 +457,7 @@ def test_recovery_clears_a_plan_intent_when_the_old_bytes_are_still_there(
                 raise SystemExit("killed before the plan replace")
             real_replace(source, destination, **kwargs)
 
-        monkeypatch.setattr(workspace_module.os, "replace", killed_replace)
+        monkeypatch.setattr(os, "replace", killed_replace)
         with pytest.raises(SystemExit):
             _publish_plan(owner, plan_ref, PLAN_NEW.encode(), grant=lease, ids=ids)
         monkeypatch.undo()
@@ -474,7 +475,7 @@ def test_recovery_clears_a_plan_intent_when_the_old_bytes_are_still_there(
 def test_recovery_refuses_a_plan_that_matches_neither_hash(site: Site, monkeypatch: pytest.MonkeyPatch) -> None:
     """producer-kill-check: overwrite a third version with the intended bytes."""
     plan_ref = _with_plan(site)
-    with site.owner(view_profile=native_profile()) as owner:
+    with site.owner(view_profile=native_profile(), read_only_profile=read_only_profile()) as owner:
         ids = ok(lambda: site.register(owner))
         lease = ok(lambda: site.claim(owner, ids))
         monkeypatch.setattr(WorkspaceAuthority, "_write_revision_from_canonical", _killed)
@@ -497,7 +498,7 @@ def test_recovery_refuses_a_plan_intent_that_does_not_describe_the_bytes(
 ) -> None:
     """producer-kill-check: trust a recomputation over the tree the intent promised."""
     plan_ref = _with_plan(site)
-    with site.owner(view_profile=native_profile()) as owner:
+    with site.owner(view_profile=native_profile(), read_only_profile=read_only_profile()) as owner:
         ids = ok(lambda: site.register(owner))
         lease = ok(lambda: site.claim(owner, ids))
         base_revision = _current(site, ids)["revision_id"]
@@ -557,7 +558,7 @@ def test_recovery_removes_exactly_the_directories_the_attempt_created(
     site: Site, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """producer-kill-check: leave the created ancestor, or undo more than it created."""
-    real_rename = workspace_module._rename_directory
+    real_rename = _rename_directory
     with site.owner(view_profile=native_profile()) as owner:
         ids = ok(lambda: site.register(owner))
         lease = ok(lambda: site.claim(owner, ids))

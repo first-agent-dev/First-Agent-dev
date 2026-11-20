@@ -21,6 +21,7 @@ def _run_script() -> subprocess.CompletedProcess[str]:
         capture_output=True,
         text=True,
         cwd=Path(__file__).resolve().parent.parent,
+        check=False,  # returncode IS the assertion: the failing run is the subject
     )
 
 

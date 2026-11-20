@@ -45,12 +45,10 @@ _SHELL_SCRIPTS = [
 
 
 # Container CLIs that scripts/fa may try to ``exec``. Unit tests must never
-# reach a real container runtime (even if one happens to be installed on the
-# developer's host) because the test contract asserts delegation failure
-# behaviour. We shadow them with a tiny stub script (see ``_docker_shadow_dir``)
-# rather than stripping PATH directories — stripping is unsafe because
-# ``docker`` often lives in the same directory as ``bash`` (e.g. ``/usr/bin``
-# on Ubuntu), and removing that directory breaks every other binary lookup.
+# reach a real runtime accidentally. The C0 host-route tests use a tiny failing
+# stub; wrapper argv and installed-controller tests provide their own recorder
+# shims. We prepend the stub directory rather than stripping PATH directories,
+# since ``docker`` often shares ``/usr/bin`` with ``bash`` and other utilities.
 _CONTAINER_RUNTIMES_TO_SHADOW: tuple[str, ...] = ("docker", "podman")
 
 _docker_shadow_dir: Path | None = None
@@ -60,9 +58,8 @@ def _get_docker_shadow_dir() -> Path:
     """Create (once) a temp directory holding fake docker/podman stubs.
 
     The stubs emit a deterministic "docker: not found" style message to stderr
-    and exit non-zero, which matches the shape of a missing-binary error
-    closely enough to satisfy scripts/fa's fallthrough behaviour AND the
-    assertion in ``test_fa_wrapper_nonhelp_product_command_still_delegates_to_container``.
+    and exit non-zero. Host-route tests use this to prove refusal paths do not
+    dispatch; product-route tests install their own argv-recording shims.
     The directory is cleaned up at interpreter exit.
     """
     global _docker_shadow_dir
@@ -101,14 +98,9 @@ def _wrapper_env() -> dict[str, str]:
 
     Design goals (each corresponds to a real failure we have hit):
 
-    1. ``fa`` must be importable when ``scripts/fa`` invokes
-       ``${PYTHON:-python3} -m fa.cli_help``. When pytest is launched from an
-       editor (VSCode) pointing directly at the venv interpreter (e.g. the
-       ``../snap/code/.../cpython-3.14`` shim VSCode uses on Ubuntu), the
-       venv's ``bin/`` is NOT on PATH the way an interactive
-       ``source .venv/bin/activate`` would make it, so plain ``python3``
-       resolves to the system interpreter (no ``fa`` module). Pinning
-       ``PYTHON=sys.executable`` removes that PATH-dependency.
+    1. Keep this host-side helper independent of whichever Python environment
+       launched pytest. Wrapper product/help execution is verified separately
+       through the installed controller; this helper is not a product fallback.
 
     2. ``bash``, ``true``, ``cat``, ``pwd``, ``ls`` and every other host
        binary MUST remain resolvable. The earlier implementation filtered PATH
@@ -120,14 +112,10 @@ def _wrapper_env() -> dict[str, str]:
        for ``docker``/``podman`` while every other command falls through to
        the host.
 
-    3. ``docker compose exec`` must deterministically fail (rc != 0) so the
-       "unknown help topic delegates to container" test does not flake on
-       hosts where the first-agent container happens to be running (a live
-       container makes delegation return rc=0 with real help, which is
-       correct production behaviour but violates the "we did not swallow the
-       topic as host help" assertion). The stubs in the shadow directory
-       exit 127 with a "docker: not found" message matching one of the
-       assertion's accepted terms.
+    3. Host-route tests must never reach a real Compose service. The failing
+       stubs provide a deterministic negative control; tests that assert a
+       product route use a separate argv-recording Docker shim or the installed
+       controller fixture.
     """
     env = os.environ.copy()
     env["PYTHON"] = sys.executable
@@ -300,8 +288,11 @@ def _run_fa_wrapper(
     )
 
 
-@pytest.mark.parametrize("args", [(), ("--help",), ("-h",), ("help",)])
-def test_fa_wrapper_help_fails_closed_without_project_import(args: tuple[str, ...], tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "args",
+    [("--help", "update"), ("-h", "update"), ("-help", "update"), ("help", "update")],
+)
+def test_fa_wrapper_host_topic_help_fails_closed_without_project_import(args: tuple[str, ...], tmp_path: Path) -> None:
     marker = tmp_path / "project-code-ran"
     poison = f"from pathlib import Path\nPath({str(marker)!r}).touch()\nraise RuntimeError('project poison')\n"
     (tmp_path / "fa").mkdir()
@@ -309,7 +300,7 @@ def test_fa_wrapper_help_fails_closed_without_project_import(args: tuple[str, ..
     result = _run_fa_wrapper(*args, cwd=tmp_path, env_overrides={"PYTHONPATH": str(tmp_path)})
 
     assert result.returncode == 2
-    assert "wrapper help is disabled" in result.stderr
+    assert "host and administrative commands" in result.stderr
     assert result.stdout == ""
     assert not marker.exists()
 
@@ -426,34 +417,6 @@ def test_fa_wrapper_host_help_flags_at_later_positions_fail_closed_before_dispat
     assert not git_marker.exists()
 
 
-@pytest.mark.parametrize(
-    "args",
-    [
-        ("--help", "run"),
-        ("-h", "run"),
-        ("-help", "run"),
-        ("--help", "update"),
-        ("run", "--help"),
-        ("run", "-h"),
-        ("run", "-help"),
-        ("run", "task", "--help"),
-        ("help", "run"),
-        ("help", "update"),
-    ],
-)
-def test_fa_wrapper_product_help_fails_closed_without_project_import(args: tuple[str, ...], tmp_path: Path) -> None:
-    marker = tmp_path / "project-code-ran"
-    poison = f"from pathlib import Path\nPath({str(marker)!r}).touch()\nraise RuntimeError('project poison')\n"
-    (tmp_path / "fa").mkdir()
-    (tmp_path / "fa" / "__init__.py").write_text(poison, encoding="utf-8")
-    result = _run_fa_wrapper(*args, cwd=tmp_path, env_overrides={"PYTHONPATH": str(tmp_path)})
-
-    assert result.returncode == 2
-    assert "wrapper help is disabled" in result.stderr
-    assert result.stdout == ""
-    assert not marker.exists()
-
-
 def test_fa_wrapper_has_real_clean_rebuild_dispatch_case() -> None:
     text = (_SCRIPTS / "fa").read_text(encoding="utf-8")
 
@@ -461,12 +424,18 @@ def test_fa_wrapper_has_real_clean_rebuild_dispatch_case() -> None:
     assert 'exec "$REPO_DIR/scripts/fa-clean-rebuild.sh" "$@"' in text
 
 
-def test_fa_wrapper_dispatches_every_documented_host_topic() -> None:
+def test_fa_wrapper_dispatches_and_guards_every_documented_host_topic() -> None:
     from fa.cli_help import HOST_COMMANDS
 
     text = (_SCRIPTS / "fa").read_text(encoding="utf-8")
+    host_topic_case = text.split("_is_host_topic() {", maxsplit=1)[1].split("_has_help_option() {", maxsplit=1)[0]
     for command in HOST_COMMANDS:
         assert f"    {command})" in text, f"missing host dispatch case for {command}"
+        assert re.search(rf"(?<![\w-]){re.escape(command)}(?![\w-])", host_topic_case), (
+            f"global/topic help could route host command {command!r} to the product controller"
+        )
+    for command in ("clean", "egress-proxy"):
+        assert re.search(rf"(?<![\w-]){command}(?![\w-])", host_topic_case)
 
 
 def test_fa_wrapper_rejects_clean_rebuild_typo_before_delegation() -> None:
@@ -476,12 +445,122 @@ def test_fa_wrapper_rejects_clean_rebuild_typo_before_delegation() -> None:
     assert "fa clean-rebuild" in result.stderr
 
 
-def test_fa_wrapper_nonhelp_product_command_still_delegates_to_container() -> None:
-    result = _run_fa_wrapper("run", "help")
+def test_fa_wrapper_nonhelp_product_command_uses_installed_controller_and_active_workspace(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "host" / "repo"
+    scripts = repo / "scripts"
+    scripts.mkdir(parents=True)
+    shutil.copy2(_SCRIPTS / "fa", scripts / "fa")
+    (repo / "docker-compose.fa.yml").write_text("services: {}\n", encoding="utf-8")
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    workspace = tmp_path / "active-project"
+    workspace.mkdir()
+    active_workspace = workspace.resolve()
+    (sessions / ".active").write_text(f"{active_workspace}\n", encoding="utf-8")
 
-    # A plain `help` task value is data, not a wrapper-help switch.
-    assert result.returncode != 0
-    assert any(term in result.stderr for term in ("exec: docker", "docker:", 'service "first-agent" is not running'))
+    docker_bin = tmp_path / "bin"
+    docker_bin.mkdir()
+    argv_log = tmp_path / "docker-argv"
+    docker = docker_bin / "docker"
+    docker.write_text(
+        '#!/bin/sh\nprintf "%s\\0" "$@" > "$FA_WRAPPER_DOCKER_ARGV"\n',
+        encoding="utf-8",
+    )
+    docker.chmod(0o755)
+    env = _wrapper_env()
+    env["PATH"] = os.pathsep.join((str(docker_bin), env["PATH"]))
+    env["FA_WRAPPER_DOCKER_ARGV"] = str(argv_log)
+    args = ("inject", "status", "--inject", "coder_slice_ceremony=enforce")
+    run = subprocess.run(
+        ["bash", str(scripts / "fa"), *args],
+        cwd=workspace,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert run.returncode == 0, run.stderr
+    argv = argv_log.read_bytes().rstrip(b"\0").decode().split("\0")
+    exec_index = argv.index("exec")
+    assert argv[exec_index:] == [
+        "exec",
+        "-T",
+        "-e",
+        f"FA_WRAPPER_ACTIVE_WORKSPACE={active_workspace}",
+        "-w",
+        "/opt/first-agent",
+        "first-agent",
+        "/opt/fa-venv/bin/python",
+        "-I",
+        "-m",
+        "fa.controller_entry",
+        *args,
+    ]
+
+
+@pytest.mark.parametrize("has_active_workspace", [True, False], ids=["active-refused", "disposable-route"])
+def test_fa_wrapper_inner_loop_smoke_preserves_q127_disposable_boundary(
+    tmp_path: Path, has_active_workspace: bool
+) -> None:
+    repo = tmp_path / "host" / "repo"
+    scripts = repo / "scripts"
+    scripts.mkdir(parents=True)
+    shutil.copy2(_SCRIPTS / "fa", scripts / "fa")
+    (repo / "docker-compose.fa.yml").write_text("services: {}\n", encoding="utf-8")
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    if has_active_workspace:
+        (sessions / ".active").write_text("/stale/active-workspace\n", encoding="utf-8")
+
+    disposable_workspace = tmp_path / "disposable"
+    disposable_workspace.mkdir()
+    docker_bin = tmp_path / "bin"
+    docker_bin.mkdir()
+    argv_log = tmp_path / "docker-argv"
+    docker = docker_bin / "docker"
+    docker.write_text(
+        '#!/bin/sh\nprintf "%s\\0" "$@" > "$FA_WRAPPER_DOCKER_ARGV"\n',
+        encoding="utf-8",
+    )
+    docker.chmod(0o755)
+    env = _wrapper_env()
+    env["PATH"] = os.pathsep.join((str(docker_bin), env["PATH"]))
+    env["FA_WRAPPER_DOCKER_ARGV"] = str(argv_log)
+    args = ("inner-loop-smoke", "--workspace", str(disposable_workspace))
+    run = subprocess.run(
+        ["bash", str(scripts / "fa"), *args],
+        cwd=disposable_workspace,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    if has_active_workspace:
+        assert run.returncode == 2
+        assert "refuses a wrapper-selected active workspace" in run.stderr
+        assert run.stdout == ""
+        assert not argv_log.exists(), "active managed workspace must be refused before Compose"
+        return
+
+    assert run.returncode == 0, run.stderr
+    argv = argv_log.read_bytes().rstrip(b"\0").decode().split("\0")
+    exec_index = argv.index("exec")
+    assert argv[exec_index:] == [
+        "exec",
+        "-T",
+        "-w",
+        "/opt/first-agent",
+        "first-agent",
+        "/opt/fa-venv/bin/python",
+        "-I",
+        "-m",
+        "fa.controller_entry",
+        *args,
+    ]
 
 
 @requires_stable_tmpdir
@@ -502,7 +581,7 @@ def test_wrapper_env_preserves_host_binaries_and_shadows_docker() -> None:
        any real container runtime the developer's host may have installed).
     3. Invoking the shimmed docker fails non-zero with a deterministic
        "docker:" message, matching the assertion contract used by
-       ``test_fa_wrapper_nonhelp_product_command_still_delegates_to_container``.
+       the wrapper-route tests.
     """
     env = _wrapper_env()
     path = env.get("PATH", "")
@@ -532,8 +611,8 @@ def test_wrapper_env_preserves_host_binaries_and_shadows_docker() -> None:
             "leaked into the test subprocess)."
         )
 
-    # Invariant 3: the shim fails non-zero with a stderr line containing
-    # "docker:" so the wrapper's "docker: not found" assertion fires.
+    # Invariant 3: the shim fails non-zero with a stable diagnostic so host
+    # refusal tests cannot accidentally connect to a running container.
     result = subprocess.run(
         ["docker", "compose", "exec", "first-agent", "fa", "help"],
         capture_output=True,
@@ -546,12 +625,14 @@ def test_wrapper_env_preserves_host_binaries_and_shadows_docker() -> None:
     assert "test shim" in result.stderr  # identifiable as the shim, not real docker
 
 
-def test_fa_wrapper_does_not_import_host_help_from_checkout() -> None:
+def test_fa_wrapper_help_uses_isolated_controller_not_checkout_python() -> None:
     text = (_SCRIPTS / "fa").read_text(encoding="utf-8")
-    route = text.split("_delegate_help_to_controller() {", 1)[1].split("\n}", 1)[0]
+    help_route = text.split("_delegate_without_active_workspace() {", maxsplit=1)[1].split("\n}\n", maxsplit=1)[0]
 
+    assert "/opt/fa-venv/bin/python -I -m fa.controller_entry" in text
     assert "-m fa.cli_help" not in text
     assert "PYTHONPATH=" not in text
+    assert "_SESSION_WORKSPACE" not in help_route
     assert "wrapper help is disabled" in text
 
 

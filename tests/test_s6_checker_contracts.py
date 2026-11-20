@@ -414,3 +414,97 @@ def test_log_kind_checker_is_wired_into_the_check_target() -> None:
     assert "check_log_kind_contract.py" in contracts_body, (
         f"_contracts bundle does not invoke check_log_kind_contract.py:\n{contracts_body}"
     )
+
+
+@pytest.mark.parametrize("site", [0, 1], ids=["after-tool", "loop-guard"])
+def test_checker_detects_each_terminal_hook_deny_site(tmp_path: Path, site: int) -> None:
+    """C0: either relocated terminal producer remains within the S6-F2 floor."""
+    root = _make_tree(tmp_path)
+    path = root / "src/fa/inner_loop/tool_turn.py"
+    original = path.read_text(encoding="utf-8")
+    needle = 'OutputEvent(type="hook_deny", data={"point": stop.point, "reason": stop.reason})'
+    assert original.count(needle) == 2
+    pieces = original.split(needle)
+    replacement = 'OutputEvent(type="session_start", data={"point": stop.point, "reason": stop.reason})'
+    mutated = (
+        pieces[0]
+        + (replacement if site == 0 else needle)
+        + pieces[1]
+        + (replacement if site == 1 else needle)
+        + pieces[2]
+    )
+    path.write_text(mutated, encoding="utf-8")
+    assert mutated.count(needle) == 1
+    result = _run_checker(root, PRODUCER_CHECKER)
+    assert result.returncode != 0 and "hook_deny" in result.stdout, result.stdout
+
+
+def test_scope_turn_emitter_is_visible_and_required(tmp_path: Path) -> None:
+    """C0: the relocated scope producer is inventoried and its removal is fatal."""
+    root = _make_tree(tmp_path)
+    _edit(
+        root,
+        "src/fa/inner_loop/scope_turn.py",
+        lambda s: s.replace('type="scope_expansion"', 'type="session_start"', 1),
+    )
+    result = _run_checker(root, PRODUCER_CHECKER)
+    assert result.returncode != 0 and "scope_expansion" in result.stdout, result.stdout
+
+
+# ---------------------------------------------------------------------------
+# Cross-module emit helpers (budget/compaction slice, 2026-11-10)
+# ---------------------------------------------------------------------------
+#
+# Splitting emit sites out of `coder_loop` silently blinded both checkers: the
+# files they scan were hard-coded, so ten console-mirrored kinds read as "no
+# producer" while the console output was byte-identical. The fix is an explicit
+# file list plus alias resolution; these two tests fail if either regresses.
+#
+# Measured before the fix: `check_log_kind_contract.py` reported 10 dual-write
+# gaps, `check_producer_consumer_contract.py` reported 5 lost emit sites.
+
+
+@pytest.mark.parametrize("helper_file", ["src/fa/inner_loop/budget_effects.py"])
+def test_log_kind_checker_sees_emit_sites_outside_coder_loop(tmp_path: Path, helper_file: str) -> None:
+    """C0: moving an emit into another module is not a lost console line."""
+    root = _make_tree(tmp_path)
+    result = _run_checker(root, LOG_KIND_CHECKER)
+
+    assert result.returncode == 0, f"a cross-module mirror read as missing.\n{result.stdout}"
+    assert "compaction_warning" not in result.stdout.split("CHECK 3")[-1], (
+        f"compaction_warning is still reported as a dual-write gap after it moved to {helper_file}\n{result.stdout}"
+    )
+
+
+def test_alias_resolver_counts_call_sites_not_definitions() -> None:
+    """C0: the alias resolver is the thing that can be wrong, so test it directly.
+
+    Measured: with resolution disabled the checker drops `context_warn` from 4
+    sites to 2 (the two in `budget_effects` that call the helper internally)
+    and reports "a producer was removed". The subprocess test above catches
+    that, but only indirectly — it also passes when resolution is broken in a
+    way that merely changes an unrelated count. This asserts the resolver's own
+    contract: an alias import contributes one producer per call site.
+    """
+    from scripts.check_producer_consumer_contract import _emits_reaching_this_file
+
+    source = (
+        "from fa.inner_loop.budget_effects import (\n"
+        "    emit_context_warn as _emit_context_warn,\n"
+        ")\n"
+        "\n"
+        "def f() -> None:\n"
+        "    _emit_context_warn(1)\n"
+        "    _emit_context_warn(2)\n"
+    )
+
+    assert _emits_reaching_this_file(source) == {"context_warn": 2}
+
+    # A helper the alias does not name must not be billed to this callback:
+    # naive "every type in the module" counting inflated this from 4 to 7.
+    assert (
+        _emits_reaching_this_file(
+            "from fa.inner_loop.budget_effects import record_budget_pressure as _rbp\n_rbp(1)\n",
+        )
+        == {}
+    )

@@ -3021,3 +3021,740 @@ D. **Other explicit dependency plan.** Name the active-set amendment, exact wave
 **Traceability.** `fs_search` already reports a `skipped_large_files` count; the legacy structural walk applies the same per-file ceiling. The managed strict rooted-reader route currently encounters an oversized lexical candidate as a refusal instead of applying that declared exclusion. The current checkout contains six search candidates over 200,000 bytes and `src/fa/execution/workspace.py` at 256,012 bytes; treating every such file as an aggregate overrun would make both managed discovery tools refuse on this tree. Q97/E506 therefore require a bounded preflight that identifies the established exclusion, reports the count, and never reads/indexes excluded bytes; aggregate quotas continue to be checked against the full eligible corpus. For reach, expose the skipped-file count in its existing stats/result surface without returning a partial result due to any aggregate quota.
 
 **Producer / caller kill checks.** No code changed for this disposition. The producer kill must remove the oversized-file exclusion/counting and make the exact-size fixture read/index the oversized candidate; the caller-EDGE kill must bypass the managed Q97 executor/serial scheduling route and reintroduce a host or unbounded path. Both are to be killed by the named C1 production-caller oracle after implementation; no helper-only proof closes W1. See E506 and `notes/q97-w1-resource-contract-2026-11-06.md`.
+
+---
+
+## Q135 — How should the existing tool-batch safety probes be closed before dependent cutover?
+
+**Status: BLOCKING for full F1–F4 closure. F1-only prerequisite is in scope; F2–F4 are deferred to live E2E after W3.** This source-grounded split follows E357/E358 and the operator direction to derive semantics from the current harness contracts, otherwise defer. It does not add CT/STEP, change the dependency order, close an acceptance row, or authorize dependent cutover. See the updated [Q135 application](i03-composition-and-batch-foundation-plan-2026-11-01.md#6-q135--f1-only-prerequisite-f2f4-deferred).
+
+**Traceability and current evidence.** Preserve Q97/STEP2b → Q103. Existing source `src/fa/inner_loop/loop.py::_execute_batch_parallel` submits calls to a `ThreadPoolExecutor`, then its broad `except` sequentially dispatches every executable payload, including submitted/possibly completed calls. E356's recorded fault injection observed each of two handlers execute twice after a `wait` exception. E358 separately records synthetic probes: F2's wait timeout does not cancel a running thread and the executor waits before returning; F3 demonstrates a synthetic BEFORE hook rewriting a read call to a workspace tool without batch reclassification; F4 demonstrates duplicate `call_id` values aliasing results in a dictionary while the set-based provider pairing check accepts duplicates. These are local harness observations, not production-frequency or host acceptance evidence. The current production reachability of hook rewrites and duplicate provider IDs is not established.
+
+**Impact.** A bookkeeping/submission error can repeat an effect. Timeout can be mislabeled as stopped work, creating unsafe retry expectations. A modified effective call may inherit an earlier scheduling classification, and duplicate IDs can make distinct calls share one result. Do not enable dependent production cutover while the applicable safety gate is unresolved; disabling concurrency by itself is not an approved or proved mitigation.
+
+**Eight-point application.** See the linked §6 draft for behavior target, existing seams and candidate file allowlist, dependency map, safeguards, failure semantics, C0/C1/C3 tests, final live acceptance and producer/EDGE mutation DoD. The draft reuses `run_session`, `ToolRegistry.dispatch`, `HookRegistry`, and `drive_session`; it proposes no new scheduler. The proposed live multi-call witness is not a ledger-append path, so ledger-append E2E is not applicable. No host result is claimed.
+
+**Source-grounded disposition under the operator direction:**
+
+- **F1 — bounded prerequisite now.** E358 already supplies the invariant: never automatically re-dispatch submitted/started work; an unknown outcome is not retryable. The broad fallback in `loop.py::_execute_batch_parallel` violates it. Implement only this no-repeat behavior using the existing future/result seam, with a C1 caller-rooted oracle and producer/EDGE kill-checks.
+- **F2 — defer until post-W3 live E2E.** `ThreadPoolExecutor` context exit waits for running workers, so the current 30-second `wait` is not a hard execution deadline. The code can report `exec_timeout` after a handler eventually completes, while no accepted contract defines whether late completion should return its actual result or a timeout failure. Do not invent cancellation or retry semantics now.
+- **F3 — defer until post-W3 live E2E.** Current source has no production `Decision.modify` callsites. ADR-7/ADR-8 require effective payload schema and opted-in sandbox revalidation, but do not specify batch reclassification/order after a cross-class rewrite; the existing probe is synthetic.
+- **F4 — defer until post-W3 live E2E.** `_build_tool_calls` and `_tool_calls_for_message` normalize missing IDs, but do not establish provider-wide duplicate-ID behavior; direct `run_session` callers also lack an agreed empty/duplicate-ID failure contract. Do not choose reject-versus-normalize without the deployed caller evidence.
+
+Q135 remains BLOCKING overall. F2–F4 and every dependent production cutover stay OPEN until post-W3 live E2E and contract review. The local F1 slice is not host acceptance and does not close STEP2b or any row.
+
+**F1-only local result.** `src/fa/inner_loop/loop.py` now settles retained futures without re-dispatch, only falls back sequentially when no submit attempt occurred, reports attempted-without-Future as non-retryable unknown, and reports never-attempted calls as retryable/not dispatched. The existing 30-second timeout behavior is unchanged; F2 remains deferred. C1 `drive_session` coverage plus `tests/test_tool_batching.py` passed **33 tests**. Ruff check/format passed; focused Pyrefly reported **0 errors**. The targeted producer mutant (re-dispatch retained futures) was killed by the exact-effect counter; the EDGE mutant (bypass `drive_session -> run_session`) was killed because no effects/results remained. These are local checks only: no live host acceptance, no ledger append, and no Q135/STEP2b closure.
+
+**Producer / EDGE reservation.** For any approved implementation, producer mutations must kill the relevant no-repeat/future-settlement, effective-call safety, and ID-correlation decisions. The primary EDGE mutation must bypass `coder_loop.drive_session -> run_session` and fail a C1 oracle with actual handler call counts/results; any affected second caller must be inventoried and tested separately. The full live/deployed obligation stays with SLICE6 and is NOT RUN here.
+
+---
+
+## Q136 — How should the independent project Pylint gate findings be resolved?
+
+**Status: OPEN — the project Pylint gate remains red; not a predeploy blocker under E544.** This is independent of Q135/F1. The configured gate is `pylint src/fa` (`justfile::_lint`), with only R0801 duplicate-code and R0401 cyclic-import enabled. This entry records a workspace gate failure, not a finding that the F1 batch change caused it.
+
+**Evidence.** `./.venv/bin/pylint src/fa` exited **8** (rating 9.99/10): two R0801 pairs and 17 R0401 import cycles. The duplicate pairs are the similar `rebind` validation in `execution/client.py` vs `execution/tool_port.py`, and exception/error mapping in `execution/backend.py` vs `execution/termination.py`. The reported cycles include `execution.composition -> execution.types -> session.manager -> execution.composition`, the broader composition/service/workspace/termination graph, and `memory.managed_discovery -> memory.search_index` (the latter imports `MAX_SEARCH_FILE_BYTES` while `search_index` locally imports managed-discovery helpers). These source files were already modified/untracked outside the F1 slice. The changed `src/fa/inner_loop/loop.py` alone passes Pylint at **10.00/10**, exit 0. Project policy explicitly excludes `tests/` from Pylint; the related pytest suites passed 68 tests. Pylint's graph findings do not alone prove a runtime import failure, and the two R0801 pairs may encode intentionally distinct contracts.
+
+**Impact.** The repository's configured Pylint stage is red; consequently the lint gate is not green. Consolidating security/lifecycle validation without confirming the owners could weaken distinct checks, while suppressing R0401 or blanket-waiving R0801 would mask structural findings without an approved rationale.
+
+**Options.**
+
+- **A — Resolve structurally (preferred only where source contracts show one owner).** Trace the import/consumer edges, extract or inject only already-shared contracts through their current owner, and consolidate duplicated behavior only where the validators/error mappings are semantically identical. Require targeted tests and re-run `pylint src/fa`.
+- **B — Preserve intentionally separate validators.** Where the two `rebind` or exception-mapping paths must remain distinct, document the contract difference and use the repository-permitted file-level R0801 waiver with rationale. This does not waive R0401; the import cycles still need a source-grounded resolution or the gate remains blocked.
+- **C — Defer to a dedicated execution/managed-discovery review.** Make no unrelated source edits now, retain the failing gate as BLOCKING, and do not claim `just lint`/Pylint PASS until the owners and cycle policy are resolved.
+- **D — Other.** Specify exact module owners, allowed dependency direction, caller-level oracle, and waiver policy before code changes.
+
+No code, tests, or increment were changed for Q136. Do not treat the 68 targeted test passes or the F1-only Pylint pass as closure of this independent gate. Under E544, keep the R0801/R0401 findings visible and fix them only when a source-grounded, high-ROI change is available; neither a waiver nor a Pylint PASS is implied. They do not block the personal test deployment.
+
+## Q137 — Full pytest/Pyrefly gate findings and baseline disposition (2026-10-30)
+
+**Status: OPEN — full-gate findings remain; not a prerequisite for MVP test deployment (E544).** W0 remains closed; the W1-pause statement below is historical. The prior operator selection **A — strict gate closure, best effort** remains the quality goal, but E544 supersedes its use as a hard W3/predeployment gate. The original 88-failure/11-error gate and intermediate Pyrefly counts are historical; the latest immutable full `just test` before subsequent refactors was 37 failed / 7252 passed / 18 skipped / 4 xfailed / 11 errors (exit 1), not a test of the current source snapshot. Prior full Pyrefly reported 0 errors, and prior full mypy 3 errors in 3 files; neither full check has been rerun after the latest refactors. See [working inventory](q137-working-entry-inventory-2026-11-09.md) for exact IDs, fixes, targeted evidence and limitations, and [full gate triage](q137-full-gate-triage-2026-10-30.md) for earlier history. Live-host acceptance and managed-provisioner/readiness failures remain open; no direct-review deferral is acceptance.
+
+**Impact (historical strict-gate framing).** The recorded gates were red; the listed findings remain unresolved unless later evidence says otherwise. Current failure groups include managed-provisioner/profile preconditions, static/contract drift, assertions, test-only Pyrefly diagnostics, and the separate baseline TLS failure. Fail-closed behavior must be preserved; no fallback, blanket waiver, suppression, or weakened test is authorized by this evidence.
+
+**Current operational disposition (E544, 2026-11-10).** A repository-wide green baseline is not required before authoring/running feature acceptance tests, merging the MVP to `main`, or making the planned personal test deployment. Run high-ROI checks on changed seams and record their real result; do not spend days building environment shims or a second runner. Full `just test`/`just check`/`just check-deep` remain diagnostics and may stay red or unrun; targeted findings remain visible and are fixed when their source-grounded value justifies the work. Host-dependent checks run during the later `fa update` + E2E stage. No failed, skipped, deferred, or unrun check becomes PASS.
+
+**Options.**
+
+- **A — Strict gate closure (recommended).** Keep every current failure and diagnostic blocking. Continue in contract/dependency order: first map managed-provisioner/profile failures to their actual test caller seams and supply contract-conforming fixtures/adapters only where the test's intended class allows; retain production-route C1/C2 coverage. Then resolve each current static/contract/test finding and all Pyrefly diagnostics, including unchanged baseline diagnostics, without ignores. Address the TLS test environment separately without bypassing the integration contract. Re-run targeted checks/mutations and both full gates after each repair group.
+- **B — Explicitly disposition only baseline/environment findings.** Keep the then-reported 43 current-only Pyrefly diagnostics and all current pytest failures blocking, but record the then-reported 21 unchanged HEAD Pyrefly diagnostics and the TLS-blocked baseline integration probe as separate accepted non-W1 findings. The full gates would still be reported red; no gate-readiness claim follows unless a later explicit acceptance rule permits it.
+- **C — Other.** Specify the exact baseline/environment findings to disposition and the acceptance rule; current-only failures remain blocking unless separately resolved or explicitly dispositioned.
+
+Q135 F2–F4 and Q136 Pylint are unaffected and remain independent. No W1 implementation was advanced by this triage record.
+
+**E544 scope clarification (2026-11-10).** Options A–C above preserve the earlier strict-gate triage; they do not make a repository-wide green baseline a prerequisite for MVP development, merge to `main`, personal `fa update` test deployment, or I03 close. Q137 remains OPEN, and its existing red/partial evidence stays red/partial; only high-ROI, source-grounded repairs are taken up on Arena. The actual clean-readiness and integrated system acceptance remain W4 host evidence and are not reported PASS until observed.
+
+---
+
+## Q138 — May the settlement predicate count an unsettled CANDIDATE view as blocking owner release?
+
+**Status: OPEN — re-researched 2026-11-10; E509's premise was wrong and is corrected here. Research: `q138-candidate-settlement-research-2026-11-10.md`.**
+
+**Reproduced behaviour (E509).** Replacing the determinate refusal in the S3P3 C1 test with `SupervisorError("DURABILITY_UNKNOWN")` — E407's exact injection point, before `publish_candidate_plan`'s commit body — leaves the CANDIDATE view at `purpose=CANDIDATE, access=READ, state=STOPPING` with its private `candidate` bytes on disk, while `workspace.json` reads `AVAILABLE`. With the original `INPUT_POLICY` the view is `REJECTED` and no `candidate` remains. Mechanism: `publish_plan` skips `_release_view` while uncertain (`client.py:594–599`), `ManagedExecution.close` fences only an unresolved HANDOFF (`composition.py:348–363`), and `_has_unsettled_views` skips every `READ` view (`workspace.py:1862`), CANDIDATE being `READ` (`:219`).
+
+**Correction to E509's framing.** E509 called `access != READ` a defect against §2.1. It is not. §2.1's release row is scoped to **WRITE** views by design (`i03-execution-workspace-spec-2026-10-15.md:168`), and that scope is correct for the `PROJECT`/`VERIFICATION` read pins the system actually creates: their bookkeeping must not fence the next writer, and their pins are revoked separately by `release_reader`. The real invariant is not "access is WRITE" but **"this view owns uncommitted writer-private state"**. CANDIDATE is the only READ view satisfying the second and not the first, because its READ access exists precisely to keep the ordinary `write_file` path off the buffer.
+
+Two facts bound the answer:
+
+- The scenario is not "data loss". After an indeterminate PUBLISH the PLAN may already be committed, and Q114 forbids asserting otherwise. What is lost is *attribution*: the next claim advances `generation`, after which `_closed_candidate_reader` rejects the old view forever (`workspace.py:4023`), so nothing can ask "did this publish".
+- Reconciliation is real but **not durable proof**. Same-request replay comes from a process-local, non-persistent reply cache (`supervisor.py:159–168`; a miss becomes `EXECUTION_UNKNOWN`, `:379–386`). It completes the ordinary in-process case; it cannot promise recovery — which is why Q114 puts process death in quarantine.
+
+**Why this is a question and not a patch.** `_settled` (`workspace.py:1813`) is shared by `release_writer`, `release_unused_writer` **and `handoff`** (`:1736`, `:1747`, `:1774`), and the authority cannot distinguish a managed run from legacy direct `fa workflow`: both publish and release through the same client and `_settle_owner`. Any predicate change therefore changes legacy behaviour, which Q114 says must not happen in this scope. The blocker is a scope authorization, not a design problem.
+
+**Impact.** The writer is released while a writer-owned artifact is unsettled — the condition already refused for `SEALED` on a WRITE view (`workspace.py:1843–1846`). The result is an unrecoverable, unattributable private buffer and an unanswerable ownership question for the next publisher.
+
+**Options (revised; E509's option A is withdrawn as based on the wrong premise).**
+
+- **A — Handle + same-id replay, no authority change (recommended).** `ManagedExecution` keeps the pending publication (the four `op-` ids, view ref and grant, source and candidate) and `close()` refuses while pending — the existing `_pending_handoff` pattern (`composition.py:348–353`). Reconciliation re-sends the same ids; `publish_candidate_plan` accepts **any** `STOPPING` CANDIDATE view of the same generation (`:4000–4040`), with `_already_published`/`_settle_view` (`:4061`, `:4591`) making the repeat safe and the view releasable. No wire change, no authority change, legacy untouched.
+- **B — A plus a purpose-scoped fence.** Additionally require `state in {PUBLISHED, REJECTED}` for CANDIDATE in `_has_unsettled_views`. This is the only mechanism that can hold the owner when `close()` is never reached, but it also changes legacy direct `fa workflow`. Needs explicit scope sign-off.
+- **C — A, authority untouched, residual gap recorded.** A run that dies between the uncertain error and storing the handle is covered only by `OWNED → QUARANTINED` at next load (`:1358–1360`). Must be recorded as an accepted gap, not as Q114 closure.
+- **D — Leave as is and document.** Rejected on the research: it is the outcome Q114 explicitly refused, and the probe shows it is reachable and silent.
+
+**Open sub-question (needed for A to be executable).** `publish_plan` does not surface its request ids on the exception path in storable form: it raises with only the last id (`client.py:585`, `:594–599`), while the earlier `CREATE_VIEW`/`WRITE_FILE`/`STOP_VIEW` ids stay local (`:525–570`). A needs all four captured on the pending record, i.e. threading them out of `publish_plan` — an internal client-method signature change, not a wire change. Confirm this is in scope for R25, or fold it into B's sign-off.
+
+**Engineering recommendation (not resolved).** A, with C's residual gap recorded explicitly. The fence is not needed for process death (`_load` already quarantines `OWNED`) and is needed only for "reconciliation cannot run", which A cannot close by itself. B is preferable only if the operator authorizes the legacy-visible change.
+
+**Scope.** Resolving this does not close R25, authorize a new wire operation or second writer, change legacy direct `fa workflow` behavior unless option B is chosen, or provide host evidence. W1's remaining `Q119-A` item is unaffected.
+
+---
+
+## Q139 — How is the mutation gate made to examine the code it claims to cover?
+
+**Status: ANSWERED — operator chose A on 2026-11-11; the deciding evidence was not the layout. `no_tests` turned out to be a test-selection fact, and the real defect was worse. See also `mutation-scope-and-import-isolation-2026-11-10.md` §3–§5.**
+
+**Context.** The operator authorized extending `[tool.mutmut].source_paths` to `src/fa/execution`, committed as `f7da7e0`. Measuring the result exposed defects in the gate that bound what any mutation claim means.
+
+**Defect 1 — scope blindness (fixed, `f7da7e0`).** `run_targeted_mutmut._scope_to_changed` filtered every `execution/` file out and printed `nothing to do`, returning 0: a green result for an area never examined.
+
+**Defect 2 — imports lost on an explicit run (fixed, `f7da7e0`).** In explicit mode `also_copy` came only from the CLI and `run_targeted_mutmut` passed none, so a staged run had no `src/fa` copy and imported the editable checkout; mutmut then reported "no test case for any mutant" for every mutant.
+
+**Correction — the earlier "staged layout" diagnosis (defect 3) was WRONG.** This entry previously asserted that `mutmut.setup_source_paths()` inserted a non-existent `mutants/src`, that Python ignored it, and that `import fa` therefore resolved to the repository. That is disproved by direct probe: `_run` does `makedirs` → `copy_src_dir` → `copy_also_copy_files` → `setup_source_paths()` (`mutmut/__main__.py:1016–1021`), so the copy exists before the insert, and in a stage directory `sys.path[0]` is the staged `mutants/src` with `fa` resolving there.
+
+`no_tests` is the pytest **exit code 5** ("no tests ran"), per `status_by_exit_code` (`:77–91`: `1→killed`, `0→survived`, `5→no tests`, `33→no tests`, `36→timeout`). The `no_tests=526` figure came from a probe that configured **one test file against six mutated modules**, so most mutants genuinely had no test. It measures the selection, not the layout.
+
+**Defect 3 (real) — the selector never listed any execution suite (fixed, `8cf42cd`).** Chasing the correction found the actual hole, and it sits exactly in the scope `f7da7e0` added: `pytest_add_cli_args_test_selection` named no `tests/test_execution_*` file. A mutant under `src/fa/execution` would have run against sandbox tests that cannot import it and "survived" vacuously — a full-scope green that proves nothing. `type_check_command` and `[tool.pytest-gremlins].paths` had also drifted from `source_paths`, so T19's positional invariant was red. All three are reconciled, T19 is green, and `tests/test_slice_mutmut.py` is 21 passed.
+
+**Operator decision (2026-11-11): A — fix the staged layout.** The operator accepted the cost with the reasoning that findings from unexamined places are hard to handle later but worth it. Recorded as taken; the staged-layout premise it was argued from did not survive the probe, and A's *intent* — the gate must actually examine the configured scope — is what `8cf42cd` implements.
+
+**Still open, and honestly so.** The scope is correct but **unmeasured**: a configured-scope run attempted 2026-11-11 died with `mutmut run returned -9` (SIGKILL) before producing counts, i.e. the runner's memory bound. `mutants/scope-baseline.json` records `"verdict": "infrastructure_failure"`. Until a run completes, no closeout may claim coverage for `execution/`; that is option B's discipline, applied to the only bucket we cannot yet quote.
+
+**Impact.** Every prior mutation claim in this repository means "the mutants that had a test stayed green", not "changed-path mutants were checked". Any closeout must quote `killed / (total − type_invalid − no_tests)` and name the selection that produced the denominator.
+
+**Options as put.** A — fix the staged layout, re-baseline, re-quote the real kill rate. B — keep the layout, stop claiming coverage. C — revert the `execution/` extension until A lands. D — other. Operator chose A.
+
+**Scope.** No change to the weekly workflow's advisory policy and no W-row is closed. The gate's correctness is now pinned by T19; its *coverage* is unmeasured until a full run completes.
+
+## Q140 — Where does a managed verify command run, and where does its scratch go?
+
+**Status: OPEN — operator decision required; raised 2026-11-11 by the W2 research note (`w2-remaining-steps-research-2026-11-11.md`). Blocks R24/S4P3's cutover, not its seam.**
+
+**Context.** R24 replaces the host `subprocess.run` in `slice_verification._run_one` with managed execution. E509 flagged this as "one ambiguity that would force a guess"; the research note resolved the mechanics and left two questions.
+
+**What is established by source and probe.** `ManagedBashExecutor` refuses any view that is not `Access.WRITE` (`client.py:1059`), and `ViewPurpose.VERIFICATION` is `Access.READ` *and* refuses writes outright (`workspace.py:217`, `:2747`). So verify cannot run in the purpose named for it. A `MUTATION` view — `Access.WRITE`, interactive-capable, plan-bound, confined to `_MUTATION_ROOTS = {"src", "scripts"}` — was probed end to end: it constructs the executor and reaches command dispatch, failing only on `BACKEND_UNAVAILABLE` because this sandbox has no Docker.
+
+**Options.**
+
+- **A — give VERIFICATION write-bearing scratch semantics.** Honest naming; widens a matrix that purpose tests pin, and duplicates MUTATION's capability.
+- **B — run verify on a MUTATION view.** Reuses an admitted purpose; the only open sub-question is where scratch lives.
+- **C — inject the executor into `run_commands` and change nothing else yet.** Not an alternative to A/B but a prerequisite for either.
+
+**Engineering recommendation.** Do C regardless — it is the seam R24 needs and a behavioural no-op. Then B, with scratch declared explicitly: either inside an approved mutation root, or as a temp directory outside the canonical tree (the command runs with `cwd=workspace` but its scratch is never projected). Prefer B over A because widening a pinned purpose matrix to duplicate an existing purpose is how a security matrix stops being reviewable.
+
+## Q141 — May a nested child's coder write project files under Q61?
+
+**Status: OPEN — operator decision required; raised 2026-11-11 by the W2 research note. Blocks R26's gate removal.**
+
+**Context.** `workflow_tool._requires_acquisition` refuses every coder-containing nested workflow with `acquisition_unavailable` (`:400–402`, `:611–616`), which makes the entire managed HANDOFF/return composition unreachable in production: only planner/eval-only nested workflows run. R26 is therefore not "build a handoff" — the handoff seam already exists and is exercised from the chat tool (`composition.py:134–160`, `workflow_tool.py:467, 498`) — but "remove the gate and prove it against a real authority".
+
+**The question.** R26's DoD says "no child project write on denial", which implies writes are permitted on success, but it never states that positively. Under Q61 the trusted controller remains the parent, so the safe reading is that a child coder writes into its own managed view and the parent publishes — but that is an inference from a negative, not a decision.
+
+**Options.**
+
+- **A — child coder writes project files through its own bound view (parent publishes).** Full nesting; needs child PlanRef acquisition to exist first, which is S5.
+- **B — nested coder remains plan-staging only.** Narrower; the gate becomes a permanent documented limit rather than temporary unavailability.
+- **C — child coder writes only inside an approved mutation root** (same confinement as R24's option B), leaving project-level edits to the parent.
+
+**Engineering recommendation.** A, sequenced after S5: the gate exists precisely because a nested coder would otherwise admit a session with no PlanRef, so removing it before S5 can produce a PlanRef would trade a clean refusal for a broken run. Whichever option is chosen, state it positively in the plan — "no write on denial" is not a policy.
+
+**Scope.** Neither question authorizes a wire change, a second writer, a model-visible grant, or any change to legacy direct `fa workflow`.
+
+## Q142 — How does a managed verify gate collect its JUnit evidence?
+
+**Status:** OPEN — blocks R24 step 3 (wiring the caller). Steps 1–2 are committed and unaffected.
+
+A managed run edits a revision the controller host never sees. R24 exists so the
+verify gate judges *that* tree instead of a stale host copy. The substrate seam
+(`238f75b`) and the read-only executor (`7e4dfcb`) are in place; passing the
+executor down from `WorkflowContext.managed_execution` is the remaining wiring.
+
+It cannot be wired yet, because the gate needs evidence to land **on the host**
+and reads it there:
+
+- `slice_verification.py:709` creates a host `TemporaryDirectory` for the JUnit XML;
+- `:715–725` runs `NODEID_CAPTURE_COMMAND` with `--junitxml=<that host path>`, then
+  `_parse_junit_report(report_path)`;
+- `:1673–1686` does the same per kill-check (`fa-kill-junit-`), and copies source
+  roots into a host overlay;
+- `:555–565` decides what to run from `(Path(root) / path).exists()` — a host check.
+
+Inside a cell that path does not exist, so every slice would record `ERROR`: a gate
+that can never pass. Small, enumerable surface — but each item is a contract choice.
+
+**Options**
+
+- **A. Collect JUnit XML in-band** (write to stdout inside the cell, parse from
+  `stdout_tail`). Cheapest wiring; but `TAIL_LIMIT` bounds the tail, and a truncated
+  report is exactly the "not evidence" case the executor already refuses. Also
+  redefines `stdout_tail` for every existing caller.
+- **B. Report into the cell's private `/scratch`, read back through the port.**
+  Evidence stays a real artifact inside the proven boundary. Costs a new port method
+  — `ClientWorkspacePort.read_file` reads the **source** projection only
+  (`workspace.py:2174–2194`), so `/scratch` is not reachable through it today — plus a
+  `/scratch` sizing decision (64 MiB tmpfs).
+- **D. Leave the gate on the host** and declare R24 to be "the seam only". Honest, but
+  a managed run then verifies a tree the coder never touched, which is the defect R24
+  was raised to remove.
+
+**Recommendation:** **B**, for the reason Q140 chose C — it keeps the evidence an
+artifact and keeps it inside the boundary the authority already proves. A is a
+protocol change wearing a convenience's clothes; D leaves the managed gate
+meaningless. **C (MUTATION view) stays withdrawn** — mutation roots *are* the
+canonical source (`workspace.py:225`).
+
+**Impact if deferred:** R24 stays two-thirds done: a managed verify still cannot run
+on the authority, and the `executor` parameter has no production caller.
+
+### Q142 addendum — B is not implementable; the audit for it found four more items
+
+Re-checked the whole verification module instead of just wiring the recommendation.
+**B is falsified by the mount table, not by taste:**
+
+- a READ view mounts **exactly two things** — sealed source at `/workspace` (ro) and
+  the toolchain cache (`profiles.py:108–113`);
+- its `/scratch` is a **tmpfs inside the container** (`profiles.py:161–167`), with the
+  authority's own instruction in the comment: *"Do not retry with the supervisor-owned
+  host scratch bind if rejected"*;
+- so the host scratch directory `_ensure_inputs` creates for a READ view
+  (`workspace.py:5649`) is **not mounted** on that path at all. Nothing is written to it
+  by an exec, and there is nothing on the host to read back.
+
+B therefore needs a new v2 operation to expose scratch contents — the same escalation
+the spec reserves for R16 `DIFF_REVISIONS`. That is a product/spec change, not wiring.
+
+**The spec already answers the question** (`i03-execution-workspace-spec:1122`):
+*"reports/cache/temp are private scratch, not source revisions or controller
+artifacts"* — the controller is explicitly not meant to receive the artifact. Only the
+verdict crosses. That is A's shape, and `:1107` names the runner as a managed
+noninteractive operation.
+
+**A's bound, measured rather than assumed.** One JUnit report for 52 tests is
+15 826 bytes → **304 bytes/test**; the receipt carries the last 64 KiB
+(`protocol.py:26`). So A holds ≈ **215 tests per report**, and the largest test file in
+this repo declares 128. Overflow is loud, not silent: `cell_worker` sets
+`truncated=True` when a stream exceeds its limit, and the adapter turns that into
+`ERROR` (never PASS) — the same refusal already tested.
+
+**Four more items the audit found, none of them B's:**
+
+1. `_existing_test_paths` (`:555–565`) decides what to run from the **host** tree. In a
+   managed run that is a *silent false pass*: a test file the coder created in the
+   revision does not exist on the host, so the slice reads "no declared TESTS path
+   exists at this snapshot" and is treated as vacuous, not as unproven. Must read the
+   revision — `LIST_PROJECT_ARTIFACTS`/the manifest — under the same managed switch.
+2. The adapter currently drops `env` (`del env`), which would also drop the
+   recursion guard and kill-check marker (`FA_VERIFY_GATE_TEST_DEPTH`,
+   `FA_VERIFY_GATE_KILL_CHECK`, `FA_VERIFY_JUNIT_RUN_ID`). The cell environment is the
+   authority's to fix, so the honest mechanism is a command-prefix assignment
+   (`VAR=value command`), not a process environment.
+3. **The mutation overlay is its own increment, not R24 step 3**: it is a host
+   `copytree` + `mkdtemp` + `write_text` (`:1096`, `:1149`, `:1155`) plus a git base read.
+   The spec's destination for it is a *supervised derivative view* (`:1107–1112`,
+   "materialize a derivative with the same supervised view primitives"), i.e. a v2
+   write path — out of scope for verification and should be tracked separately.
+4. Baseline capture (`capture_test_nodeids`) is part of R24 too — it is the T0 half of
+   the same comparison, and it feeds on the same JUnit/`_existing_test_paths` mechanism,
+   so items 1–2 apply to it identically.
+
+**Revised recommendation: A**, with items 1–2 as part of the same step and item 3
+promoted to its own question/increment.
+
+## Q142 — RESOLVED: option A, plus the two fixes the audit found
+
+Landed as `5e453b5` (evidence in the receipt, path resolution, marker prefix) and
+`0ee4b27` (the caller and its single substrate). B was falsified, not deferred: a READ
+view mounts sealed source and the toolchain cache only (`profiles.py:108-113`) and its
+`/scratch` is a tmpfs inside the cell (`profiles.py:161-167`), so there is no
+controller-side artifact to read back and no mount to expose one through.
+
+**What the gate now does.** `_pinned_verify_substrate` pins one READ view of
+`managed.current_revision_id` per verification and hands the same substrate to both
+the T1 capture and `verify_plan`, so the comparison cannot be scoped to two different
+trees. An unmanaged run yields `None` — the host tree is what it already is. A managed
+run with no read-only profile raises rather than yielding `None`, because falling back
+to the controller's copy is precisely the defect R24 removes. T0 keeps the host
+substrate: it runs before the coder's view exists.
+
+**Evidence.** The report travels in the command's own stdout between markers and is
+parsed by the same function as the path-based mode (`_parse_junit_bytes`). Capacity is
+measured: 304 bytes/test against a 64 KiB receipt tail, ≈215 tests, largest test file
+here 128. Overflow is loud — the cell reports `truncated`, and the adapter turns that
+into `ERROR`, never `PASS`.
+
+**Two defects found by auditing the module, not the recommendation:**
+
+1. `_existing_test_paths` consulted the host, so a test the coder created in the
+   revision was invisible and the slice looked like it had nothing to prove — a false
+   pass from a missing file. Host absence stays the documented empty-T0; on a snapshot
+   an unconfirmable path is *unproven*.
+2. The adapter dropped `env`, which would have silently disabled the recursion guard
+   and kill-check marker on the managed substrate. Only harness-computed markers travel
+   now, `shlex`-quoted, as a command prefix.
+
+**Negative oracle** (`tests/test_verify_read_only_oracle.py`), proved against the real
+authority: a READ view lives in `_readers`, and the writable lookup consults
+`_projects`, so a write naming a pin is refused as `UNAUTHORIZED` before any policy
+runs. Mutation confirms what it does *not* cover: removing `_purpose_write_policy`'s
+purpose branch or relaxing `workspace.py:5374` does not kill it; admitting `_readers`
+into the writable lookup does. Those two are second-order fences.
+
+**Remaining, tracked separately (not R24):**
+
+- the **mutation overlay** is still host `copytree`/`mkdtemp`/`write_text`
+  (`slice_verification.py:1096,1149,1155`) plus a git base read. The spec's destination
+  is a supervised derivative view (`:1107-1112`), i.e. a v2 write path — its own
+  increment.
+- C1 end-to-end on a live supervisor is still impossible in this sandbox
+  (`BACKEND_UNAVAILABLE`: no Docker); only the client half is proved here.
+
+## Q147 — how does a validated `PlanSnapshot` reach admission without a host plan path?
+
+**Status: RETRACTED the same day — asked on a misreading; no decision required.**
+
+The mechanism is already specified in I02 and already implemented in
+`workflow_controller.py`. `PlanSnapshot(ref, utf8_bytes, text, ids)` is self-sufficient:
+`snapshot_from_bytes(relative_path, raw, *, source_kind)` builds a complete snapshot from
+bytes with no filesystem access, and `read_plan_snapshot` is a wrapper that reads bytes and
+calls it (`plan_admission.py:133–160`). `_read_repair_candidate`
+(`workflow_controller.py:2658–2681`) is that exact pattern already shipped for managed
+repair — bytes from the authority's staged buffer via `ctx.managed_candidate_reader`, then
+`snapshot_from_bytes`, then a digest comparison. `_WorkflowAdmission.snapshot` is typed
+`PlanSnapshot`, and `_check_admission_source` returns early when no admission exists, so
+the host re-read is only the host branch of an existing split, not a competing authority.
+`i02-explicit-admission-spec-2026-10-15.md:88–92` fixes the order and already expects the
+snapshot to be the authority; `admission_schema.py:143` reserves `EXISTING_SELECTION` and
+`BOOTSTRAP` precisely for this internal producer.
+
+My error: I reasoned from `run_workflow`'s public signature ("only `plan_path: Path | None`")
+to a conclusion about the whole mechanism, while the controller's internal snapshot builder
+was a different surface I had already seen and read past.
+
+**Consequence:** no public signature change, no new parameter. S5P1 STEP2 is implementable on
+existing seams. Full retraction, with the five source facts, is in
+`q147-acquisition-internal-plan-snapshot-2026-11-12.md`.
+
+## Q148 — how does a chat-only `invoke_workflow` reach the acquisition path that exists in the controller?
+
+**Status: ANSWERED 2026-11-10 by the operator — option B.** The child gets its own READ
+binding for acquisition; the parent's writer is not shared across the suspension. This is
+the stricter reading of R26 ("no child-authority leakage") and it means the HANDOFF
+lifecycle is this step's next task. Option A's analysis is kept below because it is why the
+question was worth asking, and because B has to answer the two things A would have avoided:
+who pins the view, and whether a READ pin may coexist with the parent's suspended writer.
+
+### What is already true (measured, not inferred)
+
+The controller path is complete and proven at the composition boundary (`e4e9561`,
+E517): `run_workflow(acquisition=AcquisitionSubstrate(...))` admits a plan selected by an
+in-run `PlannerDispatchKind.ACQUISITION` planner, with `admission-without-planner`,
+clarification, bootstrap and unparseable-choice all refused before the coder runs;
+`_pinned_acquisition_substrate` builds that substrate from a real `pin_reader(plan_ref=None)`
+view and stops it in `finally`. 55 tests, mutation 4/4 + 6/6 + 5/5 + 4/4 + 5/5 + 8/8.
+
+What does not exist: a caller. `workflow_tool.acquisition_refusal` still returns
+`acquisition_unavailable` for a planner-first managed request, and `invoke_workflow` never
+builds a substrate, because it has no access to one.
+
+### The blocker, stated exactly
+
+`_pinned_acquisition_substrate` needs `ctx.managed_execution` — the run's `ExecutionClient`
+plus its `ExecutionBinding`. In `workflow_tool`, `WorkflowInvocationContext.managed_execution`
+is populated from `parent_stage_lease.managed` (`cli.py:2491`), i.e. **the parent chat
+stage's own writer grant**, deliberately, because `workspace.py` makes a second acquisition
+of the same workspace `WORKSPACE_BUSY` by construction.
+
+So the question is not "can we pass it" but which of two very different things the child
+acquisition view is allowed to be:
+
+**A — the child pins a READ view through the parent's client binding.** `pin_reader` takes
+`peer`/`namespace` and mints a new `ViewRef` owned by `namespace.run_id`; it does not
+acquire a writer. `_pinned_acquisition_substrate` already validates
+`view.owner_run_id == managed.binding.namespace.run_id`, so it would accept a view owned by
+the *parent* run and then read it on behalf of a *child* run — the same run identity used
+for the child's admission record. That is either exactly right (§7's "parent remains the
+trusted controller") or a real ownership leak across the child boundary. R26 exists
+precisely to police child authority, so a reviewer cannot accept this by inspection.
+
+**B — the child gets its own READ binding for acquisition**, and the parent's writer is not
+shared across the suspension. This matches R26's "child PlanRef/acquisition ... without
+child-authority leakage", but needs a composition change in the HANDOFF lifecycle
+(`_begin_managed_child` / `_return_managed_child_to_parent`) and a decision about whether a
+READ-only acquisition binding may coexist with the parent's suspended writer grant —
+`WORKSPACE_BUSY` currently says no second *acquisition*, and whether a pure READ pin counts
+is a supervisor policy question, not a controller one.
+
+### Why this is escalated rather than chosen
+
+Both options are defensible, they differ in what R26 must then prove, and the difference is
+visible only on a live supervisor (`BACKEND_UNAVAILABLE` in this sandbox: no Docker). Picking
+one now would also fix the shape of `acquisition_refusal`'s removal and of the Q146 view
+lifecycle across a HANDOFF — three contracts decided by one convenience edit.
+
+### Senior recommendation: **A**, scoped narrowly
+
+Reasoning: §7 and Q61 keep the trusted parent as the controller, and the acquisition view is
+read-only observation, which is the one capability that does not need to be duplicated to be
+safe. Concretely: the child's acquisition stage would pin READ through the parent binding,
+the resulting view stays owned by the **child run id** (so `_pinned_acquisition_substrate`'s
+owner check keeps its meaning and R26's "no child-authority leakage" is about writes, which
+stay parent-bound and suspended), and `acquisition_refusal` drops the managed branch while the
+legacy branch keeps `acquisition_unavailable`.
+
+If the operator prefers B, the HANDOFF lifecycle becomes this step's next task and the
+controller code above is unchanged — which is the useful property of having built it as a
+substrate rather than a thread through `invoke_workflow`.
+
+Whichever is chosen, the following is **not** solved by either option and stays open:
+bootstrap (`prepare_bundle` → `install_project` is authority-gated and served, but no
+inner-loop path renders and installs a new project; there is no install caller and no
+read-back-and-admit sequence).
+
+### Q148 — what option B actually costs, measured on the real authority
+
+Before building anything I measured the two things B leaves open, on
+`WorkspaceAuthority` through the existing `tests/test_execution_workspace.Site` harness:
+
+| probe | result |
+| --- | --- |
+| parent acquires the writer, then `handoff()` to a child | `active_actor` becomes the child; the parent's writer fd stays in the parent process; the capability rotates |
+| child `pin_reader(plan_ref=None)` **after** the handoff | **allowed**, `view_ref.owner_run_id == child run id`, `PROJECT`/`READ` |
+| parent `pin_reader` with its **old** capability after the handoff | allowed, because `pin_reader` takes no capability at all |
+| child `pin_reader` **without** any handoff, writer still held by the parent | **allowed** |
+| an unrelated namespace (`run-z`) `pin_reader` on the same workspace | **allowed** |
+
+Two conclusions, and they matter more than the choice itself:
+
+1. **A READ pin does not need the parent's binding, and does not need the HANDOFF.**
+   `pin_reader(peer, namespace, …)` authorizes on the uid allowlist plus an approved
+   read-only profile; it never consults the active actor or any capability. So under B
+   the child builds its own substrate directly — no writer sharing, no handoff needed
+   for the view itself.
+2. **`VIEWS` are authorized per peer uid, not per run.** Any run of the same user can
+   pin any workspace. That is a pre-existing property of this authority, not something
+   B introduces, and it is *not* what R26's "no child-authority leakage" polices: R26
+   polices **writes**. Recording it because a reviewer reading "the child gets its own
+   binding" could otherwise assume the binding is what stops the child writing.
+
+So B's implementation is smaller than A's, and the boundary it relies on is: a READ
+view can never become a WRITE view, and the writer is a single fd held by the parent
+process for the whole run. The child's acquisition stage cannot write by construction,
+not by convention.
+
+---
+
+## Q106 — Legacy large-result parity vs 60 KiB managed discovery envelope (deferred to W4)
+
+**Status: DEFERRED TO W4 (2026-11-10; recorded alongside E525 / Plan Review).**
+Initially raised in E325–E332 (`Q106=A`) for legacy `fs_search(output_mode="outline")` and
+`fs_reach` payloads exceeding the bounded `EXEC`/JSON envelope, and subsequently superseded on
+the active bound by E506 + Amendment 2026-11-09 (`61,440` ASCII bytes / 60 KiB cap in
+`notes/q97-w1-resource-contract-2026-11-06.md`). During W1–W3, 60 KiB remains the binding
+ceiling under Q97/Q111-A; resolving legacy large-result parity (streaming/chunking/artifact-ref
+or keeping the hard 60 KiB cap) is **deferred to wave W4**, and the two strict `xfail`s in
+`tests/test_execution_project_tools.py:304,315` (`test_q106_large_outline_parity_remains_open`
+and `test_q106_large_reach_parity_remains_open`) carry `deferred to W4` explicitly.
+
+---
+
+## Summary index of Q140–Q152 resolutions recorded in notes / ledger (E531 snapshot; Q152 current policy refined by E544)
+
+- **Q140** (`notes/q140-r24-purpose-decision-2026-11-11.md`): **RESOLVED = B** (managed verify runs
+  through `ManagedVerifyCommandExecutor` / pinned READ view + private `/scratch` — no write access
+  to canonical `src/`/`scripts/`).
+- **Q141** (`notes/q141-nested-coder-writes-2026-11-11.md`): **RESOLVED = C** (nested child `coder`
+  must run under `ViewPurpose.MUTATION`, restricting edits to `_MUTATION_ROOTS = {"src", "scripts"}`;
+  not yet enforced in `cli._open_stage_view:1877` and blocked by `ViewPurpose.PROJECT` checks in
+  `ManagedProjectToolExecutor` / `WorkspaceAuthority.admit` — tracked in W2 / R26).
+- **Q142** (`#q142--resolved-option-a-plus-the-two-fixes-the-audit-found` above): **RESOLVED = A**
+  (in-band JUnit capture on managed verify path; host-`/tmp` JUnit path defect tracked in W2 / R24).
+- **Q143** (E515): **RESOLVED = A** (staged candidate belongs to `I03-LIVE-23`).
+- **Q144** (E515): **RESOLVED = B** (next implementation target after E515 was S5P1).
+- **Q145 / Q146** (E516–E518): typed `AcquisitionSubstrate` / `project_names` + `incomplete_names`
+  over one pinned READ view (`run_workflow` / `_pinned_acquisition_substrate`).
+- **Q147** (E518, `notes/q147-acquisition-internal-plan-snapshot-2026-11-12.md`): **RETRACTED**
+  (`PlanSnapshot` already flows internally via `snapshot_from_bytes` without a host path).
+- **Q148** (`#q148--how-does-a-chat-only-invoke_workflow-reach-the-acquisition-path-that-exists-in-the-controller` above):
+  **RESOLVED = B** (child pins its own READ view via `AcquisitionSubstrateRequest` inside its own run).
+- **Q149** (E520): **RESOLVED = B** (acquisition planner user prompt uses bounded current-turn
+  task context; full live chat-transcript copy remains `S5P4` / `Q66` in W2).
+- **Q150** (E520, E524): **RESOLVED = A** (child runs with `owner_run_id != run_id` emit
+  `admission.json` `schema_version = 2`; unmanaged/top-level callers retain v1).
+- **Q151** (E521): **RESOLVED = A** (`Incomplete` / `COLLISION` rules in `managed_acquisition`
+  and `ACQUISITION_SYSTEM_PROMPT`).
+- **Q152** (E531): **RESOLVED = B** (historically deferred full configured-scope Q139 until after W4 suite/evidence capture and retained a sign-off gate); **E544 supersedes that mandatory effect**: the run is best-effort, and if unrun/infra-failed it remains `DEFERRED`/unmeasured without blocking MVP merge, test deployment, or I03 close.
+
+## Q152 — When and how must the configured-scope Q139 baseline run?
+
+**Status: RESOLVED — operator selected B on 2026-11-10; the explicit sequencing amendment is recorded in E531.**
+
+### Source-grounded conflict
+
+- I03 STEP9 item 4 requires Q139 mutation calibration before the W3 host update.
+  E530 orders STEP9 → STEP9A → STEP9B → new local slice DoDs → STEP10/W3 host
+  update → W4 live E2E/evidence review.
+- E512 says the configured-scope Q139 baseline is deferred until "after the
+  post-e2e work" because the prior run ended in SIGKILL. If that means after W4,
+  the deferral conflicts with both STEP9's pre-W3 exit and E530's deployment order.
+- The STEP9 text names `just mutmut-check` / `run_targeted_mutmut.py`, but the
+  current `justfile` has no `mutmut-check` recipe. `run_targeted_mutmut.py`
+  mutates only changed production files. The source-supported full configured-scope
+  entry point is `scripts/run_slice_mutmut.py --configured-scope`.
+- The recorded Q139 and E512 decisions are dated 2026-11-11, one day after the
+  current date recorded for this work (2026-11-10). Their effective status and the
+  intended post-E2E boundary therefore require confirmation, not inference.
+- The configured-scope attempt is recorded as an infrastructure failure
+  (`mutants/scope-baseline.json`); `src/fa/execution` remains unmeasured. No
+  mutation-coverage claim can be inferred from that failure.
+
+### Options
+
+- **A — preserve the current STEP9/W3 gate (senior recommendation).** Confirm or
+  re-authorize the full configured-scope baseline before W3, using a runner with
+  enough memory to complete it. Record the exact command, selection, and
+  `killed / (total − type_invalid − no_tests)` denominator; do not reuse the
+  failed run as evidence. Correct the stale STEP9 command reference and the
+  deferral record only after approval.
+- **B — preserve the post-E2E deferral.** Confirm that E512 is effective and
+  authorize an explicit amendment to the STEP9/E530 dependency order. Until that
+  amendment exists, STEP9 cannot close and no W3 host update is permitted; this
+  does not silently waive Q139.
+- **C — approve a different bounded Q139 criterion.** Specify the exact source
+  scope, selection, denominator, and permitted claims. Partial measurements must
+  not be described as a full configured-scope baseline.
+- **D — other, with explicit scope and sequencing.**
+
+**Recommendation (before the operator reply).** Choose A if the existing W3
+safety gate is to remain intact. The current runner's SIGKILL is not a reason to
+mark the gate green or to retry unchanged; obtain adequate execution capacity
+first. This recommendation was superseded by the operator's explicit choice of B.
+
+### Resolution — operator selected B (2026-11-10; E531)
+
+The operator confirmed E512's post-E2E deferral and authorized an explicit
+STEP9/E530 schedule amendment. In this I03 schedule, "post-E2E" means after the
+reviewed W4 suite has executed and its live evidence is captured, but before the
+final independent evidence review and I03 closure.
+
+STEP9's pre-W3 exit may record the configured-scope Q139 baseline as
+`DEFERRED` (never `PASS`) once every other STEP9 criterion is met. STEP9A and
+STEP9B remain gated on STEP9. The full configured-scope run remains mandatory
+before I03 closure; until it completes, no full-scope mutation-coverage claim
+is allowed for `src/fa/execution`. E531 records the amended order and the
+fail-closed treatment of an incomplete/actionable run.
+
+The operator's direct 2026-11-10 selection confirms E512's intent despite the
+source record's later-dated heading; historical dates are not rewritten.
+
+**Amended closeout rule:** after W4 execution/evidence capture, run
+`uv run --frozen python scripts/run_slice_mutmut.py --configured-scope` and
+record its exact selection, tool versions, complete counts, and Q139's
+`killed / (total − type_invalid − no_tests)` denominator. Do not substitute
+`run_targeted_mutmut.py` or `just check-deep`; those are changed-path checks, not
+the full configured-scope baseline. Infrastructure failure or any unreviewed
+actionable mutant status keeps I03 open. If remediation changes source or the
+candidate image, affected W3/W4 evidence must be rerun against the new candidate.
+
+### Operator policy refinement — E544 (2026-11-10)
+
+E544 supersedes the hard-gate/mandatory-closeout effect of this historical
+resolution for the personal MVP test deployment. If resource and time make it
+worthwhile, attempt the configured-scope run after W4 live-suite capture using
+the existing command above; no custom runner or Arena workaround is approved.
+If it is not run or it fails from infrastructure limits, keep Q139
+`DEFERRED`/unmeasured and make no full-scope mutation-coverage claim, but do not
+block continued development, MVP merge, the test deployment, or I03 close on that basis. Any run that
+does complete still requires exact selection, counters, denominator, and honest
+actionable-status disposition.
+
+---
+
+## Q153 — Which Python-selection contract must clean workspace bootstrap use?
+
+**Status: POLICY DECIDED — keep `requires-python >=3.13` with no interpreter pin; W3 / Q137 readiness acceptance remains OPEN.** This is separate from Q136's Pylint findings and from Q97's approved execution-profile memory check. Q139 remains deferred by Q152/E531 and is not part of this question.
+
+### Source-grounded current behavior
+
+- `pyproject.toml` and `uv.lock` both accept `requires-python >=3.13`; there is
+  no repository `.python-version`. The current lock has resolution markers for
+  Python `>=3.15`.
+- `src/fa/workspace_bootstrap.py::_UV_SYNC_ARGV` invokes
+  `uv sync --locked --extra dev` without `--python`. `_command_environment`
+  removes inherited `VIRTUAL_ENV`, `CONDA_PREFIX`, `UV_PROJECT_ENVIRONMENT`,
+  `UV_PYTHON`, and `PYTHONHOME`, then pins only
+  `UV_PROJECT_ENVIRONMENT=<target-workspace>/.venv`.
+- `_ensure_locked` skips the sync only when the target already has a valid
+  environment and passes `_fast_ready`; a fresh target proceeds to real `uv
+  sync`. `_run_process` converts nonzero sync into `sync_failed`; CLI returns
+  `degraded_environment` / exit 75, and readiness is not published.
+- `tests/test_workspace_readiness_integration.py` copies the checkout while
+  excluding `.venv`, creates a fresh managed clone, and demands `ready_repaired`
+  before doing the commit/push portion. It launches `scripts/bootstrap/workspace.py`
+  with `sys.executable`, but never forwards that executable as `uv sync --python`;
+  this is a fresh-provisioning test, not reuse of the repository virtualenv.
+- The system PATH Python is 3.11.2; the repository `.venv` and the externally
+  built Arena prefix provide CPython 3.13.16. Prior captured diagnostics (not
+  reproduced in E534) report uv selecting CPython 3.15.2 under `>=3.13` and
+  failing the GitHub-release download with `invalid peer certificate:
+  UnknownIssuer`; separate `UV_NATIVE_TLS` / `UV_SYSTEM_CERTS` runs were also
+  reported as `sync_failed`.
+- E534 reran the exact clean-copy readiness node with the 3.13.16 venv/prefix
+  exposed on `PATH`. The target began without `.venv`; after `uv sync`, the
+  target `.venv/bin/python` reported **3.13**. Bootstrap then failed at
+  `pre-commit install-hooks` (`precommit_prewarm_failed`, child rc 3 / outer
+  exit 75). Follow-up showed the custom CPython's default CA paths point to a
+  temporary build prefix: Python initially could not validate GitHub, but
+  `SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt` made the GitHub request
+  succeed and allowed pre-commit to clone the hook repos and install Python/npm
+  environments. Pre-commit then failed while preparing the Gitleaks Go hook:
+  `pre_commit.languages.golang` attempted `https://go.dev/dl/?mode=json`, whose
+  host is outside this runner's allowed outbound-host set; the traceback ends
+  in `URLError: [SSL: UNEXPECTED_EOF_WHILE_READING]`. No system Go executable is
+  installed. The exact clean-copy node was retried with the system CA bundle and
+  still returned `precommit_prewarm_failed`; it did not reach `ready_repaired`,
+  commit, or local publication. No TLS verification was disabled. No native
+  Python 3.15 runtime was available, so the full >=3.15 checker/test matrix is
+  not yet verified.
+- The post-correction full `just check` rerun took 25:59 and remains RED: 7,794
+  passed, 1 failed, 18 skipped, 7 deselected, 3 xfailed (86.78%). The one pytest
+  failure is this readiness node; the separate lint failure is Pylint R0801 /
+  R0401 (exit 8). Lock, Ruff/format, deptry, mypy, Pyrefly, authoring-check,
+  contracts, and shell syntax passed. Twelve ShellCheck tests skipped because
+  ShellCheck is absent; six runtime-server-extra tests are deferred. See ledger
+  E534 for full command environment and exact gate evidence.
+- Operator clarification (E535): Arena-only CA/egress limits are not product
+  findings and must not drive project workarounds. Preserve the strict clean-copy
+  oracle; Q137 remains pending target-host `ready_repaired` evidence and is not
+  waived or marked PASS. The Arena runner has no Docker CLI, so target Docker
+  behavior remains unverified here.
+
+### Why this is not a newly reopened test
+
+The exact nodeid was already marked `OPEN` in
+`notes/q137-working-entry-inventory-2026-11-09.md`; E534's rerun does not reopen
+or newly introduce it. E534 changes the test's evidence surface (explicitly
+asserting an absent source/target `.venv`, probing the resulting target Python,
+and including a bounded structured log tail on failure) and updates `just
+doctor` to honor the open Python floor. It does not change
+`workspace_bootstrap.py`, `pyproject.toml`, `uv.lock`, or
+`scripts/bootstrap/workspace.py`. Git history for those paths is grafted at the
+imported base commit, so the exact older change that introduced the hermetic
+environment cannot be reconstructed from this checkout. Existing source and
+unit tests establish that the pop-and-target-environment behavior is
+intentional and load-bearing; do not remove it incidentally.
+
+The historical ledger separates two different outcomes; neither is a readiness
+PASS. In E351, this same readiness integration was reported as
+`precommit_prewarm_failed`. In the implementation, pre-commit is invoked only
+after `uv sync` exits successfully, so that run proves the sync stage succeeded
+and the later hook stage failed; the readiness integration as a whole still
+failed. Its recorded invocation exposed
+`PATH=.venv/bin:$BUILD_ROOT/prefix/bin:$PATH` and `UV_SYSTEM_CERTS=true`.
+Later ledger entries report `sync_failed` even on a stashed clean tree. The most
+plausible source-grounded explanation for the stage difference is that the
+E351 runner could expose a compatible built CPython through `PATH`; its recorded
+`$BUILD_ROOT/prefix/bin` is where the environment builder puts that interpreter.
+The exact interpreter selected in E351 was not logged, so that part remains an
+inference, not a fact. In the separate captured `sync_failed` diagnostics, uv
+selected CPython 3.15.2 under `>=3.13` and then failed to download it; the latest
+focused run does not preserve fresh uv stderr, so do not assume 3.15.2 was
+selected again on that exact run.
+
+`tests/test_workspace_readiness_integration.py` starts from a copied checkout
+that excludes `.venv`, then requires `ready_repaired` before commit/publication.
+That is materially different from ordinary repo commands under an already-built
+`.venv` (CPython 3.13.16). `scripts/arena-env-build.sh` has a separate, explicit
+contract: it validates/builds exactly CPython 3.13.16 and runs root-project
+`uv sync --frozen --extra dev --python "$PYTHON"` with
+`UV_SYSTEM_CERTS=true`. E398 records that command succeeding for the root
+`.venv`; E351's separate clean-target run proves its `uv sync` stage succeeded
+before failing later at pre-commit, with the external toolchain prefix on PATH.
+Neither run proves end-to-end `ready_repaired`. A search of the tracked ledger
+entries for the exact readiness nodeid found no recorded overall PASS; it found
+earlier failures at both the later pre-commit stage and the current sync stage.
+
+### Decision criteria and options
+
+| Option | Contract change? | Preserves fresh-workspace proof? | Can pass in the current runner as observed? | Gate effect |
+| --- | --- | --- | --- | --- |
+| **A. Keep the open `>=3.13` policy and environment isolation; run on a runner where uv can discover an installed compatible Python or reach its trusted download source.** | No product-policy change; runner/toolchain requirement only. | Yes: the target remains a clean, separately provisioned workspace `.venv`. | System PATH alone is insufficient; with the 3.13.16 builder interpreter on PATH, target `uv sync` succeeded, but readiness still fails at pre-commit because fetching GitHub hook repos ends in an SSL EOF. | Can satisfy Q137 only after a successful exact test run on the declared runner; no skip or xfail. |
+| **B. Pin the supported bootstrap Python minor/release in project policy, and align bootstrap/lock/CI/Docker/update paths.** | Yes: narrows or otherwise changes the effective Python selection contract; requires owner approval and compatibility evidence. | Yes, if the test uses the same explicit selection and still creates the target `.venv`. | Only if that interpreter is available locally or its download is trusted; pinning alone does not fix TLS. | Can satisfy Q137 only after the real clean-workspace test and the aligned gates pass. |
+| **C. Select the bootstrap process's interpreter explicitly while still creating a separate target `.venv`.** | Yes: defines whether the caller runtime is authoritative; must specify behavior when it does not satisfy `requires-python`. | Potentially; must prove target isolation and incompatible-runtime refusal with tests before adoption. | Possibly, but not established by current evidence; the current runtime is the repository `.venv`, not a system installation recognized by uv. | Not a fix until the contract is approved and C0/C1 tests plus producer/EDGE mutation checks pass. |
+| **D. Defer as an environment blocker, keeping Q137 red; do not skip/xfail or claim readiness.** | No runtime change, no acceptance waiver. | The oracle stays intact. | Yes, operationally, but the test remains failing. | W3 cannot close on this evidence. |
+
+### Required selection criteria
+
+1. Preserve the invariant that bootstrap modifies only the target workspace's
+   `.venv`; never allow an inherited `VIRTUAL_ENV` or
+   `UV_PROJECT_ENVIRONMENT` to redirect writes into the caller's environment.
+2. Preserve the owner-selected policy: any version in `>=3.13`, without a
+   project interpreter pin. `sys.executable` launches the bootstrap wrapper but
+   does not constrain nested `uv sync`; the test must probe the resulting target
+   `.venv`. Do not infer that `pyrefly`'s `python-version = 3.13` or the Docker
+   image's `python3.13` symlink pins workspace bootstrap; they are separate
+   consumers.
+3. Keep the fresh-clone integration oracle real. A mocked `uv`, copied root
+   `.venv`, skip, or xfail cannot satisfy Q137's strict gate.
+4. Require an actual clean-workspace run with the selected interpreter policy,
+   followed by the existing ready marker, hook, commit, and local publication
+   assertions. Capture the bounded/redacted bootstrap log so a future failure
+   distinguishes interpreter discovery, download/TLS, dependency sync, and
+   pre-commit failures without printing secrets.
+5. Retain fail-closed semantics: nonzero `uv sync` means `sync_failed`, no
+   `ready_repaired` marker, and no commit/push assertions are credited.
+
+### Decision provenance / impact
+
+`notes/remaining-work-c901-and-repairs-2026-11-10.md` §7.6 records the
+product-owner's no-pin selection: retain `requires-python >=3.13`; do not add
+`.python-version`, `UV_PYTHON`, or `--python`; do not regenerate `uv.lock` to
+narrow the range. Treat that policy selection as effective; preserve the source
+date as recorded rather than silently changing its provenance. This answers the
+Python-selection policy only. Q137 remains a strict gate: the fresh-copy test
+must return `ready_repaired` before commit/local publication, and its current
+`precommit_prewarm_failed` result is not waived. No STEP9 closure, host
+readiness, or W3 acceptance is claimed; see E534 in the ledger for the latest
+local verification and boundaries.
+
+## Q154 — Which ledger append should the new live E2E test prove?
+
+**Status: RESOLVED = B (operator selection in this turn).** “Ledger append” means an accepted V2 STEP transition appended to the controller-owned authority progress record, with the planned deterministic read-only Markdown projection. It does **not** mean writing progress into the project's `ledger.md` or appending a planner-owned I03 host-attempt row. This resolves the target only; it does not close `Q-V2-STATUS-1`, authorize implementation, or register a live case.
+
+### Source-grounded context
+
+- The current artifact schema §5 describes project `ledger.md` as append-only typed evidence. `src/fa/execution/publication.py::render_bundle` currently creates only its fixed heading; no production producer that appends V2 progress to that project ledger was found. `SubagentRunner._append_to_worklog` writes `worklog.md`, not the project `ledger.md`.
+- The I03 live-verification sheet separately defines append-only host-attempt rows. Its artifact tests check row/schema shape and status ownership; they do not exercise a production append writer.
+- The linked V2 plan's `Q-V2-STATUS-1`, SLICE4 CT-4.2 and SLICE5 CT-5.3 specify a controller-owned progress record plus deterministic read-only projection outside the sealed workspace revision and AcceptanceBundle. Progress must not mutate the project revision, PlanRef or bundle identity. The plan does not specify an append to project `ledger.md`; `Q-V2-STATUS-1` remains open pending STEP9A review/source proof.
+- S6P7 requires independent review before fixture/helper work; S6P8 is downstream of that review.
+
+### Planned E2E acceptance under the selected target
+
+The linked V2 plan remains the source of truth for selectors and slice DoDs. Reuse its planned acceptance tests rather than inventing a parallel host case:
+
+- **Local C1 — TEST-4.2:** `tests/test_ai_native_roles_and_progress.py::test_step_progress_is_authority_owned_and_projects_without_mutating_sealed_inputs`. Drive the real local workflow/controller composition. Assert an accepted STEP transition appends an authoritative progress record, the sequence-bound Markdown projection reflects that record, and the operation leaves the workspace revision, PlanRef, and AcceptanceBundle identity unchanged. Include unauthorized/stale-identity refusal and no false progress advancement. Exact retry/CAS behavior must match the STEP9A-reviewed authority contract.
+- **Installed-host C1/C3 — TEST-5.3:** `tests/integration/test_ai_native_workflow_host.py::test_installed_host_proves_v2_progress_projection_and_fresh_project_lifecycle`. Enter through the real installed chat `invoke_workflow` caller on the frozen image; assert the authoritative record sequence and deterministic projection for accepted transitions, one bounded refusal without false advancement, and unchanged workspace revision/PlanRef/AcceptanceBundle identity. Capture image SHA/digest/profile/config, workspace ID, full PlanRef, bundle digest, progress sequence and projection digest. Do not use `FlowState`, a local fake, or a change to the project's `ledger.md` as the authority oracle.
+- **Mutation after C1:** remove the authority progress-transition producer and require TEST-4.2/TEST-5.3's accepted-transition assertion to fail; remove the actual lifecycle/caller binding into that producer and require the composition/host test to lose the effect and fail. Setup, collection, skip, timeout, crash, or zero executed tests are errors/non-kills, never proof. The host mutation is a test-build sensitivity check only, never an edit to an approved running deployment.
+
+The product `worklogs/<slug>/ledger.md` remains unchanged by STEP progress. The progress record's exact append/replay/CAS semantics are still gated by `Q-V2-STATUS-1` and STEP9A review. These planned selectors are not yet implemented, registered in the frozen I03 package, or run on a host.
+
+### Impact and stop line
+
+Q154's target ambiguity is resolved, but implementation and live registration remain gated: do not add tests or fixtures until STEP9A closes its authority contract and S6P7's independent review precedes S6P8 fixture/helper work. Do not add an S08 mapping or producer-baseline row based on this resolution alone; the required mapping/oracle review remains separate. Q154 changes no live result, frozen producer baseline, or host acceptance status. Q146/LIST_PROJECTS mapping and its S08 oracle remain governed by E547.

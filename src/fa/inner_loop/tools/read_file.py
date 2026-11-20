@@ -17,6 +17,7 @@ from fa.inner_loop.tools.base import (
 )
 from fa.inner_loop.tools.workspace_port import (
     PORT_READ_MAX_BYTES,
+    CandidateWorkspacePort,
     PortRead,
     WorkspacePort,
     WorkspacePortError,
@@ -474,8 +475,73 @@ def _read_port_text(port: WorkspacePort, relative: str) -> str | ToolResult:
     return read.content
 
 
-def build_read_file_tool(workspace_root: Path, *, workspace_io: WorkspacePort | None = None) -> ToolSpec:
+def _read_candidate_text(candidate_io: CandidateWorkspacePort, *, seed_text: str | None) -> str | ToolResult:
+    """Read the owned candidate target from the CANDIDATE buffer, or its seed while empty.
+
+    Never reads the host filesystem: when the authority rejects the buffer read as
+    ``stale`` (empty staged buffer before the planner's first write) and the
+    controller supplied the exact seed bytes for this stage's candidate target,
+    those bytes are returned; any other authority refusal fails closed.
+    """
+    try:
+        read: PortRead = candidate_io.read_candidate(max_bytes=PORT_READ_MAX_BYTES)
+    except WorkspacePortError as exc:
+        if exc.code == "stale" and seed_text is not None:
+            return seed_text
+        if exc.code == "input_policy":
+            return ToolResult.fail(
+                "read_failed",
+                "binary or non-UTF-8 content: the managed view delivers text only",
+                retryable=False,
+            )
+        codes = {
+            "denied": ("read_failed", False),
+            "stale": ("read_failed", True),
+            "invalid_request": ("invalid_params", True),
+            "unavailable": ("read_failed", True),
+        }
+        code, retryable = codes.get(exc.code, ("read_failed", True))
+        return ToolResult.fail(code, f"workspace refused the read: {exc.code}", retryable=retryable)
+    if not read.eof:
+        return ToolResult.fail(
+            "read_failed",
+            f"file exceeds the {PORT_READ_MAX_BYTES}-byte managed read bound; the managed view serves whole files only",
+            retryable=False,
+        )
+    return read.content
+
+
+def _read_workspace_source(
+    path: Path,
+    relative: str | None,
+    *,
+    workspace_io: WorkspacePort | None,
+    candidate_io: CandidateWorkspacePort | None,
+    candidate_target: str | None,
+    candidate_seed_text: str | None,
+) -> str | ToolResult:
+    if workspace_io is None or relative is None:
+        return _read_file_text(path)
+    if candidate_io is not None and candidate_target is not None and relative == candidate_target:
+        return _read_candidate_text(candidate_io, seed_text=candidate_seed_text)
+    if path.suffix.lower() == ".pdf":
+        # Refuse before IO: the portable text contract cannot carry PDF bytes,
+        # so extraction would have to read the host path — never allowed managed.
+        return ToolResult.fail("read_failed", _PDF_MANAGED_MESSAGE, retryable=False)
+    return _read_port_text(workspace_io, relative)
+
+
+def build_read_file_tool(
+    workspace_root: Path,
+    *,
+    workspace_io: WorkspacePort | None = None,
+    candidate_io: CandidateWorkspacePort | None = None,
+    candidate_target: str | None = None,
+    candidate_seed_text: str | None = None,
+) -> ToolSpec:
     """Read inside the workspace, from the admitted view when a port is present."""
+    if candidate_seed_text is not None and (workspace_io is None or candidate_io is None or candidate_target is None):
+        raise ValueError("candidate seed requires a managed workspace port, candidate port, and candidate target")
     root = Path(workspace_root).resolve()
 
     def handler(params: Mapping[str, object]) -> ToolResult:
@@ -498,15 +564,14 @@ def build_read_file_tool(workspace_root: Path, *, workspace_io: WorkspacePort | 
         except (ValueError, PermissionError) as exc:
             return ToolResult.fail("invalid_params", str(exc), retryable=True)
 
-        if workspace_io is None or relative is None:
-            text_or_fail = _read_file_text(path)
-        elif path.suffix.lower() == ".pdf":
-            # Refuse before IO: the portable text contract cannot carry PDF
-            # bytes, so extraction would have to read the host path — the one
-            # thing a managed read must never do.
-            return ToolResult.fail("read_failed", _PDF_MANAGED_MESSAGE, retryable=False)
-        else:
-            text_or_fail = _read_port_text(workspace_io, relative)
+        text_or_fail = _read_workspace_source(
+            path,
+            relative,
+            workspace_io=workspace_io,
+            candidate_io=candidate_io,
+            candidate_target=candidate_target,
+            candidate_seed_text=candidate_seed_text,
+        )
         if isinstance(text_or_fail, ToolResult):
             return text_or_fail
         text = text_or_fail

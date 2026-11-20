@@ -31,7 +31,6 @@ from typing import Any, override
 
 import pytest
 
-import fa.execution.cell_worker as cell_worker
 from fa.execution.backend import CellBackend, CommandOutcome, _EpisodeKey
 from fa.execution.cell_protocol import decode_cell_request, encode_cell_request
 from fa.execution.cell_worker import CellWorker, serve
@@ -432,6 +431,14 @@ def test_two_commands_share_one_cell_and_two_durable_records(backend: Backend) -
     assert first_record is not None and second_record is not None
     assert first_record["container_id"] == CID and second_record["container_id"] == CID
     assert second_record["view_ref"] == first_record["view_ref"]
+    assert first_record["cell_owner_operation_id"] == first_record["operation_id"]
+    assert second_record["cell_owner_operation_id"] == first_record["operation_id"]
+    assert (
+        backend.authority.journal.resolve_cell_owner(
+            second_record["operation_id"], ACTOR, view=backend.view, container_id=CID
+        )
+        == first_record["operation_id"]
+    )
 
 
 def test_typed_project_tool_exec_uses_same_admitted_cell_without_pty(
@@ -468,7 +475,7 @@ def test_typed_project_tool_exec_uses_same_admitted_cell_without_pty(
 
     monkeypatch.setattr(CellWorker, "handle", capture_action)
     monkeypatch.setattr(PtyPool, "acquire", forbidden_pty)
-    monkeypatch.setattr(cell_worker.subprocess, "Popen", launch)
+    monkeypatch.setattr(subprocess, "Popen", launch)
     outcome = ok_backend(lambda: backend.owner().execute(PEER, request, deadline=until()))
     assert outcome.exit_code == 0 and outcome.stdout == envelope and outcome.session_id is None
     assert actions == ["PROJECT_TOOL"] and backend.worker.runs == 0
@@ -1061,7 +1068,7 @@ def test_typed_project_tool_exec_uses_exact_read_pin_and_one_shot_cell(
 
     monkeypatch.setattr(CellWorker, "handle", capture_action)
     monkeypatch.setattr(PtyPool, "acquire", forbidden_pty)
-    monkeypatch.setattr(cell_worker.subprocess, "Popen", launch)
+    monkeypatch.setattr(subprocess, "Popen", launch)
     outcome = ok_backend(lambda: backend.owner().execute(PEER, request, deadline=until()))
     assert outcome.exit_code == 0 and outcome.stdout == envelope and outcome.session_id is None
     assert actions == ["PROJECT_TOOL"] and backend.worker.runs == 0

@@ -115,9 +115,18 @@ def _extract_all(tree: ast.Module) -> set[str] | None:
     return working
 
 
-# C901-baseline waiver (16>15): AST walk over many node kinds; split when
-# next touched.
-def _public_symbols(tree: ast.Module) -> dict[str, ast.stmt]:  # noqa: C901
+def _assignment_names(node: ast.Assign) -> list[str]:
+    """Names bound directly by an assignment, including only flat unpacking."""
+    names: list[str] = []
+    for target in node.targets:
+        if isinstance(target, ast.Name):
+            names.append(target.id)
+        elif isinstance(target, (ast.Tuple, ast.List)):
+            names.extend(elt.id for elt in target.elts if isinstance(elt, ast.Name))
+    return names
+
+
+def _public_symbols(tree: ast.Module) -> dict[str, ast.stmt]:
     """Return ``{name: defining_node}`` for every public top-level symbol.
 
     "Public top-level" means: (a) the body of the module (no recursion
@@ -148,14 +157,8 @@ def _public_symbols(tree: ast.Module) -> dict[str, ast.stmt]:  # noqa: C901
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             _register(node.name, node)
         elif isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name):
-                    _register(target.id, node)
-                elif isinstance(target, (ast.Tuple, ast.List)):
-                    for elt in target.elts:
-                        if isinstance(elt, ast.Name):
-                            _register(elt.id, node)
-                        # ast.Starred and nested ast.Tuple/List intentionally skipped
+            for name in _assignment_names(node):
+                _register(name, node)
         elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
             if node.value is not None:
                 _register(node.target.id, node)

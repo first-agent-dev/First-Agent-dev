@@ -28,12 +28,12 @@ import logging
 import re
 import threading
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
-from fa.execution.client import ExecutionRejectedError
+from fa.execution.client import ExecutionRejectedError, ExecutionUncertainError
 from fa.execution.composition import BoundPlanPublisher, ExecutionBinding, ManagedExecution
 from fa.execution.types import NamespaceRef
 from fa.inner_loop.expansion import TIER_HIGH, TIER_SAFE
@@ -48,6 +48,7 @@ from fa.inner_loop.workflow_controller import (
     MAX_REPAIRS_CEILING,
     MAX_REPLANS_CEILING,
     WORKFLOW_MODES,
+    AcquisitionSubstrateRequest,
     WorkflowRequestError,
     _validate_workflow_request,
 )
@@ -143,6 +144,9 @@ class WorkflowInvocationContext:
     # via resolve_injection_modes, so role gating still applies and an
     # inherited coder-only injection stays off for a planner stage.
     inject_overrides: Mapping[str, str] = field(default_factory=dict)
+    # S5P4 / CT109 / Q66: internal bounded, credential-redacted snapshot of
+    # current-turn parent messages fed ONLY to the initial planner user task.
+    initial_planner_context: str = ""
 
 
 def child_run_id(parent: str, n: int) -> str:
@@ -225,6 +229,7 @@ def build_handoff_task(
     write_paths: list[str],
     search_paths: list[str],
     config: ScopeRiskConfig | None = None,
+    acquisition: bool = False,
 ) -> str:
     """Assemble the planner handoff task text (S10 / CT6, DP-9).
 
@@ -319,11 +324,17 @@ def build_handoff_task(
         lines.extend(f"  - {p}" for p in leads)
 
     lines.append("")
+    step3 = (
+        "  3) Choose an existing active increment, bootstrap a new project bundle, "
+        "or return NEEDS_CLARIFICATION per the acquisition protocol."
+        if acquisition
+        else "  3) Produce the plan and execute toward the goal from these files."
+    )
     lines.append(
         "Do exactly:\n"
         '  1) Start from the files under "Start here".\n'
         "  2) Use Observed and Candidate leads as your map; do not re-search them.\n"
-        "  3) Produce the plan and execute toward the goal from these files."
+        f"{step3}"
     )
     return "\n".join(lines)
 
@@ -350,7 +361,9 @@ def _check_budget(invocation_count: int, ctx: WorkflowInvocationContext) -> Tool
     return None
 
 
-def _resolve_handoff_task(*, task: str, candidate: str, ctx: WorkflowInvocationContext) -> str:
+def _resolve_handoff_task(
+    *, task: str, candidate: str, ctx: WorkflowInvocationContext, acquisition: bool = False
+) -> str:
     """Build the planner handoff task from LIVE session facts (S10 / CT6).
 
     A missing/raising provider degrades to the raw goal — the escalation must
@@ -376,6 +389,7 @@ def _resolve_handoff_task(*, task: str, candidate: str, ctx: WorkflowInvocationC
             write_paths=list(facts.get("write_paths") or ()),
             search_paths=list(facts.get("last_search_paths") or ()),
             config=facts.get("risk_config"),
+            acquisition=acquisition,
         )
     except Exception as exc:  # noqa: BLE001 - handoff is advisory; degrade to goal
         logger.warning("workflow handoff build failed: %s", exc)
@@ -400,6 +414,45 @@ def _resolve_handoff_task(*, task: str, candidate: str, ctx: WorkflowInvocationC
 def _requires_acquisition(roles: list[str]) -> bool:
     """Q70: only coder-containing nested requests need the unavailable I03 handoff."""
     return "coder" in roles
+
+
+_ACQUISITION_UNAVAILABLE = (
+    "nested coder workflows need I03 managed plan acquisition; use an explicit-plan CLI/library workflow instead"
+)
+_ACQUISITION_REQUIRES_PLANNER = (
+    "a coder-bearing managed workflow must include its initial planner, "
+    "and as the first role; no outer plan reference exists to acquire one"
+)
+
+
+def acquisition_refusal(roles: list[str], *, managed: bool) -> tuple[str, str] | None:
+    """S5P1: say *why* a coder-bearing request cannot proceed, or None if it may.
+
+    Two distinct contracts, not one refusal with a guess attached (§7):
+
+    * a managed request that would run a coder with no plan to code against is
+      refused as ``acquisition_requires_planner`` -- before child/provider, so a
+      guessed default target never reaches an admission record;
+    * a legacy request keeps its existing purpose: I03 managed acquisition is not
+      wired into that path, so it is ``acquisition_unavailable`` as before.
+
+    The controller supplies a plan through its own admission. Holding a managed
+    execution or a plan reference is therefore *not* an admission ticket here: it
+    only makes the refusal more precise. Wire admission lands with the managed
+    caller (S5P2), and until then an unusable approval must not look like one.
+
+    The planner must come first. A planner sequenced after the coder cannot own
+    the plan the coder would write against, and stages run in the stated order.
+    """
+    if not _requires_acquisition(roles):
+        return None
+    if managed:
+        if not roles or roles[0] != "planner":
+            return "acquisition_requires_planner", _ACQUISITION_REQUIRES_PLANNER
+        # Q148 = B: the child pins its OWN read-only view inside its own run, so a
+        # planner-first managed request is no longer refused for being unacquisitioned.
+        return None
+    return "acquisition_unavailable", _ACQUISITION_UNAVAILABLE
 
 
 def _child_run_context(ctx: WorkflowInvocationContext, candidate: str) -> RunContext | None:
@@ -486,6 +539,21 @@ def _begin_managed_child(
     return None
 
 
+def _reconcile_child_pending_state(managed: ManagedExecution, *, deadline: float) -> tuple[bool, str | None]:
+    """Resolve pending child publication before returning writer ownership."""
+    if getattr(managed, "handoff_pending", False):
+        return False, "child handoff remains unresolved"
+    if not getattr(managed, "publication_pending", False):
+        return False, None
+    try:
+        managed.reconcile_publication(deadline=deadline)
+    except ExecutionRejectedError:
+        return True, None
+    except Exception as error:  # noqa: BLE001 - fail closed when candidate saga stays uncertain
+        return False, f"child candidate publication remains unresolved: {type(error).__name__}"
+    return False, None
+
+
 def _return_managed_child_to_parent(
     *,
     managed: ManagedExecution,
@@ -493,9 +561,19 @@ def _return_managed_child_to_parent(
     parent_stage_lease: ParentStageLease,
     deadline: float,
 ) -> str | None:
-    """Reverse HANDOFF, then reopen/rebind the parent at the returned revision."""
+    """Reconcile any pending child state, reverse HANDOFF, then reopen parent."""
+    rejected_pending_pub, pending_error = _reconcile_child_pending_state(managed, deadline=deadline)
+    if pending_error is not None:
+        return pending_error
     try:
         managed.handoff_to(parent_namespace, deadline=deadline)
+    except ExecutionUncertainError as error:
+        if not getattr(managed, "handoff_pending", False):
+            return f"return HANDOFF failed: {type(error).__name__}"
+        try:
+            managed.reconcile_handoff(deadline=deadline)
+        except Exception as reconcile_error:  # noqa: BLE001 - unresolved child authority is fail-closed
+            return f"return HANDOFF failed: {type(reconcile_error).__name__}"
     except Exception as error:  # noqa: BLE001 - unresolved child authority is fail-closed
         return f"return HANDOFF failed: {type(error).__name__}"
     if managed.binding.namespace != parent_namespace:
@@ -504,6 +582,8 @@ def _return_managed_child_to_parent(
         parent_stage_lease.resume(deadline=deadline)
     except Exception as error:  # noqa: BLE001 - never continue with suspended adapters
         return f"parent view refresh failed: {type(error).__name__}"
+    if rejected_pending_pub:
+        return "child candidate publication was rejected on reconcile"
     return None
 
 
@@ -608,12 +688,10 @@ def _prepare_invocation(
             f"`mode` {mode!r} is not one of {list(WORKFLOW_MODES)}",
             retryable=True,
         )
-    if _requires_acquisition(roles):
-        return ToolResult.fail(
-            "acquisition_unavailable",
-            "nested coder workflows need I03 managed plan acquisition; "
-            "use an explicit-plan CLI/library workflow instead",
-        )
+    refusal = acquisition_refusal(roles, managed=ctx.managed_execution is not None)
+    if refusal is not None:
+        code, message = refusal
+        return ToolResult.fail(code, message)
     candidate = child_run_id(ctx.parent_run_id, invocation_count + 1)
     if not _RUN_ID_RE.match(candidate):
         return ToolResult.fail("invalid_child_run_id", f"derived child run id {candidate!r} is invalid")
@@ -625,6 +703,34 @@ def _prepare_invocation(
         max_replans=_clamp(_as_int(params, "max_replans", DEFAULT_TOOL_MAX_REPLANS), low=0, high=MAX_REPLANS_CEILING),
         candidate=candidate,
     )
+
+
+def _workflow_outcome_summary(
+    *,
+    candidate: str,
+    roles: Sequence[str],
+    exit_code: int,
+    status: str,
+    blocked_reason: str,
+    timed_out: bool,
+    managed: bool,
+) -> str:
+    if timed_out:
+        summary = f"workflow {candidate} ran out of time ({', '.join(roles)}); artifacts kept"
+    elif exit_code == 0:
+        summary = f"workflow {candidate} finished: status={status or 'unknown'}"
+    else:
+        summary = f"workflow {candidate} exited {exit_code}: status={status or 'unknown'}"
+    if blocked_reason:
+        summary += f"; blocked_reason={blocked_reason}"
+        if blocked_reason.startswith("plan-ref/clarification/"):
+            summary += (
+                "; complete or fix any incomplete worklogs/<slug>/roadmap.md "
+                "(valid frontmatter and active IN PROGRESS increment) or clarify with the user before retrying"
+            )
+    if managed:
+        summary += "; parent workspace refreshed at the returned revision"
+    return summary
 
 
 def build_invoke_workflow_tool(
@@ -706,12 +812,21 @@ def build_invoke_workflow_tool(
             else None
         )
 
-        # (f2) Planner handoff (S10 / CT6, DP-9): file-map + Do-exactly built
-        # from LIVE session facts; degrades to the raw goal when unavailable.
-        handoff_task = _resolve_handoff_task(task=task, candidate=candidate, ctx=ctx)
-
         managed = ctx.managed_execution if parent_namespace is not None else None
         parent_lease = ctx.parent_stage_lease if parent_namespace is not None else None
+        # A coder-bearing managed child has no plan at entry; the run acquires one.
+        # The request is a marker, not a port: the view must be pinned after this
+        # child's own binding exists (i.e. after the HANDOFF), not before it.
+        wants_acquisition = managed is not None and "coder" in roles
+
+        # (f2) Planner handoff (S10 / CT6, DP-9): file-map + Do-exactly built
+        # from LIVE session facts; degrades to the raw goal when unavailable.
+        handoff_task = _resolve_handoff_task(
+            task=task,
+            candidate=candidate,
+            ctx=ctx,
+            acquisition=wants_acquisition,
+        )
         workflow_kwargs: dict[str, object] = {
             "roles": roles,
             "task": handoff_task,
@@ -734,6 +849,10 @@ def build_invoke_workflow_tool(
             # PLAN S5c / Q9: inherit the chat session's --inject.
             "inject_overrides": ctx.inject_overrides,
         }
+        if wants_acquisition:
+            workflow_kwargs["acquisition"] = AcquisitionSubstrateRequest()
+        if ctx.initial_planner_context:
+            workflow_kwargs["initial_planner_context"] = ctx.initial_planner_context
         exit_code, terminal_state, workflow_error, lifecycle_error = _execute_child_with_managed_lifecycle(
             run_workflow_fn,
             workflow_kwargs=workflow_kwargs,
@@ -759,16 +878,18 @@ def build_invoke_workflow_tool(
         status = terminal_state.status if terminal_state is not None else ""
         route = terminal_state.last_route_decision if terminal_state is not None else ""
         reason = terminal_state.last_transition_reason if terminal_state is not None else ""
+        blocked_reason = getattr(terminal_state, "blocked_reason", "") if terminal_state is not None else ""
         timed_out = DEADLINE_REASON_MARKER in reason
 
-        if timed_out:
-            summary = f"workflow {candidate} ran out of time ({', '.join(roles)}); artifacts kept"
-        elif exit_code == 0:
-            summary = f"workflow {candidate} finished: status={status or 'unknown'}"
-        else:
-            summary = f"workflow {candidate} exited {exit_code}: status={status or 'unknown'}"
-        if managed is not None:
-            summary += "; parent workspace refreshed at the returned revision"
+        summary = _workflow_outcome_summary(
+            candidate=candidate,
+            roles=roles,
+            exit_code=exit_code,
+            status=status,
+            blocked_reason=blocked_reason,
+            timed_out=timed_out,
+            managed=managed is not None,
+        )
 
         return ToolResult.ok(
             summary,
@@ -786,8 +907,11 @@ def build_invoke_workflow_tool(
         name="invoke_workflow",
         description=(
             "Run a multi-role workflow pipeline (planner, coder, eval) on a task that is too "
-            "large to finish in this conversation. Coder-containing requests currently return "
-            "acquisition_unavailable; planner/eval-only delegation remains available. "
+            "large to finish in this conversation. In managed sessions, coder-bearing runs "
+            "acquire their plan automatically when led by planner (default 'planner,coder,eval'); "
+            "coder requests without a leading planner return acquisition_requires_planner, and "
+            "unmanaged coder requests return acquisition_unavailable "
+            "(planner/eval delegation works in both). "
             "Returns the child run id, exit code and "
             "terminal status; the pipeline's artifacts are written under that run id."
         ),
@@ -804,7 +928,9 @@ __all__ = [
     "DEFAULT_WORKFLOW_MODE",
     "DEFAULT_WORKFLOW_ROLES",
     "INVOKE_WORKFLOW_SCHEMA",
+    "ParentStageLease",
     "WorkflowInvocationContext",
+    "acquisition_refusal",
     "build_handoff_task",
     "build_invoke_workflow_tool",
     "child_run_id",

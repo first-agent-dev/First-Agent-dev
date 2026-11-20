@@ -19,6 +19,8 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
+import pytest
+
 from fa.inner_loop import EventLog, SessionState
 from fa.inner_loop.coder_loop import drive_session
 from fa.inner_loop.hooks import HookRegistry
@@ -417,6 +419,7 @@ def test_console_mirror_expansion_exhausted_emitted() -> None:
         chain = make_mock_chain(context_limit=100_000, compaction_threshold=None)
         chain.request.side_effect = [
             mock_tool_call_response("call-1", "fs_read_file", {"path": "x.py"}),
+            mock_tool_call_response("call-2", "fs_read_file", {"path": "x.py"}),
             mock_success_response("done"),
         ]
         drive_session(
@@ -426,7 +429,7 @@ def test_console_mirror_expansion_exhausted_emitted() -> None:
             hooks=HookRegistry(),
             state=state,
             role="chat",
-            max_turns=2,
+            max_turns=3,
             scope_mode="chat_direct",
             output=bus,
         )
@@ -434,7 +437,8 @@ def test_console_mirror_expansion_exhausted_emitted() -> None:
         assert len(exhausted) == 1
         log = state.log
         assert log is not None
-        assert any(e.kind == "expansion_exhausted" for e in log.read_all())
+        assert len([e for e in log.read_all() if e.kind == "expansion_exhausted"]) == 1
+        assert chain.request.call_count == 3
 
 
 def test_facts_provider_uses_the_same_resolved_config(tmp_path: Path, monkeypatch: Any) -> None:
@@ -477,3 +481,121 @@ def test_facts_provider_uses_the_same_resolved_config(tmp_path: Path, monkeypatc
     facts = ctx.session_facts_provider()
     assert facts, "live state present -> facts must not be empty"
     assert "generated" in facts["risk_config"].high_prefixes
+
+
+def test_high_read_then_failed_verify_escalates_next_turn(tmp_path: Path) -> None:
+    """C1: previous-turn classified failure changes the next request, not this one."""
+    from fa.inner_loop.registry import ToolResult, ToolSpec
+
+    repo_skills = Path(__file__).resolve().parents[1] / "knowledge" / "skills"
+    (tmp_path / "knowledge").mkdir()
+    (tmp_path / "knowledge" / "skills").symlink_to(repo_skills, target_is_directory=True)
+    state = _state_with_files(tmp_path, reads=["src/fa/state.py"])
+    registry = ToolRegistry()
+    registry.register(
+        ToolSpec(
+            name="fs_run_bash",
+            description="verify",
+            input_schema={"type": "object"},
+            permission="read",
+            handler=lambda params: ToolResult.fail("verify_failed", "failed"),
+        )
+    )
+    chain = make_mock_chain(context_limit=100_000, compaction_threshold=None)
+    chain.request.side_effect = [
+        mock_tool_call_response("verify-1", "fs_run_bash", {"command": "pytest -q"}),
+        mock_success_response("done"),
+    ]
+    drive_session(
+        "verify",
+        provider_chain=chain,
+        registry=registry,
+        hooks=HookRegistry(),
+        state=state,
+        role="chat",
+        scope_mode="chat_direct",
+        max_turns=2,
+    )
+    events = _expansion_events(state)
+    assert [(e.content["level_from"], e.content["level_to"], e.content["evidence"]) for e in events] == [
+        (1, 2, "read_high_arm"),
+        (2, 3, "verify_failed"),
+    ]
+    payloads = _sent_payloads(chain)
+    assert "ConditionalSkills" in payloads[0] and "Scope escalation" not in payloads[0]
+    assert "Scope escalation" in payloads[1] and "ConditionalSkills" not in payloads[1]
+
+
+def test_scope_missing_skill_is_advisory_and_transition_survives(tmp_path: Path, caplog: Any) -> None:
+    """C1: missing skill emits a warning, while the high-read transition survives."""
+    state = _state_with_files(tmp_path, reads=["src/fa/state.py"])
+    chain = _drive(state, scope_mode="chat_direct")
+    assert chain.request.call_count == 1
+    assert _expansion_events(state)[0].content["evidence"] == "read_high_arm"
+    assert "L2 skill injection" in caplog.text
+
+
+def test_exhaustion_mirror_reaches_the_console_with_the_turn() -> None:
+    """End-to-end: producer → bus → renderer, in one real run.
+
+    The renderer unit test pins the *format*; this pins the *wiring*. The two
+    would diverge silently otherwise: the producer could stop putting `turn` on
+    the event (the JSONL row would still be right, since it writes `data`
+    independently) while the renderer kept a plausible-looking fallback — the
+    console would then print a number that no longer tracks the log.
+
+    Oracle: the rendered line names the same turn the durable row records,
+    read back from the real EventLog rather than recomputed from the mock.
+    """
+    import io
+    import sys
+
+    from fa.inner_loop.registry import ToolResult, ToolSpec
+    from fa.output import ConsoleRenderer, EventBus
+
+    def _deny(params: Any) -> ToolResult:
+        return ToolResult.fail("workflow_budget_exhausted", "budget spent")
+
+    with tempfile.TemporaryDirectory() as td:
+        state = _state_with_files(Path(td))
+        registry = ToolRegistry()
+        registry.register(
+            ToolSpec(
+                name="fs_read_file",
+                description="test stub",
+                input_schema={"type": "object", "properties": {}},
+                permission="read",
+                handler=_deny,
+            )
+        )
+        bus = EventBus()
+        bus.add(ConsoleRenderer(no_color=True))
+        chain = make_mock_chain(context_limit=100_000, compaction_threshold=None)
+        chain.request.side_effect = [
+            mock_tool_call_response("call-1", "fs_read_file", {"path": "x.py"}),
+            mock_success_response("done"),
+        ]
+        captured = io.StringIO()
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(sys, "stderr", captured)
+            drive_session(
+                "exhaust console",
+                provider_chain=chain,
+                registry=registry,
+                hooks=HookRegistry(),
+                state=state,
+                role="chat",
+                max_turns=2,
+                scope_mode="chat_direct",
+                output=bus,
+            )
+
+        log = state.log
+        assert log is not None
+        rows = [e for e in log.read_all() if e.kind == "expansion_exhausted"]
+        assert len(rows) == 1, "the durable row is the producer's own record"
+        logged_turn = rows[0].content["turn"]
+
+        mirror = [ln for ln in captured.getvalue().splitlines() if "escalation budget exhausted" in ln]
+        assert len(mirror) == 1, captured.getvalue()
+        assert f"turn {logged_turn}/" in mirror[0], (logged_turn, mirror[0])

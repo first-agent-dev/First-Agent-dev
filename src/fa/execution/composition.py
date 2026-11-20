@@ -23,11 +23,13 @@ from uuid import uuid4
 
 from fa.config import DEFAULT_CONFIG_PATH, ExecutionConfigError, load_execution_config
 from fa.execution.client import (
+    CandidateRead,
     ExecutionClient,
     ExecutionRejectedError,
     ExecutionUnavailableError,
     ExecutionUncertainError,
     ManagedBashExecutor,
+    PendingCandidatePublication,
     PlanPublication,
     StagePublication,
 )
@@ -103,6 +105,10 @@ class ManagedExecution:
     read_only_profile: ExecutionProfile | None = None
     current_revision_id: str = field(init=False)
     _pending_handoff: _PendingHandoff | None = field(default=None, init=False, repr=False)
+    # Q138 option B: the run-scoped holder of an unresolved candidate publication.
+    # While this is set the writer is not releasable, and reconciliation is the
+    # only operation allowed to name it.
+    _pending_publication: PendingCandidatePublication | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         if (
@@ -129,6 +135,11 @@ class ManagedExecution:
     def handoff_pending(self) -> bool:
         """Whether the active owner namespace is unresolved after a HANDOFF attempt."""
         return self._pending_handoff is not None
+
+    @property
+    def publication_pending(self) -> bool:
+        """Whether a candidate publication is unresolved and still holds the writer."""
+        return self._pending_publication is not None
 
     def handoff_to(self, target: NamespaceRef, *, deadline: float | None = None) -> GrantReply:
         """Transfer this single managed grant to ``target`` without cloning its holder.
@@ -215,10 +226,60 @@ class ManagedExecution:
     def publish_plan(
         self, source: PlanSnapshot, candidate: PlanSnapshot, *, deadline: float | None = None
     ) -> PlanPublication:
+        """Publish through this run's grant and remember any unresolved outcome.
+
+        Q114 option 1/A: the run-scoped object that owns the writer also owns the
+        proof of an indeterminate publication. It is recorded here, before the
+        exception leaves, so ``close()`` cannot release the writer behind it.
+        """
         self._require_handoff_resolved()
-        publication = self.client.publish_plan(self.binding, source, candidate, grant=self.grant, deadline=deadline)
+        self._require_publication_resolved()
+        try:
+            publication = self.client.publish_plan(self.binding, source, candidate, grant=self.grant, deadline=deadline)
+        except ExecutionUncertainError as error:
+            pending = getattr(error, "pending_publication", None)
+            if pending is not None:
+                self._pending_publication = pending
+            raise
         self.current_revision_id = publication.revision_id
         return publication
+
+    def reconcile_publication(self, *, deadline: float | None = None) -> PlanPublication:
+        """Settle this run's unresolved candidate publication, or raise again.
+
+        Replays the already-minted request ids (never inventing a duplicate view)
+        and, on a proved publication or a clean determinate refusal whose view
+        settled, clears the pending record so the writer may be released. An
+        unresolved answer leaves the updated record in place: the workspace stays
+        fenced for recovery rather than being handed to the next writer.
+        """
+        self._require_handoff_resolved()
+        pending = self._pending_publication
+        if pending is None:
+            raise ExecutionContractError
+        try:
+            publication = self.client.reconcile_candidate_publication(pending, deadline=deadline)
+        except ExecutionUncertainError as error:
+            updated = getattr(error, "pending_publication", None)
+            if isinstance(updated, PendingCandidatePublication):
+                self._pending_publication = updated
+            raise
+        except ExecutionRejectedError:
+            self._pending_publication = None
+            raise
+        self.current_revision_id = publication.revision_id
+        self._pending_publication = None
+        return publication
+
+    def _require_publication_resolved(self) -> None:
+        pending = self._pending_publication
+        if pending is None:
+            return
+        raise ExecutionUncertainError(
+            "op-" + (pending.publish_request_id or pending.create_request_id),
+            code="DURABILITY_UNKNOWN",
+            pending_publication=pending,
+        )
 
     def open_view(
         self,
@@ -246,6 +307,25 @@ class ManagedExecution:
             grant=self.grant,
             deadline=deadline,
         )
+
+    def open_candidate_view(self, plan_ref: PlanRef, *, deadline: float | None = None) -> GrantReply:
+        """Open the run's staged-candidate view for ``plan_ref``.
+
+        The controller names the plan it is repairing and nothing else; the base
+        is the authority's to mint, exactly as in ``publish_plan``. Kept on the
+        composition so the controller never spells a wire payload itself.
+        """
+        self._require_handoff_resolved()
+        if not isinstance(plan_ref, PlanRef):
+            raise ExecutionContractError
+        return self.client.open_candidate_view(self.binding, plan_ref=plan_ref, grant=self.grant, deadline=deadline)
+
+    def read_candidate(self, plan_ref: PlanRef, *, deadline: float | None = None) -> CandidateRead:
+        """Read the run's staged candidate buffer without publishing it."""
+        self._require_handoff_resolved()
+        if not isinstance(plan_ref, PlanRef):
+            raise ExecutionContractError
+        return self.client.read_candidate_buffer(self.binding, plan_ref, grant=self.grant, deadline=deadline)
 
     def revision_changes(
         self,
@@ -298,6 +378,18 @@ class ManagedExecution:
         self.current_revision_id = publication.revision_id
         return publication
 
+    def pin_reader(
+        self,
+        *,
+        revision_id: str | None = None,
+        plan_ref: PlanRef | None = None,
+        deadline: float | None = None,
+    ) -> GrantReply:
+        """Pin an immutable READ/PROJECT view at ``revision_id`` or current revision."""
+        self._require_handoff_resolved()
+        target_revision = self.current_revision_id if revision_id is None else revision_id
+        return self.client.pin_reader(self.binding, target_revision, plan_ref=plan_ref, deadline=deadline)
+
     def stop_view(self, grant: GrantReply, *, deadline: float | None = None) -> bool:
         """End the view ``grant`` opened; ``False`` when its end was not proved.
 
@@ -318,6 +410,29 @@ class ManagedExecution:
         )
         return False
 
+    def reject_view(self, grant: GrantReply, *, deadline: float | None = None) -> bool:
+        """Stop ``grant`` and settle an un-published WRITE view as REJECTED.
+
+        Stopping a WRITE view alone leaves it in ``STOPPING``, which still holds the
+        writer against ``RELEASE`` and ``HANDOFF``. Calling this instead of bare
+        ``stop_view`` when discarding a failed or aborted stage view completes the
+        settlement through view-scoped ``RELEASE`` -> ``REJECTED``.
+        """
+        stopped = self.stop_view(grant) if deadline is None else self.stop_view(grant, deadline=deadline)
+        if not stopped:
+            return False
+        view = grant.view_ref
+        if view is None or view.access is Access.READ:
+            return True
+        if self.client.release_stopped_view(self.binding.namespace, view=view, grant=grant, deadline=deadline):
+            return True
+        _logger.warning(
+            "managed execution: stopped WRITE view %s was not confirmed rejected for %s",
+            view.view_id,
+            self.binding.workspace_id,
+        )
+        return False
+
     def close(self, *, deadline: float | None = None) -> bool:
         """Release the writer this run holds; ``False`` when the release was not confirmed.
 
@@ -328,6 +443,15 @@ class ManagedExecution:
         if self._pending_handoff is not None:
             _logger.warning(
                 "managed execution: writer release withheld while HANDOFF is unresolved for %s",
+                self.binding.workspace_id,
+            )
+            return False
+        if self._pending_publication is not None:
+            # Releasing here would assert that a writer-owned publication is
+            # settled, which is the one thing this run cannot prove (Q114).
+            _logger.warning(
+                "managed execution: writer release withheld while a candidate publication is "
+                "unresolved for %s (reconcile before release)",
                 self.binding.workspace_id,
             )
             return False
@@ -370,11 +494,43 @@ class BoundPlanPublisher:
         self._managed = managed
         self._binding = binding
 
+    def publish_candidate_receipt(
+        self, source: PlanSnapshot, candidate: PlanSnapshot, *, deadline: float | None = None
+    ) -> PlanPublication:
+        """Publish once, reconcile an ambiguous reply, and return the full receipt.
+
+        Q114 option 1/A puts the proof of an unresolved publication on the run that
+        owns the writer, but owning it is only half the selection: the resolution
+        says to *reconcile* by exact-request replay "where the existing journal
+        permits, then release only after the candidate is proven
+        PUBLISHED/REJECTED". Without this hop the ordinary recoverable case - the
+        bytes committed, the reply lost - would sit in quarantine until an operator
+        intervened, even though the journal could answer immediately.
+
+        This is a reconciliation, not a retry: the same four request ids are
+        replayed, so the authority answers from its journal and completed-reply
+        cache. No second id is minted, no second view is opened, and no second
+        effect can occur. Exactly one attempt is made.
+
+        A run that owns **no** pending saga is not reconciled. If ``publish_plan``
+        raised without attaching a pending handle, nothing is guessed. When the
+        lost reply happened on ``CREATE_VIEW``, the run retains the minted
+        ``create_request_id`` and replays that exact id once to recover the view
+        without creating a second one (E512 closure).
+        """
+        try:
+            publication = self._managed.publish_plan(source, candidate, deadline=deadline)
+        except ExecutionUncertainError:
+            if not self._managed.publication_pending:
+                raise  # no saga to replay; fail closed exactly as before
+            publication = self._managed.reconcile_publication(deadline=deadline)
+        return publication
+
     def publish_candidate(
         self, source: PlanSnapshot, candidate: PlanSnapshot, *, deadline: float | None = None
     ) -> PlanRef:
-        publication = self._managed.publish_plan(source, candidate, deadline=deadline)
-        return publication.plan_ref
+        """Publish through the managed authority and return only the promoted ``PlanRef``."""
+        return self.publish_candidate_receipt(source, candidate, deadline=deadline).plan_ref
 
 
 def _control(
@@ -508,7 +664,8 @@ def _settle_readiness_execution(
         executor.suspend()
     if view_grant is not None:
         try:
-            if not managed.stop_view(view_grant, deadline=time.monotonic() + 15):
+            stopper = getattr(managed, "reject_view", managed.stop_view)
+            if not stopper(view_grant, deadline=time.monotonic() + 15):
                 return False
         except Exception:  # noqa: BLE001 — an unproved view end forbids writer release.
             return False

@@ -29,9 +29,12 @@ Design notes that are load-bearing rather than stylistic:
 from __future__ import annotations
 
 import ast
+import base64
 import contextlib
 import enum
+import json
 import logging
+import math
 import os
 import re
 import shlex
@@ -40,34 +43,52 @@ import subprocess
 import tempfile
 import time
 import uuid
+import zlib
 from collections.abc import Iterable, Iterator, Mapping, MutableMapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
-from typing import Final, override
+from typing import Final, Protocol, override
 from xml.etree import ElementTree
 
+from fa.execution.client import (
+    ExecutionRejectedError,
+    ExecutionTimedOutError,
+    ExecutionUnavailableError,
+    ExecutionUncertainError,
+)
+from fa.execution.primitives import ExecutionContractError
+from fa.execution.protocol import MAX_TEXT_BYTES
 from fa.inner_loop.junit_nodeid_plugin import JUNIT_NODEID_PROPERTY, JUNIT_RUN_ID_ENV, JUNIT_RUN_ID_PROPERTY
 from fa.inner_loop.plan_ids import FAIL, PlanDiagnostic, PlanIds, SliceRecord
 from fa.inner_loop.tools.bash_env import build_scrubbed_env
+from fa.inner_loop.tools.workspace_port import PORT_READ_MAX_BYTES, WorkspacePort, WorkspacePortError
+from fa.runtime.bash_executor import BashExecutor
 
 __all__ = [
     "DEFAULT_PROBE_TIMEOUT_SECONDS",
     "DEFAULT_VERIFY_TIMEOUT_SECONDS",
+    "EVIDENCE_TAIL_LIMIT",
+    "JUNIT_BLOCK_END",
+    "JUNIT_BLOCK_START",
     "KILL_CHECK_COMMAND",
     "KILL_CHECK_VERDICTS",
     "NODEID_CAPTURE_COMMAND",
+    "NODEID_CAPTURE_INBAND_COMMAND",
     "TAIL_LIMIT",
     "CommandOutcome",
     "CommandResult",
+    "HostVerifyCommandExecutor",
     "KillApplication",
     "KillCheck",
     "KillDirective",
     "KillOperator",
+    "ManagedVerifyCommandExecutor",
     "NodeidCapture",
     "OverlayError",
     "PlanVerification",
     "SliceVerdict",
     "SliceVerification",
+    "VerifyCommandExecutor",
     "apply_kill",
     "capture_test_nodeids",
     "mutation_overlay",
@@ -117,13 +138,54 @@ DEFAULT_PROBE_TIMEOUT_SECONDS = 30.0
 #: evict the diff the judge actually needs.
 TAIL_LIMIT = 4000
 
+#: When a harness-issued command must carry its own JUnit report back, the bound is
+#: the receipt's, not the log's: ``cell_worker`` keeps the last 64 KiB of each stream
+#: (``protocol.py:26``). Cutting at ``TAIL_LIMIT`` would truncate a 15 KiB report
+#: before it could be parsed, and a truncated report is refused, not guessed at.
+EVIDENCE_TAIL_LIMIT = 64 * 1024
+
+#: Delimiters around a report carried in the command's own stdout (Q142 option A).
+#: A managed run has no controller-side path to write to -- a READ view mounts sealed
+#: source and the toolchain cache only, and its /scratch is a tmpfs inside the cell
+#: (``profiles.py:108-167``) -- so the report has to travel in the receipt.
+_JUNIT_BLOCK_START: Final = "<<<FA-JUNIT-REPORT>>>"
+_JUNIT_BLOCK_END: Final = "<<<END-FA-JUNIT-REPORT>>>"
+
+#: Public names for the same two strings: a caller that composes or inspects an
+#: evidence command must not reach into private module state to do it.
+JUNIT_BLOCK_START = _JUNIT_BLOCK_START
+JUNIT_BLOCK_END = _JUNIT_BLOCK_END
+
 #: The JUnit adapter must carry pytest's authoritative Item.nodeid (CT68/CT69).
 #: Keep this command separate from planner-authored verify fences: these are
 #: harness-issued before/after snapshots, not commands the plan gets to rewrite.
 NODEID_CAPTURE_COMMAND = "python -m pytest {paths} -p fa.inner_loop.junit_nodeid_plugin --junitxml={report} -q"
 
+#: The in-band form of the same harness run (Q142 option A). pytest writes the report
+#: to a file inside the cell's own scratch (``$TMPDIR`` -> ``/scratch/tmp`` inside
+#: containers with ``ReadonlyRootfs=True``) and echoes only the report block between
+#: markers when present, keeping noisy test stdout out of the 64 KiB receipt tail.
+NODEID_CAPTURE_INBAND_COMMAND = (
+    '__fa_rep="${{TMPDIR:-/tmp}}/"{report}; __fa_log="${{__fa_rep}}.log"; '
+    'python -m pytest {paths} -p fa.inner_loop.junit_nodeid_plugin --junitxml="$__fa_rep" -q '
+    '>"$__fa_log" 2>&1; __fa_rc=$?; '
+    'if [ -s "$__fa_rep" ]; then '
+    "printf '%s\\n' '" + _JUNIT_BLOCK_START + '\'; cat "$__fa_rep"; '
+    "printf '%s\\n' '" + _JUNIT_BLOCK_END + "'; "
+    'else tail -c 4000 "$__fa_log" 2>/dev/null || true; fi; '
+    'rm -f "$__fa_rep" "$__fa_log"; exit $__fa_rc'
+)
+
 _GATE_TEST_DEPTH_ENV: Final = "FA_VERIFY_GATE_TEST_DEPTH"
 _GATE_KILL_CHECK_ENV: Final = "FA_VERIFY_GATE_KILL_CHECK"
+
+#: The only environment a managed verify command takes with it (Q142). These are
+#: *harness-computed markers*, never inherited values: the recursion guard, the
+#: kill-check flag and the JUnit run id. The cell's own environment (HOME, TMPDIR,
+#: PATH) is the authority's to set, and forwarding the controller's would be exactly
+#: the drift the scrubber exists to prevent. They reach the command as a shell prefix
+#: assignment because a one-shot non-interactive exec has no environment field.
+_MANAGED_ENV_MARKERS: Final = frozenset({_GATE_TEST_DEPTH_ENV, _GATE_KILL_CHECK_ENV, JUNIT_RUN_ID_ENV})
 _GATE_MODES: Final = frozenset({"observe", "enforce"})
 
 #: Explicit source roots kill-checks may copy into a temporary overlay. Test
@@ -186,6 +248,12 @@ class CommandResult:
     stdout_tail: str
     stderr_tail: str
     duration_s: float
+    inband_stdout: str | None = field(default=None, repr=False, compare=False)
+
+    @property
+    def evidence_stdout(self) -> str:
+        """Full un-truncated stdout when carried from a non-truncated managed receipt."""
+        return self.stdout_tail if self.inband_stdout is None else self.inband_stdout
 
 
 @dataclass(frozen=True, slots=True)
@@ -200,6 +268,32 @@ class NodeidCapture:
     nodeids: Mapping[str, bool] | None
     command_result: CommandResult | None = None
     detail: str = ""
+
+
+class VerifyCommandExecutor(Protocol):
+    """Where a verify command actually runs: the substrate seam R24 needs.
+
+    Verification used to be welded to ``subprocess.run`` against the host
+    workspace, which made "run this on the authority" impossible to express and
+    equally impossible to *test* without touching a host process. The seam is
+    deliberately narrower than "an executor": it receives exactly what a verify
+    command is (text, working directory, deadline, environment) and returns the
+    same three-outcome vocabulary the gate already speaks, so a managed substrate
+    cannot quietly claim a pass.
+
+    A default host executor keeps every existing caller byte-identical; the
+    managed caller passes its own and never falls back.
+    """
+
+    #: Whether a path the command writes is readable by the caller afterwards.
+    #: A host shell writes to this machine (``True``); a cell writes into a tmpfs its
+    #: own container owns, so the controller sees nothing (``False``) and evidence has
+    #: to travel in the receipt.
+    writes_are_visible: bool = True
+
+    def run_verify_command(
+        self, command: str, *, cwd: Path, timeout_s: float, env: dict[str, str]
+    ) -> CommandResult: ...
 
 
 def _tail(raw: bytes, limit: int = TAIL_LIMIT) -> str:
@@ -327,6 +421,128 @@ def _empty_result() -> tuple[CommandResult, ...]:
     return ()
 
 
+class HostVerifyCommandExecutor:
+    """The default substrate: one shell command against the session workspace.
+
+    This is exactly the pre-existing behaviour, moved behind the port rather than
+    changed. It stays the default because an *unmanaged* run has no authority to
+    run anything else, and inventing one there would be the host fallback the
+    spec forbids in the other direction.
+    """
+
+    def run_verify_command(self, command: str, *, cwd: Path, timeout_s: float, env: dict[str, str]) -> CommandResult:
+        """Run one command and classify the outcome."""
+        return _run_one(command, cwd=cwd, timeout_s=timeout_s, env=env)
+
+
+_HOST_EXECUTOR = HostVerifyCommandExecutor()
+
+
+class ManagedVerifyCommandExecutor:
+    """Verify on the authority's read-only view instead of the controller host.
+
+    Q140 option C: verification is read-only and already has a substrate that says
+    so. ``ReadOnlyManagedBashExecutor`` pins one READ view with a private tmpfs
+    ``/scratch`` -- the mechanism the spec names twice for exactly this ("read-only
+    verification may write only its private scratch", and a pin may drive read-only
+    cell exec). Building a second one here would be the "no host fallback, so
+    invent a parallel substrate" mistake in reverse.
+
+    No new trust boundary either: ``execution_trusted`` already hands a READ view its
+    own scratch, ``_seal_readonly_source`` strips write bits from the source copy, and
+    promotion refuses anything that is not ``Access.WRITE`` (``workspace.py:5374``),
+    so what a verify command writes cannot become a revision.
+
+    Failure is never a verdict. A timeout is ``ERROR`` (the command did not refuse the
+    work, the budget ran out), and every execution exception is ``ERROR`` too --
+    classification belongs to the substrate, not to the gate that is judging it.
+    """
+
+    writes_are_visible = False
+
+    def __init__(self, executor: BashExecutor, *, root: Path) -> None:
+        if not isinstance(root, Path) or not root.is_absolute() or ".." in root.parts:
+            raise ExecutionContractError
+        self._executor = executor
+        self._root = root
+
+    def run_verify_command(self, command: str, *, cwd: Path, timeout_s: float, env: dict[str, str]) -> CommandResult:
+        """Run one command inside the pinned view and translate the result.
+
+        ``env`` is not forwarded wholesale: the authority fixes the cell environment
+        (``HOME``/``TMPDIR`` into ``/scratch``) and proving those inputs is its job.
+        Only the harness-computed markers travel, as a command prefix -- otherwise the
+        recursion guard and kill-check flag would silently do nothing on the managed
+        substrate, which is a correctness hole rather than a hygiene detail.
+        """
+        started = time.monotonic()
+        try:
+            result = self._executor.run(
+                _with_markers(command, env),
+                timeout=max(1, math.ceil(timeout_s)),
+                workdir=cwd,
+                session_id=None,
+            )
+        except ExecutionTimedOutError:
+            return _timeout_result(command, elapsed_s=time.monotonic() - started, timeout_s=timeout_s)
+        except (ExecutionContractError, ExecutionRejectedError, ExecutionUnavailableError) as error:
+            return _managed_unavailable_result(
+                command, reason=f"{type(error).__name__}: {error}", elapsed_s=time.monotonic() - started
+            )
+        except ExecutionUncertainError as error:
+            # Uncertain means the work may have run. It is not a pass and it is not a
+            # refusal; the gate is told that it does not know.
+            return _managed_unavailable_result(
+                command,
+                reason=f"uncertain, {type(error).__name__}: {error}",
+                elapsed_s=time.monotonic() - started,
+            )
+        elapsed_s = time.monotonic() - started
+        if result.timed_out:
+            return _timeout_result(command, elapsed_s=elapsed_s, timeout_s=timeout_s)
+        if result.truncated:
+            # A truncated transcript cannot prove a command passed: the failure may be
+            # in the part that was cut off.
+            return _managed_unavailable_result(
+                command, reason="output was truncated; the result is not evidence", elapsed_s=elapsed_s
+            )
+        encoded_stdout = result.stdout.encode("utf-8", "replace")
+        return CommandResult(
+            command=command,
+            outcome=CommandOutcome.PASS if result.exit_code == 0 else CommandOutcome.FAIL,
+            exit_code=result.exit_code,
+            # Keep ``stdout_tail`` bounded for artifacts while retaining the full
+            # non-truncated receipt stream for the in-band JUnit parser when > 64 KiB.
+            stdout_tail=_tail(encoded_stdout, limit=EVIDENCE_TAIL_LIMIT),
+            stderr_tail="",
+            duration_s=elapsed_s,
+            inband_stdout=result.stdout if len(encoded_stdout) > EVIDENCE_TAIL_LIMIT else None,
+        )
+
+
+def _with_markers(command: str, env: Mapping[str, str]) -> str:
+    """Prefix a command with the harness markers it must run under.
+
+    Quoted with ``shlex.quote`` so a value can never become shell syntax: these are
+    harness constants today, and a quoting bug would still be a shell injection the day
+    one of them carries text the model can influence.
+    """
+    markers = [f"{name}={shlex.quote(env[name])}" for name in sorted(_MANAGED_ENV_MARKERS) if name in env]
+    return command if not markers else " ".join(markers) + " " + command
+
+
+def _managed_unavailable_result(command: str, *, reason: str, elapsed_s: float) -> CommandResult:
+    """A managed command that produced no usable verdict is ``ERROR``, never ``PASS``."""
+    return CommandResult(
+        command=command,
+        outcome=CommandOutcome.ERROR,
+        exit_code=None,
+        stdout_tail="",
+        stderr_tail=f"verify: managed execution produced no verdict: {reason}",
+        duration_s=elapsed_s,
+    )
+
+
 def _run_one(command: str, *, cwd: Path, timeout_s: float, env: dict[str, str]) -> CommandResult:
     """Run one command and classify the outcome."""
     started = time.monotonic()
@@ -364,6 +580,7 @@ def run_commands(
     timeout_s: float | None = None,
     deadline: float | None = None,
     env: dict[str, str] | None = None,
+    executor: VerifyCommandExecutor | None = None,
 ) -> tuple[CommandResult, ...]:
     """Run a slice's verify commands in order and report what each did.
 
@@ -380,6 +597,13 @@ def run_commands(
     rebuilding it here from a flag, because the overlay environment is already
     assembled by :func:`_overlay_env` and a second assembly could drift from
     it (CT61).
+
+    ``executor`` is the substrate seam (R24/Q140). ``None`` means the host shell,
+    which is what an unmanaged run has; a *managed* run passes the authority's
+    executor and never falls back to the host, because a fallback would silently
+    verify the wrong tree. The command, working directory, budget and environment
+    are passed through unchanged either way, so the two substrates are
+    interchangeable by construction rather than by promise.
     """
     ordered: Sequence[str] = tuple(commands)
     if not ordered:
@@ -389,26 +613,55 @@ def run_commands(
     command_env = _build_env(workspace) if env is None else env
     budget = _command_timeout(timeout_s)
 
+    runner = _HOST_EXECUTOR if executor is None else executor
     results: list[CommandResult] = []
     for command in ordered:
         if deadline is not None and time.monotonic() >= deadline:
             results.append(_deadline_result(command))
             continue
-        results.append(_run_one(command, cwd=cwd, timeout_s=budget, env=command_env))
+        results.append(runner.run_verify_command(command, cwd=cwd, timeout_s=budget, env=command_env))
     return tuple(results)
 
 
-def _existing_test_paths(test_paths: Sequence[str], root: Path) -> tuple[str, ...]:
-    """Keep declared pytest paths that exist at this snapshot's T0/now point."""
+def _existing_test_paths(test_paths: Sequence[str], root: Path, port: WorkspacePort | None = None) -> tuple[str, ...]:
+    """Keep declared pytest paths that exist at this snapshot's T0/now point.
+
+    ``port`` asks the snapshot instead of the controller host, because a test the
+    coder created in the revision does not exist on the host and a host check would
+    silently drop it (Q142).
+
+    Absence and refusal are the same answer, by the port's own contract: it does not
+    disclose whether a path exists, so ``denied`` means "not this path" for both. The
+    gate keeps its documented behaviour -- an absent path contributes no rows -- and
+    must not upgrade a refusal into "unproven", which turned every slice whose test
+    file lives elsewhere into a blocking error.
+    """
     existing: list[str] = []
     for raw_path in test_paths:
         path = raw_path.strip()
         if not path:
             continue
         filesystem_path = path.split("::", 1)[0]
-        if (Path(root) / filesystem_path).exists():
+        present = (
+            (Path(root) / filesystem_path).exists() if port is None else _port_path_confirmed(port, filesystem_path)
+        )
+        if present:
             existing.append(path)
     return tuple(dict.fromkeys(existing))
+
+
+def _port_path_confirmed(port: WorkspacePort, path: str) -> bool:
+    """Whether the snapshot can read something at this path.
+
+    A declared directory is accepted when the port reads a file inside it, because the
+    port has no directory listing; a bare directory therefore reads as unconfirmed and
+    the caller refuses rather than silently running nothing.
+    """
+    try:
+        port.read_file(path, max_bytes=1)
+    except (WorkspacePortError, ValueError):
+        return False
+    return True
 
 
 class _JUnitOutcome(enum.StrEnum):
@@ -495,6 +748,17 @@ def _parse_junit_report(path: Path, *, run_id: str | None = None) -> tuple[_JUni
         xml_bytes = path.read_bytes()
     except OSError as error:
         return None, f"JUnitXML report is missing or invalid: {error}"
+    return _parse_junit_bytes(xml_bytes, run_id=run_id)
+
+
+def _parse_junit_bytes(xml_bytes: bytes, *, run_id: str | None = None) -> tuple[_JUnitReport | None, str]:
+    """The same parser, over bytes the caller already holds.
+
+    Split out for Q142 option A: on a managed run the report arrives inside the exec
+    receipt, so there is no controller-side file to open. Every rejection below is
+    unchanged -- a report that crossed a boundary is not more trusted than one read
+    from a path.
+    """
     upper_xml = xml_bytes.replace(b"\x00", b"").upper()
     if b"<!DOCTYPE" in upper_xml or b"<!ENTITY" in upper_xml:
         return None, "JUnitXML report contains a forbidden DTD/entity declaration"
@@ -519,6 +783,28 @@ def _parse_junit_report(path: Path, *, run_id: str | None = None) -> tuple[_JUni
     return _JUnitReport(outcomes), ""
 
 
+def _junit_block(stdout: str) -> tuple[bytes | None, str]:
+    """Take the one report a managed command carried, or say why there is none.
+
+    The markers are what makes this safe: without them ``stdout`` is arbitrary test
+    output, and a byte that happens to look like XML would be a guess rather than
+    evidence. Exactly one block, both markers, in order -- duplicates and half-blocks
+    are refused instead of resolved by taking the first.
+    """
+    starts = stdout.count(_JUNIT_BLOCK_START)
+    ends = stdout.count(_JUNIT_BLOCK_END)
+    if starts != 1 or ends != 1:
+        return None, f"JUnit report markers: expected one block, found {starts} start / {ends} end"
+    start = stdout.index(_JUNIT_BLOCK_START) + len(_JUNIT_BLOCK_START)
+    end = stdout.index(_JUNIT_BLOCK_END)
+    if end < start:
+        return None, "JUnit report markers are out of order"
+    body = stdout[start:end].strip()
+    if not body:
+        return None, "JUnit report block is empty"
+    return body.encode("utf-8"), ""
+
+
 def _parse_nodeid_report(path: Path) -> tuple[dict[str, bool] | None, str]:
     """Baseline-compatible projection: failure/skip is false, unusable report is None."""
     report, detail = _parse_junit_report(path)
@@ -541,28 +827,40 @@ def capture_test_nodeids(
     *,
     root: Path,
     deadline: float | None = None,
+    executor: VerifyCommandExecutor | None = None,
+    port: WorkspacePort | None = None,
 ) -> NodeidCapture:
     """Run existing declared tests with the exact-nodeid JUnit plugin (CT68/69).
 
     Paths absent at this snapshot contribute no rows rather than becoming
     false tests. A started but unusable JUnit run returns ``nodeids=None`` so
     callers classify it as ``ERROR``; a valid report with zero tests is ``{}``.
+
+    ``executor`` and ``port`` move the two host assumptions onto the snapshot
+    (Q142): where the command runs, and what counts as an existing test path. A
+    substrate whose files the caller cannot see carries its report back inside the
+    command's own stdout, and both modes hand the *same* bytes to the same parser,
+    so neither is a weaker oracle.
     """
-    existing_paths = _existing_test_paths(test_paths, Path(root))
+    existing_paths = _existing_test_paths(test_paths, Path(root), port)
     if not existing_paths:
         return NodeidCapture(nodeids={}, detail="no declared TESTS path exists at this snapshot")
 
-    with tempfile.TemporaryDirectory(prefix="fa-verify-junit-") as temporary_directory:
-        report = Path(temporary_directory) / "results.xml"
-        command = NODEID_CAPTURE_COMMAND.format(
+    # A cell writes into its own tmpfs scratch ($TMPDIR -> /scratch/tmp); only the
+    # host mode creates a controller-side temporary directory to hold results.xml.
+    in_band = executor is not None and not getattr(executor, "writes_are_visible", True)
+    if in_band:
+        report_name = f"fa-verify-junit-{uuid.uuid4().hex}.xml"
+        command = NODEID_CAPTURE_INBAND_COMMAND.format(
             paths=shlex.join(existing_paths),
-            report=shlex.quote(str(report)),
+            report=shlex.quote(report_name),
         )
         (result,) = run_commands(
             (command,),
             workspace=Path(root),
             deadline=deadline,
             env=_gate_subprocess_env(Path(root)),
+            executor=executor,
         )
         if result.outcome is CommandOutcome.ERROR:
             return NodeidCapture(
@@ -570,15 +868,39 @@ def capture_test_nodeids(
                 command_result=result,
                 detail=result.stderr_tail or "harness-issued JUnit run could not be completed",
             )
-        parsed, detail = _parse_junit_report(report)
-        if parsed is None:
+        carried, detail = _junit_block(result.evidence_stdout)
+        if carried is None:
             return NodeidCapture(nodeids=None, command_result=result, detail=detail)
-        # Preserve pytest's valid empty T0 (exit5), but never accept partial rows
-        # from collection/interruption/internal/usage failures as a complete baseline.
-        if detail := _pytest_report_status_error(result, parsed, allow_no_tests=True):
-            return NodeidCapture(nodeids=None, command_result=result, detail=detail)
-        nodeids = {nodeid: outcome is _JUnitOutcome.PASSED for nodeid, outcome in parsed.outcomes.items()}
-        return NodeidCapture(nodeids=nodeids, command_result=result)
+        parsed, detail = _parse_junit_bytes(carried)
+    else:
+        with tempfile.TemporaryDirectory(prefix="fa-verify-junit-") as temporary_directory:
+            report = Path(temporary_directory) / "results.xml"
+            command = NODEID_CAPTURE_COMMAND.format(
+                paths=shlex.join(existing_paths),
+                report=shlex.quote(str(report)),
+            )
+            (result,) = run_commands(
+                (command,),
+                workspace=Path(root),
+                deadline=deadline,
+                env=_gate_subprocess_env(Path(root)),
+                executor=executor,
+            )
+            if result.outcome is CommandOutcome.ERROR:
+                return NodeidCapture(
+                    nodeids=None,
+                    command_result=result,
+                    detail=result.stderr_tail or "harness-issued JUnit run could not be completed",
+                )
+            parsed, detail = _parse_junit_report(report)
+    if parsed is None:
+        return NodeidCapture(nodeids=None, command_result=result, detail=detail)
+    # Preserve pytest's valid empty T0 (exit5), but never accept partial rows
+    # from collection/interruption/internal/usage failures as a complete baseline.
+    if detail := _pytest_report_status_error(result, parsed, allow_no_tests=True):
+        return NodeidCapture(nodeids=None, command_result=result, detail=detail)
+    nodeids = {nodeid: outcome is _JUnitOutcome.PASSED for nodeid, outcome in parsed.outcomes.items()}
+    return NodeidCapture(nodeids=nodeids, command_result=result)
 
 
 # --------------------------------------------------------------------------- #
@@ -1436,12 +1758,226 @@ def _errored(directive: KillDirective, detail: str, started: float) -> KillCheck
     )
 
 
+_INBAND_PROBE_FAILED_MARKER: Final = "FA_KILL_PROBE_FAILED:"
+_INBAND_OVERLAY_FAILED_MARKER: Final = "FA_KILL_OVERLAY_FAILED:"
+
+
+def _read_port_source(port: WorkspacePort, rel_path: str) -> str:
+    """Read an entire UTF-8 source file from a pinned WorkspacePort without host fallback."""
+    chunks: list[str] = []
+    offset = 0
+    expected_sha256: str | None = None
+    while True:
+        part = port.read_file(rel_path, offset_bytes=offset, max_bytes=PORT_READ_MAX_BYTES)
+        if expected_sha256 is None:
+            expected_sha256 = part.sha256
+        elif part.sha256 != expected_sha256:
+            raise WorkspacePortError("unavailable")
+        chunks.append(part.content)
+        if part.eof:
+            return "".join(chunks)
+        step = len(part.content.encode("utf-8"))
+        if step <= 0:
+            raise WorkspacePortError("unavailable")
+        offset += step
+
+
+def _build_inband_kill_command(
+    directive: KillDirective,
+    paths: tuple[str, ...],
+    *,
+    source_root: str,
+    module: str,
+    mutated_source: str,
+) -> str | None:
+    """Build one self-contained scratch-overlay kill command for a READ cell.
+
+    Never emits ``<<WORD`` heredocs (which ``PtyPool`` stages into cwd, read-only
+    in READ cells) and keeps every line under 800 bytes for PTY safety. Returns
+    ``None`` when the compressed payload exceeds the protocol command ceiling.
+    """
+    payload = {
+        "rel_path": directive.path,
+        "source_root": source_root,
+        "module": module,
+        "mutated_b64": base64.b64encode(mutated_source.encode("utf-8")).decode("ascii"),
+        "test_paths": list(paths),
+        "probe_code": _PROVENANCE_PROBE,
+        "probe_timeout_s": DEFAULT_PROBE_TIMEOUT_SECONDS,
+        "kill_cmd_template": KILL_CHECK_COMMAND,
+        "junit_block_start": _JUNIT_BLOCK_START,
+        "junit_block_end": _JUNIT_BLOCK_END,
+        "provenance_error_marker": _OVERLAY_PROVENANCE_ERROR_MARKER,
+    }
+    compressed = zlib.compress(json.dumps(payload, ensure_ascii=True, separators=(",", ":")).encode("utf-8"), 9)
+    encoded = base64.b64encode(compressed).decode("ascii")
+    chunk_lines = ",\n".join(f" {encoded[i : i + 700]!r}" for i in range(0, len(encoded), 700))
+    script = (
+        "import base64,json,os,shlex,shutil,subprocess,sys,tempfile,zlib\n"
+        "from pathlib import Path\n"
+        f"chunks=[\n{chunk_lines}\n]\n"
+        "cfg=json.loads(zlib.decompress(base64.b64decode(''.join(chunks))))\n"
+        "root=Path.cwd()\n"
+        "scratch=Path(os.environ.get('TMPDIR') or '/tmp')\n"
+        "scratch.mkdir(parents=True,exist_ok=True)\n"
+        "tmp=Path(tempfile.mkdtemp(prefix='fa-kill-inband-',dir=str(scratch)))\n"
+        "try:\n"
+        " ov=tmp/'overlay'\n"
+        " ov.mkdir()\n"
+        " src=root/'src'\n"
+        " if src.is_symlink() or not src.is_dir():\n"
+        f"  sys.stdout.write('{_INBAND_OVERLAY_FAILED_MARKER} invalid src root\\n');sys.exit(2)\n"
+        " ign=shutil.ignore_patterns('__pycache__','*.pyc','.pytest_cache','.ruff_cache','.mypy_cache')\n"
+        " shutil.copytree(src,ov/'src',ignore=ign)\n"
+        " sc=root/'scripts'\n"
+        " if cfg['source_root']=='scripts':\n"
+        "  if sc.is_symlink() or not sc.is_dir():\n"
+        f"   sys.stdout.write('{_INBAND_OVERLAY_FAILED_MARKER} invalid scripts root\\n');sys.exit(2)\n"
+        "  shutil.copytree(sc,ov/'scripts',ignore=ign)\n"
+        " for d,_,fs in os.walk(ov):\n"
+        "  os.chmod(d,0o755)\n"
+        "  for f in fs:\n"
+        "   fp=os.path.join(d,f)\n"
+        "   if not os.path.islink(fp): os.chmod(fp,0o644)\n"
+        " allowed=(ov/cfg['source_root']).resolve()\n"
+        " target=(ov/Path(cfg['rel_path'])).resolve()\n"
+        " if target==allowed or allowed not in target.parents or not target.is_file():\n"
+        f"  sys.stdout.write('{_INBAND_OVERLAY_FAILED_MARKER} invalid target\\n');sys.exit(2)\n"
+        " target.write_bytes(base64.b64decode(cfg['mutated_b64']))\n"
+        " env=dict(os.environ)\n"
+        " pybin=os.path.dirname(sys.executable)\n"
+        " pth=env.get('PATH','')\n"
+        " if pybin and pybin not in pth.split(os.pathsep):\n"
+        "  env['PATH']=f'{pybin}{os.pathsep}{pth}' if pth else pybin\n"
+        " if not shutil.which('python',path=env.get('PATH','')):\n"
+        "  bindir=tmp/'bin';bindir.mkdir(exist_ok=True)\n"
+        "  try: (bindir/'python').symlink_to(sys.executable)\n"
+        "  except OSError: pass\n"
+        "  env['PATH']=f'{bindir}{os.pathsep}'+env.get('PATH','')\n"
+        " inh=env.get('PYTHONPATH','')\n"
+        " parts=[str(ov/'src')]\n"
+        " if cfg['source_root']=='scripts': parts.append(str(ov))\n"
+        " if inh: parts.append(inh)\n"
+        " env['PYTHONPATH']=os.pathsep.join(parts)\n"
+        " if cfg['source_root']=='scripts':\n"
+        "  env['FA_MUTATION_OVERLAY_SCRIPTS_ROOT']=str(ov.resolve())\n"
+        "  env['FA_MUTATION_OVERLAY_MODULE']=cfg['module']\n"
+        "  plug=[v.strip() for v in env.get('PYTEST_PLUGINS','').split(',') if v.strip()]\n"
+        "  pl='fa.inner_loop.overlay_pytest_plugin'\n"
+        "  if pl not in plug: plug.insert(0,pl)\n"
+        "  env['PYTEST_PLUGINS']=','.join(plug)\n"
+        " mode='pytest-bootstrap' if cfg['source_root']=='scripts' else 'environment'\n"
+        " try:\n"
+        "  pr=subprocess.run([sys.executable,'-c',cfg['probe_code'],str(allowed),cfg['module'],mode],"
+        "cwd=str(root),env=env,check=False,capture_output=True,text=True,timeout=cfg['probe_timeout_s'])\n"
+        " except subprocess.TimeoutExpired:\n"
+        f"  sys.stdout.write('{_INBAND_PROBE_FAILED_MARKER} timed out\\n');sys.exit(1)\n"
+        " if pr.returncode!=0:\n"
+        "  msg=(pr.stderr or pr.stdout or f'exit {pr.returncode}').strip()\n"
+        f"  sys.stdout.write('{_INBAND_PROBE_FAILED_MARKER} '+msg[-3500:]+'\\n')\n"
+        "  sys.exit(pr.returncode or 1)\n"
+        " rep=tmp/'results.xml'\n"
+        " log=tmp/'pytest.log'\n"
+        " kcmd=cfg['kill_cmd_template'].format(path=shlex.join(cfg['test_paths']))+"
+        "' -p fa.inner_loop.junit_nodeid_plugin --junitxml='+shlex.quote(str(rep))\n"
+        " with open(log,'w',encoding='utf-8',errors='replace') as lf:\n"
+        "  rc=subprocess.run(\n"
+        "   kcmd,shell=True,cwd=str(root),env=env,stdout=lf,stderr=subprocess.STDOUT,check=False\n"
+        "  ).returncode\n"
+        " lt=log.read_text(encoding='utf-8',errors='replace') if log.is_file() else ''\n"
+        " if cfg['provenance_error_marker'] in lt:\n"
+        "  sys.stdout.write(lt[-4000:]);sys.exit(rc or 1)\n"
+        " if rep.is_file() and rep.stat().st_size>0:\n"
+        "  xml_txt=rep.read_text(encoding='utf-8',errors='replace')\n"
+        "  sys.stdout.write(cfg['junit_block_start']+'\\n'+xml_txt+'\\n'+cfg['junit_block_end']+'\\n')\n"
+        "  sys.exit(rc)\n"
+        " sys.stdout.write(lt[-4000:]);sys.exit(rc or 1)\n"
+        "finally:\n"
+        " shutil.rmtree(tmp,ignore_errors=True)\n"
+    )
+    command = f"python -c {shlex.quote(script)}"
+    if len(command.encode("utf-8")) > MAX_TEXT_BYTES:
+        return None
+    return command
+
+
+def _run_inband_kill_check(
+    directive: KillDirective,
+    paths: tuple[str, ...],
+    root: Path,
+    *,
+    source_root: str,
+    module: str,
+    started: float,
+    deadline: float | None,
+    executor: VerifyCommandExecutor,
+    port: WorkspacePort | None,
+) -> KillCheck:
+    """Execute one kill-check inside a pinned READ cell without touching the controller host."""
+    paths_label = ", ".join(paths)
+    if port is None:
+        return _errored(directive, "managed kill-check requires a pinned WorkspacePort", started)
+    try:
+        source = _read_port_source(port, directive.path)
+    except WorkspacePortError as exc:
+        if exc.code == "denied":
+            return _absent(directive, f"{directive.path} is not a file in the pinned revision", started)
+        return _errored(directive, f"could not read {directive.path} from pinned revision: {exc.code}", started)
+    try:
+        application = apply_kill(source, directive)
+    except (SyntaxError, ValueError) as exc:
+        return _errored(directive, f"could not mutate {directive.path}: {exc}", started)
+    if application.targets > 1:
+        return _errored(
+            directive,
+            f"{directive.symbol} resolves to {application.targets} definitions; "
+            "qualify the symbol rather than letting the gate choose",
+            started,
+        )
+    if application.source is None:
+        target = directive.symbol if directive.callee is None else f"{directive.symbol} -> {directive.callee}"
+        return _absent(directive, f"{target} was not found in {directive.path}", started)
+
+    command = _build_inband_kill_command(
+        directive,
+        paths,
+        source_root=source_root,
+        module=module,
+        mutated_source=application.source,
+    )
+    if command is None:
+        return _errored(directive, f"mutated {directive.path} exceeds the managed command payload ceiling", started)
+
+    run_id = uuid.uuid4().hex
+    kill_env = _gate_subprocess_env(Path(root), kill_check=True)
+    kill_env[JUNIT_RUN_ID_ENV] = run_id
+    (result,) = run_commands((command,), workspace=Path(root), deadline=deadline, env=kill_env, executor=executor)
+    evidence = result.evidence_stdout
+    if _OVERLAY_PROVENANCE_ERROR_MARKER in f"{evidence}\n{result.stderr_tail}":
+        return _kill_check_result(directive, paths_label, started, result, None, "")
+    if result.outcome is CommandOutcome.ERROR:
+        return _kill_check_result(directive, paths_label, started, result, None, result.stderr_tail)
+    if _INBAND_PROBE_FAILED_MARKER in evidence:
+        detail = evidence.split(_INBAND_PROBE_FAILED_MARKER, 1)[1].strip()
+        return _errored(directive, f"overlay provenance probe did not pass: {detail}", started)
+    if _INBAND_OVERLAY_FAILED_MARKER in evidence:
+        detail = evidence.split(_INBAND_OVERLAY_FAILED_MARKER, 1)[1].strip()
+        return _errored(directive, f"overlay failed: {detail}", started)
+    carried, report_detail = _junit_block(evidence)
+    if carried is None:
+        return _kill_check_result(directive, paths_label, started, result, None, report_detail)
+    report, report_detail = _parse_junit_bytes(carried, run_id=run_id)
+    return _kill_check_result(directive, paths_label, started, result, report, report_detail)
+
+
 def _run_kill_check(
     directive: KillDirective,
     test_paths: str | Sequence[str],
     root: Path,
     *,
     deadline: float | None = None,
+    executor: VerifyCommandExecutor | None = None,
+    port: WorkspacePort | None = None,
 ) -> KillCheck:
     """Mutate one producer and run the slice's declared tests. (CT66, CT67, CT82, Q53(c))
 
@@ -1473,13 +2009,26 @@ def _run_kill_check(
     if source_root is None:
         return _errored(directive, f"{directive.path} is outside the allowed src/scripts mutation roots", started)
 
-    source_path = Path(root) / directive.path
-    if not source_path.is_file():
-        return _absent(directive, f"{directive.path} is not a file in the workspace", started)
-
     module = _module_name(directive.path)
     if module is None:
         return _errored(directive, f"{directive.path} is not an importable module path", started)
+
+    if executor is not None and not getattr(executor, "writes_are_visible", True):
+        return _run_inband_kill_check(
+            directive,
+            paths,
+            root,
+            source_root=source_root,
+            module=module,
+            started=started,
+            deadline=deadline,
+            executor=executor,
+            port=port,
+        )
+
+    source_path = Path(root) / directive.path
+    if not source_path.is_file():
+        return _absent(directive, f"{directive.path} is not a file in the workspace", started)
 
     try:
         source = source_path.read_text(encoding="utf-8")
@@ -1527,7 +2076,9 @@ def _run_kill_check(
                 )
                 kill_env = _gate_subprocess_env(Path(root), base_env=env, kill_check=True)
                 kill_env[JUNIT_RUN_ID_ENV] = run_id
-                (result,) = run_commands((command,), workspace=Path(root), deadline=deadline, env=kill_env)
+                (result,) = run_commands(
+                    (command,), workspace=Path(root), deadline=deadline, env=kill_env, executor=executor
+                )
                 report, report_detail = _parse_junit_report(report_path, run_id=run_id)
     except OverlayError as exc:
         return _errored(directive, f"overlay failed: {exc}", started)
@@ -1547,7 +2098,7 @@ def _kill_check_result(
 ) -> KillCheck:
     """A shell failure alone is never mutation evidence (amended CT66)."""
     elapsed = time.monotonic() - started
-    combined_tail = f"{result.stdout_tail}\n{result.stderr_tail}"
+    combined_tail = f"{result.evidence_stdout}\n{result.stderr_tail}"
     if _OVERLAY_PROVENANCE_ERROR_MARKER in combined_tail:
         return _errored(
             directive,
@@ -1731,6 +2282,8 @@ def verify_slice(
     baseline: Mapping[str, bool] | None,
     now: Mapping[str, bool] | None,
     deadline: float | None = None,
+    executor: VerifyCommandExecutor | None = None,
+    port: WorkspacePort | None = None,
 ) -> SliceVerification:
     """Run and compose one slice's verify, baseline and contract kill evidence. (CT65-CT69)
 
@@ -1783,11 +2336,19 @@ def verify_slice(
         workspace=root,
         deadline=deadline,
         env=_gate_subprocess_env(root),
+        executor=executor,
     )
     named_kills = tuple(
         (
             contract_id,
-            _run_kill_check(directives[contract_id], record.test_paths, root, deadline=deadline),
+            _run_kill_check(
+                directives[contract_id],
+                record.test_paths,
+                root,
+                deadline=deadline,
+                executor=executor,
+                port=port,
+            ),
         )
         for contract_id in functional_ids
     )
@@ -1814,6 +2375,8 @@ def verify_plan(
     baseline_by_slice: Mapping[str, Mapping[str, bool] | None] | None = None,
     now_by_slice: Mapping[str, Mapping[str, bool] | None] | None = None,
     deadline: float | None = None,
+    executor: VerifyCommandExecutor | None = None,
+    port: WorkspacePort | None = None,
 ) -> PlanVerification:
     """Run the plan-level commands once and preserve each slice's ownership (CT71/76).
 
@@ -1829,6 +2392,7 @@ def verify_plan(
         workspace=root,
         deadline=deadline,
         env=_gate_subprocess_env(root),
+        executor=executor,
     )
     slice_results = tuple(
         verify_slice(
@@ -1837,6 +2401,8 @@ def verify_plan(
             baseline=None if baseline_by_slice is None else baseline_by_slice.get(record.slice_id),
             now=None if now_by_slice is None else now_by_slice.get(record.slice_id),
             deadline=deadline,
+            executor=executor,
+            port=port,
         )
         for record in plan_ids.slice_records
     )

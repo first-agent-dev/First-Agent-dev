@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import shutil
+import subprocess
 import sys
 import threading
 from collections.abc import Callable, Mapping
 from dataclasses import asdict
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
-from typing import Any, override
+from typing import Any, cast, override
 
 import pytest
 from _pytest.capture import CaptureFixture
@@ -18,18 +20,193 @@ from _pytest.capture import CaptureFixture
 import fa.cli as cli_module
 import fa.execution.composition as composition
 from fa.cli import _cmd_run, _cmd_stats, _prepare_managed_workspace, _session_manager_for_args, build_parser
+from fa.execution.client import ExecutionClient, ExecutionRejectedError
 from fa.execution.service import SupervisorService, read_config_file
+from fa.execution.types import (
+    Access,
+    ExecutionReceipt,
+    GrantReply,
+    JobState,
+    NamespaceRef,
+    Operation,
+    ViewPurpose,
+    ViewRef,
+)
+from fa.inner_loop.plan_admission import PlanRef, PlanSnapshot
 from fa.inner_loop.session_db import SessionDatabase
 from fa.providers import SecretStore
 from fa.providers.base import TransportResponse
 from fa.session.manager import RunContext
 from fa.workspace_bootstrap import ReadyState, ReadyStatus
 from tests._capabilities import requires_posix_shell, requires_pty_backend
-from tests.test_execution_views import native_profile
+from tests.test_execution_views import native_profile, read_only_profile
 
 # Injected via the _cmd_run(secrets=...) seam (ADR-12): tests supply keys through
 # the private store instead of os.environ, matching production's file-only model.
 _TEST_SECRETS = SecretStore({"TEST_FA_RUN_KEY": "sk-test-x"})
+
+
+class _TestCliManagedClient(ExecutionClient):
+    """Test-only ExecutionClient double supporting RELEASE + pinned READ verification."""
+
+    def __init__(
+        self,
+        *,
+        workspace: Path | None = None,
+        workspace_id: str,
+        revision_id: str,
+        profile_id: str,
+        image_digest: str,
+        refuse_release: bool = False,
+        on_publish: Callable[[Any, Any, Any, GrantReply], Any] | None = None,
+    ) -> None:
+        self.workspace = workspace
+        self.workspace_id = workspace_id
+        self.revision_id = revision_id
+        self.profile_id = profile_id
+        self.image_digest = image_digest
+        self.refuse_release = refuse_release
+        self.on_publish = on_publish
+        self.operations: list[Operation] = []
+        self._views: dict[str, tuple[ViewRef, str | None]] = {}
+
+    @override
+    def pin_reader(
+        self,
+        binding: object,
+        revision_id: str,
+        *,
+        plan_ref: PlanRef | None = None,
+        deadline: float | None = None,
+    ) -> GrantReply:
+        del deadline
+        self.operations.append(Operation.PIN_READER)
+        ns = cast(Any, binding).namespace
+        view = ViewRef(
+            self.workspace_id,
+            "view-" + "4" * 32,
+            revision_id,
+            ns.run_id,
+            1,
+            Access.READ,
+            ViewPurpose.PROJECT,
+        )
+        self._views[view.view_id] = (view, None if plan_ref is None else plan_ref.sha256)
+        return GrantReply(Operation.PIN_READER, "c" * 64, view, None, None, input_tree_sha256="a" * 64)
+
+    @override
+    def stop_view(
+        self,
+        namespace: NamespaceRef,
+        *,
+        view: ViewRef,
+        grant: GrantReply,
+        deadline: float | None = None,
+    ) -> bool:
+        del namespace, view, grant, deadline
+        self.operations.append(Operation.STOP_VIEW)
+        return True
+
+    @override
+    def handoff(
+        self,
+        binding: object,
+        target: NamespaceRef,
+        *,
+        grant: GrantReply,
+        expected_revision_id: str,
+        request_id: str,
+        deadline: float | None = None,
+    ) -> GrantReply:
+        del binding, target, request_id, deadline
+        self.operations.append(Operation.HANDOFF)
+        if grant.generation is None:
+            raise AssertionError("managed handoff requires a generated owner grant")
+        return GrantReply(Operation.HANDOFF, "5" * 64, None, grant.generation, expected_revision_id)
+
+    @override
+    def request(self, operation: Operation, **kwargs: Any) -> dict[str, Any]:
+        self.operations.append(operation)
+        if operation is Operation.RELEASE:
+            if self.refuse_release:
+                raise ExecutionRejectedError("workspace-not-owned", None)
+            return {}
+        if operation is Operation.READ_FILE:
+            payload = kwargs.get("payload") or {}
+            rel = str(payload.get("path", ""))
+            root = self.workspace
+            if root is None:
+                raise ExecutionRejectedError("PATH_DENIED", "op-read")
+            target = (root / rel).resolve()
+            root_resolved = root.resolve()
+            if (target != root_resolved and root_resolved not in target.parents) or not target.is_file():
+                raise ExecutionRejectedError("PATH_DENIED", "op-read")
+            raw = target.read_bytes()
+            sha = hashlib.sha256(raw).hexdigest()
+            offset = int(payload.get("offset_bytes", 0))
+            max_bytes = int(payload.get("max_bytes", len(raw) or 1))
+            chunk = raw[offset : offset + max_bytes]
+            return {
+                "content": chunk.decode("utf-8", "replace"),
+                "sha256": sha,
+                "eof": offset + len(chunk) >= len(raw),
+            }
+        if operation is Operation.EXEC:
+            payload = kwargs.get("payload") or {}
+            view = kwargs.get("view")
+            namespace = kwargs.get("namespace")
+            assert isinstance(view, ViewRef) and isinstance(namespace, NamespaceRef)
+            cwd = self.workspace if self.workspace is not None else Path.cwd()
+            cmd = str(payload.get("command", ""))
+            proc = subprocess.run(
+                cmd.replace("python -m pytest", f"{sys.executable} -m pytest"),
+                shell=True,
+                cwd=cwd,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            _, plan_sha = self._views.get(view.view_id, (view, None))
+            receipt = ExecutionReceipt(
+                schema_version=1,
+                operation_id=str(payload["operation_id"]),
+                namespace=namespace,
+                workspace_id=view.workspace_id,
+                view_id=view.view_id,
+                owner_run_id=view.owner_run_id,
+                generation=view.generation,
+                revision_id=view.base_revision,
+                original_revision_id=view.base_revision,
+                input_tree_sha256="a" * 64,
+                plan_sha256=plan_sha,
+                profile_id=self.profile_id,
+                image_digest=self.image_digest,
+                state=JobState.EXITED,
+                exit_code=proc.returncode,
+                timed_out=False,
+                stdout_tail=(proc.stdout + proc.stderr)[-65536:],
+                stderr_tail="",
+                truncated=False,
+                duration_ms=1,
+                terminal_barrier=True,
+            )
+            return {"receipt": receipt.to_dict()}
+        raise AssertionError(f"unexpected operation in test client: {operation}")
+
+    @override
+    def publish_plan(
+        self,
+        binding: Any,
+        source: PlanSnapshot,
+        candidate: PlanSnapshot,
+        *,
+        grant: GrantReply,
+        deadline: float | None = None,
+    ) -> Any:
+        del deadline
+        if self.on_publish is None:
+            raise AssertionError("plan publication was not enabled for this test")
+        return self.on_publish(binding, source, candidate, grant)
 
 
 def _install_test_managed_cli_dependencies(
@@ -54,48 +231,34 @@ def _install_test_managed_cli_dependencies(
     """
     from fa.execution.client import PlanPublication
     from fa.execution.composition import ExecutionBinding, ManagedExecution
-    from fa.execution.types import GrantReply, NamespaceRef, Operation
-    from fa.inner_loop.plan_admission import PlanRef, PlanSnapshot
     from fa.session.manager import SessionManager
     from fa.session.provisioning import ProvisionedWorkspace, ProvisionMode
 
     workspace_id = "ws-" + "1" * 32
     revision_id = "rev-" + "2" * 32
+    ro_profile = read_only_profile()
 
     published_candidate_hashes: list[str] = []
 
-    class _Client:
-        def request(self, operation: Operation, **_kwargs: Any) -> dict[str, Any]:
-            if operation is not Operation.RELEASE:
-                raise AssertionError(f"unexpected operation in test client: {operation}")
-            return {}
-
-        def publish_plan(
-            self,
-            binding: ExecutionBinding,
-            source: PlanSnapshot,
-            candidate: PlanSnapshot,
-            *,
-            grant: GrantReply,
-            deadline: float | None = None,
-        ) -> PlanPublication:
-            del deadline
-            if not allow_noop_publication:
-                raise AssertionError("plan publication was not enabled for this test")
-            if (
-                binding.workspace_id != workspace_id
-                or grant.revision_id != revision_id
-                or source.ref.source_kind != candidate.ref.source_kind
-                or source.ref.sha256 != candidate.ref.sha256
-            ):
-                raise AssertionError("no-op publisher only accepts this run's unchanged canonical plan")
-            published_candidate_hashes.append(candidate.ref.sha256)
-            canonical_ref = PlanRef(
-                source.ref.workspace_relative_path,
-                source.ref.source_kind,
-                candidate.ref.sha256,
-            )
-            return PlanPublication(canonical_ref, revision_id, True)
+    def _on_publish(
+        binding: ExecutionBinding, source: PlanSnapshot, candidate: PlanSnapshot, grant: GrantReply
+    ) -> PlanPublication:
+        if not allow_noop_publication:
+            raise AssertionError("plan publication was not enabled for this test")
+        if (
+            binding.workspace_id != workspace_id
+            or grant.revision_id != revision_id
+            or source.ref.source_kind != candidate.ref.source_kind
+            or source.ref.sha256 != candidate.ref.sha256
+        ):
+            raise AssertionError("no-op publisher only accepts this run's unchanged canonical plan")
+        published_candidate_hashes.append(candidate.ref.sha256)
+        canonical_ref = PlanRef(
+            source.ref.workspace_relative_path,
+            source.ref.source_kind,
+            candidate.ref.sha256,
+        )
+        return PlanPublication(canonical_ref, revision_id, True)
 
     def ready(path: Path, _run_context: Any) -> ReadyState:
         return ReadyState(ReadyStatus.READY, None, "ready_fast_path", path / ".fa" / "ready.log", False, 0)
@@ -128,7 +291,16 @@ def _install_test_managed_cli_dependencies(
         if key not in executions:
             binding = ExecutionBinding(NamespaceRef(session_id, run_id), workspace_id)
             grant = GrantReply(Operation.ACQUIRE_WRITER, "3" * 64, None, 1, revision_id)
-            executions[key] = ManagedExecution(_Client(), binding, grant)  # type: ignore[arg-type]
+            run_ws = getattr(run, "workspace_path", None)
+            client = _TestCliManagedClient(
+                workspace=run_ws,
+                workspace_id=workspace_id,
+                revision_id=revision_id,
+                profile_id=ro_profile.profile_id,
+                image_digest=ro_profile.image_digest,
+                on_publish=_on_publish,
+            )
+            executions[key] = ManagedExecution(client, binding, grant, read_only_profile=ro_profile)
         return executions[key]
 
     monkeypatch.setattr(cli_module, "managed_execution_for_run", managed_for_run)
@@ -263,6 +435,23 @@ def test_inner_loop_smoke_command_runs(tmp_path: Path, capsys: CaptureFixture[st
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _SEED_BASELINE = _REPO_ROOT / "knowledge" / "trace" / "codebase_map.json"
+
+
+def test_inner_loop_smoke_refuses_wrapper_active_workspace_before_effects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: CaptureFixture[str]
+) -> None:
+    workspace = tmp_path / "managed-workspace"
+    workspace.mkdir()
+    monkeypatch.setenv("FA_WRAPPER_ACTIVE_WORKSPACE", str(workspace))
+    parser = build_parser()
+    args = parser.parse_args(["inner-loop-smoke", "--workspace", str(workspace)])
+
+    assert args.func(args) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "workspace refused [smoke_active_workspace_refused]" in captured.err
+    assert not (workspace / ".fa").exists()
+    assert not (workspace / "knowledge" / "trace").exists()
 
 
 @requires_pty_backend
@@ -603,10 +792,10 @@ def test_fa_run_sends_exact_portable_coder_tool_corpus(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """C2 S13.11: shipped `_cmd_run` sends all 17 portable coder tools.
+    """C2 S13.11: shipped `_cmd_run` sends the exact portable coder corpus.
 
-    (S15: fs_exploration_metrics joined the implementer profile — 15→16.
-    S16: fs_reach joined — 16→17. TEST-EDITS declared in PR.)
+    S15/S16 added exploration metrics and reach. Q126-A/E469 retired the
+    legacy host-only subagent tool from product profiles: 17→16.
 
     This is the production-corpus oracle CONF-8 must share. It is intentionally
     stricter than ``test_drive_session_renders_tool_specs_into_request``: a
@@ -630,9 +819,10 @@ def test_fa_run_sends_exact_portable_coder_tool_corpus(
     assert isinstance(tools, list)
     by_name = {tool["function"]["name"]: tool for tool in tools}
 
-    assert len(tools) == 17
+    assert len(tools) == 16
     assert len(by_name) == len(tools)
-    assert {"fs_search", "pr_prepare"} <= set(by_name)
+    assert {"fs_search", "fs_reach", "fs_exploration_metrics", "pr_prepare"} <= set(by_name)
+    assert "fs_spawn_subagent" not in by_name
 
     forbidden = {"anyOf", "oneOf", "allOf", "$ref", "$defs"}
 
@@ -1528,11 +1718,15 @@ def test_fa_run_session_manager_creates_and_attaches_with_fresh_run_ids(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """C2 producer proof: real ``_cmd_run`` uses SessionManager + one session DB.
+    """C1/C2: real CLI/loop/manager use SQLite for setup and execution runs.
 
-    Matrix: default new session → explicit attach. Kill-check: removing the
-    SessionManager call from ``_cmd_run`` must make the manifest/DB assertions
-    fail. Provider I/O is deterministic and mocked at Transport only.
+    Matrix: new-session CLI run → explicit attach. Each ``_cmd_run`` admits one
+    managed setup/readiness RunContext and one task RunContext; only the task
+    context appends loop events. The SQL database is authoritative: JSONL is
+    never used to discover runs or satisfy event assertions. Provider I/O is
+    deterministic at the Transport seam. Producer/EDGE kill-checks remove the
+    ``user_msg``/``run_started`` producers, CLI DB injection, EventLog SQL
+    append/insert, and SessionManager run-binding reservation/edge.
     """
     config = tmp_path / "models.yaml"
     config.write_text(_FAKE_MODELS_YAML, encoding="utf-8")
@@ -1549,30 +1743,90 @@ def test_fa_run_session_manager_creates_and_attaches_with_fresh_run_ids(
 
     manifests = sorted((home / ".fa" / "sessions").glob("*/manifest.json"))
     assert len(manifests) == 1
-    session_id = json.loads(manifests[0].read_text(encoding="utf-8"))["session_id"]
-    run_dirs = sorted(
-        d for d in (home / ".fa" / "session-log").iterdir() if d.is_dir() and (d / "events.jsonl").is_file()
-    )
-    assert len(run_dirs) == 1
-    first_run_id = run_dirs[0].name
+    manifest = json.loads(manifests[0].read_text(encoding="utf-8"))
+    session_id = str(manifest["session_id"])
+    db_path = Path(str(manifest["session_db_path"]))
+    db = SessionDatabase.open_existing(db_path, session_id=session_id)
+
+    bindings_after_first = set(db.list_run_ids())
+    assert len(bindings_after_first) == 2  # setup/readiness + task execution
+    rows_after_first = db.read_event_rows()
+    first_event_run_ids = {str(row["run_id"]) for row in rows_after_first}
+    assert len(first_event_run_ids) == 1
+    first_run_id = next(iter(first_event_run_ids))
+    first_rows = db.read_event_rows(run_id=first_run_id)
+    assert first_rows == rows_after_first
+    assert first_run_id in bindings_after_first
+    first_setup_ids = bindings_after_first - {first_run_id}
+    assert len(first_setup_ids) == 1
+    first_setup_id = next(iter(first_setup_ids))
+    assert db.read_event_rows(run_id=first_setup_id) == ()
+
+    for run_id in bindings_after_first:
+        binding = db.get_run_binding(run_id)
+        assert binding is not None
+        assert binding["run_id"] == run_id
+        assert binding["session_id"] == session_id
 
     second_args = _make_run_args(workspace=tmp_path, config=config, run_id="")
     second_args.session_id = session_id
     second_args.resume = False
+    bindings_before_second = set(db.list_run_ids())
+    rows_before_second = db.read_event_rows()
+    count_before_second = db.event_count()
+    assert bindings_before_second == bindings_after_first
+    assert rows_before_second == rows_after_first
     assert _cmd_run(second_args, transport=_ScriptedTransport([_stop_body("second")]), secrets=_TEST_SECRETS) == 0
 
-    run_dirs = sorted(
-        d for d in (home / ".fa" / "session-log").iterdir() if d.is_dir() and (d / "events.jsonl").is_file()
-    )
-    assert len(run_dirs) == 2
-    second_run_id = next(d.name for d in run_dirs if d.name != first_run_id)
-    assert second_run_id != first_run_id
-
-    db_path = home / ".fa" / "sessions" / session_id / "session.db"
+    # A fresh authority handle after the second CLI run observes committed SQLite state.
     db = SessionDatabase.open_existing(db_path, session_id=session_id)
-    assert db.read_event_rows(run_id=first_run_id)
-    assert db.read_event_rows(run_id=second_run_id)
-    assert all(row["session_id"] == session_id for row in db.read_event_rows())
+    bindings_after_second = set(db.list_run_ids())
+    assert len(bindings_after_second) == 4
+    new_binding_ids = bindings_after_second - bindings_before_second
+    assert len(new_binding_ids) == 2  # attach/readiness + task execution
+
+    all_rows = db.read_event_rows()
+    event_run_ids = {str(row["run_id"]) for row in all_rows}
+    second_event_run_ids = event_run_ids - {first_run_id}
+    assert len(second_event_run_ids) == 1
+    second_run_id = next(iter(second_event_run_ids))
+    assert event_run_ids == {first_run_id, second_run_id}
+    assert second_run_id in new_binding_ids
+    second_setup_ids = new_binding_ids - {second_run_id}
+    assert len(second_setup_ids) == 1
+    second_setup_id = next(iter(second_setup_ids))
+    assert db.read_event_rows(run_id=second_setup_id) == ()
+
+    first_rows_after = db.read_event_rows(run_id=first_run_id)
+    second_rows = db.read_event_rows(run_id=second_run_id)
+    assert first_rows_after == first_rows, "a later run must not rewrite prior run events"
+    for run_id, rows in ((first_run_id, first_rows_after), (second_run_id, second_rows)):
+        assert rows
+        assert all(row["session_id"] == session_id and row["run_id"] == run_id for row in rows)
+        event_ids = [row["event_id"] for row in rows]
+        assert len(event_ids) == len(set(event_ids))
+        kinds = [row["kind"] for row in rows]
+        assert kinds.count("user_msg") == 1
+        assert kinds.count("run_started") == 1
+
+    for run_id in bindings_after_second:
+        binding = db.get_run_binding(run_id)
+        assert binding is not None
+        assert binding["run_id"] == run_id
+        assert binding["session_id"] == session_id
+
+    all_event_ids = [row["event_id"] for row in all_rows]
+    assert len(all_event_ids) == len(set(all_event_ids))
+    assert all(row["session_id"] == session_id for row in all_rows)
+    assert all(row["run_id"] in bindings_after_second for row in all_rows)
+    assert len(all_rows) > len(rows_before_second)
+    count_after_second = db.event_count()
+    assert count_after_second == len(all_rows) > count_before_second
+
+    # Read-only SQL observations leave both authorities unchanged and start no run.
+    assert db.read_event_rows() == all_rows
+    assert set(db.list_run_ids()) == bindings_after_second
+    assert db.event_count() == count_after_second
 
 
 def test_managed_readiness_failure_leaves_tombstone_before_provider_or_workflow_events(
@@ -1751,6 +2005,18 @@ def test_fa_stats_reads_current_session_db_and_rejects_legacy_without_writes(
             "content": {"n_turns": 1, "input_tokens": 1, "output_tokens": 1},
         }
     )
+    db.append_event_row(
+        {
+            "event_id": "ev-2",
+            "session_id": session_id,
+            "ts": "2026-06-21T14:00:01Z",
+            "run_id": run_id,
+            "harness_id": "fa-inner-loop@0.1.0",
+            "actor": "runtime",
+            "kind": "compaction_warning",
+            "content": {"action": "stage2", "compaction_enabled": False, "ratio": 0.8, "threshold": 0.7},
+        }
+    )
     args = argparse.Namespace(
         run_id=run_id,
         session_id=session_id,
@@ -1763,6 +2029,14 @@ def test_fa_stats_reads_current_session_db_and_rejects_legacy_without_writes(
     assert _cmd_stats(args) == 0
     rendered = json.loads(capsys.readouterr().out)
     assert rendered["run_id"] == run_id
+
+    args.output = "text"
+    assert _cmd_stats(args) == 0
+    text = capsys.readouterr().err
+    assert "Session: run-stats" in text
+    assert "Compaction pressure:" in text
+    assert "stage2: ratio=80% threshold=70% (disabled)" in text
+    assert "Tool errors:" not in text
 
     legacy_home = tmp_path / "legacy-home"
     monkeypatch.setenv("HOME", str(legacy_home))
@@ -1794,3 +2068,232 @@ def test_fa_run_resume_without_session_id_fails_before_provider(tmp_path: Path, 
     assert _cmd_run(args, transport=transport, secrets=_TEST_SECRETS) == 2
     assert transport.calls == []
     assert "requires --session-id" in capsys.readouterr().err
+
+
+def test_managed_child_chain_selects_only_chat_and_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """C0/R13: child selection never silently adopts a workflow parent's provider."""
+    from fa.providers import load_models_config_from_path
+
+    config = tmp_path / "models.yaml"
+    config.write_text(_FAKE_MODELS_YAML + _FAKE_MODELS_YAML.replace("coder:", "chat:"), encoding="utf-8")
+    models = load_models_config_from_path(config, env=_TEST_SECRETS)
+    transport = _ScriptedTransport([])
+    parent = cli_module._build_provider_chain(models.roles["coder"], transport=transport, secrets=_TEST_SECRETS)
+    build = cli_module._build_provider_chain
+    builds: list[str] = []
+
+    def recording_build(*args: Any, **kwargs: Any) -> Any:
+        builds.append(args[0].role)
+        return build(*args, **kwargs)
+
+    monkeypatch.setattr(cli_module, "_build_provider_chain", recording_build)
+
+    def select(role: str, *, proxy_url: str = "") -> Any:
+        return cli_module._build_managed_child_chain(
+            role, models, parent, transport=transport, secrets=_TEST_SECRETS, proxy_url=proxy_url
+        )
+
+    assert select("chat") is parent
+    assert builds == []
+    assert select("eval") is None
+    for role in ("planner", "coder"):
+        child = select(role)
+        assert child is not None and child is not parent
+        assert child.config.role == "chat"
+    assert builds == ["chat", "chat"]
+
+    monkeypatch.setattr(cli_module, "_proxy_rewrite_chain", lambda config, url: (config, "bad proxy"))
+    assert select("coder", proxy_url="https://proxy.invalid") is None
+    assert builds == ["chat", "chat"]
+
+    def broken_build(*args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("child unavailable")
+
+    monkeypatch.setattr(cli_module, "_build_provider_chain", broken_build)
+    assert select("planner") is None
+
+    missing = load_models_config_from_path(tmp_path / "missing.yaml", env=_TEST_SECRETS)
+    assert (
+        cli_module._build_managed_child_chain(
+            "coder", missing, parent, transport=transport, secrets=_TEST_SECRETS, proxy_url=""
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize("mode", ["standalone", "workflow", "export-failure"])
+def test_managed_cli_completion_projects_only_standalone_and_preserves_outcome(
+    mode: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: CaptureFixture[str]
+) -> None:
+    """C2/LOGIC-11: real CLI and history, with external provider/authority boundaries doubled."""
+    from fa.inner_loop.coder_loop import SessionOutcome
+    from fa.inner_loop.global_history import GlobalHistoryStore, default_global_history_path
+
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    monkeypatch.setenv("FA_STATE_ROOT", str(home / ".fa"))
+    monkeypatch.delenv("FA_SESSION_SOURCE", raising=False)
+    config = tmp_path / "models.yaml"
+    config.write_text(_FAKE_MODELS_YAML, encoding="utf-8")
+    _install_test_managed_cli_dependencies(monkeypatch, home=home, workspace_root=tmp_path.parent)
+    args = _make_run_args(workspace=tmp_path, config=config, run_id="")
+    args.session_id = None
+    args.resume = False
+    args.output_mode = "quiet"
+    sink: list[SessionOutcome] | None = [] if mode == "workflow" else None
+    export_attempts: list[str] = []
+
+    if mode == "export-failure":
+
+        def failed_export(**kwargs: Any) -> None:
+            export_attempts.append(str(kwargs["run_id"]))
+            raise RuntimeError("projection unavailable")
+
+        monkeypatch.setattr("fa.inner_loop.global_history.export_session_to_global_history", failed_export)
+
+    transport = _ScriptedTransport([_stop_body("completion payload")])
+    assert _cmd_run(args, transport=transport, secrets=_TEST_SECRETS, outcome_sink=sink) == 0
+    output = capsys.readouterr()
+    assert "OK: stopped_by_llm" in output.err
+    assert "OK: stopped_by_llm" not in output.out
+    assert "completion payload" in output.out
+    assert len(transport.calls) == 1
+    path = default_global_history_path()
+    if mode == "standalone":
+        assert path.is_file()
+        rows = GlobalHistoryStore(path).read_all()
+        assert len(rows) == 1 and rows[0]["role"] == "coder"
+    else:
+        assert not path.exists()
+    if mode == "workflow":
+        assert sink is not None and len(sink) == 1
+        assert sink[0].stop_reason == "stopped_by_llm"
+    if mode == "export-failure":
+        assert len(export_attempts) == 1
+
+
+def test_snapshot_parent_for_initial_planner_empty_cases(tmp_path: Path) -> None:
+    from fa.cli import _snapshot_parent_for_initial_planner
+    from fa.inner_loop.state import EventLog, SessionState
+
+    assert _snapshot_parent_for_initial_planner(None) == ""
+    assert _snapshot_parent_for_initial_planner([None]) == ""
+    bare_state = SessionState(workspace_root=tmp_path, log=None)
+    assert _snapshot_parent_for_initial_planner([bare_state]) == ""
+
+    empty_log = EventLog(tmp_path / "events.jsonl", run_id="r-empty")
+    empty_state = SessionState(workspace_root=tmp_path, run_id="r-empty", log=empty_log)
+    assert _snapshot_parent_for_initial_planner([empty_state]) == ""
+
+
+def test_snapshot_parent_for_initial_planner_bounds_messages_entries_and_total_chars(tmp_path: Path) -> None:
+    from fa.cli import (
+        _PARENT_SNAPSHOT_MAX_CHARS,
+        _PARENT_SNAPSHOT_MAX_ENTRY_CHARS,
+        _snapshot_parent_for_initial_planner,
+    )
+    from fa.inner_loop.state import EventLog, SessionState
+
+    # 1. >12 messages preserves first user message, inserts omission marker, keeps tail 11, caps single entry at 600.
+    log1 = EventLog(tmp_path / "events1.jsonl", run_id="r-bounds-1")
+    log1.append(actor="user", kind="user_msg", content={"text": "GOAL-00 first user prompt"})
+    for idx in range(1, 16):
+        if idx == 10:
+            log1.append(actor="user", kind="user_msg", content={"text": f"LONG-{idx:02d} " + ("x" * 700)})
+        else:
+            log1.append(actor="user", kind="user_msg", content={"text": f"TURN-{idx:02d} body"})
+    state1 = SessionState(workspace_root=tmp_path, run_id="r-bounds-1", log=log1)
+    snap1 = _snapshot_parent_for_initial_planner([state1])
+
+    assert "GOAL-00 first user prompt" in snap1
+    assert "... [earlier parent turns omitted] ..." in snap1
+    for dropped in ("TURN-01", "TURN-02", "TURN-03", "TURN-04"):
+        assert dropped not in snap1
+    for kept in ("TURN-05", "LONG-10", "TURN-15"):
+        assert kept in snap1
+    long_line = next(line for line in snap1.splitlines() if "LONG-10" in line)
+    assert long_line.endswith("...[truncated]")
+    # Label prefix + max entry chars (600) stays strictly bounded.
+    assert len(long_line.removeprefix("[parent user] ")) <= _PARENT_SNAPSHOT_MAX_ENTRY_CHARS
+
+    # 2. Total snapshot length capped at 4000 chars with truncation footer.
+    log2 = EventLog(tmp_path / "events2.jsonl", run_id="r-bounds-2")
+    for idx in range(12):
+        log2.append(actor="user", kind="user_msg", content={"text": f"MSG-{idx:02d}-" + ("z" * 480)})
+    state2 = SessionState(workspace_root=tmp_path, run_id="r-bounds-2", log=log2)
+    snap2 = _snapshot_parent_for_initial_planner([state2])
+
+    assert len(snap2) <= _PARENT_SNAPSHOT_MAX_CHARS
+    assert snap2.endswith("... [snapshot truncated]")
+
+
+def test_snapshot_parent_for_initial_planner_redacts_secrets_and_marks_untrusted_tools(tmp_path: Path) -> None:
+    from fa.cli import _snapshot_parent_for_initial_planner
+    from fa.inner_loop.state import EventLog, SessionState
+    from fa.observability.redaction import SecretRedactor
+
+    env_secret = "LIVE_ENV_SECRET_42_XYZ"
+    extra_secret = "CUSTOM_RUNTIME_SECRET_99_XYZ"
+    redactor = SecretRedactor({}, (), extra_values=(env_secret,), allow_empty=True)
+    log = EventLog(tmp_path / "events-red.jsonl", run_id="r-red", redactor=redactor)
+
+    pem_secret = "-----BEGIN RSA PRIVATE KEY-----\n" + ("MIIE" * 180) + "\n-----END RSA PRIVATE KEY-----"
+    log.append(
+        actor="harness",
+        kind="compaction_stage3_done",
+        content={"summary": f"Summary with {env_secret} and Bearer tok_compacted_123456"},
+    )
+    log.append(
+        actor="user",
+        kind="user_msg",
+        content={
+            "text": (
+                f"Check sk-abcdef1234567890 and ghp_1234567890abcdef12 and github_pat_1234567890abcdef1234 "
+                f"plus {pem_secret}"
+            )
+        },
+    )
+    log.append(
+        actor="model",
+        kind="model_msg",
+        content={
+            "text": "Inspecting AIzaSyDummyKey1234567890abcd and AKIAIOSFODNN7EXAMPLE",
+            "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "fs_read_file", "arguments": "{}"}}],
+        },
+    )
+    log.append(
+        actor="tool",
+        kind="tool_result",
+        tool_name="fs_read_file",
+        tool_call_id="c1",
+        content={
+            "summary": "read config",
+            "result": {"stdout": f'api_key=MY_INLINE_KEY_7890 password="supersecretpass" {extra_secret}'},
+        },
+    )
+    state = SessionState(workspace_root=tmp_path, run_id="r-red", log=log)
+    snap = _snapshot_parent_for_initial_planner([state], secrets={"CUSTOM": extra_secret})
+
+    assert "[parent compacted summary]" in snap
+    assert "[parent user]" in snap
+    assert "[parent assistant (tools: fs_read_file)]" in snap
+    assert "[parent tool output (untrusted data)]" in snap
+    assert "***REDACTED***" in snap
+    for leaked in (
+        env_secret,
+        extra_secret,
+        "tok_compacted_123456",
+        "sk-abcdef1234567890",
+        "ghp_1234567890abcdef12",
+        "github_pat_1234567890abcdef1234",
+        "AIzaSyDummyKey1234567890abcd",
+        "AKIAIOSFODNN7EXAMPLE",
+        "BEGIN RSA PRIVATE KEY",
+        "MIIEMIIE",
+        "MY_INLINE_KEY_7890",
+        "supersecretpass",
+    ):
+        assert leaked not in snap, f"secret fragment leaked: {leaked!r}"

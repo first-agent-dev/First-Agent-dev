@@ -111,22 +111,33 @@ def test_compaction_warning_producer_is_reachable_in_the_real_loop() -> None:
     Kill-check target: comment out the producer — this fails, where the five
     removed source-text tests all passed.
     """
-    tree = ast.parse((Path("src/fa/inner_loop/coder_loop.py")).read_text(encoding="utf-8"))
-    sites = [
-        node.lineno
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "append"
-        and any(
-            kw.arg == "kind" and isinstance(kw.value, ast.Constant) and kw.value.value == "compaction_warning"
-            for kw in node.keywords
-        )
+    # The producer may live behind a module-level helper (S6-F6 moved the
+    # budget/compaction effects out of the 399-line block); searching only the
+    # driver would report a correctly-wired producer as missing. The assertion's
+    # meaning is unchanged: the append must be live code in the modules the
+    # driver actually calls.
+    sources = [
+        Path("src/fa/inner_loop/coder_loop.py"),
+        Path("src/fa/inner_loop/budget_effects.py"),
     ]
+    sites: list[tuple[str, int]] = []
+    for source_path in sources:
+        tree = ast.parse(source_path.read_text(encoding="utf-8"))
+        sites.extend(
+            (source_path.name, node.lineno)
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "append"
+            and any(
+                kw.arg == "kind" and isinstance(kw.value, ast.Constant) and kw.value.value == "compaction_warning"
+                for kw in node.keywords
+            )
+        )
 
     assert sites, (
-        "no live log.append(kind='compaction_warning') call site in coder_loop.py — "
-        "a commented-out or stringified occurrence does not count"
+        "no live log.append(kind='compaction_warning') call site in the driver or its "
+        "budget/compaction helpers — a commented-out or stringified occurrence does not count"
     )
 
 

@@ -15,6 +15,7 @@ Exit 1 if any gaps found. Exit 0 if all contracts satisfied.
 
 from __future__ import annotations
 
+import ast
 import re
 import sys
 from pathlib import Path
@@ -71,12 +72,22 @@ def extract_handler_events() -> set[str]:
 # a path nobody enumerated (skill §3.14 path inventory) — update the floor in
 # the same commit that adds the emit.
 PRODUCER_SITE_FLOOR: dict[str, int] = {
+    # 4 throughout. The provider-failure slice (2026-11-10) moved the
+    # shape-failure console line into `provider_turn`, then removed the driver's
+    # duplicate copy so there is one implementation of it, not two: the count
+    # moved files and came back to the same number. The two exhaustion paths
+    # share `_emit_attempts_failed` and count as one site.
     "api_retry": 4,
     "compaction_end": 5,
     "compaction_start": 2,
     "compaction_warning": 1,
     "config_warning": 2,
-    "context_warn": 5,
+    # 5 -> 4 in the budget/compaction slice (2026-11-10): the two stage-3
+    # exits (stage-3 still over budget, circuit breaker) now share
+    # `_record_stage3_stop`, and two call sites of one helper are one site.
+    # Both exits are still asserted separately by
+    # test_compaction_turn_stage3.py; this is a merged path, not a lost line.
+    "context_warn": 4,
     # S6.2 raised this from 2 -> 3: drive_session now emits hook_deny when an
     # AFTER_TOOL_EXEC denial stops the outer loop (S6-F4).
     # S12.7 (CT1/GAP2) raised this from 3 -> 4: the scoped BETWEEN_ROUNDS
@@ -96,7 +107,24 @@ PRODUCER_SITE_FLOOR: dict[str, int] = {
 # ── 3. Check output.emit() calls in production code (producers) ─────────
 
 PRODUCER_FILES = [
+    # The budget/compaction slice moved these emit sites out of `coder_loop`
+    # into modules that answer one question each. Unlisted, CHECK 0 reports
+    # "a producer was removed" while console output is byte-identical — the
+    # kind of false alarm that trains people to lower the floor.
+    "src/fa/inner_loop/budget_effects.py",
+    # `budget_ladder` took the stage-3-without-compaction exit out of the driver
+    # (2026-11-10) and calls `budget_effects.emit_context_warn` for it. The call
+    # moved; the count did not — unlisted, `context_warn` reads 3 and the
+    # checker reports a producer that was in fact relocated.
+    "src/fa/inner_loop/budget_ladder.py",
+    "src/fa/inner_loop/compaction/compaction_turn.py",
+    # `provider_turn` took `provider_attempt`/`llm_call`/`llm_response` out of
+    # `coder_loop` (2026-11-10). Same reason as the two above: unlisted, the
+    # checker calls a moved emit a removed one.
+    "src/fa/inner_loop/provider_turn.py",
     "src/fa/inner_loop/coder_loop.py",
+    "src/fa/inner_loop/tool_turn.py",
+    "src/fa/inner_loop/scope_turn.py",
     "src/fa/inner_loop/tools/spawn_subagent.py",
     "src/fa/cli.py",
     "src/fa/observability/cost_guardian.py",
@@ -104,15 +132,114 @@ PRODUCER_FILES = [
 ]
 
 
+def _emit_helpers(source: str) -> tuple[dict[str, list[str]], list[tuple[int, int]]]:
+    """Module-level functions that build ``OutputEvent`` and emit it.
+
+    Returns ``{name: [event type, ...]}``. Both conditions are required: a
+    function that only constructs the event never reaches the console, and a
+    function that only calls ``emit`` gets its event from somewhere else.
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:  # the file did not parse; the caller's literal scan still runs
+        return {}, []
+    helpers: dict[str, list[str]] = {}
+    spans: list[tuple[int, int]] = []
+    for fn in tree.body:
+        if not isinstance(fn, ast.FunctionDef):
+            continue
+        types: list[str] = []
+        emits = False
+        writes_rows = False
+        for node in ast.walk(fn):
+            # A durable-row write disqualifies the function: it is a business
+            # step that happens to emit, not a console mirror. Without this,
+            # `_drive_session_inner` (dozens of emits) would qualify and its
+            # whole span would be masked as "one helper".
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "append":
+                writes_rows = True
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "OutputEvent":
+                for kw in node.keywords:
+                    if kw.arg == "type" and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+                        types.append(kw.value.value)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "emit":
+                emits = True
+        if types and emits and not writes_rows:
+            helpers[fn.name] = sorted(set(types))
+            spans.append((fn.lineno, fn.end_lineno or fn.lineno))
+    return helpers, spans
+
+
+def _emits_reaching_this_file(source: str) -> dict[str, int]:
+    """Event types produced by helpers that are *defined elsewhere*.
+
+    Returns ``{event_type: call_sites}``. A helper that moved to its own module
+    is invisible to the ``type=`` literal scan below: the string lives in the
+    defining file and the caller only names an alias. Measured before this
+    existed: `budget_effects` counted as one `context_warn` site while the
+    driver called it five times — the sites were invisible, not missing.
+
+    Parsed rather than regex-matched: `ruff format` spreads a growing import
+    list over several lines, and `from x import (\n  a as b,\n)` would slip past.
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return {}
+    counts: dict[str, int] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ImportFrom) or not node.module or not node.module.startswith("fa."):
+            continue
+        origin = f"src/{node.module.replace('.', '/')}.py"
+        if not (REPO_ROOT / origin).exists():
+            continue
+        helpers, _ = _emit_helpers((REPO_ROOT / origin).read_text(encoding="utf-8"))
+        for imported in node.names:
+            # Only the helper this alias actually names — a module can export
+            # several, and billing this call site to all of them inflated
+            # `context_warn` from 4 to 7 the first time this shipped.
+            types = helpers.get(imported.name)
+            if not imported.asname or not types:
+                continue
+            # The defining module counts its own literal; counting a re-export
+            # would inflate it.
+            call_sites = len(re.findall(rf"\b{re.escape(imported.asname)}\(", source))
+            if not call_sites:
+                continue
+            for et in types:
+                counts[et] = counts.get(et, 0) + call_sites
+    return counts
+
+
 def extract_producer_events() -> dict[str, list[str]]:
-    """Return {event_type: [file.py, ...]} for each emit call found."""
+    """Return {event_type: [file.py, ...]} for each emit site found.
+
+    A producer that moved behind a local emit-helper is counted once per CALL
+    SITE of that helper, not once for the helper's single literal. Otherwise
+    deduplicating five hand-written emits into one helper would read as "four
+    producers were deleted" — the exact false negative this file exists to
+    prevent, inverted.
+    """
     result: dict[str, list[str]] = {}
     for fpath in PRODUCER_FILES:
         full = REPO_ROOT / fpath
         if not full.exists():
             continue
         source = full.read_text(encoding="utf-8")
+        helper_types, helper_spans = _emit_helpers(source)
+        if helper_types:
+            for name, types in helper_types.items():
+                call_sites = len(re.findall(rf"\b{re.escape(name)}\(", source)) - 1  # minus the def
+                for et in types:
+                    result.setdefault(et, []).extend([fpath.split("/")[-1]] * max(call_sites, 1))
+        for et, sites in _emits_reaching_this_file(source).items():
+            result.setdefault(et, []).extend([fpath.split("/")[-1]] * sites)
         for match in re.finditer(r'type="([a-z_]+)"', source):
+            # The literal inside a helper is not its own site — the helper's
+            # CALL SITES were counted above. Counting both would double.
+            lineno = source.count("\n", 0, match.start()) + 1
+            if any(start <= lineno <= end for start, end in helper_spans):
+                continue
             et = match.group(1)
             # Only count if it's inside an OutputEvent() or output.emit() context
             # Check surrounding 200 chars for OutputEvent or emit

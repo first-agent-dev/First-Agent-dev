@@ -4,11 +4,11 @@
 # Two layers behind one command:
 #   1. Infrastructure verbs (logs, restart, up, down, rebuild, status, shell)
 #      run on the HOST via docker compose — closed set, docker compose API.
-#   2. Product commands run INSIDE the agent container. Help, `run`, `workflow`,
-#      and `stats`, plus active `chunk` and explicit disposable-workspace
-#      `inner-loop-smoke`, use the isolated installed controller; other product
-#      commands retain legacy `fa` dispatch during migration. New Python
-#      subcommands still work on the legacy route.
+#   2. Product commands run INSIDE the agent container through the isolated,
+#      installed controller from its trusted image CWD. Ordinary product calls
+#      receive `.active` as an untrusted workspace selector; help and the
+#      disposable `inner-loop-smoke` diagnostic do not.
+#      Host/admin commands retain their explicit host or fail-closed routes.
 #
 # Install:  sudo ln -sf /srv/first-agent/repo/First-Agent-dev/scripts/fa /usr/local/bin/fa
 # Override: FA_COMPOSE_FILE=docker-compose.custom.yml fa status
@@ -58,12 +58,19 @@ _is_help_arg() {
 }
 
 _help_unavailable() {
-    printf '%s\n' "fa: wrapper help is disabled until the isolated installed-controller help seam is available" >&2
+    printf '%s\n' "fa: wrapper help is disabled for host and administrative commands" >&2
     exit 2
 }
 
-_print_usage() {
-    _help_unavailable
+_is_host_topic() {
+    case "${1:-}" in
+        logs|proxy-logs|egress-proxy|status|up|down|restart|rebuild|shell|update|clean-rebuild|clean|commit-traces|sessions)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
 }
 
 _has_help_option() {
@@ -78,6 +85,38 @@ _has_help_option() {
 
 _host_has_help() {
     _is_help_arg "${1:-}" || _has_help_option "$@"
+}
+
+_delegate_without_active_workspace() {
+    exec "${COMPOSE[@]}" exec "${TTY_FLAG[@]}" -w /opt/first-agent first-agent \
+        /opt/fa-venv/bin/python -I -m fa.controller_entry "$@"
+}
+
+_delegate_to_controller() {
+    if _have_workspace; then
+        exec "${COMPOSE[@]}" exec "${TTY_FLAG[@]}" -e "FA_WRAPPER_ACTIVE_WORKSPACE=$_SESSION_WORKSPACE" \
+            -w /opt/first-agent first-agent /opt/fa-venv/bin/python -I -m fa.controller_entry "$@"
+    else
+        exec "${COMPOSE[@]}" exec "${TTY_FLAG[@]}" -w /opt/first-agent first-agent \
+            /opt/fa-venv/bin/python -I -m fa.controller_entry "$@"
+    fi
+}
+
+_delegate_product_to_controller() {
+    local arg
+    local -a normalized_args=()
+    for arg in "$@"; do
+        if [[ "$arg" == "-help" ]]; then
+            normalized_args+=(--help)
+        else
+            normalized_args+=("$arg")
+        fi
+    done
+    if _has_help_option "$@"; then
+        _delegate_without_active_workspace "${normalized_args[@]}"
+    else
+        _delegate_to_controller "${normalized_args[@]}"
+    fi
 }
 
 _delegate_to_agent() {
@@ -180,18 +219,34 @@ case "${1:-}" in
         # shellcheck disable=SC2010
         ls -lt "$_FA_ROOT/sessions/" | grep -v "^total\\|\.active"
         ;;
+    inner-loop-smoke)
+        if _have_workspace; then
+            printf '%s\n' "fa: inner-loop-smoke refuses a wrapper-selected active workspace" >&2
+            exit 2
+        fi
+        _delegate_without_active_workspace "$@"
+        ;;
 
     # ── Help ────────────────────────────────────────────────────────────
-    ""|--help|-h|-help)
-        _print_usage
+    "")
+        _delegate_without_active_workspace
+        ;;
+    --help|-h|-help)
+        if [[ $# -ge 2 ]]; then
+            if _is_host_topic "$2"; then _help_unavailable; fi
+            _delegate_without_active_workspace "$2" --help "${@:3}"
+        fi
+        _delegate_without_active_workspace --help
         ;;
     help)
-        _help_unavailable
+        shift
+        if [[ $# -eq 0 ]]; then _delegate_without_active_workspace --help; fi
+        if _is_host_topic "${1:-}"; then _help_unavailable; fi
+        _delegate_without_active_workspace help "$@"
         ;;
 
-    # ── Default: delegate product commands to the agent container ───────
+    # ── Default: delegate product commands to the isolated controller ────
     *)
-        if _has_help_option "$@"; then _help_unavailable; fi
-        _delegate_to_agent "$@"
+        _delegate_product_to_controller "$@"
         ;;
 esac

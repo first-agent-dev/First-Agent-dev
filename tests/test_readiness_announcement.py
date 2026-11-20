@@ -62,6 +62,11 @@ def _run_chat_capture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Captu
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("USERPROFILE", str(home))
+    # Session-backed run => admitted managed provisioner, no host fallback
+    # (``session/manager.py:302-307``). These oracles assert on what the run reports.
+    from tests.test_cli import _install_test_managed_cli_dependencies
+
+    _install_test_managed_cli_dependencies(monkeypatch, home=home, workspace_root=tmp_path.parent)
     transport = _CapturingTransport()
     args = build_parser().parse_args(
         ["run", "-r", "chat", "--config", str(config), "--workspace", str(tmp_path), "note the check"]

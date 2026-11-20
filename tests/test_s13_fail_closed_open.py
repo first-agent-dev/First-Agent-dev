@@ -44,6 +44,8 @@ def test_no_getattr_feature_flags() -> None:
         capture_output=True,
         text=True,
         cwd=Path(__file__).resolve().parent.parent,
+        # grep exits 1 on "no match", which is the passing case below.
+        check=False,
     )
     # grep exits 1 when no matches found
     hits = [line for line in result.stdout.splitlines() if "__pycache__" not in line]
@@ -61,6 +63,8 @@ def test_no_getattr_session_in_inner_loop() -> None:
         capture_output=True,
         text=True,
         cwd=Path(__file__).resolve().parent.parent,
+        # grep exits 1 on "no match", which is the passing case below.
+        check=False,
     )
     hits = [line for line in result.stdout.splitlines() if "__pycache__" not in line]
     assert not hits, f"Found getattr(session, ...) sites ({len(hits)}):\n" + "\n".join(hits)

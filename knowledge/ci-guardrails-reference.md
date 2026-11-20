@@ -1,4 +1,4 @@
-# CI & guardrail mechanisms — reference (as of 2026-07-01)
+# CI & guardrail mechanisms — reference (as of 2026-11-10)
 
 > **Purpose.** One-page inventory of every quality / safety mechanism in the
 > repo, with its seat (where it runs), gate class (blocking / advisory /
@@ -67,9 +67,11 @@ fail-closed (rule crash → HARD-BLOCK diagnostic).
 
 `BEFORE_TOOL_EXEC` middleware chain (ADR-7/8): SandboxHook (workspace path
 containment + bash classify/deny) → LoopGuard → Rate/Lockfile/Auth blockers →
-**IntentGuard** → AuditHook (events.jsonl) → SecretGuard (leak prevention;
-gitleaks mirrors at commit/CI) → CostGuardian (budget). Role-aware tool
-registries: planner/eval get read-only tools; only coder can write.
+**IntentGuard** → AuditHook (events.jsonl) → SecretGuard (runtime leak
+prevention) → CostGuardian (budget). Role-aware tool registries: planner/eval
+get read-only tools; only coder can write. Repository history/worktree secret
+scanning runs only in the blocking, full-history Gitleaks GitHub Actions job;
+there is no local Gitleaks pre-commit hook or Go readiness dependency.
 
 **IntentGuard** re-runs the M-6 classifier over the projected staged set per
 mutating tool call; requires a trusted same-session `pr_prepare` draft; and
@@ -127,7 +129,7 @@ branch.
 
 | Workflow | Jobs | Gate |
 | :--- | :--- | :--- |
-| `advisory.yml` | sanity-check (`uv lock --check` + full `just check`), pip-audit (known CVEs), gitleaks (full-history secrets; version-pinned to the pre-commit hook) | blocking |
+| `advisory.yml` | sanity-check (`uv lock --check` + full `just check`), pip-audit (known CVEs), Gitleaks full-history secret scan (`.gitleaks.toml`, version-pinned at 8.30.1) | blocking |
 | `authoring-guardrails.yml` | `fa authoring-check` (always-run, NO `paths:` filter — ADR-11-I6) + `check_protected_paths.py` | check blocking; flags non-blocking |
 
 **Verifying CI always-run (no `paths:` filter):** Do NOT use naïve
@@ -176,9 +178,9 @@ The script parses YAML (ignoring comments) and only flags actual
   duplicate-code findings mean fix-the-design; `# noqa: CODE` allowed only
   for intended-design patterns, rationale comment above, surfaced by the
   suppression tier.
-- **pre-commit hooks** (ruff, gitleaks, hygiene basics, uv-lock) — convenience
-  seats, bypassable, never the final authority. Managed lifecycle or
-  `just install` prepares them; hook bodies use `uv run --no-sync`, and
+- **pre-commit hooks** (ruff, hygiene basics, uv-lock) — convenience seats,
+  bypassable, never the final authority. Managed lifecycle or `just install`
+  prepares the hook environments; hook bodies use `uv run --no-sync`, and
   `just doctor` verifies readiness without mutation.
 
 ## Known residual gaps (accepted, tracked)

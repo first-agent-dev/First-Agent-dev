@@ -578,10 +578,10 @@ def _check_i01_case_artifacts(root: Path, index_text: str) -> None:
         raise CoverageError("I01 planner index must have exactly one row per planned case")
     for line in index_rows:
         cells = _split_table_row(line)
-        case_id = re.search(r"(I01-LIVE-\d{2})", cells[0] if cells else "")
+        case_match = re.search(r"(I01-LIVE-\d{2})", cells[0] if cells else "")
         if (
             len(cells) != 11
-            or case_id is None
+            or case_match is None
             or cells[9] != "NOT RUN"
             or cells[10] != "0"
             or not cells[5]
@@ -668,6 +668,38 @@ def _check_coverage(root: Path) -> dict[str, int]:
             f"register={sorted(register_i03_ids)}, index={sorted(index_i03_ids)}, "
             f"master={sorted(master_i03_ids)}, coverage={sorted(mapped_i03_ids)}"
         )
+    # Reviewed same-ID successor oracles must remain in all three authorities.
+    # Historical source rows and the immutable frozen snapshot are intentionally unchanged.
+    expected = {"I02-LIVE-005", "I02-LIVE-011"}
+    revisions = mapping_doc.get("oracle_revisions")
+    if (
+        not isinstance(revisions, list)
+        or len(revisions) != len(expected)
+        or {row.get("case_id") for row in revisions if isinstance(row, dict)} != expected
+    ):
+        raise CoverageError("reviewed oracle revision set is incomplete")
+    for row in revisions:
+        case_id = row["case_id"]
+        if (
+            row.get("status") != "PLANNED / NOT RUN"
+            or row.get("supersedes_frozen_oracle") is not True
+            or not row.get("fixture")
+            or not row.get("oracle")
+            or case_id not in all_case_ids
+        ):
+            raise CoverageError(f"invalid reviewed oracle revision: {case_id}")
+        for text in (index_text, (root / REGISTER_REL).read_text(encoding="utf-8")):
+            expected_row = f"- `{case_id}` — {row['fixture']} — {row['oracle']} — PLANNED / NOT RUN"
+            if text.count(expected_row) != 1:
+                raise CoverageError(f"reviewed oracle revision missing or diverged: {case_id}")
+    by_case = {row["case_id"]: row["oracle"] for row in revisions}
+    if (
+        "FAIL with exit_code=127" not in by_case["I02-LIVE-005"]
+        or "ERROR with exit_code=None" not in by_case["I02-LIVE-005"]
+        or "RETRY then ADMITTED before first coder" not in by_case["I02-LIVE-011"]
+        or "RETRY then BLOCKED and dispatches no coder" not in by_case["I02-LIVE-011"]
+    ):
+        raise CoverageError("reviewed oracle lost shell/admission outcome distinction")
     legacy_ids = {case for case in all_case_ids if case.startswith("I02-")}
     _check_legacy_index_rows(index_text, legacy_ids)
     if "producer-baseline.json" not in index_text or "producer-coverage.json" not in index_text:

@@ -12,7 +12,7 @@ from typing import Any, override
 import pytest
 
 from fa.execution.cell_protocol import decode_cell_reply, encode_cell_request
-from fa.execution.docker import DockerAttachStream
+from fa.execution.docker import DockerAttachStream, _remaining
 from fa.execution.protocol import (
     MAX_EXTENDED_FRAME_BYTES,
     MAX_FRAME_BYTES,
@@ -91,6 +91,43 @@ def assert_sent(peer: socket.socket, request_id: str) -> None:
     from fa.execution.protocol import _loads
 
     assert _loads(read_frame(peer))["request_id"] == request_id
+
+
+@pytest.mark.parametrize("failure", [TimeoutError, ExecutionContractError])
+def test_project_tool_gate_failure_before_send_releases_run_gate(
+    transport: tuple[ObservedStream, socket.socket], monkeypatch: pytest.MonkeyPatch, failure: type[Exception]
+) -> None:
+    import fa.execution.worker_client as worker_client
+
+    stream, peer = transport
+    client = WorkerClient(stream)
+    original_remaining = _remaining
+    checks = 0
+
+    def expire_between_gates(value: float) -> float:
+        nonlocal checks
+        checks += 1
+        if checks == 2:
+            raise failure
+        return original_remaining(value)
+
+    monkeypatch.setattr(worker_client, "_remaining", expire_between_gates)
+    try:
+        expected = WorkerUnavailableError if failure is TimeoutError else ExecutionContractError
+        with pytest.raises(expected):
+            client.request(req("PROJECT_TOOL", "1" * 32), deadline=deadline())
+        assert checks == 2
+        peer.settimeout(0.05)
+        with pytest.raises(TimeoutError):
+            peer.recv(1)
+        peer.settimeout(10)
+
+        run = client.begin(req("RUN", "2" * 32), deadline=deadline())
+        assert_sent(peer, "2" * 32)
+        send(peer, reply("RUN", "2" * 32))
+        assert client.await_reply(run, deadline=deadline())["stdout"] == "ok"
+    finally:
+        client.close(deadline=deadline())
 
 
 def test_project_tool_reply_budget_is_enforced_before_body_read(
@@ -280,7 +317,7 @@ def test_oversized_reply_is_refused_before_cell_result_decode(
 ) -> None:
     from fa.execution import worker_client
 
-    original = worker_client.decode_cell_reply
+    original = decode_cell_reply
     decoded: list[bytes] = []
 
     def observe(raw: bytes, **kwargs: Any) -> dict[str, Any] | None:

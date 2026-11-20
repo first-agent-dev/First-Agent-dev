@@ -15,18 +15,36 @@ absence of exceptions would verify nothing it exists to verify.
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
 import time
 from pathlib import Path
+from typing import Any, override
 
 import pytest
 
+import fa.inner_loop.slice_verification as slice_verification
+from fa.execution.client import (
+    ExecutionRejectedError,
+    ExecutionUnavailableError,
+    ExecutionUncertainError,
+)
+from fa.execution.primitives import ExecutionContractError
 from fa.inner_loop.slice_verification import (
     DEFAULT_VERIFY_TIMEOUT_SECONDS,
+    JUNIT_BLOCK_END,
+    JUNIT_BLOCK_START,
     TAIL_LIMIT,
     CommandOutcome,
     CommandResult,
+    ManagedVerifyCommandExecutor,
+    _junit_block,
+    _with_markers,
+    capture_test_nodeids,
     run_commands,
 )
+from fa.inner_loop.tools.workspace_port import WorkspacePort
+from fa.runtime.pty_pool import PtyResult
 
 
 @pytest.fixture
@@ -304,6 +322,19 @@ def test_result_arity_and_order_hold_for_any_command_count(workspace: Path, coun
 # ── Mutation-driven oracles (C4 follow-up to the SLICE1 sweep) ──────────────
 
 
+def test_a_missing_binary_after_shell_launch_is_fail_with_exit_127(workspace: Path) -> None:
+    """CT46: a missing child command is not failure to start the shell itself."""
+    command = "fa-deliberately-absent-ct46-executable"
+
+    (result,) = run_commands((command,), workspace=workspace)
+
+    assert result.command == command
+    assert result.outcome is CommandOutcome.FAIL
+    assert result.exit_code == 127
+    assert "not found" in result.stderr_tail
+    assert "could not start" not in result.stderr_tail
+
+
 def test_a_command_that_cannot_be_launched_is_error_not_fail(tmp_path: Path) -> None:
     """CT45/CT46 -- producer: ``_spawn_failure_result``.
 
@@ -415,3 +446,698 @@ def test_results_are_immutable(workspace: Path) -> None:
     assert isinstance(result, CommandResult)
     with pytest.raises((AttributeError, TypeError)):
         result.exit_code = 99  # type: ignore[misc]
+
+
+# ── R24/Q140: the substrate seam ──────────────────────────────────────────────
+
+
+class _RecordingExecutor:
+    """A substrate that records what it was asked to run and answers in the gate's vocabulary."""
+
+    writes_are_visible = True
+
+    def __init__(self, outcome: CommandOutcome = CommandOutcome.PASS, exit_code: int = 0) -> None:
+        self.calls: list[tuple[str, Path, float, dict[str, str]]] = []
+        self._outcome = outcome
+        self._exit_code = exit_code
+
+    def run_verify_command(self, command: str, *, cwd: Path, timeout_s: float, env: dict[str, str]) -> CommandResult:
+        self.calls.append((command, cwd, timeout_s, env))
+        return CommandResult(
+            command=command,
+            outcome=self._outcome,
+            exit_code=self._exit_code,
+            stdout_tail="managed",
+            stderr_tail="",
+            duration_s=0.0,
+        )
+
+
+def test_an_injected_executor_replaces_the_host_shell_entirely(workspace: Path) -> None:
+    """C1 — the seam, proved by absence: no host process runs when an executor is given.
+
+    R24's whole point is that a managed run must not verify the host tree. The
+    assertion that proves it is not "the executor was called" — that would pass
+    even if the host shell ran first — but that the host produced *nothing*: the
+    marker file a shell command would create never appears.
+    """
+    executor = _RecordingExecutor()
+    marker = workspace / "host-shell-ran"
+
+    (result,) = run_commands((f"touch {marker}; echo host",), workspace=workspace, executor=executor)
+
+    assert executor.calls and executor.calls[0][0] == f"touch {marker}; echo host"
+    assert result.stdout_tail == "managed"  # the executor's verdict, not the shell's
+    assert not marker.exists()  # the host shell never ran
+
+
+def test_the_executor_receives_the_same_command_cwd_budget_and_environment(workspace: Path) -> None:
+    """C1 — interchangeable substrates: the seam must not quietly rewrite its inputs.
+
+    If the managed path received a different cwd or a trimmed environment, a
+    verify command could pass on the authority and fail on the host (or worse,
+    pass in both for different reasons). The comparison is against the host run
+    itself, so it pins equivalence rather than a hard-coded expectation.
+    """
+    (host,) = run_commands(("true",), workspace=workspace)
+    executor = _RecordingExecutor()
+
+    run_commands(("true",), workspace=workspace, timeout_s=42.0, executor=executor)
+
+    command, cwd, timeout_s, env = executor.calls[0]
+    assert command == "true"
+    # CT49c: the working directory is the caller's path verbatim, not a resolved
+    # one -- resolving here would let a symlinked session workspace run commands
+    # in a tree the coder never saw.
+    assert cwd == Path(workspace)
+    assert timeout_s == 42.0
+    # The environment is the assembled one, not an empty dict and not the raw
+    # parent environment: both substrates receive the same scrubbed overlay.
+    assert env
+    assert env == slice_verification._build_env(workspace)  # the same overlay the host path builds
+    assert host.outcome is CommandOutcome.PASS
+
+
+def test_an_executor_failure_is_reported_and_never_becomes_a_pass(workspace: Path) -> None:
+    """EDGE — the substrate's own ERROR stays an ERROR; a gate cannot out-vote its runner."""
+    executor = _RecordingExecutor(outcome=CommandOutcome.ERROR, exit_code=0)
+
+    (result,) = run_commands(("true",), workspace=workspace, executor=executor)
+
+    # exit_code 0 from a broken substrate must not be read as a pass.
+    assert result.outcome is CommandOutcome.ERROR
+
+
+def test_the_default_substrate_is_unchanged_when_no_executor_is_given(workspace: Path) -> None:
+    """C0 — negative proof for the seam: existing callers keep the host behaviour."""
+    (result,) = run_commands(("echo default-host",), workspace=workspace)
+
+    assert result.outcome is CommandOutcome.PASS
+    assert result.stdout_tail.strip() == "default-host"
+
+
+def test_a_symlinked_workspace_is_passed_through_unresolved(tmp_path: Path) -> None:
+    """CT49c at the seam: the executor must see the path the caller named.
+
+    Resolving here is not cosmetic. A session workspace reached through a symlink
+    (an operator's mounted path, a migrated home) resolves to a *different* host
+    path; a managed substrate authorized for the named path would then be asked to
+    run in one nobody admitted. The oracle needs a real symlink, because on an
+    ordinary tmp_path the two spellings are identical and a mutant that resolves
+    would survive.
+    """
+    real = tmp_path / "real"
+    real.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(real, target_is_directory=True)
+    executor = _RecordingExecutor()
+
+    run_commands(("true",), workspace=link, executor=executor)
+
+    _command, cwd, _timeout, _env = executor.calls[0]
+    assert cwd == link
+    assert cwd != real.resolve()  # the distinction the oracle exists to make
+
+
+# ── R24/Q140: verify on the authority, read-only ─────────────────────────────
+
+
+class _FakeManagedExecutor:
+    """Stands in for ``ReadOnlyManagedBashExecutor``: records the call, returns a result."""
+
+    interactive = False
+
+    def __init__(self, *, exit_code: int = 0, timed_out: bool = False, truncated: bool = False) -> None:
+        self.calls: list[dict[str, object]] = []
+        self._result = PtyResult(
+            stdout="managed stdout",
+            exit_code=exit_code,
+            truncated=truncated,
+            session_id="",
+            timed_out=timed_out,
+        )
+
+    def run(
+        self, command: str, timeout: int = 30, workdir: Path | None = None, session_id: str | None = "main"
+    ) -> PtyResult:
+        self.calls.append({"command": command, "timeout": timeout, "workdir": workdir, "session_id": session_id})
+        return self._result
+
+    def send_ctrl_c(self, session_id: str) -> str:
+        raise AssertionError(f"unexpected Ctrl-C for {session_id!r}")
+
+    def close(self, session_id: str) -> None:
+        raise AssertionError(f"unexpected close for {session_id!r}")
+
+    def list_sessions(self) -> list[str]:
+        return []
+
+
+def test_managed_verify_never_opens_a_session(tmp_path: Path) -> None:
+    """C1 — an interactive session would keep state between verify commands.
+
+    ``admit`` requires ``profile.interactive == (session_id is not None)``, so a
+    session id here is not merely unnecessary: the author is a non-interactive
+    profile and any session id it sent would be refused.
+    """
+    executor = _FakeManagedExecutor()
+    managed = ManagedVerifyCommandExecutor(executor, root=tmp_path)
+
+    managed.run_verify_command("true", cwd=tmp_path, timeout_s=10.0, env={})
+
+    assert executor.calls[0]["session_id"] is None
+    assert executor.calls[0]["workdir"] == tmp_path
+    assert executor.calls[0]["timeout"] == 10
+
+
+def test_managed_verify_rounds_a_fractional_budget_up_never_down(tmp_path: Path) -> None:
+    """EDGE — ``ceil``, not ``int``: rounding a 0.4s budget down to 0 would refuse a valid run."""
+    executor = _FakeManagedExecutor()
+    managed = ManagedVerifyCommandExecutor(executor, root=tmp_path)
+
+    managed.run_verify_command("true", cwd=tmp_path, timeout_s=0.4, env={})
+    managed.run_verify_command("true", cwd=tmp_path, timeout_s=2.7, env={})
+
+    # 0.4 -> 1 (int would give 0, i.e. a refused run); 2.7 -> 3 (int would give 2,
+    # i.e. a command killed early for no reason).
+    assert [call["timeout"] for call in executor.calls] == [1, 3]
+
+
+def test_managed_verify_maps_exit_codes_without_inventing_a_pass(tmp_path: Path) -> None:
+    """C1 — the three-outcome vocabulary, on the managed substrate."""
+    managed = ManagedVerifyCommandExecutor(_FakeManagedExecutor(exit_code=0), root=tmp_path)
+    (passed,) = run_commands(("true",), workspace=tmp_path, executor=managed)
+    assert passed.outcome is CommandOutcome.PASS
+
+    managed = ManagedVerifyCommandExecutor(_FakeManagedExecutor(exit_code=7), root=tmp_path)
+    (failed,) = run_commands(("false",), workspace=tmp_path, executor=managed)
+    assert failed.outcome is CommandOutcome.FAIL
+    assert failed.exit_code == 7
+
+
+def test_a_managed_timeout_is_error_and_not_a_failure_verdict(tmp_path: Path) -> None:
+    """C1 — a killed command did not refuse the work; the budget ran out."""
+    managed = ManagedVerifyCommandExecutor(_FakeManagedExecutor(timed_out=True, exit_code=0), root=tmp_path)
+
+    (result,) = run_commands(("slow",), workspace=tmp_path, executor=managed)
+
+    assert result.outcome is CommandOutcome.ERROR
+    assert result.exit_code is None
+    assert "budget" in result.stderr_tail
+
+
+def test_truncated_managed_output_cannot_prove_a_pass(tmp_path: Path) -> None:
+    """EDGE — the failure may be in the part that was cut off."""
+    managed = ManagedVerifyCommandExecutor(_FakeManagedExecutor(truncated=True, exit_code=0), root=tmp_path)
+
+    (result,) = run_commands(("chatty",), workspace=tmp_path, executor=managed)
+
+    assert result.outcome is CommandOutcome.ERROR
+    assert "truncated" in result.stderr_tail
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        ExecutionRejectedError("PATH_DENIED", "op-1"),
+        ExecutionUnavailableError(),
+        ExecutionUncertainError("op-1"),
+        ExecutionContractError(),
+    ],
+)
+def test_every_execution_error_becomes_error_never_pass(tmp_path: Path, error: Exception) -> None:
+    """EDGE — an exception is not a verdict: ``ERROR``, and the reason is readable."""
+
+    class _Raising(_FakeManagedExecutor):
+        @override
+        def run(
+            self, command: str, timeout: int = 30, workdir: Path | None = None, session_id: str | None = "main"
+        ) -> PtyResult:
+            del command, timeout, workdir, session_id
+            raise error
+
+    managed = ManagedVerifyCommandExecutor(_Raising(), root=tmp_path)
+
+    (result,) = run_commands(("true",), workspace=tmp_path, executor=managed)
+
+    assert result.outcome is CommandOutcome.ERROR
+    assert result.exit_code is None
+    assert type(error).__name__ in result.stderr_tail
+
+
+def test_a_managed_executor_needs_an_absolute_controller_root(tmp_path: Path) -> None:
+    """C0 — a relative or traversing root could escape the admitted workspace."""
+    with pytest.raises(ExecutionContractError):
+        ManagedVerifyCommandExecutor(_FakeManagedExecutor(), root=Path("relative/path"))
+    with pytest.raises(ExecutionContractError):
+        ManagedVerifyCommandExecutor(_FakeManagedExecutor(), root=Path("/a/../b"))
+
+
+def test_managed_verify_leaves_no_host_trace(tmp_path: Path) -> None:
+    """C1 — negative proof: the same proof shape as the host seam, on the managed path.
+
+    The marker a host shell would create must not exist, because the whole point of
+    Q140 is that a verify command runs on the authority and not on this machine.
+    """
+    marker = tmp_path / "host-shell-ran"
+    managed = ManagedVerifyCommandExecutor(_FakeManagedExecutor(), root=tmp_path)
+
+    run_commands((f"touch {marker}",), workspace=tmp_path, executor=managed)
+
+    assert not marker.exists()
+
+
+# ── Q142 option A: the report travels in the receipt ─────────────────────────
+
+
+def _inband_executor(*, writes_visible: bool, prepared: dict[str, Any] | None = None) -> Any:
+    """A substrate that runs the actual in-band command inside a scratch $TMPDIR."""
+
+    class _InBand:
+        writes_are_visible = writes_visible
+
+        def run_verify_command(
+            self, command: str, *, cwd: Path, timeout_s: float, env: dict[str, str]
+        ) -> CommandResult:
+            del timeout_s
+            run_env = {**os.environ, **env}
+            scratch_root = cwd / ".scratch-tmp"
+            scratch_root.mkdir(exist_ok=True)
+            run_env["TMPDIR"] = str(scratch_root)
+            if prepared is not None:
+                prepared["command"] = command
+                prepared["tmpdir"] = scratch_root
+            proc = subprocess.run(
+                command.replace("python -m pytest", f"{sys.executable} -m pytest"),
+                shell=True,
+                cwd=cwd,
+                env=run_env,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            return CommandResult(
+                command=command,
+                outcome=CommandOutcome.PASS if proc.returncode == 0 else CommandOutcome.FAIL,
+                exit_code=proc.returncode,
+                stdout_tail=proc.stdout[-65536:],
+                stderr_tail=proc.stderr,
+                duration_s=0.0,
+                inband_stdout=proc.stdout if len(proc.stdout.encode("utf-8")) > 65536 else None,
+            )
+
+    return _InBand()
+
+
+def test_the_inband_block_round_trips_a_real_report(tmp_path: Path) -> None:
+    """C1 — the whole loop: a real pytest run, a real report, carried and parsed."""
+    (tmp_path / "test_sample.py").write_text("def test_ok():\n    assert True\n", encoding="utf-8")
+    executor = _inband_executor(writes_visible=False)
+
+    capture = capture_test_nodeids(("test_sample.py",), root=tmp_path, executor=executor)
+
+    assert capture.nodeids == {"test_sample.py::test_ok": True}
+
+
+def _sample_report(nodeid: str) -> str:
+    """A smallest-possible report the real parser accepts: proves the markers, not pytest."""
+    return (
+        '<testsuite name="pytest" tests="1" failures="0" errors="0" skipped="0">'
+        f'<testcase classname="x" name="y"><properties>'
+        f'<property name="fa_pytest_nodeid" value="{nodeid}"/>'
+        "</properties></testcase></testsuite>"
+    )
+
+
+def test_the_block_markers_survive_arbitrary_test_output(tmp_path: Path) -> None:
+    """EDGE — the report is found even when the run prints its own noise first."""
+    body = _sample_report("test_sample.py::test_ok")
+    tail = f"some test log\n{JUNIT_BLOCK_START}\n{body}\n{JUNIT_BLOCK_END}\nmore noise\n"
+
+    carried, detail = _junit_block(tail)
+
+    assert detail == ""
+    assert carried is not None
+    assert b"test_sample.py::test_ok" in carried
+
+
+@pytest.mark.parametrize(
+    ("tail", "expected"),
+    [
+        ("no markers at all", "expected one block"),
+        (f"{JUNIT_BLOCK_START}\n<testsuite/>\n", "expected one block"),
+        (f"{JUNIT_BLOCK_START}\n<testsuite/>\n{JUNIT_BLOCK_END}\n" * 2, "expected one block"),
+        (f"{JUNIT_BLOCK_START}\n{JUNIT_BLOCK_END}", "empty"),
+    ],
+)
+def test_a_malformed_inband_block_is_refused_not_guessed(tail: str, expected: str) -> None:
+    """EDGE — every unusable shape names its defect, and none of them becomes a report."""
+    carried, detail = _junit_block(tail)
+
+    assert carried is None
+    assert expected in detail
+
+
+def test_a_missing_block_never_becomes_an_empty_t0(tmp_path: Path) -> None:
+    """C1 — no report is ``None``, not ``{}``: silence must not read as "no tests failed"."""
+
+    class _NoBlock:
+        writes_are_visible = False
+
+        def run_verify_command(self, command: str, **_kwargs: object) -> CommandResult:
+            return CommandResult(command, CommandOutcome.PASS, 0, "plain log", "", 0.0)
+
+    (tmp_path / "test_sample.py").write_text("def test_ok():\n    assert True\n", encoding="utf-8")
+
+    capture = capture_test_nodeids(("test_sample.py",), root=tmp_path, executor=_NoBlock())
+
+    assert capture.nodeids is None
+    assert "markers" in capture.detail
+
+
+def test_a_path_the_snapshot_cannot_read_is_absent_and_not_an_error(tmp_path: Path) -> None:
+    """C1 — absence and refusal are one answer, and that answer is not "unproven".
+
+    The port does not disclose whether a path exists (``workspace_port.py:35-39``), so
+    a declared test file that is not in the snapshot arrives as a refusal. The gate's
+    documented behaviour is that an absent path contributes no rows; upgrading the
+    refusal to "unproven" made every managed slice whose test file lives elsewhere
+    block the run, which is how this was found (a real workflow oracle went red).
+    """
+
+    (tmp_path / "test_sample.py").write_text("def test_ok():\n    assert True\n", encoding="utf-8")
+
+    capture = capture_test_nodeids(
+        ("test_missing.py",), root=tmp_path, executor=_inband_executor(writes_visible=False), port=_make_typed_port({})
+    )
+
+    assert capture.nodeids == {}
+    assert "no declared TESTS path" in capture.detail
+
+
+def test_a_confirmed_snapshot_path_runs_and_reports(tmp_path: Path) -> None:
+    """C1 — the positive half: a path the snapshot can read is a path that gets run."""
+    source = "def test_ok():\n    assert True\n"
+    (tmp_path / "test_sample.py").write_text(source, encoding="utf-8")
+
+    capture = capture_test_nodeids(
+        ("test_sample.py",),
+        root=tmp_path,
+        executor=_inband_executor(writes_visible=False),
+        port=_make_typed_port({"test_sample.py": source}),
+    )
+
+    assert capture.nodeids == {"test_sample.py::test_ok": True}
+
+
+def test_managed_markers_travel_as_a_command_prefix_never_as_environment() -> None:
+    """C1 — the recursion guard reaches the managed command, and only the markers do."""
+    prefixed = _with_markers("true", {"FA_VERIFY_GATE_TEST_DEPTH": "2", "PATH": "/host/bin", "HOME": "/home/x"})
+
+    assert prefixed.startswith("FA_VERIFY_GATE_TEST_DEPTH=2 ")
+    assert "PATH=" not in prefixed
+    assert "HOME=" not in prefixed
+    assert prefixed.endswith(" true")
+
+    # The same property through the executor, which is where a wholesale forward would
+    # actually go wrong: the cell would inherit a controller HOME and PATH.
+    executor = _FakeManagedExecutor()
+    managed = ManagedVerifyCommandExecutor(executor, root=Path("/tmp"))
+    managed.run_verify_command(
+        "true", cwd=Path("/tmp"), timeout_s=5.0, env={"FA_VERIFY_GATE_TEST_DEPTH": "2", "PATH": "/host/bin"}
+    )
+    sent = executor.calls[0]["command"]
+    assert isinstance(sent, str)
+    assert sent.startswith("FA_VERIFY_GATE_TEST_DEPTH=2 ")
+    assert "PATH=" not in sent
+
+
+def test_a_marker_value_cannot_become_shell_syntax() -> None:
+    """EDGE — quoted, so a value is a value even if it one day carries model text."""
+    prefixed = _with_markers("true", {"FA_VERIFY_JUNIT_RUN_ID": "$(id); rm -rf /"})
+
+    assert "'" in prefixed
+    assert "$(id)" not in prefixed.replace("'$(id); rm -rf /'", "")
+
+
+def test_a_host_present_path_absent_from_the_snapshot_is_not_run(tmp_path: Path) -> None:
+    """C1 — the false pass Q142 found, stated positively.
+
+    The file exists on the controller host but not in the snapshot under judgement.
+    A host check would run it (and report on the wrong tree); the port must not. This
+    is the only case that distinguishes the two, which is why the composition oracle
+    cannot catch it — its declared test path exists in neither place.
+    """
+    (tmp_path / "test_sample.py").write_text("def test_ok():\n    assert True\n", encoding="utf-8")
+
+    capture = capture_test_nodeids(
+        ("test_sample.py",), root=tmp_path, executor=_inband_executor(writes_visible=False), port=_make_typed_port({})
+    )
+
+    assert capture.nodeids == {}
+    assert "test_sample.py::test_ok" not in str(capture.nodeids)
+
+
+def test_inband_capture_uses_cell_tmpdir_and_drops_noisy_test_output(tmp_path: Path) -> None:
+    """EDGE (R24) — in-band capture writes only inside $TMPDIR and strips pre-report noise."""
+    (tmp_path / "test_noisy.py").write_text(
+        "def test_loud():\n    print('X' * 90000)\n    assert True\n",
+        encoding="utf-8",
+    )
+    recorded: dict[str, Any] = {}
+    executor = _inband_executor(writes_visible=False, prepared=recorded)
+
+    capture = capture_test_nodeids(("test_noisy.py",), root=tmp_path, executor=executor)
+
+    assert capture.nodeids == {"test_noisy.py::test_loud": True}
+    assert "/tmp/fa-verify-junit-" not in recorded["command"]
+    assert "${TMPDIR:-/tmp}" in recorded["command"]
+    assert list((recorded["tmpdir"]).iterdir()) == []
+
+
+def test_inband_command_preserves_full_non_truncated_evidence_above_tail_limit(tmp_path: Path) -> None:
+    """EDGE (R24) — stdout > 64 KiB with truncated=False keeps full evidence without expanding stdout_tail."""
+    from fa.inner_loop.slice_verification import EVIDENCE_TAIL_LIMIT
+    from fa.runtime.pty_pool import PtyResult
+
+    body = _sample_report("test_big.py::test_case")
+    padded = ("noise line\n" * 8000) + f"{JUNIT_BLOCK_START}\n{body}\n{JUNIT_BLOCK_END}\n" + ("after\n" * 100)
+    assert len(padded.encode("utf-8")) > EVIDENCE_TAIL_LIMIT
+
+    class _LargeCleanExecutor:
+        interactive = False
+
+        def run(
+            self, command: str, timeout: int = 30, workdir: Path | None = None, session_id: str | None = "main"
+        ) -> PtyResult:
+            del command, timeout, workdir, session_id
+            return PtyResult(stdout=padded, exit_code=0, truncated=False, session_id="")
+
+        def send_ctrl_c(self, session_id: str) -> str:
+            del session_id
+            return ""
+
+        def close(self, session_id: str) -> None:
+            del session_id
+
+        def list_sessions(self) -> list[str]:
+            return []
+
+    managed = ManagedVerifyCommandExecutor(_LargeCleanExecutor(), root=tmp_path)
+    result = managed.run_verify_command("echo ok", cwd=tmp_path, timeout_s=5.0, env={})
+
+    assert result.outcome is CommandOutcome.PASS
+    assert len(result.stdout_tail.encode("utf-8")) <= EVIDENCE_TAIL_LIMIT
+    assert JUNIT_BLOCK_START in result.evidence_stdout
+    carried, detail = _junit_block(result.evidence_stdout)
+    assert detail == ""
+    assert carried is not None and b"test_big.py::test_case" in carried
+
+
+def _make_typed_port(files: dict[str, str], *, chunk_bytes: int = 1024 * 1024) -> WorkspacePort:
+    import hashlib
+
+    from fa.inner_loop.tools.workspace_port import (
+        PORT_READ_MAX_BYTES,
+        PortProjectArtifactListing,
+        PortProjectNames,
+        PortRead,
+        PortWrite,
+        WorkspacePortError,
+    )
+
+    class _MemoryPort:
+        @property
+        def cache_dir(self) -> Path | None:
+            return None
+
+        def read_file(self, path: str, *, offset_bytes: int = 0, max_bytes: int = PORT_READ_MAX_BYTES) -> PortRead:
+            if path not in files:
+                raise WorkspacePortError("denied")
+            raw = files[path].encode("utf-8")
+            sha = hashlib.sha256(raw).hexdigest()
+            limit = min(max_bytes, chunk_bytes)
+            chunk = raw[offset_bytes : offset_bytes + limit]
+            return PortRead(
+                content=chunk.decode("utf-8"),
+                sha256=sha,
+                eof=offset_bytes + len(chunk) >= len(raw),
+            )
+
+        def list_project_names(self) -> PortProjectNames:
+            raise WorkspacePortError("denied")
+
+        def list_project_artifacts(self, project_slug: str) -> PortProjectArtifactListing:
+            del project_slug
+            raise WorkspacePortError("denied")
+
+        def write_file(self, path: str, content: str, *, expected_sha256: str | None = None) -> PortWrite:
+            del path, content, expected_sha256
+            raise WorkspacePortError("denied")
+
+    return _MemoryPort()
+
+
+def test_inband_kill_check_requires_port_and_runs_chunked_without_heredoc(tmp_path: Path) -> None:
+    """C1/EDGE (R24) — in-band kill-check reads only via port, chunks safely, and never emits heredocs."""
+    from fa.inner_loop.slice_verification import KillDirective, KillOperator, SliceVerdict, _run_kill_check
+
+    # The host workspace copy is intentionally stale/broken to prove the controller copy
+    # is never what gets read or mutated when writes_are_visible=False.
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "demo_inband.py").write_text("def double(x: int) -> int:\n    return -1\n", encoding="utf-8")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_demo_inband.py").write_text(
+        "from demo_inband import double, untouched\n"
+        "def test_double():\n    assert double(4) == 8\n"
+        "def test_untouched():\n    assert untouched() == 42\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "__init__.py").write_text("", encoding="utf-8")
+    (tmp_path / "scripts" / "demo_script_tool.py").write_text(
+        "def helper():\n    return 'script-ok'\n", encoding="utf-8"
+    )
+    (tmp_path / "tests" / "test_demo_script.py").write_text(
+        "from scripts.demo_script_tool import helper\ndef test_helper():\n    assert helper() == 'script-ok'\n",
+        encoding="utf-8",
+    )
+
+    cell_src = "def double(x: int) -> int:\n    return x * 2\n\ndef untouched() -> int:\n    return 42\n"
+
+    # Separate cell workspace holds the pinned revision tree, while `tmp_path`
+    # holds the stale host tree.
+    cell_root = tmp_path / "cell-tree"
+    (cell_root / "src").mkdir(parents=True)
+    (cell_root / "src" / "demo_inband.py").write_text(cell_src, encoding="utf-8")
+    (cell_root / "scripts").mkdir()
+    (cell_root / "scripts" / "__init__.py").write_text("", encoding="utf-8")
+    (cell_root / "scripts" / "demo_script_tool.py").write_text(
+        "def helper():\n    return 'script-ok'\n", encoding="utf-8"
+    )
+    (cell_root / "tests").mkdir()
+    (cell_root / "tests" / "test_demo_inband.py").write_text(
+        (tmp_path / "tests" / "test_demo_inband.py").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    (cell_root / "tests" / "test_demo_script.py").write_text(
+        (tmp_path / "tests" / "test_demo_script.py").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    (cell_root / "tests" / "test_unrelated.py").write_text(
+        "def test_ok():\n    assert True\n",
+        encoding="utf-8",
+    )
+
+    recorded_commands: list[str] = []
+
+    class _CellInBand:
+        writes_are_visible = False
+
+        def run_verify_command(
+            self, command: str, *, cwd: Path, timeout_s: float, env: dict[str, str]
+        ) -> CommandResult:
+            del cwd, timeout_s
+            recorded_commands.append(command)
+            run_env = {**os.environ, **env}
+            scratch = cell_root / ".scratch-tmp"
+            scratch.mkdir(exist_ok=True)
+            run_env["TMPDIR"] = str(scratch)
+            proc = subprocess.run(
+                command.replace("python -m pytest", f"{sys.executable} -m pytest"),
+                shell=True,
+                cwd=cell_root,
+                env=run_env,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            return CommandResult(
+                command=command,
+                outcome=CommandOutcome.PASS if proc.returncode == 0 else CommandOutcome.FAIL,
+                exit_code=proc.returncode,
+                stdout_tail=proc.stdout[-65536:],
+                stderr_tail=proc.stderr,
+                duration_s=0.0,
+                inband_stdout=proc.stdout if len(proc.stdout.encode("utf-8")) > 65536 else None,
+            )
+
+    executor = _CellInBand()
+    port = _make_typed_port(
+        {
+            "src/demo_inband.py": cell_src,
+            "scripts/demo_script_tool.py": "def helper():\n    return 'script-ok'\n",
+        },
+        chunk_bytes=20,
+    )
+
+    directive_src = KillDirective(
+        operator=KillOperator.NEUTRALISE, path="src/demo_inband.py", symbol="double", callee=None, line=1
+    )
+    directive_vacuous = KillDirective(
+        operator=KillOperator.NEUTRALISE, path="src/demo_inband.py", symbol="untouched", callee=None, line=4
+    )
+    directive_absent_port = KillDirective(
+        operator=KillOperator.NEUTRALISE, path="src/missing.py", symbol="nope", callee=None, line=1
+    )
+    directive_scripts = KillDirective(
+        operator=KillOperator.NEUTRALISE, path="scripts/demo_script_tool.py", symbol="helper", callee=None, line=1
+    )
+
+    # 1. Missing port fails closed rather than reading the controller host.
+    missing_port = _run_kill_check(
+        directive_src, ("tests/test_demo_inband.py",), tmp_path, executor=executor, port=None
+    )
+    assert missing_port.verdict is SliceVerdict.ERROR
+
+    # 2. Live src/ mutation runs inside cell scratch overlay without touching host tree or emitting heredocs.
+    proven_src = _run_kill_check(directive_src, ("tests/test_demo_inband.py",), tmp_path, executor=executor, port=port)
+    assert proven_src.verdict is SliceVerdict.PROVEN
+    assert "<<" not in recorded_commands[-1]
+    assert all(len(line.encode("utf-8")) <= 900 for line in recorded_commands[-1].splitlines())
+    assert "return -1" in (tmp_path / "src" / "demo_inband.py").read_text(encoding="utf-8")
+
+    # 3. Uncaught mutation under unrelated tests stays VACUOUS (never PASS/PROVEN).
+    vacuous_src = _run_kill_check(
+        directive_vacuous, ("tests/test_unrelated.py",), tmp_path, executor=executor, port=port
+    )
+    assert vacuous_src.verdict is SliceVerdict.VACUOUS
+
+    # 4. Denied path in port becomes PRODUCER_ABSENT even if present or missing on host.
+    absent = _run_kill_check(
+        directive_absent_port, ("tests/test_demo_inband.py",), tmp_path, executor=executor, port=port
+    )
+    assert absent.verdict is SliceVerdict.PRODUCER_ABSENT
+
+    # 5. scripts/ mutation exercises FA_MUTATION_OVERLAY_SCRIPTS_ROOT + overlay_pytest_plugin inside cell.
+    proven_scripts = _run_kill_check(
+        directive_scripts, ("tests/test_demo_script.py",), tmp_path, executor=executor, port=port
+    )
+    assert proven_scripts.verdict is SliceVerdict.PROVEN
+
+    # 6. scripts/ test that never imports the overlay module reports provenance ERROR, not VACUOUS.
+    err_scripts = _run_kill_check(
+        directive_scripts, ("tests/test_unrelated.py",), tmp_path, executor=executor, port=port
+    )
+    assert err_scripts.verdict is SliceVerdict.ERROR
+    assert slice_verification._OVERLAY_PROVENANCE_ERROR_MARKER in err_scripts.detail

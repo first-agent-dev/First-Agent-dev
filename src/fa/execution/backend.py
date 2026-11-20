@@ -338,7 +338,13 @@ class CellBackend:
                 if record["view_ref"] != view.to_dict():
                     raise SupervisorError("UNAUTHORIZED")
                 if record["container_id"] != episode.container_id:
-                    self._journal.record_container(operation_id, namespace, episode.container_id, deadline=deadline)
+                    self._journal.record_container(
+                        operation_id,
+                        namespace,
+                        episode.container_id,
+                        cell_owner_operation_id=episode.creation_request["payload"]["operation_id"],
+                        deadline=deadline,
+                    )
         except JournalError as error:
             raise SupervisorError(error.code) from None
         frame = encode_cell_request(
@@ -397,7 +403,13 @@ class CellBackend:
                 if record["view_ref"] != view.to_dict():
                     raise SupervisorError("UNAUTHORIZED")
                 if record["container_id"] != episode.container_id:
-                    self._journal.record_container(operation_id, namespace, episode.container_id, deadline=deadline)
+                    self._journal.record_container(
+                        operation_id,
+                        namespace,
+                        episode.container_id,
+                        cell_owner_operation_id=episode.creation_request["payload"]["operation_id"],
+                        deadline=deadline,
+                    )
         except JournalError as error:
             raise SupervisorError(error.code) from None
         project_tool = payload["project_tool"]
@@ -540,13 +552,13 @@ class CellBackend:
         if raw is None:
             raise SupervisorError("INPUT_POLICY")
         view = self._view_of(raw)
+        self._authority.authorize(peer, req, deadline=deadline)  # proof only, no work
         profile = self._authority.view_profile(view)
         if profile is None:
             raise SupervisorError("UNAPPROVED_PROFILE")
         if not profile.interactive:
             # A one-shot profile has no persistent PTY between commands.
             raise SupervisorError("INPUT_POLICY")
-        self._authority.authorize(peer, request, deadline=deadline)  # proof only, no work
         with self._bounded_mutex(deadline):
             episode = self._episodes.get(_EpisodeKey.build(peer, namespace, view, profile.profile_id))
         if episode is None:
@@ -591,16 +603,24 @@ class CellBackend:
                 if profile is None:
                     continue
                 try:
+                    namespace = NamespaceRef(**record["namespace"])
+                    owner_operation_id = self._journal.resolve_cell_owner(
+                        record["operation_id"],
+                        namespace,
+                        view=view,
+                        container_id=container_id,
+                        deadline=deadline,
+                    )
                     observed = self._engine.force_stop_owned(
-                        operation_id=record["operation_id"],
+                        operation_id=owner_operation_id,
                         view=view,
                         profile=profile,
                         container_id=container_id,
                         deadline=deadline,
                     )
-                except (DockerUnavailableError, ExecutionContractError, OSError):
+                except (DockerUnavailableError, ExecutionContractError, JournalError, OSError):
                     continue
-                results.append({"operation_id": record["operation_id"], "status": observed.status})
+                results.append({"operation_id": owner_operation_id, "status": observed.status})
                 stopped = True
                 break
             if not stopped:

@@ -93,20 +93,31 @@ class OwnedCellTermination:
         profile = self._profile_for(view_ref)
         if self._cells is None or profile is None:
             raise SupervisorError("BACKEND_UNAVAILABLE")
+        stopped_cells: set[tuple[str, str]] = set()
         for record in records:
             if deadline <= time.monotonic():
                 raise SupervisorError("BACKEND_UNAVAILABLE")
             try:
-                # The record's own id is the identity: intent is persisted before
-                # any daemon contact, and a cancelled record cannot be created or
-                # started later (E262/E249 rules).
+                owner_operation_id = self._journal.resolve_cell_owner(
+                    record["operation_id"],
+                    namespace,
+                    view=view_ref,
+                    container_id=record["container_id"],
+                    deadline=deadline,
+                )
+                identity = (owner_operation_id, record["container_id"])
+                if identity in stopped_cells:
+                    continue
+                # The creator record is the durable cell identity. Each EXEC
+                # keeps its own receipt, but one interactive cell is stopped once.
                 self._cells.force_stop_operation(
-                    operation_id=record["operation_id"],
+                    operation_id=owner_operation_id,
                     namespace=namespace,
                     view=view_ref,
                     profile=profile,
                     deadline=deadline,
                 )
+                stopped_cells.add(identity)
             except JournalError as error:
                 raise SupervisorError(error.code) from None
             except ExecutionContractError:

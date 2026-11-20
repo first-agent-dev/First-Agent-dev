@@ -60,7 +60,13 @@ from fa.inner_loop.coder_loop import SessionOutcome
 from fa.inner_loop.pr_draft import PrDraftStore
 from fa.providers.base import Transport
 from tests._capabilities import requires_posix_paths
-from tests.test_cli import _FAKE_MODELS_YAML, _TEST_SECRETS, _ScriptedTransport, _stop_body
+from tests.test_cli import (
+    _FAKE_MODELS_YAML,
+    _TEST_SECRETS,
+    _install_test_managed_cli_dependencies,
+    _ScriptedTransport,
+    _stop_body,
+)
 from tests.test_s7_cli_run_paths import _run_args
 
 # A models config declaring BOTH ``coder`` and ``compactor``. The shared
@@ -78,8 +84,15 @@ _MODELS_WITH_COMPACTOR = (
 )
 
 
-def _cli_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+def _cli_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, session_backed: bool = False) -> Path:
     """Isolated ``$HOME`` + the env every ``_cmd_run`` path reads.
+
+    ``session_backed`` installs the narrow test-only authority seam for parity cells
+    that drive a real ``fa run``: a session-backed run requires an admitted managed
+    provisioner and does not fall back to the host tree (``session/manager.py:302-307``),
+    so without it those cells fail in the prologue with ``managed_execution_unavailable``
+    rather than comparing the output they exist to compare. Parity is about stdout and
+    artifacts, not about managed view IO, which has its own oracles.
 
     ``fa_session_log_root()`` resolves under ``$HOME``, so without this a test
     writes into the developer's real ``~/.fa`` and the artifact oracles below
@@ -90,6 +103,8 @@ def _cli_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("TEST_FA_RUN_KEY", "sk-test-x")
     monkeypatch.setenv("FA_DEBUG_LLM_BODIES", "0")
+    if session_backed:
+        _install_test_managed_cli_dependencies(monkeypatch, home=home, workspace_root=tmp_path.parent)
     monkeypatch.delenv("FA_EGRESS_PROXY_URL", raising=False)
     monkeypatch.delenv("FA_PROXY_TOKEN_FILE", raising=False)
     return home
@@ -145,7 +160,7 @@ def test_s10b_parity_happy_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
     Kill-check target: any extracted helper on the success path — e.g. change
     what the epilogue prints, or drop the ``final_text`` line.
     """
-    home = _cli_home(tmp_path, monkeypatch)
+    home = _cli_home(tmp_path, monkeypatch, session_backed=True)
     config = _models_config(tmp_path)
     args = _run_args(tmp_path, config, "parity-happy")
 
@@ -185,7 +200,7 @@ def test_s10b_parity_quiet_mode_moves_status_off_stdout(tmp_path: Path, monkeypa
     Kill-check target: the ``status_stream`` selection — force it back to
     ``sys.stdout`` and this fails.
     """
-    _cli_home(tmp_path, monkeypatch)
+    _cli_home(tmp_path, monkeypatch, session_backed=True)
     config = _models_config(tmp_path)
     args = _run_args(tmp_path, config, "parity-quiet", output_mode="quiet")
 
@@ -213,7 +228,7 @@ def test_s10b_parity_proxy_mode(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
     then dropped it would enter the branch and still return non-zero.
     Kill-check target: the ``if proxy_mode:`` rewrite block.
     """
-    _cli_home(tmp_path, monkeypatch)
+    _cli_home(tmp_path, monkeypatch, session_backed=True)
     config = _models_config(tmp_path)
     token = tmp_path / "proxy-token"
     token.write_text("proxy-t0ken-abcdefghij\n", encoding="utf-8")
@@ -240,7 +255,7 @@ def test_s10b_parity_proxy_mode_builds_compactor_chain(tmp_path: Path, monkeypat
     remained usable.
     Kill-check target: the ``if compactor_config is not None`` block.
     """
-    _cli_home(tmp_path, monkeypatch)
+    _cli_home(tmp_path, monkeypatch, session_backed=True)
     config = _models_config(tmp_path, _MODELS_WITH_COMPACTOR)
     token = tmp_path / "proxy-token"
     token.write_text("proxy-t0ken-abcdefghij\n", encoding="utf-8")
@@ -386,7 +401,7 @@ def test_s10b_parity_outcome_sink_suppresses_global_history_export(
     Kill-check target: the ``if outcome_sink is None:`` guard around the export
     — remove it and the db appears; drop the ``append`` and the sink is empty.
     """
-    home = _cli_home(tmp_path, monkeypatch)
+    home = _cli_home(tmp_path, monkeypatch, session_backed=True)
     config = _models_config(tmp_path)
     args = _run_args(tmp_path, config, "parity-sink")
 
@@ -417,7 +432,7 @@ def test_s10b_parity_without_sink_exports_global_history(tmp_path: Path, monkeyp
     Oracle: exit 0 · ``global_history.db`` exists.
     Kill-check target: the ``export_session_to_global_history`` call.
     """
-    home = _cli_home(tmp_path, monkeypatch)
+    home = _cli_home(tmp_path, monkeypatch, session_backed=True)
     config = _models_config(tmp_path)
     args = _run_args(tmp_path, config, "parity-export")
 
@@ -821,7 +836,7 @@ def test_s10b_stats_parity_dead_zones_report(
     Oracle: exit 0 · the ``Dead zones`` header on stderr.
     Kill-check target: the ``if getattr(args, "dead_zones", False)`` block.
     """
-    _cli_home(tmp_path, monkeypatch)
+    _cli_home(tmp_path, monkeypatch, session_backed=True)
     config = tmp_path / "models.yaml"
     config.write_text(_FAKE_MODELS_YAML, encoding="utf-8")
     src_dir = tmp_path / "src"
@@ -852,7 +867,7 @@ def test_s10b_stats_parity_single_session_json_shape(
     no ``sessions_detail`` aggregate key).
     Kill-check target: the ``if args.run_id and len(sessions) == 1`` selector.
     """
-    _cli_home(tmp_path, monkeypatch)
+    _cli_home(tmp_path, monkeypatch, session_backed=True)
     config = tmp_path / "models.yaml"
     config.write_text(_FAKE_MODELS_YAML, encoding="utf-8")
 

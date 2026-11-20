@@ -2,10 +2,12 @@
 
 **Status:** PLAN ONLY. No case below has been executed, no row in
 [e2e-live-verification-register.md](e2e-live-verification-register.md) is promoted, and nothing here
-is evidence of live behaviour. This is the execution/evidence plan for the final **W4 live-only** wave;
+is evidence of live behaviour. This is the execution/evidence plan for the final **W4 approved-host deployment and live-acceptance** wave;
 case contracts, fixtures, driver and negative-control sensitivity must be authored, reviewed and dry-run
 locally in W3 before deployment. W4 executes that frozen package only; it does not develop it on the host.
-Dates this plan: 2026-10-22, after E265 (SLICE2 STEP4 part B-1), wave boundary clarified 2026-11-03.
+Dates this plan: 2026-10-22, after E265 (SLICE2 STEP4 part B-1); wave boundaries corrected 2026-11-03 and 2026-11-10.
+
+**Operator execution policy (E544, 2026-11-10).** Arena is for high-ROI development checks on changed seams; integrated system acceptance belongs to the user's approved host after the MVP reaches `main` and the single reviewed `fa update`. W3 still prepares/reviews the suite, production-caller oracles, local acceptance tests, fixtures, and safety controls needed for that host run. A repository-wide green `just test`/`just check`/`just check-deep`, full 18-path mutation sweep, installed-controller wheel build, ShellCheck-only cases, and configured-scope Q139 are best-effort, not MVP-merge/predeploy gates; do not build another runner or Arena workaround to force them. Keep exact failures, skips, deferrals, timeouts and absent evidence visible; none is PASS. W4's approved-host deployment, frozen-image system suite, required live-row verdicts, cleanup and independent review remain required host evidence. This policy changes effort/timing, not the evidence standard or deploy safety controls.
 
 **Current acceptance-scope ruling (2026-10-23):** final I03 acceptance requires live-host E2E for all
 changes in I01–I03 of this project. The I03 inventory has 27 surfaces/8 joins; Q88 selected explicit
@@ -16,10 +18,12 @@ three planned I01 cases. All remain `NOT RUN`; this is not live evidence. The ca
 **Purpose.** The register defines what the approved-host fixture must arrange and observe; it is not
 permission to author tests during deployment. W0–W3 implement and validate the case contracts, markers,
 fixtures, external driver, producer coverage and local negative controls on Arena in dependency order.
-After those local W3 gates close, W3's approved `fa update` builds and starts the candidate image on the
-user's host; this deployment/build is a prerequisite, not live acceptance. When W4 starts, the exact
-suite and commands are frozen, reviewed, and locally dry-run. A host-side missing prerequisite is
-BLOCKED, not an invitation to improvise test code against the deployed system.
+W3 closes only on those Arena-local gates and has no host deploy/update prerequisite. W4 begins after W3
+closes; its first approved-host action is the single `fa update` build/deploy and identity/health/smoke
+check. Once the candidate image is verified, freeze it before running the reviewed suite; do not rebuild
+or update again during suite execution. The exact suite and commands are reviewed and locally dry-run
+before W3 closes. A host-side missing prerequisite is BLOCKED, not an invitation to improvise test code
+against the deployed system.
 
 **Non-negotiable framing (inherited rules).**
 - Deployment is Linux/Docker/Ubuntu/Python only; no added Go runtime. Cases run against the actual
@@ -44,8 +48,9 @@ Three layers, deliberately separate, because each fails differently:
 | Layer | Location | Purpose | Runs in CI? |
 | :--- | :--- | :--- | :--- |
 | `tests/integration/conftest.py` | authored/unit-tested in W3; probes host only in W4 | fail-closed preflight + session-scoped fixtures (approved image, daemon, sessions root, evidence sink) | no |
-| `tests/integration/live/test_*.py` | authored/reviewed/dry-run in W3; execute against approved host only in W4 | each case maps to exactly one register row or join | no |
-| `scripts/e2e_live.py` | authored, contract-tested and dry-run in W3; invoked in W4 | external observer; captures evidence and writes immutable run manifest | no |
+| `tests/integration/live/test_*.py` **(PLANNED; directory absent at 2026-11-10 review)** | author only after STEP7 independent review, then dry-run/collect locally in W3; execute against approved host only in W4 | each node maps explicitly to one register row or join, with shared evidence referenced by each producer | no |
+| `tests/test_workspace_readiness_integration.py` | local marker/selection/opt-in contract in W3; real clean-copy run only in W4 | explicit `execution_host` case; requires opt-in and real Docker/cgroup preflight before `uv sync` or hook installation | no |
+| `scripts/e2e_live.py` **(PLANNED; absent at 2026-11-10 review)** | author only after STEP7 independent review, then contract-test/dry-run in W3; invoke in W4 | external observer; captures evidence and writes append-only per-attempt manifest | no |
 
 Rules that make the layer honest:
 
@@ -54,16 +59,17 @@ Rules that make the layer honest:
    `-m execution_host`; with `--strict-markers` on, an unregistered marker is a hard error, so
    registration is step 1, not a detail. Two markers: `execution_host` (needs Docker + approved
    image) and `live_e2e` (needs Docker + approved image + real provider credentials — the S08 cases).
-2. **Skip is not pass, and a skip must say why.** The fixture skips at *collection* only when
-   `FA_REQUIRE_EXECUTION_HOST` is unset; when it is set (`FA_REQUIRE_EXECUTION_HOST=1`), a missing
-   daemon/image is a **failure**, not a skip. This is the single guard that stops a green-looking run
-   on a host that never had Docker.
+2. **Host selection is not acceptance, and missing prerequisites fail closed.** The default pytest
+   expression deselects host-marked cases; that is not a PASS. When an `execution_host` case is
+   explicitly selected, `FA_REQUIRE_EXECUTION_HOST=1` is required; missing opt-in, daemon, cgroup
+   prerequisite, or pinned image is a **failure**, not a skip. This prevents a green-looking host run
+   when the required environment was never present.
 3. **Assertions read persisted evidence, never in-process objects.** For anything that claims "the
    deployed controller did X", the oracle is: the on-disk run artifact
    (`/srv/first-agent/state/session-log/<run_id>/…`), the Docker API response the driver captured, the
    kernel's own view (`/sys/fs/cgroup/…`), or a sentinel file written by a shim the image executed.
    In-process objects are acceptable only for `unit`-level cases that stay in `tests/`.
-4. **One evidence directory per run**, `notes/evidence/i03-e2e/<run-id>/`, containing: image digest,
+4. **One evidence directory per run**, `notes/evidence/i03-e2e/<attempt-id>/`, keyed by unique attempt ID (not a reused workflow run ID), containing: image digest,
    wheel SHA, daemon version, kernel/cgroup facts, the pytest JUnit XML, the driver manifest, and any
    captured frames/sentinels. Evidence is append-only; a later run adds a directory, never rewrites.
 5. **Cleanup is part of the oracle.** Every case ends with the same assertion: zero containers
@@ -77,25 +83,31 @@ Rules that make the layer honest:
 Cases cannot be written before their subject exists; writing them early produces the near-miss
 proxies the project already paid for once (E259: duplicated producers masking each other). Order:
 
-| Phase | W3 preparation (local gates first; image deploy prerequisite last) | W4 live execution | Dependency / rows |
+| Phase | W3 preparation (Arena-local only) | W4 host deployment + live execution | Dependency / rows |
 | :--- | :--- | :--- | :--- |
-| **P0 harness** | implement markers, preflight, fixture contracts, external driver, evidence sink and cleanup checks; unit-test simulated host-present and `FA_REQUIRE_EXECUTION_HOST=1` missing-host refusal paths | verify the actual running host/image preflight before any case | none |
-| **P1 images/entry** | build/test the installed wheel and entrypoint contract locally; freeze image build inputs and expected identity | verify the already-running approved image digest, isolated entry, profile rendering and PTY deadlines; do not rebuild | LIVE-01, 02, 05, 15, 16 |
+| **P0 harness** | implement markers, preflight, fixture contracts, external driver, evidence sink and cleanup checks; unit-test simulated host-present and missing-host refusal paths | require the actual approved host/image preflight before any case; missing opt-in or prerequisites fail | none |
+| **P1 images/entry** | where the existing Arena toolchain makes it straightforward, test the installed wheel/entrypoint contract as a high-ROI best-effort check; freeze image build inputs and expected identity, recording any unrun/failed local check honestly | perform the one approved `fa update`, verify source SHA/image digest/config/health/smoke, then freeze the running image; verify isolated entry, profile rendering and PTY deadlines | LIVE-01, 02, 05, 15, 16 |
 | **P2 backend/cell** | test create/start/attach/RUN, one-shot+interactive semantics, cancel/force-stop and no-replay using local deterministic backends and mutation/fault controls | prove behavior against the approved Docker daemon, cgroups and real cells | LIVE-10, 11, 12, 13, 18 |
 | **P3 authority/views** | test registration, R0, pinned readers, rooted IO and same-view read-your-writes against the real local authority/UDS | verify actual deployed filesystem, mount and kernel behavior | LIVE-03, 14, 17 |
 | **P4 tools through the real port** | complete caller tests for E264/E265 on admitted views; local composition only, not stub-only | verify the same tool behavior in approved deployed cells | joins S02, S05, S07 |
 | **P5 journal/recovery/seal** | run deterministic kill/fault-injection at each durable boundary, seal/drain and forward-recovery matrix locally | verify actual crash/restart, filesystem durability and containment under approved host conditions | LIVE-06, 07, 08, 09; joins S01, S03, S04, S06 |
 | **P6 composed service** | implement and pass local SessionManager/provisioner/CLI and controller-attested HANDOFF composition; mock only provider I/O; validate controlled-provider case definitions | execute approved real-provider cases and deployed handoff/ledger observations | LIVE-04, LIVE-27; joins S07, S08 |
 
-**W3→W4 boundary.** P0–P6 case code, fixtures, mutation-sensitivity checks, command vectors, and
-evidence schemas are reviewed and dry-run locally before deployment. The cases remain blocked on their
-product dependencies in W0–W2 until those callers exist; do not write success assertions against
-recording fakes. After all Arena-local W0–W3 implementation, test, coverage and review gates pass,
-W3 performs the separate approved `fa update` build/deploy prerequisite and verifies its SHA/digest/
-config/health. W3 remains OPEN until that prerequisite succeeds; it does not run or close live cases.
-W4 runs only the approved frozen package against that already-running image and does not update/rebuild. A missing Docker
-host is simulated only in W3 dry-run tests; with `FA_REQUIRE_EXECUTION_HOST=1`, an actually missing
-W4 host/image must fail before any row can be reported PASS.
+**W3→W4 boundary (operator correction, 2026-11-10).** P0–P6 case code, fixtures,
+mutation-sensitivity checks, command vectors, and evidence schemas are reviewed and dry-run locally
+before W3 closes. W3 contains only Arena-local implementation, test, coverage and review gates; it has
+no Docker/live-host deployment prerequisite. After W3 closes, W4 starts with the single approved
+`fa update` build/deploy on the target Linux/Docker host and verifies SHA/digest/config/health/smoke.
+The approved image is then frozen for the reviewed W4 suite: do not rebuild or run `fa update` again
+while executing cases. The clean-workspace readiness case in
+`tests/test_workspace_readiness_integration.py` is explicitly `execution_host`: W3 verifies its marker,
+default deselection, explicit selection and fail-closed opt-in contract locally; only W4 may execute its
+real `uv sync`/`pre-commit install-hooks`/`ready_repaired` path after the existing Docker/cgroup
+preflight. The cases remain blocked on their product dependencies in W0–W2 until those callers exist;
+do not write success assertions against recording fakes. Default marker deselection is not acceptance;
+with `FA_REQUIRE_EXECUTION_HOST=1`, missing opt-in, host, cgroup, or image prerequisites fail before
+any readiness side effect or row can be reported PASS. Local fakes and collection do not count as host
+evidence.
 
 ---
 
@@ -159,22 +171,34 @@ receipt issuer. None of it has met a daemon. These cases are P3/P4 work and may 
 image, the socket and the `cgroup` mount are arranged (§1), and like every case above each one needs its
 negative control in the same file.
 
-The journal is the durable ledger of this system: one append-only record per operation id, `complete` is the
-only writer of a result, and the record — not the reply — is what survives a kill. So the receipt cases assert
-on the **on-host journal files** as well as on the wire reply, and every case names the record it expects.
+**Requested ledger-append scope recommendation (2026-11-10; planning only).** Reuse two separate existing
+runtime-ledger proposals: `L-RCPT-2`/`L-RCPT-6` for supervisor operation records, and `L-ENTRY-4` for the
+managed run binding plus session event rows. They have different authorities and durability contracts, so
+they must not share one count/oracle. The generated project `worklogs/<slug>/ledger.md` is a scaffold with no
+production append path; it is not a live-host target. If runtime appends to that artifact are intended, first
+raise a separate product-contract question rather than infer new behavior from this request. These cases
+remain proposals: this note assigns no row, fixture, host attempt, or result.
+
+The supervisor journal is a per-operation record store, not a physically append-only event stream: it keeps
+one private `op-<request_id>.json` per operation ID and replaces that file as state transitions are committed.
+`complete` is the only writer of a non-null result. The durable record—not the reply—is the recovery oracle.
+Therefore receipt cases inspect the **on-host journal files** as well as the wire reply: one record per
+operation ID, stable completed EXEC bytes during inspect/replay, and the defined restart outcome. Normal
+state transitions may rewrite the same operation file; the acceptance claim is not that its bytes never
+change during the operation lifecycle.
 
 | Case | Arrange | Observe (wire **and** ledger) | Negative control |
 | :--- | :--- | :--- | :--- |
 | **L-RCPT-1** `exec` receipt is true of the host | admitted PROJECT view, real image, real `docker` socket, real `/sys/fs/cgroup` mount; one `printf` and one `false` | `EXITED` with the container's own exit code for both; `terminal_barrier: true` only alongside `cgroup.events` reading `populated 0` for that CID; `duration_ms > 0`; tails ≤ 64 KiB; identity fields equal the view record's tree/plan and the approved profile's digest | point `cgroup_root` at a directory whose `cgroup.events` says `populated 1` → the case must see a refusal (`EXECUTION_UNKNOWN`), never `EXITED` |
-| **L-RCPT-2** `inspect` replays, the ledger does not rewrite | a completed `exec` (L-RCPT-1), then `inspect` twice | both replies are byte-identical to the stored receipt; the **EXEC** record file's hash is unchanged; the two INSPECT operations each appended exactly one record ending `DONE`; the daemon log shows no `GET /containers/<cid>/json` between the two inspects | delete the container between the two inspects → the replay still answers, which is what proves no daemon contact |
+| **L-RCPT-2** `inspect` replays, the completed record does not rewrite | a completed `exec` (L-RCPT-1), then `inspect` twice | both replies are byte-identical to the stored receipt; the **EXEC** record file's hash is unchanged; each INSPECT operation has exactly one per-operation record ending `DONE`; the daemon log shows no `GET /containers/<cid>/json` between the two inspects | delete the container between the two inspects → the replay still answers, which is what proves no daemon contact |
 | **L-RCPT-3** `cancel` before create / during create / during RUN | the three S04 timings, real SIGKILL, daemon access log on | receipt is `CANCELLED` under `op-<cancel request_id>`, never `EXITED`; `exit_code` only when an `exited` was observed; the target record shows `cancel_requested: true` **in the snapshot the driver takes when the kill request arrives**; `populated 0` read after the stop returns | move the intent write after the kill (test build) → the snapshot at kill time shows `cancel_requested: false`, which the case must catch |
 | **L-RCPT-4** a spent budget is final | a command that outlives its `timeout_ms` | `TIMED_OUT`, `exit_code: null`, `terminal_barrier: false`; **zero** post-reply `GET /containers/<cid>/json` in the daemon log; the ledger record ends `DONE` with exactly that receipt | re-enable the post-command observation (test build) → one extra GET appears, which fails the case |
 | **L-RCPT-5** one-shot vs interactive | the same command under a one-shot profile and an interactive one | one-shot requires `populated 0`; interactive returns `EXITED` with `terminal_barrier: false` while the shell lives, and `stop_view` then reports `terminal: true` with the same CID's cgroup empty | create the interactive view *after* the command → the case must fail to arrange (BLOCKED), never PASS on a later cgroup read |
-| **L-RCPT-6** ledger append survives a kill | `kill -9` the supervisor after the command reply but before `complete`; restart | exactly one record per operation id after restart (no duplicates, no second RUN in the daemon log); `inspect` answers `UNKNOWN` or the stored receipt, never a fresh `EXITED` with a new exit code | kill *after* `complete` → `inspect` must replay the stored receipt; if both timings look the same, the case is not observing the boundary and must be rewritten |
+| **L-RCPT-6** per-operation record survives a kill | Externally synchronize `kill -9` after the worker/handler result reaches the supervisor but before `OperationJournal.complete`; restart. Separately kill after `complete` but before the caller-facing reply. | exactly one record per operation ID after restart (no duplicates, no second RUN in the daemon log); after the pre-`complete` kill, `inspect` answers `UNKNOWN` or the stored receipt, never a fresh `EXITED` with a new exit code; after the post-`complete` kill, `inspect` replays the stored receipt | If the driver cannot prove which side of `complete` the kill landed on, mark BLOCKED; if both timing outcomes look the same, the case is not observing the boundary and must be rewritten |
 
 `pty_control` (E280) adds the control plane. Its cases are small but each one has a failure mode that only a
-live shell shows, and two of them are ledger-append cases: INTERRUPT/CLOSE are mutating operations and must
-append exactly one record, while LIST is read-only and must append none.
+live shell shows, and two of them are operation-record cases: INTERRUPT/CLOSE are mutating operations and
+must create exactly one per-operation record, while LIST is read-only and must create none.
 
 | Case | Arrange | Observe (wire **and** ledger) | Negative control |
 | :--- | :--- | :--- | :--- |
@@ -182,9 +206,10 @@ append exactly one record, while LIST is read-only and must append none.
 | **L-PTY-2** INTERRUPT is an ACK, not terminality | a live interactive session with exported state | a real Ctrl-C reaches the pane; the reply carries `{sessions, message}`; a following command still runs in the **same** container id with its environment intact; `cgroup.events` for that CID is still `populated > 0`; the ledger has one DONE record for the interrupt | close the session first (test build) → the interrupt must be refused (`EXECUTION_UNKNOWN`), and the shell must still answer `LIST` |
 | **L-PTY-3** an unknown session never costs the shell | one live shell, an INTERRUPT for a name that was never created | the supervisor refuses `EXECUTION_UNKNOWN`; the daemon log shows **no** attach write for that request; the very next command still succeeds in the same cell; the ledger record for that interrupt ends `UNKNOWN`, never `DONE` | let the raw frame reach the worker (test build) → the cell's attach dies and the following command must fail, which is exactly what the case forbids in production |
 
-Two of these cases (`L-RCPT-2`, `L-RCPT-6`) are the ledger-append cases the session's instruction asked for:
-they assert that the journal gains exactly one record per operation, that a completed command's record is never
-rewritten, and that the replay is served from the record rather than from the daemon.
+The operation-journal portion of the requested coverage is already represented by `L-RCPT-2` and
+`L-RCPT-6`: one durable record per operation ID, no rewrite of a completed EXEC record during inspect, and
+replay from the stored record rather than from the daemon. `L-ENTRY-4` is a separate proposal for the
+session database's run binding and event-row appends; do not merge its SQL oracle with the supervisor journal.
 
 `handoff` (Q85 ruling, E282/CT113) adds one case, and it is the only case in this suite whose arrange step
 needs two real runs. It is P6 work: it cannot be written before SLICE2 STEP6 exists and the controller cutover
@@ -218,7 +243,7 @@ directory; reopen the DB before comparing so the test proves durable state rathe
 | **L-ENTRY-1** managed cell-readiness failure refuses auto-run | Fresh session ID, `FA_AUTO_RUN=1`, no command override; admit the managed new-root provisioning run, then force cell-local readiness to fail; invoke the installed entrypoint | Structured status is `FAILED`; independent host trace shows no host project clone/checkout/configure/readiness command and no `fa run`; no new `.active` publication; a provisional manifest/DB and exactly one run reservation may exist, with the failed run ID durably non-reusable; no workflow `event_log` append. Cleanup may remove only unregistered session-owned state and must not delete supervisor-registered bytes | Rebuilt test image with the refusal branch disabled must expose `fa run` or a forbidden host-side project command; independently verify the tombstone cannot be reserved again. If either observer cannot see its mutant, the oracle is invalid |
 | **L-ENTRY-2** resumed workspace survives cell-readiness refusal | Pre-existing active session/workspace with a user sentinel, DB and one prior run binding; managed cell-local readiness fails during auto-run | Refusal is recorded; workspace/sentinel and existing active pointer remain unchanged; no `fa run` or workflow event append. At most one new provisioning reservation may be added and must remain a non-reusable tombstone; all prior bindings/events remain unchanged | A test build that removes the refusal gate must expose `fa run`; independently attempt reservation reuse and require rejection. A resumed DB delta is valid only for the reserved tombstone |
 | **L-ENTRY-3** explicit override remains diagnostic-only | Fresh managed clone, readiness failure, `FA_AUTO_RUN=1`, explicit harmless command override | Override `execve`, exit, and output are observed; trace has no `SessionManager provision` or `fa run`; no new manifest/session DB, run binding, or event append. The existing shell behavior may publish `.active`; do not use its presence as proof of a logical run | Rebuilt test image that removes the no-override provision guard must expose `SessionManager provision` in the process trace or leave a durable provision side effect; the test must fail even if the explicit command itself exits zero |
-| **L-ENTRY-4** successful managed auto-run appends once | Valid readiness; one fresh ID; a deterministic approved provider/profile that completes a minimal task; invoke managed auto-run once | Trace shows exactly one `SessionManager provision` and one `fa run`; exactly one session manifest/DB and one new `run_binding:<run_id>`; `event_log` has a nonempty set of rows for that run, unique `event_id`s, all bound to the expected session/run; rows survive process exit/reopen; a second read/replay observation adds no rows and does not start another run | Disable/replace the production append/binding edge in a test build; the independent SQL snapshot must miss the expected binding/event rows and fail. Do not mutate the approved deployment |
+| **L-ENTRY-4** successful managed auto-run appends once | Valid readiness; one fresh ID; a deterministic approved provider/profile that completes a minimal task; invoke managed auto-run once | Trace shows exactly one `SessionManager provision` and one `fa run`; exactly one session manifest/DB. Snapshot all new `run_binding:<run_id>` keys separately from `event_log` rows: under the current source path, expect three distinct session-bound bindings—entrypoint provision/readiness, the CLI attach/readiness admission, and the task execution admission. Exactly one new run ID is event-bearing: its binding matches the expected session/run and its rows have unique `event_id`s, including exactly one `user_msg` and one `run_started`; the setup/readiness bindings carry no task events. Rows survive process exit and DB reopen; a read-only post-reopen observation leaves both the event-row and binding-key snapshots unchanged and starts no second run. If the admission topology changes, update this expected count from a source trace before running the case | In separate test builds, remove the `EventLog`→`SessionDatabase` append and the `SessionManager.begin_run`→`reserve_run_binding` edge; the independent SQL snapshot must miss the expected task rows or execution binding and fail. Do not mutate the approved deployment |
 | **L-ENTRY-5** unavailable managed backend prevents host project effects | Fresh and resumed managed auto-run cases, `FA_AUTO_RUN=1`, no command override; test absent execution config and, separately, valid config with an unavailable supervisor before entrypoint start | Structured failure; independent process trace shows no host project clone/checkout/configure/readiness command and no `fa run` or new `.active` publication. With absent config, fail before lifecycle state. If the configured-but-unavailable case has already reserved a run, allow only a provisional non-active manifest/DB plus one durable non-reusable tombstone; no workflow `event_log` append. Resumed workspace/manifest/prior DB rows remain unchanged apart from that reservation. Never delete supervisor-registered bytes | Rebuilt test image with the backend gate/injection removed must expose the first forbidden host project command or `fa run`; independently verify tombstone non-reuse. If the observer cannot distinguish host commands from managed EXEC or cannot see the mutant, mark BLOCKED, not PASS |
 | **L-ENTRY-6** prewarmed immutable environment is immediately usable | Fresh self-repo session and resumed prepared session with a functioning managed EXEC backend. Self-repo uses an exact lock/runtime/profile/image artifact; empty clean seed uses the separate operator-prewarmed First-Agent baseline artifact; if the created root has its own `pyproject.toml`/`uv.lock`, require an exact-match artifact instead. | In the same admitted provisioning run, managed readiness reports `status=ready`, `reason_code=ready_managed_artifact`, `repaired=false`; `pytest --version && mutmut --version` succeeds inside its PROVISIONING view; artifact manifest/fingerprint and cache bytes remain unchanged. There is no per-session environment build, `uv sync`, host `.venv` fallback, or provider/LLM call before readiness. Preserve the accepted one-second immediate-tool target as a separately timed command observation. | Remove/mismatch the selected artifact in a rebuilt test image: readiness must fail closed as `managed_artifact_probe_failed` (with only Q118-bounded provisional state after admission), without a session build or host fallback; the mutation must miss the ready/tool oracle. If traces cannot distinguish artifact reuse from a build or identify provider calls, mark BLOCKED, not PASS |
 
@@ -245,8 +270,7 @@ directory; reopen the DB before comparing so the test proves durable state rathe
 
 ## 6. Cost, flakiness and evidence policy
 
-- Budget: P1 ≈ 10 min for W4 verification of the running image (image construction/start is the W3
-  `fa update` deployment prerequisite, not W4 work), P2 ≈ 15 min, P3 ≈ 10 min, P4 ≈ 10 min,
+- Budget: P1 ≈ 10 min for W4 image deployment/verification and freeze, P2 ≈ 15 min, P3 ≈ 10 min, P4 ≈ 10 min,
   P5 ≈ 20 min (kill/restart cycles), P6 ≈ 20 min with a real provider. Per-case timeout 120 s except the kill matrix (300 s) and provider cases (600 s).
 - **No retries for evidence.** A flaky case is a defect in the case or the product; re-running until
   green converts an unknown into a false PASS.
@@ -260,17 +284,41 @@ directory; reopen the DB before comparing so the test proves durable state rathe
 ## 7. What this plan deliberately does not do
 
 - It does not promote any row, invent a verdict, or claim that unit proof transfers to the host.
-- It does not authorize the W3 host build/deploy prerequisite until all Arena-local W0–W3 gates,
-  tests, sensitivity checks, independent review and runbook preparation close. That approved build/deploy
-  is not live I03 acceptance; W4 is the only live-test/evidence wave.
+- It does not authorize the W4 host build/deploy until the core Arena-local W0–W3 implementation, package/suite contracts, required targeted checks, independent review and runbook preparation close under E544. Broad green-baseline checks and full mutation sweeps remain best-effort and do not block MVP merge or test deployment. W3 has no host-deployment prerequisite; W4 is the only wave for approved-host deployment and live-test/evidence acceptance.
 - It does not add a second harness: use `pytest`, the registered markers and this in-repo external
-  driver. The complete harness/fixture/test package must be reviewable and dry-run locally before W3's
-  image build/deploy step.
+  driver. The complete harness/fixture/test package must be reviewable and dry-run locally before W3
+  closes; the approved-host image build/deploy starts W4.
 
-## 8. W3 image-build/deploy prerequisite (frozen runbook requirement)
+### 2026-11-10 review correction: a collected host lane is not the final live suite
 
-After all Arena-local W0–W3 gates and independent review pass, W3's deployment run sheet invokes this
-approved build/deploy command on the user's Linux/Docker host:
+`tests/integration/` currently has five case files and **seven** host-marked nodes;
+`tests/test_workspace_readiness_integration.py` adds one. Their eight-node
+selection is only a local marker/preflight contract and does **not** implement
+all 3 I01 and 35 I03 master rows. The `tests/integration/live/` case package,
+`e2e/I03/fixtures/` and `scripts/e2e_live.py` named here remain proposed.
+Do not turn 8 collected nodes into 38 PASS rows. Before W3 close the independent
+STEP7 reviewer must approve the case-to-nodeid/command/evidence matrix and
+negative controls; only then implement STEP8 fixtures/observer and prove local
+fail-closed selection, owner-scoped cleanup, append-only attempt identity and
+zero-execution/missing-prerequisite failure. Repeat review after the V2 witness
+is added to the final suite. If any required row lacks a runnable mapped node
+or explicit shared producer evidence, the suite is not frozen and W4 is NO-GO.
+
+Freeze a manifest containing: approved source SHA, exact host command vector,
+case ID(s), nodeid, image/config/profile digest checks, workspace/session/run
+identity, authoritative observer path, expected artifacts, negative-control
+mutation in an isolated disposable image (never production), owner cleanup and
+stop/rollback condition. The host runner must compare actual collected nodeids
+to this manifest before side effects; missing, extra/unreviewed, skipped,
+xfail, setup/collection error, or zero selected nodes is not PASS. Run each
+attempt in a fresh unique evidence directory, preserve failures for review,
+and do not rewrite the original attempt on retry. Do not stage fixture edits
+on the host after image freeze.
+
+## 8. W4 image-build/deploy prerequisite (frozen runbook requirement)
+
+After the core Arena-local W0–W3 package/safety/review prerequisites pass, W4's deployment run sheet invokes this
+approved build/deploy command on the user's Linux/Docker host. Best-effort full-suite, ShellCheck, wheel, and mutation-baseline results may remain red/unrun and must be recorded; they are not deployment blockers under E544:
 
 ```sh
 AUTO_STASH=0 SKIP_TESTS=1 SKIP_UV_SYNC=1 PRUNE=0 fa update
@@ -282,8 +330,9 @@ and obtain maintenance approval. This is grounded in `scripts/fa-update.sh`: `gi
 state unless auto-stash is enabled (466–480), then fetches and fast-forwards `origin/main` (483–495).
 On a changed candidate, `evaluate_changes()` marks the build required and `build_and_deploy()` runs
 `docker compose build` then `docker compose up` (557–561, 672–694); it waits for health and runs container
-smoke checks. This host-side image build/start is intentionally the W3 deployment prerequisite, not an
-accidental W4 test/build. `PRUNE=0` retains the previous image/config for reviewed rollback (986–990).
+smoke checks. This host-side image build/start is the first W4 action, after W3's Arena-local closure;
+it is not a W3 prerequisite or a live-case result. `PRUNE=0` retains the previous image/config for
+reviewed rollback (986–990).
 
 `SKIP_TESTS=1` returns from updater step 7 before its fixed `/sessions/deploy-smoke-test` deletion
 (875–877), host `uv sync` (879–897), and repository-wide host pytest (909–920). It skips only that
@@ -292,20 +341,25 @@ script initializes `TEST_RC=0` before returning (861–865), so its printed `Tes
 evidence. The environment assignments apply to this `fa update` process only. Updater health/import
 smoke checks are deployment readiness evidence, not live I03 PASS evidence.
 
-W3 closes this deployment prerequisite only if the update/build exits 0 and independent checks show the
+The W4 deployment step succeeds only if the update/build exits 0 and independent checks show the
 approved source SHA, running image digest and config/profile match the candidate, and the agent
-container reports Docker health `healthy` (not `no-healthcheck`). Require the in-container `fa --version` and core-import smoke checks to visibly pass; `fa-update.sh` reports these as
-warnings rather than failing its own exit, so exit 0 alone is insufficient. Record proxy/selfcheck
-warnings, but do not infer a working REAL-provider path from them; W4 must prove that path. If build,
-health, required smoke or identity fails, stop: W3 remains OPEN and W4 must not start. A nonzero update
-does not prove that deployment did not occur; capture printed HEAD/health/test status and use the reviewed
-recovery procedure—no blind retry. W3 runs no live producer cases and records no live PASS.
+container reports Docker health `healthy` (not `no-healthcheck`). Require the in-container `fa --version`
+and core-import smoke checks to visibly pass; `fa-update.sh` reports these as warnings rather than
+failing its own exit, so exit 0 alone is insufficient. Record proxy/selfcheck warnings, but do not infer
+a working REAL-provider path from them; the frozen W4 suite must prove that path. If build, health,
+required smoke or identity fails, stop the W4 suite and use the reviewed recovery procedure; W3 remains
+closed on its already-passed Arena-local criteria. A nonzero update does not prove that deployment did
+not occur; capture printed HEAD/health/test status—no blind retry. No host deployment or live producer
+case runs in W3, and W3 records no live PASS.
 
-W4 begins only after the candidate image is already running and identified. Do not invoke `fa update`
-or rebuild in W4. Run the frozen W3-reviewed suite against the running image/managed cells: product
-operations and workloads execute there; the approved external driver is a bounded TCB observer that
-collects host Docker/kernel/cgroup/process/DB/event-ledger evidence. Do not run repository-wide/default
-project pytest or unreviewed project conftest on the controller. The only approved host test code is the
-explicitly approved, frozen `tests/integration` package and external driver, excluded from default
-collection; no fixture authoring or production mutation is permitted on host. Docker/host live testing
-is W4-only.
+W4 starts after W3 closes. The approved `fa update` above is W4's single deployment/build action; once
+its running image is verified, freeze it, then run the frozen W3-reviewed suite against the running
+image/managed cells: product operations and workloads execute there; the approved external driver is a
+bounded TCB observer that collects host Docker/kernel/cgroup/process/DB/event-ledger evidence. Do not
+run repository-wide/default project pytest or unreviewed project conftest on the controller. The
+approved host test code is the reviewed/frozen `tests/integration` package, the explicit
+`tests/test_workspace_readiness_integration.py` host node, and the external driver, all excluded from
+default pytest selection; the readiness node requires `FA_REQUIRE_EXECUTION_HOST=1` and the real
+Docker/cgroup preflight before copying/bootstrap/`uv sync`/`pre-commit install-hooks` side effects. No
+fixture authoring or production mutation is permitted on host. Do not invoke `fa update` or rebuild
+after the image is frozen. Docker/host live testing is W4-only.

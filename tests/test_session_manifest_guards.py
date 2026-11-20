@@ -255,6 +255,72 @@ def test_workspace_override_escape_is_rejected_by_the_validator_itself(tmp_path:
     assert exc.value.code == "workspace_escape"
 
 
+@pytest.mark.parametrize("status", ["active", "provisioning"])
+@pytest.mark.parametrize("shape", ["same", "child", "parent"])
+def test_new_workspace_preflight_refuses_active_or_provisioning_overlap_without_writes(
+    tmp_path: Path, status: str, shape: str
+) -> None:
+    """C3: no equal, nested, or ancestor workspace can pass new-root preflight.
+
+    The public manifest reader is used for both active and in-flight ownership.
+    Rejection must happen before a new manifest or workspace directory appears.
+    """
+    manager = _manager(tmp_path)
+    active = manager.create_or_attach_session(session_id=None, workspace_override=None)
+    manifest = json.loads(active.manifest_path.read_text(encoding="utf-8"))
+    if status == "provisioning":
+        manifest["status"] = "provisioning"
+        active.manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    candidate = {
+        "same": active.workspace_path,
+        "child": active.workspace_path / "nested",
+        "parent": manager.workspace_root,
+    }[shape]
+    manifests_before = tuple(sorted(manager.sessions_root.glob("*/manifest.json")))
+    workspaces_before = tuple(sorted(manager.workspace_root.iterdir()))
+
+    with pytest.raises(SessionManagerError) as exc:
+        manager.validate_new_workspace_disjoint(candidate)
+
+    assert exc.value.code == "workspace_overlap"
+    assert tuple(sorted(manager.sessions_root.glob("*/manifest.json"))) == manifests_before
+    assert tuple(sorted(manager.workspace_root.iterdir())) == workspaces_before
+    if shape == "child":
+        assert not candidate.exists()
+
+
+def test_new_workspace_preflight_accepts_disjoint_sibling_without_creating_it(tmp_path: Path) -> None:
+    """C0 control: a sibling under the approved root remains an allowed new root."""
+    manager = _manager(tmp_path)
+    active = manager.create_or_attach_session(session_id=None, workspace_override=None)
+    candidate = manager.workspace_root / "sibling-project"
+    manifests_before = tuple(sorted(manager.sessions_root.glob("*/manifest.json")))
+    workspaces_before = tuple(sorted(manager.workspace_root.iterdir()))
+
+    accepted = manager.validate_new_workspace_disjoint(candidate)
+
+    assert accepted == candidate.resolve()
+    assert not candidate.exists()
+    assert tuple(sorted(manager.sessions_root.glob("*/manifest.json"))) == manifests_before
+    assert tuple(sorted(manager.workspace_root.iterdir())) == workspaces_before
+    assert active.workspace_path.is_dir()
+
+
+def test_new_workspace_preflight_resolves_symlink_alias_to_managed_root(tmp_path: Path) -> None:
+    """C3: a symlink alias cannot make an owned workspace look disjoint."""
+    manager = _manager(tmp_path)
+    active = manager.create_or_attach_session(session_id=None, workspace_override=None)
+    alias = manager.workspace_root / "alias"
+    alias.symlink_to(active.workspace_path, target_is_directory=True)
+
+    with pytest.raises(SessionManagerError) as exc:
+        manager.validate_new_workspace_disjoint(alias)
+
+    assert exc.value.code == "workspace_overlap"
+    assert alias.is_symlink() and alias.resolve() == active.workspace_path
+
+
 # ---------------------------------------------------------------------------
 # Shape A again — a second instance, found by sweeping multi-site codes (S6.6c)
 # ---------------------------------------------------------------------------

@@ -11,9 +11,9 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from fa.inner_loop.planner_dispatch import PlannerDispatch, PlannerDispatchError
+from fa.inner_loop.planner_dispatch import PlannerDispatch, PlannerDispatchError, PlannerDispatchKind
 from fa.inner_loop.registry import ToolRegistry, ToolSchemaPortabilityError, ToolSpec, ToolWireNameError
 from fa.inner_loop.runtime_limits import DEFAULT_BASH_TIMEOUT_SECONDS
 from fa.inner_loop.tool_names import is_valid_wire_name
@@ -123,6 +123,7 @@ def _register_extra_tools(
     include_pair: bool = True,
     include_observability: bool = True,
     workspace_io: WorkspacePort | None = None,
+    project_tool_executor: Any | None = None,
 ) -> None:
     """Register extra tools while preserving optional availability policy.
 
@@ -141,7 +142,12 @@ def _register_extra_tools(
     fs_search_builder = (
         None
         if build_fs_search_tool is None
-        else lambda: build_fs_search_tool(_resolve_fts_path(workspace_root), workspace_root, workspace_io=workspace_io)
+        else lambda: build_fs_search_tool(
+            _resolve_fts_path(workspace_root),
+            workspace_root,
+            workspace_io=workspace_io,
+            project_tool_executor=project_tool_executor,
+        )
     )
     _register_optional_tool(registry, "fs_search", fs_search_builder)
 
@@ -167,13 +173,14 @@ def build_baseline_registry(
     bash_timeout_seconds: int = DEFAULT_BASH_TIMEOUT_SECONDS,
     workspace_io: WorkspacePort | None = None,
     managed_executor: BashExecutor | None = None,
+    project_tool_executor: Any | None = None,
 ) -> ToolRegistry:
     """Baseline = implementer profile (read,write,edit,bash,fs_search,blackboard_query) + observability + pair.
 
     Phase 1 wiring: uses build_registry_for_role for token efficiency.
     """
-    if workspace_io is None and managed_executor is not None:
-        raise ValueError("managed executor requires a managed workspace port")
+    if workspace_io is None and (managed_executor is not None or project_tool_executor is not None):
+        raise ValueError("managed executors require a managed workspace port")
     try:
         from fa.inner_loop.profiles import build_registry_for_role
 
@@ -188,6 +195,7 @@ def build_baseline_registry(
                 bash_timeout=bash_timeout_seconds,
                 workspace_io=workspace_io,
                 managed_executor=managed_executor,
+                project_tool_executor=project_tool_executor,
             )
     except (ToolSchemaPortabilityError, ToolWireNameError):
         # D12: both are correctness failures, not availability failures.
@@ -212,6 +220,7 @@ def build_baseline_registry(
         include_pair=True,
         include_observability=True,
         workspace_io=workspace_io,
+        project_tool_executor=project_tool_executor,
     )
     return registry
 
@@ -222,11 +231,25 @@ def build_planner_registry(
     bash_timeout_seconds: int = DEFAULT_BASH_TIMEOUT_SECONDS,
     workspace_io: WorkspacePort | None = None,
     managed_executor: BashExecutor | None = None,
+    project_tool_executor: Any | None = None,
     planner_dispatch: PlannerDispatch | None = None,
+    candidate_io: Any | None = None,
+    candidate_seed_text: str | None = None,
 ) -> ToolRegistry:
     """Planner = planner profile (fs_search,read,write for research docs,blackboard_query) + observability."""
-    if workspace_io is None and managed_executor is not None:
-        raise ValueError("managed executor requires a managed workspace port")
+    if workspace_io is None and (managed_executor is not None or project_tool_executor is not None):
+        raise ValueError("managed executors require a managed workspace port")
+    if planner_dispatch is not None and planner_dispatch.kind is PlannerDispatchKind.ACQUISITION:
+        if candidate_io is not None or candidate_seed_text is not None:
+            raise PlannerDispatchError
+        from fa.inner_loop.profiles import build_acquisition_registry
+
+        return build_acquisition_registry(
+            workspace_root,
+            bash_timeout=bash_timeout_seconds,
+            workspace_io=workspace_io,
+            project_tool_executor=project_tool_executor,
+        )
     try:
         from fa.inner_loop.profiles import build_registry_for_role
 
@@ -242,6 +265,9 @@ def build_planner_registry(
                 planner_dispatch=planner_dispatch,
                 workspace_io=workspace_io,
                 managed_executor=managed_executor,
+                project_tool_executor=project_tool_executor,
+                candidate_io=candidate_io,
+                candidate_seed_text=candidate_seed_text,
             )
     except (ToolSchemaPortabilityError, ToolWireNameError):
         # D12: both are correctness failures, not availability failures.
@@ -267,6 +293,7 @@ def build_planner_registry(
         include_pair=False,
         include_observability=True,
         workspace_io=workspace_io,
+        project_tool_executor=project_tool_executor,
     )
     return registry
 
@@ -277,13 +304,14 @@ def build_eval_registry(
     bash_timeout_seconds: int = DEFAULT_BASH_TIMEOUT_SECONDS,
     workspace_io: WorkspacePort | None = None,
     managed_executor: BashExecutor | None = None,
+    project_tool_executor: Any | None = None,
 ) -> ToolRegistry:
     """Eval = verifier profile (bash only) + usage for observability.
 
     Verifier intentionally does NOT get fs_search (single-command PASS/FAIL contract).
     """
-    if workspace_io is None and managed_executor is not None:
-        raise ValueError("managed executor requires a managed workspace port")
+    if workspace_io is None and (managed_executor is not None or project_tool_executor is not None):
+        raise ValueError("managed executors require a managed workspace port")
     try:
         from fa.inner_loop.profiles import build_registry_for_role
 
@@ -296,6 +324,7 @@ def build_eval_registry(
                 bash_timeout=bash_timeout_seconds,
                 workspace_io=workspace_io,
                 managed_executor=managed_executor,
+                project_tool_executor=project_tool_executor,
             )
     except (ToolSchemaPortabilityError, ToolWireNameError):
         # D12: both are correctness failures, not availability failures.
@@ -319,6 +348,7 @@ def build_eval_registry(
         include_pair=False,
         include_observability=True,
         workspace_io=workspace_io,
+        project_tool_executor=project_tool_executor,
     )
     return registry
 
@@ -329,6 +359,7 @@ def build_chat_registry(
     bash_timeout_seconds: int = DEFAULT_BASH_TIMEOUT_SECONDS,
     workspace_io: WorkspacePort | None = None,
     managed_executor: BashExecutor | None = None,
+    project_tool_executor: Any | None = None,
 ) -> ToolRegistry:
     """Chat = generalist pair-programming partner.
 
@@ -346,8 +377,8 @@ def build_chat_registry(
     The tool list is owned by ``PROFILES_RAW["chat"]``; this function
     delegates there so the declaration and the built registry cannot drift.
     """
-    if workspace_io is None and managed_executor is not None:
-        raise ValueError("managed executor requires a managed workspace port")
+    if workspace_io is None and (managed_executor is not None or project_tool_executor is not None):
+        raise ValueError("managed executors require a managed workspace port")
     try:
         from fa.inner_loop.profiles import build_registry_for_role
 
@@ -360,6 +391,7 @@ def build_chat_registry(
                 bash_timeout=bash_timeout_seconds,
                 workspace_io=workspace_io,
                 managed_executor=managed_executor,
+                project_tool_executor=project_tool_executor,
             )
     except (ToolSchemaPortabilityError, ToolWireNameError):
         # D12: both are correctness failures, not availability failures.
@@ -383,6 +415,7 @@ def build_chat_registry(
         include_pair=False,
         include_observability=True,
         workspace_io=workspace_io,
+        project_tool_executor=project_tool_executor,
     )
     # NOTE: invoke_workflow tool will be registered in S4
     return registry

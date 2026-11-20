@@ -116,6 +116,28 @@ def test_pre_commit_ruff_hooks_run_whole_tree_in_just_fix_order() -> None:
         assert hook["always_run"] is True
 
 
+def test_gitleaks_is_blocking_ci_only_and_scans_full_history() -> None:
+    """Keep secret scanning in CI without a Go-backed local pre-commit hook."""
+
+    import yaml
+
+    root = Path(__file__).resolve().parents[1]
+    pre_commit = yaml.safe_load((root / ".pre-commit-config.yaml").read_text(encoding="utf-8"))
+    assert all(repo.get("repo") != "https://github.com/gitleaks/gitleaks" for repo in pre_commit["repos"])
+    assert all(hook.get("id") != "gitleaks" for repo in pre_commit["repos"] for hook in repo.get("hooks", []))
+
+    workflow = yaml.safe_load((root / ".github" / "workflows" / "advisory.yml").read_text(encoding="utf-8"))
+    job = workflow["jobs"]["gitleaks"]
+    assert job["name"] == "gitleaks (secret scan)"
+    assert job.get("continue-on-error") is not True
+    checkout = next(step for step in job["steps"] if step.get("uses", "").startswith("actions/checkout@"))
+    assert checkout["with"]["fetch-depth"] == 0
+    scan = next(step for step in job["steps"] if step.get("name") == "Run gitleaks detect")
+    assert scan["uses"] == "gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e"
+    assert scan["env"]["GITLEAKS_VERSION"] == "8.30.1"
+    assert (root / ".gitleaks.toml").is_file()
+
+
 def test_install_hooks_happy_path(tmp_path: Path) -> None:
     root = _make_workspace(tmp_path)
 
@@ -713,7 +735,7 @@ def test_pre_commit_preserves_first_failure_exit_code_when_no_files_changed(tmp_
 
     env = dict(os.environ)
     env["PATH"] = f"{fakebin}:{env['PATH']}"
-    result = subprocess.run(["bash", str(hook)], cwd=root, env=env, capture_output=True, text=True)
+    result = subprocess.run(["bash", str(hook)], cwd=root, env=env, capture_output=True, text=True, check=False)
 
     assert result.returncode == 7
 
@@ -753,7 +775,7 @@ exit 0
     env = dict(os.environ)
     env["PATH"] = f"{fakebin}:{env['PATH']}"
 
-    result = subprocess.run(["bash", str(hook)], cwd=root, env=env, capture_output=True, text=True)
+    result = subprocess.run(["bash", str(hook)], cwd=root, env=env, capture_output=True, text=True, check=False)
 
     assert result.returncode == 0, result.stderr
     staged = subprocess.run(
@@ -789,7 +811,7 @@ def test_pre_commit_refuses_whole_tree_fix_of_preexisting_unstaged_python(tmp_pa
     env = dict(os.environ)
     env["PATH"] = f"{fakebin}:{env['PATH']}"
 
-    result = subprocess.run(["bash", str(hook)], cwd=root, env=env, capture_output=True, text=True)
+    result = subprocess.run(["bash", str(hook)], cwd=root, env=env, capture_output=True, text=True, check=False)
 
     assert result.returncode == 9
     staged = subprocess.run(
@@ -824,7 +846,7 @@ def test_pre_commit_reports_but_never_stages_formatter_modified_untracked_python
     env = dict(os.environ)
     env["PATH"] = f"{fakebin}:{env['PATH']}"
 
-    result = subprocess.run(["bash", str(hook)], cwd=root, env=env, capture_output=True, text=True)
+    result = subprocess.run(["bash", str(hook)], cwd=root, env=env, capture_output=True, text=True, check=False)
 
     assert result.returncode == 1
     staged = subprocess.run(
@@ -880,7 +902,7 @@ exit 0
 
     env = dict(os.environ)
     env["PATH"] = f"{fakebin}:{env['PATH']}"
-    result = subprocess.run(["bash", str(hook)], cwd=root, env=env, capture_output=True, text=True)
+    result = subprocess.run(["bash", str(hook)], cwd=root, env=env, capture_output=True, text=True, check=False)
 
     log = log_path.read_text(encoding="utf-8")
     assert result.returncode == 9
@@ -916,7 +938,7 @@ exit 0
     env = dict(os.environ)
     env["FA_HOOK_FULL_CHECK"] = "1"
     env["PATH"] = f"{fakebin}:{env['PATH']}"
-    result = subprocess.run(["bash", str(hook)], cwd=root, env=env, capture_output=True, text=True)
+    result = subprocess.run(["bash", str(hook)], cwd=root, env=env, capture_output=True, text=True, check=False)
 
     assert result.returncode == 0
     log = log_path.read_text(encoding="utf-8")
@@ -974,7 +996,7 @@ exit 0
 
     env = dict(os.environ)
     env["PATH"] = f"{fakebin}:{env['PATH']}"
-    result = subprocess.run(["bash", str(hook)], cwd=root, env=env, capture_output=True, text=True)
+    result = subprocess.run(["bash", str(hook)], cwd=root, env=env, capture_output=True, text=True, check=False)
 
     log = log_path.read_text(encoding="utf-8")
     assert result.returncode == 0
@@ -1032,7 +1054,7 @@ exit 0
 
     env = dict(os.environ)
     env["PATH"] = f"{fakebin}:{env['PATH']}"
-    result = subprocess.run(["bash", str(hook)], cwd=root, env=env, capture_output=True, text=True)
+    result = subprocess.run(["bash", str(hook)], cwd=root, env=env, capture_output=True, text=True, check=False)
 
     log = log_path.read_text(encoding="utf-8")
     assert result.returncode == 8
@@ -1058,7 +1080,7 @@ def test_pre_push_runs_full_check_by_default(tmp_path: Path) -> None:
 
     env = dict(os.environ)
     env["PATH"] = f"{fakebin}:{env['PATH']}"
-    result = subprocess.run(["bash", str(hook)], cwd=root, env=env, capture_output=True, text=True)
+    result = subprocess.run(["bash", str(hook)], cwd=root, env=env, capture_output=True, text=True, check=False)
 
     assert result.returncode == 0
     assert "uv run --no-sync just check" in log_path.read_text(encoding="utf-8")
@@ -1081,7 +1103,7 @@ def test_pre_push_skip_env_bypasses_full_check(tmp_path: Path) -> None:
     env = dict(os.environ)
     env["FA_HOOK_SKIP_FULL_CHECK"] = "1"
     env["PATH"] = f"{fakebin}:{env['PATH']}"
-    result = subprocess.run(["bash", str(hook)], cwd=root, env=env, capture_output=True, text=True)
+    result = subprocess.run(["bash", str(hook)], cwd=root, env=env, capture_output=True, text=True, check=False)
 
     assert result.returncode == 0
     assert "skipping uv run --no-sync just check" in result.stderr

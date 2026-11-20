@@ -7,7 +7,7 @@ import time
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any, cast, override
 
 import pytest
 
@@ -46,6 +46,7 @@ class _RecordingClient(ExecutionClient):
         super().__init__(source._path, server_uid=source._server_uid, rpc_timeout_ms=source._timeout_ms)
         self.sent: list[Operation] = []
 
+    @override
     def request(self, operation: Operation, **kwargs: Any) -> dict[str, Any]:
         self.sent.append(operation)
         return super().request(operation, **kwargs)
@@ -54,6 +55,7 @@ class _RecordingClient(ExecutionClient):
 class _ReleaseRefusingClient(_RecordingClient):
     """Inject one authoritative RELEASE refusal while forwarding all stage RPCs."""
 
+    @override
     def request(self, operation: Operation, **kwargs: Any) -> dict[str, Any]:
         if operation is Operation.RELEASE:
             self.sent.append(operation)
@@ -453,9 +455,9 @@ def test_parent_lease_rejects_resume_until_writer_is_returned(lease_site: Site, 
 
 
 def test_stage_exception_stops_active_view_before_releasing_writer(
-    lease_site: Site, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    lease_site: Site, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """A failed parent stage aborts its current view before the run-owned writer."""
+    """A failed parent stage stops and rejects its WRITE view before releasing the writer."""
     with _served(lease_site, tmp_path) as managed:
         recording = _RecordingClient(managed.client)
         managed.client = recording
@@ -487,9 +489,14 @@ def test_stage_exception_stops_active_view_before_releasing_writer(
         lease = captured[2]
         assert lease.state == "closed"
         assert lease.writer_release_safe
-        assert recording.sent.count(Operation.STOP_VIEW) == 1
-        assert recording.sent.count(Operation.PUBLISH) == 0
-        assert recording.sent.count(Operation.RELEASE) == 1
+        assert recording.sent == [
+            Operation.CREATE_VIEW,
+            Operation.STOP_VIEW,
+            Operation.RELEASE,
+            Operation.RELEASE,
+        ]
+        assert "was not confirmed" not in capsys.readouterr().err
+        assert lease_site.metadata({"workspace_id": managed.binding.workspace_id})["status"] == "AVAILABLE"
 
 
 def test_uncertain_view_creation_retains_writer_and_does_not_call_registry(
@@ -531,3 +538,132 @@ def test_uncertain_view_creation_retains_writer_and_does_not_call_registry(
         assert recording.sent.count(Operation.RELEASE) == 0
         assert "managed stage failed closed" in capsys.readouterr().err
         assert managed.grant.operation is Operation.ACQUIRE_WRITER
+
+
+def test_clean_suspend_with_returned_writer_allows_safe_release_on_stage_exception(
+    lease_site: Site, tmp_path: Path
+) -> None:
+    """R26: if child returned cleanly after suspend and outer drive aborts before resume, finish releases cleanly."""
+    with _served(lease_site, tmp_path) as managed:
+        recording = _RecordingClient(managed.client)
+        managed.client = recording
+        captured: list[Any] = []
+
+        def build_registry(workspace_io: Any, managed_executor: Any, lease: Any) -> ToolRegistry:
+            captured.extend([workspace_io, managed_executor, lease])
+            return ToolRegistry()
+
+        def drive(_registry: ToolRegistry) -> SessionOutcome:
+            lease = captured[2]
+            lease.suspend()
+            # Child returns writer cleanly before an unhandled exception interrupts outer stage before resume().
+            child_ns = NamespaceRef(
+                managed.binding.namespace.session_id, "child-ok", parent_run_id=managed.binding.namespace.run_id
+            )
+            managed.handoff_to(child_ns)
+            managed.handoff_to(NamespaceRef(managed.binding.namespace.session_id, managed.root_owner_run_id))
+            raise RuntimeError("outer abort after clean child return")
+
+        with pytest.raises(RuntimeError, match="outer abort after clean child return"):
+            _drive_stage_with_managed_workspace(
+                managed=managed,
+                owns_writer=True,
+                run_id=managed.binding.namespace.run_id,
+                run_log_dir=tmp_path / "run-log",
+                session_db=None,
+                workspace=lease_site.source,
+                role="chat",
+                plan_ref=None,
+                build_registry=build_registry,
+                drive=drive,
+            )
+
+        lease = captured[2]
+        assert lease.state == "closed"
+        assert lease.writer_release_safe
+        assert recording.sent[-1] is Operation.RELEASE
+        assert lease_site.metadata({"workspace_id": managed.binding.workspace_id})["status"] == "AVAILABLE"
+
+
+def test_failed_resume_on_uncertain_open_view_marks_broken_and_suppresses_release(
+    lease_site: Site, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R26: if lease.resume() fails ambiguously during open_view, writer stays fenced without RELEASE."""
+    with _served(lease_site, tmp_path) as managed:
+        recording = _RecordingClient(managed.client)
+        managed.client = recording
+        captured: list[Any] = []
+
+        def build_registry(workspace_io: Any, managed_executor: Any, lease: Any) -> ToolRegistry:
+            captured.extend([workspace_io, managed_executor, lease])
+            return ToolRegistry()
+
+        def drive(_registry: ToolRegistry) -> SessionOutcome:
+            lease = captured[2]
+            lease.suspend()
+            monkeypatch.setattr(
+                managed,
+                "open_view",
+                lambda **_kw: (_ for _ in ()).throw(ExecutionUncertainError("op-" + "b" * 32)),
+            )
+            with pytest.raises(ExecutionUncertainError):
+                lease.resume()
+            assert lease.state == "broken"
+            assert not lease.writer_release_safe
+            return SessionOutcome(0, "iteration_cap", 1, "")
+
+        with pytest.raises(ExecutionUnavailableError):
+            _drive_stage_with_managed_workspace(
+                managed=managed,
+                owns_writer=True,
+                run_id=managed.binding.namespace.run_id,
+                run_log_dir=tmp_path / "run-log",
+                session_db=None,
+                workspace=lease_site.source,
+                role="chat",
+                plan_ref=None,
+                build_registry=build_registry,
+                drive=drive,
+            )
+
+        assert captured[2].state == "broken"
+        assert not captured[2].writer_release_safe
+        assert Operation.RELEASE not in recording.sent
+
+
+def test_clean_suspend_with_pending_publication_suppresses_release(
+    lease_site: Site, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """E512 + R26: clean suspend cannot release when managed.publication_pending is True."""
+    with _served(lease_site, tmp_path) as managed:
+        recording = _RecordingClient(managed.client)
+        managed.client = recording
+        captured: list[Any] = []
+
+        def build_registry(workspace_io: Any, managed_executor: Any, lease: Any) -> ToolRegistry:
+            captured.extend([workspace_io, managed_executor, lease])
+            return ToolRegistry()
+
+        def drive(_registry: ToolRegistry) -> SessionOutcome:
+            lease = captured[2]
+            lease.suspend()
+            monkeypatch.setattr(type(managed), "publication_pending", property(lambda _self: True))
+            return SessionOutcome(0, "stop", 1, "")
+
+        with pytest.raises(ExecutionUnavailableError):
+            _drive_stage_with_managed_workspace(
+                managed=managed,
+                owns_writer=True,
+                run_id=managed.binding.namespace.run_id,
+                run_log_dir=tmp_path / "run-log",
+                session_db=None,
+                workspace=lease_site.source,
+                role="chat",
+                plan_ref=None,
+                build_registry=build_registry,
+                drive=drive,
+            )
+
+        assert captured[2].state == "broken"
+        assert not captured[2].writer_release_safe
+        assert Operation.RELEASE not in recording.sent

@@ -71,16 +71,9 @@ Before any file edit, work through a `<thinking>` block with these exact subtask
 
 ### Subtask 6: Security floor (R-2, R-4)
 - **R-2 pip-audit:** Add `just audit` recipe and `make audit` target running `pip-audit` (auto-discovers `pyproject.toml`; do NOT use `-r pyproject.toml`).
-- **R-4 gitleaks:** Add `gitleaks` hook to `.pre-commit-config.yaml` using this exact snippet:
-  ```yaml
-  - repo: https://github.com/gitleaks/gitleaks
-    rev: v8.24.2
-    hooks:
-      - id: gitleaks
-  ```
-  Also add CI-level `gitleaks detect` step to the advisory workflow (ADR-11 R-6: pre-commit is bypassable).
+- **R-4 Gitleaks (CI-only):** Ensure the blocking full-history job in `.github/workflows/advisory.yml` remains pinned at version `8.30.1` and uses `.gitleaks.toml`. Do not add a local pre-commit hook, local scanner command/binary, Go SDK, or Go-based readiness prerequisite.
 - Run `just audit` and confirm `pip-audit` exits 0 (no known CVEs).
-- Run `make check` to ensure gitleaks pre-commit integration does not break existing hooks.
+- Run `make check` to verify the existing gates.
 
 ### Subtask 7: Advisory signal (R-5, R-6)
 - **R-5 Semgrep:** Create `.github/workflows/semgrep.yml` with `continue-on-error: true`, weekly cron + manual dispatch, `--config=p/python --config=p/owasp-top-ten`. Note: Semgrep local Windows usage is optional; primary run is Linux CI. Windows devs may skip local Semgrep if `pip install semgrep` fails.
@@ -136,7 +129,7 @@ Finish with a short **Implementation Summary** (3–5 sentences): what was done,
 - **Minimalism-first:** Every new tool must be in `[dev]` extras or pre-commit; no system-level installs except `universal-ctags` (already present).
 - **No breaking changes:** Existing `make check` must continue to work until `justfile` is fully verified. Do not delete `Makefile` in this session.
 - **Advisory-only for new tools:** Semgrep and pyrefly use `continue-on-error: true`. pip-audit and deptry are blocking gates.
-- **Windows parity:** uv, just, gitleaks, deptry, pip-audit are cross-platform. Semgrep has Windows binary but local Windows usage is optional.
+- **Windows parity:** uv, just, deptry and pip-audit are cross-platform. Semgrep has a Windows binary but local Windows usage is optional.
 - **Preserve existing gates:** Do not modify pylint configuration (`.pylintrc-tests`, `.github/workflows/pylint.yml`); Ruff does not support per-directory profiles. Preserve `[tool.coverage.report] fail_under = 90` exactly.
 - **Do not implement DEFER or SKIP items:** R-7 (ty), R-8 (custom Semgrep rules), R-9 (DeepEval), R-10 (Tach), R-11 (garak), R-12 (CodeQL), R-13 (Vulture CI gate), R-14 (pytest-recording) remain untouched. Add them to BACKLOG.md with unblock triggers only.
 - **Bookkeeping is mandatory:** llms.txt, BACKLOG.md, and HANDOFF.md updates are not optional — they are part of the deliverable.

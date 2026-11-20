@@ -128,19 +128,29 @@ def test_drive_session_budget_hard_stop(tmp_path: Path, mock_session_state: Sess
 
 
 def test_budget_wiring_present() -> None:
-    """Static AST check (Anti-Theater): Verify coder_loop.py imports and evaluates ContextBudget."""
+    """Static AST check (Anti-Theater): the composed path imports and evaluates ContextBudget.
+
+    Two files, one assertion: the driver still gates on the flag and estimates
+    tokens, while the module it delegates to is the one that imports the budget
+    and calls ``check``. Moving the evaluation without moving the check would
+    make this pass while the budget went unread.
+    """
     loop_file = Path("src/fa/inner_loop/coder_loop.py")
+    ladder_file = Path("src/fa/inner_loop/budget_ladder.py")
     assert loop_file.exists()
     content = loop_file.read_text(encoding="utf-8")
 
-    # Assert code contains explicit wiring keywords
+    # Assert code contains explicit wiring keywords. `budget_enabled` and
+    # `estimate_tokens` still gate the block in the driver; the budget call
+    # itself and its stop reason now live in the ladder it delegates to.
+    ladder = ladder_file.read_text(encoding="utf-8")
     assert "ContextBudget" in content
     assert "estimate_tokens" in content
     assert "budget_enabled" in content
-    assert "context_budget_hard_stop" in content
+    assert "context_budget_hard_stop" in ladder
 
     # Verify AST structure
-    tree = ast.parse(content)
+    tree = ast.parse(ladder)
     has_import = False
     has_evaluate = False
     for node in ast.walk(tree):
@@ -150,5 +160,5 @@ def test_budget_wiring_present() -> None:
         if isinstance(node, ast.Attribute):
             if node.attr == "check":
                 has_evaluate = True
-    assert has_import, "ContextBudget import statement missing in coder_loop.py AST"
-    assert has_evaluate, "ContextBudget check invocation missing in coder_loop.py AST"
+    assert has_import, "ContextBudget import statement missing in budget_ladder.py AST"
+    assert has_evaluate, "ContextBudget check invocation missing in budget_ladder.py AST"

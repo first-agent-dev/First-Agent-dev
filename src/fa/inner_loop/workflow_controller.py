@@ -12,26 +12,47 @@ The stage dispatcher (``_cmd_run``) is passed as a callable parameter
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import os
 import re
 import sys
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field, replace
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Final, Literal
+from typing import TYPE_CHECKING, Any, Final, Literal, Protocol, runtime_checkable
 
-from fa.inner_loop.admission_schema import ADMISSION_RULES
+from fa.execution.client import (
+    ExecutionRejectedError,
+    ExecutionUnavailableError,
+    ExecutionUncertainError,
+    ReadOnlyManagedBashExecutor,
+)
+from fa.execution.primitives import ExecutionContractError
+from fa.execution.publication import render_bundle
+from fa.execution.tool_port import ClientWorkspacePort
+from fa.execution.types import Access, Operation, ViewPurpose
+from fa.inner_loop.admission_schema import ADMISSION_RULES, ADMISSION_RULES_V2
 from fa.inner_loop.coder_loop import SessionOutcome
 from fa.inner_loop.injections import INJECTION_MODES, INJECTION_SPECS, resolve_injection_modes
+from fa.inner_loop.managed_acquisition import (
+    AcquisitionChoiceError,
+    AcquisitionOutcome,
+    BootstrapNewProjectChoice,
+    parse_acquisition_choice,
+    resolve_acquisition_choice,
+)
 from fa.inner_loop.plan_admission import (
     PlanRef,
     PlanRefError,
     PlanSnapshot,
     _require_plan_for_coder,
     read_plan_snapshot,
+    snapshot_from_bytes,
 )
 from fa.inner_loop.plan_ids import (
     PlanDiagnostic,
@@ -53,20 +74,25 @@ from fa.inner_loop.slice_verification import (
     TAIL_LIMIT,
     CommandOutcome,
     CommandResult,
+    ManagedVerifyCommandExecutor,
     NodeidCapture,
     PlanVerification,
     SliceVerdict,
     SliceVerification,
+    VerifyCommandExecutor,
     _gate_mode,
     capture_test_nodeids,
     validate_kill_directives,
     verify_plan,
 )
+from fa.inner_loop.stage_candidate import reset_stage_candidate, stage_candidate_reader
+from fa.inner_loop.tools.workspace_port import WorkspacePort, WorkspacePortError
 from fa.inner_loop.workflow_artifacts import (
     AdmissionIOError,
     EvalReport,
     FlowState,
     FlowStatus,
+    ManagedAdmissionBinding,
     RouteDecision,
     _admission_lock,
     _private_artifact_directory,
@@ -163,6 +189,29 @@ class WorkflowArtifactPaths:
         return self.base_dir / "admission.json"
 
 
+@dataclass(frozen=True, slots=True)
+class _BootstrapReceipt:
+    """Committed authority receipt from ``prepare_bundle`` + ``install_project``."""
+
+    bundle_sha256: str
+    input_revision: str
+    output_revision: str
+    operation_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class _BootstrapFailure:
+    """Closed v2 failure details preserved alongside legacy ``PlanRefError``."""
+
+    validator: str
+    rule: str
+    severity: str
+    validation: str
+    operation_id: str | None = None
+    candidate_sha256: str | None = None
+    bundle_sha256: str | None = None
+
+
 @dataclass(slots=True)
 class _WorkflowAdmission:
     """Run-local canonical authority and the shared planner-attempt counter."""
@@ -178,6 +227,13 @@ class _WorkflowAdmission:
     baseline: Literal["NOT_CAPTURED", "CAPTURED", "FAILED"] = "NOT_CAPTURED"
     admitted: bool = False
     failure: str | None = None
+    # True when the snapshot arrived as bytes from a pinned view (acquisition), so
+    # there is no host copy to re-read. A positive fact, not "plan_path is None":
+    # the legacy host path is also absent for a planner-only run, which has no
+    # admission at all. Declared last so the three positional fields keep theirs.
+    snapshot_backed: bool = False
+    from_acquisition: bool = False
+    bootstrap_receipt: _BootstrapReceipt | None = None
 
 
 @dataclass(slots=True)
@@ -186,6 +242,14 @@ class _ManagedRevisionPair:
 
     base_revision_id: str | None = None
     target_revision_id: str | None = None
+
+
+@dataclass(slots=True)
+class _InitialPlannerContextSlot:
+    """One-shot parent context consumed only by the initial planner dispatch (S5P4/CT109)."""
+
+    text: str = ""
+    consumed: bool = False
 
 
 @dataclass(frozen=True)
@@ -236,6 +300,25 @@ class WorkflowContext:
     managed_execution: ManagedExecution | None = None
     managed_revision_pair: _ManagedRevisionPair = field(default_factory=_ManagedRevisionPair)
     managed_plan_ref: PlanRef | None = None
+    # S3P3: the managed read-back of a staged candidate. Bound by the composition
+    # to a callable over the run's own managed execution, so the controller never
+    # holds a client and never opens a view itself. ``None`` in host mode, where
+    # `_run_admission_repair` reads the controller's own host copy instead.
+    managed_candidate_reader: Callable[[PlanRef], tuple[str, str] | None] | None = None
+    # S5P1: the run's replan budget. Admission is bound *after* the acquisition
+    # planner has already run, so the binder cannot read it off a request object it
+    # never received; without this the bound admission would claim a limit of zero
+    # and a repair leg would be refused for a plan that allows repairs.
+    replans_allowed: int = 0
+    # S5P1: bound only for an acquisition run -- the pinned view plus the names it
+    # named. None means this run must already have its plan, as every other run does.
+    acquisition: AcquisitionSubstrate | None = None
+    # Q150=A: present solely on managed-child runs (owner_run_id != run_id) to
+    # select v2 admission.json without altering unmanaged v1 callers.
+    admission_binding: ManagedAdmissionBinding | None = None
+    # S5P4 / CT109 / Q66: bounded, credential-redacted snapshot of parent chat
+    # messages consumed ONLY by the initial planner dispatch.
+    initial_planner_slot: _InitialPlannerContextSlot = field(default_factory=_InitialPlannerContextSlot)
 
     def plan_text(self) -> str | None:
         """Use the immutable admitted snapshot, or read legacy optional input.
@@ -288,6 +371,11 @@ class StageResult:
     exit_code: int
     eval_report: EvalReport | None = None
     verification: PlanVerification | None = None
+    # S5P1 §7.0: the typed choice an ACQUISITION planner returned. Set on exactly
+    # one stage of one run, and only when an acquisition substrate was bound, so
+    # the controller can bind admission between planner and coder instead of
+    # running a second planner outside the workflow.
+    acquisition: AcquisitionOutcome | None = None
 
 
 # ── Helper functions ───────────────────────────────────────────────────────
@@ -354,19 +442,116 @@ def _nodeid_capture_payload(capture: NodeidCapture) -> dict[str, object]:
     return payload
 
 
+@dataclass(frozen=True, slots=True)
+class _VerifySubstrate:
+    """Where the verification gate runs, when it is not the controller host.
+
+    Two pieces travel together because they answer the same question from two sides:
+    ``executor`` runs the command on the pinned read-only view, and ``port`` answers
+    what the snapshot actually contains. Splitting them would let a run verify one
+    tree and inspect another, which is the defect R24 exists to remove.
+    """
+
+    executor: VerifyCommandExecutor
+    port: WorkspacePort | None
+
+
+@contextmanager
+def _pinned_verify_substrate(ctx: WorkflowContext) -> Iterator[_VerifySubstrate | None]:
+    """Pin one read-only view of the current revision, or yield ``None`` when unmanaged.
+
+    ``None`` is not a fallback to the host: an unmanaged run *is* the host tree, so
+    there is nothing to move. A managed run that cannot build the substrate raises,
+    because verifying the controller copy of a revision the coder edited out of view
+    would report a verdict about a tree nobody asked about.
+
+    The pin is the mechanism the spec names for read-only verification
+    (``i03-execution-workspace-spec:640,806``): a READ view over sealed source with a
+    private tmpfs scratch, whose writes cannot become a revision
+    (``workspace.py:5374``). It is stopped before this returns, so a verify never
+    outlives the stage that asked for it.
+    """
+    managed = ctx.managed_execution
+    if managed is None:
+        yield None
+        return
+    profile = managed.read_only_profile
+    if profile is None or profile.interactive:
+        raise ExecutionContractError
+    deadline = ctx.deadline_mono if ctx.deadline_mono is not None else time.monotonic() + 30.0
+    # The plan the stage ran against, not the one the run started with: a promoted
+    # candidate changes the plan's bytes, and the authority proves the pinned ref
+    # against THIS revision.
+    plan_ref = ctx.admission.snapshot.ref if ctx.admission is not None else ctx.managed_plan_ref
+    grant = managed.client.pin_reader(
+        managed.binding,
+        revision_id=managed.current_revision_id,
+        plan_ref=plan_ref,
+        deadline=deadline,
+    )
+    view = grant.view_ref
+    if (
+        grant.operation is not Operation.PIN_READER
+        or view is None
+        or view.access is not Access.READ
+        or view.purpose is not ViewPurpose.PROJECT
+        or view.workspace_id != managed.binding.workspace_id
+        or view.owner_run_id != managed.binding.namespace.run_id
+        or grant.input_tree_sha256 is None
+    ):
+        raise ExecutionContractError
+    reader = ReadOnlyManagedBashExecutor(
+        managed.client,
+        namespace=managed.binding.namespace,
+        view=view,
+        grant=grant,
+        profile=profile,
+        plan_ref=plan_ref,
+        controller_root=ctx.workspace,
+    )
+    port = ClientWorkspacePort(
+        managed.client,
+        namespace=managed.binding.namespace,
+        view=view,
+        grant=grant,
+        cache_dir=ctx.artifact_paths.base_dir / "verify-read-cache",
+        plan_ref=plan_ref,
+    )
+    try:
+        yield _VerifySubstrate(executor=ManagedVerifyCommandExecutor(reader, root=ctx.workspace), port=port)
+    finally:
+        # A pin that did not become terminal stays owned by this run; saying so is the
+        # honest outcome, and the next run on the workspace will be refused until it is
+        # settled rather than silently reading a view someone else may hold.
+        if not managed.client.stop_view(managed.binding.namespace, view=view, grant=grant, deadline=deadline):
+            logger.error("verify read-only view did not become terminal (run=%s view=%s)", ctx.run_id, view.view_id)
+
+
 def _capture_nodeids_by_slice(
     plan_ids: PlanIds,
     *,
     root: Path,
     deadline: float | None = None,
+    execution: _VerifySubstrate | None = None,
 ) -> BaselineCapture:
-    """Capture each slice's own TESTS set so regression evidence stays attributed."""
+    """Capture each slice's own TESTS set so regression evidence stays attributed.
+
+    ``execution`` is where the run happens: unmanaged runs use the host tree, while
+    managed runs pin a READ view at the current revision so T0 and post-coder checks
+    never execute project code on the controller host or compare mismatched trees.
+    """
     nodeids_by_slice: dict[str, Mapping[str, bool] | None] = {}
     captures: dict[str, NodeidCapture] = {}
     errors: list[str] = []
     for record in plan_ids.slice_records:
         try:
-            capture = capture_test_nodeids(record.test_paths, root=root, deadline=deadline)
+            capture = capture_test_nodeids(
+                record.test_paths,
+                root=root,
+                deadline=deadline,
+                executor=None if execution is None else execution.executor,
+                port=None if execution is None else execution.port,
+            )
         except Exception as error:  # Capture uncertainty is evidence; BaseException signals still propagate.
             logger.exception("workflow nodeid capture failed for slice %s", record.slice_id)
             detail = f"nodeid capture raised {type(error).__name__}: {error}"[:TAIL_LIMIT]
@@ -424,9 +609,10 @@ def capture_baseline(
     root: Path,
     run_id: str,
     deadline: float | None = None,
+    execution: _VerifySubstrate | None = None,
 ) -> BaselineCapture:
     """Capture and write the one permitted T0 snapshot before coder dispatch (CT85/86)."""
-    captured = _capture_nodeids_by_slice(plan_ids, root=root, deadline=deadline)
+    captured = _capture_nodeids_by_slice(plan_ids, root=root, deadline=deadline, execution=execution)
     try:
         _write_json_exclusive(path, _baseline_payload(run_id=run_id, plan_ids=plan_ids, capture=captured))
     except (OSError, ValueError, TypeError) as error:
@@ -438,6 +624,40 @@ def capture_baseline(
             errors=(*captured.errors, detail),
         )
     return captured
+
+
+def _capture_stage_baseline(ctx: WorkflowContext, plan_ids: PlanIds) -> BaselineCapture:
+    """Capture T0 through ``_pinned_verify_substrate`` so managed runs never test the host."""
+    try:
+        with _pinned_verify_substrate(ctx) as substrate:
+            return capture_baseline(
+                ctx.artifact_paths.verify_baseline,
+                plan_ids,
+                root=ctx.workspace,
+                run_id=ctx.run_id,
+                deadline=ctx.deadline_mono,
+                execution=substrate,
+            )
+    except Exception as error:  # noqa: BLE001 -- Managed pin/profile failures fail closed with zero host subprocesses.
+        logger.warning(
+            "workflow verification T0 substrate failed (run=%s): %s",
+            ctx.run_id,
+            type(error).__name__,
+        )
+        code = getattr(error, "code", None)
+        code_tag = f"[{code}] " if isinstance(code, str) and code else ""
+        failed = BaselineCapture(
+            nodeids_by_slice={record.slice_id: None for record in plan_ids.slice_records},
+            errors=(f"T0 verify substrate failed ({type(error).__name__}): {code_tag}{error}",),
+        )
+        try:
+            _write_json_exclusive(
+                ctx.artifact_paths.verify_baseline,
+                _baseline_payload(run_id=ctx.run_id, plan_ids=plan_ids, capture=failed),
+            )
+        except (OSError, ValueError, TypeError):
+            pass
+        return failed
 
 
 def load_verify_baseline(path: Path, plan_ids: PlanIds, *, run_id: str) -> BaselineCapture:
@@ -1028,6 +1248,8 @@ def _stage_planner_dispatch(
         path = ctx.plan_path
         active = (path.relative_to(ctx.workspace.resolve()) if path.is_absolute() else path).as_posix()
     if dispatch is None:
+        if ctx.acquisition is not None and ctx.admission is None and active is None:
+            return PlannerDispatch(PlannerDispatchKind.ACQUISITION, ctx.run_id)
         return PlannerDispatch(PlannerDispatchKind.ORDINARY_PLANNING, ctx.run_id, active)
     if not isinstance(dispatch, PlannerDispatch) or dispatch.run_id != ctx.run_id or dispatch.active_plan != active:
         raise PlannerDispatchError
@@ -1133,9 +1355,14 @@ def _load_eval_independence(ctx: WorkflowContext) -> Mapping[str, object] | None
 
 
 def _scoped_stage_failed(dispatch: PlannerDispatch | None, sink: list[SessionOutcome]) -> bool:
-    if dispatch is None or dispatch.kind == PlannerDispatchKind.ORDINARY_PLANNING:
+    # Only candidate-owning stages (ADMISSION_REPAIR, EVAL_REPLAN) have a staged
+    # buffer whose write/pr_prepare fault invalidates the attempt. ACQUISITION
+    # runs before admission and must reach `_stage_acquisition_choice` when exit_code == 0.
+    if dispatch is None or not dispatch.owns_candidate:
         return False
-    return not sink or sink[-1].exit_code != 0 or "fs_write_file" in sink[-1].failed_tools
+    return (
+        not sink or sink[-1].exit_code != 0 or bool({"fs_write_file", "pr_prepare"}.intersection(sink[-1].failed_tools))
+    )
 
 
 def _announce_stage(ctx: WorkflowContext, role: str, progress: WorkflowProgress, transition_reason: str) -> None:
@@ -1164,13 +1391,44 @@ def _announce_stage(ctx: WorkflowContext, role: str, progress: WorkflowProgress,
         print("fa workflow: eval transition storage error: append-failed", file=sys.stderr)
 
 
+def _acquisition_stage_task(ctx: WorkflowContext, stage_task: str | None) -> str | None:
+    """Attach pinned project/incomplete lists to the initial acquisition task (Q145, Q151=A)."""
+    substrate = ctx.acquisition
+    if substrate is None:
+        return stage_task
+    projects_line = ", ".join(substrate.project_names) if substrate.project_names else "(none)"
+    incomplete_line = ", ".join(substrate.incomplete_names) if substrate.incomplete_names else "(none)"
+    lines = [
+        "Acquisition context (pinned read-only view):",
+        f"- Projects (SELECT_EXISTING): {projects_line}",
+        (
+            "- Incomplete (do NOT select or bootstrap over these slugs; "
+            f"return NEEDS_CLARIFICATION with MISSING_CONTEXT if targeted): {incomplete_line}"
+        ),
+        (
+            "- Before BOOTSTRAP_NEW_PROJECT, check with fs_search that worklogs/<project_slug>/ "
+            "does not already exist (empty or roadmap-less directories are omitted from Projects "
+            "and Incomplete, and authority installation fails with COLLISION over any existing directory)."
+        ),
+    ]
+    block = "\n".join(lines)
+    return f"{stage_task}\n\n{block}" if stage_task else block
+
+
 def _stage_task(
-    ctx: WorkflowContext, role: str, verification: PlanVerification | None, repair_round: int
+    ctx: WorkflowContext,
+    role: str,
+    verification: PlanVerification | None,
+    repair_round: int,
+    *,
+    dispatch: PlannerDispatch | None = None,
 ) -> str | None:
     # S13: the judge is handed the contract and the evidence. Eval only --
     # the coder and planner already have the plan by other means, and a diff
     # of the coder's own work is not input to writing it.
     stage_task = ctx.task_for(role)
+    if dispatch is not None and dispatch.kind is PlannerDispatchKind.ACQUISITION:
+        return _acquisition_stage_task(ctx, stage_task)
     if role == "eval":
         evidence = _eval_evidence_block(ctx, verification=verification, repair_round=repair_round)
         if evidence:
@@ -1194,6 +1452,27 @@ def _capture_managed_revision_boundary(ctx: WorkflowContext, role: str, *, after
     pair.target_revision_id = None
 
 
+def _consume_initial_planner_context(
+    ctx: WorkflowContext,
+    *,
+    role: str,
+    progress: WorkflowProgress,
+    dispatch: PlannerDispatch | None,
+) -> str:
+    """Release the one-shot parent chat snapshot strictly to the initial planner."""
+    if (
+        role != "planner"
+        or progress.repair_round != 0
+        or progress.replan_round != 0
+        or (dispatch is not None and dispatch.owns_candidate)
+        or not ctx.initial_planner_slot.text
+        or ctx.initial_planner_slot.consumed
+    ):
+        return ""
+    ctx.initial_planner_slot.consumed = True
+    return ctx.initial_planner_slot.text
+
+
 def _run_stage(
     ctx: WorkflowContext,
     role: str,
@@ -1204,6 +1483,7 @@ def _run_stage(
     run_stage_fn: Callable[..., int],
     prior_verification: PlanVerification | None = None,
     planner_dispatch: PlannerDispatch | None = None,
+    candidate_seed_text: str | None = None,
 ) -> StageResult:
     """Dispatch one role session and, for ``eval``, persist its report.
 
@@ -1231,7 +1511,10 @@ def _run_stage(
     progress = _admission_progress(ctx, progress)
 
     _announce_stage(ctx, role, progress, transition_reason)
-    stage_task = _stage_task(ctx, role, prior_verification, progress.repair_round)
+    stage_task = _stage_task(ctx, role, prior_verification, progress.repair_round, dispatch=dispatch)
+
+    stage_plan_ref = ctx.admission.snapshot.ref if ctx.admission is not None else ctx.managed_plan_ref
+    initial_planner_context = _consume_initial_planner_context(ctx, role=role, progress=progress, dispatch=dispatch)
 
     stage_kwargs: dict[str, object] = {
         "task_pos": None,
@@ -1255,7 +1538,24 @@ def _run_stage(
         # injection stays off here for a planner or eval stage.
         "injection_modes": resolve_injection_modes(role, overrides=ctx.inject_overrides),
         "_managed_execution": ctx.managed_execution,
-        "_managed_plan_ref": ctx.managed_plan_ref,
+        "_managed_plan_ref": stage_plan_ref,
+        **({"_initial_planner_context": initial_planner_context} if initial_planner_context else {}),
+        # S3P3: says "this stage owns a candidate", so the stage boundary opens
+        # the CANDIDATE view. Derived from the dispatch the controller already
+        # built, never from a role name, and from the dispatch's own positive fact
+        # rather than "kind is not ordinary": an ordinary planner stage owns no
+        # candidate, and neither does an ACQUISITION stage -- granting either one a
+        # buffer would be a capability nobody asked for, and (worse) it has no plan
+        # identity to label one with (CT120).
+        "_candidate_dispatch": dispatch is not None and dispatch.owns_candidate,
+        **(
+            {"_candidate_seed": (dispatch.candidate_target, candidate_seed_text)}
+            if dispatch is not None
+            and dispatch.owns_candidate
+            and dispatch.candidate_target is not None
+            and candidate_seed_text is not None
+            else {}
+        ),
     }
     if ctx.run_context is not None and ctx.session_context is not None:
         stage_kwargs.update(
@@ -1289,13 +1589,7 @@ def _run_stage(
     if role == "coder":
         plan_ids_for_stage, plan_read_error = _stage_plan(ctx)
         baseline_capture = (
-            capture_baseline(
-                ctx.artifact_paths.verify_baseline,
-                plan_ids_for_stage,
-                root=ctx.workspace,
-                run_id=ctx.run_id,
-                deadline=ctx.deadline_mono,
-            )
+            _capture_stage_baseline(ctx, plan_ids_for_stage)
             if _needs_baseline(ctx, progress)
             else load_verify_baseline(ctx.artifact_paths.verify_baseline, plan_ids_for_stage, run_id=ctx.run_id)
         )
@@ -1326,15 +1620,24 @@ def _run_stage(
     if role == "coder" and code == 0:
         plan_ids = plan_ids_for_stage or PlanIds()
         baseline = baseline_capture or BaselineCapture(nodeids_by_slice={})
-        now = _capture_nodeids_by_slice(plan_ids, root=ctx.workspace, deadline=ctx.deadline_mono)
+        # One substrate for the whole gate: the same pinned read view answers what the
+        # snapshot contains and where the commands run, so T1 and the comparison can
+        # never disagree about which tree they are talking about.
+        now: BaselineCapture | None = None
         try:
-            verification = verify_plan(
-                plan_ids,
-                root=ctx.workspace,
-                baseline_by_slice=baseline.nodeids_by_slice,
-                now_by_slice=now.nodeids_by_slice,
-                deadline=ctx.deadline_mono,
-            )
+            with _pinned_verify_substrate(ctx) as substrate:
+                now = _capture_nodeids_by_slice(
+                    plan_ids, root=ctx.workspace, deadline=ctx.deadline_mono, execution=substrate
+                )
+                verification = verify_plan(
+                    plan_ids,
+                    root=ctx.workspace,
+                    baseline_by_slice=baseline.nodeids_by_slice,
+                    now_by_slice=now.nodeids_by_slice,
+                    deadline=ctx.deadline_mono,
+                    executor=None if substrate is None else substrate.executor,
+                    port=None if substrate is None else substrate.port,
+                )
         except Exception as error:  # Uncertainty is a recorded ERROR, never a pass.
             logger.exception("workflow verification failed unexpectedly (run=%s)", ctx.run_id)
             verification = PlanVerification(
@@ -1347,7 +1650,7 @@ def _run_stage(
             for error in (
                 *((plan_read_error,) if plan_read_error else ()),
                 *baseline.errors,
-                *now.errors,
+                *(now.errors if now is not None else ()),
                 *_plan_integrity_errors(ctx),
             )
         )
@@ -1400,7 +1703,16 @@ def _run_stage(
             logger.warning("workflow eval-report: %s (run=%s)", _warning, ctx.run_id)
             print(f"fa workflow: {_warning}", file=sys.stderr)
         _write_stage_eval_report(ctx, report)
-    return StageResult(role=role, exit_code=code, eval_report=report, verification=verification)
+    acquisition_outcome, acquisition_refused = _stage_acquisition_choice(ctx, role, code, sink, dispatch=dispatch)
+    if acquisition_refused:
+        return StageResult(role=role, exit_code=2)
+    return StageResult(
+        role=role,
+        exit_code=code,
+        eval_report=report,
+        verification=verification,
+        acquisition=acquisition_outcome,
+    )
 
 
 def _deadline_exceeded(ctx: WorkflowContext) -> bool:
@@ -1793,36 +2105,78 @@ def _ensure_eval_after_coder(roles: list[str]) -> list[str]:
 # ── Pipeline modes ─────────────────────────────────────────────────────────
 
 
+@dataclass(frozen=True, slots=True)
+class _StageLoopResult:
+    """Outcome of running a sequence of workflow stages through the shared loop."""
+
+    ctx: WorkflowContext
+    exit_code: int
+    n_stages: int
+    last_role: str
+    eval_report: EvalReport | None
+    verification: PlanVerification | None
+
+
+def _run_role_loop(
+    ctx: WorkflowContext,
+    roles: Sequence[str],
+    run_stage_fn: Callable[..., int],
+    *,
+    progress: WorkflowProgress,
+    n_stages: int = 0,
+    eval_report: EvalReport | None = None,
+    verification: PlanVerification | None = None,
+    fresh_first: bool = True,
+    reason_prefix: str | None = None,
+) -> _StageLoopResult:
+    """Run one stage sequence through the single shared acquisition/failure loop.
+
+    All pipeline executions — linear pass, adaptive initial pass, and adaptive
+    repair/replan rounds — funnel through this loop so acquisition admission
+    binding, fail-fast state persistence, and coder→eval evidence handoff live
+    in one place (Q57 / S5P1 §7.0).
+    """
+    last_role = roles[0] if roles else "workflow"
+    total = len(roles)
+    for index, role in enumerate(roles):
+        n_stages += 1
+        last_role = role
+        if reason_prefix is None:
+            print(f"\nfa workflow ─ stage {index + 1}/{total}: {role}", file=sys.stderr)
+            transition_reason = f"dispatching stage {index + 1}/{total}"
+        else:
+            transition_reason = f"{reason_prefix}: canonical {role}"
+        result = _run_stage(
+            ctx,
+            role,
+            fresh=fresh_first and index == 0,
+            progress=progress,
+            transition_reason=transition_reason,
+            run_stage_fn=run_stage_fn,
+            prior_verification=verification,
+        )
+        if result.exit_code != 0:
+            _write_stage_failure_state(ctx, role, result.exit_code, progress=progress)
+            return _StageLoopResult(ctx, result.exit_code, n_stages, last_role, eval_report, verification)
+        if result.acquisition is not None:
+            ctx, blocked = _bind_acquisition_admission(ctx, result.acquisition)
+            if blocked is not None:
+                return _StageLoopResult(ctx, blocked, n_stages, last_role, eval_report, verification)
+        if role == "coder":
+            verification = result.verification
+        if result.eval_report is not None:
+            eval_report = result.eval_report
+    return _StageLoopResult(ctx, 0, n_stages, last_role, eval_report, verification)
+
+
 def _run_initial_roles(
     ctx: WorkflowContext,
     roles: list[str],
     run_stage_fn: Callable[..., int],
 ) -> tuple[int, int, EvalReport | None, PlanVerification | None]:
     """Run the configured initial role sequence, carrying facts from coder to eval."""
-    progress = WorkflowProgress()
-    eval_report: EvalReport | None = None
-    verification: PlanVerification | None = None
-    n_stages = 0
-    for index, role in enumerate(roles):
-        n_stages += 1
-        print(f"\nfa workflow ─ stage {index + 1}/{len(roles)}: {role}", file=sys.stderr)
-        result = _run_stage(
-            ctx,
-            role,
-            fresh=index == 0,
-            progress=progress,
-            transition_reason=f"dispatching stage {index + 1}/{len(roles)}",
-            run_stage_fn=run_stage_fn,
-            prior_verification=verification,
-        )
-        if result.exit_code != 0:
-            _write_stage_failure_state(ctx, role, result.exit_code, progress=progress)
-            return result.exit_code, n_stages, eval_report, verification
-        if role == "coder":
-            verification = result.verification
-        if result.eval_report is not None:
-            eval_report = result.eval_report
-    return 0, n_stages, eval_report, verification
+    loop = _run_role_loop(ctx, roles, run_stage_fn, progress=WorkflowProgress())
+    return loop.exit_code, loop.n_stages, loop.eval_report, loop.verification
 
 
 def _finish_adaptive(
@@ -1866,27 +2220,20 @@ def _dispatch_adaptive_round(
     eval_report: EvalReport,
     verification: PlanVerification | None,
     reason_prefix: str,
-) -> tuple[int, int, EvalReport, PlanVerification | None]:
+) -> tuple[WorkflowContext, int, int, EvalReport, PlanVerification | None]:
     """Run one canonical coder/eval or planner/coder/eval adaptive round."""
-    for role in stage_roles:
-        result = _run_stage(
-            ctx,
-            role,
-            fresh=False,
-            progress=progress,
-            transition_reason=f"{reason_prefix}: canonical {role}",
-            run_stage_fn=run_stage_fn,
-            prior_verification=verification,
-        )
-        n_stages += 1
-        if result.exit_code != 0:
-            _write_stage_failure_state(ctx, role, result.exit_code, progress=progress)
-            return result.exit_code, n_stages, eval_report, verification
-        if role == "coder":
-            verification = result.verification
-        if result.eval_report is not None:
-            eval_report = result.eval_report
-    return 0, n_stages, eval_report, verification
+    loop = _run_role_loop(
+        ctx,
+        stage_roles,
+        run_stage_fn,
+        progress=progress,
+        n_stages=n_stages,
+        eval_report=eval_report,
+        verification=verification,
+        fresh_first=False,
+        reason_prefix=reason_prefix,
+    )
+    return loop.ctx, loop.exit_code, loop.n_stages, loop.eval_report or eval_report, loop.verification
 
 
 def _run_adaptive_repair(
@@ -1900,7 +2247,7 @@ def _run_adaptive_repair(
     eval_report: EvalReport,
     verification: PlanVerification | None,
     route: RouteDecision,
-) -> tuple[bool, int, int, WorkflowProgress, EvalReport, PlanVerification | None]:
+) -> tuple[bool, int, WorkflowContext, int, WorkflowProgress, EvalReport, PlanVerification | None]:
     """Use one bounded repair round, or terminate when the existing cap is spent."""
     if progress.repair_round >= max_repairs:
         if verification is not None and verification.blocking and eval_report.route_decision == "complete":
@@ -1918,7 +2265,7 @@ def _run_adaptive_repair(
             route=route,
             reason=reason,
         )
-        return False, 0, n_stages, progress, eval_report, verification
+        return False, 0, ctx, n_stages, progress, eval_report, verification
 
     progress = WorkflowProgress(
         plan_version=progress.plan_version,
@@ -1929,7 +2276,7 @@ def _run_adaptive_repair(
         f"\nfa workflow ─ repair round {progress.repair_round}/{max_repairs} (adaptive route return_to_coder)",
         file=sys.stderr,
     )
-    code, n_stages, eval_report, verification = _dispatch_adaptive_round(
+    ctx, code, n_stages, eval_report, verification = _dispatch_adaptive_round(
         ctx,
         _canonical_loop_roles(roles, include_planner=False),
         run_stage_fn,
@@ -1939,7 +2286,7 @@ def _run_adaptive_repair(
         verification=verification,
         reason_prefix=f"repair round {progress.repair_round}: after return_to_coder",
     )
-    return code == 0, code, n_stages, progress, eval_report, verification
+    return code == 0, code, ctx, n_stages, progress, eval_report, verification
 
 
 def _run_adaptive_replan(
@@ -1953,7 +2300,7 @@ def _run_adaptive_replan(
     eval_report: EvalReport,
     verification: PlanVerification | None,
     route: RouteDecision,
-) -> tuple[bool, int, int, WorkflowProgress, EvalReport, PlanVerification | None]:
+) -> tuple[bool, int, WorkflowContext, int, WorkflowProgress, EvalReport, PlanVerification | None]:
     """Use one bounded planner round, or terminate if it cannot be honored."""
     if ctx.admission is not None:
         if not _admit_plan(
@@ -1963,9 +2310,9 @@ def _run_adaptive_replan(
             replan=True,
             reason=f"Eval requested {eval_report.route_decision}: {eval_report.summary}",
         ):
-            return False, _admission_exit_code(ctx), n_stages, progress, eval_report, verification
+            return False, _admission_exit_code(ctx), ctx, n_stages, progress, eval_report, verification
         progress = replace(progress, plan_version=progress.plan_version + 1, replan_round=ctx.admission.planner_calls)
-        code, n_stages, eval_report, verification = _dispatch_adaptive_round(
+        ctx, code, n_stages, eval_report, verification = _dispatch_adaptive_round(
             ctx,
             _canonical_loop_roles(roles, include_planner=False),
             run_stage_fn,
@@ -1975,7 +2322,7 @@ def _run_adaptive_replan(
             verification=verification,
             reason_prefix="admitted eval replan",
         )
-        return code == 0, code, n_stages, progress, eval_report, verification
+        return code == 0, code, ctx, n_stages, progress, eval_report, verification
     if "planner" not in roles:
         reason = (
             f"eval routed return_to_planner but no planner role is configured (roles={','.join(roles)}); cannot replan"
@@ -1988,7 +2335,7 @@ def _run_adaptive_replan(
             route=route,
             reason=reason,
         )
-        return False, 0, n_stages, progress, eval_report, verification
+        return False, 0, ctx, n_stages, progress, eval_report, verification
     if progress.replan_round >= max_replans:
         reason = f"replan budget exhausted ({progress.replan_round}/{max_replans}); last route return_to_planner"
         _finish_adaptive(
@@ -1999,7 +2346,7 @@ def _run_adaptive_replan(
             route=route,
             reason=reason,
         )
-        return False, 0, n_stages, progress, eval_report, verification
+        return False, 0, ctx, n_stages, progress, eval_report, verification
 
     progress = WorkflowProgress(
         plan_version=progress.plan_version + 1,
@@ -2010,7 +2357,7 @@ def _run_adaptive_replan(
         f"\nfa workflow ─ replan round {progress.replan_round}/{max_replans} (plan version {progress.plan_version})",
         file=sys.stderr,
     )
-    code, n_stages, eval_report, verification = _dispatch_adaptive_round(
+    ctx, code, n_stages, eval_report, verification = _dispatch_adaptive_round(
         ctx,
         _canonical_loop_roles(roles, include_planner=True),
         run_stage_fn,
@@ -2020,7 +2367,7 @@ def _run_adaptive_replan(
         verification=verification,
         reason_prefix=f"replan round {progress.replan_round}: after return_to_planner",
     )
-    return code == 0, code, n_stages, progress, eval_report, verification
+    return code == 0, code, ctx, n_stages, progress, eval_report, verification
 
 
 def _run_adaptive(
@@ -2031,9 +2378,13 @@ def _run_adaptive(
     run_stage_fn: Callable[..., int],
 ) -> int:
     """Run normalized roles, evaluate every coder attempt, then route on eval plus gate facts."""
-    code, n_stages, eval_report, verification = _run_initial_roles(ctx, roles, run_stage_fn)
-    if code != 0:
-        return code
+    loop = _run_role_loop(ctx, roles, run_stage_fn, progress=WorkflowProgress())
+    if loop.exit_code != 0:
+        return loop.exit_code
+    ctx = loop.ctx
+    n_stages = loop.n_stages
+    eval_report = loop.eval_report
+    verification = loop.verification
 
     progress = WorkflowProgress()
     eval_requested = "eval" in roles
@@ -2090,7 +2441,7 @@ def _run_adaptive(
                 reason=f"workflow blocked after eval: {detail}",
             )
         if route == "return_to_coder":
-            keep_going, code, n_stages, progress, eval_report, verification = _run_adaptive_repair(
+            keep_going, code, ctx, n_stages, progress, eval_report, verification = _run_adaptive_repair(
                 ctx,
                 roles,
                 max_repairs,
@@ -2105,7 +2456,7 @@ def _run_adaptive(
                 return code
             continue
         if route == "return_to_planner":
-            keep_going, code, n_stages, progress, eval_report, verification = _run_adaptive_replan(
+            keep_going, code, ctx, n_stages, progress, eval_report, verification = _run_adaptive_replan(
                 ctx,
                 roles,
                 max_replans,
@@ -2142,33 +2493,489 @@ def _run_adaptive(
         )
 
 
+@dataclass(frozen=True)
+class AcquisitionSubstrate:
+    """What one acquisition planner may read, and the names it may choose from.
+
+    Both halves come from the *same* pinned READ view: the port answers the reads the
+    planner performs with its own tools, and ``project_names`` / ``incomplete_names``
+    are the Q146 lists taken from that view. Handing the planner a port it can read
+    through but a name list from somewhere else would let it select a project the
+    view cannot resolve.
+    """
+
+    # The protocol, not `ClientWorkspacePort`: the resolver and the planner's tools
+    # need only these five operations, and a narrower type would force every test
+    # double to impersonate a client it never uses.
+    port: WorkspacePort
+    project_names: tuple[str, ...]
+    incomplete_names: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class AcquisitionSubstrateRequest:
+    """Ask `run_workflow` to pin its own acquisition view for this run.
+
+    A marker rather than a port: the caller cannot supply one, because a substrate
+    built before the child's HANDOFF would carry the parent's binding. The view must
+    be pinned inside the run, after that run's own binding exists.
+    """
+
+
+@contextmanager
+def _pinned_acquisition_substrate(ctx: WorkflowContext) -> Iterator[AcquisitionSubstrate | None]:
+    """Pin one READ view of the current revision for the acquisition planner.
+
+    ``plan_ref`` is deliberately ``None``: acquisition runs *before* any plan is
+    admitted, and ``ProtectedPlanContext.recheck`` treats a null ref as the ordinary
+    no-active-plan context rather than formal evidence. Passing a plan here would be
+    a claim about a target nobody has selected yet -- the same reasoning that makes
+    ``PlannerDispatchKind.ACQUISITION`` refuse an ``active_plan``.
+
+    ``None`` means "no substrate available" and the caller refuses the run with a
+    rule, never a host fallback: the host tree is not the revision the authority
+    will later admit a plan from, so choosing against it would admit a coder to a
+    plan the pinned view cannot resolve.
+    """
+    managed = ctx.managed_execution
+    if managed is None:
+        yield None
+        return
+    deadline = ctx.deadline_mono if ctx.deadline_mono is not None else time.monotonic() + 30.0
+    try:
+        grant = managed.client.pin_reader(
+            managed.binding,
+            revision_id=managed.current_revision_id,
+            plan_ref=None,
+            deadline=deadline,
+        )
+    except (ExecutionRejectedError, ExecutionUnavailableError, ExecutionUncertainError) as error:
+        logger.warning(
+            "managed acquisition unavailable: the authority refused the read pin [%s] (run=%s)",
+            getattr(error, "code", type(error).__name__),
+            ctx.run_id,
+        )
+        yield None
+        return
+    view = grant.view_ref
+    if (
+        grant.operation is not Operation.PIN_READER
+        or view is None
+        or view.access is not Access.READ
+        or view.purpose is not ViewPurpose.PROJECT
+        or view.owner_run_id != managed.binding.namespace.run_id
+    ):
+        # A grant that is not the one asked for is a contract violation, not a
+        # degraded case: continuing would read a view this run does not own.
+        raise ExecutionContractError
+    port = ClientWorkspacePort(
+        managed.client,
+        namespace=managed.binding.namespace,
+        view=view,
+        grant=grant,
+        cache_dir=ctx.workspace / ".fa" / "acquisition-read-cache",
+    )
+    try:
+        try:
+            listed = port.list_project_names()
+        except WorkspacePortError as error:
+            # A failed listing is not evidence that the pinned workspace is empty.
+            # Refuse acquisition before the planner can select/bootstrap from a
+            # fabricated empty inventory; the pinned view is still stopped below.
+            logger.warning("managed acquisition: project list refused [%s] (run=%s)", error.code, ctx.run_id)
+            yield None
+            return
+        yield AcquisitionSubstrate(
+            port=port,
+            project_names=listed.projects,
+            incomplete_names=listed.incomplete,
+        )
+    finally:
+        if not managed.client.stop_view(managed.binding.namespace, view=view, grant=grant, deadline=deadline):
+            logger.error(
+                "acquisition read-only view did not become terminal (run=%s view=%s)", ctx.run_id, view.view_id
+            )
+
+
+def _stage_acquisition_choice(
+    ctx: WorkflowContext,
+    role: str,
+    code: int,
+    sink: list[SessionOutcome],
+    *,
+    dispatch: PlannerDispatch | None = None,
+) -> tuple[AcquisitionOutcome | None, bool]:
+    """Read the acquisition choice on the one stage entitled to make it.
+
+    Extracted from ``_run_stage``: that function is at its complexity ceiling, and
+    this is a self-contained decision with its own failure contract. A malformed or
+    absent choice is a closed refusal reported on stderr, never an exception
+    escaping a stage dispatcher.
+    """
+    if (
+        role != "planner"
+        or code != 0
+        or ctx.acquisition is None
+        or ctx.admission is not None
+        or (dispatch is not None and dispatch.owns_candidate)
+    ):
+        return None, False
+    try:
+        return _read_acquisition_choice(sink, ctx.acquisition), False
+    except AcquisitionChoiceError as error:
+        print(f"fa workflow: acquisition choice refused: {error.rule}", file=sys.stderr)
+        severity = "FAIL" if error.validator == "bootstrap" else "ERROR"
+        outcome = "DIAGNOSTICS" if error.validator == "bootstrap" else "INDETERMINATE"
+        _blocked_plan_request(
+            run_id=ctx.run_id,
+            task=ctx.base_task,
+            rule=error.rule,
+            base_dir=ctx.artifact_paths.base_dir,
+            deadline=ctx.deadline_mono,
+            managed_binding=ctx.admission_binding,
+            attempt_kind="ACQUISITION" if ctx.admission_binding is not None else "EXPLICIT_INPUT",
+            v2_diagnostic=(error.validator, error.rule, severity, outcome, None),
+        )
+        return None, True
+
+
+def _read_acquisition_choice(sink: list[SessionOutcome], substrate: AcquisitionSubstrate) -> AcquisitionOutcome:
+    """Turn the acquisition planner's final message into the prelude's outcome.
+
+    The channel is the one eval already uses (``_run_stage`` passes ``outcome_sink``
+    for every role and ``_cmd_run`` appends the terminal outcome), so the choice
+    arrives on a production path rather than a test-only hook.
+
+    Absence is an error, not an empty choice: a planner that stopped without one
+    settled message has not selected anything, and defaulting here would submit a
+    plan nobody chose.
+    """
+    if not sink:
+        raise AcquisitionChoiceError("selection", "choice-missing")
+    choice = parse_acquisition_choice(sink[-1].final_text or "")
+    return resolve_acquisition_choice(
+        choice,
+        inventory_view=substrate.port,
+        inventory_slugs=substrate.project_names,
+    )
+
+
+def _refusal_exit_code(
+    ctx: WorkflowContext,
+    refusal: PlanRefError,
+    *,
+    failure_detail: _BootstrapFailure | None = None,
+) -> int:
+    """Record a bootstrap refusal the same way every other closed refusal is."""
+    v2_diag = (
+        (
+            failure_detail.validator,
+            failure_detail.rule,
+            failure_detail.severity,
+            failure_detail.validation,
+            failure_detail.operation_id,
+        )
+        if failure_detail is not None
+        else None
+    )
+    return _blocked_plan_request(
+        run_id=ctx.run_id,
+        task=ctx.base_task,
+        rule=refusal.rule,
+        base_dir=ctx.artifact_paths.base_dir,
+        deadline=ctx.deadline_mono,
+        managed_binding=ctx.admission_binding,
+        attempt_kind="ACQUISITION" if ctx.admission_binding is not None else "EXPLICIT_INPUT",
+        v2_diagnostic=v2_diag,
+        candidate_sha256=None if failure_detail is None else failure_detail.candidate_sha256,
+        bundle_sha256=None if failure_detail is None else failure_detail.bundle_sha256,
+    )[0]
+
+
+def _rendered_increment_sha256(choice: BootstrapNewProjectChoice) -> str | None:
+    """Compute the rendered increment digest to preserve post-prepare bootstrap evidence."""
+    try:
+        files = render_bundle(
+            choice.project_slug,
+            choice.increment_slug,
+            choice.roadmap_body,
+            choice.increment_body,
+            created=datetime.now(UTC).date().isoformat(),
+        )
+    except Exception:  # noqa: BLE001 - schema stays closed even if local render cannot repeat server rules
+        return None
+    path = f"worklogs/{choice.project_slug}/increments/increment-01-{choice.increment_slug}.md"
+    payload = files.get(path)
+    return None if payload is None else hashlib.sha256(payload).hexdigest()
+
+
+_BOOTSTRAP_REJECTED_DIAGNOSTICS: dict[str, tuple[str, str, str, str]] = {
+    "COLLISION": ("bootstrap", "collision", "FAIL", "DIAGNOSTICS"),
+    "INPUT_POLICY": ("bootstrap", "invalid-grammar", "FAIL", "DIAGNOSTICS"),
+    "STALE_REVISION": ("workspace", "stale-revision", "ERROR", "INDETERMINATE"),
+    "STALE_GENERATION": ("workspace", "stale-generation", "ERROR", "INDETERMINATE"),
+    "WORKSPACE_BUSY": ("workspace", "busy", "ERROR", "INDETERMINATE"),
+    "QUARANTINED": ("workspace", "quarantined", "ERROR", "INDETERMINATE"),
+}
+
+
+def _valid_v2_operation_id(raw: object) -> str | None:
+    if isinstance(raw, str) and _V2_OP_ID_RE.fullmatch(raw) is not None:
+        return raw
+    return None
+
+
+def _classify_bootstrap_exception(error: Exception, *, phase: str) -> _BootstrapFailure:
+    if isinstance(error, ExecutionUncertainError):
+        op_id = _valid_v2_operation_id(getattr(error, "operation_id", None)) if phase == "install" else None
+        if getattr(error, "code", None) == "TERMINALITY_UNKNOWN":
+            return _BootstrapFailure("workspace", "terminality-unknown", "ERROR", "INDETERMINATE", op_id)
+        return _BootstrapFailure("bootstrap", "durability-unknown", "ERROR", "INDETERMINATE", op_id)
+    if isinstance(error, ExecutionUnavailableError):
+        return _BootstrapFailure("workspace", "backend-unavailable", "ERROR", "INDETERMINATE")
+    code = str(getattr(error, "code", ""))
+    mapped = _BOOTSTRAP_REJECTED_DIAGNOSTICS.get(code)
+    if mapped is not None:
+        return _BootstrapFailure(*mapped)
+    fallback = "prepare-failed" if phase == "prepare" else "install-failed"
+    return _BootstrapFailure("bootstrap", fallback, "FAIL", "DIAGNOSTICS")
+
+
+def _install_bootstrap_project_with_detail(
+    ctx: WorkflowContext, choice: BootstrapNewProjectChoice
+) -> tuple[WorkflowContext, PlanRefError | None, _BootstrapFailure | None]:
+    """Render, install and read back a new project; preserve structured v2 detail."""
+    managed = ctx.managed_execution
+    if managed is None:
+        return (
+            ctx,
+            PlanRefError("bootstrap-unavailable"),
+            _BootstrapFailure("bootstrap", "unavailable", "ERROR", "INDETERMINATE"),
+        )
+    deadline = ctx.deadline_mono if ctx.deadline_mono is not None else time.monotonic() + 30.0
+    input_revision = managed.current_revision_id
+    try:
+        prepared = managed.client.prepare_bundle(
+            managed.binding,
+            grant=managed.grant,
+            project_slug=choice.project_slug,
+            increment_slug=choice.increment_slug,
+            roadmap_text=choice.roadmap_body,
+            increment_text=choice.increment_body,
+            expected_base_revision=input_revision,
+            deadline=deadline,
+        )
+    except (ExecutionRejectedError, ExecutionUncertainError, ExecutionUnavailableError) as error:
+        logger.warning(
+            "bootstrap prepare failed [%s] (run=%s)", getattr(error, "code", type(error).__name__), ctx.run_id
+        )
+        return ctx, PlanRefError("bootstrap-refused"), _classify_bootstrap_exception(error, phase="prepare")
+    try:
+        receipt = managed.client.install_project(
+            managed.binding,
+            grant=managed.grant,
+            validated_bundle_id=prepared.validated_bundle_id,
+            project_slug=choice.project_slug,
+            deadline=deadline,
+        )
+    except (ExecutionRejectedError, ExecutionUncertainError, ExecutionUnavailableError) as error:
+        logger.warning(
+            "bootstrap install failed [%s] (run=%s)", getattr(error, "code", type(error).__name__), ctx.run_id
+        )
+        detail = _classify_bootstrap_exception(error, phase="install")
+        cand_sha = _rendered_increment_sha256(choice)
+        if cand_sha is not None:
+            detail = replace(detail, candidate_sha256=cand_sha, bundle_sha256=prepared.bundle_sha256)
+        elif detail.operation_id is not None:
+            detail = replace(detail, operation_id=None)
+        return ctx, PlanRefError("bootstrap-refused"), detail
+    # The install committed a NEW revision; the plan lives in that one, not in the
+    # revision the acquisition view was pinned to.
+    managed.current_revision_id = receipt.revision_id
+    bootstrap_receipt = _BootstrapReceipt(
+        bundle_sha256=prepared.bundle_sha256,
+        input_revision=input_revision,
+        output_revision=receipt.revision_id,
+        operation_id=receipt.operation_id,
+    )
+    bound, refusal = _admit_installed_plan(ctx, choice, bootstrap_receipt=bootstrap_receipt)
+    if refusal is not None:
+        cand_sha = _rendered_increment_sha256(choice)
+        detail = _BootstrapFailure(
+            "bootstrap",
+            "install-failed",
+            "ERROR",
+            "INDETERMINATE",
+            operation_id=_valid_v2_operation_id(receipt.operation_id) if cand_sha is not None else None,
+            candidate_sha256=cand_sha,
+            bundle_sha256=prepared.bundle_sha256 if cand_sha is not None else None,
+        )
+        return bound, refusal, detail
+    return bound, None, None
+
+
+def _install_bootstrap_project(
+    ctx: WorkflowContext, choice: BootstrapNewProjectChoice
+) -> tuple[WorkflowContext, PlanRefError | None]:
+    """Render, install and read back a new project; return the context and a refusal.
+
+    The order is the authority's, not a preference (§7.1): render into a bundle,
+    install the bundle as one irreversible commit, and only then read the installed
+    increment back through a **fresh pin of the new revision**. Admitting the prose
+    the model sent would admit a coder against text that is not in the workspace,
+    which is why `resolve_acquisition_choice` refuses to fabricate a snapshot for a
+    bootstrap choice in the first place.
+
+    Nothing here is a second writer: `prepare_bundle` and `install_project` are
+    OWNER-gated authority operations, and the plan is admitted from bytes the
+    pinned view returns afterwards.
+    """
+    bound, refusal, _detail = _install_bootstrap_project_with_detail(ctx, choice)
+    return bound, refusal
+
+
+def _admit_installed_plan(
+    ctx: WorkflowContext,
+    choice: BootstrapNewProjectChoice,
+    *,
+    bootstrap_receipt: _BootstrapReceipt | None = None,
+) -> tuple[WorkflowContext, PlanRefError | None]:
+    """Read the installed increment through a fresh pin and bind it as the plan."""
+    managed = ctx.managed_execution
+    if managed is None:  # pragma: no cover - the caller proved this already
+        return ctx, PlanRefError("bootstrap-unavailable")
+    with _pinned_acquisition_substrate(ctx) as substrate:
+        if substrate is None:
+            return ctx, PlanRefError("bootstrap-unreadable")
+        path = f"worklogs/{choice.project_slug}/increments/increment-01-{choice.increment_slug}.md"
+        try:
+            read = substrate.port.read_file(path)
+        except WorkspacePortError:
+            # The tree the authority proved does not contain the file this
+            # controller asked for: a mismatch to report, never a host fallback.
+            return ctx, PlanRefError("bootstrap-unreadable")
+        snapshot = snapshot_from_bytes(path, read.content.encode("utf-8"), source_kind="BOOTSTRAP")
+    bound = replace(
+        ctx,
+        admission=_WorkflowAdmission(
+            snapshot,
+            True,
+            ctx.replans_allowed,
+            snapshot_backed=True,
+            from_acquisition=True,
+            bootstrap_receipt=bootstrap_receipt,
+        ),
+        managed_plan_ref=snapshot.ref,
+        plan_path=ctx.plan_path or ctx.workspace / snapshot.ref.workspace_relative_path,
+        acquisition=None,
+    )
+    try:
+        _record_admission_attempt(
+            ctx.artifact_paths,
+            run_id=ctx.run_id,
+            plan_ref=snapshot.ref,
+            attempt=None,
+            status="ACQUIRING",
+            deadline=ctx.deadline_mono,
+            managed_binding=bound.admission_binding,
+        )
+    except (OSError, ValueError) as error:
+        _admission_storage_failure(bound, error)
+        return bound, None
+    return bound, None
+
+
+_CLARIFICATION_V2_RULES: dict[str, str] = {
+    "AMBIGUOUS_PROJECT": "ambiguous-project",
+    "UNKNOWN_INCREMENT": "unknown-increment",
+    "MISSING_CONTEXT": "needs-clarification",
+}
+
+
+def _bind_acquisition_admission(
+    ctx: WorkflowContext, outcome: AcquisitionOutcome
+) -> tuple[WorkflowContext, int | None]:
+    """Bind the admitted plan after the acquisition planner, or stop the run.
+
+    Returns ``(context, None)`` when the run may continue, or ``(context, code)``
+    when it may not. The context is immutable, so a binding returns a *new* one
+    rather than mutating the run: a frozen context that could be edited mid-run
+    would be a second source of truth for what the coder is bound to.
+
+    The three non-snapshot outcomes are distinct operator facts, not one generic
+    failure: a clarification needs another question, a bootstrap needs the
+    authority to render and install a project, and an unusable choice needs a
+    retry -- so each is recorded under its own rule.
+    """
+    if outcome.snapshot is None:
+        if outcome.bootstrap is not None:
+            # §7.1 bootstrap: render → install → fresh pin → read back → admit. The
+            # snapshot is the INSTALLED plan, never the prose that requested it.
+            installed, refusal, failure_detail = _install_bootstrap_project_with_detail(ctx, outcome.bootstrap)
+            return installed, (
+                None if refusal is None else _refusal_exit_code(installed, refusal, failure_detail=failure_detail)
+            )
+        if outcome.clarification is not None:
+            rule = f"clarification/{outcome.clarification.reason.lower().replace('_', '-')}"
+            v2_rule = _CLARIFICATION_V2_RULES.get(outcome.clarification.reason, "needs-clarification")
+            v2_diag: tuple[str, str, str, str, str | None] = ("selection", v2_rule, "ERROR", "INDETERMINATE", None)
+        else:  # pragma: no cover - AcquisitionOutcome forbids the shape
+            rule = "acquisition-unresolved"
+            v2_diag = ("selection", "needs-clarification", "ERROR", "INDETERMINATE", None)
+        return ctx, _blocked_plan_request(
+            run_id=ctx.run_id,
+            task=ctx.base_task,
+            rule=rule,
+            base_dir=ctx.artifact_paths.base_dir,
+            deadline=ctx.deadline_mono,
+            managed_binding=ctx.admission_binding,
+            attempt_kind="ACQUISITION" if ctx.admission_binding is not None else "EXPLICIT_INPUT",
+            v2_diagnostic=v2_diag,
+        )[0]
+
+    snapshot = outcome.snapshot
+    # A coder-bearing run always has a planner (the role list was validated at
+    # entry), so the shared planner budget is allowed from here on.
+    bound = replace(
+        ctx,
+        admission=_WorkflowAdmission(
+            snapshot,
+            True,
+            ctx.replans_allowed,
+            snapshot_backed=True,
+            from_acquisition=True,
+        ),
+        managed_plan_ref=snapshot.ref,
+        plan_path=ctx.plan_path or ctx.workspace / snapshot.ref.workspace_relative_path,
+        acquisition=None,
+    )
+    try:
+        _record_admission_attempt(
+            ctx.artifact_paths,
+            run_id=ctx.run_id,
+            plan_ref=snapshot.ref,
+            attempt=None,
+            status="ACQUIRING",
+            deadline=ctx.deadline_mono,
+            managed_binding=bound.admission_binding,
+        )
+    except (OSError, ValueError) as error:
+        _admission_storage_failure(bound, error)
+        return bound, _admission_exit_code(bound)
+    return bound, None
+
+
 def _run_linear(ctx: WorkflowContext, roles: list[str], run_stage_fn: Callable[..., int]) -> int:
     """Run every role once, evaluating after coder and enforcing verifier facts afterward."""
-    eval_report: EvalReport | None = None
-    verification: PlanVerification | None = None
     progress = WorkflowProgress()
-    n_stages = 0
-    last_role = roles[0]
-    for index, role in enumerate(roles):
-        n_stages += 1
-        last_role = role
-        print(f"\nfa workflow ─ stage {index + 1}/{len(roles)}: {role}", file=sys.stderr)
-        result = _run_stage(
-            ctx,
-            role,
-            fresh=index == 0,
-            progress=progress,
-            transition_reason=f"dispatching stage {index + 1}/{len(roles)}",
-            run_stage_fn=run_stage_fn,
-            prior_verification=verification,
-        )
-        if result.exit_code != 0:
-            _write_stage_failure_state(ctx, role, result.exit_code, progress=progress)
-            return result.exit_code
-        if role == "coder":
-            verification = result.verification
-        if result.eval_report is not None:
-            eval_report = result.eval_report
+    loop = _run_role_loop(ctx, roles, run_stage_fn, progress=progress)
+    if loop.exit_code != 0:
+        return loop.exit_code
+    ctx = loop.ctx
+    n_stages = loop.n_stages
+    last_role = loop.last_role
+    eval_report = loop.eval_report
+    verification = loop.verification
 
     route = _effective_controller_route(
         eval_report,
@@ -2306,6 +3113,111 @@ def _require_managed_publisher(ctx: WorkflowContext) -> CandidatePlanPublisher:
     return publisher
 
 
+_V2_RUN_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}")
+_V2_WORKSPACE_ID_RE = re.compile(r"ws-[0-9a-f]{32}")
+_V2_REVISION_ID_RE = re.compile(r"rev-[0-9a-f]{32}")
+_V2_OP_ID_RE = re.compile(r"op-[0-9a-f]{32}")
+
+
+def _managed_admission_binding(managed: ManagedExecution | None, *, run_id: str) -> ManagedAdmissionBinding | None:
+    """Build immutable v2 binding strictly for managed-child runs (Q150 = A).
+
+    Returns ``None`` for unmanaged runs, top-level runs where ``owner_run_id == run_id``,
+    and partial test doubles that omit authority identity fields, keeping v1 exact.
+    """
+    if managed is None:
+        return None
+    workspace_id = getattr(getattr(managed, "binding", None), "workspace_id", None)
+    owner_run_id = getattr(managed, "root_owner_run_id", None)
+    generation = getattr(getattr(managed, "grant", None), "generation", None)
+    base_revision = getattr(managed, "current_revision_id", None)
+    if (
+        not isinstance(workspace_id, str)
+        or _V2_WORKSPACE_ID_RE.fullmatch(workspace_id) is None
+        or not isinstance(owner_run_id, str)
+        or _V2_RUN_ID_RE.fullmatch(owner_run_id) is None
+        or owner_run_id == run_id
+        or type(generation) is not int
+        or generation < 1
+        or not isinstance(base_revision, str)
+        or _V2_REVISION_ID_RE.fullmatch(base_revision) is None
+    ):
+        return None
+    return ManagedAdmissionBinding(
+        workspace_id=workspace_id,
+        owner_run_id=owner_run_id,
+        generation=generation,
+        base_revision=base_revision,
+    )
+
+
+def _current_managed_revision(ctx: WorkflowContext) -> str | None:
+    if ctx.admission_binding is None or ctx.managed_execution is None:
+        return None
+    rev = getattr(ctx.managed_execution, "current_revision_id", None)
+    if isinstance(rev, str) and _V2_REVISION_ID_RE.fullmatch(rev) is not None:
+        return rev
+    return ctx.admission_binding.base_revision
+
+
+@dataclass(frozen=True, slots=True)
+class _PromotionReceipt:
+    """Promoted plan snapshot plus authority revision/operation receipt when available."""
+
+    snapshot: PlanSnapshot
+    revision_id: str | None = None
+    operation_id: str | None = None
+
+
+@runtime_checkable
+class _ReceiptCandidatePublisher(Protocol):
+    def publish_candidate_receipt(
+        self, source: PlanSnapshot, candidate: PlanSnapshot, *, deadline: float | None = None
+    ) -> Any: ...
+
+
+def _promote_validated_plan_receipt(
+    source: PlanSnapshot,
+    validated: _PlanAdmissionValidation,
+    *,
+    publisher: CandidatePlanPublisher,
+    deadline: float | None = None,
+) -> _PromotionReceipt:
+    """Publish validated bytes through the injected candidate port and retain receipts."""
+    if validated.outcome != "PASS":
+        raise PlanPromotionError("prepare-failed")
+    try:
+        if isinstance(publisher, _ReceiptCandidatePublisher):
+            publication = publisher.publish_candidate_receipt(source, validated.snapshot, deadline=deadline)
+            ref = publication.plan_ref
+            rev_id = getattr(publication, "revision_id", None)
+            op_id = _valid_v2_operation_id(getattr(publication, "operation_id", None))
+        else:
+            ref = publisher.publish_candidate(source, validated.snapshot, deadline=deadline)
+            rev_id = None
+            op_id = None
+    except PlanPromotionError:
+        raise
+    except Exception as error:  # sanitize transport/backend details into the admission schema's closed vocabulary
+        code = getattr(error, "code", None)
+        uncertain = code in {"DURABILITY_UNKNOWN", "CORRUPT_STATE", "EXECUTION_UNKNOWN", "TERMINALITY_UNKNOWN"}
+        rule = "durability-unknown" if uncertain else "prepare-failed"
+        op_id = _valid_v2_operation_id(getattr(error, "operation_id", None)) if uncertain else None
+        raise PlanPromotionError(rule, replaced=uncertain, operation_id=op_id) from error
+    expected = PlanRef(
+        source.ref.workspace_relative_path,
+        source.ref.source_kind,
+        validated.snapshot.ref.sha256,
+    )
+    if ref != expected:
+        raise PlanPromotionError("hash-mismatch", replaced=True)
+    return _PromotionReceipt(
+        snapshot=replace(validated.snapshot, ref=ref),
+        revision_id=rev_id if isinstance(rev_id, str) else None,
+        operation_id=op_id,
+    )
+
+
 def _promote_validated_plan(
     source: PlanSnapshot,
     validated: _PlanAdmissionValidation,
@@ -2319,25 +3231,12 @@ def _promote_validated_plan(
     the port it proved it has (``_require_managed_publisher``), so a missing
     authority is refused before any repair is dispatched.
     """
-    if validated.outcome != "PASS":
-        raise PlanPromotionError("prepare-failed")
-    try:
-        ref = publisher.publish_candidate(source, validated.snapshot, deadline=deadline)
-    except PlanPromotionError:
-        raise
-    except Exception as error:  # sanitize transport/backend details into the admission schema's closed vocabulary
-        code = getattr(error, "code", None)
-        uncertain = code in {"DURABILITY_UNKNOWN", "CORRUPT_STATE", "EXECUTION_UNKNOWN", "TERMINALITY_UNKNOWN"}
-        rule = "durability-unknown" if uncertain else "prepare-failed"
-        raise PlanPromotionError(rule, replaced=uncertain) from error
-    expected = PlanRef(
-        source.ref.workspace_relative_path,
-        source.ref.source_kind,
-        validated.snapshot.ref.sha256,
-    )
-    if ref != expected:
-        raise PlanPromotionError("hash-mismatch", replaced=True)
-    return replace(validated.snapshot, ref=ref)
+    return _promote_validated_plan_receipt(
+        source,
+        validated,
+        publisher=publisher,
+        deadline=deadline,
+    ).snapshot
 
 
 def _admission_progress(ctx: WorkflowContext, progress: WorkflowProgress) -> WorkflowProgress:
@@ -2388,6 +3287,17 @@ def _admission_storage_failure(ctx: WorkflowContext, error: OSError | ValueError
     _admission_failed(ctx, f"artifact-io/{rule}")
 
 
+def _v2_attempt_diagnostics(
+    diagnostics: tuple[_AdmissionDiagnostic, ...], *, kind: str, route: str, ref: PlanRef | None
+) -> list[dict[str, Any]]:
+    if kind == "ACQUISITION" and ref is not None and ref.source_kind == "EXISTING_SELECTION" and route == "RETRY":
+        # v2 EXISTING_SELECTION RETRY accepts only FAIL diagnostics in the pre-coder set.
+        filtered = [item for item in diagnostics if item.severity == "FAIL"]
+        if filtered:
+            return [asdict(item) for item in filtered]
+    return [asdict(item) for item in diagnostics]
+
+
 def _admission_attempt(
     ctx: WorkflowContext,
     validation: _PlanAdmissionValidation,
@@ -2396,38 +3306,93 @@ def _admission_attempt(
     route: str,
     candidate: bool = False,
     promoted: PlanSnapshot | None = None,
+    input_revision: str | None = None,
+    output_revision: str | None = None,
+    operation_id: str | None = None,
+    bundle_sha256: str | None = None,
+    plan_ref_override: PlanRef | None = None,
+    clear_plan_ref: bool = False,
 ) -> None:
     state = ctx.admission
     if state is None:
         raise RuntimeError("admission authority absent")
+    plan_ref = None if clear_plan_ref else (plan_ref_override or (promoted or state.snapshot).ref)
+    diagnostics = (
+        _v2_attempt_diagnostics(validation.diagnostics, kind=kind, route=route, ref=plan_ref)
+        if ctx.admission_binding is not None
+        else [asdict(item) for item in validation.diagnostics]
+    )
+    attempt: dict[str, object] = {
+        "dispatch_kind": kind,
+        "validation": validation.outcome,
+        "diagnostics": diagnostics,
+        "source_sha256": None if bundle_sha256 is not None else state.snapshot.ref.sha256,
+        "candidate_sha256": validation.snapshot.ref.sha256 if candidate else None,
+        "promoted_sha256": promoted.ref.sha256 if promoted is not None else None,
+        "route": route,
+    }
+    if ctx.admission_binding is not None:
+        resolved_in = input_revision or _current_managed_revision(ctx) or ctx.admission_binding.base_revision
+        resolved_out = (
+            output_revision if clear_plan_ref or operation_id is not None else (output_revision or resolved_in)
+        )
+        attempt.update(
+            {
+                "input_revision": resolved_in,
+                "output_revision": resolved_out,
+                "operation_id": operation_id,
+                "bundle_sha256": bundle_sha256,
+            }
+        )
     _record_admission_attempt(
         ctx.artifact_paths,
         run_id=ctx.run_id,
-        plan_ref=(promoted or state.snapshot).ref,
-        attempt={
-            "dispatch_kind": kind,
-            "validation": validation.outcome,
-            "diagnostics": [asdict(item) for item in validation.diagnostics],
-            "source_sha256": state.snapshot.ref.sha256,
-            "candidate_sha256": validation.snapshot.ref.sha256 if candidate else None,
-            "promoted_sha256": promoted.ref.sha256 if promoted is not None else None,
-            "route": route,
-        },
+        plan_ref=plan_ref,
+        attempt=attempt,
         status={"RETRY": "ACQUIRING", "ADMITTED": "ADMITTED", "BLOCKED": "BLOCKED"}[route],
         deadline=ctx.deadline_mono,
+        managed_binding=ctx.admission_binding,
     )
 
 
 def _check_admission_source(ctx: WorkflowContext) -> None:
+    """Re-verify the admitted plan against the substrate that actually holds it.
+
+    Two substrates, one rule: the digest recorded at admission must still describe
+    the bytes this run is bound to.
+
+    * host mode -- the plan is a file under the workspace, so re-read it and
+      compare. This is the original behaviour and stays byte-for-byte.
+    * snapshot mode -- the plan arrived as bytes from a pinned view, so there is
+      no host copy and reading one would judge a different tree (the defect R24
+      removed for the verify gate). The bytes are in the admission record's own
+      snapshot, and re-hashing them is the check that they were not replaced
+      after validation.
+    """
     if ctx.admission is None:
         raise RuntimeError("admission authority absent")
     source = ctx.admission.snapshot
+    if ctx.admission.snapshot_backed:
+        if hashlib.sha256(source.utf8_bytes).hexdigest() != source.ref.sha256:
+            raise PlanRefError("source-changed")
+        return
     actual = read_plan_snapshot(ctx.workspace, Path(source.ref.workspace_relative_path))
     if actual.ref.sha256 != source.ref.sha256:
         raise PlanRefError("source-changed")
 
 
-def _run_admission_repair(
+@dataclass(frozen=True, slots=True)
+class _RepairPromotionOutcome:
+    """Repair validation plus authority publication receipts when promoted."""
+
+    validation: _PlanAdmissionValidation
+    promoted: PlanSnapshot | None
+    input_revision: str | None = None
+    output_revision: str | None = None
+    operation_id: str | None = None
+
+
+def _run_admission_repair_with_receipt(
     ctx: WorkflowContext,
     progress: WorkflowProgress,
     run_stage_fn: Callable[..., int],
@@ -2437,17 +3402,23 @@ def _run_admission_repair(
     publisher: CandidatePlanPublisher,
     diagnostics: tuple[_AdmissionDiagnostic, ...] = (),
     reason: str = "",
-) -> tuple[_PlanAdmissionValidation, PlanSnapshot | None]:
+) -> _RepairPromotionOutcome:
     """One reserved planner attempt; own its target through cleanup, then use only bytes."""
     if ctx.admission is None:
         raise RuntimeError("admission authority absent")
     source = ctx.admission.snapshot
     ctx.admission.candidate = None
     _check_admission_source(ctx)
+    # The captured bytes describe ONE stage. Clearing here -- before the stage is
+    # dispatched, not only when this round first runs -- is what keeps a second
+    # repair round from validating the previous round's candidate, which would
+    # silently promote bytes nobody wrote this time.
+    reset_stage_candidate()
     dispatch = seed_plan_candidate(ctx.workspace, source, run_id=ctx.run_id, kind=kind, draft=draft)
     if dispatch.candidate_target is None:
         raise PlannerDispatchError
     target = Path(dispatch.candidate_target)
+    seed_text = (source.utf8_bytes if draft is None else draft.utf8_bytes).decode("utf-8")
     try:
         role_tasks = dict(ctx.per_role_task)
         role_tasks["planner"] = (
@@ -2466,12 +3437,13 @@ def _run_admission_repair(
                 transition_reason=f"{kind.value} candidate revision",
                 run_stage_fn=run_stage_fn,
                 planner_dispatch=dispatch,
+                candidate_seed_text=seed_text,
             )
         except Exception as error:
             raise PlanPromotionError("prepare-failed") from error
         if result.exit_code != 0:
             raise PlanPromotionError("prepare-failed")
-        candidate = read_plan_snapshot(ctx.workspace, target)
+        candidate = _read_repair_candidate(ctx, source, target)
         ctx.admission.candidate = candidate
     finally:
         # Remove only the exact controller-owned leaf, never follow a replacement alias.
@@ -2481,16 +3453,78 @@ def _run_admission_repair(
             os.unlink(target.name, dir_fd=parent)
             os.fsync(parent)
     validation = _validate_plan_admission(candidate)
-    promoted: PlanSnapshot | None = None
-    if validation.outcome == "PASS":
-        try:
-            promoted = _promote_validated_plan(source, validation, publisher=publisher, deadline=ctx.deadline_mono)
-        except PlanPromotionError:
-            # CT119: the candidate was already unlinked above, so the only copy of
-            # the bytes the authority refused is the snapshot in memory.
-            _retain_rejected_draft(ctx, validation.snapshot)
-            raise
-    return validation, promoted
+    if validation.outcome != "PASS":
+        return _RepairPromotionOutcome(
+            validation=validation, promoted=None, input_revision=_current_managed_revision(ctx)
+        )
+    in_rev = _current_managed_revision(ctx)
+    try:
+        receipt = _promote_validated_plan_receipt(source, validation, publisher=publisher, deadline=ctx.deadline_mono)
+    except PlanPromotionError:
+        # CT119: the candidate was already unlinked above, so the only copy of
+        # the bytes the authority refused is the snapshot in memory.
+        _retain_rejected_draft(ctx, validation.snapshot)
+        raise
+    return _RepairPromotionOutcome(
+        validation=validation,
+        promoted=receipt.snapshot,
+        input_revision=in_rev,
+        output_revision=receipt.revision_id,
+        operation_id=receipt.operation_id,
+    )
+
+
+def _run_admission_repair(
+    ctx: WorkflowContext,
+    progress: WorkflowProgress,
+    run_stage_fn: Callable[..., int],
+    *,
+    kind: PlannerDispatchKind,
+    draft: PlanSnapshot,
+    publisher: CandidatePlanPublisher,
+    diagnostics: tuple[_AdmissionDiagnostic, ...] = (),
+    reason: str = "",
+) -> tuple[_PlanAdmissionValidation, PlanSnapshot | None]:
+    outcome = _run_admission_repair_with_receipt(
+        ctx,
+        progress,
+        run_stage_fn,
+        kind=kind,
+        draft=draft,
+        publisher=publisher,
+        diagnostics=diagnostics,
+        reason=reason,
+    )
+    return outcome.validation, outcome.promoted
+
+
+def _read_repair_candidate(ctx: WorkflowContext, source: PlanSnapshot, target: Path) -> PlanSnapshot:
+    """Read the repaired candidate from the substrate that actually holds it.
+
+    Managed: the planner wrote the authority's staged buffer, so the bytes come
+    back through that view. Host mode: the planner wrote the controller's own
+    `.fa/admission` copy and it is read as a file, exactly as before.
+
+    The choice is made HERE, once, from what the composition bound. A managed run
+    (one with a reader) never falls back to the host path: the file under `.fa`
+    holds the *seed*, so reading it after the stage would validate bytes nobody
+    wrote and could publish an unchanged candidate as a repair.
+    """
+    label = source.ref.workspace_relative_path
+    reader = ctx.managed_candidate_reader
+    captured = None if reader is None else reader(source.ref)
+    if captured is None:
+        # No buffer bytes for this stage: it owns no candidate (host mode) or the
+        # double driving it binds no buffer. A candidate-owning managed stage
+        # cannot land here -- the composition root fails it closed instead.
+        return read_plan_snapshot(ctx.workspace, target)
+    content, digest = captured
+    snapshot = snapshot_from_bytes(label, content.encode("utf-8"))
+    if snapshot.ref.sha256 != digest:
+        # The buffer changed between the read and the digest the authority
+        # reported; validating either one now would be picking a favourite.
+        raise PlanPromotionError("hash-mismatch")
+    return snapshot
 
 
 def _retain_rejected_draft(ctx: WorkflowContext, snapshot: PlanSnapshot) -> None:
@@ -2506,21 +3540,192 @@ def _admission_error(
     error: PlanRefError | PlanPromotionError | PlannerDispatchError,
     *,
     kind: str = "EXPLICIT_INPUT",
+    input_revision: str | None = None,
 ) -> None:
     if ctx.admission is None:
         raise RuntimeError("admission authority absent")
     validator = "plan-ref" if isinstance(error, PlanRefError) else "promotion"
     rule = "scope-denied" if isinstance(error, PlannerDispatchError) else error.rule
+    effective_kind = (
+        "ACQUISITION"
+        if ctx.admission_binding is not None and ctx.admission.from_acquisition and kind == "EXPLICIT_INPUT"
+        else kind
+    )
     candidate = ctx.admission.candidate if kind != "EXPLICIT_INPUT" else None
+    op_id = (
+        _valid_v2_operation_id(getattr(error, "operation_id", None)) if isinstance(error, PlanPromotionError) else None
+    )
+    bootstrap_receipt = ctx.admission.bootstrap_receipt if ctx.admission_binding is not None else None
+    if effective_kind == "ACQUISITION" and bootstrap_receipt is not None:
+        # Bootstrap rejections must satisfy _validate_v2_bootstrap (ref=None, validator=bootstrap).
+        validation = _PlanAdmissionValidation(
+            ctx.admission.snapshot, "INDETERMINATE", (_AdmissionDiagnostic("bootstrap", "hash-mismatch", "ERROR"),)
+        )
+        try:
+            _admission_attempt(
+                ctx,
+                validation,
+                kind="ACQUISITION",
+                route="BLOCKED",
+                candidate=True,
+                input_revision=bootstrap_receipt.input_revision,
+                bundle_sha256=bootstrap_receipt.bundle_sha256,
+                clear_plan_ref=True,
+            )
+        except (OSError, ValueError) as failure:
+            _admission_storage_failure(ctx, failure)
+            return
+        ctx.admission.bootstrap_receipt = None
+        _admission_failed(ctx, f"{validator}/{rule}")
+        return
     validation = _PlanAdmissionValidation(
         candidate or ctx.admission.snapshot, "INDETERMINATE", (_AdmissionDiagnostic(validator, rule, "ERROR"),)
     )
     try:
-        _admission_attempt(ctx, validation, kind=kind, route="BLOCKED", candidate=candidate is not None)
+        _admission_attempt(
+            ctx,
+            validation,
+            kind=effective_kind,
+            route="BLOCKED",
+            candidate=candidate is not None,
+            input_revision=input_revision,
+            operation_id=op_id,
+        )
     except (OSError, ValueError) as failure:
         _admission_storage_failure(ctx, failure)
         return
     _admission_failed(ctx, f"{validator}/{rule}")
+
+
+def _admit_bootstrap_attempt(
+    ctx: WorkflowContext,
+    validated: _PlanAdmissionValidation,
+    receipt: _BootstrapReceipt,
+) -> bool:
+    """Persist the v2 ACQUISITION attempt for an installed BOOTSTRAP increment."""
+    state = ctx.admission
+    if state is None:  # pragma: no cover
+        raise RuntimeError("admission authority absent")
+    if validated.outcome == "PASS":
+        _admission_attempt(
+            ctx,
+            _PlanAdmissionValidation(state.snapshot, "PASS", ()),
+            kind="ACQUISITION",
+            route="ADMITTED",
+            candidate=True,
+            promoted=state.snapshot,
+            input_revision=receipt.input_revision,
+            output_revision=receipt.output_revision,
+            operation_id=receipt.operation_id,
+            bundle_sha256=receipt.bundle_sha256,
+        )
+        state.bootstrap_receipt = None
+        state.admitted = True
+        return True
+    severity = "FAIL" if validated.outcome == "DIAGNOSTICS" else "ERROR"
+    rejected = _PlanAdmissionValidation(
+        state.snapshot,
+        validated.outcome,
+        (_AdmissionDiagnostic("bootstrap", "invalid-body", severity),),
+    )
+    _admission_attempt(
+        ctx,
+        rejected,
+        kind="ACQUISITION",
+        route="BLOCKED",
+        candidate=True,
+        input_revision=receipt.input_revision,
+        bundle_sha256=receipt.bundle_sha256,
+        clear_plan_ref=True,
+    )
+    state.bootstrap_receipt = None
+    _admission_failed(ctx, "bootstrap/invalid-body")
+    return False
+
+
+def _record_budget_blocked_acquisition(
+    ctx: WorkflowContext,
+    validated: _PlanAdmissionValidation,
+    *,
+    input_revision: str | None,
+) -> None:
+    """In v2, an EXISTING_SELECTION with FAIL diagnostics emits RETRY then BLOCKED ADMISSION_REPAIR."""
+    _admission_attempt(
+        ctx,
+        validated,
+        kind="ACQUISITION",
+        route="RETRY",
+        input_revision=input_revision,
+    )
+    _admission_attempt(
+        ctx,
+        validated,
+        kind="ADMISSION_REPAIR",
+        route="BLOCKED",
+        input_revision=input_revision,
+    )
+    _admission_failed(ctx, "validation-or-planner-budget")
+
+
+def _record_replan_barrier(ctx: WorkflowContext, state: _WorkflowAdmission) -> None:
+    """Q67(a): keep canonical ADMITTED on eval replan entry without an invented RETRY."""
+    _record_admission_attempt(
+        ctx.artifact_paths,
+        run_id=ctx.run_id,
+        plan_ref=state.snapshot.ref,
+        attempt=None,
+        status="ADMITTED",
+        deadline=ctx.deadline_mono,
+        managed_binding=ctx.admission_binding,
+    )
+    state.admitted = False
+
+
+def _record_nonreplan_route(
+    ctx: WorkflowContext,
+    state: _WorkflowAdmission,
+    validated: _PlanAdmissionValidation,
+    *,
+    kind: PlannerDispatchKind,
+    candidate: bool,
+    can_retry: bool,
+    promoted: PlanSnapshot | None,
+    input_revision: str | None,
+    output_revision: str | None,
+    operation_id: str | None,
+) -> bool | None:
+    """Record one non-replan admission attempt; return bool to terminate gate or None to retry."""
+    initial_kind = "ACQUISITION" if (ctx.admission_binding is not None and state.from_acquisition) else "EXPLICIT_INPUT"
+    if not candidate and initial_kind == "ACQUISITION" and validated.outcome == "DIAGNOSTICS" and not can_retry:
+        _record_budget_blocked_acquisition(ctx, validated, input_revision=input_revision)
+        return False
+    route = (
+        "ADMITTED"
+        if validated.outcome == "PASS"
+        else "RETRY"
+        if validated.outcome == "DIAGNOSTICS" and can_retry
+        else "BLOCKED"
+    )
+    _admission_attempt(
+        ctx,
+        validated,
+        kind=kind.value if candidate else initial_kind,
+        route=route,
+        candidate=candidate,
+        promoted=promoted,
+        input_revision=input_revision,
+        output_revision=output_revision,
+        operation_id=operation_id,
+    )
+    if route == "ADMITTED":
+        state.plan_version += int(kind == PlannerDispatchKind.EVAL_REPLAN)
+        state.snapshot = promoted or validated.snapshot
+        state.admitted = True
+        return True
+    if route == "BLOCKED":
+        _admission_failed(ctx, "validation-or-planner-budget")
+        return False
+    return None
 
 
 def _admit_plan(
@@ -2541,63 +3746,57 @@ def _admit_plan(
         _admission_failed(ctx, state.failure)
         return False
     attempt_kind = "EXPLICIT_INPUT"
+    repair_input_rev = _current_managed_revision(ctx)
+    repair_output_rev: str | None = None
+    repair_op_id: str | None = None
     try:
         _check_admission_source(ctx)
         if state.admitted and not replan:
             return True
         kind = PlannerDispatchKind.EVAL_REPLAN if replan else PlannerDispatchKind.ADMISSION_REPAIR
         validated = _validate_plan_admission(state.snapshot)
+        if not replan and ctx.admission_binding is not None and state.bootstrap_receipt is not None:
+            return _admit_bootstrap_attempt(ctx, validated, state.bootstrap_receipt)
         promoted = None
         candidate = False
-        if replan and validated.outcome != "PASS":
-            replan = False
+        replan = replan and validated.outcome == "PASS"
         if replan:
-            # Q67(a): canonical remains ADMITTED; no invented pre-dispatch FAIL/RETRY.
-            _record_admission_attempt(
-                ctx.artifact_paths,
-                run_id=ctx.run_id,
-                plan_ref=state.snapshot.ref,
-                attempt=None,
-                status="ADMITTED",
-                deadline=ctx.deadline_mono,
-            )
-            state.admitted = False
+            _record_replan_barrier(ctx, state)
         while True:
             can_retry = (
                 state.planner_allowed and state.planner_calls < state.planner_limit and not _deadline_exceeded(ctx)
             )
             if not replan:
-                route = (
-                    "ADMITTED"
-                    if validated.outcome == "PASS"
-                    else "RETRY"
-                    if validated.outcome == "DIAGNOSTICS" and can_retry
-                    else "BLOCKED"
+                decision = _record_nonreplan_route(
+                    ctx,
+                    state,
+                    validated,
+                    kind=kind,
+                    candidate=candidate,
+                    can_retry=can_retry,
+                    promoted=promoted,
+                    input_revision=repair_input_rev,
+                    output_revision=repair_output_rev,
+                    operation_id=repair_op_id,
                 )
+                if decision is not None:
+                    return decision
+            elif not can_retry:
                 _admission_attempt(
                     ctx,
                     validated,
-                    kind=kind.value if candidate else "EXPLICIT_INPUT",
-                    route=route,
-                    candidate=candidate,
-                    promoted=promoted,
+                    kind=kind.value if ctx.admission_binding is not None else "EXPLICIT_INPUT",
+                    route="BLOCKED",
+                    candidate=candidate if ctx.admission_binding is not None else False,
+                    input_revision=repair_input_rev,
                 )
-                if route == "ADMITTED":
-                    state.plan_version += int(kind == PlannerDispatchKind.EVAL_REPLAN)
-                    state.snapshot = promoted or validated.snapshot
-                    state.admitted = True
-                    return True
-                if route == "BLOCKED":
-                    _admission_failed(ctx, "validation-or-planner-budget")
-                    return False
-            elif not can_retry:
-                _admission_attempt(ctx, validated, kind="EXPLICIT_INPUT", route="BLOCKED")
                 _admission_failed(ctx, "planner-budget" if state.planner_allowed else "planner-unavailable")
                 return False
             attempt_kind = kind.value
             publisher = _require_managed_publisher(ctx)  # CT115: before the attempt is reserved.
             state.planner_calls += 1  # Reserve even when seeding/provider/writer/publication fails.
-            validated, promoted = _run_admission_repair(
+            repair_input_rev = _current_managed_revision(ctx)
+            repair_outcome = _run_admission_repair_with_receipt(
                 ctx,
                 progress,
                 run_stage_fn,
@@ -2607,14 +3806,48 @@ def _admit_plan(
                 diagnostics=validated.diagnostics,
                 reason=reason,
             )
+            validated = repair_outcome.validation
+            promoted = repair_outcome.promoted
+            repair_input_rev = repair_outcome.input_revision or repair_input_rev
+            repair_output_rev = repair_outcome.output_revision
+            repair_op_id = repair_outcome.operation_id
             candidate = True
             replan = False
     except (PlanRefError, PlanPromotionError, PlannerDispatchError) as error:
         if state.block_exit_code != WORKFLOW_DEADLINE_EXIT_CODE:
-            _admission_error(ctx, error, kind=attempt_kind)
+            _admission_error(ctx, error, kind=attempt_kind, input_revision=repair_input_rev)
     except (OSError, ValueError) as error:
         _admission_storage_failure(ctx, error)
     return False
+
+
+# The `plan-ref` values the persisted admission schema accepts. Pulled from the
+# schema itself rather than copied, so the two cannot drift apart.
+_PERSISTED_PLAN_REF_RULES = frozenset(ADMISSION_RULES["plan-ref"])
+
+_V2_BLOCKED_RULE_MAP: dict[str, tuple[str, str, str, str]] = {
+    "acquisition-unavailable": ("workspace", "backend-unavailable", "ERROR", "INDETERMINATE"),
+    "bootstrap-unavailable": ("bootstrap", "unavailable", "ERROR", "INDETERMINATE"),
+    "bootstrap-refused": ("bootstrap", "install-failed", "FAIL", "DIAGNOSTICS"),
+    "bootstrap-unreadable": ("bootstrap", "install-failed", "ERROR", "INDETERMINATE"),
+}
+
+
+def _v2_blocked_diagnostic(
+    rule: str, override: tuple[str, str, str, str, str | None] | None
+) -> tuple[str, str, str, str, str | None]:
+    if override is not None:
+        v_name, v_rule, sev, outcome, op_id = override
+        if v_name in ADMISSION_RULES_V2 and v_rule in ADMISSION_RULES_V2[v_name]:
+            return v_name, v_rule, sev, outcome, op_id
+    if rule in ADMISSION_RULES_V2["selection"]:
+        return ("selection", rule, "ERROR", "INDETERMINATE", None)
+    mapped = _V2_BLOCKED_RULE_MAP.get(rule)
+    if mapped is not None:
+        return (*mapped, None)
+    if rule in ADMISSION_RULES_V2["plan-ref"]:
+        return ("plan-ref", rule, "ERROR", "INDETERMINATE", None)
+    return ("plan-ref", "validator-error", "ERROR", "INDETERMINATE", None)
 
 
 def _record_admission_attempt(
@@ -2625,30 +3858,79 @@ def _record_admission_attempt(
     attempt: Mapping[str, object] | None,
     status: str,
     deadline: float | None,
+    managed_binding: ManagedAdmissionBinding | None = None,
 ) -> None:
     """Durable controller barrier; a failed write is never a persisted attempt."""
     write_admission_record(
-        paths.admission, run_id=run_id, plan_ref=plan_ref, attempt=attempt, status=status, deadline=deadline
+        paths.admission,
+        run_id=run_id,
+        plan_ref=plan_ref,
+        attempt=attempt,
+        status=status,
+        managed_binding=managed_binding,
+        deadline=deadline,
     )
 
 
 def _blocked_plan_request(
-    *, run_id: str, task: str | None, rule: str, base_dir: Path | None, deadline: float | None
+    *,
+    run_id: str,
+    task: str | None,
+    rule: str,
+    base_dir: Path | None,
+    deadline: float | None,
+    managed_binding: ManagedAdmissionBinding | None = None,
+    attempt_kind: str = "EXPLICIT_INPUT",
+    v2_diagnostic: tuple[str, str, str, str, str | None] | None = None,
+    candidate_sha256: str | None = None,
+    bundle_sha256: str | None = None,
 ) -> tuple[int, FlowState | None]:
     paths = workflow_artifact_paths(run_id, base_dir=base_dir)
-    attempt: dict[str, object] = {
-        "dispatch_kind": "EXPLICIT_INPUT",
-        "validation": "INDETERMINATE",
-        "diagnostics": [{"validator": "plan-ref", "rule": rule, "severity": "ERROR", "line": None}],
-        "source_sha256": None,
-        "candidate_sha256": None,
-        "promoted_sha256": None,
-        "route": "BLOCKED",
-    }
+    if managed_binding is not None:
+        v_name, v_rule, severity, validation, op_id = _v2_blocked_diagnostic(rule, v2_diagnostic)
+        both_hashes = candidate_sha256 is not None and bundle_sha256 is not None
+        attempt: dict[str, object] = {
+            "dispatch_kind": attempt_kind,
+            "validation": validation,
+            "diagnostics": [{"validator": v_name, "rule": v_rule, "severity": severity, "line": None}],
+            "source_sha256": None,
+            "candidate_sha256": candidate_sha256 if both_hashes else None,
+            "promoted_sha256": None,
+            "route": "BLOCKED",
+            "input_revision": managed_binding.base_revision,
+            "output_revision": None,
+            "operation_id": op_id if (both_hashes or attempt_kind != "ACQUISITION") else None,
+            "bundle_sha256": bundle_sha256 if both_hashes else None,
+        }
+    else:
+        # I02 spec: the persisted validator/rule vocabulary is closed, and a rule
+        # outside it must be recorded as `validator-error` rather than silently
+        # dropped. This mattered in practice -- `conflict` and
+        # `admission-without-coder` are controller-shape refusals with no schema
+        # entry, and passing them through made `write_admission_record` reject the
+        # whole record, so a refused run left no durable trace at all. The exact
+        # reason still reaches the operator: it is carried in `blocked_reason` below,
+        # which is free text, while the closed field keeps a value the schema accepts.
+        recorded_rule = rule if rule in _PERSISTED_PLAN_REF_RULES else "validator-error"
+        attempt = {
+            "dispatch_kind": "EXPLICIT_INPUT",
+            "validation": "INDETERMINATE",
+            "diagnostics": [{"validator": "plan-ref", "rule": recorded_rule, "severity": "ERROR", "line": None}],
+            "source_sha256": None,
+            "candidate_sha256": None,
+            "promoted_sha256": None,
+            "route": "BLOCKED",
+        }
     print(f"fa workflow: invalid plan reference: {rule}", file=sys.stderr)
     try:
         _record_admission_attempt(
-            paths, run_id=run_id, plan_ref=None, attempt=attempt, status="BLOCKED", deadline=deadline
+            paths,
+            run_id=run_id,
+            plan_ref=None,
+            attempt=attempt,
+            status="BLOCKED",
+            deadline=deadline,
+            managed_binding=managed_binding,
         )
     except (OSError, ValueError) as error:
         reason = error.rule if isinstance(error, AdmissionIOError) else "append-failed"
@@ -2672,6 +3954,54 @@ def _blocked_plan_request(
         print("fa workflow: blocked flow storage error: append-failed", file=sys.stderr)
         return 2, None
     return 2, state
+
+
+def _resolve_admitted_plan(
+    *,
+    roles: list[str],
+    workspace: Path,
+    plan_path: Path | None,
+    admission_snapshot: PlanSnapshot | None,
+    acquisition: AcquisitionSubstrate | None,
+) -> tuple[PlanSnapshot | None, Path | None]:
+    """Resolve the one plan this run is bound to, from exactly one substrate.
+
+    Two inputs, never both. Acquisition supplies bytes it already read through a
+    pinned view (S5P1 STEP2); the CLI supplies a host path. Accepting both would
+    make this function pick a favourite between two plans at the one place where
+    the choice decides what a coder is bound to.
+
+    Extracted from ``run_workflow`` because that function is already at its
+    complexity ceiling and this is a self-contained closed decision.
+    """
+    if admission_snapshot is not None:
+        if plan_path is not None:
+            raise PlanRefError("conflict")
+        if not isinstance(admission_snapshot, PlanSnapshot):
+            raise PlanRefError("unreadable")
+        if "coder" not in roles:
+            # A snapshot bounds what a coder may write against. With no coder it
+            # constrains nothing, so accepting it would silently discard the
+            # caller's stated authority instead of reporting the mismatch.
+            raise PlanRefError("admission-without-coder")
+        return admission_snapshot, plan_path
+    # An acquisition run is the one shape where a coder-bearing request has no
+    # plan at entry: the plan cannot exist until the planner the same run
+    # dispatches has chosen one. Guarded by `acquisition is not None` so every
+    # other caller keeps the plain presence check.
+    if acquisition is None:
+        _require_plan_for_coder(roles, plan_path)
+    elif roles[:1] != ["planner"]:
+        # A plan acquired inside the run can only be owned by a planner that runs
+        # first; a coder before the planner would have nothing to code against, and
+        # claiming otherwise would be an admission without an owner.
+        raise PlanRefError("admission-without-planner")
+    if plan_path is None:
+        return None, None
+    if not isinstance(plan_path, Path):
+        raise PlanRefError("unreadable")
+    snapshot = read_plan_snapshot(workspace, plan_path)
+    return snapshot, workspace / snapshot.ref.workspace_relative_path
 
 
 def run_workflow(
@@ -2698,8 +4028,156 @@ def run_workflow(
     plan_path: Path | None = None,
     plan_publisher: CandidatePlanPublisher | None = None,
     managed_execution: ManagedExecution | None = None,
+    admission_snapshot: PlanSnapshot | None = None,
+    acquisition: AcquisitionSubstrate | AcquisitionSubstrateRequest | None = None,
+    initial_planner_context: str = "",
 ) -> tuple[int, FlowState | None]:
-    """Run the workflow pipeline. Callable from CLI and from tools.
+    """Run the workflow pipeline, pinning an acquisition view when asked.
+
+    ``acquisition=None`` is the whole public contract of every other caller; the
+    tool-side entry passes ``acquisition=AcquisitionSubstrateRequest()`` and this
+    function then owns the view's lifetime.
+    """
+
+    def _bound(
+        substrate: AcquisitionSubstrate | None,
+        *,
+        binding: ManagedAdmissionBinding | None,
+    ) -> tuple[int, FlowState | None]:
+        return _run_workflow_bound(
+            roles=roles,
+            task=task,
+            per_role_task=per_role_task,
+            mode=mode,
+            max_repairs=max_repairs,
+            max_replans=max_replans,
+            run_id=run_id,
+            config=config,
+            workspace=workspace,
+            max_turns=max_turns,
+            output_mode=output_mode,
+            run_stage_fn=run_stage_fn,
+            transport=transport,
+            secrets=secrets,
+            session_context=session_context,
+            run_context=run_context,
+            session_db=session_db,
+            deadline_mono=deadline_mono,
+            inject_overrides=inject_overrides,
+            plan_path=plan_path,
+            plan_publisher=plan_publisher,
+            managed_execution=managed_execution,
+            admission_snapshot=admission_snapshot,
+            acquisition=substrate,
+            admission_binding=binding,
+            initial_planner_context=initial_planner_context,
+        )
+
+    admission_binding = _managed_admission_binding(managed_execution, run_id=run_id)
+    if isinstance(acquisition, AcquisitionSubstrateRequest):
+        # Pin here, inside the run, so `ctx.managed_execution` is this run's own
+        # binding -- the child's after a HANDOFF, never the parent's before it.
+        ctx = WorkflowContext(
+            run_id=run_id,
+            base_task=task,
+            per_role_task=per_role_task,
+            artifact_paths=workflow_artifact_paths(
+                run_id, base_dir=run_context.run_log_dir if run_context is not None else None
+            ),
+            config=config,
+            workspace=workspace,
+            max_turns=max_turns,
+            output_mode=output_mode,
+            managed_execution=managed_execution,
+            deadline_mono=deadline_mono,
+            admission_binding=admission_binding,
+        )
+        with _pinned_acquisition_substrate(ctx) as substrate:
+            if substrate is None:
+                # No view means no acquisition: refuse before any stage, and let the
+                # refusal be recorded like every other unreachable-plan case.
+                return _blocked_plan_request(
+                    run_id=run_id,
+                    task=task,
+                    rule="acquisition-unavailable",
+                    base_dir=ctx.artifact_paths.base_dir,
+                    deadline=deadline_mono,
+                    managed_binding=admission_binding,
+                    attempt_kind="ACQUISITION" if admission_binding is not None else "EXPLICIT_INPUT",
+                    v2_diagnostic=("workspace", "backend-unavailable", "ERROR", "INDETERMINATE", None),
+                )
+            return _bound(substrate, binding=admission_binding)
+    if acquisition is None or isinstance(acquisition, AcquisitionSubstrate):
+        return _bound(acquisition, binding=admission_binding)
+    raise PlanRefError("unreadable")
+
+
+def _initialize_admission_record(ctx: WorkflowContext) -> bool:
+    """Write the initial ACQUIRING admission barrier before stage dispatch."""
+    if ctx.admission is not None:
+        try:
+            _record_admission_attempt(
+                ctx.artifact_paths,
+                run_id=ctx.run_id,
+                plan_ref=ctx.admission.snapshot.ref,
+                attempt=None,
+                status="ACQUIRING",
+                deadline=ctx.deadline_mono,
+                managed_binding=ctx.admission_binding,
+            )
+            return True
+        except (OSError, ValueError) as error:
+            _admission_storage_failure(ctx, error)
+            return False
+    if ctx.acquisition is not None and ctx.admission_binding is not None:
+        try:
+            _record_admission_attempt(
+                ctx.artifact_paths,
+                run_id=ctx.run_id,
+                plan_ref=None,
+                attempt=None,
+                status="ACQUIRING",
+                deadline=ctx.deadline_mono,
+                managed_binding=ctx.admission_binding,
+            )
+            return True
+        except (OSError, ValueError) as error:
+            rule = error.rule if isinstance(error, AdmissionIOError) else "append-failed"
+            print(f"fa workflow: admission storage error: {rule}", file=sys.stderr)
+            return False
+    return True
+
+
+def _run_workflow_bound(
+    *,
+    roles: list[str],
+    task: str | None,
+    per_role_task: Mapping[str, str | None],
+    mode: str,
+    max_repairs: int | None,
+    max_replans: int | None,
+    run_id: str,
+    config: Path,
+    workspace: Path,
+    max_turns: int,
+    output_mode: str,
+    run_stage_fn: Callable[..., int],
+    transport: Transport | None,
+    secrets: Mapping[str, str] | None,
+    session_context: SessionContext | None,
+    run_context: RunContext | None,
+    session_db: SessionDatabase | None,
+    deadline_mono: float | None,
+    inject_overrides: Mapping[str, str] | None,
+    plan_path: Path | None,
+    plan_publisher: CandidatePlanPublisher | None,
+    managed_execution: ManagedExecution | None,
+    admission_snapshot: PlanSnapshot | None,
+    acquisition: AcquisitionSubstrate | None,
+    admission_binding: ManagedAdmissionBinding | None = None,
+    initial_planner_context: str = "",
+) -> tuple[int, FlowState | None]:
+    """The workflow body, with a resolved acquisition substrate.
 
     Returns ``(exit_code, terminal_state)`` where ``terminal_state`` may be
     ``None`` if the artifact was missing or corrupt.
@@ -2731,14 +4209,19 @@ def run_workflow(
     roles = _ensure_eval_after_coder(list(request.roles))
     max_repairs, max_replans = request.max_repairs, request.max_replans
 
-    snapshot: PlanSnapshot | None = None
+    effective_binding = (
+        admission_binding
+        if admission_binding is not None
+        else _managed_admission_binding(managed_execution, run_id=run_id)
+    )
     try:
-        _require_plan_for_coder(roles, plan_path)
-        if plan_path is not None:
-            if not isinstance(plan_path, Path):
-                raise PlanRefError("unreadable")
-            snapshot = read_plan_snapshot(workspace, plan_path)
-            plan_path = workspace / snapshot.ref.workspace_relative_path
+        snapshot, plan_path = _resolve_admitted_plan(
+            roles=roles,
+            workspace=workspace,
+            plan_path=plan_path,
+            admission_snapshot=admission_snapshot,
+            acquisition=acquisition,
+        )
     except PlanRefError as error:
         return _blocked_plan_request(
             run_id=run_id,
@@ -2746,6 +4229,7 @@ def run_workflow(
             rule=error.rule,
             base_dir=run_context.run_log_dir if run_context is not None else None,
             deadline=deadline_mono,
+            managed_binding=effective_binding,
         )
 
     artifact_paths = workflow_artifact_paths(
@@ -2790,10 +4274,23 @@ def run_workflow(
         plan_path=plan_path,
         plan_publisher=plan_publisher,
         managed_execution=managed_execution,
+        # The managed read-back is bound only where a managed execution exists.
+        # Host mode keeps its `.fa/admission` read; nothing here is a fallback,
+        # the two are different substrates and each run picks one at composition.
+        managed_candidate_reader=stage_candidate_reader,
+        replans_allowed=max_replans,
+        acquisition=acquisition,
+        admission_binding=effective_binding,
         managed_plan_ref=None if snapshot is None else snapshot.ref,
         verify_gate_mode=_gate_mode(),
+        initial_planner_slot=_InitialPlannerContextSlot(text=initial_planner_context),
         admission=(
-            _WorkflowAdmission(snapshot, "planner" in roles, max_replans)
+            _WorkflowAdmission(
+                snapshot,
+                "planner" in roles,
+                max_replans,
+                snapshot_backed=admission_snapshot is not None,
+            )
             if snapshot is not None and "coder" in roles
             else None
         ),
@@ -2802,19 +4299,8 @@ def run_workflow(
         if _deadline_exceeded(ctx):
             _write_deadline_state(ctx, roles[0], progress=WorkflowProgress())
             return WORKFLOW_DEADLINE_EXIT_CODE, read_back_terminal_state(artifact_paths.flow_state, run_id)
-        if ctx.admission is not None:
-            try:
-                _record_admission_attempt(
-                    artifact_paths,
-                    run_id=run_id,
-                    plan_ref=ctx.admission.snapshot.ref,
-                    attempt=None,
-                    status="ACQUIRING",
-                    deadline=deadline_mono,
-                )
-            except (OSError, ValueError) as error:
-                _admission_storage_failure(ctx, error)
-                return _admission_exit_code(ctx), read_back_terminal_state(artifact_paths.flow_state, run_id)
+        if not _initialize_admission_record(ctx):
+            return _admission_exit_code(ctx), read_back_terminal_state(artifact_paths.flow_state, run_id)
         label = _render_mode_label(mode, max_repairs=max_repairs, max_replans=max_replans)
         print(f"fa workflow: run_id={run_id} mode={label} roles={'→'.join(roles)}", file=sys.stderr)
         if mode == "adaptive":
@@ -2898,6 +4384,8 @@ __all__ = [
     "WORKFLOW_MODES",
     "WORKFLOW_STAGE_ROLES",
     "WORKFLOW_STATUS_TO_STOP_REASON",
+    "AcquisitionSubstrate",
+    "AcquisitionSubstrateRequest",
     "BaselineCapture",
     "StageResult",
     "WorkflowArtifactPaths",

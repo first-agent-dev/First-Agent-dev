@@ -9,67 +9,70 @@ from __future__ import annotations
 
 import json
 import os
+from dataclasses import replace
 from pathlib import Path
-from types import SimpleNamespace
-from typing import Any, ClassVar
+from typing import Any, ClassVar, override
 from unittest.mock import patch
 
 import pytest
 
-from fa.cli import _register_managed_subagent_tool
-from fa.execution.client import ExecutionRejectedError
-from fa.execution.composition import ExecutionBinding
+from fa.cli import _ManagedStageLease, _register_managed_subagent_tool
+from fa.execution.client import ExecutionClient, ExecutionRejectedError, ManagedBashExecutor, ManagedProjectToolExecutor
+from fa.execution.composition import ExecutionBinding, ManagedExecution
+from fa.execution.tool_port import ClientWorkspacePort
 from fa.execution.types import Access, GrantReply, NamespaceRef, Operation, ViewPurpose, ViewRef
 from fa.feature_flags import FeatureFlags, load_feature_flags
 from fa.inner_loop.coder_loop import SessionOutcome
 from fa.inner_loop.hooks.base import HookPayload, LifecyclePoint
-from fa.inner_loop.registry import ToolCall, ToolRegistry, ToolResult
+from fa.inner_loop.registry import ToolCall, ToolRegistry, ToolResult, ToolSpec
+from fa.inner_loop.runtime_limits import RuntimeLimits
 from fa.inner_loop.session_db import SessionDatabase
+from fa.inner_loop.state import EventLog, SessionState
 from fa.inner_loop.tools import managed_subagent
-from tests.test_execution_views import read_only_profile
+from fa.observability.redaction import SecretRedactor
+from fa.providers import ProviderChain
+from fa.providers.chain import ChainConfig, ChainEntry
+from tests.test_execution_views import native_profile, read_only_profile
 
 
-class _ParentState:
+class _ParentState(SessionState):
     def __init__(self, db: SessionDatabase, flags: FeatureFlags, *, role_run_id: str = "run-parent") -> None:
-        self.managed_child = False
-        self.session_id = "session-1"
-        self.run_id = role_run_id
-        self.session_db = db
-        self.feature_flags = flags
-        self.spawn_count = 0
-        self.active_count = 0
+        flags = replace(flags, blackboard_enabled=False, telemetry_enabled=False)
+        super().__init__(
+            workspace_root=db.path.parent,
+            session_id="session-1",
+            run_id=role_run_id,
+            session_db=db,
+            log=EventLog(db.path.parent / "events.jsonl", session_db=db, session_id="session-1", run_id=role_run_id),
+            feature_flags=flags,
+        )
 
-    def try_reserve_subagent_spawn(self, maximum: int) -> bool:
-        if self.spawn_count >= maximum:
-            return False
-        self.spawn_count += 1
-        return True
+    @property
+    def spawn_count(self) -> int:
+        return self.get_subagent_spawns()
 
-    def try_reserve_active_subagent(self, max_active: int = 1) -> bool:
-        if self.active_count >= max_active:
-            return False
-        self.active_count += 1
-        return True
-
-    def release_active_subagent(self) -> None:
-        assert self.active_count == 1
-        self.active_count -= 1
+    @property
+    def active_count(self) -> int:
+        return self.get_active_subagents()
 
 
-class _FakeClient:
-    def __init__(self) -> None:
+class _FakeClient(ExecutionClient):
+    def __init__(self, tmp_path: Path) -> None:
+        super().__init__(tmp_path / "supervisor.sock", server_uid=os.getuid(), rpc_timeout_ms=100)
         self.pin_calls: list[tuple[ExecutionBinding, str, Any]] = []
         self.stop_calls: list[tuple[NamespaceRef, ViewRef]] = []
         self.report_root: Path | None = None
 
+    @override
     def pin_reader(
         self,
-        binding: ExecutionBinding,
-        *,
+        binding: object,
         revision_id: str,
-        plan_ref: Any,
-        deadline: float,
+        *,
+        plan_ref: Any = None,
+        deadline: float | None = None,
     ) -> GrantReply:
+        assert isinstance(binding, ExecutionBinding)
         self.pin_calls.append((binding, revision_id, plan_ref))
         view = ViewRef(
             binding.workspace_id,
@@ -89,13 +92,14 @@ class _FakeClient:
             input_tree_sha256="b" * 64,
         )
 
+    @override
     def stop_view(
         self,
         namespace: NamespaceRef,
         *,
         view: ViewRef,
         grant: GrantReply,
-        deadline: float,
+        deadline: float | None = None,
     ) -> bool:
         assert grant.operation is Operation.PIN_READER
         self.stop_calls.append((namespace, view))
@@ -168,12 +172,18 @@ class _FakeExecutor:
         self.suspended = True
 
 
-class _ParentWriter:
-    def __init__(self) -> None:
-        self.binding = ExecutionBinding(NamespaceRef("session-1", "run-writer"), "ws-" + "1" * 32)
-        self.current_revision_id = "rev-" + "3" * 32
-        self.read_only_profile = read_only_profile()
-        self.client = _FakeClient()
+class _ParentWriter(ManagedExecution):
+    def __init__(self, tmp_path: Path) -> None:
+        binding = ExecutionBinding(NamespaceRef("session-1", "run-writer"), "ws-" + "1" * 32)
+        grant = GrantReply(Operation.ACQUIRE_WRITER, "c" * 64, None, 1, "rev-" + "3" * 32)
+        super().__init__(
+            _FakeClient(tmp_path), binding, grant, view_profile=native_profile(), read_only_profile=read_only_profile()
+        )
+
+    @property
+    def fake_client(self) -> _FakeClient:
+        assert isinstance(self.client, _FakeClient)
+        return self.client
 
 
 def _parent(tmp_path: Path, *, role: str = "chat", enabled: bool = True) -> tuple[_ParentState, _ParentWriter]:
@@ -185,24 +195,39 @@ def _parent(tmp_path: Path, *, role: str = "chat", enabled: bool = True) -> tupl
         subagent_coder_enabled=role == "coder",
         max_subagent_spawns_per_session=2,
     )
-    return _ParentState(db, flags), _ParentWriter()
+    return _ParentState(db, flags), _ParentWriter(tmp_path)
 
 
-def _build_tool(tmp_path: Path, parent: _ParentState, writer: _ParentWriter, *, role: str = "chat"):
+def _build_tool(
+    tmp_path: Path, parent: _ParentState, writer: _ParentWriter, *, role: str = "chat", with_provider: bool = True
+) -> ToolSpec:
+    def no_network(_entry: ChainEntry) -> Any:
+        raise AssertionError("provider IO is not permitted in this fixture")
+
+    chain = ProviderChain(
+        ChainConfig(
+            role="chat",
+            name="fake-chat",
+            family="openai",
+            chain=(ChainEntry("openrouter", "test/model", "https://example.invalid/v1", "K"),),
+        ),
+        provider_factory=no_network,
+        env={"K": "sk-test-live"},
+    )
     workspace = tmp_path / "project"
     workspace.mkdir(exist_ok=True)
     log_dir = tmp_path / "session-log"
     log_dir.mkdir(exist_ok=True)
-    writer.client.report_root = log_dir / "subagents"
+    writer.fake_client.report_root = log_dir / "subagents"
     return managed_subagent.build_managed_subagent_tool(
         workspace_root=workspace,
         run_log_dir=log_dir,
         managed=writer,
         parent_state=parent,
         parent_role=role,
-        chat_chain=SimpleNamespace(config=SimpleNamespace(family="fake-chat")),
+        chat_chain=chain if with_provider else None,
         chat_compactor=None,
-        limits=SimpleNamespace(bash_timeout_seconds=17),
+        limits=RuntimeLimits(bash_timeout_seconds=17),
         plan_ref=None,
         redactor=None,
     )
@@ -230,10 +255,14 @@ def test_managed_subagent_producer_uses_child_binding_and_releases_before_report
         result = tool.handler({"task": "Inspect the import path"})
 
     assert result.error is None
+    assert result.result is not None
     assert result.result["exit_code"] == 0
     assert result.result["files_changed"] == [] and result.result["patch_diff"] == ""
     assert captured["task"] == "Inspect the import path"
     assert captured["role"] == "subagent"
+    assert isinstance(captured["provider_chain"], ProviderChain)
+    assert captured["provider_chain"].config.name == "fake-chat"
+    assert captured["acting_family"] == "openai"
     assert captured["initial_memory_summary"] == ""
     assert captured["system_prompt_extra"] == ""
     assert captured["pinned_buffer"] is None
@@ -244,9 +273,9 @@ def test_managed_subagent_producer_uses_child_binding_and_releases_before_report
     assert child_state.artifact_store is child_state.blackboard is child_state.telemetry is None
     assert child_state.pty_pool is child_state.worktree_manager is None
     assert set(captured["registry"].names()) == {"fs_read_file", "fs_run_bash"}
-    assert writer.client.pin_calls[0][0].namespace.parent_run_id == writer.binding.namespace.run_id
-    assert writer.client.pin_calls[0][1] == writer.current_revision_id
-    assert writer.client.stop_calls[0][0] == writer.client.pin_calls[0][0].namespace
+    assert writer.fake_client.pin_calls[0][0].namespace.parent_run_id == writer.binding.namespace.run_id
+    assert writer.fake_client.pin_calls[0][1] == writer.current_revision_id
+    assert writer.fake_client.stop_calls[0][0] == writer.fake_client.pin_calls[0][0].namespace
     assert _FakePort.instances[0].suspended and _FakeExecutor.instances[0].suspended
     assert parent.spawn_count == 1 and parent.active_count == 0
 
@@ -268,16 +297,26 @@ def test_managed_subagent_flag_and_profile_gates_happen_before_pin(tmp_path: Pat
     with patch.object(managed_subagent, "get_current_session", return_value=parent):
         result = tool.handler({"task": "read"})
     assert result.error is not None and result.error.code == "disabled"
-    assert writer.client.pin_calls == []
+    assert writer.fake_client.pin_calls == []
     assert parent.spawn_count == parent.active_count == 0
 
     parent, writer = _parent(tmp_path, enabled=True)
-    writer.read_only_profile = SimpleNamespace(interactive=True)
+    writer.read_only_profile = replace(read_only_profile(), interactive=True)
     tool = _build_tool(tmp_path, parent, writer)
     with patch.object(managed_subagent, "get_current_session", return_value=parent):
         result = tool.handler({"task": "read"})
     assert result.error is not None and result.error.code == "subagent_profile_unavailable"
-    assert writer.client.pin_calls == []
+    assert writer.fake_client.pin_calls == []
+    assert parent.spawn_count == parent.active_count == 0
+
+
+def test_missing_managed_child_provider_refuses_before_pin_or_reservation(tmp_path: Path) -> None:
+    parent, writer = _parent(tmp_path)
+    tool = _build_tool(tmp_path, parent, writer, with_provider=False)
+    with patch.object(managed_subagent, "get_current_session", return_value=parent):
+        result = tool.handler({"task": "read"})
+    assert result.error is not None and result.error.code == "subagent_provider_unavailable"
+    assert writer.fake_client.pin_calls == [] and writer.fake_client.stop_calls == []
     assert parent.spawn_count == parent.active_count == 0
 
 
@@ -289,23 +328,73 @@ def test_production_caller_registers_managed_child_only_for_managed_stages(tmp_p
     workspace.mkdir()
     run_log_dir = tmp_path / "logs"
     registry = ToolRegistry()
-    stage_lease = SimpleNamespace(managed=writer, plan_ref=None)
+    namespace = writer.binding.namespace
+    view = ViewRef(
+        writer.binding.workspace_id,
+        "view-" + "4" * 32,
+        writer.current_revision_id,
+        namespace.run_id,
+        1,
+        Access.WRITE,
+        ViewPurpose.PROJECT,
+    )
+    grant = GrantReply(Operation.CREATE_VIEW, "d" * 64, view, None, None, "e" * 64)
+    port = ClientWorkspacePort(writer.client, namespace=namespace, view=view, grant=grant)
+    profile = native_profile()
+    bash = ManagedBashExecutor(
+        writer.client,
+        namespace=namespace,
+        view=view,
+        grant=grant,
+        profile=profile,
+        input_tree_sha256="e" * 64,
+        plan_sha256=None,
+        original_revision_id=writer.current_revision_id,
+        controller_root=workspace,
+    )
+    tools = ManagedProjectToolExecutor(
+        writer.client,
+        namespace=namespace,
+        view=view,
+        grant=grant,
+        profile=profile,
+        input_tree_sha256="e" * 64,
+        plan_sha256=None,
+        original_revision_id=writer.current_revision_id,
+    )
+    stage_lease = _ManagedStageLease(
+        managed=writer,
+        namespace=namespace,
+        view_grant=grant,
+        workspace_io=port,
+        managed_executor=bash,
+        project_tool_executor=tools,
+        plan_ref=None,
+        allow_nested_handoff=False,
+    )
     wired = _register_managed_subagent_tool(
         registry,
         role=role,
         workspace_root=workspace,
         run_log_dir=run_log_dir,
-        workspace_io=object(),
+        workspace_io=port,
         stage_lease=stage_lease,
         parent_state=parent,
         chat_chain=None,
         chat_compactor=None,
-        limits=SimpleNamespace(bash_timeout_seconds=10),
+        limits=RuntimeLimits(bash_timeout_seconds=10),
         redactor=None,
     )
-    assert wired.lookup("fs_spawn_subagent").name == "fs_spawn_subagent"
-    assert wired.lookup("fs_spawn_subagent").input_schema["required"] == ["task"]
-    assert set(wired.lookup("fs_spawn_subagent").input_schema["properties"]) == {"task"}
+    from fa.inner_loop.registry import validate_tool_schema_portability
+
+    spec = wired.lookup("fs_spawn_subagent")
+    assert spec.name == "fs_spawn_subagent"
+    validate_tool_schema_portability(spec.name, spec.input_schema)
+    assert spec.max_context_bytes == 16_384
+    assert spec.input_schema["required"] == ["task"]
+    properties = spec.input_schema["properties"]
+    assert isinstance(properties, dict)
+    assert set(properties) == {"task"}
 
 
 def test_subagent_child_exec_refusal_has_no_host_subprocess_or_writer_handoff(tmp_path: Path) -> None:
@@ -354,6 +443,7 @@ def test_subagent_child_exec_refusal_has_no_host_subprocess_or_writer_handoff(tm
 
     _FakeExecutor.reject_exec = False
     assert result.error is None
+    assert result.result is not None
     assert result.result["exit_code"] == 0
     assert any("execution_rejected" in item for item in result.result["evidence"])
     assert _FakeExecutor.counters == {
@@ -366,11 +456,11 @@ def test_subagent_child_exec_refusal_has_no_host_subprocess_or_writer_handoff(tm
     }
     host_run.assert_not_called()
     assert child_registry is not None
-    assert writer.client.stop_calls, "the reader must be stopped even after EXEC denial"
+    assert writer.fake_client.stop_calls, "the reader must be stopped even after EXEC denial"
     assert parent.active_count == 0
-    # No handoff API exists on the fake writer binding, and the child namespace
-    # is the only namespace used by the pinned reader.
-    assert writer.client.pin_calls[0][0].namespace != writer.binding.namespace
+    # The child namespace differs from the writer namespace; this local double
+    # does not by itself prove the absence of a supervisor-side handoff.
+    assert writer.fake_client.pin_calls[0][0].namespace != writer.binding.namespace
 
 
 def test_subagent_role_flags_are_independent_and_master_gated() -> None:
@@ -407,6 +497,41 @@ def test_subagent_role_flags_are_independent_and_master_gated() -> None:
     assert not flags.subagent_enabled_for("eval")
 
 
+@pytest.mark.parametrize("role", ["chat", "planner", "coder"])
+@pytest.mark.parametrize("master,role_enabled", [(False, False), (False, True), (True, False), (True, True)])
+def test_managed_child_handler_requires_master_and_its_own_role_flag(
+    tmp_path: Path, role: str, master: bool, role_enabled: bool
+) -> None:
+    parent, writer = _parent(tmp_path, role=role)
+    assert parent.feature_flags is not None
+    parent.feature_flags = replace(
+        parent.feature_flags,
+        subagent_spawning_enabled=master,
+        subagent_chat_enabled=role == "chat" and role_enabled,
+        subagent_planner_enabled=role == "planner" and role_enabled,
+        subagent_coder_enabled=role == "coder" and role_enabled,
+    )
+    tool = _build_tool(tmp_path, parent, writer, role=role)
+    with (
+        patch.object(managed_subagent, "get_current_session", return_value=parent),
+        patch.object(managed_subagent, "ClientWorkspacePort", _FakePort),
+        patch.object(managed_subagent, "ReadOnlyManagedBashExecutor", _FakeExecutor),
+        patch.object(
+            managed_subagent,
+            "drive_session",
+            return_value=SessionOutcome(0, "stopped_by_llm", 1, "Done."),
+        ),
+    ):
+        result = tool.handler({"task": "Inspect the project"})
+    if master and role_enabled:
+        assert result.error is None
+        assert len(writer.fake_client.pin_calls) == len(writer.fake_client.stop_calls) == 1
+    else:
+        assert result.error is not None and result.error.code == "disabled"
+        assert writer.fake_client.pin_calls == [] and writer.fake_client.stop_calls == []
+    assert parent.active_count == 0
+
+
 def test_managed_subagent_report_is_schema_valid_and_bounded() -> None:
     """Report output is capped, records child failure, and cannot claim project mutations."""
     outcome = SessionOutcome(
@@ -434,3 +559,71 @@ def test_managed_subagent_report_is_schema_valid_and_bounded() -> None:
     assert payload["patch_diff"] == ""
     assert payload["token_usage"] == {}
     assert payload["evidence"]
+
+
+def test_managed_report_redaction_masks_and_withholds_on_error() -> None:
+    secret = "sk-test-secret-value"
+    redactor = SecretRedactor({"TOKEN": secret}, ["TOKEN"])
+    assert secret not in managed_subagent._redact(redactor, f"found {secret}")
+    with patch.object(redactor, "redact", side_effect=RuntimeError("mask failure")):
+        assert managed_subagent._redact(redactor, secret) == "[output withheld: redaction failed]"
+
+
+def test_managed_child_rejects_inherited_host_store_before_authority_creation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """C3/R13: reject host-backed child dependencies before opening any authority."""
+    from fa.inner_loop.artifacts import ArtifactStore
+
+    host_store = ArtifactStore(tmp_path / "host-artifacts")
+    authority_root = tmp_path / "forbidden-authority"
+    roots_requested: list[Path] = []
+
+    def state_root() -> Path:
+        roots_requested.append(authority_root)
+        return authority_root
+
+    monkeypatch.setattr("fa.inner_loop.state.default_state_root", state_root)
+    with pytest.raises(ValueError, match="managed child state cannot inherit host-backed"):
+        SessionState(
+            workspace_root=tmp_path,
+            run_id="child-guard",
+            managed_child=True,
+            artifact_store=host_store,
+        )
+    assert roots_requested == []
+    assert not authority_root.exists()
+
+
+@pytest.mark.parametrize(
+    "params",
+    [{}, {"task": 42}, {"task": " \n"}, {"task": "\ud800"}, {"task": "é" * 8001}],
+)
+def test_managed_child_rejects_invalid_task_before_reservation_and_pin(
+    params: dict[str, object], tmp_path: Path
+) -> None:
+    """C1/C3 R13: malformed or oversized UTF-8 tasks never reach child authority."""
+    parent, writer = _parent(tmp_path)
+    tool = _build_tool(tmp_path, parent, writer)
+    with patch.object(managed_subagent, "get_current_session", return_value=parent):
+        result = tool.handler(params)
+    assert result.error is not None and result.error.code == "invalid_params"
+    assert writer.fake_client.pin_calls == [] and writer.fake_client.stop_calls == []
+    assert parent.spawn_count == parent.active_count == 0
+
+
+def test_managed_child_accepts_exact_utf8_byte_limit_before_supervisor_refusal(tmp_path: Path) -> None:
+    """C1 boundary: 16,000 encoded bytes reach PIN, whose refusal remains fail-closed."""
+    parent, writer = _parent(tmp_path)
+    tool = _build_tool(tmp_path, parent, writer)
+    with (
+        patch.object(managed_subagent, "get_current_session", return_value=parent),
+        patch.object(
+            writer.fake_client, "pin_reader", side_effect=ExecutionRejectedError("ADMISSION_CLOSED", None)
+        ) as pin,
+    ):
+        result = tool.handler({"task": "é" * 8000})
+    assert result.error is not None and result.error.code == "subagent_denied"
+    assert pin.call_count == 1
+    assert parent.spawn_count == 1 and parent.active_count == 0
+    assert writer.fake_client.stop_calls == []

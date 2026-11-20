@@ -12,7 +12,8 @@ from fa.execution.composition import ExecutionBinding
 from fa.execution.supervisor import SupervisorError
 from fa.execution.types import Access, NamespaceRef, Operation, ViewPurpose
 from fa.inner_loop.plan_admission import read_plan_snapshot, snapshot_from_bytes
-from tests.test_execution_client_port import PLAN_RELATIVE, _plan_ref, _served
+from tests.test_execution_client_port import _plan_ref, _served
+from tests.test_execution_composition import PLAN_RELATIVE
 from tests.test_execution_handoff import CHILD, GRANDCHILD, move, workspace_file
 from tests.test_execution_views import create, native_profile
 from tests.test_execution_workspace import ACTOR, Site, ok

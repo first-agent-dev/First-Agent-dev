@@ -8,6 +8,7 @@
     "Unchanged producer names map to their retained stable I02 ID or native I03 case ID.",
     "A rename/replacement must keep the original baseline untouched, list current_producer_keys, and name successor_case_ids that are also present in coverage_case_ids.",
     "A new register producer requires a NEW: mapping; orphan, missing, duplicate, and unmapped cases are rejected.",
+    "A NEW: mapping adds a distinct current producer without changing the 125-key frozen baseline; any reused case is explicit in shared_case_ids.",
     "successor_case_ids is empty in this baseline because no source producer was renamed/replaced; coverage_case_ids records the direct retained/native case mapping."
   ],
   "counts": {
@@ -1512,6 +1513,32 @@
       "mapping_kind": "native-i03"
     },
     {
+      "baseline_id": "NEW:Q108-B-managed-inventory",
+      "producer_key": null,
+      "current_producer_keys": [
+        "managed_inventory.inventory_project_artifacts"
+      ],
+      "case_id": "I03-LIVE-S08",
+      "coverage_case_ids": [
+        "I03-LIVE-S08"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "new-producer"
+    },
+    {
+      "baseline_id": "NEW:Q146-B-list-projects",
+      "producer_key": null,
+      "current_producer_keys": [
+        "WorkspaceAuthority.list_projects"
+      ],
+      "case_id": "I03-LIVE-S08",
+      "coverage_case_ids": [
+        "I03-LIVE-S08"
+      ],
+      "successor_case_ids": [],
+      "mapping_kind": "new-producer"
+    },
+    {
       "baseline_id": "I03-LIVE-19",
       "producer_key": "I03-LIVE-19 `src/fa/execution/publication.py` (E267 local seal component)",
       "current_producer_keys": [
@@ -1643,6 +1670,23 @@
     }
   ],
   "shared_case_ids": [
-    "I03-LIVE-S06"
+    "I03-LIVE-S06",
+    "I03-LIVE-S08"
+  ],
+  "oracle_revisions": [
+    {
+      "case_id": "I02-LIVE-005",
+      "status": "PLANNED / NOT RUN",
+      "supersedes_frozen_oracle": true,
+      "fixture": "A verify fence invokes a missing binary through the shell; separately force genuine shell-launch OSError.",
+      "oracle": "Missing child binary: FAIL with exit_code=127; shell-launch OSError: ERROR with exit_code=None. Inspect persisted verification result, not message text alone."
+    },
+    {
+      "case_id": "I02-LIVE-011",
+      "status": "PLANNED / NOT RUN",
+      "supersedes_frozen_oracle": true,
+      "fixture": "Submit malformed kill directive with one bounded admission repair; separately exhaust planner budget with the same invalid plan.",
+      "oracle": "Successful validated repair records RETRY then ADMITTED before first coder dispatch; exhausted budget records RETRY then BLOCKED and dispatches no coder. Inspect durable admission attempts and coder event order."
+    }
   ]
 }

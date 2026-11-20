@@ -10,6 +10,15 @@ hooks, mutation-gate TCB, host developer bootstrap, and deployment verification.
 
 Revision: **v33 — live verifier feedback closes apply-mode and gate-umask defects**
 
+## Current operator disposition — Gitleaks is CI-only (2026-11-10)
+
+The earlier Q8 and cache-benchmark records describe the former Go-backed
+Gitleaks pre-commit hook. That local hook is removed. The blocking full-history
+GitHub Actions job and `.gitleaks.toml` allowlist remain in place. No Go SDK,
+system Go toolchain, or local Gitleaks binary is a project/runtime/readiness,
+cache-sizing, or host prerequisite. The recorded historical ENOSPC failures
+remain accurate for the former hook but do not describe current readiness.
+
 Changed-since-v32: first live apply succeeded, but the verifier caught the
 prepare hook at mode 0700; exact mode normalization restored it. The second live
 verifier passed every focused/static gate but full `just check` exposed ten

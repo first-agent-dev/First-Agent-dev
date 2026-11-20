@@ -107,6 +107,24 @@ extend-exclude = ["catch-corpus", "fp-corpus", "mutants"]
 
 [tool.ruff.lint]
 select = [
+  # ARG: dead parameters. Added after a measured sweep that found 7 in `src/`
+  # and 1 in `scripts/`; 4 survive, each with its reason recorded (inline, or
+  # in the docstring of the function it belongs to). An argument nobody reads
+  # is either a contract the caller dictates (`ToolHandler`, the `_handle_*`
+  # dispatcher) or a feature that was never wired to its consumer — both are
+  # decisions worth writing down, and neither is worth shipping silently.
+  # `tests/` is exempt: fakes must match the real signature, so a test's unused
+  # parameter is the point, not a defect.
+  # Explicit members only, for the same reason the TRY family is explicit:
+  #   ARG001/ARG002/ARG004 — unused function / method / static-method argument.
+  #   ARG003 (unused `self`) and ARG005 (unused lambda argument) are NOT
+  #   selected: `self` is protocol shape, and the measured ARG005 sites are
+  #   `lambda *a` / `lambda **kw` fakes standing in for real callbacks in
+  #   `scripts/verify_complexity_aware_execution.py` — deleting their
+  #   parameters would break the call they impersonate.
+  "ARG001",
+  "ARG002",
+  "ARG004",
   "B",
   # BLE: blind `except Exception` — top LLM-agent smell: defensive swallow
   # that hides real bugs for months. Every legitimate broad catch carries
@@ -120,6 +138,16 @@ select = [
   "F",
   "I",
   "N",
+  # PLW1510: `subprocess.run` without an explicit `check=`. Omitting it means
+  # `check=False` by default, so "I inspected returncode" and "I forgot" look
+  # identical on the page — and one measured site proved the difference matters:
+  # `worktree_manager._is_branch_checked_out_elsewhere` read `stdout` without
+  # looking at `returncode`, so a failed probe answered "nobody holds this
+  # branch" and a worktree could be created on top of a checked-out one. Every
+  # site now states which it is: `check=True` where git's failure IS the error,
+  # `check=False` + a comment where the exit code is data being classified.
+  # tests/ was already reviewed by the same sweep (20 sites, all fixtures).
+  "PLW1510",
   # PGH: blanket-suppression guard — `# noqa` without codes (PGH004) or
   # bare `# type: ignore` (PGH003) would silently disable ALL checks on a
   # line; force agents to name the exact rule they are waiving.
@@ -158,8 +186,11 @@ max-complexity = 15
 
 [tool.ruff.lint.per-file-ignores]
 # Tests: `assert` IS the framework; fake tokens / subprocess fixtures /
-# tmp paths are test scaffolding, not production attack surface.
-"tests/**" = ["S"]
+# tmp paths are test scaffolding, not production attack surface. ARG is waived
+# for the mirror-image reason: a fake has to *have* the parameter it ignores
+# (`def handler(params)`, `lambda *a`), so its unused argument is fidelity to
+# the production signature — the one place where deleting it would be the bug.
+"tests/**" = ["S", "ARG"]
 # repo-management scripts intentionally spawn git/uv/etc. with hardcoded
 # argument vectors (not shell-injection surfaces). S603 (subprocess.run
 # without check=False/timeout paranoia) and S607 (start-process-with-partial-
@@ -200,8 +231,17 @@ addopts = [
   "-ra",
   "--strict-config",
   "--strict-markers",
+  # Host-only suites are opt-in; the explicit W4 command includes tests/integration and
+  # tests/test_workspace_readiness_integration.py, selects `execution_host or live_e2e`,
+  # and sets FA_REQUIRE_EXECUTION_HOST=1.
+  "-m",
+  "not execution_host and not live_e2e",
 ]
 testpaths = ["tests"]
+markers = [
+  "execution_host: requires the approved Linux/Docker/cgroup execution host; excluded from default pytest runs",
+  "live_e2e: exercises the deployed project host; run only in the reviewed W4 suite",
+]
 # S8: narrow ResourceWarning ignores for known third-party/CPython sources
 # we don't own. Test modules that care about resource ownership (test_fs_search,
 # test_global_history_export) set ``pytestmark = pytest.mark.filterwarnings(
@@ -285,6 +325,12 @@ exclude_lines = [
 source_paths = [
   "src/fa/sandbox",
   "src/fa/session",
+  # Execution authority/journals (E510): the substrate where a wrong guard is a
+  # wrong *durable* fact, not a wrong answer. Added because the targeted gate
+  # was structurally blind to every managed-execution defect: changed files
+  # under `execution/` fell outside every configured root, so `check-deep`
+  # reported "nothing to do" while claiming changed-path mutant coverage.
+  "src/fa/execution",
   "src/fa/inner_loop/state.py",
   "src/fa/inner_loop/subagent_envelope.py",
   "src/fa/inner_loop/subagent_runner.py",
@@ -312,6 +358,39 @@ pytest_add_cli_args_test_selection = [
   "tests/test_s5_state_root_contract.py",
   "tests/test_s6_subagent_fidelity.py",
   "tests/test_subagent_runner.py",
+  # E510: the execution authority's own suites. Without these, every mutant under
+  # `src/fa/execution` would run against sandbox tests that cannot import it and
+  # "survive" vacuously — the exact failure this comment warns about.
+  "tests/test_execution_admission.py",
+  "tests/test_execution_client.py",
+  "tests/test_execution_client_port.py",
+  "tests/test_execution_client_stage.py",
+  "tests/test_execution_composition.py",
+  "tests/test_execution_dispatch.py",
+  "tests/test_execution_handoff.py",
+  "tests/test_execution_handoff_return.py",
+  "tests/test_execution_journal.py",
+  "tests/test_execution_plans.py",
+  "tests/test_execution_protocol.py",
+  "tests/test_execution_purposes.py",
+  "tests/test_execution_readers.py",
+  "tests/test_execution_receipts.py",
+  "tests/test_execution_reply_cache_budget.py",
+  "tests/test_execution_service.py",
+  "tests/test_execution_supervisor.py",
+  "tests/test_execution_termination.py",
+  "tests/test_execution_views.py",
+  "tests/test_execution_view_io.py",
+  "tests/test_execution_workspace.py",
+  "tests/test_s3p3_candidate_buffer.py",
+  # S9/S19 stats parser + DB projection contract. `src/fa/stats.py` is in
+  # source_paths; omitting these owning suites would let its mutants run
+  # against unrelated banks and falsely appear to survive/finish. S10a/b CLI
+  # compatibility banks run separately; the full S10a file includes a
+  # checkout-root authoring test that cannot run in mutmut's partial overlay.
+  "tests/test_stats.py",
+  "tests/test_s19_stats_parsers.py",
+  "tests/test_s9_stats_projection.py",
   "tests/test_workspace_bootstrap.py",
 ]
 # Complete package copy supplies sibling imports while source_paths remains the
@@ -325,6 +404,7 @@ type_check_command = [
   "check",
   "src/fa/sandbox",
   "src/fa/session",
+  "src/fa/execution",
   "src/fa/inner_loop/state.py",
   "src/fa/inner_loop/subagent_envelope.py",
   "src/fa/inner_loop/subagent_runner.py",
@@ -412,6 +492,8 @@ ignore-signatures = true   # similar function signatures are not duplication
 paths = [
   "src/fa/sandbox",
   "src/fa/session",
+  # E510: mirrors [tool.mutmut] source_paths.
+  "src/fa/execution",
   "src/fa/inner_loop/state.py",
   "src/fa/inner_loop/subagent_envelope.py",
   "src/fa/inner_loop/subagent_runner.py",

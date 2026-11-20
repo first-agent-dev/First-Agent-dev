@@ -40,7 +40,7 @@ import secrets
 import time
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, cast, override
 
 import pytest
 
@@ -150,12 +150,14 @@ class LyingStages(LocalStages):
         super().__init__(owner)
         self.lie = lie
 
+    @override
     def stop_view(self, view: ViewRef, capability: str, *, request_id: str, deadline: float) -> ViewStopResult:
         result = super().stop_view(view, capability, request_id=request_id, deadline=deadline)
         if self.lie == "unknown-view":
             return ViewStopResult("view-" + "0" * 32, result.terminal, result.verdict)
         return result
 
+    @override
     def publish(
         self,
         view: ViewRef,
@@ -210,6 +212,7 @@ class SilentStages:
 class TruthyStop(LocalStages):
     """A real terminal stop, reported as truthy-but-not-``True``."""
 
+    @override
     def stop_view(self, view: ViewRef, capability: str, *, request_id: str, deadline: float) -> ViewStopResult:
         super().stop_view(view, capability, request_id=request_id, deadline=deadline)
         return ViewStopResult(view.view_id, cast(bool, 1), TerminalVerdict.TERMINAL)
@@ -335,8 +338,12 @@ def test_a_record_is_exactly_the_seven_frozen_keys() -> None:
     # "A checkpoint is not success" is structural: there is no field to read.
     assert not {"status", "passed", "outcome", "result", "success", "verdict"} & set(record.to_dict())
     assert CheckpointRecord.from_dict(record.to_dict()) == record
-    # A kind is the closed enum, not its text; operation ids are one tuple.
-    for broken in ({**record.to_dict(), "kind": "STAGE"}, {**record.to_dict(), "operation_ids": ["op-" + "1" * 32]}):
+    # These deliberately malformed runtime arguments cannot have constructor types.
+    broken_records: list[dict[str, Any]] = [
+        {**record.to_dict(), "kind": "STAGE"},
+        {**record.to_dict(), "operation_ids": ["op-" + "1" * 32]},
+    ]
+    for broken in broken_records:
         with pytest.raises(ExecutionContractError):
             CheckpointRecord(**broken)
 

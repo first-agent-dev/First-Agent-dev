@@ -65,7 +65,8 @@ import pytest
 from fa.inner_loop.planner_dispatch import PlannerDispatch
 from fa.inner_loop.registry import ToolResult, ToolSpec, ToolWireNameError
 from fa.inner_loop.tool_names import TOOL_NAMES, is_valid_wire_name
-from fa.inner_loop.tools.workspace_port import WorkspacePort
+from fa.inner_loop.tools.workspace_port import CandidateWorkspacePort, WorkspacePort
+from fa.runtime.bash_executor import BashExecutor
 
 
 def _never_called_handler(params: Mapping[str, object]) -> ToolResult:
@@ -225,6 +226,10 @@ def test_composition_root_rejects_non_portable_name(monkeypatch: pytest.MonkeyPa
         bash_timeout: int = 30,
         planner_dispatch: PlannerDispatch | None = None,
         workspace_io: WorkspacePort | None = None,
+        project_tool_executor: object = None,
+        managed_executor: BashExecutor | None = None,
+        candidate_io: CandidateWorkspacePort | None = None,
+        candidate_seed_text: str | None = None,
     ) -> dict[str, Callable[[], ToolSpec]]:
         builders = dict(
             real(
@@ -232,6 +237,10 @@ def test_composition_root_rejects_non_portable_name(monkeypatch: pytest.MonkeyPa
                 bash_timeout=bash_timeout,
                 planner_dispatch=planner_dispatch,
                 workspace_io=workspace_io,
+                project_tool_executor=project_tool_executor,
+                managed_executor=managed_executor,
+                candidate_io=candidate_io,
+                candidate_seed_text=candidate_seed_text,
             )
         )
         builders["fs_read_file"] = lambda: ToolSpec(
@@ -268,6 +277,10 @@ def test_composition_root_accepts_a_non_fs_pr_prefixed_name(monkeypatch: pytest.
         bash_timeout: int = 30,
         planner_dispatch: PlannerDispatch | None = None,
         workspace_io: WorkspacePort | None = None,
+        project_tool_executor: object = None,
+        managed_executor: BashExecutor | None = None,
+        candidate_io: CandidateWorkspacePort | None = None,
+        candidate_seed_text: str | None = None,
     ) -> dict[str, Callable[[], ToolSpec]]:
         builders = dict(
             real(
@@ -275,6 +288,10 @@ def test_composition_root_accepts_a_non_fs_pr_prefixed_name(monkeypatch: pytest.
                 bash_timeout=bash_timeout,
                 planner_dispatch=planner_dispatch,
                 workspace_io=workspace_io,
+                project_tool_executor=project_tool_executor,
+                managed_executor=managed_executor,
+                candidate_io=candidate_io,
+                candidate_seed_text=candidate_seed_text,
             )
         )
         builders["fs_read_file"] = lambda: ToolSpec(

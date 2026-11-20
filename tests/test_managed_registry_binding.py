@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +13,7 @@ from fa.execution.client import ManagedBashExecutor
 from fa.execution.tool_port import ClientWorkspacePort
 from fa.execution.types import Access, Operation, ViewPurpose
 from fa.inner_loop.pr_draft import PrDraftStore
+from fa.inner_loop.registry import ToolResult
 from fa.inner_loop.tools import run_bash
 from tests.test_execution_client import SHA
 from tests.test_execution_client_port import _plan_ref, _served
@@ -32,7 +34,7 @@ def test_real_registry_role_binds_view_and_bash_without_host_effects(
         host_calls.append((args, kwargs))
         raise AssertionError("host subprocess executed")
 
-    monkeypatch.setattr(run_bash.subprocess, "run", forbidden)
+    monkeypatch.setattr(subprocess, "run", forbidden)
     with _served(site, tmp_path) as managed:
         operations: list[object] = []
         request = managed.client.request
@@ -140,7 +142,7 @@ def test_missing_managed_bash_never_becomes_host_bash(
         host_calls.append((args, kwargs))
         raise AssertionError("host subprocess executed")
 
-    monkeypatch.setattr(run_bash.subprocess, "run", forbidden)
+    monkeypatch.setattr(subprocess, "run", forbidden)
     with _served(site, tmp_path) as managed:
         grant = managed.open_view(
             access=Access.WRITE,
@@ -220,11 +222,8 @@ def test_session_state_rejects_isolated_worktree_without_git_effects(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Q126-A producer oracle: the actual SessionState caller never creates a Git worktree."""
-    import subprocess
-
     from fa.feature_flags import FeatureFlags
     from fa.inner_loop.state import SessionState
-    from fa.workspace import worktree_manager
 
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -235,7 +234,7 @@ def test_session_state_rejects_isolated_worktree_without_git_effects(
         git_calls.append((args, kwargs))
         raise AssertionError("isolated host-Git producer reached from SessionState")
 
-    monkeypatch.setattr(worktree_manager.subprocess, "run", record_git)
+    monkeypatch.setattr(subprocess, "run", record_git)
     state = SessionState(
         workspace_root=workspace,
         run_id="q126-isolated-refusal",
@@ -273,7 +272,7 @@ def test_missing_explicit_executor_fails_closed_through_production_chat_session(
 
     def trapped_fallback(*args: Any, **_kwargs: Any) -> Any:
         fallback_calls.append(args)
-        return run_bash.ToolResult.fail("mutant_host_fallback", "host fallback tripwire", retryable=False)
+        return ToolResult.fail("mutant_host_fallback", "host fallback tripwire", retryable=False)
 
     def trapped_subprocess(*args: Any, **_kwargs: Any) -> Any:
         host_process_calls.append(args)
@@ -299,7 +298,7 @@ def test_missing_explicit_executor_fails_closed_through_production_chat_session(
 
         monkeypatch.setattr(managed.client, "request", record_request)
         monkeypatch.setattr(run_bash, "_run_subprocess_fallback", trapped_fallback)
-        monkeypatch.setattr(run_bash.subprocess, "run", trapped_subprocess)
+        monkeypatch.setattr(subprocess, "run", trapped_subprocess)
 
         run_id = managed.binding.namespace.run_id
         session_id = managed.binding.namespace.session_id
@@ -342,6 +341,8 @@ def test_missing_explicit_executor_fails_closed_through_production_chat_session(
         )
 
         class ScriptedProvider:
+            name = "scripted"
+
             def __init__(self) -> None:
                 self.calls: list[Any] = []
 

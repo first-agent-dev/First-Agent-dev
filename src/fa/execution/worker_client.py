@@ -135,12 +135,17 @@ class WorkerClient:
         else:
             gates = (self._control_gate,)
         acquired: list[threading.Lock] = []
-        for gate in gates:
-            if not gate.acquire(timeout=_remaining(deadline)):
-                for held in reversed(acquired):
-                    held.release()
-                raise WorkerUnavailableError
-            acquired.append(gate)
+        try:
+            for gate in gates:
+                if not gate.acquire(timeout=_remaining(deadline)):
+                    raise WorkerUnavailableError
+                acquired.append(gate)
+        except (OSError, ExecutionContractError, WorkerUnavailableError) as error:
+            for held in reversed(acquired):
+                held.release()
+            if isinstance(error, ExecutionContractError):
+                raise
+            raise WorkerUnavailableError from None
         request_id = req["request_id"]
         pending = _Pending(req, deadline, limit)
         registered = False

@@ -38,14 +38,16 @@ estimator has never over-scoped a simple task in measurement.
 
 Scope of the guarantee (read before strengthening this)
 -------------------------------------------------------
-Layer 1 removes the *declared* write affordances (``fs_write_file``,
-``fs_edit_file``, ``fs_spawn_subagent``). It does **not** make writes
-impossible: ``fs_run_bash`` stays in the corpus and ``echo x > f.py`` still
-works. The honest claim is "the model is not handed a write tool", not "the
-model cannot write". Closing that path means denying general-write in the bash
-gate, which this repo already tried and reverted — it denied 8/10 realistic
-verifier commands such as ``pytest`` and ``mypy`` (see Q19 and the standing
-xfail in ``tests/test_s5_isolation_boundary.py``). Do not re-litigate it here.
+Layer 1 removes the *supported* direct write affordances (``fs_write_file``
+and ``fs_edit_file``). The legacy host-only ``fs_spawn_subagent`` route is
+retired from product registries by Q126-A/E469. The gate does **not** make
+writes impossible: ``fs_run_bash`` stays in the corpus and ``echo x > f.py``
+still works. The honest claim is "the model is not handed a direct write
+tool", not "the model cannot write". Closing that path means denying
+general-write in the bash gate, which this repo already tried and reverted —
+it denied 8/10 realistic verifier commands such as ``pytest`` and ``mypy``
+(see Q19 and the standing xfail in ``tests/test_s5_isolation_boundary.py``).
+Do not re-litigate it here.
 """
 
 from __future__ import annotations
@@ -69,13 +71,7 @@ GATE_MIN_CONFIDENCE: Final = 0.8
 # Declared write affordances withheld when the gate fires. ``invoke_workflow``
 # is deliberately absent from this set: escalation must remain reachable, or
 # the gate would strand the run with no way forward.
-WITHHELD_WRITE_TOOLS: Final = frozenset(
-    {
-        "fs_write_file",
-        "fs_edit_file",
-        "fs_spawn_subagent",
-    }
-)
+WITHHELD_WRITE_TOOLS: Final = frozenset({"fs_write_file", "fs_edit_file"})
 
 
 def should_withhold_write_tools(

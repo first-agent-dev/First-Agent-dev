@@ -66,6 +66,12 @@ class Site:
     ) -> dict[str, str]:
         return owner.register_existing(peer, ACTOR, root_id="projects", relative_root=relative, deadline=until())
 
+    def live_capability(self, owner: WorkspaceAuthority, ids: dict[str, str]) -> str:
+        """The capability the registry currently holds, after any grant rotation."""
+        binding = owner._binding(ids["workspace_id"])
+        assert binding.grant is not None
+        return binding.grant
+
     def metadata(self, ids: dict[str, str]) -> dict[str, Any]:
         value = json.loads((self.state / "workspaces" / ids["workspace_id"] / "workspace.json").read_text())
         assert isinstance(value, dict)

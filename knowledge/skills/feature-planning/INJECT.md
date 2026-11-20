@@ -1,70 +1,45 @@
 ---
 name: feature-planning-inject
-description: Per-slice implementation ceremony — before-edit gate, edit packet, after-edit gate, stop rule.
+description: Per-slice ceremony: before-edit gate, edit packet, after-edit gate, stop rule.
 ---
 
-Derived from `SKILL.md` §9-§12. `SKILL.md` is SSOT; this is the injected subset.
+Derived from `SKILL.md` §9–§12; that file is SSOT.
 
 ## BEFORE EDITING GATE
 
-State, before any edit:
-
-- Current source-verified behavior: `<file:symbol findings, or "absent after grep">`
-- Plan contract and gap IDs addressed by this slice: `GAP#`, `CT#`, `SLICE#`
-- Exact files allowed to change: `<paths>`
-- Blocking questions: `none`, or `Q#: <question> blocks SLICE# because <reason>`
-
-If blocking: STOP. Do not edit. Append the `Q#` with full explanation to the
-active plan artifact and to your response.
+Before editing, state: source-verified behavior; plan/gap IDs; exact allowed files; and blocking questions (`none` or `Q#: ...`). If blocked, STOP, append the full Q# to the active plan artifact, and report it.
 
 ## EDIT PACKET `E# / SLICE#`
 
-One packet per edit. Do not bundle unrelated contracts.
+One packet per edit; do not bundle unrelated contracts. Record:
 
-- What idea is implemented now: `<one concrete idea>`
-- Concrete intent: `<user/system outcome>`
-- Current behavior -> target behavior: `AS-IS:` `<source-verified>` / `TO-BE:` `<machine-checkable>`
-- Exact code mechanism: `<file:symbol branch/call/schema/route>`
-- Degree of freedom closed: `<what could vary before and cause the bug/risk/scope leak>`
-- Deterministic mechanism: `<code/schema/gate that makes the bad state impossible or observable>`
-- Production best practice: `<minimal safe mechanism; reuse/stdlib rationale>`
-- Failure behavior: `<errors, deny, fallback, rollback, idempotency, cleanup>`
-- Definition of Done: `<observable state/artifact/contract>`
-- Negative proof: `removing <producer> makes <T#> fail`
-- Edge negative proof: `removing <caller call | supplier binding> makes <T#> fail`
-- Delivery: root `<command a user runs>` | support (`rooted-by: CT#/STEP#`);
-  what the user observes; cutover `none` or `<old producer> -> supplier bound at <file:symbol>, delete at STEP<n>`
-- Tests-writing class: `C0 | C0p | C1 | C2 | C3 | C4`
-- Producer kill-check target: `<exact production call site/branch/write/gate>`
-- Edge kill-check target: `<exact caller's call or composition binding>`
+- Idea implemented now; Concrete intent: user/system outcome; AS-IS → TO-BE, both source-verified and machine-checkable.
+- Exact files allowed; exact code mechanism (`file:symbol` branch/call/schema/route).
+- Degree of freedom closed: `<variation/risk>`; Deterministic mechanism: `<gate>`; Production best practice: minimal safe mechanism, reuse/stdlib rationale.
+- Failure behavior: errors, deny/fallback, rollback, idempotency, cleanup.
+- Definition of Done: observable state/artifact/contract.
+- Delivery: root command; support (`rooted-by: CT#/STEP#`); user-visible outcome; cutover `none` or old producer → supplier bound at `file:symbol`, delete at `STEP<n>`.
+- Tests-writing class: `C0 | C0p | C1 | C2 | C3 | C4`.
+- Producer kill-check target: exact production call/branch/write/gate; removing it must fail the named test.
+- Edge kill-check target: exact caller call/composition binding; removing it must fail the named test.
 
-A unit whose only caller is its own test is L1, not shipped. A port only tests
-construct has no supplier: do not delete the code it was meant to replace.
+A unit whose only caller is its test is L1, not shipped. A port only test-constructed has no supplier: do not delete the code it should replace; expand → prove real binding → contract.
 
 ## AFTER EDIT GATE
 
-Run and report actual output, not a summary:
+Run and report actual output, not summaries:
 
-- Targeted tests: `$ <command>` + real output
-- Static checks on changed files: `$ <command>` + real output
-- Diff inspection: `$ git diff -- <files>`
-- Reachability: `$ grep -rn "<new symbol>" src/ | grep -v "<own package>"` + real
-  output. Empty => the unit is L1: name the step that roots it, or say SUPPORT.
-- Supplier (new port): `$ grep -rn "<PortName>(" src/` minus its own module.
-  Empty => nothing constructs it in production; do not delete what it replaces.
-- Cutover (if deleting): old path still proven until the delete step + supplier
-  bound before it.
-- Contract status: `GAP#`/`CT#`/`T#` -> PASS/FAIL because `<evidence>`
+- Target tests; static checks for changed files; `git diff -- <files>`.
+- Reachability: `grep -rn "<new symbol>" src/ | grep -v "<own package>"`; empty means L1—name the rooting step or say SUPPORT.
+- Supplier: `grep -rn "<PortName>(" src/` minus its own module; empty means no production construction—do not delete what it replaces.
+- For cutovers, prove old path until delete and supplier binding before it.
+- Map each `GAP#`/`CT#`/`T#` to PASS/FAIL with evidence.
 
-Never mark complete from "no exception". State the positive oracle and the
-negative-proof target. If tests fail, classify: implementation bug, test/oracle
-bug, plan mismatch, stale preflight, or new blocking `Q#`.
+Never mark complete from “no exception.” State the positive oracle and negative-proof target. Classify failures: implementation bug, test/oracle bug, plan mismatch, stale preflight, or new blocking Q#.
 
 ## MUTATION / KILL-CHECK
 
-After a big chunk, or before declaring shipped: remove the producer call or
-invert the key branch, rerun the named tests, confirm they fail, restore.
-A surviving mutation means a weak oracle — strengthen before ship.
+After a major chunk and before claiming shipped, remove the producer call or invert its key branch, rerun the named tests, confirm failure, and restore. A survivor means strengthen the oracle before ship.
 
 ## E2E EVIDENCE ROLES
 
@@ -78,5 +53,4 @@ fixture/helper implementation. No harness, evaluator, or coder assigns live
 
 ## STOP RULE
 
-If implementation reveals a new policy choice, STOP and promote it to a `Q#`
-with explanation. Do not decide it silently.
+If implementation reveals a new policy choice, STOP and promote it to a `Q#` with explanation. Do not decide it silently.

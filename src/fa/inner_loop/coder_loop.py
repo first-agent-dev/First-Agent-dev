@@ -37,7 +37,13 @@ to the canonical OpenAI ``{id, type:"function", function:{name,
 arguments:str}}`` shape (see
 :func:`fa.providers.openai_compat._normalize_success` +
 :func:`fa.providers.anthropic._normalize_success`). The driver's
-:func:`_build_tool_calls` parses that one shape only.
+:func:`fa.inner_loop.conversation_history.record_model_response` records the
+response and parses that one shape only. After terminal-stop handling,
+:mod:`fa.inner_loop.tool_turn` owns padding and model-facing tool-result
+handoff; :mod:`fa.inner_loop.scope_turn` evaluates chat scope at turn
+boundaries. :func:`fa.inner_loop.prompt_composer.compose_turn_request` builds
+provider payloads, including compaction rebuilds. This driver retains turn
+ordering, execution and session outcome.
 
 Determinism guards (deep-dive §3 I-5 — deterministic post-LLM
 filter): malformed ``arguments`` JSON, missing ``name`` field, or
@@ -63,7 +69,6 @@ References:
 
 from __future__ import annotations
 
-import json
 import logging
 import time
 from collections.abc import Mapping, Sequence
@@ -72,13 +77,18 @@ from pathlib import Path
 from typing import Any, Final
 
 from fa.inner_loop.artifacts import ArtifactStore
-from fa.inner_loop.bash_intent import BashIntentEffect, analyze_bash_for_intent
+from fa.inner_loop.budget_ladder import run_budget_ladder
+from fa.inner_loop.budget_turn import classify_budget as classify_budget
+from fa.inner_loop.conversation_history import (
+    _assert_tool_pairing_invariant as _assert_tool_pairing_invariant,
+)
+from fa.inner_loop.conversation_history import (
+    record_model_response,
+    restore_conversation_history,
+)
 from fa.inner_loop.expansion import (
     ExpansionState,
     difficulty_to_level,
-    near_miss_evidence,
-    next_level,
-    select_l2_skill,
 )
 from fa.inner_loop.hooks.base import HookPayload, HookRegistry, LifecyclePoint
 from fa.inner_loop.hooks.loop_guard import (
@@ -91,20 +101,37 @@ from fa.inner_loop.injections import (
     is_observed,
     mode_for,
 )
-from fa.inner_loop.loop import SessionRun, run_session
-from fa.inner_loop.observations import build_observation_block
+from fa.inner_loop.loop import StopInfo, run_session
 from fa.inner_loop.path_risk import (
     default_scope_risk_config,
     load_scope_risk_config,
-    observed_tiers,
 )
-from fa.inner_loop.projection import project_for_model
+from fa.inner_loop.planner_dispatch import PlannerDispatch
 from fa.inner_loop.prompt import (
     render_tool_specs,
 )
-from fa.inner_loop.registry import ToolCall, ToolRegistry, ToolResult, ToolSpec
+from fa.inner_loop.provider_turn import handle_provider_failure as handle_provider_failure
+from fa.inner_loop.provider_turn import record_provider_call
+from fa.inner_loop.registry import ToolRegistry, ToolResult
 from fa.inner_loop.runtime_limits import RuntimeLimits
-from fa.inner_loop.state import SessionState, _now_iso_z
+from fa.inner_loop.scope_turn import ScopeState, evaluate_scope_turn
+from fa.inner_loop.session_setup import prepare_session
+from fa.inner_loop.state import EventLog, SessionState, _now_iso_z
+from fa.inner_loop.tool_turn import (
+    _failed_tool_names,
+    append_tool_turn_messages,
+    prepare_continuing_tool_results,
+)
+from fa.inner_loop.tool_turn import (
+    _handle_terminal_tool_stop as _handle_terminal_tool_stop,
+)
+from fa.inner_loop.tool_turn import (
+    _pad_unexecuted_tool_results as _pad_unexecuted_tool_results,
+)
+from fa.inner_loop.tool_turn import (
+    _redact as _redact,
+)
+from fa.inner_loop.turn_state import TurnState
 from fa.observability.redaction import SecretRedactor
 from fa.output import EventBus, OutputEvent
 from fa.providers.base import RequestInfo, ResponseInfo
@@ -113,7 +140,7 @@ from fa.providers.errors import (
     ProviderChainExhaustedError,
     ProviderRequestShapeError,
 )
-from fa.skills._inject import plan_artifact_present
+from fa.providers.types import ChainAttemptRecord
 
 logger = logging.getLogger(__name__)
 
@@ -147,20 +174,6 @@ _TERMINAL_FINISH_REASONS: frozenset[str] = frozenset({"stop", "end_turn"})
 # turns and long reasoning are not truncated; a runaway emission still surfaces
 # via the ``abnormal_stop:length`` outcome.
 DEFAULT_MAX_TOKENS = 64000
-
-
-def _redact(redactor: SecretRedactor | None, text: str) -> str:
-    """Mask known secret values in model-facing tool output (ADR-12 B2).
-
-    This is the single egress chokepoint between tool results and the LLM
-    message stream (pi-style input-side redaction). Even if a tool returns a
-    secret value (e.g. the deploy key read via some path the gate missed), it
-    is masked — in raw, base64, hex, and url-encoded forms — before it can
-    reach the provider and therefore before the model can ever repeat it.
-    """
-    if redactor is None:
-        return text
-    return redactor.redact(text)
 
 
 def _usage_event_content(response: ResponseInfo) -> dict[str, int]:
@@ -209,14 +222,6 @@ def _session_summary_content(
         "exit_code": exit_code,
         "stop_reason": stop_reason,
     }
-
-
-def _merge_memory_summary_context(initial_summary: str, rebuilt_summary: str) -> str:
-    initial = initial_summary.strip()
-    rebuilt = rebuilt_summary.strip()
-    if initial and rebuilt:
-        return f"Resumed session context:\n{initial}\n\nPrevious compacted summary:\n{rebuilt}"
-    return initial or rebuilt
 
 
 #: Condensates injected by the coder-stage slice ceremony, in prompt order.
@@ -277,127 +282,6 @@ def _ceremony_blocks(workspace_root: Path) -> list[dict[str, Any]]:
     return blocks
 
 
-def _verify_failed_in_pairs(
-    *,
-    calls: Sequence[ToolCall],
-    results: Sequence[ToolResult],
-    workspace_root: Path | None,
-) -> bool:
-    """True iff a VERIFY_ONLY bash command (pytest/ruff/mypy) exited non-zero
-    among the given (call, result) pairs. Uses the bash_intent classifier —
-    never free-text parsing. A command the classifier cannot parse is not a
-    verify failure.
-    """
-    root = workspace_root or Path.cwd()
-    for call, result in zip(calls, results, strict=False):
-        if call.name != "fs_run_bash":
-            continue
-        if result.error is None:
-            continue
-        command = str(call.params.get("command", ""))
-        if not command:
-            continue
-        try:
-            analysis = analyze_bash_for_intent(command, repo_root=root)
-        except Exception as exc:  # noqa: BLE001 - classification is advisory
-            logger.debug("bash_intent analysis failed: %s", exc)
-            continue
-        if analysis.effect is BashIntentEffect.VERIFY_ONLY:
-            return True
-    return False
-
-
-def _assert_tool_pairing_invariant(messages: Sequence[Mapping[str, Any]]) -> None:
-    """Assert provider-visible tool call/result ids are exactly paired."""
-    use_ids: set[str] = set()
-    result_ids: set[str] = set()
-    for message in messages:
-        role = message.get("role")
-        if role == "assistant":
-            for call in message.get("tool_calls") or ():
-                if isinstance(call, Mapping):
-                    use_ids.add(str(call.get("id") or ""))
-            content = message.get("content")
-            if isinstance(content, Sequence) and not isinstance(content, str):
-                for block in content:
-                    if isinstance(block, Mapping) and block.get("type") == "tool_use":
-                        use_ids.add(str(block.get("id") or ""))
-        if role == "tool":
-            result_ids.add(str(message.get("tool_call_id") or ""))
-        if role == "user":
-            content = message.get("content")
-            if isinstance(content, Sequence) and not isinstance(content, str):
-                for block in content:
-                    if isinstance(block, Mapping) and block.get("type") == "tool_result":
-                        result_ids.add(str(block.get("tool_use_id") or ""))
-    if use_ids != result_ids:
-        raise AssertionError(
-            f"orphaned tool calls: use_only={use_ids - result_ids}, result_only={result_ids - use_ids}"
-        )
-
-
-def _assert_final_role_invariant(messages: Sequence[Mapping[str, Any]]) -> None:
-    """Assert the final provider-visible message is a serving-valid role.
-
-    I-50 (S13.3) production hardening: Mistral/Anthropic reject a trailing
-    ``assistant`` for a non-prefix completion (400/3230). This dev-time assertion
-    makes the loop fail fast if the emitter ever regresses, regardless of which
-    transport or provider is in use.
-    """
-    if not messages:
-        return
-    last_role = messages[-1].get("role")
-    if last_role not in ("user", "tool"):
-        raise AssertionError(f"final provider-visible role must be user or tool for serving, got {last_role!r}")
-
-
-def _fallback_projection_handler(_params: Mapping[str, object]) -> ToolResult:
-    return ToolResult.ok("projection fallback")
-
-
-def _projection_spec_for_call(registry: ToolRegistry, call: ToolCall) -> ToolSpec:
-    try:
-        return registry.lookup(call.name)
-    except KeyError:
-        return ToolSpec(
-            name=call.name,
-            description="Fallback projection spec for an unregistered tool call.",
-            input_schema={"type": "object"},
-            permission="read",
-            handler=_fallback_projection_handler,
-        )
-
-
-def _tool_calls_for_message(
-    raw_calls: Sequence[Mapping[str, Any]], parsed_calls: Sequence[ToolCall]
-) -> list[Mapping[str, Any]]:
-    """Return provider-history tool calls with ids matching ``parsed_calls``.
-
-    ``_build_tool_calls`` intentionally supplies fallback ids / names for
-    malformed model emissions so the registry can return a structured
-    failure instead of crashing. The assistant message sent back to the
-    provider must use the same fallback ids, otherwise the next request
-    would contain an orphaned ``tool`` result and fail the pairing
-    invariant before the model can correct itself.
-    """
-    projected: list[Mapping[str, Any]] = []
-    for raw, parsed in zip(raw_calls, parsed_calls, strict=True):
-        raw_function = raw.get("function")
-        function = raw_function if isinstance(raw_function, Mapping) else {}
-        name = str(function.get("name") or parsed.name)
-        arguments = function.get("arguments")
-        if not isinstance(arguments, str):
-            arguments = json.dumps(dict(parsed.params), ensure_ascii=False, sort_keys=True)
-        projected.append(
-            {
-                "id": parsed.call_id,
-                "type": "function",
-                "function": {"name": name, "arguments": arguments},
-            }
-        )
-    return projected
-
-
 @dataclass(frozen=True)
 class SessionOutcome:
     """Terminal state of a :func:`drive_session` invocation.
@@ -409,10 +293,19 @@ class SessionOutcome:
       emitted a final message with no tool calls and a terminal
       ``finish_reason`` (the happy path).
     - ``exit_code == 1`` + ``stop_reason == "iteration_cap"``: the
-      ``max_turns`` cap fired before the LLM signalled completion.
+      ``max_turns`` cap fired before the LLM signalled completion. Only
+      this path — never a guard denial — carries this code.
     - ``exit_code == 1`` + ``stop_reason == "abnormal_stop:<reason>"``:
       the LLM stopped on ``length`` / ``content_filter`` without a
       tool call — terminal but abnormal.
+    - ``exit_code == 1`` + ``stop_reason == "hook_deny:<point>"``: a guard
+      denied at ``AFTER_TOOL_EXEC`` (or at a terminal ``BETWEEN_ROUNDS``
+      gate). The results that turn executed stay in ``tool_results``; the
+      point names which lifecycle gate stopped the run.
+    - ``exit_code == 1`` + ``stop_reason == "loop_guard"``: ``LoopGuard``
+      tripped (repeat / ping-pong breaker) and ended the session in-band.
+      Distinct from ``hook_deny`` because it means "the model was looping",
+      not "a policy said no".
     - ``exit_code == 2`` + ``stop_reason == "chain_exhausted"``: every
       provider in the chain failed; the chain raised
       :class:`fa.providers.errors.ProviderChainExhaustedError`.
@@ -458,11 +351,13 @@ def drive_session(
     # which is what every existing caller gets.
     injection_modes: InjectionModes | None = None,
     initial_memory_summary: str = "",
+    initial_user_context: str = "",
     temperature: float | None = None,
     max_tokens: int = DEFAULT_MAX_TOKENS,
     redactor: SecretRedactor | None = None,
     output: EventBus | None = None,
     pinned_buffer: Any = _DEFAULT_PINNED_BUFFER,
+    planner_dispatch: PlannerDispatch | None = None,
 ) -> SessionOutcome:
     """Drive an LLM-driven coder session to terminal state.
 
@@ -547,14 +442,155 @@ def drive_session(
             scope_mode=scope_mode,
             injection_modes=injection_modes,
             initial_memory_summary=initial_memory_summary,
+            initial_user_context=initial_user_context,
             temperature=temperature,
             max_tokens=max_tokens,
             redactor=redactor,
             output=output,
             pinned_buffer=pinned_buffer,
+            planner_dispatch=planner_dispatch,
         )
     finally:
         reset_current_session(token)
+
+
+def _request_with_cooldown_retries(
+    provider_chain: ProviderChain,
+    request: RequestInfo,
+    *,
+    log: EventLog,
+    output: EventBus | None,
+    turn: int,
+    max_turns: int,
+) -> tuple[ResponseInfo, str, list[ChainAttemptRecord]]:
+    """Retry one turn's exhausted provider chain while honoring cooldowns."""
+    # --- Internal Retry Loop for Chain Exhaustion ---
+    # S22: renamed from max_chain_retries to avoid collision with
+    # the FeatureFlags field that controls session-level retry.
+    # This is the per-turn retry: wait for cooldowns and retry the
+    # same request. The session-level retry (FeatureFlags.max_chain_retries)
+    # is in the outer ProviderChainExhaustedError handler.
+    _per_turn_chain_retries = 3
+    attempt_count = 0
+    while True:
+        try:
+            return provider_chain.request(request)
+        except ProviderChainExhaustedError as exc:
+            attempt_count += 1
+            if log is not None:
+                for attempt in exc.attempts:
+                    log.append(
+                        actor="provider",
+                        kind="provider_attempt",
+                        content={
+                            "provider": attempt.provider,
+                            "slug": attempt.slug,
+                            "status": attempt.status,
+                            "ms": attempt.ms,
+                            "error": attempt.error,
+                            "logical_call_id": exc.logical_call_id,
+                        },
+                    )
+            if attempt_count >= _per_turn_chain_retries:
+                raise  # Break the while loop, letting the outer try/except catch it as norm
+
+            now = time.time()
+            active_cooldowns = [
+                row.expires_at - now for key, row in provider_chain.cooldowns.items() if row.expires_at > now
+            ]
+
+            wait_s = max(1.0, min(active_cooldowns)) if active_cooldowns else 5.0
+
+            # Protect tests from hanging without changing production
+            # cooldown semantics. The runtime must honor the provider
+            # chain's cooldown ledger on the AIO host; only pytest gets
+            # the near-zero sleep shim so unit tests stay fast.
+            import os
+
+            if "PYTEST_CURRENT_TEST" in os.environ:
+                wait_s = 0.01
+
+            if output is not None:
+                for _att in exc.attempts:
+                    output.emit(
+                        OutputEvent(
+                            type="api_retry",
+                            turn=turn,
+                            max_turns=max_turns,
+                            data={
+                                "provider": _att.provider,
+                                "status": _att.status,
+                                "retry_after_s": int(wait_s),
+                                "reason": _att.error or "unknown",
+                            },
+                        )
+                    )
+            time.sleep(wait_s)
+
+
+def _stop_reason_for(stop: StopInfo) -> str:
+    """Short, stable code for a terminal tool stop (the detail stays in the row).
+
+    The durable ``run_stopped`` row written by ``run_session`` already carries the
+    full reason; ``stop_reason`` is the code the CLI banner and the session
+    summary need. ``iteration_cap`` is deliberately *not* an option here: that
+    code means "the turn budget ran out", and reporting it for a guard denial is
+    the misleading banner S12.7 recorded.
+    """
+    if stop.reason.startswith(LOOP_GUARD_REASON_PREFIX):
+        return "loop_guard"
+    return f"hook_deny:{stop.point}"
+
+
+def _finish_no_tool_response(
+    response: ResponseInfo,
+    *,
+    turn: int,
+    max_turns: int,
+    results: Sequence[ToolResult],
+    log: EventLog,
+    output: EventBus | None,
+) -> SessionOutcome:
+    """Classify a response with no tool calls, recording abnormal stops."""
+    if response.finish_reason in _TERMINAL_FINISH_REASONS or not response.finish_reason:
+        return SessionOutcome(
+            exit_code=0,
+            stop_reason="stopped_by_llm",
+            turns=turn,
+            final_text=response.text,
+            tool_results=tuple(results),
+        )
+
+    # S17 LOGIC-10: abnormal finish reasons have actionable console guidance.
+    if response.finish_reason == "length":
+        hint = "Output truncated (finish_reason=length). Consider increasing max_tokens or simplifying the task."
+    elif response.finish_reason == "content_filter":
+        hint = (
+            "Output blocked by content filter (finish_reason=content_filter). Review the prompt for policy violations."
+        )
+    else:
+        hint = f"Unexpected finish_reason: {response.finish_reason}"
+    if output is not None:
+        output.emit(
+            OutputEvent(
+                type="loop_warn",
+                turn=turn,
+                max_turns=max_turns,
+                data={"detector": "abnormal_stop", "message": hint},
+            )
+        )
+    log.append(
+        actor="runtime",
+        kind="run_stopped",
+        content={"reason": f"abnormal_stop:{response.finish_reason}"},
+    )
+    return SessionOutcome(
+        exit_code=1,
+        stop_reason=f"abnormal_stop:{response.finish_reason}",
+        turns=turn,
+        final_text=response.text,
+        tool_results=tuple(results),
+    )
 
 
 def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, documented
@@ -574,108 +610,40 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
     scope_mode: str = "",
     injection_modes: InjectionModes | None = None,
     initial_memory_summary: str = "",
+    initial_user_context: str = "",
     temperature: float | None = None,
     max_tokens: int = DEFAULT_MAX_TOKENS,
     redactor: SecretRedactor | None = None,
     output: EventBus | None = None,
     pinned_buffer: Any = _DEFAULT_PINNED_BUFFER,
+    planner_dispatch: PlannerDispatch | None = None,
 ) -> SessionOutcome:
     effective_limits = limits if limits is not None else RuntimeLimits.anchored_defaults()
     log = state.require_log()
     tool_payload = render_tool_specs(registry.specs())
-    tool_defs_for_prompt = [dict(tool) for tool in tool_payload]
     artifact_store = ArtifactStore.from_event_log(log)
 
-    from fa.memory.context_budget import ContextBudget, estimate_tokens
+    from fa.memory.context_budget import estimate_tokens
     from fa.memory.pinned_buffer import PinnedBuffer
 
-    # G1 fix: direct access — ChainConfig always has both fields.
-    # The old getattr+or pattern had a logic trap: `or 150000` silently
-    # converted context_limit=0 to 150000. ChainConfig.validate() already
-    # rejects context_limit <= 0 (chain.py:63), but the floor below is
-    # defense-in-depth for misconfigured-but-positive values.
-    context_limit = provider_chain.config.context_limit
-    compaction_threshold = provider_chain.config.compaction_threshold
-
-    # MIN_CONTEXT_LIMIT: below this, context budget is meaningless.
-    # Catches typos like context_limit=100 (meant 100000).
-    min_context_limit = 32_000
-    if context_limit < min_context_limit:
-        log.append(
-            actor="runtime",
-            kind="telemetry",
-            content={"message": f"context_limit={context_limit} below floor {min_context_limit}, clamped"},
-        )
-        context_limit = min_context_limit
-
-    # TODO: Adaptive context sizing — eventually derive context_limit from API response
-    # metadata (model's actual context_window). ADR-17 §Option B point 5 describes the
-    # target architecture. Current implementation uses static config from models.yaml.
-    # See: knowledge/adr/ADR-17-context-management-and-compaction.md
-    budget = ContextBudget(limit_tokens=context_limit, configured_threshold=compaction_threshold)
-    active_pinned_buffer = (
-        PinnedBuffer(state.workspace_root) if pinned_buffer is _DEFAULT_PINNED_BUFFER else pinned_buffer
+    # Preconditions first: budget (with its floor), buffer, ledger, clock. The
+    # assembler records the clamp itself — that row is operator-facing.
+    setup = prepare_session(
+        log=log,
+        context_limit=provider_chain.config.context_limit,
+        compaction_threshold=provider_chain.config.compaction_threshold,
+        pinned_buffer=PinnedBuffer(state.workspace_root) if pinned_buffer is _DEFAULT_PINNED_BUFFER else pinned_buffer,
+        tool_payload=tool_payload,
     )
+    budget = setup.budget
+    compaction_threshold = setup.compaction_threshold
+    # `Any` at the parameter boundary (callers pass stand-ins), narrowed here.
+    active_pinned_buffer: PinnedBuffer | None = setup.pinned_buffer  # type: ignore[assignment]
+    ledger = setup.ledger
+    tool_defs_for_prompt = setup.tool_defs_for_prompt
+    _session_start_mono = setup.started_at
 
-    usage_totals = {
-        "input_tokens": 0,
-        "cache_read_input_tokens": 0,
-        "cache_creation_input_tokens": 0,
-        "output_tokens": 0,
-    }
-    usage_turns = 0
-    summary_written = False
-    memory_summary = initial_memory_summary.strip()
-    conversation_history: list[dict[str, Any]] = []
-    # Rebuild conversation history from log database per D1 history authority
-    if log is not None:
-        try:
-            events = log.read_all()
-            latest_comp_idx = -1
-            rebuilt_summary = ""
-            for idx, ev in enumerate(events):
-                if ev.kind == "compaction_stage3_done":
-                    latest_comp_idx = idx
-                    rebuilt_summary = str(ev.content.get("summary") or "")
-
-            memory_summary = _merge_memory_summary_context(initial_memory_summary, rebuilt_summary)
-            relevant_events = events[latest_comp_idx + 1 :] if latest_comp_idx != -1 else events
-            for ev in relevant_events:
-                if ev.kind == "user_msg":
-                    # I-52: replay the prior instruction so a resumed stage sees
-                    # the user turn its inherited assistant/tool turns were
-                    # answering. `user_msg` rows appear chronologically before the
-                    # `model_msg` they provoked, so log-order replay cannot create
-                    # a user-after-tool transition.
-                    text = ev.content.get("text")
-                    conversation_history.append({"role": "user", "content": str(text or "")})
-                elif ev.kind == "model_msg":
-                    text = ev.content.get("text")
-                    calls = ev.content.get("tool_calls")
-                    assistant_msg: dict[str, Any] = {
-                        "role": "assistant",
-                        "content": text or "",
-                    }
-                    if calls:
-                        assistant_msg["tool_calls"] = calls
-                    conversation_history.append(assistant_msg)
-                elif ev.kind == "tool_result":
-                    # Tool response
-                    # Find tool_call_id and full stdout content
-                    res_data = ev.content.get("result") or {}
-                    stdout = ""
-                    if isinstance(res_data, dict):
-                        stdout = str(res_data.get("stdout") or "")
-                    content_val = stdout if stdout else (ev.content.get("summary") or "")
-                    conversation_history.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": ev.tool_call_id,
-                            "content": content_val,
-                        }
-                    )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Failed to rebuild history from log: %s", exc)
+    turn_state = TurnState.from_restored(restore_conversation_history(log, initial_memory_summary))
 
     log.append(actor="user", kind="user_msg", content={"text": task})
     log.append(
@@ -684,10 +652,10 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
         content={"role": role, "max_turns": max_turns, "temperature": temperature},
     )
 
-    _session_start_mono = time.monotonic()
-    # LOGIC-5: track the last budget ratio so finish() can compute
-    # context_used_pct instead of hardcoding None.
-    last_budget_ratio: float = 0.0
+    # LOGIC-5: `turn_state.last_budget_ratio` is the number finish() reports as
+    # context_used_pct. It lives on TurnState rather than here because Q#4 was
+    # a stale value read by the exit, and a field with one owner is harder to
+    # read stale than a local reassigned in four places.
 
     # ── Output: session_start ──────────────────────────────────────────────
     if output is not None:
@@ -714,48 +682,32 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
         _seed_level = difficulty_to_level(scope_mode) if scope_mode else 1
     except ValueError:
         _seed_level = 1
-    _expansion = ExpansionState(level=_seed_level)
-    _active_skill_name: str = ""
-    _exhausted_flag = False
-    # Per-turn observation block. REBUILT (not appended) at every boundary so a
-    # stale L2 line never survives L3. It is composed ON TOP of the caller's
-    # turn_context (the S3 scope hint), which is session-constant and must be
-    # preserved (RK-H) — the two strings only meet at the composer binding.
-    observation_context = ""
-    # Pairs produced during the previous turn's tool batch, evaluated at the
-    # next boundary (F6: observations land in the NEXT request).
-    _prev_calls: tuple[ToolCall, ...] = ()
-    _prev_results: tuple[ToolResult, ...] = ()
-    # S10.9 / CT-H3: delta gate for the durable near-miss telemetry
-    # (expansion_observed) — one event per distinct policy-relevant evidence
-    # tuple per run, never on a transition turn.
-    _last_observed_evidence: tuple[tuple[str, object], ...] | None = None
+    # Six locals became one value: they are written by the same two places
+    # (entry and the turn boundary) and read by the same three, so keeping them
+    # apart was six chances to update five of six (see ScopeState).
+    scope = ScopeState(expansion=ExpansionState(level=_seed_level))
     # S22: Session-level chain exhaustion counter for max_chain_retries guard.
     # Distinct from the inner per-turn retry loop (_per_turn_chain_retries):
     #   - Inner loop retries provider_chain.request() with cooldown waits
     #   - This counter retries the entire turn (continue back to while loop)
     #   - max_chain_retries (FeatureFlags, default=0) controls this counter
     #   - transport_retries (ChainEntry, models.yaml) controls per-provider HTTP retries
-    chain_exhaustion_count = 0
+    # (initialised on turn_state: chain_exhaustion_count)
 
     def record_usage(response: ResponseInfo) -> None:
-        nonlocal usage_turns
         # Waiver: internal invariant (log attached before loop starts).
         assert log is not None  # noqa: S101
         row = _usage_event_content(response)
         log.append(actor="runtime", kind="usage", content=row)
-        for key, value in row.items():
-            usage_totals[key] += value
-        usage_turns += 1
+        ledger.record(row)
 
     def finish(outcome: SessionOutcome) -> SessionOutcome:
-        nonlocal summary_written
         # Waiver: internal invariant (log attached before loop starts).
         assert log is not None  # noqa: S101
-        if not summary_written:
+        if ledger.claim_summary():
             summary = _session_summary_content(
-                usage_totals,
-                usage_turns,
+                ledger.totals,
+                ledger.turns,
                 role=role,
                 exit_code=outcome.exit_code,
                 stop_reason=outcome.stop_reason,
@@ -765,7 +717,6 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                 kind="session_summary",
                 content=summary,
             )
-            summary_written = True
             # ── Output: session_end ────────────────────────────────────────
             if output is not None:
                 output.emit(
@@ -778,10 +729,10 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                             "ok": outcome.exit_code == 0,
                             "turns": outcome.turns,
                             "wall_s": time.monotonic() - _session_start_mono,
-                            "total_in": usage_totals.get("input_tokens", 0),
-                            "total_out": usage_totals.get("output_tokens", 0),
+                            "total_in": ledger.totals.get("input_tokens", 0),
+                            "total_out": ledger.totals.get("output_tokens", 0),
                             "cache_hit_ratio": summary.get("cache_hit_ratio", 0.0),
-                            "context_used_pct": round(last_budget_ratio * 100, 1),
+                            "context_used_pct": round(turn_state.last_budget_ratio * 100, 1),
                         },
                     )
                 )
@@ -804,45 +755,60 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
 
         return replace(outcome, failed_tools=tuple(sorted(failed_tools)))
 
-    def _request_shape_failure(exc: ProviderRequestShapeError) -> SessionOutcome:
-        """Log + emit + finish a request-shape failure (CT5 / I-50 / I-51).
+    def finish_at(
+        exit_code: int,
+        stop_reason: str,
+        *,
+        final_text: str = "",
+        extra_results: Sequence[ToolResult] = (),
+    ) -> SessionOutcome:
+        """The single way this driver ends a session.
 
-        Shared by both the composition-time path (a dangling-tool or invalid
-        message order raised locally before HTTP) and the provider-returned
-        400/422 path, so an operator sees the same graceful `request_shape`
-        exit-2 and the real provider/reason either way. Previously a
-        composition-time failure (e.g. dangling tool_calls on resume) escaped as
-        an uncaught ValueError traceback because it happened outside the
-        provider-request try block.
+        Every terminal branch used to spell out the same eight-line
+        ``finish(SessionOutcome(...))`` with five fields, so the ONE thing that
+        had to differ — the reason — was buried in boilerplate identical to its
+        neighbours. That is not hypothetical: the terminal-stop branch reported
+        ``iteration_cap`` for a guard denial and dropped the results it had
+        executed, and it survived review because the block looked like all the
+        others (S6-F5). Naming the call makes the difference visible and gives
+        new exits no way to forget a field or bypass the summary guard.
+
+        ``turns`` is always the current ``turn``; ``tool_results`` is everything
+        collected so far plus whatever this turn executed (``extra_results``).
         """
-        log.append(
-            actor="runtime",
-            kind="run_stopped",
-            content={"reason": "request_shape", "detail": str(exc)},
-        )
-        if output is not None:
-            output.emit(
-                OutputEvent(
-                    type="api_retry",
-                    turn=turn,
-                    max_turns=max_turns,
-                    data={
-                        "provider": getattr(exc, "provider", None) or "unknown",
-                        "status": exc.status,
-                        "retry_after_s": 0,
-                        "reason": f"request_shape_error: {exc}",
-                    },
-                )
-            )
         return finish(
             SessionOutcome(
-                exit_code=2,
-                stop_reason="request_shape",
+                exit_code=exit_code,
+                stop_reason=stop_reason,
                 turns=turn,
-                final_text="",
-                tool_results=tuple(collected_results),
+                final_text=final_text,
+                tool_results=(*collected_results, *extra_results),
             )
         )
+
+    def _fail_request_shape(exc: ProviderRequestShapeError) -> SessionOutcome:
+        """End the session for a request-shape failure — decided and recorded elsewhere.
+
+        Composition-time and provider-time shape failures report the same way
+        (S13.4: a dangling-tool history on resume used to escape as an uncaught
+        ValueError). Both now go through `provider_turn`, which owns the
+        `run_stopped` row and its `api_retry` mirror; this wrapper only performs
+        the stop, because `finish_at` closes over this function's state.
+
+        Keeping a second copy of those two effects here is how they drift: the
+        console line was already implemented twice before this.
+        """
+        failure = handle_provider_failure(
+            exc,
+            exhaustion_count=turn_state.chain_exhaustion_count,
+            max_retries=0,
+            log=log,
+            output=output,
+            turn=turn,
+            max_turns=max_turns,
+        )
+        assert failure.stop is not None  # noqa: S101 # a shape failure never retries
+        return finish_at(failure.stop.exit_code, failure.stop.reason, final_text=failure.stop.final_text)
 
     while turn < max_turns:
         turn += 1
@@ -889,134 +855,26 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
             )
 
         if _is_chat_role:
-            transaction = state.transaction
-            read_paths = frozenset(transaction.read_set) if transaction is not None else frozenset()
-            write_paths = frozenset(transaction.write_set) if transaction is not None else frozenset()
-            tiers = observed_tiers(read_paths, write_paths, _scope_tiers)
-            files_read = len(read_paths)
-            files_changed = len(write_paths)
-            write_tier = tiers["write_max"]
-            read_high = tiers["read_max"] >= 5
-
-            verify_failed = _verify_failed_in_pairs(
-                calls=_prev_calls,
-                results=_prev_results,
-                workspace_root=state.workspace_root,
+            scope_turn = evaluate_scope_turn(
+                state=state,
+                scope_tiers=_scope_tiers,
+                scope_mode=scope_mode,
+                expansion=scope.expansion,
+                active_skill_name=scope.active_skill_name,
+                exhausted_flag=scope.exhausted_flag,
+                previous_calls=scope.previous_calls,
+                previous_results=scope.previous_results,
+                last_observed_evidence=scope.last_observed_evidence,
+                log=log,
+                output=output,
+                turn=turn,
+                max_turns=max_turns,
             )
-            assumed_linear = scope_mode == "workflow_linear"
-
-            expansion_decision = next_level(
-                _expansion,
-                write_tier=write_tier,
-                read_tier_high=read_high,
-                verify_failed=verify_failed,
-                assumed_linear=assumed_linear,
-            )
-
-            level_from = _expansion.level
-            level_to = expansion_decision.level_to if expansion_decision is not None else level_from
-
-            # L2 skill injection: read the body ONLY on the entry turn.
-            skill_result = None
-            if expansion_decision is not None and expansion_decision.observation_key == "skill":
-                # Warm signal: a PLAN-*.md in the read set. Blackboard
-                # handoff keys arrive with CT6's blackboard entry; the read
-                # path already covers plan artifacts produced this run.
-                warm = plan_artifact_present(read_paths=read_paths)
-                skill_name = select_l2_skill(plan_artifact=warm)
-                _active_skill_name = skill_name
-                try:
-                    from fa.skills._inject import default_skills_root, read_skill_for_injection
-
-                    skill_result = read_skill_for_injection(skill_name, default_skills_root(state.workspace_root))
-                    if skill_result.warning is not None:
-                        logger.warning("L2 skill injection: %s", skill_result.warning)
-                except Exception as exc:  # noqa: BLE001 - advisory must never crash
-                    logger.warning("L2 skill injection failed: %s", exc)
-                    skill_result = None
-
-            render = build_observation_block(
-                level_from=level_from,
-                level_to=level_to,
-                decision=expansion_decision,
-                write_tier=write_tier,
-                skill_result=skill_result,
-                exhausted=_exhausted_flag,
-                skill_name=_active_skill_name,
-            )
-            observation_context = render.turn_context
-            # PLAN S5 step 1: APPEND, never replace. The ceremony branch above
-            # may already have populated this. The two are mutually exclusive
-            # today (that branch needs role=="coder", this one needs
-            # role=="chat"), so a bare assignment would not lose anything --
-            # but it would be correct only by accident, and the accident
-            # evaporates the moment a chat-role injection is registered.
+            scope.adopt(scope_turn)
+            render = scope_turn.render
+            # Append, never replace: ceremony may already have populated this.
             if render.skill_block is not None:
                 skill_block_for_request = [*(skill_block_for_request or []), render.skill_block]
-
-            if level_to != level_from:
-                _expansion = ExpansionState(
-                    level=level_to,
-                    observed_read_paths=read_paths,
-                    observed_write_paths=write_paths,
-                )
-                log.append(
-                    actor="harness",
-                    kind="scope_expansion",
-                    content={
-                        "turn": turn,
-                        "level_from": level_from,
-                        "level_to": level_to,
-                        "evidence": expansion_decision.evidence if expansion_decision is not None else "",
-                        "files_read": files_read,
-                        "files_changed": files_changed,
-                        "write_tier": write_tier,
-                        "read_tier": tiers["read_max"],
-                    },
-                )
-                # S10.9 / CT-H4: console mirror (dual-write contract).
-                if output is not None:
-                    output.emit(
-                        OutputEvent(
-                            type="scope_expansion",
-                            turn=turn,
-                            max_turns=max_turns,
-                            data={
-                                "level_from": level_from,
-                                "level_to": level_to,
-                                "evidence": expansion_decision.evidence if expansion_decision is not None else "",
-                            },
-                        )
-                    )
-            else:
-                _expansion = ExpansionState(
-                    level=level_to,
-                    observed_read_paths=read_paths,
-                    observed_write_paths=write_paths,
-                )
-                # S10.9 / CT-H3: durable near-miss telemetry. Recorded when a
-                # policy-relevant signal was present but (correctly) did not
-                # escalate; delta-gated so an unchanged evidence tuple logs
-                # once per run. Never fires on a transition turn (this else
-                # branch). Includes workflow_linear-seeded runs — telemetry
-                # records the seed-was-right case too.
-                near_miss = near_miss_evidence(
-                    _expansion,
-                    files_read=files_read,
-                    files_changed=files_changed,
-                    write_tier=write_tier,
-                    read_tier_high=read_high,
-                    verify_failed=verify_failed,
-                )
-                if near_miss is not None:
-                    evidence_key = tuple(sorted(near_miss.items()))
-                    if evidence_key != _last_observed_evidence:
-                        _last_observed_evidence = evidence_key
-                        log.append(
-                            actor="harness",
-                            kind="expansion_observed",
-                            content={"turn": turn, **near_miss},
-                        )
         # ── Output: turn_start ─────────────────────────────────────────────
         if output is not None:
             output.emit(
@@ -1050,18 +908,10 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                         data={"hook": "BEFORE_LLM_CALL", "reason": str(exc)},
                     )
                 )
-            return finish(
-                SessionOutcome(
-                    exit_code=1,
-                    stop_reason=f"hook_deny:{LifecyclePoint.BEFORE_LLM_CALL.value}",
-                    turns=turn,
-                    final_text="",
-                    tool_results=tuple(collected_results),
-                )
-            )
+            return finish_at(1, f"hook_deny:{LifecyclePoint.BEFORE_LLM_CALL.value}")
         if __debug__:
             try:
-                _assert_tool_pairing_invariant(conversation_history)
+                _assert_tool_pairing_invariant(turn_state.conversation_history)
             except AssertionError:
                 # A malformed *data* state (e.g. an interrupted prior stage whose
                 # tool_call has no persisted tool_result) is a request-shape error,
@@ -1069,7 +919,7 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                 # letting a dev-only assertion crash the CLI with a traceback. The
                 # chain conformance (S13.4) is the authoritative pairing gate; this
                 # catch keeps the dev assertion loud but non-fatal on bad data.
-                return _request_shape_failure(
+                return _fail_request_shape(
                     ProviderRequestShapeError(
                         "history pairing invariant violated: orphaned/duplicate tool calls in conversation history",
                         status=400,
@@ -1087,15 +937,13 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
             pinned_text = system_prompt_extra
 
         # ── PromptComposer Sole Assembly Path (Phase 3 / PR 3) ──────────────
-        from fa.inner_loop.prompt import _ROLE_PROMPTS, CODER_SYSTEM_PROMPT
-        from fa.inner_loop.prompt_composer import (
-            build_prompt_parts_v2,
-            to_anthropic_request_v2,
-            to_openai_request_v2,
-        )
+        from fa.inner_loop.prompt import resolve_base_system_prompt
+        from fa.inner_loop.prompt_composer import compose_turn_request
 
-        base_system = _ROLE_PROMPTS.get(role, CODER_SYSTEM_PROMPT)
+        base_system = resolve_base_system_prompt(role, planner_dispatch=planner_dispatch)
         pinned_text_for_turn = pinned_text
+
+        request_task = f"{task}\n\n{initial_user_context}".strip() if initial_user_context else task
 
         def _compose_request_payload(
             *,
@@ -1103,55 +951,44 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
             observations: list[dict[str, Any]],
             base_system_value: str = base_system,
             pinned_text_value: str = pinned_text_for_turn,
+            task_value: str = request_task,
             # S7 / CT10 -> S10 / CT2: bound as default args (B023 late-binding
             # pattern). The observation context is reassigned each turn by the
             # scope expansion boundary above, so a bare closure read would
             # capture the value at the LAST turn, not this one. The caller's
             # turn_context (S3 scope hint) is session-constant and preserved.
             turn_context_value: str = (
-                f"{turn_context}\n\n{observation_context}".strip() if observation_context else turn_context
+                f"{turn_context}\n\n{scope.observation_context}".strip() if scope.observation_context else turn_context
             ),
             # S10 / CT5 F3: the L2 skill block from this turn's boundary;
             # None on every non-entry turn. Bound as a default arg for the
             # same late-binding reason as turn_context_value.
             skills_conditional_value: list[dict[str, Any]] | None = skill_block_for_request,
         ) -> tuple[dict[str, Any], list[dict[str, Any]], Mapping[str, Any]]:
-            parts, cache_key = build_prompt_parts_v2(
+            return compose_turn_request(
+                family=provider_chain.config.family,
                 base_system=base_system_value,
-                agents_md_map=pinned_text_value,
+                pinned_text=pinned_text_value,
                 tool_defs=tool_defs_for_prompt,
-                role_id=role,
-                memory_summary=active_summary,
-                task=task,
+                role=role,
+                task=task_value,
+                active_summary=active_summary,
                 observations=observations,
                 turn_context=turn_context_value,
                 skills_conditional=skills_conditional_value,
             )
-            if provider_chain.config.family == "anthropic":
-                request_body = to_anthropic_request_v2(parts, cache_key)
-                messages_payload = list(request_body["messages"])
-                if __debug__:
-                    _assert_final_role_invariant(messages_payload)
-                return request_body, messages_payload, {}
-            request_body = to_openai_request_v2(parts, cache_key)
-            extra_body = request_body.get("extra_body", {})
-            request_extras = dict(extra_body) if isinstance(extra_body, Mapping) else {}
-            messages_payload = list(request_body["messages"])
-            if __debug__:
-                _assert_final_role_invariant(messages_payload)
-            return request_body, messages_payload, request_extras
 
         try:
             _request_body, messages_payload, request_extras = _compose_request_payload(
-                active_summary=memory_summary,
-                observations=conversation_history,
+                active_summary=turn_state.memory_summary,
+                observations=turn_state.conversation_history,
             )
         except ProviderRequestShapeError as exc:
             # S13.4: a local conformance/composition failure (e.g. a dangling-tool
             # assistant-final history on resume, which used to escape as an uncaught
             # traceback) is a request-shape error: fail locally, before HTTP, as the
             # same graceful exit-2 the provider-returned 400 path produces.
-            return _request_shape_failure(exc)
+            return _fail_request_shape(exc)
 
         # ── ContextBudget Gating (Phase 1 / PR 1) ───────────────────────────
         # S13: FAIL-CLOSED — context_budget_enabled defaults to True when flags unavailable
@@ -1159,432 +996,33 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
 
         if budget_enabled:
             usage = estimate_tokens(messages_payload, tool_payload)
-            decision = budget.check(usage)
-            last_budget_ratio = decision.get("ratio", 0.0)
-            if decision["action"] == "warn":
-                logger.warning("ContextBudget Gating Warning: %s", decision["message"])
-                log.append(actor="runtime", kind="context_budget_warn", content=decision)
-                # FIX-1: emit context_warn OutputEvent for console visibility
-                if output is not None:
-                    output.emit(
-                        OutputEvent(
-                            type="context_warn",
-                            turn=turn,
-                            max_turns=max_turns,
-                            data={
-                                "pct": round(last_budget_ratio * 100),
-                                "action": decision["action"],
-                                "message": decision.get("message", ""),
-                            },
-                        )
-                    )
-            elif decision["action"] in {"stage2", "stage3"}:
-                # S6: compaction_warning — single observation point for
-                # compaction-level pressure. Fires in BOTH enabled and
-                # disabled cases so the operator can always see when the
-                # system detected pressure at compaction threshold,
-                # regardless of whether compaction is actually enabled.
-                # SSoT: threshold presence is the explicit compaction toggle;
-                # its numeric value tunes the Stage 2 threshold. No second
-                # boolean flag is consulted.
-                compaction_enabled = compaction_threshold is not None
-
-                warning_data = {
-                    "action": decision["action"],
-                    "compaction_enabled": compaction_enabled,
-                    "ratio": last_budget_ratio,
-                    "threshold": budget.stage2_threshold if decision["action"] == "stage2" else budget.stage3_threshold,
-                }
-                log.append(
-                    actor="runtime",
-                    kind="compaction_warning",
-                    content=warning_data,
+            # The ladder owns the budget's consequences and writes its own rows;
+            # it reports a stop instead of taking one, because `finish_at` closes
+            # over this function's state and nowhere else may end the session.
+            budget_outcome = run_budget_ladder(
+                usage=usage,
+                budget=budget,
+                turn=turn,
+                max_turns=max_turns,
+                log=log,
+                output=output,
+                turn_state=turn_state,
+                tool_payload=tool_payload,
+                compose_request=_compose_request_payload,
+                compactor_chain=compactor_chain,
+                artifact_store=artifact_store,
+                compaction_threshold=compaction_threshold,
+            )
+            if budget_outcome.stop is not None:
+                return finish_at(
+                    budget_outcome.stop.exit_code,
+                    budget_outcome.stop.reason,
+                    final_text=budget_outcome.stop.final_text,
                 )
-                if output is not None:
-                    output.emit(
-                        OutputEvent(
-                            type="compaction_warning",
-                            turn=turn,
-                            max_turns=max_turns,
-                            data=warning_data,
-                        )
-                    )
-
-                logger.warning("compaction_enabled: %s, flags: %s", compaction_enabled, state.feature_flags)
-
-                if not compaction_enabled:
-                    if decision["action"] == "stage2":
-                        logger.warning(
-                            "ContextBudget Stage 2 reached but compaction is disabled: %s",
-                            decision["message"],
-                        )
-                        log.append(actor="runtime", kind="context_budget_warn", content=decision)
-                        # FIX-1: emit context_warn for stage2 without compaction
-                        if output is not None:
-                            output.emit(
-                                OutputEvent(
-                                    type="context_warn",
-                                    turn=turn,
-                                    max_turns=max_turns,
-                                    data={
-                                        "pct": round(last_budget_ratio * 100),
-                                        "action": "stage2",
-                                        "message": decision.get("message", ""),
-                                    },
-                                )
-                            )
-                    else:
-                        logger.warning("ContextBudget Gate Breach: Stage 3 reached! %s", decision["message"])
-                        log.append(actor="runtime", kind="context_budget_hard_stop", content=decision)
-                        # context_budget_hard_stop → console context_warn (critical)
-                        if output is not None:
-                            output.emit(
-                                OutputEvent(
-                                    type="context_warn",
-                                    turn=turn,
-                                    max_turns=max_turns,
-                                    data={
-                                        "pct": round(last_budget_ratio * 100),
-                                        "action": "stage3",
-                                        "message": decision.get("message", ""),
-                                    },
-                                )
-                            )
-                        log.append(
-                            actor="runtime",
-                            kind="run_stopped",
-                            content={"reason": "context_budget_hard_stop", "turns": turn},
-                        )
-                        return finish(
-                            SessionOutcome(
-                                exit_code=1,
-                                stop_reason="context_budget_hard_stop",
-                                turns=turn,
-                                final_text=decision["message"],
-                                tool_results=tuple(collected_results),
-                            )
-                        )
-                else:
-                    logger.info("ContextBudget Stage 2 reached. Triggering deterministic observation masking first...")
-                    log.append(
-                        actor="runtime",
-                        kind="compaction_stage2_start",
-                        content={"tokens_before": usage, "threshold": budget.stage2_threshold},
-                    )
-                    # FIX-2: emit compaction_start for console visibility
-                    if output is not None:
-                        output.emit(
-                            OutputEvent(
-                                type="compaction_start",
-                                turn=turn,
-                                max_turns=max_turns,
-                                data={"stage": 2, "tokens_before": usage},
-                            )
-                        )
-                    try:
-                        from fa.inner_loop.compaction.compactor import project_messages_after_mask
-
-                        masked_history = project_messages_after_mask(
-                            messages=conversation_history,
-                            artifact_store=artifact_store,
-                            recent_turns_to_keep=4,
-                        )
-                        _request_body, messages_payload, request_extras = _compose_request_payload(
-                            active_summary=memory_summary,
-                            observations=masked_history,
-                        )
-                        post_mask_usage = estimate_tokens(messages_payload, tool_payload)
-                        log.append(
-                            actor="runtime",
-                            kind="compaction_stage2_done",
-                            content={"tokens_before": usage, "tokens_after": post_mask_usage},
-                        )
-                        # FIX-2: emit compaction_end for console visibility
-                        if output is not None:
-                            output.emit(
-                                OutputEvent(
-                                    type="compaction_end",
-                                    turn=turn,
-                                    max_turns=max_turns,
-                                    data={
-                                        "stage": 2,
-                                        "tokens_before": usage,
-                                        "tokens_after": post_mask_usage,
-                                        "ok": True,
-                                    },
-                                )
-                            )
-                        logger.info(
-                            "Stage 2 Compaction successful. Reclaimed tokens: %d -> %d",
-                            usage,
-                            post_mask_usage,
-                        )
-                        conversation_history = masked_history
-                        usage = post_mask_usage
-                        decision = budget.check(usage)
-                        last_budget_ratio = decision.get("ratio", 0.0)
-                    except Exception as exc:  # noqa: BLE001 # graceful degradation
-                        logger.warning("Stage 2 Compaction failed: %s, continuing with verbatim prompt", exc)
-                        log.append(
-                            actor="runtime",
-                            kind="compaction_stage2_error",
-                            content={"error": str(exc)},
-                        )
-                        # compaction error → console
-                        if output is not None:
-                            output.emit(
-                                OutputEvent(
-                                    type="compaction_end",
-                                    turn=turn,
-                                    max_turns=max_turns,
-                                    data={"stage": 2, "ok": False, "error": str(exc)},
-                                )
-                            )
-
-                    if decision["action"] == "stage3":
-                        logger.info("Stage 2 masking insufficient. Triggering Stage 3 LLM Compaction...")
-                        log.append(
-                            actor="runtime",
-                            kind="compaction_stage3_start",
-                            content={"tokens_before": usage, "threshold": budget.stage3_threshold},
-                        )
-                        # FIX-2: emit compaction_start for stage3
-                        if output is not None:
-                            output.emit(
-                                OutputEvent(
-                                    type="compaction_start",
-                                    turn=turn,
-                                    max_turns=max_turns,
-                                    data={"stage": 3, "tokens_before": usage},
-                                )
-                            )
-                        try:
-                            from fa.inner_loop.compaction.compactor import (
-                                FullLLMCompactor,
-                                find_turn_boundary_backward,
-                            )
-
-                            cutoff_idx = find_turn_boundary_backward(conversation_history, recent_turns_to_keep=4)
-                            older_history = conversation_history[:cutoff_idx]
-                            protected_window = conversation_history[cutoff_idx:]
-
-                            older_history_text = ""
-                            if memory_summary:
-                                older_history_text += (
-                                    f"PREVIOUS COMPACTION SUMMARY:\n{memory_summary}\n\nNEW CONVERSATION TO ADD:\n"
-                                )
-
-                            if older_history:
-                                lines = []
-                                for msg in older_history:
-                                    msg_role = msg.get("role", "unknown").upper()
-                                    msg_content = msg.get("content") or msg.get("text") or ""
-                                    lines.append(f"{msg_role}: {msg_content}")
-                                    if "tool_calls" in msg:
-                                        for tc in msg["tool_calls"]:
-                                            fn = tc.get("function", {}) if isinstance(tc, dict) else {}
-                                            fn_name = fn.get("name")
-                                            fn_args = fn.get("arguments")
-                                            lines.append(f"CALL TOOL: {fn_name} with arguments {fn_args}")
-                                older_history_text += "\n".join(lines)
-
-                            if older_history_text:
-                                compactor = FullLLMCompactor(compactor_chain=compactor_chain)
-                                updated_summary = compactor.compact(older_history_text)
-                                _request_body, messages_payload, request_extras = _compose_request_payload(
-                                    active_summary=updated_summary,
-                                    observations=protected_window,
-                                )
-                                post_compaction_usage = estimate_tokens(messages_payload, tool_payload)
-                                log.append(
-                                    actor="runtime",
-                                    kind="compaction_stage3_done",
-                                    content={
-                                        "tokens_before": usage,
-                                        "tokens_after": post_compaction_usage,
-                                        "summary": updated_summary,
-                                    },
-                                )
-                                # FIX-2: emit compaction_end for stage3 done
-                                if output is not None:
-                                    output.emit(
-                                        OutputEvent(
-                                            type="compaction_end",
-                                            turn=turn,
-                                            max_turns=max_turns,
-                                            data={
-                                                "stage": 3,
-                                                "tokens_before": usage,
-                                                "tokens_after": post_compaction_usage,
-                                                "ok": True,
-                                            },
-                                        )
-                                    )
-                                logger.info(
-                                    "Stage 3 LLM Compaction done. Reclaimed tokens: %d -> %d",
-                                    usage,
-                                    post_compaction_usage,
-                                )
-
-                                is_ok = budget.record_compaction_attempt(
-                                    tokens_before=usage, tokens_after=post_compaction_usage
-                                )
-                                if not is_ok:
-                                    logger.error(
-                                        "Compaction circuit breaker triggered: less than 10%% space "
-                                        "reclaimed 3 consecutive times. Anti-thrashing loop locked. "
-                                        "Consider increasing context_limit or reducing conversation "
-                                        "complexity in ~/.fa/models.yaml."
-                                    )
-                                    circuit_breaker_message = (
-                                        "Compaction circuit breaker triggered: anti-thrashing loop locked."
-                                    )
-                                    log.append(
-                                        actor="runtime",
-                                        kind="compaction_circuit_breaker",
-                                        content={"message": circuit_breaker_message},
-                                    )
-                                    # NEW-2: emit compaction_end for circuit breaker
-                                    # console visibility — the operator sees
-                                    # "❌ compaction circuit_breaker" instead of
-                                    # only a generic context_budget_hard_stop.
-                                    if output is not None:
-                                        output.emit(
-                                            OutputEvent(
-                                                type="compaction_end",
-                                                turn=turn,
-                                                max_turns=max_turns,
-                                                data={
-                                                    "stage": 3,
-                                                    "ok": False,
-                                                    "error": f"circuit_breaker: {circuit_breaker_message}",
-                                                },
-                                            )
-                                        )
-                                        # FINDING-V2 fix: emit context_warn for circuit
-                                        # breaker hard-stop path — mirrors the other
-                                        # stage3 path (L974) so the operator always
-                                        # sees the context percentage before the
-                                        # session dies, regardless of which
-                                        # compaction sub-path triggers the stop.
-                                        output.emit(
-                                            OutputEvent(
-                                                type="context_warn",
-                                                turn=turn,
-                                                max_turns=max_turns,
-                                                data={
-                                                    "pct": round(last_budget_ratio * 100),
-                                                    "action": "stage3",
-                                                    "message": circuit_breaker_message,
-                                                },
-                                            )
-                                        )
-                                        # S23: emit loop_warn for compaction circuit
-                                        # breaker — actionable console guidance so
-                                        # the operator sees "loop detected:
-                                        # compaction_circuit_breaker" with an
-                                        # explicit message instead of just a
-                                        # generic context_budget_hard_stop.
-                                        output.emit(
-                                            OutputEvent(
-                                                type="loop_warn",
-                                                turn=turn,
-                                                max_turns=max_turns,
-                                                data={
-                                                    "detector": "compaction_circuit_breaker",
-                                                    "message": (
-                                                        "Compaction circuit breaker triggered — context budget "
-                                                        "exceeded after compaction attempts"
-                                                    ),
-                                                },
-                                            )
-                                        )
-                                    log.append(
-                                        actor="runtime",
-                                        kind="context_budget_hard_stop",
-                                        content={
-                                            "message": circuit_breaker_message,
-                                            "current_tokens": post_compaction_usage,
-                                            "limit_tokens": budget.limit_tokens,
-                                            "threshold": budget.stage3_threshold,
-                                        },
-                                    )
-                                    log.append(
-                                        actor="runtime",
-                                        kind="run_stopped",
-                                        content={"reason": "context_budget_hard_stop", "turns": turn},
-                                    )
-                                    return finish(
-                                        SessionOutcome(
-                                            exit_code=1,
-                                            stop_reason="context_budget_hard_stop",
-                                            turns=turn,
-                                            final_text=circuit_breaker_message,
-                                            tool_results=tuple(collected_results),
-                                        )
-                                    )
-
-                                conversation_history = protected_window
-                                memory_summary = updated_summary
-                                usage = post_compaction_usage
-                                decision = budget.check(usage)
-                            else:
-                                logger.warning("No older history to compact for Stage 3")
-                        except Exception as exc:  # noqa: BLE001 # graceful degradation
-                            logger.warning("Stage 3 Compaction failed: %s", exc)
-                            log.append(
-                                actor="runtime",
-                                kind="compaction_stage3_error",
-                                content={"error": str(exc)},
-                            )
-                            # compaction error → console
-                            if output is not None:
-                                output.emit(
-                                    OutputEvent(
-                                        type="compaction_end",
-                                        turn=turn,
-                                        max_turns=max_turns,
-                                        data={"stage": 3, "ok": False, "error": str(exc)},
-                                    )
-                                )
-
-                    if decision["action"] == "stage3":
-                        logger.warning(
-                            "ContextBudget Gate Breach: Stage 3 still exceeds budget! %s",
-                            decision["message"],
-                        )
-                        log.append(actor="runtime", kind="context_budget_hard_stop", content=decision)
-                        # NEW-1: emit context_warn for compaction-enabled hard-stop
-                        # path — mirrors the non-compaction stage3 path so the
-                        # operator always sees the context percentage before
-                        # the session dies, regardless of compaction setting.
-                        if output is not None:
-                            output.emit(
-                                OutputEvent(
-                                    type="context_warn",
-                                    turn=turn,
-                                    max_turns=max_turns,
-                                    data={
-                                        "pct": round(last_budget_ratio * 100),
-                                        "action": "stage3",
-                                        "message": decision.get("message", ""),
-                                    },
-                                )
-                            )
-                        log.append(
-                            actor="runtime",
-                            kind="run_stopped",
-                            content={"reason": "context_budget_hard_stop", "turns": turn},
-                        )
-                        return finish(
-                            SessionOutcome(
-                                exit_code=1,
-                                stop_reason="context_budget_hard_stop",
-                                turns=turn,
-                                final_text=decision["message"],
-                                tool_results=tuple(collected_results),
-                            )
-                        )
+            usage = budget_outcome.usage
+            if budget_outcome.messages_payload is not None:
+                messages_payload = list(budget_outcome.messages_payload)
+                request_extras = dict(budget_outcome.request_extras or {})
 
         # Prompt-composer extras (``prompt_cache_key``, ``prompt_cache_retention``)
         # come from the request body builder. Per-provider fields (Mistral's
@@ -1603,238 +1041,43 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
         )
 
         try:
-            # --- Internal Retry Loop for Chain Exhaustion ---
-            # S22: renamed from max_chain_retries to avoid collision with
-            # the FeatureFlags field that controls session-level retry.
-            # This is the per-turn retry: wait for cooldowns and retry the
-            # same request. The session-level retry (FeatureFlags.max_chain_retries)
-            # is in the outer ProviderChainExhaustedError handler.
-            _per_turn_chain_retries = 3
-            attempt_count = 0
-            while True:
-                try:
-                    response, _logical_id, _attempts = provider_chain.request(request)
-                    break
-                except ProviderChainExhaustedError as exc:
-                    attempt_count += 1
-                    if log is not None:
-                        for attempt in exc.attempts:
-                            log.append(
-                                actor="provider",
-                                kind="provider_attempt",
-                                content={
-                                    "provider": attempt.provider,
-                                    "slug": attempt.slug,
-                                    "status": attempt.status,
-                                    "ms": attempt.ms,
-                                    "error": attempt.error,
-                                    "logical_call_id": exc.logical_call_id,
-                                },
-                            )
-                    if attempt_count >= _per_turn_chain_retries:
-                        raise  # Break the while loop, letting the outer try/except catch it as norm
+            response, _logical_id, _attempts = _request_with_cooldown_retries(
+                provider_chain, request, log=log, output=output, turn=turn, max_turns=max_turns
+            )
 
-                    now = time.time()
-                    active_cooldowns = [
-                        row.expires_at - now for key, row in provider_chain.cooldowns.items() if row.expires_at > now
-                    ]
-
-                    wait_s = max(1.0, min(active_cooldowns)) if active_cooldowns else 5.0
-
-                    # Protect tests from hanging without changing production
-                    # cooldown semantics. The runtime must honor the provider
-                    # chain's cooldown ledger on the AIO host; only pytest gets
-                    # the near-zero sleep shim so unit tests stay fast.
-                    import os
-
-                    if "PYTEST_CURRENT_TEST" in os.environ:
-                        wait_s = 0.01
-
-                    if output is not None:
-                        for _att in exc.attempts:
-                            output.emit(
-                                OutputEvent(
-                                    type="api_retry",
-                                    turn=turn,
-                                    max_turns=max_turns,
-                                    data={
-                                        "provider": _att.provider,
-                                        "status": _att.status,
-                                        "retry_after_s": int(wait_s),
-                                        "reason": _att.error or "unknown",
-                                    },
-                                )
-                            )
-                    time.sleep(wait_s)
-
-            if log is not None:
-                for attempt in _attempts:
-                    log.append(
-                        actor="provider",
-                        kind="provider_attempt",
-                        content={
-                            "provider": attempt.provider,
-                            "slug": attempt.slug,
-                            "status": attempt.status,
-                            "ms": attempt.ms,
-                            "error": attempt.error,
-                            "logical_call_id": _logical_id,
-                        },
-                    )
-                # Tier-1 observability rollup (ADR-9 Sec4): one row per
-                # logical call, embedding the attempts list this loop just
-                # wrote individually above. cost_usd is intentionally
-                # OMITTED per BACKLOG I-33 -- no wired cost source exists
-                # yet; a fake/None placeholder here would be worse than
-                # absence (a consumer could mistake it for "free").
-                log.append(
-                    actor="provider",
-                    kind="llm_call",
-                    content={
-                        "logical_call_id": _logical_id,
-                        "role": role,
-                        "model": provider_chain.config.name,
-                        "family": acting_family,
-                        "chain": [
-                            {
-                                "provider": attempt.provider,
-                                "slug": attempt.slug,
-                                "status": attempt.status,
-                                "ms": attempt.ms,
-                                "error": attempt.error,
-                            }
-                            for attempt in _attempts
-                        ],
-                        "in_tokens": response.in_tokens,
-                        "out_tokens": response.out_tokens,
-                        "wallclock_ms": sum(attempt.ms for attempt in _attempts),
-                    },
-                )
+            record_provider_call(
+                log=log,
+                output=output,
+                response=response,
+                attempts=_attempts,
+                logical_call_id=_logical_id,
+                role=role,
+                model=provider_chain.config.name,
+                family=acting_family,
+                turn=turn,
+                max_turns=max_turns,
+            )
             record_usage(response)
-            # ── Output: llm_response ───────────────────────────────────────
-            if output is not None:
-                _elapsed = int(_attempts[-1].ms if _attempts else 0)
-                output.emit(
-                    OutputEvent(
-                        type="llm_response",
-                        turn=turn,
-                        max_turns=max_turns,
-                        data={
-                            "ms": _elapsed,
-                            "in_tokens": response.in_tokens,
-                            "out_tokens": response.out_tokens,
-                            "cache_read": response.cache_read_input_tokens,
-                            "cache_creation": response.cache_creation_input_tokens,
-                            "tool_call_count": len(response.tool_calls),
-                            "text": response.text if response.text else None,
-                        },
-                    )
-                )
-        except KeyboardInterrupt:
-            log.append(
-                actor="runtime",
-                kind="run_stopped",
-                content={"reason": "abnormal_stop:interrupt"},
+        except (KeyboardInterrupt, ProviderChainExhaustedError, ProviderRequestShapeError) as exc:
+            # The decision (retry the turn / stop like this) is a value; the stop
+            # is performed here, because `finish_at` closes over this function's
+            # state. Same rule as the budget ladder.
+            failure = handle_provider_failure(
+                exc,
+                exhaustion_count=turn_state.chain_exhaustion_count,
+                max_retries=state.feature_flags.max_chain_retries if state.feature_flags is not None else 0,
+                log=log,
+                output=output,
+                turn=turn,
+                max_turns=max_turns,
             )
-            return finish(
-                SessionOutcome(
-                    exit_code=130,
-                    stop_reason="abnormal_stop:interrupt",
-                    turns=turn,
-                    final_text="",
-                    tool_results=tuple(collected_results),
-                )
-            )
-        except ProviderChainExhaustedError as exc:
-            # Log individual attempt records so events.jsonl contains
-            # per-entry diagnostics (status, ms, error) even on chain
-            # exhaustion — closes the observability gap where the
-            # operator saw only "all N chain entries failed" with no
-            # detail on which entry returned which HTTP status.
-            for attempt in exc.attempts:
-                log.append(
-                    actor="provider",
-                    kind="provider_attempt",
-                    content={
-                        "provider": attempt.provider,
-                        "slug": attempt.slug,
-                        "status": attempt.status,
-                        "ms": attempt.ms,
-                        "error": attempt.error,
-                        "logical_call_id": exc.logical_call_id,
-                    },
-                )
-
-            # S22: Session-level chain retry logic (CT13).
-            # max_chain_retries (FeatureFlags, default=0 → fail-fast)
-            # controls how many times to retry the ENTIRE turn after chain
-            # exhaustion. This is DISTINCT from:
-            #   - transport_retries (ChainEntry, models.yaml) — HTTP-level per-provider
-            #   - _per_turn_chain_retries (inner while loop) — per-turn cooldown-wait retries
-            # The session-level retry fires only after ALL entries are exhausted
-            # AND the inner per-turn retries are spent.
-            chain_exhaustion_count += 1
-            if log is not None:
-                log.chain_exhaustion_count += 1
-
-            max_chain_retries = state.feature_flags.max_chain_retries if state.feature_flags is not None else 0
-            if chain_exhaustion_count <= max_chain_retries:
-                # Retry the entire provider chain — continue to next turn
-                logger.info(
-                    "Provider chain exhausted, session-level retry (%d/%d)",
-                    chain_exhaustion_count,
-                    max_chain_retries,
-                )
-                if output is not None:
-                    for _att in exc.attempts:
-                        output.emit(
-                            OutputEvent(
-                                type="api_retry",
-                                turn=turn,
-                                max_turns=max_turns,
-                                data={
-                                    "provider": _att.provider,
-                                    "status": _att.status,
-                                    "retry_after_s": 0,
-                                    "reason": _att.error or "unknown",
-                                },
-                            )
-                        )
+            turn_state.chain_exhaustion_count = failure.exhaustion_count
+            if failure.retry is not None:
                 continue  # back to the top of while turn < max_turns
-
-            # Max retries reached — session exits with chain_exhausted
-            log.append(
-                actor="runtime",
-                kind="run_stopped",
-                content={"reason": "chain_exhausted", "detail": str(exc)},
-            )
-            # ── Output: api_retry (all entries failed, no more retries) ────
-            if output is not None:
-                for _att in exc.attempts:
-                    output.emit(
-                        OutputEvent(
-                            type="api_retry",
-                            turn=turn,
-                            max_turns=max_turns,
-                            data={
-                                "provider": _att.provider,
-                                "status": _att.status,
-                                "retry_after_s": 0,
-                                "reason": _att.error or "unknown",
-                            },
-                        )
-                    )
-            return finish(
-                SessionOutcome(
-                    exit_code=2,
-                    stop_reason="chain_exhausted",
-                    turns=turn,
-                    final_text="",
-                    tool_results=tuple(collected_results),
-                )
-            )
-        except ProviderRequestShapeError as exc:
-            return _request_shape_failure(exc)
+            # Waiver: a provider failure is never both and never neither — the
+            # two branches above exhaust the dataclass's meaningful states.
+            assert failure.stop is not None  # noqa: S101
+            return finish_at(failure.stop.exit_code, failure.stop.reason, final_text=failure.stop.final_text)
         try:
             hooks.dispatch(
                 LifecyclePoint.AFTER_LLM_CALL,
@@ -1860,92 +1103,14 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
                         data={"hook": "AFTER_LLM_CALL", "reason": str(exc)},
                     )
                 )
-            return finish(
-                SessionOutcome(
-                    exit_code=1,
-                    stop_reason=f"hook_deny:{LifecyclePoint.AFTER_LLM_CALL.value}",
-                    turns=turn,
-                    final_text="",
-                    tool_results=tuple(collected_results),
-                )
-            )
+            return finish_at(1, f"hook_deny:{LifecyclePoint.AFTER_LLM_CALL.value}")
 
-        tool_calls = _build_tool_calls(response.tool_calls) if response.tool_calls else ()
-        assistant_message: dict[str, Any] = {
-            "role": "assistant",
-            "content": response.text or "",
-        }
-        # Safely preserve custom API message attributes (like reasoning_details)
-        if "message_extras" in response.extras:
-            for k, v in response.extras["message_extras"].items():
-                assistant_message[k] = v
-        if tool_calls:
-            assistant_message["tool_calls"] = _tool_calls_for_message(response.tool_calls, tool_calls)
-        conversation_history.append(assistant_message)
-        log.append(
-            actor="model",
-            kind="model_msg",
-            content={
-                "text": response.text,
-                "tool_calls": [dict(c) for c in response.tool_calls],
-                "finish_reason": response.finish_reason,
-                "in_tokens": response.in_tokens,
-                "cache_read_input_tokens": response.cache_read_input_tokens,
-                "cache_creation_input_tokens": response.cache_creation_input_tokens,
-                "out_tokens": response.out_tokens,
-            },
-        )
+        tool_calls = record_model_response(response, turn_state.conversation_history, log)
 
         if not tool_calls:
-            if response.finish_reason in _TERMINAL_FINISH_REASONS or not response.finish_reason:
-                return finish(
-                    SessionOutcome(
-                        exit_code=0,
-                        stop_reason="stopped_by_llm",
-                        turns=turn,
-                        final_text=response.text,
-                        tool_results=tuple(collected_results),
-                    )
-                )
-            # LLM stopped for length / content_filter without a tool
-            # call — terminal but ABNORMAL; surface as non-zero exit
-            # so the CLI distinguishes a clean stop from a truncated
-            # one. The audit trail already has the ``model_msg`` row
-            # carrying the abnormal ``finish_reason`` verbatim.
-            # S17: LOGIC-10 — emit actionable console guidance for abnormal_stop
-            hint = ""
-            if response.finish_reason == "length":
-                hint = (
-                    "Output truncated (finish_reason=length). Consider increasing max_tokens or simplifying the task."
-                )
-            elif response.finish_reason == "content_filter":
-                hint = (
-                    "Output blocked by content filter (finish_reason=content_filter). "
-                    "Review the prompt for policy violations."
-                )
-            else:
-                hint = f"Unexpected finish_reason: {response.finish_reason}"
-            if output is not None:
-                output.emit(
-                    OutputEvent(
-                        type="loop_warn",
-                        turn=turn,
-                        max_turns=max_turns,
-                        data={"detector": "abnormal_stop", "message": hint},
-                    )
-                )
-            log.append(
-                actor="runtime",
-                kind="run_stopped",
-                content={"reason": f"abnormal_stop:{response.finish_reason}"},
-            )
             return finish(
-                SessionOutcome(
-                    exit_code=1,
-                    stop_reason=f"abnormal_stop:{response.finish_reason}",
-                    turns=turn,
-                    final_text=response.text,
-                    tool_results=tuple(collected_results),
+                _finish_no_tool_response(
+                    response, turn=turn, max_turns=max_turns, results=collected_results, log=log, output=output
                 )
             )
 
@@ -1962,243 +1127,57 @@ def _drive_session_inner(  # noqa: C901 -- complexity from top-level loop, docum
             acting_family=acting_family,
             limits=effective_limits,
         )
+        # S6-F4 / S12.7: only AFTER_TOOL_EXEC or a LoopGuard trip are
+        # terminal; other BETWEEN_ROUNDS denials continue through padding.
+        # Checked BEFORE the early `failed_tools` update below, because a
+        # terminal stop must not run the padding/projection path — and because
+        # this branch now owns the whole exit (see `_finish_terminal_tool_stop`).
+        if _handle_terminal_tool_stop(turn_results.stop, state=state, output=output):
+            # S6-F5: the results this turn really produced are part of the
+            # outcome, and the stop carries the guard's own reason. Falling
+            # through to the shared `iteration_cap` tail used to report a cap
+            # that never fired and drop executed results from `tool_results`.
+            assert turn_results.stop is not None  # noqa: S101 — _handle_* returned True
+            return finish_at(1, _stop_reason_for(turn_results.stop), extra_results=turn_results.results)
         failed_tools.update(_failed_tool_names(tool_calls, turn_results.results))
-        # S6.2 (S6-F4): honour an inner stop. A guard denial at
-        # AFTER_TOOL_EXEC / BETWEEN_ROUNDS returns a FULL result set, so the
-        # `missing > 0` padding branch below never fires and the outer loop
-        # used to continue to the next turn — calling the model again after a
-        # guard had already stopped the run. Measured: 3 provider calls after a
-        # denial that should have produced 1.
-        #
-        # The stop now arrives in-band on the returned SessionRun, so no log
-        # re-reading is needed to discover it.
-        # Scope note (verified, not assumed): only AFTER_TOOL_EXEC is the
-        # S6-F4 defect. A BETWEEN_ROUNDS denial (PauseGuard, LoopGuard) already
-        # shortens the result list, so the `missing > 0` padding branch below
-        # fires and the session continues *by design* — LoopGuard's circuit
-        # breaker needs several rounds to trip. Breaking here on every stop
-        # point silently changed that behaviour and was caught by
-        # test_loop_guard_circuit_breaker_works_without_sink.
-        if turn_results.stop is not None and turn_results.stop.point == LifecyclePoint.AFTER_TOOL_EXEC.value:
-            stop_info = turn_results.stop
-            if output is not None:
-                output.emit(
-                    OutputEvent(
-                        type="hook_deny",
-                        data={"point": stop_info.point, "reason": stop_info.reason},
-                    )
-                )
-            state.observations.append(f"run stopped at {stop_info.point}: {stop_info.reason}")
-            break
 
-        # S12.7 (CT1/GAP2): a LoopGuard circuit-breaker TRIP at
-        # BETWEEN_ROUNDS terminates the session in-band. The trip is
-        # identified by the single-sourced ``LOOP_GUARD_REASON_PREFIX``
-        # on the stop reason (Decision.reason → PermissionError →
-        # StopInfo.reason; hooks/loop_guard.py owns the constant).
-        # Any OTHER BETWEEN_ROUNDS stop (PauseGuard "pause sentinel
-        # active: …", etc.) keeps the continue-by-design semantics
-        # below — the scope note above still holds for them, and
-        # LoopGuard warn rounds never produce a stop at all.
-        # No `missing > 0` padding runs after a trip: there is no next
-        # model call, so no synthetic run_stopped results are produced
-        # (the former zombie: every later tool call failing with
-        # "session stopped" while the runner kept going).
-        if (
-            turn_results.stop is not None
-            and turn_results.stop.point == LifecyclePoint.BETWEEN_ROUNDS.value
-            and turn_results.stop.reason.startswith(LOOP_GUARD_REASON_PREFIX)
-        ):
-            stop_info = turn_results.stop
-            if output is not None:
-                output.emit(
-                    OutputEvent(
-                        type="hook_deny",
-                        data={"point": stop_info.point, "reason": stop_info.reason},
-                    )
-                )
-            state.observations.append(f"run stopped at {stop_info.point}: {stop_info.reason}")
-            break
-
-        # S14b.2 (CT-2): iteration-cap stops are turn-local — emit the
-        # operator-visible signal but DO NOT break the session loop (the
-        # model gets the synthetic-failure padding below and may continue
-        # next turn). Guard denials above remain session-terminal.
-        if turn_results.stop is not None and turn_results.stop.point == "iteration_cap":
-            if output is not None:
-                output.emit(
-                    OutputEvent(
-                        type="iteration_cap",
-                        data={
-                            "point": turn_results.stop.point,
-                            "reason": turn_results.stop.reason,
-                            "profile": role,
-                        },
-                    )
-                )
-
-        # ``run_session`` enforces ``max_iterations`` per invocation.
-        # If the LLM emitted more tool calls than the cap, the loop
-        # breaks early and returns fewer results. We MUST pad the
-        # remainder with synthetic failures so the conversation history
-        # stays protocol-valid: every ``tool_call_id`` in the
-        # assistant message needs a matching ``role="tool"`` message.
-        missing = len(tool_calls) - len(turn_results)
-        if missing > 0:
-            # Determine whether run_session stopped for a real iteration
-            # cap or for a guard denial (PauseGuard, LoopGuard, etc.).
-            stop_reason_code = "iteration_cap"
-            stop_reason_detail = (
-                f"tool call skipped: per-turn iteration limit ({effective_limits.max_iterations}) exceeded"
-            )
-            if log is not None:
-                new_rows = log.read_all()[log_len_before:]
-                for row in reversed(new_rows):
-                    if row.kind == "run_stopped":
-                        reason = str(row.content.get("reason", ""))
-                        if not reason.startswith("iteration_cap"):
-                            stop_reason_code = "run_stopped"
-                            stop_reason_detail = f"tool call skipped: session stopped — {reason}"
-                        break
-
-            synthetic = ToolResult.fail(
-                stop_reason_code,
-                stop_reason_detail,
-                retryable=True,
-            )
-            # Rebuild as a SessionRun so the stop signal survives padding —
-            # a bare tuple here would silently drop `.stop` and re-open S6-F4
-            # for any code reading it after this point.
-            turn_results = SessionRun(
-                results=(*turn_results.results, *([synthetic] * missing)),
-                stop=turn_results.stop,
-            )
-            # Record synthetic tool results in the audit trail so
-            # replay sees a complete paired ``tool_call`` / ``tool_result``
-            # row set per ADR-7 §10 Acceptance criterion 8.
-            start = len(turn_results) - missing
-            for call, result in zip(tool_calls[start:], turn_results[start:], strict=False):
-                state.record_tool_call(call)
-                state.record_tool_result(call, result)
+        turn_results = prepare_continuing_tool_results(
+            tool_calls,
+            turn_results,
+            state=state,
+            log=log,
+            log_len_before=log_len_before,
+            limits=effective_limits,
+            role=role,
+            output=output,
+        )
         failed_tools.update(_failed_tool_names(tool_calls, turn_results.results))
         collected_results.extend(turn_results)
         # S10 / CT2: remember THIS turn's (call, result) pairs; the next
         # turn's boundary evaluates them for the verify_failed trigger (F6 —
         # effects are visible at the next request, not mid-turn).
-        _prev_calls = tuple(tool_calls)
-        _prev_results = tuple(turn_results)
-        # S10 / CT6 (SA-2): a workflow_budget_exhausted denial latches the
-        # terminal "exhausted" observation so the next request carries it.
-        if not _exhausted_flag:
-            for result in turn_results:
-                if result.error is not None and getattr(result.error, "code", "") == "workflow_budget_exhausted":
-                    _exhausted_flag = True
-                    if log is not None:
-                        log.append(actor="harness", kind="expansion_exhausted", content={"turn": turn})
-                    # S10.9 / CT-H4: console mirror (dual-write contract).
-                    if output is not None:
-                        output.emit(
-                            OutputEvent(
-                                type="expansion_exhausted",
-                                turn=turn,
-                                max_turns=max_turns,
-                                data={"turn": turn},
-                            )
-                        )
-                    break
-        for call, result in zip(tool_calls, turn_results, strict=True):
-            # ── Output: tool_call ──────────────────────────────────────────
-            if output is not None:
-                output.emit(
-                    OutputEvent(
-                        type="tool_call",
-                        turn=turn,
-                        max_turns=max_turns,
-                        data={
-                            "tool": call.name,
-                            "params": dict(call.params),
-                            "summary": result.summary,
-                            "ok": result.error is None,
-                            "error": result.error.message if result.error else None,
-                        },
-                    )
-                )
-            spec = _projection_spec_for_call(registry, call)
-            conversation_history.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": call.call_id,
-                    "content": _redact(redactor, project_for_model(spec, result, artifact_store)),
-                }
-            )
+        scope.previous_calls = tuple(tool_calls)
+        scope.previous_results = tuple(turn_results)
+        scope.exhausted_flag = append_tool_turn_messages(
+            tool_calls,
+            turn_results,
+            exhausted_flag=scope.exhausted_flag,
+            log=log,
+            output=output,
+            turn=turn,
+            max_turns=max_turns,
+            registry=registry,
+            conversation_history=turn_state.conversation_history,
+            redactor=redactor,
+            artifact_store=artifact_store,
+        )
 
     log.append(
         actor="runtime",
         kind="run_stopped",
         content={"reason": "iteration_cap", "turns": turn},
     )
-    return finish(
-        SessionOutcome(
-            exit_code=1,
-            stop_reason="iteration_cap",
-            turns=turn,
-            final_text="",
-            tool_results=tuple(collected_results),
-        )
-    )
-
-
-def _failed_tool_names(calls: Sequence[ToolCall], results: Sequence[ToolResult]) -> set[str]:
-    """Trusted call/result pairing, including hook denials; never parse model text."""
-    return {call.name for call, result in zip(calls, results, strict=False) if result.error is not None}
-
-
-def _build_tool_calls(raw_calls: Sequence[Mapping[str, Any]]) -> tuple[ToolCall, ...]:
-    """Project canonical wire-shape tool calls into a :class:`ToolCall` tuple.
-
-    Wire shape (canonical across every adapter)::
-
-        {"id": "<id>", "type": "function",
-         "function": {"name": "<tool>", "arguments": "<json-str>"}}
-
-    The Anthropic adapter re-projects its native ``tool_use`` blocks
-    into this shape at response-normalise time (see
-    :func:`fa.providers.anthropic._normalize_success` ll. 187-196).
-    OpenAI-compat providers emit this shape natively.
-
-    Determinism guards (deep-dive §3 I-5 — deterministic post-LLM
-    filter): a missing ``function`` block, missing ``name``, or
-    malformed ``arguments`` JSON does NOT raise — instead the driver
-    produces a synthetic call whose registry validation produces the
-    canonical ``invalid_params`` error row. The LLM sees the error
-    on the next turn and can correct.
-    """
-    parsed: list[ToolCall] = []
-    for index, raw in enumerate(raw_calls):
-        raw_function = raw.get("function")
-        function: Mapping[str, Any] = raw_function if isinstance(raw_function, Mapping) else {}
-        name = str(function.get("name") or "")
-        arguments_raw = function.get("arguments")
-        call_id = str(raw.get("id") or f"tc-{index:04d}")
-        params: Mapping[str, Any]
-        if isinstance(arguments_raw, str):
-            try:
-                decoded = json.loads(arguments_raw) if arguments_raw else {}
-            except json.JSONDecodeError:
-                decoded = {}
-            params = decoded if isinstance(decoded, Mapping) else {}
-        elif isinstance(arguments_raw, Mapping):
-            params = arguments_raw
-        else:
-            params = {}
-        if not name:
-            # ToolCall constructor rejects empty name; surface the
-            # malformed emission as a synthetic ``__invalid__`` call so
-            # the registry validation path produces the canonical
-            # error row instead of the driver itself raising.
-            name = "__invalid__"
-        parsed.append(ToolCall(name=name, params=dict(params), call_id=call_id))
-    return tuple(parsed)
+    return finish_at(1, "iteration_cap")
 
 
 __all__ = [
@@ -2207,6 +1186,8 @@ __all__ = [
     "DEFAULT_MAX_TURNS",
     "LOOP_GUARD_REASON_PREFIX",
     "SessionOutcome",
+    "classify_budget",
     "drive_session",
+    "handle_provider_failure",
     "should_inject_ceremony",
 ]

@@ -22,7 +22,7 @@ from fa.inner_loop.tool_names import is_valid_wire_name
 from fa.inner_loop.tools.base import resolve_workspace_path
 
 if TYPE_CHECKING:
-    from fa.inner_loop.tools.workspace_port import WorkspacePort
+    from fa.inner_loop.tools.workspace_port import CandidateWorkspacePort, WorkspacePort
     from fa.runtime.bash_executor import BashExecutor
 
 logger = logging.getLogger(__name__)
@@ -261,7 +261,7 @@ def _candidate_dispatch(dispatch: PlannerDispatch | None) -> PlannerDispatch | N
         return None
     if not isinstance(dispatch, PlannerDispatch):
         raise PlannerDispatchError
-    return None if dispatch.kind == PlannerDispatchKind.ORDINARY_PLANNING else dispatch
+    return dispatch if dispatch.owns_candidate else None
 
 
 def _build_limited_write(
@@ -317,6 +317,9 @@ def _build_tool_builders(
     planner_dispatch: PlannerDispatch | None = None,
     workspace_io: WorkspacePort | None = None,
     managed_executor: BashExecutor | None = None,
+    project_tool_executor: Any | None = None,
+    candidate_io: CandidateWorkspacePort | None = None,
+    candidate_seed_text: str | None = None,
 ) -> dict[str, Callable[[], ToolSpec]]:
     """Map tool name -> builder lambda, uses existing builders, graceful degradation.
 
@@ -326,12 +329,22 @@ def _build_tool_builders(
     """
     builders: dict[str, Callable[[], ToolSpec]] = {}
     root = Path(workspace_root).resolve()
+    candidate_dispatch = _candidate_dispatch(planner_dispatch)
+    candidate_target = None if candidate_dispatch is None else candidate_dispatch.candidate_target
+    if candidate_seed_text is not None and (workspace_io is None or candidate_io is None or candidate_target is None):
+        raise PlannerDispatchError
 
     # Lazy imports to avoid circular and missing deps
     try:
         from fa.inner_loop.tools.read_file import build_read_file_tool
 
-        builders["fs_read_file"] = lambda: build_read_file_tool(root, workspace_io=workspace_io)
+        builders["fs_read_file"] = lambda: build_read_file_tool(
+            root,
+            workspace_io=workspace_io,
+            candidate_io=candidate_io,
+            candidate_target=candidate_target,
+            candidate_seed_text=candidate_seed_text,
+        )
     except Exception as exc:  # noqa: BLE001
         logger.warning(f"Failed to setup builder fs_read_file: {exc}")
 
@@ -345,7 +358,9 @@ def _build_tool_builders(
     try:
         from fa.inner_loop.tools.fs_reach import build_fs_reach_tool
 
-        builders["fs_reach"] = lambda: build_fs_reach_tool(root, workspace_io=workspace_io)
+        builders["fs_reach"] = lambda: build_fs_reach_tool(
+            root, workspace_io=workspace_io, project_tool_executor=project_tool_executor
+        )
     except Exception as exc:  # noqa: BLE001
         logger.warning(f"Failed to setup builder fs_reach: {exc}")
 
@@ -389,9 +404,14 @@ def _build_tool_builders(
             fts_path = ".fa/fts.db"
 
         def _build_fs_search(bp: str = fts_path) -> Any:
-            # ``root / bp`` is the legacy host-mode location. A bound port
-            # refuses until the view-local discovery supplier is connected.
-            return build_fs_search_tool(root / bp, root, workspace_io=workspace_io)
+            # ``root / bp`` is used only by legacy host mode. A managed view
+            # dispatches through its bound typed executor, or refuses if absent.
+            return build_fs_search_tool(
+                root / bp,
+                root,
+                workspace_io=workspace_io,
+                project_tool_executor=project_tool_executor,
+            )
 
         builders["fs_search"] = _build_fs_search
     except Exception as exc:  # noqa: BLE001
@@ -410,10 +430,100 @@ def _build_tool_builders(
     if candidate_dispatch is not None:
         from fa.inner_loop.tools.write_file import build_scoped_write_file_tool
 
-        scoped = build_scoped_write_file_tool(root, candidate_dispatch)
+        scoped = build_scoped_write_file_tool(root, candidate_dispatch, candidate_io=candidate_io)
         builders["fs_write_file_limited"] = lambda: scoped
 
     return builders
+
+
+# The acquisition planner chooses a target; it never edits one. This is a positive
+# list, not "the planner profile minus its writer": if a future planner profile
+# gains a new mutator, acquisition must not inherit it by accident. `pr_prepare`,
+# `fs_write_file`, `fs_edit_file`, `fs_run_bash` and EXEC are absent by construction.
+ACQUISITION_TOOLS: tuple[str, ...] = (
+    "fs_read_file",
+    "fs_search",
+    "fs_reach",
+    "fs_blackboard_query",
+    "fs_exploration_metrics",
+)
+
+
+def build_acquisition_registry(
+    workspace_root: Path,
+    *,
+    bash_timeout: int = 30,
+    workspace_io: WorkspacePort | None = None,
+    project_tool_executor: Any | None = None,
+) -> ToolRegistry:
+    """Build the read/search-only registry the acquisition planner runs with.
+
+    A separate constructor rather than a flag on :func:`build_registry_for_role`
+    because the difference is not a setting: a role profile is a *suggestion*
+    list, while this list is the boundary. Sharing one function would put an
+    acquisition branch inside every role's assembly path.
+    """
+    if workspace_io is None and project_tool_executor is not None:
+        raise ValueError("project-tool executor requires a managed workspace port")
+    builders = _build_tool_builders(
+        workspace_root,
+        bash_timeout=bash_timeout,
+        planner_dispatch=None,
+        workspace_io=workspace_io,
+        project_tool_executor=project_tool_executor,
+        candidate_io=None,
+    )
+    registry = ToolRegistry()
+    for tool_name in ACQUISITION_TOOLS:
+        builder = builders.get(tool_name)
+        if builder is None:
+            if workspace_io is not None:
+                raise RuntimeError(f"managed tool unavailable: {tool_name}")
+            logger.warning("Acquisition tool %s has no builder, skipping", tool_name)
+            continue
+        spec = builder()
+        if not is_valid_wire_name(spec.name):
+            raise ToolWireNameError(spec.name)
+        registry.register(spec)
+    return registry
+
+
+def _builder_for_role(
+    builders: Mapping[str, Callable[[], ToolSpec]], *, role: str, tool_name: str, managed: bool
+) -> Callable[[], ToolSpec] | None:
+    """Select the scoped planner writer, with legacy fallback only outside managed views."""
+    if role == "planner" and tool_name == "fs_write_file":
+        builder = builders.get("fs_write_file_limited")
+        if builder is not None or managed:
+            return builder
+    return builders.get(tool_name)
+
+
+def _validate_registry_inputs(
+    role: str,
+    *,
+    planner_dispatch: PlannerDispatch | None,
+    workspace_io: WorkspacePort | None,
+    managed_executor: BashExecutor | None,
+    project_tool_executor: Any | None,
+    candidate_io: CandidateWorkspacePort | None,
+    candidate_seed_text: str | None,
+) -> None:
+    if role not in PROFILES_RAW:
+        raise ValueError(f"Unknown role {role}, known: {list(PROFILES_RAW.keys())}")
+    if planner_dispatch is not None and (role != "planner" or planner_dispatch.kind is PlannerDispatchKind.ACQUISITION):
+        raise PlannerDispatchError
+    if workspace_io is None and managed_executor is not None:
+        raise ValueError("managed executor requires a managed workspace port")
+    if workspace_io is None and project_tool_executor is not None:
+        raise ValueError("project-tool executor requires a managed workspace port")
+    # A staged-candidate buffer belongs to a CANDIDATE view, which exists only
+    # inside managed execution. Accepting one without a project port would let a
+    # host-mode run write through an authority it does not hold.
+    if candidate_io is not None and workspace_io is None:
+        raise ValueError("candidate buffer requires a managed workspace port")
+    if candidate_seed_text is not None and candidate_io is None:
+        raise ValueError("candidate seed requires a managed candidate port")
 
 
 def build_registry_for_role(
@@ -424,19 +534,24 @@ def build_registry_for_role(
     planner_dispatch: PlannerDispatch | None = None,
     workspace_io: WorkspacePort | None = None,
     managed_executor: BashExecutor | None = None,
+    project_tool_executor: Any | None = None,
+    candidate_io: CandidateWorkspacePort | None = None,
+    candidate_seed_text: str | None = None,
 ) -> ToolRegistry:
     """Build ToolRegistry with only tools for given role, token efficient.
 
     Researcher: 4 tools ~600 tokens vs full 11 tools ~3000 tokens (-60%).
     Uses TOOL_BUILDERS mapping, failure-observable WARNING if tool missing, not crash.
     """
-    if role not in PROFILES_RAW:
-        raise ValueError(f"Unknown role {role}, known: {list(PROFILES_RAW.keys())}")
-
-    if planner_dispatch is not None and role != "planner":
-        raise PlannerDispatchError
-    if workspace_io is None and managed_executor is not None:
-        raise ValueError("managed executor requires a managed workspace port")
+    _validate_registry_inputs(
+        role,
+        planner_dispatch=planner_dispatch,
+        workspace_io=workspace_io,
+        managed_executor=managed_executor,
+        project_tool_executor=project_tool_executor,
+        candidate_io=candidate_io,
+        candidate_seed_text=candidate_seed_text,
+    )
     profile = PROFILES_RAW[role]
     wanted = profile.get("tools", [])
     builders = _build_tool_builders(
@@ -445,17 +560,14 @@ def build_registry_for_role(
         planner_dispatch=planner_dispatch,
         workspace_io=workspace_io,
         **({"managed_executor": managed_executor} if workspace_io is not None else {}),
+        project_tool_executor=project_tool_executor,
+        candidate_io=candidate_io,
+        candidate_seed_text=candidate_seed_text,
     )
 
     registry = ToolRegistry()
     for tool_name in wanted:
-        # For planner, use limited write_file if requested
-        if role == "planner" and tool_name == "fs_write_file":
-            builder = builders.get("fs_write_file_limited")
-            if builder is None and workspace_io is None:
-                builder = builders.get(tool_name)
-        else:
-            builder = builders.get(tool_name)
+        builder = _builder_for_role(builders, role=role, tool_name=tool_name, managed=workspace_io is not None)
         if builder is None:
             if workspace_io is not None:
                 raise RuntimeError(f"managed tool unavailable: {tool_name}")
@@ -532,10 +644,12 @@ def get_profile(role: str) -> RoleProfile:
 
 
 __all__ = [
+    "ACQUISITION_TOOLS",
     "PROFILES",
     "PROFILES_RAW",
     "TYPED_PROFILES",
     "RoleProfile",
+    "build_acquisition_registry",
     "build_registry_for_role",
     "estimate_tokens",
     "get_profile",

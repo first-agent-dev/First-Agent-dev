@@ -33,6 +33,9 @@ def _run_git(args: list[str], cwd: Path, timeout: int = 10) -> subprocess.Comple
         capture_output=True,
         text=True,
         timeout=timeout,
+        # Returns the CompletedProcess: every caller classifies the exit code
+        # itself (the helper's contract is "run and report", not "run or raise").
+        check=False,
     )
 
 

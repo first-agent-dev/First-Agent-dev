@@ -15,6 +15,7 @@ private depth marker.
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import shlex
@@ -22,7 +23,7 @@ import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
@@ -66,7 +67,7 @@ from fa.providers import ProviderChain, SecretStore
 from fa.providers.base import RequestInfo, ResponseInfo
 
 if TYPE_CHECKING:
-    from fa.inner_loop.plan_admission import PlanSnapshot
+    from fa.inner_loop.plan_admission import PlanRef, PlanSnapshot
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 _EVAL_FINAL_TEXT = "## Verification Summary\n\n### Verdict\n\nPASS\n"
@@ -151,7 +152,7 @@ CONTRACTS:
   CT72 [FUNCTIONAL]: a blocking or missing enforce result reconciles after eval and prevents PASS.
     kill: neutralise src/fa/inner_loop/workflow_controller.py::_effective_controller_route
   CT73 [FUNCTIONAL]: every successful coder stage is followed by an eval stage.
-    kill: remove-call src/fa/inner_loop/workflow_controller.py::run_workflow -> _ensure_eval_after_coder
+    kill: remove-call src/fa/inner_loop/workflow_controller.py::_run_workflow_bound -> _ensure_eval_after_coder
   CT75 [FUNCTIONAL]: the composition root dispatches real roles through drive_session.
     kill: remove-call src/fa/inner_loop/workflow_controller.py::_run_stage -> run_stage_fn
   CT76 [FUNCTIONAL]: commands remain attributed to the slice that declares them.
@@ -163,7 +164,7 @@ CONTRACTS:
   CT77 [FUNCTIONAL]: the eval request carries the actual verifier evidence.
     kill: remove-call src/fa/inner_loop/workflow_controller.py::_eval_evidence_block -> _verification_evidence_lines
   CT86 [FUNCTIONAL]: the baseline is captured before coder dispatch.
-    kill: remove-call src/fa/inner_loop/workflow_controller.py::_run_stage -> capture_baseline
+    kill: remove-call src/fa/inner_loop/workflow_controller.py::_capture_stage_baseline -> capture_baseline
 TESTS: {test_path}
 ```verify
 python -c "print('slice-one')"
@@ -1195,13 +1196,22 @@ def test_plan_preflight_workspace_resolution_is_read_only(tmp_path: Path) -> Non
     assert str(failure.value) == "workspace_required: create or choose an existing workspace with --workspace first"
 
 
-def test_plan_preflight_resumed_session_does_not_touch_manifest_or_db(tmp_path: Path) -> None:
-    from fa.session.manager import SessionManager, SessionManagerError
+def test_plan_preflight_resumed_session_does_not_touch_manifest_or_db(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from fa.session.manager import SessionManagerError
+    from tests.test_session_lifecycle import _manager
 
-    manager = SessionManager(state_root=tmp_path / "state", workspace_root=tmp_path / "workspaces")
+    manager = _manager(tmp_path)
     session = manager.provision_entrypoint_session(
         session_id="existing", workspace_override=tmp_path / "workspaces" / "one"
     )
+
+    def forbidden(*args: object, **kwargs: object) -> None:
+        raise AssertionError("read-only workflow preflight must not provision or prepare")
+
+    monkeypatch.setattr(manager, "workspace_provisioner", forbidden)
+    monkeypatch.setattr(manager, "workspace_preparer", forbidden)
     files = [p for p in tmp_path.rglob("*") if p.is_file()]
     before = {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in files}
     assert manager.resolve_workflow_workspace(session_id="existing", workspace_override=None) == session.workspace_path
@@ -1234,25 +1244,29 @@ def test_plan_preflight_real_cli_uses_selected_workspace_not_cwd(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, resumed: bool
 ) -> None:
     """C2 positive control: real factories/session/provider loop; only provider mocked."""
+    import fa.cli as cli_module
     from fa.cli import _cmd_workflow, build_parser
-    from fa.session.manager import SessionManager
+    from tests.test_cli import _install_test_managed_cli_dependencies
 
-    state, workspace, cwd = tmp_path / "state", tmp_path / "workspaces" / "selected", tmp_path / "cwd"
+    home = tmp_path / "home"
+    state, workspace, cwd = home / ".fa", tmp_path / "workspaces" / "selected", tmp_path / "cwd"
     workspace.mkdir(parents=True)
     cwd.mkdir()
     (workspace / "plan.md").write_text("Plan-ID: PLAN-selected\n", encoding="utf-8")
     # A same-named invalid CWD file must neither authorize nor veto selection.
     (cwd / "plan.md").write_bytes(b"\xff")
-    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
     monkeypatch.setenv("FA_STATE_ROOT", str(state))
     monkeypatch.setenv("FA_WORKSPACE_ROOT", str(workspace.parent))
+    _install_test_managed_cli_dependencies(monkeypatch, home=home, workspace_root=workspace.parent)
     monkeypatch.delenv("FA_EGRESS_PROXY_URL", raising=False)
     monkeypatch.delenv("FA_PROXY_TOKEN_FILE", raising=False)
     monkeypatch.chdir(cwd)
     config = tmp_path / "models.yaml"
     config.write_text(_ROLE_YAML.format(role="planner"), encoding="utf-8")
     if resumed:
-        manager = SessionManager(state_root=state, workspace_root=workspace.parent)
+        manager = cli_module._session_manager_for_args(argparse.Namespace(workspace=workspace))
         manager.provision_entrypoint_session(session_id="selected-session", workspace_override=workspace)
     calls: list[str] = []
 
@@ -1294,14 +1308,25 @@ def test_plan_preflight_real_cli_uses_selected_workspace_not_cwd(
         ("escape", "path_escape"),
     ],
 )
-def test_plan_preflight_resolver_rejects_invalid_session_without_writes(tmp_path: Path, change: str, code: str) -> None:
-    from fa.session.manager import SessionManager, SessionManagerError
+def test_plan_preflight_resolver_rejects_invalid_session_without_writes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str, code: str
+) -> None:
+    import shutil
 
-    manager = SessionManager(state_root=tmp_path / "state", workspace_root=tmp_path / "workspaces")
+    from fa.session.manager import SessionManagerError
+    from tests.test_session_lifecycle import _manager
+
+    manager = _manager(tmp_path)
     selected = tmp_path / "workspaces" / "selected"
     session = manager.provision_entrypoint_session(session_id="known", workspace_override=selected)
+
+    def forbidden(*args: object, **kwargs: object) -> None:
+        raise AssertionError("read-only workflow preflight must not provision or prepare")
+
+    monkeypatch.setattr(manager, "workspace_provisioner", forbidden)
+    monkeypatch.setattr(manager, "workspace_preparer", forbidden)
     if change == "missing-workspace":
-        selected.rmdir()
+        shutil.rmtree(selected)
     elif change == "corrupt":
         session.manifest_path.write_text("{bad", encoding="utf-8")
     elif change in {"inactive", "escape"}:
@@ -1412,13 +1437,21 @@ def test_plan_preflight_descriptors_are_nofollow_nonblocking_and_closed(
 
 
 def test_plan_preflight_new_workspace_cannot_bypass_existing_owner(tmp_path: Path) -> None:
-    from fa.session.manager import SessionManager, SessionManagerError
+    from fa.session.manager import SessionManagerError
+    from tests.test_session_lifecycle import _manager
 
-    manager = SessionManager(state_root=tmp_path / "state", workspace_root=tmp_path / "workspaces")
+    manager = _manager(tmp_path)
     session = manager.provision_entrypoint_session(
         session_id="owner", workspace_override=tmp_path / "workspaces" / "owned"
     )
     before = session.manifest_path.read_bytes()
+    # CT103a: a managed reference is only selected here; registration and
+    # conflict adjudication still happen during lifecycle provisioning.
+    assert manager.resolve_workflow_workspace(session_id=None, workspace_override=session.workspace_path) == (
+        session.workspace_path
+    )
+    assert session.manifest_path.read_bytes() == before
+    manager.workspace_provisioner = None
     with pytest.raises(SessionManagerError) as failure:
         manager.resolve_workflow_workspace(session_id=None, workspace_override=session.workspace_path)
     assert failure.value.code == "workspace_already_owned"
@@ -1491,15 +1524,16 @@ def test_plan_preflight_allocated_workspace_mismatch_blocks_provider(
     """CLI fault supplement: change the real manifest after the snapshot read."""
     from fa import cli
     from fa.inner_loop.plan_admission import read_plan_snapshot
-    from fa.session.manager import SessionManager
+    from tests.test_session_lifecycle import _manager
 
     state, root = tmp_path / "state", tmp_path / "workspaces"
     first, second = root / "first", root / "second"
     first.mkdir(parents=True)
     second.mkdir()
     (first / "plan.md").write_text("Plan-ID: PLAN-first\n", encoding="utf-8")
-    manager = SessionManager(state_root=state, workspace_root=root)
+    manager = _manager(tmp_path)
     session = manager.provision_entrypoint_session(session_id="switch", workspace_override=first)
+    monkeypatch.setattr(cli, "_session_manager_for_args", lambda _args: manager)
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     monkeypatch.setenv("FA_STATE_ROOT", str(state))
     monkeypatch.setenv("FA_WORKSPACE_ROOT", str(root))
@@ -2581,6 +2615,7 @@ def test_admission_artifact_utf8_read_is_independent_of_process_locale(tmp_path:
         },
         capture_output=True,
         timeout=10,
+        check=False,  # the triple below IS the assertion
     )
     assert (child.returncode, child.stdout, child.stderr) == (0, b"", b"")
     assert json.loads(path.read_bytes())["attempts"][0]["route"] == "ADMITTED"
@@ -3192,11 +3227,17 @@ def test_ct94_nonpassing_validation_never_publishes(tmp_path: Path, monkeypatch:
     validated = workflow._validate_plan_admission(snapshot_from_bytes("draft.md", raw))
 
     class ForbiddenPublisher:
+        def __init__(self) -> None:
+            self.calls = 0
+
         def publish_candidate(self, *_args: Any, **_kwargs: Any) -> Any:
+            self.calls += 1
             raise AssertionError("non-passing validation reached the publisher")
 
+    publisher = ForbiddenPublisher()
     with pytest.raises(PlanPromotionError) as error:
-        workflow._promote_validated_plan(source, validated, publisher=ForbiddenPublisher())
+        workflow._promote_validated_plan(source, validated, publisher=publisher)
+    assert publisher.calls == 0
     assert error.value.rule == "prepare-failed" and error.value.replaced is False
     assert (tmp_path / _CT94_PATH).read_bytes() == source.utf8_bytes
     assert not (tmp_path / ".fa").exists()
@@ -3271,12 +3312,16 @@ def test_ct94_real_session_edits_fresh_candidate_before_validated_publication(
         def __init__(self) -> None:
             self.candidate: Any | None = None
 
-        def publish_candidate(self, pinned: Any, admitted: Any, *, deadline: float | None = None) -> Any:
+        def publish_candidate(
+            self, source: PlanSnapshot, candidate: PlanSnapshot, *, deadline: float | None = None
+        ) -> PlanRef:
             from fa.inner_loop.plan_admission import PlanRef
 
-            assert pinned.ref == source.ref
-            self.candidate = admitted
-            return PlanRef(pinned.ref.workspace_relative_path, pinned.ref.source_kind, admitted.ref.sha256)
+            assert source.ref == _ct94_source_ref
+            self.candidate = candidate
+            return PlanRef(source.ref.workspace_relative_path, source.ref.source_kind, candidate.ref.sha256)
+
+    _ct94_source_ref = source.ref
 
     publisher = RecordingPublisher()
     promoted = workflow._promote_validated_plan(source, validated, publisher=publisher)
@@ -3330,20 +3375,21 @@ def test_ct94_ordinary_dispatch_cannot_seed_a_candidate(tmp_path: Path) -> None:
 
 def test_ct94_missing_publisher_fails_closed_without_canonical_write(tmp_path: Path) -> None:
     """CT115 (E299): the refusal is named, and it happens before any repair."""
-    from types import SimpleNamespace
+    from dataclasses import replace
 
     from fa.inner_loop.plan_promotion import PlanPromotionError
 
     source = _ct94_source(tmp_path)
+    ctx = _context(tmp_path, run_id="ct94")
     with pytest.raises(PlanPromotionError) as error:
-        workflow._require_managed_publisher(SimpleNamespace(plan_publisher=None))
+        workflow._require_managed_publisher(ctx)
     assert error.value.rule == "managed-execution-absent" and error.value.replaced is False
     assert (tmp_path / _CT94_PATH).read_bytes() == source.utf8_bytes
     assert not (tmp_path / ".fa").exists()
     # Control: a run that has the authority passes through unchanged, so the
     # refusal above cannot be "refuse everything".
-    publisher = object()
-    assert workflow._require_managed_publisher(SimpleNamespace(plan_publisher=publisher)) is publisher
+    publisher = _CT91TestPlanPublisher(tmp_path)
+    assert workflow._require_managed_publisher(replace(ctx, plan_publisher=publisher)) is publisher
 
 
 def test_ct94_promotion_port_receives_only_the_pinned_destination(tmp_path: Path) -> None:
@@ -3358,9 +3404,11 @@ def test_ct94_promotion_port_receives_only_the_pinned_destination(tmp_path: Path
             self.source: Any | None = None
             self.candidate: Any | None = None
 
-        def publish_candidate(self, pinned: Any, buffer: Any, *, deadline: float | None = None) -> PlanRef:
-            self.source, self.candidate = pinned, buffer
-            return PlanRef(pinned.ref.workspace_relative_path, pinned.ref.source_kind, buffer.ref.sha256)
+        def publish_candidate(
+            self, source: PlanSnapshot, candidate: PlanSnapshot, *, deadline: float | None = None
+        ) -> PlanRef:
+            self.source, self.candidate = source, candidate
+            return PlanRef(source.ref.workspace_relative_path, source.ref.source_kind, candidate.ref.sha256)
 
     publisher = RecordingPublisher()
     promoted = workflow._promote_validated_plan(source, validated, publisher=publisher)
@@ -3376,14 +3424,16 @@ class _CT91TestPlanPublisher:
     def __init__(self, workspace: Path) -> None:
         self.workspace = workspace
 
-    def publish_candidate(self, pinned: Any, candidate: Any, *, deadline: float | None = None) -> Any:
+    def publish_candidate(
+        self, source: PlanSnapshot, candidate: PlanSnapshot, *, deadline: float | None = None
+    ) -> PlanRef:
         from fa.inner_loop.plan_admission import PlanRef, PlanRefError, read_plan_snapshot
 
-        canonical = self.workspace / pinned.ref.workspace_relative_path
+        canonical = self.workspace / source.ref.workspace_relative_path
         current = read_plan_snapshot(self.workspace, canonical)
-        if current.ref != pinned.ref:
+        if current.ref != source.ref:
             raise PlanRefError("source-changed")
-        if not pinned.ref.workspace_relative_path.startswith(
+        if not source.ref.workspace_relative_path.startswith(
             "worklogs/planning-topology-and-executable-contracts-loop/increments/"
         ):
             raise PlanRefError("scope-denied")
@@ -3411,7 +3461,7 @@ class _CT91TestPlanPublisher:
             raise UncertainPublishError("test-only fake publisher boundary") from error
         finally:
             os.close(directory)
-        return PlanRef(pinned.ref.workspace_relative_path, pinned.ref.source_kind, candidate.ref.sha256)
+        return PlanRef(source.ref.workspace_relative_path, source.ref.source_kind, candidate.ref.sha256)
 
 
 # Public admission root: only ProviderChain.request is replaced in normal-path cases.
@@ -4009,24 +4059,63 @@ def test_acquisition_unavailable_live_chat_and_noncoder_child_binding(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, roles: str | None
 ) -> None:
     """C1/Q70: real CLI, parent authority, registry, handler and child stages; provider IO only."""
+    import fa.cli as cli_module
     from fa.cli import _cmd_run, build_parser
     from fa.inner_loop.global_history import GlobalHistoryStore, default_global_history_path
     from fa.inner_loop.session_db import SessionDatabase
-    from fa.session.manager import SessionManager
+    from tests.test_cli import _install_test_managed_cli_dependencies
 
-    state = tmp_path / "state"
+    home = tmp_path / "home"
+    state = home / ".fa"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
     monkeypatch.setenv("FA_STATE_ROOT", str(state))
     monkeypatch.delenv("FA_EGRESS_PROXY_URL", raising=False)
     monkeypatch.delenv("FA_PROXY_TOKEN_FILE", raising=False)
-    source = tmp_path / "source"
-    source.mkdir()
-    (source / "README.md").write_text("review this note")
-    manager = SessionManager(state_root=state, workspace_root=tmp_path / "workspaces", source_workspace=source)
-    session = manager.create_or_attach_session(session_id=None, workspace_override=None)
+    workspace_root = tmp_path / "workspaces"
+    workspace = workspace_root / "review"
+    workspace.mkdir(parents=True)
+    (workspace / "README.md").write_text("review this note")
+    _install_test_managed_cli_dependencies(monkeypatch, home=home, workspace_root=workspace_root)
+    manager = cli_module._session_manager_for_args(argparse.Namespace(workspace=workspace))
+    session = manager.create_or_attach_session(session_id=None, workspace_override=workspace)
     parent = manager.begin_run(session, requested_run_id="ct95-parent")
     db = SessionDatabase.open_existing(session.session_db_path, session_id=session.session_id)
     config = session.workspace_path / "models.yaml"
     config.write_text("".join(_ROLE_YAML.format(role=r) for r in ("chat", "planner", "coder", "eval")))
+
+    class _FixtureParentStageLease:
+        """Test-only handoff lease; it models ownership, not managed view IO."""
+
+        is_handoff_enabled = True
+        project_tool_executor: Any | None = None
+        plan_ref: Any | None = None
+
+        def __init__(self, managed: Any) -> None:
+            self.managed = managed
+            self.active = True
+
+        def suspend(self, *, deadline: float | None = None) -> str:
+            del deadline
+            assert self.active
+            self.active = False
+            return cast(str, self.managed.current_revision_id)
+
+        def resume(self, *, deadline: float | None = None) -> None:
+            del deadline
+            assert not self.active
+            self.active = True
+
+    def drive_test_stage(**kwargs: Any) -> tuple[Any, bool]:
+        parent_lease = None
+        if kwargs["run_id"] == parent.run_id and kwargs["role"] == "chat" and roles not in {None, "coder"}:
+            managed = kwargs["managed"]
+            assert managed is not None
+            parent_lease = _FixtureParentStageLease(managed)
+        registry = kwargs["build_registry"](None, None, parent_lease)
+        return kwargs["drive"](registry), True
+
+    monkeypatch.setattr(cli_module, "_drive_stage_with_managed_workspace", drive_test_stage)
     phases: list[str] = []
     chat_turn = 0
 

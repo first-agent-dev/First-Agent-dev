@@ -39,6 +39,7 @@ from fa.execution.profiles import ExecutionProfile, _configured_id
 from fa.execution.protocol import (
     CANDIDATE_SCOPE,
     CONFIG_ID,
+    MAX_PROJECT_ENTRIES,
     MAX_REVISION_DIFF_ENTRIES,
     MAX_TEXT_BYTES,
     NAMESPACE,
@@ -284,6 +285,24 @@ def _plan_ref_dict(plan_ref: PlanRef) -> dict[str, str]:
         "source_kind": plan_ref.source_kind,
         "sha256": plan_ref.sha256,
     }
+
+
+def _is_this_attempt(intent: Mapping[str, Any], inputs: _PlanInputs) -> bool:
+    """Whether a durable intent names the attempt that is aborting right now.
+
+    `operation_id` is derived from the caller's request and unique per publish,
+    and `base_revision` pins it to the bytes it was prepared against, so the
+    pair cannot collide with a *different* operation in this workspace. Kind and
+    target are checked because `intent.json` is shared by revisions, plans and
+    bootstraps: an abort must never clear an install's intent merely because the
+    same operation id was reused.
+    """
+    return bool(
+        intent["kind"] == "PLAN"
+        and intent["operation_id"] == inputs.operation_id
+        and intent["base_revision"] == inputs.base_revision
+        and intent["target_relative"] == inputs.plan_relative
+    )
 
 
 def _candidate_scope(
@@ -1827,9 +1846,24 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
     # the writer: releasing it would strand an unpublishable candidate whose
     # capability dies with the grant.
     _SETTLED_VIEW_STATES = frozenset({"PUBLISHED", "REJECTED"})
+    # §2.1 scopes release to WRITE views because a READ view is normally a pin
+    # over committed bytes. CANDIDATE is the one READ purpose that owns
+    # uncommitted writer-private state (the staged buffer), so it is judged by
+    # ownership rather than by access: an unresolved CANDIDATE publication is
+    # exactly the "unfinished projection" the WRITE rule already refuses (Q138
+    # option B). Access is untouched — CANDIDATE stays READ so the ordinary
+    # `write_file` path can never reach its buffer.
+    _OWNING_READ_PURPOSES = frozenset({ViewPurpose.CANDIDATE})
 
     @classmethod
-    def _has_unsettled_views(cls, binding: _Binding, views: int) -> bool:
+    def _has_unsettled_views(cls, binding: _Binding, views: int, *, publishing: str | None = None) -> bool:
+        """Whether any view still holds writer-owned work.
+
+        ``publishing`` names the one CANDIDATE view whose unsettled state is the
+        very transaction being proved: a forward commit inside that view cannot be
+        refused by the fence that commit is about to lift, and every other
+        unresolved view still refuses it (Q138 option B).
+        """
         for name in os.listdir(views):
             # Unknown scratch is not safe unused-owner settlement.
             if len(name) != 37 or not name.startswith("view-"):
@@ -1841,7 +1875,13 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                 ref = record["view_ref"]
                 if ref["workspace_id"] != binding.metadata["workspace_id"] or ref["view_id"] != name:
                     raise SupervisorError("CORRUPT_STATE")
-                if ref["access"] != Access.READ.value and record["state"] not in cls._SETTLED_VIEW_STATES:
+                unsettled = record["state"] not in cls._SETTLED_VIEW_STATES
+                if ref["access"] != Access.READ.value and unsettled:
+                    return True
+                if ViewPurpose(ref["purpose"]) in cls._OWNING_READ_PURPOSES and unsettled and name != publishing:
+                    # The only READ purpose whose unsettled state still holds the
+                    # writer: its bytes are writer-private and unpublished. The
+                    # one exception is the publication being committed right now.
                     return True
             finally:
                 os.close(child)
@@ -2001,6 +2041,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
         scope: dict[str, Any] | None,
         plan_ref: PlanRef | None,
         formal_evidence: bool,
+        read_only_profile: ExecutionProfile,
         deadline: float,
     ) -> GrantReply:
         """VERIFICATION/CANDIDATE: one immutable reader view of the CURRENT revision.
@@ -2045,7 +2086,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                     "input_tree_sha256": tree["tree_sha256"],
                     "sealed_manifest_id": None,
                     "operation_ids": [],
-                    "profile_id": self._read_only_profile.profile_id,
+                    "profile_id": read_only_profile.profile_id,
                     "candidate_scope": scope,
                     "plan_ref": context.to_plan_ref(),
                 }
@@ -2262,6 +2303,70 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                 "entries": entries,
             }
 
+    def list_projects(
+        self,
+        peer: PeerIdentity,
+        namespace: NamespaceRef,
+        *,
+        view_ref: ViewRef,
+        capability: str,
+        deadline: float,
+    ) -> dict[str, Any]:
+        """Name the canonical projects this pinned revision contains.
+
+        A projection of the same immutable reader manifest ``list_project_artifacts``
+        already reads -- there is no second source of truth and no filesystem scan.
+        A project is a ``worklogs/<slug>/`` directory that holds a regular
+        ``roadmap.md``; a bare directory is reported as incomplete rather than
+        offered as selectable, because bootstrap refuses to install over an existing
+        directory (``COLLISION``) and a selectable entry the model cannot use would
+        be a trap.
+
+        Names only: no contents, no symlink targets, no recursion.
+        """
+        if (
+            not isinstance(view_ref, ViewRef)
+            or view_ref.access is not Access.READ
+            or view_ref.purpose is not ViewPurpose.PROJECT
+        ):
+            raise SupervisorError("INPUT_POLICY")
+        with self._reader_io(
+            peer,
+            namespace,
+            view_ref=view_ref,
+            capability=capability,
+            deadline=deadline,
+        ) as (_io, pin):
+            projects: list[dict[str, str]] = []
+            incomplete: list[str] = []
+            for path, entry in pin.entries.items():
+                _budget(deadline)
+                parts = path.split("/")
+                # Exactly worklogs/<slug>/roadmap.md: deeper paths are increments and
+                # notes, and a slug is one component, so there is nothing to recurse.
+                if len(parts) != 3 or parts[0] != "worklogs" or parts[2] != "roadmap.md":
+                    continue
+                slug = parts[1]
+                try:
+                    name_bytes = slug.encode("utf-8")
+                except UnicodeError:
+                    raise SupervisorError("INPUT_POLICY") from None
+                if _SLUG.fullmatch(slug) is None or not name_bytes or len(name_bytes) > 255:
+                    continue  # not a canonical project name; it is not our directory
+                if entry.get("type") == "file":
+                    projects.append({"project_slug": slug})
+                elif entry.get("type") in {"directory", "symlink"}:
+                    # The path exists but is not a readable roadmap: say so instead of
+                    # pretending the project is selectable.
+                    incomplete.append(slug)
+                else:
+                    raise SupervisorError("CORRUPT_STATE")
+            if len(projects) > MAX_PROJECT_ENTRIES or len(incomplete) > MAX_PROJECT_ENTRIES:
+                raise SupervisorError("INPUT_POLICY")
+            projects.sort(key=lambda item: item["project_slug"])
+            incomplete.sort()
+            return {"projects": projects, "incomplete": incomplete}
+
     def diff_revisions(
         self,
         peer: PeerIdentity,
@@ -2322,31 +2427,77 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
         capability: str,
         deadline: float,
     ) -> dict[str, bool]:
-        """Revoke unused-for-execution READ retention; never assert cell terminality or GC."""
+        """Revoke unused READ retention, or settle a stopped WRITE view as REJECTED."""
         with self._transaction(peer, deadline):
+            view = self._proof_only(peer, namespace, view_ref, capability)
+            if isinstance(view, _ProjectView):
+                return self._release_project_view(peer, namespace, view, view_ref=view_ref, deadline=deadline)
             revoked = False
             try:
-                pin = self._proof_only(peer, namespace, view_ref, capability)
-                if not isinstance(pin, _ReaderPin):
-                    raise SupervisorError("UNAUTHORIZED")
-                if pin.record["operation_ids"]:
+                if view.record["operation_ids"]:
                     raise SupervisorError("WORKSPACE_BUSY")
                 self._gate(view_ref).closed = True
                 self._wait_drained(view_ref, deadline)
-                pin.capability = None
+                view.capability = None
                 revoked = True
-                pin.record = {**pin.record, "state": "REJECTED"}
-                _replace_private_bytes(pin.directory, "view.json", encode_json(pin.record))
-                if _read_json(pin.directory, "view.json", _VIEW_RECORD, 1024**2) != pin.record:
+                view.record = {**view.record, "state": "REJECTED"}
+                _replace_private_bytes(view.directory, "view.json", encode_json(view.record))
+                if _read_json(view.directory, "view.json", _VIEW_RECORD, 1024**2) != view.record:
                     raise SupervisorError("DURABILITY_UNKNOWN")
                 _budget(deadline)
-                pin.close()
+                view.close()
                 return {"released": True}
             except (OSError, SupervisorError):
                 if revoked:
                     self._healthy = False
                     raise SupervisorError("DURABILITY_UNKNOWN") from None
                 raise
+
+    def _release_project_view(
+        self,
+        peer: PeerIdentity,
+        namespace: NamespaceRef,
+        view: _ProjectView,
+        *,
+        view_ref: ViewRef,
+        deadline: float,
+    ) -> dict[str, bool]:
+        """Settle a proved-terminal STOPPING WRITE view as REJECTED without publishing."""
+        state = view.record["state"]
+        if state == "UNKNOWN":
+            raise SupervisorError("TERMINALITY_UNKNOWN")
+        if state != "STOPPING" or not self._gate(view_ref).closed:
+            raise SupervisorError("VIEW_CLOSED")
+        if _terminal_record(view.directory) is None:
+            raise SupervisorError("TERMINALITY_UNKNOWN")
+        binding = self._binding(view_ref.workspace_id)
+        self._recheck(binding)
+        if (
+            binding.metadata["status"] != "OWNED"
+            or binding.metadata["generation"] != view_ref.generation
+            or binding.metadata["active_actor"] != namespace.to_dict()
+            or binding.principal != peer.principal
+        ):
+            raise SupervisorError("STALE_GENERATION")
+        if self._gate(view_ref).active or self._read_intent(binding.fd) is not None:
+            raise SupervisorError("WORKSPACE_BUSY")
+        rejected = {**view.record, "state": "REJECTED"}
+        revoked = False
+        try:
+            view.capability = None
+            revoked = True
+            _replace_private_bytes(view.directory, "view.json", encode_json(rejected))
+            if _read_json(view.directory, "view.json", _VIEW_RECORD, 1024**2) != rejected:
+                raise SupervisorError("DURABILITY_UNKNOWN")
+            view.record = rejected
+            _budget(deadline)
+            view.close()
+            return {"released": True}
+        except (OSError, SupervisorError):
+            if revoked:
+                self._healthy = False
+                raise SupervisorError("DURABILITY_UNKNOWN") from None
+            raise
 
     def _writer_proof(
         self, peer: PeerIdentity, namespace: NamespaceRef, workspace_id: str, capability: str
@@ -2415,6 +2566,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                     scope,
                     plan_ref,
                     formal_evidence,
+                    profile,
                     deadline,
                 )
             stage = self._state / "pending" / uuid4().hex
@@ -3945,11 +4097,12 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
             if repeated is not None:
                 # Nothing is written, but the same gates still prove the workspace
                 # is settled and its bytes are the current revision: a repeat is a
-                # claim about state, so it owes the same evidence as a commit.
-                self._forward_gates(binding, deadline)
+                # claim about state, so it owes the same evidence as a commit. The
+                # view being settled is the one this transaction is reconciling.
+                self._forward_gates(binding, deadline, publishing=view_ref.view_id)
                 self._settle_view(pin.directory, pin.record)
                 return repeated
-            inputs = self._plan_prepare(binding, plan_ref, buffer, operation_id, deadline)
+            inputs = self._plan_prepare(binding, plan_ref, buffer, operation_id, deadline, publishing=view_ref.view_id)
             parent = self._project_parent(binding.source, inputs.plan_relative)
             scratch = -1
             try:
@@ -4073,7 +4226,14 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
         }
 
     def _plan_prepare(
-        self, binding: _Binding, plan_ref: PlanRef, buffer: bytes, operation_id: str, deadline: float
+        self,
+        binding: _Binding,
+        plan_ref: PlanRef,
+        buffer: bytes,
+        operation_id: str,
+        deadline: float,
+        *,
+        publishing: str,
     ) -> _PlanInputs:
         """Prove every precondition and compute the revision before any write."""
         path, parts = self._plan_parts(plan_ref)
@@ -4086,7 +4246,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
         new_sha256 = hashlib.sha256(buffer).hexdigest()
         if new_sha256 == plan_ref.sha256:
             raise SupervisorError("INPUT_POLICY")  # a replacement must replace something
-        self._forward_gates(binding, deadline)
+        self._forward_gates(binding, deadline, publishing=publishing)
         with self._revision(binding, binding.current["revision_id"], deadline) as (_, base, _child):
             base_entries = tuple(dict(entry) for entry in base["entries"])
         existing = {entry["path"]: entry for entry in base_entries}.get(path)
@@ -4228,13 +4388,54 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
         os.fsync(scratch)
 
     def _plan_abort(self, binding: _Binding, inputs: _PlanInputs) -> None:
-        """Discard this attempt's own staging and intent; the plan was never touched."""
+        """Discard only this attempt's own staging and its own intent.
+
+        The scope is a claim about ownership, not a shortcut (R-8). `temporary`
+        is a name this attempt chose (`.plan.<uuid4>.publish`), so removing it
+        needs no proof: nobody else can have created that exact name. The intent
+        is *shared* state — one `intent.json` per workspace, overwritten by each
+        attempt — so it may only be cleared when it names this attempt's own
+        operation and base revision. A reconcile in flight would otherwise lose
+        the one piece of evidence forward recovery needs, and `_forward_gates`
+        refuses any new attempt while an intent exists, so a refusal that
+        deleted someone else's would leave the workspace serving again on a
+        state nobody finished. Leaving a foreign intent in place keeps the
+        workspace visibly refused instead: `WORKSPACE_BUSY` for the next
+        caller, recovery for the killed operation.
+
+        Cleanup failures are deliberately not raised over the refusal that
+        caused them (same rule as `_install_abort`): a surviving intent blocks
+        visibly, while a masked `STALE_REVISION`/`PATH_DENIED` would misreport
+        why nothing happened.
+        """
         try:
-            self._sweep_temporaries(binding.source)
-            if self._read_intent(binding.fd) is not None:
+            self._discard_temporary(binding.source, inputs.temporary)
+            intent = self._read_intent(binding.fd)
+            if intent is not None and _is_this_attempt(intent, inputs):
                 self._clear_intent(binding.fd)
         except (OSError, SupervisorError):
             pass  # the original refusal is the fact the caller must see
+
+    def _discard_temporary(self, root: int, name: str) -> None:
+        """Unlink one staged plan buffer by the exact name this attempt chose.
+
+        Not `_discard_stage`, which removes a whole staged *directory* keyed by
+        operation id; a plan replacement stages a single sibling file, so the
+        name is the whole identity. `FileNotFoundError` is the normal path: the
+        replace consumed it, or `_plan_stage` never got that far.
+        """
+        directory = self._temporary_directory(root)
+        try:
+            try:
+                info = os.stat(name, dir_fd=directory, follow_symlinks=False)
+            except FileNotFoundError:
+                return
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
+                raise SupervisorError("PATH_DENIED")  # not the staging this attempt owns
+            os.unlink(name, dir_fd=directory)
+            os.fsync(directory)
+        finally:
+            os.close(directory)
 
     def _plan_finish(self, binding: _Binding, inputs: _PlanInputs, parent: int, deadline: float) -> dict[str, Any]:
         """Make the replace durable, then revision, pointer, proof, DONE.
@@ -4290,12 +4491,15 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                 raise SupervisorError("INPUT_POLICY")
             digest.update(raw)
 
-    def _forward_gates(self, binding: _Binding, deadline: float) -> None:
+    def _forward_gates(self, binding: _Binding, deadline: float, *, publishing: str | None = None) -> None:
         """The preconditions every forward-only commit shares, after the grant."""
         views = os.open("views", _DIRECTORY, dir_fd=binding.fd)
         try:
             _private(views)
-            if self._has_unsettled_views(binding, views) or self._read_intent(binding.fd) is not None:
+            if (
+                self._has_unsettled_views(binding, views, publishing=publishing)
+                or self._read_intent(binding.fd) is not None
+            ):
                 raise SupervisorError("WORKSPACE_BUSY")
         finally:
             os.close(views)
@@ -5392,7 +5596,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
             return None
 
         # View-scoped: the exact actor/view/access binding, nothing weaker.
-        if operation in {Operation.LIST_PROJECT_ARTIFACTS, Operation.DIFF_REVISIONS}:
+        if operation in {Operation.LIST_PROJECT_ARTIFACTS, Operation.DIFF_REVISIONS, Operation.LIST_PROJECTS}:
             if view.access is not Access.READ or view.purpose is not ViewPurpose.PROJECT:
                 raise SupervisorError("INPUT_POLICY")
             self._reader_proof(peer, namespace, view, capability)
@@ -5471,7 +5675,7 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                 or payload["profile_id"] != profile.profile_id
                 or payload["timeout_ms"] > profile.max_command_ms
                 or (not is_project_tool and profile.interactive != (payload["session_id"] is not None))
-                or (is_project_tool and ref.purpose is not ViewPurpose.PROJECT)
+                or (is_project_tool and ref.purpose not in {ViewPurpose.PROJECT, ViewPurpose.MUTATION})
             ):
                 raise SupervisorError("UNAPPROVED_PROFILE")
             self._execution_claim(req, namespace, ref, deadline=deadline)

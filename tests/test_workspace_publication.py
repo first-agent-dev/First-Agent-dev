@@ -32,15 +32,16 @@ import pytest
 
 import fa.execution.publication as publication_module
 import fa.execution.workspace as workspace_module
-from fa.execution.publication import MANIFEST_NAME, SealResult, derive_revision_id, seal_view
+from fa.execution.publication import MANIFEST_NAME, BundleResult, SealResult, derive_revision_id, seal_view
 from fa.execution.supervisor import SupervisorError, TerminalVerdict, ViewStopper
 from fa.execution.types import Access, GrantReply, NamespaceRef, ViewPurpose, ViewRef
+from fa.execution.view_io import _rename_directory
 from fa.execution.workspace import WorkspaceAuthority
 from fa.inner_loop.plan_admission import PlanRefError, read_plan_snapshot
 from tests.test_execution_admission import claim as claim_operation
 from tests.test_execution_admission import request as exec_request
 from tests.test_execution_readers import record_path, ref
-from tests.test_execution_views import native_profile
+from tests.test_execution_views import native_profile, read_only_profile
 from tests.test_execution_workspace import ACTOR, PEER, Site, ok, until
 from tests.test_execution_workspace import site as site
 
@@ -659,7 +660,7 @@ def test_seal_leaves_canonical_bytes_current_and_pins_untouched(site: Site) -> N
         for path in sorted(site.source.rglob("*"))
         if path.is_file() and not path.is_symlink()
     }
-    with site.owner(view_profile=native_profile()) as owner:
+    with site.owner(view_profile=native_profile(), read_only_profile=read_only_profile()) as owner:
         ids = ok(lambda: site.register(owner))
         lease = ok(lambda: site.claim(owner, ids))
         pin = ok(
@@ -836,6 +837,7 @@ def test_a_published_view_settles_the_owner(site: Site) -> None:
     with site.owner(view_profile=native_profile()) as owner:
         ids = ok(lambda: site.register(owner))
         lease = ok(lambda: site.claim(owner, ids))
+        assert lease.generation is not None
         grant = _stopped(owner, ids, lease)
         _seal(owner, grant)
         _set_state(site, grant, "PUBLISHED")
@@ -1239,6 +1241,7 @@ def test_publish_settles_the_owner_and_a_reclaim_advances_generation(site: Site)
     with site.owner(view_profile=native_profile()) as owner:
         ids = ok(lambda: site.register(owner))
         lease = ok(lambda: site.claim(owner, ids))
+        assert lease.generation is not None
         grant = _stopped(owner, ids, lease)
         sealed = _seal(owner, grant)
         _publish(owner, grant, sealed)
@@ -1258,6 +1261,7 @@ def test_publish_then_release_is_restart_clean_and_publish_without_release_is_no
     with site.owner(view_profile=native_profile()) as owner:
         ids = ok(lambda: site.register(owner))
         lease = ok(lambda: site.claim(owner, ids))
+        assert lease.generation is not None
         grant = _stopped(owner, ids, lease)
         sealed = _seal(owner, grant)
         _publish(owner, grant, sealed)
@@ -1361,7 +1365,7 @@ def test_a_projection_failure_after_the_pointer_is_durability_unknown_and_never_
                 raise OSError(5, "injected projection failure")
             real_replace(source, destination, **kwargs)
 
-        monkeypatch.setattr(workspace_module.os, "replace", exploding)
+        monkeypatch.setattr(os, "replace", exploding)
 
         with pytest.raises(SupervisorError) as refused:
             _publish(owner, grant, sealed)
@@ -1483,7 +1487,7 @@ def test_publish_refuses_a_symlink_standing_where_a_file_must_go(site: Site) -> 
 
 def test_pinned_readers_keep_the_old_revision_across_publish(site: Site) -> None:
     """producer-kill-check: mutate a pinned revision's bytes while publishing (R7,R10)."""
-    with site.owner(view_profile=native_profile()) as owner:
+    with site.owner(view_profile=native_profile(), read_only_profile=read_only_profile()) as owner:
         ids = ok(lambda: site.register(owner))
         lease = ok(lambda: site.claim(owner, ids))
         old = ok(
@@ -2021,7 +2025,7 @@ def test_projection_temporaries_never_exist_inside_the_canonical_tree(
                 assert kwargs["src_dir_fd"] != kwargs["dst_dir_fd"]
             real_replace(source, destination, **kwargs)
 
-        monkeypatch.setattr(workspace_module.os, "replace", recording)
+        monkeypatch.setattr(os, "replace", recording)
         _publish(owner, grant, sealed)
         monkeypatch.undo()
 
@@ -2151,15 +2155,16 @@ def _install(
     )
 
 
-def _bundle_root(site: Site, ids: dict[str, str], bundle: Any) -> Path:
+def _bundle_root(site: Site, ids: dict[str, str], bundle: BundleResult) -> Path:
     return _workspace(site, ids) / "bundles" / bundle.validated_bundle_id
 
 
 def test_install_creates_the_project_commits_it_and_returns_the_wire_receipt(site: Site) -> None:
     """producer-kill-check: install writes the tree but never commits a revision."""
-    import fastjsonschema
+    import fastjsonschema  # type: ignore[import-untyped]
 
-    from fa.execution.protocol import RESULTS, Operation
+    from fa.execution.protocol import RESULTS
+    from fa.execution.types import Operation
 
     with site.owner(view_profile=native_profile()) as owner:
         ids = ok(lambda: site.register(owner))
@@ -2229,7 +2234,7 @@ def test_install_never_overwrites_even_when_the_target_appears_after_the_check(
     site: Site, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """producer-kill-check: rely on the pre-check instead of RENAME_NOREPLACE."""
-    real_rename = workspace_module._rename_directory
+    real_rename = _rename_directory
     with site.owner(view_profile=native_profile()) as owner:
         ids = ok(lambda: site.register(owner))
         lease = ok(lambda: site.claim(owner, ids))
@@ -2548,7 +2553,7 @@ def test_publish_plan_replaces_the_canonical_file_and_commits_a_revision(
     """producer-kill-check: replace the plan but never commit the revision/pointer."""
     plan_ref = _with_plan(site, mode=0o640)
     old_bytes = (site.source / PLAN_RELATIVE).read_bytes()
-    with site.owner(view_profile=native_profile()) as owner:
+    with site.owner(view_profile=native_profile(), read_only_profile=read_only_profile()) as owner:
         ids = ok(lambda: site.register(owner))
         lease = ok(lambda: site.claim(owner, ids))
         base_revision = _current(site, ids)["revision_id"]
@@ -2563,8 +2568,10 @@ def test_publish_plan_replaces_the_canonical_file_and_commits_a_revision(
             buffer: bytes,
             operation_id: str,
             deadline: float,
+            *,
+            publishing: str,
         ) -> Any:
-            inputs = prepare(authority, binding, pinned_ref, buffer, operation_id, deadline)
+            inputs = prepare(authority, binding, pinned_ref, buffer, operation_id, deadline, publishing=publishing)
             captured["inputs"] = inputs
             return inputs
 
@@ -2615,14 +2622,14 @@ def test_publish_plan_replaces_the_canonical_file_and_commits_a_revision(
         assert _intent(site, ids) is None
 
     # A fresh authority accepts the committed revision as its baseline.
-    with site.owner(view_profile=native_profile()) as reopened:
+    with site.owner(view_profile=native_profile(), read_only_profile=read_only_profile()) as reopened:
         assert site.register(reopened)["revision_id"] == result.revision_id
 
 
 def test_candidate_publish_applies_a_patch_after_an_unrelated_revision_commit(site: Site) -> None:
     """producer-kill-check: restore workspace-wide base equality (a snapshot, not a patch)."""
     plan_ref = _with_plan(site)
-    with site.owner(view_profile=native_profile()) as owner:
+    with site.owner(view_profile=native_profile(), read_only_profile=read_only_profile()) as owner:
         ids = ok(lambda: site.register(owner))
         lease = ok(lambda: site.claim(owner, ids))
         candidate = _candidate_plan_view(owner, ids, lease, plan_ref)
@@ -2658,7 +2665,7 @@ def test_candidate_publish_applies_a_patch_after_an_unrelated_revision_commit(si
 def test_candidate_publish_refuses_plan_bytes_that_moved_since_the_snapshot(site: Site) -> None:
     """producer-kill-check: drop the per-file CAS now that the view base is not compared."""
     plan_ref = _with_plan(site)
-    with site.owner(view_profile=native_profile()) as owner:
+    with site.owner(view_profile=native_profile(), read_only_profile=read_only_profile()) as owner:
         ids = ok(lambda: site.register(owner))
         lease = ok(lambda: site.claim(owner, ids))
         first = _publish_plan(owner, plan_ref, PLAN_NEW.encode(), grant=lease, ids=ids)
@@ -2676,7 +2683,7 @@ def test_candidate_publish_refuses_plan_bytes_that_moved_since_the_snapshot(site
 def test_candidate_publish_of_the_current_bytes_reports_a_repeat_and_writes_nothing(site: Site) -> None:
     """producer-kill-check: answer a re-applied intent with INPUT_POLICY instead of the evidence."""
     plan_ref = _with_plan(site)
-    with site.owner(view_profile=native_profile()) as owner:
+    with site.owner(view_profile=native_profile(), read_only_profile=read_only_profile()) as owner:
         ids = ok(lambda: site.register(owner))
         lease = ok(lambda: site.claim(owner, ids))
         before_current = _current(site, ids)
@@ -2739,7 +2746,7 @@ def test_publish_plan_refuses_bytes_that_are_not_a_plan(site: Site) -> None:
     from fa.inner_loop.plan_admission import MAX_PLAN_BYTES
 
     plan_ref = _with_plan(site)
-    with site.owner(view_profile=native_profile()) as owner:
+    with site.owner(view_profile=native_profile(), read_only_profile=read_only_profile()) as owner:
         ids = ok(lambda: site.register(owner))
         lease = ok(lambda: site.claim(owner, ids))
 
@@ -2756,7 +2763,7 @@ def test_publish_plan_refuses_bytes_that_are_not_a_plan(site: Site) -> None:
 def test_publish_plan_requires_the_owner_grant_and_no_live_view(site: Site) -> None:
     """producer-kill-check: replace a plan under a live writer or a bad capability."""
     plan_ref = _with_plan(site)
-    with site.owner(view_profile=native_profile()) as owner:
+    with site.owner(view_profile=native_profile(), read_only_profile=read_only_profile()) as owner:
         ids = ok(lambda: site.register(owner))
         lease = ok(lambda: site.claim(owner, ids))
         _view(owner, ids, lease)
@@ -2771,7 +2778,7 @@ def test_publish_plan_requires_the_owner_grant_and_no_live_view(site: Site) -> N
 def test_candidate_publish_requires_closed_view_and_matching_terminal_receipt(site: Site) -> None:
     """producer-kill-check: infer terminality from record_terminal or an OPEN view."""
     plan_ref = _with_plan(site)
-    with site.owner(view_profile=native_profile()) as owner:
+    with site.owner(view_profile=native_profile(), read_only_profile=read_only_profile()) as owner:
         ids = ok(lambda: site.register(owner))
         lease = ok(lambda: site.claim(owner, ids))
         open_candidate = _candidate_plan_view(owner, ids, lease, plan_ref, stop=False)
@@ -2791,7 +2798,7 @@ def test_candidate_publish_requires_closed_view_and_matching_terminal_receipt(si
 def test_record_terminal_does_not_substitute_for_draining_active_candidate_work(site: Site) -> None:
     """producer-kill-check: allow PLAN replace after terminal.json while work is active."""
     plan_ref = _with_plan(site)
-    with site.owner(view_profile=native_profile()) as owner:
+    with site.owner(view_profile=native_profile(), read_only_profile=read_only_profile()) as owner:
         ids = ok(lambda: site.register(owner))
         lease = ok(lambda: site.claim(owner, ids))
         candidate = _candidate_plan_view(owner, ids, lease, plan_ref, stop=False)
@@ -2812,7 +2819,7 @@ def test_record_terminal_does_not_substitute_for_draining_active_candidate_work(
 def test_candidate_publish_refuses_owner_capability_in_place_of_view_grant(site: Site) -> None:
     """producer-kill-check: accept the OWNER grant instead of the candidate view grant."""
     plan_ref = _with_plan(site)
-    with site.owner(view_profile=native_profile()) as owner:
+    with site.owner(view_profile=native_profile(), read_only_profile=read_only_profile()) as owner:
         ids = ok(lambda: site.register(owner))
         lease = ok(lambda: site.claim(owner, ids))
 
@@ -2831,7 +2838,7 @@ def test_publish_plan_refuses_a_plan_swapped_for_a_link_before_the_replace(
     outside.write_text("# outside\n")
     plan_ref = _with_plan(site)
     real_stage = WorkspaceAuthority._plan_stage
-    with site.owner(view_profile=native_profile()) as owner:
+    with site.owner(view_profile=native_profile(), read_only_profile=read_only_profile()) as owner:
         ids = ok(lambda: site.register(owner))
         lease = ok(lambda: site.claim(owner, ids))
 
@@ -2884,7 +2891,7 @@ def test_publish_plan_refuses_after_a_concurrent_write_between_staging_and_repla
     """producer-kill-check: check the source hash once, then replace blindly (Q58 CAS)."""
     plan_ref = _with_plan(site)
     real_stage = WorkspaceAuthority._plan_stage
-    with site.owner(view_profile=native_profile()) as owner:
+    with site.owner(view_profile=native_profile(), read_only_profile=read_only_profile()) as owner:
         ids = ok(lambda: site.register(owner))
         lease = ok(lambda: site.claim(owner, ids))
 
@@ -2915,7 +2922,7 @@ def test_publish_plan_refuses_bytes_that_are_not_the_ones_it_staged(
     plan_ref = _with_plan(site, mode=0o600)
     wrong = PLAN_NEW.replace("repaired", "REPAIRED")  # same length, different bytes
     real_stage = WorkspaceAuthority._plan_stage
-    with site.owner(view_profile=native_profile()) as owner:
+    with site.owner(view_profile=native_profile(), read_only_profile=read_only_profile()) as owner:
         ids = ok(lambda: site.register(owner))
         lease = ok(lambda: site.claim(owner, ids))
         base_revision = _current(site, ids)["revision_id"]
@@ -2951,7 +2958,7 @@ def test_publish_plan_refuses_a_replaced_plan_with_the_wrong_mode(site: Site, mo
     """producer-kill-check: compare bytes only and never the mode (Q58)."""
     plan_ref = _with_plan(site, mode=0o640)
     real_stage = WorkspaceAuthority._plan_stage
-    with site.owner(view_profile=native_profile()) as owner:
+    with site.owner(view_profile=native_profile(), read_only_profile=read_only_profile()) as owner:
         ids = ok(lambda: site.register(owner))
         lease = ok(lambda: site.claim(owner, ids))
 
@@ -2975,7 +2982,7 @@ def test_a_failure_after_the_plan_replace_keeps_the_new_bytes_and_the_intent(
 ) -> None:
     """producer-kill-check: roll a replaced plan back, or replace without an intent."""
     plan_ref = _with_plan(site)
-    with site.owner(view_profile=native_profile()) as owner:
+    with site.owner(view_profile=native_profile(), read_only_profile=read_only_profile()) as owner:
         ids = ok(lambda: site.register(owner))
         lease = ok(lambda: site.claim(owner, ids))
         base_revision = _current(site, ids)["revision_id"]
@@ -3003,3 +3010,116 @@ def test_a_failure_after_the_plan_replace_keeps_the_new_bytes_and_the_intent(
         with pytest.raises(SupervisorError) as unusable:
             site.register(owner)
         assert unusable.value.code == "CORRUPT_STATE"
+
+
+# ---------------------------------------------------------------------------
+# R-8 — abort owns its attempt, not the whole scratch and not a shared intent
+# ---------------------------------------------------------------------------
+
+
+def test_plan_abort_leaves_another_attempts_intent_alone(site: Site, monkeypatch: pytest.MonkeyPatch) -> None:
+    """producer-kill-check: sweep the scratch and clear any intent found (R-8).
+
+    A reconcile in flight is the concrete case: `_recover_intent` is the only
+    code that may finish a killed attempt, and `intent.json` is the single piece
+    of evidence it reads. An abort belonging to a *different* operation that
+    cleared it would leave the workspace with durable state that is neither the
+    old revision nor a finished one, and — because `_forward_gates` refuses only
+    while an intent exists — would let the next caller publish on top of it.
+
+    The foreign intent is planted at the one moment it can plausibly appear:
+    after this attempt wrote its own (`_write_intent`, the last durable step
+    before the replace) and before the replace. Planting it earlier is not the
+    same test — the attempt's own write would simply overwrite it, which the
+    first version of this test did, and which made the assertion pass for the
+    wrong reason.
+    """
+    plan_ref = _with_plan(site)
+    real_replace = os.replace
+    foreign: dict[str, Any] = {}
+
+    with site.owner(view_profile=native_profile(), read_only_profile=read_only_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+        base_revision = _current(site, ids)["revision_id"]
+
+        def plant_then_refuse(source: Any, destination: Any = None, **kwargs: Any) -> None:
+            if isinstance(source, str) and source.endswith(".publish"):
+                foreign.update(
+                    {
+                        "schema_version": 1,
+                        "kind": "REVISION",
+                        "operation_id": "op-" + "2" * 32,
+                        "workspace_id": ids["workspace_id"],
+                        "generation": 0,
+                        "base_revision": base_revision,
+                        "next_revision": "rev-" + "3" * 32,
+                        "tree_sha256": "4" * 64,
+                        "phase": "PREPARED",
+                        "target_relative": None,
+                        "old_sha256": None,
+                        "new_sha256": None,
+                        "created_directories": [],
+                        "view_ref": None,
+                    }
+                )
+                (site.state / "workspaces" / ids["workspace_id"] / "intent.json").write_text(json.dumps(foreign))
+                raise OSError(5, "injected refusal after the intent exists")
+            real_replace(source, destination, **kwargs)
+
+        monkeypatch.setattr(os, "replace", plant_then_refuse)
+
+        with pytest.raises(SupervisorError) as refused:
+            _publish_plan(owner, plan_ref, grant=lease, ids=ids)
+        monkeypatch.undo()
+
+        assert refused.value.code == "DURABILITY_UNKNOWN"
+        # The refusal is still the fact the caller sees...
+        assert (site.source / PLAN_RELATIVE).read_text() == PLAN_OLD
+        # ...but recovery's evidence survives, so the next attempt stays refused.
+        assert _intent(site, ids) == foreign
+        with pytest.raises(SupervisorError) as busy:
+            _publish_plan(owner, plan_ref, grant=lease, ids=ids)
+        assert busy.value.code == "WORKSPACE_BUSY"
+
+
+def test_plan_abort_removes_only_its_own_staged_buffer(site: Site, monkeypatch: pytest.MonkeyPatch) -> None:
+    """producer-kill-check: sweep the whole scratch instead of the staged name.
+
+    `_plan_stage` writes `.plan.<uuid4>.publish`; only this attempt can have
+    chosen that name, so abort needs no ownership proof to remove it — but it
+    must not remove *other* names, which is what a full sweep would do. A
+    sibling temporary is planted beside it to make the difference observable:
+    the attempt's own buffer goes, the neighbour stays.
+    """
+    plan_ref = _with_plan(site)
+    real_stage = WorkspaceAuthority._plan_stage
+    real_replace = os.replace
+    neighbour = site.source / ".fa" / "publish-tmp" / ".plan.neighbour.publish"
+
+    with site.owner(view_profile=native_profile(), read_only_profile=read_only_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+
+        def stage_then_plant(self: WorkspaceAuthority, binding: Any, inputs: Any, scratch: int) -> None:
+            real_stage(self, binding, inputs, scratch)
+            neighbour.write_text("not mine to delete")
+
+        def refuse_at_replace(source: Any, destination: Any = None, **kwargs: Any) -> None:
+            if isinstance(source, str) and source.endswith(".publish"):
+                raise OSError(5, "injected refusal")
+            real_replace(source, destination, **kwargs)
+
+        monkeypatch.setattr(WorkspaceAuthority, "_plan_stage", stage_then_plant)
+        monkeypatch.setattr(os, "replace", refuse_at_replace)
+
+        with pytest.raises(SupervisorError) as refused:
+            _publish_plan(owner, plan_ref, grant=lease, ids=ids)
+        monkeypatch.undo()
+
+        assert refused.value.code == "DURABILITY_UNKNOWN"
+        staged = sorted(p.name for p in (site.source / ".fa" / "publish-tmp").iterdir() if p.name.endswith(".publish"))
+        assert staged == [neighbour.name], staged
+        assert neighbour.read_text() == "not mine to delete"
+        # Its own intent was the only one there, so it goes: the plan was never touched.
+        assert _intent(site, ids) is None

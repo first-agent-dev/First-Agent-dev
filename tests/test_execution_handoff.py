@@ -42,7 +42,8 @@ from fa.execution.service import SupervisorService
 from fa.execution.supervisor import PeerIdentity, SupervisorError
 from fa.execution.types import GrantReply, NamespaceRef, Operation
 from fa.execution.workspace import WorkspaceAuthority
-from tests.test_execution_readers import pin, read, ref
+from fa.inner_loop.workflow_artifacts import _replace_private_bytes
+from tests.test_execution_readers import pin, read, read_only_profile, ref
 from tests.test_execution_service import _config, _registered, _writer, exchange
 from tests.test_execution_views import native_profile
 from tests.test_execution_workspace import ACTOR, PEER, Site, ok, until
@@ -85,7 +86,7 @@ def move(
 
 def test_handoff_moves_the_grant_without_advancing_the_generation(site: Site) -> None:
     """producer-kill-check: advance the generation (or skip the replace) on handoff."""
-    with site.owner(view_profile=native_profile()) as owner:
+    with site.owner(view_profile=native_profile(), read_only_profile=read_only_profile()) as owner:
         ids = ok(lambda: site.register(owner))
         lease = ok(lambda: site.claim(owner, ids))
         retained = ok(lambda: pin(owner, ids))
@@ -187,17 +188,13 @@ def test_a_foreign_peer_namespace_or_capability_cannot_move_the_grant(site: Site
     with site.owner() as owner:
         ids = ok(lambda: site.register(owner))
         lease = ok(lambda: site.claim(owner, ids))
-        kwargs = (
-            {"peer": PeerIdentity(PEER.pid, PEER.uid, PEER.gid + 1)}
-            if wrong == "principal"
-            else {"namespace": NamespaceRef("session-b", "run-b")}
-            if wrong == "actor"
-            else {"capability": secrets.token_hex(32)}
-        )
+        peer = PeerIdentity(PEER.pid, PEER.uid, PEER.gid + 1) if wrong == "principal" else PEER
+        namespace = NamespaceRef("session-b", "run-b") if wrong == "actor" else ACTOR
+        capability = secrets.token_hex(32) if wrong == "token" else lease.capability
         before = workspace_file(site, ids).read_bytes()
 
         with pytest.raises(SupervisorError) as rejected:
-            move(owner, lease, **kwargs)
+            move(owner, lease, peer=peer, namespace=namespace, capability=capability)
 
         assert rejected.value.code == "UNAUTHORIZED"
         assert workspace_file(site, ids).read_bytes() == before
@@ -276,7 +273,7 @@ def test_a_grant_is_never_returned_unless_the_swap_reads_back(site: Site, monkey
         # A replace that silently loses the swap: the durable bytes keep the OLD
         # actor while memory already moved. The authority must refuse the grant
         # and degrade, because recovery owns this workspace from now on.
-        original = workspace_module._replace_private_bytes
+        original = _replace_private_bytes
         monkeypatch.setattr(
             workspace_module,
             "_replace_private_bytes",

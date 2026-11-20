@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import contextvars
 from collections.abc import Iterable, Iterator, Sequence
-from concurrent.futures import ThreadPoolExecutor, wait
+from concurrent.futures import Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from pathlib import Path
 from typing import overload, override
@@ -129,9 +129,15 @@ def _should_parallelize_tool_batch(calls: list[ToolCall], registry: ToolRegistry
     if len(calls) <= 1:
         return False  # No point parallelizing single tool
 
-    # Any never-parallel tool forces serial
+    # Any never-parallel tool or view-bound serial capability forces serial.
     for c in calls:
         if c.name in _NEVER_PARALLEL_TOOLS:
+            return False
+        try:
+            spec = registry.lookup(c.name)
+            if spec is not None and "managed-view-serial" in spec.tags:
+                return False
+        except Exception:  # noqa: BLE001 - an unavailable registry entry is serial by default
             return False
 
     reserved_paths: list[Path] = []
@@ -173,9 +179,12 @@ def is_parallelizable(call: ToolCall, registry: ToolRegistry) -> bool:
     # Never parallel list takes precedence
     if call.name in _NEVER_PARALLEL_TOOLS:
         return False
-    # Check registry permission read
+    # Managed project discovery is read-only but must be serialized per view.
+    # Check the opt-in tag before the generic permission-based parallel path.
     try:
         spec = registry.lookup(call.name)
+        if spec is not None and "managed-view-serial" in spec.tags:
+            return False
         if spec is not None and getattr(spec, "permission", "") == "read":
             return True
     except Exception:  # noqa: BLE001, S110 # graceful degradation per Phase 0.5, failure-observable WARNING
@@ -312,7 +321,117 @@ def _execute_one_sequential(
     return result, None
 
 
-def _execute_batch_parallel(  # noqa: C901 -- complexity from fallback chain graceful degradation, documented, will split Phase 3 per Paper 2 §4.4
+def _settle_parallel_batch_failure(
+    exc: Exception,
+    exec_payloads: list[HookPayload],
+    registry: ToolRegistry,
+    attempted: set[int],
+    futures: dict[Future[ToolResult], tuple[int, HookPayload]],
+    results_map: dict[str, ToolResult],
+) -> None:
+    """Settle retained futures without replaying work whose submission was attempted."""
+    import logging
+
+    logging.getLogger(__name__).warning(
+        "ThreadPool parallel batch failed %s; settling submitted work without replay", exc
+    )
+    retained_indexes = {idx for idx, _ in futures.values()}
+    for future, (_, p) in futures.items():
+        if p.tool_call is None:
+            continue
+        try:
+            if not future.done():
+                raise RuntimeError("submitted tool outcome is not yet known")
+            res = future.result()
+        except Exception as future_exc:  # noqa: BLE001
+            res = ToolResult.fail(
+                "exec_failed",
+                f"Parallel exec outcome unknown after batch failure: {future_exc}",
+                retryable=False,
+            )
+        results_map[p.tool_call.call_id] = res
+
+    if not attempted:
+        # Executor construction/entry failed before any submit attempt:
+        # no handler could have started, so the legacy serial fallback
+        # remains exactly-once and safe.
+        for p in exec_payloads:
+            if p.tool_call is None:
+                continue
+            try:
+                results_map[p.tool_call.call_id] = registry.dispatch(p.tool_call)
+            except Exception as fallback_exc:  # noqa: BLE001
+                results_map[p.tool_call.call_id] = ToolResult.fail("exec_failed", str(fallback_exc))
+    else:
+        for idx, p in enumerate(exec_payloads):
+            if p.tool_call is None:
+                continue
+            if idx in attempted and idx not in retained_indexes:
+                results_map[p.tool_call.call_id] = ToolResult.fail(
+                    "exec_failed",
+                    "Parallel submit was attempted but no Future was retained; execution outcome is unknown",
+                    retryable=False,
+                )
+            elif idx not in attempted:
+                results_map[p.tool_call.call_id] = ToolResult.fail(
+                    "exec_failed",
+                    "Parallel batch aborted before this call was submitted",
+                    retryable=True,
+                )
+
+
+def _dispatch_parallel_batch(exec_payloads: list[HookPayload], registry: ToolRegistry) -> dict[str, ToolResult]:
+    """Dispatch a guarded batch and settle pool failures without duplicate execution."""
+    results_map: dict[str, ToolResult] = {}
+    if exec_payloads:
+        max_workers = min(len(exec_payloads), _MAX_TOOL_WORKERS)
+        # §I-S14b-5: propagate contextvars (e.g. fa_current_session) to worker threads.
+        # ContextVar is thread-local; without copy_context().run, get_current_session()
+        # returns None inside ThreadPool workers, causing fs_blackboard_query to fail
+        # with blackboard_unavailable on first try in parallel batches (I-63).
+        # NOTE: Context objects cannot be entered concurrently; we must create
+        # a distinct Context per task (otherwise "already entered" error).
+        ctxs = [contextvars.copy_context() for _ in exec_payloads]
+        attempted: set[int] = set()
+        futures: dict[Future[ToolResult], tuple[int, HookPayload]] = {}
+        try:
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                for idx, (p, ctx) in enumerate(zip(exec_payloads, ctxs, strict=False)):
+                    if p.tool_call is None:
+                        continue
+                    # Mark before submit: if submit raises after accepting work but
+                    # before returning its Future, the outcome is unknown and must
+                    # not be replayed by the exception path.
+                    attempted.add(idx)
+                    future = executor.submit(ctx.run, registry.dispatch, p.tool_call)
+                    futures[future] = (idx, p)
+                done, _ = wait(futures.keys(), timeout=30)
+                for fut in done:
+                    _, p = futures[fut]
+                    try:
+                        res = fut.result(timeout=5)
+                    except Exception as exc:  # noqa: BLE001 # graceful degradation
+                        res = ToolResult.fail("exec_failed", f"Parallel exec failed: {exc}")
+                    if p.tool_call is not None:
+                        results_map[p.tool_call.call_id] = res
+
+                not_done = set(futures.keys()) - done
+                for fut in not_done:
+                    _, p = futures[fut]
+                    try:
+                        fut.cancel()
+                    except Exception:  # noqa: BLE001, S110
+                        pass
+                    if p.tool_call is not None:
+                        results_map[p.tool_call.call_id] = ToolResult.fail(
+                            "exec_timeout", "Parallel exec timeout after 30s"
+                        )
+        except Exception as exc:  # noqa: BLE001 - settle uncertain submissions without replay
+            _settle_parallel_batch_failure(exc, exec_payloads, registry, attempted, futures, results_map)
+    return results_map
+
+
+def _execute_batch_parallel(
     batch: list[ToolCall],
     registry: ToolRegistry,
     hooks: HookRegistry,
@@ -354,56 +473,7 @@ def _execute_batch_parallel(  # noqa: C901 -- complexity from fallback chain gra
     # Filter executable payloads
     exec_payloads = [p for p in payloads if p is not None and p.tool_call is not None]
 
-    results_map: dict[str, ToolResult] = {}
-    if exec_payloads:
-        max_workers = min(len(exec_payloads), _MAX_TOOL_WORKERS)
-        # §I-S14b-5: propagate contextvars (e.g. fa_current_session) to worker threads.
-        # ContextVar is thread-local; without copy_context().run, get_current_session()
-        # returns None inside ThreadPool workers, causing fs_blackboard_query to fail
-        # with blackboard_unavailable on first try in parallel batches (I-63).
-        # NOTE: Context objects cannot be entered concurrently; we must create
-        # a distinct Context per task (otherwise "already entered" error).
-        ctxs = [contextvars.copy_context() for _ in exec_payloads]
-        try:
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                futures = {}
-                for p, ctx in zip(exec_payloads, ctxs, strict=False):
-                    if p.tool_call is None:
-                        continue
-                    futures[executor.submit(ctx.run, registry.dispatch, p.tool_call)] = p
-                done, _ = wait(futures.keys(), timeout=30)
-                for fut in done:
-                    p = futures[fut]
-                    try:
-                        res = fut.result(timeout=5)
-                    except Exception as exc:  # noqa: BLE001 # graceful degradation
-                        res = ToolResult.fail("exec_failed", f"Parallel exec failed: {exc}")
-                    if p.tool_call is not None:
-                        results_map[p.tool_call.call_id] = res
-
-                not_done = set(futures.keys()) - done
-                for fut in not_done:
-                    p = futures[fut]
-                    try:
-                        fut.cancel()
-                    except Exception:  # noqa: BLE001, S110
-                        pass
-                    if p.tool_call is not None:
-                        results_map[p.tool_call.call_id] = ToolResult.fail(
-                            "exec_timeout", "Parallel exec timeout after 30s"
-                        )
-        except Exception as exc:  # noqa: BLE001 # graceful degradation
-            import logging
-
-            logging.getLogger(__name__).warning("ThreadPool parallel batch failed %s, fallback sequential", exc)
-            for p in exec_payloads:
-                try:
-                    assert p.tool_call is not None  # noqa: S101
-                    res = registry.dispatch(p.tool_call)
-                    results_map[p.tool_call.call_id] = res
-                except Exception as e:  # noqa: BLE001
-                    if p.tool_call is not None:
-                        results_map[p.tool_call.call_id] = ToolResult.fail("exec_failed", str(e))
+    results_map = _dispatch_parallel_batch(exec_payloads, registry)
 
     # AFTER and record in original order (preserve order, including denied)
     ordered_results: list[ToolResult] = []

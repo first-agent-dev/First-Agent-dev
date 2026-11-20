@@ -66,6 +66,7 @@ def _get_write_set_from_git_status(root: Path) -> list[str]:
             capture_output=True,
             text=True,
             timeout=2,
+            check=False,  # the non-zero exit IS the answer: fall back to no write-set
         )
         if res.returncode != 0:
             return []

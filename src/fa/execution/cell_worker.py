@@ -23,6 +23,7 @@ from uuid import uuid4
 from fa.execution.cell_protocol import decode_cell_request
 from fa.execution.protocol import (
     MAX_PROJECT_TOOL_ENVELOPE_BYTES,
+    MAX_PROJECT_TOOL_REPLY_FRAME_BYTES,
     MAX_PROJECT_TOOL_TIMEOUT_MS,
     MAX_TAIL_BYTES,
     FrameConnection,
@@ -255,18 +256,37 @@ class _StdioConnection:
         self._destination.flush()
 
 
-def _reply(connection: FrameConnection, request_id: str, result: dict[str, Any] | None) -> None:
-    write_frame(
-        connection,
-        encode_json(
-            {
-                "version": 1,
-                "request_id": request_id,
-                "result": result,
-                "error": "WORKER_UNAVAILABLE" if result is None else None,
-            }
-        ),
-    )
+def _reply(
+    connection: FrameConnection, request_id: str, result: dict[str, Any] | None, *, project_tool: str | None = None
+) -> None:
+    record = {
+        "version": 1,
+        "request_id": request_id,
+        "result": result,
+        "error": "WORKER_UNAVAILABLE" if result is None else None,
+    }
+    raw = encode_json(record)
+    if project_tool is not None and len(raw) + 4 > MAX_PROJECT_TOOL_REPLY_FRAME_BYTES and result is not None:
+        # A helper envelope is JSON embedded in another JSON string: escaping
+        # can exceed the independent frame cap even under the envelope cap.
+        # Preserve non-success flags; never expose a partial successful result.
+        stdout = ""
+        if result.get("exit_code") == 0 and result.get("timed_out") is False and result.get("truncated") is False:
+            code = "reach_failed" if project_tool == "fs_reach" else "search_failed"
+            stdout = encode_json(
+                {
+                    "summary": "managed discovery refused (output_budget)",
+                    "result": None,
+                    "error": {"code": code, "message": "managed discovery refused (output_budget)", "retryable": False},
+                    "artifacts": [],
+                }
+            ).decode("utf-8")
+        record["result"] = {**result, "stdout": stdout}
+        raw = encode_json(record)
+    if project_tool is None:
+        write_frame(connection, raw)
+    else:
+        write_frame(connection, raw, max_bytes=MAX_PROJECT_TOOL_REPLY_FRAME_BYTES - 4)
 
 
 def serve_once(worker: CellWorker, connection: FrameConnection) -> int:
@@ -290,7 +310,12 @@ def serve_once(worker: CellWorker, connection: FrameConnection) -> int:
                     raise ExecutionContractError
             except (OSError, ExecutionContractError, RuntimeError):
                 result = None
-        _reply(connection, record["request_id"], result)
+        _reply(
+            connection,
+            record["request_id"],
+            result,
+            project_tool=record["payload"]["tool"] if record["action"] == "PROJECT_TOOL" else None,
+        )
         # 78 is worker failure, NOT a command result or timeout attestation.
         return 78 if result is None or result["timed_out"] else result["exit_code"]
     finally:
@@ -304,6 +329,7 @@ def _serve_project_tool(
     raw: bytes,
     request_id: str,
     *,
+    project_tool: str,
     writes: Any,
     running: Any,
     stream_failed: threading.Event,
@@ -327,7 +353,7 @@ def _serve_project_tool(
     finally:
         with writes:
             try:
-                _reply(connection, request_id, result)
+                _reply(connection, request_id, result, project_tool=project_tool)
             except OSError:
                 stream_failed.set()
                 worker.stopped = True
@@ -392,6 +418,7 @@ def serve(worker: CellWorker, connection: FrameConnection) -> None:
                     connection,
                     raw,
                     record["request_id"],
+                    project_tool=record["payload"]["tool"],
                     writes=writes,
                     running=running,
                     stream_failed=stream_failed,

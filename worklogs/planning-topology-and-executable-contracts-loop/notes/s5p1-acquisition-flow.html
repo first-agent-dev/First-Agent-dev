@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>S5P1 — flow-схема acquisition: где обрыв</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#151b23; --panel2:#1b232d; --line:#2a3441;
+    --fg:#e6edf3; --dim:#8b949e; --dim2:#6e7681;
+    --ok:#3fb950; --okbg:#12261a;
+    --warn:#d29922; --warnbg:#2b2411;
+    --gap:#f85149; --gapbg:#2d1416;
+    --chat:#7d8590; --tool:#a371f7; --ctrl:#39c5cf; --stage:#58a6ff; --auth:#d4a72c;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--fg);
+    font:15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  header{
+    padding:28px 32px 20px; border-bottom:1px solid var(--line);
+    background:linear-gradient(180deg,#161d26,#0d1117);
+  }
+  h1{margin:0 0 6px; font-size:21px; letter-spacing:-.2px}
+  .sub{color:var(--dim); font-size:13.5px; max-width:900px}
+  .sub code{font-family:var(--mono); font-size:12.5px; color:#a5d6ff}
+  .stats{display:flex; gap:10px; margin-top:16px; flex-wrap:wrap}
+  .stat{
+    background:var(--panel); border:1px solid var(--line); border-radius:8px;
+    padding:8px 13px; font-size:12.5px; color:var(--dim);
+  }
+  .stat b{color:var(--fg); font-size:16px; font-variant-numeric:tabular-nums; margin-right:6px}
+  .stat.bad b{color:var(--gap)}
+  .stat.good b{color:var(--ok)}
+
+  .legend{display:flex; gap:18px; padding:12px 32px; border-bottom:1px solid var(--line);
+    font-size:12.5px; color:var(--dim); flex-wrap:wrap; align-items:center}
+  .dot{display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:6px; vertical-align:middle}
+  .dot.ok{background:var(--ok)} .dot.warn{background:var(--warn)} .dot.gap{background:var(--gap)}
+  .legend .sp{flex:1}
+  .filters{display:flex; gap:6px}
+  .chip{
+    background:transparent; color:var(--dim); border:1px solid var(--line);
+    border-radius:20px; padding:3px 11px; font-size:12px; cursor:pointer;
+    font-family:inherit; transition:.15s;
+  }
+  .chip:hover{color:var(--fg); border-color:#3d4b5c}
+  .chip.on{background:var(--fg); color:var(--bg); border-color:var(--fg); font-weight:600}
+
+  .wrap{
+    display:grid; grid-template-columns:minmax(0,1.12fr) minmax(340px,.88fr);
+    gap:0; align-items:start;
+  }
+  .flow{padding:24px 26px 60px 32px; border-right:1px solid var(--line)}
+
+  .lane{
+    display:flex; align-items:center; gap:10px;
+    margin:26px 0 12px; font-size:11.5px; letter-spacing:.09em;
+    text-transform:uppercase; color:var(--dim2); font-weight:700;
+  }
+  .lane:first-child{margin-top:0}
+  .lane::after{content:""; flex:1; height:1px; background:var(--line)}
+  .lane .tag{
+    font-size:10px; padding:1px 7px; border-radius:4px; letter-spacing:.06em;
+    border:1px solid currentColor; opacity:.85;
+  }
+
+  .node{
+    position:relative; display:grid; grid-template-columns:22px 1fr;
+    gap:12px; margin:0 0 6px; padding:0; cursor:pointer;
+    background:none; border:0; text-align:left; color:inherit; width:100%;
+    font-family:inherit; font-size:inherit;
+  }
+  .rail{position:relative; display:flex; justify-content:center; padding-top:16px}
+  .rail::before{content:""; position:absolute; top:0; bottom:-6px; width:2px; background:var(--line)}
+  .node:last-child .rail::before{bottom:auto; height:22px}
+  .rail .pin{
+    position:relative; width:10px; height:10px; border-radius:50%;
+    background:var(--panel); border:2px solid var(--line); z-index:1;
+  }
+  .node[data-s="ok"] .pin{border-color:var(--ok)}
+  .node[data-s="warn"] .pin{border-color:var(--warn)}
+  .node[data-s="gap"] .pin{border-color:var(--gap); background:var(--gap)}
+
+  .card{
+    background:var(--panel); border:1px solid var(--line); border-left:3px solid var(--line);
+    border-radius:7px; padding:11px 14px; transition:.13s;
+  }
+  .node[data-s="ok"] .card{border-left-color:var(--ok)}
+  .node[data-s="warn"] .card{border-left-color:var(--warn)}
+  .node[data-s="gap"] .card{border-left-color:var(--gap); background:var(--gapbg)}
+  .node:hover .card{border-color:#3d4b5c; border-left-color:inherit; transform:translateX(2px)}
+  .node.sel .card{border-color:var(--fg); box-shadow:0 0 0 1px var(--fg)}
+
+  .ct{display:flex; align-items:baseline; gap:8px; flex-wrap:wrap}
+  .num{font-family:var(--mono); font-size:11px; color:var(--dim2); min-width:16px}
+  .title{font-weight:600; font-size:14px}
+  .badge{
+    font-size:10px; padding:1px 6px; border-radius:4px; font-weight:700;
+    letter-spacing:.04em; text-transform:uppercase;
+  }
+  .badge.gap{background:var(--gap); color:#fff}
+  .badge.warn{background:var(--warn); color:#241a00}
+  .cd{color:var(--dim); font-size:12.5px; margin-top:3px}
+  .cf{margin-top:6px; font-family:var(--mono); font-size:11.5px; color:#79c0ff}
+
+  /* detail */
+  .detail{
+    position:sticky; top:0; height:100vh; overflow-y:auto;
+    padding:24px 30px 60px; background:var(--panel2);
+  }
+  .empty{color:var(--dim2); font-size:13px; margin-top:40px; text-align:center; line-height:1.7}
+  .empty b{color:var(--dim); display:block; margin-bottom:4px}
+  .dhead{border-bottom:1px solid var(--line); padding-bottom:14px; margin-bottom:16px}
+  .dhead h2{margin:8px 0 4px; font-size:17px; line-height:1.35}
+  .dhead .lane-pill{font-size:10.5px; letter-spacing:.08em; text-transform:uppercase; font-weight:700}
+  section.blk{margin-bottom:20px}
+  section.blk h3{
+    margin:0 0 7px; font-size:11px; letter-spacing:.09em; text-transform:uppercase;
+    color:var(--dim2); font-weight:700;
+  }
+  section.blk p{margin:0 0 7px; font-size:13.5px; color:#c9d1d9}
+  section.blk ul{margin:0; padding-left:17px; font-size:13.5px; color:#c9d1d9}
+  section.blk li{margin-bottom:5px}
+  code{
+    font-family:var(--mono); font-size:12px; background:#0b1017;
+    padding:1.5px 5px; border-radius:4px; color:#a5d6ff; border:1px solid #1d2632;
+  }
+  .anchor{
+    display:inline-block; font-family:var(--mono); font-size:11.5px;
+    color:#a5d6ff; background:#0b1017; border:1px solid #1d2632;
+    border-radius:4px; padding:2px 7px; margin:0 4px 4px 0;
+  }
+  .ev{color:var(--ok); font-size:12.5px}
+  .box{
+    border-radius:7px; padding:11px 13px; font-size:13px; margin-bottom:9px;
+    border:1px solid; line-height:1.5;
+  }
+  .box.break{background:var(--gapbg); border-color:#6b2226}
+  .box.fix{background:#0f1b26; border-color:#1f3a4d}
+  .box b{display:block; margin-bottom:4px; font-size:11px; letter-spacing:.07em;
+    text-transform:uppercase; opacity:.85}
+  .box.break b{color:var(--gap)}
+  .box.fix b{color:var(--chat)}
+  table{width:100%; border-collapse:collapse; font-size:12.5px; margin-top:4px}
+  th,td{text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); vertical-align:top}
+  th{color:var(--dim2); font-size:10.5px; letter-spacing:.07em; text-transform:uppercase}
+  td code{font-size:11px}
+
+  .summary{margin-top:34px; padding-top:20px; border-top:1px solid var(--line)}
+  .summary h2{font-size:15px; margin:0 0 4px}
+  .summary .note{color:var(--dim); font-size:12.5px; margin-bottom:14px}
+
+  @media (max-width:1000px){
+    .wrap{grid-template-columns:1fr}
+    .flow{border-right:0; border-bottom:1px solid var(--line)}
+    .detail{position:static; height:auto}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>S5P1 — procurement: как managed-прогон приобретает PlanRef</h1>
+  <div class="sub">
+    Путь: <code>fa run chat</code> → модель вызывает <code>invoke_workflow</code> → child run → HANDOFF →
+    <code>run_workflow(acquisition=…)</code> → planner выбирает цель → admission связывается <em>внутри</em> прогона →
+    coder. Всё ниже сверено с исходниками, не с планом. Красное — обрыв, до которого прогон дойдёт в
+    ближайшем же реальном запуске.
+  </div>
+  <div class="stats">
+    <div class="stat good"><b>4</b>блока закрыто и доказано</div>
+    <div class="stat bad"><b>5</b>обрывов</div>
+    <div class="stat"><b>4</b>из 5 обрывов — в одной стадии</div>
+    <div class="stat"><b>0</b>производственных вызовов <code>build_acquisition_registry</code></div>
+  </div>
+</header>
+
+<div class="legend">
+  <span><span class="dot ok"></span>реализовано и доказано тестом</span>
+  <span><span class="dot warn"></span>реализовано, но не доходит до прогона</span>
+  <span><span class="dot gap"></span>обрыв: упадёт или не сделает задуманного</span>
+  <span class="sp"></span>
+  <div class="filters">
+    <button class="chip on" data-f="all">всё</button>
+    <button class="chip" data-f="gap">только обрывы</button>
+    <button class="chip" data-f="ok">только закрытое</button>
+  </div>
+</div>
+
+<div class="wrap">
+  <div class="flow" id="flow"></div>
+  <div class="detail" id="detail">
+    <div class="empty"><b>Выберите узел</b>Справа появятся: что происходит, якоря в коде, чем это доказано, и — для обрывов — что именно сломается и какие есть варианты.</div>
+  </div>
+</div>
+
+<script>
+const NODES = [
+  // ── lane 1
+  { id:"c1", lane:"chat", num:1, title:"fa run chat", status:"ok",
+    file:"src/fa/cli.py:3092 _cmd_run(role='chat')",
+    what:"Модель работает в одном WRITE/PROJECT view родителя. Это единственная точка, откуда агент может попросить пайплайн.",
+    ev:"tests/test_verify_gate_live.py::test_acquisition_unavailable_live_chat_and_noncoder_child_binding (реальный CLI, реальный authority)" },
+
+  { id:"c2", lane:"chat", num:2, title:"Родительская стадия открывает view и выдаёт lease", status:"ok",
+    file:"src/fa/cli.py:1835 _drive_stage_with_managed_workspace",
+    what:"WRITE/PROJECT view + ManagedBashExecutor + _ManagedStageLease. Lease — то, что вообще делает HANDOFF возможным.",
+    ev:"tests/test_execution_composition.py, test_managed_stage_lease.py" },
+
+  { id:"c3", lane:"chat", num:3, title:"В реестре чата есть invoke_workflow", status:"ok",
+    file:"src/fa/cli.py:2637   build_invoke_workflow_tool(run_workflow, workflow_ctx)",
+    what:"Регистрируется только для role=='chat' и только при живом WorkflowInvocationContext. Остальные роли его не получают — это и есть защита от неограниченной рекурсии.",
+    ev:"tests/test_invoke_workflow_tool.py" },
+
+  // ── lane 2
+  { id:"t1", lane:"tool", num:4, title:"Гейт впускает planner-first managed", status:"ok",
+    file:"src/fa/inner_loop/tools/workflow_tool.py:415 acquisition_refusal",
+    what:"Для managed-запроса с coder требуются роли, начинающиеся с planner. Иначе — acquisition_requires_planner. Для legacy — acquisition_unavailable, как раньше.",
+    ev:"tests/test_invoke_workflow_tool.py:870 — planner-first даёт None" },
+
+  { id:"t2", lane:"tool", num:5, title:"Проверка родительского шва + аллокация child run", status:"ok",
+    file:"workflow_tool.py:464 _managed_parent_namespace   :446 _child_run_context",
+    what:"Сверяется, что managed.binding.namespace == namespace родителя, session/workspace совпадают, lease умеет suspend/resume. Затем begin_run в той же сессии.",
+    ev:"tests/test_s5p1_acquisition_lifecycle.py (косвенно), test_invoke_workflow_tool.py" },
+
+  { id:"t3", lane:"tool", num:6, title:"Маркер acquisition уезжает в run_workflow", status:"ok",
+    file:"workflow_tool.py:779   workflow_kwargs['acquisition'] = AcquisitionSubstrateRequest()",
+    what:"Маркер, а не порт: view нельзя запинить до HANDOFF, иначе достанется биндинг родителя. Пинится внутри прогона, после того как биндинг — уже детский.",
+    ev:"tests/test_s5p1_acquisition_lifecycle.py::test_a_coder_with_no_plan_and_no_substrate_is_still_refused (контроль) + substrate-банк" },
+
+  // ── lane 3
+  { id:"k1", lane:"ctrl", num:7, title:"run_workflow пинит свой READ/PROJECT view", status:"ok",
+    file:"workflow_controller.py:3281 run_workflow → :2365 _pinned_acquisition_substrate",
+    what:"pin_reader(plan_ref=None) — это и есть «прогон без плана»: ProtectedPlanContext.recheck на null-ref возвращается сразу. Из того же view берутся project_names (Q146), чтобы список имён и чтение были из одного снимка. View гасится в finally.",
+    ev:"tests/test_s5p1_acquisition_substrate.py — 8 тестов, включая «view гасится даже когда тело бросило»" },
+
+  { id:"k2", lane:"ctrl", num:8, title:"Нет view → прогон останавливается до стадий", status:"ok",
+    file:"workflow_controller.py:3360-3368 → _blocked_plan_request(rule='acquisition-unavailable')",
+    what:"Отказ, а не host-fallback: host-дерево — не та ревизия, из которой потом будут адмитить план.",
+    ev:"tests/test_s5p1_acquisition_lifecycle.py" },
+
+  { id:"k3", lane:"ctrl", num:9, title:"Разрешён coder без плана — ровно в одной форме", status:"ok",
+    file:"workflow_controller.py:3233 _resolve_admitted_plan",
+    what:"При acquisition пропускается _require_plan_for_coder, но требуется roles[:1] == ['planner']. Иначе admission-without-planner: план внутри прогона может принадлежать только планировщику, который идёт первым.",
+    ev:"tests/test_s5p1_acquisition_lifecycle.py::test_an_acquisition_substrate_cannot_admit_a_coder_without_a_lead_planner" },
+
+  // ── lane 4 — ГЛАВНЫЙ УЗЕЛ
+  { id:"p1", lane:"stage", num:10, title:"Диспатч планировщика — какой он вид?", status:"gap",
+    gap:"G1",
+    file:"workflow_controller.py:1183 _stage_planner_dispatch",
+    what:"Сейчас: dispatch is None → возвращается PlannerDispatch(ORDINARY_PLANNING, run_id, active). Ветки, которая произвела бы ACQUISITION, нет.",
+    breakTitle:"Что ломается",
+    brk:"PlannerDispatchKind.ACQUISITION существует с 62e49be, имеет инварианты (не владеет candidate-буфером, не может называть active_plan) и проверен в tests/test_s5p1_acquisition_dispatch.py — но <b>ни один</b> производственный код его не создаёт. grep по src даёт только определение и валидацию. Значит спека §7.0 («initial _run_stage uses PlannerDispatchKind.ACQUISITION») не выполняется, а downstream-код, который от kind зависит, ведёт себя как для обычного планирования.",
+    fix:"Ветка в _stage_planner_dispatch: если ctx.acquisition is not None и роль planner и это первая стадия — PlannerDispatch(ACQUISITION, run_id). Дешёво, но требует решить G3/G5, иначе kind ни на что не влияет." },
+
+  { id:"p2", lane:"stage", num:11, title:"Каким реестром ходит планировщик", status:"gap",
+    gap:"G2",
+    file:"src/fa/cli.py:2372 _build_role_registry → profiles.build_registry_for_role('planner')",
+    what:"Стадия получает WRITE/PROJECT view и обычный planner-профиль. build_acquisition_registry (profiles.py:441) — 5 read/search инструментов, положительный список без мутаторов — не вызывается ниоткуда в src.",
+    breakTitle:"Что ломается",
+    brk:"Два следствия. (1) Спека требует фильтровать pr_prepare для ACQUISITION («иначе read-only профиль молча получает writer»), а _build_run_tool_registry регистрирует его безусловно (cli.py:2637). (2) Планировщик получает fs_write_file с allowlist knowledge/research/, .fa/ — то есть стадия, которая должна только читать и выбрать, может писать.",
+    fix:"Передать acquisition-признак вниз до _build_role_registry и подменить построение реестра на build_acquisition_registry; pr_prepare для ACQUISITION не регистрировать. Это меняет форму аргументов стадии — самый «дорогой» по диффу из пяти обрывов." },
+
+  { id:"p3", lane:"stage", num:12, title:"Откуда модель знает протокол выбора", status:"gap",
+    gap:"G3",
+    file:"workflow_controller.py:1333 _stage_task   src/fa/inner_loop/prompt.py:1168 _ROLE_PROMPTS",
+    what:"grep SELECT_EXISTING|BOOTSTRAP_NEW_PROJECT|NEEDS_CLARIFICATION по src и knowledge — ноль совпадений вне managed_acquisition.py. _stage_task дополняет задачу только для eval.",
+    breakTitle:"Что ломается",
+    brk:"parse_acquisition_choice требует ровно один JSON-объект и <b>не допускает ни обёртки markdown, ни лишней прозы</b> (managed_acquisition.py:180 _decode_choice). Планировщик, которому никто не сказал протокол, вернёт обычный текстовый план → choice-malformed → прогон встанет как BLOCKED. То есть даже при готовых G1/G2 положительный путь не достигается.",
+    fix:"Носитель не выбран ни одним документом — это и есть вопрос Q149. Три честных варианта: текст стадии (как eval), отдельный prompt/скилл, описание инструмента. Список доступных проектов естественно ложится в текст стадии из уже запиненного view (это ровно то, чего добивается Q145)." },
+
+  { id:"p4", lane:"stage", num:13, title:"Контракт «стадия отработала» для нового вида", status:"gap",
+    gap:"G5",
+    file:"workflow_controller.py:1299 _scoped_stage_failed",
+    what:"Функция возвращает False только для ORDINARY_PLANNING. Для любого другого kind стадия считается scoped: проверяются exit_code, наличие sink и провал fs_write_file/pr_prepare.",
+    breakTitle:"Что ломается",
+    brk:"Семантика для ACQUISITION не определена. Если добавить kind и ничего не сделать, acquisition-планировщик попадёт в ветку «scoped repair-стадии») — с проверкой на failed_tools, которые ему больше не выдают. Это тихая смена правил отказа, а не осознанное решение.",
+    fix:"Явная таблица per-kind, как уже сделано для owns_candidate (положительный факт на каждый kind). Тест-таблица на все четыре вида — тогда пятый вид не сможет появиться без решения." },
+
+  { id:"p5", lane:"stage", num:14, title:"Модель отвечает, final_text в sink", status:"ok",
+    file:"workflow_controller.py:1443 outcome_sink=sink для каждой роли",
+    what:"Канал чтения тот же, что у eval — не новый путь и не отдельный plan-файл.",
+    ev:"tests/test_s5p1_acquisition_seam.py" },
+
+  // ── lane 5
+  { id:"a1", lane:"auth", num:15, title:"Строгий разбор выбора", status:"ok",
+    file:"managed_acquisition.py:617 parse_acquisition_choice → :536 resolve_acquisition_choice",
+    what:"Три вида, отказ на дубликат/неизвестный ключ/мусор. SELECT_EXISTING резолвится против запиненного инвентаря и стабильных ID; BOOTSTRAP честно говорит «нужна установка» и снапшот не выдумывает.",
+    ev:"tests/test_s5p1_acquisition_resolution.py, test_managed_acquisition.py" },
+
+  { id:"a2", lane:"auth", num:16, title:"Ветка существующего проекта: снимок из байтов", status:"ok",
+    file:"workflow_controller.py:2606 _WorkflowAdmission(snapshot, …, snapshot_backed=True)",
+    what:"_check_admission_source на snapshot-ветке пере-хеширует байты, а не читает host-файл. Два субстрата, одно правило.",
+    ev:"tests/test_s5p1_acquisition_admission.py — 12 тестов, включая «не читает host» и «source-changed»" },
+
+  { id:"a3", lane:"auth", num:17, title:"Bootstrap: render → install → свежий пин → admit", status:"ok",
+    file:"workflow_controller.py:2482 _install_bootstrap_project → :2531 _admit_installed_plan",
+    what:"prepare_bundle привязан к expected_base_revision, install — один необратимый коммит, read-back идёт через НОВЫЙ пин новой ревизии. Адмитятся байты установленного файла, не проза модели.",
+    ev:"tests/test_s5p1_bootstrap.py — 8 тестов на РЕАЛЬНОМ WorkspaceAuthority; 9/9 мутантов убито" },
+
+  { id:"a4", lane:"auth", num:18, title:"Уточнение → остановка до coder", status:"warn",
+    file:"workflow_controller.py:2593 _blocked_plan_request(rule=f'clarification/{reason}')",
+    what:"Прогон останавливается, coder не диспатчится — это правильно. Но запись уходит в закрытый словарь v1.",
+    breakTitle:"Частичный дефект",
+    brk:"_PERSISTED_PLAN_REF_RULES — это plan-ref-словарь v1. Любое правило вне него (clarification/*, bootstrap-*) пишется как <b>validator-error</b>. Точная причина остаётся только в свободном тексте blocked_reason. Это уже было поймано в E516 для отказов; для acquisition-отказов спека требует v2-словарь selection/*.",
+    fix:"Связан с G4: без v2-записи эти правила некуда положить." },
+
+  // ── lane 6
+  { id:"r1", lane:"auth", num:19, title:"Запись попытки в admission", status:"gap",
+    gap:"G4",
+    file:"admission_schema.py:185 _record_attempt_hashes   workflow_artifacts.py:733 write_admission_record",
+    what:"_bind_acquisition_admission пишет status='ACQUIRING', attempt=None → это v1. Ни одна производственная ветка не строит ManagedAdmissionBinding, поэтому v2 не включается никогда.",
+    breakTitle:"Что ломается (самый жёсткий из пяти)",
+    brk:"Проверено исполнением: v1-писатель <b>отвергает</b> попытку с dispatch_kind='ACQUISITION' — AdmissionIOError(corrupt-record). Причина: в _record_attempt_hashes ветки есть только для EXPLICIT_INPUT и {ADMISSION_REPAIR, EVAL_REPLAN}; ACQUISITION не попадает ни в одну, дальше route='ADMITTED' требует promoted, которого нет. А v2, где _validate_v2_acquisition расписана полностью, недостижима: ей нужен input_revision/output_revision/bundle_sha256, которых v1-запись не несёт. Итог: словарь ACQUISITION в схеме — зарезервированная лексика без производителя.",
+    fix:"Либо (а) прогон начинает писать v2 (нужен builder ManagedAdmissionBinding из managed_execution), либо (б) acquisition-попытку не писать вовсе и оставить ACQUIRING-барьер как единственный след — но это расходится со спекой §7 («Initial managed choice uses ACQUISITION»)." },
+
+  { id:"r2", lane:"auth", num:20, title:"Пред-гейт coder проверяет связанный план", status:"ok",
+    file:"workflow_controller.py:3068 _admit_plan → :2917 _check_admission_source",
+    what:"Валидация плана + проверка источника. При snapshot_backed хост не читается.",
+    ev:"tests/test_s5p1_acquisition_admission.py::test_a_snapshot_backed_admission_does_not_read_the_host" },
+
+  { id:"r3", lane:"auth", num:21, title:"Каким kind пишется попытка coder-гейта", status:"warn",
+    file:"workflow_controller.py:3122 kind=kind.value if candidate else 'EXPLICIT_INPUT'",
+    what:"Для плана, пришедшего из acquisition, попытка записывается как EXPLICIT_INPUT — потому что candidate=False.",
+    breakTitle:"Расхождение со спекой, без падения",
+    brk:"Спека: «Initial managed choice uses ACQUISITION». Сейчас след в истории говорит EXPLICIT_INPUT, то есть по записи нельзя отличить план, выбранный планировщиком, от плана, поданного CLI-путём. Не ломает прогон, но ломает провенанс — а именно на провенанс ссылается вся аргументация admission.",
+    fix:"Решается тем же решением, что G4: если вводится v2/ACQUISITION, kind должен доехать до этой точки." },
+
+  { id:"r4", lane:"auth", num:22, title:"Verify-гейт после coder", status:"ok",
+    file:"workflow_controller.py:413 _pinned_verify_substrate",
+    what:"READ-пин + executor для гейта; при отсутствии read-only профиля — громкий откат на host, с записью в лог.",
+    ev:"tests/test_verify_substrate.py, test_verify_read_only_oracle.py (R24 частично: Q140 открыт)" },
+];
+
+const LANES = {
+  chat:  {name:"Родитель · fa run chat", color:"var(--chat)"},
+  tool:  {name:"Инструмент · invoke_workflow", color:"var(--tool)"},
+  ctrl:  {name:"Контроллер · run_workflow", color:"var(--ctrl)"},
+  stage: {name:"Стадия планировщика", color:"var(--stage)"},
+  auth:  {name:"Authority · выбор и admission", color:"var(--auth)"},
+};
+
+const flow = document.getElementById('flow');
+let currentLane = null;
+NODES.forEach(n => {
+  if (n.lane !== currentLane) {
+    currentLane = n.lane;
+    const el = document.createElement('div');
+    el.className = 'lane';
+    el.innerHTML = `<span class="tag" style="color:${LANES[n.lane].color}">${LANES[n.lane].name}</span>`;
+    flow.appendChild(el);
+  }
+  const b = document.createElement('button');
+  b.className = 'node';
+  b.dataset.s = n.status;
+  b.dataset.id = n.id;
+  const badge = n.status === 'gap' ? `<span class="badge gap">${n.gap} обрыв</span>`
+              : n.status === 'warn' ? `<span class="badge warn">частично</span>` : '';
+  b.innerHTML = `
+    <div class="rail"><div class="pin"></div></div>
+    <div class="card">
+      <div class="ct"><span class="num">${n.num}</span><span class="title">${n.title}</span>${badge}</div>
+      <div class="cd">${n.what.split('.')[0]}.</div>
+      <div class="cf">${n.file.split(' ')[0]}</div>
+    </div>`;
+  b.addEventListener('click', () => select(n.id));
+  flow.appendChild(b);
+});
+
+const detail = document.getElementById('detail');
+function select(id){
+  const n = NODES.find(x => x.id === id);
+  document.querySelectorAll('.node').forEach(el => el.classList.toggle('sel', el.dataset.id === id));
+  const anchors = n.file.split(/\s{2,}/).map(a => `<span class="anchor">${a}</span>`).join('');
+  let html = `
+    <div class="dhead">
+      <div class="lane-pill" style="color:${LANES[n.lane].color}">${LANES[n.lane].name}</div>
+      <h2>${n.num}. ${n.title}</h2>
+    </div>
+    <section class="blk"><h3>Что происходит</h3><p>${n.what}</p></section>
+    <section class="blk"><h3>Код</h3><div>${anchors}</div></section>`;
+  if (n.ev) html += `<section class="blk"><h3>Чем доказано</h3><p class="ev">✓ ${n.ev}</p></section>`;
+  if (n.status === 'gap' || n.status === 'warn') {
+    html += `<section class="blk">
+      <div class="box break"><b>${n.breakTitle}</b>${n.brk}</div>
+      <div class="box fix"><b>Вариант фикса</b>${n.fix}</div>
+    </section>`;
+  }
+  detail.innerHTML = html;
+  detail.scrollTop = 0;
+  if (window.innerWidth <= 1000) detail.scrollIntoView({behavior:'smooth', block:'start'});
+}
+
+document.querySelectorAll('.chip').forEach(chip => {
+  chip.addEventListener('click', () => {
+    document.querySelectorAll('.chip').forEach(c => c.classList.remove('on'));
+    chip.classList.add('on');
+    const f = chip.dataset.f;
+    document.querySelectorAll('.node').forEach(el => {
+      const s = el.dataset.s;
+      el.style.display = (f === 'all' || s === f) ? 'grid' : 'none';
+    });
+    document.querySelectorAll('.lane').forEach(l => {
+      if (f === 'all') { l.style.display = 'flex'; return; }
+      let sib = l.nextElementSibling, any = false;
+      while (sib && !sib.classList.contains('lane')) {
+        if (sib.classList.contains('node') && sib.dataset.s === f) any = true;
+        sib = sib.nextElementSibling;
+      }
+      l.style.display = any ? 'flex' : 'none';
+    });
+  });
+});
+
+// авто-выбор первого обрыва, чтобы схема сразу отвечала на вопрос «где болит»
+select('p1');
+</script>
+</body>
+</html>

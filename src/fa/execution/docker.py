@@ -483,7 +483,7 @@ class DockerCells:
         if (
             payload["timeout_ms"] > profile.max_command_ms
             or (not is_project_tool and profile.interactive != (payload["session_id"] is not None))
-            or (is_project_tool and req["view_ref"]["purpose"] != "PROJECT")
+            or (is_project_tool and req["view_ref"]["purpose"] not in {"PROJECT", "MUTATION"})
         ):
             raise ExecutionContractError
         namespace = NamespaceRef(**req["namespace"])

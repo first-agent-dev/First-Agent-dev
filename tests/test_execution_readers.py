@@ -23,6 +23,7 @@ from typing import Any
 import pytest
 
 from fa.execution import workspace
+from fa.execution.profiles import ExecutionProfile
 from fa.execution.supervisor import SupervisorError
 from fa.execution.types import Access, ExecutionContractError, GrantReply, ViewRef
 from fa.execution.view_io import ReadResult, RootedViewIO
@@ -34,7 +35,7 @@ from tests.test_execution_workspace import ACTOR, OTHER, PEER, Site, ok, until
 from tests.test_execution_workspace import site as site
 
 
-def read_only_profile():
+def read_only_profile() -> ExecutionProfile:
     return replace(profile(), profile_id="reader", interactive=False)
 
 

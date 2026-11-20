@@ -420,7 +420,7 @@ class SessionState:
         else:
             self.output_bus.emit(OutputEvent(type="config_warning", data=content))
 
-    def __post_init__(self) -> None:  # noqa: C901 -- complexity from FeatureFlags + Transaction + Blackboard + Telemetry + WorktreeManager init, DI via SessionState, graceful degradation
+    def __post_init__(self) -> None:
         self.workspace_root = self.workspace_root.resolve()
         if type(self.managed_child) is not bool:
             raise ValueError("managed_child must be a bool")
@@ -429,6 +429,13 @@ class SessionState:
             for value in (self.artifact_store, self.blackboard, self.telemetry, self.pty_pool, self.worktree_manager)
         ):
             raise ValueError("managed child state cannot inherit host-backed optional stores or executors")
+        self._initialize_authority()
+        self._initialize_flags_and_transaction()
+        self._initialize_optional_stores()
+        self._initialize_workspace_runtime()
+
+    def _initialize_authority(self) -> None:
+        """Bind the event log and session to the same authoritative database."""
         if self.log is None:
             # Call-time resolution (V10): see ``default_state_root``. Using the
             # import-time constant here made every ``SessionState`` built
@@ -454,6 +461,8 @@ class SessionState:
             if not self.session_id:
                 self.session_id = self.log.session_id or self.session_db.session_id
 
+    def _initialize_flags_and_transaction(self) -> None:
+        """Load configuration and initialize the run transaction."""
         # FeatureFlags loader with graceful degradation
         if self.feature_flags is None:
             try:
@@ -483,6 +492,8 @@ class SessionState:
             except Exception as exc:  # noqa: BLE001 # graceful degradation per Phase 0.5, failure-observable WARNING
                 logger.warning(f"Failed to init Transaction: {exc}")
 
+    def _initialize_optional_stores(self) -> None:
+        """Initialize enabled parent-only artifact, blackboard and telemetry stores."""
         # ArtifactStore for offloading full outputs
         if self.artifact_store is None and not self.managed_child:
             try:
@@ -528,6 +539,8 @@ class SessionState:
                     logger.warning(f"Failed to init TelemetryLogger: {exc}, continuing without")
                     self.telemetry = None
 
+    def _initialize_workspace_runtime(self) -> None:
+        """Initialize parent-only worktree and terminal facilities."""
         # WorktreeManager via Factory from flags (Phase 1)
         if self.worktree_manager is None and not self.managed_child:
             from fa.workspace.worktree_manager import WorktreeManagerFactory
@@ -771,6 +784,42 @@ class SessionState:
             return
         except Exception as exc:
             raise RuntimeError(f"subagent_cleanup_failed: could not remove {resolved} ({exc})") from exc
+
+    def preserve_subagent_workspace(self, path: Path, *, stamp: str) -> Path:
+        """Move a failed task's artifacts aside and return where they landed.
+
+        The failure path used to delete them, which left the incident
+        uninvestigable: the log kept `str(exc)` but not the subprocess output
+        that explains it. Keeping them *in place* is not an option either —
+        `ensure_subagent_artifact_root` uses ``exist_ok=True``, so the next task
+        with the same id would inherit the previous one's debris and two
+        subagents' output would mix in one artifact set (the V20 defect in
+        reverse).
+
+        So the directory is renamed inside the same artifact tree to
+        ``<task-id>.failed-<stamp>``: the id is free for the next spawn, the
+        bytes survive, and containment is unchanged. The rename is the only
+        operation, so it cannot half-succeed. A missing directory is not an
+        error — the runner may have failed before writing anything.
+        """
+        from fa.workspace.worktree_manager import SUBAGENT_ARTIFACT_DIRNAME
+
+        resolved = Path(path).resolve()
+        artifact_tree = (self.workspace_root / ".fa" / SUBAGENT_ARTIFACT_DIRNAME).resolve()
+        if resolved == artifact_tree or not resolved.is_relative_to(artifact_tree):
+            raise RuntimeError(
+                f"subagent_preserve_refused: {resolved} is not a subagent artifact directory under {artifact_tree}"
+            )
+        if not resolved.exists():
+            return resolved
+        kept = resolved.with_name(f"{resolved.name}.failed-{stamp}")
+        try:
+            resolved.rename(kept)
+        except FileNotFoundError:
+            return resolved
+        except Exception as exc:
+            raise RuntimeError(f"subagent_preserve_failed: could not move {resolved} ({exc})") from exc
+        return kept
 
     def record_tool_call(self, call: ToolCall) -> TraceEvent:
         assert self.log is not None  # noqa: S101

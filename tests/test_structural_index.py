@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from fa.memory.structural_index import StructIndexStats, StructuralIndex, SymbolRow, _is_test_path
+from tests._capabilities import requires_symlinks
 
 
 def _write(path: Path, text: str) -> None:
@@ -180,13 +181,11 @@ def test_module_attribute_and_unknown_stay_unresolved(indexed: StructuralIndex) 
 # ── incremental + ghost sweep ───────────────────────────────────────────────
 
 
+@requires_symlinks
 def test_strict_rooted_index_deduplicates_in_root_symlink_alias(tmp_path: Path) -> None:
     _write(tmp_path / "real.py", "def alpha():\n    return 1\n")
     alias = tmp_path / "alias.py"
-    try:
-        alias.symlink_to("real.py")
-    except OSError as exc:
-        pytest.skip(f"symlinks unavailable: {exc}")
+    alias.symlink_to("real.py")
 
     index = StructuralIndex(tmp_path / "unused.db", in_memory=True, strict_rooted_reads=True)
     try:

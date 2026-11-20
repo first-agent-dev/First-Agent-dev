@@ -45,6 +45,7 @@ from fa.cli import _cmd_run
 from tests.test_cli import (
     _FAKE_MODELS_YAML,
     _TEST_SECRETS,
+    _install_test_managed_cli_dependencies,
     _make_run_args,
     _ScriptedTransport,
     _stop_body,
@@ -63,6 +64,9 @@ def correlated_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Pat
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("USERPROFILE", str(home))
+    # Session-backed run => admitted managed provisioner, no host fallback
+    # (``session/manager.py:302-307``); this module reads the trace it produces.
+    _install_test_managed_cli_dependencies(monkeypatch, home=home, workspace_root=tmp_path.parent)
 
     args = _make_run_args(workspace=tmp_path, config=config, run_id=_RUN_ID)
     args.session_id = None

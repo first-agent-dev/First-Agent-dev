@@ -15,7 +15,6 @@ from fa.execution import project_tools
 from fa.inner_loop.registry import ToolResult
 from fa.inner_loop.tools.fs_reach import build_fs_reach_tool
 from fa.inner_loop.tools.fs_search import build_fs_search_tool
-from fa.memory import structural_index
 from fa.memory.search_index import SearchIndex, _refresh_state
 from fa.memory.structural_index import StructuralIndex
 
@@ -84,6 +83,50 @@ def test_existing_reach_default_still_uses_legacy_db(tmp_path: Path) -> None:
     assert (root / ".fa" / "structural.db").is_file()
 
 
+@pytest.mark.parametrize(
+    ("tool", "params", "error_code"),
+    [
+        ("fs_search", {"query": "safe_symbol", "output_mode": "files"}, "search_failed"),
+        ("fs_reach", {"symbol": "safe_symbol", "direction": "down"}, "reach_failed"),
+    ],
+)
+def test_cell_discovery_rejects_same_size_file_replacement_after_inventory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tool: str,
+    params: dict[str, Any],
+    error_code: str,
+) -> None:
+    root, scratch = _tree(tmp_path, "mutable-view", "def safe_symbol():\n    pass\n")
+    target = root / "chain.py"
+    from fa.memory import managed_discovery
+
+    original_inventory = managed_discovery.inventory_managed_files
+    replaced = False
+
+    def replace_after_inventory(root_arg: Path, *, deadline: float, **kwargs: Any) -> Any:
+        nonlocal replaced
+        inventory = original_inventory(root_arg, deadline=deadline, **kwargs)
+        if any(candidate.relative_path == "chain.py" for candidate in inventory.candidates):
+            replacement = root / "replacement.tmp"
+            replacement.write_text("def evil_symbol():\n    pass\n", encoding="utf-8")
+            replacement.replace(target)
+            replaced = True
+        return inventory
+
+    monkeypatch.setattr(managed_discovery, "inventory_managed_files", replace_after_inventory)
+    result = project_tools._dispatch(tool, params, root=root, scratch=scratch)
+
+    assert replaced is True
+    assert result.error is not None and result.error.code == error_code
+    assert result.error.message.endswith("(unsafe_path)")
+    assert result.error.retryable is False
+    assert result.result is None
+    assert "evil_symbol" not in json.dumps(result.result)
+    assert list(scratch.iterdir()) == []
+    assert not (root / ".fa").exists()
+
+
 def test_cell_reach_refuses_symlink_replacement_after_enumeration(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -91,19 +134,21 @@ def test_cell_reach_refuses_symlink_replacement_after_enumeration(
     target = root / "chain.py"
     outside = tmp_path / "outside.py"
     outside.write_text("def escaped_secret():\n    pass\n", encoding="utf-8")
-    original_walk = structural_index.iter_searchable_files
+    from fa.memory import managed_discovery
+
+    original_inventory = managed_discovery.inventory_managed_files
     swapped = False
 
-    def replace_after_enumeration(*args: Any, **kwargs: Any) -> Any:
+    def replace_after_inventory(root_arg: Path, *, deadline: float, **kwargs: Any) -> Any:
         nonlocal swapped
-        for row in original_walk(*args, **kwargs):
-            yield row
-            if row[1] == "chain.py" and not swapped:
-                swapped = True
-                target.unlink()
-                target.symlink_to(outside)
+        inventory = original_inventory(root_arg, deadline=deadline, **kwargs)
+        if any(candidate.relative_path == "chain.py" for candidate in inventory.candidates):
+            target.unlink()
+            target.symlink_to(outside)
+            swapped = True
+        return inventory
 
-    monkeypatch.setattr(structural_index, "iter_searchable_files", replace_after_enumeration)
+    monkeypatch.setattr(managed_discovery, "inventory_managed_files", replace_after_inventory)
     result = project_tools._dispatch("fs_reach", {"symbol": "escaped_secret"}, root=root, scratch=scratch)
 
     assert swapped is True
@@ -214,18 +259,52 @@ def test_ascii_envelope_roundtrips_combining_marks_emoji_and_escaped_text() -> N
     assert json.loads(encoded)["result"] == value
 
 
+def test_ascii_outline_above_old_limit_succeeds(tmp_path: Path) -> None:
+    root, scratch = _tree(tmp_path, "ascii-outline", "def alpha():\n    return 1\n")
+    (root / "giant.md").write_text("# " + "a" * 35000 + "\n", encoding="utf-8")
+    result = project_tools._dispatch(
+        "fs_search", {"path": "giant.md", "output_mode": "outline"}, root=root, scratch=scratch
+    )
+    assert result.error is None and result.result is not None and result.result["truncated"] is False
+    encoded = project_tools._envelope(result)
+    assert 30_000 < len(encoded.encode("ascii")) <= 61_440
+    assert json.loads(encoded)["result"] == result.result
+
+
 def test_unicode_outline_ascii_expansion_refuses_not_partial_success(tmp_path: Path) -> None:
     root, scratch = _tree(tmp_path, "unicode", "def alpha():\n    return 1\n")
     (root / "giant.md").write_text("# " + "я" * 20000 + "\n", encoding="utf-8")
     result = project_tools._dispatch(
         "fs_search", {"path": "giant.md", "output_mode": "outline"}, root=root, scratch=scratch
     )
-    assert result.error is None and result.result is not None and result.result["truncated"] is False
+    assert result.result is None
+    assert result.error is not None
+    assert result.error.code == "search_failed" and result.error.retryable is False
+    assert result.error.message == "managed discovery refused (output_budget)"
     decoded = json.loads(project_tools._envelope(result))
-    assert decoded["result"] is None and decoded["error"]["code"] == "project_tool_failed"
+    assert decoded["result"] is None and decoded["error"]["code"] == "search_failed"
 
 
-@pytest.mark.xfail(strict=True, reason="Q106: existing 60 KiB envelope cannot transport the legacy outline")
+@pytest.mark.parametrize(("tool", "code"), [("fs_search", "search_failed"), ("fs_reach", "reach_failed")])
+def test_tool_result_ascii_budget_exact_and_one_over(tool: str, code: str) -> None:
+    empty = ToolResult.ok("s", result={"v": ""})
+    overhead = len(json.dumps(project_tools._payload(empty), ensure_ascii=True, separators=(",", ":")))
+    # The escaped character consumes six ASCII bytes, but only two UTF-8 bytes.
+    value = "я" * 1000 + "a" * (61_440 - overhead - 6000)
+    exact = ToolResult.ok("s", result={"v": value})
+    over = ToolResult.ok("s", result={"v": value + "a"})
+    assert len(json.dumps(project_tools._payload(exact), ensure_ascii=True, separators=(",", ":"))) == 61_440
+    assert project_tools._enforce_tool_result_budget(tool, exact) is exact
+    refused = project_tools._enforce_tool_result_budget(tool, over)
+    assert refused.result is None and refused.error is not None
+    assert refused.error.code == code and refused.error.retryable is False
+    assert refused.error.message == "managed discovery refused (output_budget)"
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="Q106 (deferred to W4): existing 60 KiB envelope cannot transport the legacy outline",
+)
 def test_q106_large_outline_parity_remains_open(tmp_path: Path) -> None:
     root, scratch = _tree(tmp_path, "outline-large", "def alpha():\n    return 1\n")
     (root / "giant.md").write_text("# " + "я" * 40000 + "\n", encoding="utf-8")
@@ -236,7 +315,10 @@ def test_q106_large_outline_parity_remains_open(tmp_path: Path) -> None:
     assert json.loads(project_tools._envelope(result))["result"] == result.result
 
 
-@pytest.mark.xfail(strict=True, reason="Q106: existing 60 KiB envelope cannot transport the legacy reach result")
+@pytest.mark.xfail(
+    strict=True,
+    reason="Q106 (deferred to W4): existing 60 KiB envelope cannot transport the legacy reach result",
+)
 def test_q106_large_reach_parity_remains_open(tmp_path: Path) -> None:
     root, scratch = _tree(tmp_path, "reach-large", "def alpha():\n    return 1\n")
     (root / "longname.py").write_text("def " + "a" * 80000 + "needle():\n    pass\n", encoding="utf-8")
@@ -407,6 +489,7 @@ def test_per_call_indexes_close_even_when_dispatch_fails(
 
         def reach_get(holder: Any) -> StructuralIndex:
             index = get_reach(holder)
+            assert isinstance(index, StructuralIndex)
             if index._anchor is not None and index._anchor not in retained:
                 retained.append(index._anchor)
             return index
@@ -514,7 +597,7 @@ def test_cell_search_builder_binds_strict_rooted_reads_and_host_default_stays_le
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     root, scratch = _tree(tmp_path, "strict-binding", "def alpha():\n    return 1\n")
-    original_builder = project_tools.build_fs_search_tool
+    original_builder = build_fs_search_tool
     strict_flags: list[object] = []
 
     def observe_builder(*args: Any, **kwargs: Any) -> Any:
@@ -555,7 +638,7 @@ def test_cell_search_rooted_refusal_has_no_fallback_partial_result_or_external_b
     params: dict[str, Any],
 ) -> None:
     from fa.inner_loop.tools import fs_search
-    from fa.memory import _safe_walk, search_index
+    from fa.memory import _safe_walk, managed_discovery
 
     root, scratch = _tree(tmp_path, f"strict-{surface}", "def safe_symbol():\n    pass\n")
     target = root / "chain.py"
@@ -579,16 +662,17 @@ def test_cell_search_rooted_refusal_has_no_fallback_partial_result_or_external_b
 
         monkeypatch.setattr(_safe_walk.RootedFileReader, "read_bytes_with_path", swap_before_rooted_read)
     else:
-        original_walk = search_index.iter_searchable_files
+        original_inventory = managed_discovery.inventory_managed_files
 
-        def swap_after_enumeration(*args: Any, **kwargs: Any) -> Any:
-            for row in original_walk(*args, **kwargs):
-                yield row
-                if row[1] == "chain.py":
-                    replace_target()
+        def swap_after_inventory(root_arg: Path, *, deadline: float, **kwargs: Any) -> Any:
+            inventory = original_inventory(root_arg, deadline=deadline, **kwargs)
+            if any(candidate.relative_path == "chain.py" for candidate in inventory.candidates):
+                replace_target()
+            return inventory
 
-        monkeypatch.setattr(search_index, "iter_searchable_files", swap_after_enumeration)
+        monkeypatch.setattr(managed_discovery, "inventory_managed_files", swap_after_inventory)
         if surface == "fallback":
+
             def force_fallback(holder: Any, root_arg: Path, max_file_size: int, warnings: list[str]) -> None:
                 del root_arg, max_file_size, warnings
                 holder._indexed = False
@@ -605,3 +689,91 @@ def test_cell_search_rooted_refusal_has_no_fallback_partial_result_or_external_b
     assert "external bytes" not in json.dumps(result.result)
     assert list(scratch.iterdir()) == []
     assert not (root / ".fa").exists()
+
+
+def test_managed_project_tool_executor_accepts_project_and_mutation_and_forbids_purpose_switch(
+    tmp_path: Path,
+) -> None:
+    """Q141=C: ManagedProjectToolExecutor allows PROJECT and MUTATION views, never cross-purpose rebind."""
+    from fa.execution.client import ExecutionClient, ManagedProjectToolExecutor
+    from fa.execution.types import (
+        Access,
+        ExecutionContractError,
+        GrantReply,
+        NamespaceRef,
+        Operation,
+        ViewPurpose,
+        ViewRef,
+    )
+    from tests.test_execution_views import native_profile
+
+    client = ExecutionClient(tmp_path / "supervisor.sock", server_uid=0, rpc_timeout_ms=100)
+    ns = NamespaceRef("s-pt", "r-pt")
+    profile = native_profile()
+
+    def _make_view(
+        purpose: ViewPurpose, access: Access = Access.WRITE, vid: str = "view-" + "1" * 32
+    ) -> tuple[ViewRef, GrantReply]:
+        vref = ViewRef("ws-" + "a" * 32, vid, "rev-" + "b" * 32, ns.run_id, 1, access, purpose)
+        op = Operation.CREATE_VIEW if access is Access.WRITE else Operation.PIN_READER
+        grant = GrantReply(op, "c" * 64, vref, None, None, input_tree_sha256="d" * 64)
+        return vref, grant
+
+    proj_view, proj_grant = _make_view(ViewPurpose.PROJECT, vid="view-" + "1" * 32)
+    mut_view, mut_grant = _make_view(ViewPurpose.MUTATION, vid="view-" + "2" * 32)
+
+    proj_exec = ManagedProjectToolExecutor(
+        client,
+        namespace=ns,
+        view=proj_view,
+        grant=proj_grant,
+        profile=profile,
+        input_tree_sha256="d" * 64,
+        plan_sha256=None,
+        original_revision_id="rev-" + "b" * 32,
+    )
+    mut_exec = ManagedProjectToolExecutor(
+        client,
+        namespace=ns,
+        view=mut_view,
+        grant=mut_grant,
+        profile=profile,
+        input_tree_sha256="d" * 64,
+        plan_sha256="e" * 64,
+        original_revision_id="rev-" + "b" * 32,
+    )
+    mut_exec2_view, mut_exec2_grant = _make_view(ViewPurpose.MUTATION, vid="view-" + "3" * 32)
+    mut_exec.suspend()
+    mut_exec.rebind(
+        namespace=ns,
+        view=mut_exec2_view,
+        grant=mut_exec2_grant,
+        original_revision_id="rev-" + "b" * 32,
+    )
+
+    with pytest.raises(ExecutionContractError):
+        proj_exec.suspend()
+        proj_exec.rebind(
+            namespace=ns,
+            view=mut_view,
+            grant=mut_grant,
+            original_revision_id="rev-" + "b" * 32,
+        )
+
+    for forbidden_purpose, forbidden_access in (
+        (ViewPurpose.VERIFICATION, Access.READ),
+        (ViewPurpose.CANDIDATE, Access.READ),
+        (ViewPurpose.PROVISIONING, Access.WRITE),
+    ):
+        bad_view, bad_grant = _make_view(forbidden_purpose, access=forbidden_access, vid="view-" + "4" * 32)
+        with pytest.raises(ExecutionContractError):
+            ManagedProjectToolExecutor(
+                client,
+                namespace=ns,
+                view=bad_view,
+                grant=bad_grant,
+                profile=profile,
+                input_tree_sha256="d" * 64,
+                plan_sha256=None,
+                original_revision_id="rev-" + "b" * 32,
+            )

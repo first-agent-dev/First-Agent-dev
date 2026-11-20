@@ -17,9 +17,7 @@ from __future__ import annotations
 
 import os
 import stat
-from dataclasses import dataclass, field
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -50,16 +48,19 @@ def _workspace(tmp_path: Path) -> Path:
     return tmp_path
 
 
-@dataclass
-class _Ctx:
-    """Only the fields ``_run_admission_repair`` reads; ``dataclasses.replace`` compatible."""
-
-    workspace: Path
-    run_id: str
-    admission: Any
-    base_task: str = "retain the draft"
-    per_role_task: dict[str, str] = field(default_factory=dict)
-    deadline_mono: float | None = None
+def _context(workspace: Path) -> workflow_controller.WorkflowContext:
+    source = read_plan_snapshot(workspace, Path(PLAN))
+    return workflow_controller.WorkflowContext(
+        workspace=workspace,
+        run_id=RUN,
+        admission=workflow_controller._WorkflowAdmission(snapshot=source, planner_allowed=True, planner_limit=1),
+        base_task="retain the draft",
+        per_role_task={},
+        artifact_paths=workflow_controller.workflow_artifact_paths(RUN, base_dir=workspace / "logs"),
+        config=workspace / "models.yaml",
+        max_turns=1,
+        output_mode="quiet",
+    )
 
 
 def test_a_refused_promotion_retains_the_exact_bytes_under_their_hash(
@@ -89,11 +90,11 @@ def test_a_refused_promotion_retains_the_exact_bytes_under_their_hash(
         def publish_candidate(self, source: Any, candidate: Any, *, deadline: float | None = None) -> Any:
             raise PlanPromotionError("hash-mismatch")
 
-    ctx = _Ctx(workspace, RUN, SimpleNamespace(snapshot=source, candidate=None))
+    ctx = _context(workspace)
     with pytest.raises(PlanPromotionError) as error:
         workflow_controller._run_admission_repair(
             ctx,
-            None,  # progress: unused because the stage dispatcher is replaced
+            workflow_controller.WorkflowProgress(),
             lambda **kwargs: 0,
             kind=PlannerDispatchKind.ADMISSION_REPAIR,
             draft=source,
@@ -134,10 +135,10 @@ def test_a_successful_promotion_retains_nothing(tmp_path: Path, monkeypatch: pyt
             published.append(ref)
             return ref
 
-    ctx = _Ctx(workspace, RUN, SimpleNamespace(snapshot=source, candidate=None))
+    ctx = _context(workspace)
     _, promoted = workflow_controller._run_admission_repair(
         ctx,
-        None,
+        workflow_controller.WorkflowProgress(),
         lambda **kwargs: 0,
         kind=PlannerDispatchKind.ADMISSION_REPAIR,
         draft=source,

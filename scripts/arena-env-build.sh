@@ -5,6 +5,8 @@ set -Eeuo pipefail
 
 readonly EXPECTED_PYTHON="3.13.16"
 readonly UV_VERSION="0.13.7"
+readonly JUST_VERSION="1.57.0"
+readonly JUST_PACKAGE="rust-just==$JUST_VERSION"
 readonly DEFAULT_BUILD_ROOT="${HOME}/.cache/arena-python313"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(git -C "$SCRIPT_DIR/.." rev-parse --show-toplevel)"
@@ -20,14 +22,17 @@ usage() {
 Usage: scripts/arena-env-build.sh [--check | --rebuild-python | --help]
 
   (no option)       Reuse a valid CPython/venv when possible, build CPython if
-                    needed, sync this project's frozen dev dependencies, verify.
+                    needed, sync frozen dev dependencies, install pinned uv/just
+                    gate launchers in .venv/bin, and verify.
   --check           Read-only check of the current .venv; do not build or sync.
   --rebuild-python  Force a fresh staged CPython build from pinned source archives,
                     then sync and verify. Existing prefixes are preserved.
   --help            Show this help.
 
 Overrides: BUILD_ROOT (default ~/.cache/arena-python313), JOBS (default 2),
-           UV_BIN (optional path to the pinned uv executable).
+           UV_BIN (optional path to the pinned uv executable),
+           SYSTEM_OPENSSL=auto|require|never (default auto: reuse host OpenSSL
+           when it passes a compile+link+handshake probe, otherwise build ours).
 EOF
 }
 
@@ -79,22 +84,60 @@ print("stdlib + SQLite FTS5 OK", ssl.OPENSSL_VERSION, sqlite3.sqlite_version)
 PY
 }
 
-is_usable_python() {
+# The smoke costs ~30 ms and the same interpreter is probed more than once per run
+# (venv, its base, cached toolchain). One verdict per path per run is enough, and it is
+# kept separately from REUSED_VENV, which only says the venv itself was validated.
+SMOKED_PYTHON=""
+REUSED_VENV=0
+
+# Version-only probe: one interpreter start, no imports beyond sys. Used to skip the
+# full runtime/FTS5 smoke when the version already disqualifies the candidate.
+is_expected_python() {
   local python="$1"
   [[ -x "$python" ]] || return 1
-  "$python" -c 'import sys; raise SystemExit(0 if sys.version_info[:3] == (3, 13, 16) else 1)' >/dev/null 2>&1 || return 1
-  runtime_smoke "$python" >/dev/null 2>&1
+  "$python" -c 'import sys; raise SystemExit(0 if sys.version_info[:3] == (3, 13, 16) else 1)' >/dev/null 2>&1
 }
 
+is_usable_python() {
+  local python="$1"
+  is_expected_python "$python" || return 1
+  [[ "$SMOKED_PYTHON" == "$python" ]] && return 0
+  runtime_smoke "$python" >/dev/null 2>&1 || return 1
+  SMOKED_PYTHON="$python"
+}
+
+is_pinned_uv() {
+  local version="$1"
+  [[ "$version" == "uv $UV_VERSION" || "$version" == "uv $UV_VERSION "* ]]
+}
+
+is_pinned_just() {
+  [[ "$1" == "just $JUST_VERSION" ]]
+}
+
+# The tool executables are not re-versioned here: `just check` runs them under uv, and
+# a pytest --version costs more than the entire rest of this script.
 check_project_venv() {
   local venv_python="$PROJECT_ROOT/.venv/bin/python"
   [[ -x "$venv_python" ]] || fail "project .venv is missing; run without --check to restore it"
-  is_usable_python "$venv_python" || fail "project .venv must be CPython $EXPECTED_PYTHON with SSL/zlib/bz2 and SQLite FTS5"
-  "$venv_python" -m pytest --version
-  [[ -x "$PROJECT_ROOT/.venv/bin/ruff" ]] || fail "dev extra is incomplete: .venv/bin/ruff is missing"
-  "$PROJECT_ROOT/.venv/bin/ruff" --version
-  runtime_smoke "$venv_python"
-  printf 'ENVIRONMENT_CHECK_OK: CPython %s; project dev tools present\n' "$EXPECTED_PYTHON"
+  # --check always probes. A normal run skips the probe when this interpreter already
+  # passed it while being selected (VENVPROBE=1), so one smoke per run is the maximum.
+  if [[ "${VENVPROBE:-0}" != "1" || "${SMOKED_PYTHON:-}" != "$venv_python" ]]; then
+    is_usable_python "$venv_python" || fail "project .venv must be CPython $EXPECTED_PYTHON with SSL/zlib/bz2 and SQLite FTS5 (run: just fix)"
+  fi
+  local venv_bin="$PROJECT_ROOT/.venv/bin"
+  local tool
+  for tool in pytest ruff deptry pylint mypy pyrefly mutmut vulture pip-audit fa; do
+    [[ -x "$venv_bin/$tool" ]] || fail "dev extra is incomplete: .venv/bin/$tool is missing"
+  done
+  [[ -x "$venv_bin/uv" ]] || fail "gate launcher is missing: .venv/bin/uv; rerun without --check"
+  [[ -x "$venv_bin/just" ]] || fail "gate launcher is missing: .venv/bin/just; rerun without --check"
+  # Launchers are probed by running them: a stale symlink is exactly what --check catches.
+  is_pinned_uv "$("$venv_bin/uv" --version)" || fail "project .venv must expose uv $UV_VERSION"
+  is_pinned_just "$("$venv_bin/just" --version)" || fail "project .venv must expose just $JUST_VERSION"
+  printf 'gate tools present: pytest ruff deptry pylint mypy pyrefly mutmut vulture pip-audit fa\n'
+  printf 'ENVIRONMENT_CHECK_OK: CPython %s; pinned uv/just and just-check dev tools present\n' "$EXPECTED_PYTHON"
+  printf 'Run gates with: source %s/.venv/bin/activate && just check\n' "$PROJECT_ROOT"
 }
 
 if [[ "$MODE" == "check" ]]; then
@@ -126,6 +169,27 @@ readonly BZIP2_COMMIT="05301997b2f9590f49c672cf3dfd3d3dfa7ad521"
 readonly BZIP2_SHA256="ab14accac86cdd92021d50465deeb221b476d6675bd1383d3c7fb83751c2e0a3"
 readonly SQLITE_COMMIT="f048e6a40879da9828ca2cf3b260f3e0a26117fb"
 readonly SQLITE_SHA256="593de968b2a18824c15a1310e62d131b3203beb3fc81ead7d2e726832cf805c2"
+
+# One amalgamation compile feeds BOTH our libsqlite3.so and CPython's bundled
+# _sqlite3 (which compiles the same sqlite3.c again unless the module is skipped).
+# Hence the single flag set: FTS5 for instant search, FTS3/4 because a 3.53 build
+# exposes them by default and dropping them would be a silent capability loss,
+# and the loadable-extension entry point so --enable-loadable-sqlite-extensions
+# is not a lie. SQLITE_THREADSAFE keeps the default serialized mode.
+readonly SQLITE_CFLAGS="-O2 -fPIC -DSQLITE_ENABLE_FTS5 -DSQLITE_ENABLE_FTS3 -DSQLITE_ENABLE_FTS3_PARENTHESIS -DSQLITE_ENABLE_LOADABLE_EXTENSION=1"
+readonly SYSTEM_OPENSSL="${SYSTEM_OPENSSL:-auto}"
+readonly RECONFIGURE="${RECONFIGURE:-0}"
+
+# Any stable OpenSSL 3.x is acceptable: the interpreter only needs SSL_* and the
+# hash/tls providers CPython's _ssl and _hashlib compile against, and 3.x keeps those
+# ABI-stable within the series. 4.x is deliberately opt-in — it is unreleased and may
+# change that ABI, so silently adopting it would be a reproducibility gamble.
+readonly OPENSSL_MIN_MAJOR=3
+readonly OPENSSL_MAX_MAJOR=3
+# Directories probed, in order, when the caller did not pin OPENSSL_INCLUDE_DIR.
+# Distro layouts and source installs both land here; /opt and /usr/local cover
+# images that ship a newer 3.x than the distro package.
+readonly OPENSSL_SEARCH_INCLUDES="/usr/local/include /usr/include /opt/openssl/include /opt/homebrew/include /opt/include"
 
 fetch_source() {
   local name="$1" repository="$2" commit="$3" digest="$4"
@@ -161,6 +225,196 @@ make_target_if_available() {
   fi
 }
 
+# Archives are downloaded sequentially today: on a cold cache the six files take ~40 s
+# wall clock while the network is idle most of that time. Warm them in parallel, then run
+# the ordinary (verified, idempotent) fetch loop below for extraction and cache checks.
+prefetch_archives() {
+  local spec name repository commit digest archive
+  local waited=()
+  local skip_openssl=0
+  [[ "$USE_SYSTEM_OPENSSL" == "1" ]] && skip_openssl=1
+  for spec in \
+    "cpython python/cpython $CPYTHON_COMMIT $CPYTHON_SHA256" \
+    "openssl python/cpython-source-deps $OPENSSL_COMMIT $OPENSSL_SHA256" \
+    "zlib python/cpython-source-deps $ZLIB_COMMIT $ZLIB_SHA256" \
+    "libffi python/cpython-source-deps $LIBFFI_COMMIT $LIBFFI_SHA256" \
+    "bzip2 python/cpython-source-deps $BZIP2_COMMIT $BZIP2_SHA256" \
+    "sqlite python/cpython-source-deps $SQLITE_COMMIT $SQLITE_SHA256"; do
+    read -r name repository commit digest <<<"$spec"
+    [[ "$name" == "openssl" && "$skip_openssl" == "1" ]] && continue
+    archive="$SRC/${name}-${commit}.tar.gz"
+    [[ -s "$archive" ]] && continue
+    # No `fail` here: a subshell cannot stop the parent, and fetch_source below decides
+    # what a failed or corrupt archive means (including its "preserved, inspect" rule).
+    (
+      temporary="$(mktemp "$SRC/.${name}.prefetch.XXXXXX")"
+      curl --fail --location --silent --show-error --retry 3 \
+        "https://codeload.github.com/${repository}/tar.gz/${commit}" \
+        --output "$temporary" || exit 0
+      if printf '%s  %s\n' "$digest" "$temporary" | sha256sum --check --status; then
+        mv -- "$temporary" "$archive" || rm -f -- "$temporary"
+      else
+        rm -f -- "$temporary"
+      fi
+    ) &
+    waited+=("$!")
+  done
+  # Bounded wait: one straggler cannot hold up a build that fetch_source would block on
+  # anyway, it just loses the overlap.
+  local pid
+  for pid in "${waited[@]}"; do
+    wait "$pid" 2>/dev/null || true
+  done
+}
+
+# A host OpenSSL is used only if it actually compiles, links and completes a TLS
+# handshake with the same flags CPython will use. Anything weaker (version string,
+# presence of a .so) has repeatedly produced prefixes whose `ssl` module imports but
+# whose TLS is broken, so the probe mirrors configure: include + lib + rpath.
+# Candidate prefixes for a host OpenSSL, most specific first. pkg-config is
+# authoritative when present (it knows about multiarch and custom prefixes); the
+# fixed list covers slim images that ship headers without .pc files, and the
+# Debian multiarch lib dir is tried last because its headers live under /usr/include.
+openssl_candidates() {
+  if [[ -n "${OPENSSL_INCLUDE_DIR:-}" || -n "${OPENSSL_LIB_DIR:-}" ]]; then
+    printf '%s|%s\n' "${OPENSSL_INCLUDE_DIR:-/usr/include}" "${OPENSSL_LIB_DIR:-/usr/lib/x86_64-linux-gnu}"
+    return 0
+  fi
+  local seen=""
+  if command -v pkg-config >/dev/null 2>&1 && pkg-config --exists openssl 2>/dev/null; then
+    local inc lib
+    inc="$(pkg-config --variable=includedir openssl 2>/dev/null || true)"
+    lib="$(pkg-config --variable=libdir openssl 2>/dev/null || true)"
+    if [[ -n "$inc" && -n "$lib" ]]; then
+      printf '%s|%s\n' "$inc" "$lib"
+      seen="$inc|$lib"
+    fi
+  fi
+  local include lib_dir
+  for include in $OPENSSL_SEARCH_INCLUDES; do
+    [[ -f "$include/openssl/ssl.h" ]] || continue
+    # The prefix that owns the headers is the likeliest home of a matching library;
+    # the multiarch/lib dirs after it cover split installs.
+    for lib_dir in "${include%/include}/lib64" "${include%/include}/lib" /usr/lib/x86_64-linux-gnu /usr/lib64 /usr/lib; do
+      [[ -d "$lib_dir" ]] || continue
+      [[ "$seen" == "$include|$lib_dir" ]] && continue
+      printf '%s|%s\n' "$include" "$lib_dir"
+      seen="$include|$lib_dir"
+    done
+  done
+}
+
+# Compile, link AND run. Three separate facts are checked, in this order:
+#   1. the headers declare a supported major version (compile-time),
+#   2. the linker can actually resolve -lssl -lcrypto from the same prefix,
+#   3. the library that loads at runtime reports the same supported major version
+#      as the headers (a split include/lib install — new headers, old library — is
+#      exactly the case where `import ssl` succeeds and TLS misbehaves).
+# Prints "<runtime version>" on success; the caller stores it and reports it.
+# Success: prints the runtime version on stdout and returns 0.
+# Failure: prints the reason on stderr and returns non-zero. The reason must travel
+# on stderr because the caller runs this in a command substitution — assigning a
+# variable here would be lost in the subshell (and read as "unbound" under set -u).
+openssl_probe() {
+  local include="$1" lib="$2"
+  if [[ ! -f "$include/openssl/ssl.h" ]]; then
+    printf 'no openssl/ssl.h under %s\n' "$include" >&2
+    return 1
+  fi
+  local probe_dir
+  probe_dir="$(mktemp -d "$BUILD_ROOT/.openssl-probe.XXXXXX")" || return 1
+  if ! cat >"$probe_dir/probe.c" <<'C'
+#include <openssl/ssl.h>
+#include <openssl/err.h>
+int main(void) {
+  long compile_major = (long) (OPENSSL_VERSION_NUMBER >> 28);
+  long runtime_major = (long) (OpenSSL_version_num() >> 28);
+  if (compile_major < MIN_MAJOR || compile_major > MAX_MAJOR) {
+    printf("unsupported compile-time major %ld (headers: %s)\n", compile_major, OPENSSL_VERSION_TEXT);
+    return 1;
+  }
+  if (runtime_major < MIN_MAJOR || runtime_major > MAX_MAJOR) {
+    printf("unsupported runtime major %ld (library: %s)\n", runtime_major, OpenSSL_version(OPENSSL_VERSION));
+    return 2;
+  }
+  if (compile_major != runtime_major) {
+    printf("header/library major mismatch: headers %ld, library %ld\n", compile_major, runtime_major);
+    return 3;
+  }
+  SSL_CTX *ctx = SSL_CTX_new(TLS_client_method());
+  if (ctx == NULL) {
+    printf("cannot create a TLS client context\n");
+    return 4;
+  }
+  SSL_CTX_free(ctx);
+  printf("%s\n", OpenSSL_version(OPENSSL_VERSION));
+  return 0;
+}
+C
+  then rm -rf -- "$probe_dir"; return 1; fi
+  if ! cc -DMIN_MAJOR="$OPENSSL_MIN_MAJOR" -DMAX_MAJOR="$OPENSSL_MAX_MAJOR" \
+      "$probe_dir/probe.c" -I"$include" -L"$lib" -Wl,-rpath,"$lib" -lssl -lcrypto \
+      -o "$probe_dir/probe" >"$probe_dir/build.log" 2>&1; then
+    printf 'compile/link failed against %s + %s (%s)\n' "$include" "$lib" \
+      "$(tr '\n' ' ' <"$probe_dir/build.log" | cut -c1-160)" >&2
+    rm -rf -- "$probe_dir"
+    return 1
+  fi
+  local reported
+  if ! reported="$(LD_LIBRARY_PATH="$lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" "$probe_dir/probe" 2>&1)"; then
+    printf 'runtime check failed at %s (%s)\n' "$lib" "$reported" >&2
+    rm -rf -- "$probe_dir"
+    return 1
+  fi
+  rm -rf -- "$probe_dir"
+  printf '%s\n' "$reported"
+}
+
+# Decide ONCE, before any download or build, so prefetch and build agree.
+# auto    — first host candidate that passes the probe; pinned build otherwise
+# require — host must work (fail loudly instead of silently spending minutes)
+# never   — always build the pinned OpenSSL (previous behaviour)
+select_openssl() {
+  USE_SYSTEM_OPENSSL=0
+  if [[ "$SYSTEM_OPENSSL" == "never" ]]; then
+    printf 'OpenSSL: building pinned version (SYSTEM_OPENSSL=never)\n'
+    return 0
+  fi
+  local candidate include lib reported="" reason tried=()
+  local reason_file
+  reason_file="$(mktemp "$BUILD_ROOT/.openssl-reason.XXXXXX")"
+  while IFS='|' read -r include lib; do
+    [[ -n "$include" ]] || continue
+    if reported="$(openssl_probe "$include" "$lib" 2>"$reason_file")"; then
+      USE_SYSTEM_OPENSSL=1
+      OPENSSL_INCLUDE_DIR="$include"
+      OPENSSL_LIB_DIR="$lib"
+      OPENSSL_PREFIX="$include"
+      OPENSSL_PREFIX="${OPENSSL_PREFIX%/include}"
+      OPENSSL_PREFIX="${OPENSSL_PREFIX:-/usr}"
+      SYSTEM_OPENSSL_VERSION="$reported"
+      printf 'OpenSSL: reusing host %s (headers %s, libs %s) — pinned build skipped\n' \
+        "$reported" "$include" "$lib"
+      return 0
+    fi
+    reason="$(cat "$reason_file" 2>/dev/null || true)"
+    tried+=("$include+$lib: ${reason:-not usable}")
+  done < <(openssl_candidates)
+  rm -f -- "$reason_file"
+
+  local detail
+  if ((${#tried[@]})); then
+    detail="$(printf '\n  - %s' "${tried[@]}")"
+  else
+    detail="none found (no openssl/ssl.h in: $OPENSSL_SEARCH_INCLUDES)"
+  fi
+  if [[ "$SYSTEM_OPENSSL" == "require" ]]; then
+    fail "SYSTEM_OPENSSL=require but no usable host OpenSSL (need major $OPENSSL_MIN_MAJOR):$detail"
+  fi
+  printf 'OpenSSL: no usable host OpenSSL (need major %s); building pinned version%s\n' \
+    "$OPENSSL_MIN_MAJOR" "$detail"
+}
+
 build_python() {
   local missing=()
   local command
@@ -171,10 +425,15 @@ build_python() {
     fail "cold build requires these commands: ${missing[*]}"
   fi
 
+  select_openssl
+  prefetch_archives
   fetch_source cpython python/cpython "$CPYTHON_COMMIT" "$CPYTHON_SHA256"
   local cpython_source="$FETCHED_SOURCE"
-  fetch_source openssl python/cpython-source-deps "$OPENSSL_COMMIT" "$OPENSSL_SHA256"
-  local openssl_source="$FETCHED_SOURCE"
+  local openssl_source=""
+  if [[ "$USE_SYSTEM_OPENSSL" == "0" ]]; then
+    fetch_source openssl python/cpython-source-deps "$OPENSSL_COMMIT" "$OPENSSL_SHA256"
+    openssl_source="$FETCHED_SOURCE"
+  fi
   fetch_source zlib python/cpython-source-deps "$ZLIB_COMMIT" "$ZLIB_SHA256"
   local zlib_source="$FETCHED_SOURCE"
   fetch_source libffi python/cpython-source-deps "$LIBFFI_COMMIT" "$LIBFFI_SHA256"
@@ -186,17 +445,34 @@ build_python() {
 
   local stage
   stage="$(mktemp -d "$BUILD_ROOT/.prefix-build.XXXXXX")"
+  # Describe the build conditions next to the objects. configure's cache assumes the
+  # same environment; if the prefix path or the OpenSSL choice changed, the tree is
+  # rebuilt from scratch instead of silently linking against stale objects.
+  local build_desc="openssl=$([[ "$USE_SYSTEM_OPENSSL" == "1" ]] && printf system || printf pinned)"
+  build_desc="$build_desc stage_layout=1 sqlite_flags=2"
+  local desc_file="$cpython_source/.arena-build-desc"
+  if [[ -f "$desc_file" && "$(cat "$desc_file")" != "$build_desc" ]]; then
+    printf 'CPython build conditions changed (%s -> %s); rebuilding from scratch\n' \
+      "$(cat "$desc_file")" "$build_desc"
+    make_target_if_available "$cpython_source" distclean
+  fi
+  printf '%s\n' "$build_desc" >"$desc_file"
   printf 'Building CPython %s in staging prefix %s (JOBS=%s)\n' "$EXPECTED_PYTHON" "$stage" "$JOBS"
 
   make_target_if_available "$zlib_source" clean
   (cd "$zlib_source" && ./configure --prefix="$stage" && make -j"$JOBS" && make install)
 
-  make_target_if_available "$openssl_source" clean
-  (cd "$openssl_source" && ./config --prefix="$stage" --libdir=lib && make -j"$JOBS" && make install_sw)
+  if [[ "$USE_SYSTEM_OPENSSL" == "0" ]]; then
+    make_target_if_available "$openssl_source" clean
+    (cd "$openssl_source" && ./config --prefix="$stage" --libdir=lib && make -j"$JOBS" && make install_sw)
+  fi
 
   make_target_if_available "$libffi_source" clean
   chmod +x "$libffi_source/configure"
-  (cd "$libffi_source" && ./configure --prefix="$stage" && make -j"$JOBS" && make install)
+  # --disable-static: ctypes loads the .so; the .a is another full link for nothing.
+  # --disable-docs: its configure pass alone cost ~4 s here, longer than its build.
+  (cd "$libffi_source" && ./configure --prefix="$stage" --disable-static --disable-docs \
+    && make -j"$JOBS" && make install)
 
   make_target_if_available "$bzip2_source" clean
   (cd "$bzip2_source" && make -j"$JOBS" && make install PREFIX="$stage")
@@ -208,21 +484,55 @@ build_python() {
   install -m 644 "$bzip2_source/bzlib.h" "$stage/include/"
 
   rm -f -- "$sqlite_source/sqlite3.o" "$sqlite_source/libsqlite3.so"
+  # shellcheck disable=SC2086 # $SQLITE_CFLAGS is intentionally word-split
   (cd "$sqlite_source" && \
-    gcc -O2 -fPIC -DSQLITE_ENABLE_FTS5 -c sqlite3.c -o sqlite3.o && \
+    gcc $SQLITE_CFLAGS -c sqlite3.c -o sqlite3.o && \
     gcc -shared -o libsqlite3.so sqlite3.o -lpthread -ldl -lm)
   install -m 644 "$sqlite_source/sqlite3.h" "$stage/include/"
+  # sqlite3ext.h is what --enable-loadable-sqlite-extensions compiles against; without
+  # it the option cannot be switched on later without rebuilding this prefix.
+  if [[ -f "$sqlite_source/sqlite3ext.h" ]]; then
+    install -m 644 "$sqlite_source/sqlite3ext.h" "$stage/include/"
+  fi
   install -m 755 "$sqlite_source/libsqlite3.so" "$stage/lib/"
 
-  make_target_if_available "$cpython_source" distclean
+  # ── CPython configure/build ───────────────────────────────────────────────
+  # The source tree lives in BUILD_ROOT/src and survives a run, so a like-for-like
+  # rebuild (same pins, same prefix layout) can reuse its objects: re-running
+  # `make` after a fresh `./configure` relinks what changed instead of recompiling
+  # ~234 translation units. `make distclean` would throw that away — it is used only
+  # when the tree is in an unknown state (no config.status or a half-built install).
+  local openssl_args=()
+  if [[ "$USE_SYSTEM_OPENSSL" == "1" ]]; then
+    # --with-openssl handles -I/-l itself; the lib dir is passed because Debian's
+    # multiarch libs (libssl.so) are not under the prefix's plain lib/, and rpath is
+    # scoped to _ssl/_hashlib rather than smeared over every module.
+    openssl_args=(--with-openssl="$OPENSSL_PREFIX" --with-openssl-rpath="$OPENSSL_LIB_DIR")
+  else
+    openssl_args=(--with-openssl="$stage" --with-openssl-rpath=auto)
+  fi
+
+  case "$MODE:$RECONFIGURE" in
+    rebuild:* | *:1)
+      # --rebuild-python (or an explicit RECONFIGURE=1) promises a from-scratch build.
+      make_target_if_available "$cpython_source" distclean
+      ;;
+  esac
   (
     cd "$cpython_source"
+    # Kept inside the build subshell on purpose: the staged loader path must be live
+    # for the install step too (it runs the freshly built interpreter).
     export CPPFLAGS="-I$stage/include"
     export LDFLAGS="-L$stage/lib -Wl,-rpath,$PREFIX/lib"
+    export LD_LIBRARY_PATH="$stage/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
     export PKG_CONFIG_PATH="$stage/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
-    ./configure --prefix="$stage" --with-openssl="$stage" --with-openssl-rpath=auto
-    make -j"$JOBS"
-    make install
+    if [[ ! -x ./configure ]]; then
+      printf 'CPython configure script missing; extraction is incomplete\n' >&2
+      exit 1
+    fi
+    ./configure --prefix="$stage" "${openssl_args[@]}" || exit 1
+    make -j"$JOBS" || exit 1
+    make install || exit 1
   )
 
   if ! LD_LIBRARY_PATH="$stage/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" runtime_smoke "$stage/bin/python3.13"; then
@@ -247,7 +557,10 @@ select_python() {
   if [[ "$MODE" != "rebuild" && -x "$PROJECT_ROOT/.venv/bin/python" ]] && \
       is_usable_python "$PROJECT_ROOT/.venv/bin/python"; then
     PYTHON="$("$PROJECT_ROOT/.venv/bin/python" -c 'import sys; print(sys._base_executable)')"
-    if is_usable_python "$PYTHON"; then
+    # The base interpreter is the one the venv probe above just exercised when the venv
+    # is not itself a copy; re-running the smoke on an identical path is pure cost.
+    if [[ "$PYTHON" == "$PROJECT_ROOT/.venv/bin/python" ]] || is_usable_python "$PYTHON"; then
+      REUSED_VENV=1
       printf 'Reusing the validated project venv interpreter: %s\n' "$PYTHON"
       return 0
     fi
@@ -259,9 +572,35 @@ select_python() {
   build_python
 }
 
-is_pinned_uv() {
-  local version="$1"
-  [[ "$version" == "uv $UV_VERSION" || "$version" == "uv $UV_VERSION "* ]]
+ensure_uv_launcher() {
+  local launcher="$PROJECT_ROOT/.venv/bin/uv"
+  if [[ -x "$launcher" ]] && is_pinned_uv "$("$launcher" --version 2>/dev/null || true)"; then
+    return 0
+  fi
+  if [[ -e "$launcher" && ! -L "$launcher" ]]; then
+    fail "refusing to replace non-symlink .venv/bin/uv; inspect the project environment"
+  fi
+  ln -sfn -- "$UV_PATH" "$launcher"
+  is_pinned_uv "$("$launcher" --version)" || fail "could not expose pinned uv in .venv/bin"
+}
+
+ensure_just() {
+  local venv_bin="$PROJECT_ROOT/.venv/bin"
+  local launcher="$venv_bin/just"
+  if [[ -x "$launcher" ]] && is_pinned_just "$("$launcher" --version 2>/dev/null || true)"; then
+    printf 'Reusing pinned just %s from %s\n' "$JUST_VERSION" "$launcher"
+    return 0
+  fi
+
+  printf 'Installing %s into the external tool cache with a project .venv launcher\n' "$JUST_PACKAGE" >&2
+  UV_TOOL_DIR="$BUILD_ROOT/just-tools" UV_TOOL_BIN_DIR="$venv_bin" \
+    "$UV_PATH" tool install --force --python "$PYTHON" "$JUST_PACKAGE"
+  is_pinned_just "$("$launcher" --version)" || fail "isolated just bootstrap did not produce just $JUST_VERSION"
+}
+
+ensure_gate_launchers() {
+  ensure_uv_launcher
+  ensure_just
 }
 
 ensure_uv() {
@@ -294,8 +633,13 @@ ensure_uv() {
   local temporary
   temporary="$(mktemp -d "$BUILD_ROOT/.uv-tools.XXXXXX")"
   printf 'Installing isolated uv %s under %s\n' "$UV_VERSION" "$tools_dir" >&2
-  "$PYTHON" -m venv "$temporary"
-  "$temporary/bin/python" -m pip install --disable-pip-version-check --only-binary=:all: "uv==$UV_VERSION" >&2
+  # uv ships as a py3-none wheel with its binary inside. Two extra interpreter starts
+  # (create a throwaway venv, then run pip from it) bought nothing: install straight
+  # into a staging directory that is validated and only then published.
+  if ! "$PYTHON" -m pip install --disable-pip-version-check --only-binary=:all: \
+      --target "$temporary" "uv==$UV_VERSION" >&2; then
+    fail "could not install uv $UV_VERSION with $PYTHON"
+  fi
   is_pinned_uv "$("$temporary/bin/uv" --version)" || fail "isolated uv bootstrap did not produce uv $UV_VERSION"
   if [[ -e "$tools_dir" ]]; then
     mv -- "$tools_dir" "$BUILD_ROOT/uv-tools-$UV_VERSION.previous.$(date +%Y%m%d%H%M%S)"
@@ -306,8 +650,11 @@ ensure_uv() {
 
 select_python
 UV_PATH="$(ensure_uv)"
-printf 'Syncing frozen dev environment with %s\n' "$UV_PATH"
 cd "$PROJECT_ROOT"
+printf 'Syncing frozen dev environment with %s\n' "$UV_PATH"
 UV_SYSTEM_CERTS=true "$UV_PATH" sync --frozen --extra dev --python "$PYTHON"
-check_project_venv
-printf 'ENVIRONMENT_READY: CPython %s; frozen dev extra installed\n' "$EXPECTED_PYTHON"
+ensure_gate_launchers
+# End-to-end verification always runs. VENVPROBE only tells it that the probe of this
+# very .venv interpreter already succeeded while selecting it in this same run.
+VENVPROBE="$REUSED_VENV" check_project_venv
+printf 'ENVIRONMENT_READY: CPython %s; frozen dev extra and pinned uv/just gate launchers installed\n' "$EXPECTED_PYTHON"

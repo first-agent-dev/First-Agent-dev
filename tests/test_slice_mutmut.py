@@ -624,6 +624,10 @@ def test_targeted_main_propagates_action_required_executor_rc(tmp_path: Path, mo
     monkeypatch.setattr("scripts.run_targeted_mutmut.gd.changed_python_files", lambda *_args, **_kwargs: [source])
     monkeypatch.setattr(targeted, "_scope_to_changed", lambda _changed: [source])
     monkeypatch.setattr(targeted, "request_from_configured_scope", lambda *_args, **_kwargs: sentinel)
+    # The fixture is a bare repo with no pyproject.toml, so the copies this test
+    # does not assert on are stubbed too; the point here is the exit-code
+    # propagation, not the config read (that is the T19 test below).
+    monkeypatch.setattr(targeted, "_configured_copies", lambda *_args, **_kwargs: ("src/fa",))
 
     def execute(request: SliceRequest) -> SliceResult:
         observed.append(request)
@@ -645,8 +649,15 @@ def test_permanent_mutation_configuration_includes_readiness_and_type_filter() -
     mutmut = data["tool"]["mutmut"]
     gremlins = data["tool"]["pytest-gremlins"]
     source_paths = mutmut["source_paths"]
+    selected_tests = set(mutmut["pytest_add_cli_args_test_selection"])
+    assert "src/fa/stats.py" in source_paths
     assert source_paths[-1] == "src/fa/workspace_bootstrap.py"
-    assert mutmut["pytest_add_cli_args_test_selection"][-1] == "tests/test_workspace_bootstrap.py"
+    assert "tests/test_workspace_bootstrap.py" in selected_tests
+    assert {
+        "tests/test_stats.py",
+        "tests/test_s19_stats_parsers.py",
+        "tests/test_s9_stats_projection.py",
+    } <= selected_tests
     assert mutmut["also_copy"] == ["src/fa", "scripts"]
     command = mutmut["type_check_command"]
     assert command[:2] == ["pyrefly", "check"]

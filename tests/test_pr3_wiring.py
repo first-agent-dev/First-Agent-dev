@@ -132,31 +132,86 @@ def test_cache_headers_stripped_when_disabled(tmp_path: Path) -> None:
 
 
 def test_prompt_composer_ast_invariants() -> None:
-    """Static AST check (Anti-Theater): Verify coder_loop has no parallel manual system prompts assembly."""
-    loop_file = Path("src/fa/inner_loop/coder_loop.py")
-    assert loop_file.exists()
-    content = loop_file.read_text(encoding="utf-8")
+    """C0: the driver delegates all three paths to the sole assembly owner."""
+    loop_source = Path("src/fa/inner_loop/coder_loop.py").read_text(encoding="utf-8")
+    composer_source = Path("src/fa/inner_loop/prompt_composer.py").read_text(encoding="utf-8")
+    loop_tree = ast.parse(loop_source)
+    composer_tree = ast.parse(composer_source)
+    driver = next(n for n in loop_tree.body if isinstance(n, ast.FunctionDef) and n.name == "_drive_session_inner")
+    closure = next(
+        n for n in ast.walk(driver) if isinstance(n, ast.FunctionDef) and n.name == "_compose_request_payload"
+    )
+    owner = next(n for n in composer_tree.body if isinstance(n, ast.FunctionDef) and n.name == "compose_turn_request")
 
-    # Verify imports
-    assert "build_prompt_parts_v2" in content
-    assert "to_anthropic_request_v2" in content
-    assert "to_openai_request_v2" in content
+    def calls(node: ast.AST, name: str) -> int:
+        return sum(
+            isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == name for n in ast.walk(node)
+        )
 
-    # Assert old "messages.append" or manual list setups have been deleted or migrated
-    # "messages: list" is no longer defined or initialized directly
-    assert "messages: list" not in content
+    # The driver owns assembly for all three paths. Since the compaction slice
+    # the two compaction paths get the composer as a *callback* (the stage
+    # functions live in another module and cannot close over the driver's
+    # locals), so the invariant is "one call and two hand-offs", not "three
+    # calls". Counting references, not `Call` nodes, keeps the check honest:
+    # a stage that started assembling its own request would drop the reference
+    # and fail here.
+    assert calls(driver, "_compose_request_payload") == 1  # current turn
+    # The budget ladder sits between the driver and the two compaction stages
+    # (2026-11-10): the driver hands the composer over once, and the ladder fans
+    # it out. So the invariant is stated where it belongs — *each* compaction
+    # stage is handed a composer, and no module assembles a request itself.
+    # Counting hand-offs inside the driver would read 1 and report a lost path;
+    # counting them in the ladder would count its own pass-through.
+    ladder_source = Path("src/fa/inner_loop/budget_ladder.py").read_text(encoding="utf-8")
+    ladder_tree = ast.parse(ladder_source)
+    handed = sum(
+        isinstance(n, ast.keyword)
+        and n.arg == "compose_request"
+        and getattr(n.value, "id", None) == "_compose_request_payload"
+        for n in ast.walk(driver)
+    )
+    assert handed == 1, f"the driver must hand its composer over exactly once, saw {handed}"
+    for stage in ("run_stage2_masking", "run_stage3_compaction"):
+        stage_calls = [
+            n
+            for n in ast.walk(ladder_tree)
+            if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == stage
+        ]
+        assert stage_calls, f"the ladder no longer calls {stage}"
+        for call in stage_calls:
+            assert any(
+                kw.arg == "compose_request" and getattr(kw.value, "id", None) == "compose_request"
+                for kw in call.keywords
+            ), f"{stage} is called without the driver's composer — it would assemble its own request"
+    # Anti-theater: no module outside the composer may build a request body.
+    assert calls(ladder_tree, "build_prompt_parts_v2") == 0
+    assert "to_openai_request_v2(" not in ladder_source
+    assert calls(closure, "compose_turn_request") == 1
+    assert calls(owner, "build_prompt_parts_v2") == 1
+    assert calls(owner, "to_anthropic_request_v2") == 1
+    assert calls(owner, "to_openai_request_v2") == 1
+    assert calls(driver, "build_prompt_parts_v2") == 0
+    assert "messages: list" not in loop_source  # forbid the old parallel assembly path
 
-    # Verify AST
-    tree = ast.parse(content)
-    has_composer_call = False
-    has_request_call = False
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Call):
-            if isinstance(node.func, ast.Name):
-                if node.func.id == "build_prompt_parts_v2":
-                    has_composer_call = True
-                if node.func.id in ("to_anthropic_request_v2", "to_openai_request_v2"):
-                    has_request_call = True
 
-    assert has_composer_call, "build_prompt_parts_v2 call missing in coder_loop.py AST"
-    assert has_request_call, "to_*_request_v2 conversion call missing in coder_loop.py AST"
+def test_composer_final_role_assertion_for_both_families() -> None:
+    """C0: a malformed formatter output still fails before the provider."""
+    from unittest.mock import patch
+
+    from fa.inner_loop.prompt_composer import compose_turn_request
+
+    for family, formatter in (("anthropic", "to_anthropic_request_v2"), ("openai", "to_openai_request_v2")):
+        with patch(f"fa.inner_loop.prompt_composer.{formatter}", return_value={"messages": [{"role": "assistant"}]}):
+            with pytest.raises(AssertionError, match="final provider-visible role"):
+                compose_turn_request(
+                    family=family,
+                    base_system="base",
+                    pinned_text="",
+                    tool_defs=[],
+                    role="coder",
+                    task="task",
+                    active_summary="",
+                    observations=[],
+                    turn_context="",
+                    skills_conditional=None,
+                )

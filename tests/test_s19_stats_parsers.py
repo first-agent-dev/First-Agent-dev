@@ -22,7 +22,7 @@ import json
 import sys
 import typing
 from pathlib import Path
-from typing import Any
+from typing import Any, override
 
 import pytest
 
@@ -227,40 +227,47 @@ def test_unparsed_kinds_complete() -> None:
 
 
 def _dispatched_kinds_from_source() -> set[str]:
-    """AST-extract the kinds ``_parse_events`` compares against.
+    """AST-extract kinds compared by the parser's dedicated dispatch helpers.
 
     Deliberately AST rather than a regex over source: S9 planning produced a
     confident, entirely fictional finding because a ``[a-z_]+`` character
     class silently dropped every kind containing a digit. Parsing the code the
     interpreter parses is the only honest way to ask "what does this dispatch
-    on".
+    on". The helpers are selected by their shared production seam prefix, so
+    splitting a handler further does not require a second handwritten kind list.
     """
     tree = ast.parse(Path("src/fa/stats.py").read_text(encoding="utf-8"))
-    fn = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "_parse_events")
+    dispatchers = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name.startswith("_dispatch_stats_")
+    ]
     kinds: set[str] = set()
-    for node in ast.walk(fn):
-        if isinstance(node, ast.Compare) and isinstance(node.left, ast.Name) and node.left.id == "kind":
-            for op, comparator in zip(node.ops, node.comparators, strict=True):
-                if (
-                    isinstance(op, ast.Eq)
-                    and isinstance(comparator, ast.Constant)
-                    and isinstance(comparator.value, str)
-                ):
-                    kinds.add(comparator.value)
+    for dispatcher in dispatchers:
+        for node in ast.walk(dispatcher):
+            if isinstance(node, ast.Compare) and isinstance(node.left, ast.Name) and node.left.id == "kind":
+                for op, comparator in zip(node.ops, node.comparators, strict=True):
+                    if (
+                        isinstance(op, ast.Eq)
+                        and isinstance(comparator, ast.Constant)
+                        and isinstance(comparator.value, str)
+                    ):
+                        kinds.add(comparator.value)
     return kinds
 
 
 def test_s9_parsed_kinds_matches_dispatch() -> None:
     """C1 (S9.4 / CT4): ``PARSED_KINDS`` equals what ``_parse_events`` dispatches on.
 
-    This is the test the old hardcoded list could not be. Removing an
-    ``elif kind == "..."`` branch used to leave the contract test green,
-    because the test's own literal still claimed the kind was parsed. Now the
-    claim is derived from the parser itself, so deletion is detected.
+    This is the test the old hardcoded list could not be. Removing a
+    ``kind == "..."`` branch from any parser dispatch helper used to leave
+    the contract test green if the test kept its own literal. The claim is
+    still derived from the production comparisons, across the extracted
+    helpers, so branch deletion is detected after the complexity split.
 
     Oracle: AST-derived set == the module's declared frozenset.
-    Kill-check target: delete any ``elif kind == "<name>"`` branch in
-    ``_parse_events`` — verified during S9 execution, not assumed.
+    Kill-check target: delete any parsed-kind branch in a
+    ``_dispatch_stats_*`` helper — the liveness/equality assertion fails.
     """
     dispatched = _dispatched_kinds_from_source()
 
@@ -392,3 +399,88 @@ def test_i41_explicit_stream_still_wins(monkeypatch: pytest.MonkeyPatch) -> None
 
     assert "Session: i41-run" in explicit.getvalue()
     assert ambient.getvalue() == "", "an explicit stream must not also write to sys.stderr"
+
+
+def test_render_session_preserves_sections_limits_and_empty_report() -> None:
+    """C0: all report groups retain order, bounds, error branches and flush."""
+    from fa.stats import (
+        BashCommand,
+        CircuitBreakerRecord,
+        CompactionRecord,
+        CompactionWarningRecord,
+        ContextBudgetEvent,
+        FileAccess,
+        GuardActivity,
+        ProviderHealth,
+        ScopeEstimateRecord,
+        SubagentRecord,
+        ToolError,
+        ToolUsage,
+        TurnTokens,
+    )
+
+    class FlushedBuffer(io.StringIO):
+        def __init__(self) -> None:
+            super().__init__()
+            self.flushes = 0
+
+        @override
+        def flush(self) -> None:
+            self.flushes += 1
+            super().flush()
+
+    analytics = _make_analytics()
+    analytics.ok = False
+    analytics.tool_usage = [ToolUsage("probe", 2)]
+    analytics.file_access = [FileAccess(f"file-{i}", reads=3, writes=1) for i in range(11)]
+    analytics.bash_commands = [BashCommand("x" * 61, 2)] * 6
+    analytics.token_timeline = [TurnTokens(1, 100, 20, 50, 0)]
+    analytics.provider_health = [ProviderHealth("provider", "slug", 2, 1, 42, 80)]
+    analytics.guard_activity = [GuardActivity("guard", allow=1, deny=2, warn=3)]
+    analytics.tool_errors = [ToolError(f"tool-{i}", "bad", "y" * 61) for i in range(11)]
+    analytics.compaction_records = [CompactionRecord(2, True, 100, 50), CompactionRecord(3, False, error="broken")]
+    analytics.subagent_records = [SubagentRecord(True), SubagentRecord(False, "child failure")]
+    analytics.context_budget_events = [ContextBudgetEvent("warn", 72, "budget")]
+    analytics.compaction_warnings = [CompactionWarningRecord("stage2", False, 0.8, 0.7)]
+    analytics.circuit_breaker_events = [CircuitBreakerRecord("circuit open")]
+    analytics.model_msg_count, analytics.user_msg_count = 2, 1
+    analytics.scope_estimates = [ScopeEstimateRecord(2, "small", "low", 0.5, "chat", "t" * 81)]
+    analytics.redundant_reads = 1
+    stream = FlushedBuffer()
+    render_session(analytics, stream=stream)
+    text = stream.getvalue()
+    sections = [
+        "Session:",
+        "Tools:",
+        "Files:",
+        "Bash:",
+        "Tokens:",
+        "Provider:",
+        "Guards:",
+        "Tool errors:",
+        "Compaction:",
+        "Subagent:",
+        "Context budget:",
+        "Compaction pressure:",
+        "Circuit breaker:",
+        "Messages:",
+        "Scope estimates:",
+        "Efficiency:",
+    ]
+    assert [text.index(section) for section in sections] == sorted(text.index(section) for section in sections)
+    assert "❌ coder" in text and "READ 3x ⚠ WRITE 1x" in text
+    assert "file-9" in text and "file-10" not in text and "... and 1 more" in text
+    assert text.count("x" * 60 + "...") == 5
+    assert "tool-9" in text and "tool-10" not in text and "y" * 61 not in text
+    assert "stage2: 100 → 50" in text and "stage3: error — broken" in text
+    assert "1 ok, 1 failed" in text and "failed: child failure" in text
+    assert "ratio=80% threshold=70% (disabled)" in text
+    assert "task: " + "t" * 80 + "..." in text
+    assert stream.flushes == 1
+
+    empty_stream = FlushedBuffer()
+    render_session(_make_analytics(), stream=empty_stream)
+    empty = empty_stream.getvalue()
+    assert "Session: i41-run" in empty
+    assert all(section not in empty for section in sections[1:])
+    assert empty_stream.flushes == 1

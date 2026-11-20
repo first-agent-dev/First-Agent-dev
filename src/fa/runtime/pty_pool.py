@@ -294,7 +294,7 @@ class PtySession:
         ``None`` when no rewriting was needed or possible; the caller is
         responsible for calling ``_cleanup_script(script_path)`` once done.
         """
-        if is_stateful or not re.search(r"<<-?\s*['\"]?\w", command):
+        if is_stateful or not re.search(r"(?<!<)<<(?!<)-?\s*['\"]?\w", command):
             return command, None
         try:
             script_path = self.cwd / f".fa-bash-{call_id}.sh"

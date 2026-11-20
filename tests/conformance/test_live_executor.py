@@ -619,10 +619,11 @@ def test_cmd_conformance_appends_exact_nonempty_production_tools_conf8(
     assert len(producer_workspaces) == 1
     assert producer_workspaces[0].is_relative_to(tmp_path)
     names = [tool["function"]["name"] for tool in expected_tools]
-    # S15: fs_exploration_metrics joined the implementer profile — 15→16.
-    # S16: fs_reach joined — 16→17. (TEST-EDITS declared in PR.)
-    assert len(names) == len(set(names)) == 17
+    # S15/S16 added exploration metrics and reach. Q126-A/E469 retired the
+    # legacy host-only subagent tool from the product profile: 17→16.
+    assert len(names) == len(set(names)) == 16
     assert {"fs_search", "pr_prepare", "fs_exploration_metrics", "fs_reach"} <= set(names)
+    assert "fs_spawn_subagent" not in names
     assert conf8_body["max_tokens"] == 64000
     assert "temperature" not in conf8_body
     assert "top_p" not in conf8_body

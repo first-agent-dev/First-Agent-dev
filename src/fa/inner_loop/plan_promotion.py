@@ -9,6 +9,7 @@ supervisor-owned CANDIDATE buffer and commits them through Operation.PUBLISH.
 from __future__ import annotations
 
 import os
+import re
 import time
 from pathlib import Path
 from typing import Protocol
@@ -19,14 +20,16 @@ from fa.inner_loop.planner_dispatch import PlannerDispatch, PlannerDispatchKind
 from fa.inner_loop.workflow_artifacts import _private_artifact_directory
 
 _CANONICAL_PARENT = ("worklogs", "planning-topology-and-executable-contracts-loop", "increments")
+_PROJECT_SLUG_RE = re.compile(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*")
 
 
 class PlanPromotionError(ValueError):
     """Static closed reason and irreversible-boundary state; no paths or bodies."""
 
-    def __init__(self, rule: str, *, replaced: bool = False) -> None:
+    def __init__(self, rule: str, *, replaced: bool = False, operation_id: str | None = None) -> None:
         self.rule = rule
         self.replaced = replaced
+        self.operation_id = operation_id
         super().__init__(f"plan promotion failed: {rule}")
 
 
@@ -40,7 +43,20 @@ class CandidatePlanPublisher(Protocol):
 
 def _canonical_parts(snapshot: PlanSnapshot) -> tuple[str, ...]:
     parts = tuple(snapshot.ref.workspace_relative_path.split("/"))
-    if len(parts) < 4 or parts[:3] != _CANONICAL_PARENT or any(p in {"", ".", ".."} or "\x00" in p for p in parts):
+    if any(p in {"", ".", ".."} or "\x00" in p for p in parts):
+        raise PlanPromotionError("scope-denied")
+    if snapshot.ref.source_kind in {"EXISTING_SELECTION", "BOOTSTRAP"}:
+        if (
+            len(parts) != 4
+            or parts[0] != "worklogs"
+            or _PROJECT_SLUG_RE.fullmatch(parts[1]) is None
+            or parts[2] != "increments"
+            or parts[3].startswith(".")
+            or not parts[3].endswith(".md")
+        ):
+            raise PlanPromotionError("scope-denied")
+        return parts
+    if len(parts) < 4 or parts[:3] != _CANONICAL_PARENT:
         raise PlanPromotionError("scope-denied")
     return parts
 
@@ -64,7 +80,9 @@ def seed_plan_candidate(
 ) -> PlannerDispatch:
     """Fresh no-clobber draft from exact captured bytes, never a second active plan."""
     _canonical_parts(source)  # Scope rejection must precede candidate allocation/provider.
-    if kind == PlannerDispatchKind.ORDINARY_PLANNING:
+    # Only a repairing/replanning stage owns a candidate: a first plan is not a
+    # rewrite of something already admitted (spec §7.0, S5P1 acquisition).
+    if kind not in (PlannerDispatchKind.ADMISSION_REPAIR, PlannerDispatchKind.EVAL_REPLAN):
         raise PlanPromotionError("scope-denied")
     target = f".fa/admission/{run_id}/candidate-{uuid4().hex}.md"
     dispatch = PlannerDispatch(kind, run_id, source.ref.workspace_relative_path, target)

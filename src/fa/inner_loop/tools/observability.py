@@ -269,7 +269,7 @@ def build_list_tasks_tool(  # noqa: C901 -- complexity from fallback chain grace
             pass
         return pool, wm
 
-    def handler(params: Mapping[str, object]) -> ToolResult:
+    def handler(params: Mapping[str, object]) -> ToolResult:  # noqa: ARG001 - ToolHandler signature; fs_list_tasks takes no params
         pool, wm = _get_pool_and_manager()
         tasks: list[dict[str, Any]] = []
         if pool is not None:

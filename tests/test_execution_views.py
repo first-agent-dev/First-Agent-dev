@@ -423,6 +423,58 @@ def test_no_approved_profile_cannot_create_a_project_view(site: Site) -> None:
         assert list((site.state / "workspaces" / ids["workspace_id"] / "views").iterdir()) == []
 
 
+def test_create_read_view_records_the_selected_read_only_profile(site: Site) -> None:
+    """C0/C3: create_view passes its validated READ profile to the view producer."""
+    (site.source / "plan.md").write_text("# Verification plan\n")
+    admitted = read_plan_snapshot(site.source, Path("plan.md")).ref
+    with site.owner(view_profile=native_profile(), read_only_profile=read_only_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+
+        grant = ok(
+            lambda: owner.create_view(
+                PEER,
+                ACTOR,
+                workspace_id=ids["workspace_id"],
+                capability=lease.capability,
+                purpose=ViewPurpose.VERIFICATION,
+                access=Access.READ,
+                candidate_scope=None,
+                plan_ref=admitted,
+                formal_evidence=True,
+                deadline=until(),
+            )
+        )
+
+        assert ref(grant).access is Access.READ
+        record = json.loads(record_path(site, grant).read_text())
+        assert record["view_ref"] == ref(grant).to_dict()
+        assert record["profile_id"] == read_only_profile().profile_id
+
+
+def test_create_read_view_requires_approved_read_only_profile_before_effects(site: Site) -> None:
+    """C0/C3: a missing READ profile refuses before any view is installed."""
+    (site.source / "plan.md").write_text("# Verification plan\n")
+    admitted = read_plan_snapshot(site.source, Path("plan.md")).ref
+    with site.owner(view_profile=native_profile()) as owner:
+        ids = ok(lambda: site.register(owner))
+        lease = ok(lambda: site.claim(owner, ids))
+
+        with pytest.raises(SupervisorError) as failure:
+            create(
+                owner,
+                ids,
+                lease,
+                purpose=ViewPurpose.VERIFICATION,
+                access=Access.READ,
+                plan_ref=admitted,
+                formal=True,
+            )
+
+        assert failure.value.code == "UNAPPROVED_PROFILE"
+        assert list((site.state / "workspaces" / ids["workspace_id"] / "views").iterdir()) == []
+
+
 def test_reader_grant_never_authorizes_rooted_writes(site: Site) -> None:
     with site.owner(view_profile=native_profile(), read_only_profile=read_only_profile()) as owner:
         ids = ok(lambda: site.register(owner))

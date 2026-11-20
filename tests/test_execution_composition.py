@@ -15,6 +15,7 @@ import logging
 import os
 import shlex
 import socket
+import subprocess
 import threading
 import time
 from collections.abc import Iterator
@@ -22,17 +23,19 @@ from contextlib import contextmanager, redirect_stderr
 from dataclasses import asdict, replace
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
 from fa import cli
 from fa.execution import composition
-from fa.execution.cell_worker import serve_once
+from fa.execution.cell_worker import serve, serve_once
 from fa.execution.client import (
+    ExecutionClient,
     ExecutionRejectedError,
     ExecutionUnavailableError,
     ExecutionUncertainError,
+    PlanPublication,
     StagePublication,
 )
 from fa.execution.composition import (
@@ -40,7 +43,6 @@ from fa.execution.composition import (
     ClientWorkspaceProvisioner,
     ExecutionBinding,
     ManagedExecution,
-    PlanPublication,
     client_workspace_provisioner,
     managed_execution_for_run,
 )
@@ -59,6 +61,8 @@ from fa.execution.types import (
 from fa.inner_loop import workflow_controller
 from fa.inner_loop.plan_admission import PlanRef, read_plan_snapshot, snapshot_from_bytes
 from fa.inner_loop.plan_promotion import PlanPromotionError
+from fa.inner_loop.registry import ToolResult
+from fa.inner_loop.state import EventLog
 from fa.providers.base import ResponseInfo
 from fa.runtime.pty_pool import PtyPool
 from fa.session.manager import RunContext, SessionContext, SessionManagerError
@@ -95,6 +99,14 @@ def _document(
         "view_profile_id": native_profile().profile_id,
         "read_only_profile_id": read_only_profile().profile_id,
     }
+
+
+def _status(site: Site, workspace_id: str) -> dict[str, Any]:
+    """The workspace's own record, read the way the authority writes it."""
+    return cast(
+        dict[str, Any],
+        json.loads((site.state / "workspaces" / workspace_id / "workspace.json").read_text()),
+    )
 
 
 def _configs(tmp_path: Path, document: dict[str, Any]) -> tuple[Path, Path]:
@@ -226,7 +238,7 @@ def test_session_cli_refuses_missing_provisioner_before_workspace_lifecycle(
     lifecycle_calls: list[str] = []
 
     class _HostOnlyManager:
-        workspace_provisioner = None
+        workspace_provisioner: None = None
 
         def create_or_attach_session(self, **_kwargs: Any) -> Any:
             lifecycle_calls.append("create_or_attach")
@@ -239,6 +251,48 @@ def test_session_cli_refuses_missing_provisioner_before_workspace_lifecycle(
 
     assert refused.value.code == "managed_execution_unavailable"
     assert lifecycle_calls == []
+
+
+def test_r01_wrapper_run_refuses_overlapping_new_workspace_before_lifecycle_or_provider(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """C2 Q128-B: wrapper preflight refuses an overlapping new root without effects.
+
+    The real ``_cmd_run`` caller uses a real SessionManager with an active
+    manifest/DB. Producer kill-check: remove SessionManager's overlap decision.
+    EDGE kill-check: bypass ``validate_new_workspace_disjoint`` at the CLI call.
+    Either mutant must lose the early ``workspace_overlap`` refusal or perform
+    a provider/lifecycle effect.
+    """
+    from tests.test_cli import _FAKE_MODELS_YAML, _TEST_SECRETS, _make_run_args, _ScriptedTransport
+    from tests.test_session_lifecycle import _manager as make_session_manager
+
+    manager = make_session_manager(tmp_path)
+    active = manager.create_or_attach_session(session_id=None, workspace_override=None)
+    config = tmp_path / "models.yaml"
+    config.write_text(_FAKE_MODELS_YAML, encoding="utf-8")
+    args = _make_run_args(workspace=tmp_path, config=config, run_id="overlap-preflight")
+    args.session_id = None
+    args.resume = False
+    args.output_mode = "console"
+    args.detail = "standard"
+    args.no_color = False
+    args.workspace = "nested"
+    transport = _ScriptedTransport([])
+
+    monkeypatch.setattr(cli, "_session_manager_for_args", lambda _args: manager)
+    monkeypatch.setenv("FA_WRAPPER_ACTIVE_WORKSPACE", str(active.workspace_path))
+    manifests_before = tuple(sorted(manager.sessions_root.glob("*/manifest.json")))
+    nested_workspace = active.workspace_path / "nested"
+
+    code = cli._cmd_run(args, transport=transport, secrets=_TEST_SECRETS)
+    stderr = capsys.readouterr().err
+
+    assert transport.calls == []
+    assert tuple(sorted(manager.sessions_root.glob("*/manifest.json"))) == manifests_before
+    assert not nested_workspace.exists()
+    assert args.workspace == "nested" and args.session_id is None
+    assert code == 2 and "[workspace_overlap]" in stderr
 
 
 def test_session_stage_refuses_missing_managed_execution_before_registry_or_provider(
@@ -260,7 +314,7 @@ def test_session_stage_refuses_missing_managed_execution_before_registry_or_prov
         run_id=run.run_id,
         run_log_dir=run.run_log_dir,
         session_db=None,
-        log=SimpleNamespace(path=run.run_log_dir / "events.jsonl"),
+        log=EventLog(run.run_log_dir / "events.jsonl", run_id=run.run_id),
         workspace=run.workspace_path,
         role="chat",
         plan_ref=None,
@@ -338,11 +392,10 @@ def _managed_publisher(site: Site, tmp_path: Path) -> Iterator[tuple[ManagedExec
 def test_a_host_side_write_before_the_second_publish_is_refused(site: Site, tmp_path: Path) -> None:
     """C1 (CT121): the authority refuses to commit onto bytes it does not hold.
 
-    Today a host-side stage can still write the project tree under the run's own
-    writer. The authority notices at the next commit — `_unchanged` sees a tree that
-    is not the current revision — and refuses. This is the behaviour the strict
-    `xfail` below is aimed at: the refusal is honest, but the write should never be
-    possible in the first place (SLICE4 STEP2).
+    An out-of-band host write can change the canonical tree while the run owns its
+    writer. At the next commit, `_unchanged` detects that the tree is not the current
+    revision and refuses; the managed WRITE-view control below proves the supported
+    stage path can instead publish its bytes and continue.
     """
     with _managed_publisher(site, tmp_path) as (managed, plan_path):
         publisher = BoundPlanPublisher(managed, managed.binding)
@@ -361,32 +414,58 @@ def test_a_host_side_write_before_the_second_publish_is_refused(site: Site, tmp_
                 read_plan_snapshot(site.source, Path(PLAN_RELATIVE)),
                 snapshot_from_bytes("draft.md", b"# Repaired again\n"),
             )
+        assert isinstance(error.value, (ExecutionUncertainError, ExecutionRejectedError))
         assert error.value.code == "CORRUPT_STATE"
         assert plan_path.read_bytes() == b"# Repaired plan\n"  # the first commit stands
 
 
-@pytest.mark.xfail(strict=True, reason="SLICE4 STEP2 cutover: host-side stages must stop writing bytes")
-def test_the_runs_own_second_publication_survives_a_host_side_write(site: Site, tmp_path: Path) -> None:
-    """The limitation, pinned instead of hidden (Q96 = A).
+def test_the_runs_own_second_publication_survives_a_managed_stage_write(site: Site, tmp_path: Path) -> None:
+    """C1: WRITE-view bytes advance the same run's revision before a second plan publish.
 
-    This asserts what the run's held writer *should* buy it — the authority keeps
-    serving this run while host-side stages stop touching the tree. It fails today,
-    which is why it is a strict `xfail`: the step that makes host stages respect the
-    writer must delete this mark, and the mark cannot rot silently.
+    A raw host-side write is correctly rejected by the authority as corrupt state;
+    this test instead exercises the managed composition the stage must use.
     """
-    with _managed_publisher(site, tmp_path) as (managed, _plan_path):
+    from fa.execution.tool_port import ClientWorkspacePort
+
+    # The parent directory is part of the admitted starting revision; only the file
+    # mutation itself is performed through the managed WRITE view.
+    (site.source / "src").mkdir(exist_ok=True)
+    with _managed_publisher(site, tmp_path) as (managed, plan_path):
         publisher = BoundPlanPublisher(managed, managed.binding)
-        publisher.publish_candidate(
+        first = publisher.publish_candidate(
             read_plan_snapshot(site.source, Path(PLAN_RELATIVE)),
             snapshot_from_bytes("draft.md", b"# Repaired plan\n"),
         )
-        (site.source / "src").mkdir(exist_ok=True)
-        (site.source / "src" / "host_side.py").write_text("x = 1\n", encoding="utf-8")
-        promoted = publisher.publish_candidate(
-            read_plan_snapshot(site.source, Path(PLAN_RELATIVE)),
-            snapshot_from_bytes("draft.md", b"# Repaired again\n"),
+        assert plan_path.read_bytes() == b"# Repaired plan\n"
+
+        stage_grant = managed.open_view(
+            access=Access.WRITE,
+            purpose=ViewPurpose.MUTATION,
+            base_revision=managed.current_revision_id,
+            plan_ref=first,
         )
-        assert promoted.sha256 == snapshot_from_bytes("draft.md", b"# Repaired again\n").ref.sha256
+        view = stage_grant.view_ref
+        assert view is not None
+        port = ClientWorkspacePort(
+            managed.client,
+            namespace=managed.binding.namespace,
+            view=view,
+            grant=stage_grant,
+        )
+        written = port.write_file("src/managed_stage.py", "x = 1\n")
+        assert written.bytes == len("x = 1\n")
+        port.suspend()
+
+        stage_publication = managed.publish_stage(stage_grant)
+        assert managed.current_revision_id == stage_publication.revision_id
+        assert (site.source / "src" / "managed_stage.py").read_text(encoding="utf-8") == "x = 1\n"
+
+        next_candidate = snapshot_from_bytes("draft.md", b"# Repaired again\n")
+        second = publisher.publish_candidate(read_plan_snapshot(site.source, Path(PLAN_RELATIVE)), next_candidate)
+        assert first.sha256 != second.sha256
+        assert second.sha256 == next_candidate.ref.sha256
+        assert plan_path.read_bytes() == next_candidate.utf8_bytes
+        assert managed.close() is True
 
 
 def test_the_guards_not_a_dead_socket_decide_which_runs_are_managed(site: Site, tmp_path: Path) -> None:
@@ -494,7 +573,7 @@ def test_the_workflow_root_reaches_promotion(monkeypatch: pytest.MonkeyPatch, tm
         return 0, None
 
     monkeypatch.setattr(cli, "run_workflow", fake_run_workflow)
-    args = SimpleNamespace(
+    args = argparse.Namespace(
         task="ship it",
         task_planner=None,
         task_coder=None,
@@ -799,6 +878,622 @@ class _ManagedChatProviderOracle:
         assert self.observed == [self.canonical_snapshot()], "canonical files changed while the chat stage was live"
         assert not (self.workspace / "managed-chat-note.txt").exists()
         return ResponseInfo("done", 1, 1, "stop"), logical_call_id or "managed-chat", []
+
+
+@pytest.mark.parametrize("refuse_publication", [False, True])
+def test_workflow_root_publishes_candidate_through_real_local_authority(
+    site: Site,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    refuse_publication: bool,
+) -> None:
+    """S3P3 C1: parsed workflow repairs a plan and uses the actual local publisher."""
+    from fa.inner_loop.session_db import SessionDatabase
+    from fa.providers import ProviderChain, SecretStore
+
+    monkeypatch.setenv("FA_STATE_ROOT", str(tmp_path / "fa-state"))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))
+
+    canonical_relative = "worklogs/planning-topology-and-executable-contracts-loop/increments/s3p3-cli-fixture.md"
+    plan_path = site.source / canonical_relative
+    plan_path.parent.mkdir(parents=True, exist_ok=True)
+    source_bytes = b"## SLICE 1: bad heading\n"
+    candidate_bytes = (
+        b"Plan-ID: PLAN-cli-fixture\n\n## SLICE1: CLI routing fixture\nCONTRACTS:\n"
+        b"  CT9001 [CONSTRAINT]: candidate revision remains valid.\n"
+        b"TESTS: tests/test_fixture_contract.py\n"
+    )
+    plan_path.write_bytes(source_bytes)
+    candidate_snapshot = snapshot_from_bytes("draft.md", candidate_bytes)
+    assert workflow_controller._validate_plan_admission(candidate_snapshot).outcome == "PASS"
+    initial_snapshot = read_plan_snapshot(site.source, Path(canonical_relative))
+    assert workflow_controller._validate_plan_admission(initial_snapshot).outcome == "DIAGNOSTICS"
+
+    def canonical_snapshot() -> dict[str, bytes]:
+        excluded = {".git", ".fa", ".venv", ".env"}
+        return {
+            path.relative_to(site.source).as_posix(): path.read_bytes()
+            for path in sorted(site.source.rglob("*"))
+            if path.is_file()
+            and not path.is_symlink()
+            and not excluded.intersection(path.relative_to(site.source).parts)
+        }
+
+    canonical_before = canonical_snapshot()
+    index_path = site.source / ".git" / "index"
+    index_before = index_path.read_bytes()
+
+    models = tmp_path / "models.yaml"
+    models.write_text(
+        """planner:
+  name: test-model
+  family: openai
+  chain:
+    - provider: openrouter
+      model: test/model
+      base_url: https://example.invalid/v1
+      api_key_env: K
+coder:
+  name: test-model
+  family: openai
+  chain:
+    - provider: openrouter
+      model: test/model
+      base_url: https://example.invalid/v1
+      api_key_env: K
+eval:
+  name: test-model
+  family: openai
+  chain:
+    - provider: openrouter
+      model: test/model
+      base_url: https://example.invalid/v1
+      api_key_env: K
+""",
+        encoding="utf-8",
+    )
+    service_path, service_config = _configs(tmp_path, _document(site))
+    monkeypatch.setattr(composition, "DEFAULT_CONFIG_PATH", service_config)
+
+    session_id = "s3p3-session"
+    run_id = "s3p3-refusal" if refuse_publication else "s3p3-success"
+    session_dir = tmp_path / "session"
+    session_dir.mkdir()
+    session_db_path = session_dir / "session.db"
+    session_db = SessionDatabase(session_db_path, session_id=session_id)
+    session = SessionContext(session_id, site.source, session_db_path, session_dir / "manifest.json")
+    run_log_dir = tmp_path / "workflow-run-logs" / run_id
+    run_log_dir.mkdir(parents=True)
+    run = RunContext(run_id, session_id, site.source, session_db_path, run_log_dir)
+    monkeypatch.setattr(
+        cli,
+        "_resolve_workflow_lifecycle",
+        lambda _args, resolved_run_id: (resolved_run_id, session, run, session_db),
+    )
+
+    class _WorkflowWorkspace:
+        @staticmethod
+        def resolve_workflow_workspace(**_kwargs: Any) -> Path:
+            return site.source
+
+    monkeypatch.setattr(cli, "_session_manager_for_args", lambda _args: _WorkflowWorkspace())
+    managed_instances: list[ManagedExecution] = []
+    original_managed_for_run = managed_execution_for_run
+
+    def capture_managed(*args: Any, **kwargs: Any) -> ManagedExecution | None:
+        managed = original_managed_for_run(*args, **kwargs)
+        if managed is not None:
+            managed_instances.append(managed)
+        return managed
+
+    monkeypatch.setattr(cli, "managed_execution_for_run", capture_managed)
+    provider_calls: list[str] = []
+    candidate_writes: list[str] = []
+
+    def provider_request(
+        _chain: Any, request: Any, *, logical_call_id: str | None = None
+    ) -> tuple[Any, str, list[Any]]:
+        provider_calls.append(str(logical_call_id or "s3p3"))
+        write_spec = next(
+            (
+                tool
+                for tool in request.tools
+                if isinstance(tool.get("function"), dict) and tool["function"].get("name") == "fs_write_file"
+            ),
+            None,
+        )
+        properties = (
+            write_spec.get("function", {}).get("parameters", {}).get("properties", {}) if write_spec is not None else {}
+        )
+        target_values = properties.get("path", {}).get("enum") if isinstance(properties, dict) else None
+        tool_messages = [message for message in request.messages if message.get("role") == "tool"]
+        if isinstance(target_values, list) and len(target_values) == 1:
+            target = target_values[0]
+            if tool_messages:
+                response = ResponseInfo("candidate repaired", 1, 1, "stop")
+                return response, logical_call_id or "s3p3", []
+            candidate_writes.append(target)
+            call = {
+                "id": "s3p3-candidate-write",
+                "type": "function",
+                "function": {
+                    "name": "fs_write_file",
+                    "arguments": json.dumps({"path": target, "content": candidate_bytes.decode("utf-8")}),
+                },
+            }
+            return ResponseInfo("", 1, 1, "tool_calls", (call,)), logical_call_id or "s3p3", []
+        system = request.messages[0].get("content", "") if request.messages else ""
+        final_text = (
+            "## Verification Summary\n\n### Step results\n- S1: PASS — candidate committed.\n\n"
+            "### Verdict\nPASS\n\n### Route decision\ncomplete\n"
+            if "First-Agent evaluator" in str(system)
+            else "stage complete"
+        )
+        return ResponseInfo(final_text, 1, 1, "stop"), logical_call_id or "s3p3", []
+
+    monkeypatch.setattr(ProviderChain, "request", provider_request)
+    args = cli.build_parser().parse_args(
+        [
+            "workflow",
+            "planner,coder",
+            "repair and publish the admitted candidate",
+            "--workspace",
+            str(site.source),
+            "--session-id",
+            session_id,
+            "--run-id",
+            run_id,
+            "--config",
+            str(models),
+            "--max-turns",
+            "5",
+            "--plan",
+            canonical_relative,
+        ]
+    )
+    publish_attempts: list[str] = []
+    publish_replies: list[dict[str, Any]] = []
+    with SupervisorService(read_config_file(service_path)) as service:
+        actual_publish = service.authority.publish_candidate_plan
+
+        def record_publish(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            publish_attempts.append(str(kwargs["operation_id"]))
+            if refuse_publication:
+                raise SupervisorError("INPUT_POLICY")
+            reply = actual_publish(*args, **kwargs)
+            publish_replies.append(reply)
+            return reply
+
+        # S3P3 EDGE oracle: WHICH view carried the candidate write. Without this,
+        # a run that wrote the seed to the host `.fa` copy and published it passes
+        # every other assertion here, because the bytes and the reply look the same.
+        candidate_write_views: list[str] = []
+
+        original_write = service._write_file
+
+        def record_write(peer: Any, request: dict[str, Any], deadline: float) -> Any:
+            # The dispatcher looks the handler up by NAME on each call, so the
+            # replacement must be the bound attribute it resolves.
+            view = request.get("view_ref") or {}
+            candidate_write_views.append(str(view.get("purpose")))
+            return original_write(peer, request, deadline)
+
+        monkeypatch.setattr(service, "_write_file", record_write)
+        monkeypatch.setattr(service.authority, "publish_candidate_plan", record_publish)
+        with _serving_supervisor(service):
+            exit_code = cli._cmd_workflow(args, secrets=SecretStore({"K": "sk-test-s3p3"}))
+            assert len(managed_instances) == 1
+            again = managed_execution_for_run(run, config_path=service_config)
+            assert again is not None
+            assert again.binding.workspace_id == managed_instances[0].binding.workspace_id
+            assert again.close() is True
+        workspace_id = managed_instances[0].binding.workspace_id
+        assert site.metadata({"workspace_id": workspace_id})["status"] == "AVAILABLE"
+
+    assert exit_code == (2 if refuse_publication else 0)
+    assert provider_calls and candidate_writes and len(candidate_writes) == 1
+    # Both writes travelled through the CANDIDATE view and neither through a project
+    # view onto the host seed. Two is the expected count and it is a property of the
+    # publication saga, not an accident: the planner stages bytes into the buffer,
+    # and `publish_plan` re-stages the validated snapshot into a FRESH candidate view
+    # before its PUBLISH CAS. Same purpose, two views -- which is precisely why the
+    # oracle records the purpose and not "one write happened".
+    assert candidate_write_views == ["CANDIDATE", "CANDIDATE"], candidate_write_views
+    assert len(publish_attempts) == 1  # determinate refusal is not replayed
+    assert len(publish_replies) == int(not refuse_publication)
+    assert index_path.read_bytes() == index_before
+    expected_tree = canonical_before.copy()
+    if refuse_publication:
+        assert canonical_snapshot() == canonical_before
+        assert plan_path.read_bytes() == source_bytes
+    else:
+        expected_tree[canonical_relative] = candidate_bytes
+        assert canonical_snapshot() == expected_tree
+        assert plan_path.read_bytes() == candidate_bytes
+        reply = publish_replies[0]
+        assert reply["plan_ref"].sha256 == candidate_snapshot.ref.sha256
+        assert reply["plan_ref"].workspace_relative_path == canonical_relative
+        assert reply["revision_id"] != managed_instances[0].grant.revision_id
+
+
+def _constrain_managed_inventory_candidates(monkeypatch: pytest.MonkeyPatch, candidate_limit: int) -> None:
+    from fa.memory import managed_discovery
+
+    if type(candidate_limit) is not int or candidate_limit < 1:
+        raise ValueError("inventory_candidate_limit must be a positive integer")
+    original_inventory = managed_discovery.inventory_managed_files
+
+    def constrained_inventory(root: Path, *, deadline: float, **kwargs: Any) -> Any:
+        kwargs["limits"] = managed_discovery.ManagedDiscoveryLimits(candidates=candidate_limit)
+        return original_inventory(root, deadline=deadline, **kwargs)
+
+    monkeypatch.setattr(managed_discovery, "inventory_managed_files", constrained_inventory)
+
+
+def _run_managed_discovery_c1(
+    site: Site,
+    tmp_path: Path,
+    local_cell_peer: Endpoint,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    calls: tuple[tuple[str, dict[str, Any]], ...],
+    expected_tool_result: str | None = None,
+    inventory_candidate_limit: int | None = None,
+) -> tuple[int, tuple[str, ...], tuple[str, ...]]:
+    """R20 C1 oracle: fa run reaches the typed cell helper without host fallback."""
+    import subprocess
+    from types import SimpleNamespace
+
+    import fa.execution.cell_worker as cell_worker
+    from fa.execution import project_tools
+    from fa.execution.client import ManagedProjectToolExecutor
+    from fa.inner_loop.session_db import SessionDatabase
+    from fa.providers import ProviderChain, SecretStore
+
+    if inventory_candidate_limit is not None:
+        _constrain_managed_inventory_candidates(monkeypatch, inventory_candidate_limit)
+    from fa.session.manager import RunContext, SessionContext
+
+    state_root = tmp_path / "fa-state"
+    monkeypatch.setenv("FA_STATE_ROOT", str(state_root))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))
+    monkeypatch.setattr(cli, "_build_pty_pool", lambda **_kwargs: object())
+
+    models = tmp_path / "models.yaml"
+    models.write_text(
+        """coder:
+  name: "test-model"
+  family: "openai"
+  chain:
+    - provider: openrouter
+      model: "test/model"
+      base_url: "https://example.invalid/v1"
+      api_key_env: K
+""",
+        encoding="utf-8",
+    )
+
+    git_invocations: list[list[str]] = []
+    helper_tool_names: list[str] = []
+    helper_calls_lock = threading.Lock()
+    active_executor_calls = 0
+    max_active_executor_calls = 0
+    executor_calls_lock = threading.Lock()
+
+    def record_host_git(argv: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        git_invocations.append(list(argv))
+        return subprocess.CompletedProcess(list(argv), 0, stdout="", stderr="")
+
+    monkeypatch.setattr("fa.memory._safe_walk.subprocess.run", record_host_git)
+
+    class _ProjectToolProcess:
+        def __init__(self, args: list[str]) -> None:
+            self.args = args
+
+    def start_project_tool(args: list[str], **kwargs: Any) -> _ProjectToolProcess:
+        assert len(args) == 5
+        assert args[1:4] == ["-I", "-m", "fa.execution.project_tools"]
+        assert kwargs == {
+            "stdin": subprocess.DEVNULL,
+            "stdout": subprocess.PIPE,
+            "stderr": subprocess.PIPE,
+            "cwd": str((tmp_path / "local-cell-workspace").resolve()),
+            "env": {
+                "HOME": "/scratch/home",
+                "PATH": "/usr/bin:/bin",
+                "PYTHONNOUSERSITE": "1",
+                "TMPDIR": "/scratch/tmp",
+            },
+            "close_fds": True,
+            "shell": False,
+            "start_new_session": True,
+        }
+        return _ProjectToolProcess(args)
+
+    def run_shipped_project_helper(
+        process: _ProjectToolProcess,
+        *,
+        timeout_ms: int,
+    ) -> tuple[bytes, bytes, int, bool, bool]:
+        assert timeout_ms > 0
+        parsed = project_tools._parse(process.args[-1])
+        assert parsed is not None
+        with helper_calls_lock:
+            helper_tool_names.append(parsed[0])
+        view_sources = sorted((site.state / "workspaces" / workspace_id / "views").glob("*/source"))
+        assert len(view_sources) == 1
+        scratch = tmp_path / "project-tool-scratch"
+        scratch.mkdir(exist_ok=True)
+        result = project_tools._dispatch(parsed[0], parsed[1], root=view_sources[0], scratch=scratch)
+        return (project_tools._envelope(result) + "\n").encode("utf-8"), b"", 0, False, False
+
+    monkeypatch.setattr(
+        cell_worker,
+        "subprocess",
+        SimpleNamespace(Popen=start_project_tool, DEVNULL=subprocess.DEVNULL, PIPE=subprocess.PIPE),
+    )
+    monkeypatch.setattr(cell_worker, "_capture_project_tool", run_shipped_project_helper)
+    original_execute = ManagedProjectToolExecutor.execute
+
+    def track_executor_entry(
+        executor: ManagedProjectToolExecutor,
+        tool: str,
+        params: dict[str, Any],
+        *,
+        timeout: int = 25,
+    ) -> str:
+        nonlocal active_executor_calls, max_active_executor_calls
+        with executor_calls_lock:
+            active_executor_calls += 1
+            max_active_executor_calls = max(max_active_executor_calls, active_executor_calls)
+        try:
+            # Measure overlap before ManagedProjectToolExecutor's own lock; otherwise
+            # its transport lock would conceal a broken loop scheduler edge.
+            time.sleep(0.05)
+            return original_execute(executor, tool, params, timeout=timeout)
+        finally:
+            with executor_calls_lock:
+                active_executor_calls -= 1
+
+    monkeypatch.setattr(ManagedProjectToolExecutor, "execute", track_executor_entry)
+
+    provider_calls = 0
+    tool_result_messages: list[str] = []
+
+    def provider_request(
+        _chain: Any, request: Any, *, logical_call_id: str | None = None
+    ) -> tuple[ResponseInfo, str, list[Any]]:
+        nonlocal provider_calls
+        provider_calls += 1
+        names = {
+            str(tool.get("function", {}).get("name", ""))
+            for tool in request.tools
+            if isinstance(tool.get("function"), dict)
+        }
+        if provider_calls == 1:
+            tool_calls = []
+            for index, (name, params) in enumerate(calls):
+                assert name in names
+                tool_calls.append(
+                    {
+                        "id": f"r20-managed-{name}-{index}",
+                        "type": "function",
+                        "function": {"name": name, "arguments": json.dumps(params)},
+                    }
+                )
+            return ResponseInfo("", 1, 1, "tool_calls", tuple(tool_calls)), logical_call_id or "r20", []
+        tool_result_messages.extend(
+            str(message.get("content", "")) for message in request.messages if message.get("role") == "tool"
+        )
+        return ResponseInfo("done", 1, 1, "stop"), logical_call_id or "r20", []
+
+    monkeypatch.setattr(ProviderChain, "request", provider_request)
+    from fa.inner_loop.state import SessionState
+
+    state_instances: list[SessionState] = []
+
+    def capture_state(*args: Any, **kwargs: Any) -> SessionState:
+        state = SessionState(*args, **kwargs)
+        state_instances.append(state)
+        return state
+
+    monkeypatch.setattr(cli, "SessionState", capture_state)
+    index_path = site.source / ".git" / "index"
+    index_before = index_path.read_bytes()
+    canonical_before = {
+        "dirty.txt": (site.source / "dirty.txt").read_bytes(),
+        "untracked.txt": (site.source / "untracked.txt").read_bytes(),
+    }
+    fts_path = site.source / ".fa" / "fts.db"
+    assert not fts_path.exists()
+    document = _document(site)
+    _configure_local_cell_backend(
+        local_cell_peer,
+        tmp_path,
+        document,
+        interactive_worker=True,
+        project_tool_calls=len(calls),
+    )
+    service_path, config_path = _configs(tmp_path, document)
+    session_db_path = tmp_path / "session.db"
+    run_log_dir = tmp_path / "session-log" / "run-1"
+    session_db = SessionDatabase(session_db_path, session_id="session-1")
+    session_context = SessionContext("session-1", site.source, session_db_path, tmp_path / "manifest.json")
+    run_context = RunContext("run-1", "session-1", site.source, session_db_path, run_log_dir)
+
+    with SupervisorService(read_config_file(service_path)) as service:
+        workspace_id = _registered(service)
+        with _serving_supervisor(service):
+            managed = managed_execution_for_run(run_context, config_path=config_path)
+            assert managed is not None and managed.binding.workspace_id == workspace_id
+            operations: list[Operation] = []
+            exec_bindings: list[tuple[str, str, str, str]] = []
+            original_request = managed.client.request
+
+            def record_request(operation: Operation, **kwargs: Any) -> Any:
+                operations.append(operation)
+                if operation is Operation.EXEC:
+                    view = kwargs["view"]
+                    grant = kwargs["grant"]
+                    payload = kwargs["payload"]
+                    exec_bindings.append(
+                        (
+                            view.view_id,
+                            grant.view_ref.view_id,
+                            payload["profile_id"],
+                            kwargs["request_id"],
+                        )
+                    )
+                return original_request(operation, **kwargs)
+
+            monkeypatch.setattr(managed.client, "request", record_request)
+            args = cli.build_parser().parse_args(
+                [
+                    "run",
+                    "--role",
+                    "coder",
+                    "--config",
+                    str(models),
+                    "--workspace",
+                    str(site.source),
+                    "--run-id",
+                    "run-1",
+                    "--max-turns",
+                    "3",
+                    "search the admitted workspace",
+                ]
+            )
+            args._managed_execution = managed
+            args._session_context = session_context
+            args._run_context = run_context
+            args._session_db = session_db
+            try:
+                assert cli._cmd_run(args, secrets=SecretStore({"K": "sk-test-live"})) == 0
+            finally:
+                assert managed.close()
+
+    assert provider_calls == 2
+    assert len(tool_result_messages) == len(calls)
+    if expected_tool_result is None:
+        assert all("ERROR[" not in message for message in tool_result_messages)
+    else:
+        assert tool_result_messages == [expected_tool_result] * len(calls)
+    assert sorted(helper_tool_names) == sorted(name for name, _ in calls)
+    assert max_active_executor_calls == 1
+    assert git_invocations == []
+    assert operations.count(Operation.EXEC) == len(calls), operations
+    assert len(exec_bindings) == len(calls)
+    view_ids = tuple(binding[0] for binding in exec_bindings)
+    assert len(set(view_ids)) == 1
+    assert all(view_id == grant_view_id for view_id, grant_view_id, _, _ in exec_bindings)
+    assert len({profile_id for _, _, profile_id, _ in exec_bindings}) == 1
+    assert len({request_id for _, _, _, request_id in exec_bindings}) == len(calls)
+    creates = [
+        item for item in local_cell_peer.seen if item["method"] == "POST" and "/containers/create?" in item["path"]
+    ]
+    starts = [item for item in local_cell_peer.seen if item["method"] == "POST" and item["path"].endswith("/start")]
+    kills = [item for item in local_cell_peer.seen if item["method"] == "POST" and "/kill?" in item["path"]]
+    assert len(creates) == 1 and len(starts) == 1 and len(kills) == 1
+    assert creates[0]["body"]["Labels"]["fa.execution.operation_id"] == "op-" + exec_bindings[0][3]
+    assert all(
+        CELL_CID in item["path"]
+        for item in local_cell_peer.seen
+        if "/containers/" in item["path"] and "/containers/create?" not in item["path"]
+    )
+    assert not any(operation in {Operation.READ_FILE, Operation.WRITE_FILE} for operation in operations), operations
+    assert index_path.read_bytes() == index_before
+    assert {name: (site.source / name).read_bytes() for name in canonical_before} == canonical_before
+    assert not fts_path.exists()
+    assert len(state_instances) == 1
+    if expected_tool_result is None:
+        assert state_instances[0].last_search_paths
+        assert all(
+            not path.startswith("/") and ".." not in path.split("/") for path in state_instances[0].last_search_paths
+        )
+    else:
+        assert not state_instances[0].last_search_paths
+    assert not local_cell_peer.replies, "the interactive EXEC and settlement HTTP sequence must be exhausted"
+    return max_active_executor_calls, tuple(helper_tool_names), view_ids
+
+
+def test_managed_fs_search_uses_typed_exec_without_host_git_or_workspace_io(
+    site: Site,
+    tmp_path: Path,
+    local_cell_peer: Endpoint,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R20 C1 success path through the managed role registry and typed helper."""
+    max_active, helpers, view_ids = _run_managed_discovery_c1(
+        site,
+        tmp_path,
+        local_cell_peer,
+        monkeypatch,
+        calls=(("fs_search", {"output_mode": "files"}),),
+    )
+    assert max_active == 1 and helpers == ("fs_search",) and len(view_ids) == 1
+
+
+@pytest.mark.parametrize(
+    ("tool", "params", "expected_tool_result"),
+    [
+        (
+            "fs_search",
+            {"output_mode": "files"},
+            "ERROR[search_failed]: managed search refused (candidate_budget)",
+        ),
+        (
+            "fs_reach",
+            {"symbol": "Site", "direction": "down"},
+            "ERROR[reach_failed]: managed reach refused (candidate_budget)",
+        ),
+    ],
+)
+def test_managed_discovery_budget_refusal_reaches_typed_exec_without_host_fallback(
+    site: Site,
+    tmp_path: Path,
+    local_cell_peer: Endpoint,
+    monkeypatch: pytest.MonkeyPatch,
+    tool: str,
+    params: dict[str, Any],
+    expected_tool_result: str,
+) -> None:
+    """Production C1 proves bounded producer and helper edge before index allocation."""
+    (site.source / "budget-first.py").write_text("value = 1\n", encoding="utf-8")
+    (site.source / "budget-second.py").write_text("value = 2\n", encoding="utf-8")
+    max_active, helpers, view_ids = _run_managed_discovery_c1(
+        site,
+        tmp_path,
+        local_cell_peer,
+        monkeypatch,
+        calls=((tool, params),),
+        expected_tool_result=expected_tool_result,
+        inventory_candidate_limit=1,
+    )
+    assert max_active == 1 and helpers == (tool,) and len(view_ids) == 1
+
+
+def test_managed_discovery_calls_serialize_per_view(
+    site: Site,
+    tmp_path: Path,
+    local_cell_peer: Endpoint,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Production C1: same-view search/reach entries do not overlap before EXEC's own lock."""
+    max_active, helpers, view_ids = _run_managed_discovery_c1(
+        site,
+        tmp_path,
+        local_cell_peer,
+        monkeypatch,
+        calls=(
+            ("fs_search", {"output_mode": "files"}),
+            ("fs_reach", {"symbol": "Site"}),
+        ),
+    )
+    assert max_active == 1
+    assert sorted(helpers) == ["fs_reach", "fs_search"]
+    assert len(view_ids) == 2 and len(set(view_ids)) == 1
 
 
 @contextmanager
@@ -1220,7 +1915,8 @@ def test_managed_fs_search_refuses_before_host_git_or_workspace_io(
                 assert managed.close()
 
     assert provider_calls == 2
-    assert tool_result_messages == ["ERROR[search_failed]: managed cell-local search index is unavailable"]
+    assert tool_result_messages == ["ERROR[execution_unavailable]: managed project tool backend unavailable"]
+    assert operations.count(Operation.EXEC) == 1
     assert git_invocations == []
     assert not any(operation in {Operation.READ_FILE, Operation.WRITE_FILE} for operation in operations), operations
     assert index_path.read_bytes() == index_before
@@ -1417,7 +2113,12 @@ def _local_cell_observation(peer: Endpoint, profile: Any, status: str, *, exit_c
 
 
 def _configure_local_cell_backend(
-    peer: Endpoint, tmp_path: Path, document: dict[str, Any]
+    peer: Endpoint,
+    tmp_path: Path,
+    document: dict[str, Any],
+    *,
+    interactive_worker: bool = False,
+    project_tool_calls: int = 1,
 ) -> tuple[Any, Any, CountingWorker]:
     cell_profile = replace(native_profile(), uid=os.getuid(), gid=os.getgid(), max_command_ms=5000)
     reader_profile = replace(read_only_profile(), uid=os.getuid(), gid=os.getgid(), max_command_ms=5000)
@@ -1437,7 +2138,7 @@ def _configure_local_cell_backend(
         PtyPool(base_cwd=worker_root),
         workspace=worker_root,
         max_command_ms=reader_profile.max_command_ms,
-        one_shot=True,
+        one_shot=not interactive_worker,
     )
     document.update(
         {
@@ -1452,7 +2153,14 @@ def _configure_local_cell_backend(
     worker_exit_codes: list[int] = []
 
     def attach_worker(connection: socket.socket) -> None:
-        worker_exit_codes.append(serve_once(cell_worker, MuxWorker(connection)))
+        mux = MuxWorker(connection)
+        if interactive_worker:
+            try:
+                serve(cell_worker, mux)
+            except (OSError, ValueError):
+                pass  # Service shutdown closes the persistent attach.
+        else:
+            worker_exit_codes.append(serve_once(cell_worker, mux))
 
     def inspect_reply(status: str) -> Reply:
         return Reply(
@@ -1471,10 +2179,15 @@ def _configure_local_cell_backend(
             Reply(204),
             inspect_reply("running"),
             Reply(raw=UPGRADE, upgraded=attach_worker),
-            inspect_reply("exited"),
-            inspect_reply("exited"),
         ]
     )
+    if interactive_worker:
+        if type(project_tool_calls) is not int or project_tool_calls < 1:
+            raise ValueError("project_tool_calls must be a positive integer")
+        peer.replies.extend(inspect_reply("running") for _ in range(project_tool_calls))
+        peer.replies.extend([inspect_reply("running"), Reply(204), inspect_reply("exited")])
+    else:
+        peer.replies.extend([inspect_reply("exited"), inspect_reply("exited")])
     return cell_profile, reader_profile, cell_worker
 
 
@@ -1818,7 +2531,7 @@ def _watch_workflow_revision_diff(service: Any, provider_oracle: Any, mode: str)
         assert service.authority._bindings[workspace_id].current["revision_id"] == before_revision
         return result
 
-    service._diff_revisions = counted  # type: ignore[method-assign]
+    service._diff_revisions = counted
     return calls, effects
 
 
@@ -1958,7 +2671,7 @@ eval:
         lambda _args, run_id: (run_id, session, run, session_db),
     )
     managed_instances: list[ManagedExecution] = []
-    original_managed_for_run = cli.managed_execution_for_run
+    original_managed_for_run = managed_execution_for_run
 
     def track_managed_for_run(*args: Any, **kwargs: Any) -> ManagedExecution | None:
         managed = original_managed_for_run(*args, **kwargs)
@@ -2104,9 +2817,8 @@ eval:
     assert any(row["kind"] == "tool_result" and row["tool_name"] == "fs_read_file" for row in child_rows)
 
 
-def test_failed_stage_stop_is_not_retried_by_cleanup(tmp_path: Path) -> None:
+def test_failed_stage_stop_is_not_retried_by_cleanup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """An unproved STOP_VIEW is one attempt, not an invitation to retry in cleanup."""
-    from fa.execution.client import ExecutionClient
     from fa.inner_loop.coder_loop import SessionOutcome
     from fa.inner_loop.registry import ToolRegistry
 
@@ -2138,14 +2850,14 @@ def test_failed_stage_stop_is_not_retried_by_cleanup(tmp_path: Path) -> None:
         stop_calls += 1
         return False
 
-    managed = SimpleNamespace(
-        view_profile=native_profile(),
-        current_revision_id=revision_id,
-        binding=ExecutionBinding(NamespaceRef("session-1", "stage-run"), workspace_id),
+    managed = ManagedExecution(
         client=ExecutionClient(tmp_path / "supervisor.sock", server_uid=os.getuid(), rpc_timeout_ms=100),
-        open_view=lambda **_kwargs: view_grant,
-        stop_view=stop_view,
+        binding=ExecutionBinding(NamespaceRef("session-1", "stage-run"), workspace_id),
+        grant=GrantReply(Operation.ACQUIRE_WRITER, "6" * 64, None, 1, revision_id, None),
+        view_profile=native_profile(),
     )
+    monkeypatch.setattr(managed, "open_view", lambda **_kwargs: view_grant)
+    monkeypatch.setattr(managed, "stop_view", stop_view)
 
     with pytest.raises(ExecutionUnavailableError):
         cli._drive_stage_with_managed_workspace(
@@ -2296,7 +3008,7 @@ def _paths_to(value: str, holder: Any) -> set[tuple[str, ...]]:
     return found
 
 
-def test_the_writer_capability_lives_in_exactly_one_place() -> None:
+def test_the_writer_capability_lives_in_exactly_one_place(tmp_path: Path) -> None:
     """Q90, stated as what this design actually claims, and made checkable.
 
     Q90's letter - "``ExecutionClient`` alone caches and selects raw grants" - is not
@@ -2309,7 +3021,7 @@ def test_the_writer_capability_lives_in_exactly_one_place() -> None:
     capability = "7" * 64
     binding = ExecutionBinding(NamespaceRef("session-1", "run-1"), "ws-" + "1" * 32)
     managed = ManagedExecution(
-        _ScriptedAuthority(lost=set(), answer_the_replay=True),
+        ExecutionClient(tmp_path / "supervisor.sock", server_uid=os.getuid(), rpc_timeout_ms=100),
         binding,
         GrantReply(Operation.ACQUIRE_WRITER, capability, None, 1, "rev-" + "2" * 32),
     )
@@ -2374,7 +3086,7 @@ def test_an_unconfirmed_writer_is_reported_to_the_operator(monkeypatch: pytest.M
     monkeypatch.setattr(
         cli, "managed_execution_for_run", lambda *a, **k: (_ for _ in ()).throw(ExecutionUncertainError("op-1"))
     )
-    args = SimpleNamespace(
+    args = argparse.Namespace(
         task="ship it",
         task_planner=None,
         task_coder=None,
@@ -2684,7 +3396,7 @@ def test_the_manager_takes_its_provisioner_from_the_operator_config(
     """producer-kill-check: leave the manager on the host path while an execution service is configured."""
     config_path = tmp_path / "config.yaml"
     monkeypatch.setattr(composition, "DEFAULT_CONFIG_PATH", config_path)
-    args = SimpleNamespace(workspace=site.source)
+    args = argparse.Namespace(workspace=site.source)
     assert cli._session_manager_for_args(args).workspace_provisioner is None  # no operator file: host path
     service_path = tmp_path / "execution.json"
     service_path.write_text(json.dumps(_document(site)), encoding="utf-8")
@@ -2767,14 +3479,14 @@ def test_r10_managed_chat_bash_refusal_never_falls_back_to_host(
 
     def trapped_fallback(*args: Any, **_kwargs: Any) -> Any:
         fallback_calls.append(args)
-        return run_bash_module.ToolResult.fail("mutant_host_fallback", "host fallback tripwire", retryable=False)
+        return ToolResult.fail("mutant_host_fallback", "host fallback tripwire", retryable=False)
 
     def trapped_subprocess(*args: Any, **_kwargs: Any) -> Any:
         host_process_calls.append(args)
         raise AssertionError("host subprocess tripwire reached")
 
     monkeypatch.setattr(run_bash_module, "_run_subprocess_fallback", trapped_fallback)
-    monkeypatch.setattr(run_bash_module.subprocess, "run", trapped_subprocess)
+    monkeypatch.setattr(subprocess, "run", trapped_subprocess)
     exec_requests: list[dict[str, Any]] = []
     exec_denials: list[str] = []
 
@@ -2832,3 +3544,626 @@ def test_r10_managed_chat_bash_refusal_never_falls_back_to_host(
     assert bash_results[0]["error"]["retryable"] is False
     assert len(exec_requests) == 1 and exec_denials == ["BACKEND_UNAVAILABLE"]
     assert not (site.source / "r10-host-marker").exists()
+
+
+@pytest.mark.parametrize("lost_reply", [False, True], ids=["handler-refused", "reply-lost"])
+def test_an_unresolved_candidate_publication_keeps_the_writer_and_reconciles(
+    site: Site, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, lost_reply: bool
+) -> None:
+    """Q138 option B / Q114 1-A: the run, not the caller, holds the pending proof.
+
+    The two failure shapes this covers are exactly the two the journal can answer
+    differently, and the difference is the whole reason the pending record exists:
+
+    * ``handler-refused`` — the authority's PUBLISH handler really failed. The
+      journal records ``UNKNOWN``, and by design (``_completed``) that id never
+      becomes ``DONE``. Replay therefore cannot prove publication; the honest
+      outcome is another uncertainty, and the run keeps the writer fenced.
+    * ``reply-lost`` — the commit happened and only the reply vanished. Replay of
+      the *same* id is answered from the journal and the completed-reply cache, so
+      reconciliation proves the publication without performing a second effect.
+
+    The invariant in both: while the outcome is unknown, `close()` must NOT release
+    the writer and the CANDIDATE view must NOT be dropped while the workspace goes
+    back to `AVAILABLE`.
+
+    R25 binds reconciliation to the port, so this test drives
+    ``ManagedExecution.publish_plan`` directly. That is deliberate: the port's own
+    behaviour (reconcile once, then classify) is a separate oracle below, and a
+    test that went through the port could no longer observe the unresolved state at
+    all -- precisely because the port now settles it.
+    """
+    plan_path = site.source / PLAN_RELATIVE
+    plan_path.parent.mkdir(parents=True, exist_ok=True)
+    plan_path.write_bytes(b"# Existing plan\n")
+    source = read_plan_snapshot(site.source, Path(PLAN_RELATIVE))
+    candidate = snapshot_from_bytes("draft.md", b"# Repaired plan\n")
+    service_path, yaml_path = _configs(tmp_path, _document(site))
+    with SupervisorService(read_config_file(service_path)) as service:
+        workspace_id = _registered(service)
+        stop = threading.Event()
+        runner = threading.Thread(target=service.serve_forever, args=(stop,), daemon=True)
+        runner.start()
+        original = service.authority.publish_candidate_plan
+        seen: list[str] = []
+        client_class = ExecutionClient
+
+        def sabotage(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            seen.append(str(kwargs.get("operation_id")))
+            if len(seen) <= 2:
+                # The handler itself fails. The journal records UNKNOWN, and by
+                # design that id never becomes DONE, so replay cannot prove
+                # anything and reconciliation must stay honest.
+                raise SupervisorError("DURABILITY_UNKNOWN")
+            return original(*args, **kwargs)
+
+        handler_calls: list[str] = []
+        real = service.authority.publish_candidate_plan
+
+        def counted(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            handler_calls.append(str(kwargs.get("operation_id")))
+            return real(*args, **kwargs)
+
+        if not lost_reply:
+            monkeypatch.setattr(service.authority, "publish_candidate_plan", sabotage)
+        else:
+            # The authority completes the publication; only the reply is lost on
+            # the way back, which is the one shape a same-id replay can settle
+            # because the journal and the completed-reply cache both survive it.
+            original_request = ExecutionClient.request
+            lost: set[str] = set()
+
+            def losing_request(self: Any, operation: Any, *, request_id: str, **kwargs: Any) -> Any:
+                if operation is Operation.PUBLISH:
+                    seen.append(request_id)
+                answer = original_request(self, operation, request_id=request_id, **kwargs)
+                if operation is Operation.PUBLISH and not lost:
+                    # The supervisor completed the operation; the reply is dropped
+                    # exactly once, as a timeout would drop it.
+                    lost.add(request_id)
+                    raise ExecutionUncertainError("op-" + request_id, code="EXECUTION_UNKNOWN")
+                return answer
+
+            monkeypatch.setattr(service.authority, "publish_candidate_plan", counted)
+            monkeypatch.setattr(client_class, "request", losing_request)
+        try:
+            run = _run(site.source)
+            managed = managed_execution_for_run(run, config_path=yaml_path)
+            assert managed is not None
+            with pytest.raises(ExecutionUncertainError) as unresolved:
+                managed.publish_plan(source, candidate)
+            pending = unresolved.value.pending_publication
+            assert pending is not None
+            assert managed.publication_pending is True
+
+            # The writer is fenced: no release while the outcome is unknown.
+            assert managed.close() is False
+            assert _status(site, workspace_id)["status"] == "OWNED"
+
+            if lost_reply:
+                proof = managed.reconcile_publication()
+                assert proof.plan_ref.sha256 == candidate.ref.sha256
+                # The commit was the first attempt's, so `already_published` is the
+                # value that attempt would have reported: reconciliation proves the
+                # revision exists rather than claiming a second publication.
+                assert proof.already_published is False
+                assert proof.revision_id.startswith("rev-")
+                # Reconciliation replayed the minted id and the authority answered
+                # from its journal and reply cache: no second id was ever minted,
+                # so no second effect could be performed.
+                publish_request_id = pending.publish_request_id
+                assert isinstance(publish_request_id, str)
+                assert set(seen) == {publish_request_id}
+                assert len(seen) == 2  # the lost attempt and the reconciliation
+                # ...and the authority performed the publication exactly once.
+                assert handler_calls == ["op-" + publish_request_id]
+                assert managed.publication_pending is False
+                assert plan_path.read_bytes() == candidate.utf8_bytes
+                # Only now may the writer go back.
+                assert managed.close() is True
+                assert _status(site, workspace_id)["status"] == "AVAILABLE"
+            else:
+                # A failed handler is not proof either way: reconcile honestly
+                # raises again, with the same pending record, and stays fenced.
+                with pytest.raises(ExecutionUncertainError) as again:
+                    managed.reconcile_publication()
+                assert again.value.pending_publication is pending
+                assert managed.publication_pending is True
+                assert managed.close() is False
+                assert _status(site, workspace_id)["status"] == "OWNED"
+                # The canonical plan never moved: no half-commit is claimed.
+                assert plan_path.read_bytes() == b"# Existing plan\n"
+        finally:
+            stop.set()
+            runner.join(timeout=5)
+            assert not runner.is_alive()
+
+
+@pytest.mark.parametrize("ambiguity", ["reply-lost", "handler-refused", "determinate-refusal"])
+def test_the_bound_publisher_reconciles_one_ambiguity_and_then_classifies(
+    site: Site, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, ambiguity: str
+) -> None:
+    """R25 DoD: bound publisher, one-shot uncertainty, no premature release.
+
+    The port is the only place that can decide the difference between "recoverable
+    now" and "quarantine", so all three shapes are driven through it and the
+    *observable* consequence is asserted, not the internal flag:
+
+    * ``reply-lost`` — the commit happened, the reply vanished. The port replays the
+      same ids, proves the revision, returns the promoted PlanRef, and the writer is
+      released only afterwards. The run never enters quarantine.
+    * ``handler-refused`` — the authority's PUBLISH handler failed, so the journal
+      holds UNKNOWN and no replay can prove anything. The port raises the
+      uncertainty, the writer stays fenced, and the workspace stays OWNED.
+    * ``determinate-refusal`` — the authority refuses before anything was staged.
+      That is the pre-existing R25 refusal, and it is the *good* case: no pending
+      saga exists, so nothing is replayed and the writer is released normally. The
+      canonical plan is untouched and no candidate view is left behind.
+
+    In every arm the canonical plan is only ever the old bytes or the candidate
+    bytes — never a partial state — and no second publication id is minted.
+    """
+    plan_path = site.source / PLAN_RELATIVE
+    plan_path.parent.mkdir(parents=True, exist_ok=True)
+    plan_path.write_bytes(b"# Existing plan\n")
+    original_bytes = plan_path.read_bytes()
+    source = read_plan_snapshot(site.source, Path(PLAN_RELATIVE))
+    candidate = snapshot_from_bytes("draft.md", b"# Repaired plan\n")
+    service_path, yaml_path = _configs(tmp_path, _document(site))
+    with SupervisorService(read_config_file(service_path)) as service:
+        workspace_id = _registered(service)
+        stop = threading.Event()
+        runner = threading.Thread(target=service.serve_forever, args=(stop,), daemon=True)
+        runner.start()
+        original = service.authority.publish_candidate_plan
+        seen: list[str] = []
+
+        def sabotage(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            seen.append(str(kwargs.get("operation_id")))
+            if ambiguity == "determinate-refusal":
+                raise SupervisorError("INPUT_POLICY")
+            if len(seen) <= 2:
+                raise SupervisorError("DURABILITY_UNKNOWN")
+            return original(*args, **kwargs)
+
+        lost: set[str] = set()
+        client_request = ExecutionClient.request
+        published_ids: list[str] = []
+
+        def counting_request(self: Any, operation: Any, *, request_id: str, **kwargs: Any) -> Any:
+            if operation is Operation.PUBLISH:
+                published_ids.append(request_id)
+            answer = client_request(self, operation, request_id=request_id, **kwargs)
+            if ambiguity == "reply-lost" and operation is Operation.PUBLISH and not lost:
+                lost.add(request_id)
+                raise ExecutionUncertainError("op-" + request_id, code="EXECUTION_UNKNOWN")
+            return answer
+
+        if ambiguity == "reply-lost":
+            monkeypatch.setattr(ExecutionClient, "request", counting_request)
+        else:
+            monkeypatch.setattr(service.authority, "publish_candidate_plan", sabotage)
+        try:
+            run = _run(site.source)
+            managed = managed_execution_for_run(run, config_path=yaml_path)
+            assert managed is not None
+            publisher = BoundPlanPublisher(managed, managed.binding)
+            if ambiguity == "reply-lost":
+                before = managed.current_revision_id
+                promoted = publisher.publish_candidate(source, candidate)
+                assert promoted.sha256 == candidate.ref.sha256
+                # The run must now sit on the revision the authority actually
+                # committed. "Changed" is not enough: a wrong-but-different id would
+                # make every later CAS fail with STALE_REVISION against the
+                # authority's own truth, so the value is pinned to the workspace
+                # record rather than to the port's return value (a PlanRef carries
+                # no revision id).
+                assert managed.current_revision_id != before
+                head = json.loads((site.state / "workspaces" / workspace_id / "current.json").read_text())[
+                    "revision_id"
+                ]
+                assert managed.current_revision_id == head
+                assert managed.publication_pending is False
+                assert plan_path.read_bytes() == candidate.utf8_bytes
+                # Exactly one id, replayed: the commit happened once.
+                assert len(set(published_ids)) == 1
+                assert managed.close() is True
+                assert _status(site, workspace_id)["status"] == "AVAILABLE"
+            elif ambiguity == "determinate-refusal":
+                with pytest.raises(ExecutionRejectedError):
+                    publisher.publish_candidate(source, candidate)
+                # A determinate refusal leaves no saga behind, so the writer is not
+                # fenced: the run ends clean and the workspace is reusable.
+                assert managed.publication_pending is False
+                assert managed.close() is True
+                assert _status(site, workspace_id)["status"] == "AVAILABLE"
+                assert plan_path.read_bytes() == original_bytes
+            else:
+                with pytest.raises(ExecutionUncertainError):
+                    publisher.publish_candidate(source, candidate)
+                # The port did attempt the reconciliation (it is not the pre-R25
+                # behaviour of leaving the ambiguity unexamined) ...
+                assert managed.publication_pending is True
+                # ... and the writer is fenced behind it.
+                assert managed.close() is False
+                assert _status(site, workspace_id)["status"] == "OWNED"
+                # No half-commit is ever claimed.
+                assert plan_path.read_bytes() == original_bytes
+        finally:
+            stop.set()
+            runner.join(timeout=5)
+            assert not runner.is_alive()
+
+
+def test_the_port_does_not_invent_a_saga_when_create_view_was_lost(
+    site: Site, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """EDGE / E512 closure: lost CREATE_VIEW reply reconciles via exact id; unknown CREATE_VIEW stays fenced.
+
+    Two real outcomes on ``CREATE_VIEW`` uncertainty:
+    1. Only the reply was lost while the authority recorded the view under
+       ``op-<create_request_id>``: ``BoundPlanPublisher`` replays that exact
+       ``create_request_id`` once (never minting a second view), recovers the
+       view handle, completes publication, and releases the workspace cleanly.
+    2. ``CREATE_VIEW`` itself failed/unknown (so the exact-id replay also returns
+       ``ExecutionUncertainError``): no second ``create_request_id`` is minted,
+       the pending handle remains held, ``close()`` refuses, and the workspace
+       stays ``OWNED`` (and quarantines on restart).
+    """
+    plan_path = site.source / PLAN_RELATIVE
+    plan_path.parent.mkdir(parents=True, exist_ok=True)
+    plan_path.write_bytes(b"# Existing plan\n")
+    original_bytes = plan_path.read_bytes()
+    source = read_plan_snapshot(site.source, Path(PLAN_RELATIVE))
+    candidate = snapshot_from_bytes("draft.md", b"# Repaired plan\n")
+    service_path, yaml_path = _configs(tmp_path, _document(site))
+
+    # --- 1. Lost CREATE_VIEW reply recovers cleanly via exact-id replay ---
+    with SupervisorService(read_config_file(service_path)) as service:
+        workspace_id = _registered(service)
+        stop = threading.Event()
+        runner = threading.Thread(target=service.serve_forever, args=(stop,), daemon=True)
+        runner.start()
+        original = ExecutionClient.request
+        create_ids: list[str] = []
+        lost: set[str] = set()
+
+        def losing_reply_once(self: Any, operation: Any, *, request_id: str, **kwargs: Any) -> Any:
+            if operation is Operation.CREATE_VIEW:
+                create_ids.append(request_id)
+            answer = original(self, operation, request_id=request_id, **kwargs)
+            if operation is Operation.CREATE_VIEW and not lost:
+                lost.add(request_id)
+                raise ExecutionUncertainError("op-" + request_id, code="EXECUTION_UNKNOWN")
+            return answer
+
+        monkeypatch.setattr(ExecutionClient, "request", losing_reply_once)
+        try:
+            run = _run(site.source)
+            managed = managed_execution_for_run(run, config_path=yaml_path)
+            assert managed is not None
+            publisher = BoundPlanPublisher(managed, managed.binding)
+            promoted = publisher.publish_candidate(source, candidate)
+            assert promoted.sha256 == candidate.ref.sha256
+            assert len(create_ids) == 2 and len(set(create_ids)) == 1
+            assert plan_path.read_bytes() == candidate.utf8_bytes
+            assert managed.publication_pending is False
+            assert managed.close() is True
+            assert _status(site, workspace_id)["status"] == "AVAILABLE"
+        finally:
+            monkeypatch.setattr(ExecutionClient, "request", original)
+            stop.set()
+            runner.join(timeout=5)
+            assert not runner.is_alive()
+
+    # Reset plan for arm 2 and prove unknown CREATE_VIEW fails closed without inventing a second view.
+    with SupervisorService(read_config_file(service_path)) as service:
+        stop = threading.Event()
+        runner = threading.Thread(target=service.serve_forever, args=(stop,), daemon=True)
+        runner.start()
+        original = ExecutionClient.request
+        create_ids_fail: list[str] = []
+
+        def persistent_create_unknown(self: Any, operation: Any, *, request_id: str, **kwargs: Any) -> Any:
+            if operation is Operation.CREATE_VIEW:
+                create_ids_fail.append(request_id)
+                raise ExecutionUncertainError("op-" + request_id, code="EXECUTION_UNKNOWN")
+            return original(self, operation, request_id=request_id, **kwargs)
+
+        monkeypatch.setattr(ExecutionClient, "request", persistent_create_unknown)
+        try:
+            source2 = read_plan_snapshot(site.source, Path(PLAN_RELATIVE))
+            candidate2 = snapshot_from_bytes("draft.md", b"# Second candidate\n")
+            run2 = RunContext("run-2", "session-1", site.source, site.source / ".db", site.source / "logs")
+            managed2 = managed_execution_for_run(run2, config_path=yaml_path)
+            assert managed2 is not None
+            publisher2 = BoundPlanPublisher(managed2, managed2.binding)
+            with pytest.raises(ExecutionUncertainError):
+                publisher2.publish_candidate(source2, candidate2)
+            assert len(create_ids_fail) == 2 and len(set(create_ids_fail)) == 1
+            assert managed2.publication_pending is True
+            assert managed2.close() is False
+            assert _status(site, workspace_id)["status"] == "OWNED"
+            assert plan_path.read_bytes() != candidate2.utf8_bytes
+            assert plan_path.read_bytes() == candidate.utf8_bytes or plan_path.read_bytes() == original_bytes
+        finally:
+            monkeypatch.setattr(ExecutionClient, "request", original)
+            stop.set()
+            runner.join(timeout=5)
+            assert not runner.is_alive()
+
+    # Process death before reconciliation leaves the orphaned OWNED workspace QUARANTINED.
+    with SupervisorService(read_config_file(service_path)):
+        assert _status(site, workspace_id)["status"] == "QUARANTINED"
+
+
+@pytest.mark.parametrize("lost_op", [Operation.WRITE_FILE, Operation.STOP_VIEW])
+def test_bound_plan_publisher_reconciles_lost_write_and_stop_view_without_duplicate_view(
+    site: Site, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, lost_op: Operation
+) -> None:
+    """E512: lost WRITE_FILE or STOP_VIEW reply recovers the same single CANDIDATE view and commits cleanly."""
+    plan_path = site.source / PLAN_RELATIVE
+    plan_path.parent.mkdir(parents=True, exist_ok=True)
+    plan_path.write_bytes(b"# Existing plan\n")
+    source = read_plan_snapshot(site.source, Path(PLAN_RELATIVE))
+    candidate = snapshot_from_bytes("draft.md", b"# Repaired plan\n")
+    service_path, yaml_path = _configs(tmp_path, _document(site))
+
+    with SupervisorService(read_config_file(service_path)) as service:
+        workspace_id = _registered(service)
+        original = ExecutionClient.request
+        lost_ids: set[str] = set()
+        create_ids: list[str] = []
+        target_ids: list[str] = []
+
+        def lose_once(self: Any, operation: Any, *, request_id: str, **kwargs: Any) -> Any:
+            if operation is Operation.CREATE_VIEW:
+                create_ids.append(request_id)
+            if operation is lost_op:
+                target_ids.append(request_id)
+            answer = original(self, operation, request_id=request_id, **kwargs)
+            if operation is lost_op and not lost_ids:
+                lost_ids.add(request_id)
+                raise ExecutionUncertainError("op-" + request_id, code="EXECUTION_UNKNOWN")
+            return answer
+
+        monkeypatch.setattr(ExecutionClient, "request", lose_once)
+        with _serving_supervisor(service):
+            managed = managed_execution_for_run(_run(site.source), config_path=yaml_path)
+            assert managed is not None
+            publisher = BoundPlanPublisher(managed, managed.binding)
+            promoted = publisher.publish_candidate(source, candidate)
+            assert promoted.sha256 == candidate.ref.sha256
+            assert len(create_ids) == 1
+            assert len(target_ids) == 2 and len(set(target_ids)) == 1
+            assert managed.publication_pending is False
+            assert managed.close() is True
+            assert _status(site, workspace_id)["status"] == "AVAILABLE"
+
+
+@pytest.mark.parametrize("saga", ["pending-publication", "orphaned-candidate-view"])
+def test_a_second_run_on_a_workspace_the_first_left_unsettled_is_refused_not_stranded(
+    site: Site, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, saga: str
+) -> None:
+    """E509 step 6 — the cross-cutting oracle, as a *consequence* rather than a detail.
+
+    Every other Q114 oracle asserts an inner fact (a flag, a code, one call count).
+    This one asserts the thing an operator actually experiences: run A ends badly,
+    and then run B arrives at the same workspace. There are exactly two acceptable
+    endings - B works, or B is refused for a reason it can report. What must never
+    happen is the third: B succeeds while A's private bytes are still stranded, so
+    the workspace looks free, the buffer is unreachable forever, and nobody is told.
+
+    Two shapes of "left unsettled", because they fail differently:
+
+    * ``pending-publication`` — A owns a replayable saga whose outcome the journal
+      can still prove (a lost *reply*), so A settles it and its writer goes back. B
+      then succeeds; the workspace was never lost.
+    * ``orphaned-candidate-view`` — A did not reconcile after a lost ``CREATE_VIEW``
+      reply, so A holds the unresolved saga fence (``publication_pending is True``
+      and ``close() is False``) and the workspace stays ``OWNED`` so B is refused
+      with ``WORKSPACE_BUSY``. Once A calls ``reconcile_publication()`` with
+      recovered transport, the exact ``create_request_id`` settles the same view,
+      ``close()`` releases to ``AVAILABLE``, and a subsequent run succeeds cleanly.
+    """
+    plan_path = site.source / PLAN_RELATIVE
+    plan_path.parent.mkdir(parents=True, exist_ok=True)
+    plan_path.write_bytes(b"# Existing plan\n")
+    source = read_plan_snapshot(site.source, Path(PLAN_RELATIVE))
+    candidate = snapshot_from_bytes("draft.md", b"# Repaired plan\n")
+    service_path, yaml_path = _configs(tmp_path, _document(site))
+    run = _run(site.source)
+
+    with SupervisorService(read_config_file(service_path)) as service:
+        workspace_id = _registered(service)
+        seen: list[str] = []
+        original_request = ExecutionClient.request
+        lost_create: set[str] = set()
+        lost_publish: set[str] = set()
+
+        def losing_create(self: Any, operation: Any, *, request_id: str, **kwargs: Any) -> Any:
+            answer = original_request(self, operation, request_id=request_id, **kwargs)
+            if operation is Operation.CREATE_VIEW and not lost_create:
+                lost_create.add(request_id)
+                raise ExecutionUncertainError("op-" + request_id, code="EXECUTION_UNKNOWN")
+            return answer
+
+        def losing_publish(self: Any, operation: Any, *, request_id: str, **kwargs: Any) -> Any:
+            # The commit happens; only the reply is lost, so the journal proves it.
+            answer = original_request(self, operation, request_id=request_id, **kwargs)
+            seen.append(request_id)
+            if operation is Operation.PUBLISH and not lost_publish:
+                lost_publish.add(request_id)
+                raise ExecutionUncertainError("op-" + request_id, code="EXECUTION_UNKNOWN")
+            return answer
+
+        with _serving_supervisor(service):
+            # --- run A -----------------------------------------------------------
+            if saga == "orphaned-candidate-view":
+                monkeypatch.setattr(ExecutionClient, "request", losing_create)
+            else:
+                monkeypatch.setattr(ExecutionClient, "request", losing_publish)
+            first = managed_execution_for_run(run, config_path=yaml_path)
+            assert first is not None
+            with pytest.raises(ExecutionUncertainError):
+                first.publish_plan(source, candidate)
+
+            if saga == "pending-publication":
+                # A can still settle what it owns: the authority answers the replay.
+                assert first.publication_pending is True
+                first.reconcile_publication()
+                assert first.publication_pending is False
+                assert first.close() is True
+                expected_status = "AVAILABLE"
+                second_must_work = True
+            else:
+                # Before A reconciles, the fence holds the workspace OWNED and B is refused.
+                assert first.publication_pending is True
+                assert first.close() is False
+                expected_status = "OWNED"
+                second_must_work = False
+            assert _status(site, workspace_id)["status"] == expected_status
+
+            # --- run B on the same workspace ------------------------------------
+            if saga == "orphaned-candidate-view":
+                monkeypatch.setattr(ExecutionClient, "request", original_request)
+            second = managed_execution_for_run(_run(site.source), config_path=yaml_path)
+            if second_must_work:
+                assert second is not None
+                assert second.binding.workspace_id == workspace_id
+                assert second.close() is True
+                assert _status(site, workspace_id)["status"] == "AVAILABLE"
+            else:
+                # The refusal is the answer: no half-acquired writer, no silent
+                # takeover of the run that still owns the workspace.
+                assert second is None
+                assert _status(site, workspace_id)["status"] == "OWNED"
+                # Reconciling A via its retained create_request_id now settles the
+                # orphaned CANDIDATE view and releases the workspace cleanly.
+                first.reconcile_publication()
+                assert first.publication_pending is False
+                assert first.close() is True
+                assert _status(site, workspace_id)["status"] == "AVAILABLE"
+                run3 = RunContext("run-3", "session-1", site.source, site.source / ".db", site.source / "logs")
+                third = managed_execution_for_run(run3, config_path=yaml_path)
+                assert third is not None and third.close() is True
+
+
+def test_bound_plan_publisher_receipt_carries_real_operation_id(
+    site: Site, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D10/D11: BoundPlanPublisher.publish_candidate_receipt exposes revision_id and operation_id."""
+    import re
+
+    plan_path = site.source / PLAN_RELATIVE
+    plan_path.parent.mkdir(parents=True, exist_ok=True)
+    plan_path.write_bytes(b"# Existing plan\n")
+    source = read_plan_snapshot(site.source, Path(PLAN_RELATIVE))
+    candidate = snapshot_from_bytes("draft.md", b"# Promoted plan\n")
+    service_path, yaml_path = _configs(tmp_path, _document(site))
+    run = _run(site.source)
+
+    with SupervisorService(read_config_file(service_path)) as service:
+        _registered(service)
+        with _serving_supervisor(service):
+            managed = managed_execution_for_run(run, config_path=yaml_path)
+            assert managed is not None
+            publisher = BoundPlanPublisher(managed, managed.binding)
+            receipt = publisher.publish_candidate_receipt(source, candidate)
+            assert isinstance(receipt, PlanPublication)
+            assert receipt.plan_ref.sha256 == candidate.ref.sha256
+            assert receipt.revision_id == managed.current_revision_id
+            assert receipt.operation_id is not None
+            assert re.fullmatch(r"op-[0-9a-f]{32}", receipt.operation_id) is not None
+            assert managed.close() is True
+
+
+def test_bound_plan_publisher_reconcile_preserves_operation_id(
+    site: Site, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reconciliation after a lost PUBLISH reply still surfaces the exact op-<32hex> receipt."""
+    import re
+
+    plan_path = site.source / PLAN_RELATIVE
+    plan_path.parent.mkdir(parents=True, exist_ok=True)
+    plan_path.write_bytes(b"# Existing plan\n")
+    source = read_plan_snapshot(site.source, Path(PLAN_RELATIVE))
+    candidate = snapshot_from_bytes("draft.md", b"# Reconciled plan\n")
+    service_path, yaml_path = _configs(tmp_path, _document(site))
+    run = _run(site.source)
+
+    with SupervisorService(read_config_file(service_path)) as service:
+        _registered(service)
+        original_request = ExecutionClient.request
+        lost_publish: list[str] = []
+
+        def lose_first_publish(self: Any, operation: Any, *, request_id: str, **kwargs: Any) -> Any:
+            answer = original_request(self, operation, request_id=request_id, **kwargs)
+            if operation is Operation.PUBLISH and not lost_publish:
+                lost_publish.append(request_id)
+                raise ExecutionUncertainError("op-" + request_id, code="EXECUTION_UNKNOWN")
+            return answer
+
+        with _serving_supervisor(service):
+            monkeypatch.setattr(ExecutionClient, "request", lose_first_publish)
+            managed = managed_execution_for_run(run, config_path=yaml_path)
+            assert managed is not None
+            publisher = BoundPlanPublisher(managed, managed.binding)
+            receipt = publisher.publish_candidate_receipt(source, candidate)
+            assert receipt.plan_ref.sha256 == candidate.ref.sha256
+            assert receipt.operation_id == "op-" + lost_publish[0]
+            assert re.fullmatch(r"op-[0-9a-f]{32}", receipt.operation_id or "") is not None
+            assert managed.close() is True
+
+
+def test_reconcile_publication_determinate_refusal_clears_pending_fence(
+    site: Site, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """E512: a determinate ExecutionRejectedError during reconciliation clears publication_pending and releases."""
+    import hashlib
+
+    from fa.inner_loop.plan_admission import PlanSnapshot
+    from fa.inner_loop.plan_ids import extract_plan_ids
+
+    plan_path = site.source / PLAN_RELATIVE
+    plan_path.parent.mkdir(parents=True, exist_ok=True)
+    plan_path.write_bytes(b"# Existing plan\n")
+    source = read_plan_snapshot(site.source, Path(PLAN_RELATIVE))
+    bad_bytes = b"   \n"
+    bad_candidate = PlanSnapshot(
+        ref=PlanRef(PLAN_RELATIVE, "draft", hashlib.sha256(bad_bytes).hexdigest()),
+        utf8_bytes=bad_bytes,
+        text="   \n",
+        ids=extract_plan_ids(""),
+    )
+    service_path, yaml_path = _configs(tmp_path, _document(site))
+    run = _run(site.source)
+
+    with SupervisorService(read_config_file(service_path)) as service:
+        workspace_id = _registered(service)
+        original_request = ExecutionClient.request
+        drop_next_stop = [True]
+
+        def lose_first_stop(self: Any, operation: Any, *, request_id: str, **kwargs: Any) -> Any:
+            answer = original_request(self, operation, request_id=request_id, **kwargs)
+            if operation is Operation.STOP_VIEW and drop_next_stop[0]:
+                drop_next_stop[0] = False
+                raise ExecutionUncertainError("op-" + request_id, code="EXECUTION_UNKNOWN")
+            return answer
+
+        with _serving_supervisor(service):
+            monkeypatch.setattr(ExecutionClient, "request", lose_first_stop)
+            managed = managed_execution_for_run(run, config_path=yaml_path)
+            assert managed is not None
+
+            with pytest.raises(ExecutionUncertainError):
+                managed.publish_plan(source, bad_candidate)
+            assert managed.publication_pending is True
+
+            # Reconciling replays STOP_VIEW -> PUBLISH, hits real authority INPUT_POLICY refusal,
+            # settles the candidate view cleanly, clears the pending fence, and releases AVAILABLE.
+            with pytest.raises(ExecutionRejectedError):
+                managed.reconcile_publication()
+            assert managed.publication_pending is False
+            assert managed.close() is True
+            assert _status(site, workspace_id)["status"] == "AVAILABLE"

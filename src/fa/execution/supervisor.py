@@ -269,6 +269,7 @@ READONLY_OPERATIONS = frozenset(
         Operation.INSPECT,
         Operation.LIST_PROJECT_ARTIFACTS,
         Operation.DIFF_REVISIONS,
+        Operation.LIST_PROJECTS,
     }
 )
 
@@ -332,7 +333,7 @@ class SupervisorDispatcher:
             if (
                 payload["timeout_ms"] > profile.max_command_ms
                 or (not is_project_tool and profile.interactive != (payload["session_id"] is not None))
-                or (is_project_tool and request["view_ref"]["purpose"] != "PROJECT")
+                or (is_project_tool and request["view_ref"]["purpose"] not in {"PROJECT", "MUTATION"})
             ):
                 raise SupervisorError("INPUT_POLICY")
         context = self._authorize(
@@ -539,7 +540,7 @@ class SupervisorDispatcher:
                         profile is not None
                         and payload["timeout_ms"] <= profile.max_command_ms
                         and (is_project_tool or profile.interactive == (payload["session_id"] is not None))
-                        and (not is_project_tool or request["view_ref"]["purpose"] == "PROJECT")
+                        and (not is_project_tool or request["view_ref"]["purpose"] in {"PROJECT", "MUTATION"})
                     ):
                         framed.add_execution_budget(request["payload"]["timeout_ms"])
                         # Reply waiting may include the control allowance; execution
@@ -554,7 +555,10 @@ class SupervisorDispatcher:
 
                 limit = None
                 if request["protocol_version"] == PROTOCOL_V2:
-                    if request["op"] == Operation.LIST_PROJECT_ARTIFACTS.value:
+                    if request["op"] in {
+                        Operation.LIST_PROJECT_ARTIFACTS.value,
+                        Operation.LIST_PROJECTS.value,
+                    }:
                         limit = MAX_PROJECT_ARTIFACTS_REPLY_BYTES
                     elif request["op"] == Operation.DIFF_REVISIONS.value:
                         limit = MAX_REVISION_DIFF_REPLY_BYTES

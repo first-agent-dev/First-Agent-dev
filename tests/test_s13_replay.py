@@ -23,6 +23,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from pathlib import Path
 
+import pytest
+
 from fa.inner_loop.coder_loop import drive_session
 from fa.inner_loop.hooks import HookRegistry
 from fa.inner_loop.registry import ToolRegistry
@@ -161,6 +163,26 @@ def test_resumed_transcript_replays_prior_user_msg(tmp_path: Path) -> None:
     assert prior_idx < task_idx
 
 
+def test_resume_keeps_repeated_prior_user_messages(tmp_path: Path) -> None:
+    """C1/I-52: replay must not deduplicate chronologically repeated instructions."""
+    state = _make_state(tmp_path)
+    log = state.require_log()
+    for text in ("REPEATED_INSTRUCTION", "REPEATED_INSTRUCTION"):
+        log.append(actor="user", kind="user_msg", content={"text": text})
+    provider = _FakeProvider([_make_response()])
+    outcome = drive_session(
+        "CURRENT_TASK",
+        provider_chain=_make_chain(provider),
+        registry=ToolRegistry(),
+        hooks=HookRegistry(),
+        state=state,
+        max_turns=1,
+    )
+    assert outcome.exit_code == 0 and len(provider.calls) == 1
+    repeated = [message for message in provider.calls[0].messages if message.get("content") == "REPEATED_INSTRUCTION"]
+    assert len(repeated) == 2 and all(message.get("role") == "user" for message in repeated)
+
+
 def test_dangling_tool_resume_returns_request_shape_not_traceback(tmp_path: Path) -> None:
     """C1 — a resumed history ending on an orphaned tool-call is a graceful request_shape.
 
@@ -204,3 +226,63 @@ def test_dangling_tool_resume_returns_request_shape_not_traceback(tmp_path: Path
     assert outcome.stop_reason == "request_shape"
     # The provider was never reached (fail locally, before HTTP).
     assert provider.calls == []
+
+
+def test_resume_replays_only_after_latest_compaction_with_tool_pair(tmp_path: Path) -> None:
+    """C1/I-52: latest summary wins; ordered post-boundary messages reach the provider."""
+    state = _make_state(tmp_path)
+    log = state.require_log()
+    log.append(actor="user", kind="user_msg", content={"text": "PRE_COMPACTION_INSTRUCTION"})
+    log.append(actor="runtime", kind="compaction_stage3_done", content={"summary": "OLD_SUMMARY"})
+    log.append(actor="user", kind="user_msg", content={"text": "BETWEEN_COMPACTIONS"})
+    log.append(actor="runtime", kind="compaction_stage3_done", content={"summary": "LATEST_SUMMARY"})
+    log.append(actor="user", kind="user_msg", content={"text": "AFTER_COMPACTION"})
+    call = {"id": "tc-replay", "type": "function", "function": {"name": "fs_read_file", "arguments": "{}"}}
+    log.append(actor="model", kind="model_msg", content={"text": "", "tool_calls": [call]})
+    log.append(
+        actor="tool",
+        kind="tool_result",
+        content={"summary": "SHORT_SUMMARY", "result": {"stdout": "FULL_TOOL_OUTPUT"}},
+        tool_name="fs_read_file",
+        tool_call_id="tc-replay",
+    )
+    provider = _FakeProvider([_make_response()])
+    outcome = drive_session(
+        "CURRENT_TASK",
+        provider_chain=_make_chain(provider),
+        registry=ToolRegistry(),
+        hooks=HookRegistry(),
+        state=state,
+        initial_memory_summary="DRAFT_CONTEXT",
+        max_turns=1,
+    )
+    assert outcome.exit_code == 0
+    assert len(provider.calls) == 1
+    messages = provider.calls[0].messages
+    joined = "\n".join(str(message.get("content", "")) for message in messages)
+    assert "LATEST_SUMMARY" in joined and "DRAFT_CONTEXT" in joined
+    assert "OLD_SUMMARY" not in joined and "PRE_COMPACTION_INSTRUCTION" not in joined
+    assert "BETWEEN_COMPACTIONS" not in joined
+    assert "AFTER_COMPACTION" in joined and "CURRENT_TASK" in joined
+    assert "FULL_TOOL_OUTPUT" in joined and "SHORT_SUMMARY" not in joined
+    tool_messages = [message for message in messages if message["role"] == "tool"]
+    assert len(tool_messages) == 1 and tool_messages[0]["tool_call_id"] == "tc-replay"
+    prior_user = next(i for i, message in enumerate(messages) if "AFTER_COMPACTION" in str(message.get("content", "")))
+    assistant = next(i for i, message in enumerate(messages) if message.get("tool_calls"))
+    tool = next(i for i, message in enumerate(messages) if message["role"] == "tool")
+    assert prior_user < assistant < tool
+
+
+def test_history_read_failure_preserves_draft_and_warns(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    """C0: current best-effort read failure keeps caller-provided mutable draft."""
+    from unittest.mock import patch
+
+    from fa.inner_loop.conversation_history import restore_conversation_history
+
+    log = EventLog(tmp_path / "events.jsonl", run_id="t")
+    with patch.object(log, "read_all", side_effect=RuntimeError("authority read failed")):
+        summary, history = restore_conversation_history(log, "  DRAFT_CONTEXT  ")
+    assert summary == "DRAFT_CONTEXT"
+    assert history == []
+    assert "Failed to rebuild history from log: authority read failed" in caplog.text
+    assert any(record.name == "fa.inner_loop.coder_loop" for record in caplog.records)

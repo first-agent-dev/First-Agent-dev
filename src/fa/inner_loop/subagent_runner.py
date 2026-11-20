@@ -348,6 +348,10 @@ class SubagentRunner:
                 text=True,
                 timeout=self.timeout,
                 env=env,
+                # The child is the artifact under measurement: its exit code is
+                # the RESULT being reported (envelope.exit_code), not a failure
+                # of this call. Raising would destroy the stdout that explains it.
+                check=False,
             )
             stdout = completed.stdout
             stderr = completed.stderr

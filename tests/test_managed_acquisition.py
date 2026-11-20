@@ -10,10 +10,11 @@ from __future__ import annotations
 import hashlib
 import json
 from copy import deepcopy
-from typing import Any, Literal
+from typing import Any, Literal, override
 
 import pytest
 
+import fa.inner_loop.managed_acquisition as acquisition
 from fa.inner_loop.admission_schema import (
     ADMISSION_RULES,
     ADMISSION_RULES_V2,
@@ -40,6 +41,7 @@ from fa.inner_loop.plan_admission import PlanRef
 from fa.inner_loop.tools.workspace_port import (
     PortDirectoryEntry,
     PortProjectArtifactListing,
+    PortProjectNames,
     PortRead,
     WorkspacePortError,
 )
@@ -526,6 +528,12 @@ class _InventoryPort:
         self.files = files
         self.list_calls: list[str] = []
         self.read_calls: list[str] = []
+        self.name_calls: list[bool] = []
+        self.names = PortProjectNames(("demo-project",), ())
+
+    def list_project_names(self) -> PortProjectNames:
+        self.name_calls.append(True)
+        return self.names
 
     def list_project_artifacts(self, project_slug: str) -> PortProjectArtifactListing:
         self.list_calls.append(project_slug)
@@ -552,9 +560,9 @@ def _inventory_port(
     files: dict[str, bytes] | None = None,
     entries: tuple[PortDirectoryEntry, ...] | None = None,
     *,
-    project_kind: str = "directory",
-    roadmap_kind: str = "file",
-    increments_kind: str = "directory",
+    project_kind: Literal["missing", "file", "directory", "symlink"] = "directory",
+    roadmap_kind: Literal["missing", "file", "directory", "symlink"] = "file",
+    increments_kind: Literal["missing", "file", "directory", "symlink"] = "directory",
 ) -> _InventoryPort:
     rendered = _rendered_inventory_files() if files is None else files
     rows = entries if entries is not None else (PortDirectoryEntry("increment-01-foundation.md", "file"),)
@@ -589,6 +597,47 @@ def test_inventory_reads_only_canonical_artifacts_then_resolves_the_exact_plan()
     assert isinstance(resolved, ResolvedExistingIncrement)
     assert resolved.snapshot.ref.workspace_relative_path == inventory.increments[0].relative_path
     assert resolved.snapshot.ref.source_kind == "EXISTING_SELECTION"
+
+
+def test_naming_candidates_and_resolving_them_agree_on_the_same_view() -> None:
+    """S5P1 STEP1: the naming seam and the inventory seam must not disagree.
+
+    A model that picks from `list_project_names()` and then resolves that name
+    against `inventory_project_artifacts()` must land on the same project. If the
+    two disagreed, the naming would be advisory decoration over a different
+    answer, and a clarification would fire on a name the port itself offered.
+    """
+    files = _rendered_inventory_files()
+    port = _inventory_port(files)
+
+    names = port.list_project_names()
+    assert names.projects == ("demo-project",)
+    assert names.incomplete == ()
+
+    for offered in names.projects:
+        inventory = inventory_project_artifacts(port, offered)
+        assert inventory is not None, offered
+        resolved = resolve_existing_choice(SelectExistingChoice(offered, "I01"), (inventory,))
+        assert isinstance(resolved, ResolvedExistingIncrement), offered
+
+
+def test_an_unusable_directory_is_never_named_as_a_selectable_project() -> None:
+    """Q145: naming a directory bootstrap would refuse is a trap, not a choice.
+
+    The `incomplete` half is carried for the operator's benefit only; nothing that
+    consults the selectable list can pick it, so the model cannot be led into the
+    `COLLISION` path of `_install_destination`.
+    """
+    port = _inventory_port(_rendered_inventory_files())
+    port.names = PortProjectNames(("demo-project",), ("bare-directory", "linked-project"))
+
+    names = port.list_project_names()
+    assert "bare-directory" not in names.projects
+    assert "linked-project" not in names.projects
+    # And the inventory seam agrees: it cannot resolve a project it was never
+    # given an artifact for, so an incomplete name cannot become a selection.
+    port.listing = PortProjectArtifactListing("missing", "missing", "missing", ())
+    assert inventory_project_artifacts(port, "bare-directory") is None
 
 
 def test_inventory_missing_project_or_roadmap_returns_no_partial_inventory() -> None:
@@ -655,6 +704,7 @@ def test_inventory_enforces_count_per_file_aggregate_and_digest_bounds(monkeypat
     assert total_too_large.value.rule == "too-large"
 
     class WrongDigestPort(_InventoryPort):
+        @override
         def read_file(self, path: str, *, offset_bytes: int = 0, max_bytes: int = 1024 * 1024) -> PortRead:
             result = super().read_file(path, offset_bytes=offset_bytes, max_bytes=max_bytes)
             return PortRead(result.content, "0" * 64, result.eof)
@@ -668,6 +718,7 @@ def test_inventory_enforces_count_per_file_aggregate_and_digest_bounds(monkeypat
 
 def test_inventory_rejects_unfinished_reads_and_unsupported_slugs() -> None:
     class TruncatedPort(_InventoryPort):
+        @override
         def read_file(self, path: str, *, offset_bytes: int = 0, max_bytes: int = 1024 * 1024) -> PortRead:
             result = super().read_file(path, offset_bytes=offset_bytes, max_bytes=max_bytes)
             return PortRead(result.content, result.sha256, False)
@@ -737,6 +788,20 @@ def test_artifact_metadata_parser_rejects_unsafe_yaml_and_noncanonical_metadata(
         assert rejected.value.rule == "invalid-metadata"
         diagnostic_input = content if isinstance(content, str) else content.decode("utf-8", errors="ignore")
         assert diagnostic_input[:30] not in str(rejected.value)
+
+
+def test_metadata_loader_disposes_on_success_and_duplicate_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    disposed: list[acquisition._UniqueKeyLoader] = []
+
+    def dispose(loader: acquisition._UniqueKeyLoader) -> None:
+        disposed.append(loader)
+
+    monkeypatch.setattr(acquisition._UniqueKeyLoader, "dispose", dispose)
+    parse_artifact_metadata(_ROADMAP_METADATA, kind="roadmap")
+    with pytest.raises(AcquisitionMetadataError):
+        parse_artifact_metadata(_ROADMAP_METADATA.replace(_ROADMAP_SLUG_LINE, "slug: a\nslug: b"), kind="roadmap")
+    assert len(disposed) == 2
+    assert disposed[0] is not disposed[1]
 
 
 def test_artifact_metadata_parser_rejects_yaml_aliases_and_oversized_frontmatter() -> None:

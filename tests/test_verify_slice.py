@@ -551,8 +551,9 @@ def test_verify_plan_runs_plan_commands_once_and_keeps_slice_attribution(
         timeout_s: float | None = None,
         deadline: float | None = None,
         env: dict[str, str] | None = None,
+        executor: object = None,
     ) -> tuple[CommandResult, ...]:
-        del workspace, timeout_s, deadline, env
+        del workspace, timeout_s, deadline, env, executor
         batch = tuple(commands)
         command_batches.append(batch)
         return tuple(
@@ -600,8 +601,9 @@ def test_verify_plan_treats_a_failed_plan_command_as_blocking(tmp_path: Path, mo
         timeout_s: float | None = None,
         deadline: float | None = None,
         env: dict[str, str] | None = None,
+        executor: object = None,
     ) -> tuple[CommandResult, ...]:
-        del workspace, timeout_s, deadline, env
+        del workspace, timeout_s, deadline, env, executor
         return tuple(
             CommandResult(
                 command=command,

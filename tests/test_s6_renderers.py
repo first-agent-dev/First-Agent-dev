@@ -250,3 +250,69 @@ def test_both_renderers_consume_the_same_stream_independently() -> None:
         bus.emit(OutputEvent(type="session_start", data=_PAYLOADS["session_start"]))
 
     assert buffer.getvalue().strip(), "console consumer produced nothing"
+
+
+# ---------------------------------------------------------------------------
+# S10.9 / CT-H4 — the exhaustion mirror must carry the fact, not just the alarm
+# ---------------------------------------------------------------------------
+
+
+def test_expansion_exhausted_reports_where_the_budget_ran_out() -> None:
+    """The payload the durable row records is the payload the operator sees.
+
+    ``tool_turn.py`` emits ``OutputEvent(type="expansion_exhausted", turn=turn,
+    max_turns=max_turns, data={"turn": turn})`` beside a JSONL row carrying the
+    same turn. The handler used to print a static sentence, so the event's
+    payload was dead and a long run said *that* it ran out without saying
+    *where* — enough to alarm, not enough to locate. The oracle is the pair of
+    numbers, not the presence of output (which the parametrised test above
+    already covers, and which a static line satisfies).
+
+    Kill-checks: revert to the static sentence; drop ``max_turns`` from the
+    event; or drop ``turn`` from ``data`` while leaving ``e.turn`` at its
+    default — the last one fails on the ``data`` fallback path below.
+    """
+    renderer = ConsoleRenderer(no_color=True)
+
+    with _captured_stderr() as buffer:
+        renderer.on_event(OutputEvent(type="expansion_exhausted", turn=5, max_turns=12, data={"turn": 5}))
+
+    line = buffer.getvalue()
+    assert "turn 5/12" in line, line
+
+
+def test_expansion_exhausted_falls_back_to_the_payload_turn() -> None:
+    """Two producers write the turn twice; either copy alone still locates it.
+
+    ``turn`` exists both as the event field and inside ``data`` (the JSONL row
+    shape). A producer that populates only the data dict must not render
+    "turn ?", so the handler prefers ``e.turn`` and falls back to ``data``.
+    """
+    renderer = ConsoleRenderer(no_color=True)
+
+    with _captured_stderr() as buffer:
+        renderer.on_event(OutputEvent(type="expansion_exhausted", data={"turn": 7}))
+
+    line = buffer.getvalue()
+    assert "turn 7" in line, line
+    assert "turn ?" not in line, line
+
+
+def test_expansion_exhausted_omits_the_cap_when_the_producer_did_not_set_one() -> None:
+    """``max_turns`` defaults to 0; rendering "turn 5/0" would invent a lie.
+
+    Not hypothetical: ``_PAYLOADS["expansion_exhausted"]`` in this very file is
+    ``{"turn": 5}`` — an event built without a cap — and every `OutputEvent`
+    constructor may omit it, because the dataclass defaults it to 0. The only
+    *production* producer (`tool_turn.py`) does pass it, so this branch is not
+    about a real run; it is about not printing a ratio that means nothing when
+    the field is absent, which is cheaper than making the field mandatory.
+    """
+    renderer = ConsoleRenderer(no_color=True)
+
+    with _captured_stderr() as buffer:
+        renderer.on_event(OutputEvent(type="expansion_exhausted", turn=5, data={"turn": 5}))
+
+    line = buffer.getvalue()
+    assert "turn 5" in line, line
+    assert "/0" not in line, line

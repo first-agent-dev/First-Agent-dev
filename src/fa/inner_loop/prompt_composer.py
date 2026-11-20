@@ -13,9 +13,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from fa.inner_loop.conversation_history import _assert_final_role_invariant
 from fa.providers.message_rules import MessageRulesError
 
 
@@ -274,3 +276,43 @@ def to_openai_request_v2(parts: PromptParts, cache_key: str) -> dict[str, Any]:
 
 def to_openai_request(*args: Any, **kwargs: Any) -> dict[str, Any]:
     return to_openai_request_v2(*args, **kwargs)
+
+
+def compose_turn_request(
+    *,
+    family: str,
+    base_system: str,
+    pinned_text: str,
+    tool_defs: list[dict[str, Any]],
+    role: str,
+    task: str,
+    active_summary: str,
+    observations: list[dict[str, Any]],
+    turn_context: str,
+    skills_conditional: list[dict[str, Any]] | None,
+) -> tuple[dict[str, Any], list[dict[str, Any]], Mapping[str, Any]]:
+    """Assemble one turn or compaction rebuild using the sole prompt composer."""
+    parts, cache_key = build_prompt_parts_v2(
+        base_system=base_system,
+        agents_md_map=pinned_text,
+        tool_defs=tool_defs,
+        role_id=role,
+        memory_summary=active_summary,
+        task=task,
+        observations=observations,
+        turn_context=turn_context,
+        skills_conditional=skills_conditional,
+    )
+    if family == "anthropic":
+        request_body = to_anthropic_request_v2(parts, cache_key)
+        messages_payload = list(request_body["messages"])
+        if __debug__:
+            _assert_final_role_invariant(messages_payload)
+        return request_body, messages_payload, {}
+    request_body = to_openai_request_v2(parts, cache_key)
+    extra_body = request_body.get("extra_body", {})
+    request_extras = dict(extra_body) if isinstance(extra_body, Mapping) else {}
+    messages_payload = list(request_body["messages"])
+    if __debug__:
+        _assert_final_role_invariant(messages_payload)
+    return request_body, messages_payload, request_extras

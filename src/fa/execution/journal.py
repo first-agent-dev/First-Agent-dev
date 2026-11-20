@@ -65,21 +65,24 @@ class Reservation:
     record: dict[str, Any]
 
 
-_RECORD = fastjsonschema.compile(
-    _object(
-        schema_version={"type": "integer", "const": 1},
-        operation_id=_id("op-"),
-        request_id=_id(""),
-        op=_enum(*(op.value for op in Operation if op is not Operation.HEALTH)),
-        namespace=NAMESPACE,
-        view_ref=_nullable(VIEW),
-        input_sha256=SHA,
-        state=_enum("RESERVED", "EXECUTING", "DONE", "UNKNOWN"),
-        container_id=_nullable(SHA),
-        cancel_requested=BOOL,
-        result=_nullable({"type": "object"}),
-    )
+_RECORD_SCHEMA = _object(
+    schema_version={"type": "integer", "const": 1},
+    operation_id=_id("op-"),
+    request_id=_id(""),
+    op=_enum(*(op.value for op in Operation if op is not Operation.HEALTH)),
+    namespace=NAMESPACE,
+    view_ref=_nullable(VIEW),
+    input_sha256=SHA,
+    state=_enum("RESERVED", "EXECUTING", "DONE", "UNKNOWN"),
+    container_id=_nullable(SHA),
+    cell_owner_operation_id=_nullable(_id("op-")),
+    cancel_requested=BOOL,
+    result=_nullable({"type": "object"}),
 )
+# Additive field: old private journal records remain readable without rewriting
+# them; an absent owner resolves only to that record's own operation ID.
+_RECORD_SCHEMA["required"].remove("cell_owner_operation_id")
+_RECORD = fastjsonschema.compile(_RECORD_SCHEMA)
 
 
 def _projection_schema(op: Operation) -> dict[str, Any]:
@@ -152,7 +155,16 @@ def _validate_record(record: dict[str, Any]) -> None:
     _check(_RECORD, record)
     if record["operation_id"] != "op-" + record["request_id"]:
         raise ExecutionContractError
-    if record["op"] != "exec" and record["container_id"] is not None:
+    if record["op"] != "exec" and (
+        record["container_id"] is not None or record.get("cell_owner_operation_id") is not None
+    ):
+        raise ExecutionContractError
+    owner_operation_id = record.get("cell_owner_operation_id")
+    if (
+        owner_operation_id is not None
+        and owner_operation_id != record["operation_id"]
+        and record["container_id"] is None
+    ):
         raise ExecutionContractError
     op = Operation(record["op"])
     no_view = op in GRANT_OPERATIONS | {
@@ -300,6 +312,7 @@ class OperationJournal:
             "input_sha256": operation_input_sha256(op, namespace, view, req["payload"]),
             "state": "RESERVED",
             "container_id": None,
+            "cell_owner_operation_id": "op-" + req["request_id"] if op is Operation.EXEC else None,
             "cancel_requested": False,
             "result": None,
         }
@@ -395,18 +408,75 @@ class OperationJournal:
             return container_id
 
     def record_container(
-        self, operation_id: str, namespace: NamespaceRef, container_id: str, *, deadline: float | None = None
+        self,
+        operation_id: str,
+        namespace: NamespaceRef,
+        container_id: str,
+        *,
+        cell_owner_operation_id: str | None = None,
+        deadline: float | None = None,
     ) -> None:
         _hex_id(container_id, "", 64)
+        owner_id = operation_id if cell_owner_operation_id is None else cell_owner_operation_id
+        _hex_id(owner_id, "op-")
         with self._transaction(deadline=deadline) as fd:
             record = self._bound(fd, operation_id, namespace)
             if record is None or record["op"] != "exec" or record["state"] != "EXECUTING":
                 raise JournalError("EXECUTION_UNKNOWN")
             if record["container_id"] not in {None, container_id}:
                 raise JournalError("COLLISION")
+            current_owner = record.get("cell_owner_operation_id")
+            if current_owner not in {None, operation_id, owner_id}:
+                raise JournalError("COLLISION")
+            if owner_id != operation_id:
+                owner = self._bound(fd, owner_id, namespace)
+                if (
+                    owner is None
+                    or owner["op"] != Operation.EXEC.value
+                    or owner["view_ref"] != record["view_ref"]
+                    or owner["container_id"] != container_id
+                    or owner.get("cell_owner_operation_id", owner_id) != owner_id
+                ):
+                    raise JournalError("EXECUTION_UNKNOWN")
             self._before_deadline(deadline)
             record["container_id"] = container_id
+            record["cell_owner_operation_id"] = owner_id
             self._write(fd, record)
+
+    def resolve_cell_owner(
+        self,
+        operation_id: str,
+        namespace: NamespaceRef,
+        *,
+        view: ViewRef,
+        container_id: str,
+        deadline: float | None = None,
+    ) -> str:
+        """Resolve the durable creator operation for this exact operation/CID/view."""
+        if not isinstance(view, ViewRef):
+            raise ExecutionContractError
+        _hex_id(container_id, "", 64)
+        with self._transaction(deadline=deadline) as fd:
+            record = self._bound(fd, operation_id, namespace)
+            if (
+                record is None
+                or record["op"] != Operation.EXEC.value
+                or record["view_ref"] != view.to_dict()
+                or record["container_id"] != container_id
+            ):
+                raise JournalError("EXECUTION_UNKNOWN")
+            owner_id = record.get("cell_owner_operation_id") or operation_id
+            owner = self._bound(fd, owner_id, namespace)
+            if (
+                owner is None
+                or owner["op"] != Operation.EXEC.value
+                or owner["view_ref"] != view.to_dict()
+                or owner["container_id"] != container_id
+                or owner.get("cell_owner_operation_id", owner_id) != owner_id
+            ):
+                raise JournalError("EXECUTION_UNKNOWN")
+            self._before_deadline(deadline)
+            return owner_id
 
     @contextmanager
     def start_once(self, operation_id: str, namespace: NamespaceRef, *, deadline: float | None = None) -> Iterator[str]:

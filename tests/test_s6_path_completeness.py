@@ -9,7 +9,8 @@ config warning.
 
 Why these are pins, not features
 --------------------------------
-Source-verified: `coder_loop.py` already emits `context_warn` (5 sites),
+Source-verified: `coder_loop.py` already emits `context_warn` (6 sites, five
+budget paths plus the record-only warn),
 `compaction_*`, `hook_deny` (2 sites) and `api_retry` (4 sites);
 `state.py:380-385` logs `config_warning` and emits it — or queues it when no bus
 is attached yet. None of it had a paired producer+consumer assertion, so a
@@ -43,6 +44,7 @@ from __future__ import annotations
 
 import ast
 import pathlib
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -255,6 +257,13 @@ def test_provider_retry_and_compaction_have_producers() -> None:
     assert counts.get("api_retry", 0) >= 4, f"provider-retry producers regressed: {counts.get('api_retry')}"
     assert counts.get("compaction_start", 0) >= 1
     assert counts.get("compaction_end", 0) >= 1
+    # Five sites: warn, stage2-without-compaction, stage3-without-compaction,
+    # the circuit breaker, and compaction-enabled stage3. It was six until the
+    # compaction slice moved both stage-3 hard stops into one shared
+    # `_record_stage3_stop` — they now share a single call site, so the *site*
+    # count dropped by design rather than by deletion. The exits themselves are
+    # pinned one by one in `test_compaction_turn_stage3.py`, which is the check
+    # that actually notices a missing emit.
     assert counts.get("context_warn", 0) >= 5, f"context-budget producers regressed: {counts.get('context_warn')}"
 
 
@@ -272,6 +281,7 @@ def test_console_mirror_kinds_pair_per_site() -> None:
     * an emit within ``_INLINE_PAIR_WINDOW`` lines (all `coder_loop` sites do —
       measured max 24);
     * a documented cross-boundary pairing (``CROSS_BOUNDARY_PAIRS``);
+    * the final iteration-cap row, paired through ``finish`` (also C1-tested);
     * the Q12 exemption (``loop.py`` ``run_stopped``).
 
     Anything else is an unpaired mirror kind: a durable row the operator never
@@ -287,8 +297,16 @@ def test_console_mirror_kinds_pair_per_site() -> None:
             continue
         if kind in CROSS_BOUNDARY_PAIRS:
             continue
+        if name == "coder_loop.py" and kind == "run_stopped" and lineno in _terminal_stop_sites(path):
+            continue
         nearest = _nearest_emit_distance(path, lineno)
         if nearest is None or nearest > _INLINE_PAIR_WINDOW:
+            # A mirror emitted through a named helper is paired by the helper's
+            # own emit, which lives elsewhere in the file by design. Hold the
+            # helper to the same promise instead of the caller's line number.
+            helper = _nearest_pairing_helper(path, lineno)
+            if helper is not None:
+                continue
             unpaired.append(f"{name}:{lineno} kind={kind!r} nearest_emit={nearest}")
 
     assert not unpaired, "CONSOLE_MIRROR_KINDS sites with no paired emit:\n  " + "\n  ".join(unpaired)
@@ -411,6 +429,110 @@ def _string_literals(node: ast.AST) -> list[str]:
     return []
 
 
+def _terminal_stop_sites(path: str) -> dict[int, str]:
+    """Stop rows that are mirrored through ``finish`` -> ``session_end``.
+
+    Returns ``{lineno: reason}``. The pairing is real but not textual: the row is
+    written, then the branch returns through ``finish_at`` (a wrapper that really
+    reaches ``finish``), which emits ``session_end``. A C1 test proves the output
+    and the row on each path.
+
+    The rule used to apply to the *last* statement pair of the driver only, which
+    made it pass for the wrong reason: the interrupt row sat within 30 lines of a
+    ``llm_response`` emit and was counted as an inline pair, so the exemption was
+    never consulted. Moving that emit to another module exposed it — and then the
+    iteration-cap site itself fell outside the window. Both are the same
+    cross-boundary pair, so both are recognised by the same rule.
+    """
+    tree = ast.parse(pathlib.Path(path).read_text(encoding="utf-8"))
+    driver = next(
+        node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "_drive_session_inner"
+    )
+    return _scan_terminal_stops(driver)
+
+
+def _scan_terminal_stops(driver: ast.FunctionDef) -> dict[int, str]:
+    """Walk every block of the driver for a stop row followed by a ``finish`` exit."""
+    found: dict[int, str] = {}
+
+    def visit(body: list[ast.stmt]) -> None:
+        for index, node in enumerate(body):
+            if isinstance(node, (ast.If, ast.For, ast.While, ast.Try, ast.With)):
+                for field in ("body", "orelse", "finalbody"):
+                    visit(getattr(node, field, []) or [])
+                for handler in getattr(node, "handlers", []) or []:
+                    visit(handler.body)
+            if index + 1 >= len(body):
+                continue
+            append, returned = node, body[index + 1]
+            reason = _stop_row_reason(append)
+            if reason is not None and _is_finish_exit(driver, returned):
+                found[append.lineno] = reason
+
+    visit(driver.body)
+    return found
+
+
+def _stop_row_reason(node: ast.stmt) -> str | None:
+    """The ``reason`` of a ``run_stopped`` append, or None."""
+    if not (isinstance(node, ast.Expr) and isinstance(node.value, ast.Call)):
+        return None
+    call = node.value
+    if not (isinstance(call.func, ast.Attribute) and call.func.attr == "append"):
+        return None
+    kwargs = {kw.arg: kw.value for kw in call.keywords}
+    kind = kwargs.get("kind")
+    if not (isinstance(kind, ast.Constant) and kind.value == "run_stopped"):
+        return None
+    content = kwargs.get("content")
+    if not isinstance(content, ast.Dict):
+        return None
+    pairs = {
+        k.value: v.value
+        for k, v in zip(content.keys, content.values, strict=True)
+        if isinstance(k, ast.Constant) and isinstance(v, ast.Constant)
+    }
+    reason = pairs.get("reason")
+    return reason if isinstance(reason, str) else None
+
+
+def _is_finish_exit(driver: ast.FunctionDef, node: ast.stmt) -> bool:
+    """True if this statement returns through ``finish`` or a wrapper reaching it."""
+    if not (isinstance(node, ast.Return) and isinstance(node.value, ast.Call)):
+        return False
+    func = node.value.func
+    if not isinstance(func, ast.Name):
+        return False
+    return func.id == "finish" or _reaches_finish(driver, func.id)
+
+
+def _iteration_cap_stop_site(path: str) -> int | None:
+    """The iteration-cap stop row, or None.
+
+    No longer the gate itself — ``_terminal_stop_sites`` covers every terminal
+    stop — but kept because a test asserts the iteration-cap path still exists.
+    """
+    sites = _terminal_stop_sites(path)
+    return next((lineno for lineno, reason in sites.items() if reason == "iteration_cap"), None)
+
+
+def _reaches_finish(driver: ast.FunctionDef, wrapper_name: str) -> bool:
+    """True when ``wrapper_name`` (nested in the driver) returns ``finish(...)``."""
+    wrapper = next(
+        (node for node in ast.walk(driver) if isinstance(node, ast.FunctionDef) and node.name == wrapper_name),
+        None,
+    )
+    if wrapper is None:
+        return False
+    return any(
+        isinstance(node, ast.Return)
+        and isinstance(node.value, ast.Call)
+        and isinstance(node.value.func, ast.Name)
+        and node.value.func.id == "finish"
+        for node in ast.walk(wrapper)
+    )
+
+
 def _nearest_emit_distance(path: str, lineno: int) -> int | None:
     source = pathlib.Path(path).read_text(encoding="utf-8")
     tree = ast.parse(source)
@@ -422,17 +544,206 @@ def _nearest_emit_distance(path: str, lineno: int) -> int | None:
     return min(distances) if distances else None
 
 
-def _emit_counts_by_type() -> dict[str, int]:
-    """Count ``OutputEvent(type="X")`` constructions across production code."""
-    counts: dict[str, int] = {}
+def _package_event_helpers() -> dict[str, list[str]]:
+    """Event types produced by every emit-helper in the package, by helper name."""
+    helpers: dict[str, list[str]] = {}
     for _path, tree in _iter_trees():
+        helpers.update(_event_constructor_helpers(tree))
+    return helpers
+
+
+def _nearest_pairing_helper(path: str, lineno: int, window: int = 40) -> str | None:
+    """Name of a local emit-helper called within ``window`` lines of the append.
+
+    The pair still has to exist; this only decides *where* to look for it. The
+    helper must itself emit, so "call some function" is not enough.
+    """
+    tree = ast.parse(pathlib.Path(path).read_text(encoding="utf-8"))
+    local = _event_constructor_helpers(tree)
+    # A helper imported under an alias (`from ...budget_effects import
+    # emit_context_warn as _emit_context_warn`) leaves its emit in the imported
+    # module. Resolve the alias instead of reporting the site as unpaired: the
+    # call really is paired, the emit just is not in this file — the same false
+    # negative the counter had before it learned aliases.
+    helpers = {**local, **_imported_helper_aliases(tree, _package_event_helpers())}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in helpers:
+            if abs(node.lineno - lineno) <= window:
+                return node.func.id
+    return None
+
+
+def _emit_counts_by_type() -> dict[str, int]:
+    """Count producers per event type, resolving emits hidden behind a local helper.
+
+    Counting only ``OutputEvent(type="X")`` literals would report a producer as
+    deleted the moment its construction moved into a module-level helper — the
+    S3-F4 false negative this file already warns about for ``log.append``. So a
+    helper counts once for every *call site* that reaches it, weighted by how
+    many event types it can produce:
+
+    * one literal type -> n call sites = n producers (a fifth site is still a
+      measurable regression, which is what ``>= 5`` below is asserting);
+    * several types (a shared constructor) -> n call sites, because the helper
+      is the producer and its callers are the paths.
+
+    A helper with one call site is not counted separately from that call site,
+    so moving an emit cannot inflate the total.
+    """
+    counts: dict[str, int] = {}
+    # name -> event types, across the whole package: effects now live in a helper
+    # module and the driver calls them through an alias, so a per-file name scan
+    # would miss every call site.
+    helpers: dict[str, list[str]] = {}
+    trees = _iter_trees()
+    for _path, tree in trees:
+        helpers.update(_event_constructor_helpers(tree))
+
+    for _path, tree in trees:
+        local = {**_event_constructor_helpers(tree), **_imported_helper_aliases(tree, helpers)}
         for node in ast.walk(tree):
-            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)):
+            if not isinstance(node, ast.Call):
                 continue
-            if node.func.id != "OutputEvent":
+            if isinstance(node.func, ast.Name) and node.func.id == "OutputEvent":
+                for kw in node.keywords:
+                    if kw.arg == "type":
+                        for literal in _string_literals(kw.value):
+                            counts[literal] = counts.get(literal, 0) + 1
                 continue
-            for kw in node.keywords:
-                if kw.arg == "type":
-                    for literal in _string_literals(kw.value):
-                        counts[literal] = counts.get(literal, 0) + 1
+            called = _called_helper_name(node, local, helpers)
+            if called is not None:
+                produced = local.get(called, helpers.get(called, []))
+                for literal in produced:
+                    counts[literal] = counts.get(literal, 0) + 1
     return counts
+
+
+def _imported_helper_aliases(tree: ast.Module, helpers: dict[str, list[str]]) -> dict[str, list[str]]:
+    """Map ``import x as y`` aliases for emitter helpers onto their real names.
+
+    ``from fa.inner_loop.budget_effects import emit_context_warn as
+    _emit_context_warn`` makes every call site say ``_emit_context_warn``; a
+    bare-name scan finds the helper's definition and none of its callers, which
+    is what made the counter under-report after the effects moved out.
+    """
+    aliases: dict[str, list[str]] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ImportFrom):
+            continue
+        for alias in node.names:
+            if alias.asname and alias.name in helpers:
+                aliases[alias.asname] = helpers[alias.name]
+    return aliases
+
+
+def _called_helper_name(node: ast.Call, local: dict[str, list[str]], global_: dict[str, list[str]]) -> str | None:
+    """Resolve a call to a helper, including an ``import ... as alias`` in the file.
+
+    ``from fa.inner_loop.budget_effects import emit_context_warn as
+    _emit_context_warn`` makes the call site use ``_emit_context_warn`` while the
+    helper is defined as ``emit_context_warn``; matching bare names would see
+    neither.
+    """
+    func = node.func
+    if not isinstance(func, ast.Name):
+        return None
+    if func.id in local:
+        return func.id
+    return func.id if func.id in global_ else None
+
+
+def _event_constructor_helpers(tree: ast.Module) -> dict[str, list[str]]:
+    """Module-level functions that construct ``OutputEvent`` and emit it.
+
+    Returns ``{function_name: [event types it can produce]}``. A helper is only
+    registered when it both builds the event and emits it — anything else would
+    let an unrelated wrapper inflate the count.
+    """
+    helpers: dict[str, list[str]] = {}
+    for fn in tree.body:
+        if not isinstance(fn, ast.FunctionDef):
+            continue
+        types: list[str] = []
+        emits = False
+        for node in ast.walk(fn):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "OutputEvent":
+                for kw in node.keywords:
+                    if kw.arg == "type":
+                        types.extend(_string_literals(kw.value))
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "emit":
+                emits = True
+        writes_rows = any(
+            isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "append"
+            for node in ast.walk(fn)
+        )
+        # A business step that also emits is not a console mirror. Without this
+        # the driver itself qualifies and its whole span is masked as one
+        # producer, which is how the counter first read 3 for six sites.
+        if types and emits and not writes_rows:
+            helpers[fn.name] = sorted(set(types))
+    return helpers
+
+
+# ---------------------------------------------------------------------------
+# S6-F6 — the context_warn helper is a contract, not a code-shortening
+# ---------------------------------------------------------------------------
+
+
+def test_context_warn_helper_payload_and_none_guard() -> None:
+    """C1: the shared emit keeps every caller's payload, including its message.
+
+    Deduplicating five hand-written emits into one helper moves the payload out
+    of sight of the call sites, so the helper itself has to be pinned: a silent
+    change there now changes all five paths at once. It lives in
+    ``budget_effects`` since the S6-F6 effects slice moved it there. Measured before writing
+    this: dropping ``message`` from the payload, ignoring ``action``, or
+    removing the ``output is None`` guard each survived the existing suite.
+
+    The circuit breaker is the call site that passes an explicit ``message``,
+    so it is the one that proves the argument is carried rather than defaulted.
+    """
+    from fa.inner_loop.budget_effects import emit_context_warn as _emit_context_warn
+    from fa.inner_loop.budget_turn import BudgetVerdict, classify_budget
+    from fa.output import EventBus
+
+    def _verdict(decision: dict[str, Any]) -> BudgetVerdict:
+        return classify_budget(decision, stage2_threshold=80_000, stage3_threshold=90_000)
+
+    class _Capture:
+        def __init__(self) -> None:
+            self.events: list[OutputEvent] = []
+
+        def on_event(self, event: OutputEvent) -> None:
+            self.events.append(event)
+
+    decision = {"action": "stage3", "ratio": 0.97, "message": "budget exhausted"}
+    verdict = _verdict(decision)
+
+    # (1) explicit message wins over the verdict's own text
+    bus = EventBus()
+    capture = _Capture()
+    bus.add(capture)
+    _emit_context_warn(verdict, output=bus, turn=3, max_turns=8, action="stage3", message="circuit breaker: looping")
+    assert len(capture.events) == 1
+    event = capture.events[0]
+    assert event.type == "context_warn"
+    assert event.turn == 3 and event.max_turns == 8
+    assert event.data == {"pct": 97, "action": "stage3", "message": "circuit breaker: looping"}
+
+    # (2) without a message the payload carries the verdict's own text
+    bus2 = EventBus()
+    capture2 = _Capture()
+    bus2.add(capture2)
+    _emit_context_warn(verdict, output=bus2, turn=1, max_turns=8, action="warn")
+    assert capture2.events[0].data == {"pct": 97, "action": "warn", "message": "budget exhausted"}
+
+    # (3) no bus is a no-op, not a crash (the driver runs without output in tests
+    # and in library use; the pre-helper sites all guarded on it)
+    _emit_context_warn(verdict, output=None, turn=1, max_turns=8, action="warn")
+
+    # (4) pct is derived from the verdict, not passed in: Q#4 was a local
+    # variable drifting away from the decision, and this signature removes the
+    # possibility instead of testing for it.
+    import inspect
+
+    assert "pct" not in inspect.signature(_emit_context_warn).parameters

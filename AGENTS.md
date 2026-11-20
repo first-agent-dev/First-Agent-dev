@@ -26,6 +26,14 @@ Goal-formulation in 4 pillars + minimalism-first principle:
 - [`knowledge/instructions/`](./knowledge/instructions/README.md) — deploy and operating docs for human.
 - [`knowledge/adr/README.md`](./knowledge/adr/README.md) — index of ADRs.
 
+## Agent-legible code boundaries
+
+Design code so another agent can locate the owner of a behavior, understand its
+invariants and effects, and change and verify it using a small, cohesive working
+set. Keep related responsibilities together and boundaries explicit; avoid both
+monoliths and helper scattering, and never split, merge, or pad files merely to
+hit a line count.
+
 ## Pre-flight checklist
 
 Run BEFORE making any edits, opening a branch, or writing analysis on
@@ -265,7 +273,7 @@ readiness engine, and emits `FA_AGENT_READY=1` only after READY.
   handles formatting (import order, `__all__` sorting, quoting, line
   wrapping). The pre-commit hook also applies these safe fixes.
 - **pre-commit (per commit):** runs ruff/format/deptry/pylint-gap/mypy/
-  pyrefly/shell-syntax/gitleaks/markdownlint/doc-links/uv-lock/whitespace.
+  pyrefly/shell-syntax/markdownlint/doc-links/uv-lock/whitespace.
   Budget: ~60 seconds on the operator's i5-1235U (much faster on warm cache).
 - **pre-push (per push):** runs `just check-deep` which is `just check`
   plus targeted-mutmut and targeted-semgrep on changed files. pip-audit

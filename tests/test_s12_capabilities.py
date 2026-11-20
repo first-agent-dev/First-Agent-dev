@@ -38,6 +38,7 @@ _PROBES: tuple[tuple[str, Callable[[], bool]], ...] = (
     ("has_posix_modes", cap.has_posix_modes),
     ("has_posix_paths", cap.has_posix_paths),
     ("has_symlinks", cap.has_symlinks),
+    ("has_hardlinks", cap.has_hardlinks),
     ("has_pty_backend", cap.has_pty_backend),
     ("has_stable_tmpdir", cap.has_stable_tmpdir),
 )
@@ -104,6 +105,7 @@ def test_all_marker_constants_are_present_and_do_not_skip_here() -> None:
         "requires_posix_modes": cap.requires_posix_modes,
         "requires_posix_paths": cap.requires_posix_paths,
         "requires_symlinks": cap.requires_symlinks,
+        "requires_hardlinks": cap.requires_hardlinks,
         "requires_pty_backend": cap.requires_pty_backend,
         "requires_stable_tmpdir": cap.requires_stable_tmpdir,
     }
@@ -123,6 +125,7 @@ def test_marker_constants_exist_on_every_platform() -> None:
         "requires_posix_modes",
         "requires_posix_paths",
         "requires_symlinks",
+        "requires_hardlinks",
         "requires_pty_backend",
         "requires_stable_tmpdir",
     ):
@@ -142,6 +145,7 @@ def test_every_reason_names_a_capability_not_a_platform() -> None:
         cap.posix_modes_reason,
         cap.posix_paths_reason,
         cap.symlinks_reason,
+        cap.hardlinks_reason,
         cap.pty_backend_reason,
         cap.stable_tmpdir_reason,
     ]
@@ -206,6 +210,14 @@ def test_symlinks_false_when_symlink_is_denied(monkeypatch: pytest.MonkeyPatch) 
 
     monkeypatch.setattr(os, "symlink", _denied)
     assert cap.has_symlinks() is False
+
+
+def test_hardlinks_false_when_link_creation_is_denied(monkeypatch: pytest.MonkeyPatch) -> None:
+    def denied(*_args: Any, **_kwargs: Any) -> None:
+        raise OSError("hardlink creation unavailable")
+
+    monkeypatch.setattr(os, "link", denied)
+    assert cap.has_hardlinks() is False
 
 
 def test_pty_backend_false_without_tmux_and_without_pexpect_spawn(monkeypatch: pytest.MonkeyPatch) -> None:

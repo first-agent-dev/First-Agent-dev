@@ -198,6 +198,14 @@ def test_a_foreign_view_or_grant_is_unauthorized_and_sends_nothing(
         return original(self, raw, deadline=deadline)
 
     monkeypatch.setattr(WorkerClient, "request", spy)
+    profile_calls: list[object] = []
+    original_profile = backend.authority.view_profile
+
+    def spy_profile(view: Any) -> Any:
+        profile_calls.append(view)
+        return original_profile(view)
+
+    monkeypatch.setattr(backend.authority, "view_profile", spy_profile)
     other = {**backend.view.to_dict(), "view_id": "view-" + "3" * 32}
     denied(
         "UNAUTHORIZED",
@@ -226,6 +234,7 @@ def test_a_foreign_view_or_grant_is_unauthorized_and_sends_nothing(
         ),
     )
     assert sent == [], "a refused control request still reached the cell"
+    assert profile_calls == [], "a refused control request consulted the view profile before proof"
 
 
 def test_a_non_control_envelope_is_refused(backend: Backend) -> None:

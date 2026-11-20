@@ -55,7 +55,13 @@ from fa.cli import (
     _resolve_task,
 )
 from fa.providers.base import TransportResponse
-from tests.test_cli import _FAKE_MODELS_YAML, _TEST_SECRETS, _ScriptedTransport, _stop_body
+from tests.test_cli import (
+    _FAKE_MODELS_YAML,
+    _TEST_SECRETS,
+    _install_test_managed_cli_dependencies,
+    _ScriptedTransport,
+    _stop_body,
+)
 from tests.test_s7_cli_run_paths import _run_args
 
 
@@ -90,17 +96,26 @@ coder:
 """
 
 
-def _cli_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+def _cli_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, session_backed: bool = False) -> Path:
     """Isolate ``$HOME`` so no test can touch the developer's real ``~/.fa``.
 
     ``fa.paths.fa_state_root`` resolves at call time (V10 / S8.8), so setting
     the environment here is honoured by production code rather than silently
     ignored.
+
+    ``session_backed`` installs the narrow test-only authority seam for oracles
+    that drive a real ``fa run`` and then inspect what it wrote. A session-backed
+    run requires an admitted managed provisioner and does not fall back to the host
+    tree (``session/manager.py:302-307``), so without the seam those tests fail at
+    the prologue with ``managed_execution_unavailable`` instead of testing their
+    subject. Tests that only read existing state leave it off and depend on nothing.
     """
     home = tmp_path / "home"
     home.mkdir(exist_ok=True)
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("USERPROFILE", str(home))
+    if session_backed:
+        _install_test_managed_cli_dependencies(monkeypatch, home=home, workspace_root=tmp_path.parent)
     return home
 
 
@@ -1098,7 +1113,7 @@ def test_s10a_run_proxy_mode_rewrites_the_chain(tmp_path: Path, monkeypatch: pyt
     still usable rather than merely that the branch was entered.
     Kill-check target: the ``if proxy_mode:`` rewrite block.
     """
-    _cli_home(tmp_path, monkeypatch)
+    _cli_home(tmp_path, monkeypatch, session_backed=True)
     config = tmp_path / "models.yaml"
     config.write_text(_FAKE_MODELS_YAML, encoding="utf-8")
     token = tmp_path / "proxy-token"
@@ -1368,7 +1383,7 @@ def test_s10a_stats_renders_a_real_session(
 
     Kill-check target: the ``parse_session_db`` call — no analytics, no output.
     """
-    _cli_home(tmp_path, monkeypatch)
+    _cli_home(tmp_path, monkeypatch, session_backed=True)
     config = tmp_path / "models.yaml"
     config.write_text(_FAKE_MODELS_YAML, encoding="utf-8")
 
@@ -1470,7 +1485,7 @@ def test_s10a_stats_aggregate_across_sessions(
 
     Kill-check target: the ``aggregate_sessions(sessions)`` call.
     """
-    _cli_home(tmp_path, monkeypatch)
+    _cli_home(tmp_path, monkeypatch, session_backed=True)
     config = tmp_path / "models.yaml"
     config.write_text(_FAKE_MODELS_YAML, encoding="utf-8")
 
@@ -1521,7 +1536,7 @@ def test_s10a_stats_console_render_and_dead_zones(
     the contract this test actually owns; stderr content is asserted by the
     ``--global-history`` console test where the renderer is a plain ``print``.
     """
-    _cli_home(tmp_path, monkeypatch)
+    _cli_home(tmp_path, monkeypatch, session_backed=True)
     # I-41 workaround: rebind the renderers' import-time-captured default to a
     # live buffer for the duration of this test. Without it the call writes to
     # a stderr object captured when `fa.stats` was first imported, which pytest
@@ -1564,7 +1579,7 @@ def test_s10a_stats_reports_source_errors_from_discovery(
     Kill-check target: the ``except StatsSourceError`` around
     ``parse_session_db``.
     """
-    _cli_home(tmp_path, monkeypatch)
+    _cli_home(tmp_path, monkeypatch, session_backed=True)
     config = tmp_path / "models.yaml"
     config.write_text(_FAKE_MODELS_YAML, encoding="utf-8")
 
@@ -1592,7 +1607,7 @@ def test_s10a_run_resume_reads_the_existing_draft(
 
     Kill-check target: the ``draft_path.read_text`` block under ``--resume``.
     """
-    home = _cli_home(tmp_path, monkeypatch)
+    home = _cli_home(tmp_path, monkeypatch, session_backed=True)
     config = tmp_path / "models.yaml"
     config.write_text(_FAKE_MODELS_YAML, encoding="utf-8")
 
@@ -1625,7 +1640,7 @@ def test_s10a_run_builds_compactor_chain_under_proxy(tmp_path: Path, monkeypatch
     and remained usable, not merely that the branch was entered.
     Kill-check target: the ``if compactor_config is not None`` block.
     """
-    _cli_home(tmp_path, monkeypatch)
+    _cli_home(tmp_path, monkeypatch, session_backed=True)
     config = tmp_path / "models.yaml"
     config.write_text(
         _FAKE_MODELS_YAML + "compactor:\n"
