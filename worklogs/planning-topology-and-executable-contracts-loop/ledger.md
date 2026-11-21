@@ -11392,3 +11392,29 @@ requires it to omit it, and the parser to refuse a payload containing one — th
 proposal/resolved split in `managed_acquisition.py`. Until then a planner slug is overridden, not refused.
 (b) CT-2.2's collision proof (`project_exists`, not retryable) against a real authority is not written yet.
 CT-2.1 therefore remains **open**.
+
+## E575 — Model ratified: harness assembles the v2 project tree (2026-11-20)
+
+**Operator decision (this session).** The target behaviour is not "the planner writes `worklogs/<slug>/` with
+ordinary tools and the harness renames it": the planner returns **semantics**, and the **harness assembles the
+whole v2 project set** — `roadmap.md`, `ledger.md`, `open-questions.md`,
+`increments/increment-01-initial-plan.md` and the `acceptance/` closure. The project slug is caller authority
+(`invoke_workflow.project_slug`, landed in `7f56049`); the increment slug is not planner input for I01.
+
+| Decision | Choice | Why |
+|---|---|---|
+| D-V2-7 payload / renderer | Planner returns typed semantics (JSON, no slugs, no paths, no frontmatter); harness renders both documents | `plan_v2.py:88-160` already defines the typed AST (`Invariant/Scenario/Contract/Acceptance/KillTarget/ExitCheck/Step/SlicePlan/PlanGraph`); rendering is the inverse of `parse_plan`, so correctness is a round-trip property, and grammar errors stop being a model failure mode |
+| D-V2-7 increment slug | I01 is harness-fixed `initial-plan`; planner-named slugs start at **I02**, authored inside an existing project/replan where a roadmap already exists | A post-install rename would break `plan_ref.workspace_relative_path` recorded at admission, force a second document (the roadmap's Increments table) to change in the same operation, and re-introduce a model-authored identifier by the back door |
+| D-V2-8 bundle operation | New **v2-only** operation carrying a file map, by the existing `_V2_OPERATIONS`/`features` pattern (`protocol.py:31-32, 313`); `PREPARE_BUNDLE` stays frozen for the legacy route | `store_bundle`/`_write_bundle`/`install_project` are already generic over files (`workspace.py:3322, 3451, 3640`); only the op payload (`protocol.py:161-167`) and `publication.prepare_bundle` are V1-shaped. Adding `files` to the v1 op would give one operation two incompatible shapes |
+| D-V2-8 budgets | 512 files / 16 MiB aggregate / 4 MiB per file / depth 64, reused from `acceptance_closure.py:51-54`, enforced on the bundle | `_BUNDLE.files` is an unbounded array (`workspace.py:142`); without caps the new op is unbounded write under `worklogs/<slug>/` |
+| D-V2-8 project kind | Payload carries `kind`, only `IN_REPO` accepted now; anything else refused as unsupported | Standalone projects (own git) are a different install *target*, not a different slug. Deferred, but the field and the closure's `import_roots` seam are cheap now and breaking to add later |
+| D-V2-9 renderer home | `plan_v2.py` next to the parser; `publication.py` keeps bundling | The round-trip property lives with the grammar it proves |
+| P5 collision | Authority `COLLISION` is the only authoritative answer; mapped to `project_exists` (not retryable) once CT-2.5 lands | `workspace.py:3520-3526` already enforces no-clobber; a tool-side preflight cannot see empty/roadmap-less directories and races |
+
+**Correction (mine, not the operator's).** E574 and the analysis that followed it called Q-V2-ACC-2 "open". It
+is not: `plan_v2.py:9-11, 48-56, 265-315, 547-558` implements **B-narrow** — closed reason set
+(`HOST_READINESS`, `DEPLOYMENT_IDENTITY`, `OWNER_APPROVAL`, `DURABILITY_POWER_LOSS`), owners `{W4, operator}`,
+a required `DISPOSITION-REASON`/`DISPOSITION-EVIDENCE`/`DISPOSITION-OWNER` triple, `MAX_DISPOSITIONS = 16`, and
+`EVIDENCE: TEST_REQUIRED` refusing any stray `DISPOSITION-*` line. I read the 2026-11-20 audit note (which
+predates the implementation) instead of the module. What actually remains open is the five gaps G1–G5 recorded
+in E576.
