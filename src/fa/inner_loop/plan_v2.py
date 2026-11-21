@@ -576,19 +576,38 @@ def _admit_steps(planned: SlicePlan, tests: Mapping[str, Acceptance]) -> None:
 
 
 def _admit_evidence(graph: PlanGraph, contracts: Mapping[str, Contract], tests: Mapping[str, Acceptance]) -> None:
+    """The policy matrix (R3): contract class x invariant kind decides what may prove it.
+
+    ``kind`` alone let a ``SOFT`` invariant say nothing at all, and let one
+    disposition free every contract hanging off it. The class is what carries the
+    meaning of the claim, so it is checked first: ``PRESERVATION`` ("what worked
+    still works") is the one claim a test can always express, and attesting it
+    away is exactly how a regression ships green. Then ``kind``: a ``HARD``
+    claim with no test needs a disposition, a ``SOFT`` one may stay uncovered.
+
+    A request is structurally sufficient here; whether it was *granted* is checked
+    by ``bind_dispositions`` at admission, where the caller's declaration exists
+    and the grammar cannot be asked to know it.
+    """
     invariants = {item.id: item for item in graph.invariants}
+    covered = {entry.ct for entry in tests.values()}
+    granted: dict[str, int] = {}
     for contract in contracts.values():
+        if contract.id in covered:
+            continue
         invariant = invariants[contract.inv]
+        if contract.cls == "PRESERVATION":
+            raise PlanV2Error("preservation-without-executable-evidence")
+        if invariant.evidence == "NON_EXECUTABLE" and invariant.reason:
+            granted[invariant.id] = granted.get(invariant.id, 0) + 1
+            continue
         if invariant.kind != "HARD":
             continue
-        if any(entry.ct == contract.id for entry in tests.values()):
-            continue
-        # A request is structurally sufficient here; whether it was *granted* is
-        # checked by ``bind_dispositions`` at admission, where the caller's
-        # declaration exists and the grammar cannot be asked to know it.
-        if invariant.evidence == "NON_EXECUTABLE" and invariant.reason:
-            continue
         raise PlanV2Error("hard-contract-without-executable-evidence")
+    # One waiver frees one claim: an invariant that backs a cluster would attest
+    # every contract under it with a single decision nobody re-read.
+    if any(count > 1 for count in granted.values()):
+        raise PlanV2Error("disposition-covers-several-contracts")
 
 
 def _admit(graph: PlanGraph) -> None:

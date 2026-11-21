@@ -623,10 +623,19 @@ EVIDENCE: NON_EXECUTABLE
 DISPOSITION-REASON: HOST_READINESS
 """
 
+#: Two *separate* granted invariants: R3 forbids one grant from backing a cluster.
+_TWO_DISPOSED_INVARIANTS = (
+    _INVARIANT_1
+    + "\n"
+    + _INVARIANT_2
+    + "\n### INV-3\nKIND: HARD\nTEXT: Deployment identity is proven by the release record.\n"
+    + "EVIDENCE: NON_EXECUTABLE\nDISPOSITION-REASON: DEPLOYMENT_IDENTITY\n"
+)
+
 _TWO_DISPOSED_CONTRACTS = _SLICE.replace(
     "  CT-1.2 [CONSTRAINT] INV: INV-2: readiness is proven on the host",
     "  CT-1.2 [CONSTRAINT] INV: INV-2: readiness is proven on the host\n"
-    "  CT-1.3 [CONSTRAINT] INV: INV-2: readiness is proven on the host",
+    "  CT-1.3 [CONSTRAINT] INV: INV-3: readiness is proven on the host",
 )
 
 
@@ -639,8 +648,8 @@ def test_a_selector_grades_executable_and_a_disposition_grades_attested() -> Non
     assert attested_contracts(plan_graph()) == ("CT-1.2",)
 
 
-def test_several_contracts_on_one_disposed_invariant_are_all_attested_sorted() -> None:
-    graph = plan_graph(slice_body=_TWO_DISPOSED_CONTRACTS)
+def test_several_granted_invariants_are_all_attested_sorted() -> None:
+    graph = plan_graph(invariants=_TWO_DISPOSED_INVARIANTS, slice_body=_TWO_DISPOSED_CONTRACTS)
 
     assert attested_contracts(graph) == ("CT-1.2", "CT-1.3")
 
@@ -650,10 +659,11 @@ def test_attestation_is_sorted_not_declaration_ordered() -> None:
     declared_out_of_order = _SLICE.replace(
         "  CT-1.2 [CONSTRAINT] INV: INV-2: readiness is proven on the host",
         "  CT-1.2 [CONSTRAINT] INV: INV-2: readiness is proven on the host\n"
-        "  CT-1.10 [CONSTRAINT] INV: INV-2: readiness is proven on the host",
+        "  CT-1.10 [CONSTRAINT] INV: INV-3: readiness is proven on the host",
     )
 
-    assert attested_contracts(plan_graph(slice_body=declared_out_of_order)) == ("CT-1.10", "CT-1.2")
+    graph = plan_graph(invariants=_TWO_DISPOSED_INVARIANTS, slice_body=declared_out_of_order)
+    assert attested_contracts(graph) == ("CT-1.10", "CT-1.2")
 
 
 def test_a_contract_with_neither_a_selector_nor_a_disposition_is_uncovered() -> None:
@@ -680,3 +690,83 @@ def test_the_contract_id_grammar_accepts_what_the_parser_accepts(value: str) -> 
 @pytest.mark.parametrize("value", ["CT-1", "ct-1.1", "CT-1.1 ", "CT-1.1.2", "CT-", "", "TEST-1.1", 1, None])
 def test_the_contract_id_grammar_refuses_everything_else(value: object) -> None:
     assert not is_contract_id(value)
+
+
+# --- R3: the policy matrix (contract class x invariant kind) -----------------
+
+_PRESERVING_SLICE = _SLICE.replace(
+    "  CT-1.2 [CONSTRAINT] INV: INV-2: readiness is proven on the host",
+    "  CT-1.2 [PRESERVATION] INV: INV-2: the published shape does not change",
+)
+
+_CLUSTERED_SLICE = _SLICE.replace(
+    "  CT-1.2 [CONSTRAINT] INV: INV-2: readiness is proven on the host",
+    "  CT-1.2 [CONSTRAINT] INV: INV-2: readiness is proven on the host\n"
+    "  CT-1.3 [CONSTRAINT] INV: INV-2: readiness is proven on the host",
+)
+
+
+@pytest.mark.parametrize("kind", ["HARD", "SOFT"])
+def test_a_preservation_claim_always_needs_a_test(kind: str) -> None:
+    """No disposition may carry "what worked still works": that is how regressions ship green."""
+    invariants = _INVARIANT_1 + "\n" + _INVARIANT_2.replace("KIND: HARD", f"KIND: {kind}")
+
+    assert _rule(lambda: plan_graph(invariants=invariants, slice_body=_PRESERVING_SLICE)) == (
+        "preservation-without-executable-evidence"
+    )
+
+
+@pytest.mark.parametrize(
+    ("kind", "evidence"),
+    [("HARD", "TEST_REQUIRED"), ("SOFT", "TEST_REQUIRED"), ("HARD", "NON_EXECUTABLE"), ("SOFT", "NON_EXECUTABLE")],
+)
+def test_a_preservation_claim_is_refused_whatever_the_invariant_says(kind: str, evidence: str) -> None:
+    """The class rule is independent of the invariant: no mode makes it attestable."""
+    invariant = _INVARIANT_2.replace("KIND: HARD", f"KIND: {kind}").replace(
+        "EVIDENCE: NON_EXECUTABLE", f"EVIDENCE: {evidence}"
+    )
+    if evidence == "TEST_REQUIRED":
+        invariant = invariant.replace("DISPOSITION-REASON: HOST_READINESS\n", "")
+    invariants = _INVARIANT_1 + "\n" + invariant
+
+    assert _rule(lambda: plan_graph(invariants=invariants, slice_body=_PRESERVING_SLICE)) == (
+        "preservation-without-executable-evidence"
+    )
+
+
+def test_a_preservation_claim_with_a_test_is_admitted() -> None:
+    """The rule is about the *evidence*, not the class: a tested one is fine."""
+    tested = _PRESERVING_SLICE.replace(
+        "KILL-TARGETS:",
+        "  TEST-ID: TEST-1.2 | CT: CT-1.2 | SELECTOR: "
+        "worklogs/demo/acceptance/tests/test_publish.py::test_publish2\nKILL-TARGETS:",
+    )
+
+    graph = plan_graph(slice_body=tested)
+
+    assert contract_evidence(graph)["CT-1.2"] is EvidenceMode.EXECUTABLE
+    assert "CT-1.2" not in attested_contracts(graph)
+
+
+def test_one_grant_may_not_back_a_cluster_of_contracts() -> None:
+    assert _rule(lambda: plan_graph(slice_body=_CLUSTERED_SLICE)) == "disposition-covers-several-contracts"
+
+
+def test_a_tested_contract_does_not_count_against_the_cluster_bound() -> None:
+    """The bound counts claims *leaning* on the grant, not everything it mentions."""
+    mixed = _CLUSTERED_SLICE.replace(
+        "KILL-TARGETS:",
+        "  TEST-ID: TEST-1.3 | CT: CT-1.3 | SELECTOR: "
+        "worklogs/demo/acceptance/tests/test_publish.py::test_publish3\nKILL-TARGETS:",
+    )
+
+    graph = plan_graph(slice_body=mixed)
+
+    assert attested_contracts(graph) == ("CT-1.2",)  # CT-1.3 is executable, so it is not attested
+
+
+def test_a_soft_invariant_may_still_stay_uncovered() -> None:
+    """The matrix tightens PRESERVATION and clusters; it does not make SOFT executable."""
+    graph = plan_graph(invariants=_INVARIANT_1 + "\n" + _SOFT_INVARIANT_2)
+
+    assert contract_evidence(graph)["CT-1.2"] is EvidenceMode.UNCOVERED

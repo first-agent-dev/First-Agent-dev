@@ -11553,3 +11553,41 @@ backed it — the reader sees `issue:FIRST-42`, not a green tick.
 (+6 end-to-end at the pre-install gate). **Mutants 6/6 killed** (`/tmp/mut_step5.py`), including one that never
 compares the digest and one that never reads at all. Full suite `8205 passed, 18 skipped, 3 xfailed` with the three
 baseline-red tests deselected; `ruff` clean over 653 files, `mypy` clean over 222 sources.
+
+## E580 — R3 landed: the policy matrix, and one waiver frees one claim (2026-11-20)
+
+**Operator approved the matrix as proposed.** Enforced in `plan_v2._admit_evidence`, because both facts are properties
+of the graph: no caller input is needed to know that a preservation claim has no test, or that one granted invariant
+backs several contracts.
+
+| `class` × `kind` | Before | Now |
+| :--- | :--- | :--- |
+| any class, covered by a selector | executable | executable (unchanged) |
+| `PRESERVATION`, uncovered — **any** kind, **any** evidence mode | a `HARD` one was refused only as a generic `hard-contract-without-executable-evidence`; a `SOFT` one was silently admissible; a disposition could carry it | `preservation-without-executable-evidence` |
+| `FUNCTIONAL` / `CONSTRAINT`, `HARD`, uncovered | needs a disposition | unchanged |
+| `FUNCTIONAL` / `CONSTRAINT`, `SOFT`, uncovered | allowed | allowed (unchanged) — the matrix tightens preservation and clusters, it does not make `SOFT` executable |
+| two or more uncovered contracts leaning on one granted invariant | one decision attested the whole cluster | `disposition-covers-several-contracts` |
+
+**Why `PRESERVATION` is the strict cell.** It is the claim "what worked still works", and it is the only claim a test
+can *always* express — a regression test for existing behaviour needs no host, no deployment identity, no operator
+approval. The whole ratified reason set (`HOST_READINESS`, `DEPLOYMENT_IDENTITY`, `OWNER_APPROVAL`,
+`DURABILITY_POWER_LOSS`) is about things outside the sandbox; none of them is an excuse for not testing that something
+still works. Attesting preservation away is exactly how a regression ships green. This also agrees with the existing
+CT54 exemption in `slice_verification` (a preservation contract is exempt from *kill directives* because "their proof
+is an existing test or an absence") — that exemption assumed a test exists; now the grammar says so.
+
+**Why the cluster bound.** G4's second half: a single grant on one invariant could free every contract hanging off it,
+so the decision the caller made once ("host readiness is out of scope for a test") silently became a decision about
+claims it never named. The bound counts claims *leaning* on the grant, not everything it mentions, so a tested
+contract on a granted invariant stays executable and does not consume the waiver.
+
+**Consequence worth recording.** Two R2 test fixtures had to change: they put two contracts on one disposed invariant,
+which is now refused. That is the rule working, not a test being bent — `attested_contracts` still reports every
+contract, and the seal still names them; what changed is that a plan can no longer *manufacture* such a cluster.
+
+**Verification.** `tests/test_ai_native_plan_v2.py` 84 (+10, including the four (class × kind × evidence) cells that
+prove the class rule is independent of the invariant). **Mutants 6/6 killed** (`/tmp/mut_step6.py`) after one
+survivor forced a better test: "the class check runs after the kind gate" survived until a `SOFT` + `TEST_REQUIRED` +
+uncovered preservation case existed — the tighter check is the one that can tell the two rules apart. Full suite
+`8215 passed, 18 skipped, 3 xfailed` with the three baseline-red tests deselected; `ruff` clean over 653 files,
+`mypy` clean over 222 sources.
