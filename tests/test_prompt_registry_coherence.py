@@ -499,10 +499,24 @@ def test_acquisition_prompt_only_mentions_registered_acquisition_tools() -> None
     assert {"fs_read_file", "fs_search"}.issubset(mentioned)
 
 
+def _prompt_json_examples(prompt: str) -> list[str]:
+    """Every standalone ``{...}`` block in the prompt, joined across wrapped lines."""
+    lines = prompt.splitlines()
+    blocks: list[str] = []
+    index = 0
+    while index < len(lines):
+        if lines[index].lstrip().startswith("{"):
+            buffer = [lines[index]]
+            while index + 1 < len(lines) and not buffer[-1].rstrip().endswith("}"):
+                index += 1
+                buffer.append(lines[index])
+            blocks.append("".join(line.strip() for line in buffer))
+        index += 1
+    return blocks
+
+
 def test_acquisition_prompt_is_static_cacheable_and_examples_parse() -> None:
     """C0/C1 (D9 / Q149=B + Q151=A) — static prefix, closed schema rules, valid JSON examples."""
-    import json
-
     from fa.inner_loop.managed_acquisition import (
         BootstrapNewProjectChoice,
         NeedsClarificationChoice,
@@ -521,36 +535,67 @@ def test_acquisition_prompt_is_static_cacheable_and_examples_parse() -> None:
         "UNKNOWN_INCREMENT",
         "MISSING_CONTEXT",
         "COLLISION",
-        "## Intent",
-        "## Out of scope",
-        "## SLICE1:",
-        "kill: neutralise",
+        # D-V2-7: the planner authors semantics, so the prompt must name the payload keys,
+        # the closed vocabularies and the two refusals a careless payload meets.
+        "semantics",
+        "intent",
+        "out_of_scope",
+        "invariants",
+        "HARD",
+        "NON_EXECUTABLE",
+        "HOST_READINESS",
+        "preservation-without-executable-evidence",
+        "hard-contract-without-executable-evidence",
+        "acceptance/tests/",
         "Incomplete",
     ):
         assert required in ACQUISITION_SYSTEM_PROMPT, f"missing protocol guidance: {required!r}"
 
-    # Extract each standalone JSON example in the prompt (including the 3-line bootstrap one)
-    # and assert it parses through the real `parse_acquisition_choice` boundary.
-    lines = ACQUISITION_SYSTEM_PROMPT.splitlines()
-    json_blocks: list[str] = []
-    idx = 0
-    while idx < len(lines):
-        if lines[idx].lstrip().startswith("{"):
-            buf = [lines[idx]]
-            while idx + 1 < len(lines) and not buf[-1].rstrip().endswith("}"):
-                idx += 1
-                buf.append(lines[idx])
-            json_blocks.append("".join(line.strip() for line in buf))
-        idx += 1
-    parsed = [parse_acquisition_choice(block) for block in json_blocks]
+    parsed = [parse_acquisition_choice(block) for block in _prompt_json_examples(ACQUISITION_SYSTEM_PROMPT)]
     assert any(isinstance(item, SelectExistingChoice) for item in parsed)
-    assert any(isinstance(item, BootstrapNewProjectChoice) for item in parsed)
     assert any(isinstance(item, NeedsClarificationChoice) for item in parsed)
-    for item in parsed:
-        if isinstance(item, BootstrapNewProjectChoice):
-            assert "## Intent" in item.roadmap_body
-            assert "## Out of scope" in item.roadmap_body
-            assert json.loads(json.dumps(item.roadmap_body)) == item.roadmap_body
+    bootstraps = [item for item in parsed if isinstance(item, BootstrapNewProjectChoice)]
+    assert bootstraps, "the prompt must carry one worked bootstrap payload"
+    for item in bootstraps:
+        # The payload survived the same parser production uses, so the example is real.
+        assert item.semantics is not None
+        assert (item.roadmap_body, item.increment_body) == ("", "")
+
+
+def test_the_acquisition_prompt_example_is_a_payload_the_renderer_and_parser_accept() -> None:
+    """CT-2.6: the prompt's own example is fed through the real parse → render → parse chain.
+
+    P0-1 was exactly this gap: the prompt described a grammar admission no longer accepted, so
+    the first real create-new could not produce an admissible plan. A prompt that is only
+    checked for keywords would pass again while being wrong; this walks the production path.
+    """
+    import json
+
+    from fa.inner_loop.managed_acquisition import BootstrapNewProjectChoice, parse_acquisition_choice
+    from fa.inner_loop.plan_semantics import render_project
+    from fa.inner_loop.plan_v2 import parse_plan
+    from fa.inner_loop.prompt import ACQUISITION_SYSTEM_PROMPT
+
+    examples = [
+        item
+        for item in (parse_acquisition_choice(block) for block in _prompt_json_examples(ACQUISITION_SYSTEM_PROMPT))
+        if isinstance(item, BootstrapNewProjectChoice)
+    ]
+    assert examples, "the prompt must carry one worked bootstrap payload"
+    for example in examples:
+        assert example.semantics is not None
+        files = render_project(example.semantics, project_slug="prompt-project")
+        graph = parse_plan(roadmap=files["roadmap.md"], increment=files["increments/increment-01-initial-plan.md"])
+        # The rendered selectors follow the slug the controller supplies, not the example's.
+        selectors = [entry.selector for planned in graph.slices for entry in planned.acceptance]
+        assert selectors and all(
+            selector.startswith("worklogs/prompt-project/acceptance/tests/") for selector in selectors
+        )
+        assert graph.invariants and graph.slices[0].steps
+    # And the prompt no longer teaches the retired grammar's document shapes.
+    for retired in ("## Delivery", "## Verification", "TESTS: tests/", "kill: neutralise"):
+        assert retired not in ACQUISITION_SYSTEM_PROMPT, retired
+    del json
 
 
 def test_resolve_base_system_prompt_switches_only_for_planner_acquisition() -> None:

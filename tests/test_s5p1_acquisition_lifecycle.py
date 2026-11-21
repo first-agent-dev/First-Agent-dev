@@ -42,13 +42,41 @@ from .test_s5p1_acquisition_resolution import _Port, _port
 
 SELECTION = json.dumps({"kind": "SELECT_EXISTING", "project_slug": "demo-project", "increment_id": "I01"})
 CLARIFICATION = json.dumps({"kind": "NEEDS_CLARIFICATION", "reason": "AMBIGUOUS_PROJECT"})
+#: A well-formed PLAN-V2 bootstrap (D-V2-7): the wire carries semantics, and the parser
+#: renders them through a probe slug before this choice is ever accepted. The point of the
+#: tests below is that the *route* refuses it, not that the payload is malformed.
 BOOTSTRAP = json.dumps(
     {
         "kind": "BOOTSTRAP_NEW_PROJECT",
         "project_slug": "new-project",
-        "increment_slug": "foundation",
-        "roadmap_body": "## Intent\n\nNew.\n\n## Out of scope\n\nNone.\n",
-        "increment_body": "## SLICE1: Build\n\nDo it.\n",
+        "increment_slug": "initial-plan",
+        "semantics": {
+            "intent": "New.",
+            "out_of_scope": "None.",
+            "questions": [],
+            "invariants": [
+                {"number": "1", "kind": "HARD", "text": "it builds", "evidence": "TEST_REQUIRED", "reason": None}
+            ],
+            "scenarios": [],
+            "slices": [
+                {
+                    "number": "1",
+                    "name": "Build",
+                    "steps_mode": "prescriptive",
+                    "contracts": [{"number": "1", "cls": "FUNCTIONAL", "inv": "INV-1", "text": "it builds"}],
+                    "acceptance": [
+                        {
+                            "test_id": "TEST-1.1",
+                            "ct": "CT-1.1",
+                            "selector": "acceptance/tests/test_build.py::test_build",
+                        }
+                    ],
+                    "kill_targets": [],
+                    "exit_checks": [{"check": "CHECK-1", "step": "STEP1", "test_ids": ["TEST-1.1"]}],
+                    "steps": [{"number": "1", "text": "build it", "check": "CHECK-1"}],
+                }
+            ],
+        },
     }
 )
 

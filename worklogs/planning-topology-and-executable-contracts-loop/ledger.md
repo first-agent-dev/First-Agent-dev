@@ -11583,3 +11583,50 @@ underneath a refactor.
 
 **Verification of this entry.** Documentation only: `scripts/check_doc_links.py` → 369 files, no broken internal
 links. No product code touched; nothing here claims a test or a host result.
+
+### E582 — P0-1 closed: the planner authors semantics and one renderer owns every byte (2026-11-20)
+
+**The defect.** `ACQUISITION_SYSTEM_PROMPT` taught the retired V1 `Schema-4` Markdown while the
+new-project route admits only `PLAN-V2`. A body written exactly as instructed was refused
+(`plan-format-marker-roadmap`; with the marker `slice-1-unknown-field`), so the first real
+create-new could not produce an admissible plan. The prompt and the parser were two descriptions
+of one grammar, and only one of them was true.
+
+**Landed — D-V2-7 step 1, and the prompt of step 2.**
+
+| Layer | Change | Proof |
+| :--- | :--- | :--- |
+| `plan_semantics.py` (new) | Typed payload (`PlanSemantics`, `Question`, `SemanticsSlice`, `SemanticsContract`, `SemanticsStep`), `parse_semantics`, `render_roadmap`/`render_increment`/`render_open_questions`/`render_project`, `from_graph`. Selectors travel **project-relative** and are expanded only at render, because the slug is caller authority and can still be substituted. | 26 tests, laws + refusals |
+| Self-check | `parse_semantics` renders through a **probe slug** and `render_project` re-parses with the real one, so the renderer cannot emit bytes admission rejects and the payload is judged by the grammar's own vocabulary — no second copy of the rules. | mutants M2, M6 |
+| Wire (`managed_acquisition.py`) | `BOOTSTRAP_NEW_PROJECT` carries `semantics` and nothing else; the retired `roadmap_body`/`increment_body` are a closed-key refusal. `BootstrapNewProjectChoice.semantics` holds the payload; the prose fields remain for the V1 route only. | M10, M11 |
+| Controller | `_bootstrap_bodies` is the one place the renderer is consulted, and it is called **before** the route gate so the bytes admission judges and the bytes installed are the same object. `_rendered_increment_sha256` takes the same path, so a refusal record cannot name a document the install never wrote. | M8, M9 |
+| Prompt | Rewritten in the payload's terms: imperative rules, closed vocabularies, both refusal codes named, one worked payload. The retired shapes are gone, not left beside the new one. | CT-2.6 test walks the prompt's own example through parse → render → parse |
+
+**Two defects found while building it, both real and both now closed.**
+
+1. **Selector traversal was admitted.** `_SELECTOR_RE`'s character class includes `.` and `/`, so
+   `worklogs/w/acceptance/tests/../../../etc/x.py::test_a` parsed cleanly — while the plan requires
+   `..` and symlink escape to be rejected. `_FORBIDDEN_SEGMENTS` now refuses empty/`.`/`..` segments;
+   the test drives the payload path and the raw grammar.
+2. **The round-trip law caught my own fixture.** The first seeded corpus left contracts uncovered,
+   which is a legitimate `hard-contract-without-executable-evidence` refusal — the corpus was wrong,
+   not the renderer. The law is what surfaced it; a spot check on one example would not have.
+
+**Honest limits, stated so they are not overclaimed.**
+
+* The roadmap has no byte-idempotence law: it carries two prose sections the graph does not model.
+  Only the increment is byte-idempotent, which is the half a seal digest covers.
+* `render_project` returns three documents; `ledger.md` stays with the authority (it is a fixed
+  harness body, not semantics), and `acceptance/` materialization is SLICE3 (P2-1).
+* The payload is validated but **nothing is installed from it yet end-to-end on a live host** —
+  that is SLICE2's managed-run DoD, not this step.
+* `from_graph` normalises step marks to `[ ]`; ticks never enter sealed bytes (Q-V2-STATUS-1).
+
+**Verification.** `tests/test_ai_native_plan_semantics.py` 26 (laws, seeded corpus of 60 variants,
+refusal matrix); targeted banks green (624 across plan/admission/bootstrap/dispositions/bundle/
+invoke/managed-acquisition/prompt coherence). **Mutants 11/11 killed** (`tests/mutation/mut_step7.py`)
+after two survivors forced better tests: one that weakened nothing observable (replaced with a
+closed-key mutant) and one that was unobservable by construction. Full suite **8244 passed, 18
+skipped, 3 xfailed** with the three baseline-red tests deselected; `ruff` clean over 629 files;
+`mypy src` clean over 223 sources; full `mypy` holds at the 27 pre-existing `tests/` errors — zero
+new ones, verified by diffing before/after.

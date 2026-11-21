@@ -21,6 +21,7 @@ from yaml.nodes import MappingNode
 from yaml.tokens import AliasToken, AnchorToken
 
 from fa.inner_loop.plan_admission import PlanSnapshot, snapshot_from_bytes
+from fa.inner_loop.plan_semantics import PlanSemantics, SemanticsError, parse_semantics
 
 if TYPE_CHECKING:
     from fa.inner_loop.tools.workspace_port import WorkspacePort
@@ -66,12 +67,19 @@ class SelectExistingChoice:
 
 @dataclass(frozen=True, slots=True)
 class BootstrapNewProjectChoice:
-    """Submit prose for a controller-rendered, fixed three-file project bundle."""
+    """The planner's answer: typed semantics, never Markdown (D-V2-7).
+
+    ``semantics`` is the only content a PLAN-V2 bootstrap carries, and the controller is
+    the only thing that turns it into plan bytes. ``roadmap_body``/``increment_body`` are
+    the V1 route's free prose; they stay because that route is still reachable, and a
+    PLAN-V2 choice carries neither.
+    """
 
     project_slug: str
     increment_slug: str
     roadmap_body: str
     increment_body: str
+    semantics: PlanSemantics | None = None
     kind: Literal["BOOTSTRAP_NEW_PROJECT"] = "BOOTSTRAP_NEW_PROJECT"
 
 
@@ -589,16 +597,34 @@ def _parse_existing_choice(value: dict[str, object]) -> SelectExistingChoice:
 
 
 def _parse_bootstrap_choice(value: dict[str, object]) -> BootstrapNewProjectChoice:
-    if set(value) != {"kind", "project_slug", "increment_slug", "roadmap_body", "increment_body"}:
+    """Parse the typed payload the renderer consumes; refuse Markdown fields outright.
+
+    The wire carries ``semantics`` only. Accepting ``roadmap_body``/``increment_body`` here
+    as well would leave two ways to describe one plan, and the prompt could not say which
+    one admission judges -- the drift that produced P0-1.
+    """
+    if set(value) != {"kind", "project_slug", "increment_slug", "semantics"}:
         raise _malformed()
     project_slug, increment_slug = value["project_slug"], value["increment_slug"]
     if not _valid_slug(project_slug) or not _valid_slug(increment_slug):
         raise _malformed()
+    raw = value["semantics"]
+    if isinstance(raw, Mapping):
+        encoded = json.dumps(dict(raw))
+        if len(encoded.encode("utf-8")) > _MAX_BOOTSTRAP_BODY_BYTES:
+            raise AcquisitionChoiceError("bootstrap", "too-large")
+    try:
+        semantics = parse_semantics(raw)
+    except SemanticsError as error:
+        # The payload's own field is the message: the model learns which field to fix,
+        # and the closed rule stays a closed rule.
+        raise AcquisitionChoiceError("bootstrap", "invalid-body") from error
     return BootstrapNewProjectChoice(
         project_slug=project_slug,
         increment_slug=increment_slug,
-        roadmap_body=_valid_body(value["roadmap_body"]),
-        increment_body=_valid_body(value["increment_body"]),
+        roadmap_body="",
+        increment_body="",
+        semantics=semantics,
     )
 
 

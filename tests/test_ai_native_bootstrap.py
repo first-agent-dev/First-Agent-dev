@@ -24,6 +24,7 @@ from fa.inner_loop import workflow_controller
 from fa.inner_loop.coder_loop import SessionOutcome
 from fa.inner_loop.managed_acquisition import BootstrapNewProjectChoice
 from fa.inner_loop.plan_admission import PLAN_V2, parse_dispositions, snapshot_from_bytes
+from fa.inner_loop.plan_semantics import PlanSemantics, parse_semantics, render_project
 from fa.inner_loop.registry import ToolResult
 from fa.inner_loop.tools import workflow_tool
 from fa.inner_loop.tools.workflow_tool import (
@@ -36,30 +37,69 @@ from fa.inner_loop.workflow_artifacts import FlowState
 from tests.test_execution_workspace import Site
 from tests.test_execution_workspace import site as site
 
-_ROADMAP_BODY = (
-    "Plan-Format: AI-NATIVE-PLAN-V2\n\n"
-    "## Intent\n\nShip the demo slice.\n\n"
-    "## Out of scope\n\nEverything outside SLICE1.\n"
-)
 
-_INCREMENT_BODY = (
-    "Plan-Format: AI-NATIVE-PLAN-V2\n\n"
-    "## INVARIANTS\n"
-    "### INV-1\n"
-    "KIND: HARD\n"
-    "TEXT: publication requires a sealed selection.\n"
-    "EVIDENCE: TEST_REQUIRED\n\n"
-    "## SLICE1: Foundation\n"
-    "STEPS: prescriptive\n"
-    "CONTRACTS:\n"
-    "  CT-1.1 [FUNCTIONAL] INV: INV-1: publication requires a sealed selection\n"
-    "ACCEPTANCE:\n"
-    "  TEST-ID: TEST-1.1 | CT: CT-1.1 | SELECTOR: "
-    "worklogs/demo-project/acceptance/tests/test_publish.py::test_publish\n"
-    "STEP-EXIT-CHECKS:\n"
-    "  CHECK-ID: CHECK-1 | STEP: STEP1 | TEST-ID[]: TEST-1.1\n"
-    "- [ ] STEP1: publish through the sealed authority. EXIT-CHECK: CHECK-1\n"
-)
+def _payload(
+    *,
+    evidence: str = "TEST_REQUIRED",
+    reason: str | None = None,
+    contracts: list[dict[str, object]] | None = None,
+) -> dict[str, object]:
+    """The typed semantics a PLAN-V2 bootstrap carries (D-V2-7).
+
+    The planner no longer writes Markdown, so the fixture is a payload and the controller
+    renders it. ``evidence``/``reason`` vary the R1/R5/R6 cells; ``contracts`` lets the
+    refusal oracles describe a claim the grammar will reject without restating a rule here.
+    """
+    invariant: dict[str, object] = {
+        "number": "1",
+        "kind": "HARD",
+        "text": "publication requires a sealed selection.",
+        "evidence": evidence,
+        "reason": reason,
+    }
+    return {
+        "intent": "Ship the demo slice.",
+        "out_of_scope": "Everything outside SLICE1.",
+        "questions": [],
+        "invariants": [invariant],
+        "scenarios": [],
+        "slices": [
+            {
+                "number": "1",
+                "name": "Foundation",
+                "steps_mode": "prescriptive",
+                "contracts": contracts
+                or [
+                    {
+                        "number": "1",
+                        "cls": "FUNCTIONAL",
+                        "inv": "INV-1",
+                        "text": "publication requires a sealed selection",
+                    }
+                ],
+                "acceptance": [
+                    {
+                        "test_id": "TEST-1.1",
+                        "ct": "CT-1.1",
+                        "selector": "acceptance/tests/test_publish.py::test_publish",
+                    }
+                ],
+                "kill_targets": [],
+                "exit_checks": [{"check": "CHECK-1", "step": "STEP1", "test_ids": ["TEST-1.1"]}],
+                "steps": [{"number": "1", "text": "publish through the sealed authority.", "check": "CHECK-1"}],
+            }
+        ],
+    }
+
+
+def _semantics(**kwargs: object) -> PlanSemantics:
+    return parse_semantics(_payload(**kwargs))  # type: ignore[arg-type]
+
+
+def _rendered(project_slug: str = "demo-project") -> tuple[str, str]:
+    """The pair the controller would install, rendered by the production renderer."""
+    files = render_project(_semantics(), project_slug=project_slug)
+    return files["roadmap.md"], files["increments/increment-01-initial-plan.md"]
 
 
 class _AuthorityMustNotBeTouched:
@@ -83,20 +123,34 @@ def _v2_context() -> SimpleNamespace:
     )
 
 
-def _choice(increment_body: str) -> BootstrapNewProjectChoice:
+def _choice(semantics: PlanSemantics | None = None, *, prose: str = "") -> BootstrapNewProjectChoice:
+    """A PLAN-V2 choice carries semantics; the legacy route's shape stays expressible."""
     return BootstrapNewProjectChoice(
         project_slug="demo-project",
         increment_slug="foundation",
-        roadmap_body=_ROADMAP_BODY,
-        increment_body=increment_body,
+        roadmap_body="",
+        increment_body=prose,
+        semantics=semantics,
     )
 
 
-def test_v2_bootstrap_pair_is_validated_before_the_irreversible_install() -> None:
-    """An unparseable V2 body is refused while nothing exists — no prepare, no install."""
+def _requesting_semantics() -> PlanSemantics:
+    """R1 shape: the plan asks for a disposition by reason and cannot name an owner."""
+    return _semantics(evidence="NON_EXECUTABLE", reason="HOST_READINESS")
+
+
+def test_a_v2_bootstrap_without_semantics_is_refused_before_the_authority() -> None:
+    """The V2 route has no path that skips the renderer, and no path that skips the gate.
+
+    D-V2-7 moved the "body does not parse" refusal earlier: `parse_semantics` renders the
+    payload through a probe slug, so a payload that would not admit is refused inside
+    `parse_acquisition_choice` and never reaches the controller at all. What the controller
+    still has to refuse is the *missing* payload -- a V2 choice whose semantics were never
+    produced -- and it must do so before `prepare_bundle` is touched.
+    """
     ctx, refusal, detail = workflow_controller._install_bootstrap_project_with_detail(
         _v2_context(),  # type: ignore[arg-type]
-        _choice(_INCREMENT_BODY.replace("## INVARIANTS", "## NOT_INVARIANTS")),
+        _choice(None),
         creation_authorized=True,
     )
 
@@ -106,12 +160,6 @@ def test_v2_bootstrap_pair_is_validated_before_the_irreversible_install() -> Non
     assert (detail.validator, detail.rule, detail.severity) == ("bootstrap", "invalid-body", "FAIL")
     assert detail.operation_id is None  # nothing was installed, so there is no operation
     assert ctx.run_id == "run-bootstrap-v2"  # unchanged: nothing was bound
-
-
-_REQUESTING_INCREMENT = _INCREMENT_BODY.replace(
-    "EVIDENCE: TEST_REQUIRED\n",
-    "EVIDENCE: NON_EXECUTABLE\nDISPOSITION-REASON: HOST_READINESS\n",
-)
 
 
 _EVIDENCE_PATH = "worklogs/demo-project/notes/readiness.md"
@@ -152,7 +200,7 @@ def test_a_requested_disposition_that_was_not_granted_never_installs() -> None:
     """R1 (E577): the plan asks, the caller grants; an ungranted request is a refusal."""
     ctx, refusal, detail = workflow_controller._install_bootstrap_project_with_detail(
         _v2_context(),  # type: ignore[arg-type]
-        _choice(_REQUESTING_INCREMENT),
+        _choice(_requesting_semantics()),
         creation_authorized=True,
     )
 
@@ -174,22 +222,16 @@ def test_a_granted_request_passes_the_pre_install_gate() -> None:
     with pytest.raises(AssertionError, match="authority reached before validation"):
         workflow_controller._install_bootstrap_project_with_detail(
             ctx,  # type: ignore[arg-type]
-            _choice(_REQUESTING_INCREMENT),
+            _choice(_requesting_semantics()),
             creation_authorized=True,
         )
-
-
-_SELF_OWNED_INCREMENT = _INCREMENT_BODY.replace(
-    "EVIDENCE: TEST_REQUIRED\n",
-    "EVIDENCE: NON_EXECUTABLE\nDISPOSITION-REASON: HOST_READINESS\nDISPOSITION-OWNER: W4\n",
-)
 
 
 def test_a_plan_cannot_own_its_own_waiver() -> None:
     """G1: the grant is not a plan field, so the bootstrap refuses the body outright."""
     ctx, refusal, detail = workflow_controller._install_bootstrap_project_with_detail(
         _granting_context(reviewed_at=datetime.now(UTC).date().isoformat()),  # type: ignore[arg-type]
-        _choice(_SELF_OWNED_INCREMENT),
+        _choice(_requesting_semantics()),
         creation_authorized=True,
     )
 
@@ -206,20 +248,15 @@ def test_v1_route_keeps_its_existing_authority_order() -> None:
     with pytest.raises(AssertionError, match="authority reached before validation"):
         workflow_controller._install_bootstrap_project_with_detail(
             legacy,  # type: ignore[arg-type]
-            _choice("## SLICE1: Foundation\nCONTRACTS:\n  CT1 [CONSTRAINT]: holds.\nTESTS: tests/x.py\n"),
+            _choice(prose="## SLICE1: Foundation\nCONTRACTS:\n  CT1 [CONSTRAINT]: holds.\nTESTS: tests/x.py\n"),
             creation_authorized=True,
         )
 
 
 def test_rendered_v2_bundle_is_the_pair_admission_parses() -> None:
     """The controller validates the bodies; this proves the *rendered* files agree."""
-    files = render_bundle(
-        "demo-project",
-        "foundation",
-        _ROADMAP_BODY,
-        _INCREMENT_BODY,
-        created="2026-11-20",
-    )
+    roadmap_body, increment_body = _rendered()
+    files = render_bundle("demo-project", "foundation", roadmap_body, increment_body, created="2026-11-20")
     roadmap_path = "worklogs/demo-project/roadmap.md"
     increment_path = "worklogs/demo-project/increments/increment-01-foundation.md"
 
@@ -297,8 +334,9 @@ def test_the_chat_slug_overrides_the_planner_slug_without_substitution() -> None
     choice = BootstrapNewProjectChoice(
         project_slug="planner-guess",
         increment_slug="foundation",
-        roadmap_body=_ROADMAP_BODY,
-        increment_body=_INCREMENT_BODY,
+        roadmap_body="",
+        increment_body="",
+        semantics=_semantics(),
     )
 
     assert workflow_controller._with_project_hint(choice, None) is choice
@@ -306,26 +344,26 @@ def test_the_chat_slug_overrides_the_planner_slug_without_substitution() -> None
     overridden = workflow_controller._with_project_hint(choice, "chat-name")
     assert overridden is not None
     assert overridden.project_slug == "chat-name"
-    assert overridden.increment_body == choice.increment_body  # semantics untouched
+    assert overridden.semantics is choice.semantics  # semantics untouched
+    # The slug is caller authority, so the *rendered* selectors must follow it.
+    assert overridden.semantics is not None
+    rendered = render_project(overridden.semantics, project_slug=overridden.project_slug)
+    assert (
+        "worklogs/chat-name/acceptance/tests/test_publish.py::test_publish"
+        in rendered["increments/increment-01-initial-plan.md"]
+    )
 
 
 # --- CT-2.1: creation is a caller decision, proven through a real managed run --
 
 
-def _v2_pair(project: str) -> tuple[str, str]:
-    increment = _INCREMENT_BODY.replace("worklogs/demo-project/", f"worklogs/{project}/")
-    return _ROADMAP_BODY, increment
-
-
 def _bootstrap_text(project: str) -> str:
-    roadmap, increment = _v2_pair(project)
     return json.dumps(
         {
             "kind": "BOOTSTRAP_NEW_PROJECT",
             "project_slug": project,
             "increment_slug": "foundation",
-            "roadmap_body": roadmap,
-            "increment_body": increment,
+            "semantics": _payload(),
         }
     )
 
@@ -567,13 +605,13 @@ def test_only_a_doc_grant_whose_bytes_match_can_authorise(read: PortRead | None,
         with pytest.raises(AssertionError, match="authority reached before validation"):
             workflow_controller._install_bootstrap_project_with_detail(
                 ctx,  # type: ignore[arg-type]
-                _choice(_REQUESTING_INCREMENT),
+                _choice(_requesting_semantics()),
                 creation_authorized=True,
             )
         return
     _ctx_after, refusal, detail = workflow_controller._install_bootstrap_project_with_detail(
         ctx,  # type: ignore[arg-type]
-        _choice(_REQUESTING_INCREMENT),
+        _choice(_requesting_semantics()),
         creation_authorized=True,
     )
     assert refusal is not None and refusal.rule == "bootstrap-invalid-body"
@@ -589,7 +627,7 @@ def test_a_doc_grant_without_a_pinned_view_is_unresolvable() -> None:
 
     _ctx_after, refusal, _detail = workflow_controller._install_bootstrap_project_with_detail(
         context,  # type: ignore[arg-type]
-        _choice(_REQUESTING_INCREMENT),
+        _choice(_requesting_semantics()),
         creation_authorized=True,
     )
 
@@ -604,6 +642,6 @@ def test_a_typed_reference_this_system_cannot_resolve_still_authorises() -> None
     with pytest.raises(AssertionError, match="authority reached before validation"):
         workflow_controller._install_bootstrap_project_with_detail(
             context,  # type: ignore[arg-type]
-            _choice(_REQUESTING_INCREMENT),
+            _choice(_requesting_semantics()),
             creation_authorized=True,
         )

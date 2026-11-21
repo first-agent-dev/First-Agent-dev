@@ -72,6 +72,7 @@ from fa.inner_loop.plan_promotion import (
     retain_plan_draft,
     seed_plan_candidate,
 )
+from fa.inner_loop.plan_semantics import SemanticsError, render_project
 from fa.inner_loop.plan_v2 import PlanV2Error, parse_plan
 from fa.inner_loop.planner_dispatch import PlannerDispatch, PlannerDispatchError, PlannerDispatchKind
 from fa.inner_loop.prompt import ADVERSARIAL_EVAL_STANCE_PREAMBLE
@@ -2744,14 +2745,32 @@ def _refusal_exit_code(
     )[0]
 
 
-def _rendered_increment_sha256(choice: BootstrapNewProjectChoice) -> str | None:
+def _bootstrap_bodies(choice: BootstrapNewProjectChoice, *, plan_format: str) -> tuple[str, str]:
+    """The two Markdown bodies the authority will wrap, from whichever source owns them.
+
+    A PLAN-V2 bootstrap carries typed semantics and no prose (D-V2-7), so this is the one
+    place the renderer is consulted; the V1 route keeps its free prose. Returning both in
+    one function is deliberate: the digest that records evidence
+    (``_rendered_increment_sha256``) and the bytes that get installed must come from the
+    same call, or a refusal record could name a document the install never wrote.
+    """
+    if plan_format != PLAN_V2:
+        return choice.roadmap_body, choice.increment_body
+    if choice.semantics is None:
+        raise SemanticsError("payload-missing")
+    rendered = render_project(choice.semantics, project_slug=choice.project_slug)
+    return rendered["roadmap.md"], rendered["increments/increment-01-initial-plan.md"]
+
+
+def _rendered_increment_sha256(choice: BootstrapNewProjectChoice, *, plan_format: str) -> str | None:
     """Compute the rendered increment digest to preserve post-prepare bootstrap evidence."""
     try:
+        roadmap_text, increment_text = _bootstrap_bodies(choice, plan_format=plan_format)
         files = render_bundle(
             choice.project_slug,
             choice.increment_slug,
-            choice.roadmap_body,
-            choice.increment_body,
+            roadmap_text,
+            increment_text,
             created=datetime.now(UTC).date().isoformat(),
         )
     except Exception:  # noqa: BLE001 - schema stays closed even if local render cannot repeat server rules
@@ -2854,15 +2873,26 @@ def _install_bootstrap_project_with_detail(
             PlanRefError("project-route-mismatch"),
             _BootstrapFailure("selection", "project-route-mismatch", "ERROR", "INDETERMINATE"),
         )
+    # Both routes need the identical bodies for the digest and for the install, so
+    # they are derived once here -- before the V2-only gate, which is the only part
+    # that is route-specific.
+    try:
+        roadmap_text, increment_text = _bootstrap_bodies(choice, plan_format=ctx.plan_format)
+    except SemanticsError as error:
+        logger.warning("bootstrap semantics refused [%s] (run=%s)", error.rule, ctx.run_id)
+        return (
+            ctx,
+            PlanRefError("bootstrap-invalid-body"),
+            _BootstrapFailure("bootstrap", "invalid-body", "FAIL", "DIAGNOSTICS"),
+        )
     if ctx.plan_format == PLAN_V2:
         # The pair is validated BEFORE the irreversible install: a V2 body that
         # does not parse must never become a project, because the rollback for an
-        # installed-then-refused bootstrap is recovery, not undo. The check runs
-        # on the same bodies the renderer will wrap (front matter and fixed
-        # headings are grammar-neutral), and `tests/test_ai_native_bootstrap.py`
-        # proves the *rendered* files parse identically.
+        # installed-then-refused bootstrap is recovery, not undo. These are the exact
+        # bytes `prepare_bundle` will wrap, so what admission judges and what the
+        # authority installs cannot diverge.
         try:
-            graph = parse_plan(roadmap=choice.roadmap_body, increment=choice.increment_body)
+            graph = parse_plan(roadmap=roadmap_text, increment=increment_text)
             # R1 (E577): the plan only *requests* its dispositions; this run holds
             # the only thing that can grant them. Binding before the install keeps
             # the property the parse already has -- a body that cannot be
@@ -2889,8 +2919,8 @@ def _install_bootstrap_project_with_detail(
             grant=managed.grant,
             project_slug=choice.project_slug,
             increment_slug=choice.increment_slug,
-            roadmap_text=choice.roadmap_body,
-            increment_text=choice.increment_body,
+            roadmap_text=roadmap_text,
+            increment_text=increment_text,
             expected_base_revision=input_revision,
             deadline=deadline,
         )
@@ -2912,7 +2942,7 @@ def _install_bootstrap_project_with_detail(
             "bootstrap install failed [%s] (run=%s)", getattr(error, "code", type(error).__name__), ctx.run_id
         )
         detail = _classify_bootstrap_exception(error, phase="install")
-        cand_sha = _rendered_increment_sha256(choice)
+        cand_sha = _rendered_increment_sha256(choice, plan_format=ctx.plan_format)
         if cand_sha is not None:
             detail = replace(detail, candidate_sha256=cand_sha, bundle_sha256=prepared.bundle_sha256)
         elif detail.operation_id is not None:
@@ -2929,7 +2959,7 @@ def _install_bootstrap_project_with_detail(
     )
     bound, refusal = _admit_installed_plan(ctx, choice, bootstrap_receipt=bootstrap_receipt)
     if refusal is not None:
-        cand_sha = _rendered_increment_sha256(choice)
+        cand_sha = _rendered_increment_sha256(choice, plan_format=ctx.plan_format)
         detail = _BootstrapFailure(
             "bootstrap",
             "install-failed",

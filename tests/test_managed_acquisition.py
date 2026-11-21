@@ -47,6 +47,28 @@ from fa.inner_loop.tools.workspace_port import (
 )
 from fa.inner_loop.workflow_artifacts import AdmissionIOError, ManagedAdmissionBinding, write_admission_record
 
+#: One admissible payload, as it would arrive on the wire (D-V2-7). The controller renders
+#: it; nothing here is Markdown.
+_MINIMAL_SEMANTICS: dict[str, object] = {
+    "intent": "Goal.",
+    "out_of_scope": "No extras.",
+    "questions": [],
+    "invariants": [{"number": "1", "kind": "HARD", "text": "a", "evidence": "TEST_REQUIRED", "reason": None}],
+    "scenarios": [],
+    "slices": [
+        {
+            "number": "1",
+            "name": "first",
+            "steps_mode": "prescriptive",
+            "contracts": [{"number": "1", "cls": "FUNCTIONAL", "inv": "INV-1", "text": "a"}],
+            "acceptance": [{"test_id": "TEST-1.1", "ct": "CT-1.1", "selector": "acceptance/tests/test_a.py::test_a"}],
+            "kill_targets": [],
+            "exit_checks": [{"check": "CHECK-1", "step": "STEP1", "test_ids": ["TEST-1.1"]}],
+            "steps": [{"number": "1", "text": "work", "check": "CHECK-1"}],
+        }
+    ],
+}
+
 _SHA_A = "a" * 64
 _SHA_B = "b" * 64
 _SHA_C = "c" * 64
@@ -250,18 +272,17 @@ def test_acquisition_choice_parser_accepts_only_the_three_closed_variants() -> N
             {
                 "kind": "BOOTSTRAP_NEW_PROJECT",
                 "project_slug": "demo-project",
-                "increment_slug": "first-increment",
-                "roadmap_body": "## Intent\n\nGoal.\n\n## Out of scope\n\nNo extras.\n",
-                "increment_body": "## SLICE1: first\n\nWork.\n",
+                "increment_slug": "initial-plan",
+                "semantics": _MINIMAL_SEMANTICS,
             }
         )
     )
-    assert bootstrap == BootstrapNewProjectChoice(
-        "demo-project",
-        "first-increment",
-        "## Intent\n\nGoal.\n\n## Out of scope\n\nNo extras.\n",
-        "## SLICE1: first\n\nWork.\n",
-    )
+    assert isinstance(bootstrap, BootstrapNewProjectChoice)
+    assert (bootstrap.project_slug, bootstrap.increment_slug) == ("demo-project", "initial-plan")
+    # D-V2-7: the wire carries semantics, never Markdown; the legacy bodies stay empty.
+    assert bootstrap.semantics is not None
+    assert (bootstrap.roadmap_body, bootstrap.increment_body) == ("", "")
+    assert bootstrap.semantics.invariants[0].id == "INV-1"
 
     clarification = parse_acquisition_choice('{"kind":"NEEDS_CLARIFICATION","reason":"UNKNOWN_INCREMENT"}')
     assert clarification == NeedsClarificationChoice("UNKNOWN_INCREMENT")
@@ -313,44 +334,74 @@ def test_acquisition_choice_parser_rejects_noncanonical_stable_ids(project_slug:
     assert (refused.value.validator, refused.value.rule) == ("selection", "choice-malformed")
 
 
-def test_acquisition_choice_parser_rejects_nontext_invalid_utf8_and_oversized_bootstrap_bodies() -> None:
-    invalid_fields: list[dict[str, Any]] = [
-        {"project_slug": "demo", "increment_slug": "inc", "roadmap_body": [], "increment_body": "x"},
-        {"project_slug": "demo", "increment_slug": "inc", "roadmap_body": "\u0000", "increment_body": "x"},
-    ]
-    for fields in invalid_fields:
+def test_acquisition_choice_parser_rejects_absent_or_oversized_semantics() -> None:
+    """The V2 wire carries semantics only, and the payload is bounded like any body.
+
+    A payload that is not a mapping at all is a *shape* refusal; one that is too large is
+    refused before it is parsed, so a hostile model cannot make the validator walk a
+    megabyte of nesting to find that out.
+    """
+    cases: list[object] = [[], "x", {"intent": "\u0000"}]
+    for semantics in cases:
         raw = json.dumps(
             {
                 "kind": "BOOTSTRAP_NEW_PROJECT",
-                "project_slug": fields["project_slug"],
-                "increment_slug": fields["increment_slug"],
-                "roadmap_body": fields["roadmap_body"],
-                "increment_body": fields["increment_body"],
+                "project_slug": "demo",
+                "increment_slug": "initial-plan",
+                "semantics": semantics,
             }
         )
         with pytest.raises(AcquisitionChoiceError) as refused:
             parse_acquisition_choice(raw)
-        assert (refused.value.validator, refused.value.rule) == ("bootstrap", "invalid-body")
-
-    with pytest.raises(AcquisitionChoiceError) as invalid_utf8:
-        parse_acquisition_choice(
-            '{"kind":"BOOTSTRAP_NEW_PROJECT","project_slug":"demo","increment_slug":"inc",'
-            '"roadmap_body":"\\ud800","increment_body":"x"}'
-        )
-    assert (invalid_utf8.value.validator, invalid_utf8.value.rule) == ("bootstrap", "invalid-body")
+        assert (refused.value.validator, refused.value.rule) == ("bootstrap", "invalid-body"), semantics
 
     oversized = json.dumps(
         {
             "kind": "BOOTSTRAP_NEW_PROJECT",
             "project_slug": "demo",
-            "increment_slug": "inc",
-            "roadmap_body": "x" * (1024 * 1024 + 1),
-            "increment_body": "x",
+            "increment_slug": "initial-plan",
+            "semantics": {"intent": "x" * (1024 * 1024 + 1)},
         }
     )
     with pytest.raises(AcquisitionChoiceError) as too_large:
         parse_acquisition_choice(oversized)
     assert (too_large.value.validator, too_large.value.rule) == ("bootstrap", "too-large")
+
+
+def test_a_payload_carrying_both_shapes_is_refused() -> None:
+    """The closed key set is what stops the two grammars coexisting (P0-1's root cause)."""
+    both = json.dumps(
+        {
+            "kind": "BOOTSTRAP_NEW_PROJECT",
+            "project_slug": "demo",
+            "increment_slug": "initial-plan",
+            "semantics": _MINIMAL_SEMANTICS,
+            "roadmap_body": "## Intent\n\nGoal.\n",
+        }
+    )
+    with pytest.raises(AcquisitionChoiceError) as refused:
+        parse_acquisition_choice(both)
+    assert (refused.value.validator, refused.value.rule) == ("selection", "choice-malformed")
+
+
+def test_the_markdown_bootstrap_shape_is_now_unknown_on_the_wire() -> None:
+    """P0-1's converse: the old two-body payload must not stay silently accepted.
+
+    Two ways to describe one plan is what let the prompt and the parser drift apart, so the
+    legacy fields are a closed-vocabulary refusal rather than an ignored alias.
+    """
+    legacy = json.dumps(
+        {
+            "kind": "BOOTSTRAP_NEW_PROJECT",
+            "project_slug": "demo",
+            "increment_slug": "inc",
+            "roadmap_body": "## Intent\n\nGoal.\n",
+            "increment_body": "## SLICE1: first\n",
+        }
+    )
+    with pytest.raises(AcquisitionChoiceError) as refused:
+        parse_acquisition_choice(legacy)
+    assert (refused.value.validator, refused.value.rule) == ("selection", "choice-malformed")
 
 
 _ROADMAP_SLUG = "planning-topology-and-executable-contracts-loop"

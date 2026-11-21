@@ -112,6 +112,11 @@ _SELECTOR_RE = re.compile(
     r"^worklogs/(?P<slug>[a-z][a-z0-9]*(?:-[a-z0-9]+)*)/acceptance/tests/"
     r"(?P<path>[A-Za-z0-9_./-]+\.py)::(?P<node>[A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*)$"
 )
+#: Path segments a selector may never contain. The character class above admits ``.`` and
+#: ``/``, so ``../`` would otherwise be accepted and resolved by the verifier: the plan
+#: requires absolute paths, ``..`` and symlink escape to be rejected, and only the last
+#: two are reachable inside the character class.
+_FORBIDDEN_SEGMENTS = frozenset({"", ".", ".."})
 _V1_TOKEN_RE = re.compile(r"^(?:TESTS|STEPS-NOTE|KILLS)\s*:")
 _SLICE_SECTIONS = ("CONTRACTS", "ACCEPTANCE", "KILL-TARGETS", "STEP-EXIT-CHECKS")
 
@@ -450,7 +455,10 @@ def _parse_acceptance(rows: Sequence[str], number: str) -> tuple[Acceptance, ...
             raise PlanV2Error("acceptance-test-id-invalid")
         if _CT_RE.match(fields["CT"]) is None:
             raise PlanV2Error("acceptance-ct-invalid")
-        if _SELECTOR_RE.match(fields["SELECTOR"]) is None:
+        match = _SELECTOR_RE.match(fields["SELECTOR"])
+        if match is None:
+            raise PlanV2Error("acceptance-selector-invalid")
+        if _FORBIDDEN_SEGMENTS.intersection(match.group("path").split("/")):
             raise PlanV2Error("acceptance-selector-invalid")
         entries.append(Acceptance(test_id=fields["TEST-ID"], ct=fields["CT"], selector=fields["SELECTOR"]))
     return tuple(entries)

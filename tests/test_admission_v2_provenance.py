@@ -31,6 +31,7 @@ from fa.execution.types import Access, GrantReply, NamespaceRef, ViewPurpose
 from fa.inner_loop.admission_schema import validate_admission_record
 from fa.inner_loop.coder_loop import SessionOutcome
 from fa.inner_loop.plan_promotion import PlanPromotionError
+from fa.inner_loop.plan_semantics import parse_semantics, render_project
 from fa.inner_loop.planner_dispatch import PlannerDispatch, PlannerDispatchKind
 from fa.inner_loop.tools.workflow_tool import (
     WorkflowInvocationContext,
@@ -70,23 +71,49 @@ _V2_ROADMAP = (
     "## Intent\n\nBuild the demo slice cleanly.\n\n"
     "## Out of scope\n\nEverything outside SLICE1.\n"
 )
-_V2_INCREMENT = (
-    "Plan-Format: AI-NATIVE-PLAN-V2\n\n"
-    "## INVARIANTS\n"
-    "### INV-1\n"
-    "KIND: HARD\n"
-    "TEXT: the initial boundary holds.\n"
-    "EVIDENCE: TEST_REQUIRED\n\n"
-    "## SLICE1: Foundation\n"
-    "STEPS: prescriptive\n"
-    "CONTRACTS:\n"
-    "  CT-1.1 [CONSTRAINT] INV: INV-1: the initial boundary holds\n"
-    "ACCEPTANCE:\n"
-    "  TEST-ID: TEST-1.1 | CT: CT-1.1 | SELECTOR: "
-    "worklogs/demo-project/acceptance/tests/test_foundation.py::test_foundation\n"
-    "STEP-EXIT-CHECKS:\n"
-    "  CHECK-ID: CHECK-1 | STEP: STEP1 | TEST-ID[]: TEST-1.1\n"
-    "- [ ] STEP1: hold the boundary. EXIT-CHECK: CHECK-1\n"
+#: The typed payload a PLAN-V2 bootstrap carries (D-V2-7). The planner writes semantics;
+#: the controller renders the Markdown these tests then read back from the authority.
+_V2_SEMANTICS: dict[str, object] = {
+    "intent": "Build the demo slice cleanly.",
+    "out_of_scope": "Everything outside SLICE1.",
+    "questions": [],
+    "invariants": [
+        {
+            "number": "1",
+            "kind": "HARD",
+            "text": "the initial boundary holds.",
+            "evidence": "TEST_REQUIRED",
+            "reason": None,
+        }
+    ],
+    "scenarios": [],
+    "slices": [
+        {
+            "number": "1",
+            "name": "Foundation",
+            "steps_mode": "prescriptive",
+            "contracts": [{"number": "1", "cls": "CONSTRAINT", "inv": "INV-1", "text": "the initial boundary holds"}],
+            "acceptance": [
+                {
+                    "test_id": "TEST-1.1",
+                    "ct": "CT-1.1",
+                    "selector": "acceptance/tests/test_foundation.py::test_foundation",
+                }
+            ],
+            "kill_targets": [],
+            "exit_checks": [{"check": "CHECK-1", "step": "STEP1", "test_ids": ["TEST-1.1"]}],
+            "steps": [{"number": "1", "text": "hold the boundary.", "check": "CHECK-1"}],
+        }
+    ],
+}
+#: A payload that renders an inadmissible pair: `parse_acquisition_choice` refuses it, so
+#: this is the "the model sent semantics the grammar rejects" case on the real wire.
+_V2_INVALID_SEMANTICS: dict[str, object] = {
+    **_V2_SEMANTICS,
+    "invariants": [],
+}
+_V2_ROADMAP, _V2_INCREMENT = (lambda files: (files["roadmap.md"], files["increments/increment-01-initial-plan.md"]))(
+    render_project(parse_semantics(_V2_SEMANTICS), project_slug="demo-project")
 )
 # Invalid for the same reason a V2 document is ever invalid on this route: the
 # marker is what makes it a V2 plan at all.
@@ -496,8 +523,7 @@ def test_v2_bootstrap_admitted_emits_distinct_bundle_and_plan_hashes_with_instal
                 "kind": "BOOTSTRAP_NEW_PROJECT",
                 "project_slug": "new-project",
                 "increment_slug": "foundation",
-                "roadmap_body": _V2_ROADMAP,
-                "increment_body": _V2_INCREMENT,
+                "semantics": _V2_SEMANTICS,
             }
         )
 
@@ -559,8 +585,7 @@ def test_v2_bootstrap_invalid_body_blocks_with_candidate_and_bundle_evidence_and
                 "kind": "BOOTSTRAP_NEW_PROJECT",
                 "project_slug": "bad-project",
                 "increment_slug": "foundation",
-                "roadmap_body": _V2_ROADMAP,
-                "increment_body": _V2_INVALID_INCREMENT,
+                "semantics": _V2_INVALID_SEMANTICS,
             }
         )
 
@@ -680,8 +705,7 @@ def test_v2_bootstrap_authority_failures_emit_valid_v2_records(
                 "kind": "BOOTSTRAP_NEW_PROJECT",
                 "project_slug": "demo-fail",
                 "increment_slug": "foundation",
-                "roadmap_body": _V2_ROADMAP,
-                "increment_body": _V2_INCREMENT,
+                "semantics": _V2_SEMANTICS,
             }
         )
 
@@ -732,8 +756,7 @@ def test_v2_bootstrap_authority_failures_emit_valid_v2_records(
                     "kind": "BOOTSTRAP_NEW_PROJECT",
                     "project_slug": "demo-bad",
                     "increment_slug": "foundation",
-                    "roadmap_body": [],
-                    "increment_body": "x",
+                    "semantics": [],
                 }
             ),
             ("bootstrap", "invalid-body"),
@@ -932,8 +955,7 @@ def test_invoke_workflow_handoff_child_writes_validated_v2_bootstrap_admission(
                     "kind": "BOOTSTRAP_NEW_PROJECT",
                     "project_slug": "child-proj",
                     "increment_slug": "foundation",
-                    "roadmap_body": _V2_ROADMAP,
-                    "increment_body": _V2_INCREMENT,
+                    "semantics": _V2_SEMANTICS,
                 }
             )
 
