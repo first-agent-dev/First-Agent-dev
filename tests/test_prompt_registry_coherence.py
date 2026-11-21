@@ -546,6 +546,10 @@ def test_acquisition_prompt_is_static_cacheable_and_examples_parse() -> None:
         "HOST_READINESS",
         "preservation-without-executable-evidence",
         "hard-contract-without-executable-evidence",
+        # E585: the planner is told both halves of "one grant, one claim", because a
+        # rule the model is never told is a rule the model learns by being refused.
+        "disposition-covers-several-contracts",
+        "disposition-reason-reused",
         "acceptance/tests/",
         "Incomplete",
     ):

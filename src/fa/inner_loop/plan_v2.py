@@ -345,6 +345,14 @@ def _parse_invariants(lines: Sequence[str]) -> tuple[Invariant, ...]:
         raise PlanV2Error("duplicate-invariant-id")
     if sum(1 for entry in entries if entry.evidence == "NON_EXECUTABLE") > MAX_DISPOSITIONS:
         raise PlanV2Error("too-many-dispositions")
+    # A reason is a one-shot capability, not a label (E585). The grant is keyed by
+    # reason, so two invariants naming one reason would both be authorised by a
+    # single declaration: the caller decided one thing and silently attested two
+    # claims. This lives on the invariant rather than on the contract so it stays
+    # orthogonal to the cluster rule, which bounds contracts per invariant.
+    reasons = [entry.reason for entry in entries if entry.evidence == "NON_EXECUTABLE"]
+    if len(set(reasons)) != len(reasons):
+        raise PlanV2Error("disposition-reason-reused")
     return tuple(entries)
 
 
@@ -595,7 +603,9 @@ def _admit_evidence(graph: PlanGraph, contracts: Mapping[str, Contract], tests: 
 
     A request is structurally sufficient here; whether it was *granted* is checked
     by ``bind_dispositions`` at admission, where the caller's declaration exists
-    and the grammar cannot be asked to know it.
+    and the grammar cannot be asked to know it. The one-shot bound on a *reason*
+    lives in ``_parse_invariants`` (E585), so this function keeps a single job:
+    one invariant may back at most one untested claim.
     """
     invariants = {item.id: item for item in graph.invariants}
     covered = {entry.ct for entry in tests.values()}
@@ -727,20 +737,32 @@ def is_contract_id(value: object) -> bool:
 
 
 def contract_evidence(graph: PlanGraph) -> dict[str, EvidenceMode]:
-    """Grade every contract in the graph by the evidence the plan affords.
+    """Grade every contract in the graph by the evidence that actually backs it.
 
     Precedence is "strongest wins": a contract that has both a selector and a
     disposition on its invariant is ``EXECUTABLE`` — the disposition never
     weakens evidence that exists.
+
+    ``ATTESTED`` is a claim that *somebody authorised this*, so it needs the grant,
+    not the request. R1 (E577) made ``NON_EXECUTABLE`` nothing but a request: the
+    plan names why it cannot test the claim, and the caller's declaration supplies
+    the owner and the reference. A bare ``parse_plan`` output therefore carries a
+    request with ``owner is None`` and no reference, and grading that as attested
+    would publish a verdict nobody gave. Only ``bind_dispositions`` fills those
+    fields, so their presence is the observable proof that a grant was bound
+    (R2 over R1, E585).
     """
     covered = {entry.ct for planned in graph.slices for entry in planned.acceptance}
-    dispositions = {item.id: item.evidence for item in graph.invariants}
+    #: A granted invariant, not merely a disposed one: the reason alone is a request.
+    granted = {
+        item.id for item in graph.invariants if item.evidence == "NON_EXECUTABLE" and item.owner is not None
+    }
     graded: dict[str, EvidenceMode] = {}
     for planned in graph.slices:
         for contract in planned.contracts:
             if contract.id in covered:
                 graded[contract.id] = EvidenceMode.EXECUTABLE
-            elif dispositions.get(contract.inv) == "NON_EXECUTABLE":
+            elif contract.inv in granted:
                 graded[contract.id] = EvidenceMode.ATTESTED
             else:
                 graded[contract.id] = EvidenceMode.UNCOVERED

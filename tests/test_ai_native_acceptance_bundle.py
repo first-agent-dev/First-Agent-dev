@@ -31,7 +31,7 @@ from fa.inner_loop.acceptance_bundle import (
 )
 from fa.inner_loop.acceptance_closure import collect_acceptance_closure
 from fa.inner_loop.plan_v2 import EvidenceMode, PlanV2Error, contract_evidence
-from tests.test_ai_native_plan_v2 import plan_document, plan_graph
+from tests.test_ai_native_plan_v2 import granted_graph, plan_document, plan_graph
 
 _SEALED_ROOT = "worklogs/demo/acceptance"
 _TEST_PATH = f"{_SEALED_ROOT}/tests/test_publish.py"
@@ -79,7 +79,10 @@ def _sealed_tree(tmp_path: Path) -> Path:
 
 def _mint(root: Path, **overrides: Any) -> AcceptanceBundle:
     arguments: dict[str, Any] = {
-        "graph": plan_graph(),
+        # The seal grades *granted* evidence: a bare parse still carries only the
+        # plan's request (R1), and grading a request as attested is the defect
+        # P1-1 named (E585).
+        "graph": granted_graph(),
         "plan_bytes": _PLAN_BYTES,
         "revision_id": _REVISION,
         "sealed_root": _SEALED_ROOT,

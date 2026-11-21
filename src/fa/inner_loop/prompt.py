@@ -1265,8 +1265,11 @@ that looks like a document is rejected. Exact keys, no extras:
   test and give it a row.
 - A `FUNCTIONAL`/`CONSTRAINT` contract with no test is refused for `HARD` invariants
   (`hard-contract-without-executable-evidence`) unless its invariant is `NON_EXECUTABLE`
-  **and** the caller grants that exact reason. One grant backs one claim: never hang two
-  untested contracts off one disposition request.
+  **and** the caller grants that exact reason. One grant backs one claim, in both
+  directions: never hang two untested contracts off one invariant
+  (`disposition-covers-several-contracts`), and never spend one reason on two different
+  invariants (`disposition-reason-reused`) -- a reason is a one-shot capability, not a
+  label you may reuse to save a declaration.
 - Contiguous slices starting at `1`; imperative step text; no legacy `TESTS:`/`KILLS:` lines
   and no retired document sections — those shapes belong to the grammar this route replaced.
 

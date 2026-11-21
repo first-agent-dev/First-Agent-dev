@@ -73,7 +73,7 @@ from fa.inner_loop.plan_promotion import (
     seed_plan_candidate,
 )
 from fa.inner_loop.plan_semantics import SemanticsError, render_project
-from fa.inner_loop.plan_v2 import PlanV2Error, parse_plan
+from fa.inner_loop.plan_v2 import PlanGraph, PlanV2Error, parse_plan
 from fa.inner_loop.planner_dispatch import PlannerDispatch, PlannerDispatchError, PlannerDispatchKind
 from fa.inner_loop.prompt import ADVERSARIAL_EVAL_STANCE_PREAMBLE
 from fa.inner_loop.slice_verification import (
@@ -2885,6 +2885,11 @@ def _install_bootstrap_project_with_detail(
             PlanRefError("bootstrap-invalid-body"),
             _BootstrapFailure("bootstrap", "invalid-body", "FAIL", "DIAGNOSTICS"),
         )
+    # The graph the caller actually authorised, carried to the read-back (E585).
+    # ``_admit_installed_plan`` re-parses the INSTALLED bytes, and a bare parse
+    # carries only the plan's *requests* -- so without this the grant proved here
+    # would be discarded and the seal would grade requests as attestations.
+    authorised: PlanGraph | None = None
     if ctx.plan_format == PLAN_V2:
         # The pair is validated BEFORE the irreversible install: a V2 body that
         # does not parse must never become a project, because the rollback for an
@@ -2900,7 +2905,7 @@ def _install_bootstrap_project_with_detail(
             # against the pinned view's bytes first, so an unverifiable reference
             # cannot ride in as an authorisation.
             granted = _resolve_granted_evidence(ctx.acquisition, ctx.dispositions)
-            bind_dispositions(graph, granted, today=datetime.now(UTC).date())
+            authorised = bind_dispositions(graph, granted, today=datetime.now(UTC).date())
         except (PlanV2Error, PlanRefError) as error:
             # One meaning, one rule: the admission record's closed vocabulary
             # already names this event `bootstrap/invalid-body`, and the grammar's
@@ -2957,7 +2962,9 @@ def _install_bootstrap_project_with_detail(
         output_revision=receipt.revision_id,
         operation_id=receipt.operation_id,
     )
-    bound, refusal = _admit_installed_plan(ctx, choice, bootstrap_receipt=bootstrap_receipt)
+    bound, refusal = _admit_installed_plan(
+        ctx, choice, bootstrap_receipt=bootstrap_receipt, authorised=authorised
+    )
     if refusal is not None:
         cand_sha = _rendered_increment_sha256(choice, plan_format=ctx.plan_format)
         detail = _BootstrapFailure(
@@ -2995,13 +3002,46 @@ def _install_bootstrap_project(
     return bound, refusal
 
 
+def _authorised_graph(snapshot: PlanSnapshot, authorised: PlanGraph | None) -> PlanGraph | None:
+    """The graph the caller granted, if the installed bytes are the bytes it authorised.
+
+    E577 fixes authorisation as a *one-time* act at install: later runs re-parse the
+    installed plan and never rebind, so a re-admission cannot grant a second time.
+    That leaves the run itself with a problem -- the read-back is a bare parse, and a
+    bare parse carries only the plan's requests (R1). Handing that graph to the seal
+    would grade requests as attestations, which is the defect P1-1 named.
+
+    So the granted graph is carried across the install, and this function decides
+    whether it may be used: the read-back must describe the *same* plan the grant was
+    bound to. The comparison is on the graph, not the digest, because the authority
+    wraps the same prose in its own front matter and the byte digest therefore
+    differs by design. Anything else is ``attestation-mismatch``: a grant is never
+    silently re-pointed at a plan it did not authorise.
+    """
+    if authorised is None or snapshot.graph is None:
+        return None
+    requests_only = replace(
+        authorised,
+        invariants=tuple(replace(item, owner=None, evidence_ref=None) for item in authorised.invariants),
+    )
+    if snapshot.graph != requests_only:
+        return None
+    return replace(snapshot.graph, invariants=authorised.invariants)
+
+
 def _admit_installed_plan(
     ctx: WorkflowContext,
     choice: BootstrapNewProjectChoice,
     *,
     bootstrap_receipt: _BootstrapReceipt | None = None,
+    authorised: PlanGraph | None = None,
 ) -> tuple[WorkflowContext, PlanRefError | None]:
-    """Read the installed increment through a fresh pin and bind it as the plan."""
+    """Read the installed increment through a fresh pin and bind it as the plan.
+
+    ``authorised`` is the graph this run granted before the install (E585). It is
+    used only when the installed bytes parse to that same plan; otherwise the
+    snapshot keeps its request-only graph and nothing is attested.
+    """
     managed = ctx.managed_execution
     if managed is None:  # pragma: no cover - the caller proved this already
         return ctx, PlanRefError("bootstrap-unavailable")
@@ -3030,6 +3070,11 @@ def _admit_installed_plan(
             format=ctx.plan_format,
             roadmap="" if roadmap is None else roadmap.content,
         )
+        # The installed bytes are the authority's answer; the grant this run made
+        # before the install rides along only when they describe the same plan.
+        granted_graph = _authorised_graph(snapshot, authorised)
+        if granted_graph is not None:
+            snapshot = replace(snapshot, graph=granted_graph)
     bound = replace(
         ctx,
         admission=_WorkflowAdmission(

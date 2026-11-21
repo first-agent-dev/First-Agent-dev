@@ -11739,3 +11739,55 @@ sandbox had lost `.venv` and the branch pointer; worktree bytes were proven iden
 **My error, and the cost.** E583 cost one commit and one escalation cycle. The mitigation that would
 have caught it: before filing a Q, ask "which *route* would exercise this, and is it a supported route
 today?" A defect that needs an unsupported route to manifest is a sequencing item, not a blocker.
+
+### E585 — P1-1 and P1-2 closed: a verdict may never be stronger than its evidence (2026-11-20)
+
+One root cause, two symptoms, both reproduced on production code before any edit:
+
+| | Reproduced as | Cause |
+|---|---|---|
+| **P1-1** | `parse_plan` alone reports `attested_contracts == ('CT-1.1',)` for a graph nobody granted | `contract_evidence` graded `ATTESTED` from `evidence == NON_EXECUTABLE`, which after R1 is only the plan's **request** |
+| **P1-2** | two invariants naming `HOST_READINESS` + **one** caller declaration → `('CT-1.1', 'CT-1.2')` | the grant is keyed by *reason*, so one decision authorised two claims |
+
+**P1-2 was mis-diagnosed in the register, and the correction matters.** §12 said "the
+cluster bound is per invariant, not per grant" — but R3/E580 had already fixed exactly
+that (`disposition-covers-several-contracts`). The real hole is one level down: R3 bounds
+*contracts per invariant*, while the authorisation travels by *reason*, which the plan may
+reuse freely. So a plan could reach R3's bound and still spend one decision on two
+different invariants. The fix is a one-shot reason at the point where the request is
+parsed (`_parse_invariants` → `disposition-reason-reused`), deliberately placed on the
+*invariant* so it stays orthogonal to the cluster rule: a first attempt put it on the
+contract loop and turned the cluster refusal into the wrong diagnosis, which a surviving
+mutant caught (M4 in `tests/mutation/mut_step8.py`).
+
+**P1-1 had a second half the register did not name.** Fixing the grading alone would have
+been cosmetic: the controller *did* bind the dispositions before the install, then
+**discarded the result** (`bind_dispositions(...)` with no assignment), and
+`_admit_installed_plan` re-parsed the installed bytes with no declarations. So even a
+legitimately granted contract reached the seal as merely uncovered. Two changes:
+
+* `contract_evidence` grades `ATTESTED` only when the invariant carries the grant
+  (`owner is not None`) — the observable trace `bind_dispositions` leaves.
+* the granted graph is carried across the install as `authorised` and reconciled by
+  `_authorised_graph`, which requires the installed plan to equal the authorised plan
+  **minus its grant fields**. Comparison is by graph, not by byte digest, because the
+  authority wraps the same prose in its own front matter, so the digest differs by
+  design; anything else returns `None` and the snapshot keeps its request-only graph.
+  E577's "authorised once, at install, never rebound" is unchanged: this carries the
+  *existing* grant forward, it never mints a new one.
+
+**Prompt.** `ACQUISITION_SYSTEM_PROMPT` already said "one grant backs one claim" for the
+cluster rule; it now names both directions and both rule codes, and the coherence bank
+pins that it does. A rule the model is never told is a rule it learns by being refused.
+
+**Verification.** `tests/test_ai_native_plan_v2.py` 92 (+8), `test_s5p1_acquisition_substrate.py`
+12 (+2, the real seam: a pinned view over the installed tree, asserting the grant reaches
+`admission.snapshot.graph`), `test_ai_native_acceptance_bundle.py` 95, coherence 27.
+**Mutants 8/8 killed** (`tests/mutation/mut_step8.py`) — plus one mutant recorded as
+*equivalent* rather than counted: the `graph is None` guard in `_authorised_graph` is
+redundant with the comparison that follows (`None != PlanGraph`), and exists for type
+narrowing, so no test could kill it without observing something the code does not do.
+Two fixture sets were rebased rather than bent: the grading tests now use a `granted_graph`
+helper, because the seal grades *granted* evidence and the old fixtures graded requests.
+Full suite **8256 passed, 18 skipped, 3 xfailed, 9 deselected**; `ruff` clean; `mypy src`
+clean over 223 sources.

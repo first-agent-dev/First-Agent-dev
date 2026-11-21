@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -18,6 +19,8 @@ from fa.inner_loop.plan_admission import (
     PlanRef,
     PlanRefError,
     PlanSnapshot,
+    bind_dispositions,
+    parse_dispositions,
     snapshot_from_bytes,
 )
 from fa.inner_loop.plan_v2 import (
@@ -382,6 +385,52 @@ def plan_graph(*, invariants: str = "", scenario: str = "", slice_body: str = ""
     )
 
 
+#: A grant for every reason the fixtures use, reviewed inside its 30-day life.
+_GRANTS = parse_dispositions(
+    [
+        {
+            "reason": reason,
+            "owner": "W4",
+            "evidence": "review:r1",
+            "reviewed_at": "2026-11-19",
+        }
+        for reason in sorted(DISPOSITION_REASONS)
+    ]
+)
+
+
+def granted_graph(*, invariants: str = "", scenario: str = "", slice_body: str = "") -> PlanGraph:
+    """The graph as the run actually sees it: requests bound to the caller's grants.
+
+    ``ATTESTED`` is a claim somebody authorised, so it is graded only after
+    ``bind_dispositions`` has copied the caller's owner onto the invariant (R2 over
+    R1, E585). A bare parse is the *request* half and reports ``UNCOVERED``.
+    """
+    return bind_dispositions(
+        plan_graph(invariants=invariants, scenario=scenario, slice_body=slice_body),
+        _GRANTS,
+        today=date(2026, 11, 20),
+    )
+
+
+def test_a_disposition_request_without_a_grant_is_never_attested() -> None:
+    """The defect P1-1 named: a request is not an authorisation.
+
+    ``parse_plan`` alone produces ``NON_EXECUTABLE`` with a reason but no owner,
+    because R1 made the owner the caller's. Grading that as ``ATTESTED`` would put
+    a verdict in the seal that nobody granted, so the bare graph must report the
+    contract as uncovered and only the bound graph may attest it.
+    """
+    bare = plan_graph()
+    assert contract_evidence(bare)["CT-1.2"] is EvidenceMode.UNCOVERED
+    assert attested_contracts(bare) == ()
+
+    bound = granted_graph()
+    assert contract_evidence(bound)["CT-1.2"] is EvidenceMode.ATTESTED
+    assert attested_contracts(bound) == ("CT-1.2",)
+
+
+
 # --- SLICE1: the admission cutover (format, graph, and closed rules) ---------
 
 
@@ -639,17 +688,19 @@ _TWO_DISPOSED_CONTRACTS = _SLICE.replace(
 )
 
 
-def test_a_selector_grades_executable_and_a_disposition_grades_attested() -> None:
+def test_a_selector_grades_executable_and_a_granted_disposition_grades_attested() -> None:
     """The default plan tests CT-1.1 and only *disposes* of CT-1.2 (INV-2)."""
-    assert contract_evidence(plan_graph()) == {
+    graph = granted_graph()
+
+    assert contract_evidence(graph) == {
         "CT-1.1": EvidenceMode.EXECUTABLE,
         "CT-1.2": EvidenceMode.ATTESTED,
     }
-    assert attested_contracts(plan_graph()) == ("CT-1.2",)
+    assert attested_contracts(graph) == ("CT-1.2",)
 
 
 def test_several_granted_invariants_are_all_attested_sorted() -> None:
-    graph = plan_graph(invariants=_TWO_DISPOSED_INVARIANTS, slice_body=_TWO_DISPOSED_CONTRACTS)
+    graph = granted_graph(invariants=_TWO_DISPOSED_INVARIANTS, slice_body=_TWO_DISPOSED_CONTRACTS)
 
     assert attested_contracts(graph) == ("CT-1.2", "CT-1.3")
 
@@ -662,7 +713,7 @@ def test_attestation_is_sorted_not_declaration_ordered() -> None:
         "  CT-1.10 [CONSTRAINT] INV: INV-3: readiness is proven on the host",
     )
 
-    graph = plan_graph(invariants=_TWO_DISPOSED_INVARIANTS, slice_body=declared_out_of_order)
+    graph = granted_graph(invariants=_TWO_DISPOSED_INVARIANTS, slice_body=declared_out_of_order)
     assert attested_contracts(graph) == ("CT-1.10", "CT-1.2")
 
 
@@ -760,7 +811,7 @@ def test_a_tested_contract_does_not_count_against_the_cluster_bound() -> None:
         "worklogs/demo/acceptance/tests/test_publish.py::test_publish3\nKILL-TARGETS:",
     )
 
-    graph = plan_graph(slice_body=mixed)
+    graph = granted_graph(slice_body=mixed)
 
     assert attested_contracts(graph) == ("CT-1.2",)  # CT-1.3 is executable, so it is not attested
 
@@ -770,3 +821,145 @@ def test_a_soft_invariant_may_still_stay_uncovered() -> None:
     graph = plan_graph(invariants=_INVARIANT_1 + "\n" + _SOFT_INVARIANT_2)
 
     assert contract_evidence(graph)["CT-1.2"] is EvidenceMode.UNCOVERED
+
+
+# --- P1-1 second half: the grant must survive the read-back (E585) ----------
+
+
+def _snapshot(increment: str) -> PlanSnapshot:
+    return snapshot_from_bytes(
+        "worklogs/demo/increments/increment-01-demo.md",
+        increment.encode("utf-8"),
+        source_kind="BOOTSTRAP",
+        format=PLAN_V2,
+        roadmap=ROADMAP_DOCUMENT,
+    )
+
+
+def test_the_authorised_graph_reaches_the_seal_when_the_installed_plan_is_the_same() -> None:
+    """Without this the seal grades requests: the grant would be checked and dropped.
+
+    The authority wraps the plan in its own front matter, so the read-back is a
+    different document with the same plan. The run's granted graph must therefore be
+    reconciled by *graph*, not by byte digest, or a legitimately granted contract is
+    sealed as uncovered and the operator's decision is lost.
+    """
+    increment = plan_document()
+    authorised = granted_graph()
+    installed = _snapshot(increment)
+
+    admitted = workflow_controller._authorised_graph(installed, authorised)
+
+    assert admitted is not None
+    assert attested_contracts(admitted) == ("CT-1.2",)
+    assert {item.id: item for item in admitted.invariants}["INV-2"].owner == "W4"
+
+
+def test_a_bare_read_back_is_not_attested_without_a_carried_grant() -> None:
+    """No grant was made, so nothing may be attested however often it is parsed."""
+    installed = _snapshot(plan_document())
+
+    assert workflow_controller._authorised_graph(installed, None) is None
+    assert attested_contracts(installed.graph) == ()  # a request is not an authorisation
+
+
+def test_a_grant_is_never_repointed_at_a_plan_it_did_not_authorise() -> None:
+    """The install could in principle return other bytes; the grant must not follow.
+
+    ``_authorised_graph`` is the one place a pre-install authorisation is carried
+    across an irreversible step, so it refuses on any graph difference rather than
+    "mostly matching": the read-back must describe exactly the plan that was bound.
+    """
+    authorised = granted_graph()
+    drifted = _snapshot(plan_document(slice_body=_SLICE.replace("publish", "publish_v2")))
+
+    assert workflow_controller._authorised_graph(drifted, authorised) is None
+
+
+def test_a_refused_read_back_carries_no_grant() -> None:
+    """A malformed installed plan has no graph, so there is nothing to authorise."""
+    authorised = granted_graph()
+    broken = snapshot_from_bytes(
+        "worklogs/demo/increments/increment-01-demo.md",
+        plan_document().replace("## SLICE1:", "## PHASE1:").encode("utf-8"),
+        source_kind="BOOTSTRAP",
+        format=PLAN_V2,
+        roadmap=ROADMAP_DOCUMENT,
+    )
+
+    assert broken.graph is None
+    assert workflow_controller._authorised_graph(broken, authorised) is None
+
+
+# --- P1-2: one grant, one claim (E585) -------------------------------------
+
+
+_REUSED_REASON_INVARIANTS = """### INV-1
+KIND: HARD
+TEXT: Host readiness is proven on the approved host.
+EVIDENCE: NON_EXECUTABLE
+DISPOSITION-REASON: HOST_READINESS
+
+### INV-2
+KIND: HARD
+TEXT: The operator signed off the dashboard copy.
+EVIDENCE: NON_EXECUTABLE
+DISPOSITION-REASON: HOST_READINESS
+"""
+
+_TWO_CLAIMS = """## SLICE1: two claims, one waiver
+STEPS: prescriptive
+CONTRACTS:
+  CT-1.1 [FUNCTIONAL] INV: INV-1: readiness is proven on the host
+  CT-1.2 [FUNCTIONAL] INV: INV-2: the copy was signed off
+"""
+
+
+def test_one_grant_may_not_authorise_two_different_invariants() -> None:
+    """The grant is keyed by reason, so a reused reason turns one decision into two.
+
+    A caller declaring ``HOST_READINESS`` decided that *host readiness* is out of
+    scope for a test. If two invariants name that reason, both are authorised by that
+    one declaration and the seal attests a claim the caller never named -- the R3
+    property (one decision, one claim) reached through the other door, because R3
+    bounds contracts per invariant while the grant travels by reason.
+    """
+    assert (
+        _rule(lambda: plan_graph(invariants=_REUSED_REASON_INVARIANTS, slice_body=_TWO_CLAIMS))
+        == "disposition-reason-reused"
+    )
+
+
+def test_distinct_reasons_on_distinct_invariants_are_admitted_and_both_attested() -> None:
+    """The rule is about reuse, not about having several dispositions."""
+    distinct = _REUSED_REASON_INVARIANTS.replace(
+        "TEXT: The operator signed off the dashboard copy.\n"
+        "EVIDENCE: NON_EXECUTABLE\n"
+        "DISPOSITION-REASON: HOST_READINESS",
+        "TEXT: The operator signed off the dashboard copy.\n"
+        "EVIDENCE: NON_EXECUTABLE\n"
+        "DISPOSITION-REASON: OWNER_APPROVAL",
+    )
+
+    graph = granted_graph(invariants=distinct, slice_body=_TWO_CLAIMS)
+
+    assert attested_contracts(graph) == ("CT-1.1", "CT-1.2")
+
+
+def test_the_reuse_refusal_is_not_the_cluster_refusal_scaled_up() -> None:
+    """Two *invariants* is a different defect from two *contracts* on one invariant.
+
+    The cluster rule bounds how many claims lean on one invariant; the reuse rule
+    bounds how many invariants spend one reason. Keeping them apart is what lets an
+    operator read the refusal and know which mistake the plan made.
+    """
+    clustered = _SLICE.replace(
+        "  CT-1.2 [CONSTRAINT] INV: INV-2: readiness is proven on the host",
+        "  CT-1.2 [CONSTRAINT] INV: INV-2: readiness is proven on the host\n"
+        "  CT-1.3 [CONSTRAINT] INV: INV-2: readiness is proven on the host",
+    )
+    assert _rule(lambda: plan_graph(slice_body=clustered)) == "disposition-covers-several-contracts"
+    assert (
+        _rule(lambda: plan_graph(invariants=_REUSED_REASON_INVARIANTS, slice_body=_TWO_CLAIMS))
+        == "disposition-reason-reused"
+    )
