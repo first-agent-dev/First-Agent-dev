@@ -11630,3 +11630,58 @@ closed-key mutant) and one that was unobservable by construction. Full suite **8
 skipped, 3 xfailed** with the three baseline-red tests deselected; `ruff` clean over 629 files;
 `mypy src` clean over 223 sources; full `mypy` holds at the 27 pre-existing `tests/` errors — zero
 new ones, verified by diffing before/after.
+
+### E583 — P0-2 blocked on Q-V2-RESUME-1: how does a *resuming* run learn the grammar? (2026-11-20)
+
+P0-1 is closed (E582). Before touching `resolve_existing_choice` I re-measured the defect from the
+CT-2.6 prompt payload rather than from the register text, because the register's evidence line was
+written by the audit, not by me. Three measurements changed the shape of the fix:
+
+1. **The failure is silent admission, not a diagnostic.** `render_bundle` + `resolve_existing_choice`
+   on a valid V2 pair returns `ResolvedExistingIncrement` with `format=PLAN-V1`, `format_error=None`
+   and `graph is None`. The register predicted outcome `DIAGNOSTICS`; what actually happens is that a
+   V2 increment is reported as a *well-formed V1 plan*. A caller cannot distinguish this from a real
+   V1 project by any field it receives.
+2. **Identity metadata is grammar-neutral.** Both installed documents carry V1-shaped front matter
+   (`Roadmap-ID`, `Increment-ID`, `status`, `slices`, `shipped`) and `parse_artifact_metadata` accepts
+   them unchanged. So the format question is *not* an artifact-metadata question, and a resolver fix
+   cannot be smuggled in as "the parser understood it".
+3. **The marker is already in the bytes and the parser already requires it.** `plan_v2.parse_plan`
+   raises `plan-format-marker-roadmap` when it is absent; `plan_semantics._MARKER` writes it. So a
+   V2 document is self-identifying *to the V2 parser*, which is exactly why reading it feels natural
+   and exactly why it collides with the ratified text.
+
+That collision is the blocker, and it is not mine to resolve:
+
+* §2 and CT-1.1: "The format is chosen by the **route**, never by sniffing the document."
+* D-V2-2: "No V1 fallback, **no marker dispatch**, no parallel code path."
+* `PlanSnapshot` docstring: "``format`` comes from the caller's route, and only the caller's route."
+* But a resuming route observes an *installed* document it did not render. There is no route-local
+  fact that distinguishes a V2 project from a V1 one, because §12 SLICE1 deliberately made the
+  bootstrap route one-way.
+
+So P0-2 is not a one-line parameter. It is **Q-V2-RESUME-1**, filed in the plan's decision table with
+three bounded options:
+
+* **A — refuse.** `AUTO_SELECT_EXISTING` never admits V2; a V2 install is terminal until SLICE5
+  retires the legacy route. Smallest code, but it closes P0-2 as *refused*, and it would make the
+  first create-new project unresumable on a live host.
+* **B — runtime pin + whole-document marker validation.** The resolver reads `Plan-Format:`; the
+  pinned runtime owns the vocabulary; missing/duplicate/mismatched/V1 are refused, never dispatched.
+  It is reading a *declared version field*, which is a genuinely different act from content sniffing,
+  but the difference has to be written into the ratified text, not assumed by the implementer.
+* **C — authority-recorded format at install.** Cleanest, and it makes the answer structural rather
+  than textual. It is not available today: `acceptance_bundle.py` has no production caller (only
+  `kill_attribution`, `acceptance_defect`, `acceptance_collection` and tests import it), so the seal
+  anchor Q-V2-BOOT-1/D-V2-5 describes does not yet exist to read. C would push P0-2 behind SLICE2/3.
+
+**Also noted while grounding (not fixed, not in scope):** `resolve_existing_choice` demands
+`format` never be inferred, yet it also returns a V1 snapshot for a document it cannot have decided
+about — so the sibling weaker case already exists for V1. Whatever is ratified should state the rule
+once for both grammars rather than patch only the V2 branch.
+
+**Decision:** stop, do not guess. Q-V2-RESUME-1 is a new policy decision touching two ratified
+constraints; per the stop/escalate rule it is escalated with context, impact and options rather than
+implemented under an assumed reading. No `src/` change in this step; the only edits are the plan's
+decision table and this register row. P1-1/P1-2 remain ready to start and are **not** blocked by this
+question — they need no revisit of what "format" means.
