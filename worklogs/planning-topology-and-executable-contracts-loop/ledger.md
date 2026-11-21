@@ -11463,3 +11463,25 @@ clean over 222 sources.
 out-of-band tuple never reaches the bytes; it raises `seal-malformed`, not `TypeError`) and in `load_seal` (so a
 record whose list is unsorted, duplicated, over 1024 entries, non-contract, or absent is refused). Thirteen mutants
 cover this, including one that drops the shape guard: all killed.
+
+## E577 — R5 is 30 days; R1/R6 decided by source audit (2026-11-20)
+
+**Operator answers.** R5 = **30 days**. R1 and R6 are not to be chosen by preference: the operator asked for a
+source audit through the project's values ("выбранный вариант должен удовлетворять поведению системы и в то же
+время быть достаточно гибким, чтобы агент работал уверенно и точно"). The audit is
+`notes/q-v2-r1-r6-disposition-authority-audit-2026-11-20.md`; its conclusions, with the facts that decide them:
+
+| Decision | Choice | The fact that decides it |
+| :--- | :--- | :--- |
+| R1 | **The plan requests by reason; the caller declaration supplies owner, evidence and `reviewed_at`** | The initial plan is authored *inside* the run (`workflow_controller.py:2813-2832`), so invariant ids cannot exist at call time — any "ratify the plan" record is impossible for I01 without a human gate, and no gate exists (`hooks/builtin.py:178` is a write guard; `state.py:902 human_approval` is always `None`). Reasons *are* knowable: they are semantics. The channel is the closed tool-parameter pattern that already carries `project_slug` (`workflow_controller.py:2550-2564`), where the same argument was made for slugs |
+| R1 rule | `DISPOSITION-OWNER`/`DISPOSITION-EVIDENCE` in plan text become **`disposition-not-caller-authority`** | Today a waiver costs the planner one token in a two-value set (`plan_v2.py:296-300`). With no owner field in the plan, self-ratification is not "checked", it is *unrepresentable* |
+| R6 | `doc:<workspace-relative path>@sha256:<64 hex>` resolved against the **workspace**, must exist as a regular file, no `..`/absolute, digest must match | Strength comes from the bytes, not the directory. The sealed tree cannot be required (it does not exist at I01; `install_project` creates it) and the acceptance closure must never absorb docs (it is the executed oracle). `worklogs/<slug>/notes|reviews|research` and `knowledge/` are where this repo already keeps evidence |
+| R5 | `reviewed_at` + **30 days**, `MAX_DISPOSITION_AGE_DAYS = 30` beside the reason set | Operator answer; keeps vocabulary and lifetime in one file |
+
+**Reversal to record explicitly.** This moves owner/evidence *out of the plan*, which is a change to the shape
+B-narrow shipped, not to its policy: the closed 4-reason set, the 16-disposition cap, the "no free text"
+principle and the `TEST_REQUIRED`-refuses-stray-`DISPOSITION-*` rule all stand. Q-V2-ACC-2 stays **implemented**.
+
+**Not implemented yet.** S1–S5 in the note are the plan; S1 is a grammar change that invalidates today's
+in-plan `DISPOSITION-OWNER` tests, so it should land with S2 (schema + validator) in one verified step rather
+than leaving the parser refusing documents the tool cannot yet produce.
