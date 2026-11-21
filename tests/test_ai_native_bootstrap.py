@@ -10,12 +10,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
+from fa.execution.protocol import CONFIG_ID
 from fa.execution.publication import render_bundle
 from fa.inner_loop import workflow_controller
 from fa.inner_loop.coder_loop import SessionOutcome
@@ -23,7 +25,11 @@ from fa.inner_loop.managed_acquisition import BootstrapNewProjectChoice
 from fa.inner_loop.plan_admission import PLAN_V2, snapshot_from_bytes
 from fa.inner_loop.registry import ToolResult
 from fa.inner_loop.tools import workflow_tool
-from fa.inner_loop.tools.workflow_tool import WorkflowInvocationContext
+from fa.inner_loop.tools.workflow_tool import (
+    _PROJECT_SLUG_RE,
+    INVOKE_WORKFLOW_SCHEMA,
+    WorkflowInvocationContext,
+)
 from fa.inner_loop.workflow_artifacts import FlowState
 from tests.test_execution_workspace import Site
 from tests.test_execution_workspace import site as site
@@ -387,3 +393,61 @@ def test_the_acquisition_task_states_the_route_the_controller_enforces(
         assert "COLLISION" in task  # the no-clobber warning belongs to the creating route only
     else:
         assert "COLLISION" not in task
+
+
+# --- D2: one slug grammar, imported rather than restated ---------------------
+
+
+_SLUG_CORPUS = (
+    "a",
+    "a1",
+    "auth-service",
+    "a--b",
+    "1project",
+    "-a",
+    "a-",
+    "A",
+    "Ab",
+    "a_b",
+    "a" * 48,
+    "a" * 49,
+    "worklogs",
+)
+
+
+@pytest.mark.parametrize("candidate", _SLUG_CORPUS)
+def test_the_pre_child_slug_check_accepts_exactly_what_the_authority_accepts(candidate: str) -> None:
+    """CT-2.1: the tool must not invent a second slug grammar.
+
+    Two hand-written copies diverged once: `1project`/`a--b` passed the tool and
+    were refused by `_install_prepare`, while `a` — a legal name — was refused
+    before a child run existed. The authority's `CONFIG_ID` document is the only
+    definition.
+
+    The production path is what is asserted: `_prepare_invocation` itself, not a
+    copy of its predicate. An earlier version of this test restated the rule and
+    survived the mutant that deleted the length check.
+    """
+    authority = re.compile(str(CONFIG_ID["pattern"]))
+    accepted_by_authority = bool(authority.fullmatch(candidate)) and len(candidate) <= int(CONFIG_ID["maxLength"])
+
+    prepared = workflow_tool._prepare_invocation(
+        {"task": "t", "roles": "planner", "project_action": "CREATE_NEW", "project_slug": candidate},
+        _ctx(),
+        0,
+    )
+
+    if accepted_by_authority:
+        assert not isinstance(prepared, ToolResult), candidate
+        assert prepared.project_slug == candidate
+    else:
+        assert isinstance(prepared, ToolResult), candidate
+        assert prepared.error is not None and prepared.error.code == "invalid_project_slug"
+
+
+def test_the_tool_schema_publishes_the_authority_slug_bound() -> None:
+    """A schema bound that disagrees with the validator is a lie in the tool contract."""
+    slug_schema = INVOKE_WORKFLOW_SCHEMA["properties"]["project_slug"]
+
+    assert _PROJECT_SLUG_RE.pattern == str(CONFIG_ID["pattern"])
+    assert slug_schema["maxLength"] == CONFIG_ID["maxLength"]

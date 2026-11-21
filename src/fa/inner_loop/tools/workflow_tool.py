@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from fa.execution.client import ExecutionRejectedError, ExecutionUncertainError
 from fa.execution.composition import BoundPlanPublisher, ExecutionBinding, ManagedExecution
+from fa.execution.protocol import CONFIG_ID
 from fa.execution.types import NamespaceRef
 from fa.inner_loop.expansion import TIER_HIGH, TIER_SAFE
 from fa.inner_loop.path_risk import (
@@ -70,9 +71,13 @@ _RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 _RUN_ID_MAX_LEN = 128
 
 _PROJECT_ACTIONS = frozenset({"AUTO_SELECT_EXISTING", "CREATE_NEW"})
-#: The same grammar the authority enforces (`_install_prepare` -> `_SLUG`), kept
-#: here so a bad slug is refused before a child run is allocated at all.
-_PROJECT_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,46}[a-z0-9]$")
+#: The slug grammar is *imported*, never restated: the authority compiles the same
+#: `CONFIG_ID` document for `_install_prepare`/`_SLUG` (`workspace.py`), and two
+#: hand-written copies already diverged once -- the tool accepted `1project` and
+#: `a--b` (both refused at install) while refusing `a` (a legal name). A local
+#: literal is the defect; this is the single source.
+_PROJECT_SLUG_RE = re.compile(str(CONFIG_ID["pattern"]))
+_PROJECT_SLUG_MAX = int(CONFIG_ID["maxLength"])
 
 DEFAULT_WORKFLOW_ROLES = "planner,coder,eval"
 DEFAULT_WORKFLOW_MODE = "linear"
@@ -232,7 +237,7 @@ INVOKE_WORKFLOW_SCHEMA: dict[str, object] = {
         },
         "project_slug": {
             "type": "string",
-            "maxLength": 48,
+            "maxLength": _PROJECT_SLUG_MAX,
             "description": "Validated lowercase kebab-case project slug; only meaningful with CREATE_NEW.",
         },
     },
@@ -430,6 +435,17 @@ def _resolve_handoff_task(
     return handoff
 
 
+def _wants_acquisition(managed: ManagedExecution | None, roles: Sequence[str]) -> bool:
+    """Whether this call may acquire a plan of its own (S5P1/Q148, extended by CT-2.1).
+
+    One predicate for two questions that must never disagree: whether a create route
+    is allowed at all, and whether the child is handed an acquisition request. The
+    controller pins the view inside the child run, so the capability is exactly
+    "managed session + a coder to bind the plan to".
+    """
+    return managed is not None and "coder" in roles
+
+
 def _requires_acquisition(roles: list[str]) -> bool:
     """Q70: only coder-containing nested requests need the unavailable I03 handoff."""
     return "coder" in roles
@@ -441,6 +457,11 @@ _ACQUISITION_UNAVAILABLE = (
 _ACQUISITION_REQUIRES_PLANNER = (
     "a coder-bearing managed workflow must include its initial planner, "
     "and as the first role; no outer plan reference exists to acquire one"
+)
+_CREATE_REQUIRES_ACQUISITION = (
+    "`project_action=CREATE_NEW` needs the acquisition prelude: a managed session and a coder-bearing, "
+    "planner-led role list (e.g. 'planner,coder,eval'). Without them the create route would be dropped and "
+    "the run would finish without creating the project. Use AUTO_SELECT_EXISTING to work on an existing project"
 )
 
 
@@ -717,7 +738,7 @@ def _prepare_invocation(
         )
     slug = _as_str(params, "project_slug", "")
     if action == "CREATE_NEW":
-        if not _PROJECT_SLUG_RE.fullmatch(slug or ""):
+        if not _PROJECT_SLUG_RE.fullmatch(slug or "") or len(slug) > _PROJECT_SLUG_MAX:
             return ToolResult.fail(
                 "invalid_project_slug",
                 "`project_slug` is required with CREATE_NEW and must be lowercase kebab-case, at most 48 characters",
@@ -829,6 +850,15 @@ def build_invoke_workflow_tool(
         except SessionManagerError as exc:
             return ToolResult.fail("workflow_context_error", f"managed child allocation refused: {exc.code}")
 
+        # (a2) CT-2.1: creation is caller authority, so a create route that cannot
+        # reach the acquisition prelude is a refusal and not a no-op. Computed from
+        # the same expression the child request uses, and checked before a child run
+        # is allocated or a provider is touched: the defect this guards is a
+        # planner-only call that reports DONE while nothing was created.
+        managed = ctx.managed_execution if parent_namespace is not None else None
+        if prepared.project_slug is not None and not _wants_acquisition(managed, roles):
+            return ToolResult.fail("create_requires_acquisition", _CREATE_REQUIRES_ACQUISITION, retryable=True)
+
         # (f) One absolute deadline includes child allocation, both HANDOFFs,
         # parent-view refresh, and every child stage.
         deadline = time.monotonic() + ctx.workflow_timeout_seconds
@@ -856,12 +886,11 @@ def build_invoke_workflow_tool(
             else None
         )
 
-        managed = ctx.managed_execution if parent_namespace is not None else None
         parent_lease = ctx.parent_stage_lease if parent_namespace is not None else None
         # A coder-bearing managed child has no plan at entry; the run acquires one.
         # The request is a marker, not a port: the view must be pinned after this
         # child's own binding exists (i.e. after the HANDOFF), not before it.
-        wants_acquisition = managed is not None and "coder" in roles
+        wants_acquisition = _wants_acquisition(managed, roles)
 
         # (f2) Planner handoff (S10 / CT6, DP-9): file-map + Do-exactly built
         # from LIVE session facts; degrades to the raw goal when unavailable.

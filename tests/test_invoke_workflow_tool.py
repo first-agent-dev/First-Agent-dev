@@ -1505,3 +1505,106 @@ def test_invoke_workflow_real_supervisor_handoff_mutation_confinement_and_fault_
             lease2.finish(accepted=True)
         assert not lease2.writer_release_safe
         assert managed2.close() is False
+
+
+# ── CT-2.1: a create route that cannot acquire is refused, never dropped ────
+
+
+def test_create_new_is_refused_when_the_route_cannot_acquire_a_plan(tmp_path: Path) -> None:
+    """`CREATE_NEW` without a coder-bearing managed run would silently create nothing.
+
+    Source-verified defect: `wants_acquisition` is `managed is not None and "coder"
+    in roles`, while the route was validated independently, so a planner-only call
+    reached the controller with no acquisition at all. A real run of that shape
+    exits 0/DONE with an empty `worklogs/`. The tool refused nothing, the chat was
+    told the workflow finished, and the operator's project was never created.
+    """
+    workflow = _RecordingWorkflow()
+
+    result = _call(
+        _tool(workflow, _ctx(tmp_path)),
+        task="create the project",
+        roles="planner",
+        project_action="CREATE_NEW",
+        project_slug="demo-project",
+    )
+
+    assert _error_code(result) == "create_requires_acquisition"
+    assert result.error is not None and result.error.retryable is True
+    assert workflow.calls == []  # refused before a child run existed
+
+
+def test_create_new_without_managed_execution_keeps_the_acquisition_refusal(tmp_path: Path) -> None:
+    """Ordering: the acquisition contract is reported first, so the message names the real fault."""
+    workflow = _RecordingWorkflow()
+
+    result = _call(
+        _tool(workflow, _ctx(tmp_path)),
+        task="create the project",
+        roles="planner,coder",
+        project_action="CREATE_NEW",
+        project_slug="demo-project",
+    )
+
+    assert _error_code(result) == "acquisition_unavailable"
+    assert workflow.calls == []
+
+
+@pytest.mark.parametrize(
+    ("action", "roles", "managed", "expected_refusal"),
+    [
+        ("CREATE_NEW", "planner", False, "create_requires_acquisition"),
+        ("CREATE_NEW", "planner,coder", False, "acquisition_unavailable"),
+        ("CREATE_NEW", "planner", True, "create_requires_acquisition"),
+        ("CREATE_NEW", "planner,coder", True, None),
+        ("AUTO_SELECT_EXISTING", "planner", False, None),
+        ("AUTO_SELECT_EXISTING", "planner,coder", True, None),
+    ],
+)
+def test_the_create_route_is_allowed_exactly_when_the_route_can_acquire(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    action: str,
+    roles: str,
+    managed: bool,
+    expected_refusal: str | None,
+) -> None:
+    """CT-2.1: all four quadrants of (route x capability), on the real handler.
+
+    The single-cell version of this test could not kill a mutant that dropped either
+    half of the predicate: with only `planner` unmanaged, "managed" and "coder" are
+    both already false. Each quadrant is a distinct production shape, and the two
+    refusal codes are distinct operator facts (route cannot acquire vs no authority).
+    """
+    ctx = _managed_context(tmp_path, monkeypatch)[0] if managed else _ctx(tmp_path)
+    workflow = _RecordingWorkflow()
+    params: dict[str, object] = {"task": "build it", "roles": roles}
+    if action == "CREATE_NEW":
+        params.update(project_action="CREATE_NEW", project_slug="demo-project")
+
+    result = _call(_tool(workflow, ctx), **params)
+
+    if expected_refusal is not None:
+        assert _error_code(result) == expected_refusal
+        assert workflow.calls == []
+        return
+
+    _payload(result)
+    assert len(workflow.calls) == 1
+    acquisition = workflow.calls[0]["acquisition"]
+    if action == "CREATE_NEW":
+        assert isinstance(acquisition, AcquisitionSubstrateRequest)
+        assert acquisition.project_slug == "demo-project"
+    else:
+        assert acquisition is None or acquisition.project_slug is None
+
+
+def test_the_select_route_still_delegates_without_a_coder(tmp_path: Path) -> None:
+    """The new refusal is route-scoped: planner delegation keeps working unchanged."""
+    workflow = _RecordingWorkflow()
+
+    result = _call(_tool(workflow, _ctx(tmp_path)), task="plan only", roles="planner")
+
+    _payload(result)
+    assert len(workflow.calls) == 1
+    assert workflow.calls[0]["acquisition"] is None
