@@ -270,8 +270,19 @@ def _build_limited_write(
     from fa.inner_loop.tools.write_file import build_write_file_tool
 
     base_spec = build_write_file_tool(root, workspace_io=workspace_io)
-    profile_allowlist = PROFILES_RAW.get("planner", {}).get("write_allowlist", [])
-    allowed_prefixes: list[str] = [str(p) for p in profile_allowlist]
+    if planner_dispatch is not None and planner_dispatch.kind is PlannerDispatchKind.CREATE_NEW_PROJECT:
+        # D-V2-9.6: the authoring stage writes inside one project root, and the
+        # root comes from the controller (caller slug), never from the model. The
+        # profile default would refuse this -- correctly, since it exists for
+        # ordinary planning -- so the dispatch supplies the narrower-and-different
+        # scope instead of the profile being widened for every planner.
+        authoring_root = planner_dispatch.authoring_root
+        if authoring_root is None:  # __post_init__ already refused this; never widen on a bug
+            raise PlannerDispatchError
+        allowed_prefixes: list[str] = [f"{authoring_root}/"]
+    else:
+        profile_allowlist = PROFILES_RAW.get("planner", {}).get("write_allowlist", [])
+        allowed_prefixes = [str(p) for p in profile_allowlist]
 
     orig_handler = base_spec.handler
 

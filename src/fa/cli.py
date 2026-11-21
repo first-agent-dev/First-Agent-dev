@@ -23,6 +23,7 @@ import urllib.request
 from collections.abc import Callable, Mapping
 from contextvars import ContextVar
 from dataclasses import asdict, replace
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -81,8 +82,9 @@ from fa.inner_loop.injections import (
     resolve_injection_modes,
 )
 from fa.inner_loop.plan_admission import PlanRef, PlanRefError, _require_plan_for_coder, read_plan_snapshot
-from fa.inner_loop.planner_dispatch import PlannerDispatch, PlannerDispatchKind
+from fa.inner_loop.planner_dispatch import PlannerDispatch, PlannerDispatchError, PlannerDispatchKind
 from fa.inner_loop.pr_draft import PrDraftStore
+from fa.inner_loop.project_scaffold import scaffold_files
 from fa.inner_loop.prompt import render_tool_specs
 from fa.inner_loop.recovery.attempt_history import AttemptHistory
 from fa.inner_loop.registry import ToolRegistry
@@ -1885,6 +1887,62 @@ class _ManagedStageLease:
             logger.warning("managed stage view cleanup failed: %s", error)
 
 
+def _seed_scaffold_if_authoring(workspace_io: WorkspacePort | None, planner_dispatch: PlannerDispatch | None) -> None:
+    """Write the scaffold when -- and only when -- this stage is the authoring one.
+
+    A refusal propagates: the authority's ``STALE_REVISION`` is what refuses a
+    colliding project, and the stage then settles without ``PUBLISH``. That is why
+    the collision check needs no pre-flight read: nothing is created, so there is
+    nothing to undo.
+    """
+    if workspace_io is None or planner_dispatch is None:
+        return
+    if planner_dispatch.kind is not PlannerDispatchKind.CREATE_NEW_PROJECT:
+        return
+    _write_project_scaffold(workspace_io, planner_dispatch)
+
+
+def _stage_is_read_only(role: str, planner_dispatch: PlannerDispatch | None) -> bool:
+    """Whether this stage pins a reader instead of opening a writer.
+
+    ``eval`` never writes. A planner stage writes only when its dispatch says so,
+    and D-V2-9 added a *second* writing kind: the create-new authoring stage, whose
+    whole purpose is to author the documents. Spelling the writing kinds out (rather
+    than ``kind != ORDINARY_PLANNING``) keeps a future kind from silently acquiring
+    a writer it did not ask for.
+    """
+    if role == "eval":
+        return True
+    if planner_dispatch is None:
+        return False
+    return planner_dispatch.kind not in (
+        PlannerDispatchKind.ORDINARY_PLANNING,
+        PlannerDispatchKind.CREATE_NEW_PROJECT,
+    )
+
+
+def _write_project_scaffold(workspace_io: WorkspacePort, dispatch: PlannerDispatch) -> None:
+    """Write the fixed scaffold through the stage's own port (D-V2-9.1, CT-2.3).
+
+    Called after the WRITE view is open and before the planner's first tool call,
+    so every subsequent planner write lands in a tree that already has its
+    directories. ``roadmap.md`` is written first: its create-only write is what
+    refuses a colliding project, and refusing it first means no other scaffold
+    byte is written. A refusal therefore propagates as the authority's own error
+    and the stage settles without ``PUBLISH`` -- no project exists, which is the
+    D-V2-9 guarantee rather than a cleanup step.
+
+    The harness writes no planner content here and the planner never calls this:
+    the split is one directory of empty documents, not a shared writer.
+    """
+    root = dispatch.authoring_root
+    if root is None:  # __post_init__ refused this; never write an unbounded root on a bug
+        raise PlannerDispatchError
+    slug = root.removeprefix("worklogs/")
+    for path, body in scaffold_files(slug, created=datetime.now(UTC).date().isoformat()).items():
+        workspace_io.write_file(path, body, expected_sha256=None)
+
+
 def _open_stage_candidate_view(
     managed: ManagedExecution, plan_ref: PlanRef | None
 ) -> tuple[GrantReply, ClientWorkspacePort]:
@@ -2088,9 +2146,7 @@ def _drive_stage_with_managed_workspace(
     managed_project_tool_executor: ManagedProjectToolExecutor | None = None
     view_settled = True
     release_confirmed = True
-    read_only_stage = (role == "eval") or (
-        planner_dispatch is not None and planner_dispatch.kind is not PlannerDispatchKind.ORDINARY_PLANNING
-    )
+    read_only_stage = _stage_is_read_only(role, planner_dispatch)
     managed_token = _STAGE_MANAGED_EXECUTION.set(managed)
     executor_token = _STAGE_PROJECT_TOOL_EXECUTOR.set(None)
     try:
@@ -2122,6 +2178,9 @@ def _drive_stage_with_managed_workspace(
             _STAGE_PROJECT_TOOL_EXECUTOR.set(managed_project_tool_executor)
             if wants_candidate:
                 candidate_view_grant, candidate_port = _open_stage_candidate_view(managed, plan_ref)
+            # D-V2-9.1: the scaffold is written inside this stage, through the same
+            # port the planner is about to use, and before its first tool call.
+            _seed_scaffold_if_authoring(workspace_io, planner_dispatch)
 
         if candidate_port is not None:
             STAGE_CANDIDATE_PORT.set(candidate_port)

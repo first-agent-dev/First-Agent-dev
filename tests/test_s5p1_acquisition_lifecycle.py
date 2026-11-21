@@ -124,8 +124,10 @@ def _run(
     )
 
 
-def _substrate(port: Any = None, *, project_names: tuple[str, ...] = ("demo-project",)) -> AcquisitionSubstrate:
-    return AcquisitionSubstrate(port=port or _port(), project_names=project_names)
+def _substrate(
+    port: Any = None, *, project_names: tuple[str, ...] = ("demo-project",), project_slug: str | None = None
+) -> AcquisitionSubstrate:
+    return AcquisitionSubstrate(port=port or _port(), project_names=project_names, project_slug=project_slug)
 
 
 def _record(run_id: str) -> dict[str, Any]:
@@ -627,6 +629,44 @@ def test_initial_acquisition_stage_receives_acquisition_dispatch_kind(tmp_path: 
     assert dispatch is not None and dispatch.owns_candidate is False
 
 
+@pytest.mark.parametrize("mode", ["linear", "adaptive"])
+def test_a_create_authorized_run_gets_the_authoring_dispatch_not_acquisition(tmp_path: Path, mode: str) -> None:
+    """D-V2-9 (CT-2.3): creation makes the planner an author, so its kind must change.
+
+    The distinction is load-bearing in both directions: ``ACQUISITION`` pins a
+    reader and offers no writer, while the authoring stage opens a WRITE view and
+    is handed the one directory it may fill. A run that kept ``ACQUISITION`` here
+    would refuse the planner's first document, and a run that got the authoring
+    kind without a slug would be given a writer with nowhere legal to write.
+    """
+    seen: list[PlannerDispatch | None] = []
+
+    class _DispatchRecorder(_PlannerThen):
+        def __call__(self, args: argparse.Namespace, **kwargs: Any) -> int:
+            if getattr(args, "role", None) == "planner":
+                seen.append(kwargs.get("planner_dispatch"))
+            return super().__call__(args, **kwargs)
+
+    stage = _DispatchRecorder(SELECTION, forbid_after_planner=False)
+    run_id = f"acq-authoring-{mode}"
+    _run(
+        tmp_path,
+        run_id=run_id,
+        stage=stage,
+        roles=["planner", "coder"],
+        mode=mode,
+        # A name that is NOT in the pinned inventory: an existing one is refused
+        # before the stage runs (D-V2-9.2), which is a different test.
+        acquisition=_substrate(project_slug="fresh-project"),
+    )
+    assert len(seen) == 1
+    dispatch = seen[0]
+    assert dispatch == PlannerDispatch(
+        PlannerDispatchKind.CREATE_NEW_PROJECT, run_id, authoring_root="worklogs/fresh-project"
+    )
+    assert dispatch is not None and dispatch.owns_candidate is False
+
+
 def test_ordinary_explicit_plan_planner_still_receives_ordinary_planning_dispatch(tmp_path: Path) -> None:
     """Contrast for D7: non-acquisition planner runs must retain ORDINARY_PLANNING."""
     plan = tmp_path / "worklogs/demo-project/increments/increment-01-foundation.md"
@@ -1004,3 +1044,54 @@ def test_real_cmd_run_delivers_acquisition_prompt_preserves_cache_key_and_runs_c
         for m in captured[0][1].messages
         if m.get("role") == "user"
     )
+
+
+def test_a_create_over_an_existing_project_refuses_as_collision_not_stale(tmp_path: Path) -> None:
+    """D-V2-9.2: the caller asked for a name that is taken, and hears exactly that.
+
+    The authority would refuse the scaffold's create-only write with
+    ``STALE_REVISION`` -- correct, and useless to an agent, which reads "stale" as
+    "somebody moved a file I was editing". Deciding it from the pinned inventory
+    before a view opens is what makes the caller's answer `project_exists`, and it
+    is also why nothing is created: the stage never ran.
+    """
+    staged: list[str] = []
+
+    class _MustNotRun(_PlannerThen):
+        def __call__(self, args: argparse.Namespace, **kwargs: Any) -> int:
+            staged.append(str(getattr(args, "role", "")))
+            return super().__call__(args, **kwargs)
+
+    run_id = "acq-create-collision"
+    code, state = _run(
+        tmp_path,
+        run_id=run_id,
+        stage=_MustNotRun(SELECTION, forbid_after_planner=False),
+        roles=["planner", "coder"],
+        acquisition=_substrate(project_names=("taken-project",), project_slug="taken-project"),
+    )
+    assert code == 2
+    assert state is not None
+    # The refusal precedes the view, so no stage was ever dispatched: that is the
+    # difference between "refused" and "the planner ran and its work was lost".
+    assert staged == []
+    record = _record(run_id)
+    assert record["status"] == "BLOCKED"
+    assert record["attempts"][-1]["validation"] == "INDETERMINATE"
+    # Nothing was created: there is no tree to clean up and no revision that
+    # could hold a half-written project.
+    assert not (tmp_path / "worklogs/taken-project").exists()
+
+
+def test_an_incomplete_directory_collides_too(tmp_path: Path) -> None:
+    """A half-built ``worklogs/<slug>/`` is still a name that is taken (no-clobber)."""
+    stage = _PlannerThen(SELECTION, forbid_after_planner=False)
+    code, state = _run(
+        tmp_path,
+        run_id="acq-create-incomplete",
+        stage=stage,
+        roles=["planner", "coder"],
+        acquisition=_substrate(project_names=(), project_slug="half-built"),
+    )
+    assert code == 2
+    assert state is not None

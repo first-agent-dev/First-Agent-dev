@@ -77,6 +77,7 @@ from fa.inner_loop.plan_promotion import (
 from fa.inner_loop.plan_semantics import SemanticsError, render_project
 from fa.inner_loop.plan_v2 import PlanGraph, PlanV2Error, parse_plan
 from fa.inner_loop.planner_dispatch import PlannerDispatch, PlannerDispatchError, PlannerDispatchKind
+from fa.inner_loop.project_metadata import MetadataError, check_project_metadata
 from fa.inner_loop.prompt import ADVERSARIAL_EVAL_STANCE_PREAMBLE
 from fa.inner_loop.slice_verification import (
     TAIL_LIMIT,
@@ -1268,6 +1269,17 @@ def _stage_planner_dispatch(
         active = (path.relative_to(ctx.workspace.resolve()) if path.is_absolute() else path).as_posix()
     if dispatch is None:
         if ctx.acquisition is not None and ctx.admission is None and active is None:
+            # D-V2-9 (CT-2.3): a create-authorized run does not *choose* a target,
+            # it authors one. The route decides the kind, so the planner stage gets
+            # a writer scoped to ``worklogs/<slug>/`` instead of a read-only
+            # selector -- and the scaffold, written by the harness through the same
+            # port, is what makes the first write legal. A select-only route keeps
+            # ACQUISITION: it has no directory to write into.
+            slug = ctx.acquisition.project_slug
+            if slug is not None:
+                return PlannerDispatch(
+                    PlannerDispatchKind.CREATE_NEW_PROJECT, ctx.run_id, authoring_root=f"worklogs/{slug}"
+                )
             return PlannerDispatch(PlannerDispatchKind.ACQUISITION, ctx.run_id)
         return PlannerDispatch(PlannerDispatchKind.ORDINARY_PLANNING, ctx.run_id, active)
     if not isinstance(dispatch, PlannerDispatch) or dispatch.run_id != ctx.run_id or dispatch.active_plan != active:
@@ -1415,6 +1427,13 @@ def _acquisition_stage_task(ctx: WorkflowContext, stage_task: str | None) -> str
     substrate = ctx.acquisition
     if substrate is None:
         return stage_task
+    # D-V2-9: a create-authorized run is an *authoring* stage. It gets no menu to
+    # choose from and no JSON to emit -- it fills the scaffold that is already in
+    # its view. Stating the closed JSON shapes here would be the P0-1/P2-3 drift
+    # again, so the two routes get different task text rather than one text with a
+    # conditional sentence.
+    if substrate.project_slug is not None:
+        return _authoring_stage_task(stage_task, slug=substrate.project_slug)
     projects_line = ", ".join(substrate.project_names) if substrate.project_names else "(none)"
     incomplete_line = ", ".join(substrate.incomplete_names) if substrate.incomplete_names else "(none)"
     lines = [
@@ -1424,29 +1443,94 @@ def _acquisition_stage_task(ctx: WorkflowContext, stage_task: str | None) -> str
             "- Incomplete (do NOT select or bootstrap over these slugs; "
             f"return NEEDS_CLARIFICATION with MISSING_CONTEXT if targeted): {incomplete_line}"
         ),
+        # CT-2.1: the route the planner is *allowed* to take is stated, because it is
+        # enforced. Offering creation to a run that may only select produces a
+        # well-formed bootstrap the controller must then refuse.
+        "- Project creation is NOT authorized for this call: return SELECT_EXISTING or NEEDS_CLARIFICATION.",
+        "- If no existing project fits the goal, return NEEDS_CLARIFICATION with reason AMBIGUOUS_PROJECT.",
     ]
-    # CT-2.1: the route the planner is *allowed* to take is stated, because it is
-    # enforced. Offering creation to a run that may only select produces a well-formed
-    # bootstrap the controller must then refuse -- the model is not being tested on
-    # guessing an unstated permission.
-    if substrate.project_slug is None:
-        lines += [
-            "- Project creation is NOT authorized for this call: return SELECT_EXISTING or NEEDS_CLARIFICATION.",
-            "- If no existing project fits the goal, return NEEDS_CLARIFICATION with reason AMBIGUOUS_PROJECT.",
-        ]
-    else:
-        lines += [
-            (
-                "- Project creation IS authorized for this call and the project slug is fixed by the "
-                f"caller: {substrate.project_slug}. Return BOOTSTRAP_NEW_PROJECT with exactly that "
-                "project_slug; do not select an existing project."
-            ),
-            (
-                "- Before BOOTSTRAP_NEW_PROJECT, check with fs_search that worklogs/<project_slug>/ "
-                "does not already exist (empty or roadmap-less directories are omitted from Projects "
-                "and Incomplete, and authority installation fails with COLLISION over any existing directory)."
-            ),
-        ]
+    block = "\n".join(lines)
+    return f"{stage_task}\n\n{block}" if stage_task else block
+
+
+def _deadline_refusal(ctx: WorkflowContext, role: str, progress: WorkflowProgress) -> StageResult | None:
+    """The deadline refusal for this stage, or ``None`` while budget remains."""
+    if not _deadline_exceeded(ctx):
+        return None
+    _write_deadline_state(ctx, role, progress=progress)
+    return StageResult(role=role, exit_code=WORKFLOW_DEADLINE_EXIT_CODE)
+
+
+def _stage_dispatch_outcome(
+    ctx: WorkflowContext, role: str, planner_dispatch: PlannerDispatch | None
+) -> tuple[PlannerDispatch | None, StageResult | None]:
+    """The stage's dispatch, or the refusal that ends the stage before it runs.
+
+    D-V2-9.2 lives here rather than in ``_run_stage`` for the same reason the
+    deadline check is one branch there and not five: the refusal belongs to the
+    dispatch decision, and the stage body is already at its complexity ceiling.
+    """
+    dispatch = _stage_planner_dispatch(ctx, role, planner_dispatch)
+    collision = _authoring_collision(ctx, dispatch)
+    if collision is None:
+        return dispatch, None
+    return dispatch, StageResult(role=role, exit_code=_refusal_exit_code(ctx, collision))
+
+
+def _authoring_collision(ctx: WorkflowContext, dispatch: PlannerDispatch | None) -> PlanRefError | None:
+    """Whether the name this stage would create already exists (D-V2-9.2).
+
+    Only the authoring kind can collide, so every other stage returns ``None``
+    immediately -- the check is part of the dispatch, not of the stage.
+
+    The answer comes from the pinned acquisition inventory, which already
+    distinguishes a complete project from an incomplete ``worklogs/<slug>/``:
+    either way the directory exists, and a create can only refuse. Returning a
+    ``PlanRefError`` rather than raising keeps the caller's refusal path -- the
+    same one every other closed rule takes -- instead of a new exception family.
+    """
+    if dispatch is None or dispatch.kind is not PlannerDispatchKind.CREATE_NEW_PROJECT:
+        return None
+    root = dispatch.authoring_root
+    if root is None:  # __post_init__ refused this already; a create with no root cannot be
+        return PlanRefError("bootstrap-collision")
+    slug = root.removeprefix("worklogs/")
+    substrate = ctx.acquisition
+    if substrate is None:
+        return None
+    if slug in substrate.project_names or slug in substrate.incomplete_names:
+        logger.warning("create refused: worklogs/%s already exists (run=%s)", slug, ctx.run_id)
+        return PlanRefError("bootstrap-collision")
+    return None
+
+
+def _authoring_stage_task(stage_task: str | None, *, slug: str) -> str:
+    """The task text for the stage that owns a new project's documents (D-V2-9).
+
+    It names the files that already exist and says plainly that they are empty:
+    the planner's job is to fill them, not to decide what the project is called or
+    to emit a choice. The last line is the one a model needs to know before it
+    writes anything -- the harness publishes the whole tree as one revision, so a
+    write is not visible to the run until the stage ends.
+    """
+    root = f"worklogs/{slug}"
+    lines = [
+        "## This run creates a new project",
+        "",
+        f"The harness has already published the empty scaffold of `{root}/`. Fill it:",
+        "",
+        f"- `{root}/roadmap.md` — `## Intent` and `## Out of scope`, under the front matter already there.",
+        f"- `{root}/increments/increment-01-initial-plan.md` — `## INVARIANTS`, then one `## SLICE<N>: <name>`",
+        "  per slice, each with `STEPS:`, `## CONTRACTS`, `## ACCEPTANCE`, `## KILL-TARGETS`,",
+        "  `## STEP-EXIT-CHECKS` and its step list.",
+        f"- `{root}/open-questions.md` — the questions that gate scope, or leave it as it is.",
+        f"- `{root}/ledger.md` — the first entry.",
+        f"- `{root}/acceptance/tests/` — the test modules your selectors name.",
+        "",
+        "The project slug and the increment are fixed; do not restate or change them.",
+        "Every write lands in one revision that the harness publishes when this stage ends,",
+        "so nothing you write is visible to you until then. Do not emit a JSON choice.",
+    ]
     block = "\n".join(lines)
     return f"{stage_task}\n\n{block}" if stage_task else block
 
@@ -1537,11 +1621,11 @@ def _run_stage(
     and ``bash_timeout_seconds``; the unbounded quantity was the NUMBER of
     stages, which is exactly what this caps.
     """
-    dispatch = _stage_planner_dispatch(ctx, role, planner_dispatch)
+    dispatch, refusal = _stage_dispatch_outcome(ctx, role, planner_dispatch)
     progress = _admission_progress(ctx, progress)
-    if _deadline_exceeded(ctx):
-        _write_deadline_state(ctx, role, progress=progress)
-        return StageResult(role=role, exit_code=WORKFLOW_DEADLINE_EXIT_CODE)
+    refusal = refusal or _deadline_refusal(ctx, role, progress)
+    if refusal is not None:
+        return refusal
     if role == "coder" and not _admit_plan(ctx, progress, run_stage_fn):
         return StageResult(role=role, exit_code=_admission_exit_code(ctx))
     progress = _admission_progress(ctx, progress)
@@ -3065,6 +3149,20 @@ def _admit_installed_plan(
             # The tree the authority proved does not contain the file this
             # controller asked for: a mismatch to report, never a host fallback.
             return ctx, PlanRefError("bootstrap-unreadable")
+        if roadmap is not None:
+            # D-V2-9.3: the pair can parse while the documents disagree about
+            # which project they belong to. Checked against the bytes actually
+            # read, before the parse that trusts them, and refused with a closed
+            # rule so the repair round can name it.
+            try:
+                roadmap_path = f"worklogs/{choice.project_slug}/roadmap.md"
+                check_project_metadata({path: read.content, roadmap_path: roadmap.content})
+            except MetadataError as error:
+                # One recorded rule, one logged cause: the admission vocabulary is
+                # closed and already names this event, while the specific field
+                # mismatch is what the operator needs to fix the documents.
+                logger.warning("project metadata refused [%s] (run=%s)", error.rule, ctx.run_id)
+                return ctx, PlanRefError("bootstrap-invalid-metadata")
         snapshot = snapshot_from_bytes(
             path,
             read.content.encode("utf-8"),
@@ -4157,6 +4255,9 @@ _V2_BLOCKED_RULE_MAP: dict[str, tuple[str, str, str, str]] = {
     "bootstrap-unavailable": ("bootstrap", "unavailable", "ERROR", "INDETERMINATE"),
     "bootstrap-refused": ("bootstrap", "install-failed", "FAIL", "DIAGNOSTICS"),
     "bootstrap-unreadable": ("bootstrap", "install-failed", "ERROR", "INDETERMINATE"),
+    # D-V2-9.2: the name the caller asked to create is taken. Same recorded rule
+    # the install path uses, so one event has one diagnostic in the record.
+    "bootstrap-collision": ("bootstrap", "collision", "FAIL", "DIAGNOSTICS"),
 }
 
 

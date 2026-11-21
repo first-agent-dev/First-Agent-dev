@@ -487,42 +487,58 @@ def test_chat_slug_and_explicit_route_are_required_for_new_project(site: Site, t
     assert not (site.source / "worklogs" / "sneaky-project").exists()
 
 
-@pytest.mark.parametrize(
-    ("slug", "stated", "absent"),
-    [
-        (None, "Project creation is NOT authorized", "Project creation IS authorized"),
-        ("chat-project", "Project creation IS authorized", "Project creation is NOT authorized"),
-    ],
-)
-def test_the_acquisition_task_states_the_route_the_controller_enforces(
-    slug: str | None, stated: str, absent: str
-) -> None:
-    """The planner is told which project action this call allows, and it is the same one enforced.
-
-    A prompt that offers creation to a select-only call would produce a well-formed
-    bootstrap that the controller must refuse; the model would be failing a test it
-    was never given the rule for.
-    """
+def _stage_task_for(slug: str | None) -> str:
     substrate = workflow_controller.AcquisitionSubstrate(
-        port=object(),  # type: ignore[arg-type]
+        port=object(),
         project_names=("demo-project",),
         incomplete_names=(),
         project_slug=slug,
     )
     task = workflow_controller._acquisition_stage_task(
-        SimpleNamespace(acquisition=substrate),  # type: ignore[arg-type]
+        SimpleNamespace(acquisition=substrate),
         "do the thing",
     )
-
     assert task is not None
-    assert stated in task
-    assert absent not in task
+    return task
+
+
+def test_a_select_only_route_is_told_it_may_only_select() -> None:
+    """The planner is told which project action this call allows, and it is the same one enforced.
+
+    A prompt that offered creation to a select-only call would produce a
+    well-formed bootstrap the controller must refuse; the model would be failing a
+    test it was never given the rule for.
+    """
+    task = _stage_task_for(None)
+
+    assert "Project creation is NOT authorized" in task
+    assert "Project creation IS authorized" not in task
     assert "Projects (SELECT_EXISTING): demo-project" in task
-    if slug is not None:
-        assert f"caller: {slug}" in task
-        assert "COLLISION" in task  # the no-clobber warning belongs to the creating route only
-    else:
-        assert "COLLISION" not in task
+    assert "COLLISION" not in task
+
+
+def test_a_create_route_is_told_to_author_and_never_offered_a_choice() -> None:
+    """D-V2-9: the create route is an authoring stage, not a chooser (P2-3's root cause).
+
+    The old text told the model to "return BOOTSTRAP_NEW_PROJECT with exactly that
+    project_slug" while the parser had started refusing that field: a model that
+    followed the instruction was guaranteed a `choice-malformed`. The contract now
+    is that the create task says nothing about emitting a choice at all -- it
+    describes the scaffold the harness already wrote and asks the model to fill it.
+    """
+    task = _stage_task_for("chat-project")
+
+    # What must NOT be there: the payload instruction that contradicted the parser.
+    assert "BOOTSTRAP_NEW_PROJECT" not in task
+    assert "project_slug" not in task
+    assert "COLLISION" not in task
+    assert "Projects (SELECT_EXISTING)" not in task
+
+    # What must be: the fixed identity and the files that already exist.
+    assert "This run creates a new project" in task
+    assert "worklogs/chat-project/roadmap.md" in task
+    assert "increments/increment-01-initial-plan.md" in task
+    assert "Do not emit a JSON choice" in task
 
 
 # --- D2: one slug grammar, imported rather than restated ---------------------

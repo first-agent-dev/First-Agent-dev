@@ -22,6 +22,11 @@ class PlannerDispatchKind(StrEnum):
     # before any plan exists, so it owns neither a candidate buffer nor an active
     # plan -- read/search and one final strict choice, nothing else.
     ACQUISITION = "ACQUISITION"
+    # D-V2-9 (CT-2.3): the create-new authoring stage. Unlike ACQUISITION this
+    # stage *writes* -- but only inside one project root, and never through a
+    # candidate buffer. ``plan_ref`` is None for it (D-V2-9.5), because the plan
+    # it is about to author is exactly what a plan boundary would freeze.
+    CREATE_NEW_PROJECT = "CREATE_NEW_PROJECT"
 
 
 def _relative_target(value: object) -> tuple[str, ...]:
@@ -39,6 +44,11 @@ class PlannerDispatch:
     run_id: str
     active_plan: str | None = None
     candidate_target: str | None = None
+    #: D-V2-9: the one directory a ``CREATE_NEW_PROJECT`` stage may write under,
+    #: ``worklogs/<slug>``. Controller-built, never model-supplied, and present
+    #: on exactly one kind -- a stray root on any other kind is a mistake to
+    #: refuse rather than a value to ignore.
+    authoring_root: str | None = None
 
     @property
     def owns_candidate(self) -> bool:
@@ -75,3 +85,15 @@ class PlannerDispatch:
                 # Acquisition runs before a plan is admitted, so naming one would be a
                 # claim about a target nobody has selected yet.
                 raise PlannerDispatchError
+        # D-V2-9: the authoring root travels only with the authoring kind, and it is
+        # exactly ``worklogs/<slug>`` -- two components, no traversal, no nesting.
+        # Anything else would widen a write allowlist that exists to be one directory.
+        if self.kind is PlannerDispatchKind.CREATE_NEW_PROJECT:
+            parts = _relative_target(self.authoring_root)
+            if len(parts) != 2 or parts[0] != "worklogs":
+                raise PlannerDispatchError
+            if self.active_plan is not None:
+                # D-V2-9.5: the stage authors the plan it would have to freeze.
+                raise PlannerDispatchError
+        elif self.authoring_root is not None:
+            raise PlannerDispatchError
