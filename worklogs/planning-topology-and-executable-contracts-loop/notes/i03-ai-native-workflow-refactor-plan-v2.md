@@ -35,8 +35,8 @@ Source grounding is summarized here; cited symbols are starting points for each 
 | Concern | Existing source seam / observed behavior | Target seam reuse and required change |
 |---|---|---|
 | Chat caller | `src/fa/cli.py::_build_run_tool_registry` registers `invoke_workflow` only for chat. `src/fa/inner_loop/tools/workflow_tool.py::INVOKE_WORKFLOW_SCHEMA` is closed and currently has task/mode/roles/repair/replan fields only; `_prepare_invocation` carries no project slug. Child invocation, HANDOFF, return reconciliation, and `ToolResult.fail` already exist. | Extend this real tool contract with optional validated slug plus explicit route discriminator; thread context to existing child controller. Bootstrap errors must map after child HANDOFF/return settles to stable safe code/text/retryability, not `ToolResult.ok` with a nonzero child exit. Preserve non-bootstrap invocation behavior. |
-| Acquisition/bootstrap | `src/fa/inner_loop/managed_acquisition.py::BootstrapNewProjectChoice` currently carries planner-selected project/increment slugs and free-prose roadmap/increment bodies. `workflow_controller.py::_stage_acquisition_choice`, `_install_bootstrap_project_with_detail`, `_admit_installed_plan` render/install three files and then immediately admit the increment. | Evolve this path, not a parallel bootstrap. On explicit create-new, chat slug is authoritative; planner submits bounded semantic content only. Trusted renderer owns paths, IDs, dates, metadata and fixed file set. Insert whole-project validation and seal before coder admission. Keep SELECT_EXISTING separate and do not reinterpret a typo as creation. |
-| Path/materialization authority | `src/fa/execution/publication.py::prepare_bundle/install_project` and `src/fa/execution/workspace.py::WorkspaceAuthority.install_project` implement a bound bundle, private staging, no-replace install, durable intent, forward completion and uncertainty states. Slugs are constrained under `worklogs/<slug>`; collisions preserve existing entries. Generic PROJECT access is writable and broader than required. | Reuse no-replace/revision authority. Prefer closed typed payload and private staging, then atomic install of complete validated content. Do not grant planner generic PROJECT writes. Model post-rename uncertainty as durability-unknown; never blind retry or treat it as clean absence. The acceptance closure ships **inside** the installed revision (D-V2-5): there is no immutable-payload fallback and no second store, because the authority's own recovery already proves `digest == intent.tree_sha256` before finishing forward (`workspace.py:5390–5428`). |
+| Acquisition/bootstrap | `src/fa/inner_loop/managed_acquisition.py::BootstrapNewProjectChoice` currently carries planner-selected project/increment slugs and free-prose roadmap/increment bodies. `workflow_controller.py::_stage_acquisition_choice`, `_install_bootstrap_project_with_detail`, `_admit_installed_plan` render/install three files and then immediately admit the increment. | Evolve this path, not a parallel bootstrap. On explicit create-new, chat slug is authoritative. **D-V2-9 (2026-11-21) replaces the bounded-payload split:** the planner is the *writer* of the installed documents (it holds the WRITE `PROJECT` view under `worklogs/<slug>/`), the harness owns the scaffold, the path allowlist and the metadata cross-check. See §"D-V2-9 — planner-as-writer" for the ratified design; the payload/renderer/`install_project` path for create-new is deleted, not extended. Keep SELECT_EXISTING separate and do not reinterpret a typo as creation. |
+| Path/materialization authority | `src/fa/execution/publication.py::prepare_bundle/install_project` and `WorkspaceAuthority.install_project` implement a bound bundle, private staging, no-replace install, forward completion and uncertainty states — the **bootstrap** primitive. The **revision** primitive is separate and equally live: a WRITE view commits its whole tree through `STOP_VIEW → SEAL → PUBLISH` (`client.py:963–1030`), which is what every coder stage already uses. A `PROJECT` view is writable across `worklogs/`; only a `MUTATION` view is confined to `{"src","scripts"}` (`workspace.py:222–226`). | **D-V2-9 uses the revision primitive for create-new**, not the bundle: one stage publication, no install, no post-rename recovery branch. Reuse `RootedViewIO` path policy (no `..`, no dot components, no symlinks, `_BLOCKED_COMPONENTS`) and the authority's existing uncertainty handling. The acceptance closure ships **inside** the same committed revision (D-V2-5 unchanged): no immutable-payload fallback and no second store. `install_project` stays for its other callers and is off this path. |
 | Grammar/admission | `src/fa/inner_loop/plan_ids.py::precheck/extract_plan_ids` and `workflow_controller.py::_validate_plan_admission/_admit_plan` validate current grammar and gate coder; `_SLICE_CEILING = 7`. Runtime grammar is currently code-defined while `notes/artifact-schema-and-grammar.md` is conformance input. | Make the canonical Markdown schema the only V2 source; trusted installed runtime pins supported V2 grammar independently of project files. Add explicit project plan-format marker and reject unsupported/missing/mixed/V1 input before coder. Whole-project validator checks required artifacts and complete graph, not only an increment. Do not change parser in STEP9B. |
 | Acceptance execution/custody | `workflow_controller.py::_pinned_verify_substrate` binds `ManagedVerifyCommandExecutor`; `slice_verification.py::verify_slice` and existing nodeid capture run tests from a pinned read view. `src/fa/execution/profiles.py` defines managed no-network/read-only-rootfs restrictions. Existing V1 does not prove stable TEST-ID→nodeid graph or complete closure custody. | Reuse managed runner, not a parallel runner. Resolve selector to exactly one nodeid, pin tests plus transitive support/config/fixture/driver/runner closure, expose identical bytes read-only to coder, and have verifier execute that exact seal. Missing or ambiguous closure is fail-closed; no host fallback. Read-only enforcement already has a live seam: `RootedViewIO(protected_paths=…)` is fed `plan_ref.workspace_relative_path` at both construction sites (`src/fa/execution/view_io.py:119–158`, `workspace.py:2188–2196` and `2808–2816`) and refuses writes to those paths **and their ancestors**; the closure is not in that tuple today. Shell access is separate: a writable view mounts the whole source read-write (`src/fa/execution/profiles.py:108–113`), so `run_bash` can write the closure unless the profile adds a read-only submount (Q-V2-MODEA-1). |
 | Tick ownership | Canonical schema assigns tick updates to harness, but source audit found no production Markdown tick producer; run/admission status is not equivalent. | Add production harness-owned V2 tick producer and verify it at the host witness. Arena plan editing is not constrained by the production rule. Do not infer ticks from workflow status records. |
@@ -53,7 +53,7 @@ The current `artifact-schema-and-grammar.md` is the V1 artifact contract; it is 
 | `ledger.md` | Harness initializes before seal | Immutable after admission; run/evaluation evidence is stored in controller-owned run artifacts and referenced by ID, not appended into sealed project bytes. Any desired post-seal project-ledger update requires explicit new revision/re-admission/seal. |
 | `open-questions.md` | Planner writes/resolves before admission; harness validates | Required root artifact; bounded Q records; no interactive ask dependency. Post-seal changes are a new plan revision and require re-admission/re-seal; otherwise the dependent scope stays blocked. |
 | `increments/increment-01-initial-plan.md` | Harness writes fixed metadata; planner writes semantic plan; tick mutation is gated by Q-V2-STATUS-1 | `initial-plan` is harness-fixed, not a planner field. Explicit same `Plan-Format` marker; one active new-format increment. Contains invariants, optional scenarios, SLICE/CT/STEP declarations, acceptance selectors and kill-target mappings. Semantic bytes stay immutable after seal; any update requires new revision/re-admission/seal. |
-| `acceptance/tests/` plus all referenced `acceptance/` support/fixture/driver files | Planner supplies bounded content through typed payload; harness materializes; immutable after seal | New, project-scoped acceptance root; selected to avoid mixing these sources with repository harness tests. V2 selectors are workspace-relative `worklogs/<project_slug>/acceptance/tests/<path>.py::nodeid`. Controller materializes only beneath `worklogs/<slug>/acceptance/`; fixed workspace pytest config and runner are trusted existing workspace inputs and are bound by digest in the bundle, never planner-overwritten. Reject absolute paths, `..`, symlink escape, undeclared acceptance files, and ambiguous config/fixture resolution. `TEST-ID` selectors are the sole source of nodeid membership; legacy slice-wide `TESTS:` lists are not accepted on this route. |
+| `acceptance/tests/` plus all referenced `acceptance/` support/fixture/driver files | **Planner writes them directly** (D-V2-9), confined to `worklogs/<slug>/acceptance/` by the stage allowlist; immutable after seal | New, project-scoped acceptance root; selected to avoid mixing these sources with repository harness tests. V2 selectors are workspace-relative `worklogs/<project_slug>/acceptance/tests/<path>.py::nodeid`, formed by the planner under the scaffold's front matter (no renderer expands anything). The only paths written are beneath `worklogs/<slug>/acceptance/`; fixed workspace pytest config and runner are trusted existing workspace inputs, bound by digest at seal, never planner-overwritten. The authority refuses absolute paths, `..`, dot components and symlinks at the write boundary (`view_io.py:226–234`, `_BLOCKED_COMPONENTS` `:28`); admission additionally refuses selectors resolving outside the closure. `TEST-ID` selectors are the sole source of nodeid membership; legacy slice-wide `TESTS:` lists are not accepted on this route. |
 
 This is a new fixed root, not a discovered production convention. It is chosen because the existing managed verifier accepts workspace-relative pytest paths and runs from workspace root (`slice_verification.py::capture_test_nodeids`, `:825–845`; `verify_plan`, `:2371–2408`), and the authority install path already constrains bundle files under `worklogs/<slug>` (`workspace.py::_install_file_record`, `:3637–3654`). SLICE3 C1 must actually collect/import/run a project test at this exact path through the managed runner; if it cannot, fail closed and replan before implementation rather than silently relocating paths or adding a runner. This suite is distinct from the repository's `tests/test_ai_native_*.py` harness tests that exercise the implementation.
 
@@ -94,29 +94,141 @@ whose value is empty is refused as `slice-<n>-steps-mode`, so a step list never 
 is a slice-level list item, not a member of any typed bucket, so it must not appear inside `STEP-EXIT-CHECKS:`'s
 block. A renderer that emits either shape produces bytes admission refuses.
 
-**Who writes plan bytes (D-V2-7, ratified structure).** The planner returns a **typed semantics payload** and never
-Markdown: `intent`, `out_of_scope`, `questions[]`, `invariants[]`, `scenarios[]`, `slices[]` with `contracts[]`,
-`acceptance[]`, `kill_targets[]`, `exit_checks[]`, `steps[]`. The controller renders every byte. Two properties make
-this more than a refactor:
+**Who writes plan bytes (D-V2-9, ratified 2026-11-21 — supersedes D-V2-7).** The planner **writes the installed
+documents directly**. It runs with a WRITE `PROJECT` view and the ordinary file tools; the harness writes nothing
+into `worklogs/<slug>/` except the scaffold the planner will fill. D-V2-7 (typed payload → controller renders every
+byte) is **withdrawn**: it imposed an orthogonal serialization on a model that already writes Markdown well, and it
+cost ~3 600 lines of renderer/parser/payload code that existed only to move bytes between two representations of the
+same grammar.
 
-* **Selectors are project-relative in the payload** (`acceptance/tests/<path>.py::<nodeid>`). The project slug is
-  caller authority and may still be substituted at install time, so a payload that embedded the slug would either
-  leak a model claim or break under substitution. The renderer expands to
-  `worklogs/<project_slug>/acceptance/tests/...::<nodeid>` — the only place that prefix is ever formed.
-* **The renderer cannot emit inadmissible bytes.** `render_project` renders all four documents and then parses the
-  roadmap/increment pair it just produced; any `PlanV2Error` is returned as the render refusal. Fail-closed by
-  construction rather than by matching rules twice.
+Why this is now safe — and was not when D-V2-7 was ratified:
 
-**Law of the renderer (CT-2.3 acceptance):** for every admissible semantics `s` and every valid slug,
-`parse_plan(roadmap=render_roadmap(s), increment=render_increment(s, project_slug)) == s.graph(slug)` — a structural
-`==`, not a spot check; plus byte idempotence `render_increment(from_graph(parse(out)), slug) == out`, which is what
-keeps seal digests stable across a re-render. Both are property tests over a deterministic seeded corpus, and the
-seed is recorded with the run.
+* **A WRITE `PROJECT` view can write `worklogs/`.** Only a `MUTATION` view is confined to `_MUTATION_ROOTS = {"src",
+  "scripts"}` (`workspace.py:222–226`, `_purpose_write_policy` `:2843–2855`). The earlier barrier was the planner's
+  *tool list* (`ACQUISITION_TOOLS`, `profiles.py:443`) and its *stage read-only flag* (`cli.py:2091`) — configuration,
+  not an authority invariant.
+* **Every write is already published atomically.** `STOP_VIEW → SEAL → PUBLISH` commits one whole view tree as one
+  revision (`client.py:963–1030`), which is the same mechanism every coder stage already uses.
+* **Mode A still holds.** `RootedViewIO.protected_paths` refuses writes to sealed semantic paths and their ancestors
+  (`view_io.py:232`), and the acceptance closure becomes protected at exactly the same point the plan does.
+* **Collision needs no new mechanism.** `roadmap.md` is created with `expected_sha256=None`, which the authority
+  defines as *expected absence* (`view_io.py:410–417`); an existing `worklogs/<slug>/` therefore fails the first
+  write with `STALE_REVISION` and nothing is published.
 
-**`open-questions.md` is rendered, never parsed.** Its six fields (§7) are a projection of the payload's `questions[]`.
-Admission reads the roadmap/increment pair only, so a Q record cannot influence admission — the same reasoning that
-put status ticks outside the sealed bytes (Q-V2-STATUS-1). A Q that would block scope must be honoured by *omitting*
-that scope from the payload, not by a resolver state machine.
+Authoring split (the whole design):
+
+| Path | Written by | Enforcement |
+|---|---|---|
+| `roadmap.md`, `open-questions.md` | planner | path allowlist `worklogs/<slug>/`; metadata cross-check (§D-V2-9.3) |
+| `increments/increment-01-initial-plan.md` | planner (repair rewrites only this file) | same |
+| `ledger.md` | planner, body only | harness owns the header; body append-only |
+| `acceptance/tests/**` (+ support it imports) | planner | confined under `worklogs/<slug>/acceptance/` |
+| `notes/**`, `reviews/**` | planner | free-form; nothing reads them in admission |
+
+**D-V2-9.1 — one commit, no intermediate state.** The scaffold is written by the harness *inside* the planner's
+stage, through the same port the model uses:
+
+```
+planner stage opens WRITE PROJECT view @ rev_N
+  → harness writes the scaffold (empty documents: frontmatter + section headings, no bodies)
+  → planner writes the documents
+  → lease.finish(accepted) → STOP_VIEW → SEAL → PUBLISH → one revision
+  → admission reads that revision
+```
+
+A failed or refused stage calls `reject_view` (`composition.py:413`) and **no project exists** — not an empty one.
+This is why F5 (the "scaffold is selectable but has no plan" classifier question) does not arise as a design problem:
+there is no observable intermediate tree. `prepare_bundle` / `install_project` / `_BootstrapReceipt` do **not**
+participate in V2 create-new. They stay in the codebase for their other callers; the create-new path stops calling
+them and the bundle renderer is deleted with the payload layer.
+
+**D-V2-9.2 — collision is `project_exists`, not `stale`.** The first create-only write returns `STALE_REVISION` from
+the authority, but the model must not see the generic text `"workspace refused the write: stale"`. The planned-file
+writer maps *expected-absence refusal on `roadmap.md`* to `project_exists` with actionable text ("`worklogs/<slug>/`
+already exists; select the existing project"), which is the same stable code `invoke_workflow` already returns
+(CT-2.2, CT-2.5). Distinguishing "this project exists" from "someone else moved the file" is one path comparison,
+not a new authority feature.
+
+**D-V2-9.3 — metadata is cross-checked, not authored by the harness.** Admission verifies a closed table; it does not
+rewrite the file. `parse_plan` currently strips frontmatter and never validates it (`plan_v2.py:252–264`, `:688`),
+so this table is new work and **is part of this slice**, not an existing guarantee:
+
+| Field | Rule | Why this strength |
+|---|---|---|
+| `Plan-Format:` | exactly one per document, value `AI-NATIVE-PLAN-V2` | already enforced (`_require_marker`, `plan_v2.py:267–272`) |
+| `Roadmap-ID:` / `Increment-ID:` | exactly one, `RM-<slug>` / `RM-<slug>-I01` | identity is caller authority; a model must not rename the project or the increment |
+| `slug:` in `roadmap.md` | equals the view's `worklogs/<slug>/` component | same |
+| `active-increment:` in `roadmap.md` | names the one admitted increment | the roadmap cannot point at a plan that does not exist |
+| `status:` | member of the canonical vocabulary; **any legal value is accepted** | the planner legitimately chooses the lifecycle state; admission does not dictate `IN PROGRESS` |
+| `created:` | any valid date, and identical across the project's documents | free-form value, one-fact consistency |
+| absent `Roadmap-ID` in `open-questions.md` / `ledger.md` | not required | those documents are not part of the admitted pair |
+
+Everything not in this table is the planner's content. The check is one table walk over the three admitted
+documents — flexible by construction, because it names only the fields that must agree with something else.
+
+**D-V2-9.4 — `render_project`'s self-check moves into admission, with no loss.** Today a bad payload is refused
+before bytes exist because `render_project` parses its own output. After D-V2-9 the model can write an inadmissible
+plan; the refusal becomes `plan-format-*` / `slice-*` rules from `parse_plan` at admission, and the repair round
+(`_run_admission_repair_with_receipt`, `workflow_controller.py:3719–3770`) hands the planner the sanitized
+diagnostics against the **published file** rather than a private candidate. Net guarantee is unchanged: no coder sees
+an unadmitted plan. What changes is *when* the bad bytes are visible: in the revision history rather than nowhere.
+That is the accepted cost, and it is what makes repair possible against the real artifact.
+
+**D-V2-9.5 — `plan_ref` is null on the authoring stage.** `_validate_plan_boundary` (`publication.py:336–353`) freezes
+the plan path, its ancestors and its descendants. If the authoring stage carried a `plan_ref` pointing at
+`worklogs/<slug>/increments/`, its own first write would be refused. The authoring stage therefore runs with
+`plan_ref=None` (the same shape `_pinned_acquisition_substrate` already uses, `workflow_controller.py:2596–2610`), and
+CT-2.4 stays true because there is no admitted plan to protect yet. `PlannerDispatch` must make this explicit rather
+than rely on the null default.
+
+**D-V2-9.6 — the planner's write surface is an allowlist, not a new policy engine.**
+`build_registry_for_role` already routes `planner`+`fs_write_file` through the limited writer
+(`profiles.py:495–499`), whose allowlist is `PROFILES_RAW["planner"]["write_allowlist"]`
+(`profiles.py:151`) and whose second gate `_planner_target_allowed` (`:238–256`) already refuses `.fa/admission`
+and the active plan. The create-new stage passes `allowed_paths=("worklogs/<slug>/",)` for that stage only; the
+module default is unchanged, so an ordinary planner keeps its current narrow allowlist. Nothing new is invented:
+one parameter of an existing function, threaded to a stage.
+
+Ordering constraint that follows from the above: the scaffold must be written **before** the planner's first tool
+call, and the `roadmap.md` create-only write must be the **first** write of the stage. If it is not, a failed stage
+leaves directories behind that `reject_view` cannot remove (they would only exist inside the rejected view's private
+tree, so this is a hygiene rule, not a durability one).
+
+**D-V2-9.7 — an empty directory cannot be materialized; the scaffold must carry a file in each root.** Source fact:
+the view writer has **no mkdir primitive** (`grep -n "def mkdir\|def create_directory" view_io.py workspace.py
+tool_port.py` → nothing), directories exist only as parents of a written file (`view_io.py:442`,
+`_parents(create=...)`), and dot-only names are refused as path components (`_parts`, `view_io.py:83` rejects `""`,
+`"."`, `".."`; `_write_bundle_file` additionally refuses any component starting with `.`, `workspace.py:3454`). So
+`notes/.gitkeep` is **not** a legal write and an empty `notes/`, `reviews/` or `acceptance/tests/` simply does not
+survive into the revision. The scaffold therefore writes a real file in every root it must create:
+`notes/README.md` and `reviews/README.md` (one paragraph each, harness-authored), and
+`acceptance/tests/test_acceptance_placeholder.py` — a module with **no test functions**, which collects to zero and
+cannot become a passing oracle. `acceptance/` gets no other support directory until the planner creates one by
+writing a file into it.
+
+**D-V2-9.8 — repair must not go through the candidate buffer.** Source fact: `seed_plan_candidate` refuses any kind
+except `ADMISSION_REPAIR`/`EVAL_REPLAN` (`plan_promotion.py:85–86`), writes the draft to
+`.fa/admission/<run>/candidate-*.md` (`:87`), and `publish_candidate_plan` commits **one** file at that pinned
+`PlanRef` (`workspace.py:4059+`). A create-new authoring stage owns no candidate, and a repair that rewrote only the
+increment would leave `roadmap.md`/`open-questions.md` unrestorable and would publish a revision whose other files
+still hold the refused content. Therefore the repair for a create-new project is **not** the candidate path: it is a
+second authoring stage over a WRITE `PROJECT` view opened at the revision the first stage published, whose allowlist
+is narrowed to `worklogs/<slug>/increments/increment-01-initial-plan.md` (plus `open-questions.md` when the refusal
+is a Q-record refusal). Two consequences the implementation must honour:
+
+* the second stage runs with `plan_ref=<the published increment>` so `_validate_plan_boundary`
+  (`publication.py:336–353`) refuses any byte change to the plan that authorised nothing yet — the repair's whole
+  purpose is to change those bytes, so the repair stage instead runs with `plan_ref=None` and narrows the allowlist
+  to the two files. `_validate_plan_boundary` is a *coder/verifier* protection, not an authoring one; the authoring
+  stage's equivalent protection is the allowlist.
+* `admission.planner_calls`/`planner_limit` continue to bound retries exactly as today
+  (`workflow_controller.py:4082–4090`); no new budget concept is introduced.
+
+**D-V2-9.9 — the scaffold file set is the *only* harness write, and it is idempotent-by-construction.** Because the
+harness never rewrites a scaffold file after the planner has touched it, a second authoring stage (repair) writes no
+scaffold at all: it opens the view at the published revision and hands the planner the diagnostics. This keeps the
+"harness writes only the scaffold" rule true for every stage, not just the first.
+
 
 The production grammar must require one primary INV on each CT; each TEST-ID belongs to one CT and one exact selector; selectors resolve to exactly one collected nodeid (including stable parametrized IDs); every target maps to exactly one CT and TEST-ID; SCN contains explicit CT-ID[] edges and derives TEST membership; every hard INV/ready CT has a test or a typed explicit evidence disposition. Reject duplicate IDs, dangling edges, multiple primary INV, missing evidence, duplicate selector ownership, uncollected/ambiguous selectors, unknown fields and orphan V1 `TESTS:`/kill syntax. The schema's prose example and parser/conformance tests must agree byte-for-byte on these names/cardinalities; this plan does not claim runtime parsing exists.
 
@@ -130,11 +242,36 @@ For status ticks preserve canonical vocabularies: increment `OUTLINED→READY→
 
 ### Target lifecycle and visibility barrier
 
-`NEW_REQUEST → SLUG_VALIDATED → PRIVATE_SCAFFOLD → PLANNER_CONTENT_READY → WHOLE_PROJECT_VALIDATED → PRIVATE_VALIDATED_PAYLOAD → NO_REPLACE_INSTALL → REVISION_BOUND_ACCEPTANCE_SEAL/ADMITTED → CODER → PINNED_VERIFY → TERMINAL_RESULT`.
+**D-V2-9 lifecycle (supersedes the install-based row for create-new):**
 
-All transitions are controller/authority owned and tied to explicit workspace revisions/operation evidence. Before install, fully validate and durably stage the exact closed payload in private authority-owned storage; do not call this pre-install object the STEP9A `AcceptanceBundle` seal. `install_project` returns a revision/tree receipt; then the authority proves the installed project projection byte-identical to the staged payload and mints/finalizes the revision-bound `AcceptanceBundle`. Only this final revision-bound seal permits coder. Payload digest/base revision alone is not the final revision seal. Reuse and, if necessary, extend the existing private `prepare_bundle`/no-replace `install_project` primitives for the fixed V2 manifest, but source-prove the closure/custody and recovery before coding. No planner-controlled paths or generic PROJECT writer. Once admitted, `roadmap.md`, `ledger.md`, `open-questions.md`, increment semantics and acceptance sources are immutable inputs to that admission/seal; any semantic change creates a new authoritative revision and must repeat validation/admission/seal. Runtime evidence is run-scoped and status projection is governed by Q-V2-STATUS-1; neither may silently rewrite the sealed semantic inputs.
+`NEW_REQUEST → SLUG_VALIDATED → STAGE_VIEW_OPENED(WRITE/PROJECT) → SCAFFOLD_WRITTEN → PLANNER_AUTHORED → STAGE_PUBLISHED(one revision) → METADATA_CHECKED → PLAN_ADMITTED → REVISION_BOUND_ACCEPTANCE_SEAL/ADMITTED → CODER → PINNED_VERIFY → TERMINAL_RESULT`
 
-Pre-install refusal leaves canonical workspace unchanged. Collision preserves existing tree. If no-replace rename or post-rename revision/pointer publication becomes uncertain, retain intent and operation identity and block; use authority forward recovery, not retry-as-new. If install commits but the seal/admission step fails, use the selected recovery (D-V2-5): the pointer is absent, so the harness mints the seal deterministically from the installed bytes bound to the receipt revision; a seal file that exists but cannot be loaded is a hard error, never a silent re-mint; a pointer naming a missing seal is `CORRUPT_STATE`. No `INSTALLED_UNSEALED` record and no immutable-payload store exist in this design. Never overwrite, silently retry planner, expose to coder or claim success. If the selected recovery cannot prove equality/custody, retain blocked state for explicit disposition. No canonical provisional tree is authorized unless it meets these exact isolation/recovery rules. Clarification/content retry is allowed only before irreversible effect and within existing bounded planner budget. Unsupported grammar, stale base revision, collision, durability unknown and custody loss never silently retry.
+Every transition before `STAGE_PUBLISHED` is private to one view and disappears if the stage is rejected
+(`composition.reject_view`, `composition.py:413–433`). There is no `PRIVATE_VALIDATED_PAYLOAD`, no
+`NO_REPLACE_INSTALL`, and no post-install recovery branch on this route: the authority's ordinary
+`STOP_VIEW → SEAL → PUBLISH` saga already owns intent, pointer, projection and `DURABILITY_UNKNOWN`
+(`workspace.py:5110+`, `client.py:963–1030`). Failure behaviour is therefore the *existing* stage failure
+behaviour, not a new state machine:
+
+- **Stage refused or crashed before publish** → `reject_view`; no `worklogs/<slug>/` exists; canonical tree and
+  current revision unchanged; the child run reports a structured failure (CT-2.5).
+- **Publish uncertain** → the existing `DURABILITY_UNKNOWN` path; the writer is not released, the run blocks, and
+  recovery is the authority's. Never retried as a new operation.
+- **Published but admission refused** → the revision exists and is history; coder is never dispatched; the repair
+  round rewrites `increments/increment-01-initial-plan.md` and publishes a second revision (D-V2-9.4). A run that
+  exhausts its repair budget ends `BLOCKED` with the project present and unadmitted — that is an honest, inspectable
+  end state, and CT-2.9 requires that no coder ever sees it.
+- **Collision** → `project_exists` on the first create-only write; nothing published (D-V2-9.2).
+
+Once admitted, `roadmap.md`, `ledger.md`, `open-questions.md`, increment semantics and acceptance sources are
+immutable inputs to that admission/seal; any semantic change creates a new authoritative revision and must repeat
+validation/admission/seal. Runtime evidence is run-scoped and status projection is governed by Q-V2-STATUS-1;
+neither may silently rewrite the sealed semantic inputs.
+
+**What D-V2-5 still governs:** the revision-bound `AcceptanceBundle` mint (closure inside the installed revision,
+seal derived from the committed bytes + plan bytes + revision receipt) is unchanged — only the way the revision is
+produced changed. `notes/q-v2-boot1-install-seal-audit-2026-11-20.md` E1–E9 remain the recovery reference for the
+seal half; its install half no longer applies to V2 create-new.
 
 ## 3. Global semantic invariants and graph
 
@@ -142,8 +279,8 @@ Pre-install refusal leaves canonical workspace unchanged. Collision preserves ex
 |---|---|
 | INV-01 | Only the trusted runtime-selected canonical V2 grammar can admit a project; missing, unknown, mixed, or V1 format fails before coder. |
 | INV-02 | A new project is created only by explicit create-new intent; chat-supplied slug is validated at tool and authority boundaries and never silently substituted or overwritten. |
-| INV-03 | The harness materializes only a closed fixed artifact manifest. Planner semantics are content, never arbitrary destination paths or generic project write authority. |
-| INV-04 | No provisional/unvalidated/unsealed project or plan reaches coder. Every role sees only its declared capability; coder cannot mutate acceptance closure. |
+| INV-03 | The harness materializes only a closed fixed scaffold, and the planner may write only inside `worklogs/<slug>/` through the ordinary view writer. The planner never receives a destination path it can choose outside that root, never names the project or the increment, and never holds a generic workspace write capability. (D-V2-9 supersedes the D-V2-7 "planner semantics only, no writes" form.) |
+| INV-04 | No provisional/unvalidated/unsealed plan reaches coder. Every role sees only its declared capability; coder cannot mutate the plan or the acceptance closure. A published-but-unadmitted revision is an audit fact, never a coder input (D-V2-8). |
 | INV-05 | Every admitted hard invariant/ready CT has an explicit evidence disposition and complete ID graph; selectors resolve exactly once. |
 | INV-06 | AcceptanceBundle binds canonical plan and full acceptance source/config/support/helper/fixture/driver/runner closure to immutable workspace revision; verifier executes that same closure. |
 | INV-07 | Mode A holds across two interfaces with two mechanisms (D-V2-6): **file tools are prevented** — `RootedViewIO.protected_paths` refuses writes to every sealed semantic path and its ancestors; **shell is detected** — a write that reaches the closure there is byte drift and fails closed at the next closure check, before any verification result exists. No acceptance byte that differs from the seal can produce a verdict, and every verification entry point (including incremental/repair-time checks) proves the closure digest first. Unsupported mode B, missing/stale seal, ambiguous mapping or incomplete closure fails closed. |
@@ -189,7 +326,7 @@ is now a slice obligation, so the gap cannot be silently deferred:
 
 | Gap (E564) | Owner | Contract |
 |---|---|---|
-| Nothing in the controller mints an `AcceptanceBundle` | SLICE2 (install→seal, D-V2-5) + SLICE3 | CT-2.4, CT-3.2 |
+| Nothing in the controller mints an `AcceptanceBundle` | SLICE2 (publish→seal, D-V2-5 on the D-V2-9 revision) + SLICE3 | CT-2.4, CT-3.2 |
 | The coder never receives a mode-A projection | SLICE3 | CT-3.3 (prevention for file tools, detection for shell) |
 | `verify_slice` still executes planner `verify` fences | SLICE3 | CT-3.6 (fence retired on the PLAN-V2 route) |
 | No gate blocks on a missing or stale seal | SLICE3 | CT-3.2 (admission refuses before coder) |
@@ -245,23 +382,37 @@ manual run: the CLI context is the unmanaged shape by design (no parent stage le
 gets exactly what an unmanaged caller gets, and managed composition stays where it is proven (the chat
 harness inside `fa run`).
 
+**CT-1.5 gap — `dispositions` has no human ingress (found in the 2026-11-21 diff review).** `fa invoke-workflow`
+forwards `project_action`/`project_slug` (`cli.py:2451–2452`), but not `dispositions`; the field exists only on
+the tool schema (`workflow_tool.py:245`) and the parser has no flag for it (`cli.py:975–993`). That is not a test
+gap — it is a capability gap: R1 makes the caller's grant the *only* source of owner/evidence, and a caller that
+needs one `NON_EXECUTABLE` invariant has no way to supply it from the human front, so a legal V2 plan is
+unreachable there while it is reachable from chat. A dispatch on the *unmanaged* shape is also the only context
+where `_install_bootstrap_project_with_detail` can be exercised without a parent lease, which is what made the
+gap invisible. Bounded fix, CT-1.5 scope: add `--dispositions <path-or-json>` to the `invoke-workflow` parser and
+pass it through unmodified, exactly as the other two fields are; validation stays in the tool, so the CLI adds no
+second rule. Either land it with CT-1.5 or record it as an explicit defer — silence is what this entry rules out.
+
 **Failure/negative controls:** version marker cannot override runtime pin; project cannot load a grammar copy from its own root; malformed references never yield a partial admitted snapshot; no legacy fallback; no coder/provider call on rejection. The V1 negative and valid V2 positive use production admission, not only parser helpers. **Producer kill-check:** remove the V2 admission producer at `_validate_plan_admission`/its caller choke point and show the C1 admission test fails. **EDGE kill-check:** bypass the real admission→initial coder dispatch in `_run_stage`/workflow composition; assert coder is not reached or the live witness fails. Re-ground exact current call site before mutation; do not target a dead helper. **Local DoD:** all selectors pass without unreviewed skip; canonical schema, skills, parser and conformance fixtures agree; authoring/typing checks on changed files pass; no V1 fallback; test gate rejects before provider/coder. No deployment claim.
 
 ### SLICE2: Explicit chat slug and staged trusted bootstrap
 
 **STEPS:** outcome<br>
 **DEPS:** SLICE1<br>
-**INTENT:** Evolve the existing nested acquisition/bootstrap route into a staged transaction. Chat supplies project identity and route intent; planner supplies semantic content; harness creates/validates/seals the complete fixed artifact set before coder.<br>
-**Production producer/caller:** `workflow_tool.py::INVOKE_WORKFLOW_SCHEMA/_prepare_invocation/build_invoke_workflow_tool` → `managed_acquisition.py::parse_acquisition_choice/BootstrapNewProjectChoice` → `workflow_controller.py::_stage_acquisition_choice/_install_bootstrap_project_with_detail/_admit_installed_plan`; authority through `publication.py::{prepare_bundle,install_project}` and `WorkspaceAuthority.install_project`. Caller/EDGE is `cli.py::_build_run_tool_registry` chat registration and actual child `run_workflow` handoff/reconciliation.<br>
+**INTENT:** Evolve the existing nested acquisition/bootstrap route into a **scaffold-then-author** stage. Chat supplies project identity and route intent; the harness writes the fixed scaffold inside the planner's own stage; the planner authors the documents with the ordinary file tools; one atomic view publication produces the project; admission validates and seals it before coder. D-V2-9 replaces the typed-payload renderer on this route.<br>
+**Production producer/caller — target under D-V2-9, not current.** Today the route is still the payload one: `workflow_controller.py::_install_bootstrap_project_with_detail` calls `managed.client.prepare_bundle`/`install_project` (`:2924`/`:2940`), so `publication.{prepare_bundle,install_project}` **is** on the path. After P2-4 the caller becomes `workflow_tool.py::INVOKE_WORKFLOW_SCHEMA/_prepare_invocation/build_invoke_workflow_tool` → child `run_workflow` → `workflow_controller.py::_stage_acquisition_choice` → **the planner stage itself** (`cli.py::_stage_with_ports`/`_build_stage_ports` → `_open_stage_view(write_purpose=PROJECT)` → `composition.publish_stage` → `STOP_VIEW/SEAL/PUBLISH`) → `workflow_controller.py::_admit_plan`, with `WorkspaceAuthority.{create_view,write_file,prepare_seal,publish}` (all already production-live) as the authority seam. Writing the target as present tense is the P0-1 defect in a different file: the plan would say a path exists that the code does not yet run.<br>
 **Planner-owned acceptance:** `tests/test_ai_native_bootstrap.py` (new) and real composition tests in `tests/test_managed_workflow_e2e.py` / `tests/test_invoke_workflow_tool.py`; new selectors below. C1/C2/C3: actual chat tool composition, tool-schema/CLI boundary, adversarial slug/collision/path tests.
 
 | CT | Class / primary INV | Acceptance behavior | TEST-ID → exact selector |
 |---|---|---|---|
 | CT-2.1 | FUNCTIONAL / INV-02 | Closed tool fields: `project_action: AUTO_SELECT_EXISTING (default) | CREATE_NEW`; optional `project_slug`. Omitted action preserves the existing-project selection flow only; `AUTO_SELECT_EXISTING` can never create a project, and a planner `BOOTSTRAP_NEW_PROJECT` reply on that route is refused rather than installed. `project_slug` is accepted only with `CREATE_NEW` and required then; slug alone, slug with AUTO_SELECT_EXISTING, unknown action or invalid slug refuses before child/provider. CREATE_NEW requires managed execution and planner before coder. Planner bootstrap JSON omits `project_slug`; only chat context supplies it. Authority independently rechecks lowercase kebab-case/max-48/path confinement. | TEST-2.1 → `tests/test_ai_native_bootstrap.py::test_chat_slug_and_explicit_route_are_required_for_new_project` |
 | CT-2.2 | CONSTRAINT / INV-02 | Invalid slug, traversal and malformed route refuse before provider. Collision returns stable safe code with no auto-slug, overwrite or existing-project fallback; collision discovered at install is still authoritatively refused after no-replace recheck. Existing tree and revision remain unchanged. Do not promise collision-before-provider unless a source-proven exact-path preflight closes the empty-directory/race gap. | TEST-2.2 → `tests/test_ai_native_bootstrap.py::test_invalid_input_refuses_before_provider_and_colliding_create_never_overwrites` |
-| CT-2.3 | FUNCTIONAL / INV-03 | Planner returns bounded semantic payload only; controller renders fixed V2 root/scaffold including `roadmap.md`, `ledger.md`, required `open-questions.md`, `increments/increment-01-initial-plan.md` (harness-fixed slug), version marker, plan/scenario mappings and complete `acceptance/` test/support closure. Enforce existing authority per-file/aggregate byte, file-count, path-length and depth limits before materialization; reject symlinks and undeclared files. No planner-supplied slug for the project or increment, arbitrary destination path, or generic PROJECT write capability. **The renderer is total on the payload grammar and closed on the document grammar**: selectors are carried project-relative and expanded only at render, and a rendered pair that would not parse is refused before install (D-V2-7, §2). | TEST-2.3 → `tests/test_ai_native_bootstrap.py::test_harness_materializes_closed_manifest_from_planner_semantics`; renderer law → `tests/test_ai_native_plan_v2.py::test_rendering_then_parsing_is_the_graph_the_payload_described` and `::test_rendering_the_parsed_graph_reproduces_the_same_bytes` |
-| CT-2.6 | FUNCTIONAL / INV-03 | The acquisition planner is told the grammar the parser enforces, in the payload's own terms: the system prompt names the typed payload fields, the closed vocabularies and the refusal rules that will judge them, and carries one worked example payload that `parse_semantics` accepts and `render_project` renders into a pair `parse_plan` admits. Prose about Markdown shapes the planner no longer writes is removed rather than left beside the new contract — two descriptions of the grammar is how the router and the parser drifted apart (`plan-format-marker-roadmap`, `slice-1-unknown-field`, measured 2026-11-20). | TEST-2.6 → `tests/test_prompt_registry_coherence.py::test_the_acquisition_prompt_example_is_a_payload_the_renderer_and_parser_accept` |
-| CT-2.4 | FUNCTIONAL / INV-04 | Complete project is parsed, validated and acceptance-sealed before coder starts; provisional/unvalidated content is not visible to coder. Use private typed staging preferred; if canonical provisional staging is required, prove isolation and cleanup/recovery. | TEST-2.4 → `tests/test_ai_native_bootstrap.py::test_validation_and_seal_precede_coder_and_hide_provisional_content` |
+| CT-2.3 | FUNCTIONAL / INV-03 | **D-V2-9.** On `CREATE_NEW`, the planner stage opens a WRITE `PROJECT` view and the harness writes the fixed scaffold through that same port before the planner's first tool call: `roadmap.md`, `ledger.md`, `open-questions.md`, `increments/increment-01-initial-plan.md`, `notes/README.md`, `reviews/README.md`, `acceptance/tests/test_acceptance_placeholder.py`. The three roots exist **as parents of those files** (D-V2-9.7: the writer has no mkdir, dot-only names are refused, so no `.gitkeep`). Each admitted document carries its frontmatter and section headings with **empty bodies** — no placeholder invariant, slice or test, because `parse_plan` must refuse an unfilled scaffold (`missing-invariants`/`missing-slice`) rather than admit a fake plan; the placeholder test module defines no test function and collects to zero. The planner's write allowlist for that stage is exactly `worklogs/<slug>/`; the project slug comes from the caller and the increment slug is harness-fixed `initial-plan`. Nothing is written outside that root; the harness never writes a planner-authored byte into the project. | TEST-2.3 → `tests/test_ai_native_bootstrap.py::test_create_new_stage_scaffolds_then_planner_writes_only_inside_slug` |
+| CT-2.7 | CONSTRAINT / INV-02 | **D-V2-9.2.** A create-only scaffold write against an existing `worklogs/<slug>/` is refused with `STALE_REVISION` by the authority and surfaced as `project_exists` (not `stale`), non-retryable and actionable, with the existing tree and revision byte-unchanged. No auto-slug, overwrite or fallback. Covers complete and incomplete existing directories, and a hostile or traversal-shaped slug is still refused before the child exists. | TEST-2.7 → `tests/test_ai_native_bootstrap.py::test_create_over_existing_directory_is_project_exists_and_unchanged` |
+| CT-2.8 | FUNCTIONAL / INV-04 | **D-V2-9.3/9.4/9.8.** Admission validates the planner-authored documents against the closed metadata table (marker, `Roadmap-ID`/`Increment-ID`, `slug`, `active-increment`, `status` vocabulary, consistent `created`) and then `parse_plan`. A refusal blocks coder; the repair is a **second authoring stage** over a WRITE `PROJECT` view at the published revision whose allowlist admits only `increments/increment-01-initial-plan.md` (and `open-questions.md` for a Q refusal), with `plan_ref=None` and sanitized diagnostics; its publication is a second revision that admission re-validates. No candidate buffer, no `.fa/admission` draft, no single-file publish. A legal but unexpected `status` value is accepted; a wrong identity field is refused. Unfilled scaffold, missing `open-questions.md`, an increment outside `increments/`, and a repair attempt to touch any other file are refused. | TEST-2.8 → `tests/test_ai_native_bootstrap.py::test_metadata_table_and_parse_refusal_block_coder_then_repair_rewrites_published_file` |
+| CT-2.9 | CONSTRAINT / INV-04 | **D-V2-8.** Publication is not admission. A revision containing an unadmitted plan is never a coder input; if the stage is refused or rejected, no `worklogs/<slug>/` exists in the canonical tree, and a rejected view's bytes are unreachable through any reader pin. | TEST-2.9 → `tests/test_ai_native_bootstrap.py::test_rejected_create_leaves_no_project_and_no_reader_sees_bytes` |
+| CT-2.6 | FUNCTIONAL / INV-03 | The planner is told the grammar the parser enforces, **in the terms it now writes**: the acquisition/authoring prompt names the fixed document set, the frontmatter fields the harness cross-checks and the refusal rules, and carries one worked example document pair that `parse_plan` admits. Prose about a typed JSON payload the planner no longer produces is removed rather than left beside the new contract — two descriptions of the grammar is how the router and the parser drifted apart (`plan-format-marker-roadmap`, `slice-1-unknown-field`, measured 2026-11-20). | TEST-2.6 → `tests/test_prompt_registry_coherence.py::test_the_authoring_prompt_example_is_a_document_pair_the_parser_admits` |
+| CT-2.4 | FUNCTIONAL / INV-04 | Complete project is parsed, validated and acceptance-sealed before coder starts. Under D-V2-9 the ordering is: the planner stage publishes one revision (scaffold + authored content), admission validates that revision and mints the revision-bound seal, and only then is coder dispatchable. An unadmitted or unsealed revision never reaches coder even though it exists in history (D-V2-8). | TEST-2.4 → `tests/test_ai_native_bootstrap.py::test_validation_and_seal_precede_coder_and_hide_provisional_content` |
 | CT-2.5 | CONSTRAINT / INV-11 | V2 create-new `invoke_workflow` returns `ToolResult.ok` only for child exit 0 + terminal `DONE` + committed/refreshed parent revision. After HANDOFF/return settles, child failure is `ToolResult.fail` with stable code, retryability and path/secret-free text; include child run_id in safe summary for artifact lookup. Invalid params/content before install may be retryable; collision, unsupported schema and `DURABILITY_UNKNOWN` are not. Do not map child failure as outer ok. Preserve existing result semantics for `AUTO_SELECT_EXISTING` calls. | TEST-2.5 → `tests/test_ai_native_bootstrap.py::test_bootstrap_failure_maps_after_child_settlement_with_retryability` |
 
 ```verify
@@ -308,13 +459,34 @@ the caller's slug plus `INITIAL_INCREMENT_SLUG`. A payload carrying `project_slu
 collision proof (`project_exists`, not retryable) against a real authority, the closure materialization inside the
 installed revision and the seal mint (D-V2-5).
 
-**D-V2-7 ordering (ratified 2026-11-20).** The renderer lands **before** any further prompt or payload work, because
-until it exists the prompt cannot be written truthfully (P0-1). Order: (1) `plan_semantics.py` — the typed payload,
-`parse_semantics`, `render_roadmap`/`render_increment`/`render_open_questions`/`render_project`, `from_graph`, and the
-`parse_plan(render(x)) == graph` + byte-idempotence properties; (2) the acquisition prompt rewritten against the
-payload vocabulary, carrying one example payload the coherence test feeds through the real parse→render→parse chain
-(CT-2.6); (3) the payload wired into `BootstrapNewProjectChoice`, which is where P0-2 and P2-2 are also fixed because
-they are the same route decision. Step (1) is self-contained and does not change any admission rule.
+**D-V2-9 ordering (ratified 2026-11-21; supersedes the D-V2-7 ordering).** The steps below are ordered by what
+unblocks what, and each is independently revertible:
+
+1. **Delete the payload layer.** `plan_semantics.py` (573 lines: `parse_semantics`, `render_roadmap/increment/
+   open_questions/project`, `from_graph`), the `semantics` branch of `_parse_bootstrap_choice`
+   (`managed_acquisition.py:638–660`), `_bootstrap_bodies`/`_rendered_increment_sha256`
+   (`workflow_controller.py:2759–2790`), the V1 prose fields `roadmap_body`/`increment_body`, and the V2 branches of
+   `publication.render_bundle`/`_validate_bundle_text`/`bundle_paths`. **No test may be deleted to make this pass**:
+   the renderer-law tests are replaced by CT-2.8's admission tests, and `tests/test_s5p1_bootstrap.py`'s direct
+   controller calls are rewritten against the new stage.
+2. **Planner-as-writer plumbing.** `PlannerDispatchKind.CREATE_NEW_PROJECT` (an authoring dispatch that owns the
+   write allowlist and forbids a candidate buffer and an active plan; `planner_dispatch.py:64–78` gets a third case),
+   `allowed_paths` threaded from the stage into `build_registry_for_role`, `_open_stage_view` selecting a WRITE
+   `PROJECT` view for this dispatch, and `plan_ref=None` for it (D-V2-9.5).
+3. **Scaffold writer.** One module-level constant in the controller that returns `dict[str, str]` for the seven
+   files of D-V2-9.7 (four documents with empty bodies, two `README.md` root carriers, one test module with no test
+   functions); written through the stage port before the first tool call, `roadmap.md` first so a collision refuses
+   the whole stage before any other byte. It contains no planner content and no placeholder plan.
+4. **Metadata cross-check** (D-V2-9.3) as a new function next to `parse_plan`, called from `_admit_plan` before
+   `parse_plan` for the create-new route.
+5. **`project_exists` mapping** (D-V2-9.2) in the planned-file writer.
+5b. **Repair path** (D-V2-9.8): a second authoring stage over a WRITE `PROJECT` view at the published revision with
+   the allowlist narrowed to the increment (plus `open-questions.md`), `plan_ref=None`, replacing the candidate-buffer
+   promotion for create-new only. The `ADMISSION_REPAIR` candidate path stays for every other route.
+6. **Prompt rewrite** (CT-2.6) — last, because it can only be written truthfully once 1–5 exist (the P0-1 lesson).
+
+Every step keeps the suite green on its own. Step 1 is a pure deletion once step 3 is in place, so steps 3 and 4
+land first if a single commit is preferred.
 
 **Bounded planning ASK/Q items:** Q-V2-BOOT-1 is **resolved** (D-V2-5, audit `notes/q-v2-boot1-install-seal-audit-2026-11-20.md`): the closure is installed inside the revision, the seal is minted from installed bytes + plan bytes + receipt revision into private metadata, and the pointer/recovery rules are E1–E9. SLICE2 therefore implements that chain rather than choosing one; the only open item on this slice is Q-V2-MODEA-1 (shell-side read-only policy), which does not block install. Route fields/error mapping above are this plan's selected bounded interface, not coder choices. The initial increment slug is harness-fixed `initial-plan`; planner cannot supply it. No interactive approval is required for routine implementation seams.
 
@@ -412,9 +584,9 @@ Before final W4 suite freeze, STEP10's package owner must:
 |---|---|
 | Malformed/unsupported/V1 plan or incomplete graph | Stable validation refusal before coder; no fallback, partial parse, or provider dispatch. |
 | Invalid/colliding slug | Stable non-retryable refusal for collision/invalid path; preserve existing tree, no substitution, no selection fallback. |
-| Correctable planner semantic payload error | Bounded planner retry only if deterministic, within existing budget and no irreversible effect; otherwise blocked with diagnostic. |
-| Prepare failure before install | No canonical project effect; safe retry only per structured determinate classification. |
-| Install/seal/revision uncertainty after irreversible boundary | Durability-unknown / blocked; preserve operation evidence, prohibit blind retry/overwrite, recover forward or explicit operator disposition. |
+| Correctable authored-document error (D-V2-9) | Bounded repair round against the published increment with sanitized diagnostics; on budget exhaustion the project stays present and unadmitted (`BLOCKED`), never half-admitted. |
+| Stage rejected / crashed before publish (D-V2-9) | `reject_view`; no `worklogs/<slug>/` in the canonical tree; current revision unchanged; structured failure to the caller. |
+| Publish uncertainty after the seal boundary | Durability-unknown / blocked; writer not released; preserve operation evidence; prohibit blind retry/overwrite; recover forward or explicit operator disposition. |
 | Missing/stale AcceptanceBundle, incomplete closure, nodeid ambiguity, mode B request, byte drift/write attempt | Fail closed before coder or verifier; no downgrading to hash-only sidecar or visibility fallback. |
 | Exact kill oracle collects/errors/skips/times out/crashes/zero-runs | ERROR/non-kill; never PROVEN. Target pass under mutation is VACUOUS. Unrelated assertion failure is separate and cannot prove target. |
 | TEST-DEFECT | Preserve old revision, seal, and evidence; planner decision yields new sealed revision or no-change rationale; affected gates rerun; invariant change triggers replan. |
@@ -454,6 +626,8 @@ This linked plan fixes a lightweight V2 `open-questions.md` table (6 compact fie
 | D-V2-4 | **The coder may propose a test change, never apply one** (Q159 = C). A proposal is a bounded patch artifact outside the sealed tree plus the `DefectReport` (seal, `TEST-ID`, nodeid, assertion); the planner applies it through `acceptance_defect.correct(...)`, which mints the superseding seal and returns the affected tests/kill targets to re-prove. | SLICE3/SLICE4: no new state machine and no new writer into `acceptance/`; the proposal path is a second *input* to the existing correct/uphold decision. Prompts stay the first gate; the proposal path exists so the coder never has to weaken an assertion to make progress. |
 | D-V2-5 | **Install→seal chain = A′** (Q-V2-BOOT-1). Closure shipped inside the installed revision; seal derived from installed bytes + plan bytes + receipt revision; immutable per-seal files in private metadata plus one atomic pointer; revision pin at coder admission, content checks afterwards; supersede appends rather than overwrites. | SLICE2/SLICE3: no `INSTALLED_UNSEALED` record, no fifth intent kind, no extra recovery branch, and the seal never lives under `worklogs/`. |
 | D-V2-6 | **Mode A = prevention for file tools, detection for shell** (Q-V2-MODEA-1 = B). `protected_paths` carries every sealed semantic path; shell writes surface as `seal-byte-drift`, and every verification entry point — including incremental and repair-time checks — proves the closure digest before producing a verdict. | SLICE3: no change to `profiles.py` or any approved profile identity; the honest sentence in the plan and in INV-07 is "prevented where the interface allows it, detected everywhere else". |
+| D-V2-9 | **Planner-as-writer, scaffold-inside-the-stage** (ratified 2026-11-21). The planner holds a WRITE `PROJECT` view and authors the documents; the harness writes only the scaffold, inside the same stage, through the same port; one stage publication produces the project; the bundle/`install_project` path is retired for create-new. See §2 "D-V2-9.1–9.6" for the mechanism and the authoring split. | SLICE2 CT-2.3/2.7/2.8; supersedes D-V2-7 and its ordering; P2-4 owns the deletion list. |
+| D-V2-8 | **Publication is not admission** (ratified 2026-11-21). Under D-V2-9 the plan is committed to canonical history *before* it is validated, because the planner writes the artifact and the ordinary stage publication commits it. Admission remains the sole gate to coder. A revision holding an unadmitted plan is an audit fact with no consumer: no coder dispatch, no seal, no verification, no reader pin that presents it as the plan of record. A refused run therefore leaves either no project (stage rejected) or a blocked project with an unadmitted revision (repair budget exhausted) — never a half-valid state that looks approved. | SLICE2 CT-2.9; the revision history must not be read as "the plan was valid from the start", and no component may treat "published" as "admitted". |
 
 Two consequences of D-V2-1/D-V2-2 that the implementation slices must state explicitly: the legacy module
 has a named removal step (so it cannot become permanent by drift), and the retired CLI route has a
@@ -464,7 +638,7 @@ negative control (so its absence is proven, not asserted).
 
 1. Confirm STEP9 and STEP9A close with their actual evidence before implementation. STEP9A's exact custody/mapping controls are dependencies, not repeated implementation authorization.
 2. Implement SLICE1; run its named local command and producer/EDGE kill checks. No dependent cutover until V2 parser/admission gate is complete.
-3. Implement SLICE2 on the existing nested acquisition/bootstrap path, implementing the D-V2-5 install→seal chain already proven by the Q-V2-BOOT-1 audit; then prove slug no-clobber and transaction recovery before install.
+3. Implement SLICE2 as **D-V2-9** (P2-4): delete the payload/renderer layer, plumb the authoring dispatch and its write allowlist, write the scaffold inside the stage, add the metadata cross-check and the `project_exists` mapping, then rewrite the prompt. Keep D-V2-5's revision-bound seal mint. Prove slug no-clobber (`project_exists`) and the rejected-stage-leaves-nothing property before touching the prompt.
 4. Implement SLICE3 and prove full closure, mode-A projection and exact attribution before coder can consume acceptance tests. Q-V2-ACC-1/2 are closed; Q-V2-MODEA-1 must be answered before CT-3.3 is written, because it decides whether shell writes are prevented or merely detected.
 5. Implement SLICE4 roles/questions; status tick producer is blocked until the distinct design gate in §2 has a source-proven, revision-safe resolution. Cover every actual dispatch path and caller edge.
 6. Implement SLICE5 local real composition only after SLICE4's design gate closes; test success/refusal matrix and record local-only evidence. Then finish reviewed E2E package/mapping updates before suite freeze; host test remains unrun until W4.
@@ -500,7 +674,9 @@ later entry can close a row instead of re-describing it.
 | **P0-2** | ~~A `PLAN-V2` project cannot be resumed.~~ **Corrected 2026-11-20: not a defect on a supported route — it was a symptom of a stale premise.** `resolve_existing_choice` builds a `PLAN-V1` snapshot, and both installed documents keep V1-shaped front matter, so a V2 pair selected through the *existing-project* route is silently admitted as a valid V1 plan (`format=PLAN-V1`, `format_error=None`, `graph is None`). That is only wrong if V2 must flow through `AUTO_SELECT_EXISTING`, and today it must not: V2 is produced by the run's own bootstrap renderer and admitted in that run; the legacy grammar is legal until retirement. The real requirement — a **new** plan validates and malformed input errors — already holds on the V2 route (valid → `graph` present; V1 body → `plan-format-marker-roadmap`; malformed → `unknown-top-level-section`). | `managed_acquisition.py:496`; `workflow_controller.py:3081`. **Measured both ways:** on the V2 route valid/malformed/V1 behave correctly; on the resume route a V2 pair yields `format=PLAN-V1`, `graph is None`; a V1 pair yields `format=PLAN-V1` correctly. | **Re-scoped, not blocked.** Belongs to **SLICE5** legacy-route retirement (D-V2-2, CT-1.5), not SLICE1/2: when the legacy route is retired, `SELECT_EXISTING` must either read the runtime-pinned marker under the §40 rule or refuse, and that choice rides the retirement's own negative control. Two facts let the retirement decide cheaply: the marker is renderer-owned, never planner-supplied, and the runtime pin is a single constant (`plan_v2.PLAN_FORMAT`). No code change now; the old "must be resumable" framing is withdrawn (E583 correction, E584). |
 | **P1-1** | R2 grading predates R1. `contract_evidence` grades `ATTESTED` from `reason` alone, but after R1 a reason is only a *request*; the grant lives in `owner`/`evidence_ref`. An unbound, ungranted graph reports `attested_contracts == ('CT-1.1',)`, and `bind_dispositions` is called for its refusal only — its returned graph is discarded. The seal can therefore name a contract as attested that nobody granted. | `plan_v2.py:721–739`; `workflow_controller.py:2872–2873`. | **Closed 2026-11-20 (E585):** `ATTESTED` now requires the bound grant (`owner is not None`), and the second half — a grant proved before the install then dropped before the read-back — is closed by carrying the granted graph as `authorised` and reconciling it by *graph* in `_authorised_graph` (`None` on any difference). E577's "authorised once, never rebound" is untouched: the grant is carried forward, never re-minted. Mutants M1/M2/M5–M8. |
 | **P1-2** | ~~The cluster bound is per invariant, not per grant.~~ **Re-scoped 2026-11-20:** R3/E580 had already closed the cluster (`disposition-covers-several-contracts`). The real hole is one level down — R3 bounds *contracts per invariant*, but the authorisation travels by **reason**, which the plan may reuse, so one caller decision could still authorise two different invariants. | Reproduced: two `HOST_READINESS` invariants + one grant → `('CT-1.1','CT-1.2')`. | **Closed 2026-11-20 (E585):** a reason is a one-shot capability at the point the request is parsed (`_parse_invariants` → `disposition-reason-reused`), deliberately on the *invariant* so it stays orthogonal to the cluster rule. A first attempt put it on the contract loop and reported the cluster's rule for a reuse — a surviving mutant (M4) caught the wrong diagnosis. Prompt names both codes; coherence bank pins it. |
-| **P2-1** | The plan requires artifacts nothing writes. `render_bundle` emits exactly three files; `open-questions.md` appears nowhere in `src/`; `plan_v2` parses no Q records. V2 grammar *requires* selectors under `worklogs/<slug>/acceptance/tests/...`, but the install creates no `acceptance/` file at all, so admission passes a plan whose oracle does not exist. | `publication.py:562`; `grep -r "open-questions" src/` empty. | SLICE2 (CT-2.3) for `open-questions.md`; SLICE3 for the closure. The renderer (D-V2-7) renders Q records; materializing `acceptance/` needs the closure payload, which is SLICE3. |
+| **P2-1** | The plan requires artifacts nothing writes. `render_bundle` emits exactly three files; `open-questions.md` appears nowhere in `src/`; `plan_v2` parses no Q records. V2 grammar *requires* selectors under `worklogs/<slug>/acceptance/tests/...`, but the install creates no `acceptance/` file at all, so admission passes a plan whose oracle does not exist. | `publication.py:562`; `grep -r "open-questions" src/` empty. | **Re-owned 2026-11-21 by P2-4:** under D-V2-9 the scaffold writer emits `open-questions.md` and `acceptance/tests/` as part of the closed set, so this defect is closed by construction rather than by extending `render_bundle`. The closure *contents* remain SLICE3. |
+| **P2-3** | **The acquisition prompt instructs a shape the parser refuses.** `_acquisition_stage_task` still says "Return `BOOTSTRAP_NEW_PROJECT` with exactly that `project_slug`", while `_parse_bootstrap_choice` now requires `set(value) == {"kind","semantics"}` and raises `choice-malformed` for any `project_slug`. A model that follows the instruction is guaranteed a refusal; the test pins only the phrases `caller: <slug>`/`COLLISION`, not the instruction. Introduced by E586 and not caught by the 8 259-test suite. | `workflow_controller.py:1440–1444` vs `managed_acquisition.py:640`; `tests/test_ai_native_bootstrap.py:499–530`. | **Closed by P2-4**, not patched: the `BOOTSTRAP_NEW_PROJECT` instruction disappears with the payload route. Recorded because the same class of drift (prompt vs parser) is P0-1, and because the test that should have caught it asserted phrases rather than the contract. |
+| **P2-4** | **Scaffold-first create-new (D-V2-9).** The typed-payload renderer is an orthogonal serialization for a model that already writes Markdown; it costs `plan_semantics.py` (573), the payload half of `managed_acquisition.py` (~535 of 685), `render_bundle`/`_validate_bundle_text`/`bundle_paths` (~200), `_bootstrap_bodies`/`_resolve_bootstrap_identity`/`_rendered_increment_sha256`/`_admit_bootstrap_attempt` (~150), the JSON prompt block (~180) and ~2 000 lines of renderer tests. Meanwhile the planner cannot write its own notes or its own plan, because the barriers that prevent it (`ACQUISITION_TOOLS`, `read_only_stage`, `write_allowlist`) encode a *selection*-time threat that the caller-supplied slug removed. | `plan_semantics.py`; `profiles.py:443`, `:495–499`, `:151`, `:238–256`; `cli.py:2091`; `workspace.py:222–226`, `:2843–2855`; `view_io.py:410–417`; `composition.py:413`; `client.py:963–1030`. | **OPEN — this is SLICE2's new controlling item.** Implements D-V2-9 §2 (deletion order), CT-2.3/2.7/2.8/2.9, and closes P2-1, P2-2 and P2-3 with it. V1 prose (`roadmap_body`/`increment_body`) dies here as well: it has no live writer and, with a plausible scaffold, no live reader. |
 | **P2-2** | `initial-plan` is not fixed. The plan states it three times ("harness-fixed, planner cannot supply it"); `choice.increment_slug` still comes from the planner's JSON and `grep '"initial-plan"' src/` is empty. | `managed_acquisition.py:590–600`. **Re-measured:** `_bootstrap_bodies` already renders the fixed key, but `render_bundle` received the planner's slug, so `increment_slug="my-own-name"` wrote `increments/increment-01-my-own-name.md` — the model chose the path admission reads. `_with_project_hint` silently overwrote a planner slug. | **Closed 2026-11-20 (E586):** the ratified proposal/resolved split. Wire = `{kind, semantics}`; a payload naming `project_slug`/`increment_slug` is `choice-malformed`; `INITIAL_INCREMENT_SLUG` owns the increment; `_resolve_bootstrap_identity` fills identity from caller + harness and refuses when the caller named nothing. The refusal mirrors the installer's own precedence (authority before route), so the same fact keeps the same rule. Mutants 6/6. |
 | **P3-1** | CT-1.4 names a test that does not exist under that name and whose V1-refusal half is not asserted; the live test is `..._on_a_v2_route`. | Row vs `tests/test_ai_native_plan_v2.py:474`. | Documentation defect; fold into the CT-1.4 remainder. |
 | **P3-2** | Ledger E570 was recorded twice — the same entry, lightly re-worded, with the second copy the edited one. | `grep -c "### E570"` = 2. | **Closed 2026-11-20 (E581):** the first copy is removed, the edited copy kept. |
