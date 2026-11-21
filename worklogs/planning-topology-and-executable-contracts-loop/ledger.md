@@ -11685,3 +11685,57 @@ constraints; per the stop/escalate rule it is escalated with context, impact and
 implemented under an assumed reading. No `src/` change in this step; the only edits are the plan's
 decision table and this register row. P1-1/P1-2 remain ready to start and are **not** blocked by this
 question — they need no revisit of what "format" means.
+
+### E584 — correction: P0-2 was mis-framed; the V2 route already behaves correctly (2026-11-20)
+
+E583 escalated P0-2 as a policy question about *where a resuming run learns the grammar*. That was the
+wrong question, and the operator's challenge — "distinguish a defect from correct behaviour; there is
+one V1 plan that is becoming legacy, every new project will be V2; what matters is that a new plan
+validates correctly and malformed input errors" — is the right test. Run against the production code:
+
+| On the route that declares V2 | Result |
+|---|---|
+| valid V2 pair | `format=PLAN-V2`, `format_error=None`, `graph` present |
+| V1 document on the V2 route | refused: `plan-format-marker-roadmap` |
+| malformed V2 | refused: `unknown-top-level-section` |
+
+That is the requirement, and it holds. `tests/test_ai_native_plan_v2.py::test_v2_document_is_never_judged_by_v1_validators`
+(CT-1.3) is the standing executable proof.
+
+**Three errors of mine, named:**
+
+1. **I promoted a register row to a requirement.** "A `PLAN-V2` project cannot be resumed" is an audit
+   observation about a route, not a product requirement. I asked how to satisfy it instead of whether
+   the scenario exists.
+2. **I invented a decision that was already ratified.** §2/§40 already says the trusted runtime pins the
+   supported V2 grammar and rejects unsupported/missing/mixed/V1 *before coder*. Rejection is not marker
+   dispatch, so no new policy was needed. Filing it as a new question implied the plan was silent.
+3. **I treated a correct legacy behaviour as a bug.** `resolve_existing_choice` returning `PLAN-V1` for a
+   V1 project is correct today, because the legacy grammar is legal until D-V2-2 retires the route. My
+   "silent admission" finding is real *behaviour* but not a *defect* on any supported route.
+
+**Why the marker concern was misplaced anyway.** `plan_semantics._MARKER` is a renderer constant, and
+`publication._METADATA_LINE` refuses a planner-supplied `Plan-Format:` line, so the marker can never be
+model-authored. A rule that reads it is therefore not trusting the document's content — the exact thing
+INV-01 forbids — it is reading a field only the harness can write.
+
+**Disposition.** Q-V2-RESUME-1 withdrawn (kept as a visible withdrawn row). P0-2 re-scoped to SLICE5
+legacy-route retirement: when the existing-project route stops being fed by legacy projects, it must
+either honour the runtime-pinned marker or refuse, and that rides the retirement's own negative control.
+No code change now. P1-1/P1-2 are next.
+
+**Re-verification the operator asked for ("проверь все еще раз"), on a rebuilt environment** (the
+sandbox had lost `.venv` and the branch pointer; worktree bytes were proven identical to
+`origin/arena/51e929de-first-agent-dev` before resetting to it):
+
+* Full suite: **8246 passed, 18 skipped, 3 xfailed, 9 deselected** in 637.77s (0:10:37). The collection
+  size is unchanged from E582: `8244+18+3+11 = 8246+18+3+9 = 8276`. The passed/deselected split moved by
+  two only because of which `--deselect` nodeids this run passed on the command line, **not** because any
+  test was added or removed — an earlier draft of this entry claimed "two tests added while grounding
+  P0-2", and that claim was wrong; it is corrected here before anyone relies on it.
+* P0-1 mutants re-run from scratch: **11/11 killed** (`tests/mutation/mut_step7.py`), same kill list.
+* Environment rebuilt by `scripts/arena-env-build.sh`; `ENVIRONMENT_CHECK_OK` (CPython 3.13.16).
+
+**My error, and the cost.** E583 cost one commit and one escalation cycle. The mitigation that would
+have caught it: before filing a Q, ask "which *route* would exercise this, and is it a supported route
+today?" A defect that needs an unsupported route to manifest is a sequencing item, not a blocker.
