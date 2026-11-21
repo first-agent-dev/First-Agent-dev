@@ -91,7 +91,7 @@ from fa.inner_loop.slice_verification import (
     verify_plan,
 )
 from fa.inner_loop.stage_candidate import reset_stage_candidate, stage_candidate_reader
-from fa.inner_loop.tools.workspace_port import WorkspacePort, WorkspacePortError
+from fa.inner_loop.tools.workspace_port import WorkspacePort, WorkspacePortError, port_relative
 from fa.inner_loop.workflow_artifacts import (
     AdmissionIOError,
     EvalReport,
@@ -2793,6 +2793,41 @@ def _classify_bootstrap_exception(error: Exception, *, phase: str) -> _Bootstrap
     return _BootstrapFailure("bootstrap", fallback, "FAIL", "DIAGNOSTICS")
 
 
+def _resolve_granted_evidence(
+    substrate: AcquisitionSubstrate | None,
+    declarations: tuple[DispositionDeclaration, ...],
+) -> tuple[DispositionDeclaration, ...]:
+    """Verify every ``doc:`` grant against the pinned view's bytes (R6).
+
+    The digest is what pins the claim, so it is checked before the grant can
+    authorise anything: a missing file, a file too large for one bounded read, or
+    bytes that differ from the declared digest all refuse. ``issue:``/``review:``
+    are typed references this system cannot resolve, so they pass through as
+    well-formed and are *reported* as attested, never as verified.
+    """
+    if not any(declaration.evidence.kind == "doc" for declaration in declarations):
+        return declarations
+    if substrate is None:
+        raise PlanRefError("disposition-evidence-unresolvable")
+    for declaration in declarations:
+        evidence = declaration.evidence
+        if evidence.kind != "doc":
+            continue
+        try:
+            path = port_relative(evidence.target)
+            read = substrate.port.read_file(path)
+        except WorkspacePortError as error:
+            # Two different facts: a path the substrate refuses to name is a bad
+            # reference, while a path the view does not hold is a missing artefact.
+            rule = "disposition-evidence-invalid" if error.code == "invalid_request" else "disposition-evidence-missing"
+            raise PlanRefError(rule) from None
+        if not read.eof:
+            raise PlanRefError("disposition-evidence-invalid")
+        if read.sha256 != evidence.digest:
+            raise PlanRefError("disposition-evidence-mismatch")
+    return declarations
+
+
 def _install_bootstrap_project_with_detail(
     ctx: WorkflowContext, choice: BootstrapNewProjectChoice, *, creation_authorized: bool
 ) -> tuple[WorkflowContext, PlanRefError | None, _BootstrapFailure | None]:
@@ -2831,8 +2866,11 @@ def _install_bootstrap_project_with_detail(
             # R1 (E577): the plan only *requests* its dispositions; this run holds
             # the only thing that can grant them. Binding before the install keeps
             # the property the parse already has -- a body that cannot be
-            # authorised never becomes a project.
-            bind_dispositions(graph, ctx.dispositions, today=datetime.now(UTC).date())
+            # authorised never becomes a project. R6: a ``doc:`` grant is verified
+            # against the pinned view's bytes first, so an unverifiable reference
+            # cannot ride in as an authorisation.
+            granted = _resolve_granted_evidence(ctx.acquisition, ctx.dispositions)
+            bind_dispositions(graph, granted, today=datetime.now(UTC).date())
         except (PlanV2Error, PlanRefError) as error:
             # One meaning, one rule: the admission record's closed vocabulary
             # already names this event `bootstrap/invalid-body`, and the grammar's

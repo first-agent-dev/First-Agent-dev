@@ -31,6 +31,7 @@ from fa.inner_loop.tools.workflow_tool import (
     INVOKE_WORKFLOW_SCHEMA,
     WorkflowInvocationContext,
 )
+from fa.inner_loop.tools.workspace_port import PortRead, WorkspacePortError
 from fa.inner_loop.workflow_artifacts import FlowState
 from tests.test_execution_workspace import Site
 from tests.test_execution_workspace import site as site
@@ -78,6 +79,7 @@ def _v2_context() -> SimpleNamespace:
         deadline_mono=None,
         run_id="run-bootstrap-v2",
         dispositions=(),
+        acquisition=None,
     )
 
 
@@ -112,18 +114,37 @@ _REQUESTING_INCREMENT = _INCREMENT_BODY.replace(
 )
 
 
-def _granting_context(*, reviewed_at: str) -> SimpleNamespace:
+_EVIDENCE_PATH = "worklogs/demo-project/notes/readiness.md"
+_EVIDENCE_DIGEST = "a" * 64
+_EVIDENCE_REF = f"doc:{_EVIDENCE_PATH}@sha256:{_EVIDENCE_DIGEST}"
+
+
+class _EvidencePort:
+    """One pinned view, as far as a ``doc:`` grant is concerned."""
+
+    def __init__(self, read: PortRead | None) -> None:
+        self.read = read
+        self.paths: list[str] = []
+
+    def read_file(self, path: str, *, offset_bytes: int = 0, max_bytes: int = 1024 * 1024) -> PortRead:
+        self.paths.append(path)
+        if self.read is None:
+            raise WorkspacePortError("denied")
+        return self.read
+
+
+def _granting_context(
+    *,
+    reviewed_at: str,
+    evidence: str = _EVIDENCE_REF,
+    read: PortRead | None = None,
+) -> SimpleNamespace:
     context = _v2_context()
     context.dispositions = parse_dispositions(
-        [
-            {
-                "reason": "HOST_READINESS",
-                "owner": "W4",
-                "evidence": "doc:worklogs/demo-project/notes/readiness.md@sha256:" + "a" * 64,
-                "reviewed_at": reviewed_at,
-            }
-        ]
+        [{"reason": "HOST_READINESS", "owner": "W4", "evidence": evidence, "reviewed_at": reviewed_at}]
     )
+    if read is not None or evidence.startswith("doc:"):
+        context.acquisition = SimpleNamespace(port=_EvidencePort(read))
     return context
 
 
@@ -145,7 +166,10 @@ def test_a_requested_disposition_that_was_not_granted_never_installs() -> None:
 
 def test_a_granted_request_passes_the_pre_install_gate() -> None:
     """Proof the gate *accepted* it: the authority double is reached, and raises."""
-    ctx = _granting_context(reviewed_at=datetime.now(UTC).date().isoformat())
+    ctx = _granting_context(
+        reviewed_at=datetime.now(UTC).date().isoformat(),
+        read=PortRead(content="readiness: pass\n", sha256=_EVIDENCE_DIGEST, eof=True),
+    )
 
     with pytest.raises(AssertionError, match="authority reached before validation"):
         workflow_controller._install_bootstrap_project_with_detail(
@@ -521,3 +545,65 @@ def test_the_tool_schema_publishes_the_authority_slug_bound() -> None:
 
     assert _PROJECT_SLUG_RE.pattern == str(CONFIG_ID["pattern"])
     assert slug_schema["maxLength"] == CONFIG_ID["maxLength"]
+
+
+# --- R6 (E577): a doc: grant is verified against bytes before it authorises ---
+
+
+@pytest.mark.parametrize(
+    ("read", "granted"),
+    [
+        (PortRead(content="readiness: pass\n", sha256=_EVIDENCE_DIGEST, eof=True), True),
+        (None, False),  # the pinned view has no such file
+        (PortRead(content="readiness: pass\n", sha256="b" * 64, eof=True), False),  # other bytes
+        (PortRead(content="readiness: pass\n", sha256=_EVIDENCE_DIGEST, eof=False), False),  # not fully read
+    ],
+)
+def test_only_a_doc_grant_whose_bytes_match_can_authorise(read: PortRead | None, granted: bool) -> None:
+    """R6: the digest pins the claim, so an unverifiable reference grants nothing."""
+    ctx = _granting_context(reviewed_at=datetime.now(UTC).date().isoformat(), read=read)
+
+    if granted:
+        with pytest.raises(AssertionError, match="authority reached before validation"):
+            workflow_controller._install_bootstrap_project_with_detail(
+                ctx,  # type: ignore[arg-type]
+                _choice(_REQUESTING_INCREMENT),
+                creation_authorized=True,
+            )
+        return
+    _ctx_after, refusal, detail = workflow_controller._install_bootstrap_project_with_detail(
+        ctx,  # type: ignore[arg-type]
+        _choice(_REQUESTING_INCREMENT),
+        creation_authorized=True,
+    )
+    assert refusal is not None and refusal.rule == "bootstrap-invalid-body"
+    assert detail is not None and detail.severity == "FAIL"
+
+
+def test_a_doc_grant_without_a_pinned_view_is_unresolvable() -> None:
+    """No view means no bytes to check, and an unchecked digest is not evidence."""
+    context = _v2_context()
+    context.dispositions = parse_dispositions(
+        [{"reason": "HOST_READINESS", "owner": "W4", "evidence": _EVIDENCE_REF, "reviewed_at": "2026-11-20"}]
+    )
+
+    _ctx_after, refusal, _detail = workflow_controller._install_bootstrap_project_with_detail(
+        context,  # type: ignore[arg-type]
+        _choice(_REQUESTING_INCREMENT),
+        creation_authorized=True,
+    )
+
+    assert refusal is not None and refusal.rule == "bootstrap-invalid-body"
+
+
+def test_a_typed_reference_this_system_cannot_resolve_still_authorises() -> None:
+    """`issue:`/`review:` are attested-with-reference, never reported as verified (R6)."""
+    context = _granting_context(reviewed_at=datetime.now(UTC).date().isoformat(), evidence="issue:FIRST-42")
+    assert context.acquisition is None  # nothing to read, and nothing pretends to
+
+    with pytest.raises(AssertionError, match="authority reached before validation"):
+        workflow_controller._install_bootstrap_project_with_detail(
+            context,  # type: ignore[arg-type]
+            _choice(_REQUESTING_INCREMENT),
+            creation_authorized=True,
+        )

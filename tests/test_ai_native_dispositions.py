@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import date, timedelta
+from types import SimpleNamespace
 
 import pytest
 
@@ -21,6 +22,8 @@ from fa.inner_loop.plan_admission import (
     parse_dispositions,
 )
 from fa.inner_loop.plan_v2 import MAX_DISPOSITION_AGE_DAYS, MAX_DISPOSITIONS, PlanGraph, parse_plan
+from fa.inner_loop.tools.workspace_port import PortRead, WorkspacePortError
+from fa.inner_loop.workflow_controller import _resolve_granted_evidence as resolve_grants
 from tests.test_ai_native_plan_v2 import ROADMAP_DOCUMENT, plan_document, plan_graph
 
 _DIGEST = "a" * 64
@@ -238,3 +241,73 @@ def test_binding_is_a_pure_function_of_its_inputs() -> None:
     second = bind_dispositions(graph, grant, today=_TODAY)
     assert first == second
     assert graph.invariants[1].owner is None  # the input graph is never mutated
+
+
+# -- resolving a doc: grant against bytes (R6) ------------------------------
+
+_DOC_REF = f"doc:worklogs/demo/notes/readiness.md@sha256:{_DIGEST}"
+
+
+class _Port:
+    """A pinned view double: one stored read, or one refusal code."""
+
+    def __init__(self, read: PortRead | None = None, code: str = "denied") -> None:
+        self.read = read
+        self.code = code
+        self.paths: list[str] = []
+
+    def read_file(self, path: str, *, offset_bytes: int = 0, max_bytes: int = 1024 * 1024) -> PortRead:
+        self.paths.append(path)
+        if self.read is None:
+            raise WorkspacePortError(self.code)
+        return self.read
+
+
+def _substrate(port: _Port) -> object:
+    return SimpleNamespace(port=port)
+
+
+def _grant_for(evidence: str) -> tuple[object, ...]:
+    return parse_dispositions([_grant(evidence=evidence)])
+
+
+def test_a_matching_doc_grant_is_returned_unchanged() -> None:
+    port = _Port(PortRead(content="readiness: pass\n", sha256=_DIGEST, eof=True))
+    granted = _grant_for(_DOC_REF)
+
+    assert resolve_grants(_substrate(port), granted) == granted
+    assert port.paths == ["worklogs/demo/notes/readiness.md"]
+
+
+def test_a_missing_doc_refuses_the_grant() -> None:
+    assert _rule(lambda: resolve_grants(_substrate(_Port()), _grant_for(_DOC_REF))) == "disposition-evidence-missing"
+
+
+def test_bytes_that_do_not_match_the_digest_refuse_the_grant() -> None:
+    port = _Port(PortRead(content="readiness: pass\n", sha256="b" * 64, eof=True))
+
+    assert _rule(lambda: resolve_grants(_substrate(port), _grant_for(_DOC_REF))) == "disposition-evidence-mismatch"
+
+
+def test_a_file_too_large_for_one_bounded_read_refuses_the_grant() -> None:
+    port = _Port(PortRead(content="...", sha256=_DIGEST, eof=False))
+
+    assert _rule(lambda: resolve_grants(_substrate(port), _grant_for(_DOC_REF))) == "disposition-evidence-invalid"
+
+
+def test_a_path_the_substrate_will_not_name_is_an_invalid_reference() -> None:
+    traversal = _Port(code="invalid_request")
+
+    assert _rule(lambda: resolve_grants(_substrate(traversal), _grant_for(_DOC_REF))) == "disposition-evidence-invalid"
+
+
+def test_a_doc_grant_without_a_view_is_unresolvable() -> None:
+    assert _rule(lambda: resolve_grants(None, _grant_for(_DOC_REF))) == "disposition-evidence-unresolvable"
+
+
+@pytest.mark.parametrize("evidence", ["issue:FIRST-42", "review:pr-91-round-2"])
+def test_a_reference_this_system_cannot_resolve_never_reads_anything(evidence: str) -> None:
+    port = _Port()
+
+    assert resolve_grants(None, _grant_for(evidence)) == _grant_for(evidence)
+    assert port.paths == []  # no view was needed, and none was invented

@@ -11523,3 +11523,33 @@ pre-install refusal and a granted request proven to reach the authority double),
 regression found and fixed (`test_ai_native_acceptance_collection.py` had its own copy of the old three-field
 fixture — the inline duplication is exactly why the grep missed it), then `8191 passed, 18 skipped, 3 xfailed`,
 with the three known baseline-red tests deselected. `ruff` clean over 653 files, `mypy` clean over 222 sources.
+
+## E579 — R6 closed: a `doc:` grant is verified against the pinned bytes (2026-11-20)
+
+**S4 of E577, and the correction E578 promised.** E578 shipped the reference *typed but unread*: a grant could name
+a file that did not exist and still bind. That gap is closed here.
+
+| Fact | Rule | Where |
+| :--- | :--- | :--- |
+| The pinned view does not hold the path | `disposition-evidence-missing` | `_resolve_granted_evidence`, before `bind_dispositions` |
+| The path is one the substrate refuses to name (absolute, `..`, empty segment, NUL, backslash) | `disposition-evidence-invalid` | same, via `port_relative` → `WorkspacePortError("invalid_request")` |
+| The file needs more than one bounded port read | `disposition-evidence-invalid` | `PortRead.eof` is `False` — a digest over a prefix is not a digest over the file |
+| The bytes are not the bytes that were reviewed | `disposition-evidence-mismatch` | `PortRead.sha256` vs the declared digest |
+| There is no pinned view at all | `disposition-evidence-unresolvable` | a doc grant is refused rather than trusted |
+| `issue:` / `review:` | — | no read, no resolution, no claim: typed reference, reported as attested |
+
+Order matters and is deliberate: **resolve, then bind, then install.** A grant whose bytes cannot be checked never
+reaches `bind_dispositions`, so no invariant can carry an owner granted by an unverified reference. The read is the
+substrate's own bounded read (`PORT_READ_MAX_BYTES`), not a new file-reading path in the controller — the same view
+the run uses for everything else, so "verified against the revision this run sees" is true by construction.
+
+**Why `issue:`/`review:` still authorise.** This system has no egress; a real check is impossible. The honest choice
+is either to refuse them (which would make the ratified reason set unusable for `OWNER_APPROVAL`, the one reason
+whose evidence is a conversation) or to accept them as *typed references* and never report them as verified. The
+second is what R2's `ATTESTED` exists for: `attested` names the contract, and the record's `evidence` names what
+backed it — the reader sees `issue:FIRST-42`, not a green tick.
+
+**Verification.** `tests/test_ai_native_dispositions.py` 47 (+8 resolver oracles), `test_ai_native_bootstrap.py` 37
+(+6 end-to-end at the pre-install gate). **Mutants 6/6 killed** (`/tmp/mut_step5.py`), including one that never
+compares the digest and one that never reads at all. Full suite `8205 passed, 18 skipped, 3 xfailed` with the three
+baseline-red tests deselected; `ruff` clean over 653 files, `mypy` clean over 222 sources.
