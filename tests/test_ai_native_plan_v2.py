@@ -63,8 +63,6 @@ KIND: HARD
 TEXT: Host readiness is proven on the approved host.
 EVIDENCE: NON_EXECUTABLE
 DISPOSITION-REASON: HOST_READINESS
-DISPOSITION-EVIDENCE: W4 readiness run sheet row L-RCPT-2/6
-DISPOSITION-OWNER: W4
 """
 
 _INVARIANT_3 = """### INV-3
@@ -145,7 +143,7 @@ def test_parses_a_complete_v2_plan_into_a_typed_graph() -> None:
     assert [item.id for item in graph.invariants] == ["INV-1", "INV-2"]
     assert graph.invariants[1].evidence == "NON_EXECUTABLE"
     assert graph.invariants[1].reason == "HOST_READINESS"
-    assert graph.invariants[1].owner == "W4"
+    assert graph.invariants[1].owner is None  # granted at admission, never parsed (R1)
     assert [scn.id for scn in graph.scenarios] == ["SCN-1"]
     assert graph.scenarios[0].ct_ids == ("CT-1.1",)
     planned = graph.slices[0]
@@ -202,14 +200,18 @@ def test_rejects_an_unterminated_fence() -> None:
             "invariant-INV-1-disposition-reason",
         ),
         (
-            "### INV-1\nKIND: HARD\nTEXT: t\nEVIDENCE: NON_EXECUTABLE\n"
-            "DISPOSITION-REASON: BECAUSE\nDISPOSITION-EVIDENCE: e\nDISPOSITION-OWNER: W4\n",
+            "### INV-1\nKIND: HARD\nTEXT: t\nEVIDENCE: NON_EXECUTABLE\nDISPOSITION-REASON: BECAUSE\n",
             "disposition-reason-unratified",
         ),
         (
             "### INV-1\nKIND: HARD\nTEXT: t\nEVIDENCE: NON_EXECUTABLE\n"
-            "DISPOSITION-REASON: HOST_READINESS\nDISPOSITION-EVIDENCE: e\nDISPOSITION-OWNER: coder\n",
-            "disposition-owner-invalid",
+            "DISPOSITION-REASON: HOST_READINESS\nDISPOSITION-OWNER: W4\n",
+            "disposition-not-caller-authority",
+        ),
+        (
+            "### INV-1\nKIND: HARD\nTEXT: t\nEVIDENCE: NON_EXECUTABLE\n"
+            "DISPOSITION-REASON: HOST_READINESS\nDISPOSITION-EVIDENCE: doc:x@sha256:" + "0" * 64 + "\n",
+            "disposition-not-caller-authority",
         ),
         (
             "### INV-1\nKIND: HARD\nTEXT: t\nEVIDENCE: TEST_REQUIRED\nDISPOSITION-REASON: HOST_READINESS\n",
@@ -228,7 +230,7 @@ def test_disposition_count_is_bounded() -> None:
     for index in range(MAX_DISPOSITIONS + 1):
         blocks.append(
             f"### INV-{index + 1}\nKIND: HARD\nTEXT: t{index}\nEVIDENCE: NON_EXECUTABLE\n"
-            "DISPOSITION-REASON: HOST_READINESS\nDISPOSITION-EVIDENCE: e\nDISPOSITION-OWNER: W4\n"
+            "DISPOSITION-REASON: HOST_READINESS\n"
         )
     slashed = _increment(invariants="\n".join(blocks), slice_body=_SLICE.replace("INV-1", "INV-1"))
 
@@ -283,18 +285,19 @@ def test_a_hard_contract_without_a_test_or_disposition_is_refused() -> None:
     assert _rule(lambda: _parse(_increment(slice_body=_MINIMAL_SLICE))) == "hard-contract-without-executable-evidence"
 
 
-def test_a_hard_contract_with_a_typed_disposition_is_admitted() -> None:
+def test_a_hard_contract_with_a_requested_disposition_is_admitted_unbound() -> None:
+    """The grammar checks the *request*; only admission can grant it (R1)."""
     invariants = (
         _INVARIANT_1.replace("EVIDENCE: TEST_REQUIRED", "EVIDENCE: NON_EXECUTABLE")
-        + "DISPOSITION-REASON: OWNER_APPROVAL\n"
-        + "DISPOSITION-EVIDENCE: operator approval 2026-11-20\n"
-        + "DISPOSITION-OWNER: operator\n\n"
+        + "DISPOSITION-REASON: OWNER_APPROVAL\n\n"
         + _INVARIANT_2
     )
 
     graph = parse_plan(roadmap=_ROADMAP, increment=_increment(invariants=invariants, slice_body=_MINIMAL_SLICE))
     assert graph.invariants[0].evidence == "NON_EXECUTABLE"
     assert graph.invariants[0].reason == "OWNER_APPROVAL"
+    assert graph.invariants[0].owner is None  # nobody has granted anything yet
+    assert graph.invariants[0].evidence_ref is None
 
 
 def test_top_level_sections_are_closed() -> None:
@@ -618,8 +621,6 @@ KIND: HARD
 TEXT: The writer never publishes without a sealed acceptance revision.
 EVIDENCE: NON_EXECUTABLE
 DISPOSITION-REASON: HOST_READINESS
-DISPOSITION-EVIDENCE: W4 readiness run sheet row L-RCPT-2/6
-DISPOSITION-OWNER: W4
 """
 
 _TWO_DISPOSED_CONTRACTS = _SLICE.replace(

@@ -9,12 +9,24 @@ from __future__ import annotations
 import errno
 import hashlib
 import os
+import re
 import stat
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, replace
+from datetime import date
 from pathlib import Path
 
 from fa.inner_loop.plan_ids import PlanIds, extract_plan_ids
-from fa.inner_loop.plan_v2 import PlanGraph, PlanV2Error, parse_plan
+from fa.inner_loop.plan_v2 import (
+    DISPOSITION_OWNERS,
+    DISPOSITION_REASONS,
+    MAX_DISPOSITION_AGE_DAYS,
+    MAX_DISPOSITIONS,
+    Invariant,
+    PlanGraph,
+    PlanV2Error,
+    parse_plan,
+)
 
 MAX_PLAN_BYTES = 1024 * 1024
 
@@ -61,6 +73,127 @@ class PlanSnapshot:
     format: str = PLAN_V1
     graph: PlanGraph | None = None
     format_error: str | None = None
+
+
+#: R1/R6 (E577): the caller's grant. ``doc:`` is the only kind a machine can
+#: check, and it is checked against bytes (``<path>@sha256:<64 hex>``); ``issue:``
+#: and ``review:`` are typed references this system cannot resolve, so they stay
+#: attested-with-reference and are never reported as verified.
+_EVIDENCE_DOC_RE = re.compile(r"doc:(?P<path>[A-Za-z0-9_][A-Za-z0-9_./-]*)@sha256:(?P<digest>[0-9a-f]{64})")
+_EVIDENCE_ISSUE_RE = re.compile(r"issue:[A-Z][A-Z0-9]+-[0-9]+")
+_EVIDENCE_REVIEW_RE = re.compile(r"review:[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}")
+MAX_EVIDENCE_CHARS = 256
+_DISPOSITION_FIELDS = frozenset({"reason", "owner", "evidence", "reviewed_at"})
+
+
+@dataclass(frozen=True, slots=True)
+class EvidenceRef:
+    """One typed evidence reference; ``digest`` exists only for ``doc``."""
+
+    kind: str
+    target: str
+    digest: str | None = None
+
+    def text(self) -> str:
+        """The canonical form, which is what a bound invariant carries."""
+        if self.kind == "doc":
+            return f"doc:{self.target}@sha256:{self.digest}"
+        return f"{self.kind}:{self.target}"
+
+
+@dataclass(frozen=True, slots=True)
+class DispositionDeclaration:
+    """What the caller grants: a reason, who owns it, against what, and when."""
+
+    reason: str
+    owner: str
+    evidence: EvidenceRef
+    reviewed_at: date
+
+
+def _evidence_ref(raw: object) -> EvidenceRef:
+    if not isinstance(raw, str) or not raw or len(raw) > MAX_EVIDENCE_CHARS:
+        raise PlanRefError("disposition-evidence-invalid")
+    doc = _EVIDENCE_DOC_RE.fullmatch(raw)
+    if doc is not None:
+        return EvidenceRef(kind="doc", target=doc["path"], digest=doc["digest"])
+    if _EVIDENCE_ISSUE_RE.fullmatch(raw) is not None:
+        return EvidenceRef(kind="issue", target=raw.partition(":")[2])
+    if _EVIDENCE_REVIEW_RE.fullmatch(raw) is not None:
+        return EvidenceRef(kind="review", target=raw.partition(":")[2])
+    raise PlanRefError("disposition-evidence-invalid")
+
+
+def _review_date(raw: object) -> date:
+    if not isinstance(raw, str):
+        raise PlanRefError("disposition-reviewed-at-invalid")
+    try:
+        return date.fromisoformat(raw)
+    except ValueError:
+        raise PlanRefError("disposition-reviewed-at-invalid") from None
+
+
+def parse_dispositions(raw: object) -> tuple[DispositionDeclaration, ...]:
+    """Validate the caller's declarations; every refusal is a closed rule.
+
+    Shape and vocabulary only. Age is a fact about *today*, so it is checked by
+    :func:`bind_dispositions`, which is told the date.
+    """
+    if raw is None:
+        return ()
+    if not isinstance(raw, (list, tuple)):
+        raise PlanRefError("disposition-invalid")
+    if len(raw) > MAX_DISPOSITIONS:
+        raise PlanRefError("disposition-too-many")
+    declarations: list[DispositionDeclaration] = []
+    for item in raw:
+        if not isinstance(item, Mapping) or set(item) != _DISPOSITION_FIELDS:
+            raise PlanRefError("disposition-invalid")
+        reason = item["reason"]
+        if not isinstance(reason, str) or reason not in DISPOSITION_REASONS:
+            raise PlanRefError("disposition-reason-unratified")
+        owner = item["owner"]
+        if not isinstance(owner, str) or owner not in DISPOSITION_OWNERS:
+            raise PlanRefError("disposition-owner-invalid")
+        declarations.append(
+            DispositionDeclaration(
+                reason=reason,
+                owner=owner,
+                evidence=_evidence_ref(item["evidence"]),
+                reviewed_at=_review_date(item["reviewed_at"]),
+            )
+        )
+    if len({item.reason for item in declarations}) != len(declarations):
+        raise PlanRefError("disposition-duplicate-reason")
+    return tuple(declarations)
+
+
+def bind_dispositions(graph: PlanGraph, declarations: Sequence[DispositionDeclaration], *, today: date) -> PlanGraph:
+    """Attach the caller's grant to the plan's requests, or refuse (R1).
+
+    The plan asks by reason and can never name an owner; only a declaration makes
+    the request legal, and the declaration is the sole source of owner, evidence
+    and review date. A grant older than ``MAX_DISPOSITION_AGE_DAYS`` authorises
+    nothing -- including when the plan does not use it, because a stale grant
+    says the review that backs it is stale, not that the claim is fine.
+    """
+    granted: dict[str, DispositionDeclaration] = {}
+    for grant in declarations:
+        if grant.reviewed_at > today:
+            raise PlanRefError("disposition-reviewed-at-invalid")
+        if (today - grant.reviewed_at).days > MAX_DISPOSITION_AGE_DAYS:
+            raise PlanRefError("disposition-review-stale")
+        granted[grant.reason] = grant
+    bound: list[Invariant] = []
+    for invariant in graph.invariants:
+        if invariant.evidence != "NON_EXECUTABLE":
+            bound.append(invariant)
+            continue
+        declaration = granted.get(invariant.reason or "")
+        if declaration is None:
+            raise PlanRefError("disposition-undeclared")
+        bound.append(replace(invariant, owner=declaration.owner, evidence_ref=declaration.evidence.text()))
+    return replace(graph, invariants=tuple(bound))
 
 
 def _require_plan_for_coder(roles: list[str], plan_path: Path | None) -> None:

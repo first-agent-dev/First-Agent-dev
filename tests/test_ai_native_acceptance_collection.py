@@ -420,8 +420,6 @@ KIND: HARD
 TEXT: Host readiness is proven on the approved host.
 EVIDENCE: NON_EXECUTABLE
 DISPOSITION-REASON: HOST_READINESS
-DISPOSITION-EVIDENCE: W4 readiness run sheet row L-RCPT-2/6
-DISPOSITION-OWNER: W4
 """
 
 _SLICE_WITHOUT_ACCEPTANCE = """## SLICE1: host readiness

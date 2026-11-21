@@ -49,10 +49,12 @@ from fa.inner_loop.managed_acquisition import (
 from fa.inner_loop.plan_admission import (
     PLAN_V1,
     PLAN_V2,
+    DispositionDeclaration,
     PlanRef,
     PlanRefError,
     PlanSnapshot,
     _require_plan_for_coder,
+    bind_dispositions,
     read_plan_snapshot,
     snapshot_from_bytes,
 )
@@ -303,6 +305,9 @@ class WorkflowContext:
     #: Chat-supplied project slug for a create-new run (CT-2.1). ``None`` keeps
     #: the planner's own choice, which is the only behaviour the legacy route had.
     project_hint: str | None = None
+    #: R1 (E577): the caller's disposition grants. Empty for every existing
+    #: construction site, and empty for a run that has no plan to authorise.
+    dispositions: tuple[DispositionDeclaration, ...] = ()
     # Managed candidate promotion is supplied only by the execution composition.
     # None is a fail-closed boundary; the controller has no host-path writer fallback.
     plan_publisher: CandidatePlanPublisher | None = None
@@ -2544,6 +2549,10 @@ class AcquisitionSubstrate:
     # It is not read here -- the prelude never names a project -- it is the one
     # caller-owned fact the binding step needs after the planner has spoken.
     project_slug: str | None = None
+    #: R1 (E577): the caller's disposition grants, carried to the same binding step
+    #: for the same reason -- the plan only *requests* them, and only this run can
+    #: authorise the request it is about to install.
+    dispositions: tuple[DispositionDeclaration, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -2562,6 +2571,7 @@ class AcquisitionSubstrateRequest:
     """
 
     project_slug: str | None = None
+    dispositions: tuple[DispositionDeclaration, ...] = ()
 
 
 @contextmanager
@@ -2817,8 +2827,13 @@ def _install_bootstrap_project_with_detail(
         # headings are grammar-neutral), and `tests/test_ai_native_bootstrap.py`
         # proves the *rendered* files parse identically.
         try:
-            parse_plan(roadmap=choice.roadmap_body, increment=choice.increment_body)
-        except PlanV2Error as error:
+            graph = parse_plan(roadmap=choice.roadmap_body, increment=choice.increment_body)
+            # R1 (E577): the plan only *requests* its dispositions; this run holds
+            # the only thing that can grant them. Binding before the install keeps
+            # the property the parse already has -- a body that cannot be
+            # authorised never becomes a project.
+            bind_dispositions(graph, ctx.dispositions, today=datetime.now(UTC).date())
+        except (PlanV2Error, PlanRefError) as error:
             # One meaning, one rule: the admission record's closed vocabulary
             # already names this event `bootstrap/invalid-body`, and the grammar's
             # own rule goes to the log so the operator can still tell *why*.
@@ -4275,7 +4290,11 @@ def run_workflow(
                     v2_diagnostic=("workspace", "backend-unavailable", "ERROR", "INDETERMINATE", None),
                 )
             return _bound(
-                replace(substrate, project_slug=acquisition.project_slug),
+                replace(
+                    substrate,
+                    project_slug=acquisition.project_slug,
+                    dispositions=acquisition.dispositions,
+                ),
                 binding=admission_binding,
             )
     if acquisition is None or isinstance(acquisition, AcquisitionSubstrate):
@@ -4386,6 +4405,7 @@ def _run_workflow_bound(
         else _managed_admission_binding(managed_execution, run_id=run_id)
     )
     project_hint = acquisition.project_slug if acquisition is not None else None
+    dispositions = acquisition.dispositions if acquisition is not None else ()
     try:
         snapshot, plan_path = _resolve_admitted_plan(
             roles=roles,
@@ -4444,6 +4464,7 @@ def _run_workflow_bound(
         deadline_mono=deadline_mono,
         inject_overrides=dict(inject_overrides or {}),
         project_hint=project_hint,
+        dispositions=dispositions,
         plan_path=plan_path,
         plan_publisher=plan_publisher,
         managed_execution=managed_execution,

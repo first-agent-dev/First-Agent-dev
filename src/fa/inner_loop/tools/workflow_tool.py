@@ -43,6 +43,8 @@ from fa.inner_loop.path_risk import (
     default_scope_risk_config,
     tier_for_path,
 )
+from fa.inner_loop.plan_admission import DispositionDeclaration, PlanRefError, parse_dispositions
+from fa.inner_loop.plan_v2 import DISPOSITION_OWNERS, DISPOSITION_REASONS
 from fa.inner_loop.registry import ToolResult, ToolSpec
 from fa.inner_loop.workflow_controller import (
     DEADLINE_REASON_MARKER,
@@ -239,6 +241,33 @@ INVOKE_WORKFLOW_SCHEMA: dict[str, object] = {
             "type": "string",
             "maxLength": _PROJECT_SLUG_MAX,
             "description": "Validated lowercase kebab-case project slug; only meaningful with CREATE_NEW.",
+        },
+        "dispositions": {
+            "type": "array",
+            "description": (
+                "Caller-granted non-executable dispositions (R1), at most 16. A plan may only "
+                "*request* one, by reason; who owns it, against what evidence, and when it was "
+                "reviewed are authority inputs and belong here. Only meaningful with "
+                "project_action=CREATE_NEW."
+            ),
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["reason", "owner", "evidence", "reviewed_at"],
+                "properties": {
+                    "reason": {"type": "string", "enum": sorted(DISPOSITION_REASONS)},
+                    "owner": {"type": "string", "enum": sorted(DISPOSITION_OWNERS)},
+                    "evidence": {
+                        "type": "string",
+                        "maxLength": 256,
+                        "description": "doc:<workspace-relative path>@sha256:<64 hex>, issue:<KEY>, or review:<id>.",
+                    },
+                    "reviewed_at": {
+                        "type": "string",
+                        "description": "ISO-8601 date (YYYY-MM-DD); a grant older than 30 days authorises nothing.",
+                    },
+                },
+            },
         },
     },
     "required": ["task"],
@@ -706,6 +735,7 @@ class _PreparedInvocation:
     max_replans: int
     candidate: str
     project_slug: str | None = None
+    dispositions: tuple[DispositionDeclaration, ...] = ()
 
 
 def _prepare_invocation(
@@ -752,6 +782,25 @@ def _prepare_invocation(
             "`project_slug` is only valid with `project_action=CREATE_NEW`",
             retryable=True,
         )
+    # R1 (E577): the grant travels with the run that authorises the plan. It is
+    # refused everywhere else for the same reason a slug is: a declaration that
+    # no plan can consume would look like an authorisation that took effect.
+    # Route first, then shape: on a select route the route *is* the defect.
+    if params.get("dispositions") is not None and action != "CREATE_NEW":
+        return ToolResult.fail(
+            "dispositions_require_create",
+            "`dispositions` is only valid with `project_action=CREATE_NEW`",
+            retryable=True,
+        )
+    try:
+        dispositions = parse_dispositions(params.get("dispositions"))
+    except PlanRefError as error:
+        return ToolResult.fail(
+            "invalid_dispositions",
+            f"`dispositions` refused [{error.rule}]: each needs a ratified reason, an owning lane, "
+            "a typed evidence reference and an ISO review date",
+            retryable=True,
+        )
     refusal = acquisition_refusal(roles, managed=ctx.managed_execution is not None)
     if refusal is not None:
         code, message = refusal
@@ -764,6 +813,7 @@ def _prepare_invocation(
         roles=roles,
         mode=mode,
         project_slug=slug if action == "CREATE_NEW" else None,
+        dispositions=dispositions,
         max_repairs=_clamp(_as_int(params, "max_repairs", DEFAULT_TOOL_MAX_REPAIRS), low=0, high=MAX_REPAIRS_CEILING),
         max_replans=_clamp(_as_int(params, "max_replans", DEFAULT_TOOL_MAX_REPLANS), low=0, high=MAX_REPLANS_CEILING),
         candidate=candidate,
@@ -923,7 +973,10 @@ def build_invoke_workflow_tool(
             "inject_overrides": ctx.inject_overrides,
         }
         if wants_acquisition:
-            workflow_kwargs["acquisition"] = AcquisitionSubstrateRequest(project_slug=prepared.project_slug)
+            workflow_kwargs["acquisition"] = AcquisitionSubstrateRequest(
+                project_slug=prepared.project_slug,
+                dispositions=prepared.dispositions,
+            )
         if ctx.initial_planner_context:
             workflow_kwargs["initial_planner_context"] = ctx.initial_planner_context
         exit_code, terminal_state, workflow_error, lifecycle_error = _execute_child_with_managed_lifecycle(

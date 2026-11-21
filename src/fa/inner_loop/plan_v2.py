@@ -7,8 +7,15 @@ graph's cardinalities and rejections; selector resolution is a separate step
 because it needs the actual pytest collection.
 
 ``NON_EXECUTABLE`` evidence is legal only through the operator-ratified typed
-disposition (Q-V2-ACC-2 = B-narrow): a closed reason code, a bounded evidence
-reference, an owning lane, and a capped count. There is no free-text exception.
+disposition (Q-V2-ACC-2 = B-narrow): a closed reason code and a capped count.
+There is no free-text exception.
+
+Who decided, against what, and when is *caller authority* (R1, E577): the plan
+may only request a disposition by reason, and ``DISPOSITION-OWNER`` /
+``DISPOSITION-EVIDENCE`` in a plan are refused outright -- self-ratification is
+unrepresentable rather than merely checked. The declaring record and the binding
+rule live in ``plan_admission``; ``owner``/``evidence_ref`` below are filled by
+that binding, never parsed from a document.
 
 A disposition is not a proof. ``contract_evidence`` grades every contract by the
 strongest evidence the plan actually affords — an acceptance selector
@@ -29,6 +36,7 @@ __all__ = [
     "DISPOSITION_OWNERS",
     "DISPOSITION_REASONS",
     "MAX_DISPOSITIONS",
+    "MAX_DISPOSITION_AGE_DAYS",
     "MAX_PLAN_BYTES",
     "PLAN_FORMAT",
     "Acceptance",
@@ -63,6 +71,8 @@ DISPOSITION_REASONS = frozenset(
 )
 DISPOSITION_OWNERS = frozenset({"W4", "operator"})
 MAX_DISPOSITIONS = 16
+#: R5 (E577): an out-of-sandbox claim is re-reviewed, not trusted forever.
+MAX_DISPOSITION_AGE_DAYS = 30
 CONTRACT_CLASSES = frozenset({"FUNCTIONAL", "CONSTRAINT", "PRESERVATION"})
 _EVIDENCE_MODES = frozenset({"TEST_REQUIRED", "NON_EXECUTABLE"})
 _STEP_MODES = frozenset({"prescriptive", "outcome"})
@@ -120,7 +130,10 @@ class Invariant:
     kind: str
     text: str
     evidence: str
+    #: Requested only: the plan names *why* it cannot test the claim.
     reason: str | None = None
+    #: Granted only: ``plan_admission.bind_dispositions`` fills these from the
+    #: caller's declaration. A parsed plan never carries them.
     evidence_ref: str | None = None
     owner: str | None = None
 
@@ -298,28 +311,19 @@ def _build_invariant(entry: _Entry) -> Invariant:
     evidence = _field(entry.body, "EVIDENCE", rule=f"invariant-{inv_id}-evidence")
     if evidence not in _EVIDENCE_MODES:
         raise PlanV2Error(f"invariant-{inv_id}-evidence")
+    # R1 (E577): the grant is not a plan field. Checked before the vocabulary so
+    # a document that tries to own its own waiver is told *that*, not that its
+    # reason code was spelled differently.
+    if any(line.strip().startswith(("DISPOSITION-OWNER", "DISPOSITION-EVIDENCE")) for line in entry.body):
+        raise PlanV2Error("disposition-not-caller-authority")
     if evidence == "TEST_REQUIRED":
         if any(line.strip().startswith("DISPOSITION-") for line in entry.body):
             raise PlanV2Error("disposition-without-non-executable")
         return Invariant(id=inv_id, kind=kind, text=text, evidence=evidence)
     reason = _field(entry.body, "DISPOSITION-REASON", rule=f"invariant-{inv_id}-disposition-reason")
-    evidence_ref = _field(entry.body, "DISPOSITION-EVIDENCE", rule=f"invariant-{inv_id}-disposition-evidence")
-    owner = _field(entry.body, "DISPOSITION-OWNER", rule=f"invariant-{inv_id}-disposition-owner")
     if reason not in DISPOSITION_REASONS:
         raise PlanV2Error("disposition-reason-unratified")
-    if owner not in DISPOSITION_OWNERS:
-        raise PlanV2Error("disposition-owner-invalid")
-    if len(evidence_ref) > 256:
-        raise PlanV2Error(f"invariant-{inv_id}-disposition-evidence")
-    return Invariant(
-        id=inv_id,
-        kind=kind,
-        text=text,
-        evidence=evidence,
-        reason=reason,
-        evidence_ref=evidence_ref,
-        owner=owner,
-    )
+    return Invariant(id=inv_id, kind=kind, text=text, evidence=evidence, reason=reason)
 
 
 def _parse_invariants(lines: Sequence[str]) -> tuple[Invariant, ...]:
@@ -579,7 +583,10 @@ def _admit_evidence(graph: PlanGraph, contracts: Mapping[str, Contract], tests: 
             continue
         if any(entry.ct == contract.id for entry in tests.values()):
             continue
-        if invariant.evidence == "NON_EXECUTABLE" and invariant.reason and invariant.evidence_ref and invariant.owner:
+        # A request is structurally sufficient here; whether it was *granted* is
+        # checked by ``bind_dispositions`` at admission, where the caller's
+        # declaration exists and the grammar cannot be asked to know it.
+        if invariant.evidence == "NON_EXECUTABLE" and invariant.reason:
             continue
         raise PlanV2Error("hard-contract-without-executable-evidence")
 

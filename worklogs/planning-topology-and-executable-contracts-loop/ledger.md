@@ -11485,3 +11485,41 @@ principle and the `TEST_REQUIRED`-refuses-stray-`DISPOSITION-*` rule all stand. 
 **Not implemented yet.** S1–S5 in the note are the plan; S1 is a grammar change that invalidates today's
 in-plan `DISPOSITION-OWNER` tests, so it should land with S2 (schema + validator) in one verified step rather
 than leaving the parser refusing documents the tool cannot yet produce.
+
+## E578 — R1 landed: the plan requests, the caller grants, admission binds (2026-11-20)
+
+**S1+S2+S3 of E577.** The plan can no longer own its own waiver, and the caller can now issue one. Landed as one
+step because S1 alone would have made the parser refuse documents the tool could not yet produce.
+
+| Layer | Change | Rule that fires |
+| :--- | :--- | :--- |
+| Grammar (`plan_v2.py`) | `DISPOSITION-OWNER` / `DISPOSITION-EVIDENCE` in plan text are refused **before** the reason vocabulary is consulted, so the document is told the real defect. `_admit_evidence` now accepts a request (`reason` present) as structurally sufficient; whether it was *granted* is admission's question | `disposition-not-caller-authority` |
+| Grant (`plan_admission.py`) | `EvidenceRef` + `DispositionDeclaration` + `parse_dispositions` (shape, closed vocabulary, typed evidence, ISO date, ≤16, one grant per reason) and `bind_dispositions` (undeclared, stale, future, then copies owner + canonical reference onto the invariant) | `disposition-invalid`, `-reason-unratified`, `-owner-invalid`, `-evidence-invalid`, `-reviewed-at-invalid`, `-too-many`, `-duplicate-reason`, `-undeclared`, `-review-stale` |
+| Tool (`workflow_tool.py`) | New closed `dispositions` parameter (4 fields, `additionalProperties: false`); refused outside `CREATE_NEW` before shape is judged; parsed with the same function admission uses | `dispositions_require_create`, `invalid_dispositions` |
+| Controller | `AcquisitionSubstrateRequest`/`AcquisitionSubstrate`/`WorkflowContext` carry the grant; `_install_bootstrap_project_with_detail` binds **before** `prepare_bundle`, so an unauthorised body never becomes a project. The precise rule goes to the log; the record keeps the existing `bootstrap/invalid-body` code | `bootstrap-invalid-body` |
+
+Notes that matter later:
+
+* **`maxItems` is not provider-portable** (`registry._PORTABLE_SCHEMA_KEYS`), so the 16-grant cap is published as
+  prose in the schema and enforced in `parse_dispositions`. A schema that cannot say the limit must not imply
+  there is none — the validator is the gate, the same split the slug already uses.
+* **Staleness is checked on every grant, not on every used grant**: a 31-day-old grant is refused even if the plan
+  does not reference it, because the thing that expired is the review.
+* **Authorisation happens once, at install.** Later runs re-parse the installed bytes without declarations and
+  never rebind: the plan was authorised by the run that installed it, and a re-admission that could re-grant would
+  be a second authorisation.
+
+**Not yet landed — stated so it is not overclaimed.** The reference is *typed and parsed*, but **no byte is read**:
+`doc:<path>@sha256:<hex>` is not yet checked for existence or digest match, so today a grant can name a file that
+does not exist and still bind. That is S4 (next), and until it lands the honest description of the system is
+"evidence is typed, not verified". `issue:` and `review:` stay attested-with-reference by design (no egress).
+
+**S5 is folded into D-V2-7.** No prompt needs editing yet: `ACQUISITION_SYSTEM_PROMPT` mentions no disposition at
+all, and the model's *semantics* schema is what will carry the request once the renderer exists.
+
+**Verification.** New `tests/test_ai_native_dispositions.py` (39), `test_ai_native_bootstrap.py` 31 (+3, incl. a
+pre-install refusal and a granted request proven to reach the authority double), `test_invoke_workflow_tool.py`
+140 (+4), `test_ai_native_plan_v2.py` 74. **Mutants 17/17 killed** (`/tmp/mut_step4.py`). Full suite: one
+regression found and fixed (`test_ai_native_acceptance_collection.py` had its own copy of the old three-field
+fixture — the inline duplication is exactly why the grep missed it), then `8191 passed, 18 skipped, 3 xfailed`,
+with the three known baseline-red tests deselected. `ruff` clean over 653 files, `mypy` clean over 222 sources.

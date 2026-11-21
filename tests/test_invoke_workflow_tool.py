@@ -1608,3 +1608,82 @@ def test_the_select_route_still_delegates_without_a_coder(tmp_path: Path) -> Non
     _payload(result)
     assert len(workflow.calls) == 1
     assert workflow.calls[0]["acquisition"] is None
+
+
+# --- R1 (E577): the disposition grant is caller authority --------------------
+
+
+def _grant(**overrides: object) -> dict[str, object]:
+    record: dict[str, object] = {
+        "reason": "HOST_READINESS",
+        "owner": "W4",
+        "evidence": "doc:worklogs/demo-project/notes/readiness.md@sha256:" + "a" * 64,
+        "reviewed_at": "2026-11-20",
+    }
+    record.update(overrides)
+    return record
+
+
+def test_a_grant_outside_the_create_route_is_refused(tmp_path: Path) -> None:
+    """A grant no plan can consume must not look like an authorisation that took effect."""
+    workflow = _RecordingWorkflow()
+
+    result = _call(_tool(workflow, _ctx(tmp_path)), task="build it", dispositions=[_grant()])
+
+    assert _error_code(result) == "dispositions_require_create"
+    assert workflow.calls == []
+
+
+def test_an_invalid_grant_is_refused_before_any_child_exists(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    ctx = _managed_context(tmp_path, monkeypatch)[0]
+    workflow = _RecordingWorkflow()
+
+    result = _call(
+        _tool(workflow, ctx),
+        task="build it",
+        project_action="CREATE_NEW",
+        project_slug="demo-project",
+        dispositions=[_grant(owner="coder")],
+    )
+
+    assert _error_code(result) == "invalid_dispositions"
+    assert workflow.calls == []
+
+
+def test_a_valid_grant_reaches_the_child_as_the_caller_granted_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ctx = _managed_context(tmp_path, monkeypatch)[0]
+    workflow = _RecordingWorkflow()
+
+    result = _call(
+        _tool(workflow, ctx),
+        task="build it",
+        roles="planner,coder",
+        project_action="CREATE_NEW",
+        project_slug="demo-project",
+        dispositions=[_grant()],
+    )
+
+    _payload(result)
+    (declaration,) = workflow.calls[0]["acquisition"].dispositions
+    assert declaration.reason == "HOST_READINESS"
+    assert declaration.owner == "W4"
+    assert declaration.evidence.text() == "doc:worklogs/demo-project/notes/readiness.md@sha256:" + "a" * 64
+    assert declaration.reviewed_at.isoformat() == "2026-11-20"
+
+
+def test_a_create_route_without_a_grant_carries_no_declaration(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    ctx = _managed_context(tmp_path, monkeypatch)[0]
+    workflow = _RecordingWorkflow()
+
+    result = _call(
+        _tool(workflow, ctx),
+        task="build it",
+        roles="planner,coder",
+        project_action="CREATE_NEW",
+        project_slug="demo-project",
+    )
+
+    _payload(result)
+    assert workflow.calls[0]["acquisition"].dispositions == ()

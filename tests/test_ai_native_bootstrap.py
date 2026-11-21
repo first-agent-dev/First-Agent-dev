@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -22,7 +23,7 @@ from fa.execution.publication import render_bundle
 from fa.inner_loop import workflow_controller
 from fa.inner_loop.coder_loop import SessionOutcome
 from fa.inner_loop.managed_acquisition import BootstrapNewProjectChoice
-from fa.inner_loop.plan_admission import PLAN_V2, snapshot_from_bytes
+from fa.inner_loop.plan_admission import PLAN_V2, parse_dispositions, snapshot_from_bytes
 from fa.inner_loop.registry import ToolResult
 from fa.inner_loop.tools import workflow_tool
 from fa.inner_loop.tools.workflow_tool import (
@@ -76,6 +77,7 @@ def _v2_context() -> SimpleNamespace:
         plan_format=PLAN_V2,
         deadline_mono=None,
         run_id="run-bootstrap-v2",
+        dispositions=(),
     )
 
 
@@ -102,6 +104,74 @@ def test_v2_bootstrap_pair_is_validated_before_the_irreversible_install() -> Non
     assert (detail.validator, detail.rule, detail.severity) == ("bootstrap", "invalid-body", "FAIL")
     assert detail.operation_id is None  # nothing was installed, so there is no operation
     assert ctx.run_id == "run-bootstrap-v2"  # unchanged: nothing was bound
+
+
+_REQUESTING_INCREMENT = _INCREMENT_BODY.replace(
+    "EVIDENCE: TEST_REQUIRED\n",
+    "EVIDENCE: NON_EXECUTABLE\nDISPOSITION-REASON: HOST_READINESS\n",
+)
+
+
+def _granting_context(*, reviewed_at: str) -> SimpleNamespace:
+    context = _v2_context()
+    context.dispositions = parse_dispositions(
+        [
+            {
+                "reason": "HOST_READINESS",
+                "owner": "W4",
+                "evidence": "doc:worklogs/demo-project/notes/readiness.md@sha256:" + "a" * 64,
+                "reviewed_at": reviewed_at,
+            }
+        ]
+    )
+    return context
+
+
+def test_a_requested_disposition_that_was_not_granted_never_installs() -> None:
+    """R1 (E577): the plan asks, the caller grants; an ungranted request is a refusal."""
+    ctx, refusal, detail = workflow_controller._install_bootstrap_project_with_detail(
+        _v2_context(),  # type: ignore[arg-type]
+        _choice(_REQUESTING_INCREMENT),
+        creation_authorized=True,
+    )
+
+    assert refusal is not None
+    assert refusal.rule == "bootstrap-invalid-body"
+    assert detail is not None
+    assert (detail.validator, detail.rule, detail.severity) == ("bootstrap", "invalid-body", "FAIL")
+    assert detail.operation_id is None  # nothing was installed
+    assert ctx.run_id == "run-bootstrap-v2"
+
+
+def test_a_granted_request_passes_the_pre_install_gate() -> None:
+    """Proof the gate *accepted* it: the authority double is reached, and raises."""
+    ctx = _granting_context(reviewed_at=datetime.now(UTC).date().isoformat())
+
+    with pytest.raises(AssertionError, match="authority reached before validation"):
+        workflow_controller._install_bootstrap_project_with_detail(
+            ctx,  # type: ignore[arg-type]
+            _choice(_REQUESTING_INCREMENT),
+            creation_authorized=True,
+        )
+
+
+_SELF_OWNED_INCREMENT = _INCREMENT_BODY.replace(
+    "EVIDENCE: TEST_REQUIRED\n",
+    "EVIDENCE: NON_EXECUTABLE\nDISPOSITION-REASON: HOST_READINESS\nDISPOSITION-OWNER: W4\n",
+)
+
+
+def test_a_plan_cannot_own_its_own_waiver() -> None:
+    """G1: the grant is not a plan field, so the bootstrap refuses the body outright."""
+    ctx, refusal, detail = workflow_controller._install_bootstrap_project_with_detail(
+        _granting_context(reviewed_at=datetime.now(UTC).date().isoformat()),  # type: ignore[arg-type]
+        _choice(_SELF_OWNED_INCREMENT),
+        creation_authorized=True,
+    )
+
+    assert refusal is not None and refusal.rule == "bootstrap-invalid-body"
+    assert detail is not None and detail.severity == "FAIL"
+    assert ctx.run_id == "run-bootstrap-v2"
 
 
 def test_v1_route_keeps_its_existing_authority_order() -> None:
