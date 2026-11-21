@@ -11791,3 +11791,59 @@ Two fixture sets were rebased rather than bent: the grading tests now use a `gra
 helper, because the seal grades *granted* evidence and the old fixtures graded requests.
 Full suite **8256 passed, 18 skipped, 3 xfailed, 9 deselected**; `ruff` clean; `mypy src`
 clean over 223 sources.
+
+### E586 — P2-2 closed: the planner authors content, never identity (2026-11-20)
+
+The register said "`initial-plan` is not fixed… `choice.increment_slug` still comes from the
+planner's JSON". Grounding found the premise was right but the mechanism was worse than
+described, and one part of the register's story was already dead code.
+
+**What was actually true.** Both installed documents keep V1-shaped front matter, so:
+
+* `_bootstrap_bodies` on the V2 route returns `render_project`'s hard-coded key
+  `increments/increment-01-initial-plan.md` — the planner's `increment_slug` never reached
+  the rendered *body*.
+* but `render_bundle` was called with `choice.increment_slug` from the planner, so the file
+  *path* was model-chosen. Measured: `increment_slug="my-own-name"` produced
+  `worklogs/demo-project/increments/increment-01-my-own-name.md`. The plan says three times
+  that the slug is harness-fixed, and admission reads that path.
+* `_with_project_hint` overwrote a planner-written `project_slug` and logged a warning — a
+  substitution the model never saw and the operator could not audit.
+
+**Also dead, and now documented as such.** `roadmap_body`/`increment_body` are populated
+nowhere in `src/`: the wire parser only ever built `semantics`, and the controller flips
+`plan_format = PLAN_V2` on every bootstrap branch before any bytes exist. So a V1 bootstrap
+through the wire already refused with `payload-missing`; the V1 prose path survives only in
+`tests/test_s5p1_bootstrap.py`, which drives the controller directly with `plan_format`
+left at its default — a state no production route can reach.
+
+**The change (as ratified in §12/CT-2.1, "the proposal/resolved split").**
+
+| | Before | Now |
+|---|---|---|
+| wire | `{kind, project_slug, increment_slug, semantics}` | `{kind, semantics}` |
+| parser returns | `BootstrapNewProjectChoice` | `BootstrapProposal` (no name fields) |
+| planner names a slug | silently overridden | `selection/choice-malformed` |
+| increment | planner's string → bundle path | `INITIAL_INCREMENT_SLUG = "initial-plan"` |
+| controller | `_with_project_hint` | `_resolve_bootstrap_identity`, `None` when the caller named nothing |
+
+**One mistake caught by the suite, worth recording.** My first version of the
+"no caller slug" refusal returned `project-route-mismatch` unconditionally and broke two
+lifecycle tests that expected `bootstrap-unavailable`. The tests were right and I was
+wrong: `_install_bootstrap_project_with_detail` checks *authority* before *route*, because
+"fix the body" (or "name the project") sends an operator one step in the wrong direction
+when the run has no managed execution at all. The early guard now mirrors the installer's
+order, so the same fact gets the same rule whichever checkpoint sees it first.
+
+**Verification.** `tests/test_managed_acquisition.py` 98 (+3: both identity fields, and
+both together), `test_ai_native_bootstrap.py` 37 (the real managed run now installs
+`increment-01-initial-plan.md` and proves the planner's name never lands),
+`test_admission_v2_provenance.py` 29, lifecycle 24, coherence 27.
+**Mutants 6/6 killed** (`tests/mutation/mut_step9.py`) after one survivor: M6 showed the
+coherence bank did not pin the prompt's *prohibition*, only its omission — a model not told
+otherwise will helpfully supply a slug, so the negative sentence is now asserted.
+Full suite **8259 passed, 18 skipped, 3 xfailed, 9 deselected**; `ruff` clean; `mypy src`
+clean over 223 sources. Two banks were rebased rather than bent: every bootstrap payload in
+`test_admission_v2_provenance.py` (5) and the lifecycle `BOOTSTRAP` fixture lost their
+identity keys, because a payload carrying them is now malformed *before* the route refusal
+those tests exist to prove.

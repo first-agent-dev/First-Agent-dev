@@ -45,11 +45,13 @@ CLARIFICATION = json.dumps({"kind": "NEEDS_CLARIFICATION", "reason": "AMBIGUOUS_
 #: A well-formed PLAN-V2 bootstrap (D-V2-7): the wire carries semantics, and the parser
 #: renders them through a probe slug before this choice is ever accepted. The point of the
 #: tests below is that the *route* refuses it, not that the payload is malformed.
+#:
+#: It names no project or increment (CT-2.1, E586): identity is caller + harness, so a
+#: payload that named either would be `choice-malformed` on the wire and these tests
+#: would stop exercising the route refusal they exist for.
 BOOTSTRAP = json.dumps(
     {
         "kind": "BOOTSTRAP_NEW_PROJECT",
-        "project_slug": "new-project",
-        "increment_slug": "initial-plan",
         "semantics": {
             "intent": "New.",
             "out_of_scope": "None.",

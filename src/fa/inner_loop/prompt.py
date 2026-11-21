@@ -1222,9 +1222,11 @@ Choose exactly one of three closed shapes.
 
 3. Bootstrap a new project — only when `Acquisition context` states that creation is
 authorized for this call, no existing project fits, and the directory does not exist.
-   Wrapper keys, exactly four: `kind` = `BOOTSTRAP_NEW_PROJECT`; `project_slug` = the fixed
-   slug `Acquisition context` gave you (copy it, never invent one); `increment_slug` =
-   lowercase kebab-case name for this increment; `semantics` = the payload below.
+   Wrapper keys, exactly two: `kind` = `BOOTSTRAP_NEW_PROJECT`; `semantics` = the payload
+   below. **Do not name the project or the increment.** The slug is the operator's
+   (chat supplies it) and the first increment is fixed by the harness as `initial-plan`;
+   a payload carrying `project_slug` or `increment_slug` is refused as `choice-malformed`
+   before anything is installed. Your job is the plan's content, not its identity.
 
 ### `semantics`: the typed payload you author
 
@@ -1275,7 +1277,7 @@ that looks like a document is rejected. Exact keys, no extras:
 
 ### Worked payload (the controller accepts exactly this shape)
 
-{"kind":"BOOTSTRAP_NEW_PROJECT","project_slug":"widget-service","increment_slug":"initial-plan",
+{"kind":"BOOTSTRAP_NEW_PROJECT",
  "semantics":{"intent":"Parse a widget id on the public entrypoint.",
  "out_of_scope":"Persistence.","questions":[],
  "invariants":[{"number":"1","kind":"HARD","text":"a known widget id parses","evidence":"TEST_REQUIRED","reason":null}],

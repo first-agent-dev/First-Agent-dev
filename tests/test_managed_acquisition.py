@@ -25,6 +25,7 @@ from fa.inner_loop.managed_acquisition import (
     AcquisitionChoiceError,
     AcquisitionMetadataError,
     BootstrapNewProjectChoice,
+    BootstrapProposal,
     CanonicalIncrementArtifact,
     IncrementMetadata,
     NeedsClarificationChoice,
@@ -268,20 +269,12 @@ def test_acquisition_choice_parser_accepts_only_the_three_closed_variants() -> N
     assert selected == SelectExistingChoice("demo-project", "I03")
 
     bootstrap = parse_acquisition_choice(
-        json.dumps(
-            {
-                "kind": "BOOTSTRAP_NEW_PROJECT",
-                "project_slug": "demo-project",
-                "increment_slug": "initial-plan",
-                "semantics": _MINIMAL_SEMANTICS,
-            }
-        )
+        json.dumps({"kind": "BOOTSTRAP_NEW_PROJECT", "semantics": _MINIMAL_SEMANTICS})
     )
-    assert isinstance(bootstrap, BootstrapNewProjectChoice)
-    assert (bootstrap.project_slug, bootstrap.increment_slug) == ("demo-project", "initial-plan")
-    # D-V2-7: the wire carries semantics, never Markdown; the legacy bodies stay empty.
-    assert bootstrap.semantics is not None
-    assert (bootstrap.roadmap_body, bootstrap.increment_body) == ("", "")
+    # CT-2.1 (E586): the wire carries content only. Identity is caller + harness, so a
+    # proposal has no name to read and cannot be mistaken for an installed choice.
+    assert isinstance(bootstrap, BootstrapProposal)
+    assert not isinstance(bootstrap, BootstrapNewProjectChoice)
     assert bootstrap.semantics.invariants[0].id == "INV-1"
 
     clarification = parse_acquisition_choice('{"kind":"NEEDS_CLARIFICATION","reason":"UNKNOWN_INCREMENT"}')
@@ -346,8 +339,6 @@ def test_acquisition_choice_parser_rejects_absent_or_oversized_semantics() -> No
         raw = json.dumps(
             {
                 "kind": "BOOTSTRAP_NEW_PROJECT",
-                "project_slug": "demo",
-                "increment_slug": "initial-plan",
                 "semantics": semantics,
             }
         )
@@ -358,8 +349,6 @@ def test_acquisition_choice_parser_rejects_absent_or_oversized_semantics() -> No
     oversized = json.dumps(
         {
             "kind": "BOOTSTRAP_NEW_PROJECT",
-            "project_slug": "demo",
-            "increment_slug": "initial-plan",
             "semantics": {"intent": "x" * (1024 * 1024 + 1)},
         }
     )
@@ -373,8 +362,6 @@ def test_a_payload_carrying_both_shapes_is_refused() -> None:
     both = json.dumps(
         {
             "kind": "BOOTSTRAP_NEW_PROJECT",
-            "project_slug": "demo",
-            "increment_slug": "initial-plan",
             "semantics": _MINIMAL_SEMANTICS,
             "roadmap_body": "## Intent\n\nGoal.\n",
         }
@@ -393,8 +380,6 @@ def test_the_markdown_bootstrap_shape_is_now_unknown_on_the_wire() -> None:
     legacy = json.dumps(
         {
             "kind": "BOOTSTRAP_NEW_PROJECT",
-            "project_slug": "demo",
-            "increment_slug": "inc",
             "roadmap_body": "## Intent\n\nGoal.\n",
             "increment_body": "## SLICE1: first\n",
         }
@@ -1330,3 +1315,37 @@ def test_workflow_writer_rejects_invalid_v2_append_without_replacing_history(tmp
         )
     assert caught.value.rule == "corrupt-record"
     assert path.read_bytes() == before
+
+
+# -- E586 / CT-2.1: identity is not on the wire ------------------------------
+
+
+@pytest.mark.parametrize("field", ["project_slug", "increment_slug"])
+def test_a_bootstrap_payload_may_not_name_its_own_project_or_increment(field: str) -> None:
+    """The planner owns content; the caller owns the slug and the harness the increment.
+
+    Overriding a planner-supplied slug -- what the controller used to do -- leaves the
+    model believing it chose a name that was replaced, and leaves the operator without an
+    audit trail. Refusing the field makes the attempt diagnosable and the contract total.
+    """
+    payload = {"kind": "BOOTSTRAP_NEW_PROJECT", "semantics": _MINIMAL_SEMANTICS, field: "anything"}
+
+    with pytest.raises(AcquisitionChoiceError) as refused:
+        parse_acquisition_choice(json.dumps(payload))
+
+    assert (refused.value.validator, refused.value.rule) == ("selection", "choice-malformed")
+
+
+def test_both_identity_fields_together_are_refused_the_same_way() -> None:
+    """One rule, not one per field: the closed key set is what enforces it."""
+    payload = {
+        "kind": "BOOTSTRAP_NEW_PROJECT",
+        "project_slug": "demo-project",
+        "increment_slug": "initial-plan",
+        "semantics": _MINIMAL_SEMANTICS,
+    }
+
+    with pytest.raises(AcquisitionChoiceError) as refused:
+        parse_acquisition_choice(json.dumps(payload))
+
+    assert refused.value.rule == "choice-malformed"

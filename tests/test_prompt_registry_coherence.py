@@ -518,7 +518,7 @@ def _prompt_json_examples(prompt: str) -> list[str]:
 def test_acquisition_prompt_is_static_cacheable_and_examples_parse() -> None:
     """C0/C1 (D9 / Q149=B + Q151=A) — static prefix, closed schema rules, valid JSON examples."""
     from fa.inner_loop.managed_acquisition import (
-        BootstrapNewProjectChoice,
+        BootstrapProposal,
         NeedsClarificationChoice,
         SelectExistingChoice,
         parse_acquisition_choice,
@@ -550,6 +550,9 @@ def test_acquisition_prompt_is_static_cacheable_and_examples_parse() -> None:
         # rule the model is never told is a rule the model learns by being refused.
         "disposition-covers-several-contracts",
         "disposition-reason-reused",
+        # E586: the prompt must actively forbid naming identity, not merely omit it --
+        # a model that is not told otherwise will helpfully supply a slug.
+        "Do not name the project or the increment",
         "acceptance/tests/",
         "Incomplete",
     ):
@@ -558,12 +561,14 @@ def test_acquisition_prompt_is_static_cacheable_and_examples_parse() -> None:
     parsed = [parse_acquisition_choice(block) for block in _prompt_json_examples(ACQUISITION_SYSTEM_PROMPT)]
     assert any(isinstance(item, SelectExistingChoice) for item in parsed)
     assert any(isinstance(item, NeedsClarificationChoice) for item in parsed)
-    bootstraps = [item for item in parsed if isinstance(item, BootstrapNewProjectChoice)]
+    bootstraps = [item for item in parsed if isinstance(item, BootstrapProposal)]
     assert bootstraps, "the prompt must carry one worked bootstrap payload"
     for item in bootstraps:
         # The payload survived the same parser production uses, so the example is real.
         assert item.semantics is not None
-        assert (item.roadmap_body, item.increment_body) == ("", "")
+        # CT-2.1 (E586): the example must not teach the planner to name its own project.
+        assert "project_slug" not in item.__dataclass_fields__
+        assert "increment_slug" not in item.__dataclass_fields__
 
 
 def test_the_acquisition_prompt_example_is_a_payload_the_renderer_and_parser_accept() -> None:
@@ -575,7 +580,7 @@ def test_the_acquisition_prompt_example_is_a_payload_the_renderer_and_parser_acc
     """
     import json
 
-    from fa.inner_loop.managed_acquisition import BootstrapNewProjectChoice, parse_acquisition_choice
+    from fa.inner_loop.managed_acquisition import BootstrapProposal, parse_acquisition_choice
     from fa.inner_loop.plan_semantics import render_project
     from fa.inner_loop.plan_v2 import parse_plan
     from fa.inner_loop.prompt import ACQUISITION_SYSTEM_PROMPT
@@ -583,7 +588,7 @@ def test_the_acquisition_prompt_example_is_a_payload_the_renderer_and_parser_acc
     examples = [
         item
         for item in (parse_acquisition_choice(block) for block in _prompt_json_examples(ACQUISITION_SYSTEM_PROMPT))
-        if isinstance(item, BootstrapNewProjectChoice)
+        if isinstance(item, BootstrapProposal)
     ]
     assert examples, "the prompt must carry one worked bootstrap payload"
     for example in examples:

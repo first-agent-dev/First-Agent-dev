@@ -22,7 +22,11 @@ from fa.execution.protocol import CONFIG_ID
 from fa.execution.publication import render_bundle
 from fa.inner_loop import workflow_controller
 from fa.inner_loop.coder_loop import SessionOutcome
-from fa.inner_loop.managed_acquisition import BootstrapNewProjectChoice
+from fa.inner_loop.managed_acquisition import (
+    INITIAL_INCREMENT_SLUG,
+    BootstrapNewProjectChoice,
+    BootstrapProposal,
+)
 from fa.inner_loop.plan_admission import PLAN_V2, parse_dispositions, snapshot_from_bytes
 from fa.inner_loop.plan_semantics import PlanSemantics, parse_semantics, render_project
 from fa.inner_loop.registry import ToolResult
@@ -329,25 +333,24 @@ def test_selecting_an_existing_project_carries_no_slug() -> None:
     assert prepared.project_slug is None
 
 
-def test_the_chat_slug_overrides_the_planner_slug_without_substitution() -> None:
-    """The caller's project name wins; the planner's guess is recorded, not installed."""
-    choice = BootstrapNewProjectChoice(
-        project_slug="planner-guess",
-        increment_slug="foundation",
-        roadmap_body="",
-        increment_body="",
-        semantics=_semantics(),
-    )
+def test_a_bootstrap_takes_its_identity_from_the_caller_and_the_harness() -> None:
+    """CT-2.1 (E586): the planner returns content; the route supplies the names.
 
-    assert workflow_controller._with_project_hint(choice, None) is choice
-    assert workflow_controller._with_project_hint(choice, "planner-guess") is choice
-    overridden = workflow_controller._with_project_hint(choice, "chat-name")
-    assert overridden is not None
-    assert overridden.project_slug == "chat-name"
-    assert overridden.semantics is choice.semantics  # semantics untouched
+    The old contract let the planner write a slug that the controller then *replaced*,
+    logging a warning the model never saw and the operator could not audit. Now the wire
+    has no identity field at all, so this function can only fill in facts the route
+    already owns -- and refuses when the caller never named a project.
+    """
+    proposal = BootstrapProposal(semantics=_semantics())
+
+    assert workflow_controller._resolve_bootstrap_identity(proposal, None) is None
+    choice = workflow_controller._resolve_bootstrap_identity(proposal, "chat-name")
+    assert choice is not None
+    assert choice.project_slug == "chat-name"
+    assert choice.increment_slug == INITIAL_INCREMENT_SLUG == "initial-plan"
+    assert choice.semantics is proposal.semantics  # content untouched
     # The slug is caller authority, so the *rendered* selectors must follow it.
-    assert overridden.semantics is not None
-    rendered = render_project(overridden.semantics, project_slug=overridden.project_slug)
+    rendered = render_project(choice.semantics, project_slug=choice.project_slug)
     assert (
         "worklogs/chat-name/acceptance/tests/test_publish.py::test_publish"
         in rendered["increments/increment-01-initial-plan.md"]
@@ -357,15 +360,9 @@ def test_the_chat_slug_overrides_the_planner_slug_without_substitution() -> None
 # --- CT-2.1: creation is a caller decision, proven through a real managed run --
 
 
-def _bootstrap_text(project: str) -> str:
-    return json.dumps(
-        {
-            "kind": "BOOTSTRAP_NEW_PROJECT",
-            "project_slug": project,
-            "increment_slug": "foundation",
-            "semantics": _payload(),
-        }
-    )
+def _bootstrap_text() -> str:
+    """The only bootstrap shape the wire accepts: content, never identity (E586)."""
+    return json.dumps({"kind": "BOOTSTRAP_NEW_PROJECT", "semantics": _payload()})
 
 
 def _run_case(
@@ -436,7 +433,7 @@ def test_chat_slug_and_explicit_route_are_required_for_new_project(site: Site, t
         site,
         tmp_path,
         child_run_id="ct21-select-route",
-        planner_text=_bootstrap_text("sneaky-project"),
+        planner_text=_bootstrap_text(),
         project_slug=None,
     )
     current_rev, initial_rev = revisions.split("|")
@@ -476,17 +473,18 @@ def test_chat_slug_and_explicit_route_are_required_for_new_project(site: Site, t
         site,
         tmp_path,
         child_run_id="ct21-caller-slug",
-        planner_text=_bootstrap_text("planner-guess"),
+        planner_text=_bootstrap_text(),
         project_slug="chat-project",
     )
     assert code == 0
     assert state is not None and state.status == "DONE"
     assert record["plan_ref"]["source_kind"] == "BOOTSTRAP"
+    # CT-2.1 + E586: the caller names the project, the harness names the increment.
     assert record["plan_ref"]["workspace_relative_path"] == (
-        "worklogs/chat-project/increments/increment-01-foundation.md"
+        "worklogs/chat-project/increments/increment-01-initial-plan.md"
     )
     assert (site.source / "worklogs" / "chat-project" / "roadmap.md").exists()
-    assert not (site.source / "worklogs" / "planner-guess").exists()
+    assert not (site.source / "worklogs" / "sneaky-project").exists()
 
 
 @pytest.mark.parametrize(

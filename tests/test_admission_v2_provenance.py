@@ -521,8 +521,6 @@ def test_v2_bootstrap_admitted_emits_distinct_bundle_and_plan_hashes_with_instal
         choice = json.dumps(
             {
                 "kind": "BOOTSTRAP_NEW_PROJECT",
-                "project_slug": "new-project",
-                "increment_slug": "foundation",
                 "semantics": _V2_SEMANTICS,
             }
         )
@@ -583,8 +581,6 @@ def test_v2_bootstrap_invalid_body_blocks_with_candidate_and_bundle_evidence_and
         choice = json.dumps(
             {
                 "kind": "BOOTSTRAP_NEW_PROJECT",
-                "project_slug": "bad-project",
-                "increment_slug": "foundation",
                 "semantics": _V2_INVALID_SEMANTICS,
             }
         )
@@ -703,8 +699,6 @@ def test_v2_bootstrap_authority_failures_emit_valid_v2_records(
         choice = json.dumps(
             {
                 "kind": "BOOTSTRAP_NEW_PROJECT",
-                "project_slug": "demo-fail",
-                "increment_slug": "foundation",
                 "semantics": _V2_SEMANTICS,
             }
         )
@@ -754,8 +748,6 @@ def test_v2_bootstrap_authority_failures_emit_valid_v2_records(
             json.dumps(
                 {
                     "kind": "BOOTSTRAP_NEW_PROJECT",
-                    "project_slug": "demo-bad",
-                    "increment_slug": "foundation",
                     "semantics": [],
                 }
             ),
@@ -953,8 +945,6 @@ def test_invoke_workflow_handoff_child_writes_validated_v2_bootstrap_admission(
             bootstrap_choice = json.dumps(
                 {
                     "kind": "BOOTSTRAP_NEW_PROJECT",
-                    "project_slug": "child-proj",
-                    "increment_slug": "foundation",
                     "semantics": _V2_SEMANTICS,
                 }
             )

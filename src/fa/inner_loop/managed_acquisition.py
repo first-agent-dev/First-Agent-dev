@@ -27,11 +27,13 @@ if TYPE_CHECKING:
     from fa.inner_loop.tools.workspace_port import WorkspacePort
 
 __all__ = [
+    "INITIAL_INCREMENT_SLUG",
     "AcquisitionChoice",
     "AcquisitionChoiceError",
     "AcquisitionMetadataError",
     "AcquisitionOutcome",
     "BootstrapNewProjectChoice",
+    "BootstrapProposal",
     "CanonicalIncrementArtifact",
     "IncrementMetadata",
     "NeedsClarificationChoice",
@@ -65,14 +67,38 @@ class SelectExistingChoice:
     kind: Literal["SELECT_EXISTING"] = "SELECT_EXISTING"
 
 
+#: The increment a bootstrap always creates (CT-2.1, D-V2-7). It is a property of the
+#: route, not of the request: the first increment of a new project is the initial plan,
+#: and a model that could name it could name the file admission later reads -- which is
+#: the whole difference between "the planner owns semantics" and "the planner owns
+#: identity". The renderer already hard-codes the same key; this is the one spelling.
+INITIAL_INCREMENT_SLUG = "initial-plan"
+
+
+@dataclass(frozen=True, slots=True)
+class BootstrapProposal:
+    """What the acquisition planner may say about a new project: content, never identity.
+
+    The wire carries ``semantics`` and nothing else (D-V2-7). ``project_slug`` and
+    ``increment_slug`` are *not* here because neither belongs to the planner: the slug
+    is caller authority (CT-2.1) and the increment is harness-fixed
+    (``INITIAL_INCREMENT_SLUG``). A payload that names either is ``choice-malformed``
+    rather than silently overridden -- overriding would leave the model believing it
+    chose a name that was then replaced (E586).
+    """
+
+    semantics: PlanSemantics
+    kind: Literal["BOOTSTRAP_NEW_PROJECT"] = "BOOTSTRAP_NEW_PROJECT"
+
+
 @dataclass(frozen=True, slots=True)
 class BootstrapNewProjectChoice:
-    """The planner's answer: typed semantics, never Markdown (D-V2-7).
+    """A bootstrap resolved against authority: fixed identity, typed semantics.
 
-    ``semantics`` is the only content a PLAN-V2 bootstrap carries, and the controller is
-    the only thing that turns it into plan bytes. ``roadmap_body``/``increment_body`` are
-    the V1 route's free prose; they stay because that route is still reachable, and a
-    PLAN-V2 choice carries neither.
+    Only the controller builds this, from a proposal plus the caller's project slug,
+    after the route has decided the grammar. ``roadmap_body``/``increment_body`` are
+    the V1 route's free prose, which no wire path can populate any more; they stay
+    until that route is retired with D-V2-2.
     """
 
     project_slug: str
@@ -140,7 +166,7 @@ class ResolvedExistingIncrement:
     increment: IncrementMetadata
 
 
-AcquisitionChoice: TypeAlias = SelectExistingChoice | BootstrapNewProjectChoice | NeedsClarificationChoice  # noqa: UP040
+AcquisitionChoice: TypeAlias = SelectExistingChoice | BootstrapProposal | NeedsClarificationChoice  # noqa: UP040
 
 
 class AcquisitionChoiceError(ValueError):
@@ -506,7 +532,9 @@ class AcquisitionOutcome:
     * ``snapshot`` -- a validated plan this run may be admitted against;
     * ``clarification`` -- a closed reason to return to chat with no coder;
     * ``needs_bootstrap`` -- the choice asks for a new project, whose bundle must be
-      rendered and installed by the authority before any plan identity exists.
+      rendered and installed by the authority before any plan identity exists. It is a
+      ``BootstrapProposal``: identity comes from the caller and the harness, never from
+      the planner (E586).
 
     A bootstrap choice deliberately does **not** produce a snapshot here. The plan
     it will be admitted against is the file the authority installs, read back
@@ -516,7 +544,7 @@ class AcquisitionOutcome:
 
     snapshot: PlanSnapshot | None = None
     clarification: NeedsClarificationChoice | None = None
-    bootstrap: BootstrapNewProjectChoice | None = None
+    bootstrap: BootstrapProposal | None = None
     roadmap: RoadmapMetadata | None = None
     increment: IncrementMetadata | None = None
 
@@ -554,7 +582,7 @@ def resolve_acquisition_choice(
     """
     if isinstance(choice, NeedsClarificationChoice):
         return AcquisitionOutcome(clarification=choice)
-    if isinstance(choice, BootstrapNewProjectChoice):
+    if isinstance(choice, BootstrapProposal):
         return AcquisitionOutcome(bootstrap=choice)
     if not isinstance(choice, SelectExistingChoice):
         # Same reasoning as the shape checks above: this is a programming error in
@@ -596,17 +624,19 @@ def _parse_existing_choice(value: dict[str, object]) -> SelectExistingChoice:
     return SelectExistingChoice(project_slug, increment_id)
 
 
-def _parse_bootstrap_choice(value: dict[str, object]) -> BootstrapNewProjectChoice:
+def _parse_bootstrap_choice(value: dict[str, object]) -> BootstrapProposal:
     """Parse the typed payload the renderer consumes; refuse Markdown fields outright.
 
     The wire carries ``semantics`` only. Accepting ``roadmap_body``/``increment_body`` here
     as well would leave two ways to describe one plan, and the prompt could not say which
     one admission judges -- the drift that produced P0-1.
+
+    **Identity is not on this wire** (CT-2.1, E586). ``project_slug`` is caller authority
+    and ``increment_slug`` is harness-fixed, so a payload carrying either is refused rather
+    than overridden: the closed key set makes "the planner tried to name the project" a
+    diagnosable refusal instead of a substitution the model never learns about.
     """
-    if set(value) != {"kind", "project_slug", "increment_slug", "semantics"}:
-        raise _malformed()
-    project_slug, increment_slug = value["project_slug"], value["increment_slug"]
-    if not _valid_slug(project_slug) or not _valid_slug(increment_slug):
+    if set(value) != {"kind", "semantics"}:
         raise _malformed()
     raw = value["semantics"]
     if isinstance(raw, Mapping):
@@ -619,13 +649,7 @@ def _parse_bootstrap_choice(value: dict[str, object]) -> BootstrapNewProjectChoi
         # The payload's own field is the message: the model learns which field to fix,
         # and the closed rule stays a closed rule.
         raise AcquisitionChoiceError("bootstrap", "invalid-body") from error
-    return BootstrapNewProjectChoice(
-        project_slug=project_slug,
-        increment_slug=increment_slug,
-        roadmap_body="",
-        increment_body="",
-        semantics=semantics,
-    )
+    return BootstrapProposal(semantics=semantics)
 
 
 def _parse_clarification_choice(value: dict[str, object]) -> NeedsClarificationChoice:

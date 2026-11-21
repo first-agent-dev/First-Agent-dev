@@ -40,9 +40,11 @@ from fa.inner_loop.admission_schema import ADMISSION_RULES, ADMISSION_RULES_V2
 from fa.inner_loop.coder_loop import SessionOutcome
 from fa.inner_loop.injections import INJECTION_MODES, INJECTION_SPECS, resolve_injection_modes
 from fa.inner_loop.managed_acquisition import (
+    INITIAL_INCREMENT_SLUG,
     AcquisitionChoiceError,
     AcquisitionOutcome,
     BootstrapNewProjectChoice,
+    BootstrapProposal,
     parse_acquisition_choice,
     resolve_acquisition_choice,
 )
@@ -3112,20 +3114,30 @@ _CLARIFICATION_V2_RULES: dict[str, str] = {
 }
 
 
-def _with_project_hint(choice: BootstrapNewProjectChoice, hint: str | None) -> BootstrapNewProjectChoice:
-    """Install the project under the slug the caller named, not the planner's guess.
+def _resolve_bootstrap_identity(
+    proposal: BootstrapProposal, hint: str | None
+) -> BootstrapNewProjectChoice | None:
+    """Give a proposal the identity only the route may supply (CT-2.1, E586).
 
-    CT-2.1: the slug is caller authority (``invoke_workflow.project_slug``), while
-    the planner owns the *content* of the plan. Substituting the body would let a
-    model rename a project the operator already named in chat; substituting the
-    slug would write the operator's project under a name they did not choose. So
-    the body stays and only the name is replaced -- deterministically, not as a
-    retry, because a rename is not a correctness failure of the planner.
+    The planner returns content; the *name* is caller authority
+    (``invoke_workflow.project_slug``) and the increment is harness-fixed. ``None`` means
+    the caller never named a project, which is a refusal rather than a fallback: picking
+    a name here would write the operator's project under something the model invented.
+
+    There is nothing to override any more, and that is the point. The old helper replaced
+    a planner-written slug and logged a warning -- a substitution the model could not see
+    and the operator could not audit. The wire now refuses the field outright, so this
+    function only *fills in* facts the route already owns.
     """
-    if hint is None or choice.project_slug == hint:
-        return choice
-    logger.warning("bootstrap slug overridden by the caller: planner=%r caller=%r", choice.project_slug, hint)
-    return replace(choice, project_slug=hint)
+    if hint is None:
+        return None
+    return BootstrapNewProjectChoice(
+        project_slug=hint,
+        increment_slug=INITIAL_INCREMENT_SLUG,
+        roadmap_body="",
+        increment_body="",
+        semantics=proposal.semantics,
+    )
 
 
 def _bind_acquisition_admission(
@@ -3152,7 +3164,26 @@ def _bind_acquisition_admission(
             # route decides the grammar here, before any bytes exist, which is what
             # keeps the decision out of the document (INV-01).
             ctx = replace(ctx, plan_format=PLAN_V2)
-            bootstrap = _with_project_hint(outcome.bootstrap, ctx.project_hint)
+            bootstrap = _resolve_bootstrap_identity(outcome.bootstrap, ctx.project_hint)
+            if bootstrap is None:
+                # The planner proposed a new project but nobody named it, so there is no
+                # identity to install under and inventing one would create a project the
+                # operator never asked for (CT-2.1).
+                #
+                # Precedence is the installer's, not this guard's: a run with no managed
+                # authority could not install whatever it was named, and telling that
+                # operator to name a project would send them one step in the wrong
+                # direction. Same two rules, same order, one of them early.
+                if ctx.managed_execution is None:
+                    rule, detail = "bootstrap-unavailable", _BootstrapFailure(
+                        "bootstrap", "unavailable", "ERROR", "INDETERMINATE"
+                    )
+                else:
+                    rule, detail = "project-route-mismatch", _BootstrapFailure(
+                        "selection", "project-route-mismatch", "ERROR", "INDETERMINATE"
+                    )
+                logger.warning("bootstrap refused: %s (run=%s)", rule, ctx.run_id)
+                return ctx, _refusal_exit_code(ctx, PlanRefError(rule), failure_detail=detail)
             installed, refusal, failure_detail = _install_bootstrap_project_with_detail(
                 ctx, bootstrap, creation_authorized=ctx.project_hint is not None
             )

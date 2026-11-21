@@ -27,9 +27,10 @@ refusal codes, and no chance for the renderer to emit something admission would 
 a reason the payload was never told about.
 
 **Selectors are project-relative in the payload** (``acceptance/tests/<path>.py::<node>``).
-The project slug is caller authority and can still be substituted at install time
-(``_with_project_hint``), so a payload that embedded the slug would either carry a model
-claim or break under substitution. The prefix is formed here and nowhere else.
+The project slug is caller authority and is applied at install time
+(``_resolve_bootstrap_identity``), so a payload that embedded the slug would either carry a
+model claim or break when the route names the project. The prefix is formed here and
+nowhere else.
 
 Front matter is *not* rendered here: the authority owns every metadata line
 (``fa.execution.publication``), and ``ledger.md`` is a fixed harness body rather than a

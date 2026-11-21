@@ -25,11 +25,12 @@ import pytest
 
 from fa.inner_loop.managed_acquisition import (
     AcquisitionOutcome,
-    BootstrapNewProjectChoice,
+    BootstrapProposal,
     NeedsClarificationChoice,
     SelectExistingChoice,
     resolve_acquisition_choice,
 )
+from fa.inner_loop.plan_semantics import parse_semantics
 from fa.inner_loop.tools.workspace_port import (
     PortDirectoryEntry,
     PortProjectArtifactListing,
@@ -211,6 +212,13 @@ def test_a_clarification_passes_through_unchanged() -> None:
     assert outcome.snapshot is None and outcome.bootstrap is None
 
 
+def _minimal_semantics() -> Any:
+    """The smallest payload the renderer accepts, borrowed from the parser's own bank."""
+    from tests.test_managed_acquisition import _MINIMAL_SEMANTICS
+
+    return parse_semantics(_MINIMAL_SEMANTICS)
+
+
 def test_bootstrap_asks_for_installation_and_never_fabricates_a_snapshot() -> None:
     """The decision that keeps bootstrap honest.
 
@@ -218,16 +226,13 @@ def test_bootstrap_asks_for_installation_and_never_fabricates_a_snapshot() -> No
     installs and reads back. Building a snapshot from the submitted prose would
     admit a coder against text that is not in the workspace.
     """
-    choice = BootstrapNewProjectChoice(
-        "new-project",
-        "foundation",
-        "## Intent\n\nNew.\n\n## Out of scope\n\nNone.\n",
-        "## SLICE1: Build\n\nDo it.\n",
-    )
+    choice = BootstrapProposal(semantics=_minimal_semantics())
     outcome = resolve_acquisition_choice(choice, inventory_view=_port(), inventory_slugs=())
 
     assert outcome.bootstrap is choice
     assert outcome.snapshot is None and outcome.clarification is None
+    # A proposal carries no name: identity is resolved by the controller, never here.
+    assert not hasattr(outcome.bootstrap, "project_slug")
 
 
 def test_a_selection_reads_only_the_project_it_was_told_about() -> None:
