@@ -11847,3 +11847,56 @@ clean over 223 sources. Two banks were rebased rather than bent: every bootstrap
 `test_admission_v2_provenance.py` (5) and the lifecycle `BOOTSTRAP` fixture lost their
 identity keys, because a payload carrying them is now malformed *before* the route refusal
 those tests exist to prove.
+
+### E587 — P2-3 closed: the create route authors, it does not choose (D-V2-9 steps 2–5)
+
+**What landed.** `PlannerDispatchKind.CREATE_NEW_PROJECT` — a third writing kind that carries
+exactly one directory (`authoring_root = worklogs/<slug>`), built by the controller from the
+caller's slug and validated in `__post_init__` (two components, `worklogs` first, no
+`active_plan`). `_stage_planner_dispatch` chooses it from the *route*, so a create-authorized
+run stops being an acquisition stage at all: `ACQUISITION` pins a reader and offers no writer,
+which is precisely what a planner that must author documents cannot use.
+
+**The scaffold is harness bytes and nothing else.** `project_scaffold.py` returns the seven
+files of D-V2-9.7, written by the stage through its own port before the first tool call, with
+`roadmap.md` first because its create-only write is the collision check. Two constraints that
+look stylistic are forced: `.gitkeep` is impossible (`_parts` rejects `""`/`.`/`..` and the
+writer has no mkdir), so `notes/` and `reviews/` are carried by `README.md`; and the
+placeholder test module defines no test function, because a placeholder *test* is a fake
+green. The unfilled pair is refused by `parse_plan` (`missing-slice`) — verified directly
+rather than assumed, since a scaffold that parsed would be a plan nobody wrote.
+
+**The metadata table (D-V2-9.3) is deliberately small.** `project_metadata.check_project_metadata`
+walks fields that must *agree with something else*: `Roadmap-ID` vs the path slug, the
+increment id vs `active-increment`, one `created` across the project, `status` membership
+only. A legal `status` is the planner's choice and every value in the vocabulary passes —
+that is what "as flexible as it can be while still being a check" (Q#10) means in code.
+Refusals map to the existing recorded rule `bootstrap/invalid-metadata`; the specific
+mismatch goes to the log, because the admission vocabulary is closed and already names the
+event.
+
+**Collision is `bootstrap/collision`, not `stale`.** The authority would refuse the
+scaffold's first write with `STALE_REVISION` — correct mechanism, useless message: an agent
+reads "stale" as its own lost race. The check therefore runs before any view opens, from the
+pinned inventory that already drove the route (complete *and* incomplete directories both
+collide).
+
+**P2-3 is closed by deletion, not by a patch.** The old task text told the model "return
+`BOOTSTRAP_NEW_PROJECT` with exactly that `project_slug`" while `_parse_bootstrap_choice`
+demanded `{"kind","semantics"}` — a model following the instruction was guaranteed
+`choice-malformed`. Both halves are gone with the payload route from this stage's task. The
+test that missed it asserted the phrase `caller: <slug>`; it is rewritten to assert the
+*absence* of the payload instruction, which is the property that would have caught the drift.
+
+**Verification.** 503 tests across the touched banks (`test_ai_native_project_scaffold.py`
+18 new, `test_s5p1_acquisition_lifecycle.py` +5, `test_ai_native_bootstrap.py` rewritten
+route-text oracles); `ruff` clean; `mypy src` clean over 225 sources. **Mutants 3/3 killed:**
+dropping the `active-increment` cross-check, reordering the scaffold so `roadmap.md` is not
+first, and disabling the collision check. The third survived the first version of its test,
+which only observed "something refused" — it now asserts no stage was dispatched at all,
+which is the property that separates *refused* from *ran and lost the work*.
+
+**Not done here, deliberately.** D-V2-9.8 (repair as a second authoring stage) stays its own
+CT/slice per the operator. Steps 1 (payload deletion) and 6 (prompt rewrite) remain: step 1
+is a pure deletion once step 6 can be written truthfully, and the operator's ordering put
+P2-4 last.
