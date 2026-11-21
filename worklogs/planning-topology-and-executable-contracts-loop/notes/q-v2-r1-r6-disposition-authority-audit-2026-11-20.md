@@ -99,7 +99,8 @@ evidence living somewhere else) without adding any strength.
 
 `reviewed_at` becomes a required field of the declaration, an ISO-8601 date. Admission refuses a disposition
 whose age exceeds **30 days** measured against the run clock (UTC), rule `disposition-review-stale`, not
-retryable without a fresh declaration. A future date is refused as `disposition-review-invalid`. The constant
+retryable without a fresh declaration. A future date is refused as `disposition-reviewed-at-invalid` (the name the code uses; this note
+originally spelled it `disposition-review-invalid`, corrected 2026-11-20). The constant
 lives next to the reason set in `plan_v2.py` (`MAX_DISPOSITION_AGE_DAYS = 30`) so the grammar's vocabulary and its
 lifetime stay in one file.
 

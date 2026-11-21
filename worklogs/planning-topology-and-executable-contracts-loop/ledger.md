@@ -11168,45 +11168,6 @@ Operator authorized starting implementation from the updated plan (2026-11-20) a
 **STEP9B stays unticked** because its own independent-review gate is not formally recorded yet.
 
 **Landed.** `plan_admission.snapshot_from_bytes` takes the grammar from the caller (`PLAN_V1` default,
-`PLAN_V2` when the route says so) and parses the V2 roadmap/increment pair once into
-`PlanSnapshot.graph`, carrying any refusal as the closed `format_error` rule instead of an exception;
-`PlanSnapshot.format` makes the decision explicit and `ids` stays empty on the V2 path so the V1 extractor
-never reads V2 bytes. `WorkflowContext.plan_format` carries the decision into
-`_admit_installed_plan`, which reads `roadmap.md` through the same pinned substrate as the increment and
-refuses a missing roadmap as `bootstrap-unreadable`. `_validate_plan_admission` dispatches: a `PLAN-V2`
-snapshot goes to `_validate_v2_admission` and **never** reaches `precheck`, `validate_kill_directives` or
-the `zero-slices` branch. `_admit_plan`'s legacy fail-open (`admission is None ⇒ True`) now applies only to
-`PLAN-V1`; a V2 run fails closed.
-
-**Evidence.** `tests/test_ai_native_plan_v2.py` 45 → 51 tests, five new admission selectors plus a
-hand-built-snapshot control. The same V2 bytes admit `PASS` on the V2 route and are refused on the V1 route
-with a V1 diagnostic (`precheck/step-without-exit`) — that contrast is the proof that the route, not the
-document, picks the grammar. **Six targeted mutants, 6/6 killed**: dispatch bypassed, admission fail-open
-restored, route format ignored, roadmap not required, `graph-missing` passing, `format-error` ignored; both
-modules byte-restored (`sha256sum -c` OK).
-
-**Regression banks.** 656 passed (plan ids, admission provenance, S5.1 admission, invoke tool, execution
-client ×2, plan reference, S10c, plan_v2, acceptance bundle, kill attribution); 680 passed
-(execution composition, managed workflow E2E, S8 controller, verify gate live). `ruff check`/`format`,
-`mypy` on both modules, `pyrefly` (0 errors), `fa authoring-check` (0 diagnostics).
-
-**Not done, and why.** SLICE1 step 5 — retiring `fa workflow` and leaving one composition reachable by a
-human — is **not** in this increment. It cannot be a deletion alone: the user's decision keeps a manual
-path, so the retirement needs a human front for `invoke_workflow` (argument surface, tool-result to exit
-code mapping, transport/registry wiring) plus the rewrite of the ~10 test modules that currently drive
-`fa workflow`. Doing it as a bare deletion would silently remove operator capability — the exact
-"deferred, not dropped" failure this plan's review flagged. It is the next increment, tracked as CT-1.5.
-
-**Known structural note.** The `PLAN-V2` branch has no production caller until SLICE2's renderer sets
-`ctx.plan_format`; this is recorded in the plan rather than hidden, because a mechanism without a caller is
-what E564 already cost this project.
-
-### E570 — SLICE1 increment 1: the admission cutover exists and is kill-checked (2026-11-20)
-
-Operator authorized starting implementation from the updated plan (2026-11-20) after the adversarial review;
-**STEP9B stays unticked** because its own independent-review gate is not formally recorded yet.
-
-**Landed.** `plan_admission.snapshot_from_bytes` takes the grammar from the caller (`PLAN_V1` default,
 `PLAN_V2` when the route says so) and parses the V2 roadmap/increment pair once into `PlanSnapshot.graph`,
 carrying any refusal as the closed `format_error` rule instead of an exception; `PlanSnapshot.format` makes
 the decision explicit and `ids` stays empty on the V2 path so the V1 extractor never reads V2 bytes.
@@ -11335,7 +11296,7 @@ passed (verify gate live, S10c exit contract, CLI). **Two flip mutants, 2/2 kill
 applied as V1) — the flip is load-bearing, not decorative. Targeted mutants from E572 still hold. `ruff`,
 `mypy`, `pyrefly` (0), `authoring-check` (0).
 
-## E574 — CT-2.1: creation is a caller decision, enforced on both sides (2026-11-20)
+### E574 — CT-2.1: creation is a caller decision, enforced on both sides (2026-11-20)
 
 **Fact.** `project_action`/`project_slug` are now the caller's, and the route they describe is enforced by the
 controller rather than requested from the planner. `_prepare_invocation` refuses the ambiguous shapes before a
@@ -11393,7 +11354,7 @@ proposal/resolved split in `managed_acquisition.py`. Until then a planner slug i
 (b) CT-2.2's collision proof (`project_exists`, not retryable) against a real authority is not written yet.
 CT-2.1 therefore remains **open**.
 
-## E575 — Model ratified: harness assembles the v2 project tree (2026-11-20)
+### E575 — Model ratified: harness assembles the v2 project tree (2026-11-20)
 
 **Operator decision (this session).** The target behaviour is not "the planner writes `worklogs/<slug>/` with
 ordinary tools and the harness renames it": the planner returns **semantics**, and the **harness assembles the
@@ -11419,7 +11380,7 @@ a required `DISPOSITION-REASON`/`DISPOSITION-EVIDENCE`/`DISPOSITION-OWNER` tripl
 predates the implementation) instead of the module. What actually remains open is the five gaps G1–G5 recorded
 in E576.
 
-## E576 — Acceptance gaps G1–G5; R2 foundation landed (2026-11-20)
+### E576 — Acceptance gaps G1–G5; R2 foundation landed (2026-11-20)
 
 E575 recorded that Q-V2-ACC-2 is implemented and that five gaps remain. This is the record of those gaps and of
 the work that closed the first two, in dependency order. Nothing here re-opens B-narrow: every change *adds* a
@@ -11464,7 +11425,7 @@ out-of-band tuple never reaches the bytes; it raises `seal-malformed`, not `Type
 record whose list is unsorted, duplicated, over 1024 entries, non-contract, or absent is refused). Thirteen mutants
 cover this, including one that drops the shape guard: all killed.
 
-## E577 — R5 is 30 days; R1/R6 decided by source audit (2026-11-20)
+### E577 — R5 is 30 days; R1/R6 decided by source audit (2026-11-20)
 
 **Operator answers.** R5 = **30 days**. R1 and R6 are not to be chosen by preference: the operator asked for a
 source audit through the project's values ("выбранный вариант должен удовлетворять поведению системы и в то же
@@ -11486,7 +11447,7 @@ principle and the `TEST_REQUIRED`-refuses-stray-`DISPOSITION-*` rule all stand. 
 in-plan `DISPOSITION-OWNER` tests, so it should land with S2 (schema + validator) in one verified step rather
 than leaving the parser refusing documents the tool cannot yet produce.
 
-## E578 — R1 landed: the plan requests, the caller grants, admission binds (2026-11-20)
+### E578 — R1 landed: the plan requests, the caller grants, admission binds (2026-11-20)
 
 **S1+S2+S3 of E577.** The plan can no longer own its own waiver, and the caller can now issue one. Landed as one
 step because S1 alone would have made the parser refuse documents the tool could not yet produce.
@@ -11524,7 +11485,7 @@ regression found and fixed (`test_ai_native_acceptance_collection.py` had its ow
 fixture — the inline duplication is exactly why the grep missed it), then `8191 passed, 18 skipped, 3 xfailed`,
 with the three known baseline-red tests deselected. `ruff` clean over 653 files, `mypy` clean over 222 sources.
 
-## E579 — R6 closed: a `doc:` grant is verified against the pinned bytes (2026-11-20)
+### E579 — R6 closed: a `doc:` grant is verified against the pinned bytes (2026-11-20)
 
 **S4 of E577, and the correction E578 promised.** E578 shipped the reference *typed but unread*: a grant could name
 a file that did not exist and still bind. That gap is closed here.
@@ -11554,7 +11515,7 @@ backed it — the reader sees `issue:FIRST-42`, not a green tick.
 compares the digest and one that never reads at all. Full suite `8205 passed, 18 skipped, 3 xfailed` with the three
 baseline-red tests deselected; `ruff` clean over 653 files, `mypy` clean over 222 sources.
 
-## E580 — R3 landed: the policy matrix, and one waiver frees one claim (2026-11-20)
+### E580 — R3 landed: the policy matrix, and one waiver frees one claim (2026-11-20)
 
 **Operator approved the matrix as proposed.** Enforced in `plan_v2._admit_evidence`, because both facts are properties
 of the graph: no caller input is needed to know that a preservation claim has no test, or that one granted invariant
@@ -11591,3 +11552,34 @@ survivor forced a better test: "the class check runs after the kind gate" surviv
 uncovered preservation case existed — the tighter check is the one that can tell the two rules apart. Full suite
 `8215 passed, 18 skipped, 3 xfailed` with the three baseline-red tests deselected; `ruff` clean over 653 files,
 `mypy` clean over 222 sources.
+
+### E581 — Plan corrections from the source audit: P0-1…P3-4, and the renderer's contract (2026-11-20)
+
+The operator asked for the found defects to be written into the plan before implementation. Every row in §12 of
+`notes/i03-ai-native-workflow-refactor-plan-v2.md` was reproduced by running production code; none is inferred from a
+document. The register is now the plan's, so a later entry closes a row rather than re-describing it.
+
+**What changed in the plan.**
+
+| Section | Change |
+|---|---|
+| §2 grammar block | Two positional facts recorded, both previously got wrong: `STEPS: <mode>` is the single mode line (a second, empty `STEPS:` header is `slice-<n>-steps-mode`), and a step line is a slice-level list item that must not sit inside `STEP-EXIT-CHECKS:`. Plus the **D-V2-7 structure**: planner returns typed semantics, controller renders every byte, selectors are carried *project-relative* and expanded only at render, and the renderer refuses to emit a pair that would not parse. |
+| §2 SLICE2 open items | The CT-2.1 remainder now names **both** planner-carried slugs (`project_slug` *and* `increment_slug`), and records the D-V2-7 order: renderer → prompt → payload wiring, with P0-2/P2-2 fixed in the third step because they are the same route decision. |
+| CT table | CT-2.3 gained the renderer law; **CT-2.6** added — the prompt must be written in the payload's vocabulary and carry one example payload the real chain accepts. |
+| §12 (new) | The defect register, with stable ids and measured evidence. |
+
+**The two defects that matter.** P0-1: a body written exactly as `ACQUISITION_SYSTEM_PROMPT` instructs is refused by
+`parse_plan` — the prompt teaches V1 `Schema-4` Markdown that the PLAN-V2 route no longer admits, so the first real
+create-new cannot produce an admissible plan. P0-2: a V2 project cannot be resumed, because `resolve_existing_choice`
+snapshots with the default `PLAN-V1` while only the bootstrap branch sets `PLAN_V2`; the route is one-way and D-V2-2's
+"no V1 fallback" is true only in the direction that has been built.
+
+**P1-1/P1-2 are policy, not typos, and are deliberately not folded into the renderer.** After R1 a reason is a
+*request*; `contract_evidence` still grades `ATTESTED` from the reason alone, so an ungranted graph can name contracts
+attested, and `bind_dispositions`' returned graph is discarded. The cluster bound is likewise per invariant, so one
+grant can authorise two invariants that share a reason. Both are recorded with the reproduced evidence and a preferred
+fix (grade on the bound grant; refuse a repeated reason), to be ratified as one decision rather than slipped in
+underneath a refactor.
+
+**Verification of this entry.** Documentation only: `scripts/check_doc_links.py` → 369 files, no broken internal
+links. No product code touched; nothing here claims a test or a host result.
