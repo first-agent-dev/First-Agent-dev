@@ -23,8 +23,12 @@ from fa.inner_loop.plan_admission import (
 from fa.inner_loop.plan_v2 import (
     DISPOSITION_REASONS,
     MAX_DISPOSITIONS,
+    EvidenceMode,
     PlanGraph,
     PlanV2Error,
+    attested_contracts,
+    contract_evidence,
+    is_contract_id,
     parse_plan,
     resolve_selectors,
 )
@@ -599,3 +603,79 @@ def test_invoke_workflow_cli_returns_the_child_exit_code(monkeypatch: pytest.Mon
     monkeypatch.setattr(cli, "load_runtime_limits_from_path", lambda: SimpleNamespace(limits=RuntimeLimits()))
 
     assert cli._cmd_invoke_workflow(_invoke_args()) == 3
+
+
+# --- R2: evidence grades a contract by what the plan affords -----------------
+
+_SOFT_INVARIANT_2 = """### INV-2
+KIND: SOFT
+TEXT: Host readiness is proven on the approved host.
+EVIDENCE: TEST_REQUIRED
+"""
+
+_DISPOSED_INVARIANT_1 = """### INV-1
+KIND: HARD
+TEXT: The writer never publishes without a sealed acceptance revision.
+EVIDENCE: NON_EXECUTABLE
+DISPOSITION-REASON: HOST_READINESS
+DISPOSITION-EVIDENCE: W4 readiness run sheet row L-RCPT-2/6
+DISPOSITION-OWNER: W4
+"""
+
+_TWO_DISPOSED_CONTRACTS = _SLICE.replace(
+    "  CT-1.2 [CONSTRAINT] INV: INV-2: readiness is proven on the host",
+    "  CT-1.2 [CONSTRAINT] INV: INV-2: readiness is proven on the host\n"
+    "  CT-1.3 [CONSTRAINT] INV: INV-2: readiness is proven on the host",
+)
+
+
+def test_a_selector_grades_executable_and_a_disposition_grades_attested() -> None:
+    """The default plan tests CT-1.1 and only *disposes* of CT-1.2 (INV-2)."""
+    assert contract_evidence(plan_graph()) == {
+        "CT-1.1": EvidenceMode.EXECUTABLE,
+        "CT-1.2": EvidenceMode.ATTESTED,
+    }
+    assert attested_contracts(plan_graph()) == ("CT-1.2",)
+
+
+def test_several_contracts_on_one_disposed_invariant_are_all_attested_sorted() -> None:
+    graph = plan_graph(slice_body=_TWO_DISPOSED_CONTRACTS)
+
+    assert attested_contracts(graph) == ("CT-1.2", "CT-1.3")
+
+
+def test_attestation_is_sorted_not_declaration_ordered() -> None:
+    """Declaration order is the planner's; the seal's list is canonical."""
+    declared_out_of_order = _SLICE.replace(
+        "  CT-1.2 [CONSTRAINT] INV: INV-2: readiness is proven on the host",
+        "  CT-1.2 [CONSTRAINT] INV: INV-2: readiness is proven on the host\n"
+        "  CT-1.10 [CONSTRAINT] INV: INV-2: readiness is proven on the host",
+    )
+
+    assert attested_contracts(plan_graph(slice_body=declared_out_of_order)) == ("CT-1.10", "CT-1.2")
+
+
+def test_a_contract_with_neither_a_selector_nor_a_disposition_is_uncovered() -> None:
+    """A soft invariant needs no executable evidence, so the gap is legal — and visible."""
+    graph = plan_graph(invariants=_INVARIANT_1 + "\n" + _SOFT_INVARIANT_2)
+
+    assert contract_evidence(graph)["CT-1.2"] is EvidenceMode.UNCOVERED
+    assert attested_contracts(graph) == ()
+
+
+def test_a_selector_outranks_a_disposition_on_its_own_invariant() -> None:
+    """A disposition never weakens evidence that exists: the run still executes it."""
+    graph = plan_graph(invariants=_DISPOSED_INVARIANT_1 + "\n" + _SOFT_INVARIANT_2)
+
+    assert contract_evidence(graph)["CT-1.1"] is EvidenceMode.EXECUTABLE
+    assert "CT-1.1" not in attested_contracts(graph)
+
+
+@pytest.mark.parametrize("value", ["CT-1.1", "CT-12.3b", "CT-1b.2a"])
+def test_the_contract_id_grammar_accepts_what_the_parser_accepts(value: str) -> None:
+    assert is_contract_id(value)
+
+
+@pytest.mark.parametrize("value", ["CT-1", "ct-1.1", "CT-1.1 ", "CT-1.1.2", "CT-", "", "TEST-1.1", 1, None])
+def test_the_contract_id_grammar_refuses_everything_else(value: object) -> None:
+    assert not is_contract_id(value)

@@ -39,9 +39,10 @@ from .acceptance_closure import (
     collect_acceptance_closure,
     read_closure_payload,
 )
-from .plan_v2 import Acceptance, PlanGraph, resolve_selectors
+from .plan_v2 import Acceptance, PlanGraph, attested_contracts, is_contract_id, resolve_selectors
 
 __all__ = [
+    "MAX_ATTESTED",
     "MAX_SEAL_BYTES",
     "SCHEMA_VERSION",
     "SEAL_FILENAME",
@@ -69,6 +70,9 @@ MAX_SEAL_BYTES = 1024**2
 #: One seal cannot describe more selectors than the closure can hold tests.
 #: Implemented visibility modes; ``B`` is named only to refuse it explicitly.
 VISIBILITY_MODES = frozenset({"A"})
+#: Upper bound on one seal's attestation list, so the record stays far below
+#: ``MAX_SEAL_BYTES`` and a hostile list cannot inflate it.
+MAX_ATTESTED = 1024
 _UNSUPPORTED_MODES = frozenset({"B"})
 
 _REVISION_RE = re.compile(r"\Arev-[0-9a-f]{32}\Z")
@@ -118,6 +122,9 @@ class AcceptanceBundle:
     identity: tuple[PinnedIdentity, ...]
     supersedes_sha256: str | None
     seal_sha256: str
+    #: Contracts the plan covers only by an out-of-sandbox disposition. The seal
+    #: states them so no reader can mistake them for proven ones (R2).
+    attested: tuple[str, ...] = ()
 
     def nodeids(self) -> dict[str, str]:
         """``TEST-ID`` -> nodeid, the mapping the verifier executes against."""
@@ -142,6 +149,19 @@ def _require_text(value: object, rule: str, *, limit: int = 4096) -> str:
     if not isinstance(value, str) or not value or len(value) > limit or "\x00" in value:
         raise AcceptanceBundleError(rule)
     return value
+
+
+def _require_contract_ids(raw: object) -> tuple[str, ...]:
+    """Canonical attestation: a bounded, sorted, duplicate-free contract-id list.
+
+    Accepts a tuple on the mint side and the record's list on the load side, and
+    refuses every other shape with a rule rather than a ``TypeError``.
+    """
+    if not isinstance(raw, (list, tuple)) or len(raw) > MAX_ATTESTED:
+        raise AcceptanceBundleError("seal-malformed")
+    if any(not is_contract_id(item) for item in raw) or list(raw) != sorted(set(raw)):
+        raise AcceptanceBundleError("seal-malformed")
+    return tuple(raw)
 
 
 def _require_mode(mode: object) -> str:
@@ -258,6 +278,7 @@ def _record(bundle: AcceptanceBundle) -> dict[str, Any]:
             {"test_id": item.test_id, "ct_id": item.ct_id, "selector": item.selector, "nodeid": item.nodeid}
             for item in sorted(bundle.selectors, key=lambda item: item.test_id)
         ],
+        "attested": list(_require_contract_ids(bundle.attested)),
         "identity": [{"name": item.name, "sha256": item.sha256} for item in bundle.identity],
         "supersedes_sha256": bundle.supersedes_sha256,
     }
@@ -313,6 +334,7 @@ def mint_seal(
         identity=_bind_identity(identity),
         supersedes_sha256=supersedes_sha256,
         seal_sha256="",
+        attested=attested_contracts(graph),
     )
     return AcceptanceBundle(
         plan_sha256=bundle.plan_sha256,
@@ -324,6 +346,7 @@ def mint_seal(
         identity=bundle.identity,
         supersedes_sha256=bundle.supersedes_sha256,
         seal_sha256=_sha256(_canonical(_record(bundle))),
+        attested=bundle.attested,
     )
 
 
@@ -413,6 +436,7 @@ def load_seal(raw: bytes) -> AcceptanceBundle:
         selectors=_load_selectors(body.get("selectors")),
         mode=_require_mode(body.get("mode")),
         identity=_load_identity(body.get("identity")),
+        attested=_require_contract_ids(body.get("attested")),
         supersedes_sha256=None if supersedes is None else _require_sha256(supersedes, "supersedes-invalid"),
         seal_sha256=recorded,
     )

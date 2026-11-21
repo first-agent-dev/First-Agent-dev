@@ -11418,3 +11418,48 @@ a required `DISPOSITION-REASON`/`DISPOSITION-EVIDENCE`/`DISPOSITION-OWNER` tripl
 `EVIDENCE: TEST_REQUIRED` refusing any stray `DISPOSITION-*` line. I read the 2026-11-20 audit note (which
 predates the implementation) instead of the module. What actually remains open is the five gaps G1–G5 recorded
 in E576.
+
+## E576 — Acceptance gaps G1–G5; R2 foundation landed (2026-11-20)
+
+E575 recorded that Q-V2-ACC-2 is implemented and that five gaps remain. This is the record of those gaps and of
+the work that closed the first two, in dependency order. Nothing here re-opens B-narrow: every change *adds* a
+refusal or a disclosure, and none relaxes an existing rule.
+
+| Gap | What is missing today | Ratified resolution | State |
+|---|---|---|---|
+| **G1** self-ratification | `_build_invariant` (`plan_v2.py:265-315`) accepts `DISPOSITION-OWNER: W4\|operator` from the plan text, so the planner that wants a waiver writes one | **R1** — ratification is an *external input* (`parse_plan(..., ratified=...)`), never a plan field | accepted, planned after R2 |
+| **G2** untethered evidence | `DISPOSITION-EVIDENCE` is free text ≤ 256 chars; nothing checks it names a real artefact | **R6** — typed `DISPOSITION-EVIDENCE`: `doc:<path>@<sha256>`, `issue:<KEY>`, `review:<id>`, resolved at admission | accepted |
+| **G3** no attested verdict | `NON_EXECUTABLE` had **no consumer outside `plan_v2.py`** (grep, 2026-11-20): a disposed contract looked exactly like a covered one wherever coverage is reported | **R2** — a contract is graded `EXECUTABLE` / `ATTESTED` / `UNCOVERED` and the grading is carried by the artifact that claims coverage | **landed for the seal (this entry)** |
+| **G4** policy keyed on `KIND` | `_admit_evidence` (`plan_v2.py:573-584`) only inspects `KIND: HARD`; a `SOFT` invariant can be silent, and one disposition frees every contract hanging off it | **R3** — policy matrix `contract class × invariant kind` | accepted |
+| **G5** no expiry | nothing bounds the age of a disposition, so a 2024 readiness run satisfies a 2026 plan | **R5** — `REVIEWED-AT` + a maximum age (90 days proposed) | accepted, the 90-day constant is still undecided |
+
+**Landed in this entry.**
+
+| Change | File | Evidence |
+|---|---|---|
+| **D2 / B0** one slug authority: `_PROJECT_SLUG_RE`/`_PROJECT_SLUG_MAX` derived from `CONFIG_ID`, schema `maxLength` published from the same source | `tools/workflow_tool.py` | 3/3 mutants killed (`/tmp/mut_step1.py`) |
+| **D1 / B1** `CREATE_NEW` is refused as `create_requires_acquisition` (retryable) unless the route can acquire a plan (`managed is not None and "coder" in roles`), checked before any child allocation; unmanaged+coder still reports `acquisition_unavailable` first | `tools/workflow_tool.py` | 5/5 mutants killed (`/tmp/mut_step2.py`), 6-quadrant real-handler parametrisation |
+| **R2 (seal half)** `EvidenceMode` + `contract_evidence` + `attested_contracts` grade every contract; `mint_seal` records `attested` in the seal, `load_seal` requires it canonical, and the digest covers it | `plan_v2.py`, `acceptance_bundle.py` | 13/13 mutants killed (`/tmp/mut_step3.py`) |
+
+**Why the seal and not the admission record (R2 scope decision).** A run-summary counter needs a verdict sink, and
+the honest sink is the acceptance graph mapped to `CT-3.1`/`CT-3.4` — that wiring is SLICE3. Producing a counter
+before the sink exists would be a number nobody reads. The admission record cannot carry it either: the record
+schema hard-codes `route == "ADMITTED" → validation == "PASS"` (`admission_schema.py:302, 346, 383`), so a WARN
+cannot ride an admitted attempt, and inventing a new severity/route to hold a disclosure would be a schema change
+in service of a cosmetic signal. The seal, by contrast, is minted today and is precisely the artifact that claims
+"this closure is the oracle for this plan revision" — so it must name the contracts it does *not* prove
+(`attested`), while `nodeids()` stays exactly the executable table. Consequence for SLICE3: the summary must read
+`attested` from the seal and report `attested`/`uncovered` counts next to `proven`, never fold them into it.
+
+**Verification.** `tests/test_ai_native_plan_v2.py` 73 passed, `tests/test_ai_native_acceptance_bundle.py` 95
+passed, `tests/test_ai_native_bootstrap.py` 28 passed, `tests/test_invoke_workflow_tool.py` 136 passed; full suite
+`8141 passed, 18 skipped, 3 xfailed` with `test_pyrefly_import_topology::test_pyrefly_check_passes` and two
+`test_verify_slice.py` tests red **at baseline too** (verified by stashing: same failures on `da5ad12`; the
+verify-slice pair fails on `ModuleNotFoundError: No module named 'fa'` inside its overlay probe, the pyrefly test on
+14 pre-existing `SimpleNamespace`-vs-protocol errors). `ruff check`/`format --check` clean over 652 files, `mypy`
+clean over 222 sources.
+
+**Attestation is validated on both sides of the record.** `_require_contract_ids` runs in `_record` (so an
+out-of-band tuple never reaches the bytes; it raises `seal-malformed`, not `TypeError`) and in `load_seal` (so a
+record whose list is unsorted, duplicated, over 1024 entries, non-contract, or absent is refused). Thirteen mutants
+cover this, including one that drops the shape guard: all killed.

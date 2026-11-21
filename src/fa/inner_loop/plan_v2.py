@@ -9,6 +9,12 @@ because it needs the actual pytest collection.
 ``NON_EXECUTABLE`` evidence is legal only through the operator-ratified typed
 disposition (Q-V2-ACC-2 = B-narrow): a closed reason code, a bounded evidence
 reference, an owning lane, and a capped count. There is no free-text exception.
+
+A disposition is not a proof. ``contract_evidence`` grades every contract by the
+strongest evidence the plan actually affords — an acceptance selector
+(``EXECUTABLE``), else an out-of-sandbox disposition (``ATTESTED``), else
+nothing (``UNCOVERED``) — so that no consumer can present an attested contract
+as a proven one (R2).
 """
 
 from __future__ import annotations
@@ -16,6 +22,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
+from enum import StrEnum
 
 __all__ = [
     "CONTRACT_CLASSES",
@@ -26,6 +33,7 @@ __all__ = [
     "PLAN_FORMAT",
     "Acceptance",
     "Contract",
+    "EvidenceMode",
     "ExitCheck",
     "Invariant",
     "KillTarget",
@@ -34,6 +42,9 @@ __all__ = [
     "Scenario",
     "SlicePlan",
     "Step",
+    "attested_contracts",
+    "contract_evidence",
+    "is_contract_id",
     "parse_plan",
     "resolve_selectors",
 ]
@@ -55,6 +66,22 @@ MAX_DISPOSITIONS = 16
 CONTRACT_CLASSES = frozenset({"FUNCTIONAL", "CONSTRAINT", "PRESERVATION"})
 _EVIDENCE_MODES = frozenset({"TEST_REQUIRED", "NON_EXECUTABLE"})
 _STEP_MODES = frozenset({"prescriptive", "outcome"})
+
+
+class EvidenceMode(StrEnum):
+    """What a plan affords for one contract, strongest first.
+
+    ``EXECUTABLE`` — an acceptance selector in the sealed closure will be run.
+    ``ATTESTED`` — the contract's invariant carries an out-of-sandbox
+    disposition, so the claim is carried by a typed human record, never by a
+    test: it may be reported as attested and must not be reported as proven.
+    ``UNCOVERED`` — neither; the plan does not yet say how the claim is checked.
+    """
+
+    EXECUTABLE = "executable"
+    ATTESTED = "attested"
+    UNCOVERED = "uncovered"
+
 
 _ID = r"\d+[a-z]?"
 _INV_RE = re.compile(rf"^INV-({_ID})$")
@@ -658,3 +685,35 @@ def resolve_selectors(graph: PlanGraph, collected: Mapping[str, Iterable[str]]) 
     if len(set(resolved.values())) != len(resolved):
         raise PlanV2Error("selector-duplicate-nodeid")
     return resolved
+
+
+def is_contract_id(value: object) -> bool:
+    """True only for this grammar's contract id (``_CT_RE``, fullmatch)."""
+    return isinstance(value, str) and _CT_RE.fullmatch(value) is not None
+
+
+def contract_evidence(graph: PlanGraph) -> dict[str, EvidenceMode]:
+    """Grade every contract in the graph by the evidence the plan affords.
+
+    Precedence is "strongest wins": a contract that has both a selector and a
+    disposition on its invariant is ``EXECUTABLE`` — the disposition never
+    weakens evidence that exists.
+    """
+    covered = {entry.ct for planned in graph.slices for entry in planned.acceptance}
+    dispositions = {item.id: item.evidence for item in graph.invariants}
+    graded: dict[str, EvidenceMode] = {}
+    for planned in graph.slices:
+        for contract in planned.contracts:
+            if contract.id in covered:
+                graded[contract.id] = EvidenceMode.EXECUTABLE
+            elif dispositions.get(contract.inv) == "NON_EXECUTABLE":
+                graded[contract.id] = EvidenceMode.ATTESTED
+            else:
+                graded[contract.id] = EvidenceMode.UNCOVERED
+    return graded
+
+
+def attested_contracts(graph: PlanGraph) -> tuple[str, ...]:
+    """The sorted contract ids whose only evidence is a disposition (R2)."""
+    graded = contract_evidence(graph)
+    return tuple(sorted(contract_id for contract_id, mode in graded.items() if mode is EvidenceMode.ATTESTED))

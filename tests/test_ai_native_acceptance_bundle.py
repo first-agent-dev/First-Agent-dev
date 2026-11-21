@@ -6,12 +6,14 @@ import hashlib
 import json
 import os
 from collections.abc import Callable, Mapping
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from fa.inner_loop.acceptance_bundle import (
+    MAX_ATTESTED,
     SCHEMA_VERSION,
     SEAL_FILENAME,
     AcceptanceBundle,
@@ -28,7 +30,7 @@ from fa.inner_loop.acceptance_bundle import (
     write_seal,
 )
 from fa.inner_loop.acceptance_closure import collect_acceptance_closure
-from fa.inner_loop.plan_v2 import PlanV2Error
+from fa.inner_loop.plan_v2 import EvidenceMode, PlanV2Error, contract_evidence
 from tests.test_ai_native_plan_v2 import plan_document, plan_graph
 
 _SEALED_ROOT = "worklogs/demo/acceptance"
@@ -450,3 +452,93 @@ def test_the_seal_is_bound_to_one_immutable_revision(tmp_path: Path) -> None:
     verify_revision(bundle, _REVISION)
     assert _rule(lambda: verify_revision(bundle, "rev-" + "1" * 32)) == "seal-stale"
     assert _rule(lambda: verify_revision(bundle, "rev-1")) == "revision-invalid"
+
+
+# -- R2: the seal names what it cannot prove --------------------------------
+
+#: The default plan with INV-2's disposition removed: the same two contracts, no
+#: attestation anywhere, so CT-1.2 is merely *uncovered* rather than attested.
+_NO_DISPOSITION_INVARIANTS = """### INV-1
+KIND: HARD
+TEXT: The writer never publishes without a sealed acceptance revision.
+EVIDENCE: TEST_REQUIRED
+
+### INV-2
+KIND: SOFT
+TEXT: Host readiness is proven on the approved host.
+EVIDENCE: TEST_REQUIRED
+"""
+_NO_DISPOSITION_PLAN = plan_document(invariants=_NO_DISPOSITION_INVARIANTS)
+
+
+def _executable_only(root: Path) -> AcceptanceBundle:
+    return _mint(
+        root,
+        graph=plan_graph(invariants=_NO_DISPOSITION_INVARIANTS),
+        plan_bytes=_NO_DISPOSITION_PLAN.encode("utf-8"),
+    )
+
+
+def test_the_seal_names_the_contracts_that_only_a_disposition_covers(tmp_path: Path) -> None:
+    bundle = _mint(_sealed_tree(tmp_path))
+
+    assert bundle.attested == ("CT-1.2",)
+    assert json.loads(seal_bytes(bundle))["attested"] == ["CT-1.2"]
+    assert set(bundle.nodeids()) == {"TEST-1.1"}  # custody is unchanged by attestation
+
+
+def test_a_plan_that_disposes_of_nothing_seals_an_empty_attestation(tmp_path: Path) -> None:
+    bundle = _executable_only(_sealed_tree(tmp_path))
+
+    assert contract_evidence(plan_graph(invariants=_NO_DISPOSITION_INVARIANTS))["CT-1.2"] is EvidenceMode.UNCOVERED
+    assert bundle.attested == ()
+    assert json.loads(seal_bytes(bundle))["attested"] == []
+    assert load_seal(seal_bytes(bundle)).attested == ()
+
+
+def test_the_seal_digest_covers_the_attestation(tmp_path: Path) -> None:
+    bundle = _mint(_sealed_tree(tmp_path))
+    record = json.loads(seal_bytes(bundle))
+    record["attested"] = []
+
+    raw = json.dumps(record, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")
+    assert _rule(lambda: load_seal(raw)) == "seal-digest-mismatch"
+
+
+def test_a_missing_attestation_field_is_refused(tmp_path: Path) -> None:
+    bundle = _mint(_sealed_tree(tmp_path))
+    record = json.loads(seal_bytes(bundle))
+    del record["attested"]
+
+    assert _rule(lambda: load_seal(_rehash(record))) == "seal-malformed"
+
+
+@pytest.mark.parametrize(
+    "attested",
+    [
+        ["CT-1.2", "CT-1.1"],
+        ["CT-1.2", "CT-1.2"],
+        ["not-a-contract"],
+        ["CT-1.2", 7],
+        "CT-1.2",
+        {"CT-1.2": True},
+    ],
+)
+def test_a_non_canonical_attestation_is_refused(tmp_path: Path, attested: Any) -> None:
+    bundle = _mint(_sealed_tree(tmp_path))
+
+    assert _rule(lambda: load_seal(_hostile(bundle, attested=attested))) == "seal-malformed"
+
+
+def test_an_attestation_longer_than_the_bound_is_refused(tmp_path: Path) -> None:
+    bundle = _mint(_sealed_tree(tmp_path))
+    oversized = sorted(f"CT-1.{index}" for index in range(MAX_ATTESTED + 1))
+
+    assert _rule(lambda: load_seal(_hostile(bundle, attested=oversized))) == "seal-malformed"
+
+
+@pytest.mark.parametrize("attested", [("CT-1.2", "CT-1.1"), ("CT-1.2", "CT-1.2"), None, "CT-1.2"])
+def test_an_out_of_band_attestation_never_reaches_the_bytes(tmp_path: Path, attested: Any) -> None:
+    bundle = _mint(_sealed_tree(tmp_path))
+
+    assert _rule(lambda: seal_bytes(replace(bundle, attested=attested))) == "seal-malformed"
