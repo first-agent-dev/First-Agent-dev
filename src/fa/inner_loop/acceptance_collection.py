@@ -308,6 +308,7 @@ def verify_sealed_acceptance(
     workspace: Path,
     candidate_revision_id: str,
     plan_bytes: bytes,
+    kill_required: tuple[str, ...] = (),
     deadline: float | None = None,
     executor: VerifyCommandExecutor | None = None,
 ) -> SealedVerification:
@@ -318,6 +319,15 @@ def verify_sealed_acceptance(
     cell. Nothing here reads a planner ``verify`` fence -- the command is the
     harness-built argv over the sealed closure -- and nothing here falls back to a
     host run.
+
+    ``kill_required`` is the contracts whose plan section declares a kill target
+    (``KILL-TARGETS``). This function does **not** run mutations yet, and it refuses
+    instead of proving without them (F9): a claim is "passed **and** the mutation
+    died", so returning a result for a contract whose mutation never ran would be a
+    proof the attempt does not have. The composition with STEP9A's existing runner
+    (a public ``run_kill_checks`` seam -- not a second runner, which SLICE3's intent
+    forbids) is what lifts this refusal; until then a plan that declares kill targets
+    gets an honest ``claim-mutation-missing`` rather than a false ``PROVEN``.
     """
     if not isinstance(bundle, AcceptanceBundle):
         raise AcceptanceCollectionError("seal-invalid")
@@ -328,6 +338,10 @@ def verify_sealed_acceptance(
         raise AcceptanceCollectionError("candidate-revision-invalid") from None
     if _overlaps_code_root(bundle.sealed_root):
         raise AcceptanceCollectionError("sealed-root-code-overlap")
+    if kill_required:
+        # Refused before the cell runs: a proof that omits the mutation is worse than
+        # no proof, because it is indistinguishable from one that had it.
+        raise AcceptanceCollectionError("claim-mutation-missing")
     verify_plan(bundle, plan_bytes)
     verify_revision(bundle, bundle.revision_id)
     collection = collect_sealed_nodeids_inband(bundle, workspace=Path(workspace), deadline=deadline, executor=executor)

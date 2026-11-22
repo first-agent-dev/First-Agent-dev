@@ -13115,3 +13115,45 @@ the S0 probe; the probe now uses ``managed.current_revision_id``).
 a decision the plan does not contain — what artifact a sealed verification writes, since ``write_verification``
 consumes ``PlanVerification`` built from planner commands. Filed as **Q-V2-SLICE3-1** (A recommended: a sibling
 ``verification-v2.json``). Writing that wiring before the answer would decide the artifact by accident.
+
+### E616 — the attempt entity exists, and the verifier can no longer prove what it did not measure (2026-11-22)
+
+**The findings were checked against the code before anything was changed** (`notes/verification-entities-2026-11-22.md`,
+second half). Six were real as stated, one shrank, one is cosmetic, one is a stated exception — and the check turned
+up a ninth that is a defect in code already landed:
+
+* **F9 (new, real, mine).** `verify_sealed_acceptance` (E615) proves "the sealed nodeid executed and passed" and never
+  runs a mutation. `plan_v2.py:563` parses `KILL-TARGETS`, `verify_slice` populates `kill_checks` per contract, and
+  SLICE3's intent names STEP9A's mutation runner as the one to consume. So for a plan with kill targets the verifier
+  would have returned something that reads as proven while the kill check never happened.
+* **F4 (shrank).** The refusal path already records `errors` (`workflow_controller.py:1792–1796`), `blocking` is true
+  whenever `errors` is non-empty, and `_verification_is_indeterminate` is consulted before the gate (`:839`, `:902`).
+  So a new `executed|refused` field would be redundant state that can disagree with `errors`; it became an invariant.
+* **F6 (sharper).** The eval block *is* bounded, but by `rendered[:EVAL_VERIFICATION_MAX_CHARS]` (`:1136–1140`) — a
+  **head** truncation. One long `detail` on the first slice evicts every later verdict, nodeid and error from the
+  model's context. The bound had to move to the field.
+* **F1/F3/F5/F2/F8** held as stated, with the anchors now in the note (`kill_checks` at `workflow_controller.py:746`,
+  no total in `_slice_verification_payload` `:739–763`, `ViewRef.base_revision` `execution/types.py:63–70` with no
+  public accessor, planner commands and harness commands sharing `run_commands`).
+
+**Landed — `src/fa/inner_loop/verification_attempt.py`.** `VerificationAttempt = route + identity + claims + commands
++ attested + pending + contracts_total + kill_required + errors`, with `blocking`/`first_reason`/`repair_nodeids`
+derived. Five write-time refusals: `claims-total-mismatch`, `claim-mutation-missing`, `fence-on-v2-route`,
+`empty-attempt-unexplained`, `identity-missing-on-v2`. Two design changes happened *while* implementing, both
+simplifications: `attested`/`pending` are carried as the seal's own two lists instead of becoming claim outcomes (one
+idea, one vocabulary), and every free-text field is bounded at construction (2000 chars, one line, `…[truncated]`).
+
+**Landed — the F9 refusal.** `verify_sealed_acceptance` takes `kill_required: tuple[str, ...]` and raises
+`claim-mutation-missing` *before* any cell command when it is non-empty. This is deliberately a refusal and not a
+capability: it turns "silently false `PROVEN`" into "loud refusal", which is the property that matters until the
+mutation composition lands.
+
+Tests: 21 in `tests/test_v2_verification_attempt.py` plus the F9 oracle in the bundle bank (110 passed there). Seven
+mutants in the entity (fence rule, total rule, mutation rule, empty-attempt rule, identity rule, per-field bound,
+`proven` ignoring the mutation) each died on the intended test, and an eighth (the F9 refusal removed) died on
+its own. mypy 62 (0 new), ruff 0, ruff-format 0 new, authoring-check 0.
+
+**Not done:** nothing writes an attempt yet, and no mutation is executed on the sealed route. Order from here:
+`run_kill_checks` seam over the existing `_run_kill_check` → sealed projection into `VerificationAttempt` →
+controller branch that retires the fence → the two CT-3.6 properties (hostile fence runs nothing; partial identity
+refused at write).

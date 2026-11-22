@@ -809,6 +809,33 @@ def test_the_sealed_verifier_refuses_before_it_runs_a_cell_command(tmp_path: Pat
     assert prepared == {}, "a refused call must not have reached a cell"
 
 
+def test_a_declared_kill_target_is_refused_rather_than_proved_without_its_mutation(tmp_path: Path) -> None:
+    """F9 — the verifier cannot prove a contract whose mutation it never ran.
+
+    `claim` proof is "the sealed test passed *and* its mutation died". This route has no mutation
+    runner yet, so a plan that declares `KILL-TARGETS` must be refused before the cell runs; the
+    alternative is an attempt that reads as proven while the kill check never happened.
+    """
+    root = _sealed_tree(tmp_path)
+    bundle = _mint(root)
+    prepared: dict[str, Any] = {}
+
+    assert (
+        _collection_rule(
+            lambda: verify_sealed_acceptance(
+                bundle,
+                workspace=tmp_path,
+                candidate_revision_id=_candidate(),
+                plan_bytes=_PLAN_BYTES,
+                kill_required=("CT-1.1",),
+                executor=_inband_executor(writes_visible=False, prepared=prepared),
+            )
+        )
+        == "claim-mutation-missing"
+    )
+    assert prepared == {}, "the refusal must happen before a cell command exists"
+
+
 def test_the_sealed_verifier_still_refuses_a_drifted_closure(tmp_path: Path) -> None:
     """CT-3.6 — the pinned route keeps the seal's own byte-drift rule."""
     root = _sealed_tree(tmp_path)
