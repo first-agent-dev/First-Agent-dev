@@ -180,6 +180,23 @@ Both assert UNCOVERED is legal for SOFT. They are the only encoding of the SOFT 
 
 `workspace.py:2191-2196` and `:2810-2819` — both construction sites pass `protected_paths` only when `plan_ref is not None`, and the tuple carries `plan_ref.workspace_relative_path` only. `worklogs/<slug>/acceptance/` is unprotected — a file-tool write to the sealed closure is refused only by the authority, not by the IO layer. (CT-3.3.)
 
+### 3.13. An un-granted disposition request reaches the coder — FOUND IN CROSS-CHECK (E604 addendum)
+
+`_admit_published_project` binds dispositions only under `if snapshot.graph is not None and granted:`
+(`workflow_controller.py:3203`). When the caller supplied **no** dispositions, `granted` is `()`, the
+binding step is **skipped entirely**, and the graph is admitted with every `NON_EXECUTABLE` request
+still unbound: `contract_evidence` grades it `UNCOVERED`, `attested_contracts` returns `()`, and the
+planner's request is never checked at all. The library does enforce the rule — `bind_dispositions(graph, ())`
+raises `disposition-undeclared` (`plan_admission.py:194`) and a test pins it
+(`test_ai_native_dispositions.py:183`, `test_a_request_without_a_grant_never_binds`) — the controller
+bypasses the call. Consequence: the whole grant pipeline is dead authority on the create-new route
+(the tool path can supply grants; the CLI cannot, see §3.9), and the run ends as the generic,
+irrefutable `workflow_failed`, because `disposition-undeclared` is absent from `_V2_CREATE_FAILURES`
+(`workflow_tool.py` fallback at `:876`).
+
+The audit that produced this package missed this hole; it surfaced during an independent cross-check
+(2026-11-22, external review) and is the cheapest defect in this package to close: one guard.
+
 ---
 
 ## 4. Problems — classified
@@ -198,6 +215,7 @@ Both assert UNCOVERED is legal for SOFT. They are the only encoding of the SOFT 
 | P10 | **Seal schema does not record coverage** | Missing invariant | A seal without a count or a coverage map cannot be audited without the plan graph |
 | P11 | **`protected_paths` does not cover the closure** | Custody gap | File-tool writes to the closure are structurally allowed |
 | P12 | **No production seals exist** | Honest fact | Migration for schema bump is free today — seals don't exist |
+| P13 | **Un-granted disposition request bypasses binding** | Binding-rule bypass | The grant pipeline is dead authority on the create-new route; the run ends `workflow_failed` |
 
 ---
 
@@ -269,6 +287,8 @@ The naive fix is necessary but not sufficient.
 - The repair stage's task text and the diagnostic mapping are updated; the D8 misdiagnosis (`bootstrap-invalid-metadata` for a coverage gap) is fixed.
 - `test_a_create_new_repair_may_write_only_the_documents_admission_read` is amended.
 
+Re-examination note (2026-11-22): an earlier, superseded draft (E603) recommended NOT widening to `acceptance/tests/**`, on the premise that the repair was a different authority from the planner's first stage and that the repair writing test files would erase planner≠coder. That premise is wrong as designed: the scaffold writes `acceptance/tests/` (the planner writes the real modules beside the placeholder), the authoring prompt assigns them to the planner, and the repair is the same role over the same tree, re-validated after it publishes. The family-scoped widening above is the recommendation; it is a **ratification point (D4)**, not a code fix, and the honest risk it carries — the repair can rewrite a test, and nothing but the seal and the verifier binds the bytes afterwards — is recorded in §9, not hidden.
+
 **Path B — coverage refusals non-repairable.** Run ends BLOCKED with an actionable diagnostic. Honest, but throws away the repair budget on a gap the planner could fix.
 
 ### 6.3. Seal self-description (P10)
@@ -299,6 +319,25 @@ Bounded: add `--dispositions <path-or-json>` to the `invoke-workflow` parser, pa
 
 Documentation-only: delete or align line 60; delete "ready CT" (use "a contract that gates admission"); fix §8 step 4; record ACC-2 resolved D-V2-10 + repair geometry + schema rewrite as one ratified change set.
 
+### 6.9. The un-granted binding guard (P13) — bug fix, not ratification
+
+The controller skips the binding step when the caller supplied no grants (`workflow_controller.py:3203`): one guard removes the skip —
+
+```python
+if snapshot.graph is not None:
+    # bind unconditionally; the caller's (possibly empty) declarations are the sole source
+    snapshot = replace(snapshot, graph=bind_dispositions(snapshot.graph, granted, today=...))
+```
+
+Consequences, all one change set:
+
+- A request with no grant now refuses with `disposition-undeclared` instead of sailing through as UNCOVERED.
+- Add `disposition-undeclared` to the non-repairable set in `_may_repair_authored_project` (next to collision — both are facts about the world, not the bytes): the planner cannot satisfy this refusal; only a human can, by re-invoking with the grant.
+- Map it in `_V2_CREATE_FAILURES` to a retryable code (e.g. `disposition_required`, retryable=True) — the same caller-retryable pattern already used for `invalid_dispositions` (`workflow_tool.py:866`). This is a caller hint, not an automatic retry.
+- The CLI `--dispositions` flag (6.5) is the human path to that retry.
+
+**Cost:** one guard + one rule in one exclusion set + one row in one table. **Risk:** none — the library already enforces the rule; the controller now obeys it. **Note on the present comment:** the inline comment at the guard ("skipping this would let a plan reach the coder ATTESTED on a grant nobody gave") describes a failure mode the code does not exhibit — a skipped bind leaves the request `UNCOVERED`, not `ATTESTED` — and it is precisely the silence (a missing grant is never refused) that makes the pipeline dead authority. Worth fixing the comment together with the guard.
+
 ---
 
 ## 7. Expert opinion — the global problem
@@ -328,6 +367,7 @@ A grammar with two sources of truth. The plan mandated the fix: "Make the canoni
 6. **Seal record as auditable**: `uncovered` empty by construction; a future regression is detectable from bytes.
 7. **Record ACC-1 budget half as closed-by-code; transitive half as a named residual** — not a closable gate.
 8. **Delete "ready CT" and fix every contradiction in the plan** (§8 step 4 "are closed"). The plan is the artifact the next agent reads; it must be true.
+9. **Fix the un-granted binding hole** (§6.9) and the two plan-v2 grammar defects (the missing `plan-v2` namespace in `ADMISSION_RULES_V2`, and the `CT\d+[a-z]?` contract-id regex that cannot express `CT-1.1`) **before** wiring the seal — the diagnostic vocabulary is the only feedback channel to the author, and today every parse refusal is folded into `bootstrap-invalid-metadata`.
 
 ### 7.4. What NOT to do — with reasons
 
@@ -368,6 +408,7 @@ A grammar with two sources of truth. The plan mandated the fix: "Make the canoni
 | 2.4 | Repair: family-scoped allowlist + diagnostic mapping + task text; update the geometry test |
 | 2.5 | CLI: `--dispositions` pass-through |
 | 2.6 | No code change for HARD + NON_EXECUTABLE (already admitted); alignment lives in the plan (1.1) |
+| 2.7 | **Un-granted binding fix**: remove the `and granted` skip (§6.9); add `disposition-undeclared` to the non-repairable set; map it to `disposition_required`; fix the inline comment |
 
 **DoD:** parse refuses the previously-admitted cases; seal refuses an uncovered caller-supplied graph; repair fixes a coverage gap (second authoring stage writes the missing acceptance test file); two encoding tests rewritten; no production seal exists yet (CT-2.4/3.6 still open).
 
@@ -404,6 +445,10 @@ A grammar with two sources of truth. The plan mandated the fix: "Make the canoni
 
 **Ratification gate:** Phase 1 is ratified by the operator before Phase 2. Phase 2 changes admission semantics; it is not a "code fix".
 
+**D4 — withdrawn correction note (2026-11-22).** An earlier, superseded draft (E603) recommended that the repair allowlist must NOT extend to `acceptance/tests/**` and declared the coverage refusal non-repairable. After re-examination — the planner authors `acceptance/tests/**` in the first stage (the scaffold creates the directory; the authoring prompt names it; the repair is the same role over the same tree and is re-validated after it publishes) — that correction is withdrawn: Path A (family-scoped widening) is the recommendation, with the family-scoping and the diagnostic-mapping built in. This D4 is a genuine ratification point, not a code fix: the family-scoped widening and the narrower Path B are both defensible, but a blanket widen was never the intent. The note below records the one bug-class fix that is NOT a ratification.
+
+**Bug-class fix, not ratified (§6.9):** the un-granted binding guard — the controller skips the call to `bind_dispositions` when the caller supplied no grants (`workflow_controller.py:3203`). This is not a judgment call; the library enforces the rule and a test pins it. It lands whenever it lands; it is listed here only to keep it visible.
+
 ---
 
 ## 10. What is NOT verified (honest limits)
@@ -414,6 +459,7 @@ A grammar with two sources of truth. The plan mandated the fix: "Make the canoni
 4. The status-tick design gate (§2 of the plan) is independent and blocks SLICE4/5. This package must not be mistaken for resolving it.
 5. The `verify_slice` gate (legacy route) is not addressed here.
 6. No host-side verification exists for V2 — SLICE5 is not started.
+7. The cross-check (2026-11-22) is an audit of another agent's document, not a live test: every load-bearing claim in this package was re-verified against the checkout, but the numbers in an independent review (e.g. ledger-entry count, worklog line count) may drift slightly from their snapshot; the reviewed external document carries its own reproductions in its Appendix A and is retained as a second opinion.
 
 ---
 
@@ -446,6 +492,11 @@ A grammar with two sources of truth. The plan mandated the fix: "Make the canoni
 | 23 | pytest_argv pins `-c`/`--rootdir` + closed `--addopts` | read | `acceptance_closure.py` |
 | 24 | Bundle tests (45), closure tests (30) | grep | `tests/test_ai_native_acceptance_bundle.py`, `test_ai_native_acceptance_closure.py` |
 | 25 | The two encoding tests' exact bodies | read | `test_ai_native_plan_v2.py:720-727`, `:819-826` |
+| 26 | Un-granted request bypasses binding | read + grep | `workflow_controller.py:3203`, `plan_admission.py:194` |
+| 27 | `disposition-undeclared` has no `_V2_CREATE_FAILURES` row | read | `workflow_tool.py:835-876` (fallback at `:876`) |
+| 28 | `_V2_CREATE_FAILURES` has the retryable-disposition pattern | read | `workflow_tool.py:862-864` |
+| 29 | Scaffold creates `acceptance/tests/` + placeholder (planner authors these files) | read | `project_scaffold.py` `_PLACEHOLDER_TEST` |
+| 30 | Tool accepts `dispositions`; CLI does not | read | `workflow_tool.py:245`, `cli.py:969-1001` |
 
 ---
 

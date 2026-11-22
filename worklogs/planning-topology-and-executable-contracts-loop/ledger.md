@@ -12554,3 +12554,38 @@ standalone). Its core content:
   toolchain; measurements by direct execution with synthetic fixtures).
 
 No production change in this commit.
+
+### E604 addendum (2026-11-22) — cross-check with an independent external review
+
+The final decision package was cross-checked against an independently-produced
+review of the same task (external design review, 2026-11-22). Findings:
+
+- The external review found a **live defect this package missed**: `_admit_published_project`
+  skips the disposition-binding step when the caller supplied no grants
+  (`workflow_controller.py:3203` — `if ... and granted:`), so an un-granted
+  `NON_EXECUTABLE` request is admitted unbound. The library enforces the rule
+  (`bind_dispositions` raises `disposition-undeclared`, `plan_admission.py:194`,
+  pinned by `test_ai_native_dispositions.py:183`); the controller bypasses the call.
+  Fixed by one guard, added as §3.13/P13/§6.9 — a bug-class fix, not a ratification.
+- The external review independently confirmed: seal blindness (un-granted contract
+  vanishes from the record), repair-geometry gap, grammar-drift detail
+  (`plan-v2` validator absent from `ADMISSION_RULES_V2`; `CT\d+[a-z]?` contract-id
+  regex cannot express `CT-1.1`), the folded `bootstrap-invalid-metadata` debt
+  (recorded in `workflow_tool.py:846-850`), the three-test rewrite set (the third
+  at `test_ai_native_acceptance_bundle.py:493`), and the prompt-vs-parser mismatch
+  (prompt states totality; parser exempts SOFT).
+- One earlier, superseded draft (E603) recommended NOT widening the repair
+  allowlist to `acceptance/tests/**` — declared in the final package (§6.2, §9 D4)
+  as **withdrawn**, with the re-examination recorded. The scaffold creates
+  `acceptance/tests/`; the authoring prompt assigns the test modules to the
+  planner; the repair is the same role over the same tree and is re-validated
+  after publication. The family-scoped widening stands as the recommendation and
+  remains a genuine ratification point (D4).
+- The external review's numbers drift slightly from this checkout (e.g. ledger
+  entries 317 vs 324; worklog lines 141,555 vs 142,694) — snapshot drift, noted,
+  not corrected.
+- The external document is retained at the operator's side (`/tmp` upload path,
+  external design review v2). Both documents converge on the same ratification
+  set; the external is more precise on the un-granted hole and the plan-v2
+  namespace defects; this package is more disciplined on ratification points,
+  phases and honest limits.
