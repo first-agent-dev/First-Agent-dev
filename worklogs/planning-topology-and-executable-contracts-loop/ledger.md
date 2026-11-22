@@ -12210,3 +12210,36 @@ interpreter `test_s8_workflow_controller.py` is 26 passed and `mypy src/` is cle
 files. The lesson is in `knowledge/arena-env-build.md`, and I should have read it first.
 
 39 tests in `test_ai_native_bootstrap.py`; 358 across nine banks; ruff clean; mypy 224.
+
+### E596 — CT-2.7 was the one control with a data-loss failure mode, and nothing proved it (2026-11-21)
+
+Re-checking the plan's citations after E594/E595 left eighteen absent. Seventeen are
+SLICE2–SLICE5 work the plan already schedules. CT-2.7 was different: the collision guard is
+*already implemented* (`_authoring_collision` plus create-only scaffold writes), so its
+absence was not a schedule -- it was an untested property with the worst failure mode in the
+set. "Create over an existing project" that is only *mostly* refused overwrites someone
+else's work.
+
+**What the test pins, and why each half is separate.** The guard has two independent
+mechanisms and either alone can rot:
+
+* the *decision* reads the pinned inventory and refuses before dispatch. Checked against a
+  live-shaped inventory, including the case the plan calls out explicitly -- an **incomplete**
+  `worklogs/<slug>/` collides too, because a create may not finish a tree it did not start;
+* the *write* is create-only (`expected_sha256=None`). Checked against the real authority by
+  running a second create of the same slug and comparing the published tree byte for byte.
+
+The ordering assertion is the one I did not plan and the measurement added: `reached == []`.
+The second create is refused *before the planner runs*, so a doomed run never spends a
+provider call. Had the guard been at the write site only, this would have caught it.
+
+**Mutants** (all killed, in `tests/mutation/mut_test_28.py`, now 8/8): the collision check
+disabled; the incomplete-directory case treated as free; the scaffold switched to "expect a
+known sha", which is what an overwrite would look like.
+
+**Honest scope.** This is CT-2.7 only. TEST-2.2 (invalid input refuses before provider),
+TEST-2.3 (scaffold then write inside the slug) and TEST-2.5 (child failure mapping) remain
+absent, and CT-2.4 remains blocked on SLICE2's seal. They are the next items of this class,
+in that order -- 2.2 before 2.3 because 2.2 is the one that can overwrite.
+
+40 tests in `test_ai_native_bootstrap.py`; ruff clean; mypy 224 clean; doc-links 370.

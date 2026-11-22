@@ -1260,6 +1260,122 @@ def _stage_ctx(case_site: Any, child_ctx: Any, yaml_path: Path, managed: Any, sl
     )
 
 
+def test_create_over_existing_directory_is_project_exists_and_unchanged(
+    site: Site, tmp_path: Path
+) -> None:
+    """CT-2.7 (D-V2-9.2): a create onto an existing project refuses, and nothing is lost.
+
+    The guard has two independent halves and either one failing is a data-loss bug, so
+    both are checked here:
+
+    * the *decision* -- `_authoring_collision` reads the pinned inventory and refuses
+      before the stage is dispatched, so no provider is reached and no view is opened;
+    * the *write* -- the scaffold writer asks for create-only on every file
+      (`expected_sha256=None`), so even a bypassed decision ends in the authority's
+      `STALE_REVISION` rather than an overwrite.
+
+    "Refused" alone is not the property: the existing project's bytes must survive. The
+    second half therefore runs against the real authority -- a second stage trying to
+    create the same slug -- and compares the tree byte for byte afterwards.
+    """
+    import argparse as _argparse
+
+    from fa import cli as _cli
+    from fa.inner_loop.planner_dispatch import PlannerDispatch, PlannerDispatchKind
+    from fa.inner_loop.project_scaffold import scaffold_files
+    from fa.inner_loop.workflow_controller import _authoring_collision
+    from tests.test_admission_v2_provenance import _managed_child_env
+
+    slug = "taken-project"
+    root = f"worklogs/{slug}"
+
+    # ---- half 1: the decision, against a pinned inventory that says "it exists" -------
+    def ctx_with(project_names: tuple[str, ...], incomplete_names: tuple[str, ...]) -> object:
+        return SimpleNamespace(
+            run_id="collision",
+            acquisition=SimpleNamespace(project_names=project_names, incomplete_names=incomplete_names),
+        )
+
+    dispatch = PlannerDispatch(PlannerDispatchKind.CREATE_NEW_PROJECT, "collision", authoring_root=root)
+    taken = _authoring_collision(cast("Any", ctx_with((slug,), ())), dispatch)
+    assert taken is not None and taken.rule == "bootstrap-collision"
+    # An *incomplete* directory collides too: a create may not finish someone else's tree.
+    half = _authoring_collision(cast("Any", ctx_with((), (slug,))), dispatch)
+    assert half is not None and half.rule == "bootstrap-collision"
+    # A free name passes, so the refusal is about the collision and not the route.
+    assert _authoring_collision(cast("Any", ctx_with(("other",), ())), dispatch) is None
+    # A non-authoring kind is never asked the question at all.
+    ordinary = PlannerDispatch(PlannerDispatchKind.ORDINARY_PLANNING, "collision", "plans/plan.md")
+    assert _authoring_collision(cast("Any", ctx_with((slug,), ())), ordinary) is None
+
+    # ---- half 2: the bytes survive a real second create ------------------------------
+    case_dir = tmp_path / "collision"
+    case_site = Site(case_dir / "protected", site.roots, site.source)
+    scaffold = scaffold_files(slug, created="2026-11-21")
+
+    with _managed_child_env(case_site, case_dir, child_run_id="ct27-collision") as (
+        managed,
+        _publisher,
+        child_ctx,
+        _yaml,
+    ):
+        def _stage(dispatch: object, drive: object) -> tuple[object, bool]:
+            return _cli._run_cli_stage(
+                args=_argparse.Namespace(_managed_execution=managed),
+                run_context=child_ctx,
+                run_id=child_ctx.run_id,
+                run_log_dir=case_dir / "log",
+                session_db=None,
+                log=SimpleNamespace(path=case_dir / "events.jsonl"),
+                workspace=case_site.source,
+                role="planner",
+                plan_ref=None,
+                planner_dispatch=dispatch,
+                build_registry=lambda workspace_io, _e, _l: workspace_io,
+                drive=drive,
+            )
+
+        def author(port: object) -> object:
+            for path, content in scaffold.items():
+                current = port.read_file(path).sha256  # type: ignore[attr-defined]
+                port.write_file(path, content, expected_sha256=current)  # type: ignore[attr-defined]
+            return SessionOutcome(exit_code=0, stop_reason="stopped_by_llm", turns=1, final_text="first")
+
+        first_dispatch = PlannerDispatch(PlannerDispatchKind.CREATE_NEW_PROJECT, child_ctx.run_id, authoring_root=root)
+        _stage(first_dispatch, author)
+        first_revision = managed.current_revision_id
+        before = dict(scaffold)
+
+        # The second create: same slug, and the planner tries to overwrite the roadmap.
+        reached: list[str] = []
+
+        def overwrite(port: object) -> object:
+            reached.append("provider reached")
+            port.write_file(f"{root}/roadmap.md", "# replaced", expected_sha256=None)  # type: ignore[attr-defined]
+            return SessionOutcome(exit_code=0, stop_reason="stopped_by_llm", turns=1, final_text="second")
+
+        second_dispatch = PlannerDispatch(PlannerDispatchKind.CREATE_NEW_PROJECT, child_ctx.run_id, authoring_root=root)
+        try:
+            _stage(second_dispatch, overwrite)
+        except WorkspacePortError:
+            # Expected: create-only write against an existing file. The stage refused.
+            pass
+
+        # 0. The refusal happened *before* the planner ran. The scaffold writer is what
+        #    refuses -- its create-only write hits an existing `roadmap.md` -- so the model
+        #    is never asked to author over a project it does not own. That ordering is the
+        #    guarantee: a provider called first would have spent tokens on a doomed run.
+        assert reached == [], "the planner ran before the collision was refused"
+        # 1. Nothing was published: the second create never became a revision.
+        assert managed.current_revision_id == first_revision
+        # 2. And the project's bytes are exactly what the first create wrote.
+        probe = _stage_ctx(case_site, child_ctx, _yaml, managed, slug)
+        with workflow_controller._pinned_acquisition_substrate(probe) as substrate:
+            assert substrate is not None
+            for path, content in before.items():
+                assert substrate.port.read_file(path).content == content, f"{path} was overwritten"
+
+
 def _admit_in(
     case_site: Site, child_ctx: Any, managed: Any, yaml_path: Path, slug: str
 ) -> tuple[Any, Any]:

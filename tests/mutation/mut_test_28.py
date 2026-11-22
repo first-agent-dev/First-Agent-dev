@@ -1,4 +1,4 @@
-"""Mutation run for TEST-2.8 / D-V2-9.8 (E594, E595): the repair path must be real.
+"""Mutation run for TEST-2.8 / CT-2.7 / D-V2-9.8 (E594, E595, E596): the repair path must be real.
 
 Three of these exist because a cheaper test once survived them. `test_the_bound_repair_
 path_runs_both_stages_and_binds_the_result` was written after M3 survived the hand-built
@@ -26,6 +26,7 @@ _BANK = "tests/test_ai_native_bootstrap.py"
 BOUND = [f"{_BANK}::test_the_bound_repair_path_runs_both_stages_and_binds_the_result"]
 E2E = [f"{_BANK}::test_metadata_table_and_parse_refusal_block_coder_then_repair_rewrites_published_file"]
 BUDGET = [f"{_BANK}::test_a_create_new_repair_is_budgeted_and_never_overwrites_on_collision"]
+COLLISION = [f"{_BANK}::test_create_over_existing_directory_is_project_exists_and_unchanged"]
 
 MUTANTS: list[tuple[str, Path, str, str, list[str]]] = [
     (
@@ -55,6 +56,27 @@ MUTANTS: list[tuple[str, Path, str, str, list[str]]] = [
         "    if run_stage_fn is not None and progress is not None and _may_repair_authored_project(ctx, refusal):",
         "    if False:  # MUTANT",
         BOUND,
+    ),
+    (
+        "M6 the create-collision check never runs (CT-2.7: overwrite allowed)",
+        CONTROLLER,
+        "    if slug in substrate.project_names or slug in substrate.incomplete_names:",
+        "    if False:  # MUTANT",
+        COLLISION,
+    ),
+    (
+        "M7 an incomplete project directory is treated as free (CT-2.7)",
+        CONTROLLER,
+        "    if slug in substrate.project_names or slug in substrate.incomplete_names:",
+        "    if slug in substrate.project_names:  # MUTANT",
+        COLLISION,
+    ),
+    (
+        "M8 the scaffold overwrites instead of creating (CT-2.7)",
+        CLI,
+        "        workspace_io.write_file(path, body, expected_sha256=None)",
+        "        workspace_io.write_file(path, body, expected_sha256='0' * 64)  # MUTANT",
+        COLLISION,
     ),
     (
         "M5 a repair is not budgeted (killed by BUDGET, not BOUND)",
