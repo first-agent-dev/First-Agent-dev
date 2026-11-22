@@ -12662,3 +12662,35 @@ S3 mode A. S1 before S2 because a seal must not certify a graph admission will l
 probe proves *where* the closure runs, not that its result is trustworthy; S0 before any SLICE3 wiring because a
 closure that cannot be collected at the new path makes that wiring pointless; S3 next because confinement currently
 depends on the launch topology.
+
+### E606 — the gate environment is built from the repository's own runbook, so tests are evidence again (2026-11-22)
+
+Every measurement in E602–E605 that said "`[R]` by name, `[M]` only under a python3.11 stub" existed because this
+sandbox had no CPython 3.13 and `uv python install` could not fetch a standalone build (TLS to
+`python-build-standalone`; not an allowed host). The repository already answers that: `scripts/arena-env-build.sh`
+with `knowledge/arena-env-build.md` builds CPython from pinned `codeload.github.com` sources. It was run as written.
+
+- **Host had no OpenSSL headers and no `pkg-config`**, so `SYSTEM_OPENSSL=auto` chose the pinned source path:
+  zlib 1.3.1, OpenSSL 3.0.22, libffi, bzip2 and SQLite (FTS5) compiled into a staging prefix, then CPython **3.13.16**
+  built against it. Cold build on 2 cores: ~11 minutes, moderate `JOBS`.
+- **Toolchain:** `uv 0.13.7` (pinned, installed into an external tool cache, launcher in `.venv/bin`), `just 1.57.0`,
+  dev extra synced with `--frozen`.
+- **`./scripts/arena-env-build.sh --check` → `ENVIRONMENT_CHECK_OK`**: CPython 3.13.16, and every command `just check`
+  needs present (`pytest ruff deptry pylint mypy pyrefly mutmut vulture pip-audit fa`).
+
+**Baseline measured with it (before any code change in S1):**
+
+| Gate | Result |
+|---|---|
+| `uv run pytest tests/test_ai_native_plan_v2.py tests/test_ai_native_dispositions.py tests/test_ai_native_acceptance_bundle.py -q` | **231 passed**, 2.8 s |
+| `uv run pytest tests/ -q -k "ai_native or invoke_workflow or admission_v2"` | **613 passed**, 7685 deselected, 48.6 s |
+| `uv run fa authoring-check` | exit 0, 0 diagnostics |
+
+So the next slice starts from a measured green baseline on exactly the banks it will rewrite, not from a promise that
+they were green before.
+
+**Operational note for later turns.** `.venv` and `BUILD_ROOT` (`$HOME/.cache/arena-python313`) are outside the
+snapshot, so both can disappear between turns. Rebuild with `./scripts/arena-env-build.sh` — seconds when the cached
+source tree survived, ~11 minutes cold — and activate with `source .venv/bin/activate`. The `/tmp/stub` python3.11
+slice used in E602/E603 is now a fallback for quick probes only; **claims about gates must come from the real
+interpreter.**
