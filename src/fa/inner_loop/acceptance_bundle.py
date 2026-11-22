@@ -336,7 +336,6 @@ def seal_bytes(bundle: AcceptanceBundle) -> bytes:
     return _canonical(record)
 
 
-
 _PROBE_ARTIFACT = re.compile(r"\Aprobe:(?P<path>\S+?)@host:(?P<host>[a-z][a-z0-9._-]{0,63})\Z")
 
 
@@ -371,9 +370,10 @@ def _attestations(
             probe = _PROBE_ARTIFACT.match(record.artifact)
             # Closure paths are relative to the sealed root, the artifact is
             # repo-relative: the same projection selectors go through.
-            if probe is None or _relative_to(
-                probe["path"], sealed_root, "seal-attestation-artifact-missing"
-            ) not in closure_paths:
+            if (
+                probe is None
+                or _relative_to(probe["path"], sealed_root, "seal-attestation-artifact-missing") not in closure_paths
+            ):
                 raise AcceptanceBundleError("seal-attestation-artifact-missing")
         elif record.route != "APPROVAL":
             raise AcceptanceBundleError("seal-attestation-route-invalid")
@@ -410,6 +410,7 @@ def _bind_graph_to_bytes(graph: PlanGraph, plan_bytes: bytes) -> None:
     for contract in graph.contracts().values():
         if contract.text not in text or contract.id not in text:
             raise AcceptanceBundleError("seal-plan-graph-mismatch")
+
 
 def mint_seal(
     *,
@@ -532,7 +533,6 @@ def _load_identity(raw: object) -> tuple[PinnedIdentity, ...]:
     return tuple(identity)
 
 
-
 _ATTESTATION_FIELDS = frozenset(
     {"contract_id", "invariant_id", "reason", "route", "artifact", "owner", "reviewed_at", "scope_sha256"}
 )
@@ -602,6 +602,7 @@ def _require_totality(
     if tuple(item.contract_id for item in attestations if item.route == "HOST_PROBE") != pending:
         raise AcceptanceBundleError("seal-attestation-mismatch")
     return contracts_total
+
 
 def load_seal(raw: bytes) -> AcceptanceBundle:
     """Parse and verify one seal record, or refuse with a closed rule."""

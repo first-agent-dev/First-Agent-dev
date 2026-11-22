@@ -224,6 +224,8 @@ _PURPOSE_MATRIX: dict[ViewPurpose, tuple[Access, bool, bool]] = {
 # view's rooted writes are confined to these top-level trees. The single-target
 # discipline is completed by the controller's expected_sha one-file edit.
 _MUTATION_ROOTS = frozenset({"src", "scripts"})
+
+
 def sealed_project_paths(plan_path: str) -> tuple[str, ...]:
     """Paths a coder view may never write, derived from the admitted plan (CT-3.3).
 

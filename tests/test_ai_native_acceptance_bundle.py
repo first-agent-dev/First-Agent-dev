@@ -431,8 +431,9 @@ def test_a_probe_the_closure_does_not_hold_is_refused(tmp_path: Path) -> None:
 
 def test_a_graph_that_does_not_describe_the_plan_bytes_is_refused(tmp_path: Path) -> None:
     """``plan_sha256`` must name a plan the graph actually describes (D-V2-12)."""
-    other = plan_document(slice_body="## SLICE1: other\nSTEPS: outcome\nCONTRACTS:\nACCEPTANCE:\n"
-                                     "KILL-TARGETS:\nSTEP-EXIT-CHECKS:\n")
+    other = plan_document(
+        slice_body="## SLICE1: other\nSTEPS: outcome\nCONTRACTS:\nACCEPTANCE:\nKILL-TARGETS:\nSTEP-EXIT-CHECKS:\n"
+    )
 
     assert _rule(lambda: _mint(_sealed_tree(tmp_path), plan_bytes=other.encode("utf-8"))) == (
         "seal-plan-graph-mismatch"

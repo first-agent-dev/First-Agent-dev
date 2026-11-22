@@ -243,8 +243,7 @@ def test_a_drifted_tree_never_runs(tmp_path: Path) -> None:
     # The rule, not just "something refused": INV-07's shell half is exactly
     # `seal-byte-drift`, and a different refusal would mean a different check fired.
     assert (
-        _seal_rule(lambda: collect_sealed_nodeids(bundle, workspace=workspace, executor=executor))
-        == "seal-byte-drift"
+        _seal_rule(lambda: collect_sealed_nodeids(bundle, workspace=workspace, executor=executor)) == "seal-byte-drift"
     )
     assert executor.commands == [], "no sealed byte produced a row: the drift is found first"
 
