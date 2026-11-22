@@ -12013,3 +12013,24 @@ and is the next item of this class.
 
 Net: 33 tests in `test_ai_native_bootstrap.py`, 29 in `test_prompt_registry_coherence.py`,
 169 across the four touched banks; ruff clean.
+
+### E591 — the absent citations are the plan working as designed (2026-11-21)
+
+E590 said "two of four cited controls were imaginary". That was the wrong reading, and it
+is worth recording because the wrong reading is the tempting one. I had audited only the
+four `TEST-` rows I happened to be working on, found them absent, and generalised. A
+sweep of all 27 citations gives 8 present, 19 absent -- and the split is not arbitrary:
+
+* every `CT-1.x` row, the only *implemented* slice, is present;
+* every absentee belongs to SLICE2–SLICE5, and the plan's own §"Nothing in the controller
+  mints an `AcceptanceBundle`" (line 329) already assigns CT-2.4 and CT-3.2 to SLICE2/3;
+* §State says PLAN ONLY, and §3 keeps slice status in W3/W4, not in this column.
+
+So the `TEST-` column names the test a control *will* have. Absence is a statement about
+implementation progress, which the plan tracks elsewhere. What was genuinely wrong is that
+nothing said so: a reader (me) saw a name, grepped, found nothing, and could not tell
+"not built yet" from "dropped". The table now carries that convention above its header,
+and CT-2.4/CT-2.5 say `absent — SLICE2 work` instead of the `NOT WRITTEN, BLOCKED` I first
+wrote, which implied a defect where there is a schedule.
+
+No code changed in this entry. 28 contract rows, doc-links 369 OK.
