@@ -12582,3 +12582,47 @@ channel to the author, and there is one repair attempt.
 
 **Held.** E601's proposed refusal of `HARD + NON_EXECUTABLE` remains wrong: dispositions exist for claims that are
 critical and unobservable, and `bind_dispositions` is the authority that grants them. Re-confirmed, not re-argued.
+
+### E604 — cross-review of two independent packages: two live holes, and a confinement that is topology-dependent (2026-11-22)
+
+Third document in this sequence: [i03-external-design-review-2026-11-22.md](notes/i03-external-design-review-2026-11-22.md)
+(v3). A second agent produced an independent package for the same brief; it was read line by line and its load-bearing
+claims were re-measured. No production change.
+
+**Convergent (both packages, independently).** `TEST_REQUIRED` must be discharged for every contract regardless of
+`KIND`; the `SOFT` exemption is an implementation gap, not a ratified policy; `HARD + NON_EXECUTABLE` stays legal via
+the caller-granted pipeline and the plan's strict line-60 reading must be deleted, not enforced; the seal must be
+self-describing; the repair allowlist must admit `acceptance/tests/`; `--dispositions` is a real capability gap; the
+canonical schema is the root cause and the doc triad must change atomically. Two independent derivations agreeing on
+the policy is the strongest signal in this sequence — the recommendation is not an artefact of one reading.
+
+**Rejected from the parallel package, with cause.** (a) "a `HARD` invariant can be converted to a signature *by the
+planner choosing* `NON_EXECUTABLE`" — the grant is the caller's (`bind_dispositions` refuses
+`disposition-undeclared`; `contract_evidence` requires `owner is not None`); the planner selects *which claim* carries
+an attestation, not whether one exists, and that residual is now recorded with a cheap mitigation. (b) "`SOFT` = not
+admission-gating" — a severity claim with no consumer, i.e. the defect restated; the resolution adopted here is to
+delete `KIND` for the MVP. (c) one PR containing the document rewrite, parser policy, repair geometry and CLI —
+atomicity belongs to the doc triad only. (d) an `uncovered` field in the seal that can only be empty — a refusal plus
+`len(selectors)+len(attested)==contracts_total` asserts the same property without teaching consumers to accept the
+state. (e) a new rule name where renaming an existing vocabulary entry suffices.
+
+**Adopted from it.** The plan's five contradictory sentences with line numbers (60/233/284/511/621/650) — the single
+most actionable item either package produced; the fact that `acceptance_defect.correct` passes a caller-supplied graph
+into `mint_seal`, i.e. the seal has a **second existing producer** (verified `acceptance_defect.py:246`), which is a
+better justification for the mint-time refusal than "a future caller"; the zero-migration argument for bumping
+`SCHEMA_VERSION`; and the target-flow/role inventory.
+
+**New finding (missed by all three prior audits and by both packages).** `cli.py:2165` sets
+`write_purpose = MUTATION if is_nested_coder else PROJECT`, and `workspace.py:2844–2854` confines only `MUTATION` views
+to `{"src","scripts"}`; a `PROJECT`-purpose write view falls through to the ordinary rooted-IO policy, where the sole
+barrier is `protected_paths` — which carries the plan file and nothing else (`workspace.py:2194`, `:2814`). The coder
+holds unconfined `fs_write_file`/`fs_edit_file` (`profiles.py:123–137`). So "the coder cannot edit the tests it must
+pass" is true **because the V2 coder stage is nested**, not because the role is confined: a top-level managed coder
+stage can write `worklogs/<slug>/acceptance/tests/**`. Making the purpose unconditionally `MUTATION` is *not* the fix
+(the coder legitimately writes repository tests and docs outside those roots) — which is exactly why CT-3.3
+(`protected_paths` covering every sealed semantic path) is the correct mechanism, and why it is urgent rather than
+defence-in-depth. S3's priority rises; its implementation is unchanged.
+
+**Net.** Policy: both packages agree, adopt. Mechanics: this document's set is smaller and measured (one-cell patch
+blast radius, three encoding tests, the un-granted-request guard, the escalation classification). Process: adopt the
+parallel package's documentation-first ratification phase; reject its mega-PR.
