@@ -12469,3 +12469,64 @@ current candidate by design. Record the budget half closed-by-code; file the tra
 a named residual, not an open gate.
 
 No production change in this commit.
+
+### E602 — external design review: the question was mis-framed, and two bigger holes sit under it (2026-11-22)
+
+Full review: [i03-external-design-review-2026-11-22.md](notes/i03-external-design-review-2026-11-22.md).
+Read-only audit plus design opinion; no production change in this commit.
+
+E600 and E601 measured correctly but framed the decision over an architecture the route does not have, and one of
+their recommendations would remove a feature rather than a defect.
+
+**S1 — there is one gate, and its refusal *is* the repair trigger.** The create-new order is
+`_admit_published_project` (`workflow_controller.py:3141`) → `snapshot_from_bytes(… format=PLAN_V2)` (`:3190`) →
+`parse_plan`/`_admit` → `bind_dispositions` (`:3212`); any `PlanRefError` goes to `_bind_authored_project` (`:2963`)
+→ `_may_repair_authored_project` (`:2929`) → `_run_create_new_repair` (`:3081`). A parse refusal returns
+`bootstrap-invalid-metadata` (`:3202`), which is repairable — only collision/unavailable/route-mismatch/failed-repair
+are excluded (`:2946–2951`). So E600's premise that refusing at parse "lands before the repair begins" is not the
+code's behaviour: option B *drives* the repair loop. The real choice is one admission predicate versus two, not
+parse-versus-seal.
+
+**S2 — `HARD + NON_EXECUTABLE` is the disposition pipeline's primary case, not a bug.** The plan's quoted sentence
+carries the escape that E601 dropped ("unless Q-V2-ACC-2 is resolved under a ratified rule"), and the ACC-2 row
+itself offers typed `NON_EXECUTABLE` under a ratified rule as option B. `DISPOSITION_REASONS` are physical and
+institutional claims (host readiness, deployment identity, owner approval, durability), i.e. exactly the critical
+claims a test cannot express, and the grant is caller-supplied (`bind_dispositions` refuses
+`disposition-undeclared`; `contract_evidence` needs `owner is not None`). E601's (A) — refuse `HARD +
+NON_EXECUTABLE` — would leave dispositions usable only for claims nobody cares about. Do not implement it.
+
+**S3 — the gap is `SOFT + TEST_REQUIRED`, and the test defending it asserts a property no code implements.**
+Measured by executing `plan_v2` directly: `HARD+TEST_REQUIRED` uncovered → `hard-contract-without-executable-evidence`;
+`SOFT+TEST_REQUIRED` uncovered → **admitted**, grades `UNCOVERED`, and `UNCOVERED` has no reader. The defending
+test's docstring (`tests/test_ai_native_plan_v2.py:819`) says the gap is "legal — and visible"; the visible half is
+false.
+
+**S4 — the repair loop cannot perform the fix it is likely to need.** `_REPAIR_WRITABLE_SUFFIXES` (`:3044`) is the
+increment plus `open-questions.md`, so a missing acceptance test cannot be written by the repair; and every grammar
+refusal of any kind reaches the repair stage as the single string `bootstrap-invalid-metadata`
+(`_authored_diagnostics` `:2953`), with one repair in the budget (`DEFAULT_MAX_REPLANS = 1`, `:157`, `:2950`). The
+reachable "fixes" are deleting the claim or re-describing it as a grant request — the two behaviours an author model
+is most likely to choose. Diagnosis must carry the parser's rule, and `acceptance/tests/` must be in the allowlist.
+
+**S5 — a grant request has no upward path.** `ctx.dispositions` is fixed at invocation; a plan that truthfully needs
+an attestation the caller did not pre-declare gets `disposition-undeclared`, burns the repair, and the model
+optimizes the claim away. The pipeline needs a third outcome — `needs_grant(reason)` as a structured retryable
+result — so the operator can grant and re-invoke. That is the human gate the design intends, reached as a result
+rather than as an author's repair attempt.
+
+**S6 — the closed vocabulary does not contain the V2 vocabulary.** `ADMISSION_RULES_V2` has no `plan-v2` key, yet
+`_validate_v2_admission` emits diagnostics under it (`:3481`, `:3490`), which `_record_diagnostics` would reject as a
+corrupt record; and the record's `contract_id` shape is `CT\d+[a-z]?` (`admission_schema.py:169`) while V2 ids are
+`CT-1.1`. Both are latent and both are the §4 drift in executable form.
+
+**S7 — zero compatibility cost.** There is no V2 plan anywhere outside fixtures (`grep -rl AI-NATIVE-PLAN-V2
+worklogs/` → plan/ledger/notes only; `worklogs/<slug>/increments/` has none). Any vocabulary change recommended here
+costs nothing today and rises from here.
+
+**Recommendation.** Record D-V2-10 (evidence totality: one discharge mode per contract, `TEST_REQUIRED` ⇒ resolving
+selector, `NON_EXECUTABLE` ⇒ bound grant, `PRESERVATION` never dispositionable; parser rule as diagnostic; repair
+allowlist includes `acceptance/tests/`; `needs_grant` outcome) and D-V2-11 (one machine-readable grammar table as the
+source for parser rules, canonical document, skills and prompt example). Strike "ready CT". Order SLICE3
+riskiest-first: probe managed collection at the new acceptance path, then seal wiring, then mode A, then the
+verifier, then attribution; the schema/prompt conformance change lands last, because only then can it be written
+truthfully. Do not reopen D-V2-9.
