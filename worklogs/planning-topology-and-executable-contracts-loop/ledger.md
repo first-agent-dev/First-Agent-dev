@@ -12524,3 +12524,33 @@ The E602 opinion was re-reviewed adversarially and two errors found:
 **Decision requests** (judgment, not ratified — see the package §5 for each): 1. TIGHT admission rule for uncovered TEST_REQUIRED (any KIND) — my recommendation; 2. HARD+NON_EXECUTABLE allowed via ratified pipeline — my recommendation; 3. Seal records contract_total + coverage map — recommended, zero cost; 4. Repair widened by refusal family — recommended; 5. CLI `--dispositions` — bounded, recommended; 6. Schema rewrite as the first work item, one coherent change set — recommended; 7. The plan's internal contradictions fixed — documentation, first.
 
 No production change in this commit.
+
+### E604 — consolidated evidence-model decision package (2026-11-22)
+
+The E602 opinion (two errors) and the E603 adversarial review (corrections) are
+consolidated into one final document:
+[evidence-model-final-decision-package-2026-11-22.md](notes/evidence-model-final-decision-package-2026-11-22.md).
+
+The document is precise (every claim cited to a line/test/execution), transparent
+(all recommendations labelled judgment, not ratified), and self-contained (reads
+standalone). Its core content:
+
+- What the system is: artifact produced by AI must be checked by something other
+  than the AI that produced it; the check cannot be talked around.
+- Measured facts: KIND read once (`plan_v2.py:622`), SOFT+TEST_REQUIRED admitted +
+  UNCOVERED, HARD+NON_EXECUTABLE admitted then ATTESTED, seal does not record
+  coverage, "ready CT" absent, STEP9A seal stack unwired, plan contradicts itself
+  (§8 step 4 false), repair geometry cannot fix coverage gaps, CLI drops
+  dispositions, two encoding tests pin the SOFT exemption.
+- Problems classified P1–P12 with blast radius.
+- The real question: not "where to refuse" but "what does KIND oblige" — with the
+  honest reframing that TEST_REQUIRED must be discharged for every contract, for
+  every KIND (D1), HARD+NON_EXECUTABLE allowed via ratified pipeline (D2), seal
+  self-describing (D3), repair widened by family (D4), CLI dispositions (D5), one
+  coherent change set (D6), plan consistency (D7).
+- Implementation order with DoDs — documentation + ratification first (Phase 1),
+  then one coherent evidence fix (Phase 2), then CT-2.4/3.x wiring (Phase 3).
+- What NOT to do and what is NOT verified (no test suite ran — no Python 3.13
+  toolchain; measurements by direct execution with synthetic fixtures).
+
+No production change in this commit.

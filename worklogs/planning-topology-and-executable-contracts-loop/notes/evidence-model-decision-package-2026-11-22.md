@@ -1,5 +1,10 @@
 # Evidence-model decision package — invoke_workflow / PLAN-V2
 
+> **SUPERSEDED 2026-11-22 (E604).** Consolidated into the single final package:
+> [evidence-model-final-decision-package-2026-11-22.md](evidence-model-final-decision-package-2026-11-22.md).
+> Everything here is superseded; do not read this as the governing document.
+
+
 **Date:** 2026-11-22<br>
 **Status:** decision-ready context. Read-only. Not an implementation.<br>
 **Scope:** the V2 evidence/admission model — `plan_v2.py`, `plan_admission.py`, `acceptance_bundle.py`, `acceptance_collection.py`, `acceptance_defect.py`, `kill_attribution.py`, `workflow_controller.py`, CLI, canonical schema, skills.<br>
