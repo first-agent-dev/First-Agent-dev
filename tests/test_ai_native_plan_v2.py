@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from dataclasses import replace as dc_replace
@@ -598,6 +599,7 @@ def _invoke_args(**overrides: object) -> SimpleNamespace:
         "session_id": None,
         "project_action": "CREATE_NEW",
         "project_slug": "demo-project",
+        "dispositions": None,
     }
     values.update(overrides)
     return SimpleNamespace(**values)
@@ -623,6 +625,116 @@ def test_invoke_workflow_cli_calls_the_same_tool_the_chat_registers(monkeypatch:
     # The provider the CLI hands the tool is the same closure shape the chat
     # registry uses, so the child run is assembled by the same code.
     assert callable(recorder.ctx_provider)
+
+
+#: One grant the tool would accept, spelled the way a caller sends it over the wire.
+_GRANT_JSON = (
+    '[{"reason": "HOST_READINESS", "owner": "W4", '
+    '"evidence": "issue:412", "reviewed_at": "2026-11-20"}]'
+)
+_GRANT = [{"reason": "HOST_READINESS", "owner": "W4", "evidence": "issue:412", "reviewed_at": "2026-11-20"}]
+
+
+def test_invoke_workflow_forwards_the_callers_grant_unmodified(monkeypatch: pytest.MonkeyPatch) -> None:
+    """P4-6/R1: the human front can grant what the chat front can grant.
+
+    R1 makes the caller's declaration the only source of owner, evidence and review date,
+    so a legal V2 plan that requests a non-executable invariant is unreachable from the
+    operator's front unless the flag exists. The CLI must not *reshape* the grant either:
+    what the operator wrote is what the tool validates.
+    """
+    recorder = _Recorder()
+    monkeypatch.setattr(cli, "build_invoke_workflow_tool", recorder.build)
+    monkeypatch.setattr(cli, "_resolve_workflow_lifecycle", lambda args, run_id: (run_id, None, None, None))
+    monkeypatch.setattr(cli, "load_runtime_limits_from_path", lambda: SimpleNamespace(limits=RuntimeLimits()))
+
+    # The flag exists on the *parser*, not only as a keyword the command happens to read:
+    # a rename of one without the other is the failure this line exists for.
+    parsed = cli.build_parser().parse_args(["invoke-workflow", "task", "--dispositions", _GRANT_JSON])
+    assert parsed.dispositions == _GRANT_JSON
+
+    assert cli._cmd_invoke_workflow(_invoke_args(dispositions=_GRANT_JSON)) == 0
+    assert recorder.params is not None
+    assert recorder.params["dispositions"] == _GRANT
+
+    # ...and no flag means no key: the tool sees the field absent, not an empty grant.
+    assert cli._cmd_invoke_workflow(_invoke_args()) == 0
+    assert recorder.params is not None and "dispositions" not in recorder.params
+
+
+def test_invoke_workflow_reads_the_grant_from_a_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """`PATH_OR_JSON`: a grant carries a review date and an evidence reference, so the shape
+    an audit can keep is a file. Both spellings must mean the same thing."""
+    grant_file = tmp_path / "grant.json"
+    grant_file.write_text(_GRANT_JSON, encoding="utf-8")
+
+    recorder = _Recorder()
+    monkeypatch.setattr(cli, "build_invoke_workflow_tool", recorder.build)
+    monkeypatch.setattr(cli, "_resolve_workflow_lifecycle", lambda args, run_id: (run_id, None, None, None))
+    monkeypatch.setattr(cli, "load_runtime_limits_from_path", lambda: SimpleNamespace(limits=RuntimeLimits()))
+
+    assert cli._cmd_invoke_workflow(_invoke_args(dispositions=str(grant_file))) == 0
+    assert recorder.params is not None
+    assert recorder.params["dispositions"] == _GRANT
+
+
+def test_a_grant_file_the_operator_cannot_read_says_so(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The two transport failures are different and must not share a message.
+
+    "Not JSON" would send an operator to inspect the syntax of a file the CLI never opened.
+    """
+    grant_file = tmp_path / "grant.json"
+    grant_file.write_text(_GRANT_JSON, encoding="utf-8")
+
+    def unreadable(self: Path, *_args: object, **_kwargs: object) -> str:
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(cli.Path, "read_text", unreadable, raising=True)
+    built: list[object] = []
+    monkeypatch.setattr(cli, "build_invoke_workflow_tool", lambda *a: built.append(a))
+
+    assert cli._cmd_invoke_workflow(_invoke_args(dispositions=str(grant_file))) == 2
+    assert built == []
+    message = capsys.readouterr().err
+    assert "could not be read" in message and "not JSON" not in message
+
+
+def test_the_cli_leaves_the_grant_to_the_tool_to_validate(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The CLI is transport, not a second rule.
+
+    A second validator is the one that drifts: it would either accept what the tool
+    refuses or refuse what the tool accepts, and nobody would notice until a grant that
+    admission honoured was rejected at the front. So a wrong-shaped grant is forwarded
+    verbatim and the tool's own refusal is what the operator sees.
+    """
+    wrong_shape = {"reason": "HOST_READINESS"}  # not a list: only `parse_dispositions` says so
+    recorder = _Recorder()
+    recorder.result = ToolResult.fail("invalid_dispositions", "`dispositions` refused [disposition-invalid]")
+    monkeypatch.setattr(cli, "build_invoke_workflow_tool", recorder.build)
+    monkeypatch.setattr(cli, "_resolve_workflow_lifecycle", lambda args, run_id: (run_id, None, None, None))
+    monkeypatch.setattr(cli, "load_runtime_limits_from_path", lambda: SimpleNamespace(limits=RuntimeLimits()))
+
+    assert cli._cmd_invoke_workflow(_invoke_args(dispositions=json.dumps(wrong_shape))) == 2
+    assert recorder.params is not None
+    assert recorder.params["dispositions"] == wrong_shape
+
+
+def test_a_dispositions_argument_that_is_not_json_refuses_before_any_lifecycle(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Transport failure is the operator's, and it is theirs to fix: refuse before a run.
+
+    A grant that cannot even be decoded must not start a pipeline that then reports some
+    deeper refusal -- the operator would debug admission for a typo in their own flag.
+    """
+    built: list[object] = []
+    monkeypatch.setattr(cli, "build_invoke_workflow_tool", lambda *a: built.append(a))
+
+    assert cli._cmd_invoke_workflow(_invoke_args(dispositions="not json at all")) == 2
+    assert built == []
+    assert "--dispositions is not JSON" in capsys.readouterr().err
 
 
 def test_invoke_workflow_cli_maps_a_tool_refusal_to_a_failed_exit(monkeypatch: pytest.MonkeyPatch) -> None:
