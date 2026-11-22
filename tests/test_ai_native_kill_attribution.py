@@ -65,6 +65,13 @@ def _attributed(bundle: AcceptanceBundle, outcome: str, *, detail: str = "") -> 
     return attribute(_binding(bundle), baseline=_run("PASSED"), mutated=_run(outcome, detail=detail))
 
 
+def _seal_rule(callable_: Callable[[], object]) -> str:
+    """The seal's own closed rule: drift is refused by the seal, never re-labelled."""
+    with pytest.raises(AcceptanceBundleError) as refused:
+        callable_()
+    return refused.value.rule
+
+
 def _rule(callable_: Callable[[], object]) -> str:
     with pytest.raises(KillAttributionError) as refused:
         callable_()
@@ -227,9 +234,11 @@ def test_a_drifted_acceptance_tree_never_runs_the_oracle(tmp_path: Path) -> None
     )
     executor = FakeHost(report=junit_report(("tests/test_publish.py::test_publish", "passed")))
 
-    with pytest.raises(AcceptanceBundleError):
-        run_node_oracle(bundle, _binding(bundle), workspace=tmp_path, executor=executor)
-    assert executor.commands == []
+    assert (
+        _seal_rule(lambda: run_node_oracle(bundle, _binding(bundle), workspace=tmp_path, executor=executor))
+        == "seal-byte-drift"
+    )
+    assert executor.commands == [], "a verdict about drifted bytes would be a verdict about nothing"
 
 
 @pytest.mark.parametrize("binding", [None, {"target": 1}])

@@ -133,6 +133,13 @@ class _FakeHost:
         )
 
 
+def _seal_rule(callable_: Callable[[], object]) -> str:
+    """The seal's own closed rule: drift is refused by the seal, never re-labelled."""
+    with pytest.raises(AcceptanceBundleError) as refused:
+        callable_()
+    return refused.value.rule
+
+
 def _rule(callable_: Callable[[], object]) -> str:
     with pytest.raises(AcceptanceCollectionError) as refused:
         callable_()
@@ -233,9 +240,13 @@ def test_a_drifted_tree_never_runs(tmp_path: Path) -> None:
     )
     executor = _FakeHost(report=_junit(("tests/test_publish.py::test_publish", "passed")))
 
-    with pytest.raises(AcceptanceBundleError):
-        collect_sealed_nodeids(bundle, workspace=workspace, executor=executor)
-    assert executor.commands == []
+    # The rule, not just "something refused": INV-07's shell half is exactly
+    # `seal-byte-drift`, and a different refusal would mean a different check fired.
+    assert (
+        _seal_rule(lambda: collect_sealed_nodeids(bundle, workspace=workspace, executor=executor))
+        == "seal-byte-drift"
+    )
+    assert executor.commands == [], "no sealed byte produced a row: the drift is found first"
 
 
 def test_a_smuggled_test_file_never_runs(tmp_path: Path) -> None:

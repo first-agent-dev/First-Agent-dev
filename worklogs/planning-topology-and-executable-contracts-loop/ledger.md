@@ -12895,3 +12895,51 @@ exit with an empty list is a parser bug, never a clean tree. Measured after the 
 **Deliberately not in S2:** `ROUTE:` on invariants, the prompt's grammar table and the authoring
 surface (S6/D-V2-11); a deploy gate that acts on `pending`; and any change to `PRESERVATION`
 (unchanged: never dispositionable).
+
+### E610 — S3: mode A stops depending on which coder topology is running (2026-11-22)
+
+**The defect (P4-4, measured).** `write_purpose = MUTATION if is_nested_coder else PROJECT`
+(`cli.py:2165`). A `MUTATION` view is confined to `{"src","scripts"}`, so a nested coder cannot reach
+the sealed tests. A `PROJECT` view falls through to ordinary rooted IO where the only barrier was
+`protected_paths` — which carried the plan file and nothing else. So "the coder cannot edit the tests it
+must pass" was true **because the V2 coder stage happens to be nested**, not because the role is
+confined: a top-level managed coder could write `worklogs/<slug>/acceptance/tests/**`. Making the purpose
+unconditionally `MUTATION` is not the fix either — the coder legitimately writes repository tests and
+docs outside those roots.
+
+**The fix (CT-3.3/INV-07).** One derivation in the authority:
+
+```python
+sealed_project_paths(plan_path)  # -> ("worklogs/<slug>",)   or  (plan_path,)
+```
+
+Both view construction sites pass it; `write_purpose` was not touched. Three properties earn the shape:
+
+* **Purpose-free**, so it cannot be topology-dependent again: `PROJECT` and `MUTATION` get the same
+  tuple, and `ViewPurpose` keeps deciding what a view *may* write, never what it may not.
+* **Derived from the plan the authority already holds**, not declared by the caller — a caller that
+  could name its own exclusions could name none.
+* **Directory-wide**, because the enumerated list is the thing that rots: roadmap, ledger, open
+  questions, every increment and the whole acceptance closure live under `worklogs/<slug>`, so a new
+  sealed artifact type is covered the day it is written. `RootedViewIO` refuses the directory *and its
+  ancestors*, so re-creating a complying file beside the seal is refused too.
+
+A plan outside that layout (legacy single-file route) protects its own path — the pre-S3 behaviour — and
+never protects nothing.
+
+**Oracles.** `test_v2_coder_projection_protects_every_sealed_semantic_path` opens both purposes on the
+real authority and requires `PATH_DENIED` for every sealed artifact **and for a new file beside them**
+(the case that mattered: overwriting an existing sealed file already failed with `STALE_REVISION`). It
+also proves the ban is scoped — another project stays writable for `PROJECT`, stays outside the approved
+roots for `MUTATION` — and that ordinary coder work (`tests/test_new.py`) still succeeds. Three more bind
+the parts: the derivation itself, the layout↔enforcement pair (scaffold paths vs protected directory, two
+modules that must not drift), and the drift half at both verdict entry points, now asserting the *named*
+rule `seal-byte-drift` with `executor.commands == []` rather than "some error was raised".
+
+**Producer kill-check.** With `sealed_project_paths` reduced to `return (plan_path,)`, the projection
+test fails as `expected PATH_DENIED; observed success` on the injected file — the exact hole P4-4
+described — and the derivation test fails on its first assertion. Restored, both pass.
+
+**Not in S3:** the S0 host probe (needs a live run; first thing SLICE3 wiring), CT-3.6, and any change to
+`profiles.py` or an approved profile identity (D-V2-6 stands: prevented where the interface allows it,
+detected everywhere else).

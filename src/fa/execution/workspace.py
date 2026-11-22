@@ -224,6 +224,35 @@ _PURPOSE_MATRIX: dict[ViewPurpose, tuple[Access, bool, bool]] = {
 # view's rooted writes are confined to these top-level trees. The single-target
 # discipline is completed by the controller's expected_sha one-file edit.
 _MUTATION_ROOTS = frozenset({"src", "scripts"})
+def sealed_project_paths(plan_path: str) -> tuple[str, ...]:
+    """Paths a coder view may never write, derived from the admitted plan (CT-3.3).
+
+    The seal is *about* the project's own bytes, so a view that can write them can
+    rewrite the criteria it is graded against. Two properties this derivation has
+    that a caller-supplied list does not:
+
+    * **Topology-independent (P4-4).** It is computed here from the plan reference the
+      authority already holds, so a nested coder (a ``MUTATION`` view confined to
+      ``src``/``scripts``) and a top-level coder (a ``PROJECT`` view with the whole
+      tree writable) receive the *same* tuple. ``ViewPurpose`` decides what a view may
+      write; it never decides what it may not.
+    * **Directory-wide.** The whole ``worklogs/<slug>`` tree is protected rather than a
+      list of files an author remembers to keep current: a new sealed artifact type is
+      covered the day it is written, not the day someone updates a tuple. The IO layer
+      refuses writes to the directory and to every ancestor of it, so
+      ``worklogs/<slug>/acceptance/tests/x.py`` cannot be re-created beside the seal.
+
+    A plan outside that layout (the legacy single-file route) protects its own path --
+    what the authority did before this existed -- and never protects nothing. Path
+    shape is not validated here: ``RootedViewIO`` already refuses a malformed path with
+    ``INVALID_REQUEST`` before any filesystem effect.
+    """
+    parts = [part for part in plan_path.split("/") if part not in ("", ".")]
+    if len(parts) >= 3 and parts[0] == _INSTALL_ROOT:
+        return (f"{_INSTALL_ROOT}/{parts[1]}",)
+    return (plan_path,)
+
+
 # Components the canonical projection never traverses or writes, at any depth.
 # `_Capture` drops them from every revision, so a manifest naming one is forged.
 _PROTECTED_COMPONENTS = frozenset({".git", ".fa", ".venv", ".env"})
@@ -2191,9 +2220,12 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                         uid=profile.uid,
                         gid=profile.gid,
                         writable=False,
+                        # CT-3.3/INV-07: a reader's write path does not exist, so the
+                        # protection is inert here -- it is passed anyway because the
+                        # derivation must not depend on which site asks for it.
                         protected_paths=()
                         if pin.context.plan_ref is None
-                        else (pin.context.plan_ref.workspace_relative_path,),
+                        else sealed_project_paths(pin.context.plan_ref.workspace_relative_path),
                         excluded_paths=tuple("/".join(p) for p in self._excluded),
                         max_file_bytes=self._limits.max_file_bytes,
                         max_depth=self._limits.max_depth,
@@ -2811,9 +2843,11 @@ class WorkspaceAuthority(AbstractContextManager["WorkspaceAuthority"]):
                         uid=profile.uid,
                         gid=profile.gid,
                         writable=writable,
+                        # CT-3.3/INV-07/P4-4: every project artifact the seal speaks
+                        # for, derived from the plan rather than declared by the caller.
                         protected_paths=()
                         if view.context.plan_ref is None
-                        else (view.context.plan_ref.workspace_relative_path,),
+                        else sealed_project_paths(view.context.plan_ref.workspace_relative_path),
                         excluded_paths=tuple("/".join(p) for p in self._excluded),
                         max_file_bytes=self._limits.max_file_bytes,
                         max_depth=self._limits.max_depth,

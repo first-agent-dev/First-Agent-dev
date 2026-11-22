@@ -359,6 +359,29 @@ def test_an_unknown_schema_is_refused(tmp_path: Path, overrides: dict[str, Any])
     assert _rule(lambda: load_seal(raw)) == "seal-schema-unknown"
 
 
+def test_every_scaffolded_project_artifact_is_inside_a_protected_path() -> None:
+    """Layout and enforcement are two modules; this binds them (CT-3.3/INV-07).
+
+    ``project_scaffold`` owns the layout and lives in the inner loop; the refusal is
+    the authority's (``execution.workspace.sealed_project_paths``) and the execution
+    layer does not import upward. So the two are bound here instead of by a shared
+    constant: every path the harness scaffolds -- and therefore every artifact a later
+    admitted plan speaks for -- falls inside the directory a coder view cannot write,
+    including the acceptance closure the seal digests.
+    """
+    from fa.execution.workspace import sealed_project_paths
+    from fa.inner_loop.project_scaffold import scaffold_paths
+
+    paths = scaffold_paths("demo")
+    (protected,) = sealed_project_paths(paths[0])
+
+    assert protected == "worklogs/demo"
+    for path in paths:
+        assert path.startswith(f"{protected}/"), path
+    assert any(path.startswith(f"{protected}/acceptance/") for path in paths)
+    assert any("/increments/" in path for path in paths)
+
+
 # -- S2: seal totality, and the record of who carried the claim (P4-8/D-V2-12) --
 
 
