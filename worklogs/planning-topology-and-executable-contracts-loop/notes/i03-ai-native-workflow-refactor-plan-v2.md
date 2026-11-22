@@ -675,6 +675,14 @@ Producer kill-check: with the derivation reduced to the plan path, the projectio
 `expected PATH_DENIED; observed success` for an injected file beside the seal — the hole P4-4 described.
 Not in S3: the S0 host probe at `acceptance/tests/` (needs a live run, first thing SLICE3 wiring) and CT-3.6.
 
+**CT-3.6 status (2026-11-22) — verifier half landed, wiring half blocked.**
+`acceptance_collection.verify_sealed_acceptance` runs the sealed closure on a managed substrate only, refuses
+a host-shaped one, refuses a closure/code overlap, and records both revision identities (E615). What is missing
+is the caller: `workflow_controller` still routes the V2 verification through `verify_plan(plan_ids, …)`, which
+executes the planner's `verify` fences. Retiring that fence decides what a V2 verification artifact *is*, and
+`write_verification` currently persists a `PlanVerification` built from those very commands — so the choice is
+filed as **Q-V2-SLICE3-1** rather than made by whoever next touches the file.
+
 **S0 status (2026-11-22) — landed as option A.** `tests/test_ai_native_managed_substrate_probe.py` walks the
 production path (`managed_execution_for_run` → `PIN_READER` → `ReadOnlyManagedBashExecutor` →
 `ManagedVerifyCommandExecutor` → `capture_test_nodeids`) and asserts the nodeid of a test that exists *only*
