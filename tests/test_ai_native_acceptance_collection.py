@@ -18,16 +18,18 @@ from fa.inner_loop.acceptance_bundle import (
     mint_seal,
     write_seal,
 )
+from fa.inner_loop.acceptance_closure import collect_acceptance_closure
 from fa.inner_loop.acceptance_collection import (
     AcceptanceCollectionError,
     SealedRun,
     collect_sealed_nodeids,
+    collect_sealed_tree,
     run_sealed_acceptance,
     sealed_collection_argv,
     sealed_test_paths,
     verify_sealed_acceptance,
 )
-from fa.inner_loop.slice_verification import CommandOutcome, CommandResult
+from fa.inner_loop.slice_verification import JUNIT_BLOCK_END, JUNIT_BLOCK_START, CommandOutcome, CommandResult
 from tests.test_ai_native_plan_v2 import GRANT_PROBE_FILES, granted_graph, plan_document, plan_graph
 from tests.test_slice_verification_runner import _inband_executor
 
@@ -136,6 +138,149 @@ class _FakeHost:
             stderr_tail="",
             duration_s=0.0,
         )
+
+
+@dataclass
+class _InbandHost:
+    """A managed-shaped substrate that returns whatever receipt it was given."""
+
+    stdout: str
+    exit_code: int | None = 0
+    outcome: CommandOutcome = CommandOutcome.PASS
+    writes_are_visible: bool = False
+    commands: list[str] = field(default_factory=list)
+
+    def run_verify_command(self, command: str, *, cwd: Path, timeout_s: float, env: dict[str, str]) -> CommandResult:
+        del cwd, timeout_s, env
+        self.commands.append(command)
+        return CommandResult(
+            command=command,
+            outcome=self.outcome,
+            exit_code=self.exit_code,
+            stdout_tail="",
+            stderr_tail="",
+            duration_s=0.0,
+            inband_stdout=self.stdout,
+        )
+
+
+def _receipt(*rows: tuple[str, str]) -> str:
+    return f"{JUNIT_BLOCK_START}\n{_junit(*rows).decode('utf-8')}\n{JUNIT_BLOCK_END}"
+
+
+# --- collect_sealed_tree: the pre-mint half of D-V2-5's chain ----------------------------------
+
+
+def test_a_sealed_tree_is_collected_before_any_seal_exists(tmp_path: Path) -> None:
+    """The cycle that kept the controller from minting: no report without a seal, no seal without one.
+
+    ``collect_sealed_nodeids`` needs a minted bundle, so the only collector that existed could not
+    run first. A tree plus a sealed root are enough for the closure and for the harness argv, so the
+    collection is taken there and the mint follows.
+    """
+    root = _tree(tmp_path)
+    collection = collect_sealed_tree(
+        root,
+        sealed_root=_SEALED_ROOT,
+        workspace=tmp_path,
+        executor=_inband_executor(writes_visible=False),
+    )
+    # Only ``tests/test_*.py`` inside the closure is a target: the support module and the
+    # helper parked under ``support/`` collect nothing, and the nodeids are workspace-relative
+    # exactly as the plan writes its selectors.
+    assert dict(collection.nodeids) == {_PUBLISH: (_NODEID,), _EXTRA: (_EXTRA_NODEID,)}
+    assert collection.outcomes == {_NODEID: True, _EXTRA_NODEID: True}
+    assert collection.argv[0:3] == ("python", "-m", "pytest")
+    assert f"{_SEALED_ROOT}/pytest.ini" in collection.argv
+    assert collection.command is not None
+
+
+def test_the_tree_collection_is_exactly_what_the_mint_accepts(tmp_path: Path) -> None:
+    """The two halves must meet on the same bytes: this is the whole point of the seam."""
+    root = _tree(tmp_path)
+    collection = collect_sealed_tree(
+        root,
+        sealed_root=_SEALED_ROOT,
+        workspace=tmp_path,
+        executor=_inband_executor(writes_visible=False),
+    )
+    bundle = _mint(root, collected=collection.nodeids)
+    assert {selector.test_id for selector in bundle.selectors} == {"TEST-1.1"}
+    assert bundle.selectors[0].nodeid == _NODEID
+    # The seal describes the closure that was collected, not a second walk of the tree.
+    assert bundle.closure.digest == collect_acceptance_closure(root).digest
+
+
+def test_a_tree_collection_refuses_a_substrate_it_cannot_read_back() -> None:
+    """No host fallback, the same rule the sealed verifier applies: an unread receipt is not evidence."""
+    with pytest.raises(AcceptanceCollectionError) as refused:
+        collect_sealed_tree(Path("worklogs/demo/acceptance"), sealed_root=_SEALED_ROOT, workspace=Path("."))
+    assert refused.value.rule == "verifier-substrate-required"
+
+
+def test_a_tree_collection_refuses_a_root_that_is_not_an_acceptance_tree(tmp_path: Path) -> None:
+    """``sealed-root-invalid`` stays the seal's rule: this module does not re-label what it borrows.
+
+    The same reason ``collect_sealed_nodeids`` lets the drift refusal escape -- one rule, one owner --
+    so the pre-mint collector refuses with the seal's exception rather than a second vocabulary.
+    """
+    root = _tree(tmp_path)
+    for acceptance_root, sealed_root in (
+        (root.parent, _SEALED_ROOT),
+        (root, "acceptance"),
+        (root, f"{_SEALED_ROOT}/nested"),
+    ):
+        assert (
+            _seal_rule(
+                lambda acceptance_root=acceptance_root, sealed_root=sealed_root: collect_sealed_tree(
+                    acceptance_root,
+                    sealed_root=sealed_root,
+                    workspace=tmp_path,
+                    executor=_inband_executor(writes_visible=False),
+                )
+            )
+            == "sealed-root-invalid"
+        )
+
+
+def test_a_tree_collection_carries_the_closure_rules_instead_of_relabelling_them(tmp_path: Path) -> None:
+    """A tree with no ``pytest.ini`` is the closure's own refusal, prefixed and not replaced."""
+    unsealed = tmp_path / "worklogs" / "demo" / "acceptance"
+    unsealed.mkdir(parents=True)
+    (unsealed / "notes.md").write_text("x", encoding="utf-8")
+    with pytest.raises(AcceptanceCollectionError) as refused:
+        collect_sealed_tree(
+            unsealed, sealed_root=_SEALED_ROOT, workspace=tmp_path, executor=_inband_executor(writes_visible=False)
+        )
+    assert refused.value.rule == "closure-missing-pytest-ini"
+
+
+def test_a_tree_without_test_modules_is_refused(tmp_path: Path) -> None:
+    root = _tree(tmp_path, extra_test=False, publish_name="support_publish.py")
+    with pytest.raises(AcceptanceCollectionError) as refused:
+        collect_sealed_tree(
+            root, sealed_root=_SEALED_ROOT, workspace=tmp_path, executor=_inband_executor(writes_visible=False)
+        )
+    assert refused.value.rule == "no-sealed-tests"
+
+
+def test_a_tree_collection_refuses_a_report_that_escaped_the_closure(tmp_path: Path) -> None:
+    """A receipt naming a file the closure does not hold is refused, never re-prefixed into belief."""
+    root = _tree(tmp_path)
+    host = _InbandHost(stdout=_receipt((f"{_SEALED_ROOT}/tests/test_elsewhere.py::test_x", "passed")))
+    with pytest.raises(AcceptanceCollectionError) as refused:
+        collect_sealed_tree(root, sealed_root=_SEALED_ROOT, workspace=tmp_path, executor=host)
+    assert refused.value.rule == "collection-nodeid-outside-closure"
+    # ...and the command it refused to believe was the in-band one, not a host invocation.
+    assert "$__fa_rep" in host.commands[0]
+
+
+def test_a_tree_collection_refuses_a_receipt_with_no_report_block(tmp_path: Path) -> None:
+    root = _tree(tmp_path)
+    host = _InbandHost(stdout="no report here")
+    with pytest.raises(AcceptanceCollectionError) as refused:
+        collect_sealed_tree(root, sealed_root=_SEALED_ROOT, workspace=tmp_path, executor=host)
+    assert refused.value.rule == "collection-report-invalid"
 
 
 def _seal_rule(callable_: Callable[[], object]) -> str:

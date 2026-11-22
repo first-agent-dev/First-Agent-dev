@@ -35,11 +35,18 @@ from .acceptance_bundle import (
     AcceptanceBundle,
     AcceptanceBundleError,
     require_revision_id,
+    require_sealed_root,
     verify_plan,
     verify_revision,
     verify_sealed_root,
 )
-from .acceptance_closure import pytest_argv, shell_command
+from .acceptance_closure import (
+    AcceptanceClosure,
+    AcceptanceClosureError,
+    collect_acceptance_closure,
+    pytest_argv,
+    shell_command,
+)
 from .slice_verification import (
     CommandOutcome,
     CommandResult,
@@ -64,6 +71,7 @@ __all__ = [
     "SealedVerification",
     "collect_sealed_nodeids",
     "collect_sealed_nodeids_inband",
+    "collect_sealed_tree",
     "run_sealed_acceptance",
     "sealed_attempt",
     "sealed_collection_argv",
@@ -125,41 +133,56 @@ def _is_sealed_test(path: str) -> bool:
     return path.startswith("tests/") and path.endswith(".py") and PurePosixPath(path).name.startswith("test_")
 
 
-def sealed_test_paths(bundle: AcceptanceBundle) -> tuple[str, ...]:
+def _test_paths(closure: AcceptanceClosure, sealed_root: str) -> tuple[str, ...]:
     """The sealed test modules, workspace-relative and sorted.
 
     Derived from the closure record, not from the plan: a test the planner named
     but never sealed is not a target, and a sealed module the plan forgot is.
+    Takes the closure rather than a bundle because the collection that *precedes*
+    a mint has no bundle yet (see :func:`collect_sealed_tree`).
     """
-    if not isinstance(bundle, AcceptanceBundle):
-        raise AcceptanceCollectionError("seal-invalid")
-    paths = sorted(
-        f"{bundle.sealed_root}/{entry.path}" for entry in bundle.closure.files if _is_sealed_test(entry.path)
-    )
+    paths = sorted(f"{sealed_root}/{entry.path}" for entry in closure.files if _is_sealed_test(entry.path))
     if not paths:
         raise AcceptanceCollectionError("no-sealed-tests")
     return tuple(paths)
 
 
-def sealed_collection_argv(bundle: AcceptanceBundle, *, report: str) -> tuple[str, ...]:
+def sealed_test_paths(bundle: AcceptanceBundle) -> tuple[str, ...]:
+    """The sealed test modules of one seal, workspace-relative and sorted."""
+    if not isinstance(bundle, AcceptanceBundle):
+        raise AcceptanceCollectionError("seal-invalid")
+    return _test_paths(bundle.closure, bundle.sealed_root)
+
+
+def _argv_for(closure: AcceptanceClosure, sealed_root: str, *, report: str) -> tuple[str, ...]:
     """The harness-built invocation: sealed targets, sealed config, sealed root."""
     return pytest_argv(
-        tests=sealed_test_paths(bundle),
-        ini=f"{bundle.sealed_root}/pytest.ini",
-        rootdir=bundle.sealed_root,
+        tests=_test_paths(closure, sealed_root),
+        ini=f"{sealed_root}/pytest.ini",
+        rootdir=sealed_root,
         report=report,
     )
 
 
+def sealed_collection_argv(bundle: AcceptanceBundle, *, report: str) -> tuple[str, ...]:
+    """The harness-built invocation for one seal: sealed targets, config and root."""
+    return _argv_for(bundle.closure, bundle.sealed_root, report=report)
+
+
 def _workspace_nodeids(bundle: AcceptanceBundle, outcomes: Mapping[str, bool]) -> dict[str, bool]:
+    """Re-key one seal's nodeid report; the rule itself is :func:`_key_nodeids`."""
+    return _key_nodeids(bundle.closure, bundle.sealed_root, outcomes)
+
+
+def _key_nodeids(closure: AcceptanceClosure, sealed_root: str, outcomes: Mapping[str, bool]) -> dict[str, bool]:
     """Re-key pytest's rootdir-relative nodeids to workspace-relative ones.
 
     Every reported nodeid must address a file the closure holds; a report that
     escaped the sealed root (an absolute path, a ``..`` hop, a file outside the
     record) is refused rather than normalized.
     """
-    paths = {entry.path for entry in bundle.closure.files}
-    prefix = f"{bundle.sealed_root}/"
+    paths = {entry.path for entry in closure.files}
+    prefix = f"{sealed_root}/"
     keyed: dict[str, bool] = {}
     for nodeid, passed in outcomes.items():
         workspace_nodeid = f"{prefix}{nodeid}"
@@ -231,7 +254,11 @@ def sealed_collection_inband_command(bundle: AcceptanceBundle, *, report: str) -
     Exactly one argv element may carry the flag; anything else is refused rather
     than rendered, so the command that runs is always the argv that was checked.
     """
-    argv = sealed_collection_argv(bundle, report=report)
+    return _render_inband(sealed_collection_argv(bundle, report=report), report=report)
+
+
+def _render_inband(argv: tuple[str, ...], *, report: str) -> str:
+    """Render an argv with its report flag pointed at the wrapper's ``$__fa_rep``."""
     rendered: list[str] = []
     replaced = 0
     for part in argv:
@@ -261,6 +288,66 @@ def _overlaps_code_root(sealed_root: str) -> bool:
     """Whether the sealed root names a code tree (CT-3.6's overlap refusal)."""
     parts = PurePosixPath(sealed_root).parts
     return not parts or any(part in _CODE_ROOTS for part in parts)
+
+
+def collect_sealed_tree(
+    acceptance_root: Path,
+    *,
+    sealed_root: str,
+    workspace: Path,
+    deadline: float | None = None,
+    executor: VerifyCommandExecutor | None = None,
+) -> SealedCollection:
+    """Collect a sealed tree's nodeids **before** any seal exists.
+
+    ``mint_seal`` requires a ``collected`` report, and every other collector here
+    requires a minted ``AcceptanceBundle`` -- a cycle, which is why the controller
+    has never minted a seal: there was no way to take the first step. The closure
+    and the harness argv, however, depend only on the tree and the sealed root, so a
+    tree can be collected on its own and the result handed straight to ``mint_seal``:
+
+        collection = collect_sealed_tree(root, sealed_root=..., workspace=...)
+        bundle = mint_seal(..., collected=collection.nodeids)
+
+    The root is the tree the revision committed, read through the same closure walk
+    the mint will perform, so the nodeids this returns are keyed exactly as the
+    mint's ``resolve_selectors`` expects (workspace-relative, grouped by module).
+    Nothing else about the seal is assumed: the revision binding, the plan digest
+    and the totality checks stay in the mint, where they are one rule.
+
+    No host fallback applies here for the same reason it applies to every sealed
+    run: this executes the acceptance bytes, and it runs on the authority or not at
+    all.
+    """
+    if not isinstance(acceptance_root, Path) or acceptance_root.name != "acceptance":
+        # Same rule and same exception as ``mint_seal``'s check on the tree it seals: this is the
+        # seal's vocabulary borrowed, not a second one, so a caller catches one type for one rule.
+        raise AcceptanceBundleError("sealed-root-invalid")
+    root = require_sealed_root(sealed_root)
+    _require_managed_substrate(executor)
+    try:
+        closure = collect_acceptance_closure(acceptance_root)
+    except AcceptanceClosureError as error:
+        raise AcceptanceCollectionError(f"closure-{error.rule}") from None
+    argv = _argv_for(closure, root, report=_INBAND_REPORT_NAME)
+    (result,) = run_commands(
+        (_render_inband(argv, report=_INBAND_REPORT_NAME),),
+        workspace=Path(workspace),
+        deadline=deadline,
+        executor=executor,
+    )
+    if result.outcome is CommandOutcome.ERROR:
+        raise AcceptanceCollectionError("collection-error")
+    carried = result.inband_stdout if result.inband_stdout is not None else result.stdout_tail
+    outcomes, _detail = parse_inband_nodeids(carried)
+    if outcomes is None:
+        raise AcceptanceCollectionError("collection-report-invalid")
+    if not outcomes:
+        raise AcceptanceCollectionError("collection-empty")
+    if result.exit_code not in {0, 1}:
+        raise AcceptanceCollectionError("collection-unusable")
+    keyed = _key_nodeids(closure, root, outcomes)
+    return SealedCollection(argv=argv, nodeids=_group_nodeids(keyed), outcomes=keyed, command=result)
 
 
 def collect_sealed_nodeids_inband(

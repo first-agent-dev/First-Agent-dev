@@ -68,6 +68,7 @@ __all__ = [
     "load_seal",
     "mint_seal",
     "require_revision_id",
+    "require_sealed_root",
     "seal_bytes",
     "seal_payload",
     "verify_plan",
@@ -215,7 +216,13 @@ def _plan_digest(plan_bytes: object) -> str:
     return _sha256(plan_bytes)
 
 
-def _require_sealed_root(sealed_root: object) -> str:
+def require_sealed_root(sealed_root: object) -> str:
+    """The closed shape of a sealed root, usable *before* a seal exists.
+
+    Minting needs a collection report, and a collection report needs the sealed root, so the rule
+    has to be callable on the way in rather than only from :func:`mint_seal`. Kept as the single
+    definition so the pre-mint collector cannot accept a root the seal would refuse.
+    """
     if not isinstance(sealed_root, str) or not _SEALED_ROOT_RE.match(sealed_root):
         raise AcceptanceBundleError("sealed-root-invalid")
     return sealed_root
@@ -436,7 +443,7 @@ def mint_seal(
     plan_sha256 = _plan_digest(plan_bytes)
     revision = _require_revision(revision_id)
     visibility = _require_mode(mode)
-    root = _require_sealed_root(sealed_root)
+    root = require_sealed_root(sealed_root)
     if not isinstance(acceptance_root, Path) or acceptance_root.name != "acceptance":
         raise AcceptanceBundleError("sealed-root-invalid")
     if supersedes_sha256 is not None:
@@ -636,7 +643,7 @@ def load_seal(raw: bytes) -> AcceptanceBundle:
     return AcceptanceBundle(
         plan_sha256=_require_sha256(body.get("plan_sha256"), "seal-malformed"),
         revision_id=_require_revision(body.get("revision_id")),
-        sealed_root=_require_sealed_root(body.get("sealed_root")),
+        sealed_root=require_sealed_root(body.get("sealed_root")),
         closure=closure,
         selectors=selectors,
         mode=_require_mode(body.get("mode")),

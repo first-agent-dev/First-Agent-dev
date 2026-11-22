@@ -604,3 +604,73 @@ unconditionally true, add `"PROVEN"` to the vocabulary, restore the literal in `
 (`{'PROVEN','VACUOUS','ERROR'}`) for the adjacent idea, used by CT-3.5's closure attribution. Unifying the two is a
 schema decision with a blast radius across two banks and the attribution artifact, so it is filed as
 **Q-V2-SLICE3-3** rather than decided here; the two sets are now visibly different instead of accidentally so.
+
+## F1–F9 closure audit (2026-11-22) — re-verified against the code, not the plan
+
+The F-list was written against a code base that has since changed. Each item below was re-measured by
+*constructing the defect's own shape* through the real constructors (`/tmp/audit_f1_f9.py`, kept as the
+reproduction recipe in this section) rather than by grepping for a rule name.
+
+| Item | Status | Measured now | Anchor |
+|---|---|---|---|
+| F1 mutation dropped | **closed** | `MutationEvidence(verdict="PROVEN")` → `mutation-invalid`; only `KILL_CHECK_VERDICTS` members accepted; legacy `kill_checks` written per contract and read by the gate | `verification_attempt.py:174–184`, `:342`; `workflow_controller.py:883`, `:1081`, `:1380`; `plan_v2.py:563` |
+| F2 route conflates axes | **closed on v2** | planner command on a `v2` attempt → `fence-on-v2-route`; harness-only → accepted; the artifact records `commands_authored_by` | `verification_attempt.py:225`, `:235`, `:307`; `workflow_controller.py:953`, `:1319` |
+| F3 absence reads as a pass | **closed** | 1 claim of a 2-contract seal → `claims-total-mismatch`; the same attempt with `attested=("CT-1.2",)` → accepted; `contracts_total` is in the artifact | `verification_attempt.py:312–321`; `workflow_controller.py:956` |
+| F4 refused vs empty | **closed as an invariant** | `legacy` with no claims and no errors → `empty-attempt-unexplained`; on `v2` the same shape is refused *earlier* (`identity-missing-on-v2`, then `claims-total-mismatch`) — the invariant holds by a stricter rule, and no new field was added | `verification_attempt.py:285`, `:303–321` |
+| F5 revision asserted | **closed** | substrate naming another revision → `verifier-revision-mismatch`; substrate naming none → `verifier-revision-mismatch`; a *different but agreed* candidate is accepted, which is correct (the closure may not move, the code may) | `slice_verification.py:505`; `client.py:1587`; `acceptance_collection.py:478`; `workflow_controller.py:633` |
+| F6 free text | **closed on v2**, residual on legacy | 10 000-char multi-line detail → 2 000 chars, newlines collapsed, `…[truncated]`; per-field cap at render (`300`), so one field cannot evict the rest | `verification_attempt.py:80–105`, `:200`; `workflow_controller.py:1297`, `:1338` |
+| F7 naming | **closed** | `RunIdentity` no longer exists; `VerificationIdentity`, `sealed_revision_id`, `candidate_revision_id` | `verification_attempt.py:117–137` |
+| F8 legacy identity | **kept exception, as stated** | `legacy` with no identity → accepted; `v2` with no identity → `identity-missing-on-v2` | `verification_attempt.py:303–306` |
+| F9 verifier proves without the mutation | **closed as a refusal** | `verify_sealed_acceptance(kill_required=("CT-1.1",))` → `claim-mutation-missing` *before the cell runs*; the control (no kill target) runs | `acceptance_collection.py:423–444`; `verification_attempt.py:325` |
+
+**Nothing in F1–F9 is open as a rule.** What the audit did find is four *route-level* gaps — the places where
+the entity is correct and the pipeline cannot reach it, or reaches it with a fact missing:
+
+**N1 — the seal is never minted on the create-new route (highest impact).** `mint_seal` is called only from
+`acceptance_defect.correct` and tests, so `_stage_acceptance_bundle` refuses `acceptance-seal/missing` on every
+V2 stage: the whole CT-3.6 path is unreachable in production, and every rule above is a guard nobody trips.
+Two halves were missing, and the first is now landed (see the section below): `mint_seal` needs a `collected`
+report, and every collector needed a minted bundle — a cycle. `collect_sealed_tree` breaks it. The remaining half
+is the controller wiring plus D-V2-5's pointer/recovery rules (E1–E9). Plan-settled (CT-2.4, CT-3.2, D-V2-5) — no
+question to raise.
+
+**N2 — a declared kill target leaves no trace in a V2 attempt.** The controller passes `kill_required=()`
+unconditionally, and the reason is right for *execution* (V2 `KillTarget` carries attribution only, so nothing is
+runnable — F10 item 5). But the artifact then records `kill_required: []` even when the plan declares
+`KILL-TARGETS  KT-1 -> CT-1.1, TEST-1.1`. A reader cannot tell "no mutation was required" from "a mutation was
+declared and never ran" — F3's shape, one field over, and the exact reason F1 was called the worst defect. The
+record-only fix (carry the declared attribution: target id, contract, test, and say `executed: false`) is small;
+the fail-closed fix (pass the declared CTs as `kill_required`) blocks every plan that declares a target until the
+runner exists. **Which one is right is a product choice the plan does not settle → Q-V2-SLICE3-4.**
+
+**N3 — the run report carries the attested ids but not the evidence behind them.** D-V2-10's stated mitigation is
+"attested ids, reason and owner written into the seal *and the run report*". The seal carries `attestations`
+(contract, invariant, reason, route, artifact, owner, `reviewed_at`, scope digest); the artifact and the eval block
+carry only `attested`/`pending` id lists (`grep -c attestations` in `workflow_controller.py` → 0). So on the report a
+reviewer reads "CT-1.2 was attested" with no way to see who, on what, and whether the artifact named was a host
+probe or a review. Plan-settled by D-V2-10 — implement, no question.
+
+**Minor residual (recorded, not urgent):** on the frozen legacy route `_verification_evidence_lines` still renders
+`slice_result.detail` and `check.detail` unbounded before the 20 000-char head cut (`workflow_controller.py:1371`,
+`:1382`, `:1391`), and legacy `plan_commands` carry no authorship. Both die with the route (D-V2-1/D-V2-2); the
+per-field production bound is `TAIL_LIMIT` (4 000), so one field cannot grow without limit — it can still evict a
+later slice, which is F6's cosmetic half.
+
+**Order this implies:** N1 first (otherwise nothing else is observable in production), then N2/N3 in one change set
+(the artifact schema bump is shared), then the remaining S5/S6 work. F10 item 5 (`run_kill_checks`) stays unbuilt
+until a grammar can express an executable mutation.
+
+## The pre-mint collection seam, and the cycle it removes (landed 2026-11-22)
+
+`collect_sealed_tree(acceptance_root, *, sealed_root, workspace, deadline, executor) -> SealedCollection` runs the
+sealed closure's harness argv through the managed substrate **before any seal exists** and returns nodeids keyed
+exactly as `mint_seal(collected=…)` expects. `sealed_test_paths`, `sealed_collection_argv`, the in-band renderer and
+the nodeid re-keying were factored over an `AcceptanceClosure` (they only ever needed one), so the pre-mint path and
+the post-mint path share one implementation instead of growing a second. `acceptance_bundle.require_sealed_root` is
+now public for the same reason: a root the seal would refuse must not be accepted on the way in.
+
+Measured: `tests/test_ai_native_acceptance_collection.py` 37 passed (8 new oracles, including the one that closes
+the loop — collect a tree, mint from `collection.nodeids`, and prove the mint sealed the same closure digest that
+was collected); affected bucket 388 passed; five mutants of the new seam each killed by a named oracle. The
+long bank `tests/test_verify_gate_live.py` was **interrupted by the operator before it finished** and has not been
+re-run; it is owed before N1's controller wiring lands, and nothing in this change is claimed as E2E-verified.
