@@ -1,412 +1,393 @@
-# I03 external design review — what the evidence model is for, and what SLICE3 should build first
+# I03 evidence model — decision document (external design review, v2)
 
-**Date:** 2026-11-22<br>
-**Scope:** `plan_v2.py` evidence matrix, `plan_admission.bind_dispositions`, `acceptance_bundle.mint_seal`,
-`workflow_controller` create-new route, `project_scaffold`, `slice_verification`, `admission_schema`,
-`prompt.AUTHORING_SYSTEM_PROMPT`, `notes/artifact-schema-and-grammar.md`.<br>
-**Status:** read-only source audit + design review. **No production change.** The only additions are this note
-and ledger E602.<br>
-**Inputs:** plan [`i03-ai-native-workflow-refactor-plan-v2.md`](i03-ai-native-workflow-refactor-plan-v2.md),
-audit [`evidence-model-audit-2026-11-21.md`](evidence-model-audit-2026-11-21.md), ledger E600/E601.<br>
+**Date:** 2026-11-22 (supersedes the same-day v1 draft of this file, after adversarial self-review; corrections listed in §11)<br>
+**Status:** read-only audit + recommendation. **No production code changed.** Ledger entries: E602 (v1 findings), E603 (self-review corrections).<br>
+**Audience:** the operator ratifying Q-V2-ACC-2 and the SLICE3 order.<br>
+**Authority:** [`i03-ai-native-workflow-refactor-plan-v2.md`](i03-ai-native-workflow-refactor-plan-v2.md), Q-V2-ACC-2, D-V2-5, D-V2-9; prior audits [evidence-model-audit-2026-11-21.md](evidence-model-audit-2026-11-21.md), E600, E601.
 
-Every factual claim below was reproduced against the working tree (commands and file:line given). Where I disagree
-with E600/E601 I say so explicitly and give the measurement that moved me.
+### Evidence classes used throughout
+
+| Tag | Meaning |
+|---|---|
+| **[M]** | measured by executing the production code in this review (command in Appendix A) |
+| **[R]** | read from source, file:line cited |
+| **[A]** | argument / engineering judgement, explicitly not a measurement |
+
+**Not verified here:** the full pytest suite was **not** executed (the review sandbox had no Python 3.13 and `uv sync` could not reach the interpreter download — §11.4). Test-existence claims are **[R] by name**, not by pass. Everything marked [M] was executed (stdlib-only modules, loaded directly).
 
 ---
 
-## 0. What this system is for — and which of its values are load-bearing
+## 1. What the system promises
 
-Read from the code rather than the prose, the system makes exactly one promise:
+Read from code, the promise is one sentence:
 
-> **An artifact produced by a model is checked by something other than the model that produced it, and the check
-> cannot be talked around — not by the plan, not by the author, not by "it finished".**
-
-Everything else in the tree is an entailment of that promise, and each mechanism earns its place by removing a
-specific way the promise could be faked:
+> An artifact produced by a model is checked by something other than the model that produced it, and the check cannot be talked around — not by the plan, not by the author, not by "it finished".
 
 | Value | Mechanism | Where |
 |---|---|---|
-| the author of a claim is not the author of the proof | separate planner/coder/verifier stages, separate capabilities | `PlannerDispatchKind`, `profiles.build_registry_for_role` |
-| a claim either maps to an executable check or is refused | `INV → CT → TEST-ID → selector → one nodeid` | `plan_v2._admit`, `resolve_selectors` |
-| the thing that ran is the thing that was reviewed | seal over plan bytes + revision + closure digest + exact nodeids | `acceptance_bundle.mint_seal` |
-| the author cannot edit what must pass | `MUTATION` view confined to `{"src","scripts"}` | `workspace._MUTATION_ROOTS` |
-| the proof is produced outside the author's control | managed no-network / read-only-rootfs cell | `profiles.py`, `slice_verification` |
-| "finished" ≠ "succeeded" | `ToolResult.fail` on child exit 0 + non-`DONE` | `workflow_tool` (CT-2.5) |
-| human authority is only for what physics puts out of reach | closed `DISPOSITION_REASONS` (host readiness, deployment identity, owner approval, durability/power loss), grant by caller, ≤30 days | `plan_v2`, `plan_admission.bind_dispositions` |
-| uncertainty is a named state, not a retry | `DURABILITY_UNKNOWN`, no blind retry | `workspace` publish saga |
-| refusals are data | closed rule vocabularies per surface; repair consumes diagnostics | `admission_schema`, `workflow_controller` |
+| the author of a claim is not the author of the proof | planner / coder / verifier stages, per-role capabilities | `PlannerDispatchKind`, `profiles.build_registry_for_role` [R] |
+| a claim maps to an executable check or is refused | `INV → CT → TEST-ID → selector → one nodeid` | `plan_v2._admit`, `resolve_selectors` [R] |
+| the check that ran is the check that was reviewed | seal over plan bytes + revision + closure digest + exact nodeids | `acceptance_bundle.mint_seal` [R] |
+| the author cannot edit what must pass | `MUTATION` view confined to `{"src","scripts"}` | `workspace._MUTATION_ROOTS` [R] |
+| the proof is produced outside the author's control | managed no-network / read-only-rootfs cell | `profiles`, `slice_verification` [R] |
+| "finished" ≠ "succeeded" | `ToolResult.fail` unless exit 0 + `DONE` + revision | `workflow_tool._v2_create_failure` [R] |
+| human authority only for what physics puts out of reach | closed disposition reasons, caller-supplied grant, ≤30 days | `plan_v2.DISPOSITION_REASONS`, `plan_admission.bind_dispositions` [R] |
+| uncertainty is a named state, not a retry | `DURABILITY_UNKNOWN` | `workspace` publish saga [R] |
 
-Two of these are unusual and, in my judgement, are the actual product: the **seal** (bytes-with-revision identity)
-and the **disposition pipeline** (a waiver that a model cannot mint for itself, restricted to reasons that are
-outside the sandbox by nature rather than by convenience). Design decisions around them should be defended harder
-than anything else in the tree; the rest — V1 legacy, the I03 parent plan, the tick machinery, the review layer —
-is scaffolding.
+Two mechanisms are the product: the **seal** and the **disposition pipeline** (a waiver a model cannot mint for itself, restricted to reasons that are outside the sandbox by nature rather than by convenience). Everything else is scaffolding.
 
-I read three further values in how the work itself is done, and they are the project's real methodology:
-
-1. **Claims are verified, not asserted** — "measured, not read", mutants killed, exit codes retained.
-2. **A defect is a named row that can be closed**, not a paragraph that can be re-worded.
-3. **One mechanism, no parallel path** — the plan applies this to code repeatedly (no second parser, no second
-   runner, no second seal, no V1 fallback).
-
-Value 3 is where the current problem lives, and it is not a code problem. It is applied to *code* but not to
-*contracts*: there are today three or four descriptions of the plan grammar, and the model that writes plans reads
-the wrong one (§4).
+The methodology visible in the ledger is the same thesis applied to the work: claims are measured rather than read, defects get names and closure, and one mechanism is preferred over a parallel path.
 
 ---
 
-## 1. Measured state
+## 2. Current state (what is on the route today)
 
-Executed against this tree. "Route" means reachable from chat `invoke_workflow` → managed `run_workflow`.
-
-| Thing | State | Evidence |
+| Item | State | Evidence |
 |---|---|---|
-| V2 parser + admission rules | **implemented, 775 lines, on the route** | `plan_v2.parse_plan`; called once in production at `workflow_controller.py:3190` |
-| Metadata cross-check, scaffold, planner-as-writer, one-revision create | **implemented** | `project_scaffold.py` (148), `_admit_published_project` `:3141`, `_run_create_new_repair` `:3081` |
-| SLICE1 CT-1.1…1.5 tests | **5/5 present** | `tests/test_ai_native_plan_v2.py` |
-| SLICE2 CT-2.1/2.2/2.3/2.5/2.6/2.7/2.8/2.9 tests | **8/8 present** | `test_ai_native_bootstrap.py`, `test_invoke_workflow_tool.py`, `test_prompt_registry_coherence.py` |
-| CT-2.4 (seal before coder) and CT-3.1…3.6 | **absent** | 0 test hits; `grep -rn AcceptanceBundle src/fa/inner_loop/workflow_controller.py` → 0 |
-| `mint_seal` | **library only** | single production caller `acceptance_defect.py:246` |
-| `contract_evidence` / `UNCOVERED` | **no consumer** | only `acceptance_bundle.attested_contracts` at mint time; `UNCOVERED` read by nothing |
-| `protected_paths` on the coder view | **plan file only** | `workspace.py:2194`, `:2814` pass `(plan_ref.workspace_relative_path,)`; acceptance root absent |
-| planner `verify` fence on the V2 route | **still executed** | `slice_verification.py:552` |
-| canonical schema vs parser | **divergent** | `artifact-schema-and-grammar.md`: `AI-NATIVE-PLAN-V2` ×0, `KIND:` ×0, `CT-` ×0, `TESTS:` ×10 |
-| real V2 project documents in the repo | **zero** | `grep -rl AI-NATIVE-PLAN-V2 worklogs/` → only plan/ledger/notes, no `worklogs/<slug>/increments/*` |
-| authored-repair budget | **1** | `replans_allowed = DEFAULT_MAX_REPLANS = 1` (`workflow_controller.py:157`, `:2950`) |
-| repair write surface | **increment + open-questions only** | `_REPAIR_WRITABLE_SUFFIXES` `:3044` |
-| `plan-v2` diagnostic namespace | **not in the closed table** | `admission_schema.ADMISSION_RULES_V2` has no `"plan-v2"` key; `"plan-v2"` × 0 |
-| diagnostic `contract_id` shape | **V1 only** | `re.fullmatch(r"CT\d+[a-z]?", …)` `:169` — a V2 `CT-1.1` is unrepresentable |
+| V2 parser + admission rules (`plan_v2.py`, 775 lines) | implemented, one production call site | `workflow_controller.py:3190` [R] |
+| create-new: scaffold → planner writes → one revision → metadata cross-check → admission | implemented (D-V2-9) | `project_scaffold.py`, `_admit_published_project:3141` [R] |
+| SLICE1 tests CT-1.1…1.5 | 5/5 present | `tests/test_ai_native_plan_v2.py` [R] |
+| SLICE2 tests CT-2.1/2.2/2.3/2.5–2.9 | 8/8 present | `test_ai_native_bootstrap.py`, `test_invoke_workflow_tool.py`, `test_prompt_registry_coherence.py` [R] |
+| `mint_seal`, `collect_sealed_nodeids`, `run_sealed_acceptance`, `kill_attribution`, `acceptance_defect` | implemented + unit-tested (≈210 test functions across six banks) | `acceptance_bundle.py`, `acceptance_collection.py`, tests [R] |
+| any of the above on the controller route | **none** — 0 references to `AcceptanceBundle` in `workflow_controller.py` | [R] |
+| coder gate | one choke point, admission only | `_run_stage:1634` [R] |
+| `UNCOVERED` consumer | **none** | `contract_evidence` used only via `attested_contracts` at mint [R] |
+| coder view protection | plan file only | `workspace.py:2194`, `:2814` pass `(plan_ref.workspace_relative_path,)` [R] |
+| planner `verify` fence | still executed, no format branch | `slice_verification.py:552`; `grep plan_format` → 0 [R] |
+| real V2 project documents | **zero** | `grep -rl AI-NATIVE-PLAN-V2 worklogs/` → plan/ledger/notes only [R] |
+| authored-repair budget | 1 by default, shares the replan budget | `DEFAULT_MAX_REPLANS = 1` (`:157`), `_may_repair_authored_project:2950` [R] |
+| repair write surface | increment + `open-questions.md` | `_REPAIR_WRITABLE_SUFFIXES:3044` [R] |
 
-Scale, for context on where the effort is going: `src` 88 747 lines, `tests` 152 181 lines (5 531 tests),
-`worklogs/**/*.md` **141 555 lines**, ledger 317 entries. Documentation mass is now larger than the source it
-describes. That is a signal about the process, not about the code (§7).
+Scale: `src` 88 747 lines, `tests` 152 181 (≈5 53x test functions by source scan), `worklogs/**/*.md` **141 555** lines, ledger 317 `###`-headed entries [R].
 
-**One consequence worth stating plainly:** because there is not a single V2 plan in existence outside test fixtures,
-**every vocabulary change recommended below has zero compatibility cost today.** This is the cheapest moment in the
-whole programme to fix the grammar, and the price only rises from here.
+**Two consequences.**
+
+1. Because no V2 plan exists outside fixtures, every vocabulary change below has **zero compatibility cost today** [R]. This is the cheapest moment to fix the grammar; the price rises monotonically.
+2. STEP9A shipped the mechanisms; **SLICE3 is an integration slice, not a construction slice.** `collect_sealed_nodeids` already runs the sealed closure's own `pytest.ini`/`rootdir` (`sealed_collection_argv:101`), refuses a tree that drifted from the seal, refuses an unexecuted selector (`run_sealed_acceptance:181`), and `excluded_paths` defaults to `()` so `worklogs/` is visible through a managed view [R]. What is missing is controller wiring plus one policy predicate.
 
 ---
 
-## 2. Q-V2-ACC-2, re-derived
+## 3. The decision: evidence must be total
 
-The question as filed — *"where do we refuse a plan that declared `TEST_REQUIRED` and covered nothing: at parse or
-at seal?"* — cannot be answered as asked, because it assumes a two-gate architecture that this route does not have.
-Three corrections, each measured.
+### 3.1 What the code admits today [M]
 
-### 2.1 There is one gate, and its refusal is the repair trigger
+`plan_v2` executed directly, one contract per row:
 
-On the create-new route the order is:
+| Plan shape | Outcome today | Grade |
+|---|---|---|
+| `HARD` + `TEST_REQUIRED`, no selector, no disposition | **refused** `hard-contract-without-executable-evidence` | — |
+| `SOFT` + `TEST_REQUIRED`, no selector, no disposition | **admitted** | `UNCOVERED` |
+| `HARD`/`SOFT` + `NON_EXECUTABLE` + reason, **caller supplied no grants** | **admitted** | `UNCOVERED` |
+| `HARD`/`SOFT` + `NON_EXECUTABLE` + reason, grant bound | admitted | `ATTESTED` |
+| `PRESERVATION`, any kind, no selector | **refused** `preservation-without-executable-evidence` | — |
+
+Row 2 is the hole reported as Q-V2-ACC-2. Row 3 is a second hole that this review found and E601 did not: **the controller skips the binding step entirely when the caller supplied no grants**, so the request is never checked at all (§5.1).
+
+### 3.2 Behaviour on a real task
+
+Task *«сделай сервис экспорта отчётов»*; the planner writes `INV: export works offline`, `EVIDENCE: TEST_REQUIRED`, `CT-1.2`, and no acceptance row.
+
+| | Keep today (A) | Refuse `UNCOVERED` at the seal (C, E600's pick) | Refuse at admission (recommended) | Refuse `HARD+NON_EXECUTABLE` too (E601-A) |
+|---|---|---|---|---|
+| plan admitted | yes | yes | **no** | as recommended, for the soft case |
+| repair runs | — | no refusal yet | **yes** — it *is* the repair trigger (§3.3) | — |
+| coder starts | yes | yes, until the seal is wired; unproven forever if it is never wired | no | no |
+| what the run produces | a project whose own plan says a test is required and has none | second gate with no repair path on this route | a second revision that adds the test or converts the claim into a request for a grant; else `BLOCKED`, project present, unadmitted | dispositions unusable for exactly the claims they exist for |
+| seal is truthful | no (contract vanishes from the seal — §6) | no | yes | — |
+| cost | 0 | ~two predicates to keep in step, forever | 5 small edits, 3 test rewrites (§3.4) | — |
+| verdict | hole | wrong layer | **correct** | regression |
+
+**Answer to the operator's question.** A plan that says "must be tested" and ships no test must not reach a coder, and it does not need a waiver either: it goes back to the planner with an actionable rule name, or the run ends `BLOCKED` with the project present and inspectable. A waiver is for claims outside the sandbox, not for tests the planner did not write.
+
+### 3.3 Why "parse vs seal" is not the real choice [R]
+
+There is **one** gate on this route and its refusal **is** the repair trigger:
 
 ```
 authoring stage → STOP_VIEW/SEAL/PUBLISH (one revision)
-  → _admit_published_project                      workflow_controller.py:3141
-      → check_project_metadata → snapshot_from_bytes(... format=PLAN_V2)   :3168, :3190
-          → parse_plan → _admit(graph)            plan_v2.py:648
-      → bind_dispositions (caller grants)                                :3212
-  → on any PlanRefError: _bind_authored_project → _may_repair_authored_project → _run_create_new_repair
-                                                                          :2963–2988
+  _admit_published_project                                    workflow_controller.py:3141
+    check_project_metadata → snapshot_from_bytes(… PLAN_V2)   :3168, :3190 → parse_plan → _admit
+    bind_dispositions (only if the caller supplied grants)    :3209
+    any PlanRefError → _bind_authored_project                 :2963 (single call site :2289)
+      → _may_repair_authored_project                          :2929 (excludes collision / unavailable /
+                                                               route-mismatch / failed repair, :2946–2951)
+      → _run_create_new_repair (1 attempt)                    :3081 → admits the second revision :3138
 ```
 
-Parsing happens **inside admission**, admission is **the** pre-coder gate, and its refusal is **the** input to the
-one authored-repair stage. E600 argued that refusing at parse "lands before the repair begins, burns the budget, and
-kills the repair loop". That is not what the code does: a parse refusal returns
-`PlanRefError("bootstrap-invalid-metadata")` (`:3202`), which is repairable (`_may_repair_authored_project` only
-excludes collision/unavailable/route-mismatch/failed-repair, `:2946–2951`). Option B feeds the repair loop; it does
-not bypass it.
+A parse refusal returns `bootstrap-invalid-metadata` (`:3202`), which is repairable. E600's premise — that refusing at parse "lands before the repair begins and burns the budget" — is not the code's behaviour; **refusing at parse is what feeds the repair loop.** The real choice is *one predicate* versus *two predicates that must stay in step*, and the plan forbids the second everywhere it discusses code.
 
-So the real choice is not *parse vs seal*. It is **one admission predicate** versus **two predicates to keep in
-step** — and the second is exactly the "parallel mechanism" the plan forbids everywhere else.
+Rule of thumb this restores: **a structural fact (no selector exists) belongs where the document is read; a caller fact (no grant exists) belongs where the grant is bound. Neither belongs at the seal.** The seal asserts the consequence (§6).
 
-### 2.2 `HARD + NON_EXECUTABLE` is not a bug — it is the disposition pipeline's primary case
+### 3.4 The recommended rule, and its measured blast radius
 
-E601 calls it "a `HARD` invariant can be waived, which the plan forbids verbatim". Three measurements say
-otherwise:
+> Every contract is discharged by exactly one mode, and the mode is total. `TEST_REQUIRED` requires an acceptance row resolving to exactly one nodeid in the sealed closure. `NON_EXECUTABLE` requires a caller-granted typed disposition. `KIND` is not an exemption; `PRESERVATION` is never dispositionable. "ready CT" is struck — it has no runtime meaning (0 hits in `src/fa/`).
 
-1. The sentence being quoted ends differently: *"`NON_EXECUTABLE` is forbidden for HARD/ready contracts **unless
-   Q-V2-ACC-2 is resolved under a ratified rule**"* (plan §2), and the ACC-2 row itself offers, as option B,
-   *"permit only a typed `NON_EXECUTABLE` disposition with reason and authoritative evidence under an
-   already-ratified disposition rule"*. The typed-reason + caller-grant + 30-day pipeline is that rule.
-2. The plan cannot see this. The whole point of a disposition is a claim that is **critical and unobservable**. "The
-   release is registered under the owner's domain", "the host is approved", "the record survives power loss" are all
-   `HARD`; if `HARD` refused dispositions, dispositions would exist only for claims nobody cares about, and the
-   mechanism would be dead weight. `DISPOSITION_REASONS` is a list of *physics and institutions*, not of severities.
-3. The author does not choose it. `bind_dispositions` (`plan_admission.py:171`) refuses `disposition-undeclared`, and
-   is the sole source of `owner` and `evidence_ref`; `contract_evidence` grades `ATTESTED` only when `owner is not
-   None` (`plan_v2.py:753–757`). A plan can *request*; only a caller can *grant*.
+**Why totality does not over-constrain the planner [A].** The unit of admission is the *increment*, and the increment is what the coder implements; verification is already slice-scoped (`slice_verifications`). So every slice's oracle must exist before the first coder byte — which is the property the whole system claims. Work that is not yet imagined belongs in a future increment, which is the artifact model's own answer. The `SOFT` flag was implicitly serving "some of this plan is not real yet"; the honest form of that statement is "this plan is not ready", not "this claim is exempt".
 
-**Therefore:** E601's proposed (A) "refuse `HARD + NON_EXECUTABLE`" is not a bug fix — it is a regression against the
-feature's purpose. Do not implement it. (The narrower defect E601 measured is real but different: nothing *forces*
-a requesting plan to have a grant before admission on the create-new route — see §3.2, which is where that
-belongs.)
+**The patch is two deletions** (measured on a copy of `plan_v2.py`, Appendix A):
 
-### 2.3 `SOFT` is not a policy, it is a hole — and the test that defends it asserts an unverified property
-
-Reproduced by executing the module directly (no pytest needed; `plan_v2` is stdlib-only):
-
-```
-CT-1.2 HARD + TEST_REQUIRED, no test, no disposition  -> REFUSED  hard-contract-without-executable-evidence
-CT-1.2 SOFT + TEST_REQUIRED, no test, no disposition  -> ADMITTED {'CT-1.2': UNCOVERED}
-CT-1.2 HARD + NON_EXECUTABLE(reason), no grant        -> ADMITTED {'CT-1.2': UNCOVERED}
-CT-1.2 SOFT + NON_EXECUTABLE(reason), no grant        -> ADMITTED {'CT-1.2': UNCOVERED}
-```
-
-The third and fourth rows are admissible **because admission has not yet bound a grant**; after
-`bind_dispositions` they become `ATTESTED`, and without one `_granted_dispositions` refuses the run
-(`disposition-undeclared`). That part is coherent.
-
-The second row is not. The document says "this must be checked by a test"; the parser accepts that no test exists;
-`contract_evidence` marks it `UNCOVERED`; nothing reads `UNCOVERED`; the seal cannot even represent it. The
-defending test is titled `test_a_soft_invariant_may_still_stay_uncovered`
-(`tests/test_ai_native_plan_v2.py:819`) and its docstring claims the gap is *"legal — and visible"*. **The
-"visible" half is false**: there is no reader. A test that asserts a property no code implements is the exact
-defect class this project exists to catch — it is a `GUESS` wearing a `FACT`'s clothes.
-
-### 2.4 `"ready CT"` — strike the phrase
-
-`grep -rni "ready ct\|ready_contract\|contract_ready" src/fa/` → 0. Contract lifecycle (`PLANNED/IMPLEMENTED/VERIFIED`)
-belongs to SLICE4 and does not exist. On the V2 route every admitted contract is in force from the moment of
-admission, so "ready" was an attempt to say "every contract", and it should be spelled that way.
-
-### 2.5 The rule, stated once
-
-A plan is admissible iff **every contract is discharged by exactly one of two modes, and the mode is total**:
-
-| `EVIDENCE` on the contract's invariant | required | refused |
+| Case | today | with `kind != "HARD"` removed |
 |---|---|---|
-| `TEST_REQUIRED` | ≥1 acceptance row resolving to exactly one nodeid in the sealed closure | no row, no nodeid, ambiguous nodeid — **regardless of `KIND`** |
-| `NON_EXECUTABLE` (+ typed reason) | a caller grant bound at admission (owner + typed evidence ref + ≤30 d) | missing grant, unratified reason, reason reused, >1 contract per grant, `PRESERVATION` class |
+| legitimate: covered contract + `HARD` disposition request | admitted | **admitted** |
+| `SOFT` + `TEST_REQUIRED` uncovered | admitted | **refused** `contract-without-executable-evidence` |
+| `HARD` + `TEST_REQUIRED` uncovered | refused | refused (same rule, renamed) |
+| `SOFT` + `NON_EXECUTABLE` request (no grant yet) | admitted | **admitted** (request is a document fact; the grant is checked at admission) |
+| `PRESERVATION` uncovered | refused | refused (unchanged) |
 
-`PRESERVATION` stays non-dispositionable (`plan_v2.py:617`) — that check is correct and should be *stated as a rule*
-rather than living as an ordering accident.
+Exactly one cell changes. Tests that encode the hole: **3 functions**, not 2 —
+`test_a_soft_invariant_may_still_stay_uncovered` (`tests/test_ai_native_plan_v2.py:819`),
+`test_a_contract_with_neither_a_selector_nor_a_disposition_is_uncovered` (`:720`), and
+`test_a_plan_that_disposes_of_nothing_seals_an_empty_attestation` (`tests/test_ai_native_acceptance_bundle.py:493`).
+The third is the seal-level twin: it mints a seal over an undispositionsed contract and asserts `attested == ()`. `KIND: SOFT` appears in 5 places in the whole test tree [R].
 
-Implementation is one branch: delete `if invariant.kind != "HARD": continue` (`plan_v2.py:622`) and let the existing
-`hard-contract-without-executable-evidence` rule fire for every uncovered contract whose invariant requests a test.
-Two tests get rewritten (`:720`, `:819`) — they encode the hole, and their replacement asserts the property that
-actually holds.
+### 3.5 `KIND` itself
 
-### 2.6 Behaviour on a real task, side by side
+`invariant.kind` is read in exactly one place (`plan_v2.py:622`) and only to exempt [R]. For a model author, a field whose only consumer removes an obligation is an attractor: the cheapest admissible document is the one that uses it.
 
-Task: *"сделай сервис экспорта отчётов"*; the planner writes `INV: export works offline`, `EVIDENCE: TEST_REQUIRED`,
-`CT-1.2`, and no acceptance row.
+* **For the MVP: delete it.** One evidence field, two total modes. The §3.4 patch already does the work; deleting the field is the follow-up that removes the attractor from the prompt and the schema.
+* **If severity is wanted later**, it is a *second* field (`SEVERITY: BLOCKING | ADVISORY`) with its own consumer (verdict grading, status promotion — SLICE4), never mixed into proof mode.
 
-| | A — today | B — refuse at admission (recommended) | C — refuse at seal | E601 (A′): also refuse `HARD+NON_EXECUTABLE` |
-|---|---|---|---|---|
-| plan admitted | yes | no | yes | as B for the soft case |
-| repair stage runs | — | **yes**, one shot, narrowed allowlist | no (no refusal yet) | irrelevant |
-| planner learns | nothing | the parser's rule name (once §3.1 is fixed) | nothing at refusal time | — |
-| coder dispatched | yes | no | yes — until the seal is wired | no |
-| what the run produces | a project whose own plan says a test is required and has none; seal (when wired) is shape-identical to a fully-covered one | a second revision that either adds the test or converts the claim to a request-for-grant; or `BLOCKED`, project present and honestly unadmitted | a second gate whose refusal has no repair path on this route; two predicates, two vocabularies | dispositions become unusable for exactly the claims they exist for |
-| cost | 0 | 1 line + 2 test rewrites + the two §3 fixes | ~50 lines of wiring that must stay in step forever | — |
-| verdict | hole | **correct** | correct-in-principle, worse-in-practice | regression |
-
-**Answer to the operator question:** no — a plan that says "must be tested" and ships no test must not reach a
-coder, and it must not need a waiver either. It must go back to the planner with a rule name it can act on, or end
-`BLOCKED` with the project present and inspectable. The waiver path is for claims physics puts out of reach, not for
-tests the planner did not get around to writing.
+Doctrine worth adopting in the project's own idiom: **no field enters the grammar without a named consumer and a test that fails when the consumer is removed** — the producer kill-check applied to the vocabulary.
 
 ---
 
-## 3. Two holes the parse/seal question hides — both bigger than the question
+## 4. Where `KIND` came from, and why the question felt unanswerable
 
-### 3.1 The repair loop is lossy, and the fix it may need is outside its allowlist
+There are four descriptions of one grammar, and the model that writes plans reads the unchecked ones:
 
-Two measured facts combine badly:
-
-* the repair stage is told **one** sanitized string, and on the create-new route every grammar refusal collapses to
-  `bootstrap-invalid-metadata` (`:3202` → `_authored_diagnostics` `:2953`). The parser knows the precise rule
-  (`slice-1-exit-check-entry`, `acceptance-selector-invalid`, `hard-contract-without-executable-evidence`, …); the
-  model is told "invalid metadata". E590 recorded the first two prompt drafts failing on exactly those two rules —
-  a real model produces them.
-* the repair may write only `increments/increment-01-initial-plan.md` and `open-questions.md` (`:3044`). The natural
-  fix for an uncovered `TEST_REQUIRED` contract is **to write the test**, which lives in
-  `acceptance/tests/` — outside the allowlist. The reachable fixes are "delete the contract" or "re-describe it as a
-  grant request", i.e. exactly the two behaviours that make a model optimize the claim away rather than escalate.
-
-With one repair in the budget, these two facts mean the loop will usually fail on the class of refusal that the
-whole V2 effort is about. Both fixes are small and bounded: carry the parser's closed rule as the diagnostic rule
-(the vocabulary must therefore contain grammar rules — §4), and add `acceptance/tests/` to the repair allowlist
-(planner-owned bytes, sealed afterwards, coder still cannot touch them).
-
-### 3.2 A grant request has no upward path
-
-`ctx.dispositions` comes from the caller at invocation time. If a plan truthfully needs an out-of-sandbox
-attestation and the caller did not pre-declare one, the run gets `disposition-undeclared`, spends its single repair
-attempt, and the model will almost certainly remove or weaken the claim. That is the worst possible outcome for the
-product: the honest plan is punished, the dishonest one is admitted.
-
-The disposition pipeline needs a **third outcome besides "granted" and "refused": `needs_grant(reason)` as a
-structured terminal result**, distinct from `workflow_failed` and retryable by re-invoking with `--dispositions` /
-the tool field. The chat caller can then show the operator one line ("this plan needs OWNER_APPROVAL: <what>"),
-and the operator decides. That is the human gate the design intends — reached as a *result*, not as a repair
-attempt by the author.
-
-Related: CT-1.5's documented gap (no `--dispositions` on the CLI) is not a test gap but the same capability gap from
-the human side; it becomes blocking the moment §3.2 exists.
-
----
-
-## 4. The canonical schema: not a rewrite, a conformance gate
-
-The measured divergence is real (schema teaches V1 `TESTS:` + `verify`, parser requires V2 `CONTRACTS/ACCEPTANCE/…`),
-and it is the root cause of every unanswerable evidence question — the document that defines invariants never
-mentions `KIND`. E601's step (C) is right that this must be fixed, but "rewrite the authoritative document" is the
-wrong shape of fix, because it will drift again. There are four surfaces of the same grammar:
-
-| Surface | Who reads it | Enforced by |
+| Surface | Reader | Checked by |
 |---|---|---|
-| `plan_v2.py` (parser + `_admit`) | the machine | itself |
-| `notes/artifact-schema-and-grammar.md` | two skills, four conformance tests, humans | nothing |
-| `prompt.AUTHORING_SYSTEM_PROMPT` (`:1225`) | **the model that writes plans** | nothing |
-| plan §2 "grammar delta" | reviewers | nothing |
+| `plan_v2.py` | the machine | itself |
+| `notes/artifact-schema-and-grammar.md` | 2 skills, 4 conformance tests, humans | **nothing** — `AI-NATIVE-PLAN-V2` ×0, `KIND:` ×0, `CT-` ×0, `TESTS:` ×10 [R] |
+| `prompt.AUTHORING_SYSTEM_PROMPT:1225` | **the model** | nothing; it states a rule the parser does not enforce (`:1260`) and a promise nothing keeps (`:1319`) [R] |
+| plan §2 "grammar delta" | reviewers | nothing; it contradicts §8 and its own Q table [R] |
 
-Fix the *relationship*, not the text: one machine-readable grammar table (sections, fields, cardinalities, and the
-closed rule vocabulary), from which (a) the parser's rules are drawn, (b) the document's grammar block is checked,
-(c) the prompt's worked example is **parsed by the real parser in a test** (CT-2.6 already does this), and (d) the
-skills' conformance test reads the same table. Then "two descriptions of the grammar" becomes a build failure rather
-than an audit finding.
+The fix is the *relationship*, not the text: one machine-readable grammar table (sections, fields, cardinalities, closed rule names) from which the parser's rules, the document's grammar block, the skills' conformance test and the prompt's worked example are all checked. The repository already does this for the admission-record vocabulary (`ADMISSION_RULES`/`ADMISSION_RULES_V2`); extending it to the grammar closes the root cause. Two live defects prove it is not academic:
 
-This is not speculative: the repository already does exactly this for the *admission record* vocabulary
-(`ADMISSION_RULES`/`ADMISSION_RULES_V2`, closed tables, schema tests). Extending that pattern to the grammar closes
-the root cause. Two live defects prove the gap is not academic:
-
-* `_validate_v2_admission` emits diagnostics under validator `"plan-v2"` (`:3481`, `:3490`) — a namespace that
-  `ADMISSION_RULES_V2` does not contain, so a loaded record would be **rejected as corrupt**
-  (`_record_diagnostics` → `_record_enum(validator, frozenset(rules))`). Latent today, one refactor from live.
-* the record's `contract_id` regex is `CT\d+[a-z]?` (`admission_schema.py:169`), while V2 ids are `CT-1.1`
-  (`plan_v2.is_contract_id`). A V2 diagnostic carrying a contract id cannot be persisted.
-
-Also worth correcting while the prompt is being brought into line: it currently states a rule the parser does not
-enforce ("a `FUNCTIONAL`/`CONSTRAINT` contract with `INV` pointing at a `TEST_REQUIRED` invariant must have an
-acceptance row") and a promise nothing keeps ("a false `TEST_REQUIRED` is a lie the verifier will catch later",
-`prompt.py:1260–1263`, `:1319`). After §2.5 the first becomes true; the second should be deleted, or made true by
-§2.5 and the seal.
+* `_validate_v2_admission` emits diagnostics under validator `"plan-v2"` (`:3481`, `:3490`), absent from `ADMISSION_RULES_V2`; `_record_diagnostics` would reject such a record as corrupt (`_record_enum(validator, frozenset(rules))`). Latent — today the create-new route returns before a `_WorkflowAdmission` exists [R].
+* the record's `contract_id` shape is `CT\d+[a-z]?` (`admission_schema.py:169`), while V2 ids are `CT-1.1` (`plan_v2.is_contract_id`): a V2 diagnostic cannot carry a contract id [R].
 
 ---
 
-## 5. The vocabulary: `KIND` needs a consumer or a funeral
+## 5. Two defects this review found (fix them with the same change set)
 
-`invariant.kind` is read in exactly one place (`plan_v2.py:622`) and only to exempt. A field whose only consumer
-removes an obligation is, for a model author, an attractor: the model is trained to produce *admissible* documents,
-so the cheapest admissible document is the one that uses the exemption. That is not a severity knob that is being
-misused; it is a free pass.
+### 5.1 An un-granted disposition request reaches the coder [M]
 
-Two honest options:
+`_admit_published_project:3209` reads `if snapshot.graph is not None and granted:` — and `granted` is `()`
+whenever the caller passed no dispositions. So the binding step is skipped, no rule fires, and the graph is
+admitted with the request still unbound: `contract_evidence → UNCOVERED`, `attested_contracts → ()`.
 
-* **Delete `KIND`.** The grammar then has one evidence field with two total modes (§2.5). Smallest vocabulary that
-  is fully enforced. Costs a schema/prompt/parser change, which today costs nothing (§1).
-* **Keep it, but make it a second, consumed axis.** `SEVERITY: BLOCKING | ADVISORY`, consumed by verdict grading
-  (a `SOFT`/advisory contract failing produces a warning and does not block `SHIPPED`) and by status promotion.
-  That is a real product decision for SLICE4 and it is fine — as long as `SEVERITY` never touches *proof mode*.
+The library is not at fault: `bind_dispositions(graph, ())` raises `disposition-undeclared` [M], and
+`test_a_request_without_a_grant_never_binds` already proves it (`tests/test_ai_native_dispositions.py:183`).
+**The controller bypasses a rule the library enforces and a test already pins.** One guard removed.
 
-What is not fine is the current state: one field doing both jobs, with the severity half unread and the exemption
-half live. **Doctrine to adopt, in the project's own idiom:** *no field enters the grammar without a named consumer
-and a test that fails when the consumer is removed.* This is the producer kill-check applied to the grammar itself.
+Consequence at the caller: the rule is absent from `_V2_CREATE_FAILURES`, so the run ends as the generic,
+non-retryable `workflow_failed` (`workflow_tool.py:879`) — unattributable, which INV-11 forbids [R].
 
----
+### 5.2 The repair loop cannot repair the case it exists for [R]
 
-## 6. Order inside SLICE3 — riskiest unknown first, not contract order
+| Fact | Measurement |
+|---|---|
+| one repair attempt, shared with the replan budget | `DEFAULT_MAX_REPLANS = 1` (`:157`); `authored_repairs < replans_allowed` (`:2950`) |
+| the repair may write only two files | `_REPAIR_WRITABLE_SUFFIXES` (`:3044`) — `acceptance/tests/` is **not** writable |
+| every grammar refusal reaches the repair stage as one string | `format_error` → `bootstrap-invalid-metadata` (`:3202`) → `_authored_diagnostics` (`:2953`) |
 
-The plan's CT order is a *dependency* order. The value order is different: two facts gate everything else, and one
-of them is a measurement nobody has taken.
+So the natural fix for "the plan promised a test it does not have" — *write the test* — is outside the allowlist,
+and the model is told "invalid metadata" instead of `acceptance-selector-invalid` or
+`hard-contract-without-executable-evidence`. With one attempt, the reachable behaviours are "delete the claim" or
+"re-describe it as a grant request": exactly the two an author model is most likely to choose, and both worse than
+the truth. The tool's own comment already records the folded-rule part as debt (`workflow_tool.py:846–850`); this
+review adds the reason it is not deferrable — **the diagnostic is the only feedback channel to the author.**
 
-**STEP 0 — the C1 probe (do this before any seal code).**
-The whole design assumes the managed runner can collect and execute a project test at
-`worklogs/<slug>/acceptance/tests/<file>.py::<node>` and resolve it to exactly one nodeid
-(`slice_verification.capture_test_nodeids`, plan §2). That has never been measured on a fresh project. Write one
-test that proves collection, one nodeid, and an ambiguous-selector refusal. If it fails, the plan's own instruction
-applies: fail closed and replan — everything in SLICE3 is downstream of this.
+The minimal fix is not a new mechanism:
 
-**STEP 1 — totality + a repair that can actually repair.** §2.5, plus §3.1's two fixes, plus §3.2's
-`needs_grant`. Exit: three tests — uncovered `TEST_REQUIRED` refused pre-coder; the repair writes the missing test
-and the second revision admits; the diagnostic the repair stage receives is the parser's own rule name.
-This is CT-3.1, and it is ~80 % already implemented: `_admit_contracts`, `_admit_acceptance`, `_admit_scenarios`,
-`_admit_kill_targets`, `_admit_steps` already enforce the graph cardinalities.
+1. `acceptance/tests/` joins the repair allowlist (planner-owned bytes, sealed afterwards, coder still excluded).
+2. The parser's closed rule becomes the diagnostic rule — which requires the `plan-v2` namespace to exist in
+   `ADMISSION_RULES_V2` (§4), i.e. the same table work.
+3. `disposition-undeclared` is classified **non-repairable** and mapped to `disposition_required` with
+   `retryable=True`.
 
-**STEP 2 — mint the seal on the route.** `_admit_published_project`: collect → `resolve_selectors` → `mint_seal`
-from the **bound** graph and the published revision → persist per-seal + atomic pointer (D-V2-5) → admission
-refuses a missing/stale seal. Add to the seal: `contracts_total`, `uncovered` (empty by construction), `attested`.
-`mint_seal` refuses `UNCOVERED` and refuses an unbound `NON_EXECUTABLE` invariant — as a *serialization invariant*,
-not a second policy. Exit: CT-2.4 + CT-3.2, and a seal that is auditable without the graph.
+(3) is the important one and it is counter-intuitive, so it is spelled out in §5.3.
 
-**STEP 3 — mode A.** `protected_paths` ← every sealed semantic path (`workspace.py:2194`, `:2814`), not just the
-plan file. Exit: CT-3.3 both halves (file-tool refusal; shell drift detected before any verdict).
+### 5.3 A grant request needs an upward path, not a repair attempt [A]
 
-**STEP 4 — the verifier runs the seal.** `sealed_collection_argv` on the V2 route; retire the planner `verify` fence
-there (`slice_verification.py:552`); closure-digest check before any verdict. Exit: CT-3.6.
+A caller fixes `ctx.dispositions` at invocation. If a plan truthfully needs an attestation the caller did not
+pre-declare, the planner **cannot** satisfy the refusal — only a human can. Spending the single repair attempt on it
+guarantees the model removes or weakens the claim. Therefore:
 
-**STEP 5 — attribution and TEST-DEFECT** to the existing `kill_attribution` / `acceptance_defect` mechanisms
-(CT-3.4/3.5). No new state machine.
+* the refusal is **not repairable** (add the rule to `_may_repair_authored_project`'s exclusion set, next to
+  collision — both are "a fact about the world, not about the bytes");
+* it maps to a **retryable** code `disposition_required` in the existing `_V2_CREATE_FAILURES` table (one row);
+* the caller re-invokes with `--dispositions` / the tool field.
 
-**STEP 6 — schema + prompt conformance**, last, because the prompt can only be written truthfully once 0–5 exist
-(the P0-1 lesson). §4 in one change.
-
-Do not start with "the graph" as a new parser feature (it is largely there), and do not start with seal wiring
-before STEP 0 — a seal built on an unproven collection path would be a second, more expensive audit.
+That is the human gate the design intends — reached as a *result*, not as an author's second guess. It is two lines
+in existing tables, not a new outcome type. It also makes CT-1.5's missing `--dispositions` CLI ingress
+(`cli.py:975–993`) blocking rather than deferred: the human path must be able to supply the grant.
 
 ---
 
-## 7. Process observations (offered as an equal, not a junior)
+## 6. What the seal must say [M]
 
-1. **The review layer has outgrown the product.** 141 k lines of worklog against 89 k of source; E600–E601 plus
-   four audits in three days. The audits are excellent — E600's refusal to widen admission semantics by inference is
-   exactly right — but the ratio says the bottleneck has moved from "unknowns" to "decision latency". A decision that
-   is measured twice and written three times is not safer than one that is measured once and ratified.
-2. **The plan is three documents in one.** It carries (a) ratified decisions, (b) status, (c) the specification, and
-   they contradict each other: §8 step 4 says "Q-V2-ACC-1/2 are closed" while the ACC-2 row says BLOCKING; the header
-   says "PLAN ONLY, no implementation" while eight of its own contracts are implemented. That is not carelessness;
-   it is what happens when one file is both a decision record and a status board. Split them: decisions immutable and
-   dated; state generated or checked; spec machine-verified (§4).
-3. **"Present tense" discipline cuts both ways.** The plan learned not to describe targets as existing (P0-1). The
-   mirror rule is missing: a *status* claim must cite evidence or be absent. "Closed" without a citation is how the
-   §8/Q contradiction appeared.
-4. **The cheapest next measurement is a real run, not another audit.** There is no host witness and no live
-   create-new run; the model-authored plan path has been exercised only by fixtures and by the prompt example. One
-   local managed run with a real provider will teach more about the repair loop, the prompt drift and the diagnostic
-   quality than several more static reviews — and the whole product claim (INV-12) is about exactly that path.
-5. **Do not reopen D-V2-9.** Planner-as-writer removes an orthogonal serialization, deletes ~3 600 lines of
-   renderer, and is implemented and tested. The fact that it moved the failure from "renderer refuses" to "admission
-   refuses" is the intended trade, and it is the better one.
+Measured: a seal minted over a plan with one tested contract and one un-granted `NON_EXECUTABLE` contract
+(`CT-1.2`) contains **no trace of `CT-1.2`** — not in `selectors`, not in `attested`, and the record has no field
+where it could appear:
 
----
+```
+seal.attested     = ()
+selector CTs      = ['CT-1.1']
+record keys       = attested, closure_sha256, files, identity, kind, mode, plan_sha256,
+                    revision_id, schema_version, seal_sha256, sealed_root, selectors, supersedes_sha256
+CT-1.2 in seal    -> False
+```
 
-## 8. Proposed resolutions to ratify (ready to paste)
+A manifest that does not state cardinality cannot be audited: the reader cannot distinguish "the rest were waived"
+from "the rest were never mentioned". Production manifests solve this the boring way — a total count plus per-item
+digests (lockfiles, in-toto/SLSA subjects).
 
-**Q-V2-ACC-2 — RESOLVED.** Evidence is total: every contract is discharged either by a selector resolving to exactly
-one nodeid in the sealed closure, or by a caller-granted typed disposition. `KIND` is not an exemption; `"ready CT"`
-is struck from the grammar (no runtime meaning). Two consequences: (a) `kind != "HARD"` no longer exempts a contract
-from evidence, so `SOFT + TEST_REQUIRED` with no selector and no grant is refused at admission with
-`hard-contract-without-executable-evidence` (rule name to be renamed `contract-without-executable-evidence`), and the
-two tests encoding the hole are replaced; (b) `HARD + NON_EXECUTABLE` remains legal **only** with a bound caller
-grant — the disposition pipeline is the ratified rule this row asked for, and refusing it for `HARD` would make the
-mechanism unusable for the claims it exists for. Admission is the single gate; the seal re-checks coverage as a
-serialization invariant and records `contracts_total`/`attested`/`uncovered`, never re-decides policy.
+**Seal requirements (three additions, no new policy):**
 
-**§2 grammar delta.** Delete "`NON_EXECUTABLE` is forbidden for HARD/ready contracts unless…"; replace with:
-"every contract has exactly one discharge mode; `TEST_REQUIRED` requires a resolving selector, `NON_EXECUTABLE`
-requires a bound caller grant; `PRESERVATION` is never dispositionable."
+1. `mint_seal` refuses a graph whose `contract_evidence` contains `UNCOVERED` — as a *serialization invariant*, not a
+   second admission decision (defence in depth against a future caller minting from an unadmitted graph).
+2. `mint_seal` refuses an `NON_EXECUTABLE` invariant with `owner is None` — an unbound request must never become a
+   seal with a silent empty attestation.
+3. The record carries `contracts_total`, `attested`, `uncovered` (empty by construction), so
+   `len(selectors) + len(attested) == contracts_total` becomes checkable **without the graph**.
 
-**§8 step 4.** Replace "Q-V2-ACC-1/2 are closed" with: "Q-V2-ACC-1 is closed by code (budgets, 30 tests); its
-transitive half is a named residual. Q-V2-ACC-2 is resolved by D-V2-10 (evidence totality)."
-
-**D-V2-10 — evidence totality** (new ratified decision): the rule in §2.5 plus (i) the parser's rule name is the
-diagnostic the repair stage receives, (ii) the repair allowlist includes `acceptance/tests/`, (iii) `needs_grant` is a
-structured, retryable terminal outcome that lets the operator supply a disposition and re-invoke.
-
-**D-V2-11 — grammar conformance** (new): one machine-readable grammar table is the source for parser rules, the
-canonical document's grammar block, the skills' conformance test and the prompt example; `ADMISSION_RULES_V2` gains
-the `plan-v2` namespace and V2-shaped contract ids.
-
-**Q-V2-ACC-1 — CLOSED-BY-CODE + residual.** Agreed with E601: budgets are implemented and strict; the transitive
-import closure is not provable in this design (a sealed test may import outside `acceptance/`, and the MUTATION route
-imports the candidate by design). Record it as a named residual with the reason, not as an open gate.
+With §3.4 + §5.1 in place, (1) and (2) can never fire on the create-new route; that is what makes them assertions
+about the pipeline rather than a second gate. `attested` already exists; only the counter and the two refusals are new.
 
 ---
 
-## 9. What I would do on Monday
+## 7. SLICE3 as an integration slice — order and exit criteria
 
-1. Ratify D-V2-10/D-V2-11 and the four one-paragraph plan edits above (30 minutes, no code).
-2. Land STEP 0 as a throwaway probe (~1 hour) — the only unknown that can invalidate SLICE3.
-3. Land STEP 1 + STEP 2 (evidence totality, repair fixes, seal wiring) behind the existing tests; run the suites.
-4. Then do one real create-new run end-to-end and read what the model actually did, instead of auditing what it
-   should do. Everything else — mode A, verifier, attribution, ticks — has a known shape and can wait for that
-   measurement.
+The plan's CT order is a dependency order; this is a *risk and value* order. Each step is independently revertible.
+
+| Step | Work | Exit criterion | Why here |
+|---|---|---|---|
+| **S0** | Probe: run `sealed_collection_argv` through the **managed** executor against a published fresh project; assert one nodeid; assert a parametrized selector (`::test_x[p]`) resolves; assert an uncollected selector refuses | one C1 test; if it fails, replan before any seal work | the only unknown that can invalidate everything else; ~1 h, not a research spike (§2.2) |
+| **S1** | §3.4 (delete the `KIND` exemption, rename the rule) + §5.1 (unconditional `bind_dispositions`) + §5.2 (repair allowlist, precise diagnostic) + §5.3 (non-repairable, `disposition_required`) | 3 rewritten tests + 5 new: uncovered `TEST_REQUIRED` refused pre-coder; un-granted request refused; repair adds the missing test and the second revision admits; the diagnostic carries the parser rule; the caller sees `disposition_required` as retryable | closes both holes at the gate that already exists; no seal needed |
+| **S2** | Mint on the route: after admission, `collect_sealed_nodeids` → `resolve_selectors` → `mint_seal` (bound graph, published revision) → persist per-seal + atomic pointer (D-V2-5) → coder gate `_run_stage:1634` refuses without a valid seal; §6 counters | CT-2.4, CT-3.2; a fresh project has a seal before its first coder byte; missing/stale seal blocks dispatch | makes INV-06 true on the product path |
+| **S3** | Mode A: `protected_paths` ← every sealed semantic path (`workspace.py:2194`, `:2814`), not just the plan file | CT-3.3 both halves (file-tool refusal; shell drift detected as `seal-byte-drift` before any verdict) | cheap, one tuple, closes an overclaim |
+| **S4** | Verifier on the seal: `run_sealed_acceptance` with the existing `_VerifySubstrate`; **retire the planner `verify` fence on the V2 route** (`slice_verification.py:552`) | CT-3.6; a drifted closure yields no verdict | command text must never drive a result |
+| **S5** | Attribution + TEST-DEFECT onto `kill_attribution` / `acceptance_defect` | CT-3.4, CT-3.5 | no new state machine |
+| **S6** | Diagnostic namespace + grammar table + canonical doc + skills + prompt example (§4, §5.2) | the prompt example parses (§CT-2.6); `ADMISSION_RULES_V2` contains every rule the parser can emit | last, because only then can it be written truthfully (the P0-1 lesson) |
+
+Do **not** start with "the graph" as a new feature: `_admit_contracts`, `_admit_acceptance`, `_admit_scenarios`,
+`_admit_kill_targets`, `_admit_steps` already enforce the cardinalities, and `resolve_selectors` already implements
+the nodeid half — it is simply not called on this route yet [R].
+
+---
+
+## 8. Remaining-work track
+
+| # | Item | Depends | State |
+|---|---|---|---|
+| 1 | Ratify D-V2-10 (evidence totality) and D-V2-11 (grammar table); correct plan §2, the Q-V2-ACC-2 row and §8 step 4 | — | **waiting on the operator**, no code |
+| 2 | S0 collection probe | — | ready |
+| 3 | S1 policy closure (§3.4, §5.1–5.3) | 1 | ready; 5 small edits |
+| 4 | S2 seal on the route (+ §6) | 3 | CT-2.4, CT-3.2 |
+| 5 | S3 mode A / S4 verifier | 4 | CT-3.3, CT-3.6 |
+| 6 | S5 attribution, TEST-DEFECT | 4 | CT-3.4, CT-3.5 |
+| 7 | S6 grammar table + doc/skills/prompt | 3 | current §4 debt becomes a task |
+| 8 | Debt: `--dispositions` CLI ingress (blocking after §5.3); `plan-v2` namespace; `CT-1.1` in the record schema; delete V1 `plan_ids` after the `SELECT_EXISTING` decision | — | partially blocking S1 |
+| 9 | Q-V2-ACC-1: budgets **closed-by-code** (512 files / 4 MiB per file / 16 MiB total / 4096 chars / depth 64 + refusal set, 25 tests); the transitive-import half is a **named residual**, not a gate | — | close with a record |
+| 10 | SLICE4/5 as planned; ticks stay a projection (Q-V2-STATUS-1 = A); status-producer design gate unchanged | 4 | unchanged |
+
+---
+
+## 9. Risks and non-goals
+
+| Risk | Mitigation |
+|---|---|
+| the seal gate becomes a second policy gate | §6 makes it a serialization invariant only; the create-new route can never reach it |
+| totality makes the first real plan inadmissible and stalls the product | that is the intended behaviour, but it must land **with** §5.2 (repair can write the test) and §5.3 (honest escalation), or the first run will look like a regression |
+| surface drift recurs after S6 | the table is the source; the conformance test fails when the doc/prompt/skills disagree |
+| more audits instead of a first real run | §10 |
+| **not** doing | reopening D-V2-9 (it deletes an orthogonal serialization and is implemented); changing `MUTATION_ROOTS`; blocking the shell half of mode A (D-V2-6 = detection is correct and profile identities stay untouched); inventing severity semantics before a consumer exists |
+
+---
+
+## 10. What I would do on Monday
+
+1. Ratify D-V2-10/D-V2-11 and the four one-paragraph plan corrections (30 min, no code).
+2. Run S0 (~1 h). It is the only measurement that can invalidate SLICE3.
+3. Land S1 + S2 behind the existing banks; run the targeted suites.
+4. **Then do one real create-new run end-to-end** and read what the model actually did. The whole product claim is
+   about that path, and it has never been exercised outside fixtures; one live run will teach more about the repair
+   loop, the prompt drift and the diagnostic quality than several more static reviews.
+
+Workflow note, offered as an equal: the review layer has outgrown the product (141 k lines of worklog vs 89 k of
+source, four audits in three days). The audits are good — E600's refusal to widen admission semantics by inference
+was exactly right — but the bottleneck has moved from *unknowns* to *decision latency*. The plan carries decisions,
+status and specification in one file, which is why §8 can claim a question closed while its own row says BLOCKING.
+Split them: decisions immutable and dated, state generated or checked, specification machine-verified.
+
+---
+
+## 11. Adversarial review of this document
+
+### 11.1 Corrections to the v1 draft (this is what self-review changed)
+
+| # | v1 said | Correct statement | Why it matters |
+|---|---|---|---|
+| 1 | "without a grant `_granted_dispositions` refuses the run (`disposition-undeclared`)" | **false**: the controller skips binding entirely when no grants were supplied (`:3209`), so the request is admitted and graded `UNCOVERED`. The library would have refused, and a test proves it; the controller bypasses it | it is a second, live hole, and it is the cheapest of the whole set to close (one guard) |
+| 2 | "two tests get rewritten" | **three**, named in §3.4 | the third is at the seal level, so it also proves the seal blindness |
+| 3 | "the seal is shape-identical to a covered one" | stronger: the un-granted contract **disappears** from the seal entirely [M] | "shape-identical" understated it |
+| 4 | CT-3.1 "~80 % implemented" | the cardinality half is implemented; the nodeid half (`resolve_selectors`) is implemented but not called on this route | avoids implying a parser feature is missing |
+| 5 | S0 "the riskiest unknown" | the library path is implemented and unit-tested with a fake executor; the unknowns are the managed executor, the new path prefix and parametrized ids | a 1 h probe, not a spike — and it should not gate planning decisions |
+| 6 | "`needs_grant` as a structured terminal outcome" | over-engineered: one row in `_V2_CREATE_FAILURES` + one rule in the non-repairable set + non-deferral of the CLI ingress | user's rule: simplest mechanism that fully satisfies the behaviour |
+| 7 | "the diagnostic problem is a gap I found" | the folded-rule part is already recorded as debt in `workflow_tool.py:846–850` | credit accuracy; the finding is *why it is not deferrable* |
+| 8 | "refuse `HARD+NON_EXECUTABLE` = regression" (kept) | confirmed and sharpened: the disposition pipeline needs `HARD` claims to exist at all | prevents a plausible-looking wrong fix |
+
+### 11.2 Objections a reviewer should raise, and the answers
+
+* **"Totality will refuse legitimate incremental planning."** §3.4 answers it: the unit of admission is the
+  increment; unevidenced future work is a future increment. If the product genuinely needs exploratory slices, that
+  is a *new* requirement and needs its own decision — it is not served by a silent exemption.
+* **"Deleting `KIND` breaks the schema the plan mandates."** The schema already does not contain `KIND` (§4); there
+  is nothing to break, and no V2 plan exists to migrate (§2).
+* **"The repair should be allowed to rewrite tests — the model could weaken them."** Nothing executes at admission,
+  and the coder cannot reach `acceptance/`; the seal binds whatever the repair wrote, and the verifier runs those
+  bytes. The attack surface is unchanged; the alternative is a repair that can never fix the case it exists for.
+* **"`disposition_required` retryable invites a loop."** Retryability is a *caller* hint, not an automatic retry;
+  the same pattern is already used for `invalid_dispositions` (`workflow_tool.py:866`).
+
+### 11.3 Residual uncertainty in this document
+
+1. The proposals are not applied to the tree; the §3.4 blast radius was measured on a copy, not against the full
+   suite. Expect the three named tests plus any fixture that mints a seal over an undispositionsed contract.
+2. `SOFT` fixtures appear in 5 places; I read them, but a suite run is the authority.
+3. S2's persistence details follow D-V2-5 as written; this review did not re-audit `q-v2-boot1-install-seal-audit`
+   beyond the fact that the seal is minted from installed bytes + plan + revision.
+4. **No test suite was executed** (sandbox lacks Python 3.13; `uv sync` blocked by egress). Claims about test
+   greens elsewhere in the ledger were not re-verified.
+
+---
+
+## Appendix A — reproductions
+
+```text
+# 1. The evidence matrix, today (no pytest needed: plan_v2 is stdlib-only)
+python3 - <<'PY'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("plan_v2", "src/fa/inner_loop/plan_v2.py")
+m = importlib.util.module_from_spec(spec); sys.modules["plan_v2"] = m; spec.loader.exec_module(m)
+# ... build a two-contract document as in §3.1 and print m.contract_evidence(...)
+PY
+# Result: SOFT+TEST_REQUIRED uncovered -> ADMITTED, UNCOVERED; HARD -> REFUSED
+#         hard-contract-without-executable-evidence
+
+# 2. The patch blast radius: copy plan_v2.py, delete the `if invariant.kind != "HARD": continue`
+#    branch, rename the rule; run the five cases in §3.4. Result: exactly one cell changes.
+
+# 3. The un-granted request:
+#    bind_dispositions(graph, (), today=date(2026,11,22))
+#    -> PlanRefError: disposition-undeclared
+#    ... and yet the request is admitted, because the controller skips this call (:3209).
+
+# 4. The seal blindness: mint_seal over that graph (acceptance root needs pytest.ini + one test)
+#    -> seal.attested == (), selector CTs == ['CT-1.1'], "CT-1.2" not in json.dumps(record)
+```
+
+Search anchors used: `grep -rn "invariant.kind" src/fa` → 1 hit; `grep -rn "AcceptanceBundle" workflow_controller.py`
+→ 0; `grep -c -- "KIND:" artifact-schema-and-grammar.md` → 0; `grep -rl "AI-NATIVE-PLAN-V2" worklogs/` → 0 projects.

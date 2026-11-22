@@ -12530,3 +12530,55 @@ source for parser rules, canonical document, skills and prompt example). Strike 
 riskiest-first: probe managed collection at the new acceptance path, then seal wiring, then mode A, then the
 verifier, then attribution; the schema/prompt conformance change lands last, because only then can it be written
 truthfully. Do not reopen D-V2-9.
+
+### E603 — self-review of E602: one claim was wrong, and it hid a second live hole (2026-11-22)
+
+Supersedes the v1 draft of [i03-external-design-review-2026-11-22.md](notes/i03-external-design-review-2026-11-22.md);
+the decision document now in that file is v2. No production change in this commit.
+
+**Correction — the hole is wider than E602 said.** E602 stated that an un-granted `NON_EXECUTABLE` request is
+refused by `disposition-undeclared`. It is not. `_admit_published_project` guards the binding with
+`if snapshot.graph is not None and granted:` (`workflow_controller.py:3209`), and `granted` is `()` whenever the
+caller supplied no dispositions — so **the binding step is skipped entirely**, no rule fires, and the graph is
+admitted with the request unbound and graded `UNCOVERED`. Measured: `bind_dispositions(graph, ())` raises
+`disposition-undeclared`, and `tests/test_ai_native_dispositions.py:183` already pins that; the controller therefore
+bypasses a rule the library enforces and a test proves. Closing it is deleting one guard. Consequence in the caller:
+the rule is absent from `_V2_CREATE_FAILURES`, so such a run ends as the generic non-retryable `workflow_failed`
+(`workflow_tool.py:879`) — unattributable, which INV-11 forbids.
+
+**Correction — the blast radius is three tests, not two.**
+`test_a_soft_invariant_may_still_stay_uncovered` (`tests/test_ai_native_plan_v2.py:819`),
+`test_a_contract_with_neither_a_selector_nor_a_disposition_is_uncovered` (`:720`), and
+`test_a_plan_that_disposes_of_nothing_seals_an_empty_attestation`
+(`tests/test_ai_native_acceptance_bundle.py:493`) — the third is the seal-level twin and mints a seal over an
+undispositionsed contract. `KIND: SOFT` occurs in 5 places in the whole test tree.
+
+**Measurement — the seal does not merely look similar, it omits the contract.** A seal minted over a plan with one
+tested contract and one un-granted `NON_EXECUTABLE` contract holds no trace of the second: `attested == ()`,
+`selectors` names only the first, and no field in the record could carry it (`CT-1.2 in seal → False`). The §6
+requirement (`contracts_total` + refusals inside `mint_seal`) follows from that, as a serialization invariant rather
+than a second gate.
+
+**Measurement — the recommended patch changes exactly one cell.** Removing the `kind != "HARD"` exemption from
+`_admit_evidence` (and renaming the rule) turns `SOFT + TEST_REQUIRED` uncovered from admitted into refused; the
+legitimate disposition request, the `HARD` refusal and the `PRESERVATION` refusal are unchanged. Applied to a copy of
+`plan_v2.py`, not to the tree.
+
+**Simplification — `needs_grant` as a new outcome type was over-engineered.** The same behaviour comes from existing
+tables: add `disposition-undeclared` to `_may_repair_authored_project`'s exclusion set (the planner cannot supply a
+human grant, so retrying it is a loop, exactly like a collision) and one row in `_V2_CREATE_FAILURES` mapping it to
+`disposition_required` with `retryable=True`. That also makes CT-1.5's missing `--dispositions` CLI ingress blocking
+rather than deferred.
+
+**Downgraded — the collection probe is not a research spike.** `sealed_collection_argv` pins the closure's own
+`pytest.ini`/`rootdir`, `collect_sealed_nodeids`/`run_sealed_acceptance` already refuse drift, unexecuted selectors
+and unusable reports, and `excluded_paths` defaults to `()` so `worklogs/` is visible through a managed view. The
+open questions are the managed executor, the new path prefix and parametrized nodeids: a ~1 h probe, not a gate on
+planning.
+
+**Credit where due.** The folded-rule part of the diagnostic defect is already recorded as debt in
+`workflow_tool.py:846–850`; what this review adds is why it is not deferrable — the diagnostic is the only feedback
+channel to the author, and there is one repair attempt.
+
+**Held.** E601's proposed refusal of `HARD + NON_EXECUTABLE` remains wrong: dispositions exist for claims that are
+critical and unobservable, and `bind_dispositions` is the authority that grants them. Re-confirmed, not re-argued.
