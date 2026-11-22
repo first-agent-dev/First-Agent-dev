@@ -12791,26 +12791,37 @@ at the stage seam (`drive -> SessionOutcome`, `build_registry -> ToolRegistry`, 
 `WorkflowProgress("WORKFLOW")`, which passed a string where `plan_version: int` is declared — a real
 type error copied from a pre-existing test. `src/` has 0 findings.
 
-**Result 2 — the pytest baseline is red before S1, and the dominant cause is the runner, not the
-plans.** Full suite at the base commit: **116 failed, 8146 passed, 19 skipped, 3 xfailed, 6 errors**,
-806 s. By file: `test_verify_gate_live` 79, `test_s8_workflow_controller` 11, `test_cli_ergonomics` 8,
-`test_workflow_no_eval_terminal` 5, then ten files with one or two each. Root cause for the dominant
-cluster, measured on two independent samples:
+**Result 2 — pytest, measured twice, because the first measurement was wrong.** First attempt: a
+worktree of `1acb56b` gave **116 failed, 8146 passed, 6 errors**. That number was an artifact of how the
+worktree was prepared, not a property of the commit, and the difference is worth recording because it is
+easy to mistake for "the sandbox cannot run these tests":
 
-| Evidence | Reading |
+| Symptom in the bad run | Actual cause |
 |---|---|
-| `fa workflow: admission blocked: baseline-unavailable`, exit 2 (CLI ergonomics, S8 controller, verify-gate) | T0 baseline capture failed, so the coder stage is refused and every downstream assertion about exit codes and attribution trips |
-| `assert 'runner status contradicts' in "JUnitXML report is missing or invalid: [Errno 2] … /results.xml"` | `capture_test_nodeids` runs a **nested pytest** with the exact-nodeid JUnit plugin; the report never appears, so the baseline is an ERROR by the code's own rule |
-| `AssertionError: just is required by the workspace check toolchain` (2 tests) | `just` is not on `PATH` in this sandbox |
-| `WARNING fa.runtime.pty_pool: tmux binary not found, falling back to pexpect` | the pty/runner layer is degraded here too |
+| 114 tests fail with `fa workflow: admission blocked: baseline-unavailable`, exit 2 | The product's T0 capture shells out to a literal `python -m pytest … -p fa.inner_loop.junit_nodeid_plugin`, and the gate environment puts `<workspace>/.venv/bin` first on `PATH`. The worktree had **no `.venv`**, so `python` was the system interpreter, the plugin did not import, no JUnit report appeared, and every workflow test was refused before its coder stage |
+| `assert 'runner status contradicts' in "JUnitXML report is missing or invalid … results.xml"` | The same missing report, surfaced by the one test that asserts on the message |
+| `AssertionError: just is required by the workspace check toolchain` (2 tests) | Real, but unrelated to the plans; `just` is genuinely absent here |
 
-So the largest share of the red is "this workspace cannot run the project's own test toolchain the way
-the product expects", not "the plan logic is wrong". That is a **host prerequisite**, and it is the only
-category the review allows to be marked `xfail` — in the form the repository already enforces
-(`tests/test_authoring_rules_tests.py` V4: `strict=True` plus a reason). Nothing is marked yet: a
-prerequisite has to be *proven* per test, not assumed from a file-level pattern, and this entry records
-that the classification is owed rather than done.
+Symlinking `.venv` into the worktree made the sample test pass immediately (`1 passed in 6.09s`), so the
+baseline was re-run properly. Comparable measurement, same tests, both trees able to run the toolchain:
 
-**Policy recorded (plan §8).** `no new red` is a standing gate: `compare` must report `0 new`; known
-red stays listed with its reason; `xfail` only for a proven host prerequisite; known red that turns out
-to be code is fixed before deploy as its own item.
+| | base `1acb56b` | head `e0cbea6` |
+|---|---|---|
+| pytest | 2 failed, 8267 passed, 18 skipped, 3 xfailed (**0 errors**) in 24m35s | 2 failed, 8286 passed, 18 skipped, 3 xfailed in 19m08s |
+| failures | `test_c901_diff_guard`, `test_pyrefly_import_topology` | `test_console_encoding`, `test_pyrefly_import_topology` |
+
+`compare`: **1 new, 1 gone**. The new one was mine and is fixed (`ddb5c8f`): `gate_tracker.py` printed
+box characters without `force_utf8_stdio()`, caught by `tests/test_console_encoding.py`. The "gone" one
+is a measurement artifact — the C901 diff guard needs `merge-base(HEAD, main|origin/main|HEAD^)`, and in
+a worktree at `1acb56b` none resolves (`main` shares no ancestor with this branch line, and the checkout
+does not carry the parent object, so `HEAD^` is "not a valid object name"). Details and the verification
+run are in `notes/gates/2026-11-22-head-e0cbea6/RESOLUTION.md`.
+
+So the honest split at this branch is: **new = 1, fixed in `ddb5c8f` and re-verified; pre-existing = 1**
+(`test_pyrefly_import_topology`, `pyrefly` not installed here) — the other 114 were neither, they were a
+tree that could not run the project's toolchain. Both lessons are now in `notes/gates/README.md`, because
+a baseline measured in such a tree is not a baseline.
+
+**Policy recorded (plan §8).** `no new red` is a standing gate: `compare` must report `0 new`; known red
+stays listed with its reason; `xfail` only for a *proven* host prerequisite, never for "it fails in this
+environment"; known red that turns out to be code is fixed before deploy as its own item.

@@ -1,10 +1,25 @@
 {
-  "cwd": "/home/user/First-Agent-dev",
+  "cwd": "/tmp/base-wt",
   "gates": {
+    "authoring-check": {
+      "exit": 0,
+      "findings": 0,
+      "log": "authoring-check.log"
+    },
+    "mypy": {
+      "exit": 1,
+      "findings": 66,
+      "log": "mypy.log"
+    },
     "pytest": {
       "exit": null,
-      "findings": 116,
+      "findings": 2,
       "log": "pytest.log"
+    },
+    "ruff": {
+      "exit": 0,
+      "findings": 0,
+      "log": "ruff.log"
     }
   },
   "label": "base-1acb56b"

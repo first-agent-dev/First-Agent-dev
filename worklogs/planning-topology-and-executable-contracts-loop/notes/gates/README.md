@@ -55,3 +55,18 @@ finding that moves is not a new finding. So a finding is
 disappearing finding can be a coincidence of two edits, which is exactly how the
 three new mypy errors hid. Known red stays listed with a reason (environment,
 host prerequisite, deferred fix) — never silently re-run until green.
+
+## Baseline gotchas (both measured the hard way)
+
+1. **A worktree needs `--pythonpath`.** `pip install -e` points at the working tree; without
+   `--pythonpath <worktree>/src` the "base" recording silently measures HEAD.
+2. **A worktree also needs a `.venv` inside it.** The product's T0 baseline capture shells out to a
+   literal `python -m pytest … -p fa.inner_loop.junit_nodeid_plugin`, and the gate environment puts
+   `<workspace>/.venv/bin` first on `PATH`. In a worktree with no `.venv`, `python` resolves to the
+   system interpreter, the plugin import fails, no JUnit report appears, T0 becomes
+   `baseline-unavailable`, the coder stage is refused with exit 2 — and **114 tests fail for a reason
+   that has nothing to do with the commit under test**. Symlink the venv (`ln -s … /tmp/base-wt/.venv`)
+   and the same tests pass. A red baseline measured in a tree that cannot run the toolchain is not a
+   baseline; it is a property of the tree.
+3. **The suite is ~13–19 minutes.** Record it once, `--reuse pytest=<log>` afterwards. A `--tb=no -rf`
+   run is enough for the nodeid list; re-run the survivors with `--tb=line` when a reason is needed.

@@ -1,0 +1,2 @@
+FAILED tests/test_console_encoding.py::test_scripts_with_non_ascii_output_force_utf8
+FAILED tests/test_pyrefly_import_topology.py::test_pyrefly_check_passes
