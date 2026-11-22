@@ -12170,3 +12170,43 @@ diagnosing the environment.
 
 38 tests in `test_ai_native_bootstrap.py`; 357 across nine banks; 306 across the
 controller/e2e/acceptance banks; ruff clean; mypy 224 clean; doc-links 370 OK.
+
+### E595 — the e2e proved repair was possible, not that the path did it (2026-11-21)
+
+E594's e2e assembled the second stage by hand: it ran stage 1, called
+`_admit_published_project`, then built its own `PlannerDispatch` for the repair. Every
+assertion passed. Mutation M3 -- "the repair runs with no narrowed scope" -- replaced
+`repair_allowlist=_repair_allowlist(root)` with `None` inside `_run_create_new_repair` and
+**survived**. The mutant is a real weakening: an unbounded repair could rewrite the roadmap
+and publish a project admission never read.
+
+The reason is the one worth remembering: the test never executed the code it was supposed
+to protect. It proved repair is *possible*, which is a property of the pieces, not of the
+bound path. A test that builds the machinery it is checking cannot fail when that machinery
+is deleted.
+
+**The fix is a second test, not a stronger first one.** `test_the_bound_repair_path_runs_
+both_stages_and_binds_the_result` drives `_bind_authored_project` with the production
+recursion seam (`run_stage_fn`, the same hook `_cmd_run` supplies through
+`invoke_workflow`). Stage 1 is real; stage 2 is dispatched *by the bound path*; the test
+records the scope of every dispatch it receives and asserts `scopes == ["narrowed"]`.
+M3 dies there. M4 ("the bound path never dispatches a repair", `if False:`) dies there too
+-- without it, a green suite would have said nothing about the wiring at all.
+
+**M5 survived and that is correct.** "A repair is not budgeted" is killed by
+`test_a_create_new_repair_is_budgeted_and_never_overwrites_on_collision`, a different test
+with a different subject. Recorded in the harness comment so nobody later "fixes" a bank
+that is already covered, and so the kill attribution stays honest: 5/5 mutants, but not all
+from one test.
+
+**Harness committed** as `tests/mutation/mut_test_28.py`, following `mut_step8.py`/
+`mut_step9.py`: same loop, restore-and-verify, `SKIP` on a pattern that does not apply
+rather than a fake kill.
+
+**Sandbox correction.** Everything after the environment rebuild ran on the project's own
+CPython 3.13.16 via `scripts/arena-env-build.sh`. The 3.11 shim, the rewritten test overlay
+and the "11 environmental failures" I recorded in E593 are all void: on the real
+interpreter `test_s8_workflow_controller.py` is 26 passed and `mypy src/` is clean in 224
+files. The lesson is in `knowledge/arena-env-build.md`, and I should have read it first.
+
+39 tests in `test_ai_native_bootstrap.py`; 358 across nine banks; ruff clean; mypy 224.

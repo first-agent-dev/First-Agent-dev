@@ -1006,6 +1006,123 @@ def test_a_create_new_repair_writes_no_scaffold() -> None:
     assert ordinary_port.writes == []
 
 
+def test_the_bound_repair_path_runs_both_stages_and_binds_the_result(site: Site, tmp_path: Path) -> None:
+    """D-V2-9.8: `_bind_authored_project` itself repairs -- not just "a repair is possible".
+
+    The sibling test assembles the second stage by hand, which proves the mechanism but
+    leaves the wiring unproven: a regression that stopped `_bind_authored_project` from
+    calling `_run_create_new_repair` would leave it green, and so would a repair that ran
+    with no narrowed scope (M3 in this bank's mutant list survived that test).
+
+    `run_stage_fn` is the same recursion seam production uses (`_cmd_run` through
+    `invoke_workflow`): each dispatch lands back in `_run_cli_stage`. Only the planner's
+    behaviour is scripted per attempt -- the seam, the authority, the views and the
+    publication are the real ones.
+    """
+    import argparse as _argparse
+    from dataclasses import replace as _replace
+
+    from fa import cli as _cli
+    from fa.inner_loop.project_scaffold import scaffold_files
+    from tests.test_admission_v2_provenance import _managed_child_env
+
+    slug = "bound-repair"
+    scaffold = scaffold_files(slug, created="2026-11-21")
+    roadmap_path = f"worklogs/{slug}/roadmap.md"
+    increment_path = f"worklogs/{slug}/increments/increment-01-initial-plan.md"
+    body = _AUTHORED_BODY.format(slug=slug)
+    good_roadmap = scaffold[roadmap_path]
+    good_increment = scaffold[increment_path].replace("slices: 0", "slices: 1") + body
+    broken_increment = good_increment.replace("Roadmap-ID: RM-bound-repair", "Roadmap-ID: RM-elsewhere")
+
+    case_dir = tmp_path / "bound"
+    case_site = Site(case_dir / "protected", site.roots, site.source)
+
+    with _managed_child_env(case_site, case_dir, child_run_id="ct28-bound") as (
+        managed,
+        _publisher,
+        child_ctx,
+        yaml_path,
+    ):
+        scopes: list[str] = []
+
+        def build_registry(workspace_io: object, _executor: object, _lease: object) -> object:
+            # The stage's port is the registry this drive needs: it writes documents.
+            return workspace_io
+
+        def drive_first(port: object) -> object:
+            for path, content in ((roadmap_path, good_roadmap), (increment_path, broken_increment)):
+                current = port.read_file(path).sha256  # type: ignore[attr-defined]
+                port.write_file(path, content, expected_sha256=current)  # type: ignore[attr-defined]
+            return SessionOutcome(exit_code=0, stop_reason="stopped_by_llm", turns=1, final_text="authored")
+
+        def drive_repair(port: object) -> object:
+            current = port.read_file(increment_path).sha256  # type: ignore[attr-defined]
+            port.write_file(increment_path, good_increment, expected_sha256=current)  # type: ignore[attr-defined]
+            return SessionOutcome(exit_code=0, stop_reason="stopped_by_llm", turns=1, final_text="repaired")
+
+        # ---- stage 1: a real authoring stage publishes a pair that disagrees ----------
+        from fa.inner_loop.planner_dispatch import PlannerDispatch, PlannerDispatchKind
+
+        first_dispatch = PlannerDispatch(
+            PlannerDispatchKind.CREATE_NEW_PROJECT, child_ctx.run_id, authoring_root=f"worklogs/{slug}"
+        )
+        _cli._run_cli_stage(
+            args=_argparse.Namespace(_managed_execution=managed),
+            run_context=child_ctx,
+            run_id=child_ctx.run_id,
+            run_log_dir=case_dir / "log-1",
+            session_db=None,
+            log=SimpleNamespace(path=case_dir / "events.jsonl"),
+            workspace=case_site.source,
+            role="planner",
+            plan_ref=None,
+            planner_dispatch=first_dispatch,
+            build_registry=build_registry,
+            drive=drive_first,
+        )
+        published = managed.current_revision_id
+
+        # ---- stage 2: the BOUND path, which must dispatch the repair itself -----------
+        def stage_runner(args: object, **kwargs: object) -> int:
+            dispatch = kwargs["planner_dispatch"]
+            scopes.append("narrowed" if dispatch.repair_allowlist else "unbounded")
+            outcome, _released = _cli._run_cli_stage(
+                args=_argparse.Namespace(_managed_execution=managed),
+                run_context=child_ctx,
+                run_id=child_ctx.run_id,
+                run_log_dir=case_dir / "log-2",
+                session_db=None,
+                log=SimpleNamespace(path=case_dir / "events.jsonl"),
+                workspace=case_site.source,
+                role="planner",
+                plan_ref=None,
+                planner_dispatch=dispatch,
+                build_registry=build_registry,
+                drive=drive_repair,
+            )
+            return 0 if outcome is not None and outcome.exit_code == 0 else 2
+
+        ctx = _replace(
+            _stage_ctx(case_site, child_ctx, yaml_path, managed, slug), replans_allowed=1
+        )
+        bound, blocked = workflow_controller._bind_authored_project(
+            ctx,
+            progress=workflow_controller.WorkflowProgress("WORKFLOW"),
+            run_stage_fn=stage_runner,
+        )
+
+        assert blocked is None, f"the bound path refused instead of repairing ({blocked})"
+        # Exactly one repair stage ran, and it ran with the narrowed scope. This is the
+        # assertion that kills "the repair runs with no narrowed scope" (M3).
+        assert scopes == ["narrowed"], f"expected one narrowed repair stage, got {scopes}"
+        assert bound.authored_repairs == 1
+        assert bound.admission is not None and bound.admission.snapshot.graph is not None
+        assert list(bound.admission.snapshot.graph.contracts()) == ["CT-1.1"]
+        # The repair published a SECOND revision on top of the refused one.
+        assert managed.current_revision_id != published
+
+
 def test_metadata_table_and_parse_refusal_block_coder_then_repair_rewrites_published_file(
     site: Site, tmp_path: Path
 ) -> None:
