@@ -1256,13 +1256,13 @@ def test_a_grammar_refusal_reaches_the_repair_as_the_parser_rule(site: Site, tmp
             run_id=child_ctx.run_id,
             run_log_dir=case_dir / "log-1",
             session_db=None,
-            log=SimpleNamespace(path=case_dir / "events.jsonl"),
+            log=cast("Any", SimpleNamespace(path=case_dir / "events.jsonl")),
             workspace=case_site.source,
             role="planner",
             plan_ref=None,
-            planner_dispatch=first_dispatch,
-            build_registry=build_registry,
-            drive=drive_first,
+            planner_dispatch=cast("Any", first_dispatch),
+            build_registry=cast("Any", build_registry),
+            drive=cast("Any", drive_first),
         )
 
         prompts: list[str] = []
@@ -1275,13 +1275,13 @@ def test_a_grammar_refusal_reaches_the_repair_as_the_parser_rule(site: Site, tmp
                 run_id=child_ctx.run_id,
                 run_log_dir=case_dir / "log-2",
                 session_db=None,
-                log=SimpleNamespace(path=case_dir / "events.jsonl"),
+                log=cast("Any", SimpleNamespace(path=case_dir / "events.jsonl")),
                 workspace=case_site.source,
                 role="planner",
                 plan_ref=None,
-                planner_dispatch=kwargs["planner_dispatch"],
-                build_registry=build_registry,
-                drive=drive_repair,
+                planner_dispatch=cast("Any", kwargs["planner_dispatch"]),
+                build_registry=cast("Any", build_registry),
+                drive=cast("Any", drive_repair),
             )
             return 0 if outcome is not None and outcome.exit_code == 0 else 2
 

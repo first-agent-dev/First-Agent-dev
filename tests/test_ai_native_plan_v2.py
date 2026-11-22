@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -586,7 +587,7 @@ class _Recorder:
         )
 
 
-def _invoke_args(**overrides: object) -> SimpleNamespace:
+def _invoke_args(**overrides: object) -> argparse.Namespace:
     values: dict[str, object] = {
         "task": "ship the sealed project",
         "task_flag": None,
@@ -602,7 +603,9 @@ def _invoke_args(**overrides: object) -> SimpleNamespace:
         "dispositions": None,
     }
     values.update(overrides)
-    return SimpleNamespace(**values)
+    # `argparse.Namespace`, not `SimpleNamespace`: `_cmd_invoke_workflow` takes a `Namespace`
+    # and every attribute read is a `getattr`, so the two are interchangeable here.
+    return argparse.Namespace(**values)
 
 
 def test_invoke_workflow_cli_calls_the_same_tool_the_chat_registers(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -691,7 +694,7 @@ def test_a_grant_file_the_operator_cannot_read_says_so(
     def unreadable(self: Path, *_args: object, **_kwargs: object) -> str:
         raise PermissionError(13, "Permission denied")
 
-    monkeypatch.setattr(cli.Path, "read_text", unreadable, raising=True)
+    monkeypatch.setattr("pathlib.Path.read_text", unreadable, raising=True)
     built: list[object] = []
     monkeypatch.setattr(cli, "build_invoke_workflow_tool", lambda *a: built.append(a))
 

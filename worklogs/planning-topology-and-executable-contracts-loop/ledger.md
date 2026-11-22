@@ -12694,3 +12694,66 @@ snapshot, so both can disappear between turns. Rebuild with `./scripts/arena-env
 source tree survived, ~11 minutes cold — and activate with `source .venv/bin/activate`. The `/tmp/stub` python3.11
 slice used in E602/E603 is now a fallback for quick probes only; **claims about gates must come from the real
 interpreter.**
+
+### E607 — S1 lands: admission's policy half closes, and the repair path it depends on was dead (2026-11-22)
+
+Four commits make up S1: `763239f`, `f932b13`, `03c3b87`, `b6ca424`. They are one change set because
+each closes a hole the next one would otherwise have to work around — a seal minted before S1 would
+certify a graph admission no longer accepts (plan §8, "Next slice").
+
+**What the code now does, item by item.**
+
+| # | Rule | Commit | Behaviour |
+|---|---|---|---|
+| 1 | P4-1 / R1 | `f932b13` | `_admit_published_project` binds unconditionally (`if snapshot.graph is not None:`). The old `and granted` skipped the binding exactly when the caller sent nothing — the one case with no other gate, since `bind_dispositions` is a no-op without requests. An ungranted request is now `disposition-undeclared`, pre-seal. |
+| 2 | D-V2-10 | `763239f` | `KIND` is gone from the grammar and from the prompt; every admitted CT is discharged exactly once (executable selector or caller-granted disposition); `UNCOVERED` is refused at admission and survives only as a grading state the seal reports. |
+| 3 | P4-1 (callers) | `f932b13` | `disposition-undeclared` is non-repairable in the controller (a repair would "fix" it by deleting the request) and maps to `disposition_required`, retryable, in the tool's closed table. |
+| 4 | P4-3 | `03c3b87` | The repair scope admits `roadmap.md`, the pair admission parses, `open-questions.md` and the `acceptance` subtree; the task text is derived from that tuple and names the parser's rule; `PlanRefError.detail` carries the rule while the persisted code stays the coarse metadata family. |
+| 5 | P4-6 | `b6ca424` | `fa invoke-workflow --dispositions PATH_OR_JSON`: the CLI decodes and forwards, `parse_dispositions` stays the only validator, and a value that is not JSON refuses before any lifecycle. |
+| 7 | D-V2-11 (first half) | — | Closed by measurement, not prose: `artifact-schema-and-grammar.md` has `KIND:` ×0, `AI-NATIVE-PLAN-V2` ×0, `CT-` ×0, `DISPOSITION` ×0, `^EVIDENCE:` ×0. It describes no field S1 deleted and contradicts nothing S1 changed; it is the V1 contract, and the V2 table that replaces it is S6. A partial V2 section now would be the *fourth* description the review counted. |
+
+**The defect inside the fix — P4-7.** Item 4 was not "widen a list". Measured through
+`build_registry_for_role`, the repair writer returned `path_denied` for the increment it exists to
+repair: the scope named *files* and the only matcher, `is_path_within_allowlist`, is
+strictly-descendant, so a file-name prefix admits nothing. Every repair test bound the workspace port
+directly, so no oracle could see it — the double hid the defect, which is the failure mode
+`/tests-writing` names. Fixed by `is_path_in_write_scope` (exact entry or subtree), selected by both
+gates when the dispatch carries a repair scope; the directory predicate is untouched for every
+profile allowlist, and a mutant proves the two are not interchangeable.
+
+**Gates (each commit, then the whole set).**
+
+| Gate | Result |
+|---|---|
+| S1 banks: `plan_v2 · dispositions · acceptance_bundle · bootstrap · invoke_workflow_tool · profiles_allowlist · cli` | **519 passed**, 22 s |
+| Wide bank `-k "ai_native or invoke_workflow or admission or workflow or plan_"` | **1479 passed**, 6838 deselected, 388 s (second run; the first showed one failure, see below) |
+| `uv run ruff check` on every touched file | clean (format drift in two pre-existing test files left alone) |
+| `uv run fa authoring-check` | exit 0, 0 diagnostics |
+| `uv run mypy` | **65 errors**, **0 in `src/`** — one fewer than the 66 the branch base had, because `_invoke_args` now returns `argparse.Namespace`. Mid-change it was 83; the extra ones were all my own test code, and they were fixed rather than declared. |
+
+**Mutation evidence, 25 mutants, 25 killed, each by its named oracle.**
+
+| Group | Mutants | Killed by |
+|---|---|---|
+| D-V2-10 (item 2) | 3: skip the seal restore, stale `KIND`, move the PRESERVATION rule | the three D-V2-10 oracles |
+| P4-1 (items 1, 3) | M4 restore `and granted`, M5 allow the repair, M6 drop the failure-map row | `test_an_ungranted_request_is_refused_even_when_the_caller_sends_no_declarations`, `test_a_missing_grant_is_never_repaired_by_rewriting_the_plan`, the closed-rule parametrisation |
+| P4-3/P4-7 (item 4) | M7 scope back to two documents, M8/M8b the directory predicate at either gate, M9 unbounded rule, M10 no rule in the task, M11/M12 the metadata and parse rules dropped, M13 no threading, M14/M15 roadmap and acceptance removed, M16 the directory predicate starts matching equality | the repair-scope test, the bound-repair test, the grammar-refusal test, `tests/test_profiles_allowlist.py` |
+| P4-6 (item 5) | M17 grant never reaches the tool, M18 the CLI validates shape, M19 the file is never read, M20 the raw string forwarded, M21 absent grant becomes `[]`, M22 the flag is checked after the run starts, M23 an unreadable file says "not JSON", M24 a file is detected but never read | the five new CLI tests |
+
+**Recorded, not hidden.**
+
+- `tests/test_managed_workflow_e2e.py::test_parent_initial_planner_snapshot_is_one_shot_and_redacts_secrets`
+  failed once in two identical wide-bank runs, passes alone, passes as a file, and the rerun was
+  fully green (1479/1479). So it is order- or time-dependent in a bank, not a regression from S1 —
+  but it is a real flake in an E2E test and it is written down here rather than re-run until green.
+- `_validate_v2_admission` still emits diagnostics under validator `"plan-v2"`, which is absent from
+  `ADMISSION_RULES_V2` (`admission_schema.py:71`); `_record_diagnostics` would refuse such a record as
+  corrupt. Latent today because the create-new route returns before a `_WorkflowAdmission` exists.
+  Not S1's to fix (it is the record vocabulary, S2/S6), and not forgotten.
+- A *live* end-to-end run with a grant remains unproven for the same reason CT-1.5 already records:
+  the human front is the unmanaged shape. The flag is proven to reach the tool unmodified; what a
+  managed child does with it is proven separately.
+
+**Next slice:** S2 — seal totality. `mint_seal` refuses `UNCOVERED` and ownerless contracts, the record
+carries `contracts_total`/`attested`/`uncovered` with the arithmetic asserted, `SCHEMA_VERSION` 1→2, and
+**both** producers (`acceptance_bundle.mint_seal`, `acceptance_defect.correct`) are held to it.
