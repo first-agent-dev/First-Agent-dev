@@ -866,6 +866,10 @@ _V2_CREATE_FAILURES: dict[str, tuple[str, bool]] = {
     "disposition-evidence-invalid": ("invalid_dispositions", True),
     "disposition-evidence-missing": ("invalid_dispositions", True),
     "disposition-evidence-mismatch": ("invalid_dispositions", True),
+    # D-V2-12: the reason commits to a route, and the route accepts one kind of
+    # artifact. A host claim answered with a document is the caller's mistake, so it
+    # is retryable -- and it must name itself, or it degrades to `workflow_failed`.
+    "disposition-evidence-route-mismatch": ("invalid_dispositions", True),
     # The authority does not know whether the effect landed. Never retried: one unknown
     # create repeated is two creates.
     "durability-unknown": ("durability_unknown", False),

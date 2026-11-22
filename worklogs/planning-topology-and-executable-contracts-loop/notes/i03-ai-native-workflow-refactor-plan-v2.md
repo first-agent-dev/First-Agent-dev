@@ -660,6 +660,17 @@ negative control (so its absence is proven, not asserted).
 
 **Standing gate: `no new red` (ratified 2026-11-22, E608).** A red baseline is tolerated as *known*; adding to it is not. The unit of evidence is the **list**, never the count: `scripts/gate_tracker.py record` runs `pytest`, `mypy`, `ruff` and `fa authoring-check`, keeps each raw log beside a normalised finding list, and `gate_tracker.py compare <base> <head>` prints the new/gone sets and **exits 1 when anything is new**. A baseline is recorded from a worktree of the base commit with `--pythonpath`, because an editable install otherwise imports the working tree's package and measures the wrong commit. Counts are explicitly *not* evidence: mid-S1 mypy went 83 → 65 → 62 while three of those errors were mine. `xfail` stays what the repository already enforces (`tests/test_authoring_rules_tests.py` V4: `strict=True` plus a reason) and is allowed only for a test whose prerequisite is the real Ubuntu/Docker host — never for typing, logic, or a sandbox quirk. Known red that turns out to be code, not environment, is fixed before deploy as its own list item; known red that is environment is recorded with its reason, not worked around.
 
+**S2 status (2026-11-22) — landed.** `SCHEMA_VERSION` 2, mint refuses `seal-uncovered-contracts` /
+`seal-attestation-unowned` / `seal-attestation-artifact-missing` / `seal-plan-graph-mismatch`, the record carries
+`contracts_total`, `attested`, `pending` and `attestations` (contract, invariant, reason, route, artifact, owner,
+`reviewed_at`, scope digest) inside the digest, and `load_seal` re-proves the block (`seal-attestation-mismatch`,
+`seal-attestation-route-invalid`, `seal-totality-mismatch`) instead of trusting the digest. D-V2-12's checkable half
+is in: `probe:<path>@host:<label>`, the closed reason→kind matrix (`disposition-evidence-route-mismatch`, mapped in
+the tool's failure table as retryable), and the probe-existence check at the seal. E609 records the change set and
+the two defects found while writing the oracles (a bare `AcceptanceBundleError` escaping `correct`; `plan_sha256`
+naming bytes a graph did not describe). Still open by design: `ROUTE:` on invariants and the grammar table (S6), and
+the deploy gate that *acts* on `pending` (W4). Next: S3 (mode A / CT-3.3 across both coder topologies), per §8.
+
 **Next slice, decided 2026-11-22 (E605): S1 policy closure, then S2 seal totality — before any SLICE3 wiring.**
 These are the two cheapest changes that stop the pipeline saying "ok" when it cannot. Both are inside SLICE1/SLICE2
 scope, neither needs a live managed run, and each is proven by banks that already exist. The order is load-bearing:

@@ -243,17 +243,22 @@ def correct(
         raise DefectError("defect-requires-replan")
     if revision_id == bundle_before.revision_id:
         raise DefectError("defect-revision-unchanged")
-    replacement = mint_seal(
-        graph=graph,
-        plan_bytes=plan_bytes,
-        revision_id=revision_id,
-        sealed_root=bundle_before.sealed_root,
-        acceptance_root=acceptance_root,
-        collected=collected,
-        mode=bundle_before.mode,
-        identity=tuple(identity),
-        supersedes_sha256=bundle_before.seal_sha256,
-    )
+    try:
+        replacement = mint_seal(
+            graph=graph,
+            plan_bytes=plan_bytes,
+            revision_id=revision_id,
+            sealed_root=bundle_before.sealed_root,
+            acceptance_root=acceptance_root,
+            collected=collected,
+            mode=bundle_before.mode,
+            identity=tuple(identity),
+            supersedes_sha256=bundle_before.seal_sha256,
+        )
+    except AcceptanceBundleError as error:
+        # One closed vocabulary per module: a seal refusal reached through the
+        # correction route is still a defect decision, not a raw bundle error.
+        raise DefectError(f"defect-{error.rule}") from None
     if replacement.closure.digest == bundle_before.closure.digest:
         raise DefectError("defect-no-change")
     tests, targets = affected_scope(graph, report.test_id)

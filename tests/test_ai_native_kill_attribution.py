@@ -31,8 +31,8 @@ from tests.test_ai_native_acceptance_collection import (
     mint_sealed,
     sealed_tree,
 )
-from tests.test_ai_native_plan_v2 import plan_graph
-from tests.test_ai_native_plan_v2 import plan_graph as admitted_graph
+from tests.test_ai_native_plan_v2 import granted_graph, plan_graph
+from tests.test_ai_native_plan_v2 import granted_graph as admitted_graph
 
 _REVISION = "rev-" + "0" * 32
 _TARGET = "publication.publish_plan"

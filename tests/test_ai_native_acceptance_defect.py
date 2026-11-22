@@ -29,8 +29,8 @@ from tests.test_ai_native_acceptance_collection import (
     mint_sealed,
     sealed_tree,
 )
+from tests.test_ai_native_plan_v2 import granted_graph as admitted_graph
 from tests.test_ai_native_plan_v2 import plan_graph
-from tests.test_ai_native_plan_v2 import plan_graph as admitted_graph
 
 _REVISION = "rev-" + "0" * 32
 _NEXT_REVISION = "rev-" + "1" * 32
@@ -212,6 +212,22 @@ def _correct(workspace: Path, bundle: AcceptanceBundle, report: DefectReport, **
         arguments["acceptance_root"] = _corrected_tree(workspace)
     arguments.update(overrides)
     return correct(report, **arguments)
+
+
+def test_a_correction_cannot_seal_an_uncovered_contract(tmp_path: Path) -> None:
+    """The second producer must refuse where the first does (S2).
+
+    ``correct`` mints a replacement seal through ``mint_seal``, so the refusal is
+    inherited rather than re-implemented -- and this test is the one that proves the
+    inheritance, because a second path that could re-seal an uncovered plan would
+    make the first refusal decorative.
+    """
+    bundle, workspace = _seal(tmp_path)
+    report = _report(bundle)
+
+    refusal = _rule(lambda: _correct(workspace, bundle, report, graph=plan_graph()))
+
+    assert refusal == "defect-seal-uncovered-contracts"
 
 
 def test_a_correction_is_a_new_seal_that_supersedes_the_reported_one(tmp_path: Path) -> None:

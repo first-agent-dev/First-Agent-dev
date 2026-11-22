@@ -33,9 +33,11 @@ from fa.inner_loop.plan_v2 import (
     PlanGraph,
     PlanV2Error,
     attested_contracts,
+    contract_attestations,
     contract_evidence,
     is_contract_id,
     parse_plan,
+    pending_contracts,
     resolve_selectors,
 )
 from fa.inner_loop.registry import ToolResult, ToolSpec
@@ -378,17 +380,31 @@ def plan_graph(*, invariants: str = "", scenario: str = "", slice_body: str = ""
 
 
 #: A grant for every reason the fixtures use, reviewed inside its 30-day life.
+#: D-V2-12: the artifact's *kind* is decided by the reason's route, so the
+#: host-facing reasons name a probe and only ``OWNER_APPROVAL`` is a review.
+_PROBE_ROOT = "worklogs/demo/acceptance/probes"
+_GRANT_EVIDENCE = {
+    "HOST_READINESS": f"probe:{_PROBE_ROOT}/host_readiness.sh@host:w4-ubuntu",
+    "DEPLOYMENT_IDENTITY": f"probe:{_PROBE_ROOT}/deployment_identity.sh@host:w4-ubuntu",
+    "DURABILITY_POWER_LOSS": f"probe:{_PROBE_ROOT}/power_loss.sh@host:w4-ubuntu",
+    "OWNER_APPROVAL": "review:r1",
+}
 _GRANTS = parse_dispositions(
     [
         {
             "reason": reason,
             "owner": "W4",
-            "evidence": "review:r1",
+            "evidence": _GRANT_EVIDENCE[reason],
             "reviewed_at": "2026-11-19",
         }
         for reason in sorted(DISPOSITION_REASONS)
     ]
 )
+#: The probe files the granted graph can attest; a sealed tree must carry them,
+#: because ``mint_seal`` refuses a ``HOST_PROBE`` artifact outside the closure.
+GRANT_PROBE_FILES = tuple(sorted({_GRANT_EVIDENCE[reason].split("probe:")[1].split("@host:")[0]
+                                  for reason in DISPOSITION_REASONS
+                                  if _GRANT_EVIDENCE[reason].startswith("probe:")}))
 
 
 def granted_graph(*, invariants: str = "", scenario: str = "", slice_body: str = "") -> PlanGraph:
@@ -420,6 +436,71 @@ def test_a_disposition_request_without_a_grant_is_never_attested() -> None:
     bound = granted_graph()
     assert contract_evidence(bound)["CT-1.2"] is EvidenceMode.ATTESTED
     assert attested_contracts(bound) == ("CT-1.2",)
+
+
+def test_an_attestation_records_the_route_the_artifact_and_the_review() -> None:
+    """P4-8: the seal is told *who* carried the claim, not just which contract it was.
+
+    Before this the graph carried an owner on the invariant and the seal recorded
+    only contract ids, so a reader could not tell an owner's review from a rubber
+    stamp. The route, the artifact and the review date travel with the claim.
+    """
+    records = contract_attestations(granted_graph())
+
+    assert [record.contract_id for record in records] == ["CT-1.2"]
+    record = records[0]
+    assert (record.invariant_id, record.reason, record.route) == ("INV-2", "HOST_READINESS", "HOST_PROBE")
+    assert record.artifact == "probe:worklogs/demo/acceptance/probes/host_readiness.sh@host:w4-ubuntu"
+    assert (record.owner, record.reviewed_at) == ("W4", "2026-11-19")
+    assert pending_contracts(granted_graph()) == ("CT-1.2",)
+
+
+def test_a_request_that_was_never_granted_produces_no_attestation() -> None:
+    """A request is not an authorisation: nothing to record, nothing pending."""
+    assert contract_attestations(plan_graph()) == ()
+    assert pending_contracts(plan_graph()) == ()
+
+
+def test_the_scope_digest_covers_the_sentences_the_grant_describes() -> None:
+    """The digest names the text that was attested, so a re-review can prove its scope.
+
+    ``plan_sha256`` already kills a seal on any plan edit; the scope is what lets a
+    reader see *which* sentence moved, and what makes "reviewed again" checkable.
+    """
+    original = contract_attestations(granted_graph())[0].scope_sha256
+
+    reworded_invariant = contract_attestations(
+        granted_graph(
+            invariants=(
+                "### INV-1\nTEXT: publication requires a sealed selection.\nEVIDENCE: TEST_REQUIRED\n"
+                "\n### INV-2\nTEXT: readiness is proven on the approved host.\nEVIDENCE: NON_EXECUTABLE\n"
+                "DISPOSITION-REASON: HOST_READINESS\n"
+            )
+        )
+    )[0].scope_sha256
+    reworded_contract = contract_attestations(granted_graph(slice_body=_SLICE.replace(
+        "CT-1.2 [CONSTRAINT] INV: INV-2: readiness is proven on the host",
+        "CT-1.2 [CONSTRAINT] INV: INV-2: readiness is proven on the frozen host",
+    )))[0].scope_sha256
+
+    assert reworded_invariant != original, "the invariant's own sentence must be inside the scope"
+    assert reworded_contract != original, "the contract the grant discharges must be inside the scope"
+
+
+def test_an_approval_is_attested_but_not_pending() -> None:
+    """Only a host claim is a debt; a decision is not something a host can run later."""
+    graph = granted_graph(
+        invariants=(
+            "### INV-1\nTEXT: publication requires a sealed selection.\nEVIDENCE: TEST_REQUIRED\n"
+            "\n### INV-2\nTEXT: the owner approved the wording.\nEVIDENCE: NON_EXECUTABLE\n"
+            "DISPOSITION-REASON: OWNER_APPROVAL\n"
+        )
+    )
+
+    (record,) = contract_attestations(graph)
+    assert record.route == "APPROVAL"
+    assert attested_contracts(graph) == ("CT-1.2",)
+    assert pending_contracts(graph) == ()
 
 
 # --- SLICE1: the admission cutover (format, graph, and closed rules) ---------

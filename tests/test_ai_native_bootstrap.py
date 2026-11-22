@@ -106,7 +106,10 @@ def test_a_doc_grant_must_describe_the_bytes_in_the_pinned_view() -> None:
     declaration = parse_dispositions(
         [
             {
-                "reason": "HOST_READINESS",
+                # A `doc:` reference belongs to the APPROVAL route (D-V2-12): the
+                # property under test is that a reference is checked against bytes,
+                # not that a document can stand in for a host run.
+                "reason": "OWNER_APPROVAL",
                 "owner": "W4",
                 "evidence": f"doc:evidence/readiness.md@sha256:{_EVIDENCE_DIGEST}",
                 "reviewed_at": "2026-11-20",
@@ -130,7 +133,7 @@ def test_a_doc_grant_that_the_view_cannot_hold_is_refused_not_trusted() -> None:
     declaration = parse_dispositions(
         [
             {
-                "reason": "HOST_READINESS",
+                "reason": "OWNER_APPROVAL",
                 "owner": "W4",
                 "evidence": f"doc:evidence/absent.md@sha256:{_EVIDENCE_DIGEST}",
                 "reviewed_at": "2026-11-20",
@@ -1543,7 +1546,9 @@ def test_an_ungranted_request_is_refused_even_when_the_caller_sends_no_declarati
                 {
                     "reason": "HOST_READINESS",
                     "owner": "W4",
-                    "evidence": "issue:FA-1234",
+                    # D-V2-12: a host-readiness claim is discharged by a probe, not
+                    # by a ticket that says nothing about any host.
+                    "evidence": "probe:worklogs/waiver-project/acceptance/probes/host.sh@host:w4-ubuntu",
                     "reviewed_at": "2026-11-20",
                 }
             ]

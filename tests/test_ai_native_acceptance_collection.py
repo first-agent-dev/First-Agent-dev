@@ -27,7 +27,7 @@ from fa.inner_loop.acceptance_collection import (
     sealed_test_paths,
 )
 from fa.inner_loop.slice_verification import CommandOutcome, CommandResult
-from tests.test_ai_native_plan_v2 import plan_document, plan_graph
+from tests.test_ai_native_plan_v2 import GRANT_PROBE_FILES, granted_graph, plan_document, plan_graph
 
 _SEALED_ROOT = "worklogs/demo/acceptance"
 _PUBLISH = f"{_SEALED_ROOT}/tests/test_publish.py"
@@ -57,12 +57,18 @@ def _tree(tmp_path: Path, *, extra_test: bool = True, publish_name: str = "test_
         (root / "tests" / "test_extra.py").write_text("def test_extra():\n    assert True\n", encoding="utf-8")
     (root / "tests" / "support_notes.py").write_text("VALUE = 1\n", encoding="utf-8")
     (root / "support" / "test_helper.py").write_text("VALUE = 2\n", encoding="utf-8")
+    # D-V2-12: a HOST_PROBE attestation names a probe the seal must find here.
+    (root / "probes").mkdir()
+    for probe in GRANT_PROBE_FILES:
+        (root / "probes" / Path(probe).name).write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     return root
 
 
 def _mint(root: Path, **overrides: Any) -> AcceptanceBundle:
     arguments: dict[str, Any] = {
-        "graph": plan_graph(),
+        # Granted: a bare parse leaves CT-1.2's disposition as a request, and S2
+        # refuses to seal an uncovered contract.
+        "graph": granted_graph(),
         "plan_bytes": _PLAN_BYTES,
         "revision_id": _REVISION,
         "sealed_root": _SEALED_ROOT,
@@ -405,10 +411,15 @@ def test_a_written_seal_loads_and_then_drives_the_same_run(tmp_path: Path) -> No
 
 
 def test_a_bundle_without_selectors_is_never_minted(tmp_path: Path) -> None:
+    without_acceptance = plan_document(invariants=_INV_NON_EXECUTABLE, slice_body=_SLICE_WITHOUT_ACCEPTANCE)
     with pytest.raises(AcceptanceBundleError) as refused:
         _mint(
             _tree(tmp_path),
+            # The bytes and the graph must describe the same plan: S2 refuses a
+            # mismatch, so a fixture that paired one plan's bytes with another
+            # plan's graph would be refused for the wrong reason.
             graph=plan_graph(invariants=_INV_NON_EXECUTABLE, slice_body=_SLICE_WITHOUT_ACCEPTANCE),
+            plan_bytes=without_acceptance.encode("utf-8"),
             collected={},
         )
 

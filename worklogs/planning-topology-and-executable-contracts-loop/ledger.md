@@ -12830,3 +12830,60 @@ finding mypy lost. Recording: `notes/gates/2026-11-22-pyrefly-diff.md`. Not yet 
 **Policy recorded (plan §8).** `no new red` is a standing gate: `compare` must report `0 new`; known red
 stays listed with its reason; `xfail` only for a *proven* host prerequisite, never for "it fails in this
 environment"; known red that turns out to be code is fixed before deploy as its own item.
+
+### E609 — S2: the seal asserts totality, and the grant leaves a trace (2026-11-22)
+
+S2 was three items in the plan and became six when D-V2-12 was ratified in the same breath, which
+was the point of doing it in one schema bump: `SCHEMA_VERSION` 1 → 2 with one migration (zero, because
+no production seal exists and `load_seal` fails closed on an unknown version), not two.
+
+**1. A seal can no longer describe less than the plan.** `mint_seal` refused nothing before: it
+recorded `attested` and whatever `selectors` it could bind, so a contract that was neither selected
+nor attested *disappeared from the record* while the seal still read as the plan's oracle. Now
+`_attestations` refuses `seal-uncovered-contracts` while any contract is `UNCOVERED`, and records
+`contracts_total` with `len({covered contract ids}) + len(attested) == contracts_total`. The identity is
+re-proved in `load_seal`, because a digest proves a record was not *edited*, not that it *says
+everything* — `seal-totality-mismatch` is the load-side rule.
+
+**2. Every producer inherits the refusal, and `correct` now speaks one vocabulary.** `correct()`
+reaches `mint_seal`, so the refusal is inherited rather than re-implemented
+(`test_a_correction_cannot_seal_an_uncovered_contract`). Writing that test found a real gap: a seal
+refusal escaped `correct` as a bare `AcceptanceBundleError`, outside the `defect-*` vocabulary the
+module promises every failure belongs to. Fixed by translating at the boundary.
+
+**3. P4-8: the record of *who* carries the claim.** The seal now carries `attestations` — contract id,
+invariant id, reason, route, artifact, owner, `reviewed_at`, and a scope digest over the invariant and
+contract sentences the grant covers — inside the digest. `load_seal` refuses a block whose ids are not
+exactly `attested` (`seal-attestation-mismatch`), a `pending` list that is not exactly the host-owed
+subset (same rule), a route that contradicts its reason (`seal-attestation-route-invalid`), and a
+missing owner/review date/artifact at mint (`seal-attestation-unowned`).
+
+**4. D-V2-12's checkable half: the route decides the artifact.** `plan_admission` gained
+`probe:<repo-relative path>@host:<label>` and the closed reason→kind matrix
+(`disposition-evidence-route-mismatch`): a host claim can no longer be discharged by a document that
+says nothing about a host, and an approval cannot be discharged by a probe. The matrix caught four
+existing banks whose fixtures paired `HOST_READINESS` with `doc:`/`issue:` — those were the hole, not
+the tests. The route rule also entered the tool's closed failure table, so it names itself and stays
+retryable instead of degrading to `workflow_failed`.
+
+**5. The artifact-existence check lives where the tree is visible.** Admission reads plan bytes and
+never the acceptance tree, so `"a plan may name a probe that does not exist"` cannot be refused there.
+`mint_seal` refuses `seal-attestation-artifact-missing` when a `HOST_PROBE` artifact is not in the
+sealed closure — the rule the plan wording ("admission checks the artifact exists") had to be moved
+from, and the plan says so now.
+
+**6. `plan_sha256` now means what it says.** `mint_seal` took a graph *and* the plan bytes and only
+digested the bytes: a caller could seal one plan's graph beside another plan's bytes.
+`_bind_graph_to_bytes` refuses `seal-plan-graph-mismatch` unless every authored sentence of every
+invariant and contract appears in those bytes and the invariant-heading count matches. The roadmap is
+not part of the increment bytes, so this is what the bytes can prove on their own — weaker than
+re-parsing, strong enough that a scope digest cannot describe a plan nobody sealed.
+
+**HOST_PROBE is a debt, not a decision.** `pending` is the `HOST_PROBE` subset of `attested`; both are
+recorded, so no reader can collapse "a named party carries this" into "the host ran it". Nothing acts
+on `pending` yet — the seal states the debt and W4 is where a deploy gate reads it; that is recorded in
+the plan rather than implied by a field name.
+
+**Deliberately not in S2:** `ROUTE:` on invariants, the prompt's grammar table and the authoring
+surface (S6/D-V2-11); a deploy gate that acts on `pending`; and any change to `PRESERVATION`
+(unchanged: never dispositionable).

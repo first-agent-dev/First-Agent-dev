@@ -21,20 +21,39 @@ from fa.inner_loop.plan_admission import (
     bind_dispositions,
     parse_dispositions,
 )
-from fa.inner_loop.plan_v2 import MAX_DISPOSITION_AGE_DAYS, MAX_DISPOSITIONS, PlanGraph, parse_plan
+from fa.inner_loop.plan_v2 import (
+    DISPOSITION_REASONS as _REASONS,
+)
+from fa.inner_loop.plan_v2 import (
+    DISPOSITION_ROUTES,
+    EVIDENCE_ROUTES,
+    MAX_DISPOSITION_AGE_DAYS,
+    MAX_DISPOSITIONS,
+    PlanGraph,
+    parse_plan,
+)
 from fa.inner_loop.tools.workspace_port import PortRead, WorkspacePortError
 from fa.inner_loop.workflow_controller import _granted_dispositions as resolve_grants
 from tests.test_ai_native_plan_v2 import ROADMAP_DOCUMENT, plan_document, plan_graph
 
 _DIGEST = "a" * 64
 _TODAY = date(2026, 11, 20)
+_PROBE_REF = "probe:worklogs/demo/acceptance/probes/host_readiness.sh@host:w4-ubuntu"
+_DOC_REF = f"doc:worklogs/demo/notes/approval.md@sha256:{_DIGEST}"
 
 
 def _grant(**overrides: object) -> dict[str, object]:
+    """A complete, legal grant: the default reason is a host claim, so is its artifact.
+
+    D-V2-12 made the artifact's kind a function of the reason's route, so a default
+    that paired ``HOST_READINESS`` with a document would describe a grant the
+    system refuses. Tests about *documents* (the R6 section) therefore ask for the
+    ``OWNER_APPROVAL`` route explicitly.
+    """
     record: dict[str, object] = {
         "reason": "HOST_READINESS",
         "owner": "W4",
-        "evidence": f"doc:worklogs/demo/notes/readiness.md@sha256:{_DIGEST}",
+        "evidence": _PROBE_REF,
         "reviewed_at": _TODAY.isoformat(),
     }
     record.update(overrides)
@@ -60,7 +79,9 @@ def test_a_complete_declaration_parses_into_its_parts() -> None:
 
     assert declaration.reason == "HOST_READINESS"
     assert declaration.owner == "W4"
-    assert declaration.evidence == EvidenceRef(kind="doc", target="worklogs/demo/notes/readiness.md", digest=_DIGEST)
+    assert declaration.evidence == EvidenceRef(
+        kind="probe", target="worklogs/demo/acceptance/probes/host_readiness.sh", host="w4-ubuntu"
+    )
     assert declaration.reviewed_at == _TODAY
 
 
@@ -75,7 +96,8 @@ def test_a_complete_declaration_parses_into_its_parts() -> None:
 def test_every_evidence_kind_is_typed_and_round_trips_to_its_text(
     evidence: str, kind: str, target: str, digest: str | None
 ) -> None:
-    (declaration,) = parse_dispositions([_grant(evidence=evidence)])
+    # A reference a human can open belongs to the approval lane (D-V2-12).
+    (declaration,) = parse_dispositions([_grant(reason="OWNER_APPROVAL", evidence=evidence)])
 
     assert (declaration.evidence.kind, declaration.evidence.target, declaration.evidence.digest) == (
         kind,
@@ -176,7 +198,8 @@ def test_a_granted_request_carries_the_owner_and_the_reference() -> None:
     granted = {item.id: item for item in graph.invariants}["INV-2"]
     assert granted.reason == "HOST_READINESS"
     assert granted.owner == "W4"
-    assert granted.evidence_ref == f"doc:worklogs/demo/notes/readiness.md@sha256:{_DIGEST}"
+    assert granted.evidence_ref == _PROBE_REF
+    assert granted.reviewed_at == _TODAY.isoformat()
     # the request itself is untouched: the plan still says only *why*
     assert {item.id: item for item in _graph().invariants}["INV-2"].owner is None
 
@@ -186,7 +209,7 @@ def test_a_request_without_a_grant_never_binds() -> None:
 
 
 def test_a_grant_for_another_reason_does_not_authorise_this_one() -> None:
-    other = parse_dispositions([_grant(reason="OWNER_APPROVAL")])
+    other = parse_dispositions([_grant(reason="OWNER_APPROVAL", evidence=_DOC_REF)])
 
     assert _rule(lambda: bind_dispositions(_graph(), other, today=_TODAY)) == "disposition-undeclared"
 
@@ -256,9 +279,68 @@ def test_binding_is_a_pure_function_of_its_inputs() -> None:
     assert graph.invariants[1].owner is None  # the input graph is never mutated
 
 
-# -- resolving a doc: grant against bytes (R6) ------------------------------
+# -- the route decides the artifact (D-V2-12) -------------------------------
 
-_DOC_REF = f"doc:worklogs/demo/notes/readiness.md@sha256:{_DIGEST}"
+_HOST_PROBE_REASONS = sorted(reason for reason, route in DISPOSITION_ROUTES.items() if route == "HOST_PROBE")
+
+
+@pytest.mark.parametrize("reason", _HOST_PROBE_REASONS)
+def test_a_host_claim_is_discharged_by_a_probe_not_by_a_document(reason: str) -> None:
+    """The whole point of the route: "we cannot test it here" names *where* it is tested.
+
+    Before D-V2-12 all four reasons accepted every reference kind, so a review
+    document could stand in for a host run and the two cost the same signature.
+    """
+    (probe,) = parse_dispositions([_grant(reason=reason, evidence=_PROBE_REF)])
+    assert probe.evidence.kind == "probe"
+    assert probe.evidence.host == "w4-ubuntu"
+
+    assert _rule(lambda: parse_dispositions([_grant(reason=reason, evidence=_DOC_REF)])) == (
+        "disposition-evidence-route-mismatch"
+    )
+    assert _rule(lambda: parse_dispositions([_grant(reason=reason, evidence="issue:FIRST-42")])) == (
+        "disposition-evidence-route-mismatch"
+    )
+
+
+@pytest.mark.parametrize("evidence", [_DOC_REF, "issue:FIRST-42", "review:pr-91-round-2"])
+def test_an_approval_takes_a_reference_a_human_can_open(evidence: str) -> None:
+    (approval,) = parse_dispositions([_grant(reason="OWNER_APPROVAL", evidence=evidence)])
+
+    assert approval.evidence.text() == evidence
+
+
+def test_an_approval_refuses_a_probe() -> None:
+    """`APPROVAL` is the route with no artifact to run; a probe there is a category error."""
+    assert _rule(lambda: parse_dispositions([_grant(reason="OWNER_APPROVAL", evidence=_PROBE_REF)])) == (
+        "disposition-evidence-route-mismatch"
+    )
+
+
+@pytest.mark.parametrize(
+    "evidence",
+    [
+        "probe:/etc/passwd@host:w4-ubuntu",  # absolute
+        "probe:worklogs/demo/acceptance/../../evil.sh@host:w4-ubuntu",  # traversal
+        "probe:worklogs/demo/notes/p.sh@host:w4-ubuntu",  # outside the sealed tree
+        "probe:worklogs/demo/acceptance/p.sh",  # no host
+        "probe:worklogs/demo/acceptance/p.sh@host:",  # empty host
+        "probe:worklogs/DEMO/acceptance/p.sh@host:w4",  # slug shape
+    ],
+)
+def test_a_probe_names_a_file_inside_a_project_and_a_host(evidence: str) -> None:
+    """Shape only: whether the file *exists* is the seal's check, not admission's."""
+    assert _rule(lambda: parse_dispositions([_grant(evidence=evidence)])) == "disposition-evidence-invalid"
+
+
+def test_the_route_axis_is_closed_and_derived_from_the_reason() -> None:
+    """A new reason must arrive with its route; the planner never chooses one."""
+    assert set(DISPOSITION_ROUTES) == set(_REASONS)
+    assert set(DISPOSITION_ROUTES.values()) <= set(EVIDENCE_ROUTES)
+    assert "TEST" not in set(DISPOSITION_ROUTES.values()), "a disposition is never the executable route"
+
+
+# -- resolving a doc: grant against bytes (R6) ------------------------------
 
 
 class _Port:
@@ -281,7 +363,8 @@ def _substrate(port: _Port) -> object:
 
 
 def _grant_for(evidence: str) -> tuple[object, ...]:
-    return parse_dispositions([_grant(evidence=evidence)])
+    """A document-backed grant: the ``OWNER_APPROVAL`` route, by D-V2-12."""
+    return parse_dispositions([_grant(reason="OWNER_APPROVAL", evidence=evidence)])
 
 
 def test_a_matching_doc_grant_is_returned_unchanged() -> None:
@@ -289,7 +372,7 @@ def test_a_matching_doc_grant_is_returned_unchanged() -> None:
     granted = _grant_for(_DOC_REF)
 
     assert resolve_grants(port, granted) == granted
-    assert port.paths == ["worklogs/demo/notes/readiness.md"]
+    assert port.paths == ["worklogs/demo/notes/approval.md"]
 
 
 def test_a_missing_doc_refuses_the_grant() -> None:

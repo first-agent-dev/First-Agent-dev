@@ -31,7 +31,7 @@ from fa.inner_loop.acceptance_bundle import (
 )
 from fa.inner_loop.acceptance_closure import collect_acceptance_closure
 from fa.inner_loop.plan_v2 import EvidenceMode, PlanV2Error, contract_evidence
-from tests.test_ai_native_plan_v2 import granted_graph, plan_document, plan_graph
+from tests.test_ai_native_plan_v2 import GRANT_PROBE_FILES, granted_graph, plan_document, plan_graph
 
 _SEALED_ROOT = "worklogs/demo/acceptance"
 _TEST_PATH = f"{_SEALED_ROOT}/tests/test_publish.py"
@@ -75,10 +75,15 @@ def _sealed_tree(tmp_path: Path) -> Path:
     root = tmp_path / "worklogs" / "demo" / "acceptance"
     (root / "tests").mkdir(parents=True)
     (root / "support").mkdir()
+    (root / "probes").mkdir()
     (root / "pytest.ini").write_text(_INI, encoding="utf-8")
     (root / "conftest.py").write_text("import pytest\n", encoding="utf-8")
     (root / "support" / "helper.py").write_text(_HELPER, encoding="utf-8")
     (root / "tests" / "test_publish.py").write_text(_TEST, encoding="utf-8")
+    # D-V2-12: an attested HOST_PROBE names an artifact the seal must find in the
+    # closure, so the fixture tree carries every probe its grants refer to.
+    for probe in GRANT_PROBE_FILES:
+        (root / "probes" / Path(probe).name).write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     return root
 
 
@@ -135,6 +140,9 @@ def test_mints_a_seal_bound_to_plan_revision_closure_and_nodeids(tmp_path: Path)
     assert bundle.closure.digest == collect_acceptance_closure(root).digest
     assert [entry.path for entry in bundle.closure.files] == [
         "conftest.py",
+        "probes/deployment_identity.sh",
+        "probes/host_readiness.sh",
+        "probes/power_loss.sh",
         "pytest.ini",
         "support/helper.py",
         "tests/test_publish.py",
@@ -331,13 +339,111 @@ def test_an_oversized_record_is_refused() -> None:
     assert _rule(lambda: load_seal(b" " * (1024**2 + 1))) == "seal-malformed"
 
 
-@pytest.mark.parametrize("overrides", [{"schema_version": 2}, {"kind": "BUNDLE"}, {}])
+# A literal version would rot the moment the schema moves: S2 moved this from 1 to
+# 2, and the old literal ``2`` then read as *current*. The neighbours of the current
+# version are what "unknown" means, whichever version is current.
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"schema_version": SCHEMA_VERSION + 1},
+        {"schema_version": SCHEMA_VERSION - 1},
+        {"kind": "BUNDLE"},
+        {},
+    ],
+)
 def test_an_unknown_schema_is_refused(tmp_path: Path, overrides: dict[str, Any]) -> None:
     bundle = _mint(_sealed_tree(tmp_path))
 
     raw = b"{}" if not overrides else _hostile(bundle, **overrides)
 
     assert _rule(lambda: load_seal(raw)) == "seal-schema-unknown"
+
+
+# -- S2: seal totality, and the record of who carried the claim (P4-8/D-V2-12) --
+
+
+def test_the_seal_carries_the_attestation_record(tmp_path: Path) -> None:
+    """The record a reader could never reconstruct: who, on what, when, over which text."""
+    bundle = _mint(_sealed_tree(tmp_path))
+
+    assert bundle.contracts_total == 2
+    assert bundle.attested == ("CT-1.2",)
+    assert bundle.pending == ("CT-1.2",), "a host claim is a debt, not a decision"
+    (record,) = bundle.attestations
+    assert (record.contract_id, record.invariant_id, record.reason, record.route) == (
+        "CT-1.2",
+        "INV-2",
+        "HOST_READINESS",
+        "HOST_PROBE",
+    )
+    assert record.owner == "W4" and record.reviewed_at == "2026-11-19"
+    assert record.artifact.startswith("probe:") and record.artifact.endswith("@host:w4-ubuntu")
+    # Inside the digest, not beside it: an edited record breaks the seal.
+    record_bytes = json.loads(seal_bytes(bundle))
+    assert record_bytes["attestations"][0]["scope_sha256"] == record.scope_sha256
+    assert record_bytes["contracts_total"] == 2
+
+
+def test_a_seal_is_refused_while_a_contract_has_no_evidence(tmp_path: Path) -> None:
+    """The hole S2 closes: a plan with an uncovered contract could be sealed.
+
+    ``mint_seal`` used to record ``attested`` and nothing else, so a contract that
+    was neither selected nor attested simply vanished from the record while the seal
+    still read as the oracle for the whole plan.
+    """
+    assert _rule(lambda: _mint(_sealed_tree(tmp_path), graph=plan_graph())) == "seal-uncovered-contracts"
+
+
+def test_a_probe_the_closure_does_not_hold_is_refused(tmp_path: Path) -> None:
+    """A promise to run something that does not exist is not evidence.
+
+    Admission cannot see the tree; the seal can, so this is where the artifact is
+    checked. The rule names the artifact, not the input.
+    """
+    root = _sealed_tree(tmp_path)
+    (root / "probes" / "host_readiness.sh").unlink()
+
+    assert _rule(lambda: _mint(root)) == "seal-attestation-artifact-missing"
+
+
+def test_a_graph_that_does_not_describe_the_plan_bytes_is_refused(tmp_path: Path) -> None:
+    """``plan_sha256`` must name a plan the graph actually describes (D-V2-12)."""
+    other = plan_document(slice_body="## SLICE1: other\nSTEPS: outcome\nCONTRACTS:\nACCEPTANCE:\n"
+                                     "KILL-TARGETS:\nSTEP-EXIT-CHECKS:\n")
+
+    assert _rule(lambda: _mint(_sealed_tree(tmp_path), plan_bytes=other.encode("utf-8"))) == (
+        "seal-plan-graph-mismatch"
+    )
+
+
+def test_a_block_that_does_not_describe_the_attested_set_is_refused(tmp_path: Path) -> None:
+    """``load_seal`` re-proves the record's arithmetic instead of trusting the digest."""
+    bundle = _mint(_sealed_tree(tmp_path))
+
+    assert _rule(lambda: load_seal(_hostile(bundle, attestations=[]))) == "seal-attestation-mismatch"
+
+
+def test_a_pending_list_that_is_not_the_host_subset_is_refused(tmp_path: Path) -> None:
+    """``pending`` is derived, so a record that drops it is describing another plan."""
+    bundle = _mint(_sealed_tree(tmp_path))
+
+    assert _rule(lambda: load_seal(_hostile(bundle, pending=[]))) == "seal-attestation-mismatch"
+
+
+def test_a_route_that_contradicts_its_reason_is_refused(tmp_path: Path) -> None:
+    """The route is a function of the reason; a record cannot claim both halves."""
+    bundle = _mint(_sealed_tree(tmp_path))
+    record = json.loads(seal_bytes(bundle))["attestations"][0]
+    record["route"] = "APPROVAL"
+
+    assert _rule(lambda: load_seal(_hostile(bundle, attestations=[record]))) == "seal-attestation-route-invalid"
+
+
+def test_the_totals_identity_is_re_checked_on_load(tmp_path: Path) -> None:
+    """Covered + attested == total is the seal's whole claim; it is re-proved on read."""
+    bundle = _mint(_sealed_tree(tmp_path))
+
+    assert _rule(lambda: load_seal(_hostile(bundle, contracts_total=3))) == "seal-totality-mismatch"
 
 
 def test_an_edited_field_breaks_the_seal_digest(tmp_path: Path) -> None:

@@ -1262,7 +1262,11 @@ stage's working view; your job is to fill it, in Markdown, with a plan admission
   invariant you cannot test, which must say why (`DISPOSITION-REASON: HOST_READINESS`,
   `DEPLOYMENT_IDENTITY`, `OWNER_APPROVAL` or `DURABILITY_POWER_LOSS`) and is then
   granted -- or refused -- by the **caller**. Never write an owner: a disposition is a
-  request here, not an authorisation. One grant authorises one contract.
+  request here, not an authorisation. One grant authorises one contract. The reason also
+  decides *where* the claim is checked: `HOST_READINESS`, `DEPLOYMENT_IDENTITY` and
+  `DURABILITY_POWER_LOSS` are owed to a host probe and stay **pending** -- a debt that
+  blocks deploy, not a settled verdict -- while only `OWNER_APPROVAL` is a decision no
+  machine can test. Choose the narrowest reason that is true.
 - There is no severity field and no "soft" invariant. `KIND` was removed from the
   grammar; a document that still writes it is refused (`invariant-kind-removed`), and a
   contract with neither a test nor a granted request is refused

@@ -1007,8 +1007,13 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="PATH_OR_JSON",
         help=(
             "Caller-granted non-executable dispositions for CREATE_NEW: a JSON file path or an "
-            "inline JSON array of {reason, owner, evidence, reviewed_at}. Forwarded to the tool "
-            "as decoded; the tool validates it, so this flag adds no rule of its own."
+            "inline JSON array of {reason, owner, evidence, reviewed_at}. The reason fixes the "
+            "kind of `evidence` its route accepts: HOST_READINESS, DEPLOYMENT_IDENTITY and "
+            "DURABILITY_POWER_LOSS are owed to a host probe "
+            "(probe:worklogs/<slug>/acceptance/<path>@host:<label>), while OWNER_APPROVAL takes a "
+            "reference a person can open (doc:<path>@sha256:<digest>, issue:<KEY-123>, "
+            "review:<name>). Forwarded to the tool as decoded; the tool validates it, so this "
+            "flag adds no rule of its own."
         ),
     )
     invoke_parser.set_defaults(func=_cmd_invoke_workflow)
