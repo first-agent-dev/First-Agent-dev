@@ -29,14 +29,15 @@ from fa.inner_loop.plan_admission import PLAN_V2, PlanRefError, parse_dispositio
 from fa.inner_loop.plan_v2 import EvidenceMode, contract_evidence, parse_plan
 from fa.inner_loop.project_metadata import MetadataError, check_project_metadata
 from fa.inner_loop.project_scaffold import scaffold_files, scaffold_paths
-from fa.inner_loop.registry import ToolResult
+from fa.inner_loop.registry import ToolRegistry, ToolResult
+from fa.inner_loop.state import EventLog
 from fa.inner_loop.tools import workflow_tool
 from fa.inner_loop.tools.workflow_tool import (
     _PROJECT_SLUG_RE,
     INVOKE_WORKFLOW_SCHEMA,
     WorkflowInvocationContext,
 )
-from fa.inner_loop.tools.workspace_port import PortRead, WorkspacePortError
+from fa.inner_loop.tools.workspace_port import PortRead, WorkspacePort, WorkspacePortError
 from fa.inner_loop.workflow_artifacts import FlowState
 from tests.test_execution_workspace import Site
 from tests.test_execution_workspace import site as site
@@ -731,6 +732,16 @@ def _yield(substrate: object) -> Any:
     return _cm
 
 
+def _stage_log(path: Path) -> EventLog:
+    """A log double for `_run_cli_stage`, which reads exactly `.path` from it.
+
+    A real `EventLog` would open a session database per test for an attribute read. The
+    cast is precise rather than `Any`, so the double cannot drift into another type
+    unnoticed; `mypy --strict` is the check that keeps this honest.
+    """
+    return cast("EventLog", SimpleNamespace(path=path))
+
+
 def test_rejected_create_leaves_no_project_and_no_reader_sees_bytes(site: Site, tmp_path: Path) -> None:
     """CT-2.9 (D-V2-8): publication is not admission, and a refusal is not a publication.
 
@@ -763,17 +774,23 @@ def test_rejected_create_leaves_no_project_and_no_reader_sees_bytes(site: Site, 
         base_rev = managed.current_revision_id
         wrote: dict[str, str] = {}
 
-        def build_registry(workspace_io: object, _executor: object, _lease: object) -> object:
-            return workspace_io
+        def build_registry(
+            workspace_io: WorkspacePort | None, _executor: object, _lease: object
+        ) -> ToolRegistry:
+            # The stage's port *is* the registry this drive needs: the drive only calls the
+            # two document methods, and the seam declares a `ToolRegistry` because that is
+            # what a real stage builds. Casting at the seam keeps the drive fully typed.
+            return cast("ToolRegistry", workspace_io)
 
-        def drive(port: object) -> SessionOutcome:
+        def drive(registry: ToolRegistry) -> SessionOutcome:
+            port = cast("WorkspacePort", registry)
             # Write like a planner would, then fail: the stage is refused *after* the
             # bytes exist in the view, which is exactly the case that must not leak.
             for path, content in authored.items():
                 # The harness already wrote the scaffold, so each write is an update:
                 # `expected_sha256=None` would mean "expect absence" and be refused.
-                current = port.read_file(path).sha256  # type: ignore[attr-defined]
-                port.write_file(path, content, expected_sha256=current)  # type: ignore[attr-defined]
+                current = port.read_file(path).sha256
+                port.write_file(path, content, expected_sha256=current)
                 wrote[path] = content
             return SessionOutcome(exit_code=2, stop_reason="error", turns=1, final_text="failed")
 
@@ -786,7 +803,7 @@ def test_rejected_create_leaves_no_project_and_no_reader_sees_bytes(site: Site, 
             run_id=child_ctx.run_id,
             run_log_dir=tmp_path / "run-log",
             session_db=None,
-            log=SimpleNamespace(path=tmp_path / "events.jsonl"),
+            log=_stage_log(tmp_path / "events.jsonl"),
             workspace=site.source,
             role="planner",
             plan_ref=None,
@@ -1231,20 +1248,22 @@ def test_a_grammar_refusal_reaches_the_repair_as_the_parser_rule(site: Site, tmp
         yaml_path,
     ):
 
-        def build_registry(workspace_io: object, _executor: object, _lease: object) -> object:
-            return workspace_io
+        def build_registry(
+            workspace_io: WorkspacePort | None, _executor: object, _lease: object
+        ) -> ToolRegistry:
+            return cast("ToolRegistry", workspace_io)
 
-        def rewrite(port: object, path: str, content: str) -> None:
-            current = port.read_file(path).sha256  # type: ignore[attr-defined]
-            port.write_file(path, content, expected_sha256=current)  # type: ignore[attr-defined]
+        def rewrite(port: WorkspacePort, path: str, content: str) -> None:
+            current = port.read_file(path).sha256
+            port.write_file(path, content, expected_sha256=current)
 
-        def drive_first(port: object) -> object:
-            rewrite(port, roadmap_path, good_roadmap)
-            rewrite(port, increment_path, broken_increment)
+        def drive_first(registry: ToolRegistry) -> SessionOutcome:
+            rewrite(cast("WorkspacePort", registry), roadmap_path, good_roadmap)
+            rewrite(cast("WorkspacePort", registry), increment_path, broken_increment)
             return SessionOutcome(exit_code=0, stop_reason="stopped_by_llm", turns=1, final_text="authored")
 
-        def drive_repair(port: object) -> object:
-            rewrite(port, increment_path, good_increment)
+        def drive_repair(registry: ToolRegistry) -> SessionOutcome:
+            rewrite(cast("WorkspacePort", registry), increment_path, good_increment)
             return SessionOutcome(exit_code=0, stop_reason="stopped_by_llm", turns=1, final_text="repaired")
 
         first_dispatch = PlannerDispatch(
@@ -1256,13 +1275,13 @@ def test_a_grammar_refusal_reaches_the_repair_as_the_parser_rule(site: Site, tmp
             run_id=child_ctx.run_id,
             run_log_dir=case_dir / "log-1",
             session_db=None,
-            log=cast("Any", SimpleNamespace(path=case_dir / "events.jsonl")),
+            log=_stage_log(case_dir / "events.jsonl"),
             workspace=case_site.source,
             role="planner",
             plan_ref=None,
-            planner_dispatch=cast("Any", first_dispatch),
-            build_registry=cast("Any", build_registry),
-            drive=cast("Any", drive_first),
+            planner_dispatch=first_dispatch,
+            build_registry=build_registry,
+            drive=drive_first,
         )
 
         prompts: list[str] = []
@@ -1275,19 +1294,19 @@ def test_a_grammar_refusal_reaches_the_repair_as_the_parser_rule(site: Site, tmp
                 run_id=child_ctx.run_id,
                 run_log_dir=case_dir / "log-2",
                 session_db=None,
-                log=cast("Any", SimpleNamespace(path=case_dir / "events.jsonl")),
+                log=_stage_log(case_dir / "events.jsonl"),
                 workspace=case_site.source,
                 role="planner",
                 plan_ref=None,
-                planner_dispatch=cast("Any", kwargs["planner_dispatch"]),
-                build_registry=cast("Any", build_registry),
-                drive=cast("Any", drive_repair),
+                planner_dispatch=cast("PlannerDispatch", kwargs["planner_dispatch"]),
+                build_registry=build_registry,
+                drive=drive_repair,
             )
             return 0 if outcome is not None and outcome.exit_code == 0 else 2
 
         bound, blocked = workflow_controller._bind_authored_project(
             _replace(_stage_ctx(case_site, child_ctx, yaml_path, managed, slug), replans_allowed=1),
-            progress=workflow_controller.WorkflowProgress("WORKFLOW"),
+            progress=workflow_controller.WorkflowProgress(),
             run_stage_fn=stage_runner,
         )
 
