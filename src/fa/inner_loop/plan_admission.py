@@ -41,10 +41,19 @@ ADMISSION_FORMATS = frozenset({PLAN_V1, PLAN_V2})
 
 
 class PlanRefError(ValueError):
-    """Closed diagnostic reason; never expose input paths or exception bodies."""
+    """Closed diagnostic reason; never expose input paths or exception bodies.
 
-    def __init__(self, rule: str) -> None:
+    ``detail`` is an optional second, equally closed code: the grammar or metadata rule
+    behind a refusal whose ``rule`` is the coarse family admission persists. It exists
+    because a repair stage has to be told *which* rule failed in order to fix it, while
+    the persisted record's vocabulary has no slot for per-document rules. It is never
+    free text -- callers pass a parser rule and the consumer bounds it again before it
+    reaches a prompt (``_bounded_rule``).
+    """
+
+    def __init__(self, rule: str, detail: str | None = None) -> None:
         self.rule = rule
+        self.detail = detail
         super().__init__(f"invalid plan reference: {rule}")
 
 

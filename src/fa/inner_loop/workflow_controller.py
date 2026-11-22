@@ -3001,6 +3001,7 @@ def _bind_authored_project(
             run_stage_fn,
             diagnostics=_authored_diagnostics(refusal),
             reason=refusal.rule,
+            rule=refusal.detail,
         )
         if repair_refusal is None:
             return repaired, None
@@ -3047,26 +3048,65 @@ def _granted_dispositions(
     return declarations
 
 
-#: The allowlist a create-new *repair* stage writes through (D-V2-9.8). Narrower than
-#: the authoring stage's ``worklogs/<slug>/`` because a repair may only fix the
-#: documents admission read: the increment, and the question record when the refusal
-#: was a Q-record one. "Narrowed" is the whole point -- a repair that could rewrite
-#: the roadmap could publish a project admission never saw.
-_REPAIR_WRITABLE_SUFFIXES = ("increments/increment-01-initial-plan.md", "open-questions.md")
+#: The allowlist a create-new *repair* stage writes through (D-V2-9.8).
+#:
+#: Wider than the two documents a metadata refusal needs, and narrower than the
+#: authoring root, because a repair must be able to fix every refusal that *is*
+#: repairable without being able to publish a project nobody re-read. The accepted
+#: families are: the pair admission parses, the question record, and the acceptance
+#: tree. The acceptance tree is here because D-V2-10 makes evidence the common
+#: refusal and the fix for it is a test -- admitting only the plan would tell the
+#: model to discharge a contract in a file it may not write. The roadmap is here
+#: because ``plan-format-marker-roadmap`` is repairable and its only fix lives there;
+#: leaving it out made that repair a guaranteed failure that cost a planner call and
+#: ended in the worse code ``bootstrap-refused``. The ledger is not here: nothing
+#: admission refuses can be fixed by editing it.
+#:
+#: Widening this cannot weaken the gate -- the second revision is re-admitted whole,
+#: including the metadata cross-check -- it only stops a dead-end repair.
+_REPAIR_WRITABLE_SUFFIXES = (
+    "roadmap.md",
+    "increments/increment-01-initial-plan.md",
+    "open-questions.md",
+    # A subtree, spelled without a trailing slash: the dispatch validates its entries as
+    # path components, and the writer's matcher is component-wise, so a bare parent admits
+    # the whole tree without admitting a sibling whose name merely starts with "acceptance".
+    "acceptance",
+)
+
+
+#: A parser rule as it may appear in a prompt: lowercase kebab, bounded. The rules embed
+#: document identifiers (``invariant-1-text``), so the value is model-influenced; the
+#: prompt is the last place it can do harm.
+_REPAIR_RULE_RE = re.compile(r"[a-z][a-z0-9-]{0,63}")
+
+
+def _bounded_rule(rule: str | None) -> str | None:
+    """The rule if it is shaped like one of ours, else ``None``. Never raises."""
+    if rule is None or _REPAIR_RULE_RE.fullmatch(rule) is None:
+        return None
+    return rule
 
 
 def _repair_allowlist(root: str) -> tuple[str, ...]:
-    """The exact files a create-new repair may write, spelled as prefixes.
+    """The exact paths a create-new repair may write, spelled as prefixes.
 
     Prefixes rather than paths because that is the shape the limited writer consumes
-    (``is_path_within_allowlist``); the two entries are full file names, so the
-    prefix admits exactly one file each and no sibling.
+    (``is_path_in_write_scope``: an exact entry, or a subtree). Three entries are full file
+    names, so each admits exactly one file and no sibling; ``acceptance`` is a subtree,
+    which is the only shape that can admit a test the planner has not written yet.
     """
     return tuple(f"{root}/{suffix}" for suffix in _REPAIR_WRITABLE_SUFFIXES)
 
 
-def _repair_stage_task(base_task: str | None, *, slug: str, diagnostics: tuple[_AdmissionDiagnostic, ...]) -> str:
-    """The task for a create-new repair: fix these two files, change nothing else.
+def _repair_stage_task(
+    base_task: str | None,
+    *,
+    slug: str,
+    diagnostics: tuple[_AdmissionDiagnostic, ...],
+    rule: str | None = None,
+) -> str:
+    """The task for a create-new repair: fix the refused documents, change nothing else.
 
     A repair is not a re-authoring. The project already published one revision with
     a scaffold and the planner's documents; the refusal was about the *content of the
@@ -3076,15 +3116,27 @@ def _repair_stage_task(base_task: str | None, *, slug: str, diagnostics: tuple[_
     """
     root = f"worklogs/{slug}"
     payload = json.dumps([asdict(item) for item in diagnostics], sort_keys=True)
+    # Built from the allowlist rather than spelled out: the previous text promised "exactly
+    # two files" in prose, which is how a prompt and a writer drift apart when the allowlist
+    # moves. The rule is bounded HERE, at the boundary where a code becomes prose: it is the
+    # only place that turns it into text, so there is one guard rather than a contract each
+    # caller has to remember.
+    writable = "\n".join(f"- `{root}/{suffix}`" for suffix in _REPAIR_WRITABLE_SUFFIXES)
+    rule = _bounded_rule(rule)
+    rule_line = f"Admission's rule: `{rule}`." if rule else "Admission gave no rule name."
     return (
         f"{base_task or ''}\n"
         f"This project's documents were refused by admission. The revision is already "
         f"published; fix it in place -- do not start over and do not re-plan.\n\n"
-        f"You may write exactly two files:\n"
-        f"- `{root}/increments/increment-01-initial-plan.md`\n"
-        f"- `{root}/open-questions.md`\n\n"
-        f"Anything else -- the roadmap, the ledger, the acceptance tests -- is fixed and "
-        f"a write to it is refused.\n\n"
+        f"{rule_line}\n\n"
+        f"You may write exactly these paths:\n{writable}\n\n"
+        f"Anything else -- the ledger, `.fa/`, any path outside `{root}/` -- is fixed "
+        f"and a write to it is refused. The identity fields in the front matter are checked "
+        f"again on the next admission, so changing them refuses the repair.\n\n"
+        f"There are two legal ways out of an evidence refusal: give the contract a test in "
+        f"`{root}/acceptance/tests/` and name it in `ACCEPTANCE`, or declare why the claim "
+        f"cannot be tested (`DISPOSITION-REASON`) and leave the grant to the caller. "
+        f"Deleting the contract or the invariant to satisfy admission is not a repair.\n\n"
         f"The refusal, sanitized: {payload}"
     )
 
@@ -3096,6 +3148,7 @@ def _run_create_new_repair(
     *,
     diagnostics: tuple[_AdmissionDiagnostic, ...] = (),
     reason: str = "",
+    rule: str | None = None,
 ) -> tuple[WorkflowContext, PlanRefError | None]:
     """Repair a refused create-new project with a second authoring stage (D-V2-9.8).
 
@@ -3107,7 +3160,10 @@ def _run_create_new_repair(
     other documents would be unrestorable because they never had a draft.
 
     So the repair is a second stage of the *same* kind over the published revision, with
-    the allowlist narrowed to the pair admission read. ``plan_ref`` stays ``None``: the
+    the allowlist narrowed to the documents a repairable refusal can be fixed in -- the
+    pair admission parses, the roadmap, the question record and the acceptance tree
+    (``_REPAIR_WRITABLE_SUFFIXES``), which is narrower than the authoring root and still
+    admits every legal fix. ``plan_ref`` stays ``None``: the
     stage's business is to change the very bytes a plan-ref would freeze (D-V2-9.5), and
     the allowlist -- not `_validate_plan_boundary`, which protects coders and verifiers --
     is what bounds it.
@@ -3123,7 +3179,7 @@ def _run_create_new_repair(
         return ctx, PlanRefError("project-route-mismatch")
     root = f"worklogs/{slug}"
     role_tasks = dict(ctx.per_role_task)
-    role_tasks["planner"] = _repair_stage_task(ctx.base_task, slug=slug, diagnostics=diagnostics)
+    role_tasks["planner"] = _repair_stage_task(ctx.base_task, slug=slug, diagnostics=diagnostics, rule=rule)
     repair_ctx = replace(ctx, per_role_task=role_tasks)
     dispatch = PlannerDispatch(
         PlannerDispatchKind.CREATE_NEW_PROJECT,
@@ -3197,7 +3253,7 @@ def _admit_published_project(ctx: WorkflowContext) -> tuple[WorkflowContext, Pla
         check_project_metadata({roadmap_path: roadmap.content, increment_path: increment.content})
     except MetadataError as error:
         logger.warning("project metadata refused [%s] (run=%s)", error.rule, ctx.run_id)
-        return ctx, PlanRefError("bootstrap-invalid-metadata")
+        return ctx, PlanRefError("bootstrap-invalid-metadata", detail=error.rule)
     snapshot = snapshot_from_bytes(
         increment_path,
         increment.content.encode("utf-8"),
@@ -3210,7 +3266,10 @@ def _admit_published_project(ctx: WorkflowContext) -> tuple[WorkflowContext, Pla
         # repair round already knows how to name, with the parser's own rule logged:
         # admission's vocabulary is closed, the operator's is not.
         logger.warning("authored plan refused [%s] (run=%s)", snapshot.format_error, ctx.run_id)
-        return ctx, PlanRefError("bootstrap-invalid-metadata")
+        # The rule travels with the refusal even though the *code* stays the metadata one:
+        # the repair prompt is the only place that can act on it, and "invalid metadata"
+        # alone tells a planner nothing it could not have guessed (P4-3).
+        return ctx, PlanRefError("bootstrap-invalid-metadata", detail=snapshot.format_error)
     if snapshot.graph is not None:
         # R1/D-V2-10: the plan only *requests* a disposition; the caller's declaration is
         # the sole source of owner and reference. Binding therefore always runs -- the old

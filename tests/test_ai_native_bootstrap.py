@@ -833,37 +833,95 @@ def _rejected_ctx(case_site: Site, child_ctx: Any, yaml_path: Path, managed: Any
     )
 
 
-def test_a_create_new_repair_may_write_only_the_documents_admission_read() -> None:
-    """D-V2-9.8: the repair stage is narrower than the stage it repairs.
+def test_a_create_new_repair_may_write_only_the_paths_a_refusal_can_be_fixed_in(tmp_path: Path) -> None:
+    """D-V2-9.8/P4-3: the repair scope reaches through the *real* writer, from the real list.
 
-    The control is not "repair works" -- that needs a live planner. It is the part
-    that must hold whatever the planner does: a repair stage's writer admits the
-    increment and the question record, and refuses the roadmap. That split is what
-    keeps a repair from publishing a project admission never read, and it is enforced
-    by the allowlist rather than by asking the model nicely.
+    Three things were wrong at once here, and each one hides the others:
+
+    * the scope was a hand-copied tuple, so it could drift from the dispatch's;
+    * it named only the plan and the question record, so a missing test -- the *common*
+      refusal under D-V2-10 -- could not be fixed by any repair;
+    * and because `is_path_within_allowlist` is strictly-descendant, naming a file admitted
+      nothing at all: a real repair was denied the very document it was dispatched to fix.
+      The previous version of this test never noticed, because it injected the workspace
+      port directly and skipped the limited writer.
+
+    So this asserts the behaviour through `build_registry_for_role`, the way a stage gets
+    its tools.
     """
     from fa.inner_loop.planner_dispatch import PlannerDispatch, PlannerDispatchKind
     from fa.inner_loop.profiles import build_registry_for_role
+    from fa.inner_loop.workflow_controller import _repair_allowlist
 
-    root = "worklogs/widget-project"
+    slug = "widget-project"
+    root = f"worklogs/{slug}"
+    for relative in ("increments", "acceptance/tests", "notes"):
+        (tmp_path / root / relative).mkdir(parents=True)
+    for name in ("roadmap.md", "ledger.md", "open-questions.md"):
+        (tmp_path / root / name).write_text("original\n", encoding="utf-8")
+
     dispatch = PlannerDispatch(
         PlannerDispatchKind.CREATE_NEW_PROJECT,
         "repair-run",
         authoring_root=root,
-        repair_allowlist=(f"{root}/increments/increment-01-initial-plan.md", f"{root}/open-questions.md"),
+        repair_allowlist=_repair_allowlist(root),
     )
-    registry = build_registry_for_role("planner", Path.cwd(), planner_dispatch=dispatch)
-    # The planner profile names the tool ``fs_write_file``; the limited builder is what
-    # that name resolves to for a planner, so the allowlist is on the tool the model sees.
-    writer = registry.lookup("fs_write_file")
+    writer = build_registry_for_role("planner", tmp_path, planner_dispatch=dispatch).lookup(
+        "fs_write_file"
+    )
 
-    denied = writer.handler({"path": f"{root}/roadmap.md", "content": "# rewritten"})
-    assert denied.error is not None and denied.error.code == "path_denied"
+    def write(relative: str) -> str | None:
+        result = writer.handler({"path": relative, "content": "changed\n"})
+        return None if result.error is None else result.error.code
 
-    # And the scope is the *repair* one, not the whole authoring root: a second
-    # document the planner authored in the first stage is out of reach too.
-    ledger = writer.handler({"path": f"{root}/ledger.md", "content": "# rewritten"})
-    assert ledger.error is not None and ledger.error.code == "path_denied"
+    # Every family a repairable refusal lives in is reachable -- the plan and the question
+    # record (metadata refusals), the roadmap (`plan-format-marker-roadmap`), and the
+    # acceptance tree (any evidence refusal).
+    assert write(f"{root}/increments/increment-01-initial-plan.md") is None
+    assert write(f"{root}/open-questions.md") is None
+    assert write(f"{root}/roadmap.md") is None
+    assert write(f"{root}/acceptance/tests/test_initial.py") is None
+    assert write(f"{root}/acceptance/pytest.ini") is None
+
+    # ...and nothing else: not the ledger, not a sibling subtree, not another project.
+    assert write(f"{root}/ledger.md") == "path_denied"
+    assert write(f"{root}/notes/README.md") == "path_denied"
+    assert write("worklogs/other-project/roadmap.md") == "path_denied"
+    assert (tmp_path / root / "ledger.md").read_text(encoding="utf-8") == "original\n"
+def test_the_repair_task_names_the_rule_and_every_path_it_may_write() -> None:
+    """P4-3: "invalid metadata" is not an actionable instruction; the rule is.
+
+    The path list is derived from the allowlist, so the text cannot promise a scope the
+    writer does not have -- which is exactly what "you may write exactly two files" did
+    once and would do again.
+    """
+    from fa.inner_loop.workflow_controller import _AdmissionDiagnostic as _Diag
+    from fa.inner_loop.workflow_controller import _bounded_rule, _repair_stage_task
+
+    task = _repair_stage_task(
+        "base task",
+        slug="demo-project",
+        diagnostics=(_Diag("bootstrap", "invalid-body", "FAIL"),),
+        rule="contract-without-evidence",
+    )
+
+    assert "Admission's rule: `contract-without-evidence`" in task
+    for suffix in workflow_controller._REPAIR_WRITABLE_SUFFIXES:
+        assert f"`worklogs/demo-project/{suffix}`" in task
+    assert "`worklogs/demo-project/ledger.md`" not in task
+    # Both legal ways out of an evidence refusal, named: the fix is a test, and the
+    # alternative is a declaration the caller must grant, never a quiet deletion.
+    assert "Deleting the contract or the invariant" in task
+    assert "DISPOSITION-REASON" in task
+
+    # A rule is model-influenced by the time it renders (document identifiers are embedded
+    # in it), so anything not shaped like one of ours is dropped -- at the single place that
+    # turns a code into prose, so no caller has to remember to bound it first.
+    assert _bounded_rule("invariant-1-text") == "invariant-1-text"
+    for hostile in ("drop this. /etc/passwd", "a" * 90, "Rule", "\u0440\u0443"):
+        rendered = _repair_stage_task(None, slug="demo-project", diagnostics=(), rule=hostile)
+        assert "Admission gave no rule name" in rendered, hostile
+        assert hostile not in rendered
 
 
 def test_a_repair_allowlist_outside_the_authoring_root_is_refused_at_construction() -> None:
@@ -1085,9 +1143,12 @@ def test_the_bound_repair_path_runs_both_stages_and_binds_the_result(site: Site,
         published = managed.current_revision_id
 
         # ---- stage 2: the BOUND path, which must dispatch the repair itself -----------
+        prompts: list[str] = []
+
         def stage_runner(args: object, **kwargs: object) -> int:
             dispatch = kwargs["planner_dispatch"]
             scopes.append("narrowed" if dispatch.repair_allowlist else "unbounded")
+            prompts.append(args.task)  # type: ignore[attr-defined]
             outcome, _released = _cli._run_cli_stage(
                 args=_argparse.Namespace(_managed_execution=managed),
                 run_context=child_ctx,
@@ -1117,11 +1178,123 @@ def test_the_bound_repair_path_runs_both_stages_and_binds_the_result(site: Site,
         # Exactly one repair stage ran, and it ran with the narrowed scope. This is the
         # assertion that kills "the repair runs with no narrowed scope" (M3).
         assert scopes == ["narrowed"], f"expected one narrowed repair stage, got {scopes}"
+        # P4-3: the repair is TOLD the rule, not just "invalid metadata" -- and the scope it
+        # is told is the scope it actually has. Both travel with the refusal, so a regression
+        # that drops either one shows up here and not only in a hand-written unit test.
+        assert len(prompts) == 1
+        assert "Admission's rule: `roadmap-id-mismatch`" in prompts[0], prompts[0][:600]
+        assert "`worklogs/bound-repair/acceptance`" in prompts[0]
+        assert "exactly two files" not in prompts[0]
         assert bound.authored_repairs == 1
         assert bound.admission is not None and bound.admission.snapshot.graph is not None
         assert list(bound.admission.snapshot.graph.contracts()) == ["CT-1.1"]
         # The repair published a SECOND revision on top of the refused one.
         assert managed.current_revision_id != published
+
+
+def test_a_grammar_refusal_reaches_the_repair_as_the_parser_rule(site: Site, tmp_path: Path) -> None:
+    """P4-3: the *parse* rule travels too, not only the metadata cross-check's.
+
+    A refusal reported as ``bootstrap-invalid-metadata`` is a family, and the family is all
+    admission's closed vocabulary can hold. But the repair stage is the one actor that has
+    to act on the rule -- "invalid metadata" tells a planner nothing -- so the parser's own
+    name for the failure rides along on the refusal. This pins that second path; the
+    metadata path is pinned by the bound-repair test above.
+    """
+    import argparse as _argparse
+    import re as _re
+    from dataclasses import replace as _replace
+
+    from fa import cli as _cli
+    from fa.inner_loop.planner_dispatch import PlannerDispatch, PlannerDispatchKind
+    from fa.inner_loop.project_scaffold import scaffold_files
+    from tests.test_admission_v2_provenance import _managed_child_env
+
+    slug = "grammar-repair"
+    scaffold = scaffold_files(slug, created="2026-11-21")
+    roadmap_path = f"worklogs/{slug}/roadmap.md"
+    increment_path = f"worklogs/{slug}/increments/increment-01-initial-plan.md"
+    good_roadmap = scaffold[roadmap_path]
+    good_increment = scaffold[increment_path].replace("slices: 0", "slices: 1") + _AUTHORED_BODY.format(
+        slug=slug
+    )
+    # Metadata-clean, grammar-broken: the parser wants an INVARIANTS section, and nothing in
+    # the front matter is wrong, so this refusal can only come from the parse.
+    broken_increment = _re.sub(r"## INVARIANTS.*?(?=\n## |\Z)", "", good_increment, flags=_re.S)
+
+    case_dir = tmp_path / "grammar"
+    case_site = Site(case_dir / "protected", site.roots, site.source)
+    with _managed_child_env(case_site, case_dir, child_run_id="ct28-grammar") as (
+        managed,
+        _publisher,
+        child_ctx,
+        yaml_path,
+    ):
+
+        def build_registry(workspace_io: object, _executor: object, _lease: object) -> object:
+            return workspace_io
+
+        def rewrite(port: object, path: str, content: str) -> None:
+            current = port.read_file(path).sha256  # type: ignore[attr-defined]
+            port.write_file(path, content, expected_sha256=current)  # type: ignore[attr-defined]
+
+        def drive_first(port: object) -> object:
+            rewrite(port, roadmap_path, good_roadmap)
+            rewrite(port, increment_path, broken_increment)
+            return SessionOutcome(exit_code=0, stop_reason="stopped_by_llm", turns=1, final_text="authored")
+
+        def drive_repair(port: object) -> object:
+            rewrite(port, increment_path, good_increment)
+            return SessionOutcome(exit_code=0, stop_reason="stopped_by_llm", turns=1, final_text="repaired")
+
+        first_dispatch = PlannerDispatch(
+            PlannerDispatchKind.CREATE_NEW_PROJECT, child_ctx.run_id, authoring_root=f"worklogs/{slug}"
+        )
+        _cli._run_cli_stage(
+            args=_argparse.Namespace(_managed_execution=managed),
+            run_context=child_ctx,
+            run_id=child_ctx.run_id,
+            run_log_dir=case_dir / "log-1",
+            session_db=None,
+            log=SimpleNamespace(path=case_dir / "events.jsonl"),
+            workspace=case_site.source,
+            role="planner",
+            plan_ref=None,
+            planner_dispatch=first_dispatch,
+            build_registry=build_registry,
+            drive=drive_first,
+        )
+
+        prompts: list[str] = []
+
+        def stage_runner(args: object, **kwargs: object) -> int:
+            prompts.append(args.task)  # type: ignore[attr-defined]
+            outcome, _released = _cli._run_cli_stage(
+                args=_argparse.Namespace(_managed_execution=managed),
+                run_context=child_ctx,
+                run_id=child_ctx.run_id,
+                run_log_dir=case_dir / "log-2",
+                session_db=None,
+                log=SimpleNamespace(path=case_dir / "events.jsonl"),
+                workspace=case_site.source,
+                role="planner",
+                plan_ref=None,
+                planner_dispatch=kwargs["planner_dispatch"],
+                build_registry=build_registry,
+                drive=drive_repair,
+            )
+            return 0 if outcome is not None and outcome.exit_code == 0 else 2
+
+        bound, blocked = workflow_controller._bind_authored_project(
+            _replace(_stage_ctx(case_site, child_ctx, yaml_path, managed, slug), replans_allowed=1),
+            progress=workflow_controller.WorkflowProgress("WORKFLOW"),
+            run_stage_fn=stage_runner,
+        )
+
+        assert blocked is None, f"a grammar refusal was not repaired ({blocked})"
+        assert len(prompts) == 1
+        assert "Admission's rule: `missing-invariants`" in prompts[0], prompts[0][:600]
+        assert bound.admission is not None and bound.admission.snapshot.graph is not None
 
 
 def test_metadata_table_and_parse_refusal_block_coder_then_repair_rewrites_published_file(
