@@ -677,12 +677,23 @@ Producer kill-check: with the derivation reduced to the plan path, the projectio
 Not in S3: the S0 host probe at `acceptance/tests/` (needs a live run, first thing SLICE3 wiring) and CT-3.6.
 
 **CT-3.6 status (2026-11-22) — verifier half landed, wiring half blocked.**
+
+**Measured defect (F10, E617): on the `PLAN-V2` route the verification stage is green by emptiness.**
+`PlanSnapshot.ids` is `PlanIds()` for a V2 snapshot by design (`plan_admission.py:74–76`, `:401`), and the call
+site passes exactly those ids to `verify_plan` (`workflow_controller.py:1757` via `_stage_plan:1335`). Measured:
+`verify_plan(PlanIds(), root=<tmp>)` → `plan commands: ()`, `slices: ()`, `errors: ()`, **`blocking: False`** —
+so enforce mode reads a stage that measured nothing as a pass, today, on the only forward grammar. This is
+strictly worse than the F9 guard (which cannot even fire: V2 `KILL-TARGETS` are `KillTarget(target_id, ct,
+test_id)` attribution, with no operator/path/symbol to mutate), and it fixes the order of work: projection →
+substrate-named revision → controller branch on the snapshot grammar (not on "are there commands") → artifact
+writer. Recorded in `notes/verification-entities-2026-11-22.md` (F10), including the correction that F9 did not
+make today's V2 results false.
 `acceptance_collection.verify_sealed_acceptance` runs the sealed closure on a managed substrate only, refuses
 a host-shaped one, refuses a closure/code overlap, and records both revision identities (E615). What is missing
 is the caller: `workflow_controller` still routes the V2 verification through `verify_plan(plan_ids, …)`, which
 executes the planner's `verify` fences. Retiring that fence decides what a V2 verification artifact *is*, and
 `write_verification` currently persists a `PlanVerification` built from those very commands — so the choice is
-filed as **Q-V2-SLICE3-1** rather than made by whoever next touches the file.
+filed as **Q-V2-SLICE3-1** rather than made by whoever next touches the file. Order of remaining work (F10): projection of the sealed result into `VerificationAttempt`, substrate-named candidate revision (F5), controller branch on the snapshot grammar, artifact writer; `run_kill_checks` is **not** on the critical path because no route can declare an executable mutation today.
 
 **S0 status (2026-11-22) — landed as option A.** `tests/test_ai_native_managed_substrate_probe.py` walks the
 production path (`managed_execution_for_run` → `PIN_READER` → `ReadOnlyManagedBashExecutor` →

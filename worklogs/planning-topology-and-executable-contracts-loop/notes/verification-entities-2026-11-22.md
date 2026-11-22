@@ -351,3 +351,62 @@ CommandRun           := command, authored_by: planner|harness, outcome, exit_cod
 
 Write-time refusals: `claims-total-mismatch`, `claim-mutation-missing`, `fence-on-v2-route`,
 `empty-attempt-unexplained`, `verifier-revision-mismatch`, `identity-missing-on-v2`.
+
+---
+
+# F10 — measured while ordering the work: on the V2 route, verification is green by emptiness
+
+Asking "what runs today on a `PLAN-V2` run" produced the finding that matters more than F9 this turn.
+
+`PlanSnapshot.ids` is **empty by design** for a V2 snapshot — `plan_admission.py:74–76` says so, and `:401` constructs
+`ids=PlanIds()` with the parsed `graph` beside it, deliberately, so the V1 extractor never judges V2 bytes. The
+verification call site does not know that: `workflow_controller.py:1757` passes exactly those `ids` to
+`verify_plan(plan_ids, …)`, and `_stage_plan` (`:1335–1337`) returns `ctx.admission.snapshot.ids`.
+
+Measured, not inferred (2026-11-22, on this tree):
+
+    verify_plan(PlanIds(), root=<tmp>)  ->  plan commands: ()   slices: ()   errors: ()   blocking: False
+
+So on the V2 route the whole verification stage runs nothing, reports nothing, and satisfies `blocking is False`
+in enforce mode. The gate is not merely missing a fence — **there is nothing for it to say, and it says "ok"**.
+That is a strictly worse condition than F9: F9 was "the verifier could record a pass it did not measure"; F10 is
+"the verifier measures nothing and the gate reads that as a pass", today, on the only forward grammar.
+
+Two consequences for the order of work:
+
+1. **The projection and the controller branch are the urgent half, not the mutation runner.** The sealed verifier
+   already measures the right thing; nothing hands its result to the gate. F9's guard stays as the rail that keeps
+   the projection honest, but its trigger cannot fire on today's grammar — see 2.
+2. **F9's premise narrows, and the earlier report over-claimed.** The V2 grammar's `KILL-TARGETS` entries are
+   `KillTarget(target_id, ct, test_id)` (`plan_v2.py:509–518`): *attribution*, not an executable mutation — no
+   operator, path or symbol. `_run_kill_check` needs `KillDirective(operator, path, symbol, …)`, so no mutation can
+   be constructed from a V2 plan at all, and CT-3.4's "target pass remains VACUOUS on the V2 route" is consistent
+   with that. The `kill_required` refusal therefore protects a future route that carries executable directives; it
+   did not make today's V2 results false, and this note and the ledger say so rather than leaving the stronger claim
+   standing. `kill_required` is empty for a V2 attempt, and the attempt's `mutation=None` means "no executable
+   mutation declared", which is the truth on this grammar.
+
+F10 also sharpens what CT-3.6's wiring must prove, and it is not only "the fence does not run":
+
+* a V2 attempt for a plan whose sealed nodeid fails must be **blocking** (today nothing runs, so nothing blocks);
+* a V2 attempt must never be produced with an empty claim set (the entity refuses it: `empty-attempt-unexplained`);
+* `verify_plan(PlanIds(), …)` must stop being reachable on the V2 route, i.e. the branch is on the *snapshot grammar*,
+  not on "are there commands".
+
+## Ordered remaining work (recorded so it is not re-derived)
+
+1. **Projection** — `sealed_attempt(bundle, verification, identity)` → `VerificationAttempt`: claims from
+   `bundle.selectors` × `verification.run.outcomes`, `attested`/`pending`/`contracts_total` from the seal, one
+   `harness`-authored `AttemptCommand`, and identity fields proved against the bundle (seal, closure, plan, sealed
+   revision) plus `candidate_revision_id == verification.candidate_revision_id` (`verifier-revision-mismatch`).
+2. **Substrate-named revision (F5)** — `ReadOnlyManagedBashExecutor.view_revision_id` (from `ViewRef.base_revision`),
+   forwarded by `ManagedVerifyCommandExecutor`, required by `verify_sealed_acceptance`; a view that disagrees with
+   the caller is refused.
+3. **Controller branch** — on `snapshot.format == PLAN_V2` call the sealed verifier and write the attempt; never call
+   `verify_plan(ids)` there (F10). Proven by: a plan with a hostile `verify` fence produces zero executions on the V2
+   route, and a failing sealed nodeid makes the attempt blocking.
+4. **Artifact writer** — emit `route` + `identity` + `claims[]` in the attempt log, keep the legacy keys for the
+   legacy route, and render claims (bounded detail, `UNAVAILABLE`/untrusted label) in the eval block.
+5. **`run_kill_checks` seam** — only if a route can declare executable mutation directives; today none can, so this
+   is *not* on the critical path and must not be built speculatively (SLICE3's intent forbids a second runner, and
+   there is nothing to run).
