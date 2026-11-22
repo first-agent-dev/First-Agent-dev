@@ -1,0 +1,21 @@
+{
+  "cwd": "/home/user/First-Agent-dev",
+  "gates": {
+    "authoring-check": {
+      "exit": 0,
+      "findings": 0,
+      "log": "authoring-check.log"
+    },
+    "mypy": {
+      "exit": 1,
+      "findings": 62,
+      "log": "mypy.log"
+    },
+    "ruff": {
+      "exit": 0,
+      "findings": 0,
+      "log": "ruff.log"
+    }
+  },
+  "label": "head-ae0973d"
+}

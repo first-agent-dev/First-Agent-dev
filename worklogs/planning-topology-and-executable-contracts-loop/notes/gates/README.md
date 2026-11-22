@@ -83,3 +83,12 @@ Two fixes: recordings now pass `--output-format=concise`, and the parser reads b
 `CODE message` line with a following `--> location` line. Lesson for the next gate added here: **record
 the exit code as a finding too** — `summary.json` keeps it, and a non-zero exit with an empty list is a
 parser bug, never a clean tree.
+
+## Partial recordings are named, not compared (2026-11-22)
+
+The full suite costs ~24 minutes on this host, so a change set that cannot touch most of it may record
+only the cheap gates (`--gate mypy --gate ruff --gate authoring-check`). `compare` now reports a gate
+recorded on one side only as `not recorded in <dir> — skipped, not counted` and keeps it out of
+`NEW TOTAL`. Before that rule, a partial head recording made the base's two pytest failures read as
+`2 gone`, i.e. a cheap run looked like a repair. A partial recording is a legitimate economy; a partial
+recording *read as a full one* is the same class of error as counting instead of listing.

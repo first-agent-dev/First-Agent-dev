@@ -226,7 +226,17 @@ def compare(args: argparse.Namespace) -> int:
     for gate in GATES:
         before = _findings(base, gate.name)
         after = _findings(head, gate.name)
-        if not before and not after and not (base / f"{gate.name}.findings.txt").exists():
+        recorded = ((base / f"{gate.name}.findings.txt").exists(), (head / f"{gate.name}.findings.txt").exists())
+        if not any(recorded):
+            continue
+        if recorded != (True, True):
+            # A gate recorded on one side only cannot be compared. Reporting its
+            # findings as "gone" would read as a fix (E610: a cheap partial head
+            # recording made pytest's two known failures look repaired), so it is
+            # named as missing and excluded from the total instead.
+            missing = base if not recorded[0] else head
+            lines.append(f"## {gate.name}: not recorded in {missing} — skipped, not counted")
+            lines.append("")
             continue
         new = sorted(after - before)
         gone = sorted(before - after)
