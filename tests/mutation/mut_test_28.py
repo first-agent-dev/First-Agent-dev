@@ -1,4 +1,4 @@
-"""Mutation run for TEST-2.8 / CT-2.7 / CT-2.2-2.3 / D-V2-9.8 (E594-E598): the repair path must be real.
+"""Mutation run for TEST-2.8 / CT-2.7 / CT-2.2-2.5 / D-V2-9.8 (E594-E599): the repair path must be real.
 
 Three of these exist because a cheaper test once survived them. `test_the_bound_repair_
 path_runs_both_stages_and_binds_the_result` was written after M3 survived the hand-built
@@ -32,6 +32,7 @@ BUDGET = [f"{_BANK}::test_a_create_new_repair_is_budgeted_and_never_overwrites_o
 COLLISION = [f"{_BANK}::test_create_over_existing_directory_is_project_exists_and_unchanged"]
 SCAFFOLD_T = [f"{_BANK}::test_create_new_stage_scaffolds_then_planner_writes_only_inside_slug"]
 _TOOL_BANK = "tests/test_invoke_workflow_tool.py"
+CT25 = [f"{_TOOL_BANK}::TestCreatNewRouteFailureMapping"]
 SLUG = [
     f"{_TOOL_BANK}::test_an_invalid_slug_is_refused_before_any_child_exists",
     f"{_TOOL_BANK}::test_a_slug_without_a_create_route_is_refused_before_any_child_exists",
@@ -129,6 +130,49 @@ MUTANTS: list[tuple[str, Path, str, str, list[str]]] = [
         '        allowed_prefixes = [f"{authoring_root}/"]',
         '        allowed_prefixes = [""]',
         SCAFFOLD_T,
+    ),
+    (
+        "M15 a settled child failure is mapped back to ok (CT-2.5)",
+        TOOL,
+        '        if prepared.project_slug is not None and not (exit_code == 0 and status == "DONE"):',
+        "        if False:  # MUTANT",
+        CT25,
+    ),
+    (
+        "M16 only the exit code is checked, not the terminal state (CT-2.5)",
+        TOOL,
+        '        if prepared.project_slug is not None and not (exit_code == 0 and status == "DONE"):',
+        "        if prepared.project_slug is not None and exit_code != 0:  # MUTANT",
+        CT25,
+    ),
+    (
+        "M17 every create failure is retryable (CT-2.5)",
+        TOOL,
+        '    code, retryable = _V2_CREATE_FAILURES.get(rule or "", _V2_CREATE_FALLBACK)',
+        '    code, retryable = _V2_CREATE_FAILURES.get(rule or "", _V2_CREATE_FALLBACK)'
+        "\n    retryable = True  # MUTANT",
+        CT25,
+    ),
+    (
+        "M18 the rule segment reaches the summary unvalidated (CT-2.5 leak)",
+        TOOL,
+        "            return segment if _RULE_SEGMENT_RE.fullmatch(segment) else None",
+        "            return segment  # MUTANT",
+        CT25,
+    ),
+    (
+        "M20 a collision is reported as retryable (CT-2.5)",
+        TOOL,
+        '    "bootstrap-collision": ("project_exists", False),',
+        '    "bootstrap-collision": ("project_exists", True),  # MUTANT',
+        CT25,
+    ),
+    (
+        "M21 the select route is gated too (CT-2.5: contract broken)",
+        TOOL,
+        '        if prepared.project_slug is not None and not (exit_code == 0 and status == "DONE"):',
+        '        if not (exit_code == 0 and status == "DONE"):  # MUTANT',
+        CT25,
     ),
     (
         "M5 a repair is not budgeted (killed by BUDGET, not BOUND)",

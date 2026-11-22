@@ -1771,3 +1771,161 @@ def test_an_unknown_project_action_is_refused_before_any_child_exists(
 
     assert _error_code(result) == "invalid_project_action"
     assert workflow.calls == []
+
+
+# --- CT-2.5: a settled child failure is this call's failure -------------------
+
+
+class TestCreatNewRouteFailureMapping:
+    """root=tool class=C1 claim=CT-2.5 path=SLICE2
+
+    The plan's rule is short and easy to satisfy wrongly: on a V2 create route,
+    ``ok`` means the project exists. Before this, every route returned ``ok``
+    regardless of the child's exit code, so a create that died at
+    ``bootstrap-collision`` told the model the workflow had finished -- the one
+    reading that makes it stop investigating.
+    """
+
+    def _result(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, **state: object) -> ToolResult:
+        ctx = _managed_context(tmp_path, monkeypatch)[0]
+        workflow = _RecordingWorkflow(
+            exit_code=int(state.get("exit_code", 2)),  # type: ignore[arg-type]
+            terminal_state=_TerminalState(
+                status=str(state.get("status", "FAILED")),
+                route=str(state.get("route", "blocked")),
+                reason=str(state.get("reason", "explicit plan admission blocked")),
+                blocked_reason=str(state.get("blocked_reason", "")),
+            ),
+        )
+        return _call(
+            _tool(workflow, ctx),
+            task="build it",
+            roles="planner,coder",
+            project_action="CREATE_NEW",
+            project_slug="demo-project",
+        )
+
+    def test_a_collision_is_reported_as_project_exists_and_not_as_success(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The name the operator asked for is taken; nothing was created."""
+        result = self._result(tmp_path, monkeypatch, blocked_reason="plan-ref/bootstrap-collision")
+
+        assert result.error is not None, "a failed create was reported as a successful call"
+        assert result.error.code == "project_exists"
+        # A second attempt meets the same directory. Reporting this as retryable would
+        # have the caller loop -- and a repair on this route is how an overwrite starts.
+        assert result.error.retryable is False
+        assert result.result is None, "ToolResult.fail must not carry a success payload"
+
+    @pytest.mark.parametrize(
+        ("rule", "code", "retryable"),
+        [
+            ("bootstrap-invalid-body", "bootstrap_content_invalid", False),
+            ("bootstrap-invalid-metadata", "bootstrap_content_invalid", False),
+            ("bootstrap-refused", "bootstrap_content_invalid", False),
+            ("plan-format-mismatch", "unsupported_plan_format", False),
+            ("durability-unknown", "durability_unknown", False),
+            ("prepare-failed", "durability_unknown", False),
+            ("hash-mismatch", "durability_unknown", False),
+            ("project-route-mismatch", "project_route_mismatch", False),
+            ("disposition-evidence-mismatch", "invalid_dispositions", True),
+            ("bootstrap-unavailable", "workspace_unavailable", True),
+            ("backend-unavailable", "workspace_unavailable", True),
+            # Anything the table does not name still fails, and fails closed.
+            ("something-new", "workflow_failed", False),
+        ],
+    )
+    def test_the_closed_rule_selects_the_code_and_the_retryability(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, rule: str, code: str, retryable: bool
+    ) -> None:
+        result = self._result(tmp_path, monkeypatch, blocked_reason=f"admission/plan-ref/{rule}")
+
+        assert result.error is not None and result.error.code == code
+        assert result.error.retryable is retryable
+
+    @pytest.mark.parametrize(
+        "blocked_reason",
+        [
+            "plan-ref/plan-format-mismatch",
+            "plan-ref/bootstrap-collision",
+            "admission/promotion/prepare-failed",
+            "",
+            "explicit plan admission blocked",
+            # A hostile *segment* under a real prefix: the prefix says "this is a closed
+            # rule", so the segment is the only thing standing between a free-text field
+            # and the caller-visible summary.
+            "plan-ref/../../home/operator/secret/models.yaml",
+            "admission/plan-ref/SK-live-abc123",
+            "plan-ref/" + "a" * 200,
+        ],
+    )
+    def test_the_summary_names_the_child_and_never_leaks_its_text(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, blocked_reason: str
+    ) -> None:
+        """``ToolResult.fail`` has no payload, so the run id has to be in the text.
+
+        The negative half matters as much: ``blocked_reason`` is free text on the
+        flow state, and this is the only place the child's own words would reach
+        the caller. A path or a secret must not survive the trip.
+        """
+        hostile = blocked_reason
+        if blocked_reason == "":
+            hostile = "/home/operator/secret/models.yaml key=sk-live-abc"
+        result = self._result(tmp_path, monkeypatch, blocked_reason=hostile)
+
+        assert result.error is not None
+        child_run_id = re.search(r"workflow (\S+) did not create", result.summary)
+        assert child_run_id is not None, f"the child run id is not nameable: {result.summary!r}"
+        assert child_run_id.group(1).startswith("run-parent")
+        for leaked in ("/home/operator", "sk-live", "models.yaml"):
+            assert leaked not in result.summary
+
+    def test_a_child_that_stopped_short_of_done_is_a_failure_even_at_exit_zero(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Exit 0 is necessary, not sufficient: the terminal state is the other half.
+
+        A stage that publishes and then stops without reaching ``DONE`` leaves no
+        committed parent revision, which is the third condition in the plan.
+        """
+        result = self._result(
+            tmp_path, monkeypatch, exit_code=0, status="RUNNING", blocked_reason=""
+        )
+
+        assert result.error is not None and result.error.code == "workflow_failed"
+
+    def test_a_create_that_reached_done_still_succeeds(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The mapping must not turn the happy path into a failure."""
+        result = self._result(
+            tmp_path, monkeypatch, exit_code=0, status="DONE", route="complete", reason="done"
+        )
+
+        assert result.error is None
+        payload = _payload(result)
+        assert payload["status"] == "DONE"
+        assert payload["run_id"].startswith("run-parent")
+
+    def test_the_select_route_keeps_its_existing_result_semantics(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The plan says to preserve it, and it is not an accident of the gate.
+
+        An ``AUTO_SELECT_EXISTING`` call that ends FAILED has always returned ok with
+        the failure visible in the payload. Changing that here would alter a published
+        contract as a side effect of a create-route rule.
+        """
+        ctx = _managed_context(tmp_path, monkeypatch)[0]
+        workflow = _RecordingWorkflow(
+            exit_code=2,
+            terminal_state=_TerminalState(
+                status="FAILED", route="blocked", reason="explicit plan admission blocked",
+                blocked_reason="plan-ref/bootstrap-collision",
+            ),
+        )
+        result = _call(_tool(workflow, ctx), task="fix it", roles="planner,coder")
+
+        assert result.error is None, "the select route's contract changed"
+        assert _payload(result)["exit_code"] == 2

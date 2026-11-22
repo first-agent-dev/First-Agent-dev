@@ -12312,3 +12312,46 @@ made the stage able to write `.fa/admission/candidate.md` -- which is exactly th
 mutation that looks harmless in a diff and is not.
 
 193 tests across the two banks; ruff clean; mypy 224; doc-links 372.
+
+### E599 — CT-2.5: the defect was that ok was unconditional (2026-11-21)
+
+`workflow_tool.py` returned `ToolResult.ok` on every route and every exit code. So a
+`CREATE_NEW` call whose child died at `bootstrap-collision` told the model the workflow had
+finished, with `exit_code` sitting in the payload as a detail. That is not a missing
+refinement of an existing mapping -- there was no mapping, and the one route where "ok"
+must mean "the project exists" was the route that could not distinguish the cases.
+
+**The gate is the whole conjunction**, `exit_code == 0 and status == "DONE"`, not the exit
+code alone. Cheap to write the weaker version and it passes almost everything: a child can
+exit 0 without reaching its terminal state, and `DONE` alongside a `blocked_reason` is a
+contradiction this must not honour. Mutant M16 (exit-code-only) died on exactly that.
+
+**Codes come from the closed rule, not from prose.** The controller spells a refusal two
+ways -- `plan-ref/<rule>` at the admission barrier, `admission/<validator>/<rule>` at the
+promotion and planner paths -- so the mapping keys on the trailing segment. Everything the
+table does not name falls to `workflow_failed`, non-retryable; the default is what a new
+rule from some future slice will hit, and failing closed there is the difference between an
+unmapped refusal and a retry loop.
+
+**Two decisions worth naming.**
+
+*`bootstrap_content_invalid` is `retryable=False`*, though the plan permits `True` "only
+when child evidence proves no install/irreversible effect". No such proof exists: whether a
+refused create leaves the canonical tree clean is CT-2.9, and CT-2.9 is not implemented.
+Retrying into a collision is worse than an honest refusal, and the flip is one table row
+when CT-2.9 lands.
+
+*Format refusals keep their own code* (`unsupported_plan_format`) even though the
+controller currently folds them into `bootstrap-invalid-metadata` before they reach the
+tool. The map is keyed on what arrives, so today nothing produces that code; recording it
+as debt rather than deleting the row is deliberate -- the row is the seam CT-2.4 needs.
+
+**Leak control.** `blocked_reason` is free text on the flow state and this is the only
+place a child's own words could reach the caller. The summary is assembled from a fixed
+code plus a rule segment that must match `[a-z][a-z0-9-]{0,63}`, so a child that wrote a
+path, a planner body or a credential into its own failure state cannot pass it through.
+The first version of this test put the hostile text *outside* the prefix and M18 survived
+-- the regex never ran. Recording that: a leak test that does not reach the interpolation
+proves nothing. Harness 20/20.
+
+231 tests across the four banks; ruff clean; mypy 224; doc-links 372.

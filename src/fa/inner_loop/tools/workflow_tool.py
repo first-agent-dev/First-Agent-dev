@@ -820,6 +820,105 @@ def _prepare_invocation(
     )
 
 
+#: How a child's refusal becomes a caller-visible code on the V2 create route.
+#:
+#: Keyed by the *rule* rather than by the whole ``blocked_reason`` because the controller
+#: spells the same refusal two ways: ``plan-ref/<rule>`` from the admission barrier and
+#: ``admission/<validator>/<rule>`` from the promotion/planner paths. The tail segment is
+#: the rule in both, and both are closed vocabularies, so the tail is a safe thing to key
+#: on and the prefix is not information the caller needs.
+#:
+#: ``retryable`` follows the plan's mapping. Two of them are ``False`` for a reason worth
+#: keeping explicit: a collision is a fact about the workspace that a second attempt
+#: cannot change, and ``durability_unknown`` means the authority does not know whether
+#: the effect landed -- retrying it is how one create becomes two.
+_V2_CREATE_FAILURES: dict[str, tuple[str, bool]] = {
+    # D-V2-9.2: the caller's name is taken. Nothing was created and nothing will be.
+    "bootstrap-collision": ("project_exists", False),
+    # The planner published a pair admission would not read. Repairable *inside* the run
+    # (D-V2-9.8 dispatches a second authoring stage), so by the time it reaches the caller
+    # every attempt is spent and a fresh call is what would repeat it.
+    "bootstrap-invalid-body": ("bootstrap_content_invalid", False),
+    "bootstrap-invalid-metadata": ("bootstrap_content_invalid", False),
+    "bootstrap-refused": ("bootstrap_content_invalid", False),
+    # Format refusals, kept separate from content ones: a document in a plan format this
+    # build does not read is not fixed by rewriting its prose. Today the controller folds
+    # these into `bootstrap-invalid-metadata` before they reach here (recorded as debt in
+    # the ledger); the mapping is in place so the distinction lands the moment it survives.
+    "plan-format-mismatch": ("unsupported_plan_format", False),
+    "plan-format-marker-roadmap": ("unsupported_plan_format", False),
+    "plan-format-marker-increment": ("unsupported_plan_format", False),
+    # The authority, not the documents. A retry is a reasonable thing for the caller to
+    # attempt, because nothing was decided.
+    "bootstrap-unavailable": ("workspace_unavailable", True),
+    "bootstrap-unreadable": ("workspace_unavailable", True),
+    "acquisition-unavailable": ("workspace_unavailable", True),
+    "backend-unavailable": ("workspace_unavailable", True),
+    "planner-unavailable": ("workspace_unavailable", True),
+    # D-V2-9.1: the route the caller asked for and the reply the child produced disagree.
+    "project-route-mismatch": ("project_route_mismatch", False),
+    # R1: the caller's own grant could not be verified against the pinned bytes. Fixing the
+    # declaration is a real repair, and it happens before anything irreversible.
+    "disposition-evidence-invalid": ("invalid_dispositions", True),
+    "disposition-evidence-missing": ("invalid_dispositions", True),
+    "disposition-evidence-mismatch": ("invalid_dispositions", True),
+    # The authority does not know whether the effect landed. Never retried: one unknown
+    # create repeated is two creates.
+    "durability-unknown": ("durability_unknown", False),
+    "prepare-failed": ("durability_unknown", False),
+    "replace-failed": ("durability_unknown", False),
+    "hash-mismatch": ("durability_unknown", False),
+}
+
+# What a child failure looks like when nothing in its record names a cause the caller can
+# act on. Deliberately not retryable: an unattributed failure that is retried automatically
+# is a loop, and the child run is kept for inspection either way.
+_V2_CREATE_FALLBACK = ("workflow_failed", False)
+
+#: The controller's two spellings of "this run stopped at a closed rule".
+_BLOCKED_RULE_PREFIXES = ("plan-ref/", "admission/")
+
+#: A rule segment as the closed vocabularies write it: lowercase kebab, nothing else.
+#: Applied before the segment is interpolated into caller-visible text so that the
+#: ``blocked_reason`` free-text field cannot carry a path, a body or a credential into
+#: the summary just by being unusual.
+_RULE_SEGMENT_RE = re.compile(r"[a-z][a-z0-9-]{0,63}")
+
+
+def _blocked_rule(blocked_reason: str) -> str | None:
+    """The closed rule named by a ``blocked_reason``, or ``None`` if there is not one."""
+    for prefix in _BLOCKED_RULE_PREFIXES:
+        if blocked_reason.startswith(prefix):
+            segment = blocked_reason.rsplit("/", 1)[-1]
+            return segment if _RULE_SEGMENT_RE.fullmatch(segment) else None
+    return None
+
+
+def _v2_create_failure(candidate: str, *, exit_code: int, status: str, blocked_reason: str) -> ToolResult:
+    """Map a settled V2 create-route failure to ``ToolResult.fail`` (CT-2.5 / INV-11).
+
+    Three facts go into this, and only these three: the child's exit code, its terminal
+    status, and the closed rule at the end of ``blocked_reason``. Nothing else from the
+    child reaches the caller -- the summary is assembled here from a fixed code and a
+    regex-checked rule, so a child that wrote a filesystem path or a planner body into its
+    own failure state cannot leak it through this tool.
+
+    The ``run_id`` is in the message on purpose: ``ToolResult.fail`` carries no structured
+    ``result`` payload, so the summary is the only place the caller can learn which child
+    to look at, and without it a failure is unattributable.
+    """
+    rule = _blocked_rule(blocked_reason)
+    code, retryable = _V2_CREATE_FAILURES.get(rule or "", _V2_CREATE_FALLBACK)
+    if rule is None:
+        cause = f"status={status or 'unknown'}"
+    else:
+        cause = f"{rule}; status={status or 'unknown'}"
+    summary = f"workflow {candidate} did not create the project: {code} ({cause})"
+    if exit_code != 0:
+        summary += f"; child exit {exit_code}"
+    return ToolResult.fail(code, summary, retryable=retryable, summary=summary)
+
+
 def _workflow_outcome_summary(
     *,
     candidate: str,
@@ -1016,6 +1115,25 @@ def build_invoke_workflow_tool(
             timed_out=timed_out,
             managed=managed is not None,
         )
+
+        # CT-2.5 (INV-11): on a V2 create route, ok means the project exists. A settled
+        # child that did not get that far is a failure of *this* call, not a successful
+        # call that happens to report bad news -- the distinction decides whether the
+        # caller retries, reports, or keeps going, and "finished, status=FAILED" has been
+        # read as the first of those often enough.
+        #
+        # The gate is deliberately the whole condition and not just the exit code: a child
+        # can exit 0 while never reaching DONE (a BLOCKED admission writes exit 2, but a
+        # stage that stopped short of its terminal state need not), and `DONE` after a
+        # `blocked_reason` is a contradiction this must not honour. Select-route calls keep
+        # their existing contract untouched, including the refresh flag they have today.
+        if prepared.project_slug is not None and not (exit_code == 0 and status == "DONE"):
+            return _v2_create_failure(
+                candidate,
+                exit_code=exit_code,
+                status=status,
+                blocked_reason=blocked_reason,
+            )
 
         return ToolResult.ok(
             summary,
