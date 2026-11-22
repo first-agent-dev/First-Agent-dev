@@ -486,3 +486,48 @@ the W4 host rather than a parallel claim.
 
 **What this does not do:** `verify_sealed_acceptance` still has no production caller — `_stage_plan` reaches
 `verify_plan(PlanIds())` (F10). Item 3, the controller branch, is next.
+
+## F10 — closed: the V2 stage branches on the snapshot's grammar
+
+Item 3 is implemented in `workflow_controller`. `_run_stage`'s coder gate now reads
+`_sealed_snapshot(ctx)` — the admitted snapshot when its `format` is `PLAN-V2`, else `None` — and on that
+route calls `_sealed_stage_verification(...)` inside the same pinned substrate. **`verify_plan` is not reached
+on the V2 route at all**: not with a guard, and not with the empty `ids` a V2 snapshot carries by design. The
+`verify` fence therefore has no way to become the oracle, which is the property the earlier "green by
+emptiness" measurement showed was missing.
+
+What the sealed path does, in order, and each step is a recorded `PlanVerification` error rather than a raised
+exception, so the existing enforce/observe gate keeps judging it:
+
+1. `_stage_acceptance_bundle` — `load_seal(workspace / acceptance.seal.json)`; missing (`acceptance-seal/missing`),
+   malformed (`acceptance-seal/<rule>`) or unreadable (`acceptance-seal/unreadable`) is blocking. There is no
+   fallback to the fence: that fallback *is* the defect.
+2. no substrate → `verifier-substrate-required`, because the unmanaged substrate is the host tree the coder just
+   edited (CT61).
+3. the substrate must name the candidate revision (F5) → `verifier-revision-mismatch`.
+4. `verify_sealed_acceptance(..., kill_required=())` → failures surface as `sealed-verification/<rule>`.
+5. `sealed_attempt(...)` → `sealed-attempt/<rule>`; a blocking attempt contributes
+   `sealed-attempt/<first_reason>` so the legacy gate blocks *and says why*.
+6. the receipt (`verification.command`) becomes `plan_command_results`, so a passing V2 stage has one command that
+   actually ran and a blocking one has an error — never an empty command list reading as green.
+
+The attempt is kept on `_WorkflowAdmission.last_attempt` (and cleared to `None` when the legacy route runs) for the
+artifact writer, which is item 4 and is **not** done: `verification.json` today carries the receipt and the
+reason, not the claims, identity or route.
+
+**Measured:** `tests/test_verify_gate_live.py` 576 passed in 181 s, including four new oracles: the V2 stage never
+reaches `verify_plan` (it is replaced by a recorder and asserted empty); the seal is read from the workspace and
+the only remaining refusal is the cell; a V2 stage with a cell produces a sealed attempt whose claim is the sealed
+nodeid and whose `blocking` is `False`; and a failing sealed nodeid blocks the stage. Five mutants, all killed:
+force the legacy branch, make `_sealed_snapshot` always `None`, drop the substrate refusal, stop propagating a
+blocking attempt, and pass a non-empty `kill_required`. The neighbouring controller files
+(`test_s8_workflow_controller`, `test_injection_threading`, `test_kill_directives`, `test_plan_*`,
+`test_s5p1_acquisition_seam`, `test_slice_id_validation`, `test_workflow_*`) were re-run: 149 passed.
+
+**One structural constraint that shaped the change:** the live oracle's plan declares
+`kill: remove-call src/fa/inner_loop/workflow_controller.py::_run_stage -> verify_plan` and
+`...::_run_stage -> write_verification`, and it reports every one of those contracts `PROVEN` by mutating them. The
+first attempt to satisfy `ruff`'s complexity limit extracted `verify_plan` into a helper, and the live test failed
+— correctly: the mutation no longer applied, so the plan's own claim about its kill surface had become false.
+`_run_stage` therefore keeps both call sites verbatim; the complexity was paid down by extracting the eval-report
+build (`_stage_eval_report`) instead, which no kill directive names.

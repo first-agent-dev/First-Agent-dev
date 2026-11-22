@@ -35,6 +35,12 @@ from fa.execution.client import (
 from fa.execution.primitives import ExecutionContractError
 from fa.execution.tool_port import ClientWorkspacePort
 from fa.execution.types import Access, Operation, ViewPurpose
+from fa.inner_loop.acceptance_bundle import SEAL_FILENAME, AcceptanceBundle, AcceptanceBundleError, load_seal
+from fa.inner_loop.acceptance_collection import (
+    AcceptanceCollectionError,
+    sealed_attempt,
+    verify_sealed_acceptance,
+)
 from fa.inner_loop.admission_schema import ADMISSION_RULES, ADMISSION_RULES_V2
 from fa.inner_loop.coder_loop import SessionOutcome
 from fa.inner_loop.injections import INJECTION_MODES, INJECTION_SPECS, resolve_injection_modes
@@ -91,6 +97,7 @@ from fa.inner_loop.slice_verification import (
 )
 from fa.inner_loop.stage_candidate import reset_stage_candidate, stage_candidate_reader
 from fa.inner_loop.tools.workspace_port import WorkspacePort, WorkspacePortError, port_relative
+from fa.inner_loop.verification_attempt import VerificationAttempt, VerificationIdentity
 from fa.inner_loop.workflow_artifacts import (
     AdmissionIOError,
     EvalReport,
@@ -228,6 +235,9 @@ class _WorkflowAdmission:
     block_exit_code: int = 2
     candidate: PlanSnapshot | None = None
     last_eval_report: EvalReport | None = None
+    #: F10: the V2 verification attempt for the most recent coder gate. ``None`` means the legacy
+    #: route ran (or the V2 route could not build one), never "the attempt was empty".
+    last_attempt: VerificationAttempt | None = None
     baseline: Literal["NOT_CAPTURED", "CAPTURED", "FAILED"] = "NOT_CAPTURED"
     admitted: bool = False
     failure: str | None = None
@@ -550,6 +560,133 @@ def _pinned_verify_substrate(ctx: WorkflowContext) -> Iterator[_VerifySubstrate 
         # settled rather than silently reading a view someone else may hold.
         if not managed.client.stop_view(managed.binding.namespace, view=view, grant=grant, deadline=deadline):
             logger.error("verify read-only view did not become terminal (run=%s view=%s)", ctx.run_id, view.view_id)
+
+
+def _sealed_snapshot(ctx: WorkflowContext) -> PlanSnapshot | None:
+    """The admitted snapshot when its grammar is ``PLAN-V2``, else ``None``.
+
+    The branch is on the grammar, never on "are there commands": a V2 snapshot's ``ids`` are empty
+    by design (`plan_admission.py:74-76`), so a route that decided by commands would pick the
+    legacy verifier on exactly the grammar that retired it (F10).
+    """
+    if ctx.admission is None:
+        return None
+    snapshot = ctx.admission.snapshot
+    return snapshot if snapshot.format == PLAN_V2 else None
+
+
+def _record_stage_attempt(ctx: WorkflowContext, attempt: VerificationAttempt | None) -> None:
+    """Keep the stage's attempt on the admission record for the artifact writer (F10 item 4).
+
+    ``None`` is recorded as ``None`` rather than left stale: an attempt from an earlier repair
+    round describes another candidate, and a writer that read it would attach the wrong evidence.
+    """
+    if ctx.admission is not None:
+        ctx.admission.last_attempt = attempt
+
+
+def _stage_acceptance_bundle(ctx: WorkflowContext) -> tuple[AcceptanceBundle | None, tuple[str, ...]]:
+    """The seal this workspace admitted, or the closed rule that says why there is none.
+
+    A V2 stage cannot fall back to the planner's ``verify`` fence when the seal is missing: the
+    fence is exactly what the route retired (CT-3.6), so "no seal" is a blocking error, not an
+    invitation to run something else.
+    """
+    try:
+        return load_seal((ctx.workspace / SEAL_FILENAME).read_bytes()), ()
+    except FileNotFoundError:
+        return None, ("acceptance-seal/missing",)
+    except AcceptanceBundleError as error:
+        return None, (f"acceptance-seal/{error.rule}",)
+    except OSError:
+        return None, ("acceptance-seal/unreadable",)
+
+
+def _sealed_stage_verification(
+    ctx: WorkflowContext,
+    snapshot: PlanSnapshot,
+    substrate: _VerifySubstrate | None,
+    *,
+    attempt: int,
+    repair_round: int,
+) -> tuple[PlanVerification, VerificationAttempt | None]:
+    """CT-3.6 on the ``PLAN-V2`` route: the seal is the oracle, the plan's fence never runs (F10).
+
+    ``verify_plan`` is not called here at all -- not with a guard and not with an empty id set.
+    The measured defect was that a V2 snapshot's ids are empty by design, so the planner's fences
+    were the only commands and a stage that measured nothing read as a pass; branching on the
+    snapshot's *grammar* is what retires that, because the two routes have different oracles and
+    nothing in the route is allowed to decide by "are there commands".
+
+    Every refusal below is recorded as a ``PlanVerification`` error rather than raised, so the
+    existing gate (enforce/observe) keeps judging it; the difference is that the error is now the
+    reason a V2 stage blocks, instead of an empty command list reading as green.
+    """
+    bundle, errors = _stage_acceptance_bundle(ctx)
+    if substrate is None:
+        # No pinned cell means the host tree, and the host tree is what the coder just edited.
+        errors = (*errors, "verifier-substrate-required")
+    if bundle is None or substrate is None:
+        return PlanVerification(plan_command_results=(), slice_verifications=(), errors=errors), None
+
+    executor = substrate.executor
+    candidate_revision_id = getattr(executor, "view_revision_id", None)
+    if not isinstance(candidate_revision_id, str) or not candidate_revision_id:
+        return PlanVerification(
+            plan_command_results=(),
+            slice_verifications=(),
+            errors=(*errors, "verifier-revision-mismatch"),
+        ), None
+    managed = ctx.managed_execution
+    profile = None if managed is None else managed.read_only_profile
+    try:
+        verification = verify_sealed_acceptance(
+            bundle,
+            workspace=ctx.workspace,
+            candidate_revision_id=candidate_revision_id,
+            plan_bytes=snapshot.utf8_bytes,
+            # F9/CT-3.4: V2 `KILL-TARGETS` carry attribution only (`KillTarget(target_id, ct,
+            # test_id)`), so no executable mutation can be declared on this grammar and nothing
+            # is required -- not because a mutation was skipped.
+            kill_required=(),
+            deadline=ctx.deadline_mono,
+            executor=executor,
+        )
+    except (AcceptanceCollectionError, AcceptanceBundleError) as error:
+        rule = getattr(error, "rule", type(error).__name__)
+        return PlanVerification(
+            plan_command_results=(),
+            slice_verifications=(),
+            errors=(*errors, f"sealed-verification/{rule}"),
+        ), None
+    identity = VerificationIdentity(
+        plan_sha256=snapshot.ref.sha256,
+        candidate_revision_id=candidate_revision_id,
+        profile_id="managed-readonly" if profile is None else profile.profile_id,
+        substrate="managed-readonly" if managed is not None else "host",
+        run_id=ctx.run_id,
+        attempt=attempt,
+        repair_round=repair_round,
+        mode=_gate_mode(ctx.verify_gate_mode),
+        seal_sha256=bundle.seal_sha256,
+        closure_sha256=bundle.closure.digest,
+        sealed_revision_id=bundle.revision_id,
+    )
+    try:
+        sealed = sealed_attempt(bundle, verification, identity=identity)
+    except AcceptanceCollectionError as error:
+        return PlanVerification(
+            plan_command_results=(),
+            slice_verifications=(),
+            errors=(*errors, f"sealed-attempt/{error.rule}"),
+        ), None
+    # One command, attributed to the oracle that actually ran: the harness built it from the seal.
+    plan_verification = PlanVerification(
+        plan_command_results=(verification.command,),
+        slice_verifications=(),
+        errors=(*errors, *(("sealed-attempt/" + sealed.first_reason,) if sealed.blocking else ())),
+    )
+    return plan_verification, sealed
 
 
 def _capture_nodeids_by_slice(
@@ -1313,6 +1450,33 @@ def _plan_integrity_errors(ctx: WorkflowContext) -> tuple[str, ...]:
     return ()
 
 
+def _stage_eval_report(ctx: WorkflowContext, final_text: str, *, progress: WorkflowProgress) -> EvalReport:
+    """Build, adjust, then write the eval report -- exactly one write (S12/§24 D-1).
+
+    Calling ``emit_eval_report`` here and rewriting afterwards would persist a report that
+    contradicts the routing decision for the window in between, which is why this stays one
+    function with one write.
+    """
+    report = build_eval_report(
+        final_text,
+        run_id=ctx.run_id,
+        # S12a: the plan's declared ID when one was supplied, else run_id.
+        plan_id=ctx.plan_identity(),
+        plan_version=progress.plan_version,
+        eval_independence=_load_eval_independence(ctx),
+    )
+    report, slice_warnings = validate_slice_ids(
+        report,
+        ctx.plan_text(),
+        plan_ids=ctx.admission.snapshot.ids if ctx.admission is not None else None,
+    )
+    for warning in slice_warnings:
+        logger.warning("workflow eval-report: %s (run=%s)", warning, ctx.run_id)
+        print(f"fa workflow: {warning}", file=sys.stderr)
+    _write_stage_eval_report(ctx, report)
+    return report
+
+
 def _write_stage_eval_report(ctx: WorkflowContext, report: EvalReport) -> None:
     if ctx.admission is not None:
         ctx.admission.last_eval_report = report
@@ -1749,20 +1913,33 @@ def _run_stage(
         # snapshot contains and where the commands run, so T1 and the comparison can
         # never disagree about which tree they are talking about.
         now: BaselineCapture | None = None
+        sealed_attempt_for_stage: VerificationAttempt | None = None
+        sealed_snapshot = _sealed_snapshot(ctx)
         try:
             with _pinned_verify_substrate(ctx) as substrate:
-                now = _capture_nodeids_by_slice(
-                    plan_ids, root=ctx.workspace, deadline=ctx.deadline_mono, execution=substrate
-                )
-                verification = verify_plan(
-                    plan_ids,
-                    root=ctx.workspace,
-                    baseline_by_slice=baseline.nodeids_by_slice,
-                    now_by_slice=now.nodeids_by_slice,
-                    deadline=ctx.deadline_mono,
-                    executor=None if substrate is None else substrate.executor,
-                    port=None if substrate is None else substrate.port,
-                )
+                if sealed_snapshot is not None:
+                    # F10: the oracle is the seal, and `verify_plan` is not reached at all -- not
+                    # with a guard and not with the empty id set the route carries by design.
+                    verification, sealed_attempt_for_stage = _sealed_stage_verification(
+                        ctx,
+                        sealed_snapshot,
+                        substrate,
+                        attempt=progress.repair_round + 1,
+                        repair_round=progress.repair_round,
+                    )
+                else:
+                    now = _capture_nodeids_by_slice(
+                        plan_ids, root=ctx.workspace, deadline=ctx.deadline_mono, execution=substrate
+                    )
+                    verification = verify_plan(
+                        plan_ids,
+                        root=ctx.workspace,
+                        baseline_by_slice=baseline.nodeids_by_slice,
+                        now_by_slice=now.nodeids_by_slice,
+                        deadline=ctx.deadline_mono,
+                        executor=None if substrate is None else substrate.executor,
+                        port=None if substrate is None else substrate.port,
+                    )
         except Exception as error:  # Uncertainty is a recorded ERROR, never a pass.
             logger.exception("workflow verification failed unexpectedly (run=%s)", ctx.run_id)
             verification = PlanVerification(
@@ -1770,6 +1947,7 @@ def _run_stage(
                 slice_verifications=(),
                 errors=(f"verify_plan raised {type(error).__name__}: {error}",),
             )
+        _record_stage_attempt(ctx, sealed_attempt_for_stage)
         capture_errors = tuple(
             error
             for error in (
@@ -1807,27 +1985,7 @@ def _run_stage(
             file=sys.stderr,
         )
     if role == "eval" and code == 0 and sink:
-        _eval_independence = _load_eval_independence(ctx)
-        # S12/§24 D-1: build -> adjust -> write, exactly one write. Calling
-        # emit_eval_report here and rewriting afterwards would persist a report
-        # that contradicts the routing decision for the window in between.
-        report = build_eval_report(
-            sink[-1].final_text,
-            run_id=ctx.run_id,
-            # S12a: the plan's declared ID when one was supplied, else run_id.
-            plan_id=ctx.plan_identity(),
-            plan_version=progress.plan_version,
-            eval_independence=_eval_independence,
-        )
-        report, _slice_warnings = validate_slice_ids(
-            report,
-            ctx.plan_text(),
-            plan_ids=ctx.admission.snapshot.ids if ctx.admission is not None else None,
-        )
-        for _warning in _slice_warnings:
-            logger.warning("workflow eval-report: %s (run=%s)", _warning, ctx.run_id)
-            print(f"fa workflow: {_warning}", file=sys.stderr)
-        _write_stage_eval_report(ctx, report)
+        report = _stage_eval_report(ctx, sink[-1].final_text, progress=progress)
     terminal, acquisition_outcome, _refused = _post_stage_binding(
         ctx, role, code, sink, report, verification, dispatch=dispatch
     )

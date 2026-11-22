@@ -21,6 +21,7 @@ import os
 import shlex
 import time
 from collections.abc import Callable, Iterator
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
@@ -4475,3 +4476,152 @@ def test_review_peer_capture_exception_evidence_is_bounded(tmp_path: Path, monke
     assert captured.nodeids_by_slice == {"SLICE1": None}
     detail = captured.captures["SLICE1"].detail
     assert detail.startswith("nodeid capture raised AssertionError:") and len(detail) <= TAIL_LIMIT
+
+
+# ── F10: the PLAN-V2 route's verification is the seal, not the fence ────────
+
+_V2_FENCE = '```verify\npython -c "raise SystemExit(9)"\n```\n'
+
+
+def _v2_context(tmp_path: Path, *, run_id: str, mode: str = "enforce", fence: bool = True) -> WorkflowContext:
+    """A real V2 admission over a plan whose text carries a hostile ``verify`` fence."""
+    from fa.inner_loop.plan_admission import PLAN_V2, snapshot_from_bytes
+    from tests.test_ai_native_plan_v2 import _ROADMAP, plan_document
+
+    text = plan_document()
+    if fence:
+        text = text.replace("STEP-EXIT-CHECKS:", _V2_FENCE + "\nSTEP-EXIT-CHECKS:", 1)
+    snapshot = snapshot_from_bytes(
+        "worklogs/demo/increments/increment-01-demo.md",
+        text.encode("utf-8"),
+        format=PLAN_V2,
+        roadmap=_ROADMAP,
+    )
+    assert snapshot.format == PLAN_V2 and snapshot.format_error is None and snapshot.ids.slices == ()
+    admission = workflow._WorkflowAdmission(
+        snapshot=snapshot,
+        planner_allowed=False,
+        planner_limit=0,
+        # Bytes came from the admission record itself, so the source re-check hashes them.
+        snapshot_backed=True,
+    )
+    return replace(_context(tmp_path, run_id=run_id, mode=mode), admission=admission)
+
+
+def test_a_v2_stage_never_runs_the_planner_verify_fence(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """F10 — the route branch is the snapshot's grammar, so `verify_plan` is never reached.
+
+    Before the branch, a V2 snapshot's empty ``ids`` made ``verify_plan`` return
+    "no commands, no errors" and the stage read that as a pass. The fence in this plan's text is
+    the thing that must not become the oracle, so ``verify_plan`` is made to fail loudly if called.
+    """
+    called: list[object] = []
+    monkeypatch.setattr(workflow, "verify_plan", lambda *args, **kwargs: called.append((args, kwargs)))
+
+    result = _run_stage(
+        _v2_context(tmp_path, run_id="v2-no-fence"),
+        "coder",
+        fresh=True,
+        progress=WorkflowProgress(),
+        transition_reason="test v2 coder",
+        run_stage_fn=lambda *_args, **_kwargs: 0,
+    )
+
+    assert called == [], "the V2 route must not reach the legacy plan verifier"
+    assert result.verification is not None
+    assert result.verification.blocking, "a V2 stage with no seal or cell must not read as a pass"
+    assert result.verification.errors == ("acceptance-seal/missing", "verifier-substrate-required")
+    assert result.verification.plan_command_results == ()
+    artifact = json.loads(tmp_path.joinpath("logs/v2-no-fence/verification.json").read_text(encoding="utf-8"))
+    assert artifact["attempts"][0]["blocking"] is True
+
+
+def test_a_v2_stage_reads_the_seal_and_then_refuses_an_unmanaged_cell(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The seal is read from the workspace, so the only thing missing is the cell -- not the plan."""
+    from fa.inner_loop.acceptance_bundle import SEAL_FILENAME, write_seal
+    from tests.test_ai_native_acceptance_collection import _mint, _tree
+
+    write_seal(_mint(_tree(tmp_path)), tmp_path / SEAL_FILENAME)
+    monkeypatch.setattr(workflow, "verify_plan", lambda *args, **kwargs: pytest.fail("legacy verifier reached"))
+
+    result = _run_stage(
+        _v2_context(tmp_path, run_id="v2-seal-unmanaged"),
+        "coder",
+        fresh=True,
+        progress=WorkflowProgress(),
+        transition_reason="test v2 sealed cell",
+        run_stage_fn=lambda *_args, **_kwargs: 0,
+    )
+
+    assert result.verification is not None and result.verification.blocking
+    assert result.verification.errors == ("verifier-substrate-required",)
+    assert result.verification.plan_command_results == ()
+
+
+def test_a_v2_stage_with_a_cell_produces_a_sealed_attempt_and_never_a_vacuous_pass(tmp_path: Path) -> None:
+    """The whole point of F10: the V2 gate's verdict comes from a claimed, proven nodeid."""
+    from fa.inner_loop.acceptance_bundle import SEAL_FILENAME, write_seal
+    from fa.inner_loop.workflow_controller import _VerifySubstrate
+    from tests.test_ai_native_acceptance_collection import (
+        _NODEID,
+        _PLAN_BYTES,
+        _REVISION,
+        _mint,
+        _tree,
+    )
+    from tests.test_slice_verification_runner import _inband_executor
+
+    bundle = _mint(_tree(tmp_path))
+    assert bundle.plan_sha256 == __import__("hashlib").sha256(_PLAN_BYTES).hexdigest()
+    write_seal(bundle, tmp_path / SEAL_FILENAME)
+    context = _v2_context(tmp_path, run_id="v2-sealed-cell", fence=False)
+
+    verification, attempt = workflow._sealed_stage_verification(
+        context,
+        context.admission.snapshot,
+        # The same managed-substrate stand-in the sealed tests use: no visible writes, and it
+        # names the revision it is pinned at (F5). The wrapper's forwarding is proven separately.
+        _VerifySubstrate(executor=_inband_executor(writes_visible=False, revision=_REVISION), port=None),
+        attempt=1,
+        repair_round=0,
+    )
+
+    assert attempt is not None, verification.errors
+    assert verification.errors == ()
+    assert verification.blocking is False
+    assert [claim.nodeid for claim in attempt.claims] == [_NODEID]
+    assert attempt.blocking is False
+    assert {command.authored_by for command in attempt.commands} == {"harness"}
+    # The attempt is the evidence; the legacy command list carries the same receipt, not a fence.
+    assert [result.command for result in verification.plan_command_results] == [attempt.commands[0].command]
+
+
+def test_a_failing_sealed_nodeid_blocks_the_v2_stage(tmp_path: Path) -> None:
+    """The measured defect's other half: a failing seal must not read as a pass either."""
+    from fa.inner_loop.acceptance_bundle import SEAL_FILENAME, write_seal
+    from fa.inner_loop.workflow_controller import _VerifySubstrate
+    from tests.test_ai_native_acceptance_collection import _REVISION, _mint, _tree
+    from tests.test_slice_verification_runner import _inband_executor
+
+    root = _tree(tmp_path)
+    (root / "tests" / "test_publish.py").write_text("def test_publish():\n    assert False\n", encoding="utf-8")
+    bundle = _mint(root)
+    write_seal(bundle, tmp_path / SEAL_FILENAME)
+    context = _v2_context(tmp_path, run_id="v2-failing-seal", fence=False)
+
+    verification, attempt = workflow._sealed_stage_verification(
+        context,
+        context.admission.snapshot,
+        # The same managed-substrate stand-in the sealed tests use: no visible writes, and it
+        # names the revision it is pinned at (F5). The wrapper's forwarding is proven separately.
+        _VerifySubstrate(executor=_inband_executor(writes_visible=False, revision=_REVISION), port=None),
+        attempt=1,
+        repair_round=0,
+    )
+
+    assert attempt is not None and attempt.blocking is True
+    assert attempt.claims[0].outcome == "failed"
+    assert verification.blocking is True
+    assert verification.errors, "a blocking attempt must explain itself in the legacy gate"
