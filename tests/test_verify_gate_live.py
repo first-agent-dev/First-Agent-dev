@@ -4508,6 +4508,13 @@ def _v2_context(tmp_path: Path, *, run_id: str, mode: str = "enforce", fence: bo
     return replace(_context(tmp_path, run_id=run_id, mode=mode), admission=admission)
 
 
+def _admitted_snapshot(context: WorkflowContext) -> Any:
+    """The admitted snapshot, stated as a precondition rather than navigated through an Optional."""
+    admission = context.admission
+    assert admission is not None
+    return admission.snapshot
+
+
 def test_a_v2_stage_never_runs_the_planner_verify_fence(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """F10 — the route branch is the snapshot's grammar, so `verify_plan` is never reached.
 
@@ -4580,7 +4587,7 @@ def test_a_v2_stage_with_a_cell_produces_a_sealed_attempt_and_never_a_vacuous_pa
 
     verification, attempt = workflow._sealed_stage_verification(
         context,
-        context.admission.snapshot,
+        _admitted_snapshot(context),
         # The same managed-substrate stand-in the sealed tests use: no visible writes, and it
         # names the revision it is pinned at (F5). The wrapper's forwarding is proven separately.
         _VerifySubstrate(executor=_inband_executor(writes_visible=False, revision=_REVISION), port=None),
@@ -4613,7 +4620,7 @@ def test_a_failing_sealed_nodeid_blocks_the_v2_stage(tmp_path: Path) -> None:
 
     verification, attempt = workflow._sealed_stage_verification(
         context,
-        context.admission.snapshot,
+        _admitted_snapshot(context),
         # The same managed-substrate stand-in the sealed tests use: no visible writes, and it
         # names the revision it is pinned at (F5). The wrapper's forwarding is proven separately.
         _VerifySubstrate(executor=_inband_executor(writes_visible=False, revision=_REVISION), port=None),
