@@ -44,7 +44,7 @@ from tests.test_execution_workspace import site as site
 #: slice, one contract, one acceptance entry. Kept as a format string so a test can
 #: point the selectors at the project it actually published.
 _AUTHORED_BODY = (
-    "\n## INVARIANTS\n### INV-1\nKIND: HARD\n"
+    "\n## INVARIANTS\n### INV-1\n"
     "TEXT: the initial boundary holds.\nEVIDENCE: TEST_REQUIRED\n"
     "\n## SLICE1: Foundation\n\nSTEPS: outcome\n\n"
     "CONTRACTS:\n"
@@ -62,7 +62,7 @@ def _requiring_pair() -> tuple[str, str]:
     # `DISPOSITION-REASON` is the request; no owner and no evidence reference, because
     # those are the caller's to supply (R1) -- and this test supplies none.
     body = (
-        "\n## INVARIANTS\n### INV-1\nKIND: HARD\n"
+        "\n## INVARIANTS\n### INV-1\n"
         "TEXT: the host is ready.\nEVIDENCE: NON_EXECUTABLE\nDISPOSITION-REASON: HOST_READINESS\n"
         "\n## SLICE1: Foundation\n\nSTEPS: outcome\n\n"
         "CONTRACTS:\n"
@@ -203,7 +203,7 @@ def test_the_scaffold_is_a_pair_the_metadata_check_and_the_grammar_accept() -> N
 
     # And the grammar accepts the envelope once a slice body exists (the planner's half).
     body = (
-        "\n## INVARIANTS\n### INV-1\nKIND: HARD\n"
+        "\n## INVARIANTS\n### INV-1\n"
         "TEXT: the initial boundary holds.\nEVIDENCE: TEST_REQUIRED\n"
         "\n## SLICE1: Foundation\n\nSTEPS: outcome\n\n"
         "CONTRACTS:\n"

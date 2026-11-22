@@ -39,7 +39,8 @@ _NODEID = f"{_TEST_PATH}::test_publish"
 _REVISION = "rev-" + "0" * 32
 _PLAN = plan_document()
 _PLAN_BYTES = _PLAN.encode("utf-8")
-_COLLECTED = {_TEST_PATH: [_NODEID]}
+_NODEID_SECOND = f"{_TEST_PATH}::test_publish2"
+_COLLECTED = {_TEST_PATH: [_NODEID, _NODEID_SECOND]}
 _SLICE_WITH_FOREIGN_SELECTOR = """## SLICE1: sealed acceptance
 STEPS: prescriptive
 CONTRACTS:
@@ -59,6 +60,10 @@ _TEST = """from support.helper import publish
 
 
 def test_publish():
+    assert publish() == "published"
+
+
+def test_publish2():
     assert publish() == "published"
 """
 _HELPER = """def publish():
@@ -462,22 +467,36 @@ def test_the_seal_is_bound_to_one_immutable_revision(tmp_path: Path) -> None:
 #: The default plan with INV-2's disposition removed: the same two contracts, no
 #: attestation anywhere, so CT-1.2 is merely *uncovered* rather than attested.
 _NO_DISPOSITION_INVARIANTS = """### INV-1
-KIND: HARD
 TEXT: The writer never publishes without a sealed acceptance revision.
 EVIDENCE: TEST_REQUIRED
 
 ### INV-2
-KIND: SOFT
 TEXT: Host readiness is proven on the approved host.
 EVIDENCE: TEST_REQUIRED
 """
-_NO_DISPOSITION_PLAN = plan_document(invariants=_NO_DISPOSITION_INVARIANTS)
+#: Both contracts tested, no request anywhere: the plan that legitimately produces a
+#: seal with an empty attestation. Before D-V2-10 the second contract could go
+#: uncovered instead, which is the shape admission now refuses.
+_NO_DISPOSITION_SLICE = """## SLICE1: sealed acceptance
+STEPS: prescriptive
+CONTRACTS:
+  CT-1.1 [FUNCTIONAL] INV: INV-1: publication requires a sealed selection
+  CT-1.2 [CONSTRAINT] INV: INV-2: readiness is proven on the host
+ACCEPTANCE:
+  TEST-ID: TEST-1.1 | CT: CT-1.1 | SELECTOR: worklogs/demo/acceptance/tests/test_publish.py::test_publish
+  TEST-ID: TEST-1.2 | CT: CT-1.2 | SELECTOR: worklogs/demo/acceptance/tests/test_publish.py::test_publish2
+KILL-TARGETS:
+STEP-EXIT-CHECKS:
+  CHECK-ID: CHECK-1 | STEP: STEP1 | TEST-ID[]: TEST-1.1
+- [ ] STEP1: publish through the sealed authority. EXIT-CHECK: CHECK-1
+"""
+_NO_DISPOSITION_PLAN = plan_document(invariants=_NO_DISPOSITION_INVARIANTS, slice_body=_NO_DISPOSITION_SLICE)
 
 
 def _executable_only(root: Path) -> AcceptanceBundle:
     return _mint(
         root,
-        graph=plan_graph(invariants=_NO_DISPOSITION_INVARIANTS),
+        graph=plan_graph(invariants=_NO_DISPOSITION_INVARIANTS, slice_body=_NO_DISPOSITION_SLICE),
         plan_bytes=_NO_DISPOSITION_PLAN.encode("utf-8"),
     )
 
@@ -491,9 +510,16 @@ def test_the_seal_names_the_contracts_that_only_a_disposition_covers(tmp_path: P
 
 
 def test_a_plan_that_disposes_of_nothing_seals_an_empty_attestation(tmp_path: Path) -> None:
+    """No request anywhere: every contract is executable, so nothing is attested.
+
+    D-V2-10 made the neighbouring shape -- a contract with neither a selector nor a
+    request -- unreachable at admission, so an empty ``attested`` list now means
+    "everything here is tested", not "one contract slipped through".
+    """
     bundle = _executable_only(_sealed_tree(tmp_path))
 
-    assert contract_evidence(plan_graph(invariants=_NO_DISPOSITION_INVARIANTS))["CT-1.2"] is EvidenceMode.UNCOVERED
+    graded = contract_evidence(plan_graph(invariants=_NO_DISPOSITION_INVARIANTS, slice_body=_NO_DISPOSITION_SLICE))
+    assert graded == {"CT-1.1": EvidenceMode.EXECUTABLE, "CT-1.2": EvidenceMode.EXECUTABLE}
     assert bundle.attested == ()
     assert json.loads(seal_bytes(bundle))["attested"] == []
     assert load_seal(seal_bytes(bundle)).attested == ()

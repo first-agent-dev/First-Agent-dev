@@ -149,7 +149,6 @@ def test_the_review_date_must_be_an_iso_date(reviewed_at: object) -> None:
 # -- the binding (R1) --------------------------------------------------------
 
 _DISPOSED_INVARIANT = """### INV-2
-KIND: HARD
 TEXT: Host readiness is proven on the approved host.
 EVIDENCE: NON_EXECUTABLE
 DISPOSITION-REASON: HOST_READINESS
@@ -157,21 +156,17 @@ DISPOSITION-REASON: HOST_READINESS
 
 
 _NO_REQUEST_INVARIANTS = """### INV-1
-KIND: HARD
 TEXT: The writer never publishes without a sealed acceptance revision.
 EVIDENCE: TEST_REQUIRED
 
 ### INV-2
-KIND: SOFT
 TEXT: Host readiness is proven on the approved host.
 EVIDENCE: TEST_REQUIRED
 """
 
 
 def _graph() -> PlanGraph:
-    increment = plan_document(
-        invariants=f"### INV-1\nKIND: HARD\nTEXT: t\nEVIDENCE: TEST_REQUIRED\n\n{_DISPOSED_INVARIANT}"
-    )
+    increment = plan_document(invariants=f"### INV-1\nTEXT: t\nEVIDENCE: TEST_REQUIRED\n\n{_DISPOSED_INVARIANT}")
     return parse_plan(roadmap=ROADMAP_DOCUMENT, increment=increment)
 
 
@@ -226,8 +221,26 @@ def test_a_grant_reviewed_in_the_future_is_refused() -> None:
     assert _rule(lambda: bind_dispositions(_graph(), future, today=_TODAY)) == "disposition-reviewed-at-invalid"
 
 
+#: Every contract tested, so no invariant asks for a grant: the plan this test needs
+#: in order to observe "binding with nothing is a no-op". Before D-V2-10 the second
+#: contract could simply go uncovered, which is exactly the hole that was closed.
+_TWO_TESTED_CONTRACTS = """## SLICE1: sealed acceptance
+STEPS: prescriptive
+CONTRACTS:
+  CT-1.1 [FUNCTIONAL] INV: INV-1: publication requires a sealed selection
+  CT-1.2 [CONSTRAINT] INV: INV-2: readiness is proven on the host
+ACCEPTANCE:
+  TEST-ID: TEST-1.1 | CT: CT-1.1 | SELECTOR: worklogs/demo/acceptance/tests/test_publish.py::test_publish
+  TEST-ID: TEST-1.2 | CT: CT-1.2 | SELECTOR: worklogs/demo/acceptance/tests/test_publish.py::test_publish2
+KILL-TARGETS:
+STEP-EXIT-CHECKS:
+  CHECK-ID: CHECK-1 | STEP: STEP1 | TEST-ID[]: TEST-1.1
+- [ ] STEP1: publish through the sealed authority. EXIT-CHECK: CHECK-1
+"""
+
+
 def test_a_plan_with_no_request_binds_unchanged() -> None:
-    graph = plan_graph(invariants=_NO_REQUEST_INVARIANTS)
+    graph = plan_graph(invariants=_NO_REQUEST_INVARIANTS, slice_body=_TWO_TESTED_CONTRACTS)
 
     assert bind_dispositions(graph, (), today=_TODAY) == graph
     assert bind_dispositions(_graph(), parse_dispositions([_grant()]), today=_TODAY).invariants[0].owner is None

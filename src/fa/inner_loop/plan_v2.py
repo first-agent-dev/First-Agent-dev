@@ -132,7 +132,6 @@ class PlanV2Error(ValueError):
 @dataclass(frozen=True, slots=True)
 class Invariant:
     id: str
-    kind: str
     text: str
     evidence: str
     #: Requested only: the plan names *why* it cannot test the claim.
@@ -309,9 +308,13 @@ def _collect_entries(
 
 def _build_invariant(entry: _Entry) -> Invariant:
     inv_id = entry.id
-    kind = _field(entry.body, "KIND", rule=f"invariant-{inv_id}-kind")
-    if kind not in {"HARD", "SOFT"}:
-        raise PlanV2Error(f"invariant-{inv_id}-kind")
+    # D-V2-10: severity is not part of the grammar. Its only reader exempted the
+    # invariant from evidence, and a label that reads as policy while obliging
+    # nothing is how an uncovered contract reached an admitted plan. A document
+    # that still writes it is told the field is gone -- silently ignoring it would
+    # leave the model believing the label did something.
+    if any(line.strip().startswith("KIND:") for line in entry.body):
+        raise PlanV2Error("invariant-kind-removed")
     text = _field(entry.body, "TEXT", rule=f"invariant-{inv_id}-text")
     evidence = _field(entry.body, "EVIDENCE", rule=f"invariant-{inv_id}-evidence")
     if evidence not in _EVIDENCE_MODES:
@@ -324,11 +327,11 @@ def _build_invariant(entry: _Entry) -> Invariant:
     if evidence == "TEST_REQUIRED":
         if any(line.strip().startswith("DISPOSITION-") for line in entry.body):
             raise PlanV2Error("disposition-without-non-executable")
-        return Invariant(id=inv_id, kind=kind, text=text, evidence=evidence)
+        return Invariant(id=inv_id, text=text, evidence=evidence)
     reason = _field(entry.body, "DISPOSITION-REASON", rule=f"invariant-{inv_id}-disposition-reason")
     if reason not in DISPOSITION_REASONS:
         raise PlanV2Error("disposition-reason-unratified")
-    return Invariant(id=inv_id, kind=kind, text=text, evidence=evidence, reason=reason)
+    return Invariant(id=inv_id, text=text, evidence=evidence, reason=reason)
 
 
 def _parse_invariants(lines: Sequence[str]) -> tuple[Invariant, ...]:
@@ -592,14 +595,21 @@ def _admit_steps(planned: SlicePlan, tests: Mapping[str, Acceptance]) -> None:
 
 
 def _admit_evidence(graph: PlanGraph, contracts: Mapping[str, Contract], tests: Mapping[str, Acceptance]) -> None:
-    """The policy matrix (R3): contract class x invariant kind decides what may prove it.
+    """Evidence totality (D-V2-10): every contract is discharged exactly once.
 
-    ``kind`` alone let a ``SOFT`` invariant say nothing at all, and let one
-    disposition free every contract hanging off it. The class is what carries the
-    meaning of the claim, so it is checked first: ``PRESERVATION`` ("what worked
-    still works") is the one claim a test can always express, and attesting it
-    away is exactly how a regression ships green. Then ``kind``: a ``HARD``
-    claim with no test needs a disposition, a ``SOFT`` one may stay uncovered.
+    Two ways to discharge a contract, and no third: an acceptance row whose
+    selector names its test, or a ``NON_EXECUTABLE`` invariant that states why the
+    claim cannot be tested -- and that one is only a *request* until the caller
+    grants it (``bind_dispositions``). Nothing exempts a contract: there is no
+    severity field, no class that may skip the check, and no "soft" invitation to
+    reason from. A ``TEST_REQUIRED`` contract with no selector is refused here, at
+    the point the plan is read, which is also the point a repair round is still
+    possible.
+
+    ``PRESERVATION`` is checked first and separately: "what worked still works" is
+    the one claim a test can always express, so attesting it away is how a
+    regression ships green. That refusal is independent of the evidence mode,
+    which is why it cannot be reached through the disposition branch.
 
     A request is structurally sufficient here; whether it was *granted* is checked
     by ``bind_dispositions`` at admission, where the caller's declaration exists
@@ -619,9 +629,7 @@ def _admit_evidence(graph: PlanGraph, contracts: Mapping[str, Contract], tests: 
         if invariant.evidence == "NON_EXECUTABLE" and invariant.reason:
             granted[invariant.id] = granted.get(invariant.id, 0) + 1
             continue
-        if invariant.kind != "HARD":
-            continue
-        raise PlanV2Error("hard-contract-without-executable-evidence")
+        raise PlanV2Error("contract-without-evidence")
     # One waiver frees one claim: an invariant that backs a cluster would attest
     # every contract under it with a single decision nobody re-read.
     if any(count > 1 for count in granted.values()):
@@ -754,9 +762,7 @@ def contract_evidence(graph: PlanGraph) -> dict[str, EvidenceMode]:
     """
     covered = {entry.ct for planned in graph.slices for entry in planned.acceptance}
     #: A granted invariant, not merely a disposed one: the reason alone is a request.
-    granted = {
-        item.id for item in graph.invariants if item.evidence == "NON_EXECUTABLE" and item.owner is not None
-    }
+    granted = {item.id for item in graph.invariants if item.evidence == "NON_EXECUTABLE" and item.owner is not None}
     graded: dict[str, EvidenceMode] = {}
     for planned in graph.slices:
         for contract in planned.contracts:

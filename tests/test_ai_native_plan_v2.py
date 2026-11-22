@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from dataclasses import replace as dc_replace
 from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
@@ -56,28 +57,17 @@ Nothing here.
 """
 
 _INVARIANT_1 = """### INV-1
-KIND: HARD
 TEXT: The writer never publishes without a sealed acceptance revision.
 EVIDENCE: TEST_REQUIRED
 """
 
 _INVARIANT_2 = """### INV-2
-KIND: HARD
 TEXT: Host readiness is proven on the approved host.
 EVIDENCE: NON_EXECUTABLE
 DISPOSITION-REASON: HOST_READINESS
 """
 
-_INVARIANT_3 = """### INV-3
-KIND: SOFT
-TEXT: Logs stay human readable.
-EVIDENCE: TEST_REQUIRED
-"""
-
-_INV_DUP = (
-    "### INV-1\nKIND: HARD\nTEXT: t\nEVIDENCE: TEST_REQUIRED\n\n"
-    "### INV-1\nKIND: SOFT\nTEXT: t\nEVIDENCE: TEST_REQUIRED\n"
-)
+_INV_DUP = "### INV-1\nTEXT: t\nEVIDENCE: TEST_REQUIRED\n\n### INV-1\nTEXT: t\nEVIDENCE: TEST_REQUIRED\n"
 _CHECK_ROW = "  CHECK-ID: CHECK-1 | STEP: STEP1 | TEST-ID[]: TEST-1.1\n"
 _ACCEPT_ROW = (
     "  TEST-ID: TEST-1.1 | CT: CT-1.1 | SELECTOR: worklogs/demo/acceptance/tests/test_publish.py::test_publish\n"
@@ -194,34 +184,34 @@ def test_rejects_an_unterminated_fence() -> None:
 @pytest.mark.parametrize(
     ("invariants", "rule"),
     [
-        ("### INV-1\nKIND: MAYBE\nTEXT: t\nEVIDENCE: TEST_REQUIRED\n", "invariant-INV-1-kind"),
-        ("### INV-1\nKIND: HARD\nEVIDENCE: TEST_REQUIRED\n", "invariant-INV-1-text"),
-        ("### INV-1\nKIND: HARD\nTEXT: t\nEVIDENCE: MAYBE\n", "invariant-INV-1-evidence"),
-        ("### INV-1\nKIND: HARD\nTEXT: t\n", "invariant-INV-1-evidence"),
+        # D-V2-10 removed the field; any value is now "you are writing the old grammar".
+        ("### INV-1\nKIND: MAYBE\nTEXT: t\nEVIDENCE: TEST_REQUIRED\n", "invariant-kind-removed"),
+        ("### INV-1\nEVIDENCE: TEST_REQUIRED\n", "invariant-INV-1-text"),
+        ("### INV-1\nTEXT: t\nEVIDENCE: MAYBE\n", "invariant-INV-1-evidence"),
+        ("### INV-1\nTEXT: t\n", "invariant-INV-1-evidence"),
         (
-            "### INV-1\nKIND: HARD\nTEXT: t\nEVIDENCE: NON_EXECUTABLE\n",
+            "### INV-1\nTEXT: t\nEVIDENCE: NON_EXECUTABLE\n",
             "invariant-INV-1-disposition-reason",
         ),
         (
-            "### INV-1\nKIND: HARD\nTEXT: t\nEVIDENCE: NON_EXECUTABLE\nDISPOSITION-REASON: BECAUSE\n",
+            "### INV-1\nTEXT: t\nEVIDENCE: NON_EXECUTABLE\nDISPOSITION-REASON: BECAUSE\n",
             "disposition-reason-unratified",
         ),
         (
-            "### INV-1\nKIND: HARD\nTEXT: t\nEVIDENCE: NON_EXECUTABLE\n"
-            "DISPOSITION-REASON: HOST_READINESS\nDISPOSITION-OWNER: W4\n",
+            "### INV-1\nTEXT: t\nEVIDENCE: NON_EXECUTABLE\nDISPOSITION-REASON: HOST_READINESS\nDISPOSITION-OWNER: W4\n",
             "disposition-not-caller-authority",
         ),
         (
-            "### INV-1\nKIND: HARD\nTEXT: t\nEVIDENCE: NON_EXECUTABLE\n"
+            "### INV-1\nTEXT: t\nEVIDENCE: NON_EXECUTABLE\n"
             "DISPOSITION-REASON: HOST_READINESS\nDISPOSITION-EVIDENCE: doc:x@sha256:" + "0" * 64 + "\n",
             "disposition-not-caller-authority",
         ),
         (
-            "### INV-1\nKIND: HARD\nTEXT: t\nEVIDENCE: TEST_REQUIRED\nDISPOSITION-REASON: HOST_READINESS\n",
+            "### INV-1\nTEXT: t\nEVIDENCE: TEST_REQUIRED\nDISPOSITION-REASON: HOST_READINESS\n",
             "disposition-without-non-executable",
         ),
         (_INV_DUP, "duplicate-invariant-id"),
-        ("### NOPE-1\nKIND: HARD\nTEXT: t\nEVIDENCE: TEST_REQUIRED\n", "invariants-unknown-heading"),
+        ("### NOPE-1\nTEXT: t\nEVIDENCE: TEST_REQUIRED\n", "invariants-unknown-heading"),
     ],
 )
 def test_invariant_rules_are_closed(invariants: str, rule: str) -> None:
@@ -232,8 +222,7 @@ def test_disposition_count_is_bounded() -> None:
     blocks = []
     for index in range(MAX_DISPOSITIONS + 1):
         blocks.append(
-            f"### INV-{index + 1}\nKIND: HARD\nTEXT: t{index}\nEVIDENCE: NON_EXECUTABLE\n"
-            "DISPOSITION-REASON: HOST_READINESS\n"
+            f"### INV-{index + 1}\nTEXT: t{index}\nEVIDENCE: NON_EXECUTABLE\nDISPOSITION-REASON: HOST_READINESS\n"
         )
     slashed = _increment(invariants="\n".join(blocks), slice_body=_SLICE.replace("INV-1", "INV-1"))
 
@@ -284,8 +273,9 @@ def test_slice_rules_refuse_invalid_graphs(slice_body: str, rule: str) -> None:
     assert _rule(lambda: _parse(_increment(slice_body=slice_body))) == rule
 
 
-def test_a_hard_contract_without_a_test_or_disposition_is_refused() -> None:
-    assert _rule(lambda: _parse(_increment(slice_body=_MINIMAL_SLICE))) == "hard-contract-without-executable-evidence"
+def test_a_contract_without_a_test_or_request_is_refused() -> None:
+    """D-V2-10: no class and no severity escapes the check, so the rule names neither."""
+    assert _rule(lambda: _parse(_increment(slice_body=_MINIMAL_SLICE))) == "contract-without-evidence"
 
 
 def test_a_hard_contract_with_a_requested_disposition_is_admitted_unbound() -> None:
@@ -311,7 +301,7 @@ def test_top_level_sections_are_closed() -> None:
     assert _rule(lambda: _parse(stray)) == "content-outside-sections"
 
     duplicated = _increment().replace(
-        "## SCENARIOS", "## INVARIANTS\n### INV-1\nKIND: HARD\nTEXT: t\nEVIDENCE: TEST_REQUIRED\n## SCENARIOS", 1
+        "## SCENARIOS", "## INVARIANTS\n### INV-1\nTEXT: t\nEVIDENCE: TEST_REQUIRED\n## SCENARIOS", 1
     )
     assert _rule(lambda: _parse(duplicated)) == "duplicate-section"
 
@@ -430,7 +420,6 @@ def test_a_disposition_request_without_a_grant_is_never_attested() -> None:
     assert attested_contracts(bound) == ("CT-1.2",)
 
 
-
 # --- SLICE1: the admission cutover (format, graph, and closed rules) ---------
 
 
@@ -481,6 +470,30 @@ def test_v2_admission_surfaces_closed_rule_codes_not_exceptions() -> None:
     assert validation.outcome == "INDETERMINATE"
     assert [(item.validator, item.rule, item.severity) for item in validation.diagnostics] == [
         ("plan-v2", "plan-format-marker-increment", "ERROR")
+    ]
+
+
+def test_an_uncovered_contract_reaches_admission_as_its_own_rule() -> None:
+    """EDGE: the policy sits on the path the controller walks, not only in ``_admit``.
+
+    ``snapshot_from_bytes`` is what admission reads, so the refusal has to survive as
+    the snapshot's own rule; a check reachable only from a direct ``parse_plan`` call
+    would leave the live route exactly as it was.
+    """
+    uncovered = _increment(invariants=_INVARIANT_1 + "\n" + _UNTESTED_INVARIANT_2)
+    snapshot = snapshot_from_bytes(
+        "worklogs/demo/increments/increment-01-demo.md",
+        uncovered.encode("utf-8"),
+        format=PLAN_V2,
+        roadmap=_ROADMAP,
+    )
+
+    assert snapshot.graph is None
+    assert snapshot.format_error == "contract-without-evidence"
+    validation = workflow_controller._validate_plan_admission(snapshot)
+    assert validation.outcome == "INDETERMINATE"
+    assert [(item.validator, item.rule) for item in validation.diagnostics] == [
+        ("plan-v2", "contract-without-evidence")
     ]
 
 
@@ -659,14 +672,12 @@ def test_invoke_workflow_cli_returns_the_child_exit_code(monkeypatch: pytest.Mon
 
 # --- R2: evidence grades a contract by what the plan affords -----------------
 
-_SOFT_INVARIANT_2 = """### INV-2
-KIND: SOFT
+_UNTESTED_INVARIANT_2 = """### INV-2
 TEXT: Host readiness is proven on the approved host.
 EVIDENCE: TEST_REQUIRED
 """
 
 _DISPOSED_INVARIANT_1 = """### INV-1
-KIND: HARD
 TEXT: The writer never publishes without a sealed acceptance revision.
 EVIDENCE: NON_EXECUTABLE
 DISPOSITION-REASON: HOST_READINESS
@@ -677,7 +688,7 @@ _TWO_DISPOSED_INVARIANTS = (
     _INVARIANT_1
     + "\n"
     + _INVARIANT_2
-    + "\n### INV-3\nKIND: HARD\nTEXT: Deployment identity is proven by the release record.\n"
+    + "\n### INV-3\nTEXT: Deployment identity is proven by the release record.\n"
     + "EVIDENCE: NON_EXECUTABLE\nDISPOSITION-REASON: DEPLOYMENT_IDENTITY\n"
 )
 
@@ -717,17 +728,49 @@ def test_attestation_is_sorted_not_declaration_ordered() -> None:
     assert attested_contracts(graph) == ("CT-1.10", "CT-1.2")
 
 
-def test_a_contract_with_neither_a_selector_nor_a_disposition_is_uncovered() -> None:
-    """A soft invariant needs no executable evidence, so the gap is legal — and visible."""
-    graph = plan_graph(invariants=_INVARIANT_1 + "\n" + _SOFT_INVARIANT_2)
+def test_a_contract_with_neither_a_selector_nor_a_request_is_refused() -> None:
+    """D-V2-10: the gap this test used to describe as "legal and visible" is now refused.
 
-    assert contract_evidence(graph)["CT-1.2"] is EvidenceMode.UNCOVERED
-    assert attested_contracts(graph) == ()
+    The plan is read once, and reading it is the last moment a repair round can still
+    fix it -- so a contract with no test and no request to waive it does not become a
+    graded gap downstream, it becomes a diagnostic here.
+    """
+    assert _rule(lambda: plan_graph(invariants=_INVARIANT_1 + "\n" + _UNTESTED_INVARIANT_2)) == (
+        "contract-without-evidence"
+    )
+
+
+def test_the_grader_still_names_a_contract_that_admission_refuses() -> None:
+    """``UNCOVERED`` stays a grading state: the seal reports it, admission never produces it.
+
+    Admission refuses the shape, so the grader is exercised on a graph handed to it --
+    strip the request from an admitted graph and the same function the seal uses names
+    the contract instead of assuming it is discharged.
+    """
+    graph = plan_graph()
+    stripped = dc_replace(
+        graph,
+        invariants=tuple(
+            dc_replace(item, evidence="TEST_REQUIRED", reason=None) if item.id == "INV-2" else item
+            for item in graph.invariants
+        ),
+    )
+
+    assert contract_evidence(stripped)["CT-1.2"] is EvidenceMode.UNCOVERED
+    assert attested_contracts(stripped) == ()
+
+
+#: Two different reasons, so the one-shot reason bound (E585) is not what refuses.
+_DISPOSED_PAIR = (
+    _DISPOSED_INVARIANT_1
+    + "\n### INV-2\nTEXT: Deployment identity is proven by the release record.\n"
+    + "EVIDENCE: NON_EXECUTABLE\nDISPOSITION-REASON: DEPLOYMENT_IDENTITY\n"
+)
 
 
 def test_a_selector_outranks_a_disposition_on_its_own_invariant() -> None:
     """A disposition never weakens evidence that exists: the run still executes it."""
-    graph = plan_graph(invariants=_DISPOSED_INVARIANT_1 + "\n" + _SOFT_INVARIANT_2)
+    graph = plan_graph(invariants=_DISPOSED_PAIR)
 
     assert contract_evidence(graph)["CT-1.1"] is EvidenceMode.EXECUTABLE
     assert "CT-1.1" not in attested_contracts(graph)
@@ -743,7 +786,7 @@ def test_the_contract_id_grammar_refuses_everything_else(value: object) -> None:
     assert not is_contract_id(value)
 
 
-# --- R3: the policy matrix (contract class x invariant kind) -----------------
+# --- R3: the policy matrix (contract class x evidence mode) -------------------
 
 _PRESERVING_SLICE = _SLICE.replace(
     "  CT-1.2 [CONSTRAINT] INV: INV-2: readiness is proven on the host",
@@ -757,25 +800,19 @@ _CLUSTERED_SLICE = _SLICE.replace(
 )
 
 
-@pytest.mark.parametrize("kind", ["HARD", "SOFT"])
-def test_a_preservation_claim_always_needs_a_test(kind: str) -> None:
+def test_a_disposition_may_not_attest_a_preservation_claim() -> None:
     """No disposition may carry "what worked still works": that is how regressions ship green."""
-    invariants = _INVARIANT_1 + "\n" + _INVARIANT_2.replace("KIND: HARD", f"KIND: {kind}")
+    invariants = _INVARIANT_1 + "\n" + _INVARIANT_2
 
     assert _rule(lambda: plan_graph(invariants=invariants, slice_body=_PRESERVING_SLICE)) == (
         "preservation-without-executable-evidence"
     )
 
 
-@pytest.mark.parametrize(
-    ("kind", "evidence"),
-    [("HARD", "TEST_REQUIRED"), ("SOFT", "TEST_REQUIRED"), ("HARD", "NON_EXECUTABLE"), ("SOFT", "NON_EXECUTABLE")],
-)
-def test_a_preservation_claim_is_refused_whatever_the_invariant_says(kind: str, evidence: str) -> None:
+@pytest.mark.parametrize("evidence", ["TEST_REQUIRED", "NON_EXECUTABLE"])
+def test_a_preservation_claim_is_refused_whatever_the_invariant_says(evidence: str) -> None:
     """The class rule is independent of the invariant: no mode makes it attestable."""
-    invariant = _INVARIANT_2.replace("KIND: HARD", f"KIND: {kind}").replace(
-        "EVIDENCE: NON_EXECUTABLE", f"EVIDENCE: {evidence}"
-    )
+    invariant = _INVARIANT_2.replace("EVIDENCE: NON_EXECUTABLE", f"EVIDENCE: {evidence}")
     if evidence == "TEST_REQUIRED":
         invariant = invariant.replace("DISPOSITION-REASON: HOST_READINESS\n", "")
     invariants = _INVARIANT_1 + "\n" + invariant
@@ -816,11 +853,18 @@ def test_a_tested_contract_does_not_count_against_the_cluster_bound() -> None:
     assert attested_contracts(graph) == ("CT-1.2",)  # CT-1.3 is executable, so it is not attested
 
 
-def test_a_soft_invariant_may_still_stay_uncovered() -> None:
-    """The matrix tightens PRESERVATION and clusters; it does not make SOFT executable."""
-    graph = plan_graph(invariants=_INVARIANT_1 + "\n" + _SOFT_INVARIANT_2)
+def test_an_untested_invariant_can_no_longer_leave_its_contract_uncovered() -> None:
+    """D-V2-10 supersedes the "a soft invariant needs no executable evidence" reading of R3."""
+    assert _rule(lambda: plan_graph(invariants=_INVARIANT_1 + "\n" + _UNTESTED_INVARIANT_2)) == (
+        "contract-without-evidence"
+    )
 
-    assert contract_evidence(graph)["CT-1.2"] is EvidenceMode.UNCOVERED
+
+def test_a_document_that_still_writes_kind_is_told_the_field_is_gone() -> None:
+    """The deletion has to be actionable: the prompt told models to write this field."""
+    stale = _INVARIANT_1.replace("TEXT:", "KIND: SOFT\nTEXT:")
+
+    assert _rule(lambda: plan_graph(invariants=stale)) == "invariant-kind-removed"
 
 
 # --- P1-1 second half: the grant must survive the read-back (E585) ----------
@@ -860,13 +904,11 @@ def test_the_grant_is_bound_to_the_graph_that_is_admitted_not_a_read_back() -> N
 
 
 _REUSED_REASON_INVARIANTS = """### INV-1
-KIND: HARD
 TEXT: Host readiness is proven on the approved host.
 EVIDENCE: NON_EXECUTABLE
 DISPOSITION-REASON: HOST_READINESS
 
 ### INV-2
-KIND: HARD
 TEXT: The operator signed off the dashboard copy.
 EVIDENCE: NON_EXECUTABLE
 DISPOSITION-REASON: HOST_READINESS

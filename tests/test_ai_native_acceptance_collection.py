@@ -416,7 +416,6 @@ def test_a_bundle_without_selectors_is_never_minted(tmp_path: Path) -> None:
 
 
 _INV_NON_EXECUTABLE = """### INV-2
-KIND: HARD
 TEXT: Host readiness is proven on the approved host.
 EVIDENCE: NON_EXECUTABLE
 DISPOSITION-REASON: HOST_READINESS
