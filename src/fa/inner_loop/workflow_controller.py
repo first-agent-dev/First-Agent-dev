@@ -97,7 +97,7 @@ from fa.inner_loop.slice_verification import (
 )
 from fa.inner_loop.stage_candidate import reset_stage_candidate, stage_candidate_reader
 from fa.inner_loop.tools.workspace_port import WorkspacePort, WorkspacePortError, port_relative
-from fa.inner_loop.verification_attempt import VerificationAttempt, VerificationIdentity
+from fa.inner_loop.verification_attempt import ClaimEvidence, VerificationAttempt, VerificationIdentity
 from fa.inner_loop.workflow_artifacts import (
     AdmissionIOError,
     EvalReport,
@@ -899,20 +899,87 @@ def _slice_verification_payload(result: SliceVerification) -> dict[str, object]:
     }
 
 
+def _claim_payload(claim: ClaimEvidence) -> dict[str, object]:
+    """One contract's evidence, explicitly: what ran, whether it passed, and the mutation."""
+    mutation = claim.mutation
+    return {
+        "contract_id": claim.contract_id,
+        "test_id": claim.test_id,
+        "nodeid": claim.nodeid,
+        "outcome": claim.outcome,
+        "proven": claim.proven,
+        "mutation": (
+            None
+            if mutation is None
+            else {
+                "operator": mutation.operator,
+                "target": mutation.target,
+                "verdict": mutation.verdict,
+                "detail": mutation.detail,
+            }
+        ),
+        "detail": claim.detail,
+    }
+
+
+def _sealed_attempt_payload(attempt: VerificationAttempt) -> dict[str, object]:
+    """The attempt's own facts (F10 item 4): route, identity, claims, authorship.
+
+    Deliberately additive. The legacy keys stay where they were, because the legacy route still
+    writes them and the eval contract they serve is unchanged; what was missing is the part a
+    reader needs to tell *which* candidate, *which* seal and *which* claims a verdict is about.
+    """
+    identity = attempt.identity
+    return {
+        "route": attempt.route,
+        "identity": (
+            None
+            if identity is None
+            else {
+                "plan_sha256": identity.plan_sha256,
+                "candidate_revision_id": identity.candidate_revision_id,
+                "sealed_revision_id": identity.sealed_revision_id,
+                "seal_sha256": identity.seal_sha256,
+                "closure_sha256": identity.closure_sha256,
+                "profile_id": identity.profile_id,
+                "substrate": identity.substrate,
+                "run_id": identity.run_id,
+                "attempt": identity.attempt,
+                "repair_round": identity.repair_round,
+                "mode": identity.mode,
+            }
+        ),
+        "claims": [_claim_payload(claim) for claim in attempt.claims],
+        "commands_authored_by": sorted({command.authored_by for command in attempt.commands}),
+        "attested": list(attempt.attested),
+        "pending": list(attempt.pending),
+        "contracts_total": attempt.contracts_total,
+        "kill_required": list(attempt.kill_required),
+        "attempt_blocking": attempt.blocking,
+        "first_reason": attempt.first_reason,
+    }
+
+
 def _verification_attempt_payload(
     verification: PlanVerification,
     *,
     mode: str,
     repair_round: int,
+    attempt: VerificationAttempt | None = None,
 ) -> dict[str, object]:
-    return {
+    payload: dict[str, object] = {
         "mode": mode,
         "repair_round": repair_round,
-        "blocking": verification.blocking,
+        # The gate's own verdict plus the attempt's, so a disagreement can never be smoothed into
+        # a pass: either face of the same evidence may block.
+        "blocking": verification.blocking or (attempt is not None and attempt.blocking),
         "plan_commands": [_command_result_payload(result) for result in verification.plan_command_results],
         "slices": [_slice_verification_payload(result) for result in verification.slice_verifications],
         "errors": list(verification.errors),
     }
+    if attempt is not None:
+        payload.update(_sealed_attempt_payload(attempt))
+    return payload
 
 
 def write_verification(
@@ -924,8 +991,14 @@ def write_verification(
     repair_round: int,
     plan_ref: PlanRef | None = None,
     deadline: float | None = None,
+    attempt: VerificationAttempt | None = None,
 ) -> None:
-    """Append typed attempt evidence with the established private locked atomic IO."""
+    """Append typed attempt evidence with the established private locked atomic IO.
+
+    ``attempt`` is the sealed route's own record (F10): when it is supplied the entry carries
+    ``route``, ``identity`` and ``claims`` beside the legacy keys, and its verdict is OR-ed into
+    ``blocking``. The legacy route passes nothing and its artifact is byte-for-byte unchanged.
+    """
     with _private_artifact_directory(path.parent) as parent:
         with _admission_lock(parent, deadline=deadline):
             try:
@@ -941,10 +1014,10 @@ def write_verification(
             ):
                 raise ValueError("existing verification.json has an incompatible run identity or schema")
             attempts = list(previous["attempts"])
-            attempt = _verification_attempt_payload(verification, mode=mode, repair_round=repair_round)
+            entry = _verification_attempt_payload(verification, mode=mode, repair_round=repair_round, attempt=attempt)
             if plan_ref is not None:
-                attempt["plan_ref"] = asdict(plan_ref)
-            attempts.append(attempt)
+                entry["plan_ref"] = asdict(plan_ref)
+            attempts.append(entry)
             _replace_private_json(parent, path.name, {"schema_version": 1, "run_id": run_id, "attempts": attempts})
 
 
@@ -1218,6 +1291,10 @@ judge's context. Truncation is always announced, never silent.
 """
 
 EVAL_VERIFICATION_MAX_CHARS: Final = 20_000
+#: One claim's free text inside the eval block. ``ClaimEvidence.detail`` is already bounded at
+#: ``DETAIL_LIMIT`` for the artifact; the block has its own budget and ten claims at 2000 characters
+#: would spend it on coder-influenced text (F6).
+EVAL_CLAIM_DETAIL_MAX_CHARS: Final = 300
 """Cap on detailed deterministic verification evidence sent to the evaluator."""
 
 EVAL_DOC_PATHS: Final = ("knowledge/adr/DIGEST.md", "knowledge/adr/README.md")
@@ -1229,18 +1306,59 @@ rather than sending the judge to a dead reference.
 """
 
 
+def _claim_evidence_lines(attempt: VerificationAttempt) -> list[str]:
+    """Render the attempt's claims: what ran, what it proved, and who authored the command (F6).
+
+    ``detail`` is assertion text and command output, i.e. bytes a coder can influence, so it is
+    labelled ``untrusted`` and cut to the block's own budget rather than the artifact's. The
+    ``proven`` word is the harness's verdict, not the coder's, and it is what the evaluator must
+    read first.
+    """
+    lines = [
+        f"- Route: {attempt.route}",
+        f"- Commands authored by: {', '.join(sorted({c.authored_by for c in attempt.commands}))}",
+    ]
+    identity = attempt.identity
+    if identity is not None:
+        lines.append(
+            "- Identity: plan={plan} seal={seal} closure={closure} candidate={candidate} sealed={sealed}".format(
+                plan=identity.plan_sha256[:12],
+                seal=(identity.seal_sha256 or "none")[:12],
+                closure=(identity.closure_sha256 or "none")[:12],
+                candidate=identity.candidate_revision_id,
+                sealed=identity.sealed_revision_id or "none",
+            )
+        )
+    for claim in attempt.claims:
+        state = "proven" if claim.proven else "NOT proven"
+        lines.append(f"- {claim.contract_id} {claim.test_id} [{state}]: {claim.outcome} at {claim.nodeid}")
+        if claim.mutation is not None:
+            lines.append(f"  mutation {claim.mutation.operator} {claim.mutation.target}: {claim.mutation.verdict}")
+        if claim.detail:
+            detail = claim.detail[:EVAL_CLAIM_DETAIL_MAX_CHARS]
+            lines.append(f"  detail (untrusted): {detail}")
+    if attempt.attested:
+        lines.append(f"- Attested elsewhere (not run here): {', '.join(attempt.attested)}")
+    if attempt.pending:
+        lines.append(f"- Pending deploy debt (does not block this attempt): {', '.join(attempt.pending)}")
+    return lines
+
+
 def _verification_evidence_lines(
     verification: PlanVerification,
     *,
     mode: str,
     repair_round: int,
     artifact_path: Path,
+    attempt: VerificationAttempt | None = None,
 ) -> tuple[str, ...]:
     """Render the current attempt's authoritative facts for the evaluator."""
     lines = [
         f"Harness verify gate (mode={mode}, repair_round={repair_round}, blocking={verification.blocking}):",
         f"Detailed artifact: {artifact_path}",
     ]
+    if attempt is not None:
+        lines.extend(_claim_evidence_lines(attempt))
     for result in verification.plan_command_results:
         lines.append(
             f"- Plan command: outcome={result.outcome.value}, exit_code={result.exit_code}, "
@@ -1331,6 +1449,9 @@ def _eval_evidence_block(
                 mode=ctx.verify_gate_mode,
                 repair_round=repair_round,
                 artifact_path=ctx.artifact_paths.verification,
+                # F10: the sealed route's claim-level evidence lives on the admission record, so
+                # the evaluator reads the same attempt the gate judged rather than a re-derivation.
+                attempt=None if ctx.admission is None else ctx.admission.last_attempt,
             )
         )
 
@@ -1970,6 +2091,7 @@ def _run_stage(
                 repair_round=progress.repair_round,
                 plan_ref=ctx.admission.snapshot.ref if ctx.admission is not None else None,
                 deadline=ctx.deadline_mono,
+                attempt=sealed_attempt_for_stage,
             )
             verification_saved = True
         except Exception as error:  # Artifact failure stays explicit and blocks enforce mode.
@@ -5019,6 +5141,7 @@ __all__ = [
     "DEADLINE_REASON_MARKER",
     "DEFAULT_MAX_REPAIRS",
     "DEFAULT_MAX_REPLANS",
+    "EVAL_CLAIM_DETAIL_MAX_CHARS",
     "EVAL_DIFF_MAX_CHARS",
     "EVAL_DOC_PATHS",
     "EVAL_VERDICT_TO_TERMINAL_STATUS",

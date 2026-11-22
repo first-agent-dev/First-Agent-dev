@@ -531,3 +531,41 @@ first attempt to satisfy `ruff`'s complexity limit extracted `verify_plan` into 
 — correctly: the mutation no longer applied, so the plan's own claim about its kill surface had become false.
 `_run_stage` therefore keeps both call sites verbatim; the complexity was paid down by extracting the eval-report
 build (`_stage_eval_report`) instead, which no kill directive names.
+
+## F10 item 4 — landed: the artifact and the eval block carry the attempt
+
+`write_verification` takes `attempt: VerificationAttempt | None`. When it is supplied the entry gains
+`route`, `identity`, `claims`, `commands_authored_by`, `attested`, `pending`, `contracts_total`,
+`kill_required`, `attempt_blocking` and `first_reason`, and its `blocking` is
+`verification.blocking or attempt.blocking` — either face of the same evidence may block, so a disagreement
+between the gate and the record cannot be smoothed into a pass. Every legacy key (`mode`, `repair_round`,
+`plan_commands`, `slices`, `errors`) is untouched, and the legacy route passes `attempt=None`, so its entry
+carries none of the new keys. This is additive by construction, not a schema swap, which is what lets the legacy
+route keep reading the artifact it already reads.
+
+The eval evidence block renders the attempt (`_claim_evidence_lines`): route, the authorship set, a shortened
+identity line (`plan=… seal=… closure=… candidate=… sealed=…`), one line per claim with the harness's own
+`proven`/`NOT proven` word, the mutation when one exists, and the claim's `detail` **labelled `untrusted` and cut to
+`EVAL_CLAIM_DETAIL_MAX_CHARS = 300`** (F6: the artifact's 2000-character budget is per field, but the block has one
+budget and ten fields, so re-using the wider bound would let coder-influenced text evict the diff). `attested` and
+`pending` are rendered as different facts -- "not run here" and "deploy debt that does not block this attempt" --
+because folding them was F3/F8's failure mode.
+
+The block reads the attempt from `_WorkflowAdmission.last_attempt` rather than being threaded through every caller:
+the gate and the evaluator then judge the *same* record, and a repair round that clears the field cannot leave a
+stale attempt attached to a new candidate.
+
+**Measured:** `tests/test_verify_gate_live.py` 581 passed in 180 s (five new oracles: the artifact carries
+route/identity/claims beside the legacy keys; an attempt-less entry carries none of them; a blocking claim blocks
+the record; the eval block labels and bounds the detail; and a coder stage writes the attempt it measured).
+Six mutants, all killed: drop `attempt=` at the write site, never merge the attempt into the payload, stop OR-ing
+the two `blocking` faces, drop the `untrusted` label, drop the detail cut, and drop the merge guard. Neighbouring
+suites re-run: 134 passed (`test_workflow_artifacts`, `test_workflow_hygiene`, `test_s8_workflow_controller`,
+`test_workflow_no_eval_terminal`, `test_injection_threading`, `test_kill_directives`).
+
+**Where the ordered list now stands:** items 1–4 are landed. Item 5 (`run_kill_checks`) remains deliberately
+unbuilt: on the V2 grammar a `KILL-TARGETS` row is `KillTarget(target_id, ct, test_id)` — attribution with no
+operator, path or symbol — so there is nothing to mutate, and building the seam speculatively is what SLICE3's
+intent forbids. The next real work on this arc is not in the list: the V2 route still has no production caller of
+`_pinned_verify_substrate` that *reaches* a managed cell on this host, so the W4 host probe (S0) remains the proof
+that the substrate half is live, and `run_workflow` on V2 with no cell is a *recorded block*, not a pass.

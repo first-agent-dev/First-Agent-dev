@@ -4632,3 +4632,151 @@ def test_a_failing_sealed_nodeid_blocks_the_v2_stage(tmp_path: Path) -> None:
     assert attempt.claims[0].outcome == "failed"
     assert verification.blocking is True
     assert verification.errors, "a blocking attempt must explain itself in the legacy gate"
+
+
+# ── F10 item 4: the artifact and the eval block carry the attempt ───────────
+
+_SEAL = "a" * 64
+
+
+def _v2_attempt(*, outcome: str = "passed", detail: str = "", blocking: bool = False) -> Any:
+    """One V2 attempt with real entity rules, built lazily for the artifact oracles."""
+    from fa.inner_loop.verification_attempt import (
+        AttemptCommand,
+        ClaimEvidence,
+        VerificationAttempt,
+        VerificationIdentity,
+    )
+
+    identity = VerificationIdentity(
+        plan_sha256="b" * 64,
+        candidate_revision_id="rev-" + "0" * 32,
+        profile_id="managed-readonly",
+        substrate="managed-readonly",
+        run_id="run-1",
+        attempt=1,
+        repair_round=0,
+        mode="enforce",
+        seal_sha256="c" * 64,
+        closure_sha256="d" * 64,
+        sealed_revision_id="rev-" + "0" * 32,
+    )
+    claims = (
+        ClaimEvidence(
+            contract_id="CT-1.1",
+            test_id="TEST-1.1",
+            nodeid="worklogs/demo/acceptance/tests/test_publish.py::test_publish",
+            outcome=outcome,
+            detail=detail,
+        ),
+    )
+    attempt = cast(
+        Any,
+        VerificationAttempt(
+            route="v2",
+            identity=identity,
+            claims=claims,
+            commands=(AttemptCommand(command="python -m pytest", authored_by="harness", outcome="pass", exit_code=0),),
+            attested=("CT-1.2",),
+            contracts_total=2,
+        ),
+    )
+    assert attempt.blocking is blocking
+    return attempt
+
+
+def _write_verification(tmp_path: Path, *, attempt: Any) -> dict[str, Any]:
+    path = tmp_path / "verification.json"
+    workflow.write_verification(
+        path,
+        PlanVerification(plan_command_results=(), slice_verifications=()),
+        run_id="run-1",
+        mode="enforce",
+        repair_round=0,
+        attempt=attempt,
+    )
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def test_the_artifact_carries_route_identity_and_claims(tmp_path: Path) -> None:
+    payload = _write_verification(tmp_path, attempt=_v2_attempt())
+
+    entry = payload["attempts"][0]
+    assert entry["route"] == "v2"
+    assert entry["identity"]["candidate_revision_id"] == "rev-" + "0" * 32
+    assert entry["identity"]["sealed_revision_id"] == "rev-" + "0" * 32
+    assert entry["claims"][0]["contract_id"] == "CT-1.1"
+    assert entry["claims"][0]["nodeid"].endswith("::test_publish")
+    assert entry["claims"][0]["proven"] is True
+    assert entry["commands_authored_by"] == ["harness"]
+    assert entry["contracts_total"] == 2
+    assert entry["kill_required"] == []
+    # The legacy keys the eval contract already reads are still there.
+    assert {"mode", "repair_round", "blocking", "plan_commands", "slices", "errors"} <= set(entry)
+
+
+def test_the_artifact_without_an_attempt_has_no_sealed_keys(tmp_path: Path) -> None:
+    """The legacy route's entry stays what it was: this change is additive, not a schema swap."""
+    payload = _write_verification(tmp_path, attempt=None)
+
+    entry = payload["attempts"][0]
+    assert "route" not in entry
+    assert "claims" not in entry
+    assert "identity" not in entry
+
+
+def test_a_claim_that_blocks_makes_the_record_block(tmp_path: Path) -> None:
+    """The gate and the record cannot disagree silently: either face of the evidence may block."""
+    payload = _write_verification(tmp_path, attempt=_v2_attempt(outcome="failed", blocking=True))
+
+    entry = payload["attempts"][0]
+    assert entry["blocking"] is True
+    assert entry["claims"][0]["proven"] is False
+    assert entry["first_reason"]
+
+
+def test_the_eval_block_renders_claims_with_untrusted_bounded_detail(tmp_path: Path) -> None:
+    long_detail = "assertion output " * 100
+    attempt = _v2_attempt(detail=long_detail)
+
+    lines = workflow._verification_evidence_lines(
+        PlanVerification(plan_command_results=(), slice_verifications=()),
+        mode="enforce",
+        repair_round=0,
+        artifact_path=tmp_path / "verification.json",
+        attempt=attempt,
+    )
+    rendered = "\n".join(lines)
+
+    assert "- Route: v2" in rendered
+    assert "- Identity: plan=" in rendered
+    assert "CT-1.1 TEST-1.1 [proven]" in rendered
+    assert "detail (untrusted):" in rendered
+    detail_line = next(line for line in lines if "detail (untrusted):" in line)
+    assert len(detail_line) <= len("  detail (untrusted): ") + workflow.EVAL_CLAIM_DETAIL_MAX_CHARS
+    assert len(detail_line) < len(long_detail)
+
+
+def test_the_coder_stage_writes_the_attempt_it_measured(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """F10 item 4 wiring: the attempt reaches the artifact, not just the admission record."""
+    attempt = _v2_attempt()
+    monkeypatch.setattr(
+        workflow,
+        "_sealed_stage_verification",
+        lambda *args, **kwargs: (PlanVerification(plan_command_results=(), slice_verifications=()), attempt),
+    )
+    context = _v2_context(tmp_path, run_id="v2-attempt-artifact", fence=False)
+
+    result = _run_stage(
+        context,
+        "coder",
+        fresh=True,
+        progress=WorkflowProgress(),
+        transition_reason="test v2 attempt artifact",
+        run_stage_fn=lambda *_args, **_kwargs: 0,
+    )
+
+    assert result.verification is not None
+    entry = json.loads(Path(context.artifact_paths.verification).read_text(encoding="utf-8"))["attempts"][0]
+    assert entry["route"] == "v2"
+    assert entry["claims"][0]["outcome"] == "passed"
