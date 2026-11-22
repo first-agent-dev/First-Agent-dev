@@ -4695,7 +4695,8 @@ def _write_verification(tmp_path: Path, *, attempt: Any) -> dict[str, Any]:
         repair_round=0,
         attempt=attempt,
     )
-    return json.loads(path.read_text(encoding="utf-8"))
+    payload: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
+    return payload
 
 
 def test_the_artifact_carries_route_identity_and_claims(tmp_path: Path) -> None:
