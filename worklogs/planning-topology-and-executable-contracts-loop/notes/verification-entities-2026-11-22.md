@@ -204,3 +204,146 @@ cheap correctness. F8 is the honest exception.
 **Nothing in this section is implemented yet.** The code that exists (`verify_sealed_acceptance`, E615) returns the
 narrower `SealedVerification` and takes `candidate_revision_id` on trust — F5 and F3 change its signature and its
 refusals, so implementing the schema first and the wiring second keeps each step green.
+
+---
+
+# Do the findings hold? (checked against the code, not against my summary)
+
+Each finding below is re-derived from a quoted location. Verdicts: **real**, **shrinks** (the defect is smaller and
+the fix different), **grows** (worse than stated), or **not a defect**.
+
+## F1 — mutation evidence dropped: **REAL, and worse than stated**
+
+`SliceVerification.kill_checks: tuple[tuple[str, KillCheck], ...]` is populated per contract by `verify_slice` and
+consumed at four places (`workflow_controller.py:746` payload, `:871` block detail, `:1125` evidence renderer, plus
+the slice verdict). `plan_v2.py:563` parses `KILL-TARGETS`, and SLICE3's own intent says the mutation runner is
+STEP9A's and "MUST NOT" be reimplemented. So kill evidence is part of V2 verification, and an artifact that carries
+only `(claim → passed)` would need a second array keyed by the same contract id.
+
+**It is worse than that.** The verifier I landed in E615 never runs a mutation: `verify_sealed_acceptance` proves
+"the sealed nodeid executed and passed" and nothing else. A `FUNCTIONAL` contract with a `KILL-TARGETS` directive
+would therefore be recorded as proven by an attempt whose mutation never ran. That is not a schema gap, it is a
+defect in the landed code — recorded as **F9** below.
+
+**Correction:** one row per contract, `mutation: MutationEvidence | None`, plus a write-time rule —
+`claim-mutation-missing`: a claim for a contract that declares a kill directive may not have `mutation=None`, and a
+`MutationEvidence.verdict` from the closed `KILL_CHECK_VERDICTS` set. `None` therefore means exactly "this contract
+declares no kill target", never "did not get to it".
+
+## F2 — route conflates two axes: **REAL (structural, provable by construction)**
+
+`verify_slice` runs `record.commands` — planner-authored text — through `run_commands` (`slice_verification.py:2394`
+and `:624`), while `capture_test_nodeids` (`:882`) and the kill runner (`:1969`) issue harness-built commands through
+the *same* `run_commands` and the *same* `executor`. The artifact's `commands` array (`workflow_controller.py:745`)
+therefore mixes both provenances with no marker, and the only way to tell them apart downstream is to remember which
+slice of history produced them.
+
+**Correction:** `CommandRun.authored_by ∈ {planner, harness}`, and `identity.route ∈ {v2, legacy}` for the grammar.
+Invariant at write time: `route == "v2"` ⇒ no command is `planner`-authored (`fence-on-v2-route`). That is what makes
+CT-3.6's retirement statement checkable rather than true-by-omission.
+
+## F3 — absence reads as a pass: **REAL (artifact-level)**
+
+`_slice_verification_payload` (`workflow_controller.py:739–763`) emits `verdict`, `test_paths`, executed `commands`,
+`kill_checks`, `regression_nodeids`, `failed_nodeids`, `detail` — and **no expected set and no total**, while the seal
+carries `contracts_total` (`acceptance_bundle.py:149`) and its attested/pending split. So "the seal promised 12
+contracts, this attempt covered 11" is not answerable from the artifact at all. At *runtime* the gap is refused
+(`run_sealed_acceptance` → `sealed-test-missing`), which is why this is an artifact defect and not a correctness hole.
+
+**Correction:** `claims[]` covers the seal's total; `outcome` includes `attested` and `pending` from the seal's own
+vocabulary; write-time rule `claims-total-mismatch` when `len(claims) != contracts_total`.
+
+## F4 — "refused" vs "empty": **SHRINKS to an invariant, no new field**
+
+Checked the refusal path: the controller catches any exception and builds `PlanVerification(errors=(...))`
+(`workflow_controller.py:1792–1796`), `blocking` is true whenever `errors` is non-empty (`:2346`), and
+`_verification_is_indeterminate` (`:839`) is consulted before the gate is applied (`:902`). So refusal *is* handled;
+what does not exist is anything that stops a writer from emitting an empty claim set with no errors, which would read
+as "nothing to check".
+
+**Correction:** no `outcome: executed|refused` field — it would be redundant state that can disagree with `errors`.
+Two invariants instead: `claims` non-empty ⇒ no `errors` describing a refusal is required to agree, and the converse,
+`claims` empty ⇒ `errors` non-empty (`empty-attempt-unexplained`). Fewer fields, same guarantee. This is the
+simplification the adversarial pass was looking for.
+
+## F5 — candidate revision asserted: **REAL (and the fix has an exact anchor)**
+
+`ViewRef` (`execution/types.py:63–70`) carries `base_revision` — the authority-named revision a view is pinned at —
+and `ReadOnlyManagedBashExecutor` holds it privately (`client.py:1578`: `self._view = view`) with **no public
+accessor**, while `ManagedVerifyCommandExecutor` (`slice_verification.py:476–501`) exposes nothing about the view it
+wraps. The controller does hold both ends (`ctx.managed_revision_pair.base_revision_id/target_revision_id`,
+`workflow_controller.py:322`, `:1201`), so the expected value exists — it is simply never compared with the substrate.
+
+**Correction:** the substrate must name its revision (`view_revision_id`, a public read-only property forwarded by the
+wrapper), and `verify_sealed_acceptance` refuses `verifier-revision-mismatch` on disagreement *or* absence. Identity
+then comes from the thing that ran, and the caller's value is an expectation that can fail.
+
+## F6 — free text into the eval context: **REAL, and sharper than "unbounded"**
+
+The block *is* bounded, but at the wrong end: `_verification_evidence_lines` renders per-field text unbounded
+(`:1117` slice detail, `:1126` kill-check detail) and then cuts with `rendered[:EVAL_VERIFICATION_MAX_CHARS]`
+(`:1136–1140`) — a **head** truncation. One long `detail` on the first slice therefore *evicts the rest of the
+evidence*: later slices, failing nodeids and errors never reach the model, while the footer still says "full artifact:
+<path>". Command output is already bounded (`TAIL_LIMIT`, `:582`), so `detail` is the one field that can starve the
+block.
+
+**Correction:** bound each field where it is produced (single-line normalised, ≤ 2000 chars, with an explicit
+`…[truncated]` marker), and render it as untrusted text. Bounding the payload keeps the truncation honest; bounding
+the renderer alone does not.
+
+## F7 — naming: **REAL but cosmetic**
+
+`RunIdentity` next to `RunContext`/`ExecutionBinding`, and `sealed_revision` inconsistent with the codebase's
+`*_revision_id` (`ViewRef.base_revision`, `GrantReply.revision_id`). **Correction:** `VerificationIdentity`,
+`sealed_revision_id`, `candidate_revision_id`.
+
+## F8 — legacy stays identity-blind: **REAL, deliberate exception, unchanged**
+
+Making `identity` mandatory on the frozen route would mean rewriting attempts for a route being deleted (D-V2-1,
+D-V2-2). Kept as stated: mandatory on `v2`, optional on `legacy`, and the rule tightens by deletion.
+
+## F9 — NEW: the landed verifier records a pass without the mutation (**REAL, code defect in E615**)
+
+`verify_sealed_acceptance` (`acceptance_collection.py`) collects the sealed closure and asserts every selector's
+nodeid executed; it never runs `_run_kill_check`. Combined with F1's rule, an attempt it produces for a plan with
+`KILL-TARGETS` is *incomplete*, and today it is not even labelled as such — it simply has no mutation records.
+
+**Correction:** the verifier composes with STEP9A's existing mutation runner instead of reimplementing it (SLICE3's
+intent forbids a second runner): a public `run_kill_checks(...)` seam over `_run_kill_check`, called per contract with
+a directive, with results folded into `ClaimEvidence.mutation`. Until that exists, `verify_sealed_acceptance` must
+**refuse** to project an attempt for a contract that declares a kill directive (`claim-mutation-missing`) rather than
+return an artifact that reads as proven.
+
+## Verdict
+
+Six are real as stated, one shrinks to an invariant (F4), one is cosmetic (F7), one is a stated exception (F8), and
+the check found a ninth — a defect in the code I already landed, not just in the proposed schema. F9 and F1 together
+mean the sealed verifier is *not yet able to produce a truthful attempt for a functional contract*; that is the first
+code step, ahead of the controller wiring.
+
+## Final schema (what the plan now carries)
+
+```
+VerificationAttempt                  # one per attempt, append-only log entry
+  route:      v2 | legacy            # grammar; decides which half is populated
+  identity:   VerificationIdentity   # mandatory on v2, optional on legacy (F8)
+  claims:     [ClaimEvidence]        # covers the seal's total (F3)
+  commands:   [CommandRun]           # authored_by marks provenance (F2)
+  blocking:   derived                # never read as authority
+  errors:     [text]                 # empty claims ⇒ non-empty errors (F4)
+
+VerificationIdentity := route, plan_sha256, seal_sha256, closure_sha256,
+                        sealed_revision_id, candidate_revision_id,   # candidate from the substrate (F5)
+                        profile_id, substrate, run_id, attempt, repair_round, mode
+
+ClaimEvidence        := contract_id, test_id, nodeid,
+                        outcome: passed|failed|skipped|error|attested|pending,
+                        mutation: MutationEvidence | None,            # None only when no KILL-TARGET (F1)
+                        detail: bounded 2000 chars, single line (F6)
+
+MutationEvidence     := operator, path_or_symbol, verdict (closed KILL_CHECK_VERDICTS), detail (bounded)
+CommandRun           := command, authored_by: planner|harness, outcome, exit_code, tails, duration
+```
+
+Write-time refusals: `claims-total-mismatch`, `claim-mutation-missing`, `fence-on-v2-route`,
+`empty-attempt-unexplained`, `verifier-revision-mismatch`, `identity-missing-on-v2`.
