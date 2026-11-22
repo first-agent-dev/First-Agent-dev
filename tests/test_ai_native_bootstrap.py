@@ -1376,6 +1376,73 @@ def test_create_over_existing_directory_is_project_exists_and_unchanged(
                 assert substrate.port.read_file(path).content == content, f"{path} was overwritten"
 
 
+def test_create_new_stage_scaffolds_then_planner_writes_only_inside_slug() -> None:
+    """CT-2.3 (D-V2-9 / 9.6 / 9.7): the harness owns the tree, the planner owns the prose.
+
+    Three properties, each of which has a distinct failure mode if it rots:
+
+    * **the file set** -- exactly seven files, and the three roots exist only as parents of
+      those files. The writer has no mkdir and refuses dot-only names, so a `.gitkeep`
+      would not survive; an "empty" `acceptance/tests/` cannot exist at all. That is why
+      the scaffold carries a module with no test functions rather than a placeholder.
+    * **the scaffold is not a plan** -- `parse_plan` must refuse the unfilled increment.
+      This is the one that matters most: a scaffold that parsed would let an authoring
+      stage that wrote nothing reach admission with a fake plan.
+    * **the boundary** -- the stage's writer admits `worklogs/<slug>/` and nothing else,
+      including traversal out of it and a sibling project.
+
+    The boundary is checked on the tool the model actually calls (`fs_write_file`, which
+    resolves to the limited builder for a planner), not on a helper.
+    """
+    from fa.inner_loop.plan_v2 import PlanV2Error, parse_plan
+    from fa.inner_loop.planner_dispatch import PlannerDispatch, PlannerDispatchKind
+    from fa.inner_loop.profiles import build_registry_for_role
+    from fa.inner_loop.project_scaffold import scaffold_files
+
+    slug = "demo-project"
+    root = f"worklogs/{slug}"
+    files = scaffold_files(slug, created="2026-11-21")
+
+    # ---- the file set ---------------------------------------------------------------
+    assert list(files) == [
+        f"{root}/roadmap.md",
+        f"{root}/ledger.md",
+        f"{root}/open-questions.md",
+        f"{root}/increments/increment-01-initial-plan.md",
+        f"{root}/notes/README.md",
+        f"{root}/reviews/README.md",
+        f"{root}/acceptance/tests/test_acceptance_placeholder.py",
+    ]
+    # No dot-only component anywhere: the writer refuses those, so any would be a silent
+    # drop rather than a directory.
+    assert not any("/." in path or path.endswith(".") for path in files)
+
+    # ---- the scaffold is refused as a plan -------------------------------------------
+    increment = files[f"{root}/increments/increment-01-initial-plan.md"]
+    with pytest.raises(PlanV2Error) as refused:
+        parse_plan(roadmap=files[f"{root}/roadmap.md"], increment=increment)
+    assert refused.value.rule == "missing-slice"
+    # ...and the placeholder module cannot become a passing oracle.
+    placeholder = files[f"{root}/acceptance/tests/test_acceptance_placeholder.py"]
+    assert "def test_" not in placeholder
+
+    # ---- the boundary ---------------------------------------------------------------
+    dispatch = PlannerDispatch(PlannerDispatchKind.CREATE_NEW_PROJECT, "ct23", authoring_root=root)
+    writer = build_registry_for_role("planner", Path.cwd(), planner_dispatch=dispatch).lookup("fs_write_file")
+
+    inside = writer.handler({"path": f"{root}/roadmap.md", "content": "x"})
+    assert inside.error is None, "the stage must be able to write its own project"
+    for path in (
+        "src/fa/evil.py",
+        f"{root}/../escape.md",
+        "worklogs/another-project/roadmap.md",
+        "README.md",
+        ".fa/admission/candidate.md",
+    ):
+        denied = writer.handler({"path": path, "content": "x"})
+        assert denied.error is not None and denied.error.code == "path_denied", path
+
+
 def _admit_in(
     case_site: Site, child_ctx: Any, managed: Any, yaml_path: Path, slug: str
 ) -> tuple[Any, Any]:

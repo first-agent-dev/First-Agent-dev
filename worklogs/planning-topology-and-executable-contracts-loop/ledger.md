@@ -12278,3 +12278,37 @@ now cites both halves separately.
 (child failure mapping). CT-2.4 stays blocked on SLICE2's seal.
 
 152 tests in `test_invoke_workflow_tool.py`; ruff clean; mypy 224; doc-links 370.
+
+### E598 — CT-2.3: three properties, and the one that actually protects admission (2026-11-21)
+
+The row asks that the harness write the scaffold and the planner write only inside the
+slug. Three things can go wrong there and they are not the same size, so the test separates
+them.
+
+**The file set** -- seven files, keys in write order, `roadmap.md` first. Order is part of
+the contract (D-V2-9.2): that first create-only write *is* the collision check, so a
+reordering silently moves the check to the fourth file. Also asserted: no dot-only path
+component, because the writer refuses those -- a `.gitkeep` would not be an empty directory,
+it would be a silent drop, so the "three roots" only exist as parents of real files.
+
+**The scaffold must not parse as a plan.** This is the property that keeps the stage honest.
+If the unfilled increment were admissible, an authoring run that wrote nothing would still
+reach admission holding a fake plan -- and every later stage would be reasoning about a
+document no one filled in. Verified: `parse_plan` refuses it with `missing-slice`, and the
+placeholder module defines no test function, so it cannot collect as a passing oracle
+either. Both halves are needed: refusing the plan stops admission, refusing the test stops
+"green because nothing ran".
+
+**The boundary**, checked on the tool the model actually calls (`fs_write_file` for a
+planner), not on the allowlist helper: outside the project, a traversal out of it, a
+sibling project, and the admission directory are all `path_denied`; its own `roadmap.md`
+is admitted. Testing the helper would have proved the rule, not its enforcement.
+
+**Mutants**, all killed: a placeholder that defines a test; `roadmap.md` no longer written
+first; the authoring prefix widened to the whole workspace. Harness 14/14.
+
+Note on the last one: widening `allowed_prefixes` to `""` did not merely permit more, it
+made the stage able to write `.fa/admission/candidate.md` -- which is exactly the kind of
+mutation that looks harmless in a diff and is not.
+
+193 tests across the two banks; ruff clean; mypy 224; doc-links 372.

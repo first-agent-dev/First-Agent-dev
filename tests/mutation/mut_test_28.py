@@ -1,4 +1,4 @@
-"""Mutation run for TEST-2.8 / CT-2.7 / CT-2.2 / D-V2-9.8 (E594-E597): the repair path must be real.
+"""Mutation run for TEST-2.8 / CT-2.7 / CT-2.2-2.3 / D-V2-9.8 (E594-E598): the repair path must be real.
 
 Three of these exist because a cheaper test once survived them. `test_the_bound_repair_
 path_runs_both_stages_and_binds_the_result` was written after M3 survived the hand-built
@@ -21,6 +21,8 @@ PY = str(ROOT / ".venv" / "bin" / "python")
 CONTROLLER = ROOT / "src/fa/inner_loop/workflow_controller.py"
 CLI = ROOT / "src/fa/cli.py"
 TOOL = ROOT / "src/fa/inner_loop/tools/workflow_tool.py"
+SCAFFOLD = ROOT / "src/fa/inner_loop/project_scaffold.py"
+PROFILES = ROOT / "src/fa/inner_loop/profiles.py"
 
 _BANK = "tests/test_ai_native_bootstrap.py"
 
@@ -28,6 +30,7 @@ BOUND = [f"{_BANK}::test_the_bound_repair_path_runs_both_stages_and_binds_the_re
 E2E = [f"{_BANK}::test_metadata_table_and_parse_refusal_block_coder_then_repair_rewrites_published_file"]
 BUDGET = [f"{_BANK}::test_a_create_new_repair_is_budgeted_and_never_overwrites_on_collision"]
 COLLISION = [f"{_BANK}::test_create_over_existing_directory_is_project_exists_and_unchanged"]
+SCAFFOLD_T = [f"{_BANK}::test_create_new_stage_scaffolds_then_planner_writes_only_inside_slug"]
 _TOOL_BANK = "tests/test_invoke_workflow_tool.py"
 SLUG = [
     f"{_TOOL_BANK}::test_an_invalid_slug_is_refused_before_any_child_exists",
@@ -105,6 +108,27 @@ MUTANTS: list[tuple[str, Path, str, str, list[str]]] = [
         "    if action not in _PROJECT_ACTIONS:",
         "    if False:  # MUTANT",
         SLUG,
+    ),
+    (
+        "M12 the placeholder module defines a test (CT-2.3: a passing oracle exists)",
+        SCAFFOLD,
+        '        f"{root}/acceptance/tests/test_acceptance_placeholder.py": _PLACEHOLDER_TEST,',
+        '        f"{root}/acceptance/tests/test_acceptance_placeholder.py": "def test_ok():\\n    assert True\\n",',
+        SCAFFOLD_T,
+    ),
+    (
+        "M13 roadmap.md is no longer written first (CT-2.3/D-V2-9.2)",
+        SCAFFOLD,
+        '        f"{root}/roadmap.md": _roadmap_body(slug, created),',
+        '        f"{root}/ledger.md": _ledger_body(slug),\n        f"{root}/roadmap.md": _roadmap_body(slug, created),',
+        SCAFFOLD_T,
+    ),
+    (
+        "M14 the authoring stage writes the whole workspace (CT-2.3/D-V2-9.6)",
+        PROFILES,
+        '        allowed_prefixes = [f"{authoring_root}/"]',
+        '        allowed_prefixes = [""]',
+        SCAFFOLD_T,
     ),
     (
         "M5 a repair is not budgeted (killed by BUDGET, not BOUND)",
