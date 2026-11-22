@@ -13017,9 +13017,51 @@ base, drifted by S2/S3). Per the standing `no new red` rule the second list is f
 byte-identical string concatenation, and both `ruff format --check` on them and `ruff check .` are clean after.
 The first list stays as a recorded, pre-existing list — it is not silence and not a count.
 
+**Correction after the environment was rebuilt (E614).** The 12/8 split above was measured with ruff 0.17.6, which was all the sandbox could install at that moment. The project's own pinned formatter is ruff **0.16.0** from `uv.lock`; re-running the same base-vs-head comparison with it gives **8** unformatted files, all of them dirty at base, and the four that were mine are clean. So both readings agree on the part that decides the commit — the drift was mine and it is fixed — while the counts differ because the tool did. The lesson is the one this ledger keeps repeating: a count is not evidence, and neither is a count taken with a different tool.
+
 Fix owed to the tooling, not to the tree: `gate_tracker.py record` must gain the formatter so a future slice
 cannot repeat this. Until then the fourth gate is "recorded", not "the lint gate".
 
 Not verified this session: no test, no mypy (E612 — no Python 3.13 in this sandbox). Formatter-only changes
 are the one class where a tool's own re-check substitutes for a suite run, and that substitution is stated
 here rather than implied.
+
+### E614 — S0 landed as option A, after the environment could be rebuilt (2026-11-22)
+
+`scripts/arena-env-build.sh` (documented in `knowledge/arena-env-build.md`) built CPython 3.13.16 from pinned
+codeload sources plus OpenSSL, published it under `$BUILD_ROOT/prefix`, and ran the frozen dev sync — so the
+session had a real interpreter again (`.venv`, pytest 9.0.3, mypy 2.1.0, ruff 0.16.0, pyrefly, deptry, pylint,
+mutmut). The earlier "no Python 3.13 obtainable" reading in E612 was true of the *interpreter-only* routes
+(release assets blocked, no apt package, nothing vendored on PyPI); the source build through `codeload` was the
+route that worked, and the repository already carried it. That distinction is worth keeping: the constraint was
+not the proxy, it was which host the archives come from.
+
+**Landed:** `tests/test_ai_native_managed_substrate_probe.py` — option A of Q-V2-S0-1 (now resolved = A). It builds
+a sealed acceptance closure at `worklogs/demo/acceptance/`, registers the workspace with a real
+`SupervisorService`, pins a `PIN_READER` view, wraps it in `ReadOnlyManagedBashExecutor` and
+`ManagedVerifyCommandExecutor`, and asserts `capture_test_nodeids` returns exactly
+`worklogs/demo/acceptance/tests/test_substrate_probe.py::test_the_cell_ran_the_seal` plus the harness's own
+in-band command (`-p fa.inner_loop.junit_nodeid_plugin`, `--junitxml=`). A green result therefore cannot be
+produced by a host shell running something else.
+
+**The xfail was verified to be the intended failure, not a broken probe.** `--runxfail` shows the failure text
+`verify: managed execution produced no verdict: ExecutionUnavailableError: execution_unavailable` — the
+supervisor refused at EXEC because there is no container engine — and the recorded command string is the
+harness's in-band `pytest` command, so everything before EXEC (register, `PIN_READER`, executor construction,
+capture orchestration) actually ran. `strict=True` means the W4 host turns the XPASS into a failure and forces
+the marker off in the same change that proves the substrate.
+
+Targeted runs: `tests/test_ai_native_managed_substrate_probe.py tests/test_execution_client_port.py
+tests/test_slice_verification_runner.py tests/test_authoring_rules_tests.py` → **138 passed, 1 xfailed in 12.10 s**;
+`fa authoring-check` → `diagnostics: 0`, exit 0; `ruff check` and `ruff format --check` clean on the new file.
+
+**Two tool findings from the same session.** (1) The probe's first draft imported `Access` but used
+`Operation.HEALTH` and carried a `noqa` that ruff called unused — both caught by `ruff check` before any test ran,
+which is the cheap half of the discipline working. (2) `gate_tracker.py` gained the missing `ruff-format` gate
+(E613): its first parser version recognised only the `Would reformat: <path>` summary shape and recorded
+`findings=0` beside `exit=1` — *the same silent-clean failure as E609, reproduced in the tool that documents it*.
+Ruff 0.16 emits `unformatted: File would be reformatted` plus a `--> path:l:c` line instead, so the parser now
+pairs the marker with the location, still accepts the legacy shape, and `record` refuses to report zero findings
+for a non-zero exit (it writes `<gate>: unrecognised failure (exit N)` instead). Verified: the parser returns the
+right finding for both shapes and nothing for the summary-only text, and a real `record --gate ruff-format` run
+lists exactly the eight files that the independent base-vs-head comparison names.

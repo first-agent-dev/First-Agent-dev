@@ -120,6 +120,43 @@ def _parse_ruff(log: str) -> list[str]:
     return sorted(findings)
 
 
+_RUFF_FORMAT_SUMMARY = re.compile(r"^Would reformat: (?P<path>\S+)$")
+
+
+def _parse_ruff_format(log: str) -> list[str]:
+    """The formatter's findings, in **both** shapes ruff prints them (E613).
+
+    The first draft of this parser recognised only ``Would reformat: <path>`` and
+    recorded ``findings=0`` while ruff exited 1 -- the same silent-clean failure as
+    E609, reproduced in the very file that documents it. Ruff 0.16's ``--check``
+    emits a diagnostic instead::
+
+        unformatted: File would be reformatted
+          --> tests/mutation/mut_step9.py:1:1
+
+    so the marker line is paired with the location that follows it, and the older
+    one-line summary shape is still accepted. The trailing "N files would be
+    reformatted" summary is not a finding: a count is what this tool refuses.
+    """
+    findings: list[str] = []
+    pending = False
+    for line in _strip_ansi(log).splitlines():
+        stripped = line.strip()
+        if stripped.startswith("unformatted:"):
+            pending = True
+            continue
+        if pending:
+            location = _RUFF_LOCATION.match(line)
+            if location:
+                findings.append(f"{location.group('path')}: would-reformat")
+            pending = False
+            continue
+        summary = _RUFF_FORMAT_SUMMARY.match(stripped)
+        if summary:
+            findings.append(f"{summary.group('path')}: would-reformat")
+    return sorted(findings)
+
+
 def _parse_authoring_check(log: str) -> list[str]:
     """The check reports counts, not per-item lines; the exit code is the finding."""
     text = _strip_ansi(log)
@@ -159,6 +196,13 @@ GATES: tuple[Gate, ...] = (
     Gate("mypy", lambda _cwd: [sys.executable, "-m", "mypy"], _parse_mypy),
     # Concise output is the shape the parser reads best; both are accepted.
     Gate("ruff", lambda _cwd: [sys.executable, "-m", "ruff", "check", "--output-format=concise"], _parse_ruff),
+    # E613: `just lint` checks the formatter too; a recording that skipped it
+    # reported green while four files had drifted, so it is a recorded gate now.
+    Gate(
+        "ruff-format",
+        lambda _cwd: [sys.executable, "-m", "ruff", "format", "--check", "."],
+        _parse_ruff_format,
+    ),
     Gate("authoring-check", lambda _cwd: [_fa(), "authoring-check"], _parse_authoring_check),
 )
 
@@ -205,6 +249,12 @@ def record(args: argparse.Namespace) -> int:
         (out / f"{gate.name}.findings.txt").write_text(
             "\n".join(findings) + ("\n" if findings else ""), encoding="utf-8"
         )
+        if code not in (None, 0) and not findings:
+            # E609/E613: a gate that fails while the parser sees nothing is a parser
+            # bug, not a clean gate. Naming it here is what stops a recording from
+            # reporting "0 findings" beside a non-zero exit.
+            findings = [f"{gate.name}: unrecognised failure (exit {code})"]
+            (out / f"{gate.name}.findings.txt").write_text(findings[0] + "\n", encoding="utf-8")
         gates_summary[gate.name] = {"exit": code, "findings": len(findings), "log": log_path.name}
         print(f"{gate.name:16} exit={code} findings={len(findings)}", file=sys.stderr)
     (out / "summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
