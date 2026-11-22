@@ -250,8 +250,12 @@ carries `contracts_total` (`acceptance_bundle.py:149`) and its attested/pending 
 contracts, this attempt covered 11" is not answerable from the artifact at all. At *runtime* the gap is refused
 (`run_sealed_acceptance` → `sealed-test-missing`), which is why this is an artifact defect and not a correctness hole.
 
-**Correction:** `claims[]` covers the seal's total; `outcome` includes `attested` and `pending` from the seal's own
-vocabulary; write-time rule `claims-total-mismatch` when `len(claims) != contracts_total`.
+**Correction:** `claims[]` covers the seal's total; write-time rule `claims-total-mismatch` when
+`len(claims) + len(attested) + len(pending) != contracts_total`. **Implemented differently from this first draft,
+and better:** `attested`/`pending` do *not* become claim outcomes. The seal already keeps them as two lists beside
+`selectors`, and re-encoding "proven by the oracle" vs "carried by a named party" vs "owed to a host" as three
+values of one enum would be a second vocabulary for one idea — the attempt now carries the same two lists the
+seal does.
 
 ## F4 — "refused" vs "empty": **SHRINKS to an invariant, no new field**
 
