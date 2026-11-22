@@ -154,11 +154,11 @@ def test_a_mutation_verdict_outside_the_kill_check_vocabulary_is_refused() -> No
     """
     assert MUTATION_VERDICTS == {member.value for member in KILL_CHECK_VERDICTS}
 
-    for rejected in ("PROVEN", "SURVIVED", "proven ", "", "PROVEN".lower().upper()):
-        assert (
-            _rule(lambda verdict=rejected: MutationEvidence(operator="remove-call", target="fa/x.py", verdict=verdict))
-            == "mutation-invalid"
-        )
+    def refusal(verdict: str) -> str:
+        return _rule(lambda: MutationEvidence(operator="remove-call", target="fa/x.py", verdict=verdict))
+
+    for rejected in ("PROVEN", "SURVIVED", "proven ", "", "  "):
+        assert refusal(rejected) == "mutation-invalid"
 
 
 def test_the_reason_uses_the_same_vocabulary_as_the_verdict() -> None:
