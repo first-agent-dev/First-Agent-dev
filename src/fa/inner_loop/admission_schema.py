@@ -73,6 +73,10 @@ ADMISSION_RULES_V2: dict[str, frozenset[str]] = {
     "bootstrap": ADMISSION_RULES["bootstrap"]
     | frozenset(
         {
+            # D-V2-9: the BOOTSTRAP_NEW_PROJECT shape is retired, not merely unnamed.
+            # A select-only route that answers with it is refused at parse time, so
+            # the operator sees the route contradiction rather than a malformed blob.
+            "retired-choice",
             "invalid-body",
             "invalid-metadata",
             "invalid-grammar",

@@ -216,13 +216,14 @@ def test_a_clarification_stops_the_run_before_the_coder(tmp_path: Path, mode: st
 
 
 @pytest.mark.parametrize("mode", ["linear", "adaptive"])
-def test_a_bootstrap_request_without_a_managed_authority_stops_before_the_coder(tmp_path: Path, mode: str) -> None:
-    """Bootstrap needs the authority: rendering and installing are its operations.
+def test_a_retired_bootstrap_request_is_refused_before_the_planner_runs(tmp_path: Path, mode: str) -> None:
+    """The wire value is gone, so the refusal is about the shape and comes first (D-V2-9).
 
-    `_substrate()` is a port only, so this run has no `managed_execution` and there is
-    nothing that could install a project. The refusal must name that, and must happen
-    before the coder — a coder admitted here would be coding against prose the
-    workspace never received.
+    This run has no `managed_execution`, and before D-V2-9 that was what the operator
+    was told (`bootstrap-unavailable`). The shape is now retired outright, so the more
+    fundamental fact wins: no authority in the world could install a project from a
+    choice this build no longer reads. Either way the run stops before the coder --
+    a coder admitted here would be coding against prose the workspace never received.
     """
     stage = _PlannerThen(BOOTSTRAP, forbid_after_planner=True)
     code, state = _run(
@@ -237,7 +238,8 @@ def test_a_bootstrap_request_without_a_managed_authority_stops_before_the_coder(
     assert code == 2
     assert "coder" not in stage.roles
     assert "eval" not in stage.roles
-    assert state is not None and state.blocked_reason == "plan-ref/bootstrap-unavailable"
+    assert state is not None
+    assert state.blocked_reason == "stage 'planner' exited 2"
 
 
 @pytest.mark.parametrize("mode", ["linear", "adaptive"])

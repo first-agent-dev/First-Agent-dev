@@ -41,7 +41,6 @@ from fa.execution.types import (
 from fa.inner_loop.plan_admission import PlanRef
 from fa.inner_loop.workflow_controller import (
     WorkflowContext,
-    _admit_installed_plan,
     _pinned_acquisition_substrate,
     workflow_artifact_paths,
 )
@@ -378,63 +377,3 @@ def _installed_project_files() -> dict[str, bytes]:
         created="2026-11-20",
     )
     return {path: body for path, body in files.items() if path.endswith(".md")}
-
-
-def _admit_installed(*, authorised: Any, root: Path) -> Any:
-    from fa.inner_loop.managed_acquisition import BootstrapNewProjectChoice
-
-    files = _installed_project_files()
-    client = _PostInstallClient(grant=_grant(), files=files)
-    managed = _Managed(client)
-    ctx = WorkflowContext(
-        run_id="run-1",
-        base_task="t",
-        per_role_task={},
-        artifact_paths=workflow_artifact_paths("run-1", base_dir=root / "logs"),
-        config=_config(root),
-        workspace=root,
-        max_turns=1,
-        output_mode="quiet",
-        managed_execution=managed,
-        plan_format="PLAN-V2",
-    )
-    choice = BootstrapNewProjectChoice(
-        project_slug="demo-project",
-        increment_slug="foundation",
-        roadmap_body="",
-        increment_body="",
-    )
-    return _admit_installed_plan(ctx, choice, authorised=authorised)
-
-
-def test_the_run_s_own_grant_reaches_the_admitted_snapshot(tmp_path: Path) -> None:
-    """E585 / P1-1 second half: the read-back is where authorisation used to die.
-
-    The controller bound the dispositions before the install and then discarded the
-    result, while ``_admit_installed_plan`` re-parsed the installed bytes without any
-    declarations. A legitimately granted contract therefore reached the seal as
-    merely *uncovered*: the operator's decision was checked, proved, and thrown away.
-    This test walks the real seam (a pinned view over the installed tree) and asserts
-    the grant survives it.
-    """
-    from fa.inner_loop.plan_v2 import attested_contracts
-    from tests.test_ai_native_plan_v2 import granted_graph
-
-    admitted, refusal = _admit_installed(authorised=granted_graph(), root=tmp_path)
-
-    assert refusal is None
-    assert admitted.admission is not None
-    snapshot = admitted.admission.snapshot
-    assert snapshot.graph is not None
-    assert attested_contracts(snapshot.graph) == ("CT-1.2",)
-
-
-def test_without_a_carried_grant_the_admitted_snapshot_attests_nothing(tmp_path: Path) -> None:
-    """The negative half: a bare read-back must not manufacture a verdict."""
-    from fa.inner_loop.plan_v2 import attested_contracts
-
-    admitted, refusal = _admit_installed(authorised=None, root=tmp_path)
-
-    assert refusal is None
-    assert admitted.admission is not None
-    assert attested_contracts(admitted.admission.snapshot.graph) == ()

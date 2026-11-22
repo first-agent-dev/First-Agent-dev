@@ -49,10 +49,22 @@ def test_only_the_two_repair_kinds_own_a_candidate() -> None:
         PlannerDispatchKind.ADMISSION_REPAIR: True,
         PlannerDispatchKind.EVAL_REPLAN: True,
         PlannerDispatchKind.ACQUISITION: False,
+        # D-V2-9: an authoring stage writes its project's documents directly, scoped to
+        # `authoring_root`. There is no candidate buffer to own -- the published revision
+        # *is* the candidate, and admitting it is a read of what was written.
+        PlannerDispatchKind.CREATE_NEW_PROJECT: False,
     }
     assert expected.keys() == set(PlannerDispatchKind)
     for kind, owns in expected.items():
-        dispatch = PlannerDispatch(kind, _RUN, candidate_target=_CANDIDATE if owns else None)
+        # The authoring kind names its write root instead of a candidate buffer: it
+        # writes the project itself, so there is nothing to stage in a second file.
+        authoring_root = "worklogs/demo" if kind is PlannerDispatchKind.CREATE_NEW_PROJECT else None
+        dispatch = PlannerDispatch(
+            kind,
+            _RUN,
+            candidate_target=_CANDIDATE if owns else None,
+            authoring_root=authoring_root,
+        )
         assert dispatch.owns_candidate is owns, kind
 
 

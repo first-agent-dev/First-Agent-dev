@@ -515,10 +515,14 @@ def _prompt_json_examples(prompt: str) -> list[str]:
     return blocks
 
 
-def test_acquisition_prompt_is_static_cacheable_and_examples_parse() -> None:
-    """C0/C1 (D9 / Q149=B + Q151=A) — static prefix, closed schema rules, valid JSON examples."""
+def test_the_acquisition_prompt_offers_only_the_shapes_the_parser_accepts() -> None:
+    """C0/C1 (D9 / Q149=B + Q151=A) -- static prefix, closed schema, parseable examples.
+
+    D-V2-9 retired the third shape. The prompt that still offered it was P0-1 in its
+    purest form: an instruction whose only possible outcome was a refusal
+    (`retired-choice`), so a model that followed it perfectly still failed the run.
+    """
     from fa.inner_loop.managed_acquisition import (
-        BootstrapProposal,
         NeedsClarificationChoice,
         SelectExistingChoice,
         parse_acquisition_choice,
@@ -527,86 +531,71 @@ def test_acquisition_prompt_is_static_cacheable_and_examples_parse() -> None:
 
     assert "Acquisition context (pinned read-only view):" not in ACQUISITION_SYSTEM_PROMPT
     assert "demo-project" not in ACQUISITION_SYSTEM_PROMPT
-    for required in (
+    required_shapes = (
         "SELECT_EXISTING",
-        "BOOTSTRAP_NEW_PROJECT",
         "NEEDS_CLARIFICATION",
         "AMBIGUOUS_PROJECT",
         "UNKNOWN_INCREMENT",
         "MISSING_CONTEXT",
-        "COLLISION",
-        # D-V2-7: the planner authors semantics, so the prompt must name the payload keys,
-        # the closed vocabularies and the two refusals a careless payload meets.
-        "semantics",
-        "intent",
-        "out_of_scope",
-        "invariants",
-        "HARD",
-        "NON_EXECUTABLE",
-        "HOST_READINESS",
-        "preservation-without-executable-evidence",
-        "hard-contract-without-executable-evidence",
-        # E585: the planner is told both halves of "one grant, one claim", because a
-        # rule the model is never told is a rule the model learns by being refused.
-        "disposition-covers-several-contracts",
-        "disposition-reason-reused",
-        # E586: the prompt must actively forbid naming identity, not merely omit it --
-        # a model that is not told otherwise will helpfully supply a slug.
-        "Do not name the project or the increment",
-        "acceptance/tests/",
-        "Incomplete",
-    ):
+    )
+    for required in required_shapes:
         assert required in ACQUISITION_SYSTEM_PROMPT, f"missing protocol guidance: {required!r}"
+
+    # What must be gone: every trace of the retired bootstrap route.
+    for retired in ("BOOTSTRAP_NEW_PROJECT", "semantics", "COLLISION", "project creation"):
+        assert retired not in ACQUISITION_SYSTEM_PROMPT, f"prompt still offers the retired route: {retired!r}"
 
     parsed = [parse_acquisition_choice(block) for block in _prompt_json_examples(ACQUISITION_SYSTEM_PROMPT)]
     assert any(isinstance(item, SelectExistingChoice) for item in parsed)
     assert any(isinstance(item, NeedsClarificationChoice) for item in parsed)
-    bootstraps = [item for item in parsed if isinstance(item, BootstrapProposal)]
-    assert bootstraps, "the prompt must carry one worked bootstrap payload"
-    for item in bootstraps:
-        # The payload survived the same parser production uses, so the example is real.
-        assert item.semantics is not None
-        # CT-2.1 (E586): the example must not teach the planner to name its own project.
-        assert "project_slug" not in item.__dataclass_fields__
-        assert "increment_slug" not in item.__dataclass_fields__
 
 
-def test_the_acquisition_prompt_example_is_a_payload_the_renderer_and_parser_accept() -> None:
-    """CT-2.6: the prompt's own example is fed through the real parse → render → parse chain.
+def test_the_authoring_prompt_describes_markdown_and_asks_for_no_choice() -> None:
+    """The create route's prompt must match what the create route reads (D-V2-9).
 
-    P0-1 was exactly this gap: the prompt described a grammar admission no longer accepted, so
-    the first real create-new could not produce an admissible plan. A prompt that is only
-    checked for keywords would pass again while being wrong; this walks the production path.
+    This is the other half of P0-1: the acquisition prompt was rewritten to stop
+    offering bootstrap, so the route that *replaced* bootstrap needs a prompt of its
+    own. Handing it the acquisition text would tell the model to return the very
+    shape the parser refuses.
     """
-    import json
+    from fa.inner_loop.planner_dispatch import PlannerDispatch, PlannerDispatchKind
+    from fa.inner_loop.prompt import AUTHORING_SYSTEM_PROMPT, resolve_base_system_prompt
 
-    from fa.inner_loop.managed_acquisition import BootstrapProposal, parse_acquisition_choice
-    from fa.inner_loop.plan_semantics import render_project
-    from fa.inner_loop.plan_v2 import parse_plan
-    from fa.inner_loop.prompt import ACQUISITION_SYSTEM_PROMPT
+    dispatch = PlannerDispatch(PlannerDispatchKind.CREATE_NEW_PROJECT, "run-1", authoring_root="worklogs/x")
+    assert resolve_base_system_prompt("planner", planner_dispatch=dispatch) == AUTHORING_SYSTEM_PROMPT
 
-    examples = [
-        item
-        for item in (parse_acquisition_choice(block) for block in _prompt_json_examples(ACQUISITION_SYSTEM_PROMPT))
-        if isinstance(item, BootstrapProposal)
-    ]
-    assert examples, "the prompt must carry one worked bootstrap payload"
-    for example in examples:
-        assert example.semantics is not None
-        files = render_project(example.semantics, project_slug="prompt-project")
-        graph = parse_plan(roadmap=files["roadmap.md"], increment=files["increments/increment-01-initial-plan.md"])
-        # The rendered selectors follow the slug the controller supplies, not the example's.
-        selectors = [entry.selector for planned in graph.slices for entry in planned.acceptance]
-        assert selectors and all(
-            selector.startswith("worklogs/prompt-project/acceptance/tests/") for selector in selectors
-        )
-        assert graph.invariants and graph.slices[0].steps
-    # And the prompt no longer teaches the retired grammar's document shapes.
-    for retired in ("## Delivery", "## Verification", "TESTS: tests/", "kill: neutralise"):
-        assert retired not in ACQUISITION_SYSTEM_PROMPT, retired
-    del json
+    # It must describe the documents the stage task names, in Markdown, not a payload.
+    for required in ("roadmap.md", "increment-01-initial-plan.md", "## INVARIANTS", "## SLICE", "SELECTOR"):
+        assert required in AUTHORING_SYSTEM_PROMPT, f"authoring prompt omits {required!r}"
+    for retired in ("BOOTSTRAP_NEW_PROJECT", '"semantics"', "raw JSON object"):
+        assert retired not in AUTHORING_SYSTEM_PROMPT, f"authoring prompt still asks for {retired!r}"
 
 
+def test_the_authoring_stage_task_and_prompt_name_the_same_files() -> None:
+    """CT-2.6 / P0-1: the two instructions a create-run reads must not disagree.
+
+    The model gets a system prompt and a task block. P0-1 was a disagreement between
+    exactly these two: the task said one thing, the parser another. Under D-V2-9 both
+    now describe the same authored tree, so the assertion is that every document the
+    task tells the model to fill is also one the prompt describes -- and that neither
+    mentions the retired wire.
+
+    Keyword agreement is weak on its own, which is why the *real* proof lives in
+    `test_the_scaffold_is_a_pair_the_metadata_check_and_the_grammar_accept`: the files
+    named here are the files that test renders and admits. This one catches the drift
+    between the two pieces of text before it reaches a model.
+    """
+    from fa.inner_loop.prompt import AUTHORING_SYSTEM_PROMPT
+    from fa.inner_loop.workflow_controller import _authoring_stage_task
+
+    task = _authoring_stage_task("Create a widget parser.", slug="prompt-project")
+
+    for document in ("roadmap.md", "increment-01-initial-plan.md", "open-questions.md", "ledger.md"):
+        assert document in task, f"task omits {document!r}"
+        assert document in AUTHORING_SYSTEM_PROMPT, f"prompt omits {document!r}"
+    for text in (task, AUTHORING_SYSTEM_PROMPT):
+        assert "BOOTSTRAP_NEW_PROJECT" not in text
+        assert "project_slug" not in text
 def test_resolve_base_system_prompt_switches_only_for_planner_acquisition() -> None:
     """C0/C1 (D9 / Q149=B) — ACQUISITION selects ACQUISITION_SYSTEM_PROMPT without altering other dispatches/roles."""
     from fa.inner_loop.planner_dispatch import PlannerDispatchKind

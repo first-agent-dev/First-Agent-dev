@@ -24,8 +24,6 @@ from fa.inner_loop.admission_schema import (
 from fa.inner_loop.managed_acquisition import (
     AcquisitionChoiceError,
     AcquisitionMetadataError,
-    BootstrapNewProjectChoice,
-    BootstrapProposal,
     CanonicalIncrementArtifact,
     IncrementMetadata,
     NeedsClarificationChoice,
@@ -264,21 +262,20 @@ def test_managed_bundle_renderer_rejects_the_superseded_hyphenated_heading() -> 
     assert rejected.value.code == "INPUT_POLICY"
 
 
-def test_acquisition_choice_parser_accepts_only_the_three_closed_variants() -> None:
+def test_acquisition_choice_parser_accepts_only_the_live_closed_variants() -> None:
     selected = parse_acquisition_choice('{"kind":"SELECT_EXISTING","project_slug":"demo-project","increment_id":"I03"}')
     assert selected == SelectExistingChoice("demo-project", "I03")
 
-    bootstrap = parse_acquisition_choice(
-        json.dumps({"kind": "BOOTSTRAP_NEW_PROJECT", "semantics": _MINIMAL_SEMANTICS})
-    )
-    # CT-2.1 (E586): the wire carries content only. Identity is caller + harness, so a
-    # proposal has no name to read and cannot be mistaken for an installed choice.
-    assert isinstance(bootstrap, BootstrapProposal)
-    assert not isinstance(bootstrap, BootstrapNewProjectChoice)
-    assert bootstrap.semantics.invariants[0].id == "INV-1"
-
     clarification = parse_acquisition_choice('{"kind":"NEEDS_CLARIFICATION","reason":"UNKNOWN_INCREMENT"}')
     assert clarification == NeedsClarificationChoice("UNKNOWN_INCREMENT")
+
+    # D-V2-9: BOOTSTRAP_NEW_PROJECT is retired, not merely unnamed. A create-authorized
+    # run authors documents instead of describing them, so the only correct answer to
+    # this shape is the closed refusal -- and it is the *bootstrap* validator's, so an
+    # operator reads "the model used a retired route" rather than "the payload is junk".
+    with pytest.raises(AcquisitionChoiceError) as retired:
+        parse_acquisition_choice(json.dumps({"kind": "BOOTSTRAP_NEW_PROJECT", "semantics": _MINIMAL_SEMANTICS}))
+    assert (retired.value.validator, retired.value.rule) == ("bootstrap", "retired-choice")
 
 
 def test_acquisition_choice_parser_distinguishes_missing_from_malformed() -> None:
@@ -327,50 +324,6 @@ def test_acquisition_choice_parser_rejects_noncanonical_stable_ids(project_slug:
     assert (refused.value.validator, refused.value.rule) == ("selection", "choice-malformed")
 
 
-def test_acquisition_choice_parser_rejects_absent_or_oversized_semantics() -> None:
-    """The V2 wire carries semantics only, and the payload is bounded like any body.
-
-    A payload that is not a mapping at all is a *shape* refusal; one that is too large is
-    refused before it is parsed, so a hostile model cannot make the validator walk a
-    megabyte of nesting to find that out.
-    """
-    cases: list[object] = [[], "x", {"intent": "\u0000"}]
-    for semantics in cases:
-        raw = json.dumps(
-            {
-                "kind": "BOOTSTRAP_NEW_PROJECT",
-                "semantics": semantics,
-            }
-        )
-        with pytest.raises(AcquisitionChoiceError) as refused:
-            parse_acquisition_choice(raw)
-        assert (refused.value.validator, refused.value.rule) == ("bootstrap", "invalid-body"), semantics
-
-    oversized = json.dumps(
-        {
-            "kind": "BOOTSTRAP_NEW_PROJECT",
-            "semantics": {"intent": "x" * (1024 * 1024 + 1)},
-        }
-    )
-    with pytest.raises(AcquisitionChoiceError) as too_large:
-        parse_acquisition_choice(oversized)
-    assert (too_large.value.validator, too_large.value.rule) == ("bootstrap", "too-large")
-
-
-def test_a_payload_carrying_both_shapes_is_refused() -> None:
-    """The closed key set is what stops the two grammars coexisting (P0-1's root cause)."""
-    both = json.dumps(
-        {
-            "kind": "BOOTSTRAP_NEW_PROJECT",
-            "semantics": _MINIMAL_SEMANTICS,
-            "roadmap_body": "## Intent\n\nGoal.\n",
-        }
-    )
-    with pytest.raises(AcquisitionChoiceError) as refused:
-        parse_acquisition_choice(both)
-    assert (refused.value.validator, refused.value.rule) == ("selection", "choice-malformed")
-
-
 def test_the_markdown_bootstrap_shape_is_now_unknown_on_the_wire() -> None:
     """P0-1's converse: the old two-body payload must not stay silently accepted.
 
@@ -386,7 +339,10 @@ def test_the_markdown_bootstrap_shape_is_now_unknown_on_the_wire() -> None:
     )
     with pytest.raises(AcquisitionChoiceError) as refused:
         parse_acquisition_choice(legacy)
-    assert (refused.value.validator, refused.value.rule) == ("selection", "choice-malformed")
+    # D-V2-9: the whole shape is retired, so the refusal is about the *route*, not
+    # about which fields the payload carries. Naming it `choice-malformed` would tell
+    # the model to fix its keys; the correct instruction is that this route is gone.
+    assert (refused.value.validator, refused.value.rule) == ("bootstrap", "retired-choice")
 
 
 _ROADMAP_SLUG = "planning-topology-and-executable-contracts-loop"
@@ -883,6 +839,9 @@ def test_v1_and_v2_diagnostic_vocabularies_are_separate() -> None:
             "install-failed",
             "durability-unknown",
             "hash-mismatch",
+            # D-V2-9: the BOOTSTRAP_NEW_PROJECT shape is retired; a select-only route
+            # that answers with it is refused at parse time under this rule.
+            "retired-choice",
         }
     )
 
@@ -1319,33 +1278,3 @@ def test_workflow_writer_rejects_invalid_v2_append_without_replacing_history(tmp
 
 # -- E586 / CT-2.1: identity is not on the wire ------------------------------
 
-
-@pytest.mark.parametrize("field", ["project_slug", "increment_slug"])
-def test_a_bootstrap_payload_may_not_name_its_own_project_or_increment(field: str) -> None:
-    """The planner owns content; the caller owns the slug and the harness the increment.
-
-    Overriding a planner-supplied slug -- what the controller used to do -- leaves the
-    model believing it chose a name that was replaced, and leaves the operator without an
-    audit trail. Refusing the field makes the attempt diagnosable and the contract total.
-    """
-    payload = {"kind": "BOOTSTRAP_NEW_PROJECT", "semantics": _MINIMAL_SEMANTICS, field: "anything"}
-
-    with pytest.raises(AcquisitionChoiceError) as refused:
-        parse_acquisition_choice(json.dumps(payload))
-
-    assert (refused.value.validator, refused.value.rule) == ("selection", "choice-malformed")
-
-
-def test_both_identity_fields_together_are_refused_the_same_way() -> None:
-    """One rule, not one per field: the closed key set is what enforces it."""
-    payload = {
-        "kind": "BOOTSTRAP_NEW_PROJECT",
-        "project_slug": "demo-project",
-        "increment_slug": "initial-plan",
-        "semantics": _MINIMAL_SEMANTICS,
-    }
-
-    with pytest.raises(AcquisitionChoiceError) as refused:
-        parse_acquisition_choice(json.dumps(payload))
-
-    assert refused.value.rule == "choice-malformed"

@@ -836,59 +836,24 @@ def _snapshot(increment: str) -> PlanSnapshot:
     )
 
 
-def test_the_authorised_graph_reaches_the_seal_when_the_installed_plan_is_the_same() -> None:
-    """Without this the seal grades requests: the grant would be checked and dropped.
+def test_the_grant_is_bound_to_the_graph_that_is_admitted_not_a_read_back() -> None:
+    """R2/P1-1: the seal grades *this* binding, never a bare re-parse.
 
-    The authority wraps the plan in its own front matter, so the read-back is a
-    different document with the same plan. The run's granted graph must therefore be
-    reconciled by *graph*, not by byte digest, or a legitimately granted contract is
-    sealed as uncovered and the operator's decision is lost.
+    Before D-V2-9 a granted graph had to be carried across an install: the authority
+    wrapped the same plan in its own front matter, so the read-back was a different
+    document and the grant was reconciled by graph (``_authorised_graph``). The
+    authoring route has no such step -- it parses the published bytes once and binds
+    the caller's declaration to that same graph -- so the reconciliation function is
+    gone and the property is now structural: there is no second parse a grant could be
+    re-pointed onto. What this asserts is the observable half: a bare parse attests
+    nothing, and binding is what makes a disposition an attestation.
     """
-    increment = plan_document()
-    authorised = granted_graph()
-    installed = _snapshot(increment)
+    bare = _snapshot(plan_document())
+    assert attested_contracts(bare.graph) == ()  # a request is not an authorisation
 
-    admitted = workflow_controller._authorised_graph(installed, authorised)
-
-    assert admitted is not None
-    assert attested_contracts(admitted) == ("CT-1.2",)
-    assert {item.id: item for item in admitted.invariants}["INV-2"].owner == "W4"
-
-
-def test_a_bare_read_back_is_not_attested_without_a_carried_grant() -> None:
-    """No grant was made, so nothing may be attested however often it is parsed."""
-    installed = _snapshot(plan_document())
-
-    assert workflow_controller._authorised_graph(installed, None) is None
-    assert attested_contracts(installed.graph) == ()  # a request is not an authorisation
-
-
-def test_a_grant_is_never_repointed_at_a_plan_it_did_not_authorise() -> None:
-    """The install could in principle return other bytes; the grant must not follow.
-
-    ``_authorised_graph`` is the one place a pre-install authorisation is carried
-    across an irreversible step, so it refuses on any graph difference rather than
-    "mostly matching": the read-back must describe exactly the plan that was bound.
-    """
-    authorised = granted_graph()
-    drifted = _snapshot(plan_document(slice_body=_SLICE.replace("publish", "publish_v2")))
-
-    assert workflow_controller._authorised_graph(drifted, authorised) is None
-
-
-def test_a_refused_read_back_carries_no_grant() -> None:
-    """A malformed installed plan has no graph, so there is nothing to authorise."""
-    authorised = granted_graph()
-    broken = snapshot_from_bytes(
-        "worklogs/demo/increments/increment-01-demo.md",
-        plan_document().replace("## SLICE1:", "## PHASE1:").encode("utf-8"),
-        source_kind="BOOTSTRAP",
-        format=PLAN_V2,
-        roadmap=ROADMAP_DOCUMENT,
-    )
-
-    assert broken.graph is None
-    assert workflow_controller._authorised_graph(broken, authorised) is None
+    granted = granted_graph()
+    assert attested_contracts(granted) == ("CT-1.2",)
+    assert {item.id: item for item in granted.invariants}["INV-2"].owner == "W4"
 
 
 # --- P1-2: one grant, one claim (E585) -------------------------------------

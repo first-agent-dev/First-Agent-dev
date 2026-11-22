@@ -33,7 +33,6 @@ from fa.execution.client import (
     ReadOnlyManagedBashExecutor,
 )
 from fa.execution.primitives import ExecutionContractError
-from fa.execution.publication import render_bundle
 from fa.execution.tool_port import ClientWorkspacePort
 from fa.execution.types import Access, Operation, ViewPurpose
 from fa.inner_loop.admission_schema import ADMISSION_RULES, ADMISSION_RULES_V2
@@ -43,8 +42,6 @@ from fa.inner_loop.managed_acquisition import (
     INITIAL_INCREMENT_SLUG,
     AcquisitionChoiceError,
     AcquisitionOutcome,
-    BootstrapNewProjectChoice,
-    BootstrapProposal,
     parse_acquisition_choice,
     resolve_acquisition_choice,
 )
@@ -74,8 +71,6 @@ from fa.inner_loop.plan_promotion import (
     retain_plan_draft,
     seed_plan_candidate,
 )
-from fa.inner_loop.plan_semantics import SemanticsError, render_project
-from fa.inner_loop.plan_v2 import PlanGraph, PlanV2Error, parse_plan
 from fa.inner_loop.planner_dispatch import PlannerDispatch, PlannerDispatchError, PlannerDispatchKind
 from fa.inner_loop.project_metadata import MetadataError, check_project_metadata
 from fa.inner_loop.prompt import ADVERSARIAL_EVAL_STANCE_PREAMBLE
@@ -396,6 +391,10 @@ class StageResult:
     # the controller can bind admission between planner and coder instead of
     # running a second planner outside the workflow.
     acquisition: AcquisitionOutcome | None = None
+    #: D-V2-9: this stage authored a NEW project and published one revision. A
+    #: positive fact rather than "acquisition is None and something happened",
+    #: because the binding step after it is destructive (it admits a plan).
+    authored_project: bool = False
 
 
 # ── Helper functions ───────────────────────────────────────────────────────
@@ -1823,9 +1822,11 @@ def _run_stage(
             logger.warning("workflow eval-report: %s (run=%s)", _warning, ctx.run_id)
             print(f"fa workflow: {_warning}", file=sys.stderr)
         _write_stage_eval_report(ctx, report)
-    acquisition_outcome, acquisition_refused = _stage_acquisition_choice(ctx, role, code, sink, dispatch=dispatch)
-    if acquisition_refused:
-        return StageResult(role=role, exit_code=2)
+    terminal, acquisition_outcome, _refused = _post_stage_binding(
+        ctx, role, code, sink, report, verification, dispatch=dispatch
+    )
+    if terminal is not None:
+        return terminal
     return StageResult(
         role=role,
         exit_code=code,
@@ -2278,6 +2279,10 @@ def _run_role_loop(
         if result.exit_code != 0:
             _write_stage_failure_state(ctx, role, result.exit_code, progress=progress)
             return _StageLoopResult(ctx, result.exit_code, n_stages, last_role, eval_report, verification)
+        if result.authored_project:
+            ctx, blocked = _bind_authored_project(ctx)
+            if blocked is not None:
+                return _StageLoopResult(ctx, blocked, n_stages, last_role, eval_report, verification)
         if result.acquisition is not None:
             ctx, blocked = _bind_acquisition_admission(ctx, result.acquisition)
             if blocked is not None:
@@ -2831,76 +2836,110 @@ def _refusal_exit_code(
     )[0]
 
 
-def _bootstrap_bodies(choice: BootstrapNewProjectChoice, *, plan_format: str) -> tuple[str, str]:
-    """The two Markdown bodies the authority will wrap, from whichever source owns them.
-
-    A PLAN-V2 bootstrap carries typed semantics and no prose (D-V2-7), so this is the one
-    place the renderer is consulted; the V1 route keeps its free prose. Returning both in
-    one function is deliberate: the digest that records evidence
-    (``_rendered_increment_sha256``) and the bytes that get installed must come from the
-    same call, or a refusal record could name a document the install never wrote.
-    """
-    if plan_format != PLAN_V2:
-        return choice.roadmap_body, choice.increment_body
-    if choice.semantics is None:
-        raise SemanticsError("payload-missing")
-    rendered = render_project(choice.semantics, project_slug=choice.project_slug)
-    return rendered["roadmap.md"], rendered["increments/increment-01-initial-plan.md"]
-
-
-def _rendered_increment_sha256(choice: BootstrapNewProjectChoice, *, plan_format: str) -> str | None:
-    """Compute the rendered increment digest to preserve post-prepare bootstrap evidence."""
-    try:
-        roadmap_text, increment_text = _bootstrap_bodies(choice, plan_format=plan_format)
-        files = render_bundle(
-            choice.project_slug,
-            choice.increment_slug,
-            roadmap_text,
-            increment_text,
-            created=datetime.now(UTC).date().isoformat(),
-        )
-    except Exception:  # noqa: BLE001 - schema stays closed even if local render cannot repeat server rules
-        return None
-    path = f"worklogs/{choice.project_slug}/increments/increment-01-{choice.increment_slug}.md"
-    payload = files.get(path)
-    return None if payload is None else hashlib.sha256(payload).hexdigest()
-
-
-_BOOTSTRAP_REJECTED_DIAGNOSTICS: dict[str, tuple[str, str, str, str]] = {
-    "COLLISION": ("bootstrap", "collision", "FAIL", "DIAGNOSTICS"),
-    "INPUT_POLICY": ("bootstrap", "invalid-grammar", "FAIL", "DIAGNOSTICS"),
-    "STALE_REVISION": ("workspace", "stale-revision", "ERROR", "INDETERMINATE"),
-    "STALE_GENERATION": ("workspace", "stale-generation", "ERROR", "INDETERMINATE"),
-    "WORKSPACE_BUSY": ("workspace", "busy", "ERROR", "INDETERMINATE"),
-    "QUARANTINED": ("workspace", "quarantined", "ERROR", "INDETERMINATE"),
-}
-
-
 def _valid_v2_operation_id(raw: object) -> str | None:
+    """A well-formed v2 operation id, or ``None``.
+
+    Shared by the promotion receipt path and the refusal classifiers: an id the
+    authority reports must be syntactically v2 before it is recorded, because a
+    malformed one in a durable record is a lie about what can be recovered.
+    """
     if isinstance(raw, str) and _V2_OP_ID_RE.fullmatch(raw) is not None:
         return raw
     return None
 
 
-def _classify_bootstrap_exception(error: Exception, *, phase: str) -> _BootstrapFailure:
-    if isinstance(error, ExecutionUncertainError):
-        op_id = _valid_v2_operation_id(getattr(error, "operation_id", None)) if phase == "install" else None
-        if getattr(error, "code", None) == "TERMINALITY_UNKNOWN":
-            return _BootstrapFailure("workspace", "terminality-unknown", "ERROR", "INDETERMINATE", op_id)
-        return _BootstrapFailure("bootstrap", "durability-unknown", "ERROR", "INDETERMINATE", op_id)
-    if isinstance(error, ExecutionUnavailableError):
-        return _BootstrapFailure("workspace", "backend-unavailable", "ERROR", "INDETERMINATE")
-    code = str(getattr(error, "code", ""))
-    mapped = _BOOTSTRAP_REJECTED_DIAGNOSTICS.get(code)
-    if mapped is not None:
-        return _BootstrapFailure(*mapped)
-    fallback = "prepare-failed" if phase == "prepare" else "install-failed"
-    return _BootstrapFailure("bootstrap", fallback, "FAIL", "DIAGNOSTICS")
+def _post_stage_binding(
+    ctx: WorkflowContext,
+    role: str,
+    code: int,
+    sink: list[SessionOutcome],
+    report: EvalReport | None,
+    verification: PlanVerification | None,
+    *,
+    dispatch: PlannerDispatch | None,
+) -> tuple[StageResult | None, AcquisitionOutcome | None, bool]:
+    """What the stage produced, in one place: an authored project, a choice, or a refusal.
+
+    Two routes answer differently and must not both run. An authoring stage
+    (D-V2-9) emits no JSON -- the revision it published is the answer -- so it
+    returns its own ``StageResult`` and the choice reader is never consulted.
+    Every other acquisition stage keeps the S5P1 wire.
+    """
+    authored = _authored_stage_result(role, code, report, verification, dispatch=dispatch)
+    if authored is not None:
+        return authored, None, False
+    outcome, refused = _stage_acquisition_choice(ctx, role, code, sink, dispatch=dispatch)
+    if refused:
+        return StageResult(role=role, exit_code=2), None, True
+    return None, outcome, False
 
 
-def _resolve_granted_evidence(
-    substrate: AcquisitionSubstrate | None,
-    declarations: tuple[DispositionDeclaration, ...],
+def _authored_stage_result(
+    role: str,
+    code: int,
+    report: EvalReport | None,
+    verification: PlanVerification | None,
+    *,
+    dispatch: PlannerDispatch | None,
+) -> StageResult | None:
+    """The stage result for an authoring stage, or ``None`` for every other stage.
+
+    D-V2-9: the authoring stage emits no choice -- the view it published *is* the
+    answer, so there is nothing to parse and nothing that can be malformed. The
+    binding step admits the revision and reports a closed rule if it refuses.
+    """
+    if dispatch is None or dispatch.kind is not PlannerDispatchKind.CREATE_NEW_PROJECT:
+        return None
+    return StageResult(
+        role=role,
+        exit_code=code,
+        eval_report=report,
+        verification=verification,
+        authored_project=code == 0,
+    )
+
+
+def _authored_refusal_detail(rule: str) -> _BootstrapFailure:
+    """The structured diagnostic for an authoring refusal, in the closed vocabulary.
+
+    ``invalid-metadata`` is reported as ``bootstrap/invalid-body``: admission's rule set
+    is closed and already has no separate slot for front-matter -- the repair round
+    reads ``invalid-body`` -- while the *specific* metadata rule is logged, so nothing
+    an operator needs is lost by the mapping.
+    """
+    if rule == "bootstrap-invalid-metadata":
+        return _BootstrapFailure("bootstrap", "invalid-body", "FAIL", "DIAGNOSTICS", None)
+    if rule == "bootstrap-unavailable":
+        return _BootstrapFailure("workspace", "backend-unavailable", "ERROR", "INDETERMINATE", None)
+    if rule.startswith("bootstrap-"):
+        return _BootstrapFailure("bootstrap", "invalid-body", "ERROR", "INDETERMINATE", None)
+    if rule == "project-route-mismatch":
+        return _BootstrapFailure("selection", "project-route-mismatch", "ERROR", "INDETERMINATE", None)
+    return _BootstrapFailure("selection", "needs-clarification", "ERROR", "INDETERMINATE", None)
+
+
+def _bind_authored_project(ctx: WorkflowContext) -> tuple[WorkflowContext, int | None]:
+    """Admit the revision an authoring stage published, or stop the run (D-V2-9).
+
+    The shape mirrors ``_bind_acquisition_admission`` -- return a new context on
+    success, an exit code on refusal -- so the loop has one way to spell "this
+    stage produced the plan". What differs is the source: there is no choice to
+    interpret, because the planner wrote the documents instead of describing them.
+    """
+    bound, refusal = _admit_published_project(ctx)
+    if refusal is None:
+        return bound, None
+    # The rule must reach the durable record, not just stderr: an operator reading a
+    # blocked run has no stage output to fall back on, and a BLOCKED attempt with an
+    # empty ``diagnostics`` is indistinguishable from one that failed to normalise.
+    # ``bootstrap-*`` rules are the bootstrap validator's own vocabulary, so they map
+    # to their own validator name; everything else is an admission-level refusal.
+    detail = _authored_refusal_detail(refusal.rule)
+    return bound, _refusal_exit_code(bound, refusal, failure_detail=detail)
+
+
+def _granted_dispositions(
+    port: WorkspacePort, declarations: tuple[DispositionDeclaration, ...]
 ) -> tuple[DispositionDeclaration, ...]:
     """Verify every ``doc:`` grant against the pinned view's bytes (R6).
 
@@ -2909,21 +2948,20 @@ def _resolve_granted_evidence(
     bytes that differ from the declared digest all refuse. ``issue:``/``review:``
     are typed references this system cannot resolve, so they pass through as
     well-formed and are *reported* as attested, never as verified.
+
+    This lived inside the bootstrap installer until D-V2-9 deleted that path. It is
+    not an install-time courtesy: it is the only thing that makes a ``doc:`` grant a
+    claim about real bytes, so the authoring route verifies it just the same.
     """
     if not any(declaration.evidence.kind == "doc" for declaration in declarations):
         return declarations
-    if substrate is None:
-        raise PlanRefError("disposition-evidence-unresolvable")
     for declaration in declarations:
         evidence = declaration.evidence
         if evidence.kind != "doc":
             continue
         try:
-            path = port_relative(evidence.target)
-            read = substrate.port.read_file(path)
+            read = port.read_file(port_relative(evidence.target))
         except WorkspacePortError as error:
-            # Two different facts: a path the substrate refuses to name is a bad
-            # reference, while a path the view does not hold is a missing artefact.
             rule = "disposition-evidence-invalid" if error.code == "invalid_request" else "disposition-evidence-missing"
             raise PlanRefError(rule) from None
         if not read.eof:
@@ -2933,248 +2971,82 @@ def _resolve_granted_evidence(
     return declarations
 
 
-def _install_bootstrap_project_with_detail(
-    ctx: WorkflowContext, choice: BootstrapNewProjectChoice, *, creation_authorized: bool
-) -> tuple[WorkflowContext, PlanRefError | None, _BootstrapFailure | None]:
-    """Render, install and read back a new project; preserve structured v2 detail.
+def _admit_published_project(ctx: WorkflowContext) -> tuple[WorkflowContext, PlanRefError | None]:
+    """Admit the project the authoring stage just published (D-V2-9, CT-2.4).
 
-    ``creation_authorized`` is the caller's route decision (CT-2.1), not the
-    planner's. It is checked after the capability check -- an unmanaged run cannot
-    install anything whatever it was asked for -- and before the grammar check,
-    because a body is only worth validating if a project may exist at all. Telling
-    an operator "fix the body" when the route never allowed creation would send
-    them one step in the wrong direction.
+    The stage already committed one revision containing the scaffold plus the
+    planner's documents (``STOP_VIEW → SEAL → PUBLISH``), so there is nothing to
+    install and no bundle to render. Admission reads that revision through a fresh
+    pin -- the same mechanism the install path used -- and binds the plan, which is
+    what makes the coder dispatchable and what D-V2-8 keeps honest: the revision
+    exists in history whether or not it admitted.
+
+    ``plan_ref`` is ``None`` on the pin for the same reason it is ``None`` on the
+    stage (D-V2-9.5): the plan being admitted is the one inside the revision, and a
+    ref to it would be a claim made before reading it.
+
+    Every refusal is closed and pre-coder, so a rejected authoring stage leaves a
+    published revision with no consumer rather than a coder bound to bad bytes.
     """
     managed = ctx.managed_execution
-    if managed is None:
-        return (
-            ctx,
-            PlanRefError("bootstrap-unavailable"),
-            _BootstrapFailure("bootstrap", "unavailable", "ERROR", "INDETERMINATE"),
-        )
-    if not creation_authorized:
-        logger.warning("bootstrap refused: the caller did not authorize creation (run=%s)", ctx.run_id)
-        return (
-            ctx,
-            PlanRefError("project-route-mismatch"),
-            _BootstrapFailure("selection", "project-route-mismatch", "ERROR", "INDETERMINATE"),
-        )
-    # Both routes need the identical bodies for the digest and for the install, so
-    # they are derived once here -- before the V2-only gate, which is the only part
-    # that is route-specific.
-    try:
-        roadmap_text, increment_text = _bootstrap_bodies(choice, plan_format=ctx.plan_format)
-    except SemanticsError as error:
-        logger.warning("bootstrap semantics refused [%s] (run=%s)", error.rule, ctx.run_id)
-        return (
-            ctx,
-            PlanRefError("bootstrap-invalid-body"),
-            _BootstrapFailure("bootstrap", "invalid-body", "FAIL", "DIAGNOSTICS"),
-        )
-    # The graph the caller actually authorised, carried to the read-back (E585).
-    # ``_admit_installed_plan`` re-parses the INSTALLED bytes, and a bare parse
-    # carries only the plan's *requests* -- so without this the grant proved here
-    # would be discarded and the seal would grade requests as attestations.
-    authorised: PlanGraph | None = None
-    if ctx.plan_format == PLAN_V2:
-        # The pair is validated BEFORE the irreversible install: a V2 body that
-        # does not parse must never become a project, because the rollback for an
-        # installed-then-refused bootstrap is recovery, not undo. These are the exact
-        # bytes `prepare_bundle` will wrap, so what admission judges and what the
-        # authority installs cannot diverge.
-        try:
-            graph = parse_plan(roadmap=roadmap_text, increment=increment_text)
-            # R1 (E577): the plan only *requests* its dispositions; this run holds
-            # the only thing that can grant them. Binding before the install keeps
-            # the property the parse already has -- a body that cannot be
-            # authorised never becomes a project. R6: a ``doc:`` grant is verified
-            # against the pinned view's bytes first, so an unverifiable reference
-            # cannot ride in as an authorisation.
-            granted = _resolve_granted_evidence(ctx.acquisition, ctx.dispositions)
-            authorised = bind_dispositions(graph, granted, today=datetime.now(UTC).date())
-        except (PlanV2Error, PlanRefError) as error:
-            # One meaning, one rule: the admission record's closed vocabulary
-            # already names this event `bootstrap/invalid-body`, and the grammar's
-            # own rule goes to the log so the operator can still tell *why*.
-            logger.warning("bootstrap content refused [%s] (run=%s)", error.rule, ctx.run_id)
-            return (
-                ctx,
-                PlanRefError("bootstrap-invalid-body"),
-                _BootstrapFailure("bootstrap", "invalid-body", "FAIL", "DIAGNOSTICS"),
-            )
-    deadline = ctx.deadline_mono if ctx.deadline_mono is not None else time.monotonic() + 30.0
-    input_revision = managed.current_revision_id
-    try:
-        prepared = managed.client.prepare_bundle(
-            managed.binding,
-            grant=managed.grant,
-            project_slug=choice.project_slug,
-            increment_slug=choice.increment_slug,
-            roadmap_text=roadmap_text,
-            increment_text=increment_text,
-            expected_base_revision=input_revision,
-            deadline=deadline,
-        )
-    except (ExecutionRejectedError, ExecutionUncertainError, ExecutionUnavailableError) as error:
-        logger.warning(
-            "bootstrap prepare failed [%s] (run=%s)", getattr(error, "code", type(error).__name__), ctx.run_id
-        )
-        return ctx, PlanRefError("bootstrap-refused"), _classify_bootstrap_exception(error, phase="prepare")
-    try:
-        receipt = managed.client.install_project(
-            managed.binding,
-            grant=managed.grant,
-            validated_bundle_id=prepared.validated_bundle_id,
-            project_slug=choice.project_slug,
-            deadline=deadline,
-        )
-    except (ExecutionRejectedError, ExecutionUncertainError, ExecutionUnavailableError) as error:
-        logger.warning(
-            "bootstrap install failed [%s] (run=%s)", getattr(error, "code", type(error).__name__), ctx.run_id
-        )
-        detail = _classify_bootstrap_exception(error, phase="install")
-        cand_sha = _rendered_increment_sha256(choice, plan_format=ctx.plan_format)
-        if cand_sha is not None:
-            detail = replace(detail, candidate_sha256=cand_sha, bundle_sha256=prepared.bundle_sha256)
-        elif detail.operation_id is not None:
-            detail = replace(detail, operation_id=None)
-        return ctx, PlanRefError("bootstrap-refused"), detail
-    # The install committed a NEW revision; the plan lives in that one, not in the
-    # revision the acquisition view was pinned to.
-    managed.current_revision_id = receipt.revision_id
-    bootstrap_receipt = _BootstrapReceipt(
-        bundle_sha256=prepared.bundle_sha256,
-        input_revision=input_revision,
-        output_revision=receipt.revision_id,
-        operation_id=receipt.operation_id,
-    )
-    bound, refusal = _admit_installed_plan(
-        ctx, choice, bootstrap_receipt=bootstrap_receipt, authorised=authorised
-    )
-    if refusal is not None:
-        cand_sha = _rendered_increment_sha256(choice, plan_format=ctx.plan_format)
-        detail = _BootstrapFailure(
-            "bootstrap",
-            "install-failed",
-            "ERROR",
-            "INDETERMINATE",
-            operation_id=_valid_v2_operation_id(receipt.operation_id) if cand_sha is not None else None,
-            candidate_sha256=cand_sha,
-            bundle_sha256=prepared.bundle_sha256 if cand_sha is not None else None,
-        )
-        return bound, refusal, detail
-    return bound, None, None
-
-
-def _install_bootstrap_project(
-    ctx: WorkflowContext, choice: BootstrapNewProjectChoice, *, creation_authorized: bool
-) -> tuple[WorkflowContext, PlanRefError | None]:
-    """Render, install and read back a new project; return the context and a refusal.
-
-    The order is the authority's, not a preference (§7.1): render into a bundle,
-    install the bundle as one irreversible commit, and only then read the installed
-    increment back through a **fresh pin of the new revision**. Admitting the prose
-    the model sent would admit a coder against text that is not in the workspace,
-    which is why `resolve_acquisition_choice` refuses to fabricate a snapshot for a
-    bootstrap choice in the first place.
-
-    Nothing here is a second writer: `prepare_bundle` and `install_project` are
-    OWNER-gated authority operations, and the plan is admitted from bytes the
-    pinned view returns afterwards.
-    """
-    bound, refusal, _detail = _install_bootstrap_project_with_detail(
-        ctx, choice, creation_authorized=creation_authorized
-    )
-    return bound, refusal
-
-
-def _authorised_graph(snapshot: PlanSnapshot, authorised: PlanGraph | None) -> PlanGraph | None:
-    """The graph the caller granted, if the installed bytes are the bytes it authorised.
-
-    E577 fixes authorisation as a *one-time* act at install: later runs re-parse the
-    installed plan and never rebind, so a re-admission cannot grant a second time.
-    That leaves the run itself with a problem -- the read-back is a bare parse, and a
-    bare parse carries only the plan's requests (R1). Handing that graph to the seal
-    would grade requests as attestations, which is the defect P1-1 named.
-
-    So the granted graph is carried across the install, and this function decides
-    whether it may be used: the read-back must describe the *same* plan the grant was
-    bound to. The comparison is on the graph, not the digest, because the authority
-    wraps the same prose in its own front matter and the byte digest therefore
-    differs by design. Anything else is ``attestation-mismatch``: a grant is never
-    silently re-pointed at a plan it did not authorise.
-    """
-    if authorised is None or snapshot.graph is None:
-        return None
-    requests_only = replace(
-        authorised,
-        invariants=tuple(replace(item, owner=None, evidence_ref=None) for item in authorised.invariants),
-    )
-    if snapshot.graph != requests_only:
-        return None
-    return replace(snapshot.graph, invariants=authorised.invariants)
-
-
-def _admit_installed_plan(
-    ctx: WorkflowContext,
-    choice: BootstrapNewProjectChoice,
-    *,
-    bootstrap_receipt: _BootstrapReceipt | None = None,
-    authorised: PlanGraph | None = None,
-) -> tuple[WorkflowContext, PlanRefError | None]:
-    """Read the installed increment through a fresh pin and bind it as the plan.
-
-    ``authorised`` is the graph this run granted before the install (E585). It is
-    used only when the installed bytes parse to that same plan; otherwise the
-    snapshot keeps its request-only graph and nothing is attested.
-    """
-    managed = ctx.managed_execution
-    if managed is None:  # pragma: no cover - the caller proved this already
+    slug = ctx.project_hint
+    if managed is None:  # pragma: no cover - the route proved this before the stage
         return ctx, PlanRefError("bootstrap-unavailable")
+    if slug is None:  # pragma: no cover - the authoring kind cannot exist without one
+        return ctx, PlanRefError("project-route-mismatch")
     with _pinned_acquisition_substrate(ctx) as substrate:
         if substrate is None:
             return ctx, PlanRefError("bootstrap-unreadable")
-        path = f"worklogs/{choice.project_slug}/increments/increment-01-{choice.increment_slug}.md"
         try:
-            read = substrate.port.read_file(path)
-            # The V2 contract is a roadmap/increment pair, so both documents come
-            # from the same pinned read. A missing roadmap on a V2 route is a
-            # mismatch between what was installed and what is being admitted.
-            roadmap = (
-                substrate.port.read_file(f"worklogs/{choice.project_slug}/roadmap.md")
-                if ctx.plan_format == PLAN_V2
-                else None
-            )
+            granted = _granted_dispositions(substrate.port, ctx.dispositions)
+        except PlanRefError as error:
+            logger.warning("disposition grant refused [%s] (run=%s)", error.rule, ctx.run_id)
+            return ctx, error
+        roadmap_path = f"worklogs/{slug}/roadmap.md"
+        increment_path = f"worklogs/{slug}/increments/increment-01-{INITIAL_INCREMENT_SLUG}.md"
+        try:
+            roadmap = substrate.port.read_file(roadmap_path)
+            increment = substrate.port.read_file(increment_path)
         except WorkspacePortError:
-            # The tree the authority proved does not contain the file this
-            # controller asked for: a mismatch to report, never a host fallback.
-            return ctx, PlanRefError("bootstrap-unreadable")
-        if roadmap is not None:
-            # D-V2-9.3: the pair can parse while the documents disagree about
-            # which project they belong to. Checked against the bytes actually
-            # read, before the parse that trusts them, and refused with a closed
-            # rule so the repair round can name it.
-            try:
-                roadmap_path = f"worklogs/{choice.project_slug}/roadmap.md"
-                check_project_metadata({path: read.content, roadmap_path: roadmap.content})
-            except MetadataError as error:
-                # One recorded rule, one logged cause: the admission vocabulary is
-                # closed and already names this event, while the specific field
-                # mismatch is what the operator needs to fix the documents.
-                logger.warning("project metadata refused [%s] (run=%s)", error.rule, ctx.run_id)
-                return ctx, PlanRefError("bootstrap-invalid-metadata")
-        snapshot = snapshot_from_bytes(
-            path,
-            read.content.encode("utf-8"),
-            source_kind="BOOTSTRAP",
-            format=ctx.plan_format,
-            roadmap="" if roadmap is None else roadmap.content,
-        )
-        # The installed bytes are the authority's answer; the grant this run made
-        # before the install rides along only when they describe the same plan.
-        granted_graph = _authorised_graph(snapshot, authorised)
-        if granted_graph is not None:
-            snapshot = replace(snapshot, graph=granted_graph)
+            # The published revision does not hold the pair the stage was told to
+            # author. That is the planner's failure to produce documents, not an
+            # unreadable tree: the stage published, so the view is exactly what the
+            # planner left in it. Naming it "unreadable" would send the operator to
+            # look at the authority for a defect that lives in the authoring stage.
+            logger.warning("published project has no authored pair [%s] (run=%s)", slug, ctx.run_id)
+            return ctx, PlanRefError("bootstrap-invalid-body")
+    try:
+        check_project_metadata({roadmap_path: roadmap.content, increment_path: increment.content})
+    except MetadataError as error:
+        logger.warning("project metadata refused [%s] (run=%s)", error.rule, ctx.run_id)
+        return ctx, PlanRefError("bootstrap-invalid-metadata")
+    snapshot = snapshot_from_bytes(
+        increment_path,
+        increment.content.encode("utf-8"),
+        source_kind="BOOTSTRAP",
+        format=PLAN_V2,
+        roadmap=roadmap.content,
+    )
+    if snapshot.format_error is not None:
+        # The grammar refused the authored pair. Reported as the metadata rule the
+        # repair round already knows how to name, with the parser's own rule logged:
+        # admission's vocabulary is closed, the operator's is not.
+        logger.warning("authored plan refused [%s] (run=%s)", snapshot.format_error, ctx.run_id)
+        return ctx, PlanRefError("bootstrap-invalid-metadata")
+    if snapshot.graph is not None and granted:
+        # R1: the plan only *requests* a disposition; the caller's declaration is the
+        # sole source of owner and reference. Binding here -- not at seal -- keeps the
+        # refusal pre-coder, and `contract_evidence` grades an unbound invariant as a
+        # request rather than an attestation, so skipping this would let a plan reach
+        # the coder ATTESTED on a grant nobody gave.
+        try:
+            snapshot = replace(
+                snapshot,
+                graph=bind_dispositions(snapshot.graph, granted, today=datetime.now(UTC).date()),
+            )
+        except PlanRefError as error:
+            logger.warning("disposition binding refused [%s] (run=%s)", error.rule, ctx.run_id)
+            return ctx, error
     bound = replace(
         ctx,
         admission=_WorkflowAdmission(
@@ -3183,10 +3055,9 @@ def _admit_installed_plan(
             ctx.replans_allowed,
             snapshot_backed=True,
             from_acquisition=True,
-            bootstrap_receipt=bootstrap_receipt,
         ),
         managed_plan_ref=snapshot.ref,
-        plan_path=ctx.plan_path or ctx.workspace / snapshot.ref.workspace_relative_path,
+        plan_path=ctx.workspace / snapshot.ref.workspace_relative_path,
         acquisition=None,
     )
     try:
@@ -3201,7 +3072,6 @@ def _admit_installed_plan(
         )
     except (OSError, ValueError) as error:
         _admission_storage_failure(bound, error)
-        return bound, None
     return bound, None
 
 
@@ -3210,32 +3080,6 @@ _CLARIFICATION_V2_RULES: dict[str, str] = {
     "UNKNOWN_INCREMENT": "unknown-increment",
     "MISSING_CONTEXT": "needs-clarification",
 }
-
-
-def _resolve_bootstrap_identity(
-    proposal: BootstrapProposal, hint: str | None
-) -> BootstrapNewProjectChoice | None:
-    """Give a proposal the identity only the route may supply (CT-2.1, E586).
-
-    The planner returns content; the *name* is caller authority
-    (``invoke_workflow.project_slug``) and the increment is harness-fixed. ``None`` means
-    the caller never named a project, which is a refusal rather than a fallback: picking
-    a name here would write the operator's project under something the model invented.
-
-    There is nothing to override any more, and that is the point. The old helper replaced
-    a planner-written slug and logged a warning -- a substitution the model could not see
-    and the operator could not audit. The wire now refuses the field outright, so this
-    function only *fills in* facts the route already owns.
-    """
-    if hint is None:
-        return None
-    return BootstrapNewProjectChoice(
-        project_slug=hint,
-        increment_slug=INITIAL_INCREMENT_SLUG,
-        roadmap_body="",
-        increment_body="",
-        semantics=proposal.semantics,
-    )
 
 
 def _bind_acquisition_admission(
@@ -3254,40 +3098,6 @@ def _bind_acquisition_admission(
     retry -- so each is recorded under its own rule.
     """
     if outcome.snapshot is None:
-        if outcome.bootstrap is not None:
-            # §7.1 bootstrap: render → install → fresh pin → read back → admit. The
-            # snapshot is the INSTALLED plan, never the prose that requested it.
-            #
-            # D-V2-1: a NEW project is authored under PLAN-V2 by construction. The
-            # route decides the grammar here, before any bytes exist, which is what
-            # keeps the decision out of the document (INV-01).
-            ctx = replace(ctx, plan_format=PLAN_V2)
-            bootstrap = _resolve_bootstrap_identity(outcome.bootstrap, ctx.project_hint)
-            if bootstrap is None:
-                # The planner proposed a new project but nobody named it, so there is no
-                # identity to install under and inventing one would create a project the
-                # operator never asked for (CT-2.1).
-                #
-                # Precedence is the installer's, not this guard's: a run with no managed
-                # authority could not install whatever it was named, and telling that
-                # operator to name a project would send them one step in the wrong
-                # direction. Same two rules, same order, one of them early.
-                if ctx.managed_execution is None:
-                    rule, detail = "bootstrap-unavailable", _BootstrapFailure(
-                        "bootstrap", "unavailable", "ERROR", "INDETERMINATE"
-                    )
-                else:
-                    rule, detail = "project-route-mismatch", _BootstrapFailure(
-                        "selection", "project-route-mismatch", "ERROR", "INDETERMINATE"
-                    )
-                logger.warning("bootstrap refused: %s (run=%s)", rule, ctx.run_id)
-                return ctx, _refusal_exit_code(ctx, PlanRefError(rule), failure_detail=detail)
-            installed, refusal, failure_detail = _install_bootstrap_project_with_detail(
-                ctx, bootstrap, creation_authorized=ctx.project_hint is not None
-            )
-            return installed, (
-                None if refusal is None else _refusal_exit_code(installed, refusal, failure_detail=failure_detail)
-            )
         if outcome.clarification is not None:
             rule = f"clarification/{outcome.clarification.reason.lower().replace('_', '-')}"
             v2_rule = _CLARIFICATION_V2_RULES.get(outcome.clarification.reason, "needs-clarification")
@@ -3313,9 +3123,9 @@ def _bind_acquisition_admission(
         # the operator did not ask for, so this is a refusal rather than a retry:
         # no plan was authored, and re-planning under the same request would only
         # ask the model to guess again which project the caller meant. The mirror
-        # case -- a bootstrap on a select-only route -- is refused by the installer
-        # under the same rule, so both directions name one fact: the planner's
-        # project route contradicted the caller's.
+        # case -- a bootstrap on a select-only route -- is refused above under the
+        # same rule, so both directions name one fact: the planner's project route
+        # contradicted the caller's.
         return ctx, _blocked_plan_request(
             run_id=ctx.run_id,
             task=ctx.base_task,

@@ -23,7 +23,7 @@ from fa.inner_loop.plan_admission import (
 )
 from fa.inner_loop.plan_v2 import MAX_DISPOSITION_AGE_DAYS, MAX_DISPOSITIONS, PlanGraph, parse_plan
 from fa.inner_loop.tools.workspace_port import PortRead, WorkspacePortError
-from fa.inner_loop.workflow_controller import _resolve_granted_evidence as resolve_grants
+from fa.inner_loop.workflow_controller import _granted_dispositions as resolve_grants
 from tests.test_ai_native_plan_v2 import ROADMAP_DOCUMENT, plan_document, plan_graph
 
 _DIGEST = "a" * 64
@@ -275,39 +275,47 @@ def test_a_matching_doc_grant_is_returned_unchanged() -> None:
     port = _Port(PortRead(content="readiness: pass\n", sha256=_DIGEST, eof=True))
     granted = _grant_for(_DOC_REF)
 
-    assert resolve_grants(_substrate(port), granted) == granted
+    assert resolve_grants(port, granted) == granted
     assert port.paths == ["worklogs/demo/notes/readiness.md"]
 
 
 def test_a_missing_doc_refuses_the_grant() -> None:
-    assert _rule(lambda: resolve_grants(_substrate(_Port()), _grant_for(_DOC_REF))) == "disposition-evidence-missing"
+    assert _rule(lambda: resolve_grants(_Port(), _grant_for(_DOC_REF))) == "disposition-evidence-missing"
 
 
 def test_bytes_that_do_not_match_the_digest_refuse_the_grant() -> None:
     port = _Port(PortRead(content="readiness: pass\n", sha256="b" * 64, eof=True))
 
-    assert _rule(lambda: resolve_grants(_substrate(port), _grant_for(_DOC_REF))) == "disposition-evidence-mismatch"
+    assert _rule(lambda: resolve_grants(port, _grant_for(_DOC_REF))) == "disposition-evidence-mismatch"
 
 
 def test_a_file_too_large_for_one_bounded_read_refuses_the_grant() -> None:
     port = _Port(PortRead(content="...", sha256=_DIGEST, eof=False))
 
-    assert _rule(lambda: resolve_grants(_substrate(port), _grant_for(_DOC_REF))) == "disposition-evidence-invalid"
+    assert _rule(lambda: resolve_grants(port, _grant_for(_DOC_REF))) == "disposition-evidence-invalid"
 
 
 def test_a_path_the_substrate_will_not_name_is_an_invalid_reference() -> None:
     traversal = _Port(code="invalid_request")
 
-    assert _rule(lambda: resolve_grants(_substrate(traversal), _grant_for(_DOC_REF))) == "disposition-evidence-invalid"
+    assert _rule(lambda: resolve_grants(traversal, _grant_for(_DOC_REF))) == "disposition-evidence-invalid"
 
 
-def test_a_doc_grant_without_a_view_is_unresolvable() -> None:
-    assert _rule(lambda: resolve_grants(None, _grant_for(_DOC_REF))) == "disposition-evidence-unresolvable"
+def test_a_doc_grant_without_a_view_is_refused_before_the_read() -> None:
+    """There is no "verify without a view" path: the caller must supply a pinned one.
+
+    Before D-V2-9 the installer accepted ``None`` and answered with its own rule. The
+    authoring route refuses earlier, at ``bootstrap-unreadable``, because a run with no
+    pinned view has no revision to admit either -- so the guarantee is now that the
+    verification is unreachable without a view rather than that it names one.
+    """
+    with pytest.raises(AttributeError):  # no port, nothing to read: unreachable by design
+        resolve_grants(None, _grant_for(_DOC_REF))  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize("evidence", ["issue:FIRST-42", "review:pr-91-round-2"])
 def test_a_reference_this_system_cannot_resolve_never_reads_anything(evidence: str) -> None:
     port = _Port()
 
-    assert resolve_grants(None, _grant_for(evidence)) == _grant_for(evidence)
+    assert resolve_grants(port, _grant_for(evidence)) == _grant_for(evidence)
     assert port.paths == []  # no view was needed, and none was invented

@@ -29,20 +29,10 @@ GRADING_TESTS = ["tests/test_ai_native_plan_v2.py", "tests/test_ai_native_accept
 READBACK_TESTS = ["tests/test_ai_native_plan_v2.py", "tests/test_ai_native_bootstrap.py"]
 SEAM_TESTS = ["tests/test_s5p1_acquisition_substrate.py"]
 
-#: Recorded, not counted. ``_authorised_graph`` starts with
-#: ``if authorised is None or snapshot.graph is None: return None``. Dropping the
-#: second half cannot change an answer -- the next line compares the snapshot's graph
-#: to a ``PlanGraph``, and ``None != PlanGraph`` returns ``None`` anyway -- so the
-#: guard is a type narrowing for the ``replace`` below, not a behaviour. A mutant of
-#: it survives by construction, and a test that "killed" it would have to observe
-#: something the code does not do.
-EQUIVALENT_MUTANTS: list[tuple[str, str]] = [
-    (
-        "the read-back existence guard in _authorised_graph",
-        "redundant with the graph comparison that follows; kept for type narrowing, "
-        "so no observable behaviour distinguishes its presence",
-    ),
-]
+#: ``_authorised_graph`` and its mutants are gone with the install path (D-V2-9): the
+#: authoring route parses the published bytes once and binds the caller's grant to that
+#: same graph, so there is no carried grant and no read-back to reconcile.
+EQUIVALENT_MUTANTS: list[tuple[str, str]] = []
 
 MUTANTS: list[tuple[str, Path, str, str, list[str]]] = [
     (
@@ -77,38 +67,6 @@ MUTANTS: list[tuple[str, Path, str, str, list[str]]] = [
         '        raise PlanV2Error("disposition-reason-reused")',
         '        raise PlanV2Error("disposition-covers-several-contracts")',
         PLAN_TESTS,
-    ),
-    (
-        "M5 the carried grant is applied without proving the installed plan is the same",
-        CONTROLLER,
-        "    if snapshot.graph != requests_only:\n        return None",
-        "",
-        READBACK_TESTS,
-    ),
-    (
-        "M6 the read-back never receives the grant (the original P1-1 wiring)",
-        CONTROLLER,
-        (
-            "        granted_graph = _authorised_graph(snapshot, authorised)\n"
-            "        if granted_graph is not None:\n"
-            "            snapshot = replace(snapshot, graph=granted_graph)"
-        ),
-        "",
-        SEAM_TESTS,
-    ),
-    (
-        "M7 any difference in the plan is tolerated as long as it parses",
-        CONTROLLER,
-        "    if snapshot.graph != requests_only:\n        return None",
-        "    if snapshot.graph is None:\n        return None",
-        READBACK_TESTS,
-    ),
-    (
-        "M8 the grant fields are not restored onto the read-back graph",
-        CONTROLLER,
-        "    return replace(snapshot.graph, invariants=authorised.invariants)",
-        "    return snapshot.graph",
-        READBACK_TESTS,
     ),
 ]
 

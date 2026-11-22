@@ -9,26 +9,25 @@ recovery for an installed-but-refused bootstrap is forward recovery, not undo.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
-from datetime import UTC, datetime
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
+from unittest import mock
 
 import pytest
 
 from fa.execution.protocol import CONFIG_ID
-from fa.execution.publication import render_bundle
 from fa.inner_loop import workflow_controller
 from fa.inner_loop.coder_loop import SessionOutcome
-from fa.inner_loop.managed_acquisition import (
-    INITIAL_INCREMENT_SLUG,
-    BootstrapNewProjectChoice,
-    BootstrapProposal,
-)
-from fa.inner_loop.plan_admission import PLAN_V2, parse_dispositions, snapshot_from_bytes
-from fa.inner_loop.plan_semantics import PlanSemantics, parse_semantics, render_project
+from fa.inner_loop.managed_acquisition import INITIAL_INCREMENT_SLUG
+from fa.inner_loop.plan_admission import PLAN_V2, PlanRefError, parse_dispositions, snapshot_from_bytes
+from fa.inner_loop.plan_v2 import EvidenceMode, contract_evidence, parse_plan
+from fa.inner_loop.project_metadata import MetadataError, check_project_metadata
+from fa.inner_loop.project_scaffold import scaffold_files, scaffold_paths
 from fa.inner_loop.registry import ToolResult
 from fa.inner_loop.tools import workflow_tool
 from fa.inner_loop.tools.workflow_tool import (
@@ -41,134 +40,44 @@ from fa.inner_loop.workflow_artifacts import FlowState
 from tests.test_execution_workspace import Site
 from tests.test_execution_workspace import site as site
 
-
-def _payload(
-    *,
-    evidence: str = "TEST_REQUIRED",
-    reason: str | None = None,
-    contracts: list[dict[str, object]] | None = None,
-) -> dict[str, object]:
-    """The typed semantics a PLAN-V2 bootstrap carries (D-V2-7).
-
-    The planner no longer writes Markdown, so the fixture is a payload and the controller
-    renders it. ``evidence``/``reason`` vary the R1/R5/R6 cells; ``contracts`` lets the
-    refusal oracles describe a claim the grammar will reject without restating a rule here.
-    """
-    invariant: dict[str, object] = {
-        "number": "1",
-        "kind": "HARD",
-        "text": "publication requires a sealed selection.",
-        "evidence": evidence,
-        "reason": reason,
-    }
-    return {
-        "intent": "Ship the demo slice.",
-        "out_of_scope": "Everything outside SLICE1.",
-        "questions": [],
-        "invariants": [invariant],
-        "scenarios": [],
-        "slices": [
-            {
-                "number": "1",
-                "name": "Foundation",
-                "steps_mode": "prescriptive",
-                "contracts": contracts
-                or [
-                    {
-                        "number": "1",
-                        "cls": "FUNCTIONAL",
-                        "inv": "INV-1",
-                        "text": "publication requires a sealed selection",
-                    }
-                ],
-                "acceptance": [
-                    {
-                        "test_id": "TEST-1.1",
-                        "ct": "CT-1.1",
-                        "selector": "acceptance/tests/test_publish.py::test_publish",
-                    }
-                ],
-                "kill_targets": [],
-                "exit_checks": [{"check": "CHECK-1", "step": "STEP1", "test_ids": ["TEST-1.1"]}],
-                "steps": [{"number": "1", "text": "publish through the sealed authority.", "check": "CHECK-1"}],
-            }
-        ],
-    }
+#: The body the planner is expected to author into the scaffold: one invariant, one
+#: slice, one contract, one acceptance entry. Kept as a format string so a test can
+#: point the selectors at the project it actually published.
+_AUTHORED_BODY = (
+    "\n## INVARIANTS\n### INV-1\nKIND: HARD\n"
+    "TEXT: the initial boundary holds.\nEVIDENCE: TEST_REQUIRED\n"
+    "\n## SLICE1: Foundation\n\nSTEPS: outcome\n\n"
+    "CONTRACTS:\n"
+    "  CT-1.1 [CONSTRAINT] INV: INV-1: the initial boundary holds.\n\n"
+    "ACCEPTANCE:\n"
+    "  TEST-ID: TEST-1.1 | CT: CT-1.1 | "
+    "SELECTOR: worklogs/{slug}/acceptance/tests/test_initial.py::test_initial\n"
+)
 
 
-def _semantics(**kwargs: object) -> PlanSemantics:
-    return parse_semantics(_payload(**kwargs))  # type: ignore[arg-type]
-
-
-def _rendered(project_slug: str = "demo-project") -> tuple[str, str]:
-    """The pair the controller would install, rendered by the production renderer."""
-    files = render_project(_semantics(), project_slug=project_slug)
-    return files["roadmap.md"], files["increments/increment-01-initial-plan.md"]
-
-
-class _AuthorityMustNotBeTouched:
-    """Any authority call before validation is the defect this file guards."""
-
-    def __getattr__(self, name: str) -> object:
-        raise AssertionError(f"authority reached before validation: {name}")
-
-
-def _v2_context() -> SimpleNamespace:
-    return SimpleNamespace(
-        managed_execution=SimpleNamespace(
-            current_revision_id="rev-1",
-            client=_AuthorityMustNotBeTouched(),
-        ),
-        plan_format=PLAN_V2,
-        deadline_mono=None,
-        run_id="run-bootstrap-v2",
-        dispositions=(),
-        acquisition=None,
+def _requiring_pair() -> tuple[str, str]:
+    """A scaffolded pair whose plan *requests* a disposition and grants itself none."""
+    files = scaffold_files("waiver-project", created="2026-11-20")
+    # The waiver the R1 test needs: an invariant the plan *declares it cannot test*.
+    # `DISPOSITION-REASON` is the request; no owner and no evidence reference, because
+    # those are the caller's to supply (R1) -- and this test supplies none.
+    body = (
+        "\n## INVARIANTS\n### INV-1\nKIND: HARD\n"
+        "TEXT: the host is ready.\nEVIDENCE: NON_EXECUTABLE\nDISPOSITION-REASON: HOST_READINESS\n"
+        "\n## SLICE1: Foundation\n\nSTEPS: outcome\n\n"
+        "CONTRACTS:\n"
+        "  CT-1.1 [CONSTRAINT] INV: INV-1: the host is ready.\n\n"
+        "ACCEPTANCE:\n"
+        "  TEST-ID: TEST-1.1 | CT: CT-1.1 | "
+        "SELECTOR: worklogs/waiver-project/acceptance/tests/test_initial.py::test_initial\n"
     )
+    increment = files["worklogs/waiver-project/increments/increment-01-initial-plan.md"].replace(
+        "slices: 0", "slices: 1"
+    ) + body
+    return files["worklogs/waiver-project/roadmap.md"], increment
 
 
-def _choice(semantics: PlanSemantics | None = None, *, prose: str = "") -> BootstrapNewProjectChoice:
-    """A PLAN-V2 choice carries semantics; the legacy route's shape stays expressible."""
-    return BootstrapNewProjectChoice(
-        project_slug="demo-project",
-        increment_slug="foundation",
-        roadmap_body="",
-        increment_body=prose,
-        semantics=semantics,
-    )
-
-
-def _requesting_semantics() -> PlanSemantics:
-    """R1 shape: the plan asks for a disposition by reason and cannot name an owner."""
-    return _semantics(evidence="NON_EXECUTABLE", reason="HOST_READINESS")
-
-
-def test_a_v2_bootstrap_without_semantics_is_refused_before_the_authority() -> None:
-    """The V2 route has no path that skips the renderer, and no path that skips the gate.
-
-    D-V2-7 moved the "body does not parse" refusal earlier: `parse_semantics` renders the
-    payload through a probe slug, so a payload that would not admit is refused inside
-    `parse_acquisition_choice` and never reaches the controller at all. What the controller
-    still has to refuse is the *missing* payload -- a V2 choice whose semantics were never
-    produced -- and it must do so before `prepare_bundle` is touched.
-    """
-    ctx, refusal, detail = workflow_controller._install_bootstrap_project_with_detail(
-        _v2_context(),  # type: ignore[arg-type]
-        _choice(None),
-        creation_authorized=True,
-    )
-
-    assert refusal is not None
-    assert refusal.rule == "bootstrap-invalid-body"
-    assert detail is not None
-    assert (detail.validator, detail.rule, detail.severity) == ("bootstrap", "invalid-body", "FAIL")
-    assert detail.operation_id is None  # nothing was installed, so there is no operation
-    assert ctx.run_id == "run-bootstrap-v2"  # unchanged: nothing was bound
-
-
-_EVIDENCE_PATH = "worklogs/demo-project/notes/readiness.md"
 _EVIDENCE_DIGEST = "a" * 64
-_EVIDENCE_REF = f"doc:{_EVIDENCE_PATH}@sha256:{_EVIDENCE_DIGEST}"
 
 
 class _EvidencePort:
@@ -185,99 +94,135 @@ class _EvidencePort:
         return self.read
 
 
-def _granting_context(
-    *,
-    reviewed_at: str,
-    evidence: str = _EVIDENCE_REF,
-    read: PortRead | None = None,
-) -> SimpleNamespace:
-    context = _v2_context()
-    context.dispositions = parse_dispositions(
-        [{"reason": "HOST_READINESS", "owner": "W4", "evidence": evidence, "reviewed_at": reviewed_at}]
-    )
-    if read is not None or evidence.startswith("doc:"):
-        context.acquisition = SimpleNamespace(port=_EvidencePort(read))
-    return context
+def test_a_doc_grant_must_describe_the_bytes_in_the_pinned_view() -> None:
+    """R6: the digest pins the claim, so an unverifiable reference grants nothing.
 
-
-def test_a_requested_disposition_that_was_not_granted_never_installs() -> None:
-    """R1 (E577): the plan asks, the caller grants; an ungranted request is a refusal."""
-    ctx, refusal, detail = workflow_controller._install_bootstrap_project_with_detail(
-        _v2_context(),  # type: ignore[arg-type]
-        _choice(_requesting_semantics()),
-        creation_authorized=True,
+    D-V2-9 deleted the installer this used to live in, but the property is not an
+    install-time courtesy -- it is the only thing that makes a ``doc:`` grant a
+    claim about real bytes -- so the authoring route verifies it just the same.
+    """
+    declaration = parse_dispositions(
+        [
+            {
+                "reason": "HOST_READINESS",
+                "owner": "W4",
+                "evidence": f"doc:evidence/readiness.md@sha256:{_EVIDENCE_DIGEST}",
+                "reviewed_at": "2026-11-20",
+            }
+        ]
     )
 
-    assert refusal is not None
-    assert refusal.rule == "bootstrap-invalid-body"
-    assert detail is not None
-    assert (detail.validator, detail.rule, detail.severity) == ("bootstrap", "invalid-body", "FAIL")
-    assert detail.operation_id is None  # nothing was installed
-    assert ctx.run_id == "run-bootstrap-v2"
+    # Bytes that match the declared digest: the grant stands.
+    matching = _EvidencePort(PortRead(content="readiness: pass\n", sha256=_EVIDENCE_DIGEST, eof=True))
+    assert workflow_controller._granted_dispositions(matching, declaration) == declaration
+
+    # Bytes that differ: refused, and the rule names *which* fact failed.
+    mismatched = _EvidencePort(PortRead(content="readiness: pass\n", sha256="0" * 64, eof=True))
+    with pytest.raises(PlanRefError) as refusal:
+        workflow_controller._granted_dispositions(mismatched, declaration)
+    assert refusal.value.rule == "disposition-evidence-mismatch"
 
 
-def test_a_granted_request_passes_the_pre_install_gate() -> None:
-    """Proof the gate *accepted* it: the authority double is reached, and raises."""
-    ctx = _granting_context(
-        reviewed_at=datetime.now(UTC).date().isoformat(),
-        read=PortRead(content="readiness: pass\n", sha256=_EVIDENCE_DIGEST, eof=True),
+def test_a_doc_grant_that_the_view_cannot_hold_is_refused_not_trusted() -> None:
+    """A missing artifact is a refusal: the reference may not outrun the revision."""
+    declaration = parse_dispositions(
+        [
+            {
+                "reason": "HOST_READINESS",
+                "owner": "W4",
+                "evidence": f"doc:evidence/absent.md@sha256:{_EVIDENCE_DIGEST}",
+                "reviewed_at": "2026-11-20",
+            }
+        ]
     )
-
-    with pytest.raises(AssertionError, match="authority reached before validation"):
-        workflow_controller._install_bootstrap_project_with_detail(
-            ctx,  # type: ignore[arg-type]
-            _choice(_requesting_semantics()),
-            creation_authorized=True,
-        )
+    with pytest.raises(PlanRefError) as refusal:
+        workflow_controller._granted_dispositions(_EvidencePort(None), declaration)
+    assert refusal.value.rule == "disposition-evidence-missing"
 
 
 def test_a_plan_cannot_own_its_own_waiver() -> None:
-    """G1: the grant is not a plan field, so the bootstrap refuses the body outright."""
-    ctx, refusal, detail = workflow_controller._install_bootstrap_project_with_detail(
-        _granting_context(reviewed_at=datetime.now(UTC).date().isoformat()),  # type: ignore[arg-type]
-        _choice(_requesting_semantics()),
-        creation_authorized=True,
-    )
+    """R1: an unbound ``NON_EXECUTABLE`` invariant is a request, not an attestation.
 
-    assert refusal is not None and refusal.rule == "bootstrap-invalid-body"
-    assert detail is not None and detail.severity == "FAIL"
-    assert ctx.run_id == "run-bootstrap-v2"
+    The plan names why it cannot test a claim; only the caller's declaration supplies
+    the owner. Grading the bare request as attested would publish a verdict nobody
+    gave, so `contract_evidence` must read an owner-less invariant as uncovered.
+    """
+    roadmap, increment = _requiring_pair()
+    graph = parse_plan(roadmap=roadmap, increment=increment)
+    waiver = graph.invariants[0]
+    assert waiver.evidence == "NON_EXECUTABLE"
+    assert waiver.owner is None  # the plan asked; nobody granted
 
+    graded = contract_evidence(graph)
+    assert EvidenceMode.ATTESTED not in graded.values()
 
-def test_v1_route_keeps_its_existing_authority_order() -> None:
-    """The pre-install V2 check is route-scoped: a V1 bootstrap still reaches prepare."""
-    legacy = _v2_context()
-    legacy.plan_format = "PLAN-V1"
+def test_admission_refuses_documents_whose_front_matter_disagrees() -> None:
+    """D-V2-9.3 is a *check inside admission*, not advice in a docstring.
 
-    with pytest.raises(AssertionError, match="authority reached before validation"):
-        workflow_controller._install_bootstrap_project_with_detail(
-            legacy,  # type: ignore[arg-type]
-            _choice(prose="## SLICE1: Foundation\nCONTRACTS:\n  CT1 [CONSTRAINT]: holds.\nTESTS: tests/x.py\n"),
-            creation_authorized=True,
+    The scaffold ships valid metadata, so a passing authoring test cannot tell whether
+    admission verified anything at all: delete the call and the happy path still goes
+    green (this test exists because a mutant proved exactly that). The negative case is
+    the observable one -- an author who renames the roadmap id, or marks the increment
+    shipped, must be refused *before* the coder, under the metadata rule.
+    """
+    for documents, why in (
+        ({"roadmap_id": "RM-other-project"}, "the roadmap id disagrees with the directory name"),
+        ({"active-increment": "I07"}, "the roadmap points at an increment that is not I01"),
+    ):
+        files = scaffold_files("meta-project", created="2026-11-20")
+        roadmap_path = "worklogs/meta-project/roadmap.md"
+        increment_path = "worklogs/meta-project/increments/increment-01-initial-plan.md"
+        roadmap = files[roadmap_path]
+        increment = files[increment_path]
+        roadmap = roadmap.replace(
+            "Roadmap-ID: RM-meta-project", f"Roadmap-ID: {documents.get('roadmap_id', 'RM-meta-project')}"
+        )
+        roadmap = roadmap.replace(
+            "active-increment: I01", f"active-increment: {documents.get('active-increment', 'I01')}"
         )
 
+        with pytest.raises(MetadataError):
+            check_project_metadata({roadmap_path: roadmap, increment_path: increment})
+        assert why
 
-def test_rendered_v2_bundle_is_the_pair_admission_parses() -> None:
-    """The controller validates the bodies; this proves the *rendered* files agree."""
-    roadmap_body, increment_body = _rendered()
-    files = render_bundle("demo-project", "foundation", roadmap_body, increment_body, created="2026-11-20")
+
+def test_the_scaffold_is_a_pair_the_metadata_check_and_the_grammar_accept() -> None:
+    """The harness's own half must be *admissible prose*, or every authoring run fails.
+
+    D-V2-9 replaced render-then-install with write-scaffold-then-author, so the property
+    to prove moved: it is no longer "the renderer's output parses" but "the scaffold the
+    harness writes is a legal document envelope" -- real front matter, closed key set,
+    the V2 marker, and one increment file whose metadata names the initial plan.
+    """
+    files = scaffold_files("demo-project", created="2026-11-20")
     roadmap_path = "worklogs/demo-project/roadmap.md"
-    increment_path = "worklogs/demo-project/increments/increment-01-foundation.md"
+    increment_path = "worklogs/demo-project/increments/increment-01-initial-plan.md"
 
-    assert b"Plan-Format: AI-NATIVE-PLAN-V2" in files[roadmap_path]
-    assert b"Plan-Format: AI-NATIVE-PLAN-V2" in files[increment_path]
+    # The metadata table accepts both halves as written -- no authoring required.
+    check_project_metadata({roadmap_path: files[roadmap_path], increment_path: files[increment_path]})
 
+    # And the grammar accepts the envelope once a slice body exists (the planner's half).
+    body = (
+        "\n## INVARIANTS\n### INV-1\nKIND: HARD\n"
+        "TEXT: the initial boundary holds.\nEVIDENCE: TEST_REQUIRED\n"
+        "\n## SLICE1: Foundation\n\nSTEPS: outcome\n\n"
+        "CONTRACTS:\n"
+        "  CT-1.1 [CONSTRAINT] INV: INV-1: the initial boundary holds.\n\n"
+        "ACCEPTANCE:\n"
+        "  TEST-ID: TEST-1.1 | CT: CT-1.1 | "
+        "SELECTOR: worklogs/demo-project/acceptance/tests/test_initial.py::test_initial\n"
+    )
+    increment = files[increment_path].replace("slices: 0", "slices: 1") + body
     snapshot = snapshot_from_bytes(
         increment_path,
-        files[increment_path],
+        increment.encode("utf-8"),
         source_kind="BOOTSTRAP",
         format=PLAN_V2,
-        roadmap=files[roadmap_path].decode("utf-8"),
+        roadmap=files[roadmap_path],
     )
 
     assert snapshot.graph is not None
-    validation = workflow_controller._validate_plan_admission(snapshot)
-    assert validation.outcome == "PASS", validation.diagnostics
+    assert workflow_controller._validate_plan_admission(snapshot).outcome == "PASS"
     assert snapshot.graph.contracts()["CT-1.1"].inv == "INV-1"
 
 
@@ -334,35 +279,34 @@ def test_selecting_an_existing_project_carries_no_slug() -> None:
 
 
 def test_a_bootstrap_takes_its_identity_from_the_caller_and_the_harness() -> None:
-    """CT-2.1 (E586): the planner returns content; the route supplies the names.
+    """CT-2.1 (E586): the route supplies the names, and nothing else can.
 
     The old contract let the planner write a slug that the controller then *replaced*,
-    logging a warning the model never saw and the operator could not audit. Now the wire
-    has no identity field at all, so this function can only fill in facts the route
-    already owns -- and refuses when the caller never named a project.
+    logging a warning the model never saw and the operator could not audit. D-V2-9 went
+    further: the wire has no bootstrap shape at all, and the scaffold the harness writes
+    inside the stage is the only thing that names the project. The property worth
+    keeping is the one below -- the caller's slug reaches every rendered path, so a plan
+    cannot be authored against a project other than the one that was asked for.
     """
-    proposal = BootstrapProposal(semantics=_semantics())
+    files = scaffold_files("chat-name", created="2026-11-21")
 
-    assert workflow_controller._resolve_bootstrap_identity(proposal, None) is None
-    choice = workflow_controller._resolve_bootstrap_identity(proposal, "chat-name")
-    assert choice is not None
-    assert choice.project_slug == "chat-name"
-    assert choice.increment_slug == INITIAL_INCREMENT_SLUG == "initial-plan"
-    assert choice.semantics is proposal.semantics  # content untouched
-    # The slug is caller authority, so the *rendered* selectors must follow it.
-    rendered = render_project(choice.semantics, project_slug=choice.project_slug)
-    assert (
-        "worklogs/chat-name/acceptance/tests/test_publish.py::test_publish"
-        in rendered["increments/increment-01-initial-plan.md"]
-    )
+    assert set(files) == set(scaffold_paths("chat-name"))
+    # The increment the harness owns, named under the caller's slug.
+    assert f"worklogs/chat-name/increments/increment-01-{INITIAL_INCREMENT_SLUG}.md" in files
+    # And every path it emits is under that slug -- no second identity source.
+    assert all(path.startswith("worklogs/chat-name/") for path in files)
 
 
 # --- CT-2.1: creation is a caller decision, proven through a real managed run --
 
 
 def _bootstrap_text() -> str:
-    """The only bootstrap shape the wire accepts: content, never identity (E586)."""
-    return json.dumps({"kind": "BOOTSTRAP_NEW_PROJECT", "semantics": _payload()})
+    """The retired bootstrap shape, verbatim: a select-only route must refuse it.
+
+    Kept as a literal rather than built from a type, because the point of the case is
+    that the *wire* value is gone (D-V2-9) and only the refusal remains.
+    """
+    return json.dumps({"kind": "BOOTSTRAP_NEW_PROJECT", "semantics": {}})
 
 
 def _run_case(
@@ -428,7 +372,7 @@ def test_chat_slug_and_explicit_route_are_required_for_new_project(site: Site, t
     cannot be satisfied by an existing project; and when both name a project the
     caller's name is the one that is installed.
     """
-    # 1. Select-only route: a well-formed bootstrap reply is refused, nothing installs.
+    # 1. Select-only route: the retired bootstrap shape is refused, nothing installs.
     code, state, record, revisions = _run_case(
         site,
         tmp_path,
@@ -439,22 +383,25 @@ def test_chat_slug_and_explicit_route_are_required_for_new_project(site: Site, t
     current_rev, initial_rev = revisions.split("|")
     assert code == 2
     assert state is not None
-    assert state.blocked_reason == "plan-ref/project-route-mismatch"
+    # D-V2-9 made the refusal earlier and more precise: the retired shape is refused
+    # where the model's text is read, so the run never reaches a route contradiction.
+    # The stage fails on its own choice error rather than exiting with a controller
+    # refusal -- the operator still sees one closed rule and nothing was installed.
+    assert state.blocked_reason == "stage 'planner' exited 2"
     assert record["status"] == "BLOCKED"
     assert record["plan_ref"] is None
     attempt = record["attempts"][-1]
     assert (attempt["diagnostics"][0]["validator"], attempt["diagnostics"][0]["rule"]) == (
-        "selection",
-        "project-route-mismatch",
+        "bootstrap",
+        "retired-choice",
     )
-    assert attempt["operation_id"] is None and attempt["bundle_sha256"] is None
     assert current_rev == initial_rev  # the authority's revision never moved
     assert not (site.source / "worklogs" / "sneaky-project").exists()
 
-    # 2. Create route answered by an existing selection: refused, not redirected.
-    from .test_admission_v2_provenance import _VALID_INCREMENT, _write_project_files
-
-    _write_project_files(site.source, "demo-project", _VALID_INCREMENT)
+    # 2. Create route: the stage is an authoring stage, so a selection reply has no
+    #    reader. What the run refuses on is the absence of authored documents, not on
+    #    the reply's shape -- D-V2-9 removed the wire, so there is nothing to parse and
+    #    nothing a reply can redirect. The caller's project is not created either way.
     code, state, record, _revisions = _run_case(
         site,
         tmp_path,
@@ -464,27 +411,17 @@ def test_chat_slug_and_explicit_route_are_required_for_new_project(site: Site, t
     )
     assert code == 2
     assert state is not None
-    assert state.blocked_reason == "plan-ref/project-route-mismatch"
+    assert state.blocked_reason == "plan-ref/bootstrap-invalid-body"
+    # A refusal is BLOCKED with its rule; nothing was authored, so there is no plan
+    # ref to record either.
     assert record["status"] == "BLOCKED"
     assert record["plan_ref"] is None
+    assert not (site.source / "worklogs" / "wanted-new-project").exists()
 
-    # 3. Both named a project: the caller's slug is the one that exists afterwards.
-    code, state, record, _revisions = _run_case(
-        site,
-        tmp_path,
-        child_run_id="ct21-caller-slug",
-        planner_text=_bootstrap_text(),
-        project_slug="chat-project",
-    )
-    assert code == 0
-    assert state is not None and state.status == "DONE"
-    assert record["plan_ref"]["source_kind"] == "BOOTSTRAP"
-    # CT-2.1 + E586: the caller names the project, the harness names the increment.
-    assert record["plan_ref"]["workspace_relative_path"] == (
-        "worklogs/chat-project/increments/increment-01-initial-plan.md"
-    )
-    assert (site.source / "worklogs" / "chat-project" / "roadmap.md").exists()
-    assert not (site.source / "worklogs" / "sneaky-project").exists()
+    # 3. The authoring route is proved separately, by
+    #    `test_the_authoring_stage_publishes_and_admits_the_project`: under D-V2-9 the
+    #    planner writes documents through a stage port, and a planner *saying*
+    #    something can no longer prove a project was created.
 
 
 def _stage_task_for(slug: str | None) -> str:
@@ -599,63 +536,223 @@ def test_the_tool_schema_publishes_the_authority_slug_bound() -> None:
     assert slug_schema["maxLength"] == CONFIG_ID["maxLength"]
 
 
-# --- R6 (E577): a doc: grant is verified against bytes before it authorises ---
+def test_the_authoring_stage_publishes_and_admits_the_project(site: Site, tmp_path: Path) -> None:
+    """D-V2-9 end to end: scaffold, authored documents, one publication, then admission.
 
+    This is the create route's whole contract, and it is deliberately *not* driven
+    by a planner payload: under D-V2-9 the planner writes documents through the
+    stage's own port. A payload-shaped double would still pass if the route
+    regressed to rendering, which is why the oracle runs the real stage machinery
+    (`_run_cli_stage`) against the real authority and then asserts on the revision
+    and the admitted plan.
 
-@pytest.mark.parametrize(
-    ("read", "granted"),
-    [
-        (PortRead(content="readiness: pass\n", sha256=_EVIDENCE_DIGEST, eof=True), True),
-        (None, False),  # the pinned view has no such file
-        (PortRead(content="readiness: pass\n", sha256="b" * 64, eof=True), False),  # other bytes
-        (PortRead(content="readiness: pass\n", sha256=_EVIDENCE_DIGEST, eof=False), False),  # not fully read
-    ],
-)
-def test_only_a_doc_grant_whose_bytes_match_can_authorise(read: PortRead | None, granted: bool) -> None:
-    """R6: the digest pins the claim, so an unverifiable reference grants nothing."""
-    ctx = _granting_context(reviewed_at=datetime.now(UTC).date().isoformat(), read=read)
+    Four facts, in the order they must happen:
 
-    if granted:
-        with pytest.raises(AssertionError, match="authority reached before validation"):
-            workflow_controller._install_bootstrap_project_with_detail(
-                ctx,  # type: ignore[arg-type]
-                _choice(_requesting_semantics()),
-                creation_authorized=True,
-            )
-        return
-    _ctx_after, refusal, detail = workflow_controller._install_bootstrap_project_with_detail(
-        ctx,  # type: ignore[arg-type]
-        _choice(_requesting_semantics()),
-        creation_authorized=True,
-    )
-    assert refusal is not None and refusal.rule == "bootstrap-invalid-body"
-    assert detail is not None and detail.severity == "FAIL"
+    1. the harness scaffold exists in the published revision (`roadmap.md` first,
+       the placeholder test module, both `README.md` carriers);
+    2. the planner's bytes are in that same revision -- one publication, not two;
+    3. admission bound the pair *after* the publication, so the coder is not
+       dispatchable against an unadmitted revision (D-V2-8);
+    4. the project is named by the caller and the increment by the harness.
+    """
+    import argparse as _argparse
 
+    from fa import cli as _cli
+    from fa.inner_loop.planner_dispatch import PlannerDispatch, PlannerDispatchKind
+    from fa.inner_loop.project_scaffold import scaffold_files, scaffold_paths
+    from tests.test_admission_v2_provenance import _managed_child_env
 
-def test_a_doc_grant_without_a_pinned_view_is_unresolvable() -> None:
-    """No view means no bytes to check, and an unchecked digest is not evidence."""
-    context = _v2_context()
-    context.dispositions = parse_dispositions(
-        [{"reason": "HOST_READINESS", "owner": "W4", "evidence": _EVIDENCE_REF, "reviewed_at": "2026-11-20"}]
-    )
+    slug = "auto-project"
 
-    _ctx_after, refusal, _detail = workflow_controller._install_bootstrap_project_with_detail(
-        context,  # type: ignore[arg-type]
-        _choice(_requesting_semantics()),
-        creation_authorized=True,
-    )
-
-    assert refusal is not None and refusal.rule == "bootstrap-invalid-body"
-
-
-def test_a_typed_reference_this_system_cannot_resolve_still_authorises() -> None:
-    """`issue:`/`review:` are attested-with-reference, never reported as verified (R6)."""
-    context = _granting_context(reviewed_at=datetime.now(UTC).date().isoformat(), evidence="issue:FIRST-42")
-    assert context.acquisition is None  # nothing to read, and nothing pretends to
-
-    with pytest.raises(AssertionError, match="authority reached before validation"):
-        workflow_controller._install_bootstrap_project_with_detail(
-            context,  # type: ignore[arg-type]
-            _choice(_requesting_semantics()),
-            creation_authorized=True,
+    # Fill the scaffold's empty bodies rather than replace the files: the
+    # frontmatter is the harness's half (D-V2-9.3), and overwriting it would be a
+    # test that proves the planner may rewrite identity -- the opposite of the rule.
+    scaffold = scaffold_files(slug, created="2026-11-21")
+    roadmap_scaffold = scaffold[f"worklogs/{slug}/roadmap.md"]
+    increment_scaffold = scaffold[f"worklogs/{slug}/increments/increment-01-{INITIAL_INCREMENT_SLUG}.md"]
+    authored = {
+        "roadmap.md": roadmap_scaffold.replace(
+            "## Intent\n\n## Out of scope\n",
+            "## Intent\n\nBuild the demo slice cleanly.\n\n## Out of scope\n\nEverything outside SLICE1.\n",
+        ),
+        f"increments/increment-01-{INITIAL_INCREMENT_SLUG}.md": increment_scaffold.replace(
+            "slices: 0", "slices: 1"
         )
+        + _AUTHORED_BODY.format(slug=slug),
+    }
+
+    case_dir = tmp_path / "authoring"
+    case_site = Site(case_dir / "protected", site.roots, site.source)
+    with _managed_child_env(case_site, case_dir, child_run_id="ct28-authoring") as (
+        managed,
+        _publisher,
+        child_ctx,
+        _yaml,
+    ):
+        base_rev = managed.current_revision_id
+        seen: dict[str, object] = {}
+
+        def build_registry(workspace_io: object, _executor: object, _lease: object) -> object:
+            seen["port"] = workspace_io
+            return object()  # the stage's tools are irrelevant; `drive` writes the bytes
+
+        def drive(_registry: object) -> SessionOutcome:
+            # Fill the scaffold the harness just wrote. The read-then-write is the
+            # planner's own loop too: `expected_sha256` is what makes a write an
+            # *update* rather than a create (`None` means expected absence), and the
+            # scaffold means these files already exist.
+            port = seen["port"]
+            for relative, body in authored.items():
+                path = f"worklogs/{slug}/{relative}"
+                port.write_file(path, body, expected_sha256=port.read_file(path).sha256)
+            # Capture inside `drive`: the port is released when the stage settles,
+            # so a read after `_run_cli_stage` returns would be a closed view.
+            seen["wrote"] = {
+                path: port.read_file(path).content for path in (f"worklogs/{slug}/{rel}" for rel in authored)
+            }
+            seen["scaffold"] = {path: port.read_file(path).content for path in scaffold_paths(slug)}
+            return SessionOutcome(0, "stopped_by_llm", 1, "")
+
+        dispatch = PlannerDispatch(
+            PlannerDispatchKind.CREATE_NEW_PROJECT, child_ctx.run_id, authoring_root=f"worklogs/{slug}"
+        )
+        outcome, released = _cli._run_cli_stage(
+            # The workflow-owner path: `_managed_execution` on args is how a
+            # controller-driven stage reuses the run's writer instead of
+            # composing a second one.
+            args=_argparse.Namespace(_managed_execution=managed),
+            run_context=child_ctx,
+            run_id=child_ctx.run_id,
+            run_log_dir=tmp_path / "run-log",
+            session_db=None,
+            log=SimpleNamespace(path=tmp_path / "events.jsonl"),
+            workspace=site.source,
+            role="planner",
+            plan_ref=None,
+            planner_dispatch=dispatch,
+            build_registry=build_registry,
+            drive=drive,
+        )
+        assert outcome is not None and outcome.exit_code == 0
+        assert released
+        published = managed.current_revision_id
+        assert published != base_rev, "the stage published nothing"
+
+        # 1 + 2: one revision holds both the scaffold and the planner's bytes, and
+        # the bytes read back are the ones `drive` wrote -- captured in-stage because
+        # the view is released the moment the stage settles.
+        assert set(seen["scaffold"]) == set(scaffold_paths(slug))
+        assert all(seen["scaffold"].values()), "a scaffold file is empty"
+        for relative, body in authored.items():
+            assert seen["wrote"][f"worklogs/{slug}/{relative}"] == body
+
+        # 3: admission runs against the published revision and binds the pair.
+        bound, refusal = _admit_in(case_site, child_ctx, managed, _yaml, slug)
+        assert refusal is None, f"admission refused the published project: {refusal}"
+        assert bound.admission is not None and bound.admission.snapshot.format == PLAN_V2
+        assert bound.admission.snapshot.graph is not None
+
+        # 4: the caller named the project, the harness named the increment.
+        assert bound.managed_plan_ref is not None
+        assert bound.managed_plan_ref.workspace_relative_path == (
+            f"worklogs/{slug}/increments/increment-01-{INITIAL_INCREMENT_SLUG}.md"
+        )
+
+
+def test_admission_calls_the_metadata_check_it_documents(tmp_path: Path) -> None:
+    """D-V2-9.3, pinned: the cross-check runs *inside* admission.
+
+    `test_admission_refuses_documents_whose_front_matter_disagrees` proves the table
+    refuses; it does not prove admission consults it. That gap is not hypothetical --
+    a mutant that emptied the call survived the whole bank, because the scaffold's own
+    front matter is valid and the happy path cannot tell the difference. Here the
+    pinned view returns a pair whose roadmap names another project, everything else is
+    a real scaffold, and the only rule that can produce the refusal is the metadata one.
+    """
+    from fa.inner_loop.workflow_controller import _admit_published_project
+
+    scaffold = scaffold_files("meta-project", created="2026-11-21")
+    increment_path = f"worklogs/meta-project/increments/increment-01-{INITIAL_INCREMENT_SLUG}.md"
+    # The disagreement the grammar cannot see: the increment names a different roadmap
+    # than the one in the directory it lives in. Both documents still parse, so the
+    # only rule that can refuse this pair is the metadata cross-check.
+    increment = (
+        scaffold[increment_path].replace("slices: 0", "slices: 1")
+        + _AUTHORED_BODY.format(slug="meta-project")
+    ).replace("Roadmap-ID: RM-meta-project", "Roadmap-ID: RM-other-project")
+    documents = {
+        "worklogs/meta-project/roadmap.md": scaffold["worklogs/meta-project/roadmap.md"],
+        increment_path: increment,
+    }
+
+    ctx = workflow_controller.WorkflowContext(
+        run_id="meta-check",
+        base_task="t",
+        per_role_task={},
+        artifact_paths=workflow_controller.workflow_artifact_paths("meta-check", base_dir=tmp_path / "logs"),
+        config=tmp_path / "models.yaml",
+        workspace=tmp_path,
+        max_turns=1,
+        output_mode="quiet",
+        managed_execution=cast("Any", object()),
+        project_hint="meta-project",
+    )
+    substrate = workflow_controller.AcquisitionSubstrate(port=_DocumentPort(documents), project_names=())
+
+    with mock.patch.object(workflow_controller, "_pinned_acquisition_substrate", _yield(substrate)):
+        _bound, refusal = _admit_published_project(ctx)
+
+    assert refusal is not None, "admission did not consult the metadata table"
+    assert refusal.rule == "bootstrap-invalid-metadata"
+
+
+class _DocumentPort:
+    """A pinned view holding exactly the documents it was given."""
+
+    def __init__(self, documents: dict[str, str]) -> None:
+        self.documents = documents
+
+    def read_file(self, path: str, *, offset_bytes: int = 0, max_bytes: int = 1024 * 1024) -> PortRead:
+        key = path if path.startswith("/") else f"/{path}"
+        content = self.documents.get(key, self.documents.get(path))
+        if content is None:
+            raise WorkspacePortError("denied")
+        return PortRead(content=content, sha256=hashlib.sha256(content.encode("utf-8")).hexdigest(), eof=True)
+
+
+def _yield(substrate: object) -> Any:
+    """A stand-in for `_pinned_acquisition_substrate` that yields one substrate."""
+
+    @contextmanager
+    def _cm(_ctx: object) -> Any:
+        yield substrate
+
+    return _cm
+
+
+def _admit_in(
+    case_site: Site, child_ctx: Any, managed: Any, yaml_path: Path, slug: str
+) -> tuple[Any, Any]:
+    """Run admission over the revision the stage published, in a real context.
+
+    A real `WorkflowContext` and not a double: `_admit_published_project` returns a
+    *replaced* context, which is the point -- the binding is a new value, never a
+    mutation of the run's shared state.
+    """
+    from fa.inner_loop.workflow_controller import _admit_published_project
+
+    ctx = workflow_controller.WorkflowContext(
+        run_id=child_ctx.run_id,
+        base_task="ct-2.8",
+        per_role_task={},
+        artifact_paths=workflow_controller.workflow_artifact_paths(
+            child_ctx.run_id, base_dir=child_ctx.run_log_dir
+        ),
+        config=yaml_path,
+        workspace=case_site.source,
+        max_turns=2,
+        output_mode="quiet",
+        managed_execution=managed,
+        project_hint=slug,
+    )
+    return _admit_published_project(ctx)

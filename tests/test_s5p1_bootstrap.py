@@ -35,7 +35,6 @@ import pytest
 from fa.execution.client import ExecutionClient, ExecutionRejectedError, InstallReceipt
 from fa.execution.primitives import Operation
 from fa.execution.profiles import ExecutionProfile
-from fa.inner_loop.managed_acquisition import BootstrapNewProjectChoice
 from fa.inner_loop.tools.workspace_port import PORT_READ_MAX_BYTES
 from fa.inner_loop.workflow_controller import WorkflowContext, workflow_artifact_paths
 
@@ -65,12 +64,6 @@ def _read_only_profile() -> ExecutionProfile:
     )
 
 
-ROADMAP = "## Intent\n\nShip the thing.\n\n## Out of scope\n\nEverything else.\n"
-INCREMENT = "## SLICE1: first\n\nSteps.\n"
-
-
-def _choice() -> BootstrapNewProjectChoice:
-    return BootstrapNewProjectChoice("demo-project", "first-increment", ROADMAP, INCREMENT)
 
 
 @pytest.fixture
@@ -87,146 +80,6 @@ def site(tmp_path: Path) -> Any:
 
 
 # ── C1: the positive path, on the real authority ────────────────────────────
-
-
-def test_the_installed_increment_is_what_gets_admitted(site: Any, tmp_path: Path) -> None:
-    """Render → install → fresh pin → read back, and compare the bytes.
-
-    The comparison is the whole point: `INCREMENT` is what the model submitted, and
-    the rendered file is that prose *plus* the authority's frontmatter. If the
-    snapshot ever equals the submitted prose, the admitter trusted the model.
-    """
-    from fa.inner_loop.plan_admission import snapshot_from_bytes
-
-    with site.owner(read_only_profile=_read_only_profile()) as owner:
-        ids = site.register(owner)
-        writer = site.claim(owner, ids)
-        from fa.execution.publication import install_project, prepare_bundle
-
-        prepared = prepare_bundle(
-            owner,
-            PEER,
-            ACTOR,
-            capability=writer.capability,
-            project_slug="demo-project",
-            increment_slug="first-increment",
-            roadmap_text=ROADMAP,
-            increment_text=INCREMENT,
-            expected_base_revision=ids["revision_id"],
-            operation_id="op-" + "b" * 32,
-            created="2026-11-10",
-            deadline=until(),
-        )
-        receipt = install_project(
-            owner,
-            PEER,
-            ACTOR,
-            capability=writer.capability,
-            validated_bundle_id=prepared.validated_bundle_id,
-            project_slug="demo-project",
-            deadline=until(),
-        )
-
-        # The install committed a NEW revision: the pre-install view is stale.
-        assert receipt.revision_id != ids["revision_id"]
-
-        # Read the installed file back through a fresh pin of that new revision.
-        pin = owner.pin_reader(
-            PEER,
-            ACTOR,
-            workspace_id=ids["workspace_id"],
-            revision_id=receipt.revision_id,
-            plan_ref=None,
-            formal_evidence=False,
-            deadline=until(),
-        )
-        assert pin.view_ref is not None
-        view = pin.view_ref
-        port = __import__("fa.execution.tool_port", fromlist=["AuthorityWorkspacePort"]).AuthorityWorkspacePort(
-            owner,
-            peer=PEER,
-            namespace=ACTOR,
-            view_ref=view,
-            capability=pin.capability,
-            deadline_factory=until,
-        )
-        path = "worklogs/demo-project/increments/increment-01-first-increment.md"
-        read = port.read_file(path)
-
-    raw = read.content.encode("utf-8")
-    snapshot = snapshot_from_bytes(path, raw, source_kind="BOOTSTRAP")
-
-    assert snapshot.ref.source_kind == "BOOTSTRAP"
-    # The admitted bytes are the INSTALLED file, frontmatter included.
-    assert snapshot.utf8_bytes.startswith(b"---\nIncrement-ID: RM-demo-project-I01\n")
-    assert INCREMENT.encode() in snapshot.utf8_bytes
-    assert snapshot.utf8_bytes != INCREMENT.encode(), "the model's prose was admitted verbatim"
-    assert snapshot.ids.slices, "the installed plan must declare slices"
-
-
-def test_the_project_directory_exists_only_after_the_install(site: Any) -> None:
-    """Ordering, observed from outside: render is not install.
-
-    A design that admitted the plan after `prepare_bundle` would leave the plan
-    pointing at a file that does not exist yet, and a coder would then code against
-    a plan identity with no bytes behind it.
-    """
-    from fa.execution.publication import prepare_bundle
-
-    with site.owner(read_only_profile=_read_only_profile()) as owner:
-        ids = site.register(owner)
-        writer = site.claim(owner, ids)
-        prepare_bundle(
-            owner,
-            PEER,
-            ACTOR,
-            capability=writer.capability,
-            project_slug="demo-project",
-            increment_slug="first-increment",
-            roadmap_text=ROADMAP,
-            increment_text=INCREMENT,
-            expected_base_revision=ids["revision_id"],
-            operation_id="op-" + "c" * 32,
-            created="2026-11-10",
-            deadline=until(),
-        )
-        root = site.roots / "project"
-        assert not (root / "worklogs" / "demo-project").exists(), "a bundle is not a project"
-
-
-# ── C0: the installed file is the only admissible thing ─────────────────────
-
-
-def test_a_path_that_was_not_installed_is_refused_by_the_view(site: Any) -> None:
-    """The read-back cannot be steered at a path the install did not create."""
-    from fa.execution.tool_port import AuthorityWorkspacePort
-    from fa.inner_loop.tools.workspace_port import WorkspacePortError
-
-    with site.owner(read_only_profile=_read_only_profile()) as owner:
-        ids = site.register(owner)
-        writer = site.claim(owner, ids)
-        pin = owner.pin_reader(
-            PEER,
-            ACTOR,
-            workspace_id=ids["workspace_id"],
-            revision_id=ids["revision_id"],
-            plan_ref=None,
-            formal_evidence=False,
-            deadline=until(),
-        )
-        view = pin.view_ref
-        assert view is not None
-        port = AuthorityWorkspacePort(
-            owner,
-            peer=PEER,
-            namespace=ACTOR,
-            view_ref=view,
-            capability=pin.capability,
-            deadline_factory=until,
-        )
-        with pytest.raises(WorkspacePortError):
-            port.read_file("worklogs/demo-project/increments/increment-01-first-increment.md")
-        assert writer.capability
 
 
 def test_the_bootstrap_refusal_rule_is_its_own(tmp_path: Path) -> None:
@@ -450,86 +303,9 @@ def _controller(tmp_path: Path, client: Any, *, grant: Any, revision_id: str | N
     )
 
 
-def test_the_controller_installs_then_reads_back_and_admits(site: Any, tmp_path: Path) -> None:
-    """The whole controller path, against the authority that really installs.
-
-    `_install_bootstrap_project` must: prepare against the CURRENT revision, install,
-    pin the revision the install named (not the one it read before), read the
-    installed file back from the real tree, and admit those bytes with
-    `source_kind == "BOOTSTRAP"`.
-    """
-    from fa.inner_loop.workflow_controller import _install_bootstrap_project
-
-    with site.owner(read_only_profile=_read_only_profile()) as owner:
-        ids = site.register(owner)
-        writer = site.claim(owner, ids)
-        client = _BootstrapClient(owner, ids, writer.to_wire_capability(), namespace=ACTOR)
-        ctx = _controller(tmp_path, client, grant=writer)
-
-        bound, refusal = _install_bootstrap_project(ctx, _choice(), creation_authorized=True)
-
-        assert refusal is None, refusal
-        # prepare is bound to the generation the run was reading, not to the install.
-        assert client.prepares[0]["expected_base_revision"] == ids["revision_id"]
-        # the pin targets the revision the INSTALL committed.
-        installed_revision = client.installs[0]["revision_id"]
-        assert installed_revision != ids["revision_id"], "the install must commit a new revision"
-        assert client.pinned_revisions == [installed_revision]
-        assert client.calls[:3] == ["prepare", "install", "pin"], client.calls
-        # the admitted plan is the installed file, with the authority's frontmatter.
-        assert bound.admission is not None
-        assert bound.managed_plan_ref is not None
-        assert bound.managed_plan_ref.source_kind == "BOOTSTRAP"
-        # The read-back went to the installed increment, in the NEW revision.
-        assert client.reads == [
-            {
-                "path": "worklogs/demo-project/increments/increment-01-first-increment.md",
-                "sha256": bound.managed_plan_ref.sha256,
-            }
-        ]
-        # The admitted bytes are the authority's file, not the submitted prose: the
-        # install added frontmatter, so byte equality with INCREMENT would prove the
-        # admitter trusted the model.
-        admitted = bound.admission.snapshot.utf8_bytes
-        assert admitted.startswith(b"---\n")
-        assert INCREMENT.encode() in admitted
-        assert admitted != INCREMENT.encode()
-        assert bound.admission.snapshot_backed is True
-
-
-# ── C0: the refusals, each on its own rule ─────────────────────────────────
-
-
-def test_an_authority_refusal_stops_the_run_under_its_own_rule(site: Any, tmp_path: Path) -> None:
-    """COLLISION (the project exists) is `bootstrap-refused`, not `unreadable`.
-
-    A refused install installed nothing, so it must not be reported as a read
-    problem: the operator's next action is different (pick another slug).
-    """
-    from fa.inner_loop.workflow_controller import _install_bootstrap_project
-
-    with site.owner(read_only_profile=_read_only_profile()) as owner:
-        ids = site.register(owner)
-        writer = site.claim(owner, ids)
-        client = _BootstrapClient(owner, ids, writer.to_wire_capability(), namespace=ACTOR)
-        # First install succeeds, so the project directory now exists.
-        ctx = _controller(tmp_path, client, grant=writer)
-        _first, first_refusal = _install_bootstrap_project(ctx, _choice(), creation_authorized=True)
-        assert first_refusal is None
-
-        # The same slug again is a COLLISION at prepare/install time.
-        second_ctx = _controller(tmp_path, client, grant=writer, revision_id=client.installs[0]["revision_id"])
-        _second, refusal = _install_bootstrap_project(second_ctx, _choice(), creation_authorized=True)
-
-    assert refusal is not None
-    assert refusal.rule == "bootstrap-refused", refusal
-    # Nothing was re-pinned for the refused attempt after the install refused.
-    assert client.pinned_revisions.count(client.pinned_revisions[-1]) == 1
-
-
 def test_a_missing_managed_client_is_reported_before_any_authority_call(tmp_path: Path) -> None:
-    """No managed execution is `bootstrap-unavailable`, and it calls nothing."""
-    from fa.inner_loop.workflow_controller import _install_bootstrap_project
+    """No managed execution is `bootstrap-unavailable`, and it reads nothing."""
+    from fa.inner_loop.workflow_controller import _admit_published_project
 
     ctx = WorkflowContext(
         run_id="boot-2",
@@ -542,7 +318,9 @@ def test_a_missing_managed_client_is_reported_before_any_authority_call(tmp_path
         output_mode="quiet",
         managed_execution=None,
     )
-    _same, refusal = _install_bootstrap_project(ctx, _choice(), creation_authorized=True)
+    # No managed execution means no pinned view, so admission cannot read a revision
+    # it was never given -- the refusal is the same closed rule the install path used.
+    _same, refusal = _admit_published_project(ctx)
 
     assert refusal is not None
     assert refusal.rule == "bootstrap-unavailable"

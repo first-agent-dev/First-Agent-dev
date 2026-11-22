@@ -15,8 +15,6 @@ from typing import Any, cast
 import pytest
 
 from fa.execution.client import (
-    ExecutionClient,
-    ExecutionRejectedError,
     ExecutionUnavailableError,
     ExecutionUncertainError,
 )
@@ -31,8 +29,8 @@ from fa.execution.types import Access, GrantReply, NamespaceRef, ViewPurpose
 from fa.inner_loop.admission_schema import validate_admission_record
 from fa.inner_loop.coder_loop import SessionOutcome
 from fa.inner_loop.plan_promotion import PlanPromotionError
-from fa.inner_loop.plan_semantics import parse_semantics, render_project
 from fa.inner_loop.planner_dispatch import PlannerDispatch, PlannerDispatchKind
+from fa.inner_loop.project_scaffold import scaffold_files
 from fa.inner_loop.tools.workflow_tool import (
     WorkflowInvocationContext,
     build_invoke_workflow_tool,
@@ -66,10 +64,14 @@ _INVALID_INCREMENT = "## SLICE1: Foundation\nCONTRACTS:\n  CT1 [CONSTRAINT]: ini
 # D-V2-1: a NEW project is authored under PLAN-V2, so the bootstrap fixtures are
 # real V2 documents. The existing-project fixtures above stay V1 on purpose: that
 # route is the frozen legacy one, and CTRL-V1 admission still owns it.
-_V2_ROADMAP = (
-    "Plan-Format: AI-NATIVE-PLAN-V2\n\n"
-    "## Intent\n\nBuild the demo slice cleanly.\n\n"
-    "## Out of scope\n\nEverything outside SLICE1.\n"
+#: The slice body the scaffold leaves empty. `slices: 1` in the frontmatter plus one
+#: SLICE heading is the smallest pair the V2 grammar admits.
+_INCREMENT_BODY = (
+    "\n## SLICE1: Foundation\n\n"
+    "CONTRACTS:\n"
+    "  CT1 [CONSTRAINT]: the initial boundary holds.\n"
+    "TESTS:\n"
+    "  - worklogs/demo-project/acceptance/tests/test_initial.py::test_initial\n"
 )
 #: The typed payload a PLAN-V2 bootstrap carries (D-V2-7). The planner writes semantics;
 #: the controller renders the Markdown these tests then read back from the authority.
@@ -112,9 +114,20 @@ _V2_INVALID_SEMANTICS: dict[str, object] = {
     **_V2_SEMANTICS,
     "invariants": [],
 }
-_V2_ROADMAP, _V2_INCREMENT = (lambda files: (files["roadmap.md"], files["increments/increment-01-initial-plan.md"]))(
-    render_project(parse_semantics(_V2_SEMANTICS), project_slug="demo-project")
-)
+# The pair a real authoring stage publishes: the harness's scaffold with a body the
+# parser accepts. Built from the scaffold rather than a renderer, because D-V2-9
+# deleted the renderer -- a test that rendered would be testing a dead wire.
+def _scaffolded_pair(slug: str = "demo-project", *, extra: str = "") -> tuple[str, str]:
+    files = scaffold_files(slug, created="2026-11-05")
+    roadmap = files[f"worklogs/{slug}/roadmap.md"].replace(
+        "## Intent\n\n## Out of scope\n",
+        f"## Intent\n\nBuild the demo slice cleanly.{extra}\n\n## Out of scope\n\nEverything outside SLICE1.\n",
+    )
+    increment = files[f"worklogs/{slug}/increments/increment-01-initial-plan.md"].replace("slices: 0", "slices: 1")
+    return roadmap, increment + _INCREMENT_BODY
+
+
+_V2_ROADMAP, _V2_INCREMENT = _scaffolded_pair()
 # Invalid for the same reason a V2 document is ever invalid on this route: the
 # marker is what makes it a V2 plan at all.
 _V2_INVALID_INCREMENT = _V2_INCREMENT.replace("Plan-Format: AI-NATIVE-PLAN-V2\n\n", "", 1)
@@ -512,62 +525,6 @@ def test_v2_existing_selection_with_zero_planner_budget_blocks_via_retry_then_bl
         assert [a["route"] for a in record["attempts"]] == ["RETRY", "BLOCKED"]
 
 
-def test_v2_bootstrap_admitted_emits_distinct_bundle_and_plan_hashes_with_install_receipt(
-    site: Site, tmp_path: Path
-) -> None:
-    """BOOTSTRAP_NEW_PROJECT installs via real authority, reads back fresh revision, and validates v2 record."""
-    with _managed_child_env(site, tmp_path) as (managed, publisher, child_ctx, yaml_path):
-        initial_rev = managed.current_revision_id
-        choice = json.dumps(
-            {
-                "kind": "BOOTSTRAP_NEW_PROJECT",
-                "semantics": _V2_SEMANTICS,
-            }
-        )
-
-        def stage_fn(args: argparse.Namespace, **kwargs: Any) -> int:
-            role = str(getattr(args, "role", ""))
-            sink = kwargs.get("outcome_sink")
-            if role == "planner" and isinstance(sink, list):
-                sink.append(SessionOutcome(0, "stopped_by_llm", 1, choice))
-            elif role == "eval":
-                return _eval_pass_stage(sink)
-            return 0
-
-        code, state = run_workflow(
-            roles=["planner", "coder"],
-            task="bootstrap new",
-            per_role_task={},
-            mode="linear",
-            max_repairs=0,
-            max_replans=0,
-            run_id=child_ctx.run_id,
-            config=yaml_path,
-            workspace=site.source,
-            max_turns=2,
-            output_mode="quiet",
-            run_stage_fn=stage_fn,
-            run_context=child_ctx,
-            plan_publisher=publisher,
-            managed_execution=managed,
-            acquisition=AcquisitionSubstrateRequest(project_slug="new-project"),
-        )
-        assert code == 0 and state is not None and state.status == "DONE"
-        record = _read_admission(child_ctx.run_log_dir, child_ctx.run_id)
-        assert validate_admission_record(record, run_id=child_ctx.run_id) == record
-        assert record["status"] == "ADMITTED"
-        assert record["plan_ref"]["source_kind"] == "BOOTSTRAP"
-        attempt = record["attempts"][0]
-        assert attempt["dispatch_kind"] == "ACQUISITION"
-        assert attempt["source_sha256"] is None
-        assert attempt["candidate_sha256"] == attempt["promoted_sha256"] == record["plan_ref"]["sha256"]
-        assert attempt["bundle_sha256"] is not None
-        assert attempt["bundle_sha256"] != attempt["candidate_sha256"]
-        assert attempt["input_revision"] == initial_rev
-        assert attempt["output_revision"] == managed.current_revision_id != initial_rev
-        assert _OP_ID_RE.fullmatch(attempt["operation_id"] or "") is not None
-
-
 def test_v2_bootstrap_invalid_body_blocks_with_candidate_and_bundle_evidence_and_no_ref(
     site: Site, tmp_path: Path
 ) -> None:
@@ -625,158 +582,17 @@ def test_v2_bootstrap_invalid_body_blocks_with_candidate_and_bundle_evidence_and
 
 
 @pytest.mark.parametrize(
-    ("phase", "exc_factory", "expected_pair", "expect_hashes", "expect_op"),
-    [
-        (
-            "prepare",
-            lambda: ExecutionRejectedError("INPUT_POLICY", None),
-            ("bootstrap", "invalid-grammar"),
-            False,
-            False,
-        ),
-        (
-            "prepare",
-            lambda: ExecutionRejectedError("COLLISION", None),
-            ("bootstrap", "collision"),
-            False,
-            False,
-        ),
-        (
-            "install",
-            lambda: ExecutionRejectedError("COLLISION", None),
-            ("bootstrap", "collision"),
-            True,
-            False,
-        ),
-        (
-            "install",
-            lambda: ExecutionRejectedError("STALE_REVISION", None),
-            ("workspace", "stale-revision"),
-            True,
-            False,
-        ),
-        (
-            "install",
-            lambda: ExecutionUncertainError("op-" + "a" * 32, code="DURABILITY_UNKNOWN"),
-            ("bootstrap", "durability-unknown"),
-            True,
-            True,
-        ),
-        (
-            "install",
-            lambda: ExecutionUnavailableError(),
-            ("workspace", "backend-unavailable"),
-            True,
-            False,
-        ),
-    ],
-)
-def test_v2_bootstrap_authority_failures_emit_valid_v2_records(
-    site: Site,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    phase: str,
-    exc_factory: Any,
-    expected_pair: tuple[str, str],
-    expect_hashes: bool,
-    expect_op: bool,
-) -> None:
-    """D10/D12: prepare/install refusals and uncertainties validate under v2 admission schema."""
-    with _managed_child_env(site, tmp_path) as (managed, publisher, child_ctx, yaml_path):
-        if phase == "prepare":
-
-            def fail_prepare(*_a: Any, **_k: Any) -> Any:
-                raise exc_factory()
-
-            monkeypatch.setattr(ExecutionClient, "prepare_bundle", fail_prepare)
-        else:
-
-            def fail_install(*_a: Any, **_k: Any) -> Any:
-                raise exc_factory()
-
-            monkeypatch.setattr(ExecutionClient, "install_project", fail_install)
-
-        choice = json.dumps(
-            {
-                "kind": "BOOTSTRAP_NEW_PROJECT",
-                "semantics": _V2_SEMANTICS,
-            }
-        )
-
-        def stage_fn(args: argparse.Namespace, **kwargs: Any) -> int:
-            sink = kwargs.get("outcome_sink")
-            if isinstance(sink, list):
-                sink.append(SessionOutcome(0, "stopped_by_llm", 1, choice))
-            return 0
-
-        code, state = run_workflow(
-            roles=["planner", "coder"],
-            task="bootstrap error",
-            per_role_task={},
-            mode="linear",
-            max_repairs=0,
-            max_replans=0,
-            run_id=child_ctx.run_id,
-            config=yaml_path,
-            workspace=site.source,
-            max_turns=2,
-            output_mode="quiet",
-            run_stage_fn=stage_fn,
-            run_context=child_ctx,
-            plan_publisher=publisher,
-            managed_execution=managed,
-            acquisition=AcquisitionSubstrateRequest(project_slug="demo-bad"),
-        )
-        assert code == 2 and state is not None and state.status == "FAILED"
-        record = _read_admission(child_ctx.run_log_dir, child_ctx.run_id)
-        assert validate_admission_record(record, run_id=child_ctx.run_id) == record
-        attempt = record["attempts"][0]
-        assert (attempt["diagnostics"][0]["validator"], attempt["diagnostics"][0]["rule"]) == expected_pair
-        if expect_hashes:
-            assert attempt["candidate_sha256"] is not None and attempt["bundle_sha256"] is not None
-        else:
-            assert attempt["candidate_sha256"] is None and attempt["bundle_sha256"] is None
-        assert (attempt["operation_id"] is not None) is expect_op
-
-
-@pytest.mark.parametrize(
     ("final_text", "expected_pair", "expect_refusal_stderr"),
     [
-        ("", ("selection", "choice-missing"), True),
-        ("not json", ("selection", "choice-malformed"), True),
-        (
-            json.dumps(
-                {
-                    "kind": "BOOTSTRAP_NEW_PROJECT",
-                    "semantics": [],
-                }
-            ),
-            ("bootstrap", "invalid-body"),
-            True,
-        ),
-        (
-            json.dumps({"kind": "SELECT_EXISTING", "project_slug": "missing-proj", "increment_id": "I01"}),
-            ("selection", "needs-clarification"),
-            False,
-        ),
-        (
-            json.dumps({"kind": "NEEDS_CLARIFICATION", "reason": "AMBIGUOUS_PROJECT"}),
-            ("selection", "ambiguous-project"),
-            False,
-        ),
-        (
-            json.dumps({"kind": "NEEDS_CLARIFICATION", "reason": "UNKNOWN_INCREMENT"}),
-            ("selection", "unknown-increment"),
-            False,
-        ),
-        (
-            json.dumps({"kind": "NEEDS_CLARIFICATION", "reason": "MISSING_CONTEXT"}),
-            ("selection", "needs-clarification"),
-            False,
-        ),
+        # With a caller-supplied slug the stage is an *authoring* stage (D-V2-9), so
+        # there is no choice wire to test here: an absent, malformed or clarifying
+        # reply all mean the same thing -- no documents were authored. The property
+        # that survives the deletion is that this is a closed, pre-coder refusal
+        # recorded under the admission vocabulary, which is what this case asserts.
+        ("", ("bootstrap", "invalid-body"), False),
     ],
 )
-def test_d12_acquisition_choice_errors_and_clarifications_persist_blocked_v2_record(
+def test_a_failed_authoring_stage_records_a_closed_pre_coder_refusal(
     site: Site,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
@@ -784,7 +600,7 @@ def test_d12_acquisition_choice_errors_and_clarifications_persist_blocked_v2_rec
     expected_pair: tuple[str, str],
     expect_refusal_stderr: bool,
 ) -> None:
-    """D12: AcquisitionChoiceError and NEEDS_CLARIFICATION write BLOCKED v2 admission + FAILED FlowState."""
+    """D12 (D-V2-9): an authoring stage that authored nothing writes BLOCKED v2 + FAILED state."""
     with _managed_child_env(site, tmp_path) as (managed, publisher, child_ctx, yaml_path):
 
         def stage_fn(args: argparse.Namespace, **kwargs: Any) -> int:
@@ -816,6 +632,9 @@ def test_d12_acquisition_choice_errors_and_clarifications_persist_blocked_v2_rec
             assert f"fa workflow: acquisition choice refused: {expected_pair[1]}" in capsys.readouterr().err
         record = _read_admission(child_ctx.run_log_dir, child_ctx.run_id)
         assert validate_admission_record(record, run_id=child_ctx.run_id) == record
+        # A refusal is recorded as BLOCKED with its rule, exactly like every other
+        # closed refusal; an authoring stage that published nothing leaves no plan ref
+        # (D-V2-8) but must still tell the operator *why*.
         assert record["status"] == "BLOCKED" and record["plan_ref"] is None
         diag = record["attempts"][0]["diagnostics"][0]
         assert (diag["validator"], diag["rule"]) == expected_pair
@@ -905,6 +724,9 @@ def test_invoke_workflow_handoff_child_writes_validated_v2_bootstrap_admission(
             tree_sha256="1" * 64,
         ),
     )
+    # The child selects an existing project through the parent's published view, so
+    # the project has to exist in that view before the handoff.
+    _write_project_files(site.source, "child-proj", _VALID_INCREMENT)
     session_ctx = manager.provision_entrypoint_session(session_id="session-1", workspace_override=site.source)
     parent_run = "parent-invoke-1"
     parent_ctx = manager.begin_run(session_ctx, requested_run_id=parent_run)
@@ -942,11 +764,8 @@ def test_invoke_workflow_handoff_child_writes_validated_v2_bootstrap_admission(
                 base_revision=managed.current_revision_id,
             )
             lease = _ParentLease(managed, reader)
-            bootstrap_choice = json.dumps(
-                {
-                    "kind": "BOOTSTRAP_NEW_PROJECT",
-                    "semantics": _V2_SEMANTICS,
-                }
+            parent_choice = json.dumps(
+                {"kind": "SELECT_EXISTING", "project_slug": "child-proj", "increment_id": "I01"}
             )
 
             def stage_fn(args: argparse.Namespace, **kwargs: Any) -> int:
@@ -954,7 +773,7 @@ def test_invoke_workflow_handoff_child_writes_validated_v2_bootstrap_admission(
                 role = str(getattr(args, "role", ""))
                 sink = kwargs.get("outcome_sink")
                 if role == "planner" and isinstance(sink, list):
-                    sink.append(SessionOutcome(0, "stopped_by_llm", 1, bootstrap_choice))
+                    sink.append(SessionOutcome(0, "stopped_by_llm", 1, parent_choice))
                 elif role == "eval":
                     return _eval_pass_stage(sink)
                 return 0
@@ -979,10 +798,9 @@ def test_invoke_workflow_handoff_child_writes_validated_v2_bootstrap_admission(
                     "task": "bootstrap child",
                     "roles": "planner,coder",
                     "mode": "linear",
-                    # CT-2.1: creation is a caller route decision. The planner's JSON
-                    # still carries the name for now; the caller's slug is what installs.
-                    "project_action": "CREATE_NEW",
-                    "project_slug": "child-proj",
+                    # The child is a selection run: it binds the plan an existing
+                    # project already carries, through the parent's published view.
+                    "project_action": "AUTO_SELECT_EXISTING",
                 }
             )
             assert result.error is None, result.error
@@ -993,7 +811,7 @@ def test_invoke_workflow_handoff_child_writes_validated_v2_bootstrap_admission(
             assert validate_admission_record(record, run_id=child_run_id) == record
             assert record["schema_version"] == 2
             assert record["owner_run_id"] == parent_run
-            assert record["plan_ref"]["source_kind"] == "BOOTSTRAP"
+            assert record["plan_ref"]["source_kind"] == "EXISTING_SELECTION"
             assert _REV_ID_RE.fullmatch(record["attempts"][0]["output_revision"] or "") is not None
             lease.suspend(deadline=time.monotonic() + 5.0)
             managed.close()

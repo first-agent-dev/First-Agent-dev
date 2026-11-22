@@ -11900,3 +11900,72 @@ which is the property that separates *refused* from *ran and lost the work*.
 CT/slice per the operator. Steps 1 (payload deletion) and 6 (prompt rewrite) remain: step 1
 is a pure deletion once step 6 can be written truthfully, and the operator's ordering put
 P2-4 last.
+
+### E588 — P2-4 closed: the payload layer is gone, and the create route is one publication (2026-11-21)
+
+**What was deleted, and why it could be deleted rather than kept.** P2-4's deletion list was
+~3 600 lines across six files. The safe version of that work is not "remove the code" but
+"prove the code is unreachable first", so that is what this entry is about. The create route
+now dispatches `CREATE_NEW_PROJECT`, and `_authored_stage_result` returns before
+`_stage_acquisition_choice` ever runs; `_resolve_bootstrap_identity` could therefore only be
+reached with `hint is None` (where it returns `None`) or with a slug (where the route had
+already taken the authoring path). The whole install chain — `_bootstrap_bodies`,
+`_rendered_increment_sha256`, `_install_bootstrap_project_with_detail`,
+`_install_bootstrap_project`, `_admit_installed_plan`, `_authorised_graph`,
+`_resolve_bootstrap_identity` — was dead before it was deleted. `plan_semantics.py` (573
+lines) went with it: its only live importer was the payload half of
+`managed_acquisition.py`, which is also gone (`BootstrapProposal`, `_parse_bootstrap_choice`,
+`BootstrapNewProjectChoice`, `AcquisitionOutcome.bootstrap`).
+
+**Two properties nearly died with the deletions, and that is the real finding.** Deleting the
+installer silently took `_resolve_granted_evidence` (R6: a `doc:` grant must match the pinned
+bytes) and `bind_dispositions` (R1: an unbound `NON_EXECUTABLE` invariant is a *request*, not
+an attestation) out of every live path. Both were only ever called from inside
+`_install_bootstrap_project_with_detail`. Nothing failed: `bind_dispositions` has no caller
+nowhere, and `contract_evidence` grades an owner-less invariant as `UNCOVERED`, so the
+regression would have been a plan that reached the coder with its dispositions silently
+unbound. They are restored in `_admit_published_project` — `_granted_dispositions` verifies
+the digests through the same pinned view, and the granted graph is bound to the snapshot the
+route actually admits. The authoring route is in fact *stronger* than the install path was:
+there is one parse, so a grant cannot be re-pointed at a different read-back.
+
+**A dead arm and a lie in a comment.** Removing the installer also removed the only thing that
+refused `BOOTSTRAP_NEW_PROJECT` on a select-only route. The first fix was an arm in
+`_bind_acquisition_admission`; it worked, but it was reached only if `parse_acquisition_choice`
+still produced that kind, and `AcquisitionOutcome.bootstrap` had just been deleted — the arm
+was unreachable. The refusal now lives where the shape is read:
+`parse_acquisition_choice` raises `AcquisitionChoiceError("bootstrap", "retired-choice")`, a
+new closed rule in the `bootstrap` validator. That is earlier, more accurate, and it keeps the
+route contradiction a *pre-coder* fact instead of a route surprise.
+
+**Prompt rewrite (step 6), and the P0-1 shape of it.** `ACQUISITION_SYSTEM_PROMPT` was 7 168
+characters whose spine was "emit one raw JSON object" with a worked `BOOTSTRAP_NEW_PROJECT`
+payload. Every word of that is now wrong for the create route, and the route had no prompt of
+its own — it was handed a read-only selector's instructions while holding a write view. The
+create route gets `AUTHORING_SYSTEM_PROMPT` (Markdown documents, the closed metadata rules,
+"do not emit a JSON choice"); the acquisition prompt drops to 2 379 characters and two shapes.
+One test asserts the two texts name the same files, because P0-1 was exactly a disagreement
+between the task block and the parser.
+
+**Verification.** 398 tests across the touched banks; full suite run with the two environment
+gates excluded (86 environment failures on this sandbox, unchanged from the base commit —
+`uv`, `semgrep` and `pyrefly` are absent). `ruff` clean; `mypy src` clean over **224** sources
+(one fewer: `plan_semantics.py` is gone); doc-links 369 OK. **Mutants 4/4 killed** on the new
+rules (the retired shape parsing again; the metadata check deleted from admission; a missing
+authored pair reported as "unreadable"; the authoring refusal carrying no durable diagnostic),
+plus the surviving step-8 set **4/4** after its four install-path mutants were retired with
+the code they mutated.
+
+**The mutant that mattered.** M2 — "admission trusts the published bytes without the metadata
+check" — survived the first version of its test, and survived again after a test was added
+that called `check_project_metadata` directly. Both tests were proving the *table*, not its
+*use*: the scaffold's own front matter is valid, so the happy path cannot tell "checked" from
+"not checked", and the direct test never entered admission. The killing test drives
+`_admit_published_project` through a pinned view holding a pair that **parses** and is
+**still refused** — the increment names a roadmap other than the one in its own directory,
+which is a fact the grammar cannot see. That is the difference between testing a rule and
+testing that the run consults it.
+
+**Not done here, deliberately.** D-V2-9.8 (repair as a second authoring stage) stays its own
+CT/slice per the operator. `prepare_bundle`/`install_project` remain in the authority for
+their other callers, as the plan directs; the create route simply stops calling them.

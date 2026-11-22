@@ -21,7 +21,6 @@ from yaml.nodes import MappingNode
 from yaml.tokens import AliasToken, AnchorToken
 
 from fa.inner_loop.plan_admission import PlanSnapshot, snapshot_from_bytes
-from fa.inner_loop.plan_semantics import PlanSemantics, SemanticsError, parse_semantics
 
 if TYPE_CHECKING:
     from fa.inner_loop.tools.workspace_port import WorkspacePort
@@ -32,8 +31,6 @@ __all__ = [
     "AcquisitionChoiceError",
     "AcquisitionMetadataError",
     "AcquisitionOutcome",
-    "BootstrapNewProjectChoice",
-    "BootstrapProposal",
     "CanonicalIncrementArtifact",
     "IncrementMetadata",
     "NeedsClarificationChoice",
@@ -73,40 +70,6 @@ class SelectExistingChoice:
 #: the whole difference between "the planner owns semantics" and "the planner owns
 #: identity". The renderer already hard-codes the same key; this is the one spelling.
 INITIAL_INCREMENT_SLUG = "initial-plan"
-
-
-@dataclass(frozen=True, slots=True)
-class BootstrapProposal:
-    """What the acquisition planner may say about a new project: content, never identity.
-
-    The wire carries ``semantics`` and nothing else (D-V2-7). ``project_slug`` and
-    ``increment_slug`` are *not* here because neither belongs to the planner: the slug
-    is caller authority (CT-2.1) and the increment is harness-fixed
-    (``INITIAL_INCREMENT_SLUG``). A payload that names either is ``choice-malformed``
-    rather than silently overridden -- overriding would leave the model believing it
-    chose a name that was then replaced (E586).
-    """
-
-    semantics: PlanSemantics
-    kind: Literal["BOOTSTRAP_NEW_PROJECT"] = "BOOTSTRAP_NEW_PROJECT"
-
-
-@dataclass(frozen=True, slots=True)
-class BootstrapNewProjectChoice:
-    """A bootstrap resolved against authority: fixed identity, typed semantics.
-
-    Only the controller builds this, from a proposal plus the caller's project slug,
-    after the route has decided the grammar. ``roadmap_body``/``increment_body`` are
-    the V1 route's free prose, which no wire path can populate any more; they stay
-    until that route is retired with D-V2-2.
-    """
-
-    project_slug: str
-    increment_slug: str
-    roadmap_body: str
-    increment_body: str
-    semantics: PlanSemantics | None = None
-    kind: Literal["BOOTSTRAP_NEW_PROJECT"] = "BOOTSTRAP_NEW_PROJECT"
 
 
 @dataclass(frozen=True, slots=True)
@@ -166,7 +129,7 @@ class ResolvedExistingIncrement:
     increment: IncrementMetadata
 
 
-AcquisitionChoice: TypeAlias = SelectExistingChoice | BootstrapProposal | NeedsClarificationChoice  # noqa: UP040
+AcquisitionChoice: TypeAlias = SelectExistingChoice | NeedsClarificationChoice  # noqa: UP040
 
 
 class AcquisitionChoiceError(ValueError):
@@ -175,7 +138,9 @@ class AcquisitionChoiceError(ValueError):
     def __init__(
         self,
         validator: Literal["selection", "bootstrap"],
-        rule: Literal["choice-missing", "choice-malformed", "invalid-body", "too-large"],
+        # `retired-choice` is D-V2-9's own refusal: the BOOTSTRAP_NEW_PROJECT shape is
+        # gone, so naming it is a statement about this build's route, not the model's JSON.
+        rule: Literal["choice-missing", "choice-malformed", "invalid-body", "too-large", "retired-choice"],
     ) -> None:
         self.validator = validator
         self.rule = rule
@@ -525,26 +490,22 @@ def resolve_existing_choice(
 
 @dataclass(frozen=True, slots=True)
 class AcquisitionOutcome:
-    """What the acquisition prelude hands back: one of exactly three things.
+    """What the acquisition prelude hands back: exactly one of two things.
 
-    The three are mutually exclusive by construction rather than by convention:
+    The two are mutually exclusive by construction rather than by convention:
 
     * ``snapshot`` -- a validated plan this run may be admitted against;
-    * ``clarification`` -- a closed reason to return to chat with no coder;
-    * ``needs_bootstrap`` -- the choice asks for a new project, whose bundle must be
-      rendered and installed by the authority before any plan identity exists. It is a
-      ``BootstrapProposal``: identity comes from the caller and the harness, never from
-      the planner (E586).
+    * ``clarification`` -- a closed reason to return to chat with no coder.
 
-    A bootstrap choice deliberately does **not** produce a snapshot here. The plan
-    it will be admitted against is the file the authority installs, read back
-    through a fresh pin; inventing one from the submitted prose would admit a
-    coder against text that is not in the workspace.
+    Creation is not a third shape. Under D-V2-9 a create-authorized run never makes a
+    choice: its planner stage *authors* the documents, so plan identity is established
+    by the publication rather than described on the wire. A select-only route that
+    still answers with the retired bootstrap shape is refused by the controller before
+    it gets here -- `parse_acquisition_choice` no longer produces that kind at all.
     """
 
     snapshot: PlanSnapshot | None = None
     clarification: NeedsClarificationChoice | None = None
-    bootstrap: BootstrapProposal | None = None
     roadmap: RoadmapMetadata | None = None
     increment: IncrementMetadata | None = None
 
@@ -556,7 +517,6 @@ class AcquisitionOutcome:
         filled = [
             self.snapshot is not None,
             self.clarification is not None,
-            self.bootstrap is not None,
         ]
         if sum(filled) != 1:
             raise ValueError("an acquisition outcome carries exactly one answer")
@@ -573,8 +533,10 @@ def resolve_acquisition_choice(
     """Turn one typed planner choice into the prelude's closed outcome.
 
     The controller side of §7: `SELECT_EXISTING` resolves against a pinned-view
-    inventory, `NEEDS_CLARIFICATION` passes through, and `BOOTSTRAP_NEW_PROJECT`
-    is reported as needing installation rather than resolved here.
+    inventory, and `NEEDS_CLARIFICATION` passes through. There is no bootstrap
+    outcome to report any more (D-V2-9): a create-authorized run authors documents
+    instead of describing a project, and a select-only run that answers with the
+    retired shape is refused where the shape is parsed.
 
     ``inventory_slugs`` is what the pinned view named (``list_project_names``), so
     the inventory is only read for projects that exist. Reading every name a model
@@ -582,8 +544,6 @@ def resolve_acquisition_choice(
     """
     if isinstance(choice, NeedsClarificationChoice):
         return AcquisitionOutcome(clarification=choice)
-    if isinstance(choice, BootstrapProposal):
-        return AcquisitionOutcome(bootstrap=choice)
     if not isinstance(choice, SelectExistingChoice):
         # Same reasoning as the shape checks above: this is a programming error in
         # a caller we control, not a model diagnostic.
@@ -624,34 +584,6 @@ def _parse_existing_choice(value: dict[str, object]) -> SelectExistingChoice:
     return SelectExistingChoice(project_slug, increment_id)
 
 
-def _parse_bootstrap_choice(value: dict[str, object]) -> BootstrapProposal:
-    """Parse the typed payload the renderer consumes; refuse Markdown fields outright.
-
-    The wire carries ``semantics`` only. Accepting ``roadmap_body``/``increment_body`` here
-    as well would leave two ways to describe one plan, and the prompt could not say which
-    one admission judges -- the drift that produced P0-1.
-
-    **Identity is not on this wire** (CT-2.1, E586). ``project_slug`` is caller authority
-    and ``increment_slug`` is harness-fixed, so a payload carrying either is refused rather
-    than overridden: the closed key set makes "the planner tried to name the project" a
-    diagnosable refusal instead of a substitution the model never learns about.
-    """
-    if set(value) != {"kind", "semantics"}:
-        raise _malformed()
-    raw = value["semantics"]
-    if isinstance(raw, Mapping):
-        encoded = json.dumps(dict(raw))
-        if len(encoded.encode("utf-8")) > _MAX_BOOTSTRAP_BODY_BYTES:
-            raise AcquisitionChoiceError("bootstrap", "too-large")
-    try:
-        semantics = parse_semantics(raw)
-    except SemanticsError as error:
-        # The payload's own field is the message: the model learns which field to fix,
-        # and the closed rule stays a closed rule.
-        raise AcquisitionChoiceError("bootstrap", "invalid-body") from error
-    return BootstrapProposal(semantics=semantics)
-
-
 def _parse_clarification_choice(value: dict[str, object]) -> NeedsClarificationChoice:
     if set(value) != {"kind", "reason"}:
         raise _malformed()
@@ -678,8 +610,12 @@ def parse_acquisition_choice(final_text: object) -> AcquisitionChoice:
     kind = value["kind"]
     if kind == "SELECT_EXISTING":
         return _parse_existing_choice(value)
-    if kind == "BOOTSTRAP_NEW_PROJECT":
-        return _parse_bootstrap_choice(value)
     if kind == "NEEDS_CLARIFICATION":
         return _parse_clarification_choice(value)
+    if kind == "BOOTSTRAP_NEW_PROJECT":
+        # The shape is retired, not merely unnamed (D-V2-9): a create-authorized run
+        # authors through its stage view, so there is nothing a payload could describe.
+        # Refusing here -- where the model's text is read -- is what keeps the
+        # contradiction a closed, pre-coder diagnostic instead of a route surprise.
+        raise AcquisitionChoiceError("bootstrap", "retired-choice")
     raise _malformed()

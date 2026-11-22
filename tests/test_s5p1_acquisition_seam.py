@@ -57,7 +57,7 @@ def test_a_settled_planner_message_becomes_the_admitted_snapshot() -> None:
 
     assert outcome.snapshot is not None
     assert outcome.snapshot.ref.source_kind == "EXISTING_SELECTION"
-    assert outcome.clarification is None and outcome.bootstrap is None
+    assert outcome.clarification is None
     assert outcome.roadmap is not None and outcome.increment is not None
 
 
