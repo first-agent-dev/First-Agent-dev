@@ -47,6 +47,7 @@ from .acceptance_closure import (
     pytest_argv,
     shell_command,
 )
+from .plan_v2 import KillTarget
 from .slice_verification import (
     CommandOutcome,
     CommandResult,
@@ -536,6 +537,7 @@ def sealed_attempt(
     verification: SealedVerification,
     *,
     identity: VerificationIdentity,
+    kill_declared: tuple[KillTarget, ...] = (),
 ) -> VerificationAttempt:
     """Project one sealed verification into the attempt the gate reads (F10).
 
@@ -575,6 +577,8 @@ def sealed_attempt(
             attested=bundle.attested,
             pending=bundle.pending,
             contracts_total=bundle.contracts_total,
+            attestations=bundle.attestations,
+            kill_declared=kill_declared,
         )
     except VerificationAttemptError as error:
         raise AcceptanceCollectionError(f"attempt-{error.rule}") from None

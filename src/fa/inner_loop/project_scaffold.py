@@ -29,6 +29,7 @@ exists" into a refusal that leaves the rest of the scaffold unwritten.
 
 from __future__ import annotations
 
+from fa.inner_loop.acceptance_closure import ACCEPTANCE_INI
 from fa.inner_loop.plan_v2 import PLAN_FORMAT
 
 #: The increment a bootstrap always creates (CT-2.1, D-V2-7). Route property, not
@@ -41,6 +42,18 @@ _README = (
     "Scaffold placeholder written by the harness (D-V2-9).\n"
     "The planner replaces this body when it has content for this directory.\n"
 )
+
+#: The sealed closure's own pytest config (Q-V2-ACC-1 fixes the root at
+#: ``worklogs/<slug>/acceptance/``). The harness writes it with the scaffold because a
+#: closure without ``pytest.ini`` is not a closure -- ``collect_acceptance_closure`` refuses
+#: it -- and the planner has no instruction, and no reason, to author a runner config. It is
+#: harness *shape*, like the front matter: nothing here decides what is tested.
+_ACCEPTANCE_INI = """[pytest]
+python_files = test_*.py
+addopts = -q --strict-markers
+testpaths = tests
+"""
+
 
 _PLACEHOLDER_TEST = '''"""Acceptance placeholder for this project's sealed closure.
 
@@ -121,7 +134,7 @@ def _open_questions_body(slug: str) -> str:
 
 
 def scaffold_files(slug: str, *, created: str) -> dict[str, str]:
-    """The seven files, ``roadmap.md`` first, workspace-relative.
+    """The eight files, ``roadmap.md`` first, workspace-relative.
 
     ``roadmap.md`` leads because its create-only write is the collision check
     (D-V2-9.2): if ``worklogs/<slug>/`` already exists the first write fails with
@@ -136,6 +149,7 @@ def scaffold_files(slug: str, *, created: str) -> dict[str, str]:
         f"{root}/increments/increment-01-{INITIAL_INCREMENT_SLUG}.md": _increment_body(slug),
         f"{root}/notes/README.md": _README.format(title="Notes"),
         f"{root}/reviews/README.md": _README.format(title="Reviews"),
+        f"{root}/acceptance/{ACCEPTANCE_INI}": _ACCEPTANCE_INI,
         f"{root}/acceptance/tests/test_acceptance_placeholder.py": _PLACEHOLDER_TEST,
     }
 

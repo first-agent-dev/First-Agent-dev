@@ -41,6 +41,7 @@ from fa.inner_loop.tools.workspace_port import PortRead, WorkspacePort, Workspac
 from fa.inner_loop.workflow_artifacts import FlowState
 from tests.test_execution_workspace import Site
 from tests.test_execution_workspace import site as site
+from tests.test_slice_verification_runner import _inband_executor
 
 #: The body the planner is expected to author into the scaffold: one invariant, one
 #: slice, one contract, one acceptance entry. Kept as a format string so a test can
@@ -55,6 +56,39 @@ _AUTHORED_BODY = (
     "  TEST-ID: TEST-1.1 | CT: CT-1.1 | "
     "SELECTOR: worklogs/{slug}/acceptance/tests/test_initial.py::test_initial\n"
 )
+
+
+#: The module the authored fixtures' TEST-1.1 selector names.
+_ACCEPTANCE_MODULE = "def test_initial():\n    assert True\n"
+
+
+def _patch_sealed_cell(monkeypatch: pytest.MonkeyPatch, revision: str) -> None:
+    """Give admission a sealed cell that can actually run the collection (N1).
+
+    The managed provider these route tests use has no test runner inside its cells, so an
+    admission that is *supposed* to succeed would report ``collection-error`` for a reason that
+    has nothing to do with the route. The stand-in keeps the whole code path -- collect, mint,
+    store -- and replaces only the substrate, exactly as the sealed-stage tests do.
+    """
+    substrate = workflow_controller._VerifySubstrate(
+        executor=_inband_executor(writes_visible=False, revision=revision), port=None
+    )
+    monkeypatch.setattr(workflow_controller, "_pinned_verify_substrate", _yield(substrate))
+
+
+def _seed_acceptance(port: object, slug: str) -> None:
+    """Create the module the plan's selector names, before the stage publishes (N1).
+
+    A *create*, not an update: the file does not exist yet, and the port answers absence with
+    ``denied`` -- the same value it uses for a refusal -- so a read-first update cannot tell
+    "new" from "forbidden". The seal collects this closure at admission, so a plan whose
+    selector nothing can collect is now refused there rather than admitted unsealed.
+    """
+    port.write_file(  # type: ignore[attr-defined]
+        f"worklogs/{slug}/acceptance/tests/test_initial.py",
+        _ACCEPTANCE_MODULE,
+        expected_sha256=None,
+    )
 
 
 def _requiring_pair() -> tuple[str, str]:
@@ -541,7 +575,9 @@ def test_the_tool_schema_publishes_the_authority_slug_bound() -> None:
     assert slug_schema["maxLength"] == CONFIG_ID["maxLength"]
 
 
-def test_the_authoring_stage_publishes_and_admits_the_project(site: Site, tmp_path: Path) -> None:
+def test_the_authoring_stage_publishes_and_admits_the_project(
+    site: Site, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """D-V2-9 end to end: scaffold, authored documents, one publication, then admission.
 
     This is the create route's whole contract, and it is deliberately *not* driven
@@ -610,6 +646,7 @@ def test_the_authoring_stage_publishes_and_admits_the_project(site: Site, tmp_pa
             for relative, body in authored.items():
                 path = f"worklogs/{slug}/{relative}"
                 port.write_file(path, body, expected_sha256=port.read_file(path).sha256)
+            _seed_acceptance(port, slug)
             # Capture inside `drive`: the port is released when the stage settles,
             # so a read after `_run_cli_stage` returns would be a closed view.
             seen["wrote"] = {
@@ -652,6 +689,7 @@ def test_the_authoring_stage_publishes_and_admits_the_project(site: Site, tmp_pa
             assert seen["wrote"][f"worklogs/{slug}/{relative}"] == body
 
         # 3: admission runs against the published revision and binds the pair.
+        _patch_sealed_cell(monkeypatch, managed.current_revision_id)
         bound, refusal = _admit_in(case_site, child_ctx, managed, _yaml, slug)
         assert refusal is None, f"admission refused the published project: {refusal}"
         assert bound.admission is not None and bound.admission.snapshot.format == PLAN_V2
@@ -1065,6 +1103,7 @@ def test_a_create_new_repair_writes_no_scaffold() -> None:
         f"{root}/increments/increment-01-initial-plan.md",
         f"{root}/notes/README.md",
         f"{root}/reviews/README.md",
+        f"{root}/acceptance/pytest.ini",
         f"{root}/acceptance/tests/test_acceptance_placeholder.py",
     ]
 
@@ -1085,7 +1124,9 @@ def test_a_create_new_repair_writes_no_scaffold() -> None:
     assert ordinary_port.writes == []
 
 
-def test_the_bound_repair_path_runs_both_stages_and_binds_the_result(site: Site, tmp_path: Path) -> None:
+def test_the_bound_repair_path_runs_both_stages_and_binds_the_result(
+    site: Site, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """D-V2-9.8: `_bind_authored_project` itself repairs -- not just "a repair is possible".
 
     The sibling test assembles the second stage by hand, which proves the mechanism but
@@ -1129,10 +1170,13 @@ def test_the_bound_repair_path_runs_both_stages_and_binds_the_result(site: Site,
             # The stage's port is the registry this drive needs: it writes documents.
             return workspace_io
 
+        _patch_sealed_cell(monkeypatch, managed.current_revision_id)
+
         def drive_first(port: object) -> object:
             for path, content in ((roadmap_path, good_roadmap), (increment_path, broken_increment)):
                 current = port.read_file(path).sha256  # type: ignore[attr-defined]
                 port.write_file(path, content, expected_sha256=current)  # type: ignore[attr-defined]
+            _seed_acceptance(port, slug)
             return SessionOutcome(exit_code=0, stop_reason="stopped_by_llm", turns=1, final_text="authored")
 
         def drive_repair(port: object) -> object:
@@ -1212,7 +1256,9 @@ def test_the_bound_repair_path_runs_both_stages_and_binds_the_result(site: Site,
         assert managed.current_revision_id != published
 
 
-def test_a_grammar_refusal_reaches_the_repair_as_the_parser_rule(site: Site, tmp_path: Path) -> None:
+def test_a_grammar_refusal_reaches_the_repair_as_the_parser_rule(
+    site: Site, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """P4-3: the *parse* rule travels too, not only the metadata cross-check's.
 
     A refusal reported as ``bootstrap-invalid-metadata`` is a family, and the family is all
@@ -1263,6 +1309,7 @@ def test_a_grammar_refusal_reaches_the_repair_as_the_parser_rule(site: Site, tmp
         def drive_first(registry: ToolRegistry) -> SessionOutcome:
             rewrite(cast("WorkspacePort", registry), roadmap_path, good_roadmap)
             rewrite(cast("WorkspacePort", registry), increment_path, broken_increment)
+            _seed_acceptance(registry, slug)
             return SessionOutcome(exit_code=0, stop_reason="stopped_by_llm", turns=1, final_text="authored")
 
         def drive_repair(registry: ToolRegistry) -> SessionOutcome:
@@ -1307,6 +1354,7 @@ def test_a_grammar_refusal_reaches_the_repair_as_the_parser_rule(site: Site, tmp
             )
             return 0 if outcome is not None and outcome.exit_code == 0 else 2
 
+        _patch_sealed_cell(monkeypatch, managed.current_revision_id)
         bound, blocked = workflow_controller._bind_authored_project(
             _replace(_stage_ctx(case_site, child_ctx, yaml_path, managed, slug), replans_allowed=1),
             progress=workflow_controller.WorkflowProgress(),
@@ -1320,7 +1368,7 @@ def test_a_grammar_refusal_reaches_the_repair_as_the_parser_rule(site: Site, tmp
 
 
 def test_metadata_table_and_parse_refusal_block_coder_then_repair_rewrites_published_file(
-    site: Site, tmp_path: Path
+    site: Site, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """TEST-2.8 (D-V2-9.3/9.4/9.8): a refused project is repaired in place, not re-created.
 
@@ -1377,6 +1425,7 @@ def test_metadata_table_and_parse_refusal_block_coder_then_repair_rewrites_publi
         def first_drive(port: object) -> object:
             _rewrite(port, roadmap_path, good_roadmap)
             _rewrite(port, increment_path, broken_increment)
+            _seed_acceptance(port, slug)
             return SessionOutcome(exit_code=0, stop_reason="stopped_by_llm", turns=1, final_text="authored")
 
         dispatch = PlannerDispatch(
@@ -1400,6 +1449,7 @@ def test_metadata_table_and_parse_refusal_block_coder_then_repair_rewrites_publi
         assert managed.current_revision_id != first_rev
 
         ctx = _stage_ctx(case_site, child_ctx, yaml_path, managed, slug)
+        _patch_sealed_cell(monkeypatch, managed.current_revision_id)
         refused_ctx, refusal = workflow_controller._admit_published_project(ctx)
         assert refusal is not None and refusal.rule == "bootstrap-invalid-metadata"
         assert refused_ctx.admission is None, "a refused project must not bind an admission"
@@ -1431,6 +1481,7 @@ def test_metadata_table_and_parse_refusal_block_coder_then_repair_rewrites_publi
             drive=repair_drive,
         )
 
+        _patch_sealed_cell(monkeypatch, managed.current_revision_id)
         bound, second_refusal = workflow_controller._admit_published_project(ctx)
         assert second_refusal is None, f"the repaired revision must admit, got {second_refusal}"
         assert bound.admission is not None and bound.admission.admitted is False
@@ -1481,7 +1532,7 @@ def test_a_missing_grant_is_never_repaired_by_rewriting_the_plan() -> None:
 
 
 def test_an_ungranted_request_is_refused_even_when_the_caller_sends_no_declarations(
-    site: Site, tmp_path: Path
+    site: Site, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """P4-1: binding used to run only when the caller *also* sent declarations.
 
@@ -1516,6 +1567,7 @@ def test_an_ungranted_request_is_refused_even_when_the_caller_sends_no_declarati
             for path, content in ((roadmap_path, roadmap), (increment_path, increment)):
                 current = port.read_file(path).sha256  # type: ignore[attr-defined]
                 port.write_file(path, content, expected_sha256=current)  # type: ignore[attr-defined]
+            _seed_acceptance(port, slug)
             return SessionOutcome(exit_code=0, stop_reason="stopped_by_llm", turns=1, final_text="authored")
 
         _cli._run_cli_stage(
@@ -1536,6 +1588,7 @@ def test_an_ungranted_request_is_refused_even_when_the_caller_sends_no_declarati
         )
 
         ctx = _stage_ctx(case_site, child_ctx, yaml_path, managed, slug)
+        _patch_sealed_cell(monkeypatch, managed.current_revision_id)
         admitted, refusal = workflow_controller._admit_published_project(ctx)
 
         assert refusal is not None and refusal.rule == "disposition-undeclared"
@@ -1714,6 +1767,7 @@ def test_create_new_stage_scaffolds_then_planner_writes_only_inside_slug() -> No
         f"{root}/increments/increment-01-initial-plan.md",
         f"{root}/notes/README.md",
         f"{root}/reviews/README.md",
+        f"{root}/acceptance/pytest.ini",
         f"{root}/acceptance/tests/test_acceptance_placeholder.py",
     ]
     # No dot-only component anywhere: the writer refuses those, so any would be a silent

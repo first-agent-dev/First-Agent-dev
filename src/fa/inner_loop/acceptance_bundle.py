@@ -59,7 +59,6 @@ __all__ = [
     "MAX_ATTESTED",
     "MAX_SEAL_BYTES",
     "SCHEMA_VERSION",
-    "SEAL_FILENAME",
     "VISIBILITY_MODES",
     "AcceptanceBundle",
     "AcceptanceBundleError",
@@ -83,8 +82,6 @@ __all__ = [
 #: (D-V2-12, P4-8, S2). Version 1 described *which* contracts were attested and
 #: nothing about who carried them, so it had to change shape, not gain a field.
 SCHEMA_VERSION = 2
-#: Seal file name; it sits beside ``acceptance/``, never inside it.
-SEAL_FILENAME = "acceptance.seal.json"
 #: Same read cap the authority already applies to its own bundle manifests.
 MAX_SEAL_BYTES = 1024**2
 #: One seal cannot describe more selectors than the closure can hold tests.

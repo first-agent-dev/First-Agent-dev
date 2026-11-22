@@ -841,6 +841,11 @@ _V2_CREATE_FAILURES: dict[str, tuple[str, bool]] = {
     "bootstrap-invalid-body": ("bootstrap_content_invalid", False),
     "bootstrap-invalid-metadata": ("bootstrap_content_invalid", False),
     "bootstrap-refused": ("bootstrap_content_invalid", False),
+    # N1: admission read the pair, then the acceptance closure could not be sealed -- a selector
+    # nothing collects, a tree that is not a closure, or (the consistency half) a seal that
+    # refused what admission accepted. The repair stage runs first and its budget is the only
+    # thing that can fix the content half, so by the time this reaches the caller it is spent.
+    "bootstrap-acceptance-unsealed": ("bootstrap_content_invalid", False),
     # Format refusals, kept separate from content ones: a document in a plan format this
     # build does not read is not fixed by rewriting its prose. Today the controller folds
     # these into `bootstrap-invalid-metadata` before they reach here (recorded as debt in

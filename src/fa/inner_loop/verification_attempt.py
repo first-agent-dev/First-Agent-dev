@@ -29,6 +29,11 @@ conventions:
                            and "found nothing" cannot look alike (F4, an invariant rather than a
                            redundant field).
 ``identity-missing-on-v2``  a ``v2`` attempt must name its seal, closure and revisions (F8).
+``attestation-unowned``    every attestation names a contract the seal lists as ``attested``, so
+                           the report cannot carry a grant the seal does not (N3).
+``kill-target-unknown``    every declared kill target names a covered contract (N2).
+``kill-target-conflict``   a target is either *declared* (attribution, not executed) or
+                           *required* (must carry a mutation), never both.
 ======================  =====================================================================
 
 Two deliberate choices. ``attested``/``pending`` are carried as the seal's own two lists instead
@@ -42,9 +47,11 @@ and error from the model's context (F6) -- a bound applied only at render time c
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Final
 
+from .plan_v2 import Attestation, KillTarget
 from .slice_verification import KILL_CHECK_VERDICTS, CommandOutcome, CommandResult, SliceVerdict
 
 __all__ = [
@@ -275,12 +282,27 @@ class VerificationAttempt:
     pending: tuple[str, ...] = ()
     contracts_total: int = 0
     kill_required: tuple[str, ...] = ()
+    #: The plan's declared ``KILL-TARGETS`` (N2, Q-V2-SLICE3-4 option A): attribution only, so it
+    #: says *what a mutation would belong to* without claiming one ran. Recorded instead of
+    #: inferred, because ``kill_required == ()`` cannot distinguish "none declared" from
+    #: "declared and not executed" -- F3's shape, one field over.
+    kill_declared: tuple[KillTarget, ...] = ()
+    #: The seal's attestation records (N3): who carried each non-executable claim, on what
+    #: evidence, and when. ``attested`` alone says *that* a contract was carried, which is the
+    #: half of P4-8 the run report was missing.
+    attestations: tuple[Attestation, ...] = ()
     errors: tuple[str, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         self._check_members()
+        # The record's coherence is a fact about the record, not about the route: a legacy attempt
+        # carries neither list today, so this costs nothing, and a route that starts declaring
+        # targets inherits the same rules instead of a second copy of them.
+        covered = {claim.contract_id: claim for claim in self.claims}
+        self._check_kill_targets(covered)
+        self._check_attestations()
         if self.route == "v2":
-            self._check_v2()
+            self._check_v2(covered)
         if not self.claims and not self.errors:
             raise VerificationAttemptError("empty-attempt-unexplained")
 
@@ -296,7 +318,7 @@ class VerificationAttempt:
         if any(not isinstance(error, str) for error in self.errors):
             raise VerificationAttemptError("attempt-invalid")
 
-    def _check_v2(self) -> None:
+    def _check_v2(self, covered: Mapping[str, ClaimEvidence]) -> None:
         """The rules that only bind the route whose oracle is sealed (F2, F3, F8, F9)."""
         identity = self.identity
         if identity is None or identity.seal_sha256 is None or identity.closure_sha256 is None:
@@ -305,7 +327,6 @@ class VerificationAttempt:
             raise VerificationAttemptError("identity-missing-on-v2")
         if any(command.authored_by == "planner" for command in self.commands):
             raise VerificationAttemptError("fence-on-v2-route")
-        covered = {claim.contract_id: claim for claim in self.claims}
         if len(covered) != len(self.claims):
             # One contract with two claims is ambiguous evidence, and it would also let the
             # totals below add up while a contract is missing.
@@ -323,6 +344,30 @@ class VerificationAttempt:
             claim = covered.get(contract_id)
             if claim is None or claim.mutation is None:
                 raise VerificationAttemptError("claim-mutation-missing")
+
+    def _check_kill_targets(self, covered: Mapping[str, ClaimEvidence]) -> None:
+        """A declared target is attribution, a required one is a mutation: never both (N2)."""
+        required = set(self.kill_required)
+        for target in self.kill_declared:
+            if not isinstance(target, KillTarget):
+                raise VerificationAttemptError("kill-target-invalid")
+            if target.ct not in covered:
+                raise VerificationAttemptError("kill-target-unknown")
+            if target.ct in required:
+                raise VerificationAttemptError("kill-target-conflict")
+        if len({target.target_id for target in self.kill_declared}) != len(self.kill_declared):
+            raise VerificationAttemptError("kill-target-duplicate")
+
+    def _check_attestations(self) -> None:
+        """The report may not carry a grant the seal does not list (N3, P4-8)."""
+        attested = set(self.attested)
+        for record in self.attestations:
+            if not isinstance(record, Attestation):
+                raise VerificationAttemptError("attestation-invalid")
+            if record.contract_id not in attested:
+                raise VerificationAttemptError("attestation-unowned")
+        if len({record.contract_id for record in self.attestations}) != len(self.attestations):
+            raise VerificationAttemptError("attestation-duplicate")
 
     @property
     def blocking(self) -> bool:

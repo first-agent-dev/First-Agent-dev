@@ -15,7 +15,6 @@ import pytest
 from fa.inner_loop.acceptance_bundle import (
     MAX_ATTESTED,
     SCHEMA_VERSION,
-    SEAL_FILENAME,
     AcceptanceBundle,
     AcceptanceBundleError,
     PinnedIdentity,
@@ -36,6 +35,8 @@ from fa.inner_loop.slice_verification import JUNIT_BLOCK_END, JUNIT_BLOCK_START,
 from tests.test_ai_native_plan_v2 import GRANT_PROBE_FILES, granted_graph, plan_document, plan_graph
 from tests.test_slice_verification_runner import _inband_executor
 
+#: A file name the seal writer is given explicitly; custody is the store's business now.
+_SEAL_FILE = "acceptance.seal.json"
 _SEALED_ROOT = "worklogs/demo/acceptance"
 _TEST_PATH = f"{_SEALED_ROOT}/tests/test_publish.py"
 _NODEID = f"{_TEST_PATH}::test_publish"
@@ -299,7 +300,7 @@ def test_an_unadmitted_plan_never_reaches_the_seal() -> None:
 
 def test_a_seal_is_written_once_with_fixed_mode(tmp_path: Path) -> None:
     bundle = _mint(_sealed_tree(tmp_path))
-    path = tmp_path / "worklogs" / "demo" / SEAL_FILENAME
+    path = tmp_path / "worklogs" / "demo" / _SEAL_FILE
 
     assert write_seal(bundle, path) == path
     assert path.read_bytes() == seal_bytes(bundle)
@@ -310,7 +311,7 @@ def test_a_seal_is_written_once_with_fixed_mode(tmp_path: Path) -> None:
 def test_an_existing_seal_is_never_replaced(tmp_path: Path) -> None:
     root = _sealed_tree(tmp_path)
     bundle = _mint(root)
-    path = tmp_path / "worklogs" / "demo" / SEAL_FILENAME
+    path = tmp_path / "worklogs" / "demo" / _SEAL_FILE
     write_seal(bundle, path)
 
     assert _rule(lambda: write_seal(_mint(root, supersedes_sha256=bundle.seal_sha256), path)) == "seal-exists"
@@ -327,7 +328,7 @@ def test_a_seal_path_must_be_a_path(tmp_path: Path, path: Any) -> None:
 def test_a_missing_parent_directory_is_refused(tmp_path: Path) -> None:
     bundle = _mint(_sealed_tree(tmp_path))
 
-    assert _rule(lambda: write_seal(bundle, tmp_path / "absent" / SEAL_FILENAME)) == "seal-path-invalid"
+    assert _rule(lambda: write_seal(bundle, tmp_path / "absent" / _SEAL_FILE)) == "seal-path-invalid"
 
 
 # -- refusal: loading a hostile record --------------------------------------

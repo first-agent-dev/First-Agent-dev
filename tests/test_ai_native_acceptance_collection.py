@@ -11,7 +11,6 @@ from typing import Any
 import pytest
 
 from fa.inner_loop.acceptance_bundle import (
-    SEAL_FILENAME,
     AcceptanceBundle,
     AcceptanceBundleError,
     load_seal,
@@ -230,17 +229,18 @@ def test_a_tree_collection_refuses_a_root_that_is_not_an_acceptance_tree(tmp_pat
         (root, "acceptance"),
         (root, f"{_SEALED_ROOT}/nested"),
     ):
-        assert (
-            _seal_rule(
-                lambda acceptance_root=acceptance_root, sealed_root=sealed_root: collect_sealed_tree(
-                    acceptance_root,
-                    sealed_root=sealed_root,
-                    workspace=tmp_path,
-                    executor=_inband_executor(writes_visible=False),
-                )
+
+        def collect_here(acceptance_root: Path = acceptance_root, sealed_root: str = sealed_root) -> object:
+            # A named function, not a lambda: mypy cannot infer the lambda's types. The default
+            # arguments bind the loop variable, which is what ruff's B023 asks for.
+            return collect_sealed_tree(
+                acceptance_root,
+                sealed_root=sealed_root,
+                workspace=tmp_path,
+                executor=_inband_executor(writes_visible=False),
             )
-            == "sealed-root-invalid"
-        )
+
+        assert _seal_rule(collect_here) == "sealed-root-invalid"
 
 
 def test_a_tree_collection_carries_the_closure_rules_instead_of_relabelling_them(tmp_path: Path) -> None:
@@ -554,7 +554,7 @@ def test_a_sealed_selector_that_did_not_execute_never_proves_anything(tmp_path: 
 
 def test_a_written_seal_loads_and_then_drives_the_same_run(tmp_path: Path) -> None:
     bundle, workspace = _seal(tmp_path)
-    seal_path = write_seal(bundle, workspace / SEAL_FILENAME)
+    seal_path = write_seal(bundle, workspace / "acceptance.seal.json")
     reloaded = load_seal(seal_path.read_bytes())
     executor = _FakeHost(report=_junit(("tests/test_publish.py::test_publish", "passed")))
 

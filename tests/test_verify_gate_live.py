@@ -4547,10 +4547,10 @@ def test_a_v2_stage_reads_the_seal_and_then_refuses_an_unmanaged_cell(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The seal is read from the workspace, so the only thing missing is the cell -- not the plan."""
-    from fa.inner_loop.acceptance_bundle import SEAL_FILENAME, write_seal
+    from fa.inner_loop.acceptance_seal_store import SealStore
     from tests.test_ai_native_acceptance_collection import _mint, _tree
 
-    write_seal(_mint(_tree(tmp_path)), tmp_path / SEAL_FILENAME)
+    SealStore(tmp_path).store(_mint(_tree(tmp_path)))
     monkeypatch.setattr(workflow, "verify_plan", lambda *args, **kwargs: pytest.fail("legacy verifier reached"))
 
     result = _run_stage(
@@ -4569,7 +4569,7 @@ def test_a_v2_stage_reads_the_seal_and_then_refuses_an_unmanaged_cell(
 
 def test_a_v2_stage_with_a_cell_produces_a_sealed_attempt_and_never_a_vacuous_pass(tmp_path: Path) -> None:
     """The whole point of F10: the V2 gate's verdict comes from a claimed, proven nodeid."""
-    from fa.inner_loop.acceptance_bundle import SEAL_FILENAME, write_seal
+    from fa.inner_loop.acceptance_seal_store import SealStore
     from fa.inner_loop.workflow_controller import _VerifySubstrate
     from tests.test_ai_native_acceptance_collection import (
         _NODEID,
@@ -4582,7 +4582,7 @@ def test_a_v2_stage_with_a_cell_produces_a_sealed_attempt_and_never_a_vacuous_pa
 
     bundle = _mint(_tree(tmp_path))
     assert bundle.plan_sha256 == __import__("hashlib").sha256(_PLAN_BYTES).hexdigest()
-    write_seal(bundle, tmp_path / SEAL_FILENAME)
+    SealStore(tmp_path).store(bundle)
     context = _v2_context(tmp_path, run_id="v2-sealed-cell", fence=False)
 
     verification, attempt = workflow._sealed_stage_verification(
@@ -4607,7 +4607,7 @@ def test_a_v2_stage_with_a_cell_produces_a_sealed_attempt_and_never_a_vacuous_pa
 
 def test_a_failing_sealed_nodeid_blocks_the_v2_stage(tmp_path: Path) -> None:
     """The measured defect's other half: a failing seal must not read as a pass either."""
-    from fa.inner_loop.acceptance_bundle import SEAL_FILENAME, write_seal
+    from fa.inner_loop.acceptance_seal_store import SealStore
     from fa.inner_loop.workflow_controller import _VerifySubstrate
     from tests.test_ai_native_acceptance_collection import _REVISION, _mint, _tree
     from tests.test_slice_verification_runner import _inband_executor
@@ -4615,7 +4615,7 @@ def test_a_failing_sealed_nodeid_blocks_the_v2_stage(tmp_path: Path) -> None:
     root = _tree(tmp_path)
     (root / "tests" / "test_publish.py").write_text("def test_publish():\n    assert False\n", encoding="utf-8")
     bundle = _mint(root)
-    write_seal(bundle, tmp_path / SEAL_FILENAME)
+    SealStore(tmp_path).store(bundle)
     context = _v2_context(tmp_path, run_id="v2-failing-seal", fence=False)
 
     verification, attempt = workflow._sealed_stage_verification(

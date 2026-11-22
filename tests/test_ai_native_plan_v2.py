@@ -18,6 +18,7 @@ from fa.inner_loop import workflow_controller
 from fa.inner_loop.plan_admission import (
     PLAN_V1,
     PLAN_V2,
+    DispositionDeclaration,
     PlanIds,
     PlanRef,
     PlanRefError,
@@ -402,9 +403,24 @@ _GRANTS = parse_dispositions(
 )
 #: The probe files the granted graph can attest; a sealed tree must carry them,
 #: because ``mint_seal`` refuses a ``HOST_PROBE`` artifact outside the closure.
-GRANT_PROBE_FILES = tuple(sorted({_GRANT_EVIDENCE[reason].split("probe:")[1].split("@host:")[0]
-                                  for reason in DISPOSITION_REASONS
-                                  if _GRANT_EVIDENCE[reason].startswith("probe:")}))
+GRANT_PROBE_FILES = tuple(
+    sorted(
+        {
+            _GRANT_EVIDENCE[reason].split("probe:")[1].split("@host:")[0]
+            for reason in DISPOSITION_REASONS
+            if _GRANT_EVIDENCE[reason].startswith("probe:")
+        }
+    )
+)
+
+
+def grant_declarations() -> tuple[DispositionDeclaration, ...]:
+    """The caller's declarations, for a test that has to hand them to admission itself.
+
+    ``granted_graph`` binds them after the fact; the create route binds the caller's own
+    declarations to the plan it read, so a test that drives admission needs the same list.
+    """
+    return _GRANTS
 
 
 def granted_graph(*, invariants: str = "", scenario: str = "", slice_body: str = "") -> PlanGraph:
@@ -478,10 +494,14 @@ def test_the_scope_digest_covers_the_sentences_the_grant_describes() -> None:
             )
         )
     )[0].scope_sha256
-    reworded_contract = contract_attestations(granted_graph(slice_body=_SLICE.replace(
-        "CT-1.2 [CONSTRAINT] INV: INV-2: readiness is proven on the host",
-        "CT-1.2 [CONSTRAINT] INV: INV-2: readiness is proven on the frozen host",
-    )))[0].scope_sha256
+    reworded_contract = contract_attestations(
+        granted_graph(
+            slice_body=_SLICE.replace(
+                "CT-1.2 [CONSTRAINT] INV: INV-2: readiness is proven on the host",
+                "CT-1.2 [CONSTRAINT] INV: INV-2: readiness is proven on the frozen host",
+            )
+        )
+    )[0].scope_sha256
 
     assert reworded_invariant != original, "the invariant's own sentence must be inside the scope"
     assert reworded_contract != original, "the contract the grant discharges must be inside the scope"
@@ -712,10 +732,7 @@ def test_invoke_workflow_cli_calls_the_same_tool_the_chat_registers(monkeypatch:
 
 
 #: One grant the tool would accept, spelled the way a caller sends it over the wire.
-_GRANT_JSON = (
-    '[{"reason": "HOST_READINESS", "owner": "W4", '
-    '"evidence": "issue:412", "reviewed_at": "2026-11-20"}]'
-)
+_GRANT_JSON = '[{"reason": "HOST_READINESS", "owner": "W4", "evidence": "issue:412", "reviewed_at": "2026-11-20"}]'
 _GRANT = [{"reason": "HOST_READINESS", "owner": "W4", "evidence": "issue:412", "reviewed_at": "2026-11-20"}]
 
 

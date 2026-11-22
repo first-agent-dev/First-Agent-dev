@@ -674,3 +674,80 @@ the loop — collect a tree, mint from `collection.nodeids`, and prove the mint 
 was collected); affected bucket 388 passed; five mutants of the new seam each killed by a named oracle. The
 long bank `tests/test_verify_gate_live.py` was **interrupted by the operator before it finished** and has not been
 re-run; it is owed before N1's controller wiring lands, and nothing in this change is claimed as E2E-verified.
+
+## N1–N3 landed, and the four defects the new bank found (2026-11-22)
+
+**N1 — custody.** `acceptance_seal_store.SealStore` replaces the loose `SEAL_FILENAME` in the tracked tree. The
+record is `.fa/seals/<seal_sha256>.json` and the authority over "which seal is in force" is a single pointer,
+`.fa/seal-current.json`, replaced by `os.replace` after an fsync (never a partial file). `.fa/` is the one location
+both canonical walks already exclude (`workspace.py:_PROTECTED_COMPONENTS`) and no file tool may address
+(`view_io.py:_BLOCKED_COMPONENTS`), so "the project at revision R" and "the bytes on disk" cannot stop meaning the
+same thing at the artifact that is supposed to prove custody. `store` is idempotent (a restart mints the same bytes
+from the same inputs), a second different seal must declare `supersedes_sha256`, and the pointer never swings
+without that declaration — a second mint on the create route is `seal-conflict`, not a supersede (D-V2-9 allows one
+revision). Absence and corruption are different answers: a missing pointer is `seal-pointer-missing` ("nothing
+sealed yet", which the stage reports in its existing `acceptance-seal/missing` vocabulary), a pointer naming a
+record that is not on disk is `seal-record-missing`, and a torn record is `seal-record-mismatch` — never a re-mint,
+because re-minting over corruption launders it into evidence.
+
+**N1 — mint and wiring.** `_seal_published_project` runs on the create route *after* every admission refusal has
+returned and *before* any coder is dispatched (D-V2-5 §3): `collect_sealed_tree` → `mint_seal` → `SealStore.store`.
+`candidate_revision_id = managed.current_revision_id` (C2: the pin is consulted once, at admission; custody is
+content-based afterwards). The stage reads the seal back through `SealStore.current()`. The refusal is one rule,
+`bootstrap-acceptance-unsealed`, whose `detail` is the closed rule of whichever producer refused (bundle rules, and
+plan rules such as `selector-uncollected` — `mint_seal` resolves selectors against the collection, so a selector
+nothing collects is the parser's own rule, not the bundle's). It maps to `bootstrap_content_invalid` and is
+non-retryable; repairability is split by half: an acceptance tree that does not collect is content the planner can
+fix inside `acceptance/`, while the consistency half (`_UNREPAIRABLE_SEAL_RULES`: admission accepted a graph the
+seal refused) is this build's defect and must not spend the repair budget. The scaffold now writes
+`acceptance/pytest.ini` with the project, because a closure without a runner config is not a closure and the
+planner has no instruction to author one — harness shape, like the front matter.
+
+**N2 (Q-V2-SLICE3-4 = option A, implemented on the recorded recommendation, operator sign-off still open).**
+`PlanGraph.kill_targets()` exposes the grammar's `KILL-TARGETS` rows in document order; `VerificationAttempt` gains
+`kill_declared`, and the artifact records `{target_id, ct_id, test_id, executed: false}` with the eval line saying
+"declared, not executed on this route". `kill_required` stays empty — nothing on this grammar is executable, which
+is a fact about the plan, not about the attempt. Rules: `kill-target-invalid`, `kill-target-unknown` (must name a
+covered contract), `kill-target-conflict` (declared and required are mutually exclusive), `kill-target-duplicate`.
+Revert surface if the operator chooses B: `kill_declared` and its three rules; B would instead pass the declared CTs
+as `kill_required` and block every plan that declares a target until `run_kill_checks` exists.
+
+**N3 (plan-settled by D-V2-10).** The seal's `Attestation` records travel through `sealed_attempt(attestations=…)`
+into the artifact (contract, invariant, reason, route, artifact, owner, `reviewed_at`, scope digest) and into the eval
+block (`owner`/`artifact` cut at `EVAL_CLAIM_DETAIL_MAX_CHARS` and labelled untrusted). Rules: `attestation-invalid`,
+`attestation-unowned` (the report may not carry a grant the seal does not list), `attestation-duplicate`. Both new
+rule families are checked for every route, not just `v2` — the record's coherence is a fact about the record, and a
+route that starts declaring targets inherits the same rules instead of a second copy.
+
+**Four defects the bank found — each caught by a test, none by inspection.** (1) `SealStore.store` wrote the record
+*before* validating the pointer move, so a refused supersede left an orphan seal nobody's pointer named; validation
+now precedes `_write_once`. (2) `_admit_published_project` returned the *bound* context on a seal refusal, so the
+caller still held an admission for a project with no oracle; it now returns the input `ctx`. (3) `mint_seal`'s
+`PlanV2Error` escaped uncaught — catching only `AcceptanceBundleError` turned a content refusal into a crash; the
+rule now travels as `detail`. (4) `bootstrap-acceptance-unsealed` had no mapping in `_V2_CREATE_FAILURES` and would
+have surfaced as an unclassified failure; it maps to `bootstrap_content_invalid`, non-retryable.
+
+**Fixture contract for route tests (all three discovered the hard way).** The shared V2 fixture front matter
+(`Increment-ID: I01`, no slug/active-increment/status/created) cannot pass `check_project_metadata`, so a route test
+builds its documents from `scaffold_files(slug, created=…)` and appends the authored body after the `Plan-Format`
+line; a seeded acceptance test must be created the way the tool creates it; and the verify substrate must be patched
+at the admission site (`workflow_controller._pinned_verify_substrate`), not at `verify_sealed_acceptance`.
+
+**Verification.** `tests/test_v2_seal_store_and_mint.py` — new bank, **19 passed** (custody, round-trip, idempotent
+re-store, supersede chain, pointer-missing vs record-missing, torn record, pointer not closed, route mint + next
+stage reads it, uncollectable tree, repairability split, no pinned cell, stage-level `kill_declared`, attestations in
+payload and render, plus three refusals). Affected bucket **675 passed**; the narrower re-run after the lint repairs
+**260 passed**. The owed long bank `tests/test_verify_gate_live.py` **581 passed in 183 s** (it had been interrupted,
+then its three `SealStore` sites were unverified). Full suite **8411 passed, 1 failed** — the pre-existing pyrefly
+topology red, unchanged. Gate recording `notes/gates/2026-11-22-head-n1n3` compared to `head-2f9924b`:
+**NEW TOTAL 0** (mypy 62 = base count, ruff 0, ruff-format 7 with one gone, authoring-check 0); the pytest finding
+list is also 0 new against the `base-1acb56b` recording. The three mypy findings this change initially added (an
+unbound lambda in a test, two imports from the wrong module) were fixed rather than recorded, because `no new red`
+counts findings, not their severity. Mutation testing: **14 of 14 mutants killed**, including pointer-before-record, missing-record-read-
+as-absence, record-write-into-the-tree, admission-skipping-the-mint, unsealed-context-returned, seal-family-always-
+repairable, declared-targets-dropped-at-the-stage, attestations-dropped-by-`sealed_attempt`, and each of the three
+new refusal rules. `ruff check`/`format --check` clean; `fa authoring-check` diagnostics 0.
+
+**Still open.** `Q-V2-SLICE3-4` needs the operator's confirmation of option A (the implementation follows the
+recorded recommendation). `Q-V2-SLICE3-3` (the duplicated uppercase verdict vocabulary in `kill_attribution`) stays
+open and untouched.

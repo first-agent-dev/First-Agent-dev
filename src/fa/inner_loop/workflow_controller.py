@@ -35,12 +35,14 @@ from fa.execution.client import (
 from fa.execution.primitives import ExecutionContractError
 from fa.execution.tool_port import ClientWorkspacePort
 from fa.execution.types import Access, Operation, ViewPurpose
-from fa.inner_loop.acceptance_bundle import SEAL_FILENAME, AcceptanceBundle, AcceptanceBundleError, load_seal
+from fa.inner_loop.acceptance_bundle import AcceptanceBundle, AcceptanceBundleError, mint_seal
 from fa.inner_loop.acceptance_collection import (
     AcceptanceCollectionError,
+    collect_sealed_tree,
     sealed_attempt,
     verify_sealed_acceptance,
 )
+from fa.inner_loop.acceptance_seal_store import SealStore
 from fa.inner_loop.admission_schema import ADMISSION_RULES, ADMISSION_RULES_V2
 from fa.inner_loop.coder_loop import SessionOutcome
 from fa.inner_loop.injections import INJECTION_MODES, INJECTION_SPECS, resolve_injection_modes
@@ -77,6 +79,7 @@ from fa.inner_loop.plan_promotion import (
     retain_plan_draft,
     seed_plan_candidate,
 )
+from fa.inner_loop.plan_v2 import PlanV2Error
 from fa.inner_loop.planner_dispatch import PlannerDispatch, PlannerDispatchError, PlannerDispatchKind
 from fa.inner_loop.project_metadata import MetadataError, check_project_metadata
 from fa.inner_loop.prompt import ADVERSARIAL_EVAL_STANCE_PREAMBLE
@@ -593,13 +596,12 @@ def _stage_acceptance_bundle(ctx: WorkflowContext) -> tuple[AcceptanceBundle | N
     invitation to run something else.
     """
     try:
-        return load_seal((ctx.workspace / SEAL_FILENAME).read_bytes()), ()
-    except FileNotFoundError:
-        return None, ("acceptance-seal/missing",)
+        return SealStore(ctx.workspace).current(), ()
     except AcceptanceBundleError as error:
-        return None, (f"acceptance-seal/{error.rule}",)
-    except OSError:
-        return None, ("acceptance-seal/unreadable",)
+        # ``seal-pointer-missing`` is the store's name for "nothing sealed yet", which on this
+        # route is the same fact the old missing-file check reported.
+        rule = "missing" if error.rule == "seal-pointer-missing" else error.rule
+        return None, (f"acceptance-seal/{rule}",)
 
 
 def _sealed_stage_verification(
@@ -673,7 +675,16 @@ def _sealed_stage_verification(
         sealed_revision_id=bundle.revision_id,
     )
     try:
-        sealed = sealed_attempt(bundle, verification, identity=identity)
+        sealed = sealed_attempt(
+            bundle,
+            verification,
+            identity=identity,
+            # N2/Q-V2-SLICE3-4 = A: the grammar's targets are attribution, so they are recorded
+            # as declared-and-not-executed rather than dropped. ``kill_required`` stays empty for
+            # the same reason -- nothing on this grammar is executable, which is a fact about the
+            # plan, not about the attempt.
+            kill_declared=snapshot.graph.kill_targets() if snapshot.graph is not None else (),
+        )
     except AcceptanceCollectionError as error:
         return PlanVerification(
             plan_command_results=(),
@@ -954,7 +965,26 @@ def _sealed_attempt_payload(attempt: VerificationAttempt) -> dict[str, object]:
         "attested": list(attempt.attested),
         "pending": list(attempt.pending),
         "contracts_total": attempt.contracts_total,
+        "attestations": [
+            {
+                "contract_id": record.contract_id,
+                "invariant_id": record.invariant_id,
+                "reason": record.reason,
+                "route": record.route,
+                "artifact": record.artifact,
+                "owner": record.owner,
+                "reviewed_at": record.reviewed_at,
+                "scope_sha256": record.scope_sha256,
+            }
+            for record in attempt.attestations
+        ],
         "kill_required": list(attempt.kill_required),
+        # N2: declared, not executed. ``kill_required`` alone cannot tell "none declared" from
+        # "declared and never run", and those are different facts about the plan.
+        "kill_declared": [
+            {"target_id": target.target_id, "ct_id": target.ct, "test_id": target.test_id, "executed": False}
+            for target in attempt.kill_declared
+        ],
         "attempt_blocking": attempt.blocking,
         "first_reason": attempt.first_reason,
     }
@@ -1337,6 +1367,19 @@ def _claim_evidence_lines(attempt: VerificationAttempt) -> list[str]:
         if claim.detail:
             detail = claim.detail[:EVAL_CLAIM_DETAIL_MAX_CHARS]
             lines.append(f"  detail (untrusted): {detail}")
+    for record in attempt.attestations:
+        # N3/P4-8: the ids alone say *that* a contract was carried; this says who carried it, on
+        # what, and when. ``owner`` and ``artifact`` are caller text, so both are cut and labelled.
+        lines.append(
+            f"- {record.contract_id} attested (untrusted): reason={record.reason} route={record.route} "
+            f"artifact={record.artifact[:EVAL_CLAIM_DETAIL_MAX_CHARS]} "
+            f"owner={(record.owner or 'none')[:EVAL_CLAIM_DETAIL_MAX_CHARS]} reviewed_at={record.reviewed_at or 'none'}"
+        )
+    for target in attempt.kill_declared:
+        lines.append(
+            f"- {target.ct} kill target {target.target_id} ({target.test_id}): declared, not executed "
+            "on this route (the V2 grammar expresses attribution only)"
+        )
     if attempt.attested:
         lines.append(f"- Attested elsewhere (not run here): {', '.join(attempt.attested)}")
     if attempt.pending:
@@ -3238,6 +3281,12 @@ def _may_repair_authored_project(ctx: WorkflowContext, refusal: PlanRefError) ->
     # with another repair is a loop, and the operator needs the failure instead.
     if refusal.rule == "bootstrap-refused":
         return False
+    # N1: an unsealed project is usually a content problem -- an acceptance tree that does not
+    # collect, a selector outside its own closure -- and ``acceptance/`` is inside the repair
+    # scope (S1 item 4) precisely so the planner can fix it. The consistency half is not:
+    # there, admission accepted what the seal refused, and the planner has nothing to repair.
+    if refusal.rule == "bootstrap-acceptance-unsealed" and refusal.detail in _UNREPAIRABLE_SEAL_RULES:
+        return False
     return ctx.authored_repairs < ctx.replans_allowed
 
 
@@ -3590,7 +3639,117 @@ def _admit_published_project(ctx: WorkflowContext) -> tuple[WorkflowContext, Pla
         )
     except (OSError, ValueError) as error:
         _admission_storage_failure(bound, error)
+    # N1/D-V2-5: mint and store the seal now, so the coder stage has an oracle and the gate can
+    # refuse a missing one instead of rewriting the plan to make absence legal.
+    refused = _seal_published_project(bound, snapshot)
+    if refused is not None:
+        logger.warning("published project not sealed [%s/%s] (run=%s)", refused.rule, refused.detail, ctx.run_id)
+        # The *bound* context is not handed back (every other refusal in this function returns
+        # ``ctx``): an unsealed project has no oracle, so the value a caller could dispatch a
+        # coder from must not carry an admission.
+        return ctx, refused
     return bound, None
+
+
+#: Seal refusals that a second authoring stage cannot fix.
+#:
+#: The family is one rule (``bootstrap-acceptance-unsealed``) because the caller sees one fact
+#: -- "the project was not sealed" -- while the *detail* is the closed rule of the producer
+#: that refused. These details are the consistency half: admission accepted the graph and the
+#: seal refused it, which is a defect in this build, not in the planner's prose. Spending the
+#: repair budget on our own inconsistency would burn a model call and end in a worse code.
+_UNREPAIRABLE_SEAL_RULES: frozenset[str] = frozenset(
+    {
+        "plan-graph-missing",
+        "seal-uncovered-contracts",
+        "seal-attestation-unowned",
+        "seal-attestation-artifact-missing",
+        "seal-plan-graph-mismatch",
+        "seal-totality-mismatch",
+        "seal-conflict",
+        "seal-record-mismatch",
+        "seal-record-missing",
+        "seal-pointer-invalid",
+        "seal-pointer-unreadable",
+        "seal-store-unwritable",
+        "seal-store-unreadable",
+    }
+)
+
+
+def _seal_published_project(ctx: WorkflowContext, snapshot: PlanSnapshot) -> PlanRefError | None:
+    """Mint the acceptance seal for the revision admission just read, or refuse (N1, D-V2-5).
+
+    Before this function the route had no seal at all: ``mint_seal`` was reachable only from
+    the defect-correction route and from tests, so every V2 stage refused
+    ``acceptance-seal/missing`` and CT-3.6 -- and every rule inside it -- was a guard nobody
+    tripped. The two halves of that gap are visible here: the collection report the mint needs
+    could only be produced by a collector that needed a minted seal (:func:`collect_sealed_tree`
+    breaks that cycle), and nothing ran the mint after admission succeeded.
+
+    Order is load-bearing. The seal is minted *after* every admission refusal has already
+    returned, so a project that admission would reject never gets a seal that outlives the
+    refusal, and it is minted *before* the coder is dispatched, so the coder's first stage can
+    rely on the pointer existing (D-V2-5 §3).
+
+    ``candidate_revision_id`` is the sealed revision here, not a candidate: the acceptance
+    closure lives in the revision the authoring stage published, and C2 says the revision pin
+    is consulted once -- at admission -- while standing custody is content-based
+    (``verify_plan`` + ``verify_sealed_root``) from then on.
+    """
+    managed = ctx.managed_execution
+    slug = ctx.project_hint
+    graph = snapshot.graph
+    if managed is None or slug is None:  # pragma: no cover - the route proved both before the stage
+        return PlanRefError("bootstrap-unavailable")
+    if graph is None:
+        # A PLAN-V2 snapshot with no graph cannot describe a contract, let alone seal one.
+        return PlanRefError("bootstrap-acceptance-unsealed", detail="plan-graph-missing")
+    sealed_root = f"worklogs/{slug}/acceptance"
+    acceptance_root = ctx.workspace / sealed_root
+    with _pinned_verify_substrate(ctx) as substrate:
+        if substrate is None:
+            # No pinned cell means the collection would run on the host tree, which is what the
+            # coder just edited; that is an authority fact, so it is retryable and pre-seal.
+            return PlanRefError("bootstrap-unavailable")
+        try:
+            collection = collect_sealed_tree(
+                acceptance_root,
+                sealed_root=sealed_root,
+                workspace=ctx.workspace,
+                deadline=ctx.deadline_mono,
+                executor=substrate.executor,
+            )
+        except AcceptanceCollectionError as error:
+            return PlanRefError("bootstrap-acceptance-unsealed", detail=error.rule)
+        except AcceptanceBundleError as error:
+            # ``sealed-root-invalid`` stays the seal's rule on the way in, by design.
+            return PlanRefError("bootstrap-acceptance-unsealed", detail=error.rule)
+    try:
+        bundle = mint_seal(
+            graph=graph,
+            plan_bytes=snapshot.utf8_bytes,
+            revision_id=managed.current_revision_id,
+            sealed_root=sealed_root,
+            acceptance_root=acceptance_root,
+            collected=collection.nodeids,
+        )
+    except AcceptanceBundleError as error:
+        return PlanRefError("bootstrap-acceptance-unsealed", detail=error.rule)
+    except PlanV2Error as error:
+        # ``mint_seal`` resolves the plan's selectors against the collection, so a selector
+        # nothing collected surfaces here as the parser's own rule. It is content, and the
+        # repair prompt is the only place that can act on it (P4-3).
+        return PlanRefError("bootstrap-acceptance-unsealed", detail=error.rule)
+    try:
+        SealStore(ctx.workspace).store(bundle)
+    except AcceptanceBundleError as error:
+        # A second mint with a different digest means the pointer already names another seal.
+        # On the create route that is a conflict, not a supersede: D-V2-9 allows one revision,
+        # so nothing here may swing the pointer over a record a reviewer is reading.
+        rule = "seal-conflict" if error.rule == "seal-supersede-required" else error.rule
+        return PlanRefError("bootstrap-acceptance-unsealed", detail=rule)
+    return None
 
 
 _CLARIFICATION_V2_RULES: dict[str, str] = {
