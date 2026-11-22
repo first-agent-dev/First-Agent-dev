@@ -410,3 +410,48 @@ F10 also sharpens what CT-3.6's wiring must prove, and it is not only "the fence
 5. **`run_kill_checks` seam** — only if a route can declare executable mutation directives; today none can, so this
    is *not* on the critical path and must not be built speculatively (SLICE3's intent forbids a second runner, and
    there is nothing to run).
+
+## F10 — landed: the projection, and the total rule it corrected
+
+Item 1 of the ordered list is implemented: `sealed_attempt(bundle, verification, *, identity)` in
+`acceptance_collection.py`, with `_claim_outcome`, `_require_command`, `_require_identity_matches` and
+`_require_run_matches` beside it. Claims are `bundle.selectors × verification.run.outcomes` — a selector with no
+outcome becomes `outcome="error"` with the detail *"the sealed selector produced no nodeid in this run"*, never
+`skipped`, because "did not execute" and "failed" are different facts and only one of them is a coder's bug. One
+`AttemptCommand.from_result(verification.command, authored_by="harness")`; `attested`, `pending` and
+`contracts_total` come from the seal; `kill_required == ()` for the reason recorded above.
+
+**Two things had to be fixed to make the join honest, and both were measured rather than assumed:**
+
+1. **The receipt had no command.** `SealedCollection`/`SealedVerification` recorded argv, nodeids and outcomes but
+   not the `CommandResult` that produced them, so the projection had no provenance to carry. Both now hold
+   `command`, and a collection that cannot name its own command is refused (`collection-no-command`) instead of
+   being projected as if it were evidence.
+2. **`claims-total-mismatch` was wrong for every real seal.** The attempt counted
+   `len(claims) + len(attested) + len(pending) == contracts_total`. Measured on the fixture seal:
+   `contracts_total=2`, `selectors=(CT-1.1,)`, `attested=("CT-1.2",)`, `pending=("CT-1.2",)` — because
+   `acceptance_bundle` requires `pending ⊆ attested` (`:601`). The seal's `pending` is a *deploy qualifier on an
+   attestation*, not a third disjoint bucket, so the sum is 3 against a total of 2 and the projection of a correct
+   verification was refused. The rule is now a **coverage** rule: one contract id per claim (`claims-total-mismatch`
+   if a contract is claimed twice), no contract both claimed and excused, and
+   `len(claims) + len(attested ∪ pending) == contracts_total`. The sum rule's mutant dies against
+   `test_a_pending_contract_that_is_also_attested_is_counted_once`; the intersection-removal mutant dies against
+   `test_a_contract_cannot_be_claimed_and_also_excused`; the dropped-contract case (F3's original purpose) is still
+   refused because coverage falls short.
+
+**What the projection refuses, each with a test that dies when the rule is removed:** `verifier-revision-mismatch`
+(the caller's candidate is not the verification's candidate), `verifier-identity-mismatch` (any of plan/seal/closure/
+sealed-revision disagrees with the bundle, **or** the `SealedRun` itself carries another seal's digests — a frozen
+run can be swapped in after the fact, which the identity fields alone cannot see), `collection-no-command`, and the
+attempt's own `attempt-<rule>` translations.
+
+**Measured:** `tests/test_v2_sealed_attempt.py` 10 oracles, `tests/test_v2_verification_attempt.py` 23; bundle
+targeted bucket 314 passed; `ruff` clean, `ruff format` clean, mypy 62 raw (unchanged against the `head-c41df3e-f9`
+recording), `fa authoring-check` diagnostics 0. Seven hand-built mutants, all killed: drop `_require_run_matches`,
+drop the revision refusal, drop the identity refusal, make a missing outcome `passed`, drop the harness authorship,
+restore the three-list sum, drop the claim/excused intersection.
+
+**Still not done, and next in order:** the controller branch (item 3) is the *only* thing that makes F10's green-by-
+emptiness stop, because the projection has no caller on the V2 route yet — `_stage_plan` still passes
+`PlanSnapshot.ids` to `verify_plan` (`workflow_controller.py:1757`). Item 2 (F5, substrate-named revision) is what
+gives `identity.substrate`/`candidate_revision_id` a value the verifier can prove rather than receive.

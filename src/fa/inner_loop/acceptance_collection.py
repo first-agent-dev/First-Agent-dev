@@ -42,11 +42,19 @@ from .acceptance_bundle import (
 from .acceptance_closure import pytest_argv, shell_command
 from .slice_verification import (
     CommandOutcome,
+    CommandResult,
     VerifyCommandExecutor,
     inband_junit_command,
     parse_inband_nodeids,
     parse_nodeid_report,
     run_commands,
+)
+from .verification_attempt import (
+    AttemptCommand,
+    ClaimEvidence,
+    VerificationAttempt,
+    VerificationAttemptError,
+    VerificationIdentity,
 )
 
 __all__ = [
@@ -57,6 +65,7 @@ __all__ = [
     "collect_sealed_nodeids",
     "collect_sealed_nodeids_inband",
     "run_sealed_acceptance",
+    "sealed_attempt",
     "sealed_collection_argv",
     "sealed_collection_inband_command",
     "sealed_test_paths",
@@ -95,6 +104,9 @@ class SealedCollection:
     argv: tuple[str, ...]
     nodeids: Mapping[str, tuple[str, ...]]
     outcomes: Mapping[str, bool]
+    #: The receipt's own command record. A collection that cannot name the command that
+    #: produced it is not evidence, and the attempt entity requires provenance.
+    command: CommandResult | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -281,7 +293,7 @@ def collect_sealed_nodeids_inband(
     if result.exit_code not in {0, 1}:
         raise AcceptanceCollectionError("collection-unusable")
     keyed = _workspace_nodeids(bundle, outcomes)
-    return SealedCollection(argv=argv, nodeids=_group_nodeids(keyed), outcomes=keyed)
+    return SealedCollection(argv=argv, nodeids=_group_nodeids(keyed), outcomes=keyed, command=result)
 
 
 @dataclass(frozen=True, slots=True)
@@ -300,6 +312,7 @@ class SealedVerification:
     sealed_root: str
     sealed_revision_id: str
     candidate_revision_id: str
+    command: CommandResult
 
 
 def verify_sealed_acceptance(
@@ -360,7 +373,108 @@ def verify_sealed_acceptance(
         sealed_root=bundle.sealed_root,
         sealed_revision_id=bundle.revision_id,
         candidate_revision_id=candidate_revision_id,
+        command=_require_command(collection),
     )
+
+
+def _require_command(collection: SealedCollection) -> CommandResult:
+    """The receipt a sealed collection always has, or a refusal -- never a guess."""
+    if collection.command is None:
+        raise AcceptanceCollectionError("collection-no-command")
+    return collection.command
+
+
+def _claim_outcome(outcomes: Mapping[str, bool], nodeid: str) -> tuple[str, str]:
+    """One selector's outcome, keeping "did not execute" distinct from "failed"."""
+    passed = outcomes.get(nodeid)
+    if passed is None:
+        return "error", "the sealed selector produced no nodeid in this run"
+    return ("passed", "") if passed else ("failed", "")
+
+
+def _require_identity_matches(bundle: AcceptanceBundle, identity: VerificationIdentity) -> None:
+    """The identity an attempt records must describe the seal it claims to describe.
+
+    Pairing one plan's bytes with another seal's graph is the defect E610 already paid for
+    (``seal-plan-graph-mismatch``); the projection is the second place such a pair can be made, so
+    it checks the pair rather than trusting the caller to have built both from one bundle.
+    """
+    recorded = {
+        "plan": (identity.plan_sha256, bundle.plan_sha256),
+        "seal": (identity.seal_sha256, bundle.seal_sha256),
+        "closure": (identity.closure_sha256, bundle.closure.digest),
+        "sealed revision": (identity.sealed_revision_id, bundle.revision_id),
+    }
+    for expected, actual in recorded.values():
+        if expected != actual:
+            raise AcceptanceCollectionError("verifier-identity-mismatch")
+
+
+def _require_run_matches(bundle: AcceptanceBundle, verification: SealedVerification) -> None:
+    """The measured run must be *this* seal's run, not one that was carried over.
+
+    ``SealedRun`` is a frozen record of what executed; a caller who swaps it in after the fact can
+    otherwise attach another seal's outcomes to this bundle's claims. The identity checks above
+    cannot see that, because the run is a second statement of the same three digests.
+    """
+    run = verification.run
+    if (
+        run.seal_sha256 != bundle.seal_sha256
+        or run.closure_sha256 != bundle.closure.digest
+        or run.revision_id != bundle.revision_id
+        or verification.sealed_revision_id != bundle.revision_id
+        or verification.sealed_root != bundle.sealed_root
+    ):
+        raise AcceptanceCollectionError("verifier-identity-mismatch")
+
+
+def sealed_attempt(
+    bundle: AcceptanceBundle,
+    verification: SealedVerification,
+    *,
+    identity: VerificationIdentity,
+) -> VerificationAttempt:
+    """Project one sealed verification into the attempt the gate reads (F10).
+
+    This is the step that turns "the verifier measured the sealed closure" into "the gate has a
+    verdict": one claim per sealed selector, the seal's attested/pending debt carried exactly as
+    the seal states it, and one harness-authored command with its receipt. ``kill_required`` is
+    empty because the V2 grammar declares no executable mutation (``KillTarget`` carries
+    attribution only, ``plan_v2.py:509-518``); CT-3.4 calls a target pass on that route vacuous,
+    and an attempt must not claim more than the grammar can express.
+    """
+    if not isinstance(bundle, AcceptanceBundle):
+        raise AcceptanceCollectionError("seal-invalid")
+    if not isinstance(verification, SealedVerification):
+        raise AcceptanceCollectionError("verification-invalid")
+    if verification.candidate_revision_id != identity.candidate_revision_id:
+        raise AcceptanceCollectionError("verifier-revision-mismatch")
+    _require_identity_matches(bundle, identity)
+    _require_run_matches(bundle, verification)
+
+    commands = (AttemptCommand.from_result(verification.command, authored_by="harness"),)
+    claims = tuple(
+        ClaimEvidence(
+            contract_id=selector.ct_id,
+            test_id=selector.test_id,
+            nodeid=selector.nodeid,
+            outcome=_claim_outcome(verification.run.outcomes, selector.nodeid)[0],
+            detail=_claim_outcome(verification.run.outcomes, selector.nodeid)[1],
+        )
+        for selector in bundle.selectors
+    )
+    try:
+        return VerificationAttempt(
+            route="v2",
+            identity=identity,
+            claims=claims,
+            commands=commands,
+            attested=bundle.attested,
+            pending=bundle.pending,
+            contracts_total=bundle.contracts_total,
+        )
+    except VerificationAttemptError as error:
+        raise AcceptanceCollectionError(f"attempt-{error.rule}") from None
 
 
 def run_sealed_acceptance(

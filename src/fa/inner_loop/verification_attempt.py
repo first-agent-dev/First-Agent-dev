@@ -292,9 +292,20 @@ class VerificationAttempt:
             raise VerificationAttemptError("identity-missing-on-v2")
         if any(command.authored_by == "planner" for command in self.commands):
             raise VerificationAttemptError("fence-on-v2-route")
-        if len(self.claims) + len(self.attested) + len(self.pending) != self.contracts_total:
-            raise VerificationAttemptError("claims-total-mismatch")
         covered = {claim.contract_id: claim for claim in self.claims}
+        if len(covered) != len(self.claims):
+            # One contract with two claims is ambiguous evidence, and it would also let the
+            # totals below add up while a contract is missing.
+            raise VerificationAttemptError("claims-total-mismatch")
+        excused = set(self.attested) | set(self.pending)
+        if set(covered) & excused:
+            raise VerificationAttemptError("claims-total-mismatch")
+        # Every contract is accounted for exactly once. ``pending`` is a deploy qualifier, so a
+        # contract that is attested *and* pending counts once -- the seal's own partition
+        # (``acceptance_bundle`` requires ``pending`` ⊆ ``attested``), which is why this is a
+        # coverage count and not a sum of the three list lengths.
+        if len(covered) + len(excused) != self.contracts_total:
+            raise VerificationAttemptError("claims-total-mismatch")
         for contract_id in self.kill_required:
             claim = covered.get(contract_id)
             if claim is None or claim.mutation is None:

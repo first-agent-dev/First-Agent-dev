@@ -165,6 +165,21 @@ def test_claims_must_cover_the_seal_total_including_attested_and_pending() -> No
     assert attempt.blocking is False
 
 
+def test_a_pending_contract_that_is_also_attested_is_counted_once() -> None:
+    """The seal requires ``pending`` ⊆ ``attested`` (``acceptance_bundle``), so the totals are a
+    coverage count, not a sum of three list lengths -- otherwise every real seal double-counts."""
+    attempt = _attempt(contracts_total=2, attested=("CT-1.2",), pending=("CT-1.2",))
+
+    assert attempt.blocking is False
+    assert attempt.attested == ("CT-1.2",)
+    assert attempt.pending == ("CT-1.2",)
+
+
+def test_a_contract_cannot_be_claimed_and_also_excused() -> None:
+    assert _rule(lambda: _attempt(contracts_total=2, attested=("CT-1.1",))) == "claims-total-mismatch"
+    assert _rule(lambda: _attempt(claims=(_claim(), _claim()), contracts_total=1)) == "claims-total-mismatch"
+
+
 def test_pending_blocks_deploy_but_not_this_attempt() -> None:
     """D-V2-12: a debt owed to a host is a deploy question, not a verification failure."""
     attempt = _attempt(contracts_total=2, pending=("CT-1.2",))
