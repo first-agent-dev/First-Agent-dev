@@ -12355,3 +12355,55 @@ The first version of this test put the hostile text *outside* the prefix and M18
 proves nothing. Harness 20/20.
 
 231 tests across the four banks; ruff clean; mypy 224; doc-links 372.
+
+### E600 — SLICE3 begins with a contradiction in the plan, not a defect in the code (2026-11-21)
+
+Started CT-3.1 (the `INV→CT→TEST-ID→selector` graph) expecting a test to write. Reading
+`plan_v2._admit_evidence` first, and it is *more* permissive than the row's wording:
+
+    a SOFT invariant with EVIDENCE: TEST_REQUIRED whose contract has no selector and no
+    disposition is admitted, and grades UNCOVERED.
+
+Verified by execution, not by reading: `_admit(plan_graph(invariants=_NO_DISPOSITION_INVARIANTS))`
+returns normally and `contract_evidence(...)["CT-1.2"] is UNCOVERED`. Only `PRESERVATION`
+and `HARD` are refused. Two tests encode the current behaviour on purpose, one of them
+titled `test_a_soft_invariant_may_still_stay_uncovered` with the docstring "A soft
+invariant needs no executable evidence, so the gap is legal -- and visible."
+
+So a plan can promise a test in its own grammar, ship none, waive nothing, and admit.
+
+**Why I did not fix it.** I implemented the tightening, ran the bank, and four tests failed
+-- three of them *by design*. Then I read the row again: CT-3.1 says evidence-or-disposition
+is required for "hard invariant/ready CT". `SOFT` is outside that sentence. Q-V2-ACC-2 asks
+which of two readings to adopt and is still open in its own table. And §8 step 4 asserts
+"Q-V2-ACC-1/2 are closed" while that row carries no resolution -- the plan contradicts
+itself, so the stricter reading cannot be inferred from it either. Widening admission
+semantics by inference, against two tests that document the opposite, is exactly the kind of
+decision this work is supposed to escalate rather than absorb. Reverted; the tree is clean
+at `00c2303` plus this entry and the question text.
+
+**The three options, and what each costs.**
+
+*(A) Require an executable assertion for every hard INV/ready CT.* This is the plan's
+literal wording and is already implemented; the gap is `SOFT`-only, so (A) changes nothing.
+Choosing (A) closes the question without closing the gap, and `UNCOVERED` stays reachable.
+
+*(B) Permit typed `NON_EXECUTABLE` only under a ratified disposition rule.* Already how
+`HARD` works. Applying it to `SOFT` is the tightening I wrote: a `TEST_REQUIRED` claim must
+be covered or waived, regardless of kind. Cost: every existing plan that leaves a `SOFT`
+contract uncovered becomes inadmissible, and the two tests above must be rewritten. Benefit:
+"we declared the evidence mode" starts meaning something.
+
+*(C) Grade the gap and let admission decide elsewhere.* Keep `UNCOVERED` legal at parse time
+and refuse it at seal or at coder dispatch, where the *sealed* closure makes coverage a
+matter of bytes rather than intent. Cost: two gates to keep in step; benefit: `SOFT` plans
+stay parseable for authoring and repair, which is where the two encoding tests live.
+
+I lean (B) for the parse-time rule and would take (C) for anything discovered late, but the
+choice sets admission semantics for every V2 plan, and the plan is authoritative on exactly
+this kind of question.
+
+**State.** BLOCKING CT-3.1. Nothing else in SLICE3 depends on the answer yet -- CT-3.2
+(materialization into the seal) and CT-3.3 (mode-A projection) can proceed, and CT-3.3's
+own gate Q-V2-MODEA-1 is recorded RESOLVED (= B, detection). Ask which option governs before
+the CT-3.1 test is written.
