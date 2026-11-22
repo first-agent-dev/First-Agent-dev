@@ -87,12 +87,36 @@ def _parse_mypy(log: str) -> list[str]:
     return sorted(findings)
 
 
+_RUFF_CONCISE = re.compile(r"^(?P<path>[^:]+\.py):\d+:\d+: (?P<msg>[A-Z]+\d+.*)$")
+_RUFF_CODE = re.compile(r"^(?P<msg>[A-Z]+\d+(?: \[\*\])? .*)$")
+_RUFF_LOCATION = re.compile(r"^\s*--> (?P<path>[^:]+):\d+:\d+$")
+
+
 def _parse_ruff(log: str) -> list[str]:
+    """Recognise both of ruff's output shapes (E609).
+
+    ``--output-format=concise`` puts the location on the line (``path:l:c: CODE msg``);
+    the default *full* shape puts the code and message on one line and the location
+    on the next (``F401 [*] msg`` / ``--> path:34:42``). Parsing only the first shape
+    is how a recording reported "findings=0" while ruff exited 1 with an unused
+    import -- the gate silently reading clean, which is the failure it exists to stop.
+    """
     findings: list[str] = []
+    pending: str | None = None
     for line in _strip_ansi(log).splitlines():
-        match = re.match(r"^(?P<path>[^:]+\.py):\d+:\d+: (?P<msg>[A-Z]+\d+.*)$", line)
-        if match:
-            findings.append(f"{match.group('path')}: {match.group('msg')}")
+        concise = _RUFF_CONCISE.match(line)
+        if concise:
+            findings.append(f"{concise.group('path')}: {concise.group('msg')}")
+            pending = None
+            continue
+        code = _RUFF_CODE.match(line)
+        if code:
+            pending = code.group("msg")
+            continue
+        location = _RUFF_LOCATION.match(line)
+        if location and pending is not None:
+            findings.append(f"{location.group('path')}: {pending}")
+            pending = None
     return sorted(findings)
 
 
@@ -133,7 +157,8 @@ GATES: tuple[Gate, ...] = (
         _parse_pytest,
     ),
     Gate("mypy", lambda _cwd: [sys.executable, "-m", "mypy"], _parse_mypy),
-    Gate("ruff", lambda _cwd: [sys.executable, "-m", "ruff", "check"], _parse_ruff),
+    # Concise output is the shape the parser reads best; both are accepted.
+    Gate("ruff", lambda _cwd: [sys.executable, "-m", "ruff", "check", "--output-format=concise"], _parse_ruff),
     Gate("authoring-check", lambda _cwd: [_fa(), "authoring-check"], _parse_authoring_check),
 )
 

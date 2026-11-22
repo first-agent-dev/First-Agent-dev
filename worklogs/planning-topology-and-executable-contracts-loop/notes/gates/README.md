@@ -70,3 +70,16 @@ host prerequisite, deferred fix) — never silently re-run until green.
    baseline; it is a property of the tree.
 3. **The suite is ~13–19 minutes.** Record it once, `--reuse pytest=<log>` afterwards. A `--tb=no -rf`
    run is enough for the nodeid list; re-run the survivors with `--tb=line` when a reason is needed.
+
+## A gate that read clean while the gate failed (2026-11-22)
+
+The first S2 recording printed `ruff exit=1 findings=0`. Both halves were true: ruff failed, and the
+parser found nothing — the parser only knew `path:line:col: CODE msg` (concise), while ruff's default
+output puts the code on one line and `--> path:line:col` on the next. So the gate reported "no
+findings" for a run that had one (an unused import), which is exactly the failure `no new red` exists to
+prevent: a green reading from a red run.
+
+Two fixes: recordings now pass `--output-format=concise`, and the parser reads both shapes, pairing a
+`CODE message` line with a following `--> location` line. Lesson for the next gate added here: **record
+the exit code as a finding too** — `summary.json` keeps it, and a non-zero exit with an empty list is a
+parser bug, never a clean tree.
