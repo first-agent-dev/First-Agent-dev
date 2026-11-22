@@ -12822,6 +12822,11 @@ So the honest split at this branch is: **new = 1, fixed in `ddb5c8f` and re-veri
 tree that could not run the project's toolchain. Both lessons are now in `notes/gates/README.md`, because
 a baseline measured in such a tree is not a baseline.
 
+**Result 3 — pyrefly, the second type checker, same method.** Its test asserts a *total* of zero, and it
+is red on both sides (63 at base, 59 here), so the total is useless as a merge signal. Normalised lists
+(`file` + message) give 27 -> 26 unique, **0 new, 1 gone** — the same `SimpleNamespace` -> `Namespace`
+finding mypy lost. Recording: `notes/gates/2026-11-22-pyrefly-diff.md`. Not yet a gate in the tracker.
+
 **Policy recorded (plan §8).** `no new red` is a standing gate: `compare` must report `0 new`; known red
 stays listed with its reason; `xfail` only for a *proven* host prerequisite, never for "it fails in this
 environment"; known red that turns out to be code is fixed before deploy as its own item.
