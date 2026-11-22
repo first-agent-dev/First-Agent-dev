@@ -45,12 +45,13 @@ import re
 from dataclasses import dataclass, field
 from typing import Final
 
-from .slice_verification import CommandOutcome, CommandResult
+from .slice_verification import KILL_CHECK_VERDICTS, CommandOutcome, CommandResult, SliceVerdict
 
 __all__ = [
     "AUTHORSHIP",
     "CLAIM_OUTCOMES",
     "DETAIL_LIMIT",
+    "MUTATION_VERDICTS",
     "ROUTES",
     "AttemptCommand",
     "ClaimEvidence",
@@ -64,6 +65,14 @@ __all__ = [
 ROUTES: Final = frozenset({"v2", "legacy"})
 AUTHORSHIP: Final = frozenset({"planner", "harness"})
 CLAIM_OUTCOMES: Final = frozenset({"passed", "failed", "skipped", "error"})
+
+#: The words a mutation verdict may use, derived from the runner's own closed set rather than
+#: restated: ``KILL_CHECK_VERDICTS`` is what ``KillCheck`` validates against, so a copy here could
+#: drift into a second vocabulary for one idea -- and a *different* alphabet is not cosmetic. The
+#: landed defect this replaces accepted any string and compared against ``"PROVEN"``, so the only
+#: value production can produce (``SliceVerdict.PROVEN.value``, lowercase) read as *not proven*,
+#: while a string production never produces read as proven.
+MUTATION_VERDICTS: Final = frozenset(member.value for member in KILL_CHECK_VERDICTS)
 
 #: One field's budget inside the eval evidence block. ``EVAL_VERIFICATION_MAX_CHARS`` is the
 #: block's budget and is applied by *truncating the head* of the rendering, so an unbounded
@@ -159,7 +168,9 @@ class MutationEvidence:
             raise VerificationAttemptError("mutation-invalid")
         if not isinstance(self.target, str) or not self.target:
             raise VerificationAttemptError("mutation-invalid")
-        if not isinstance(self.verdict, str) or not self.verdict:
+        if self.verdict not in MUTATION_VERDICTS:
+            # A verdict outside the runner's vocabulary is a programming error, not data: it would
+            # otherwise be stored verbatim and read as "not proven" by luck rather than by rule.
             raise VerificationAttemptError("mutation-invalid")
         object.__setattr__(self, "detail", _bounded(self.detail))
 
@@ -197,7 +208,9 @@ class ClaimEvidence:
         """Passed *and* (when a kill target was declared) the mutation died."""
         if self.outcome != "passed":
             return False
-        return self.mutation is None or self.mutation.verdict == "PROVEN"
+        # The closed vocabulary, not a literal: ``proven`` is the one member that means the mutation
+        # died, and it is ``SliceVerdict.PROVEN.value``.
+        return self.mutation is None or self.mutation.verdict == SliceVerdict.PROVEN.value
 
 
 @dataclass(frozen=True, slots=True)
@@ -326,7 +339,7 @@ class VerificationAttempt:
         for claim in self.claims:
             if claim.outcome != "passed":
                 return f"{claim.contract_id} {claim.test_id}: {claim.outcome} at {claim.nodeid}"
-            if claim.mutation is not None and claim.mutation.verdict != "PROVEN":
+            if claim.mutation is not None and claim.mutation.verdict != SliceVerdict.PROVEN.value:
                 return (
                     f"{claim.contract_id} {claim.test_id}: mutation {claim.mutation.verdict} "
                     f"({claim.mutation.operator} {claim.mutation.target})"

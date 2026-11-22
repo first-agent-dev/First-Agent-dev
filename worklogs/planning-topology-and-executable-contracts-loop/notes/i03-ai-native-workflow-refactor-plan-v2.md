@@ -703,6 +703,8 @@ filed as **Q-V2-SLICE3-1** rather than made by whoever next touches the file. Or
 
 **F10 item 4 landed (2026-11-22, E621): the artifact and the eval block carry the attempt.** `write_verification(..., attempt=...)` adds `route`, `identity`, `claims`, authorship and the seal's `attested`/`pending`/`contracts_total` beside the untouched legacy keys, and OR-s the attempt's verdict into `blocking`; the legacy route passes `None` and its entry is unchanged. The eval block renders the claims with the harness's own `proven` word and each `detail` labelled `untrusted` and cut to 300 characters (F6). F10's four items are now landed; item 5 (`run_kill_checks`) stays unbuilt because no route can declare an executable mutation. The remaining V2 work is outside that list: proving the substrate half on the W4 host (S0) and the S0 probe's XPASS removing its `xfail` in the same change.
 
+**F1 schema gap closed (2026-11-22, E622).** `MutationEvidence.verdict` is now drawn from `KILL_CHECK_VERDICTS` (derived, not copied) and both of its readers compare to `SliceVerdict.PROVEN.value`. Measured before the fix: the landed code accepted any string and compared against a literal `"PROVEN"`, so the only verdict production can emit read as *not proven*. That was the last F1–F10 rule the entity did not implement; F1–F10 are now spec-complete. `kill_attribution`'s second, uppercase verdict vocabulary is filed as Q-V2-SLICE3-3 and deliberately not unified here.
+
 **S0 status (2026-11-22) — landed as option A.** `tests/test_ai_native_managed_substrate_probe.py` walks the
 production path (`managed_execution_for_run` → `PIN_READER` → `ReadOnlyManagedBashExecutor` →
 `ManagedVerifyCommandExecutor` → `capture_test_nodeids`) and asserts the nodeid of a test that exists *only*

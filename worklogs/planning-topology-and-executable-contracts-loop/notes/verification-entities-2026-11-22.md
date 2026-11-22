@@ -341,11 +341,12 @@ VerificationIdentity := route, plan_sha256, seal_sha256, closure_sha256,
                         profile_id, substrate, run_id, attempt, repair_round, mode
 
 ClaimEvidence        := contract_id, test_id, nodeid,
-                        outcome: passed|failed|skipped|error|attested|pending,
+                        outcome: passed|failed|skipped|error,          # never attested|pending (F4)
                         mutation: MutationEvidence | None,            # None only when no KILL-TARGET (F1)
                         detail: bounded 2000 chars, single line (F6)
 
-MutationEvidence     := operator, path_or_symbol, verdict (closed KILL_CHECK_VERDICTS), detail (bounded)
+MutationEvidence     := operator, path_or_symbol,
+                        verdict ∈ {v.value for v in KILL_CHECK_VERDICTS}, detail (bounded)
 CommandRun           := command, authored_by: planner|harness, outcome, exit_code, tails, duration
 ```
 
@@ -569,3 +570,37 @@ operator, path or symbol — so there is nothing to mutate, and building the sea
 intent forbids. The next real work on this arc is not in the list: the V2 route still has no production caller of
 `_pinned_verify_substrate` that *reaches* a managed cell on this host, so the W4 host probe (S0) remains the proof
 that the substrate half is live, and `run_workflow` on V2 with no cell is a *recorded block*, not a pass.
+
+## F1 — the last schema gap, and it was an inversion (landed 2026-11-22)
+
+F1 carried one rule that the entity did not implement: `MutationEvidence.verdict` must come from the runner's
+closed set. Measured on the landed code, before any edit:
+
+    closed vocabulary (production): ['error', 'producer_absent', 'proven', 'vacuous']
+    MutationEvidence(verdict='proven')-> accepted, claim.proven = False   # the only value production can emit
+    MutationEvidence(verdict='PROVEN')-> accepted, claim.proven = True    # a value production never emits
+    MutationEvidence(verdict='SURVIVED' | 'bogus')-> accepted
+
+So it was not merely unvalidated free text: the two readers (`ClaimEvidence.proven`, `VerificationAttempt.first_reason`)
+compared against a literal `"PROVEN"` that no `KillCheck` can produce, while the real member read as *not proven*.
+A vacuously-passing test under a survived mutation would have looked completed; a genuinely killed one, blocked. That
+is F1's exact failure mode ("mutation evidence is part of the claim") reached from the other side.
+
+**Change:** `MUTATION_VERDICTS = frozenset(member.value for member in KILL_CHECK_VERDICTS)` — **derived**, not a copy,
+because `KillCheck` validates against the same set and two literals are how this drifted in the first place.
+`MutationEvidence` refuses anything outside it (`mutation-invalid`, the closed rule it already used), and both readers
+compare to `SliceVerdict.PROVEN.value`. No field, no new rule name, no migration: nothing in production constructs a
+`MutationEvidence` yet (F9/CT-3.4: no route can declare an executable mutation), so the alphabet is free to correct
+now and expensive after the first writer.
+
+**Measured:** `tests/test_v2_verification_attempt.py` 29 passed, five new oracles (the set equality against
+`KILL_CHECK_VERDICTS`; five refused spellings including the legacy uppercase ones; a truth table over *every* member
+where only `proven` completes the claim; the reason/verdict agreement; the empty-reason case for a proven mutation).
+Six mutants, all killed: drop the membership check, restore the `"PROVEN"` literal in `proven`, make `proven`
+unconditionally true, add `"PROVEN"` to the vocabulary, restore the literal in `first_reason`, and disable
+`first_reason`'s mutation branch.
+
+**Recorded, not changed:** `kill_attribution.ATTRIBUTION_VERDICTS` is a *second*, uppercase vocabulary
+(`{'PROVEN','VACUOUS','ERROR'}`) for the adjacent idea, used by CT-3.5's closure attribution. Unifying the two is a
+schema decision with a blast radius across two banks and the attribution artifact, so it is filed as
+**Q-V2-SLICE3-3** rather than decided here; the two sets are now visibly different instead of accidentally so.

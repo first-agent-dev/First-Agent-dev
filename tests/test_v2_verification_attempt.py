@@ -13,9 +13,10 @@ from typing import Any, cast
 
 import pytest
 
-from fa.inner_loop.slice_verification import CommandOutcome, CommandResult
+from fa.inner_loop.slice_verification import KILL_CHECK_VERDICTS, CommandOutcome, CommandResult, SliceVerdict
 from fa.inner_loop.verification_attempt import (
     DETAIL_LIMIT,
+    MUTATION_VERDICTS,
     AttemptCommand,
     ClaimEvidence,
     MutationEvidence,
@@ -122,20 +123,67 @@ def test_a_declared_kill_target_without_evidence_is_refused() -> None:
 
 def test_a_declared_kill_target_that_survived_blocks_even_though_the_test_passed() -> None:
     """F1: the mutation verdict is part of the claim, not a parallel array a reader may miss."""
-    survived = MutationEvidence(operator="operator", target="fa/x.py", verdict="SURVIVED", detail="still passes")
+    survived = MutationEvidence(
+        operator="remove-call", target="fa/x.py", verdict=SliceVerdict.VACUOUS.value, detail="still passes"
+    )
     attempt = _attempt(kill_required=("CT-1.1",), claims=(_claim(mutation=survived),))
 
     assert attempt.blocking is True
-    assert "mutation SURVIVED" in attempt.first_reason
+    assert f"mutation {SliceVerdict.VACUOUS.value}" in attempt.first_reason
     assert attempt.repair_nodeids() == (_NODEID,)
 
 
 def test_a_killed_mutation_completes_the_claim() -> None:
-    killed = MutationEvidence(operator="operator", target="fa/x.py", verdict="PROVEN")
+    killed = MutationEvidence(operator="remove-call", target="fa/x.py", verdict=SliceVerdict.PROVEN.value)
     attempt = _attempt(kill_required=("CT-1.1",), claims=(_claim(mutation=killed),))
 
     assert attempt.blocking is False
     assert attempt.repair_nodeids() == ()
+
+
+# ── F1: the mutation verdict is the runner's closed vocabulary, not free text ─
+
+
+def test_a_mutation_verdict_outside_the_kill_check_vocabulary_is_refused() -> None:
+    """The landed alphabet was free text and ``proven`` compared against ``"PROVEN"``.
+
+    Measured before this rule: ``verdict="proven"`` (the only value a real ``KillCheck`` can
+    produce) read as *not proven*, while ``verdict="PROVEN"`` -- which production never emits --
+    read as proven. A closed vocabulary is what makes that inversion impossible rather than
+    unlikely.
+    """
+    assert MUTATION_VERDICTS == {member.value for member in KILL_CHECK_VERDICTS}
+
+    for rejected in ("PROVEN", "SURVIVED", "proven ", "", "PROVEN".lower().upper()):
+        assert (
+            _rule(lambda verdict=rejected: MutationEvidence(operator="remove-call", target="fa/x.py", verdict=verdict))
+            == "mutation-invalid"
+        )
+
+
+def test_the_reason_uses_the_same_vocabulary_as_the_verdict() -> None:
+    """``first_reason`` is the *second* reader of the verdict; both must read one alphabet.
+
+    The landed code fixed neither and compared against ``"PROVEN"`` in both places, so a real
+    ``vacuous`` mutation produced no reason at all -- the gate blocked (correctly, via ``proven``)
+    and said nothing about why.
+    """
+    vacuous = MutationEvidence(operator="remove-call", target="fa/x.py", verdict=SliceVerdict.VACUOUS.value)
+    blocked = _attempt(kill_required=("CT-1.1",), claims=(_claim(mutation=vacuous),))
+    assert f"mutation {SliceVerdict.VACUOUS.value}" in blocked.first_reason
+
+    proven = MutationEvidence(operator="remove-call", target="fa/x.py", verdict=SliceVerdict.PROVEN.value)
+    passing = _attempt(kill_required=("CT-1.1",), claims=(_claim(mutation=proven),))
+    assert passing.first_reason == ""
+
+
+@pytest.mark.parametrize("verdict", sorted(member.value for member in KILL_CHECK_VERDICTS))
+def test_every_kill_check_verdict_is_accepted_only_proven_completes_the_claim(verdict: str) -> None:
+    """The truth table, one row per member of the runner's own set."""
+    mutation = MutationEvidence(operator="remove-call", target="fa/x.py", verdict=verdict)
+    claim = _claim(mutation=mutation)
+
+    assert claim.proven is (verdict == SliceVerdict.PROVEN.value)
 
 
 # ── F2: the fence cannot come back unnoticed ─────────────────────────────────
