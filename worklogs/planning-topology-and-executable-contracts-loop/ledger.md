@@ -12961,3 +12961,65 @@ three options and a recommendation (A: a repo test under `xfail(strict=True)` wi
 docstring, plus C's fixture-closure probe as the live evidence once a host exists; B leaves nothing in the
 tree that would notice the substrate breaking). Slices S1–S3 are unaffected: none of them depends on the
 substrate, only SLICE3's wiring does.
+
+### E612 — the S0 probe is host-only by construction, and this session lost its interpreter (2026-11-22)
+
+Two measurements, neither of them a pass.
+
+**(1) The transport question is answered: there is no Docker-free in-process path to a real managed
+command.** The supervisor has exactly one cell backend and it is a container engine — `backend.CellBackend`
+(`src/fa/execution/backend.py:95`) is constructed over `DockerEngine`/`DockerCells` (`:20`, `:113`) and every
+RUN allocates through `self._cells.launch_new(...)` (`:252`, `:290`). Both escape hatches are ruled out in the
+modules' own prose, which they keep: `supervisor.py:288` "no defaults, implicit allow, host-shell fallback or
+grant reconstruction"; `service.py:7` "no default authority, no permissive fallback, no host-side runner".
+`DockerUnavailableError` is caught (`backend.py:266`, `:305`, `:493`, `:527`) only to become an honest failure.
+The harnesses that look like counter-examples are fakes one level down: `test_execution_composition._configure_local_cell_backend`
+wires the authority to `test_execution_docker.Endpoint`, a **fake Docker unix socket** that speaks the HTTP API
+and records calls, so `test_managed_workflow_e2e.py` proves the protocol, not the execution.
+
+Consequence for Q-V2-S0-1: the probe cannot be made runnable in this repository by rewriting it, so the
+"maybe it runs in-process without Docker" middle ground is closed. That does not decide the question — the
+*home and proof* of the probe still need ratification — but it removes the reason to re-open it.
+
+**(2) This session cannot execute anything, and that is a toolchain loss, not a green.** The sandbox returned
+with `python3.11` only and no `.venv`; `src/fa` requires 3.12+ (`fa.inner_loop.loop` imports `typing.override`)
+and `pyproject` declares `>=3.13`. Every route to 3.13 was tried and refused: `uv python install` needs a GitHub
+release asset and the proxy answers `release-assets.githubusercontent.com` with a TLS abort; `apt` has no
+`python3.13`; `pypi` has no vendored CPython (checked the full simple index for `python-build*`, `cpython*`,
+`pybi`, `static-python`); and a from-source build is not viable because the image carries no `zlib`, `openssl`
+or `sqlite3` headers, and `sqlite3` is imported by the session database every test touches. Under 3.11 the
+package does not even import, so no partial run is meaningful either.
+
+Therefore: **no test, no `mypy`, no `ruff`, no `fa authoring-check` ran this session.** The option-A probe was
+written in full and then *deliberately parked* rather than committed, because landing a file whose prerequisite
+is absent and whose xfail semantics were never exercised would be the "looks-tested" pattern this plan exists
+to stop. The draft lives verbatim at `notes/s0-managed-substrate-probe-draft-2026-11-22.md` with its host
+command; the next session that has the interpreter lands it (if A is ratified) and verifies on the host that
+`strict=True` turns into XPASS. Slices S1–S3 remain unaffected: their commits, gate recordings and comparison
+(`0 new` on every gate) are already in history at `e263a4e`.
+
+### E613 — the gate set was missing the formatter, and S2/S3 drifted under it (2026-11-22)
+
+The standing gate records four things (`gate_tracker.py record`: pytest, mypy, ruff, authoring-check).
+`just lint` checks five: `ruff check`, **`ruff format --check`** (`justfile:230`), deptry, pylint-gap.
+The formatter was in the gate I run by hand and not in the gate that leaves a recording, so the gap was
+invisible exactly where evidence is kept.
+
+Measured on the restored head (`e263a4e`) with ruff 0.17.6: `ruff format --check .` names 12 files. Checking
+each of the 12 against base `1acb56b` in a scratch path with the same formatter separates them into
+**8 pre-existing** (`tests/mutation/mut_step9.py`, `tests/test_admission_v2_provenance.py`,
+`tests/test_ai_native_bootstrap.py`, `tests/test_ai_native_plan_v2.py`, `tests/test_invoke_workflow_tool.py`,
+`tests/test_managed_acquisition.py`, `tests/test_prompt_registry_coherence.py`, `tests/test_s5p1_bootstrap.py`)
+and **4 mine** (`src/fa/execution/workspace.py`, `src/fa/inner_loop/acceptance_bundle.py`,
+`tests/test_ai_native_acceptance_bundle.py`, `tests/test_ai_native_acceptance_collection.py` — all clean at
+base, drifted by S2/S3). Per the standing `no new red` rule the second list is fixed here in its own commit
+(`7b3561b`), by applying the formatter to those four files only; the diff is blank lines, line wrapping and one
+byte-identical string concatenation, and both `ruff format --check` on them and `ruff check .` are clean after.
+The first list stays as a recorded, pre-existing list — it is not silence and not a count.
+
+Fix owed to the tooling, not to the tree: `gate_tracker.py record` must gain the formatter so a future slice
+cannot repeat this. Until then the fourth gate is "recorded", not "the lint gate".
+
+Not verified this session: no test, no mypy (E612 — no Python 3.13 in this sandbox). Formatter-only changes
+are the one class where a tool's own re-check substitutes for a suite run, and that substitution is stated
+here rather than implied.
