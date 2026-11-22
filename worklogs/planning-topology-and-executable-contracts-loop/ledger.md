@@ -12626,3 +12626,39 @@ defence-in-depth. S3's priority rises; its implementation is unchanged.
 **Net.** Policy: both packages agree, adopt. Mechanics: this document's set is smaller and measured (one-cell patch
 blast radius, three encoding tests, the un-granted-request guard, the escalation classification). Process: adopt the
 parallel package's documentation-first ratification phase; reject its mega-PR.
+
+### E605 — the plan corrected before implementation: one evidence rule, `KIND` deleted, six defects become rows (2026-11-22)
+
+The plan was edited where it contradicted itself, **before** any implementation, so the next slice follows one rule
+instead of five. Documentation only; no production code changed.
+
+**What changed in [i03-ai-native-workflow-refactor-plan-v2.md](notes/i03-ai-native-workflow-refactor-plan-v2.md).**
+(1) A dated header note names every change and why, so nobody has to diff two drafts to discover the rule moved.
+(2) The five sentences that disagreed about evidence — grammar delta, §2 "production grammar", INV-05, CT-3.1, §8
+step 4 — now say one thing: every CT is discharged exactly once, by a selector resolving to one collected nodeid or
+by a caller-granted typed disposition; `KIND` exempts nothing; "ready CT" is gone from the vocabulary because it never
+had a runtime meaning. (3) `KIND: HARD | SOFT` is deleted from the grammar and from the grammar skeleton (D-V2-10);
+severity is deferred to a future `SEVERITY` field *with a consumer*. (4) Q-V2-ACC-2 is marked RESOLVED, keeping the
+measurements that made the old wording untenable, and §8 step 4 no longer claims ACC-1/2 are closed or calls
+Q-V2-MODEA-1 open after D-V2-6 answered it. (5) D-V2-10 (evidence totality, `KIND` removed, seal totality) and D-V2-11
+(one machine-readable grammar table; the doc triad moves atomically) enter the ratified-decision table. (6) Six
+defects become §12 rows **P4-1…P4-6** instead of prose in a note: the un-granted binding guard, the blind seal plus its
+second producer, the repair geometry, coder confinement being topology-dependent, `KIND`'s sole exempting reader, and
+the missing `--dispositions` ingress. (7) Five stale citations fixed (`parse_plan:674`,
+`_admit_published_project:3141`, `_validate_plan_admission:3427`/`_validate_v2_admission:3476`,
+`_run_stage:1601` with its coder gate at `:1634`, the acceptance bank's 45 tests), plus the SLICE2 paragraph that
+still described the deleted payload route as *today* (P2-4), the duplicated §5 number and the out-of-order §11/§12.
+
+**One correction to my own correction.** P4-1 first attributed `bind_dispositions` to `plan_v2`; it lives in
+`plan_admission.py:171`. Fixed in the same edit — a defect row that sends the implementer to a module that does not
+contain the function is the same class of error the row describes.
+
+**What this edit deliberately does not ratify**, recorded because editing the plan is how this project ratifies
+policy: nothing about S0 (whether the managed executor can collect and run a project test under
+`worklogs/<slug>/acceptance/` is still unmeasured), nothing about severity *existing*, and none of S1/S2's code.
+
+**Next slice chosen (plan §8 "Next slice, decided 2026-11-22"):** S1 policy closure → S2 seal totality → S0 probe →
+S3 mode A. S1 before S2 because a seal must not certify a graph admission will later reject; S2 before S0 because the
+probe proves *where* the closure runs, not that its result is trustworthy; S0 before any SLICE3 wiring because a
+closure that cannot be collected at the new path makes that wiring pointless; S3 next because confinement currently
+depends on the launch topology.

@@ -362,6 +362,42 @@ Same brief, independently produced, second agent. Verdict: **it is the better br
 
 ---
 
+## 13. Corrections landed in the plan (2026-11-22, E605)
+
+The plan was edited where it contradicted itself, before any implementation, so the next slice follows one rule
+instead of five. Documentation only; no production code changed.
+
+- **Header** now carries a dated correction note naming every change and why, so the next reader does not have to
+  diff two drafts to learn that the rule changed.
+- **One evidence rule in all five places** (grammar delta, §2 "production grammar", INV-05, CT-3.1, §8 step 4):
+  every CT is discharged exactly once; `KIND` is not an exemption; the phrase "ready CT" is gone.
+- **`KIND` deleted from the grammar** (D-V2-10), including the grammar skeleton block; severity is deferred to a
+  future `SEVERITY` field with its own consumer.
+- **Q-V2-ACC-2 = RESOLVED** with the decision, the `HARD + NON_EXECUTABLE` residual and its mitigation. §8 step 4 no
+  longer claims ACC-1/2 are closed, and no longer calls Q-V2-MODEA-1 open after D-V2-6 answered it.
+- **D-V2-10 and D-V2-11** added to the ratified-decision table; **six defect rows P4-1…P4-6** added to §12
+  (un-granted binding, seal blindness plus its second producer, repair geometry, coder-confinement topology,
+  `KIND`'s sole exempting reader, the missing `--dispositions` ingress).
+- **Five stale citations fixed** (`parse_plan:674`, `_admit_published_project:3141`,
+  `_validate_plan_admission:3427` / `_validate_v2_admission:3476`, `_run_stage:1601` with its coder gate at `:1634`,
+  the acceptance bank's 45 tests) plus the SLICE2 paragraph that still described the deleted payload route as *today*
+  (P2-4), the duplicated §5 number, and the out-of-order §11/§12.
+
+**What this edit does not ratify** — worth stating, because editing the plan is how this project ratifies policy:
+nothing in S0 (whether the managed executor can collect and run a project test under `worklogs/<slug>/acceptance/`
+is still unmeasured, and §8 keeps it as SLICE3's first step); nothing about severity *existing* (only that it may not
+gate evidence); and none of S1/S2's code, which is the next slice rather than a consequence of this document.
+
+## 14. Next slice, chosen
+
+S1 policy closure → **S2** seal totality → S0 probe → S3 mode A. The exact task list lives in the plan, §8
+"Next slice, decided 2026-11-22" — one source of truth, not two. The ordering rationale in one line each: S1 before
+S2 because a seal must not certify a graph admission will later reject; S2 before S0 because the probe only proves
+*where* the closure runs, not that its result is trustworthy; S0 before any SLICE3 wiring because a closure that
+cannot be collected at the new path makes the wiring pointless; S3 next because P4-4 showed confinement currently
+depends on the launch topology, so "the coder cannot edit its tests" is true on one supported route and false on
+another.
+
 ## Appendix A — reproductions
 
 ```text
