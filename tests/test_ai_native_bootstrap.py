@@ -1006,6 +1006,143 @@ def test_a_create_new_repair_writes_no_scaffold() -> None:
     assert ordinary_port.writes == []
 
 
+def test_metadata_table_and_parse_refusal_block_coder_then_repair_rewrites_published_file(
+    site: Site, tmp_path: Path
+) -> None:
+    """TEST-2.8 (D-V2-9.3/9.4/9.8): a refused project is repaired in place, not re-created.
+
+    Two real stages against the real authority, no doubles at the seam that matters:
+
+    1. the authoring stage publishes a project whose roadmap disagrees with its
+       increment about `Roadmap-ID`. The grammar is fine; the *cross-check* is what
+       refuses it, which is the whole point of moving the metadata table into
+       admission (D-V2-9.3) instead of trusting the renderer;
+    2. the repair stage reopens a WRITE view at that revision and rewrites the
+       increment. Admission reads the new revision and binds it.
+
+    What this pins that the unit tests cannot: the repair opens a *second* WRITE view
+    over a published revision (so it is not the candidate buffer), it writes through
+    the narrowed allowlist, and the run ends with an admitted plan rather than a loop.
+    """
+    import argparse as _argparse
+
+    from fa import cli as _cli
+    from fa.inner_loop.planner_dispatch import PlannerDispatch, PlannerDispatchKind
+    from fa.inner_loop.project_scaffold import scaffold_files
+    from tests.test_admission_v2_provenance import _managed_child_env
+
+    slug = "repair-project"
+    scaffold = scaffold_files(slug, created="2026-11-21")
+    roadmap_path = f"worklogs/{slug}/roadmap.md"
+    increment_path = f"worklogs/{slug}/increments/increment-01-initial-plan.md"
+    authored_body = _AUTHORED_BODY.format(slug=slug)
+
+    good_roadmap = scaffold[roadmap_path]
+    # The increment claims a different roadmap than the one published beside it.
+    good_increment = scaffold[increment_path].replace("slices: 0", "slices: 1") + authored_body
+    broken_increment = good_increment.replace("Roadmap-ID: RM-repair-project", "Roadmap-ID: RM-somewhere-else")
+
+    case_dir = tmp_path / "repair"
+    # The shared roots/source of the `site` fixture: the authority is registered once
+    # against them, so a fresh tree here would hand the service an unregistered root.
+    case_site = Site(case_dir / "protected", site.roots, site.source)
+    with _managed_child_env(case_site, case_dir, child_run_id="ct28-repair") as (
+        managed,
+        _publisher,
+        child_ctx,
+        yaml_path,
+    ):
+        first_rev = managed.current_revision_id
+
+        def build_registry(workspace_io: object, _executor: object, _lease: object) -> object:
+            return workspace_io
+
+        def _rewrite(port: object, path: str, content: str) -> None:
+            current = port.read_file(path).sha256  # type: ignore[attr-defined]
+            port.write_file(path, content, expected_sha256=current)  # type: ignore[attr-defined]
+
+        def first_drive(port: object) -> object:
+            _rewrite(port, roadmap_path, good_roadmap)
+            _rewrite(port, increment_path, broken_increment)
+            return SessionOutcome(exit_code=0, stop_reason="stopped_by_llm", turns=1, final_text="authored")
+
+        dispatch = PlannerDispatch(
+            PlannerDispatchKind.CREATE_NEW_PROJECT, child_ctx.run_id, authoring_root=f"worklogs/{slug}"
+        )
+        _cli._run_cli_stage(
+            args=_argparse.Namespace(_managed_execution=managed),
+            run_context=child_ctx,
+            run_id=child_ctx.run_id,
+            run_log_dir=case_dir / "log-1",
+            session_db=None,
+            log=SimpleNamespace(path=case_dir / "events.jsonl"),
+            workspace=case_site.source,
+            role="planner",
+            plan_ref=None,
+            planner_dispatch=dispatch,
+            build_registry=build_registry,
+            drive=first_drive,
+        )
+        # The stage published (it wrote valid bytes; the *pair* is what disagrees).
+        assert managed.current_revision_id != first_rev
+
+        ctx = _stage_ctx(case_site, child_ctx, yaml_path, managed, slug)
+        refused_ctx, refusal = workflow_controller._admit_published_project(ctx)
+        assert refusal is not None and refusal.rule == "bootstrap-invalid-metadata"
+        assert refused_ctx.admission is None, "a refused project must not bind an admission"
+
+        # The repair: a second stage at the published revision, narrowed to the increment.
+        repair_dispatch = PlannerDispatch(
+            PlannerDispatchKind.CREATE_NEW_PROJECT,
+            child_ctx.run_id,
+            authoring_root=f"worklogs/{slug}",
+            repair_allowlist=(increment_path,),
+        )
+
+        def repair_drive(port: object) -> object:
+            _rewrite(port, increment_path, good_increment)
+            return SessionOutcome(exit_code=0, stop_reason="stopped_by_llm", turns=1, final_text="repaired")
+
+        _cli._run_cli_stage(
+            args=_argparse.Namespace(_managed_execution=managed),
+            run_context=child_ctx,
+            run_id=child_ctx.run_id,
+            run_log_dir=case_dir / "log-2",
+            session_db=None,
+            log=SimpleNamespace(path=case_dir / "events.jsonl"),
+            workspace=case_site.source,
+            role="planner",
+            plan_ref=None,
+            planner_dispatch=repair_dispatch,
+            build_registry=build_registry,
+            drive=repair_drive,
+        )
+
+        bound, second_refusal = workflow_controller._admit_published_project(ctx)
+        assert second_refusal is None, f"the repaired revision must admit, got {second_refusal}"
+        assert bound.admission is not None and bound.admission.admitted is False
+        assert bound.admission.snapshot.graph is not None
+        assert list(bound.admission.snapshot.graph.contracts()) == ["CT-1.1"]
+
+
+def _stage_ctx(case_site: Any, child_ctx: Any, yaml_path: Path, managed: Any, slug: str) -> Any:
+    """The run context admission reads: a real frozen dataclass, real project hint."""
+    return workflow_controller.WorkflowContext(
+        run_id=child_ctx.run_id,
+        base_task="ct-2.8",
+        per_role_task={},
+        artifact_paths=workflow_controller.workflow_artifact_paths(
+            child_ctx.run_id, base_dir=child_ctx.run_log_dir
+        ),
+        config=yaml_path,
+        workspace=case_site.source,
+        max_turns=2,
+        output_mode="quiet",
+        managed_execution=managed,
+        project_hint=slug,
+    )
+
+
 def _admit_in(
     case_site: Site, child_ctx: Any, managed: Any, yaml_path: Path, slug: str
 ) -> tuple[Any, Any]:

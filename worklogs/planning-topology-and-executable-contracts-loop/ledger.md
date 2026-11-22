@@ -12126,3 +12126,47 @@ here both before and after my change (the pty pool needs `tmux`, which is absent
 (3.13 needs those ignores; 3.11 does not). Neither is attributable to this work.
 
 37 tests in `test_ai_native_bootstrap.py`, 356 across nine banks.
+
+### E594 — TEST-2.8 e2e: a refused project is repaired in place (2026-11-21)
+
+E592 ended with an honest gap: the repair mechanism was built but nothing drove a live
+planner through a refusal and a successful second stage. This closes it with two real
+stages against the real authority -- no doubles at the seam that matters.
+
+**Case.** Stage 1 publishes a project whose geometry is right and whose *pair* disagrees:
+the increment says `Roadmap-ID: RM-somewhere-else` while the roadmap beside it says
+`RM-repair-project`. `parse_plan` accepts the grammar; `check_project_metadata` is what
+refuses, which is exactly the D-V2-9.3 claim -- the cross-check moved into admission, so it
+is admission that must catch this, not the renderer that no longer exists. Stage 2 reopens
+a WRITE view at that published revision, rewrites the increment, and admission binds the
+result.
+
+**What the measured behaviour added.** I first probed whether a second WRITE view could
+open at all in the same managed environment, because an earlier note in this session said
+it could not. It can -- but *only* after the D-V2-9.9 fix: the probe failed at
+`WorkspacePortError: stale` before it, and returned `update-ok` / `update-ok` after. So the
+scaffold bug was not a latent hygiene issue; it was the thing that made two-stage repair
+impossible, and the note that said "do not retry a second stage" was measuring that bug
+rather than a platform limit.
+
+**Mutation.** M1 replaces `check_project_metadata(...)` with `pass` -- KILLED: the first
+stage would admit and the test's `bootstrap-invalid-metadata` assertion catches it. A
+second mutant that weakened the repair allowlist did not apply (pattern matched 0 times);
+rather than fake a kill I left it out. The e2e's discriminating power against the repair
+path itself is therefore proven by M1 plus the earlier unit-level allowlist mutants.
+
+**Guarded against false success.** Before the refusal check the test asserts the revision
+actually moved, so a stage that failed to publish cannot satisfy `refusal is not None` for
+the wrong reason.
+
+**Sandbox lesson, recorded because it cost most of a session.** The sandbox was rebuilt on
+Python 3.11 while the project targets 3.13, and I spent the session building a shim and a
+rewritten test overlay -- none of which was needed: `scripts/arena-env-build.sh` builds the
+pinned CPython 3.13.16 and the frozen dev environment, and after running it the suite,
+`ruff` and `mypy` all pass natively. The 11 `test_s8_workflow_controller` failures and the
+12 `mypy unused-ignore` errors I classified as environmental were purely 3.11 artifacts and
+are gone on 3.13.16 (26 passed; mypy 224 clean). Use the project's own build script before
+diagnosing the environment.
+
+38 tests in `test_ai_native_bootstrap.py`; 357 across nine banks; 306 across the
+controller/e2e/acceptance banks; ruff clean; mypy 224 clean; doc-links 370 OK.
