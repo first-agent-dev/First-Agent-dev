@@ -12884,6 +12884,14 @@ recorded, so no reader can collapse "a named party carries this" into "the host 
 on `pending` yet — the seal states the debt and W4 is where a deploy gate reads it; that is recorded in
 the plan rather than implied by a field name.
 
+**The gate caught itself.** The first S2 recording printed `ruff exit=1 findings=0`: ruff's default output
+puts `F401 [*] msg` and `--> path:34:42` on separate lines, and the parser only knew the concise shape, so
+a real unused import was recorded as a clean gate. Fixed in `scripts/gate_tracker.py` (both shapes read,
+recordings ask for `--output-format=concise`) and the lesson is in `notes/gates/README.md`: a non-zero
+exit with an empty list is a parser bug, never a clean tree. Measured after the fix, base `1acb56b` →
+`b047160`: **pytest 0 new / 1 gone, mypy 0 new / 1 gone, ruff 0/0, authoring-check 0/0, pyrefly 0 new
+(27 → 26 unique)** — gate exit 0.
+
 **Deliberately not in S2:** `ROUTE:` on invariants, the prompt's grammar table and the authoring
 surface (S6/D-V2-11); a deploy gate that acts on `pending`; and any change to `PRESERVATION`
 (unchanged: never dispositionable).
