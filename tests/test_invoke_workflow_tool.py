@@ -1687,3 +1687,87 @@ def test_a_create_route_without_a_grant_carries_no_declaration(tmp_path: Path, m
 
     _payload(result)
     assert workflow.calls[0]["acquisition"].dispositions == ()
+
+
+# --- CT-2.2: invalid input refuses before any provider exists ------------------
+
+
+@pytest.mark.parametrize(
+    ("slug", "label"),
+    [
+        ("Demo-Project", "uppercase"),
+        ("demo_project", "underscore"),
+        ("demo project", "space"),
+        ("", "empty"),
+        ("a" * 49, "over the 48-character limit"),
+        ("../escape", "traversal"),
+        ("worklogs/../etc", "traversal through a path"),
+        ("demo/../../x", "nested traversal"),
+        ("-leading-dash", "leading dash"),
+        ("trailing-", "trailing dash"),
+    ],
+)
+def test_an_invalid_slug_is_refused_before_any_child_exists(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, slug: str, label: str
+) -> None:
+    """CT-2.2 (INV-02): the slug is checked before a child run, not by the child.
+
+    The ordering is the control, not the message. A slug reaches the authority as a path
+    component, so a validation that ran one layer deeper would already have created the
+    run it then refuses -- and for traversal the interesting question is not whether it
+    fails, but whether it fails *before* anything tries to resolve it. `workflow.calls`
+    is the observable: the child is never invoked.
+    """
+    ctx = _managed_context(tmp_path, monkeypatch)[0]
+    workflow = _RecordingWorkflow()
+
+    result = _call(
+        _tool(workflow, ctx),
+        task="build it",
+        project_action="CREATE_NEW",
+        project_slug=slug,
+    )
+
+    assert _error_code(result) == "invalid_project_slug", label
+    assert workflow.calls == [], f"{label}: a child was dispatched for an invalid slug"
+
+
+def test_a_slug_without_a_create_route_is_refused_before_any_child_exists(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The other half of CT-2.2: a slug with no create route is ambiguous, not ignored.
+
+    Silently dropping the slug would select an existing project the caller did not name;
+    silently honouring it would create one they did not ask to create. Both are guesses,
+    and the plan's rule is that the route discriminator is explicit and closed.
+    """
+    ctx = _managed_context(tmp_path, monkeypatch)[0]
+    workflow = _RecordingWorkflow()
+
+    result = _call(_tool(workflow, ctx), task="build it", project_slug="demo-project")
+
+    assert _error_code(result) == "invalid_project_slug"
+    assert workflow.calls == []
+
+
+def test_an_unknown_project_action_is_refused_before_any_child_exists(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A route the schema does not name is refused, never defaulted.
+
+    `AUTO_SELECT_EXISTING` is the default, so an unrecognised value must not fall through
+    to it: "create" misspelled would become "select", and the caller would be looking at
+    an existing project while believing they had asked for a new one.
+    """
+    ctx = _managed_context(tmp_path, monkeypatch)[0]
+    workflow = _RecordingWorkflow()
+
+    result = _call(
+        _tool(workflow, ctx),
+        task="build it",
+        project_action="CREATE",
+        project_slug="demo-project",
+    )
+
+    assert _error_code(result) == "invalid_project_action"
+    assert workflow.calls == []

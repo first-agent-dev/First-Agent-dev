@@ -12243,3 +12243,38 @@ absent, and CT-2.4 remains blocked on SLICE2's seal. They are the next items of 
 in that order -- 2.2 before 2.3 because 2.2 is the one that can overwrite.
 
 40 tests in `test_ai_native_bootstrap.py`; ruff clean; mypy 224 clean; doc-links 370.
+
+### E597 — CT-2.2: the control is the ordering, so the test measures ordering (2026-11-21)
+
+The plan's row says "invalid slug, traversal and malformed route refuse before provider".
+Every word of that is about *when*, not *what*, so a test asserting the error code would
+have proved the smaller half. These assert `workflow.calls == []`: the child run is never
+invoked. That is observable, it cannot be satisfied by a message, and it distinguishes
+"validated" from "validated too late" -- which for traversal is the whole question.
+
+**Ten slug shapes**, chosen so each one fails for a different reason rather than piling up
+near-duplicates: uppercase, underscore, space, empty, over the 48-character limit, two
+traversal spellings (`../escape`, `worklogs/../etc`), a nested traversal, and both dash
+edges. `worklogs/../etc` is the one worth naming: it is long enough to look like a path and
+contains no `..` as a whole component, so it exercises the regex rather than an obvious
+`startswith` check.
+
+**Two route refusals beside it**, because "malformed route" is the other half of the row:
+a slug with no create route (ambiguous -- dropping it would select a project the caller did
+not name, honouring it would create one they did not ask for) and an unknown
+`project_action` (which must not fall through to the `AUTO_SELECT_EXISTING` default, where
+"create" misspelled becomes "select").
+
+**Mutants**, all killed: the slug regex not enforced; a route-less slug silently dropped;
+an unknown action falling through to the default. Harness now 11/11.
+
+**Where the test lives, and why.** Not in `test_ai_native_bootstrap.py` as the plan's row
+first spelled it, but beside the other `invoke_workflow` validation tests -- this is the
+tool's public field validation, and putting it in the bootstrap bank would have separated
+it from the fixture (`_RecordingWorkflow`) that makes the ordering observable. The plan row
+now cites both halves separately.
+
+**Remaining of this class:** TEST-2.3 (scaffold then write inside the slug) and TEST-2.5
+(child failure mapping). CT-2.4 stays blocked on SLICE2's seal.
+
+152 tests in `test_invoke_workflow_tool.py`; ruff clean; mypy 224; doc-links 370.

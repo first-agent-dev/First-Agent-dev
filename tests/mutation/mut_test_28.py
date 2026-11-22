@@ -1,4 +1,4 @@
-"""Mutation run for TEST-2.8 / CT-2.7 / D-V2-9.8 (E594, E595, E596): the repair path must be real.
+"""Mutation run for TEST-2.8 / CT-2.7 / CT-2.2 / D-V2-9.8 (E594-E597): the repair path must be real.
 
 Three of these exist because a cheaper test once survived them. `test_the_bound_repair_
 path_runs_both_stages_and_binds_the_result` was written after M3 survived the hand-built
@@ -20,6 +20,7 @@ ROOT = Path("/home/user/First-Agent-dev")
 PY = str(ROOT / ".venv" / "bin" / "python")
 CONTROLLER = ROOT / "src/fa/inner_loop/workflow_controller.py"
 CLI = ROOT / "src/fa/cli.py"
+TOOL = ROOT / "src/fa/inner_loop/tools/workflow_tool.py"
 
 _BANK = "tests/test_ai_native_bootstrap.py"
 
@@ -27,6 +28,12 @@ BOUND = [f"{_BANK}::test_the_bound_repair_path_runs_both_stages_and_binds_the_re
 E2E = [f"{_BANK}::test_metadata_table_and_parse_refusal_block_coder_then_repair_rewrites_published_file"]
 BUDGET = [f"{_BANK}::test_a_create_new_repair_is_budgeted_and_never_overwrites_on_collision"]
 COLLISION = [f"{_BANK}::test_create_over_existing_directory_is_project_exists_and_unchanged"]
+_TOOL_BANK = "tests/test_invoke_workflow_tool.py"
+SLUG = [
+    f"{_TOOL_BANK}::test_an_invalid_slug_is_refused_before_any_child_exists",
+    f"{_TOOL_BANK}::test_a_slug_without_a_create_route_is_refused_before_any_child_exists",
+    f"{_TOOL_BANK}::test_an_unknown_project_action_is_refused_before_any_child_exists",
+]
 
 MUTANTS: list[tuple[str, Path, str, str, list[str]]] = [
     (
@@ -77,6 +84,27 @@ MUTANTS: list[tuple[str, Path, str, str, list[str]]] = [
         "        workspace_io.write_file(path, body, expected_sha256=None)",
         "        workspace_io.write_file(path, body, expected_sha256='0' * 64)  # MUTANT",
         COLLISION,
+    ),
+    (
+        "M9 the slug pattern is not enforced (CT-2.2: traversal reaches the child)",
+        TOOL,
+        '        if not _PROJECT_SLUG_RE.fullmatch(slug or "") or len(slug) > _PROJECT_SLUG_MAX:',
+        "        if not slug:  # MUTANT",
+        SLUG,
+    ),
+    (
+        "M10 a slug without a create route is silently dropped (CT-2.2)",
+        TOOL,
+        "    elif slug:",
+        "    elif False:  # MUTANT",
+        SLUG,
+    ),
+    (
+        "M11 an unknown action falls through to the default (CT-2.2)",
+        TOOL,
+        "    if action not in _PROJECT_ACTIONS:",
+        "    if False:  # MUTANT",
+        SLUG,
     ),
     (
         "M5 a repair is not budgeted (killed by BUDGET, not BOUND)",
