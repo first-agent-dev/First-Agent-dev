@@ -1267,6 +1267,48 @@ stage's working view; your job is to fill it, in Markdown, with a plan admission
 - Slices are contiguous from `1`. No legacy `TESTS:`/`KILLS:` lines: those belong to the
   grammar this route replaced.
 
+## A worked pair (admission accepts exactly this shape)
+
+The increment's front matter is the harness's; only `slices:` becomes non-zero. The body:
+
+```
+## INVARIANTS
+### INV-1
+KIND: HARD
+TEXT: a known widget id parses.
+EVIDENCE: TEST_REQUIRED
+
+## SLICE1: Parse the widget id
+
+STEPS: prescriptive
+
+CONTRACTS:
+  CT-1.1 [FUNCTIONAL] INV: INV-1: a known widget id parses.
+
+ACCEPTANCE:
+  TEST-ID: TEST-1.1 | CT: CT-1.1 | SELECTOR: worklogs/widget-project/acceptance/tests/test_widget.py::test_parse
+
+KILL-TARGETS:
+  TARGET-ID: src/widget.py::parse | CT: CT-1.1 | TEST-ID: TEST-1.1
+
+STEP-EXIT-CHECKS:
+  CHECK-ID: CHECK-1 | STEP: STEP1 | TEST-ID[]: TEST-1.1
+
+- [ ] STEP1: write the failing parse test EXIT-CHECK: CHECK-1
+```
+
+And the roadmap halves are prose only:
+
+```
+## Intent
+
+Parse a widget id on the public entrypoint.
+
+## Out of scope
+
+Persistence.
+```
+
 ## What not to do
 
 - Do not rename, move or delete the scaffold's files, and do not write a second

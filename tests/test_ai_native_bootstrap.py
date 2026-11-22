@@ -730,6 +730,108 @@ def _yield(substrate: object) -> Any:
     return _cm
 
 
+def test_rejected_create_leaves_no_project_and_no_reader_sees_bytes(site: Site, tmp_path: Path) -> None:
+    """CT-2.9 (D-V2-8): publication is not admission, and a refusal is not a publication.
+
+    The authoring stage writes real bytes into a real WRITE view. If it settles
+    *rejected*, those bytes must not become a revision: the canonical tree gains no
+    `worklogs/<slug>/`, and no reader pin can see what the planner wrote. This is the
+    difference between "the work was lost" and "the work is lying around unpublished
+    waiting for the next run to trip over it"; D-V2-9.1 chose the first deliberately,
+    which is why there is no observable half-written tree.
+    """
+    import argparse as _argparse
+
+    from fa import cli as _cli
+    from fa.inner_loop.planner_dispatch import PlannerDispatch, PlannerDispatchKind
+    from fa.inner_loop.project_scaffold import scaffold_files
+    from tests.test_admission_v2_provenance import _managed_child_env
+
+    slug = "rejected-project"
+    authored = scaffold_files(slug, created="2026-11-21")
+    roadmap_path = f"worklogs/{slug}/roadmap.md"
+
+    case_dir = tmp_path / "rejected"
+    case_site = Site(case_dir / "protected", site.roots, site.source)
+    with _managed_child_env(case_site, case_dir, child_run_id="ct29-rejected") as (
+        managed,
+        _publisher,
+        child_ctx,
+        _yaml,
+    ):
+        base_rev = managed.current_revision_id
+        wrote: dict[str, str] = {}
+
+        def build_registry(workspace_io: object, _executor: object, _lease: object) -> object:
+            return workspace_io
+
+        def drive(port: object) -> SessionOutcome:
+            # Write like a planner would, then fail: the stage is refused *after* the
+            # bytes exist in the view, which is exactly the case that must not leak.
+            for path, content in authored.items():
+                # The harness already wrote the scaffold, so each write is an update:
+                # `expected_sha256=None` would mean "expect absence" and be refused.
+                current = port.read_file(path).sha256  # type: ignore[attr-defined]
+                port.write_file(path, content, expected_sha256=current)  # type: ignore[attr-defined]
+                wrote[path] = content
+            return SessionOutcome(exit_code=2, stop_reason="error", turns=1, final_text="failed")
+
+        dispatch = PlannerDispatch(
+            PlannerDispatchKind.CREATE_NEW_PROJECT, child_ctx.run_id, authoring_root=f"worklogs/{slug}"
+        )
+        outcome, released = _cli._run_cli_stage(
+            args=_argparse.Namespace(_managed_execution=managed),
+            run_context=child_ctx,
+            run_id=child_ctx.run_id,
+            run_log_dir=tmp_path / "run-log",
+            session_db=None,
+            log=SimpleNamespace(path=tmp_path / "events.jsonl"),
+            workspace=site.source,
+            role="planner",
+            plan_ref=None,
+            planner_dispatch=dispatch,
+            build_registry=build_registry,
+            drive=drive,
+        )
+
+        # The bytes really were written -- otherwise this test would pass for the
+        # wrong reason, on a stage that never got far enough to write anything.
+        assert wrote[roadmap_path] == authored[roadmap_path]
+        assert outcome is not None and outcome.exit_code != 0
+        assert released
+        # 1. Nothing was published: the canonical revision never moved.
+        assert managed.current_revision_id == base_rev
+        # 2. And no reader pin can reach what was written: the rejected view is gone,
+        #    so a fresh pin sees the pre-stage tree, not the planner's bytes.
+        probe_ctx = _rejected_ctx(case_site, child_ctx, _yaml, managed)
+        with workflow_controller._pinned_acquisition_substrate(probe_ctx) as probe:
+            assert probe is not None, "the pre-stage revision should still be readable"
+            with pytest.raises(WorkspacePortError):
+                probe.port.read_file(roadmap_path)
+
+    # 3. The canonical tree has no project either -- the refusal was not a partial install.
+    assert not any(
+        (root / "worklogs" / slug).exists() for root in (site.source, *site.roots.iterdir())
+    )
+
+
+def _rejected_ctx(case_site: Site, child_ctx: Any, yaml_path: Path, managed: Any) -> Any:
+    """A context that pins the *current* revision, for asking what survived."""
+    return workflow_controller.WorkflowContext(
+        run_id=child_ctx.run_id,
+        base_task="ct-2.9",
+        per_role_task={},
+        artifact_paths=workflow_controller.workflow_artifact_paths(
+            child_ctx.run_id, base_dir=child_ctx.run_log_dir
+        ),
+        config=yaml_path,
+        workspace=case_site.source,
+        max_turns=1,
+        output_mode="quiet",
+        managed_execution=managed,
+    )
+
+
 def _admit_in(
     case_site: Site, child_ctx: Any, managed: Any, yaml_path: Path, slug: str
 ) -> tuple[Any, Any]:

@@ -571,6 +571,46 @@ def test_the_authoring_prompt_describes_markdown_and_asks_for_no_choice() -> Non
         assert retired not in AUTHORING_SYSTEM_PROMPT, f"authoring prompt still asks for {retired!r}"
 
 
+def test_the_authoring_prompt_example_is_a_document_pair_the_parser_admits() -> None:
+    """CT-2.6: the worked example in the prompt survives the production parser.
+
+    A prompt that is only checked for keywords can describe a grammar admission no
+    longer accepts -- P0-1 exactly, and it cost a whole create route. Mine was broken
+    the first time I wrote it: `STEPS:` twice, `KILL-TARGETS` with the wrong keys and a
+    literal `<slug>` in the selector. None of that shows up in a keyword assertion;
+    all of it shows up here, because the example is fed through `parse_plan` on the
+    real scaffold.
+    """
+    import re
+
+    from fa.inner_loop.plan_v2 import parse_plan
+    from fa.inner_loop.project_scaffold import scaffold_files
+    from fa.inner_loop.prompt import AUTHORING_SYSTEM_PROMPT
+
+    blocks = re.findall(r"```\n(.*?)```", AUTHORING_SYSTEM_PROMPT, re.S)
+    increments = [block for block in blocks if "## INVARIANTS" in block]
+    assert len(increments) == 1, "the prompt must carry exactly one worked increment body"
+
+    slug = "widget-project"
+    scaffold = scaffold_files(slug, created="2026-11-21")
+    roadmap = scaffold[f"worklogs/{slug}/roadmap.md"]
+    increment = (
+        scaffold[f"worklogs/{slug}/increments/increment-01-initial-plan.md"].replace("slices: 0", "slices: 1")
+        + "\n"
+        + increments[0]
+    )
+
+    graph = parse_plan(roadmap=roadmap, increment=increment)
+    # And it is the graph the prompt claims: one contract, backed by one selector.
+    assert dict(graph.contracts())["CT-1.1"].inv == "INV-1"
+    selectors = [entry.selector for planned in graph.slices for entry in planned.acceptance]
+    assert selectors == [f"worklogs/{slug}/acceptance/tests/test_widget.py::test_parse"]
+    # The *example* must not carry a literal placeholder: the prose may say
+    # `worklogs/<slug>/` (that is how it teaches scope), but a model copying `<slug>`
+    # into a selector writes a row admission refuses. So: no angle brackets in the block.
+    assert "<" not in increments[0], "the worked example still contains a placeholder"
+
+
 def test_the_authoring_stage_task_and_prompt_name_the_same_files() -> None:
     """CT-2.6 / P0-1: the two instructions a create-run reads must not disagree.
 

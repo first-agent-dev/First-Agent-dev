@@ -11982,3 +11982,34 @@ which is the failure mode that lets a real gap hide behind a plausible name.
 
 The row now names both tests, and this entry records that no code changed: the tests were
 already green. **Docs only**; doc-links 369 OK; both cited tests re-run and pass.
+
+### E590 — four controls were cited, none existed; two now do (2026-11-21)
+
+Closing P3-1 taught the lesson and I did not apply it widely enough, so I checked every
+`TEST-` citation in the contract table against `grep "def <name>" tests/`. Four were
+absent: TEST-2.9, TEST-2.6, TEST-2.4 and TEST-2.5. The plan was reading as a description
+of a suite that was partly imaginary.
+
+**CT-2.9 (written).** `test_rejected_create_leaves_no_project_and_no_reader_sees_bytes`
+drives a real authoring stage that writes real bytes and then exits 2, so the lease
+settles `accepted=False` -> `reject_view`. It asserts the revision did not move, a fresh
+pin cannot read the rejected path, and the canonical tree gained no `worklogs/<slug>/`.
+Mutant: `lease.finish(accepted=True)` -- killed by the revision assertion.
+
+**CT-2.6 (written, and it found a live defect).** The authoring prompt carried **no**
+worked example at all, so the control could not have been satisfied. I wrote one, and the
+first two drafts were refused by `parse_plan` (`slice-1-exit-check-entry` -- the parser
+wants `CHECK-ID`/`TEST-ID[]`, not `CHECK`/`TEST-IDS`; then `acceptance-selector-invalid`
+-- a literal `<slug>` in a selector). That is the control earning its place immediately:
+a keyword assertion would have passed all three drafts. Two mutants, both killed.
+
+**CT-2.4 (blocked, not written).** The controller contains no `AcceptanceBundle` and no
+seal: `_validate_plan_admission` for V2 is a projection over an already-parsed graph, so
+it can only refuse what `parse_plan` refused, and the gate has nothing to precede the
+coder *with*. Writing the test would assert an ordering the code does not implement. Line
+329 of the plan already assigns the minting to SLICE2; the row now says BLOCKED and why,
+so the next reader does not mistake absence for coverage. **CT-2.5 remains unwritten**
+and is the next item of this class.
+
+Net: 33 tests in `test_ai_native_bootstrap.py`, 29 in `test_prompt_registry_coherence.py`,
+169 across the four touched banks; ruff clean.
