@@ -11969,3 +11969,16 @@ testing that the run consults it.
 **Not done here, deliberately.** D-V2-9.8 (repair as a second authoring stage) stays its own
 CT/slice per the operator. `prepare_bundle`/`install_project` remain in the authority for
 their other callers, as the plan directs; the create route simply stops calling them.
+
+### E589 — P3-1 closed: the plan cites tests that exist (2026-11-21)
+
+A plan row that names a control is a claim, and this one named a control that has never
+existed: `test_coder_never_dispatches_without_bound_admission_and_v1_is_refused_first`. The
+live test is `..._on_a_v2_route`, and its V1 half was never missing -- it lives in
+`test_v2_document_is_never_judged_by_v1_validators`, which asserts that the same document that
+passes V2 is refused by the V1 route. So the defect was narrower than "unasserted control":
+it was that a reader could not tell whether the control existed or the row was aspirational,
+which is the failure mode that lets a real gap hide behind a plausible name.
+
+The row now names both tests, and this entry records that no code changed: the tests were
+already green. **Docs only**; doc-links 369 OK; both cited tests re-run and pass.
