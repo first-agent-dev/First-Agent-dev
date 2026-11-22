@@ -857,6 +857,10 @@ _V2_CREATE_FAILURES: dict[str, tuple[str, bool]] = {
     "planner-unavailable": ("workspace_unavailable", True),
     # D-V2-9.1: the route the caller asked for and the reply the child produced disagree.
     "project-route-mismatch": ("project_route_mismatch", False),
+    # R1/D-V2-10: the plan requested a disposition and the caller supplied none. Only the
+    # caller can make that legal, so this is retryable -- with a declaration -- and the run
+    # never tries to repair it by rewriting the plan (the request would just be deleted).
+    "disposition-undeclared": ("disposition_required", True),
     # R1: the caller's own grant could not be verified against the pinned bytes. Fixing the
     # declaration is a real repair, and it happens before anything irreversible.
     "disposition-evidence-invalid": ("invalid_dispositions", True),

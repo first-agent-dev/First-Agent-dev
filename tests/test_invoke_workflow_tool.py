@@ -1830,6 +1830,9 @@ class TestCreatNewRouteFailureMapping:
             ("hash-mismatch", "durability_unknown", False),
             ("project-route-mismatch", "project_route_mismatch", False),
             ("disposition-evidence-mismatch", "invalid_dispositions", True),
+            # D-V2-10/P4-1: the plan asked for a waiver and the caller gave none. Only the
+            # caller can fix that, so the code says what to send and the call is retryable.
+            ("disposition-undeclared", "disposition_required", True),
             ("bootstrap-unavailable", "workspace_unavailable", True),
             ("backend-unavailable", "workspace_unavailable", True),
             # Anything the table does not name still fails, and fails closed.

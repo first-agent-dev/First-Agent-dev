@@ -2286,9 +2286,7 @@ def _run_role_loop(
             _write_stage_failure_state(ctx, role, result.exit_code, progress=progress)
             return _StageLoopResult(ctx, result.exit_code, n_stages, last_role, eval_report, verification)
         if result.authored_project:
-            ctx, blocked = _bind_authored_project(
-                ctx, progress=progress, run_stage_fn=run_stage_fn
-            )
+            ctx, blocked = _bind_authored_project(ctx, progress=progress, run_stage_fn=run_stage_fn)
             if blocked is not None:
                 return _StageLoopResult(ctx, blocked, n_stages, last_role, eval_report, verification)
         if result.acquisition is not None:
@@ -2923,6 +2921,13 @@ def _authored_refusal_detail(rule: str) -> _BootstrapFailure:
         return _BootstrapFailure("bootstrap", "invalid-body", "ERROR", "INDETERMINATE", None)
     if rule == "project-route-mismatch":
         return _BootstrapFailure("selection", "project-route-mismatch", "ERROR", "INDETERMINATE", None)
+    if rule == "disposition-undeclared":
+        # The persisted record has no `disposition-*` slot: `ADMISSION_RULES_V2` extends the
+        # v1 vocabularies by name, and none of them names a grant. `needs-clarification` is
+        # the closest true statement -- the caller must decide something -- while the exact
+        # rule survives in `blocked_reason` (which is what the caller's failure code keys
+        # on). Q-V2-RULES-1 carries the choice that would let the record keep the rule.
+        return _BootstrapFailure("selection", "needs-clarification", "ERROR", "INDETERMINATE", None)
     return _BootstrapFailure("selection", "needs-clarification", "ERROR", "INDETERMINATE", None)
 
 
@@ -2942,6 +2947,12 @@ def _may_repair_authored_project(ctx: WorkflowContext, refusal: PlanRefError) ->
     repaired: at the first repair there is no ``_WorkflowAdmission`` to count on.
     """
     if refusal.rule in {"bootstrap-collision", "bootstrap-unavailable", "project-route-mismatch"}:
+        return False
+    # A grant is the caller's to give (R1). A repair rewrites the plan, so its cheapest
+    # way to satisfy this refusal is to delete the request -- silently dropping a claim
+    # the planner said it could not test. The run stops and the caller either supplies the
+    # declaration (retryable) or the claim changes on a new plan revision.
+    if refusal.rule == "disposition-undeclared":
         return False
     # "bootstrap-refused" is the repair stage's own failure; repairing a failed repair
     # with another repair is a loop, and the operator needs the failure instead.
@@ -3200,12 +3211,13 @@ def _admit_published_project(ctx: WorkflowContext) -> tuple[WorkflowContext, Pla
         # admission's vocabulary is closed, the operator's is not.
         logger.warning("authored plan refused [%s] (run=%s)", snapshot.format_error, ctx.run_id)
         return ctx, PlanRefError("bootstrap-invalid-metadata")
-    if snapshot.graph is not None and granted:
-        # R1: the plan only *requests* a disposition; the caller's declaration is the
-        # sole source of owner and reference. Binding here -- not at seal -- keeps the
-        # refusal pre-coder, and `contract_evidence` grades an unbound invariant as a
-        # request rather than an attestation, so skipping this would let a plan reach
-        # the coder ATTESTED on a grant nobody gave.
+    if snapshot.graph is not None:
+        # R1/D-V2-10: the plan only *requests* a disposition; the caller's declaration is
+        # the sole source of owner and reference. Binding therefore always runs -- the old
+        # `and granted` skipped it precisely when the caller sent nothing, which is the one
+        # case where an unbound request has no other gate: the plan was admitted, sealed and
+        # handed to a coder with a waiver nobody gave. `bind_dispositions` is a no-op for a
+        # graph with no requests, so the always-bound form costs nothing on that route.
         try:
             snapshot = replace(
                 snapshot,

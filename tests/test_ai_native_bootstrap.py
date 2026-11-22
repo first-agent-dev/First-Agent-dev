@@ -13,6 +13,7 @@ import hashlib
 import json
 import re
 from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -1258,6 +1259,111 @@ def _stage_ctx(case_site: Any, child_ctx: Any, yaml_path: Path, managed: Any, sl
         managed_execution=managed,
         project_hint=slug,
     )
+
+
+def test_a_missing_grant_is_never_repaired_by_rewriting_the_plan() -> None:
+    """R1/D-V2-10: the grant is the caller's, so a repair cannot manufacture one.
+
+    A repair rewrites the documents, and the cheapest way for it to satisfy
+    ``disposition-undeclared`` is to delete the request -- quietly dropping a claim the
+    planner said it could not test. So the rule is excluded from repairability and the
+    run stops for the caller instead.
+    """
+    ctx = workflow_controller.WorkflowContext(
+        run_id="run-20260101-000000-" + "0" * 8,
+        base_task="task",
+        per_role_task={},
+        artifact_paths=workflow_controller.workflow_artifact_paths("run-20260101-000000-" + "0" * 8),
+        config=Path("config.yaml"),
+        workspace=Path("."),
+        max_turns=1,
+        output_mode="quiet",
+        replans_allowed=1,  # budget exists, so "no repair" is the rule and not the counter
+    )
+
+    assert workflow_controller._may_repair_authored_project(ctx, PlanRefError("disposition-undeclared")) is False
+    assert workflow_controller._may_repair_authored_project(ctx, PlanRefError("bootstrap-invalid-metadata")) is True
+
+
+def test_an_ungranted_request_is_refused_even_when_the_caller_sends_no_declarations(
+    site: Site, tmp_path: Path
+) -> None:
+    """P4-1: binding used to run only when the caller *also* sent declarations.
+
+    `_admit_published_project` read `if snapshot.graph is not None and granted:`, so the
+    one combination with no other gate -- a plan that requests a waiver and a caller who
+    supplies none -- skipped the binding entirely and reached admission with the request
+    unbound. The control here is the same published revision admitted twice: without the
+    declaration it is refused, with it the grant is bound.
+    """
+    from fa import cli as _cli
+    from fa.inner_loop.planner_dispatch import PlannerDispatch, PlannerDispatchKind
+    from tests.test_admission_v2_provenance import _managed_child_env
+
+    slug = "waiver-project"
+    roadmap_path = f"worklogs/{slug}/roadmap.md"
+    increment_path = f"worklogs/{slug}/increments/increment-01-initial-plan.md"
+    roadmap, increment = _requiring_pair()
+
+    case_dir = tmp_path / "ungranted"
+    case_site = Site(case_dir / "protected", site.roots, site.source)
+    with _managed_child_env(case_site, case_dir, child_run_id="p41-ungranted") as (
+        managed,
+        _publisher,
+        child_ctx,
+        yaml_path,
+    ):
+
+        def build_registry(workspace_io: object, _executor: object, _lease: object) -> object:
+            return workspace_io
+
+        def drive(port: object) -> SessionOutcome:
+            for path, content in ((roadmap_path, roadmap), (increment_path, increment)):
+                current = port.read_file(path).sha256  # type: ignore[attr-defined]
+                port.write_file(path, content, expected_sha256=current)  # type: ignore[attr-defined]
+            return SessionOutcome(exit_code=0, stop_reason="stopped_by_llm", turns=1, final_text="authored")
+
+        _cli._run_cli_stage(
+            args=argparse.Namespace(_managed_execution=managed),
+            run_context=child_ctx,
+            run_id=child_ctx.run_id,
+            run_log_dir=case_dir / "log",
+            session_db=None,
+            log=SimpleNamespace(path=case_dir / "events.jsonl"),
+            workspace=case_site.source,
+            role="planner",
+            plan_ref=None,
+            planner_dispatch=PlannerDispatch(
+                PlannerDispatchKind.CREATE_NEW_PROJECT, child_ctx.run_id, authoring_root=f"worklogs/{slug}"
+            ),
+            build_registry=build_registry,
+            drive=drive,
+        )
+
+        ctx = _stage_ctx(case_site, child_ctx, yaml_path, managed, slug)
+        admitted, refusal = workflow_controller._admit_published_project(ctx)
+
+        assert refusal is not None and refusal.rule == "disposition-undeclared"
+        assert admitted.admission is None, "a refused request must not bind an admission"
+
+        declaration = parse_dispositions(
+            [
+                {
+                    "reason": "HOST_READINESS",
+                    "owner": "W4",
+                    "evidence": "issue:FA-1234",
+                    "reviewed_at": "2026-11-20",
+                }
+            ]
+        )
+        bound, granted_refusal = workflow_controller._admit_published_project(
+            replace(ctx, dispositions=declaration)
+        )
+
+        assert granted_refusal is None
+        assert bound.admission is not None and bound.admission.snapshot.graph is not None
+        waiver = {item.id: item for item in bound.admission.snapshot.graph.invariants}["INV-1"]
+        assert waiver.owner == "W4"
 
 
 def test_create_over_existing_directory_is_project_exists_and_unchanged(
