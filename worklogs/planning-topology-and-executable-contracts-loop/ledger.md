@@ -12407,3 +12407,65 @@ this kind of question.
 (materialization into the seal) and CT-3.3 (mode-A projection) can proceed, and CT-3.3's
 own gate Q-V2-MODEA-1 is recorded RESOLVED (= B, detection). Ask which option governs before
 the CT-3.1 test is written.
+
+### E601 — the evidence model was never given a runtime meaning (2026-11-21)
+
+Full audit: [evidence-model-audit-2026-11-21.md](notes/evidence-model-audit-2026-11-21.md).
+
+Started from a question about where to refuse an uncovered contract. Four measurements moved
+the question a level up, and one of them is a real defect rather than a policy gap.
+
+**`KIND` is read in exactly one place** (`plan_v2.py:622`) and its only job there is to decide
+whether to refuse. It reaches the seal, the verifier, the verdict and the report: nowhere. So
+`SOFT` is not a severity, it is an exemption flag, and "a soft invariant may stay uncovered"
+describes an absence of mechanism rather than a design choice.
+
+**A `HARD` invariant can be waived**, which the plan forbids verbatim ("`NON_EXECUTABLE` is
+forbidden for HARD/ready contracts unless Q-V2-ACC-2 is resolved"). Measured: `KIND: HARD` +
+`EVIDENCE: NON_EXECUTABLE` + a reason is admitted, and after `bind_dispositions` the contract
+grades `ATTESTED` and enters `seal.attested`. The strictest class in the vocabulary is the one
+that converts most easily into a human signature — chosen by the planner, not the human.
+`PRESERVATION` is correctly protected only because its class check runs before the waiver
+branch (`:617`), which is an ordering accident, not a rule.
+
+**The seal cannot express "unverified".** It carries `selectors` and `attested`, never a
+contract count, and `UNCOVERED` appears in neither. A seal over 5 contracts / 1 test / 1 grant
+is shape-identical to one over 2 / 1 / 1. The consumer cannot distinguish "we waived the rest"
+from "the rest were never mentioned".
+
+**`"ready CT"` does not exist** in the codebase. Q-V2-ACC-2 is phrased over a category with no
+runtime meaning, which is why it read as answerable and was not.
+
+**Root cause.** Two authorities describe the grammar and disagree. The canonical schema
+(`artifact-schema-and-grammar.md`) has 0 occurrences of the V2 marker, 0 of `KIND:`, 0 of
+`CT-`, and teaches `TESTS:` + a `verify` fence; the parser requires the opposite of all four.
+Two skills and four conformance tests read the schema. The plan calls this document the sole
+V2 source of truth and marks it "not yet a runtime-admitted artifact" — so the split is known,
+and it is the reason every evidence question is unanswerable: the document that defines
+invariants never mentions `HARD`. `prompt.py` already mirrors the split (`CREATE_NEW` gets the
+V2 prompt; `ACQUISITION` and `ORDINARY_PLANNING` still teach `TESTS:`).
+
+**Recommendation, in dependency order.** (A) Make `KIND` mean something and enforce what the
+plan already says: `HARD` + `NON_EXECUTABLE` refused — a bug fix, not a policy choice; `SOFT`
+is the only waivable class, through the ratified typed-reason → caller-grant → `ATTESTED`
+pipeline that already exists; `UNCOVERED` cannot ship (`mint_seal` refuses). After this the
+vocabulary is tautological in the good sense: `HARD` = must execute, `SOFT` = may be attested,
+neither = not admissible. (B) Make the seal self-describing — contract count and uncovered set,
+which is empty by construction after (A) and therefore states the invariant it enforces.
+(C) Rewrite the canonical schema to V2 and update both skills and the four conformance tests in
+the same change; the plan mandates this before SLICE3 is credible, and it is the only thing
+that stops the next contract from being designed blind.
+
+**Why C-alone is not enough, contra E600.** C would refuse `UNCOVERED` and wave through a
+waived `HARD` contract, because that contract is `ATTESTED`, not uncovered. Sequence matters:
+fix the vocabulary, then gate the seal.
+
+**Q-V2-ACC-1.** The enforceable-budget half is implemented and strict (512 files, 4 MiB/file,
+16 MiB aggregate, 4096 chars, depth 64, symlink/hidden/nested-conftest/hardlink/uid refusals;
+`pytest_argv` pins `-c`/`--rootdir` and a closed `--addopts`), covered by 30 tests. The
+transitive-import half is not implemented and cannot be closed inside this design: a sealed
+test may import outside `acceptance/`, and on the `MUTATION` route the verifier imports the
+current candidate by design. Record the budget half closed-by-code; file the transitive half as
+a named residual, not an open gate.
+
+No production change in this commit.
