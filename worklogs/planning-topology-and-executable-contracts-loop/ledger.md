@@ -12943,3 +12943,21 @@ described — and the derivation test fails on its first assertion. Restored, bo
 **Not in S3:** the S0 host probe (needs a live run; first thing SLICE3 wiring), CT-3.6, and any change to
 `profiles.py` or an approved profile identity (D-V2-6 stands: prevented where the interface allows it,
 detected everywhere else).
+
+### E611 — S0 is blocked by a missing decision, not by a missing host (2026-11-22)
+
+S3 closed, the next item in §8 is S0: "the managed-executor probe at `acceptance/tests/`", which gates
+SLICE3 wiring. Two facts measured before writing anything:
+
+1. **This environment cannot run it.** No `docker`, no `podman`, no `/var/run/docker.sock`. A probe of the
+   pinned managed substrate needs a real container, so here it can be *written* and not *run* — which is the
+   one category the review already allows to be `xfail(strict=True, reason=...)`.
+2. **The plan does not say where it lives.** "The managed-executor probe at `acceptance/tests/`" could be a
+   repo test driving the authority, a probe inside a fixture project's sealed closure, or both — and that
+   choice decides what "SLICE3 has started" means.
+
+Writing it blind would invent the contract the probe exists to check, so it is filed as **Q-V2-S0-1** with
+three options and a recommendation (A: a repo test under `xfail(strict=True)` with the host command in its
+docstring, plus C's fixture-closure probe as the live evidence once a host exists; B leaves nothing in the
+tree that would notice the substrate breaking). Slices S1–S3 are unaffected: none of them depends on the
+substrate, only SLICE3's wiring does.
