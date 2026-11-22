@@ -925,7 +925,7 @@ def test_a_create_new_repair_is_budgeted_and_never_overwrites_on_collision() -> 
         authored_repairs=0,
     )
 
-    def refusal(rule: str) -> object:
+    def refusal(rule: str) -> PlanRefError:
         return PlanRefError(rule)
 
     # Budget remains, but these are not content refusals.
@@ -940,6 +940,70 @@ def test_a_create_new_repair_is_budgeted_and_never_overwrites_on_collision() -> 
     # ...and stops being repairable when the budget is spent.
     spent = replace(ctx, authored_repairs=3)
     assert _may_repair_authored_project(spent, refusal("bootstrap-invalid-metadata")) is False
+
+
+class _RecordingPort:
+    """A port that records writes instead of performing them.
+
+    The property under test is *silence*, so the double has to be able to tell
+    "wrote nothing" apart from "wrote something and it happened to be accepted".
+    A real managed view would refuse a second scaffold on its own -- which is exactly
+    the failure a repair stage must not run into -- so the double is deliberate.
+    """
+
+    def __init__(self) -> None:
+        self.writes: list[tuple[str, str]] = []
+
+    def write_file(self, path: str, content: str, *, expected_sha256: str | None = None) -> object:
+        self.writes.append((path, content))
+        return SimpleNamespace(path=path, sha256="0" * 64, created=expected_sha256 is None)
+
+
+def test_a_create_new_repair_writes_no_scaffold() -> None:
+    """D-V2-9.9: the harness writes only the scaffold, and a repair writes none of it.
+
+    `_write_project_scaffold` is create-only on purpose: `expected_sha256=None` is what
+    turns a colliding project into a refusal instead of an overwrite. A repair stage runs
+    at the revision the first stage published, so every scaffold file already exists --
+    writing it again would fail on the first file with exactly the rule that protects
+    creation, and the repair could never run. The seed function therefore has to
+    distinguish the two stages, and this is the test that says so in the only way that
+    cannot be accidentally satisfied: a double that would happily accept the write.
+    """
+    from fa import cli as _cli
+    from fa.inner_loop.planner_dispatch import PlannerDispatch, PlannerDispatchKind
+
+    root = "worklogs/widget-project"
+
+    first = PlannerDispatch(PlannerDispatchKind.CREATE_NEW_PROJECT, "run-1", authoring_root=root)
+    port = _RecordingPort()
+    _cli._seed_scaffold_if_authoring(cast("Any", port), first)
+    # The first authoring stage does seed: the scaffold is the only harness write.
+    assert [path for path, _ in port.writes] == [
+        f"{root}/roadmap.md",
+        f"{root}/ledger.md",
+        f"{root}/open-questions.md",
+        f"{root}/increments/increment-01-initial-plan.md",
+        f"{root}/notes/README.md",
+        f"{root}/reviews/README.md",
+        f"{root}/acceptance/tests/test_acceptance_placeholder.py",
+    ]
+
+    repair = PlannerDispatch(
+        PlannerDispatchKind.CREATE_NEW_PROJECT,
+        "run-1",
+        authoring_root=root,
+        repair_allowlist=(f"{root}/increments/increment-01-initial-plan.md", f"{root}/open-questions.md"),
+    )
+    repair_port = _RecordingPort()
+    _cli._seed_scaffold_if_authoring(cast("Any", repair_port), repair)
+    assert repair_port.writes == [], "a repair stage must not rewrite the scaffold"
+
+    # And an ordinary planner stage never seeds it either, allowlist or not.
+    ordinary = PlannerDispatch(PlannerDispatchKind.ORDINARY_PLANNING, "run-1", "plans/plan.md")
+    ordinary_port = _RecordingPort()
+    _cli._seed_scaffold_if_authoring(cast("Any", ordinary_port), ordinary)
+    assert ordinary_port.writes == []
 
 
 def _admit_in(

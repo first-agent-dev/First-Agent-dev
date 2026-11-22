@@ -1899,6 +1899,15 @@ def _seed_scaffold_if_authoring(workspace_io: WorkspacePort | None, planner_disp
         return
     if planner_dispatch.kind is not PlannerDispatchKind.CREATE_NEW_PROJECT:
         return
+    if planner_dispatch.repair_allowlist is not None:
+        # D-V2-9.9: a repair writes no scaffold. It opens the view at the revision the
+        # first stage published, so every scaffold file already exists -- and the
+        # scaffold writer is create-only by design (`expected_sha256=None`), which is
+        # what makes a colliding project refuse the whole stage. Writing it again would
+        # fail the repair on the first file with the very rule that protects creation,
+        # and would break "the harness writes only the scaffold" for a stage whose
+        # business is the planner's documents.
+        return
     _write_project_scaffold(workspace_io, planner_dispatch)
 
 

@@ -12082,3 +12082,47 @@ stays absent for that reason.
 
 355 tests across nine banks, 221 across the controller/CLI/e2e six; ruff clean, mypy 224
 clean, doc-links 370 OK.
+
+### E593 — D-V2-9.9: a repair stage writes no scaffold (2026-11-21)
+
+The rule was already written down and I had just broken it. D-V2-9.9 says the scaffold
+file set is the *only* harness write and that "a second authoring stage (repair) writes no
+scaffold at all". The repair stage I landed in E592 used `CREATE_NEW_PROJECT` -- and
+`_seed_scaffold_if_authoring` selects on exactly that kind. So every repair would have run
+the scaffold writer.
+
+**It would not have failed loudly; it would have failed fatally.** `_write_project_scaffold`
+writes with `expected_sha256=None`, which in this port means *expect absence* -- that is
+the mechanism that turns a colliding project into `STALE_REVISION` instead of an overwrite
+(D-V2-9.2). On a repair, every scaffold file already exists, so `roadmap.md` -- written
+first, deliberately -- would refuse the whole stage. The repair feature could never have
+run once, and the symptom would have been a create-new run that refused, repaired,
+refused, and reported `bootstrap-refused` with no hint that the harness was the problem.
+
+**Where the fix belongs.** Not in `_run_create_new_repair` (it would have to remember to
+suppress a write another layer owns), and not in `_write_project_scaffold` (it would have
+to ask whether it is allowed to do its one job). The predicate that *chooses* the stage
+already reads the dispatch, and the dispatch already carries `repair_allowlist`, so the
+seed function distinguishes the two stages in one condition. That is the seam: a repair is
+a create-new stage that is narrower, and "narrower" is already a fact on the object.
+
+**The test had to prove silence.** A double that refuses writes would have passed for the
+wrong reason, so the double accepts every write and the test asserts the list is empty. It
+also asserts the *first* stage writes exactly the seven scaffold files in order --
+otherwise "wrote nothing" could be satisfied by a seed function that no longer works.
+
+Mutant: `if False and planner_dispatch.repair_allowlist is not None` -> killed by
+`assert [('worklogs/...scaffold body...'), ...] == []`.
+
+**Sandbox note (new, and it cost real time).** The session's sandbox was re-created with
+Python 3.11 while the project requires >=3.13, and `release-assets.githubusercontent.com`
+is blocked, so no matching interpreter can be installed. `src/` is 3.11-clean except
+`typing.override` (shimmed from `typing_extensions` in the venv, never in the repo); four
+test modules use PEP 695 *syntax*, so the suite runs from a rewritten `/tmp` overlay and
+the repository's `tests/` is untouched. **A run in this sandbox is not the project gate.**
+Two consequences worth recording: `tests/test_s8_workflow_controller.py` fails 11 tests
+here both before and after my change (the pty pool needs `tmux`, which is absent), and
+`mypy src/` reports 12 `unused-ignore` errors that are identical on an untouched tree
+(3.13 needs those ignores; 3.11 does not). Neither is attributable to this work.
+
+37 tests in `test_ai_native_bootstrap.py`, 356 across nine banks.
