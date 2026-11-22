@@ -245,7 +245,7 @@ def test_the_real_verification_projects_its_own_receipt(tmp_path: Path) -> None:
         workspace=tmp_path,
         candidate_revision_id=_REVISION,
         plan_bytes=_PLAN_BYTES,
-        executor=_inband_executor(writes_visible=False, prepared=prepared),
+        executor=_inband_executor(writes_visible=False, prepared=prepared, revision=_REVISION),
     )
 
     attempt = sealed_attempt(bundle, verification, identity=_identity(bundle))

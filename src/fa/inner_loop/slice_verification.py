@@ -501,6 +501,17 @@ class ManagedVerifyCommandExecutor:
         self._executor = executor
         self._root = root
 
+    @property
+    def view_revision_id(self) -> str | None:
+        """Forward the substrate's own answer to "which revision is pinned" (F5).
+
+        This wrapper is where verification is *judged*, so it must not become a place where the
+        identity gets invented: it forwards only, and a wrapped executor that cannot name its
+        revision yields ``None`` rather than an empty string that could compare equal by accident.
+        """
+        named = getattr(self._executor, "view_revision_id", None)
+        return named if isinstance(named, str) and named else None
+
     def run_verify_command(self, command: str, *, cwd: Path, timeout_s: float, env: dict[str, str]) -> CommandResult:
         """Run one command inside the pinned view and translate the result.
 

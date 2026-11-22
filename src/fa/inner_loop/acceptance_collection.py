@@ -357,6 +357,8 @@ def verify_sealed_acceptance(
         raise AcceptanceCollectionError("claim-mutation-missing")
     verify_plan(bundle, plan_bytes)
     verify_revision(bundle, bundle.revision_id)
+    # F5: the caller's revision becomes evidence only once the substrate names it.
+    _require_named_revision(executor, candidate_revision_id)
     collection = collect_sealed_nodeids_inband(bundle, workspace=Path(workspace), deadline=deadline, executor=executor)
     missing = [selector.nodeid for selector in bundle.selectors if selector.nodeid not in collection.outcomes]
     if missing:
@@ -375,6 +377,20 @@ def verify_sealed_acceptance(
         candidate_revision_id=candidate_revision_id,
         command=_require_command(collection),
     )
+
+
+def _require_named_revision(executor: VerifyCommandExecutor | None, candidate_revision_id: str) -> None:
+    """The substrate must *name* the revision it is pinned at, and name the candidate (F5).
+
+    ``candidate_revision_id`` used to be taken on trust, so a verification could faithfully record a
+    revision that never ran the oracle. The managed substrate holds the authority's view, whose
+    ``base_revision`` is that answer; a substrate that cannot name one is not an identity ("I ran
+    somewhere"), and one that names another is a different candidate -- both are refused before the
+    cell runs, because neither can be repaired by executing anything.
+    """
+    named = getattr(executor, "view_revision_id", None)
+    if not isinstance(named, str) or named != candidate_revision_id:
+        raise AcceptanceCollectionError("verifier-revision-mismatch")
 
 
 def _require_command(collection: SealedCollection) -> CommandResult:

@@ -455,3 +455,34 @@ restore the three-list sum, drop the claim/excused intersection.
 emptiness stop, because the projection has no caller on the V2 route yet — `_stage_plan` still passes
 `PlanSnapshot.ids` to `verify_plan` (`workflow_controller.py:1757`). Item 2 (F5, substrate-named revision) is what
 gives `identity.substrate`/`candidate_revision_id` a value the verifier can prove rather than receive.
+
+## F5 — landed: the substrate names the revision, the verifier refuses the disagreement
+
+`candidate_revision_id` was an assertion: the caller typed a revision and the artifact recorded it as though
+something had checked. Three small pieces make it evidence, and none of them creates a new trust boundary:
+
+* `ReadOnlyManagedBashExecutor.view_revision_id` — the authority's own `ViewRef.base_revision`, or `None` before a
+  view is pinned and after `suspend()` (`client.py`). `None` is the honest answer for "no view"; returning `""`
+  would let a blank caller revision compare equal by accident.
+* `ManagedVerifyCommandExecutor.view_revision_id` — forwards only. It is where verification is *judged*, so it must
+  not become a place where the identity is invented: a wrapped executor with no answer, or a blank one, yields
+  `None`.
+* `acceptance_collection._require_named_revision(executor, candidate_revision_id)` — called after the plan and seal
+  checks and **before** any cell command: a substrate that cannot name its revision, or names another one, is refused
+  with `verifier-revision-mismatch`. `prepared == {}` in both oracles, so the refusal provably precedes execution.
+
+The ordering is deliberate and was checked against the existing oracles: the drift (`seal-byte-drift`) and nodeid
+checks happen while collecting, i.e. *after* this refusal, so every existing refusal keeps the rule it was recorded
+under rather than being re-labelled by the new check.
+
+**Measured:** 6 hand-built mutants, all killed — drop the refusal, disable the comparison, make the wrapper return
+`None` always, make it forward blank strings, make the client return `None` always, make it return `""` when
+suspended. `tests/test_slice_verification_runner.py` now constructs a real `ReadOnlyManagedBashExecutor` (a real
+`ViewRef`/`GrantReply`/non-interactive `ExecutionProfile`, an unconnected client) rather than a stand-in, plus four
+forwarding oracles; `tests/test_ai_native_acceptance_collection.py` gains "cannot name", "names another" and "names
+the candidate and therefore runs" (the last one through the real in-band substrate). The S0 probe asserts
+`substrate.view_revision_id == managed.current_revision_id` inside the xfail, i.e. it becomes a proof of this seam on
+the W4 host rather than a parallel claim.
+
+**What this does not do:** `verify_sealed_acceptance` still has no production caller — `_stage_plan` reaches
+`verify_plan(PlanIds())` (F10). Item 3, the controller branch, is next.

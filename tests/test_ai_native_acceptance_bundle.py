@@ -738,7 +738,7 @@ def test_v2_verifier_uses_sealed_closure_with_current_candidate_revision(tmp_pat
         workspace=tmp_path,
         candidate_revision_id=candidate,
         plan_bytes=_PLAN_BYTES,
-        executor=_inband_executor(writes_visible=False, prepared=prepared),
+        executor=_inband_executor(writes_visible=False, prepared=prepared, revision=candidate),
     )
 
     # Two identities, two claims: the closure stayed at the sealed revision while
@@ -828,7 +828,7 @@ def test_a_declared_kill_target_is_refused_rather_than_proved_without_its_mutati
                 candidate_revision_id=_candidate(),
                 plan_bytes=_PLAN_BYTES,
                 kill_required=("CT-1.1",),
-                executor=_inband_executor(writes_visible=False, prepared=prepared),
+                executor=_inband_executor(writes_visible=False, prepared=prepared, revision=_candidate()),
             )
         )
         == "claim-mutation-missing"
@@ -849,7 +849,7 @@ def test_the_sealed_verifier_still_refuses_a_drifted_closure(tmp_path: Path) -> 
                 workspace=tmp_path,
                 candidate_revision_id=_candidate(),
                 plan_bytes=_PLAN_BYTES,
-                executor=_inband_executor(writes_visible=False),
+                executor=_inband_executor(writes_visible=False, revision=_candidate()),
             )
         )
         == "seal-byte-drift"
@@ -861,6 +861,7 @@ def test_a_report_from_outside_the_closure_is_refused(tmp_path: Path) -> None:
 
     class _ForeignReport:
         writes_are_visible = False
+        view_revision_id = _candidate()
 
         def run_verify_command(
             self, command: str, *, cwd: Path, timeout_s: float, env: dict[str, str]

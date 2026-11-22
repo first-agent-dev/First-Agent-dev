@@ -25,9 +25,11 @@ from fa.inner_loop.acceptance_collection import (
     run_sealed_acceptance,
     sealed_collection_argv,
     sealed_test_paths,
+    verify_sealed_acceptance,
 )
 from fa.inner_loop.slice_verification import CommandOutcome, CommandResult
 from tests.test_ai_native_plan_v2 import GRANT_PROBE_FILES, granted_graph, plan_document, plan_graph
+from tests.test_slice_verification_runner import _inband_executor
 
 _SEALED_ROOT = "worklogs/demo/acceptance"
 _PUBLISH = f"{_SEALED_ROOT}/tests/test_publish.py"
@@ -115,6 +117,9 @@ class _FakeHost:
     exit_code: int | None = 0
     outcome: CommandOutcome = CommandOutcome.PASS
     writes_are_visible: bool = True
+    #: F5: the revision the substrate is pinned at. ``None`` models a substrate that cannot
+    #: name one, which the sealed verifier must refuse rather than trust the caller.
+    view_revision_id: str | None = None
     commands: list[str] = field(default_factory=list)
     env: dict[str, str] = field(default_factory=dict)
 
@@ -418,6 +423,53 @@ def test_a_written_seal_loads_and_then_drives_the_same_run(tmp_path: Path) -> No
 
     assert run.seal_sha256 == bundle.seal_sha256
     assert run.nodeids == {_PUBLISH: (_NODEID,)}
+
+
+# -- F5: the revision is named by the substrate, not asserted by the caller ----
+
+
+def _sealed_call(bundle: AcceptanceBundle, workspace: Path, executor: Any) -> Any:
+    return lambda: verify_sealed_acceptance(
+        bundle,
+        workspace=workspace,
+        candidate_revision_id=_REVISION,
+        plan_bytes=_PLAN_BYTES,
+        executor=executor,
+    )
+
+
+def test_a_substrate_that_cannot_name_its_revision_is_refused(tmp_path: Path) -> None:
+    """F5 — "I ran somewhere" is not an identity, and the refusal precedes the cell."""
+    bundle, workspace = _seal(tmp_path)
+    executor = _FakeHost(report=_junit((_NODEID, "passed")), writes_are_visible=False)
+
+    assert _rule(_sealed_call(bundle, workspace, executor)) == "verifier-revision-mismatch"
+    assert executor.commands == []
+
+
+def test_a_substrate_pinned_at_another_revision_is_refused(tmp_path: Path) -> None:
+    """F5 — the caller's revision is evidence only when the view is at it."""
+    bundle, workspace = _seal(tmp_path)
+    executor = _FakeHost(
+        report=_junit((_NODEID, "passed")),
+        writes_are_visible=False,
+        view_revision_id="rev-" + "1" * 32,
+    )
+
+    assert _rule(_sealed_call(bundle, workspace, executor)) == "verifier-revision-mismatch"
+    assert executor.commands == []
+
+
+def test_a_substrate_pinned_at_the_candidate_revision_is_believed(tmp_path: Path) -> None:
+    """F5's other half: agreement is not a refusal -- the run happens and is recorded."""
+    bundle, workspace = _seal(tmp_path)
+    prepared: dict[str, Any] = {}
+    executor = _inband_executor(writes_visible=False, prepared=prepared, revision=_REVISION)
+
+    verification = _sealed_call(bundle, workspace, executor)()
+
+    assert verification.candidate_revision_id == _REVISION == executor.view_revision_id
+    assert prepared["command"], "the accepted call must have run the sealed command"
 
 
 def test_a_bundle_without_selectors_is_never_minted(tmp_path: Path) -> None:

@@ -161,6 +161,9 @@ def test_a_sealed_acceptance_test_runs_in_the_cell_and_returns_its_nodeid(site: 
     """The one claim SLICE3 builds on: the seal executes off the controller host."""
     with _substrate(site, tmp_path) as (managed, substrate):
         assert managed.binding.workspace_id
+        # F5: the substrate names the revision the authority pinned, and the wrapper forwards it
+        # rather than inventing one -- this is the value `candidate_revision_id` must match.
+        assert substrate.view_revision_id == managed.current_revision_id
         capture = capture_test_nodeids(
             [_PROBE_TEST],
             root=site.source,
