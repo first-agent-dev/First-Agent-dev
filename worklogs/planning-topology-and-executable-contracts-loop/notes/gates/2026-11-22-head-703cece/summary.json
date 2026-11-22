@@ -8,7 +8,7 @@
     },
     "mypy": {
       "exit": 1,
-      "findings": 64,
+      "findings": 62,
       "log": "mypy.log"
     },
     "ruff": {

@@ -60,5 +60,3 @@ tests/test_ai_native_plan_v2.py: Unsupported right operand type for in ("Iterabl
 tests/test_ai_native_plan_v2.py: Value of type "Iterable[Any] | None" is not indexable  [index]
 tests/test_invoke_workflow_tool.py: No overload variant of "int" matches argument type "object"  [call-overload]
 tests/test_invoke_workflow_tool.py: Unused "type: ignore" comment  [unused-ignore]
-tests/test_verify_gate_live.py: Item "None" of "_WorkflowAdmission | None" has no attribute "snapshot"  [union-attr]
-tests/test_verify_gate_live.py: Item "None" of "_WorkflowAdmission | None" has no attribute "snapshot"  [union-attr]
