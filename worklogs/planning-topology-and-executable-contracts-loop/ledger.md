@@ -12757,3 +12757,60 @@ profile allowlist, and a mutant proves the two are not interchangeable.
 **Next slice:** S2 — seal totality. `mint_seal` refuses `UNCOVERED` and ownerless contracts, the record
 carries `contracts_total`/`attested`/`uncovered` with the arithmetic asserted, `SCHEMA_VERSION` 1→2, and
 **both** producers (`acceptance_bundle.mint_seal`, `acceptance_defect.correct`) are held to it.
+
+### E608 — the gate tracker: lists instead of counts, and what the red baseline actually is (2026-11-22)
+
+**Why the tracker exists.** During S1 mypy went 83 → 65 → 62 and I read that as "better". It was not:
+four errors had gone and **three of the remaining were mine**. A count answers "how bad"; the merge
+question is "did I add any", and only a set difference answers it. So the unit of evidence is now the
+finding list.
+
+**The tool** — `scripts/gate_tracker.py`, stdlib only, two commands:
+
+```bash
+python scripts/gate_tracker.py record --label base-1acb56b --out notes/gates/2026-11-22-base-1acb56b \
+    --cwd /tmp/base-wt --pythonpath /tmp/base-wt/src      # a worktree of the base commit
+python scripts/gate_tracker.py record --label head-e0cbea6 --out notes/gates/2026-11-22-head-e0cbea6
+python scripts/gate_tracker.py compare <base> <head>       # exits 1 when anything is new
+```
+
+Each recording keeps the raw log, the normalised finding list and `summary.json`; `compare` writes
+`compare.md`/`compare.json` into the head directory. `--reuse pytest=/tmp/suite.log` ingests a run
+instead of repeating a 13-minute suite. `--pythonpath` is not optional for a worktree: an editable
+install imports the *working* tree's package, which would quietly measure the wrong commit.
+
+Normalisation is deliberately coarse — line and column numbers are dropped (they drift with every
+unrelated edit; a finding that moves is not a new finding), pytest findings are nodeids, ruff findings
+are `file: CODE message`, `authoring-check` is its diagnostic count.
+
+**Result 1 — mypy.** Base `1acb56b`: 66 entries → **30 unique** findings. HEAD `e0cbea6`: 62 → **29**.
+`compare`: **0 new, 1 gone** (the four `_cmd_invoke_workflow` entries are one unique message). The
+three errors the count had hidden were real and were fixed in the code, not suppressed: typed doubles
+at the stage seam (`drive -> SessionOutcome`, `build_registry -> ToolRegistry`, the port cast to
+`WorkspacePort`, one `_stage_log` helper that says why a real `EventLog` is not used) and
+`WorkflowProgress("WORKFLOW")`, which passed a string where `plan_version: int` is declared — a real
+type error copied from a pre-existing test. `src/` has 0 findings.
+
+**Result 2 — the pytest baseline is red before S1, and the dominant cause is the runner, not the
+plans.** Full suite at the base commit: **116 failed, 8146 passed, 19 skipped, 3 xfailed, 6 errors**,
+806 s. By file: `test_verify_gate_live` 79, `test_s8_workflow_controller` 11, `test_cli_ergonomics` 8,
+`test_workflow_no_eval_terminal` 5, then ten files with one or two each. Root cause for the dominant
+cluster, measured on two independent samples:
+
+| Evidence | Reading |
+|---|---|
+| `fa workflow: admission blocked: baseline-unavailable`, exit 2 (CLI ergonomics, S8 controller, verify-gate) | T0 baseline capture failed, so the coder stage is refused and every downstream assertion about exit codes and attribution trips |
+| `assert 'runner status contradicts' in "JUnitXML report is missing or invalid: [Errno 2] … /results.xml"` | `capture_test_nodeids` runs a **nested pytest** with the exact-nodeid JUnit plugin; the report never appears, so the baseline is an ERROR by the code's own rule |
+| `AssertionError: just is required by the workspace check toolchain` (2 tests) | `just` is not on `PATH` in this sandbox |
+| `WARNING fa.runtime.pty_pool: tmux binary not found, falling back to pexpect` | the pty/runner layer is degraded here too |
+
+So the largest share of the red is "this workspace cannot run the project's own test toolchain the way
+the product expects", not "the plan logic is wrong". That is a **host prerequisite**, and it is the only
+category the review allows to be marked `xfail` — in the form the repository already enforces
+(`tests/test_authoring_rules_tests.py` V4: `strict=True` plus a reason). Nothing is marked yet: a
+prerequisite has to be *proven* per test, not assumed from a file-level pattern, and this entry records
+that the classification is owed rather than done.
+
+**Policy recorded (plan §8).** `no new red` is a standing gate: `compare` must report `0 new`; known
+red stays listed with its reason; `xfail` only for a proven host prerequisite; known red that turns out
+to be code is fixed before deploy as its own item.
