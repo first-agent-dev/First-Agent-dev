@@ -12469,3 +12469,40 @@ current candidate by design. Record the budget half closed-by-code; file the tra
 a named residual, not an open gate.
 
 No production change in this commit.
+
+### E602 — expert opinion: what the evidence model is for, and the real question behind Q-V2-ACC-2 (2026-11-22)
+
+Full opinion: [q-v2-acc2-expert-opinion-2026-11-22.md](notes/q-v2-acc2-expert-opinion-2026-11-22.md).
+
+**The system's meaning.** The whole stack exists because the artifact an AI produces must be
+checked by something other than the AI that produced it, and that check cannot be talked around.
+Every mechanism (planner≠author≠proof, INV→CT→TEST-ID→nodeid, seal binds bytes at revision,
+MUTATION roots, managed verifier) is one of six values: independence, fail-closed reliability,
+small verifiable steps, repair without losing evidence, audit trail, minimalism toward new mechanisms.
+
+**Re-measured four facts (2026-11-22):** (1) `KIND` read in exactly one place (`plan_v2.py:622`),
+only to exempt — verified by execution; (2) `HARD`+`NON_EXECUTABLE`+reason admitted, then `ATTESTED`
+after `bind_dispositions` — verified; (3) `mint_seal` mints over an `UNCOVERED` contract and the seal
+record carries no contract count — verified (seal over 5 contracts/1 test/1 grant is shape-identical
+to 2/1/1); (4) "ready CT" has zero hits in `src/fa/` — verified.
+
+**Additional findings (2026-11-22):** (D1) the plan contradicts itself — §8 step 4 says ACC-1/2
+"are closed" while the Q-V2-ACC-2 row is BLOCKING with no resolution; (D2) the STEP9A seal stack
+(`AcceptanceBundle`/`mint_seal`/`sealed_collection_argv`/`acceptance_collection`/`acceptance_defect`/
+`kill_attribution`) has ZERO production consumers — the seal is a library, no production path mints
+one; (D3) the D-V2-9.8 repair allowlist (increment + open-questions only) cannot fix a coverage gap
+that needs an acceptance test file; (D4) CT-2.4's named test is absent and the controller has no
+`AcceptanceBundle` reference; (D6) the planner verify fence still runs on PLAN-V2 route
+(`slice_verification.py:552`); (D7) `protected_paths` carries only the plan file, not the closure.
+
+**The real question behind Q-V2-ACC-2 is not where to refuse, it is what KIND obliges.** Recommended:
+(A) refuse `HARD`+`NON_EXECUTABLE` (bug fix vs. the plan's own words), keep `SOFT` waivable through
+the ratified grant pipeline, and refuse any `UNCOVERED` contract at admission AND at seal;
+(B) make the seal self-describing (contract count + coverage map); (C) rewrite the canonical schema
+to V2 with both skills and the four conformance tests in one commit — this is the plan's first SLICE1
+item and the prerequisite for any further CT design; (D) delete the "ready CT" phrase from the plan
+and state the invariant in a vocabulary the code enforces; (E) fix the repair allowlist geometry;
+(F) add `--dispositions` to the CLI; (G) record Q-V2-ACC-1 budget half closed-by-code and the
+transitive half as a named residual.
+
+No production change in this commit.
